@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "beeline",
+  "project_id": "e51b8610-e84d-4c41-a288-fc7afb86c9cd"
+}

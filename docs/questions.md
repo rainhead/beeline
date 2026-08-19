@@ -14,6 +14,14 @@ Production facts to anchor the conversation: ~52k trap-collected records (14% of
 6. **For Darwin Core publication** we would want per sample: `samplingProtocol` (controlled term), `samplingEffort` (e.g. trap-count × trap-days), `eventDate` as a range, and possibly habitat and preservative/kill method. Which of these can staff actually supply, and which should the trap interface capture going forward?
 7. **What are the `G`/`R`/`LRB`/`SM`/`MMS` sample-number prefixes** in Oregon net data? (G/R look like the Gretchen/Robert `pandg` split; the others?)
 
+## Taxon geoprivacy (⚠ blocker: must be answered before go-live)
+
+Raised by Nora (2026-08-19). iNaturalist obscures coordinates for sensitive taxa regardless of the collector's wishes, and each atlas sits in its own regulatory environment — this is not a decision Beeline can make on every atlas's behalf. Beeline retains **both** the public (possibly obscured) and true coordinate pairs, so either answer is implementable; what's open is *revelation*, per atlas:
+
+1. **May true coordinates of taxon-obscured records be revealed** — on printed labels, in the app (to staff? to the collector?), and in exports (Ecdysis/GBIF)? Answer needed per atlas.
+2. **What binds each atlas here** — sensitive-species regulations, state natural-heritage data-sharing agreements, iNaturalist's obscured-coordinate terms?
+3. Until an atlas answers: do its taxon-obscured records stay unprintable (current behavior), or print with obscured coordinates?
+
 ## Printing and mailing (for the walkthrough with Arthur/Andony)
 
 1. Observe the "printing moment" end to end: what does Arthur actually inspect when proofing, and what causes him to pull a record out of a run?
@@ -21,3 +29,5 @@ Production facts to anchor the conversation: ~52k trap-collected records (14% of
 3. How do other atlases plan to print and mail — equipment, label stock, postage/bulk-mail access?
 4. What does the `E` prefix on 2020–2022 Oregon field numbers (`E2000000`–`E2332481`, 1,400 records) denote? And the 2018 name-based identifiers (`First_Last:18.sss.nnn`) — are those printed verbatim on physical labels?
 5. Where did the historical cross-project duplicate field numbers live — this database, Ecdysis, or between them — and were they renumbered or do the physical labels still collide?
+6. **Label lifecycle**: when bad data is found on a printed label, is the remedy always a reprint under the *same* catalog number, with the old label removed and destroyed by whoever holds the pin? Is that swap ever confirmed, or taken on faith?
+7. **Catalog-number lifecycle**: has a number ever been permanently scrapped/voided — specimen destroyed, label printed but never pinned, duplicate collision? If a number were retired after publication, how would Ecdysis/GBIF learn of it?

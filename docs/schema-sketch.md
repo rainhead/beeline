@@ -16,6 +16,7 @@ erDiagram
     atlas ||--o{ sample : "assigned (geography or explicit)"
     person ||--o{ sample : "collects"
     sample ||--o{ specimen : "individuated at print"
+    sample ||--o| sample_true_location : "trusted coordinates"
     observation_load }o--|| sample : "evidences (latest load)"
     specimen ||--o{ determination : "receives (events)"
     taxon ||--o{ determination : "asserts"
@@ -131,10 +132,12 @@ CREATE TABLE sample (
   inat_observation_id BIGINT,             -- evidence link, when iNat-documented
   host_inat_taxon_id BIGINT,              -- iNat taxonomy, by role (see CONTEXT)
   host_name_as_observed TEXT,
+  -- Coordinates as iNat publishes them: possibly shifted by geoprivacy.
+  -- True coordinates live in sample_true_location; both are kept (see below).
   latitude           DOUBLE,
   longitude          DOUBLE,
   coordinate_uncertainty_m INTEGER,
-  coordinate_source  TEXT,                -- 'private' | 'public'
+  geoprivacy         TEXT,                -- null | 'obscured' | 'private', user- or taxon-driven
   country TEXT, state_province TEXT, county TEXT, locality TEXT,
   elevation_m        INTEGER,
   protocol           TEXT,                -- controlled vocabulary TBD with staff (Q3)
@@ -152,6 +155,17 @@ CREATE TABLE specimen (
   catalog_number  TEXT,                   -- opaque verbatim text: all four historical eras land here
   created_at      TIMESTAMP NOT NULL,
   UNIQUE (sample_id, specimen_number)
+);
+
+-- True coordinates from trusted authenticated reads, isolated like mailing_address:
+-- joining them in is a deliberate act, never an accident. Both pairs are always
+-- retained. Whether an atlas may *reveal* them for taxon-obscured records (labels,
+-- app, exports) is a per-atlas policy/regulatory question — open, and a blocker
+-- before go-live (see questions.md).
+CREATE TABLE sample_true_location (
+  sample_id  INTEGER PRIMARY KEY REFERENCES sample(id),
+  latitude   DOUBLE NOT NULL,
+  longitude  DOUBLE NOT NULL
 );
 ```
 
@@ -219,7 +233,7 @@ CREATE TABLE qc_waiver (
 );
 ```
 
-**Printability** (view, over *samples*): all label-required fields present ∧ no blocking finding without a live waiver ∧ coordinates not obscured-without-trust ∧ `specimen_count > 0`. A print run freezes printable samples into specimens.
+**Printability** (view, over *samples*): all label-required fields present ∧ no blocking finding without a live waiver ∧ obscured samples have a `sample_true_location` row (and, once atlases answer the geoprivacy question, that atlas's policy permits printing it for taxon-obscured records) ∧ `specimen_count > 0`. A print run freezes printable samples into specimens.
 
 ## Corrections
 
@@ -276,6 +290,8 @@ CREATE TABLE reprint_request (
 ```
 
 Proofing (between `prepared` and `approved`) can pull records from a run; what Arthur actually inspects there is [question P1](questions.md).
+
+*Open theme — artifact lifecycle.* The model is event-sourced about creation but has no vocabulary for destruction or retirement: nothing records that a physical label was scrapped (a reprint merely implies supersession), or that a catalog number was permanently voided. Provisional stance, to confirm with staff ([questions P6–P7](questions.md)): the catalog number is the specimen's permanent identity — fixing bad label data means a new print under the same number (the `printed_label` rows across runs already form that revision history; latest print = current intended label), with destruction of the old label a physical-workflow obligation the model may need to record rather than assume. Minting a *new* number is reserved for identity errors (two specimens sharing one number) and would be an explicit voiding event on `minted_catalog_number` — append-only, never an edit, with downstream (Ecdysis/GBIF) notification. Whether disposition needs first-class events (`label_scrapped`, `number_voided`) or stays derived-plus-convention awaits the staff answers.
 
 ## Deliberately absent, for now
 

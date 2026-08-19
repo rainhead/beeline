@@ -20,6 +20,12 @@ Domain vocabulary lives in [CONTEXT.md](CONTEXT.md). The first schema sketch is 
 - **Self-service.** Collectors sign in (via iNaturalist), see the data-quality issues assigned to them, understand what to do, and resolve them in one session — replacing weekly hand-assembled email digests.
 - **Domain-driven, plainly worded.** We follow the values of Domain Driven Design without burdening readers with its vocabulary.
 
+## Ways of working
+
+- **GitHub Issues** for anything discussion-shaped, and for customer requests and bugs — the venue where atlas staff (Andony, Arthur) can participate.
+- **[Beads](https://github.com/steveyegge/beads)** (`bd`, in-repo) for everything else: fine-grained work items, interaction between workstreams, dependency tracking.
+- **pnpm** for package management.
+
 ## Open technology questions
 
 - DuckDB vs PostgreSQL as the primary store: DuckDB promises fast iteration (in-memory testing, easy ingestion) at some risk from its development velocity. The deciding constraint and the decision point are in the [roadmap](docs/roadmap.md#duckdb-vs-postgresql).

@@ -11,7 +11,7 @@ A rebuild of the specimen-cataloging and label-printing system for the Master Me
 1. **Catalog of record for specimens.** Volunteers and staff collect bees (by net or trap); Beeline creates and governs the specimen records, assigns catalog numbers, and records taxonomic determinations by volunteers and experts. Downstream systems — reporting, GBIF, Ecdysis — consume these records.
 2. **Label governance.** Printing pinned-specimen labels accurately and exactly once per specimen: ensuring data quality before printing, guaranteeing catalog-number uniqueness, and identifying which physical labels a later data correction invalidates.
 
-Domain vocabulary lives in [CONTEXT.md](CONTEXT.md). The first schema sketch is [docs/schema-sketch.md](docs/schema-sketch.md). Downstream consumers and the scopes planned to build on this system are in [docs/surrounding-systems.md](docs/surrounding-systems.md); open questions for staff are in [docs/questions.md](docs/questions.md). Architectural decisions will live in `docs/adr/`.
+Domain vocabulary lives in [CONTEXT.md](CONTEXT.md). The first schema sketch is [docs/schema-sketch.md](docs/schema-sketch.md); the build order toward cutover is [docs/roadmap.md](docs/roadmap.md). Downstream consumers and the scopes planned to build on this system are in [docs/surrounding-systems.md](docs/surrounding-systems.md); open questions for staff are in [docs/questions.md](docs/questions.md). Architectural decisions will live in `docs/adr/`.
 
 ## Principles
 
@@ -22,4 +22,4 @@ Domain vocabulary lives in [CONTEXT.md](CONTEXT.md). The first schema sketch is 
 
 ## Open technology questions
 
-- DuckDB vs PostgreSQL as the primary store: DuckDB promises fast iteration (in-memory testing, easy ingestion) at some risk from its development velocity.
+- DuckDB vs PostgreSQL as the primary store: DuckDB promises fast iteration (in-memory testing, easy ingestion) at some risk from its development velocity. The deciding constraint and the decision point are in the [roadmap](docs/roadmap.md#duckdb-vs-postgresql).

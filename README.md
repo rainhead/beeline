@@ -28,4 +28,4 @@ Domain vocabulary lives in [CONTEXT.md](CONTEXT.md). The first schema sketch is 
 
 ## Open technology questions
 
-- DuckDB vs PostgreSQL as the primary store: DuckDB promises fast iteration (in-memory testing, easy ingestion) at some risk from its development velocity. The deciding constraint and the decision point are in the [roadmap](docs/roadmap.md#duckdb-vs-postgresql).
+- DuckDB vs PostgreSQL as the primary store: decided as [ADR 0001](docs/adr/0001-duckdb-first-with-portable-sql.md) — DuckDB first, behind dialect-neutral SQL; the app-store engine is re-decided at roadmap phase 4.

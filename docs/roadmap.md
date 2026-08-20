@@ -19,6 +19,4 @@ Ordered build-out toward a **December 2026 cutover**. Vocabulary per [CONTEXT.md
 
 ## DuckDB vs PostgreSQL
 
-Keep the door open: dialect-neutral DDL, SQL-first, and no ORM that owns the schema — Prisma is ruled out (no DuckDB support, migration engine wants schema ownership); Kysely is the candidate query layer (Postgres dialect built-in, community DuckDB dialect).
-
-What actually decides it: DuckDB's MVCC means writes don't block reads and serialized writes are fine for this load — but only **one process** may hold the database read-write. The ingestion pipeline and the web app must share a process or hand off the file; if that constraint starts hurting, the app store moves to Postgres and DuckDB remains the pipeline/analytics engine. Decide at phase 4, not during it.
+Decided as [ADR 0001](adr/0001-duckdb-first-with-portable-sql.md): DuckDB first, behind dialect-neutral SQL, no ORM owning the schema, Kysely as the query layer; the app-store engine is re-decided at phase 4, not during it.

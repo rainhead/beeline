@@ -6,7 +6,9 @@
   "scripts": {
     "db:build": "tsx src/build-db.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "legacy:fetch": "scripts/fetch-legacy.sh",
+    "legacy:load": "tsx src/load-legacy.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

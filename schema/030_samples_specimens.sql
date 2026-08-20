@@ -62,13 +62,13 @@ CREATE TABLE sample_location (
   coordinate_uncertainty_m INTEGER,
   elevation_m INTEGER,
   elevation_source_id INTEGER REFERENCES elevation_source(id),
-  source     TEXT NOT NULL CHECK (source IN ('inat_trusted', 'inat_public', 'legacy_private', 'staff_entry')),
+  source     TEXT NOT NULL CHECK (source IN ('inat_trusted', 'inat_public', 'legacy_import', 'staff_entry')),
   CHECK ((elevation_m IS NULL) = (elevation_source_id IS NULL))
 );
 COMMENT ON TABLE sample_location IS 'Believed-true coordinates, isolated in their own table: joining them in is a deliberate act, never an accident. Retention of source coordinate pairs (including obscured ones) is unconditional but lives in the staging/observation layer; revelation for taxon-obscured records is the open per-atlas question (docs/questions.md).';
 COMMENT ON COLUMN sample_location.coordinate_uncertainty_m IS 'iNat positional_accuracy describes the true location even when public coordinates are obscured — it belongs with the true coordinates.';
 COMMENT ON COLUMN sample_location.elevation_m IS 'A property of these believed-true coordinates, derived from them (legacy: SRTM 1-arc-second tiles). Always paired with elevation_source_id (CHECK) — an elevation never arrives without provenance. Obscured-untrusted records have no location row and therefore no elevation — the legacy fictional elevations for such records stay in staging.';
-COMMENT ON COLUMN sample_location.source IS 'Why we believe it: inat_trusted (private geojson via project trust), inat_public (open observation — public coordinates are true), legacy_private (Mongo coordinateSource=private), staff_entry.';
+COMMENT ON COLUMN sample_location.source IS 'Why we believe it: inat_trusted (private geojson via project trust), inat_public (open observation — public coordinates are true), staff_entry, or legacy_import — production Mongo carries no coordinate provenance at all (the coordinateSource work never merged), so legacy coordinates are printed-on-labels believed-true with unknowable provenance; phase-3 sync can upgrade them.';
 
 -- Specimens are individuated by printing: until a print run freezes, a sample
 -- has only specimen_count. Historical ingestion also lands here.

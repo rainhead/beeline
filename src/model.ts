@@ -44,7 +44,7 @@ export interface AnimalTable {
 
 export type SampleKind = "net" | "trap";
 export type Geoprivacy = "obscured" | "private";
-export type LocationSource = "inat_trusted" | "inat_public" | "legacy_private" | "staff_entry";
+export type LocationSource = "inat_trusted" | "inat_public" | "legacy_import" | "staff_entry";
 
 export interface SampleTable {
   id: Generated<number>;

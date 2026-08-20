@@ -2,6 +2,7 @@
 node_modules/
 *.duckdb
 *.duckdb.wal
+data/
 
 # Beads / Dolt files (added by bd init)
 .dolt/

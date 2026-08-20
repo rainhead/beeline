@@ -5,11 +5,11 @@
 -- job, not the schema's.
 
 CREATE TABLE sample (
-  id                 INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
+  entity_id          INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
   kind               TEXT NOT NULL CHECK (kind IN ('net', 'trap')),
-  collector_id       INTEGER NOT NULL REFERENCES person(id),
-  atlas_id           INTEGER REFERENCES atlas(id),
-  atlas_assigned_by  INTEGER REFERENCES person(id),
+  collector_id       INTEGER NOT NULL REFERENCES person(entity_id),
+  atlas_id           INTEGER REFERENCES atlas(entity_id),
+  atlas_assigned_by  INTEGER REFERENCES person(entity_id),
   sample_number      TEXT NOT NULL,
   date_start         DATE NOT NULL,
   date_end           DATE NOT NULL,
@@ -42,7 +42,7 @@ COMMENT ON COLUMN sample.sampling_effort IS 'Trap-count × trap-days etc., pendi
 -- derives its own) a specific DEM tile, identified by name and content hash so
 -- a re-derivation against updated data is distinguishable from the original.
 CREATE TABLE elevation_source (
-  id          INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
+  entity_id   INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
   description TEXT NOT NULL,
   file_name   TEXT,
   file_hash   TEXT
@@ -56,12 +56,12 @@ COMMENT ON COLUMN elevation_source.file_hash IS 'Content hash of that file, so t
 -- source had no coordinates). Never a deliberately-shifted pair: interpreting
 -- a coordinate here requires consulting nothing else.
 CREATE TABLE sample_location (
-  sample_id  INTEGER PRIMARY KEY REFERENCES sample(id),
+  sample_id  INTEGER PRIMARY KEY REFERENCES sample(entity_id),
   latitude   DOUBLE NOT NULL,
   longitude  DOUBLE NOT NULL,
   coordinate_uncertainty_m INTEGER,
   elevation_m INTEGER,
-  elevation_source_id INTEGER REFERENCES elevation_source(id),
+  elevation_source_id INTEGER REFERENCES elevation_source(entity_id),
   source     TEXT NOT NULL CHECK (source IN ('inat_trusted', 'inat_public', 'legacy_import', 'staff_entry')),
   CHECK ((elevation_m IS NULL) = (elevation_source_id IS NULL))
 );
@@ -73,8 +73,8 @@ COMMENT ON COLUMN sample_location.source IS 'Why we believe it: inat_trusted (pr
 -- Specimens are individuated by printing: until a print run freezes, a sample
 -- has only specimen_count. Historical ingestion also lands here.
 CREATE TABLE specimen (
-  id              INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
-  sample_id       INTEGER NOT NULL REFERENCES sample(id),
+  entity_id       INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
+  sample_id       INTEGER NOT NULL REFERENCES sample(entity_id),
   specimen_number INTEGER NOT NULL,
   catalog_number  TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),

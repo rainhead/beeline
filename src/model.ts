@@ -13,7 +13,7 @@ type Timestamped = ColumnType<Date, Date | string | undefined, Date | string>;
 // schema/010_people_atlases.sql
 
 export interface PersonTable {
-  id: Generated<number>;
+  entity_id: Generated<number>;
   display_name: string;
 }
 
@@ -24,7 +24,7 @@ export interface InatAccountTable {
 }
 
 export interface AtlasTable {
-  id: Generated<number>;
+  entity_id: Generated<number>;
   code: string;
   name: string;
   inat_place_id: BigIntCol | null;
@@ -33,7 +33,7 @@ export interface AtlasTable {
 // schema/020_animal.sql
 
 export interface AnimalTable {
-  id: Generated<number>;
+  entity_id: Generated<number>;
   parent_id: number | null;
   rank: string;
   scientific_name: string;
@@ -47,7 +47,7 @@ export type Geoprivacy = "obscured" | "private";
 export type LocationSource = "inat_trusted" | "inat_public" | "legacy_import" | "staff_entry";
 
 export interface SampleTable {
-  id: Generated<number>;
+  entity_id: Generated<number>;
   kind: SampleKind;
   collector_id: number;
   atlas_id: number | null;
@@ -70,7 +70,7 @@ export interface SampleTable {
 }
 
 export interface ElevationSourceTable {
-  id: Generated<number>;
+  entity_id: Generated<number>;
   description: string;
   file_name: string | null;
   file_hash: string | null;
@@ -87,7 +87,7 @@ export interface SampleLocationTable {
 }
 
 export interface SpecimenTable {
-  id: Generated<number>;
+  entity_id: Generated<number>;
   sample_id: number;
   specimen_number: number;
   catalog_number: string | null;
@@ -99,7 +99,7 @@ export interface SpecimenTable {
 export type DeterminationChannel = "in_app" | "ecdysis_import" | "legacy_import";
 
 export interface DeterminationTable {
-  id: Generated<number>;
+  entity_id: Generated<number>;
   specimen_id: number;
   animal_id: number;
   sex: string | null;

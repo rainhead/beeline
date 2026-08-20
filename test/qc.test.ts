@@ -121,13 +121,13 @@ describe("determination of record", () => {
     const sampleId = await insertCleanSample(conn);
     const [[specimenId]] = (await rows(
       conn,
-      `INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, 1) RETURNING id`,
+      `INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, 1) RETURNING entity_id`,
     )) as [[number]];
     const animals = (await rows(
       conn,
       `INSERT INTO animal (rank, scientific_name) VALUES
          ('genus', 'Bombus'), ('species', 'Bombus vosnesenskii'), ('species', 'Bombus caliginosus')
-       RETURNING id`,
+       RETURNING entity_id`,
     )) as [[number], [number], [number]];
     const [[genus], [vosnesenskii], [caliginosus]] = animals;
 

@@ -25,10 +25,10 @@ SELECT sample_id,
          CASE WHEN protocol IS NULL THEN 'protocol' END
        ) AS details
 FROM (
-  SELECT s.id AS sample_id, s.country, s.state_province, s.locality, s.protocol,
+  SELECT s.entity_id AS sample_id, s.country, s.state_province, s.locality, s.protocol,
          (loc.sample_id IS NULL AND s.geoprivacy IS NULL AND s.taxon_geoprivacy IS NULL) AS missing_location
   FROM sample s
-  LEFT JOIN sample_location loc ON loc.sample_id = s.id
+  LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
 ) t
 WHERE missing_location
    OR country IS NULL OR state_province IS NULL
@@ -38,7 +38,7 @@ WHERE missing_location
 -- LABEL_REQUIRED_FIELDS). Elevation is deliberately absent from both rules:
 -- it is derived from coordinates, never the collector's gap to fill.
 CREATE VIEW qc_rule_missing_recommended_field AS
-SELECT s.id AS sample_id,
+SELECT s.entity_id AS sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'missing_recommended_field' AS rule_name,
        'county' AS details
@@ -50,7 +50,7 @@ WHERE s.county IS NULL;
 -- missing_required_field, carries the actionable fix (CONTEXT.md, Coordinates
 -- & privacy).
 CREATE VIEW qc_rule_obscured_no_true_coordinates AS
-SELECT s.id AS sample_id,
+SELECT s.entity_id AS sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'obscured_no_true_coordinates' AS rule_name,
        concat_ws(', ',
@@ -58,7 +58,7 @@ SELECT s.id AS sample_id,
          CASE WHEN s.taxon_geoprivacy IS NOT NULL THEN concat('taxon_geoprivacy=', s.taxon_geoprivacy) END
        ) AS details
 FROM sample s
-LEFT JOIN sample_location loc ON loc.sample_id = s.id
+LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
 WHERE (s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL)
   AND loc.sample_id IS NULL;
 
@@ -86,7 +86,7 @@ FROM (
           OR norm.norm LIKE '% ln %' OR norm.norm LIKE '%street%' OR norm.norm LIKE '%avenue%'
           OR norm.norm LIKE '%highway%') AS is_street
   FROM (
-    SELECT s.id AS sample_id, s.locality,
+    SELECT s.entity_id AS sample_id, s.locality,
            concat(' ', replace(replace(lower(s.locality), ',', ' '), '.', ' '), ' ') AS norm
     FROM sample s
     WHERE s.locality IS NOT NULL
@@ -105,7 +105,7 @@ WHERE loc.coordinate_uncertainty_m > 250;
 -- Same collector, same day, same sample number, more than one sample: an
 -- identity collision the reference implementation silently merged.
 CREATE VIEW qc_rule_duplicate_sample_number AS
-SELECT s.id AS sample_id,
+SELECT s.entity_id AS sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'duplicate_sample_number' AS rule_name,
        concat('sample number ', s.sample_number, ' used ', dup.n, ' times on ', s.date_start) AS details
@@ -119,12 +119,12 @@ JOIN (
 
 -- Post-print trouble: count fell below the number of specimens already frozen.
 CREATE VIEW qc_rule_count_below_printed AS
-SELECT s.id AS sample_id,
+SELECT s.entity_id AS sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'count_below_printed' AS rule_name,
        concat(printed.n, ' specimens printed but count is ', s.specimen_count) AS details
 FROM sample s
 JOIN (
   SELECT sample_id, count(*) AS n FROM specimen GROUP BY sample_id
-) printed ON printed.sample_id = s.id
+) printed ON printed.sample_id = s.entity_id
 WHERE printed.n > s.specimen_count;

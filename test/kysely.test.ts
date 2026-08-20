@@ -23,14 +23,14 @@ test("insert returning generated ids", async () => {
   const person = await db
     .insertInto("person")
     .values({ display_name: "Ada Collector" })
-    .returning("id")
+    .returning("entity_id")
     .executeTakeFirstOrThrow();
 
   const sample = await db
     .insertInto("sample")
     .values({
       kind: "net",
-      collector_id: person.id,
+      collector_id: person.entity_id,
       sample_number: "1",
       date_start: "2026-07-14",
       date_end: "2026-07-14",
@@ -41,26 +41,26 @@ test("insert returning generated ids", async () => {
       locality: "Corvallis",
       protocol: "net",
     })
-    .returning("id")
+    .returning("entity_id")
     .executeTakeFirstOrThrow();
-  expect(sample.id).toBeGreaterThan(person.id); // one global entity sequence
-  sampleId = sample.id;
+  expect(sample.entity_id).toBeGreaterThan(person.entity_id); // one global entity sequence
+  sampleId = sample.entity_id;
 
   const dem = await db
     .insertInto("elevation_source")
     .values({ description: "SRTM 1-arc-second", file_name: "N44_W124_1arc_v3.tif", file_hash: "deadbeef" })
-    .returning("id")
+    .returning("entity_id")
     .executeTakeFirstOrThrow();
 
   await db
     .insertInto("sample_location")
     .values({
-      sample_id: sample.id,
+      sample_id: sample.entity_id,
       latitude: 44.5646,
       longitude: -123.262,
       coordinate_uncertainty_m: 30,
       elevation_m: 72,
-      elevation_source_id: dem.id,
+      elevation_source_id: dem.entity_id,
       source: "inat_public",
     })
     .execute();
@@ -69,7 +69,7 @@ test("insert returning generated ids", async () => {
 test("typed joins over tables", async () => {
   const row = await db
     .selectFrom("sample")
-    .innerJoin("person", "person.id", "sample.collector_id")
+    .innerJoin("person", "person.entity_id", "sample.collector_id")
     .select(["sample.sample_number", "person.display_name", "sample.locality"])
     .executeTakeFirstOrThrow();
   expect(row).toEqual({ sample_number: "1", display_name: "Ada Collector", locality: "Corvallis" });

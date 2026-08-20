@@ -20,7 +20,7 @@ export async function insertCleanSample(
 ): Promise<number> {
   const cols: Record<string, string> = {
     kind: "'net'",
-    collector_id: "1",
+    collector_id: "(SELECT min(entity_id) FROM person)",
     sample_number: "'1'",
     date_start: "DATE '2026-07-14'",
     date_end: "DATE '2026-07-14'",
@@ -34,7 +34,7 @@ export async function insertCleanSample(
   };
   const keys = Object.keys(cols);
   const result = await conn.run(
-    `INSERT INTO sample (${keys.join(", ")}) VALUES (${keys.map((k) => cols[k]).join(", ")}) RETURNING id`,
+    `INSERT INTO sample (${keys.join(", ")}) VALUES (${keys.map((k) => cols[k]).join(", ")}) RETURNING entity_id`,
   );
   const [[id]] = (await result.getRows()) as [[number]];
 
@@ -51,7 +51,7 @@ export async function insertCleanSample(
     if (loc.elevation_m !== "NULL" && loc.elevation_source_id === undefined) {
       const src = await conn.run(
         `INSERT INTO elevation_source (description, file_name, file_hash)
-         VALUES ('test DEM', 'N44_W124_1arc_v3.tif', 'deadbeef') RETURNING id`,
+         VALUES ('test DEM', 'N44_W124_1arc_v3.tif', 'deadbeef') RETURNING entity_id`,
       );
       const [[srcId]] = (await src.getRows()) as [[number]];
       loc.elevation_source_id = String(srcId);

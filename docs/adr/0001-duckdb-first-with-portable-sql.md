@@ -25,11 +25,9 @@ engine runs them owns the heart of the system.
   hand-written SQL. Concretely:
   - Row ids come from `CREATE SEQUENCE` + `DEFAULT nextval(...)` — identical in
     both engines. (DuckDB has no auto-increment; Postgres identity columns are
-    not portable to DuckDB.) A **single global `entity_id_seq`** feeds every
-    table (Datomic-influenced): an id names exactly one entity across the whole
-    model, so polymorphic references (corrections, waivers, future
-    notifications) are never ambiguous and debugging ids is unambiguous.
-    INTEGER is ample headroom (~400k entities/year against a 2.1B range).
+    not portable to DuckDB.) A single global `entity_id_seq` feeds every entity
+    table — what "entity" means and the naming norms are
+    [ADR 0002](0002-entities.md).
   - Enum-ish columns are `TEXT` with `CHECK` constraints, not native enum types.
   - No partial unique indexes (Postgres-only) — the `minted_catalog_number`
     two-table design exists partly for this reason.

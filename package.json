@@ -8,7 +8,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "legacy:fetch": "scripts/fetch-legacy.sh",
-    "legacy:load": "tsx src/load-legacy.ts"
+    "legacy:load": "tsx src/load-legacy.ts",
+    "legacy:promote": "tsx src/promote-legacy.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

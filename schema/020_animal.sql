@@ -1,6 +1,6 @@
 CREATE TABLE animal (
-  id              INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
-  parent_id       INTEGER REFERENCES animal(id),
+  entity_id       INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
+  parent_id       INTEGER REFERENCES animal(entity_id),
   rank            TEXT NOT NULL,
   scientific_name TEXT NOT NULL,
   authorship      TEXT

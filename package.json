@@ -2,6 +2,7 @@
   "name": "beeline",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.22.0",
   "scripts": {
     "db:build": "tsx src/build-db.ts",
     "test": "vitest run",

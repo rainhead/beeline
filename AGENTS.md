@@ -1,27 +1,27 @@
-# Agent Instructions
+# Project Instructions for AI Agents
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+This file provides instructions and context for AI coding agents working on this project. (CLAUDE.md is a symlink to this file.)
 
-> **Architecture in one line:** Issues live in a local Dolt database
-> (`.beads/dolt/`); cross-machine sync uses `bd dolt push/pull` (a
-> git-compatible protocol), stored under `refs/dolt/data` on your git
-> remote — separate from `refs/heads/*` where your code lives.
-> `.beads/issues.jsonl` is a passive export, not the wire protocol.
->
-> See [SYNC_CONCEPTS.md](https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md)
-> for the one-screen overview and anti-patterns (don't treat JSONL as the
-> source of truth; don't `bd import` during normal operation; don't
-> reach for third-party Dolt hosting before trying the default).
-
-## Quick Reference
+## Build & Test
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
+pnpm install
+pnpm test                      # vitest, against in-memory DuckDB
+pnpm typecheck
+pnpm db:build [target.duckdb]  # blow away and rebuild from schema/*.sql
 ```
+
+## Architecture Overview
+
+The schema **is** the `schema/*.sql` files, applied in filename order (0xx tables, 1xx derived views). No migration system before cutover: databases are blown away and rebuilt ([docs/roadmap.md](docs/roadmap.md)). QC rules, printability, and determination-of-record are SQL views, not app code. Engine: DuckDB behind dialect-neutral SQL — [ADR 0001](docs/adr/0001-duckdb-first-with-portable-sql.md).
+
+## Conventions & Patterns
+
+- Build only what the current roadmap phase needs; the fuller domain sketch waits in [docs/schema-sketch.md](docs/schema-sketch.md) and is re-reviewed when its phase arrives.
+- Keep DDL dialect-neutral per ADR 0001: one global `entity_id_seq` for all ids, `TEXT` + `CHECK` for enum-ish columns, `concat()`/`concat_ws()` over `||`, no partial unique indexes.
+- Document tables and columns with `COMMENT ON` (queryable in-database); reserve `--` comments for design rationale spanning statements.
+- `src/model.ts` (Kysely types) follows the SQL by hand — update it with any schema change.
+- Kysely is pinned to 0.28.x until `kysely-duckdb` supports 0.29.
 
 ## Non-Interactive Shell Commands
 

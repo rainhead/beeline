@@ -13,8 +13,8 @@ COMMENT ON COLUMN qc_rule.instructions IS 'The self-service "what to do" copy sh
 -- The required/recommended split mirrors the reference implementation
 -- (nonEmptyFields vs LABEL_REQUIRED_FIELDS): county is flagged when empty but
 -- does not block printing; elevation is derived, so never the collector's gap.
--- Two reference rules await reference data (beeline-kw8.6): unabbreviated
--- country/state, non-tracheophyte host.
+-- One reference rule still awaits reference data (beeline-kw8.6):
+-- non-tracheophyte host (needs iNat taxon ancestry, phase 3).
 INSERT INTO qc_rule (name, severity, instructions) VALUES
   ('missing_required_field', 'blocking',
    'A field the label needs is empty. Fill it in on the iNaturalist observation (or here for trap samples) and it will clear on the next sync.'),
@@ -24,6 +24,8 @@ INSERT INTO qc_rule (name, severity, instructions) VALUES
    'The coordinates are obscured by iNaturalist geoprivacy and Beeline does not hold the true coordinates. Join the project with trusted coordinate access, or clear the geoprivacy setting on the observation.'),
   ('locality_format', 'blocking',
    'The locality must be a short place name (18 characters or fewer) without commas, quotes, or street addresses — it is printed on a 3pt label. Example: Corvallis not 5th St, Corvallis OR.'),
+  ('place_unabbreviated', 'blocking',
+   'Country and state/province must be abbreviations (USA not United States; OR not Oregon) — the label cell is tiny.'),
   ('coordinate_uncertainty', 'blocking',
    'The location accuracy is worse than 250 m. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.'),
   ('duplicate_sample_number', 'blocking',

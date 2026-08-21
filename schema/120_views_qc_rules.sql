@@ -63,9 +63,12 @@ WHERE (s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL)
   AND loc.sample_id IS NULL;
 
 -- Locality must fit a 3-5pt label cell: short place name, no punctuation, no
--- street addresses. Rules carried over from the reference implementation.
--- norm pads the locality with spaces and turns punctuation into spaces so
--- suffix words match at the end of the string and next to commas/periods.
+-- street addresses. Semantics match the reference implementation exactly
+-- (OccurrenceService.updateErrorFlags + includesIllegalSuffix): length > 18,
+-- comma or double quote (single quotes are fine — O''Brien Rd is a name),
+-- or a word-bounded street/county suffix. norm pads the locality with spaces
+-- and turns commas/periods into spaces, reproducing the reference's
+-- boundary lookarounds without regex (RE2 lacks lookbehind anyway).
 CREATE VIEW qc_rule_locality_format AS
 SELECT sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
@@ -73,18 +76,22 @@ SELECT sample_id,
        concat_ws('; ',
          CASE WHEN len > 18 THEN concat('longer than 18 chars (', len, ')') END,
          CASE WHEN has_comma THEN 'contains comma' END,
-         CASE WHEN has_quote THEN 'contains quote' END,
+         CASE WHEN has_quote THEN 'contains double quote' END,
          CASE WHEN is_street THEN 'looks like a street address' END
        ) AS details
 FROM (
   SELECT norm.sample_id,
          length(norm.locality) AS len,
          position(',' IN norm.locality) > 0 AS has_comma,
-         position('"' IN norm.locality) > 0 OR position('''' IN norm.locality) > 0 AS has_quote,
-         (norm.norm LIKE '% st %'   OR norm.norm LIKE '% ave %' OR norm.norm LIKE '% rd %'
-          OR norm.norm LIKE '% dr %' OR norm.norm LIKE '% blvd %' OR norm.norm LIKE '% hwy %'
-          OR norm.norm LIKE '% ln %' OR norm.norm LIKE '%street%' OR norm.norm LIKE '%avenue%'
-          OR norm.norm LIKE '%highway%') AS is_street
+         position('"' IN norm.locality) > 0 AS has_quote,
+         (norm.norm LIKE '% road %' OR norm.norm LIKE '% rd %'
+          OR norm.norm LIKE '% street %' OR norm.norm LIKE '% str %' OR norm.norm LIKE '% st %'
+          OR norm.norm LIKE '% avenue %' OR norm.norm LIKE '% ave %' OR norm.norm LIKE '% av %'
+          OR norm.norm LIKE '% drive %' OR norm.norm LIKE '% dr %'
+          OR norm.norm LIKE '% boulevard %' OR norm.norm LIKE '% blvd %'
+          OR norm.norm LIKE '% court %' OR norm.norm LIKE '% ct %'
+          OR norm.norm LIKE '% lane %' OR norm.norm LIKE '% ln %'
+          OR norm.norm LIKE '% county %') AS is_street
   FROM (
     SELECT s.entity_id AS sample_id, s.locality,
            concat(' ', replace(replace(lower(s.locality), ',', ' '), '.', ' '), ' ') AS norm
@@ -93,6 +100,21 @@ FROM (
   ) norm
 ) flags
 WHERE len > 18 OR has_comma OR has_quote OR is_street;
+
+-- Country must be an abbreviation (≤ 3 chars), state/province likewise
+-- (≤ 2): the label cell is tiny. Length checks exactly as the reference —
+-- no abbreviation table involved (its Wyoming bug lived in the ingest-side
+-- mapping, not here).
+CREATE VIEW qc_rule_place_unabbreviated AS
+SELECT s.entity_id AS sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'place_unabbreviated' AS rule_name,
+       concat_ws(', ',
+         CASE WHEN length(s.country) > 3 THEN concat('country ''', s.country, '''') END,
+         CASE WHEN length(s.state_province) > 2 THEN concat('state_province ''', s.state_province, '''') END
+       ) AS details
+FROM sample s
+WHERE length(s.country) > 3 OR length(s.state_province) > 2;
 
 CREATE VIEW qc_rule_coordinate_uncertainty AS
 SELECT loc.sample_id,

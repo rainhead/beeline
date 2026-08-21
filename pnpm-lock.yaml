@@ -11,12 +11,15 @@ importers:
       '@duckdb/node-api':
         specifier: 1.5.5-r.4
         version: 1.5.5-r.4
+      geotiff:
+        specifier: ^3.0.5
+        version: 3.0.5
       kysely:
         specifier: ^0.28.17
         version: 0.28.17
       kysely-duckdb:
         specifier: ^0.4.0
-        version: 0.4.0(@duckdb/node-api@1.5.5-r.4)(kysely@0.28.17)
+        version: 0.4.0(@duckdb/node-api@1.5.5-r.4)(kysely@0.28.17)(web-worker@1.5.0)
     devDependencies:
       '@types/node':
         specifier: ^26.2.0
@@ -244,6 +247,9 @@ packages:
 
   '@oxc-project/types@0.146.0':
     resolution: {integrity: sha512-XC0QsnnhVe7sLIWmYmdPw7x5P0h4W8vUU3Nv1ySgWXtvCz8NizoAEpGXA0sOYoJQV2Rl13LgURAHQ5cI5ILCSA==}
+
+  '@petamoriken/float16@3.9.3':
+    resolution: {integrity: sha512-8awtpHXCx/bNpFt4mt2xdkgtgVvKqty8VbjHI/WWWQuEw+KLzFot3f4+LkQY9YmOtq7A5GdOnqoIC8Pdygjk2g==}
 
   '@rolldown/binding-android-arm-eabi@1.2.5':
     resolution: {integrity: sha512-DLe/i+l8ynIBY7XEQ191TeZvCoowIGa18R+dIV30GW7DiOtp74i/xX8hs8GUjW5ARV7VZuie3d6AumSmCwbeRA==}
@@ -552,6 +558,10 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  geotiff@3.0.5:
+    resolution: {integrity: sha512-OWcL9S9+yDZ6iAlXMt32T1iwUApJM8UiD47xbm6ZP1h33d10fqkPs14EG/ttT5EnefpZSx3G15iDFC5FxUNUwA==}
+    engines: {node: '>=10.19'}
+
   kysely-duckdb@0.4.0:
     resolution: {integrity: sha512-+kMNRIb6E8yUMH8NHQB3teN1Q48UcyMwaENM47Pleaxi9c7UFkcuEByimepuMJ6RN5zjUyxPGmZB0JhvYKsbQQ==}
     peerDependencies:
@@ -570,6 +580,9 @@ packages:
   kysely@0.28.17:
     resolution: {integrity: sha512-nbD8lB9EB3wNdMhOCdx5Li8DxnLbvKByylRLcJ1h+4SkrowVeECAyZlyiKMThF7xFdRz0jSQ2MoJr+wXux2y0Q==}
     engines: {node: '>=20.0.0'}
+
+  lerc@3.0.0:
+    resolution: {integrity: sha512-Rm4J/WaHhRa93nCN2mwWDZFoRVF18G1f47C+kvQWyHGEZxFpTUi73p7lMVSAndyxGt6lJ2/CFbOcf9ra5p8aww==}
 
   lightningcss-android-arm64@1.33.0:
     resolution: {integrity: sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg==}
@@ -657,6 +670,12 @@ packages:
     resolution: {integrity: sha512-4a+OsYv9UktOJKE+l1A4OufDgdRF9PifWj+tJnHURo/P+WOxpG4GzUFL9qCalmWauao6ogiG+QvnCovwPoyAWA==}
     engines: {node: '>=12.20.0'}
 
+  pako@2.2.0:
+    resolution: {integrity: sha512-zJq6RP/5q+TO2OpFV3FHzlPnFjmkb7Nc99a5SNjJE+uu/PkpChs+NIZSSzbBoD+6kjiISXjfYdwj1ZRQ81dz/w==}
+
+  parse-headers@2.0.6:
+    resolution: {integrity: sha512-Tz11t3uKztEW5FEVZnj1ox8GKblWn+PvHY9TmJV5Mll2uHEwRdR/5Li1OlXoECjLYkApdhWy44ocONwXLiKO5A==}
+
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
 
@@ -670,6 +689,10 @@ packages:
   postcss@8.5.26:
     resolution: {integrity: sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==}
     engines: {node: ^10 || ^12 || >=14}
+
+  quick-lru@6.1.2:
+    resolution: {integrity: sha512-AAFUA5O1d83pIHEhJwWCq/RQcRukCkn/NSm2QsTEMle5f2hP0ChI2+3Xb051PZCkLryI/Ir1MVKviT2FIloaTQ==}
+    engines: {node: '>=12'}
 
   rolldown@1.2.5:
     resolution: {integrity: sha512-VD2IE5PUG4Oj8zz2VGykiYd5wbnjdIiSsNQb8Qu5B+noEp+A78mu2iVvpp27g8es14Tk9rofNs5Tku9iQCS4fA==}
@@ -801,10 +824,19 @@ packages:
       jsdom:
         optional: true
 
+  web-worker@1.5.0:
+    resolution: {integrity: sha512-RiMReJrTAiA+mBjGONMnjVDP2u3p9R1vkcGz6gDIrOMT3oGuYwX2WRMYI9ipkphSuE5XKEhydbhNEJh4NY9mlw==}
+
   why-is-node-running@2.3.0:
     resolution: {integrity: sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==}
     engines: {node: '>=8'}
     hasBin: true
+
+  xml-utils@1.10.2:
+    resolution: {integrity: sha512-RqM+2o1RYs6T8+3DzDSoTRAUfrvaejbVHcp3+thnAtDKo8LskR+HomLajEy5UjTz24rpka7AxVBRR3g2wTUkJA==}
+
+  zstddec@0.2.0:
+    resolution: {integrity: sha512-oyPnDa1X5c13+Y7mA/FDMNJrn4S8UNBe0KCqtDmor40Re7ALrPN6npFwyYVRRh+PqozZQdeg23QtbcamZnG5rA==}
 
 snapshots:
 
@@ -930,6 +962,8 @@ snapshots:
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
   '@oxc-project/types@0.146.0': {}
+
+  '@petamoriken/float16@3.9.3': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.5':
     optional: true
@@ -1146,13 +1180,27 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  kysely-duckdb@0.4.0(@duckdb/node-api@1.5.5-r.4)(kysely@0.28.17):
+  geotiff@3.0.5:
+    dependencies:
+      '@petamoriken/float16': 3.9.3
+      lerc: 3.0.0
+      pako: 2.2.0
+      parse-headers: 2.0.6
+      quick-lru: 6.1.2
+      web-worker: 1.5.0
+      xml-utils: 1.10.2
+      zstddec: 0.2.0
+
+  kysely-duckdb@0.4.0(@duckdb/node-api@1.5.5-r.4)(kysely@0.28.17)(web-worker@1.5.0):
     dependencies:
       kysely: 0.28.17
     optionalDependencies:
       '@duckdb/node-api': 1.5.5-r.4
+      web-worker: 1.5.0
 
   kysely@0.28.17: {}
+
+  lerc@3.0.0: {}
 
   lightningcss-android-arm64@1.33.0:
     optional: true
@@ -1211,6 +1259,10 @@ snapshots:
 
   obug@2.1.4: {}
 
+  pako@2.2.0: {}
+
+  parse-headers@2.0.6: {}
+
   pathe@2.0.3: {}
 
   picocolors@1.1.1: {}
@@ -1222,6 +1274,8 @@ snapshots:
       nanoid: 3.3.18
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  quick-lru@6.1.2: {}
 
   rolldown@1.2.5:
     dependencies:
@@ -1334,7 +1388,13 @@ snapshots:
     transitivePeerDependencies:
       - msw
 
+  web-worker@1.5.0: {}
+
   why-is-node-running@2.3.0:
     dependencies:
       siginfo: 2.0.0
       stackback: 0.0.2
+
+  xml-utils@1.10.2: {}
+
+  zstddec@0.2.0: {}

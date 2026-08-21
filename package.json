@@ -14,7 +14,8 @@
     "inat:sync": "tsx src/sync-inat.ts",
     "inat:promote": "tsx src/promote-observations.ts",
     "inat:backfill-accounts": "tsx src/backfill-inat-accounts.ts",
-    "inat:login": "tsx src/inat-login.ts"
+    "inat:login": "tsx src/inat-login.ts",
+    "elevation:derive": "tsx src/derive-elevation.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
@@ -24,6 +25,7 @@
   },
   "dependencies": {
     "@duckdb/node-api": "1.5.5-r.4",
+    "geotiff": "^3.0.5",
     "kysely": "^0.28.17",
     "kysely-duckdb": "^0.4.0"
   }

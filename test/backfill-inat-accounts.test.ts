@@ -81,6 +81,23 @@ describe("inat account backfill", () => {
     expect(again.filled).toHaveLength(0);
   });
 
+  test("a login whose profile names a different known person is misattributed, not linked", async () => {
+    // Emily's records carry a login whose iNat profile says it is Andony's
+    // account — the structural guards can't see that, the profile name can.
+    await stageLegacy([
+      { fn: "Emily", ln: "Carlson", login: "amelathopoulos" },
+      { fn: "Andony", ln: "Melathopoulos", login: "andonymelathopoulos", account: 1542612 },
+    ]);
+    const result = await backfillInatAccounts(conn, {
+      delayMs: 0,
+      fetchImpl: fakeUsersApi({
+        amelathopoulos: { id: 429964, login: "amelathopoulos", name: "Andony Melathopoulos" },
+      }),
+    });
+    expect(result.filled).toHaveLength(0);
+    expect(result.skipped[0]?.reason).toMatch(/misattributed/);
+  });
+
   test("a renamed login (API returns a different login) is not trusted", async () => {
     await stageLegacy([{ fn: "Amy", ln: "Leonard", login: "oldlogin" }]);
     const result = await backfillInatAccounts(conn, {

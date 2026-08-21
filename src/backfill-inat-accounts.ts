@@ -81,6 +81,25 @@ export async function backfillInatAccounts(
       result.skipped.push({ login, reason: `API returned ${user?.login ?? "nothing"} — not an exact match` });
       continue;
     }
+    // A login can sit on the wrong person's records (shared data entry,
+    // clerical error). If the account's own profile name names a different
+    // person we know, believe the profile: the login is misattributed here.
+    if (user.name) {
+      const [claimant] = (await (
+        await conn.run(
+          `SELECT display_name FROM person
+           WHERE lower(display_name) = lower(trim($1)) AND entity_id <> $2 LIMIT 1`,
+          [user.name, personId],
+        )
+      ).getRows()) as Array<[string]>;
+      if (claimant) {
+        result.skipped.push({
+          login,
+          reason: `API profile name '${user.name}' is existing person '${claimant[0]}', not ${displayName} — login misattributed on their records?`,
+        });
+        continue;
+      }
+    }
     await conn.run(
       `INSERT INTO inat_account (person_id, inat_user_id, login) VALUES ($1, $2, $3)`,
       [personId, user.id, user.login],

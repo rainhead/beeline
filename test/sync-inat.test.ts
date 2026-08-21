@@ -44,9 +44,9 @@ const base = { projectId: 99706, perPage: 2, pageDelayMs: 0, token: "test-jwt" }
 
 describe("iNat sync", () => {
   test("refuses to run silently anonymous", async () => {
-    await expect(syncINat(conn, { projectId: 99706, fetchImpl: fakeApi([[]]) })).rejects.toThrow(
-      /anonymous/,
-    );
+    await expect(
+      syncINat(conn, { projectId: 99706, token: null, fetchImpl: fakeApi([[]]) }),
+    ).rejects.toThrow(/anonymous/);
   });
 
   test("keyset sweep loads every observation and completes the run", async () => {

@@ -28,7 +28,8 @@ export interface SyncOptions {
   projectId: number;
   d1?: string;
   d2?: string;
-  token?: string;
+  /** undefined → fall back to INAT_JWT / data/secrets/inat-jwt; null → explicitly tokenless (tests). */
+  token?: string | null;
   /** Explicit dev-only escape hatch; never the silent default. */
   anonymous?: boolean;
   perPage?: number;
@@ -68,7 +69,7 @@ async function readTokenFallback(): Promise<string | undefined> {
 }
 
 export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promise<SyncResult> {
-  const token = opts.token ?? (await readTokenFallback());
+  const token = opts.token === null ? undefined : (opts.token ?? (await readTokenFallback()));
   if (!token && !opts.anonymous) {
     throw new Error(
       "no iNaturalist token (INAT_JWT or data/secrets/inat-jwt) — refusing to run silently anonymous. " +

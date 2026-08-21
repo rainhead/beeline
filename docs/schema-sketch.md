@@ -256,7 +256,7 @@ CREATE TABLE correction (
 );
 ```
 
-*Open design point:* a corrected field must not be silently clobbered by the next sync. The next iNat load needs three-way-merge semantics — take upstream when upstream changed and we didn't correct; keep the correction otherwise; surface a conflict when both moved.
+*Design point resolved by [ADR 0004](adr/0004-correction-overlay.md):* corrections are a three-way-merge overlay anchored on the load the corrector saw (that load is the base). Upstream unchanged → correction applies; upstream converged → correction auto-retires; both moved → the correction stands and a `correction_conflict` finding opens. Conflicts resolve only by a new correction based on the current load.
 
 ## Label governance
 

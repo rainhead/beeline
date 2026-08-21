@@ -30,6 +30,9 @@ describe("legacy promotion", () => {
       blockedRows: 1,
       unresolvedDeterminations: 0,
       unresolvedDeterminerNames: 0,
+      correctionsApplied: 0,
+      correctionsRetired: 0,
+      correctionConflicts: 0,
     });
   });
 

@@ -12,6 +12,100 @@
 -- kind: a sample with a date range is a trap sample — the definitional
 -- criterion (CONTEXT.md); sampleId prefixes also occur on net data (G/R/…).
 
+-- ── Corrections over staging (ADR 0004, frozen-upstream case) ───────────
+-- Staff fixes for rows whose upstream is frozen or wrong forever, keyed by
+-- Mongo _id + staging column name, curated in git (the CSV survives the
+-- blow-away era the way determiner-aliases.csv does). Three-way per ADR
+-- 0004 with the staged row as "theirs": staged = base → applies; staged =
+-- new (someone fixed upstream after all) → retires; staged moved elsewhere
+-- → the correction stands and a finding opens. The correctable vocabulary
+-- is the identity/parse/label columns promotion reads — extend the three
+-- lists below together when widening it.
+CREATE TABLE legacy_correction AS
+SELECT * FROM read_csv('{{LEGACY_CORRECTIONS}}', header = true, columns = {
+  '_id': 'VARCHAR', 'field': 'VARCHAR', 'base_value': 'VARCHAR',
+  'new_value': 'VARCHAR', 'author': 'VARCHAR', 'reason': 'VARCHAR'});
+
+CREATE OR REPLACE VIEW legacy_correction_state AS
+SELECT c.*,
+  CASE c.field
+    WHEN 'firstName' THEN r.firstName WHEN 'lastName' THEN r.lastName
+    WHEN 'sampleId' THEN r.sampleId WHEN 'specimenId' THEN r.specimenId
+    WHEN 'day' THEN r.day WHEN 'month' THEN r.month WHEN 'year' THEN r.year
+    WHEN 'day2' THEN r.day2 WHEN 'month2' THEN r.month2 WHEN 'year2' THEN r.year2
+    WHEN 'decimalLatitude' THEN r.decimalLatitude
+    WHEN 'decimalLongitude' THEN r.decimalLongitude
+    WHEN 'coordinateUncertaintyInMeters' THEN r.coordinateUncertaintyInMeters
+    WHEN 'verbatimElevation' THEN r.verbatimElevation
+    WHEN 'country' THEN r.country WHEN 'stateProvince' THEN r.stateProvince
+    WHEN 'county' THEN r.county WHEN 'locality' THEN r.locality
+    WHEN 'samplingProtocol' THEN r.samplingProtocol
+    WHEN 'fieldNumber' THEN r.fieldNumber
+  END AS staged_value,
+  CASE
+    WHEN r._id IS NULL THEN 'orphaned'
+    WHEN staged_value IS NULL THEN 'invalid_field'
+    WHEN staged_value = coalesce(c.new_value, '') THEN 'retired'
+    WHEN staged_value = coalesce(c.base_value, '') THEN 'applies'
+    ELSE 'conflict'
+  END AS status
+FROM legacy_correction c
+LEFT JOIN legacy_occurrence r ON r._id = c._id;
+
+-- One row per corrected record; a correction TO empty pivots as '' (never
+-- NULL), so coalesce in the overlay cannot mistake it for "no correction".
+CREATE OR REPLACE VIEW legacy_correction_pivot AS
+SELECT _id,
+  max(CASE WHEN field = 'firstName' THEN coalesce(new_value, '') END) AS firstName,
+  max(CASE WHEN field = 'lastName' THEN coalesce(new_value, '') END) AS lastName,
+  max(CASE WHEN field = 'sampleId' THEN coalesce(new_value, '') END) AS sampleId,
+  max(CASE WHEN field = 'specimenId' THEN coalesce(new_value, '') END) AS specimenId,
+  max(CASE WHEN field = 'day' THEN coalesce(new_value, '') END) AS day,
+  max(CASE WHEN field = 'month' THEN coalesce(new_value, '') END) AS month,
+  max(CASE WHEN field = 'year' THEN coalesce(new_value, '') END) AS year,
+  max(CASE WHEN field = 'day2' THEN coalesce(new_value, '') END) AS day2,
+  max(CASE WHEN field = 'month2' THEN coalesce(new_value, '') END) AS month2,
+  max(CASE WHEN field = 'year2' THEN coalesce(new_value, '') END) AS year2,
+  max(CASE WHEN field = 'decimalLatitude' THEN coalesce(new_value, '') END) AS decimalLatitude,
+  max(CASE WHEN field = 'decimalLongitude' THEN coalesce(new_value, '') END) AS decimalLongitude,
+  max(CASE WHEN field = 'coordinateUncertaintyInMeters' THEN coalesce(new_value, '') END) AS coordinateUncertaintyInMeters,
+  max(CASE WHEN field = 'verbatimElevation' THEN coalesce(new_value, '') END) AS verbatimElevation,
+  max(CASE WHEN field = 'country' THEN coalesce(new_value, '') END) AS country,
+  max(CASE WHEN field = 'stateProvince' THEN coalesce(new_value, '') END) AS stateProvince,
+  max(CASE WHEN field = 'county' THEN coalesce(new_value, '') END) AS county,
+  max(CASE WHEN field = 'locality' THEN coalesce(new_value, '') END) AS locality,
+  max(CASE WHEN field = 'samplingProtocol' THEN coalesce(new_value, '') END) AS samplingProtocol,
+  max(CASE WHEN field = 'fieldNumber' THEN coalesce(new_value, '') END) AS fieldNumber
+FROM legacy_correction_state
+WHERE status IN ('applies', 'conflict')
+GROUP BY _id;
+
+CREATE OR REPLACE VIEW legacy_occurrence_corrected AS
+SELECT r.* REPLACE (
+  coalesce(o.firstName, r.firstName) AS firstName,
+  coalesce(o.lastName, r.lastName) AS lastName,
+  coalesce(o.sampleId, r.sampleId) AS sampleId,
+  coalesce(o.specimenId, r.specimenId) AS specimenId,
+  coalesce(o.day, r.day) AS day,
+  coalesce(o.month, r.month) AS month,
+  coalesce(o.year, r.year) AS year,
+  coalesce(o.day2, r.day2) AS day2,
+  coalesce(o.month2, r.month2) AS month2,
+  coalesce(o.year2, r.year2) AS year2,
+  coalesce(o.decimalLatitude, r.decimalLatitude) AS decimalLatitude,
+  coalesce(o.decimalLongitude, r.decimalLongitude) AS decimalLongitude,
+  coalesce(o.coordinateUncertaintyInMeters, r.coordinateUncertaintyInMeters) AS coordinateUncertaintyInMeters,
+  coalesce(o.verbatimElevation, r.verbatimElevation) AS verbatimElevation,
+  coalesce(o.country, r.country) AS country,
+  coalesce(o.stateProvince, r.stateProvince) AS stateProvince,
+  coalesce(o.county, r.county) AS county,
+  coalesce(o.locality, r.locality) AS locality,
+  coalesce(o.samplingProtocol, r.samplingProtocol) AS samplingProtocol,
+  coalesce(o.fieldNumber, r.fieldNumber) AS fieldNumber
+)
+FROM legacy_occurrence r
+LEFT JOIN legacy_correction_pivot o ON o._id = r._id;
+
 -- ── Parsing ─────────────────────────────────────────────────────────────
 -- Months arrive mostly numeric with a roman-numeral minority.
 CREATE OR REPLACE MACRO legacy_month(m) AS coalesce(
@@ -42,7 +136,7 @@ SELECT *,
   legacy_int(coordinateUncertaintyInMeters) AS p_uncertainty,
   legacy_int(verbatimElevation)            AS p_elevation,
   try_cast(regexp_extract(url, '([0-9]+)$', 1) AS BIGINT) AS p_inat_obs_id
-FROM legacy_occurrence;
+FROM legacy_occurrence_corrected;
 
 -- ── Deduplication ───────────────────────────────────────────────────────
 -- The hash-id bug duplicated specimens: same (person, date, sample,
@@ -97,7 +191,28 @@ UNION ALL
 SELECT _id, 'bad_uncertainty', 'warning',
        concat('unparseable: ''', coordinateUncertaintyInMeters, '''')
 FROM legacy_parsed
-WHERE coordinateUncertaintyInMeters <> '' AND p_uncertainty IS NULL;
+WHERE coordinateUncertaintyInMeters <> '' AND p_uncertainty IS NULL
+UNION ALL
+-- Correction housekeeping (ADR 0004): a conflicted correction stands but
+-- staff re-review; orphaned/invalid corrections are CSV mistakes to fix.
+SELECT _id, 'correction_conflict', 'warning',
+       concat(field, ': correction ''', coalesce(new_value, ''),
+              ''' stands, but upstream moved from ''', coalesce(base_value, ''),
+              ''' to ''', staged_value, '''')
+FROM legacy_correction_state WHERE status = 'conflict'
+UNION ALL
+SELECT _id, 'correction_orphaned', 'warning',
+       concat(field, ': no staging row with this _id')
+FROM legacy_correction_state WHERE status = 'orphaned'
+UNION ALL
+SELECT _id, 'correction_invalid_field', 'warning',
+       concat('''', field, ''' is not a correctable column')
+FROM legacy_correction_state WHERE status = 'invalid_field'
+UNION ALL
+SELECT _id, 'correction_duplicate', 'warning',
+       concat(field, ': ', count(*), ' corrections for one field — the max new_value wins')
+FROM legacy_correction_state
+GROUP BY _id, field HAVING count(*) > 1;
 
 CREATE OR REPLACE VIEW legacy_promotable AS
 SELECT * FROM legacy_ranked r

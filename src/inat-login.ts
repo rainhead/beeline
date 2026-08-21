@@ -37,7 +37,7 @@ function awaitCallback(state: string): Promise<string> {
       const err = url.searchParams.get("error");
       const code = url.searchParams.get("code");
       const ok = !err && code && url.searchParams.get("state") === state;
-      res.writeHead(ok ? 200 : 400, { "content-type": "text/html" });
+      res.writeHead(ok ? 200 : 400, { "content-type": "text/html; charset=utf-8" });
       res.end(ok
         ? "<p>Signed in — you can close this tab and return to the terminal.</p>"
         : `<p>Login failed: ${err ?? "state mismatch"}.</p>`);

@@ -14,6 +14,11 @@ ssh -o BatchMode=yes beeline 'docker exec mongo sh -c "
     --authenticationDatabase admin \
     -d api-backend -c occurrences | gzip"' > "$dir/occurrences.jsonl.gz"
 
+echo "exporting curated taxonomy CSV…" >&2
+ssh -o BatchMode=yes beeline \
+  'docker exec server sh -c "cat \"\$(ls -t /app/shared/data/taxonomy/taxonomy_*.csv | head -1)\""' \
+  > "$dir/taxonomy.csv"
+
 count=$(gzip -dc "$dir/occurrences.jsonl.gz" | wc -l | tr -d ' ')
 printf '{"fetched_at": "%s", "collection": "api-backend.occurrences", "count": %s}\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$count" > "$dir/metadata.json"

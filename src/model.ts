@@ -12,15 +12,23 @@ type Timestamped = ColumnType<Date, Date | string | undefined, Date | string>;
 
 // schema/010_people_atlases.sql
 
+export type Pronouns = "he" | "she" | "they";
+
 export interface PersonTable {
   entity_id: Generated<number>;
   display_name: string;
+  pronouns: Pronouns | null;
 }
 
 export interface InatAccountTable {
   person_id: number;
   inat_user_id: BigIntCol;
   login: string;
+}
+
+export interface PersonOrcidTable {
+  person_id: number;
+  orcid: string;
 }
 
 export interface AtlasTable {
@@ -139,6 +147,7 @@ export interface PrintableSampleView {
 export interface Database {
   person: PersonTable;
   inat_account: InatAccountTable;
+  person_orcid: PersonOrcidTable;
   atlas: AtlasTable;
   animal: AnimalTable;
   sample: SampleTable;

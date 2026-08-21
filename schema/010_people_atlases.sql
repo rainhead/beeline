@@ -10,9 +10,11 @@ CREATE SEQUENCE entity_id_seq;
 
 CREATE TABLE person (
   entity_id    INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
-  display_name TEXT NOT NULL
+  display_name TEXT NOT NULL,
+  pronouns     TEXT CHECK (pronouns IN ('he', 'she', 'they'))
 );
-COMMENT ON TABLE person IS 'An identity to hang facts on — deliberately anemic. Every concern lives in its own satellite table with its own privacy and lifecycle; joining one in is a deliberate act.';
+COMMENT ON TABLE person IS 'An identity to hang facts on — deliberately anemic. Every concern lives in its own satellite table with its own privacy and lifecycle; joining one in is a deliberate act. Pronouns sit here with the name because both are "how to refer to this person".';
+COMMENT ON COLUMN person.pronouns IS 'Self-filled; null = unstated (render neutrally, never guess). Starting vocabulary he/she/they — widening the CHECK is expected, and is cheap pre-cutover.';
 
 CREATE TABLE inat_account (
   person_id    INTEGER PRIMARY KEY REFERENCES person(entity_id),
@@ -22,6 +24,12 @@ CREATE TABLE inat_account (
 COMMENT ON TABLE inat_account IS 'A person exists before (or without) an iNaturalist account.';
 COMMENT ON COLUMN inat_account.inat_user_id IS 'The stable key; logins change.';
 COMMENT ON COLUMN inat_account.login IS 'Cached for display and matching, refreshed on sync.';
+
+CREATE TABLE person_orcid (
+  person_id INTEGER PRIMARY KEY REFERENCES person(entity_id),
+  orcid     TEXT NOT NULL UNIQUE
+);
+COMMENT ON TABLE person_orcid IS 'ORCiD where known — scholarly attribution for determiners and authors in exports. Some iNaturalist profiles note them; recorded as confirmed, never guessed.';
 
 CREATE TABLE atlas (
   entity_id     INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),

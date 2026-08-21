@@ -5,6 +5,7 @@ import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy, type PromotionCounts } from "../src/promote-legacy.js";
 
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
+const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
 
 let conn: DuckDBConnection;
 let counts: PromotionCounts;
@@ -12,19 +13,53 @@ let counts: PromotionCounts;
 beforeAll(async () => {
   ({ conn } = await createMemoryDb());
   await loadLegacyStaging(conn, FIXTURE);
-  counts = await promoteLegacy(conn);
+  counts = await promoteLegacy(conn, TAXONOMY);
 });
 
 describe("legacy promotion", () => {
   test("promotes the valid rows and blocks the junk row", () => {
     expect(counts).toEqual({
       staged: 3,
-      people: 2,
+      people: 3, // two collectors + the determiner Lincoln Best
       samples: 2,
       specimens: 2,
       locations: 2,
+      // Spine (3) + Hymenoptera + 2 families + 2 genera + 3 species.
+      animals: 11,
+      determinations: 2,
       blockedRows: 1,
+      unresolvedDeterminations: 0,
+      unresolvedDeterminerNames: 0,
     });
+  });
+
+  test("the animal tree links species to genus to family to order", async () => {
+    const chain = await rows(
+      conn,
+      `SELECT sp.scientific_name, g.scientific_name, f.scientific_name, o.scientific_name, sp.authorship
+       FROM animal sp
+       JOIN animal g ON g.entity_id = sp.parent_id
+       JOIN animal f ON f.entity_id = g.parent_id
+       JOIN animal o ON o.entity_id = f.parent_id
+       WHERE sp.scientific_name = 'Bombus vosnesenskii'`,
+    );
+    expect(chain).toEqual([["Bombus vosnesenskii", "Bombus", "Apidae", "Hymenoptera", null]]);
+  });
+
+  test("expert and volunteer determinations both land, correctly attributed", async () => {
+    const dets = await rows(
+      conn,
+      `SELECT a.scientific_name, d.is_expert, d.determiner_name, p.display_name, d.sex
+       FROM determination d
+       JOIN animal a ON a.entity_id = d.animal_id
+       LEFT JOIN person p ON p.entity_id = d.determiner_id
+       ORDER BY d.is_expert`,
+    );
+    expect(dets).toEqual([
+      ["Bombus", false, null, "Bea Trapper", "female"],
+      // Verbatim name retained AND resolved to a single person record.
+      ["Bombus vosnesenskii", true, "Lincoln Best", "Lincoln Best", "female"],
+    ]);
   });
 
   test("the junk row's problems are named findings", async () => {
@@ -60,6 +95,7 @@ describe("legacy promotion", () => {
     expect(people).toEqual([
       ["Ada Collector", "adacollects", "OBA"],
       ["Bea Trapper", "trapline", "WaBA"],
+      ["Lincoln Best", null, null], // determiner-only person: no samples, no account yet
     ]);
   });
 

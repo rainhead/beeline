@@ -2,7 +2,7 @@ import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-const PROMOTE_SQL = new URL("../ingest/promote-legacy.sql", import.meta.url).pathname;
+const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
 export interface PromotionCounts {
   staged: number;
@@ -10,11 +10,20 @@ export interface PromotionCounts {
   samples: number;
   specimens: number;
   locations: number;
+  animals: number;
+  determinations: number;
   blockedRows: number;
+  unresolvedDeterminations: number;
+  unresolvedDeterminerNames: number;
 }
 
 /** Promote staged legacy_occurrence rows into the model. Fresh model only. */
-export async function promoteLegacy(conn: DuckDBConnection): Promise<PromotionCounts> {
+export async function promoteLegacy(
+  conn: DuckDBConnection,
+  taxonomyCsvPath = "data/legacy/taxonomy.csv",
+  determinerAliasesPath = "ingest/determiner-aliases.csv",
+  determinerRegisterPath = "ingest/determiner-register.csv",
+): Promise<PromotionCounts> {
   const scalar = async (sql: string): Promise<number> => {
     const [[v]] = (await (await conn.run(sql)).getRows()) as [[bigint]];
     return Number(v);
@@ -22,16 +31,28 @@ export async function promoteLegacy(conn: DuckDBConnection): Promise<PromotionCo
   if ((await scalar("SELECT count(*) FROM person")) > 0) {
     throw new Error("model already contains people — promotion runs only against a freshly built database");
   }
-  await conn.run(await readFile(PROMOTE_SQL, "utf8"));
+  await conn.run(await readFile(`${INGEST_DIR}promote-legacy.sql`, "utf8"));
+  const seedSql = await readFile(`${INGEST_DIR}seed-animals.sql`, "utf8");
+  await conn.run(seedSql.replaceAll("{{TAXONOMY_CSV}}", taxonomyCsvPath.replaceAll("'", "''")));
+  const detSql = await readFile(`${INGEST_DIR}promote-determinations.sql`, "utf8");
+  await conn.run(
+    detSql
+      .replaceAll("{{DETERMINER_ALIASES}}", determinerAliasesPath.replaceAll("'", "''"))
+      .replaceAll("{{DETERMINER_REGISTER}}", determinerRegisterPath.replaceAll("'", "''")),
+  );
   return {
     staged: await scalar("SELECT count(*) FROM legacy_occurrence"),
     people: await scalar("SELECT count(*) FROM person"),
     samples: await scalar("SELECT count(*) FROM sample"),
     specimens: await scalar("SELECT count(*) FROM specimen"),
     locations: await scalar("SELECT count(*) FROM sample_location"),
+    animals: await scalar("SELECT count(*) FROM animal"),
+    determinations: await scalar("SELECT count(*) FROM determination"),
     blockedRows: await scalar(
       "SELECT count(DISTINCT _id) FROM legacy_promotion_finding WHERE severity = 'blocking'",
     ),
+    unresolvedDeterminations: await scalar("SELECT count(*) FROM legacy_unresolved_determination"),
+    unresolvedDeterminerNames: await scalar("SELECT count(*) FROM legacy_determiner_unresolved"),
   };
 }
 

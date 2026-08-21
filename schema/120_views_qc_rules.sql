@@ -139,6 +139,19 @@ JOIN (
   HAVING count(*) > 1
 ) dup USING (collector_id, date_start, sample_number);
 
+-- The sample's evidencing observation asserts a different specimen count
+-- than the sample carries: someone changed one side. Warning — counts move
+-- legitimately until printing; staff/self-service reconcile.
+CREATE VIEW qc_rule_count_mismatch AS
+SELECT s.entity_id AS sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'count_mismatch' AS rule_name,
+       concat('observation says ', f.specimen_count_raw, ' but sample count is ', s.specimen_count) AS details
+FROM sample s
+JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id
+WHERE try_cast(f.specimen_count_raw AS INTEGER) IS NOT NULL
+  AND try_cast(f.specimen_count_raw AS INTEGER) <> s.specimen_count;
+
 -- Post-print trouble: count fell below the number of specimens already frozen.
 CREATE VIEW qc_rule_count_below_printed AS
 SELECT s.entity_id AS sample_id,

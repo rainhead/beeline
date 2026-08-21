@@ -10,7 +10,8 @@
     "legacy:fetch": "scripts/fetch-legacy.sh",
     "legacy:load": "tsx src/load-legacy.ts",
     "legacy:promote": "tsx src/promote-legacy.ts",
-    "legacy:reconcile": "tsx src/reconcile-legacy.ts"
+    "legacy:reconcile": "tsx src/reconcile-legacy.ts",
+    "inat:sync": "tsx src/sync-inat.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

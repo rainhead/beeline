@@ -30,5 +30,7 @@ INSERT INTO qc_rule (name, severity, instructions) VALUES
    'The location accuracy is worse than 250 m. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.'),
   ('duplicate_sample_number', 'blocking',
    'Two of your samples on the same day share a sample number. Renumber one of the observations so each sample that day is distinct.'),
+  ('count_mismatch', 'warning',
+   'Your iNaturalist observation and this sample disagree about how many specimens were collected. Update whichever side is wrong.'),
   ('count_below_printed', 'warning',
    'The specimen count is now lower than the number of labels already printed for this sample. Nothing to fix in the data — but some printed labels may never be attached to a specimen.');

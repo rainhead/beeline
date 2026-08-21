@@ -1,0 +1,84 @@
+import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+
+const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
+
+/**
+ * Provenance upgrades from sync: promote the current observation state onto
+ * linked samples — geoprivacy flags, believed-true locations
+ * (private/trusted > public-unobscured; obscured-untrusted writes nothing),
+ * and observer→collector iNat account linkage. Idempotent; run after every
+ * sync. The SQL lives in ingest/promote-observations.sql.
+ */
+
+export interface ObservationPromotionCounts {
+  linkedSamples: number;
+  trustedLocations: number;
+  publicLocations: number;
+  obscuredWithheld: number;
+  accountsLinked: number;
+  accountConflicts: number;
+}
+
+export async function promoteObservations(
+  conn: DuckDBConnection,
+): Promise<ObservationPromotionCounts> {
+  const scalar = async (sql: string): Promise<number> => {
+    const [[v]] = (await (await conn.run(sql)).getRows()) as [[bigint]];
+    return Number(v);
+  };
+
+  await conn.run("BEGIN TRANSACTION");
+  try {
+    const accountsBefore = await scalar("SELECT count(*) FROM inat_account");
+    await conn.run(await readFile(`${INGEST_DIR}promote-observations.sql`, "utf8"));
+    const counts: ObservationPromotionCounts = {
+      linkedSamples: await scalar(
+        `SELECT count(*) FROM sample s
+         JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id`,
+      ),
+      trustedLocations: await scalar(
+        `SELECT count(*) FROM observation_location_candidate WHERE source = 'inat_trusted'`,
+      ),
+      publicLocations: await scalar(
+        `SELECT count(*) FROM observation_location_candidate WHERE source = 'inat_public'`,
+      ),
+      obscuredWithheld: await scalar(
+        `SELECT count(*) FROM sample s
+         JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id
+         LEFT JOIN observation_location_candidate c ON c.sample_id = s.entity_id
+         WHERE c.sample_id IS NULL`,
+      ),
+      accountsLinked: (await scalar("SELECT count(*) FROM inat_account")) - accountsBefore,
+      // Pairs the harvest refused: ambiguous either way, or clashing with an
+      // account already on file under a different person/user id.
+      accountConflicts: await scalar(
+        `SELECT count(*) FROM observer_collector_pair p
+         WHERE (SELECT count(*) FROM observer_collector_pair q
+                WHERE q.person_id = p.person_id) > 1
+            OR (SELECT count(*) FROM observer_collector_pair q
+                WHERE q.user_id = p.user_id) > 1
+            OR EXISTS (SELECT 1 FROM inat_account a
+                       WHERE a.person_id = p.person_id AND a.inat_user_id <> p.user_id)
+            OR EXISTS (SELECT 1 FROM inat_account a
+                       WHERE a.inat_user_id = p.user_id AND a.person_id <> p.person_id)`,
+      ),
+    };
+    await conn.run("COMMIT");
+    return counts;
+  } catch (err) {
+    await conn.run("ROLLBACK");
+    throw err;
+  }
+}
+
+// CLI: pnpm inat:promote [db]
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  const dbPath = process.argv[2] ?? "beeline.duckdb";
+  const instance = await DuckDBInstance.create(dbPath);
+  const conn = await instance.connect();
+  const counts = await promoteObservations(conn);
+  conn.closeSync();
+  console.log(JSON.stringify(counts, null, 2));
+}

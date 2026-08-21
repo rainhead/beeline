@@ -33,4 +33,6 @@ INSERT INTO qc_rule (name, severity, instructions) VALUES
   ('count_mismatch', 'warning',
    'Your iNaturalist observation and this sample disagree about how many specimens were collected. Update whichever side is wrong.'),
   ('count_below_printed', 'warning',
-   'The specimen count is now lower than the number of labels already printed for this sample. Nothing to fix in the data — but some printed labels may never be attached to a specimen.');
+   'The specimen count is now lower than the number of labels already printed for this sample. Nothing to fix in the data — but some printed labels may never be attached to a specimen.'),
+  ('observation_missing_upstream', 'blocking',
+   'The iNaturalist observation backing this sample was not returned by a sync that should have included it. It may have been deleted, removed from the project, or had its observation date changed. Staff investigate before any further printing for this sample.');

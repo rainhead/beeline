@@ -115,6 +115,12 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
 
       for (const obs of results) {
         fetched += 1;
+        // Presence first, unconditionally: unchanged observations leave no
+        // load row, and deletion detection needs "this run saw it".
+        await conn.run(
+          `INSERT INTO observation_seen (sync_run_id, inat_id) VALUES ($1, $2)`,
+          [syncRunId, Number(obs.id)],
+        );
         const content = canonicalJson(obs);
         const hash = createHash("sha256").update(content).digest("hex");
         const seen = await scalar(

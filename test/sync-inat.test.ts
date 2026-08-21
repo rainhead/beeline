@@ -135,6 +135,29 @@ describe("iNat sync", () => {
     expect(printable).toHaveLength(1); // warning, not blocking
   });
 
+  test("absence from a completed covering run blocks; a window that misses the date does not; reappearing clears", async () => {
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    const sampleId = await insertCleanSample(conn, { inat_observation_id: "42" });
+    await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(42)]]) });
+
+    const missing = async () =>
+      rows(conn, `SELECT rule_name FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'observation_missing_upstream'`);
+
+    // A window that cannot contain observed_on (2026-07-14) is not covering.
+    await syncINat(conn, { ...base, d1: "2026-08-01", d2: "2026-08-20", fetchImpl: fakeApi([[]]) });
+    expect(await missing()).toHaveLength(0);
+
+    // An unbounded run over the same source that comes back empty is.
+    await syncINat(conn, { ...base, fetchImpl: fakeApi([[]]) });
+    expect(await missing()).toEqual([["observation_missing_upstream"]]);
+    const printable = await rows(conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${sampleId}`);
+    expect(printable).toHaveLength(0); // blocking
+
+    // Seen again (even unchanged, no new load) — the finding clears.
+    await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(42)]]) });
+    expect(await missing()).toHaveLength(0);
+  });
+
   test("canonical json is order-insensitive", () => {
     expect(canonicalJson({ b: 1, a: [{ y: 2, x: 1 }] })).toBe('{"a":[{"x":1,"y":2}],"b":1}');
   });

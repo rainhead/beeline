@@ -152,6 +152,44 @@ JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id
 WHERE try_cast(f.specimen_count_raw AS INTEGER) IS NOT NULL
   AND try_cast(f.specimen_count_raw AS INTEGER) <> s.specimen_count;
 
+-- The sample's evidencing observation stopped coming back: a completed run
+-- that should have covered it (same source, window containing its observed
+-- date, started after the observation was last seen) did not return it. That
+-- means deleted, removed from the project, or its date edited out of the
+-- window — all "staff investigate", and printing more specimens on vanished
+-- evidence would be a mistake, so the rule blocks. Presence comes from
+-- observation_seen: loads are hash-deduped, so absence of a load row cannot
+-- distinguish unchanged from gone. A later run that sees the observation
+-- again clears the finding by advancing last_seen_at.
+CREATE VIEW qc_rule_observation_missing_upstream AS
+WITH last_seen AS (
+  SELECT sn.inat_id, max(r.started_at) AS last_seen_at
+  FROM observation_seen sn
+  JOIN sync_run r ON r.entity_id = sn.sync_run_id
+  GROUP BY sn.inat_id
+), seen_source AS (
+  SELECT DISTINCT sn.inat_id, r.source
+  FROM observation_seen sn
+  JOIN sync_run r ON r.entity_id = sn.sync_run_id
+)
+SELECT s.entity_id AS sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'observation_missing_upstream' AS rule_name,
+       concat('observation ', s.inat_observation_id, ' missing from ',
+              count(*), ' completed covering run(s), latest started ',
+              max(r.started_at)) AS details
+FROM sample s
+JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id
+JOIN last_seen ls ON ls.inat_id = f.inat_id
+JOIN seen_source ss ON ss.inat_id = f.inat_id
+JOIN sync_run r
+  ON r.source = ss.source
+ AND r.completed_at IS NOT NULL
+ AND r.started_at > ls.last_seen_at
+ AND (r.window_start IS NULL OR f.observed_on >= r.window_start)
+ AND (r.window_end IS NULL OR f.observed_on <= r.window_end)
+GROUP BY s.entity_id, s.inat_observation_id;
+
 -- Post-print trouble: count fell below the number of specimens already frozen.
 CREATE VIEW qc_rule_count_below_printed AS
 SELECT s.entity_id AS sample_id,

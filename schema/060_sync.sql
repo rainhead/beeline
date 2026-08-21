@@ -26,3 +26,12 @@ CREATE TABLE observation_load (
 );
 COMMENT ON TABLE observation_load IS 'Append-only: a new row only when the whitelisted projection''s hash changes. The projection is the v2 fields parameter itself — the API returns only what we whitelist.';
 COMMENT ON COLUMN observation_load.content_hash IS 'sha256 of the canonical (recursively key-sorted) JSON projection.';
+
+-- Not an entity (ADR 0002): nothing anchors on a presence fact — it is pure
+-- bookkeeping for deletion detection, keyed by what it witnesses.
+CREATE TABLE observation_seen (
+  sync_run_id INTEGER NOT NULL REFERENCES sync_run(entity_id),
+  inat_id     BIGINT NOT NULL,
+  PRIMARY KEY (sync_run_id, inat_id)
+);
+COMMENT ON TABLE observation_seen IS 'Every observation a run fetched, changed or not. Loads are hash-deduped, so a missing load row cannot distinguish unchanged from gone — deletion detection (qc_rule_observation_missing_upstream) reads presence from here instead.';

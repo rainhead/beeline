@@ -69,15 +69,18 @@ describe("observation promotion", () => {
     expect(geoprivacy).toBe("obscured");
   });
 
-  test("unchanged coordinates keep their derived elevation through the upgrade", async () => {
+  test("coordinates within the legacy 4-decimal export precision keep their derived elevation", async () => {
+    // Legacy holds the iNat coordinates rounded to 4 decimals (measured on
+    // the full corpus); a delta ≤ 5e-5° is the same place, so the elevation
+    // derived there still applies while the coordinates gain precision.
     const sampleId = await insertCleanSample(
       conn,
       { inat_observation_id: "8" },
       { source: "'legacy_import'" },
     );
-    await stage(obs(8, { private_geojson: { coordinates: [-123.262, 44.5646], type: "Point" } }));
+    await stage(obs(8, { private_geojson: { coordinates: [-123.26204, 44.56462], type: "Point" } }));
     await promoteObservations(conn);
-    expect(await location(sampleId)).toEqual(["inat_trusted", 44.5646, -123.262, 30, 72]);
+    expect(await location(sampleId)).toEqual(["inat_trusted", 44.56462, -123.26204, 30, 72]);
   });
 
   test("an open observation upgrades to inat_public and clears stale flags; taxon_geoprivacy 'open' means unobscured", async () => {

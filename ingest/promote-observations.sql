@@ -40,15 +40,19 @@ WHERE (f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL)
 
 -- Upgrade in place. positional_accuracy describes the true location even on
 -- obscured records, so it accompanies both sources. An elevation survives
--- only when the coordinates it was derived from are unchanged; otherwise it
--- clears together with its source (CHECK pairs them), awaiting
--- re-derivation (beeline-bqz).
+-- when the coordinates it was derived from agree with the new pair within
+-- the reference system's export precision — legacy Mongo carries exactly 4
+-- decimal places (measured: 383,004/383,032 rows; every linked sample sits
+-- within half-ULP of the iNat coordinates), so "same place, rounded" is a
+-- delta of at most 5e-5 degrees (~5.5 m, well under an SRTM cell).
+-- Genuinely moved coordinates clear the elevation together with its source
+-- (CHECK pairs them), awaiting re-derivation (beeline-bqz).
 UPDATE sample_location SET
-  elevation_m = CASE WHEN sample_location.latitude = c.latitude
-                      AND sample_location.longitude = c.longitude
+  elevation_m = CASE WHEN abs(sample_location.latitude - c.latitude) <= 5e-5
+                      AND abs(sample_location.longitude - c.longitude) <= 5e-5
                      THEN sample_location.elevation_m END,
-  elevation_source_id = CASE WHEN sample_location.latitude = c.latitude
-                              AND sample_location.longitude = c.longitude
+  elevation_source_id = CASE WHEN abs(sample_location.latitude - c.latitude) <= 5e-5
+                              AND abs(sample_location.longitude - c.longitude) <= 5e-5
                              THEN sample_location.elevation_source_id END,
   latitude = c.latitude,
   longitude = c.longitude,

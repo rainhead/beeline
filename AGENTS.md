@@ -11,6 +11,18 @@ pnpm typecheck
 pnpm db:build [target.duckdb]  # blow away and rebuild from schema/*.sql
 ```
 
+Populating a fresh database end to end (production access = `beeline` in
+`~/.ssh/config`; iNat access = dev OAuth credentials in `data/secrets/`):
+
+```bash
+pnpm legacy:fetch && pnpm legacy:load && pnpm legacy:promote  # production Mongo → model
+pnpm inat:login                             # OAuth sign-in; mints the 24h JWT sync reads
+pnpm inat:sync <projectId> [d1] [d2]        # observation window → append-only loads
+pnpm inat:promote                           # current observation state → samples
+pnpm inat:backfill-accounts                 # resolve legacy logins → iNat accounts
+pnpm elevation:fetch && pnpm elevation:derive  # SRTM tiles (from legacy server) → missing elevations
+```
+
 ## Architecture Overview
 
 The schema **is** the `schema/*.sql` files, applied in filename order (0xx tables, 1xx derived views). No migration system before cutover: databases are blown away and rebuilt ([docs/roadmap.md](docs/roadmap.md)). QC rules, printability, and determination-of-record are SQL views, not app code. Engine: DuckDB behind dialect-neutral SQL — [ADR 0001](docs/adr/0001-duckdb-first-with-portable-sql.md).

@@ -11,6 +11,10 @@ export default defineConfig({
     },
   },
   test: {
+    // Integration tests build real DuckDB databases and run the promote
+    // pipeline, sometimes twice; on CI's 2-core runner with parallel
+    // workers the 5s default trips on machine speed, not on hangs.
+    testTimeout: 30_000,
     server: {
       deps: {
         // Ships ESM with extensionless internal imports (bundler-only

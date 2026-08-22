@@ -18,3 +18,20 @@ describe("configFromEnv sync settings (beeline-vni)", () => {
     expect(() => configFromEnv({ BEELINE_SWEEP_DAYS: "0" })).toThrow(/BEELINE_SWEEP_DAYS/);
   });
 });
+
+describe("configFromEnv deploy safety", () => {
+  it("requires BEELINE_ORIGIN outside development (beeline-4cb)", () => {
+    const base = { BEELINE_ENV: "sandbox", BEELINE_PRIVATE_DB_KEY: "k" };
+    expect(() => configFromEnv(base)).toThrow(/BEELINE_ORIGIN/);
+    const config = configFromEnv({ ...base, BEELINE_ORIGIN: "https://beeline.example" });
+    expect(config.origin).toBe("https://beeline.example");
+  });
+
+  it("parses the admin allowlist", () => {
+    expect(configFromEnv({ BEELINE_ADMIN_LOGINS: "rainhead, amelathopoulos" }).adminLogins).toEqual([
+      "rainhead",
+      "amelathopoulos",
+    ]);
+    expect(configFromEnv({}).adminLogins).toEqual([]);
+  });
+});

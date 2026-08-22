@@ -105,8 +105,18 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
     if (!code || !expected || c.req.query("state") !== expected) {
       return c.text(m.signIn.failed, 400);
     }
-    const accessToken = await deps.inat.exchangeCode(code, redirectUri);
-    const identity = await deps.inat.identity(accessToken);
+    // A failed exchange is a user-visible sign-in failure, not a 500 — and
+    // anyone can reach this route, so the error must not feed Hono's default
+    // handler on a loop of garbage codes (beeline-j5z).
+    let accessToken: string;
+    let identity: InatIdentity;
+    try {
+      accessToken = await deps.inat.exchangeCode(code, redirectUri);
+      identity = await deps.inat.identity(accessToken);
+    } catch (err) {
+      console.error("sign-in: token exchange or identity fetch failed:", err);
+      return c.text(m.signIn.failed, 400);
+    }
 
     await deps.db
       .insertInto("private.inat_oauth_token")

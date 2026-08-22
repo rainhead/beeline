@@ -29,7 +29,7 @@ export interface JobsDep {
 
 export interface AppDeps {
   db: Kysely<Database>;
-  config: Pick<AppConfig, "environment" | "origin">;
+  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins">>;
   inat: InatClient;
   resolveSession: SessionResolver;
   /** The job registry; absent in tests that don't exercise /jobs. */
@@ -47,6 +47,11 @@ export interface AppDeps {
 export function createApp({ db, config, inat, resolveSession, jobs, correctionsPath }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], runNow: async () => false };
   const corrections = correctionsPath ?? "data/corrections.csv";
+  // Admin surface (/jobs): everyone in development, allowlisted logins
+  // elsewhere — running ingestion is not for every approved volunteer
+  // (beeline-6va).
+  const isAdmin = (session: Session) =>
+    config.environment === "development" || (config.adminLogins ?? []).includes(session.login);
   const app = new Hono<AppEnv>();
   const tokens = tokensCss();
 
@@ -122,6 +127,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
           environment: config.environment,
           islandsSrc: await islandsSrc(),
           session: c.get("session"),
+          admin: isAdmin(c.get("session")),
           m: c.get("m"),
         }}
         title={title}
@@ -214,6 +220,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   });
 
   app.get("/jobs", async (c) => {
+    if (!isAdmin(c.get("session"))) return c.text("Admins only.", 403);
     const m = c.get("m");
     const runs = await db
       .selectFrom("job_run")
@@ -225,6 +232,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   });
 
   app.post("/jobs/run/:name", async (c) => {
+    if (!isAdmin(c.get("session"))) return c.text("Admins only.", 403);
     await jobsDep.runNow(c.req.param("name"));
     return c.redirect("/jobs");
   });

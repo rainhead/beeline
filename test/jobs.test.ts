@@ -253,4 +253,34 @@ describe("/jobs page", () => {
     expect(after).toContain("pressed the button");
     expect(after).toContain("succeeded");
   });
+
+  it("outside development, /jobs is allowlist-only (beeline-6va)", async () => {
+    const deps = await jobDeps();
+    const inat: InatClient = {
+      authorizeUrl: () => "unused",
+      exchangeCode: () => Promise.reject(new Error("not under test")),
+      identity: () => Promise.reject(new Error("not under test")),
+    };
+    const appFor = (adminLogins: string[]) =>
+      createApp({
+        db: deps.db,
+        config: { environment: "sandbox", origin: "https://beeline.example", adminLogins },
+        inat,
+        resolveSession: async () => ({ personId: 1, login: "volunteer", iconUrl: null }),
+        jobs: { list: [], runNow: async () => true },
+      });
+
+    const gated = appFor(["someone-else"]);
+    expect((await gated.request("/jobs")).status).toBe(403);
+    const run = await gated.request("/jobs/run/nightly-pipeline", {
+      method: "POST",
+      headers: { origin: "https://beeline.example" },
+    });
+    expect(run.status).toBe(403);
+    // The nav link disappears with the access.
+    expect(await (await gated.request("/patterns")).text()).not.toContain(`href="/jobs"`);
+
+    const admin = appFor(["volunteer"]);
+    expect((await admin.request("/jobs")).status).toBe(200);
+  });
 });

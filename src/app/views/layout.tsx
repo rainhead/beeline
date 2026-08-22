@@ -8,15 +8,17 @@ export interface PageEnv {
   /** URL of the built islands bundle, or null when it hasn't been built. */
   islandsSrc: string | null;
   session: Session;
+  /** Whether this session may see the admin surface (/jobs, beeline-6va). */
+  admin: boolean;
   m: Messages;
 }
 
 /** The nav destinations, rendered twice: inline on wide screens, in the hamburger menu on narrow ones. */
-function NavLinks({ m }: { m: Messages }) {
+function NavLinks({ m, admin }: { m: Messages; admin: boolean }) {
   return (
     <>
       <a href="/patterns">{m.layout.nav.patterns}</a>
-      <a href="/jobs">{m.layout.nav.jobs}</a>
+      {admin && <a href="/jobs">{m.layout.nav.jobs}</a>}
     </>
   );
 }
@@ -66,14 +68,14 @@ export function Layout(props: { env: PageEnv; title: string; children?: Child })
               <HamburgerIcon />
             </summary>
             <nav class="menu-panel">
-              <NavLinks m={m} />
+              <NavLinks m={m} admin={env.admin} />
             </nav>
           </details>
           <a href="/" class="brand">
             {m.brand}
           </a>
           <nav class="nav-inline">
-            <NavLinks m={m} />
+            <NavLinks m={m} admin={env.admin} />
           </nav>
           <details class="menu account-menu">
             <summary aria-label={m.layout.account(session.login)} title={m.layout.account(session.login)}>

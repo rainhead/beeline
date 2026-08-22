@@ -85,6 +85,23 @@ describe("iNat OAuth sign-in", () => {
     expect(token.access_token).toBe("access-token-123");
   });
 
+  it("a failed token exchange is a sign-in failure, not a 500", async () => {
+    const { instance } = await createMemoryDb();
+    await attachPrivateStore(instance, { path: ":memory:", key: null });
+    const db = createKysely(instance);
+    const app = createApp({
+      db,
+      config: { environment: "development", origin: ORIGIN },
+      inat: {
+        ...fakeInat({ inatUserId: 501, login: "memberbee" }),
+        exchangeCode: () => Promise.reject(new Error("iNat said 502")),
+      },
+      resolveSession: cookieSessionResolver(db),
+    });
+    const res = await signIn(app);
+    expect(res.status).toBe(400);
+  });
+
   it("a state mismatch is refused", async () => {
     const { app } = await testApp({ inatUserId: 501, login: "memberbee" });
     const res = await app.request("/auth/inat/callback?code=abc&state=wrong", {

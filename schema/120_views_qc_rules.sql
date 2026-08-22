@@ -139,6 +139,23 @@ JOIN (
   HAVING count(*) > 1
 ) dup USING (collector_id, date_start, sample_number);
 
+-- The evidencing observation's taxon is the floral host in this protocol,
+-- and a host must be a vascular plant: anything else — a moss, a fungus, or
+-- the bee itself — means the observation is identified as the wrong subject.
+-- Mirrors the reference phylumPlant ≠ Tracheophyta check, with ancestry read
+-- from the cached projection (observation_current_fields) instead of a
+-- Darwin Core phylum string. IS FALSE keeps stale loads silent: NULL means
+-- no taxon or a load predating ancestor_ids, not a non-plant host.
+CREATE VIEW qc_rule_non_tracheophyte_host AS
+SELECT s.entity_id AS sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'non_tracheophyte_host' AS rule_name,
+       concat('observation taxon ', coalesce(f.host_taxon_name, CAST(f.host_taxon_id AS TEXT)),
+              ' is not a vascular plant') AS details
+FROM sample s
+JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id
+WHERE f.host_is_tracheophyte IS FALSE;
+
 -- The sample's evidencing observation asserts a different specimen count
 -- than the sample carries: someone changed one side. Warning — counts move
 -- legitimately until printing; staff/self-service reconcile.

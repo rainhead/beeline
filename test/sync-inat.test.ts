@@ -21,7 +21,8 @@ function obs(id: number, extra: Record<string, unknown> = {}): Record<string, un
     taxon_geoprivacy: null,
     obscured: false,
     user: { id: 100, login: "adacollects", name: "Ada Collector" },
-    taxon: { id: 51048, name: "Salvia officinalis", rank: "species" },
+    // ancestor_ids is self-inclusive; 211194 = Tracheophyta
+    taxon: { id: 51048, name: "Salvia officinalis", rank: "species", ancestor_ids: [48460, 47126, 211194, 47125, 48151, 51048] },
     ofvs: [
       { name: "sampleId", value: "1", datatype: "numeric" },
       { name: "numberOfSpecimens", value: "3", datatype: "numeric" },
@@ -133,6 +134,32 @@ describe("iNat sync", () => {
     expect(findings).toEqual([["count_mismatch", "observation says 5 but sample count is 3"]]);
     const printable = await rows(conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${sampleId}`);
     expect(printable).toHaveLength(1); // warning, not blocking
+  });
+
+  test("a non-vascular-plant host blocks; a tracheophyte or ancestry-less load stays silent", async () => {
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    const moss = await insertCleanSample(conn, { inat_observation_id: "42" });
+    const sage = await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "43" });
+    const stale = await insertCleanSample(conn, { sample_number: "'3'", inat_observation_id: "44" });
+    await syncINat(conn, {
+      ...base,
+      fetchImpl: fakeApi([
+        [
+          obs(42, { taxon: { id: 56327, name: "Bryum argenteum", rank: "species", ancestor_ids: [48460, 47126, 311249, 56327] } }),
+          obs(43),
+        ],
+        // A load predating ancestor_ids in the projection: no verdict, no finding.
+        [obs(44, { taxon: { id: 51048, name: "Salvia officinalis", rank: "species" } })],
+      ]),
+    });
+    const flagged = await rows(
+      conn,
+      "SELECT sample_id, details FROM qc_finding WHERE rule_name = 'non_tracheophyte_host'",
+    );
+    expect(flagged).toEqual([[moss, "observation taxon Bryum argenteum is not a vascular plant"]]);
+    expect(await rows(conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${moss}`)).toHaveLength(0);
+    expect(await rows(conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${sage}`)).toHaveLength(1);
+    expect(await rows(conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${stale}`)).toHaveLength(1);
   });
 
   test("absence from a completed covering run blocks; a window that misses the date does not; reappearing clears", async () => {

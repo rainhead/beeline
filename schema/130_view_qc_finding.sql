@@ -6,6 +6,7 @@ UNION ALL SELECT * FROM qc_rule_locality_format
 UNION ALL SELECT * FROM qc_rule_place_unabbreviated
 UNION ALL SELECT * FROM qc_rule_coordinate_uncertainty
 UNION ALL SELECT * FROM qc_rule_duplicate_sample_number
+UNION ALL SELECT * FROM qc_rule_non_tracheophyte_host
 UNION ALL SELECT * FROM qc_rule_count_mismatch
 UNION ALL SELECT * FROM qc_rule_count_below_printed
 UNION ALL SELECT * FROM qc_rule_observation_missing_upstream;

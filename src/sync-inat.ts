@@ -20,7 +20,7 @@ const FIELDS = [
   "geoprivacy", "taxon_geoprivacy", "obscured", "viewer_trusted_by_observer",
   "place_guess", "private_place_guess", "place_ids", "private_place_ids",
   "quality_grade", "user.id", "user.login", "user.name",
-  "taxon.id", "taxon.name", "taxon.rank",
+  "taxon.id", "taxon.name", "taxon.rank", "taxon.ancestor_ids",
   "ofvs.name", "ofvs.value", "ofvs.datatype",
 ].join(",");
 

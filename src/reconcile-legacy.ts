@@ -25,11 +25,14 @@ const COMPARISONS: Array<{ theirs: string; ours: string; predicate: string }> = 
     predicate: "(rule_name = 'missing_required_field' AND details LIKE '%state_province%') OR (rule_name = 'place_unabbreviated' AND details LIKE '%state_province%')" },
   { theirs: "decimalLatitude", ours: "missing location",
     predicate: "rule_name = 'missing_required_field' AND details LIKE '%location%'" },
+  // Ours reads taxon ancestry from synced observations, so only-legacy counts
+  // are expected until inat:sync has covered the linked observations.
+  { theirs: "phylumPlant", ours: "non_tracheophyte_host",
+    predicate: "rule_name = 'non_tracheophyte_host'" },
 ];
 
 // Their flags with no model-level counterpart yet, with why.
 const EXCLUSIONS = [
-  "phylumPlant (non-tracheophyte host: needs iNat taxon ancestry, phase 3 — beeline-kw8.6)",
   "firstName/lastName/sampleId/specimenId/day/month/year (identity gaps stay in staging as promotion findings; such rows mostly never promote)",
 ];
 

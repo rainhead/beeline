@@ -30,6 +30,10 @@ SELECT o.inat_id,
   json_extract_string(o.content, '$.place_guess')                        AS place_guess,
   CAST(json_extract(o.content, '$.taxon.id') AS BIGINT)                  AS host_taxon_id,
   json_extract_string(o.content, '$.taxon.name')                         AS host_taxon_name,
+  -- ancestor_ids is self-inclusive, so this is true for Tracheophyta
+  -- (iNat taxon 211194) itself; NULL when the taxon is absent or the load
+  -- predates ancestor_ids in the projection (clears on the next sync).
+  list_contains(CAST(json_extract(o.content, '$.taxon.ancestor_ids') AS BIGINT[]), 211194) AS host_is_tracheophyte,
   json_extract_string(o.content, '$.quality_grade')                      AS quality_grade,
   (SELECT j.j ->> '$.value'
    FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j

@@ -13,8 +13,6 @@ COMMENT ON COLUMN qc_rule.instructions IS 'The self-service "what to do" copy sh
 -- The required/recommended split mirrors the reference implementation
 -- (nonEmptyFields vs LABEL_REQUIRED_FIELDS): county is flagged when empty but
 -- does not block printing; elevation is derived, so never the collector's gap.
--- One reference rule still awaits reference data (beeline-kw8.6):
--- non-tracheophyte host (needs iNat taxon ancestry, phase 3).
 INSERT INTO qc_rule (name, severity, instructions) VALUES
   ('missing_required_field', 'blocking',
    'A field the label needs is empty. Fill it in on the iNaturalist observation (or here for trap samples) and it will clear on the next sync.'),
@@ -28,6 +26,8 @@ INSERT INTO qc_rule (name, severity, instructions) VALUES
    'Country and state/province must be abbreviations (USA not United States; OR not Oregon) — the label cell is tiny.'),
   ('coordinate_uncertainty', 'blocking',
    'The location accuracy is worse than 250 m. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.'),
+  ('non_tracheophyte_host', 'blocking',
+   'The iNaturalist observation should be identified as the floral host — a vascular plant. Its current identification is something else (a moss, alga, fungus, or the bee itself). Correct the observation''s identification to the plant the bee was collected from and it will clear on the next sync.'),
   ('duplicate_sample_number', 'blocking',
    'Two of your samples on the same day share a sample number. Renumber one of the observations so each sample that day is distinct.'),
   ('count_mismatch', 'warning',

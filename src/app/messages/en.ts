@@ -19,11 +19,13 @@ const dateTime = (d: Date | string) =>
 export const en = {
   locale,
   brand: "Beeline",
+  /** Locale-aware value formatters, for views composing values into markup. */
+  format: { date, dateTime },
 
   layout: {
     /** Any instance that is not production says so (beeline-2u8). */
     envBanner: (environment: string) => `${environment} instance — data here may be blown away and rebuilt at any time`,
-    nav: { patterns: "Patterns" },
+    nav: { patterns: "Patterns", jobs: "Jobs" },
     signOut: "Sign out",
     pageTitle: (title: string) => `${title} · Beeline`,
   },
@@ -65,6 +67,32 @@ export const en = {
 
   errors: {
     crossOrigin: "cross-origin request refused",
+  },
+
+  jobs: {
+    title: "Jobs",
+    heading: "Scheduled jobs",
+    intro: "Everything the app runs on a schedule, and how the recent runs went. Night-window jobs may run long; interactive jobs answer to the one-second budget.",
+    registered: "Registered",
+    recentRuns: "Recent runs",
+    everyMinutes: (minutes: number) => `every ${n(minutes)} min`,
+    dailyLA: (hour: number) => `daily at ${n(hour)}:00 Pacific (night window)`,
+    windowInteractive: "interactive",
+    windowNight: "night",
+    runNow: "Run now",
+    colJob: "Job",
+    colSchedule: "Schedule",
+    colWindow: "Window",
+    colStarted: "Started",
+    colDuration: "Duration",
+    colOutcome: "Outcome",
+    colBreaches: "SLA breaches",
+    colDetail: "Detail",
+    outcomeSucceeded: "succeeded",
+    outcomeFailed: "failed",
+    outcomeRunning: "running…",
+    durationSeconds: (s: number) => `${n(s)}s`,
+    noRuns: "No runs yet.",
   },
 
   /**

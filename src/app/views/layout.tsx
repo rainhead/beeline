@@ -34,6 +34,7 @@ export function Layout(props: { env: PageEnv; title: string; children?: Child })
           </a>
           <nav>
             <a href="/patterns">{m.layout.nav.patterns}</a>
+            <a href="/jobs">{m.layout.nav.jobs}</a>
           </nav>
           <form method="post" action="/auth/logout" style="margin-left: auto; display: flex; gap: 0.75rem; align-items: baseline">
             <span>{env.session.login}</span>

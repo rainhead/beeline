@@ -166,6 +166,20 @@ export interface SyncRunTable {
   completed_at: ColumnType<Date, Date | string, Date | string> | null;
 }
 
+// schema/070_jobs.sql
+
+export type JobOutcome = "succeeded" | "failed";
+
+export interface JobRunTable {
+  entity_id: Generated<number>;
+  job_name: string;
+  started_at: Timestamped;
+  completed_at: ColumnType<Date, Date | string, Date | string> | null;
+  outcome: JobOutcome | null;
+  detail: string | null;
+  sla_breaches: Generated<number>;
+}
+
 // Derived views (schema/1xx) — read-only.
 
 export interface QcFindingView {
@@ -193,6 +207,7 @@ export interface Database {
   qc_rule: QcRuleTable;
   sample_promotion_finding: SamplePromotionFindingTable;
   sync_run: SyncRunTable;
+  job_run: JobRunTable;
   determination_of_record: DeterminationTable;
   qc_finding: QcFindingView;
   printable_sample: PrintableSampleView;

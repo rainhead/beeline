@@ -2,11 +2,13 @@ import { serve } from "@hono/node-server";
 import { inatClient, loadInatCredentials } from "./auth.js";
 import { configFromEnv } from "./config.js";
 import { openAppDb } from "./db.js";
+import { startScheduler } from "./jobs/framework.js";
+import { buildJobs } from "./jobs/registry.js";
 import { createApp } from "./server.js";
 import { cookieSessionResolver, type SessionResolver } from "./session.js";
 
 const config = configFromEnv();
-const { db, close } = await openAppDb(config);
+const { db, instance, close } = await openAppDb(config);
 
 if (config.privateDbKey === null) {
   console.warn("BEELINE_PRIVATE_DB_KEY unset: private store is UNENCRYPTED (development only)");
@@ -27,8 +29,18 @@ if (config.devLogin) {
   resolveSession = async () => ({ personId, login: config.devLogin! });
 }
 
+const jobs = buildJobs(config);
+const jobConn = await instance.connect();
+const scheduler = startScheduler({ db, conn: jobConn, jobs });
+
 const inat = inatClient(await loadInatCredentials());
-const app = createApp({ db, config, inat, resolveSession });
+const app = createApp({
+  db,
+  config,
+  inat,
+  resolveSession,
+  jobs: { list: jobs, runNow: (name) => scheduler.runNow(name) },
+});
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`beeline app (${config.environment}) listening on http://localhost:${info.port}`);
 });
@@ -37,7 +49,9 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
 // WAL flushes; the supervisor restarting us is the normal deploy.
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
+    scheduler.stop();
     server.close(async () => {
+      jobConn.closeSync();
       await close();
       process.exit(0);
     });

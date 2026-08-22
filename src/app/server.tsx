@@ -14,14 +14,24 @@ import { tokensCss } from "./theme/tokens.js";
 import { Layout } from "./views/layout.js";
 import { MessagesProof } from "./views/messages-proof.js";
 import { Patterns } from "./views/patterns.js";
+import type { Job } from "./jobs/framework.js";
+import { Jobs } from "./views/jobs.js";
 import { QcHome, type FindingRow } from "./views/qc.js";
 import { QcProof } from "./views/qc-proof.js";
+
+export interface JobsDep {
+  list: Job[];
+  /** Run a job immediately; false if unknown or busy. */
+  runNow(name: string): Promise<boolean>;
+}
 
 export interface AppDeps {
   db: Kysely<Database>;
   config: Pick<AppConfig, "environment" | "origin">;
   inat: InatClient;
   resolveSession: SessionResolver;
+  /** The job registry; absent in tests that don't exercise /jobs. */
+  jobs?: JobsDep;
 }
 
 /**
@@ -30,7 +40,8 @@ export interface AppDeps {
  * after the gate (and everything added later by other modules) sees a
  * session or doesn't run: no anonymous reads, structurally.
  */
-export function createApp({ db, config, inat, resolveSession }: AppDeps) {
+export function createApp({ db, config, inat, resolveSession, jobs }: AppDeps) {
+  const jobsDep: JobsDep = jobs ?? { list: [], runNow: async () => false };
   const app = new Hono<AppEnv>();
   const tokens = tokensCss();
 
@@ -163,6 +174,22 @@ export function createApp({ db, config, inat, resolveSession }: AppDeps) {
   app.get("/patterns/qc", async (c) => {
     const m = c.get("m");
     return c.html(await page(c, m.qcProof.title, <QcProof m={m} />));
+  });
+
+  app.get("/jobs", async (c) => {
+    const m = c.get("m");
+    const runs = await db
+      .selectFrom("job_run")
+      .select(["job_name", "started_at", "completed_at", "outcome", "detail", "sla_breaches"])
+      .orderBy("started_at", "desc")
+      .limit(20)
+      .execute();
+    return c.html(await page(c, m.jobs.title, <Jobs m={m} jobs={jobsDep.list} runs={runs} />));
+  });
+
+  app.post("/jobs/run/:name", async (c) => {
+    await jobsDep.runNow(c.req.param("name"));
+    return c.redirect("/jobs");
   });
 
   return app;

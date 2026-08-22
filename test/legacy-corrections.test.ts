@@ -33,7 +33,7 @@ describe("legacy correction overlay (ADR 0004, frozen upstream)", () => {
       samples: 3,
       specimens: 4,
       blockedRows: 0, // cccc3333's missing person + bad specimenId corrected away
-      correctionsApplied: 4, // 3 on cccc3333 + the conflicted latitude on bbbb2222
+      correctionsApplied: 5, // 4 on cccc3333 + the conflicted latitude on bbbb2222
       correctionsRetired: 1,
       correctionConflicts: 1,
     });
@@ -75,6 +75,30 @@ describe("legacy correction overlay (ADR 0004, frozen upstream)", () => {
       `SELECT details FROM legacy_promotion_finding WHERE _id = 'bbbb2222' AND rule = 'correction_conflict'`,
     );
     expect(String(finding?.[0])).toContain("46.0646");
+  });
+
+  test("filling a field the upstream document lacks applies (NULL stages like empty)", async () => {
+    // cccc3333 has no county key at all, so it stages as NULL; the app and
+    // git CSVs both anchor such fixes on base_value '' (beeline-qeu).
+    const [[county]] = (await rows(
+      conn,
+      `SELECT county FROM sample WHERE sample_number = '142'`,
+    )) as [[unknown]];
+    expect(county).toBe("Benton");
+    const findings = await rows(
+      conn,
+      `SELECT rule FROM legacy_promotion_finding
+       WHERE _id = 'cccc3333' AND rule = 'correction_invalid_field'`,
+    );
+    expect(findings).toEqual([]);
+  });
+
+  test("a correction naming an unknown column is reported, not applied", async () => {
+    const findings = await rows(
+      conn,
+      `SELECT rule FROM legacy_promotion_finding WHERE _id = 'dddd4444' AND rule LIKE 'correction%'`,
+    );
+    expect(findings).toEqual([["correction_invalid_field"]]);
   });
 
   test("a correction whose record vanished upstream is reported, not applied", async () => {

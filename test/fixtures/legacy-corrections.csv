@@ -2,6 +2,8 @@ _id,field,base_value,new_value,author,reason
 cccc3333,firstName,,Gretchen,Peter Abrahamsen,collector identified from field notebook
 cccc3333,lastName,,Pederson,Peter Abrahamsen,collector identified from field notebook
 cccc3333,specimenId,foo,3,Peter Abrahamsen,printed label shows specimen 3
+cccc3333,county,,Benton,Peter Abrahamsen,county determined from coordinates
+dddd4444,bogusField,a,b,Peter Abrahamsen,typo'd column name
 aaaa1111,sampleId,2,1,Peter Abrahamsen,upstream fixed this after the correction was filed
 bbbb2222,decimalLatitude,46.9999,46.1111,Peter Abrahamsen,trap site re-surveyed
 zzzz9999,locality,x,y,Peter Abrahamsen,record deleted upstream after the correction was filed

@@ -45,21 +45,25 @@ WHERE NOT EXISTS (
   WHERE a._id = g._id AND a.field = g.field
 );
 
+-- Staged columns coalesce to '' here: a key absent from the source document
+-- stages as NULL, and both CSVs anchor fixes to such fields on base_value ''
+-- (the app writes member[field] ?? ''). NULL staged_value therefore means
+-- exactly "field name outside the correctable vocabulary" (beeline-qeu).
 CREATE OR REPLACE VIEW legacy_correction_state AS
 SELECT c.*,
   CASE c.field
-    WHEN 'firstName' THEN r.firstName WHEN 'lastName' THEN r.lastName
-    WHEN 'sampleId' THEN r.sampleId WHEN 'specimenId' THEN r.specimenId
-    WHEN 'day' THEN r.day WHEN 'month' THEN r.month WHEN 'year' THEN r.year
-    WHEN 'day2' THEN r.day2 WHEN 'month2' THEN r.month2 WHEN 'year2' THEN r.year2
-    WHEN 'decimalLatitude' THEN r.decimalLatitude
-    WHEN 'decimalLongitude' THEN r.decimalLongitude
-    WHEN 'coordinateUncertaintyInMeters' THEN r.coordinateUncertaintyInMeters
-    WHEN 'verbatimElevation' THEN r.verbatimElevation
-    WHEN 'country' THEN r.country WHEN 'stateProvince' THEN r.stateProvince
-    WHEN 'county' THEN r.county WHEN 'locality' THEN r.locality
-    WHEN 'samplingProtocol' THEN r.samplingProtocol
-    WHEN 'fieldNumber' THEN r.fieldNumber
+    WHEN 'firstName' THEN coalesce(r.firstName, '') WHEN 'lastName' THEN coalesce(r.lastName, '')
+    WHEN 'sampleId' THEN coalesce(r.sampleId, '') WHEN 'specimenId' THEN coalesce(r.specimenId, '')
+    WHEN 'day' THEN coalesce(r.day, '') WHEN 'month' THEN coalesce(r.month, '') WHEN 'year' THEN coalesce(r.year, '')
+    WHEN 'day2' THEN coalesce(r.day2, '') WHEN 'month2' THEN coalesce(r.month2, '') WHEN 'year2' THEN coalesce(r.year2, '')
+    WHEN 'decimalLatitude' THEN coalesce(r.decimalLatitude, '')
+    WHEN 'decimalLongitude' THEN coalesce(r.decimalLongitude, '')
+    WHEN 'coordinateUncertaintyInMeters' THEN coalesce(r.coordinateUncertaintyInMeters, '')
+    WHEN 'verbatimElevation' THEN coalesce(r.verbatimElevation, '')
+    WHEN 'country' THEN coalesce(r.country, '') WHEN 'stateProvince' THEN coalesce(r.stateProvince, '')
+    WHEN 'county' THEN coalesce(r.county, '') WHEN 'locality' THEN coalesce(r.locality, '')
+    WHEN 'samplingProtocol' THEN coalesce(r.samplingProtocol, '')
+    WHEN 'fieldNumber' THEN coalesce(r.fieldNumber, '')
   END AS staged_value,
   CASE
     WHEN r._id IS NULL THEN 'orphaned'

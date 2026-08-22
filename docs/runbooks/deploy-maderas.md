@@ -103,6 +103,13 @@ The banner will read "sandbox instance" (BEELINE_ENV=sandbox).
 ssh maderas 'cd ~/dev/beeline && git pull && pnpm install && pnpm app:build && systemctl --user restart beeline'
 ```
 
+From a non-interactive shell (agents, scripts), nvm isn't loaded and `node`
+is missing from PATH — source it explicitly:
+
+```sh
+ssh maderas 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; cd ~/dev/beeline && nvm use >/dev/null && git pull && pnpm install && pnpm app:build && systemctl --user restart beeline'
+```
+
 Brief downtime is by design (ADR 0005). Schema changes pre-cutover mean a
 database rebuild (or a one-off table apply while the service is stopped).
 **Any one-off DDL must end with an explicit `CHECKPOINT` before closing**:

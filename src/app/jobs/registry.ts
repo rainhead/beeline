@@ -24,15 +24,24 @@ async function mintJwt(): Promise<string> {
   return ((await res.json()) as { api_token: string }).api_token;
 }
 
-/** Start of the most recent completed sync run for a source, or null. */
+/**
+ * The incremental watermark for a source: start of the most recent completed
+ * run that asked for everything-updated-since-X. A windowed sweep must not
+ * advance it — the sweep proves nothing about edits to observations outside
+ * its window, so using its start would skip those edits forever
+ * (beeline-bwy). Sweeps bootstrap the chain only while no incremental run
+ * has ever completed: at that point the store holds nothing but what sweeps
+ * loaded, all of it inside the window.
+ */
 export async function lastSyncStart(db: Kysely<Database>, source: string): Promise<Date | null> {
-  const row = await db
-    .selectFrom("sync_run")
-    .where("source", "=", source)
-    .where("completed_at", "is not", null)
+  const completed = db.selectFrom("sync_run").where("source", "=", source).where("completed_at", "is not", null);
+  const incremental = await completed
+    .where("updated_since", "is not", null)
     .select(({ fn }) => fn.max("started_at").as("at"))
     .executeTakeFirst();
-  return row?.at ?? null;
+  if (incremental?.at != null) return incremental.at;
+  const any = await completed.select(({ fn }) => fn.max("started_at").as("at")).executeTakeFirst();
+  return any?.at ?? null;
 }
 
 /** Overlap margin for incremental runs: re-fetching an hour twice is free (hash-dedup). */

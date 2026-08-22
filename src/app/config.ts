@@ -48,6 +48,23 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`BEELINE_PRIVATE_DB_KEY is required outside development: the private store must be encrypted (ADR 0003)`);
   }
   const port = env.PORT ? Number(env.PORT) : 0xbee; // 3054: unmistakably ours among the neighbors' dev servers
+  // Sync settings fail here, at boot, not at 2am when the nightly first
+  // reads them (beeline-vni).
+  const syncProjects = (env.BEELINE_SYNC_PROJECTS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "")
+    .map((s) => {
+      const id = Number(s);
+      if (!Number.isInteger(id) || id <= 0) {
+        throw new Error(`BEELINE_SYNC_PROJECTS must be comma-separated iNat project ids, got '${s}'`);
+      }
+      return id;
+    });
+  const sweepDays = env.BEELINE_SWEEP_DAYS ? Number(env.BEELINE_SWEEP_DAYS) : 365;
+  if (!Number.isInteger(sweepDays) || sweepDays <= 0) {
+    throw new Error(`BEELINE_SWEEP_DAYS must be a whole number of days, got '${env.BEELINE_SWEEP_DAYS}'`);
+  }
   return {
     port,
     dbPath: env.BEELINE_DB ?? "beeline.duckdb",
@@ -57,11 +74,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     correctionsPath: env.BEELINE_CORRECTIONS ?? "data/corrections.csv",
     environment,
     devLogin: environment === "development" ? (env.BEELINE_DEV_LOGIN ?? null) : null,
-    syncProjects: (env.BEELINE_SYNC_PROJECTS ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s !== "")
-      .map(Number),
-    sweepDays: env.BEELINE_SWEEP_DAYS ? Number(env.BEELINE_SWEEP_DAYS) : 365,
+    syncProjects,
+    sweepDays,
   };
 }

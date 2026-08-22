@@ -58,19 +58,42 @@ export function laParts(instant: Date): { date: string; hour: number; weekday: n
   };
 }
 
-export function isDue(schedule: Schedule, now: Date, lastStarted: Date | null): boolean {
+/** End of the night carve-out: night jobs must not START at or after this LA hour (beeline-7tt). */
+const NIGHT_END_HOUR = 5;
+/** Pause between retries of a failed daily/weekly run — not every tick (beeline-40m). */
+const RETRY_MS = 15 * 60_000;
+
+export interface LastRuns {
+  /** Most recent start, any outcome (orphans are reconciled to failed at boot). */
+  started: Date | null;
+  /** Most recent start that ran to success. */
+  succeeded: Date | null;
+}
+
+/** Done for the LA day only once SUCCEEDED that day; a failed attempt retries after a pause. */
+function dueToday(now: Date, todayLA: string, last: LastRuns): boolean {
+  if (last.succeeded !== null && laParts(last.succeeded).date === todayLA) return false;
+  if (last.started !== null && laParts(last.started).date === todayLA) {
+    return now.getTime() - last.started.getTime() >= RETRY_MS;
+  }
+  return true;
+}
+
+export function isDue(schedule: Schedule, window: JobWindow, now: Date, last: LastRuns): boolean {
   switch (schedule.kind) {
     case "everyMinutes":
-      return lastStarted === null || now.getTime() - lastStarted.getTime() >= schedule.minutes * 60_000;
+      return last.started === null || now.getTime() - last.started.getTime() >= schedule.minutes * 60_000;
     case "dailyLA": {
       const nowLA = laParts(now);
       if (nowLA.hour < schedule.hour) return false;
-      return lastStarted === null || laParts(lastStarted).date !== nowLA.date;
+      if (window === "night" && nowLA.hour >= NIGHT_END_HOUR) return false;
+      return dueToday(now, nowLA.date, last);
     }
     case "weeklyLA": {
       const nowLA = laParts(now);
       if (nowLA.weekday !== schedule.weekday || nowLA.hour < schedule.hour) return false;
-      return lastStarted === null || laParts(lastStarted).date !== nowLA.date;
+      if (window === "night" && nowLA.hour >= NIGHT_END_HOUR) return false;
+      return dueToday(now, nowLA.date, last);
     }
   }
 }
@@ -136,23 +159,38 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
   const now = deps.now ?? (() => new Date());
   let busy: string | null = null;
 
-  const lastStarts = async (): Promise<Map<string, Date>> => {
+  // A run left without completed_at means the process died mid-job: mark it
+  // failed so it stops occupying the day's schedule slot (beeline-40m). Runs
+  // once, before any scheduling; nothing is running yet in this process.
+  const reconciled = deps.db
+    .updateTable("job_run")
+    .set({ completed_at: sql`now()`, outcome: "failed", detail: "orphaned: the process exited mid-run" })
+    .where("completed_at", "is", null)
+    .execute()
+    .then(() => undefined)
+    .catch((err: unknown) => console.error("job_run orphan reconciliation failed:", err));
+
+  const lastRuns = async (): Promise<Map<string, LastRuns>> => {
     const rows = await deps.db
       .selectFrom("job_run")
       .select(["job_name"])
-      .select(({ fn }) => fn.max("started_at").as("at"))
+      .select(({ fn }) => fn.max("started_at").as("started"))
+      .select(sql<Date | null>`max(CASE WHEN outcome = 'succeeded' THEN started_at END)`.as("succeeded"))
       .groupBy("job_name")
       .execute();
-    return new Map(rows.map((r) => [r.job_name, r.at]));
+    return new Map(rows.map((r) => [r.job_name, { started: r.started, succeeded: r.succeeded }]));
   };
+
+  const NEVER: LastRuns = { started: null, succeeded: null };
 
   const tick = async () => {
     if (busy !== null) return;
     busy = "(scheduling)";
     try {
-      const last = await lastStarts();
+      await reconciled;
+      const last = await lastRuns();
       for (const job of deps.jobs) {
-        if (isDue(job.schedule, now(), last.get(job.name) ?? null)) {
+        if (isDue(job.schedule, job.window, now(), last.get(job.name) ?? NEVER)) {
           busy = job.name;
           await runJob(deps, job);
         }
@@ -174,6 +212,7 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
       if (job === undefined || busy !== null) return false;
       busy = job.name;
       try {
+        await reconciled; // never insert a live run the orphan sweep could catch
         await runJob(deps, job);
       } finally {
         busy = null;

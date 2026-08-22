@@ -9,6 +9,8 @@ pnpm install
 pnpm test                      # vitest, against in-memory DuckDB
 pnpm typecheck
 pnpm db:build [target.duckdb]  # blow away and rebuild from schema/*.sql
+pnpm app:dev                   # web app: tsx watch + vite build --watch (islands)
+pnpm app:build && pnpm app:start  # web app, production shape
 ```
 
 Populating a fresh database end to end (production access = `beeline` in
@@ -25,7 +27,7 @@ pnpm elevation:fetch && pnpm elevation:derive  # SRTM tiles (from legacy server)
 
 ## Architecture Overview
 
-The schema **is** the `schema/*.sql` files, applied in filename order (0xx tables, 1xx derived views). No migration system before cutover: databases are blown away and rebuilt ([docs/roadmap.md](docs/roadmap.md)). QC rules, printability, and determination-of-record are SQL views, not app code. Engine: DuckDB behind dialect-neutral SQL — [ADR 0001](docs/adr/0001-duckdb-first-with-portable-sql.md).
+The schema **is** the `schema/*.sql` files, applied in filename order (0xx tables, 1xx derived views). No migration system before cutover: databases are blown away and rebuilt ([docs/roadmap.md](docs/roadmap.md)). QC rules, printability, and determination-of-record are SQL views, not app code. Engine: DuckDB behind dialect-neutral SQL — [ADR 0001](docs/adr/0001-duckdb-first-with-portable-sql.md). The web app (`src/app/`) is the process that owns the database — [ADR 0005](docs/adr/0005-app-process-owns-the-store.md): Hono with `hono/jsx` SSR views, Lit light-DOM islands built by Vite, MD3 color tokens generated from a seed (`src/app/theme/tokens.ts`), every route session-gated by construction; `/patterns` is the pattern library/proofing screen.
 
 ## Conventions & Patterns
 

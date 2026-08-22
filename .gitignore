@@ -9,3 +9,6 @@ data/
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Build output
+dist/

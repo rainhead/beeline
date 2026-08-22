@@ -28,4 +28,4 @@ Domain vocabulary lives in [CONTEXT.md](CONTEXT.md). The first schema sketch is 
 
 ## Open technology questions
 
-- DuckDB vs PostgreSQL as the primary store: decided as [ADR 0001](docs/adr/0001-duckdb-first-with-portable-sql.md) — DuckDB first, behind dialect-neutral SQL; the app-store engine is re-decided at roadmap phase 4.
+- DuckDB vs PostgreSQL as the primary store: decided as [ADR 0001](docs/adr/0001-duckdb-first-with-portable-sql.md) — DuckDB first, behind dialect-neutral SQL — and re-affirmed at phase 4 by [ADR 0005](docs/adr/0005-app-process-owns-the-store.md): the app process owns the store, ingestion runs in-process under interactivity SLAs, and PostgreSQL remains the escape hatch.

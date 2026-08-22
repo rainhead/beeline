@@ -3,6 +3,8 @@
     "target": "es2023",
     "module": "nodenext",
     "moduleResolution": "nodenext",
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
     "types": ["node"],
     "strict": true,
     "noUncheckedIndexedAccess": true,

@@ -1,0 +1,161 @@
+/* Beeline base stylesheet: Material 3 applied to semantic HTML.
+   Colors come exclusively from the generated tokens (/tokens.css);
+   this file names roles, never hex values. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  /* MD3 type scale (the slice we use), system fonts. */
+  --md-sys-typescale-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --md-sys-typescale-display: 400 2.25rem/2.75rem var(--md-sys-typescale-font);
+  --md-sys-typescale-headline: 400 1.5rem/2rem var(--md-sys-typescale-font);
+  --md-sys-typescale-title: 500 1.125rem/1.75rem var(--md-sys-typescale-font);
+  --md-sys-typescale-body: 400 1rem/1.5rem var(--md-sys-typescale-font);
+  --md-sys-typescale-label: 500 0.875rem/1.25rem var(--md-sys-typescale-font);
+  --md-sys-shape-corner: 0.5rem;
+  --md-sys-shape-corner-full: 999rem;
+}
+
+body {
+  margin: 0;
+  font: var(--md-sys-typescale-body);
+  background: var(--md-sys-color-background);
+  color: var(--md-sys-color-on-background);
+}
+
+h1 { font: var(--md-sys-typescale-display); margin: 0 0 1rem; }
+h2 { font: var(--md-sys-typescale-headline); margin: 2rem 0 0.75rem; }
+h3 { font: var(--md-sys-typescale-title); margin: 1.5rem 0 0.5rem; }
+
+a { color: var(--md-sys-color-primary); }
+a:visited { color: var(--md-sys-color-tertiary); }
+
+code, pre {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.875em;
+  background: var(--md-sys-color-surface-variant);
+  color: var(--md-sys-color-on-surface-variant);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.3em;
+}
+
+/* Layout chrome */
+
+body > header {
+  background: var(--md-sys-color-surface-variant);
+  color: var(--md-sys-color-on-surface-variant);
+  padding: 0.75rem 1.5rem;
+  display: flex;
+  align-items: baseline;
+  gap: 1.5rem;
+}
+body > header .brand {
+  font: var(--md-sys-typescale-title);
+  color: var(--md-sys-color-on-surface);
+  text-decoration: none;
+}
+body > header nav { display: flex; gap: 1rem; }
+body > header nav a { font: var(--md-sys-typescale-label); text-decoration: none; }
+
+main {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+/* Environment banner: any instance that is not production says so
+   (sandbox-until-launch, beeline-2u8). */
+.env-banner {
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+  font: var(--md-sys-typescale-label);
+  text-align: center;
+  padding: 0.25rem 1rem;
+}
+
+/* Tables */
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+}
+th {
+  font: var(--md-sys-typescale-label);
+  color: var(--md-sys-color-on-surface-variant);
+  text-align: left;
+}
+th, td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+tbody tr:hover { background: var(--md-sys-color-surface-variant); }
+
+/* Forms */
+
+label {
+  display: block;
+  font: var(--md-sys-typescale-label);
+  color: var(--md-sys-color-on-surface-variant);
+  margin: 0.75rem 0 0.25rem;
+}
+input:not([type="checkbox"], [type="radio"]), select, textarea {
+  font: var(--md-sys-typescale-body);
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface);
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  width: 100%;
+  max-width: 24rem;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 1px;
+}
+
+button, .button {
+  font: var(--md-sys-typescale-label);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  padding: 0.625rem 1.5rem;
+  cursor: pointer;
+}
+button:hover { filter: brightness(1.08); }
+button.tonal {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+button.outlined {
+  background: transparent;
+  color: var(--md-sys-color-primary);
+  border: 1px solid var(--md-sys-color-outline);
+}
+
+/* Status chips (QC findings will lean on these) */
+
+.chip {
+  display: inline-block;
+  font: var(--md-sys-typescale-label);
+  border-radius: var(--md-sys-shape-corner);
+  padding: 0.25rem 0.75rem;
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.chip.error {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+
+/* Cards */
+
+.card {
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner);
+  padding: 1rem 1.25rem;
+}

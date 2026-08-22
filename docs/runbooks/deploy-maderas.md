@@ -89,6 +89,7 @@ sudo certbot --apache -d beeline.beeatlas.net
 ### 6. Verify
 
 ```sh
+curl -sI http://beeline.beeatlas.net/healthz | head -1      # 301 → https (once the cert exists)
 curl -sI https://beeline.beeatlas.net/healthz | head -1     # 200
 curl -s  https://beeline.beeatlas.net/ | grep -o 'Sign in with iNaturalist'
 # sign in from a browser: a known member lands on their QC list;

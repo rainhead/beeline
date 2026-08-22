@@ -1,12 +1,13 @@
 import { DuckDBInstance } from "@duckdb/node-api";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Kysely } from "kysely";
 import { createKysely } from "../db.js";
 import type { Database } from "../model.js";
 import type { AppConfig } from "./config.js";
 
-const PRIVATE_SCHEMA_DIR = new URL("../../schema/private/", import.meta.url).pathname;
+const PRIVATE_SCHEMA_DIR = fileURLToPath(new URL("../../schema/private/", import.meta.url));
 
 const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
 

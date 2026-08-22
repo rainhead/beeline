@@ -50,7 +50,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     const rsync = spawn("rsync", ["-a", `--files-from=${listPath}`, REMOTE, demDir], {
       stdio: ["ignore", "inherit", "inherit"],
     });
-    const code = await new Promise<number>((resolve) => rsync.on("close", resolve));
+    // A null close code means rsync died on a signal — never success.
+    const code = await new Promise<number>((resolve) => rsync.on("close", (c) => resolve(c ?? 1)));
     // 23/24: partial transfer — tiles the server lacks; the post-check below
     // reports exactly which. (macOS rsync predates --ignore-missing-args.)
     if (code !== 0 && code !== 23 && code !== 24) {

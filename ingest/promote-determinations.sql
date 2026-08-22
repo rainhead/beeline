@@ -52,7 +52,10 @@ JOIN (
 WHERE r.inat_login IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM inat_account ia WHERE ia.person_id = dp.person_id)
   AND NOT EXISTS (SELECT 1 FROM inat_account ia WHERE ia.inat_user_id = u.uid)
-QUALIFY row_number() OVER (PARTITION BY u.uid ORDER BY r.name) = 1;
+-- The NOT EXISTS guards see the table before this INSERT, not the other
+-- rows of it: dedup within the batch on both keys (person_id is the PK).
+QUALIFY row_number() OVER (PARTITION BY u.uid ORDER BY r.name) = 1
+    AND row_number() OVER (PARTITION BY dp.person_id ORDER BY r.name) = 1;
 
 -- Curation surface: determiner strings the alias CSV doesn't cover yet.
 CREATE OR REPLACE VIEW legacy_determiner_unresolved AS

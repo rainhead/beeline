@@ -25,12 +25,16 @@ WHERE sample.inat_observation_id = f.inat_id;
 -- shifted pairs never enter the sample layer, so existing believed-true
 -- rows (legacy private-preferred ingestion) are left untouched.
 CREATE OR REPLACE TEMP TABLE observation_location_candidate AS
+-- The private pair is used only whole: a half-present pair (never seen from
+-- the API, but ruinous if mixed) falls back to the public coordinates.
 SELECT s.entity_id AS sample_id,
-       CASE WHEN f.private_latitude IS NOT NULL
+       CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL
             THEN 'inat_trusted' ELSE 'inat_public' END AS source,
-       coalesce(f.private_latitude, f.latitude)        AS latitude,
-       coalesce(f.private_longitude, f.longitude)      AS longitude,
-       f.positional_accuracy                           AS coordinate_uncertainty_m
+       CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL
+            THEN f.private_latitude ELSE f.latitude END   AS latitude,
+       CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL
+            THEN f.private_longitude ELSE f.longitude END AS longitude,
+       f.positional_accuracy                              AS coordinate_uncertainty_m
 FROM sample s
 JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id
 WHERE (f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL)

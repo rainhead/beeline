@@ -267,7 +267,10 @@ FROM (
   HAVING count(DISTINCT (fn, ln)) = 1
 ) c
 JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM c.fn AND m.ln IS NOT DISTINCT FROM c.ln
-QUALIFY row_number() OVER (PARTITION BY m.person_id ORDER BY c.login) = 1;
+-- One row per person AND per iNat user id: a login change upstream leaves
+-- two logins with the same uid, and inat_user_id is UNIQUE.
+QUALIFY row_number() OVER (PARTITION BY m.person_id ORDER BY c.login) = 1
+    AND row_number() OVER (PARTITION BY c.uid ORDER BY c.login) = 1;
 
 -- ── Samples ─────────────────────────────────────────────────────────────
 -- One sample per (person, start date, sample number). Descriptive fields

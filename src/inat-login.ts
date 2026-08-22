@@ -78,7 +78,7 @@ async function fullLogin(creds: Credentials): Promise<string> {
   });
   if (!response.ok) throw new Error(`token exchange failed: ${response.status} ${await response.text()}`);
   const token = (await response.json()) as { access_token: string };
-  await writeFile(TOKEN_PATH, JSON.stringify(token, null, 2));
+  await writeFile(TOKEN_PATH, JSON.stringify(token, null, 2), { mode: 0o600 });
   await chmod(TOKEN_PATH, 0o600);
   return token.access_token;
 }
@@ -89,7 +89,7 @@ async function mintJwt(accessToken: string): Promise<string> {
   });
   if (!response.ok) throw new Error(`JWT mint failed: ${response.status} — access token revoked? rerun with --relogin`);
   const { api_token: jwt } = (await response.json()) as { api_token: string };
-  await writeFile(JWT_PATH, jwt);
+  await writeFile(JWT_PATH, jwt, { mode: 0o600 });
   await chmod(JWT_PATH, 0o600);
   return jwt;
 }

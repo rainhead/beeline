@@ -10,8 +10,12 @@
 -- now); nodes join uniquely on (rank, scientific_name) — subgenus names are
 -- stored as 'Genus (Subgenus)'.
 
+-- Blank cells become NULL here so a half-filled row can contribute what it
+-- has (family for a genus) without minting nameless or 'Genus ' animals.
 CREATE TABLE legacy_taxonomy_csv AS
-SELECT trim(family) AS family, trim(genus) AS genus, trim(species) AS species
+SELECT nullif(trim(family), '') AS family,
+       nullif(trim(genus), '') AS genus,
+       nullif(trim(species), '') AS species
 FROM read_csv('{{TAXONOMY_CSV}}', header = true);
 
 -- ── Spine ───────────────────────────────────────────────────────────────
@@ -56,7 +60,7 @@ INSERT INTO animal (rank, scientific_name, parent_id)
 SELECT 'family', f.family, o.entity_id
 FROM (
   SELECT family FROM legacy_family_order
-  UNION SELECT DISTINCT family FROM legacy_taxonomy_csv
+  UNION SELECT DISTINCT family FROM legacy_taxonomy_csv WHERE family IS NOT NULL
 ) f
 LEFT JOIN legacy_family_order fo ON fo.family = f.family
 JOIN animal o ON o.rank = 'order'
@@ -81,7 +85,7 @@ SELECT g.base_genus,
    ) t) AS ord
 FROM (
   SELECT DISTINCT base_genus FROM legacy_det_taxa WHERE base_genus IS NOT NULL
-  UNION SELECT DISTINCT genus FROM legacy_taxonomy_csv
+  UNION SELECT DISTINCT genus FROM legacy_taxonomy_csv WHERE genus IS NOT NULL
   UNION SELECT DISTINCT nullif(trim(genusVolDet), '') FROM legacy_promotable
           WHERE nullif(trim(genusVolDet), '') IS NOT NULL
 ) g;
@@ -114,6 +118,7 @@ FROM (
     FROM legacy_det_taxa WHERE base_genus IS NOT NULL AND epithet IS NOT NULL
     UNION ALL
     SELECT genus, species, NULL FROM legacy_taxonomy_csv
+    WHERE genus IS NOT NULL AND species IS NOT NULL
     UNION ALL
     SELECT nullif(trim(genusVolDet), ''), nullif(trim(speciesVolDet), ''), NULL
     FROM legacy_promotable

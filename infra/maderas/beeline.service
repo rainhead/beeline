@@ -9,8 +9,10 @@ After=network-online.target
 WorkingDirectory=%h/dev/beeline
 # Secrets and settings live outside the repo and the databases (ADR 0003).
 EnvironmentFile=%h/.config/beeline/env
-# Login shells on maderas don't load nvm, so source it explicitly; the
-# node version follows nvm's default alias (set to the .nvmrc major).
+# systemd's user PATH has neither pnpm (~/.local/bin) nor node (nvm, which
+# login shells don't load either) — provide both explicitly; the node
+# version follows nvm's default alias (set to the .nvmrc major).
+Environment=PATH=%h/.local/bin:/usr/bin:/bin
 ExecStart=/bin/bash -c '. "$HOME/.nvm/nvm.sh" && exec pnpm app:start'
 Restart=on-failure
 RestartSec=5

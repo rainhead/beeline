@@ -4,10 +4,10 @@ Questions we can't answer from code or data, queued for Peter's next meetings wi
 
 ## Trap sampling (mostly unknown territory — no reference implementation, spreadsheets unseen)
 
-Production facts to anchor the conversation: ~52k trap-collected records (14% of all), sample series `OBAS-00016`–`OBAS-00669`+ (Oregon vane traps, 33k records) and `WBAS-…` (487), single samples up to 2,252 specimens, 53k records carry end-dates (date ranges).
+Production facts to anchor the conversation: ~52k trap-collected records (14% of all), sample series `OBAS-00016`–`OBAS-00669`+ (Oregon vane traps, 33k records) and `WBAS-…` (487), single samples up to 2,252 specimens, 53k records carry end-dates (date ranges). The `within_sample_disagreement` findings (973 samples) add evidence for question 2: the largest clusters are trap groups whose rows carry *incrementing* localities along a route ("… Forest Service Road 2780 | 2781 | 2782 …") with coordinates differing to match — one (person, date, sample-number) group that looks like a trap line of distinct collecting spots, not one place.
 
 1. **Who assigns the `OBAS-`/`WBAS-` sample numbers, and is there a registry?** (A spreadsheet mapping sample → site, dates, trap details?) Can we see it?
-2. **What is a trap site?** Are traps at fixed, named locations with a deployment history, or placed ad hoc? Do multiple traps at one site make one sample or several?
+2. **What is a trap site?** Are traps at fixed, named locations with a deployment history, or placed ad hoc? Do multiple traps at one site make one sample or several? And for the trap-line pattern above: is a route one sample with many stations, or many samples sharing a number — and which does the label/record need?
 3. **Protocol vocabulary**: production free text includes vane trap(s), blue vane trap, pan trap(s), trap nest, vacuum — and effort smuggled into strings like "6 Vane Traps" / "25 Pan Traps". What controlled vocabulary do staff actually think in? Is trap *count* per sample recorded anywhere reliable?
 4. **Dates**: is the range's start date the previous servicing? Where is servicing recorded today?
 5. **Batch processing**: when a large catch is processed over weeks, what does the processor record per batch, and when do those specimens become printable?

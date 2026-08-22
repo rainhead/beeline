@@ -27,11 +27,12 @@ describe("configFromEnv deploy safety", () => {
     expect(config.origin).toBe("https://beeline.example");
   });
 
-  it("parses the admin allowlist", () => {
+  it("the admin roster is checked in; the env var overrides it when set", () => {
+    expect(configFromEnv({}).adminLogins).toEqual(["rainhead"]);
     expect(configFromEnv({ BEELINE_ADMIN_LOGINS: "rainhead, amelathopoulos" }).adminLogins).toEqual([
       "rainhead",
       "amelathopoulos",
     ]);
-    expect(configFromEnv({}).adminLogins).toEqual([]);
+    expect(configFromEnv({ BEELINE_ADMIN_LOGINS: "" }).adminLogins).toEqual([]); // explicit nobody
   });
 });

@@ -17,8 +17,10 @@ export interface AppConfig {
   /** Public origin of this instance, e.g. https://beeline.example — OAuth redirect target and CSRF origin check. */
   origin: string;
   /**
-   * iNat logins allowed on the admin surface (/jobs). Everyone is an admin
-   * in development; elsewhere an empty list means nobody (beeline-6va).
+   * iNat logins allowed on the admin surface (/jobs, beeline-6va). The
+   * checked-in default below is the real roster; BEELINE_ADMIN_LOGINS
+   * overrides it when set (dev/testing). Development bypasses the check
+   * entirely either way.
    */
   adminLogins: string[];
   /**
@@ -42,6 +44,9 @@ export interface AppConfig {
   /** Anti-entropy sweep depth in days: the presence-proof window (d1 = today - sweepDays). */
   sweepDays: number;
 }
+
+/** The admin roster, checked in: who may see /jobs and trigger ingestion. */
+const ADMIN_LOGINS = ["rainhead"];
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const environment = env.BEELINE_ENV ?? "development";
@@ -83,10 +88,12 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     privateDbPath: env.BEELINE_PRIVATE_DB ?? "private.duckdb",
     privateDbKey,
     origin: origin ?? `http://localhost:${port}`,
-    adminLogins: (env.BEELINE_ADMIN_LOGINS ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s !== ""),
+    adminLogins:
+      env.BEELINE_ADMIN_LOGINS === undefined
+        ? ADMIN_LOGINS
+        : env.BEELINE_ADMIN_LOGINS.split(",")
+            .map((s) => s.trim())
+            .filter((s) => s !== ""),
     correctionsPath: env.BEELINE_CORRECTIONS ?? "data/corrections.csv",
     environment,
     devLogin: environment === "development" ? (env.BEELINE_DEV_LOGIN ?? null) : null,

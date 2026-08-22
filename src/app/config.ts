@@ -32,7 +32,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`BEELINE_ENV must be development|sandbox|production, got '${environment}'`);
   }
   return {
-    port: env.PORT ? Number(env.PORT) : 3000,
+    port: env.PORT ? Number(env.PORT) : 0xbee, // 3054: unmistakably ours among the neighbors' dev servers
     dbPath: env.BEELINE_DB ?? "beeline.duckdb",
     privateDbPath: env.BEELINE_PRIVATE_DB ?? "private.duckdb",
     privateDbKey: env.BEELINE_PRIVATE_DB_KEY ?? null,

@@ -21,6 +21,17 @@ describe("isDue", () => {
     expect(isDue(s, now, new Date("2026-08-22T11:00:00Z"))).toBe(true);
   });
 
+  it("weeklyLA: fires only on the LA weekday, once", () => {
+    const s = { kind: "weeklyLA", weekday: 0, hour: 3 } as const;
+    // 2026-08-23 is a Sunday; 10:01Z = 03:01 LA (PDT).
+    expect(isDue(s, new Date("2026-08-23T10:01:00Z"), null)).toBe(true);
+    expect(isDue(s, new Date("2026-08-23T09:01:00Z"), null)).toBe(false); // 02:01 LA, too early
+    expect(isDue(s, new Date("2026-08-24T10:01:00Z"), null)).toBe(false); // Monday
+    // Already ran that Sunday → next Sunday.
+    expect(isDue(s, new Date("2026-08-23T20:00:00Z"), new Date("2026-08-23T10:01:00Z"))).toBe(false);
+    expect(isDue(s, new Date("2026-08-30T10:01:00Z"), new Date("2026-08-23T10:01:00Z"))).toBe(true);
+  });
+
   it("dailyLA: fires once per LA day, at or after the hour", () => {
     const s = { kind: "dailyLA", hour: 2 } as const;
     // PDT is UTC-7: 08:59Z = 01:59 LA (too early), 09:01Z = 02:01 LA (due).

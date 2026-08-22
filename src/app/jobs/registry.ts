@@ -1,10 +1,12 @@
 import { readFile } from "node:fs/promises";
+import type { Kysely } from "kysely";
 import { deriveElevations } from "../../derive-elevation.js";
+import type { Database } from "../../model.js";
 import { promoteObservations } from "../../promote-observations.js";
 import { syncINat } from "../../sync-inat.js";
 import type { AppConfig } from "../config.js";
 import { purgeIdleSessions } from "../session.js";
-import type { Job } from "./framework.js";
+import type { Job, JobContext } from "./framework.js";
 
 /**
  * Fresh 24h JWT from the stored pipeline access token — same source the CLI
@@ -22,7 +24,35 @@ async function mintJwt(): Promise<string> {
   return ((await res.json()) as { api_token: string }).api_token;
 }
 
-export function buildJobs(config: Pick<AppConfig, "syncProjects" | "syncDays">): Job[] {
+/** Start of the most recent completed sync run for a source, or null. */
+export async function lastSyncStart(db: Kysely<Database>, source: string): Promise<Date | null> {
+  const row = await db
+    .selectFrom("sync_run")
+    .where("source", "=", source)
+    .where("completed_at", "is not", null)
+    .select(({ fn }) => fn.max("started_at").as("at"))
+    .executeTakeFirst();
+  return row?.at ?? null;
+}
+
+/** Overlap margin for incremental runs: re-fetching an hour twice is free (hash-dedup). */
+const UPDATED_SINCE_MARGIN_MS = 60 * 60 * 1000;
+
+const sweepStart = (sweepDays: number) => new Date(Date.now() - sweepDays * 86_400_000).toISOString().slice(0, 10);
+
+/** Promote and elevation, shared by both sync jobs. */
+async function pipelineTail(ctx: JobContext, parts: string[]): Promise<string> {
+  const promoted = await ctx.step("promote observations", () => promoteObservations(ctx.conn));
+  parts.push(`${promoted.linkedSamples} samples linked`);
+  const elevation = await ctx.step("derive elevations", () => deriveElevations(ctx.conn));
+  parts.push(
+    `elevation ${elevation.filled}/${elevation.gaps} filled` +
+      (elevation.missingTiles.length > 0 ? ` (missing tiles: ${elevation.missingTiles.join(", ")})` : ""),
+  );
+  return parts.join("; ");
+}
+
+export function buildJobs(config: Pick<AppConfig, "syncProjects" | "sweepDays">): Job[] {
   return [
     {
       name: "session-purge",
@@ -33,7 +63,9 @@ export function buildJobs(config: Pick<AppConfig, "syncProjects" | "syncDays">):
       },
     },
     {
-      // The whole ingestion chain, in the ADR 0005 night carve-out.
+      // Incremental ingestion (beeline-3hj): updated_since catches edits and
+      // creations of any-aged observation since the last run. First run ever
+      // for a source falls back to a full sweep of the presence window.
       name: "nightly-pipeline",
       schedule: { kind: "dailyLA", hour: 2 },
       window: "night",
@@ -42,20 +74,41 @@ export function buildJobs(config: Pick<AppConfig, "syncProjects" | "syncDays">):
           return "no projects configured (BEELINE_SYNC_PROJECTS) — nothing to sync";
         }
         const token = await ctx.step("mint JWT", mintJwt);
-        const d1 = new Date(Date.now() - config.syncDays * 86_400_000).toISOString().slice(0, 10);
         const parts: string[] = [];
         for (const projectId of config.syncProjects) {
-          const r = await ctx.step(`sync project ${projectId}`, () => syncINat(ctx.conn, { projectId, d1, token }));
-          parts.push(`project ${projectId}: ${r.fetched} fetched, ${r.newLoads} new`);
+          const last = await lastSyncStart(ctx.db, String(projectId));
+          if (last === null) {
+            const d1 = sweepStart(config.sweepDays);
+            const r = await ctx.step(`first full sweep ${projectId}`, () => syncINat(ctx.conn, { projectId, d1, token }));
+            parts.push(`project ${projectId} (first sweep since ${d1}): ${r.fetched} fetched, ${r.newLoads} new`);
+          } else {
+            const updatedSince = new Date(last.getTime() - UPDATED_SINCE_MARGIN_MS).toISOString();
+            const r = await ctx.step(`incremental ${projectId}`, () => syncINat(ctx.conn, { projectId, updatedSince, token }));
+            parts.push(`project ${projectId} (updated since ${updatedSince.slice(0, 16)}Z): ${r.fetched} fetched, ${r.newLoads} new`);
+          }
         }
-        const promoted = await ctx.step("promote observations", () => promoteObservations(ctx.conn));
-        parts.push(`${promoted.linkedSamples} samples linked`);
-        const elevation = await ctx.step("derive elevations", () => deriveElevations(ctx.conn));
-        parts.push(
-          `elevation ${elevation.filled}/${elevation.gaps} filled` +
-            (elevation.missingTiles.length > 0 ? ` (missing tiles: ${elevation.missingTiles.join(", ")})` : ""),
-        );
-        return parts.join("; ");
+        return pipelineTail(ctx, parts);
+      },
+    },
+    {
+      // Anti-entropy (beeline-3hj): a full presence sweep of the trailing
+      // window — the only kind of run that can prove an observation gone
+      // (deletion detection reads covering runs; incremental runs are not).
+      name: "weekly-sweep",
+      schedule: { kind: "weeklyLA", weekday: 0, hour: 3 },
+      window: "night",
+      async run(ctx) {
+        if (config.syncProjects.length === 0) {
+          return "no projects configured (BEELINE_SYNC_PROJECTS) — nothing to sweep";
+        }
+        const token = await ctx.step("mint JWT", mintJwt);
+        const d1 = sweepStart(config.sweepDays);
+        const parts: string[] = [];
+        for (const projectId of config.syncProjects) {
+          const r = await ctx.step(`sweep ${projectId}`, () => syncINat(ctx.conn, { projectId, d1, token }));
+          parts.push(`project ${projectId} (full sweep since ${d1}): ${r.fetched} fetched, ${r.newLoads} new`);
+        }
+        return pipelineTail(ctx, parts);
       },
     },
   ];

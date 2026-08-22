@@ -26,10 +26,10 @@ export interface AppConfig {
    * until real auth lands (beeline-2c3.3). Ignored outside development.
    */
   devLogin: string | null;
-  /** iNat project ids the nightly pipeline syncs; empty = the job reports nothing-to-do. */
+  /** iNat project ids the sync jobs cover; empty = the jobs report nothing-to-do. */
   syncProjects: number[];
-  /** Sliding sync window in days (d1 = today - syncDays). */
-  syncDays: number;
+  /** Anti-entropy sweep depth in days: the presence-proof window (d1 = today - sweepDays). */
+  sweepDays: number;
 }
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -55,6 +55,6 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
       .map((s) => s.trim())
       .filter((s) => s !== "")
       .map(Number),
-    syncDays: env.BEELINE_SYNC_DAYS ? Number(env.BEELINE_SYNC_DAYS) : 14,
+    sweepDays: env.BEELINE_SWEEP_DAYS ? Number(env.BEELINE_SWEEP_DAYS) : 365,
   };
 }

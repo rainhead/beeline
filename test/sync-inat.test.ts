@@ -185,6 +185,38 @@ describe("iNat sync", () => {
     expect(await missing()).toHaveLength(0);
   });
 
+  test("an incremental (updated_since) run never claims coverage — and sends the param", async () => {
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    const sampleId = await insertCleanSample(conn, { inat_observation_id: "42" });
+    await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(42)]]) });
+
+    // Empty incremental run: observation 42 wasn't updated — that is NOT
+    // evidence it is gone, so no missing-upstream finding may appear.
+    const urls: string[] = [];
+    const capturing: typeof fetch = async (input) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    };
+    await syncINat(conn, { ...base, updatedSince: "2026-08-20T00:00:00Z", fetchImpl: capturing });
+
+    expect(urls[0]).toContain("updated_since=2026-08-20T00%3A00%3A00Z");
+    const run = await rows(conn, `SELECT updated_since FROM sync_run ORDER BY entity_id DESC LIMIT 1`);
+    expect(run[0]![0]).not.toBeNull();
+    const missing = await rows(
+      conn,
+      `SELECT rule_name FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'observation_missing_upstream'`,
+    );
+    expect(missing).toHaveLength(0);
+
+    // The same emptiness from a full sweep IS evidence.
+    await syncINat(conn, { ...base, fetchImpl: fakeApi([[]]) });
+    const after = await rows(
+      conn,
+      `SELECT rule_name FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'observation_missing_upstream'`,
+    );
+    expect(after).toEqual([["observation_missing_upstream"]]);
+  });
+
   test("canonical json is order-insensitive", () => {
     expect(canonicalJson({ b: 1, a: [{ y: 2, x: 1 }] })).toBe('{"a":[{"x":1,"y":2}],"b":1}');
   });

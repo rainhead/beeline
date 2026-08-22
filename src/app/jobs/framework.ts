@@ -15,7 +15,9 @@ export type JobWindow = "interactive" | "night";
 export type Schedule =
   | { kind: "everyMinutes"; minutes: number }
   | /** Once per LA calendar day, at or after this hour (schedule night jobs ≥ 0 and < 5). */
-    { kind: "dailyLA"; hour: number };
+    { kind: "dailyLA"; hour: number }
+  | /** Once per week: on this LA weekday (0 = Sunday), at or after this hour. */
+    { kind: "weeklyLA"; weekday: number; hour: number };
 
 export interface JobContext {
   db: Kysely<Database>;
@@ -35,8 +37,10 @@ export interface Job {
 
 const LA = "America/Los_Angeles";
 
-/** Calendar date and hour of an instant, in the night-window's timezone. */
-export function laParts(instant: Date): { date: string; hour: number } {
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Calendar date, hour, and weekday (0 = Sunday) of an instant, in the night-window's timezone. */
+export function laParts(instant: Date): { date: string; hour: number; weekday: number } {
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: LA,
     year: "numeric",
@@ -44,9 +48,14 @@ export function laParts(instant: Date): { date: string; hour: number } {
     day: "2-digit",
     hour: "2-digit",
     hourCycle: "h23",
+    weekday: "short",
   });
   const parts = Object.fromEntries(fmt.formatToParts(instant).map((p) => [p.type, p.value])) as Record<string, string>;
-  return { date: `${parts.year}-${parts.month}-${parts.day}`, hour: Number(parts.hour) };
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    hour: Number(parts.hour),
+    weekday: WEEKDAYS.indexOf(parts.weekday!),
+  };
 }
 
 export function isDue(schedule: Schedule, now: Date, lastStarted: Date | null): boolean {
@@ -56,6 +65,11 @@ export function isDue(schedule: Schedule, now: Date, lastStarted: Date | null): 
     case "dailyLA": {
       const nowLA = laParts(now);
       if (nowLA.hour < schedule.hour) return false;
+      return lastStarted === null || laParts(lastStarted).date !== nowLA.date;
+    }
+    case "weeklyLA": {
+      const nowLA = laParts(now);
+      if (nowLA.weekday !== schedule.weekday || nowLA.hour < schedule.hour) return false;
       return lastStarted === null || laParts(lastStarted).date !== nowLA.date;
     }
   }

@@ -162,6 +162,7 @@ export interface SyncRunTable {
   authenticated: boolean;
   window_start: ColumnType<Date, Date | string, Date | string> | null;
   window_end: ColumnType<Date, Date | string, Date | string> | null;
+  updated_since: ColumnType<Date, Date | string, Date | string> | null;
   started_at: Timestamped;
   completed_at: ColumnType<Date, Date | string, Date | string> | null;
 }

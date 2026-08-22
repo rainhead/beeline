@@ -203,6 +203,9 @@ JOIN sync_run r
   ON r.source = ss.source
  AND r.completed_at IS NOT NULL
  AND r.started_at > ls.last_seen_at
+ -- Incremental (updated_since) runs fetch only the changed subset: they can
+ -- never prove an observation gone, so they are not covering runs.
+ AND r.updated_since IS NULL
  AND (r.window_start IS NULL OR f.observed_on >= r.window_start)
  AND (r.window_end IS NULL OR f.observed_on <= r.window_end)
 GROUP BY s.entity_id, s.inat_observation_id;

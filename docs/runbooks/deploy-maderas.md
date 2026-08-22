@@ -108,7 +108,7 @@ database rebuild (or a one-off table apply while the service is stopped).
 
 ## Operational notes
 
-- The nightly pipeline runs at 02:00 **America/Los_Angeles**; the beeatlas
+- The nightly incremental pipeline runs at 02:00 **America/Los_Angeles** and the weekly anti-entropy sweep Sundays at 03:00; the beeatlas
   nightly runs at 03:00 server time — check maderas's timezone once and make
   sure the two don't overlap on the shared two cores.
 - Real backups start at roadmap phase 7. Until then the database is

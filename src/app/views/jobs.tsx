@@ -12,7 +12,11 @@ export interface JobRunRow {
 }
 
 const scheduleLabel = (m: Messages, s: Schedule) =>
-  s.kind === "everyMinutes" ? m.jobs.everyMinutes(s.minutes) : m.jobs.dailyLA(s.hour);
+  s.kind === "everyMinutes"
+    ? m.jobs.everyMinutes(s.minutes)
+    : s.kind === "dailyLA"
+      ? m.jobs.dailyLA(s.hour)
+      : m.jobs.weeklyLA(m.jobs.weekdays[s.weekday] ?? String(s.weekday), s.hour);
 
 function Outcome({ m, run }: { m: Messages; run: JobRunRow }) {
   if (run.outcome === "succeeded") return <span class="chip">{m.jobs.outcomeSucceeded}</span>;

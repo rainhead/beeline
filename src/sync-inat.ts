@@ -28,6 +28,14 @@ export interface SyncOptions {
   projectId: number;
   d1?: string;
   d2?: string;
+  /**
+   * ISO instant: fetch only observations updated at/after it (activity-based —
+   * catches edits and creations regardless of observed_on). An incremental run
+   * proves nothing about absence, so it is excluded from deletion detection's
+   * covering runs (sync_run.updated_since; schema/120). Callers overlap the
+   * previous run by a margin: re-fetches are free (hash-dedup).
+   */
+  updatedSince?: string;
   /** undefined → fall back to INAT_JWT / data/secrets/inat-jwt; null → explicitly tokenless (tests). */
   token?: string | null;
   /** Explicit dev-only escape hatch; never the silent default. */
@@ -87,9 +95,9 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
   await conn.run("BEGIN TRANSACTION");
   try {
     const syncRunId = await scalar(
-      `INSERT INTO sync_run (source, authenticated, window_start, window_end)
-       VALUES ($1, $2, $3, $4) RETURNING entity_id`,
-      [String(opts.projectId), !!token, opts.d1 ?? null, opts.d2 ?? null],
+      `INSERT INTO sync_run (source, authenticated, window_start, window_end, updated_since)
+       VALUES ($1, $2, $3, $4, $5) RETURNING entity_id`,
+      [String(opts.projectId), !!token, opts.d1 ?? null, opts.d2 ?? null, opts.updatedSince ?? null],
     );
 
     let fetched = 0, newLoads = 0, unchanged = 0, idAbove = 0;
@@ -103,6 +111,7 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
       url.searchParams.set("fields", FIELDS);
       if (opts.d1) url.searchParams.set("d1", opts.d1);
       if (opts.d2) url.searchParams.set("d2", opts.d2);
+      if (opts.updatedSince) url.searchParams.set("updated_since", opts.updatedSince);
 
       const response = await fetchImpl(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},

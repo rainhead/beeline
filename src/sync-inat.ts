@@ -44,6 +44,8 @@ export interface SyncOptions {
   fetchImpl?: typeof fetch;
   /** Pause between pages; the public API allows 100 req/min, we stay well under. */
   pageDelayMs?: number;
+  /** Per-request abort; a stalled response must not hold the write transaction open. */
+  requestTimeoutMs?: number;
   apiBase?: string;
 }
 
@@ -85,7 +87,9 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
     );
   }
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const perPage = opts.perPage ?? 200;
+  // The endpoint caps per_page at 200; asking for more would make every real
+  // page "short" and end the sweep after one page (beeline-m3k).
+  const perPage = Math.min(opts.perPage ?? 200, 200);
   const apiBase = opts.apiBase ?? "https://api.inaturalist.org/v2";
   const scalar = async (sql: string, params: unknown[] = []): Promise<number> => {
     const [[v]] = (await (await conn.run(sql, params as never)).getRows()) as [[bigint | number]];
@@ -101,6 +105,7 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
     );
 
     let fetched = 0, newLoads = 0, unchanged = 0, idAbove = 0;
+    let expectedTotal: number | undefined;
     for (;;) {
       const url = new URL(`${apiBase}/observations`);
       url.searchParams.set("project_id", String(opts.projectId));
@@ -115,12 +120,17 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
 
       const response = await fetchImpl(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
+        signal: AbortSignal.timeout(opts.requestTimeoutMs ?? 60_000),
       });
       if (!response.ok) {
         throw new Error(`iNat API ${response.status} on ${url.pathname}?id_above=${idAbove}`);
       }
-      const body = (await response.json()) as { results: Array<Record<string, unknown>> };
-      const results = body.results ?? [];
+      const body = (await response.json()) as { results?: unknown; total_results?: number };
+      if (!Array.isArray(body.results)) {
+        throw new Error(`iNat API returned no results array at id_above=${idAbove} — aborting the run`);
+      }
+      const results = body.results as Array<Record<string, unknown>>;
+      if (typeof body.total_results === "number") expectedTotal = body.total_results;
 
       for (const obs of results) {
         fetched += 1;
@@ -149,10 +159,25 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
       }
 
       if (results.length < perPage) break; // short page is terminal
-      idAbove = Number(results[results.length - 1]!.id); // max RAW id
+      const nextIdAbove = Number(results[results.length - 1]!.id); // max RAW id
+      if (!Number.isFinite(nextIdAbove) || nextIdAbove <= idAbove) {
+        throw new Error(`iNat pagination did not advance past id_above=${idAbove} — aborting instead of looping`);
+      }
+      idAbove = nextIdAbove;
       if (opts.pageDelayMs !== 0) {
         await new Promise((r) => setTimeout(r, opts.pageDelayMs ?? 1100));
       }
+    }
+
+    // A short page ends pagination, but a completed run poses as covering
+    // (deletion detection reads it), so cross-check the API's own count
+    // before committing. Mid-sweep churn is ahead of the id cursor (new
+    // observations take higher ids) or lowers the total (deletions), so
+    // fetched < total means truncation, not drift (beeline-m3k).
+    if (expectedTotal !== undefined && fetched < expectedTotal) {
+      throw new Error(
+        `iNat pagination ended after ${fetched} of ${expectedTotal} observations — refusing to record a truncated run`,
+      );
     }
 
     await conn.run(`UPDATE sync_run SET completed_at = now() WHERE entity_id = $1`, [syncRunId]);

@@ -19,6 +19,7 @@ async function mintJwt(): Promise<string> {
   };
   const res = await fetch("https://www.inaturalist.org/users/api_token", {
     headers: { Authorization: `Bearer ${access_token}` },
+    signal: AbortSignal.timeout(30_000), // a hung mint must not stall the scheduler
   });
   if (!res.ok) throw new Error(`JWT mint failed (${res.status}) — aborting rather than syncing anonymously`);
   return ((await res.json()) as { api_token: string }).api_token;

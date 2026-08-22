@@ -220,4 +220,38 @@ describe("iNat sync", () => {
   test("canonical json is order-insensitive", () => {
     expect(canonicalJson({ b: 1, a: [{ y: 2, x: 1 }] })).toBe('{"a":[{"x":1,"y":2}],"b":1}');
   });
+
+  test("a truncated sweep rolls back instead of posing as a covering run (beeline-m3k)", async () => {
+    // The API says 5 observations exist but pagination dries up after 3.
+    const withTotals: typeof fetch = (() => {
+      const pages = [[obs(1), obs(2)], [obs(3)]];
+      let call = 0;
+      return async () =>
+        new Response(JSON.stringify({ results: pages[Math.min(call++, pages.length - 1)] ?? [], total_results: 5 }), {
+          status: 200,
+        });
+    })() as typeof fetch;
+    await expect(syncINat(conn, { ...base, fetchImpl: withTotals })).rejects.toThrow(/3 of 5/);
+    const [[runs]] = (await rows(conn, "SELECT count(*) FROM sync_run")) as [[unknown]];
+    expect(runs).toBe(0n);
+  });
+
+  test("pagination that fails to advance aborts instead of looping forever", async () => {
+    // A second full page whose max id is not past the cursor — an API
+    // ignoring id_above. (Identical ids would trip the observation_seen
+    // primary key; either way the run aborts rather than spinning.)
+    await expect(
+      syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(10), obs(20)], [obs(5), obs(6)]]) }),
+    ).rejects.toThrow(/did not advance/);
+  });
+
+  test("per_page is clamped to the API maximum of 200", async () => {
+    const urls: string[] = [];
+    const capturing: typeof fetch = async (input) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    };
+    await syncINat(conn, { ...base, perPage: 500, fetchImpl: capturing });
+    expect(urls[0]).toContain("per_page=200");
+  });
 });

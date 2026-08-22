@@ -25,6 +25,14 @@ describe("message catalog", () => {
     expect(Object.keys(en.qcInstructions).sort()).toEqual(ruleNames);
   });
 
+  it("describes exactly the jobs the registry builds", async () => {
+    const { buildJobs } = await import("../src/app/jobs/registry.js");
+    const names = buildJobs({ syncProjects: [], syncDays: 14 })
+      .map((j) => j.name)
+      .sort();
+    expect(Object.keys(en.jobs.descriptions).sort()).toEqual(names);
+  });
+
   it("has all three pronoun sets the schema allows", () => {
     // person.pronouns CHECK ('he','she','they') — the catalog must cover them.
     for (const set of ["he", "she", "they"] as const) {

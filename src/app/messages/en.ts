@@ -75,6 +75,12 @@ export const en = {
     intro: "Everything the app runs on a schedule, and how the recent runs went. Night-window jobs may run long; interactive jobs answer to the one-second budget.",
     registered: "Registered",
     recentRuns: "Recent runs",
+    /** What each job does, keyed by Job.name (a test pins the key sets together). */
+    descriptions: {
+      "session-purge": "Deletes sign-in sessions idle for more than 30 days; their cookies stop working.",
+      "nightly-pipeline":
+        "Pulls recent observations from the configured iNaturalist projects, promotes them into samples, and fills missing elevations from the SRTM tiles on disk.",
+    } as Record<string, string>,
     everyMinutes: (minutes: number) => `every ${n(minutes)} min`,
     dailyLA: (hour: number) => `daily at ${n(hour)}:00 Pacific (night window)`,
     windowInteractive: "interactive",

@@ -42,6 +42,9 @@ export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[] }) {
             <tr>
               <td>
                 <code>{job.name}</code>
+                <p style="margin: 0.25rem 0 0; font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant)">
+                  {m.jobs.descriptions[job.name]}
+                </p>
               </td>
               <td>{scheduleLabel(m, job.schedule)}</td>
               <td>{job.window === "night" ? m.jobs.windowNight : m.jobs.windowInteractive}</td>

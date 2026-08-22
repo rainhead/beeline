@@ -197,7 +197,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   outline-offset: 1px;
 }
 
-button, .button {
+/* :visited included: it outranks a bare class on specificity, so without it
+   a link dressed as a button turns tertiary-on-primary — illegible. */
+button, .button, a.button:visited {
   font: var(--md-sys-typescale-label);
   background: var(--md-sys-color-primary);
   color: var(--md-sys-color-on-primary);
@@ -205,6 +207,8 @@ button, .button {
   border-radius: var(--md-sys-shape-corner-full);
   padding: 0.625rem 1.5rem;
   cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
 }
 button:hover { filter: brightness(1.08); }
 button.tonal {

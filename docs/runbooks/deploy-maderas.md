@@ -105,6 +105,10 @@ ssh maderas 'cd ~/dev/beeline && git pull && pnpm install && pnpm app:build && s
 
 Brief downtime is by design (ADR 0005). Schema changes pre-cutover mean a
 database rebuild (or a one-off table apply while the service is stopped).
+**Any one-off DDL must end with an explicit `CHECKPOINT` before closing**:
+DuckDB 1.5.5 can fail WAL replay of an ALTER on a table with sequence
+defaults with an INTERNAL error, leaving the file unopenable until the WAL
+is deleted (beeline-vyi tracks the upstream report).
 
 ## Operational notes
 

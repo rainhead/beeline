@@ -40,6 +40,16 @@ describe("app correction store", () => {
     expect(records.find((r) => r[1] === "county")?.[3]).toBe("BentonCo");
   });
 
+  test("a hand-mangled row makes the save refuse instead of silently erasing it (beeline-3xw)", async () => {
+    const path = await scratchFile();
+    await upsertCorrections(path, [event({})]);
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(path, `${await readFile(path, "utf8")}bbbb2222,county,BentonCo\n`);
+    await expect(upsertCorrections(path, [event({ field: "county" })])).rejects.toThrow(/row 3/);
+    // The file is untouched — the mangled row is still there to fix.
+    expect(await readFile(path, "utf8")).toContain("bbbb2222,county,BentonCo");
+  });
+
   test("values with commas, quotes, and newlines survive the round trip DuckDB reads", async () => {
     const path = await scratchFile();
     const gnarly = '5th St, "the mill"\nnear the river';

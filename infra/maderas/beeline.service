@@ -9,8 +9,9 @@ After=network-online.target
 WorkingDirectory=%h/dev/beeline
 # Secrets and settings live outside the repo and the databases (ADR 0003).
 EnvironmentFile=%h/.config/beeline/env
-# bash -l so nvm's node/pnpm are on PATH, as for beeatlas-api.
-ExecStart=/bin/bash -lc 'exec pnpm app:start'
+# Login shells on maderas don't load nvm, so source it explicitly; the
+# node version follows nvm's default alias (set to the .nvmrc major).
+ExecStart=/bin/bash -c '. "$HOME/.nvm/nvm.sh" && exec pnpm app:start'
 Restart=on-failure
 RestartSec=5
 

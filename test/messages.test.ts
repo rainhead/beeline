@@ -9,8 +9,14 @@ describe("message catalog", () => {
     expect(messagesFor("fr-CA")).toBe(en);
   });
 
-  it("formats numbers per locale in interpolations", () => {
-    expect(en.home.holdings(66314, 584)).toBe("Holding 66,314 samples from 584 people.");
+  it("formats numbers per locale and pluralizes in interpolations", () => {
+    expect(en.qc.summary(1200, 3)).toBe("1,200 samples need attention — 3 findings block label printing.");
+    expect(en.qc.summary(1, 0)).toBe("1 sample needs attention.");
+  });
+
+  it("date formatters pass the proofing placeholder through", () => {
+    expect(en.qc.sampleTitle("7", "«sample»")).toBe("Sample 7 · «sample»");
+    expect(en.qc.sampleTitle("7", new Date("2026-07-14T12:00:00"))).toContain("Jul");
   });
 
   it("carries instructions for exactly the QC rules the schema declares", async () => {

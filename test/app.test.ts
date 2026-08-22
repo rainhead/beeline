@@ -57,7 +57,6 @@ describe("app scaffold", () => {
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain("<!doctype html>");
-    expect(body).toContain("1 samples from 1 people");
     expect(body).toContain("testuser");
   });
 
@@ -73,8 +72,7 @@ describe("app scaffold", () => {
     const res = await app.request("/patterns/messages");
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain("home.holdings");
-    expect(body).toContain("Holding «sample» samples from «sample» people.");
+    expect(body).toContain("qc.summary");
     expect(body).toContain("qcInstructions.locality_format");
   });
 

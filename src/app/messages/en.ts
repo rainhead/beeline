@@ -7,6 +7,14 @@
 
 const locale = "en";
 const n = (x: number) => x.toLocaleString(locale);
+// Date formatters pass strings through untouched so the proofing page's
+// «sample» placeholders survive; real callers always pass Date.
+const date = (d: Date | string) =>
+  typeof d === "string" ? d : d.toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric" });
+const dateTime = (d: Date | string) =>
+  typeof d === "string"
+    ? d
+    : d.toLocaleString(locale, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 export const en = {
   locale,
@@ -36,11 +44,23 @@ export const en = {
       `Your atlas's staff can connect it — nothing more for you to do here.`,
   },
 
-  home: {
-    title: "Home",
-    heading: "Beeline",
-    holdings: (samples: number, people: number) => `Holding ${n(samples)} samples from ${n(people)} people.`,
-    qcTeaser: "The self-service QC experience lands here (beeline-2c3.6).",
+  qc: {
+    title: "Your samples",
+    heading: "Samples needing attention",
+    summary: (samples: number, blocking: number) =>
+      `${n(samples)} ${samples === 1 ? "sample needs" : "samples need"} attention` +
+      (blocking > 0 ? ` — ${n(blocking)} ${blocking === 1 ? "finding blocks" : "findings block"} label printing.` : "."),
+    allClearHeading: "All clear",
+    allClear: "Nothing needs your attention — every one of your samples is clean. Thank you!",
+    lastSynced: (when: Date | string) => `Data last synced from iNaturalist ${dateTime(when)}.`,
+    neverSynced: "This instance has not synced from iNaturalist yet.",
+    clearsNote: "Fix things on the iNaturalist observation and the finding clears on the next sync.",
+    sampleTitle: (sampleNumber: string, when: Date | string) => `Sample ${sampleNumber} · ${date(when)}`,
+    specimens: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"}`,
+    fixOnInat: "Fix on iNaturalist",
+    notInatBacked: "Not backed by an iNaturalist observation — staff can correct it; in-app editing is coming.",
+    blocksPrinting: "blocks printing",
+    headsUp: "heads-up",
   },
 
   errors: {

@@ -154,6 +154,18 @@ export interface SamplePromotionFindingTable {
   details: string;
 }
 
+// schema/060_sync.sql
+
+export interface SyncRunTable {
+  entity_id: Generated<number>;
+  source: string;
+  authenticated: boolean;
+  window_start: ColumnType<Date, Date | string, Date | string> | null;
+  window_end: ColumnType<Date, Date | string, Date | string> | null;
+  started_at: Timestamped;
+  completed_at: ColumnType<Date, Date | string, Date | string> | null;
+}
+
 // Derived views (schema/1xx) — read-only.
 
 export interface QcFindingView {
@@ -180,6 +192,7 @@ export interface Database {
   determination: DeterminationTable;
   qc_rule: QcRuleTable;
   sample_promotion_finding: SamplePromotionFindingTable;
+  sync_run: SyncRunTable;
   determination_of_record: DeterminationTable;
   qc_finding: QcFindingView;
   printable_sample: PrintableSampleView;

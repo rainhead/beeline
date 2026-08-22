@@ -13,10 +13,19 @@ if (config.privateDbKey === null) {
 }
 
 // Real cookie sessions; a development instance may bypass them wholesale via
-// BEELINE_DEV_LOGIN (no OAuth round-trip, person id 0).
-const resolveSession: SessionResolver = config.devLogin
-  ? async () => ({ personId: 0, login: config.devLogin! })
-  : cookieSessionResolver(db);
+// BEELINE_DEV_LOGIN (no OAuth round-trip). The stub resolves the login
+// against inat_account so dev sessions see that person's real data.
+let resolveSession: SessionResolver = cookieSessionResolver(db);
+if (config.devLogin) {
+  const account = await db
+    .selectFrom("inat_account")
+    .where("login", "=", config.devLogin)
+    .select("person_id")
+    .executeTakeFirst();
+  const personId = account?.person_id ?? 0;
+  if (account === undefined) console.warn(`BEELINE_DEV_LOGIN '${config.devLogin}' has no inat_account; using person 0`);
+  resolveSession = async () => ({ personId, login: config.devLogin! });
+}
 
 const inat = inatClient(await loadInatCredentials());
 const app = createApp({ db, config, inat, resolveSession });

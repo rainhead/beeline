@@ -11,10 +11,10 @@ import { messagesFor } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, SESSION_COOKIE, type AppEnv, type Session, type SessionResolver } from "./session.js";
 import { tokensCss } from "./theme/tokens.js";
-import { Home } from "./views/home.js";
 import { Layout } from "./views/layout.js";
 import { MessagesProof } from "./views/messages-proof.js";
 import { Patterns } from "./views/patterns.js";
+import { QcHome, type FindingRow } from "./views/qc.js";
 
 export interface AppDeps {
   db: Kysely<Database>;
@@ -113,14 +113,39 @@ export function createApp({ db, config, inat, resolveSession }: AppDeps) {
       </Layout>
     )}`;
 
+  // The flagship is the front page: your samples needing attention.
   app.get("/", async (c) => {
-    const [samples, people] = await Promise.all([
-      db.selectFrom("sample").select(({ fn }) => fn.countAll().as("n")).executeTakeFirstOrThrow(),
-      db.selectFrom("person").select(({ fn }) => fn.countAll().as("n")).executeTakeFirstOrThrow(),
-    ]);
     const m = c.get("m");
+    const session = c.get("session");
+    const [findings, sync] = await Promise.all([
+      db
+        .selectFrom("qc_finding as f")
+        .innerJoin("sample as s", "s.entity_id", "f.sample_id")
+        .innerJoin("qc_rule as r", "r.name", "f.rule_name")
+        .where("s.collector_id", "=", session.personId)
+        .select([
+          "s.entity_id as sample_id",
+          "f.rule_name",
+          "f.details",
+          "r.severity",
+          "s.sample_number",
+          "s.date_start",
+          "s.locality",
+          "s.county",
+          "s.state_province",
+          "s.specimen_count",
+          "s.inat_observation_id",
+        ])
+        .orderBy("s.date_start", "desc")
+        .orderBy("s.entity_id")
+        .execute(),
+      db
+        .selectFrom("sync_run")
+        .select(({ fn }) => fn.max("completed_at").as("at"))
+        .executeTakeFirst(),
+    ]);
     return c.html(
-      await page(c, m.home.title, <Home m={m} sampleCount={Number(samples.n)} personCount={Number(people.n)} />),
+      await page(c, m.qc.title, <QcHome m={m} findings={findings as FindingRow[]} syncedAt={sync?.at ?? null} />),
     );
   });
 

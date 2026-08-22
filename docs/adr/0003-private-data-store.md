@@ -2,7 +2,14 @@
 
 **Status:** accepted (2026-08-20) · **Reviewed:** unchanged by the phase-4
 app-store decision ([ADR 0005](0005-app-process-owns-the-store.md),
-2026-08-22) — the owning app process `ATTACH`es the private store
+2026-08-22) — the owning app process `ATTACH`es the private store ·
+**Caveat** (2026-08-22, review): phase-3 sync stores whole observation
+projections — `private_geojson` included on trusted reads — in the **main**
+file (`observation_load`, [schema/060](../../schema/060_sync.sql)). True
+coordinates of obscured observations are not tokens or addresses, but they
+are exactly what geoprivacy hides, so "safe to copy by construction" is
+overstated until a snapshot boundary is decided (redact loads on export, or
+move load content to the private store) — tracked as a bead.
 
 ## Context
 

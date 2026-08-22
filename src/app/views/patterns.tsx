@@ -27,6 +27,9 @@ export function Patterns({ m }: { m: Messages }) {
     <>
       <h1>{m.patterns.heading}</h1>
       <p>{m.patterns.intro}</p>
+      <p>
+        <a href="/patterns/messages">{m.patterns.messagesLink}</a>
+      </p>
 
       <h2>{m.patterns.colorRoles}</h2>
       <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 0.5rem">

@@ -90,9 +90,19 @@ export const en = {
     they: { subject: "they", object: "them", possessive: "their" },
   },
 
+  messagesProof: {
+    title: "Messages",
+    heading: "Message catalog",
+    intro:
+      "Every message in the catalog, rendered. Functions are called with «sample» placeholders so each interpolation slot is visible. Proof copy here before any screen ships it.",
+    keyHeader: "Key",
+    textHeader: "Rendered",
+  },
+
   patterns: {
     title: "Pattern library",
     heading: "Pattern library",
+    messagesLink: "Proof the message catalog →",
     intro:
       "Every pattern the app dresses in, on one page. Colors are generated from the seed in src/app/theme/tokens.ts; shapes and type live in src/app/static/base.css. Flip your system color scheme to proof dark mode.",
     colorRoles: "Color roles",

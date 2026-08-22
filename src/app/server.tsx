@@ -13,6 +13,7 @@ import { deleteSession, SESSION_COOKIE, type AppEnv, type Session, type SessionR
 import { tokensCss } from "./theme/tokens.js";
 import { Home } from "./views/home.js";
 import { Layout } from "./views/layout.js";
+import { MessagesProof } from "./views/messages-proof.js";
 import { Patterns } from "./views/patterns.js";
 
 export interface AppDeps {
@@ -126,6 +127,11 @@ export function createApp({ db, config, inat, resolveSession }: AppDeps) {
   app.get("/patterns", async (c) => {
     const m = c.get("m");
     return c.html(await page(c, m.patterns.title, <Patterns m={m} />));
+  });
+
+  app.get("/patterns/messages", async (c) => {
+    const m = c.get("m");
+    return c.html(await page(c, m.messagesProof.title, <MessagesProof m={m} />));
   });
 
   return app;

@@ -68,6 +68,16 @@ describe("app scaffold", () => {
     expect(body).toContain("blown away");
   });
 
+  it("the string-proofing page renders every catalog entry with visible slots", async () => {
+    const app = await appOnMemoryDb("testuser");
+    const res = await app.request("/patterns/messages");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("home.holdings");
+    expect(body).toContain("Holding «sample» samples from «sample» people.");
+    expect(body).toContain("qcInstructions.locality_format");
+  });
+
   it("the pattern library renders with its island tag", async () => {
     const app = await appOnMemoryDb("testuser");
     const res = await app.request("/patterns");

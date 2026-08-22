@@ -4,3 +4,4 @@
  * URL); registering here is what makes a component available to pages.
  */
 import "./demo-counter.js";
+import "./menus.js";

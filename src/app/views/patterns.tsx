@@ -78,35 +78,37 @@ export function Patterns({ m }: { m: Messages }) {
       </form>
 
       <h2>{m.patterns.table}</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Sample</th>
-            <th>Date</th>
-            <th>Locality</th>
-            <th>Specimens</th>
-            <th>Findings</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>3</td>
-            <td>2026-07-14</td>
-            <td>Corvallis</td>
-            <td>3</td>
-            <td>—</td>
-          </tr>
-          <tr>
-            <td>4</td>
-            <td>2026-07-15</td>
-            <td>Alsea Falls</td>
-            <td>12</td>
-            <td>
-              <span class="chip error">missing host</span>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Sample</th>
+              <th>Date</th>
+              <th>Locality</th>
+              <th>Specimens</th>
+              <th>Findings</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>3</td>
+              <td>2026-07-14</td>
+              <td>Corvallis</td>
+              <td>3</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td>2026-07-15</td>
+              <td>Alsea Falls</td>
+              <td>12</td>
+              <td>
+                <span class="chip error">missing host</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <h2>{m.patterns.card}</h2>
       <div class="card" style="max-width: 24rem">

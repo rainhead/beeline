@@ -57,7 +57,7 @@ async function editApp(appCsv?: string) {
     db,
     config: { environment: "development" as const, origin: "http://localhost:3054" },
     inat: unusedInat,
-    resolveSession: async () => ({ personId: bea, login: "trapline" }),
+    resolveSession: async () => ({ personId: bea, login: "trapline", iconUrl: null }),
     correctionsPath,
   });
   return { app, conn, db, correctionsPath, bea, beaSample, instance };

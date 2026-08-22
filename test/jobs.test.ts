@@ -161,7 +161,7 @@ describe("/jobs page", () => {
       db: deps.db,
       config: { environment: "development", origin: "http://localhost:3054" },
       inat,
-      resolveSession: async () => ({ personId: 1, login: "tester" }),
+      resolveSession: async () => ({ personId: 1, login: "tester", iconUrl: null }),
       jobs: { list: [job], runNow: async (name) => (name === "manual" ? (await runJob(deps, job), true) : false) },
     });
 

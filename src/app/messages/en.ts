@@ -26,6 +26,10 @@ export const en = {
     /** Any instance that is not production says so (beeline-2u8). */
     envBanner: (environment: string) => `${environment} instance — data here may be blown away and rebuilt at any time`,
     nav: { patterns: "Patterns", jobs: "Jobs" },
+    /** The hamburger button that holds the nav on narrow screens. */
+    menu: "Menu",
+    /** The avatar button that opens the account menu. */
+    account: (login: string) => `Account: ${login}`,
     signOut: "Sign out",
     pageTitle: (title: string) => `${title} · Beeline`,
   },

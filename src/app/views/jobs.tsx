@@ -32,72 +32,76 @@ export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[] }) {
       <p>{m.jobs.intro}</p>
 
       <h2>{m.jobs.registered}</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>{m.jobs.colJob}</th>
-            <th>{m.jobs.colSchedule}</th>
-            <th>{m.jobs.colWindow}</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {props.jobs.map((job) => (
+      <div class="table-scroll">
+        <table>
+          <thead>
             <tr>
-              <td>
-                <code>{job.name}</code>
-                <p style="margin: 0.25rem 0 0; font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant)">
-                  {m.jobs.descriptions[job.name]}
-                </p>
-              </td>
-              <td>{scheduleLabel(m, job.schedule)}</td>
-              <td>{job.window === "night" ? m.jobs.windowNight : m.jobs.windowInteractive}</td>
-              <td>
-                <form method="post" action={`/jobs/run/${job.name}`} style="margin: 0">
-                  <button class="tonal">{m.jobs.runNow}</button>
-                </form>
-              </td>
+              <th>{m.jobs.colJob}</th>
+              <th>{m.jobs.colSchedule}</th>
+              <th>{m.jobs.colWindow}</th>
+              <th></th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {props.jobs.map((job) => (
+              <tr>
+                <td>
+                  <code>{job.name}</code>
+                  <p style="margin: 0.25rem 0 0; font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant)">
+                    {m.jobs.descriptions[job.name]}
+                  </p>
+                </td>
+                <td>{scheduleLabel(m, job.schedule)}</td>
+                <td>{job.window === "night" ? m.jobs.windowNight : m.jobs.windowInteractive}</td>
+                <td>
+                  <form method="post" action={`/jobs/run/${job.name}`} style="margin: 0">
+                    <button class="tonal">{m.jobs.runNow}</button>
+                  </form>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <h2>{m.jobs.recentRuns}</h2>
       {props.runs.length === 0 ? (
         <p>{m.jobs.noRuns}</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>{m.jobs.colJob}</th>
-              <th>{m.jobs.colStarted}</th>
-              <th>{m.jobs.colDuration}</th>
-              <th>{m.jobs.colOutcome}</th>
-              <th>{m.jobs.colBreaches}</th>
-              <th>{m.jobs.colDetail}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {props.runs.map((run) => (
+        <div class="table-scroll">
+          <table>
+            <thead>
               <tr>
-                <td>
-                  <code>{run.job_name}</code>
-                </td>
-                <td>{m.format.dateTime(run.started_at)}</td>
-                <td>
-                  {run.completed_at === null
-                    ? "—"
-                    : m.jobs.durationSeconds(Math.round((run.completed_at.getTime() - run.started_at.getTime()) / 1000))}
-                </td>
-                <td>
-                  <Outcome m={m} run={run} />
-                </td>
-                <td>{run.sla_breaches > 0 ? run.sla_breaches : "—"}</td>
-                <td>{run.detail}</td>
+                <th>{m.jobs.colJob}</th>
+                <th>{m.jobs.colStarted}</th>
+                <th>{m.jobs.colDuration}</th>
+                <th>{m.jobs.colOutcome}</th>
+                <th>{m.jobs.colBreaches}</th>
+                <th>{m.jobs.colDetail}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {props.runs.map((run) => (
+                <tr>
+                  <td>
+                    <code>{run.job_name}</code>
+                  </td>
+                  <td>{m.format.dateTime(run.started_at)}</td>
+                  <td>
+                    {run.completed_at === null
+                      ? "—"
+                      : m.jobs.durationSeconds(Math.round((run.completed_at.getTime() - run.started_at.getTime()) / 1000))}
+                  </td>
+                  <td>
+                    <Outcome m={m} run={run} />
+                  </td>
+                  <td>{run.sla_breaches > 0 ? run.sla_breaches : "—"}</td>
+                  <td>{run.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </>
   );

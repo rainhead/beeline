@@ -39,7 +39,7 @@ async function qcApp() {
     db,
     config: { environment: "development" as const, origin: "http://localhost:3054" },
     inat: unusedInat,
-    resolveSession: async () => ({ personId: alice, login: "alice" }),
+    resolveSession: async () => ({ personId: alice, login: "alice", iconUrl: null }),
   });
   return { app, conn, alice, bob };
 }

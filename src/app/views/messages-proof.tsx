@@ -37,24 +37,26 @@ export function MessagesProof({ m }: { m: Messages }) {
       {[...sections].map(([section, entries]) => (
         <>
           <h2>{section}</h2>
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 30%">{m.messagesProof.keyHeader}</th>
-                <th>{m.messagesProof.textHeader}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map(([path, text]) => (
+          <div class="table-scroll">
+            <table>
+              <thead>
                 <tr>
-                  <td>
-                    <code>{path}</code>
-                  </td>
-                  <td>{text}</td>
+                  <th style="width: 30%">{m.messagesProof.keyHeader}</th>
+                  <th>{m.messagesProof.textHeader}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {entries.map(([path, text]) => (
+                  <tr>
+                    <td>
+                      <code>{path}</code>
+                    </td>
+                    <td>{text}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       ))}
     </>

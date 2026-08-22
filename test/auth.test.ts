@@ -8,14 +8,16 @@ import { createMemoryDb } from "./helpers.js";
 
 const ORIGIN = "http://localhost:3054";
 
-const fakeInat = (identity: { inatUserId: number; login: string }): InatClient => ({
+type FakeIdentity = { inatUserId: number; login: string; iconUrl?: string | null };
+
+const fakeInat = (identity: FakeIdentity): InatClient => ({
   authorizeUrl: (state, redirectUri) =>
     `https://inat.example/authorize?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`,
   exchangeCode: async () => "access-token-123",
-  identity: async () => identity,
+  identity: async () => ({ iconUrl: null, ...identity }),
 });
 
-async function testApp(identity: { inatUserId: number; login: string }) {
+async function testApp(identity: FakeIdentity) {
   const { instance, conn } = await createMemoryDb();
   await attachPrivateStore(instance, { path: ":memory:", key: null });
   await conn.run(`INSERT INTO person (entity_id, display_name) VALUES (11, 'Member Bee')`);
@@ -53,6 +55,19 @@ describe("iNat OAuth sign-in", () => {
     const home = await app.request("/", { headers: { cookie: `beeline_session=${session}` } });
     expect(home.status).toBe(200);
     expect(await home.text()).toContain("memberbee");
+  });
+
+  it("the profile picture is cached at sign-in and rendered as the account-menu button", async () => {
+    const icon = "https://static.inaturalist.org/attachments/users/icons/501/medium.jpg";
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee", iconUrl: icon });
+    const cb = await signIn(app);
+    const session = /beeline_session=([a-f0-9]+)/.exec(cb.headers.get("set-cookie")!)![1];
+
+    const token = await db.selectFrom("private.inat_oauth_token").selectAll().executeTakeFirstOrThrow();
+    expect(token.icon_url).toBe(icon);
+
+    const home = await app.request("/", { headers: { cookie: `beeline_session=${session}` } });
+    expect(await home.text()).toContain(`<img class="avatar" src="${icon}"`);
   });
 
   it("an unknown signer-in gets a holding page, no session — but the token is stored", async () => {

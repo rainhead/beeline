@@ -12,6 +12,8 @@ export interface Session {
   personId: number;
   /** iNat login (or display name for the rare accountless person). */
   login: string;
+  /** iNat profile picture, cached at sign-in; null for accountless people. */
+  iconUrl: string | null;
 }
 
 /** Resolves a request to a session, or null for anonymous. */
@@ -45,9 +47,10 @@ export function cookieSessionResolver(db: Kysely<Database>): SessionResolver {
       .selectFrom("private.session")
       .innerJoin("person", "person.entity_id", "private.session.person_id")
       .leftJoin("inat_account", "inat_account.person_id", "person.entity_id")
+      .leftJoin("private.inat_oauth_token as token", "token.inat_user_id", "inat_account.inat_user_id")
       .where("private.session.id", "=", id)
       .where("last_seen_at", ">", idleCutoff)
-      .select(["private.session.person_id", "person.display_name", "inat_account.login"])
+      .select(["private.session.person_id", "person.display_name", "inat_account.login", "token.icon_url"])
       .executeTakeFirst();
     if (row === undefined) return null;
     await db
@@ -55,7 +58,7 @@ export function cookieSessionResolver(db: Kysely<Database>): SessionResolver {
       .set({ last_seen_at: sql`current_timestamp` })
       .where("id", "=", id)
       .execute();
-    return { personId: row.person_id, login: row.login ?? row.display_name };
+    return { personId: row.person_id, login: row.login ?? row.display_name, iconUrl: row.icon_url };
   };
 }
 

@@ -7,12 +7,14 @@
 CREATE TABLE inat_oauth_token (
   inat_user_id  BIGINT PRIMARY KEY,
   login         TEXT NOT NULL,
+  icon_url      TEXT,
   access_token  TEXT NOT NULL,
   created_at    TIMESTAMP NOT NULL DEFAULT current_timestamp,
   last_login_at TIMESTAMP NOT NULL DEFAULT current_timestamp
 );
 COMMENT ON TABLE inat_oauth_token IS 'iNaturalist OAuth access tokens — non-expiring credentials, the reason this store exists (ADR 0003). Stored at first sign-in, before approval, keyed by iNat user because a person row may not exist yet. Retention is minimized: purge after months of login inactivity and on membership drop (scheduled job, beeline-2c3.4).';
 COMMENT ON COLUMN inat_oauth_token.login IS 'Cached at sign-in for staff to recognize pending accounts.';
+COMMENT ON COLUMN inat_oauth_token.icon_url IS 'iNat profile picture URL, cached at sign-in; shown as the account-menu button. Stale until the next login (periodic re-fetch is beeline-1b7).';
 
 CREATE TABLE session (
   id           TEXT PRIMARY KEY,

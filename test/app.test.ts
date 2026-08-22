@@ -16,7 +16,7 @@ async function appOnMemoryDb(sessionLogin: string | null) {
   await conn.run(`INSERT INTO person (display_name) VALUES ('Test Person')`);
   await insertCleanSample(conn);
   const db = createKysely(instance);
-  const resolveSession = sessionLogin === null ? noSession : async () => ({ personId: 1, login: sessionLogin });
+  const resolveSession = sessionLogin === null ? noSession : async () => ({ personId: 1, login: sessionLogin, iconUrl: null });
   return createApp({
     db,
     config: { environment: "development" as const, origin: "http://localhost:3054" },

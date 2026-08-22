@@ -14,6 +14,8 @@ const STATE_COOKIE = "beeline_oauth_state";
 export interface InatIdentity {
   inatUserId: number;
   login: string;
+  /** Profile picture URL, when the account has one. */
+  iconUrl: string | null;
 }
 
 /** The iNaturalist side of sign-in — injectable so tests never hit the network. */
@@ -65,10 +67,10 @@ export function inatClient(creds: InatCredentials): InatClient {
       const { api_token: jwt } = (await jwtRes.json()) as { api_token: string };
       const meRes = await fetch(`${API}/users/me`, { headers: { Authorization: `Bearer ${jwt}` } });
       if (!meRes.ok) throw new Error(`identity fetch failed: ${meRes.status}`);
-      const me = (await meRes.json()) as { results: Array<{ id: number; login: string }> };
+      const me = (await meRes.json()) as { results: Array<{ id: number; login: string; icon_url?: string | null }> };
       const user = me.results[0];
       if (!user) throw new Error("identity fetch returned no user");
-      return { inatUserId: user.id, login: user.login };
+      return { inatUserId: user.id, login: user.login, iconUrl: user.icon_url ?? null };
     },
   };
 }
@@ -108,10 +110,16 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
 
     await deps.db
       .insertInto("private.inat_oauth_token")
-      .values({ inat_user_id: identity.inatUserId, login: identity.login, access_token: accessToken })
+      .values({
+        inat_user_id: identity.inatUserId,
+        login: identity.login,
+        icon_url: identity.iconUrl,
+        access_token: accessToken,
+      })
       .onConflict((oc) =>
         oc.column("inat_user_id").doUpdateSet({
           login: identity.login,
+          icon_url: identity.iconUrl,
           access_token: accessToken,
           // Bare current_timestamp binds as a column ref in DuckDB's DO UPDATE SET; now() doesn't.
           last_login_at: sql`now()`,

@@ -33,6 +33,20 @@ export async function attachPrivateStore(
       for (const file of files) {
         await conn.run(await readFile(join(PRIVATE_SCHEMA_DIR, file), "utf8"));
       }
+    } else {
+      // The private store outlives the blow-away era (it holds live sessions
+      // and tokens), so columns added to its schema are patched in here rather
+      // than by rebuild. CHECKPOINT per docs/runbooks: DuckDB < 1.6 can fail
+      // WAL replay after DDL (beeline-vyi).
+      const hasIconUrl = await conn.run(
+        `SELECT count(*) FROM information_schema.columns
+         WHERE table_catalog = 'private' AND table_name = 'inat_oauth_token' AND column_name = 'icon_url'`,
+      );
+      const [[iconUrlCount]] = (await hasIconUrl.getRows()) as [[bigint]];
+      if (iconUrlCount === 0n) {
+        await conn.run(`ALTER TABLE private.inat_oauth_token ADD COLUMN icon_url TEXT`);
+        await conn.run(`CHECKPOINT private`);
+      }
     }
   } finally {
     conn.closeSync();

@@ -43,6 +43,7 @@ export interface AtlasTable {
 export interface InatOauthTokenTable {
   inat_user_id: BigIntCol;
   login: string;
+  icon_url: string | null;
   access_token: string;
   created_at: Generated<Date>;
   last_login_at: Generated<Date>;

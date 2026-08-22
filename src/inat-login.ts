@@ -14,7 +14,10 @@ import { pathToFileURL } from "node:url";
  */
 
 const SITE = "https://www.inaturalist.org";
-const REDIRECT_URI = "http://localhost:8484/auth/inat/callback";
+// iNat OAuth apps register exactly ONE callback URL, shared with the web
+// app's sign-in — so this CLI binds the app's port. Stop the dev server
+// first; a held port fails loudly below.
+const REDIRECT_URI = "http://localhost:3054/auth/inat/callback";
 const CREDENTIALS_PATH = "data/secrets/inat-oauth.json";
 const TOKEN_PATH = "data/secrets/inat-oauth-token";
 const JWT_PATH = "data/secrets/inat-jwt";
@@ -45,8 +48,8 @@ function awaitCallback(state: string): Promise<string> {
       if (ok) resolve(code);
       else reject(new Error(`OAuth callback: ${err ?? "state mismatch or missing code"}`));
     });
-    server.on("error", reject); // e.g. port 8484 already bound — fail loudly
-    server.listen(8484);
+    server.on("error", reject); // port bound (dev server running?) — fail loudly
+    server.listen(Number(new URL(REDIRECT_URI).port));
   });
 }
 

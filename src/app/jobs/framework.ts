@@ -100,8 +100,10 @@ export async function runJob(deps: Pick<SchedulerDeps, "db" | "conn" | "budgetMs
       .set({ completed_at: sql`now()`, outcome, detail, sla_breaches: breaches })
       .where("entity_id", "=", run.entity_id)
       .execute();
+  ctx.log("started");
   try {
     const detail = await job.run(ctx);
+    ctx.log(`succeeded${detail ? `: ${detail}` : ""}`);
     await finish("succeeded", detail ?? null);
   } catch (err) {
     console.error(`[job ${job.name}] failed:`, err);

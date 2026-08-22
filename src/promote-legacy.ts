@@ -1,6 +1,7 @@
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { ensureCorrectionsFile } from "./corrections.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -27,6 +28,7 @@ export async function promoteLegacy(
   determinerAliasesPath = "ingest/determiner-aliases.csv",
   determinerRegisterPath = "ingest/determiner-register.csv",
   legacyCorrectionsPath = "ingest/legacy-corrections.csv",
+  appCorrectionsPath = "data/corrections.csv",
 ): Promise<PromotionCounts> {
   const scalar = async (sql: string): Promise<number> => {
     const [[v]] = (await (await conn.run(sql)).getRows()) as [[bigint]];
@@ -35,9 +37,12 @@ export async function promoteLegacy(
   if ((await scalar("SELECT count(*) FROM person")) > 0) {
     throw new Error("model already contains people — promotion runs only against a freshly built database");
   }
+  await ensureCorrectionsFile(appCorrectionsPath); // read_csv fails on a missing file
   const promoteSql = await readFile(`${INGEST_DIR}promote-legacy.sql`, "utf8");
   await conn.run(
-    promoteSql.replaceAll("{{LEGACY_CORRECTIONS}}", legacyCorrectionsPath.replaceAll("'", "''")),
+    promoteSql
+      .replaceAll("{{LEGACY_CORRECTIONS}}", legacyCorrectionsPath.replaceAll("'", "''"))
+      .replaceAll("{{APP_CORRECTIONS}}", appCorrectionsPath.replaceAll("'", "''")),
   );
   const seedSql = await readFile(`${INGEST_DIR}seed-animals.sql`, "utf8");
   await conn.run(seedSql.replaceAll("{{TAXONOMY_CSV}}", taxonomyCsvPath.replaceAll("'", "''")));

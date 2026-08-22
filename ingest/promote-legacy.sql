@@ -21,10 +21,29 @@
 -- → the correction stands and a finding opens. The correctable vocabulary
 -- is the identity/parse/label columns promotion reads — extend the three
 -- lists below together when widening it.
-CREATE TABLE legacy_correction AS
-SELECT * FROM read_csv('{{LEGACY_CORRECTIONS}}', header = true, columns = {
+-- Two correction files share one vocabulary and one merge rule: the
+-- git-curated CSV (staff, reviewed in PRs) and the app-written store
+-- (data/corrections.csv — volunteers' in-app sample edits, beeline-2c3.8,
+-- outside the blow-away path so they survive rebuilds). The app keeps one
+-- current row per (_id, field) (src/corrections.ts), and where both files
+-- correct the same field the app row wins — it is newer by construction;
+-- staff graduate app rows into the git CSV when curating.
+CREATE TABLE legacy_app_correction AS
+SELECT * FROM read_csv('{{APP_CORRECTIONS}}', header = true, columns = {
   '_id': 'VARCHAR', 'field': 'VARCHAR', 'base_value': 'VARCHAR',
   'new_value': 'VARCHAR', 'author': 'VARCHAR', 'reason': 'VARCHAR'});
+
+CREATE TABLE legacy_correction AS
+SELECT * FROM legacy_app_correction
+UNION ALL
+SELECT g.*
+FROM read_csv('{{LEGACY_CORRECTIONS}}', header = true, columns = {
+  '_id': 'VARCHAR', 'field': 'VARCHAR', 'base_value': 'VARCHAR',
+  'new_value': 'VARCHAR', 'author': 'VARCHAR', 'reason': 'VARCHAR'}) g
+WHERE NOT EXISTS (
+  SELECT 1 FROM legacy_app_correction a
+  WHERE a._id = g._id AND a.field = g.field
+);
 
 CREATE OR REPLACE VIEW legacy_correction_state AS
 SELECT c.*,

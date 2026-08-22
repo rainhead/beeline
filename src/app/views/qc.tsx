@@ -77,9 +77,14 @@ function SampleCard({ m, group }: { m: Messages; group: SampleGroup }) {
           {m.qc.fixOnInat}
         </a>
       ) : (
-        <p style="font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant); margin: 0">
-          {m.qc.notInatBacked}
-        </p>
+        <>
+          <p style="font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant); margin: 0 0 0.75rem">
+            {m.qc.notInatBacked}
+          </p>
+          <a class="button" href={`/samples/${s.sample_id}/edit`}>
+            {m.qc.editSample}
+          </a>
+        </>
       )}
     </article>
   );

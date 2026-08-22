@@ -18,6 +18,8 @@ import type { Job } from "./jobs/framework.js";
 import { Jobs } from "./views/jobs.js";
 import { QcHome, type FindingRow } from "./views/qc.js";
 import { QcProof } from "./views/qc-proof.js";
+import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
+import { SampleEditForm } from "./views/sample-edit.js";
 
 export interface JobsDep {
   list: Job[];
@@ -32,6 +34,8 @@ export interface AppDeps {
   resolveSession: SessionResolver;
   /** The job registry; absent in tests that don't exercise /jobs. */
   jobs?: JobsDep;
+  /** App-written correction store for in-app sample edits (config.correctionsPath). */
+  correctionsPath?: string;
 }
 
 /**
@@ -40,8 +44,9 @@ export interface AppDeps {
  * after the gate (and everything added later by other modules) sees a
  * session or doesn't run: no anonymous reads, structurally.
  */
-export function createApp({ db, config, inat, resolveSession, jobs }: AppDeps) {
+export function createApp({ db, config, inat, resolveSession, jobs, correctionsPath }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], runNow: async () => false };
+  const corrections = correctionsPath ?? "data/corrections.csv";
   const app = new Hono<AppEnv>();
   const tokens = tokensCss();
 
@@ -159,6 +164,37 @@ export function createApp({ db, config, inat, resolveSession, jobs }: AppDeps) {
     return c.html(
       await page(c, m.qc.title, <QcHome m={m} findings={findings as FindingRow[]} syncedAt={sync?.at ?? null} />),
     );
+  });
+
+  // Non-iNat samples are fixed here, not upstream (beeline-2c3.8). The gate
+  // is in the query: your sample, and no observation to send you to.
+  app.get("/samples/:id/edit", async (c) => {
+    const m = c.get("m");
+    const sample = await loadEditableSample(db, Number(c.req.param("id")), c.get("session").personId);
+    if (sample === undefined) return c.text(m.sampleEdit.notEditable, 404);
+    return c.html(await page(c, m.sampleEdit.title, <SampleEditForm m={m} sample={sample} />));
+  });
+
+  app.post("/samples/:id/edit", async (c) => {
+    const m = c.get("m");
+    const session = c.get("session");
+    const sample = await loadEditableSample(db, Number(c.req.param("id")), session.personId);
+    if (sample === undefined) return c.text(m.sampleEdit.notEditable, 404);
+    const body = await c.req.parseBody();
+    // Absent fields stay untouched (applySampleEdit's contract); only strings pass.
+    const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : undefined);
+    const values = Object.fromEntries(
+      (["locality", "country", "state_province", "county", "protocol"] as const)
+        .map((name) => [name, field(name)])
+        .filter(([, v]) => v !== undefined),
+    );
+    const result = await applySampleEdit(db, corrections, sample, {
+      values,
+      note: field("note") ?? "",
+      author: session.login,
+    });
+    if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
+    return c.redirect("/");
   });
 
   app.get("/patterns", async (c) => {

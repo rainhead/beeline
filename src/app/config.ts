@@ -17,6 +17,12 @@ export interface AppConfig {
   /** Public origin of this instance, e.g. https://beeline.example — OAuth redirect target and CSRF origin check. */
   origin: string;
   /**
+   * App-written correction events (in-app sample edits, beeline-2c3.8) —
+   * outside the blow-away path so they survive rebuilds; promotion reads
+   * them union the git-curated CSV (ADR 0004).
+   */
+  correctionsPath: string;
+  /**
    * Deployment environment. Anything but 'production' renders the
    * environment banner (sandbox-until-launch, beeline-2u8).
    */
@@ -48,6 +54,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     privateDbPath: env.BEELINE_PRIVATE_DB ?? "private.duckdb",
     privateDbKey,
     origin: env.BEELINE_ORIGIN ?? `http://localhost:${port}`,
+    correctionsPath: env.BEELINE_CORRECTIONS ?? "data/corrections.csv",
     environment,
     devLogin: environment === "development" ? (env.BEELINE_DEV_LOGIN ?? null) : null,
     syncProjects: (env.BEELINE_SYNC_PROJECTS ?? "")

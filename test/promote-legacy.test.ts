@@ -6,6 +6,7 @@ import { promoteLegacy, type PromotionCounts } from "../src/promote-legacy.js";
 
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
+const NO_APP_CORRECTIONS = new URL("./fixtures/empty-corrections.csv", import.meta.url).pathname;
 
 let conn: DuckDBConnection;
 let counts: PromotionCounts;
@@ -13,7 +14,14 @@ let counts: PromotionCounts;
 beforeAll(async () => {
   ({ conn } = await createMemoryDb());
   await loadLegacyStaging(conn, FIXTURE);
-  counts = await promoteLegacy(conn, TAXONOMY);
+  counts = await promoteLegacy(
+    conn,
+    TAXONOMY,
+    "ingest/determiner-aliases.csv",
+    "ingest/determiner-register.csv",
+    "ingest/legacy-corrections.csv",
+    NO_APP_CORRECTIONS, // never the developer's live data/corrections.csv
+  );
 });
 
 describe("legacy promotion", () => {

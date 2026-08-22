@@ -7,6 +7,8 @@ import { promoteLegacy, type PromotionCounts } from "../src/promote-legacy.js";
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
 const CORRECTIONS = new URL("./fixtures/legacy-corrections.csv", import.meta.url).pathname;
+const APP_CORRECTIONS = new URL("./fixtures/app-corrections.csv", import.meta.url).pathname;
+const NO_APP_CORRECTIONS = new URL("./fixtures/empty-corrections.csv", import.meta.url).pathname;
 
 let conn: DuckDBConnection;
 let counts: PromotionCounts;
@@ -20,6 +22,7 @@ beforeAll(async () => {
     "ingest/determiner-aliases.csv",
     "ingest/determiner-register.csv",
     CORRECTIONS,
+    NO_APP_CORRECTIONS,
   );
 });
 
@@ -80,5 +83,33 @@ describe("legacy correction overlay (ADR 0004, frozen upstream)", () => {
       `SELECT rule FROM legacy_promotion_finding WHERE _id = 'zzzz9999'`,
     );
     expect(findings).toEqual([["correction_orphaned"]]);
+  });
+});
+
+describe("app-written corrections take precedence over the git CSV", () => {
+  test("for the same (_id, field), the app row wins and the git row is dropped", async () => {
+    const { conn: appConn } = await createMemoryDb();
+    await loadLegacyStaging(appConn, FIXTURE);
+    await promoteLegacy(
+      appConn,
+      TAXONOMY,
+      "ingest/determiner-aliases.csv",
+      "ingest/determiner-register.csv",
+      CORRECTIONS,
+      APP_CORRECTIONS, // corrects bbbb2222 decimalLatitude too, anchored on the true staged value
+    );
+    const [[latitude]] = (await rows(
+      appConn,
+      `SELECT loc.latitude FROM sample_location loc
+       JOIN sample s ON s.entity_id = loc.sample_id
+       WHERE s.sample_number = 'OBAS-00657'`,
+    )) as [[unknown]];
+    expect(latitude).toBe(46.2222); // the app correction, not git's 46.1111
+    // The git row never enters the merge, so its conflict finding is gone too.
+    const findings = await rows(
+      appConn,
+      `SELECT rule FROM legacy_promotion_finding WHERE _id = 'bbbb2222' AND rule LIKE 'correction%'`,
+    );
+    expect(findings).toEqual([]);
   });
 });

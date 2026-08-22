@@ -1,7 +1,13 @@
 # ADR 0004: Corrections are a three-way-merge overlay anchored on loads
 
 **Status:** accepted (2026-08-21) · **Review:** before the self-service QC
-phase builds the correction table ([roadmap](../roadmap.md) phase 4)
+phase builds the correction table ([roadmap](../roadmap.md) phase 4) ·
+**Reviewed** (2026-08-22, beeline-2c3.8): the frozen-upstream store now
+exists — in-app sample edits write correction events to `data/corrections.csv`
+(outside the blow-away path; [src/corrections.ts](../../src/corrections.ts)),
+read at promotion union the git-curated CSV with app rows winning per
+(record, field). The correction table for *synced iNat observations* still
+waits.
 
 ## Context
 

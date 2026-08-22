@@ -40,6 +40,7 @@ const app = createApp({
   inat,
   resolveSession,
   jobs: { list: jobs, runNow: (name) => scheduler.runNow(name) },
+  correctionsPath: config.correctionsPath,
 });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`beeline app (${config.environment}) listening on http://localhost:${info.port}`);

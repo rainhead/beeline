@@ -60,9 +60,31 @@ export const en = {
     sampleTitle: (sampleNumber: string, when: Date | string) => `Sample ${sampleNumber} · ${date(when)}`,
     specimens: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"}`,
     fixOnInat: "Fix on iNaturalist",
-    notInatBacked: "Not backed by an iNaturalist observation — staff can correct it; in-app editing is coming.",
+    notInatBacked: "Not backed by an iNaturalist observation — edit it here and the findings update immediately.",
+    editSample: "Edit this sample",
     blocksPrinting: "blocks printing",
     headsUp: "heads-up",
+  },
+
+  sampleEdit: {
+    title: "Edit sample",
+    heading: (sampleNumber: string) => `Edit sample ${sampleNumber}`,
+    intro:
+      "This sample has no iNaturalist observation to fix, so corrections happen here. " +
+      "Saved changes take effect immediately and are kept as attributed corrections that survive database rebuilds.",
+    fields: {
+      locality: "Locality",
+      country: "Country",
+      state_province: "State / province",
+      county: "County",
+      protocol: "Sampling protocol",
+    } as Record<string, string>,
+    noteLabel: "Note (optional)",
+    noteHint: "Why the change, if it isn't obvious",
+    save: "Save changes",
+    cancel: "Cancel",
+    notEditable: "This sample can't be edited here — it may not be yours, or its fixes belong on iNaturalist.",
+    noStagingRows: "This sample has no underlying records to correct — ask staff to look into it.",
   },
 
   errors: {

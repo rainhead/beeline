@@ -15,6 +15,7 @@ import { Layout } from "./views/layout.js";
 import { MessagesProof } from "./views/messages-proof.js";
 import { Patterns } from "./views/patterns.js";
 import { QcHome, type FindingRow } from "./views/qc.js";
+import { QcProof } from "./views/qc-proof.js";
 
 export interface AppDeps {
   db: Kysely<Database>;
@@ -157,6 +158,11 @@ export function createApp({ db, config, inat, resolveSession }: AppDeps) {
   app.get("/patterns/messages", async (c) => {
     const m = c.get("m");
     return c.html(await page(c, m.messagesProof.title, <MessagesProof m={m} />));
+  });
+
+  app.get("/patterns/qc", async (c) => {
+    const m = c.get("m");
+    return c.html(await page(c, m.qcProof.title, <QcProof m={m} />));
   });
 
   return app;

@@ -119,10 +119,25 @@ export const en = {
     textHeader: "Rendered",
   },
 
+  qcProof: {
+    title: "QC states",
+    heading: "QC home, in every state",
+    intro:
+      "The QC home page rendered from fixture data, one panel per state it can be in. Proof layout and copy here; the real page at / shows only your own findings.",
+    states: {
+      allClear: "All clear, synced",
+      neverSynced: "All clear, never synced",
+      single: "One sample: blocking + warning, iNat-backed",
+      nonInat: "Trap sample: no observation to fix",
+      busy: "A busy season: several samples, mixed severities",
+    },
+  },
+
   patterns: {
     title: "Pattern library",
     heading: "Pattern library",
     messagesLink: "Proof the message catalog →",
+    qcLink: "Proof the QC home states →",
     intro:
       "Every pattern the app dresses in, on one page. Colors are generated from the seed in src/app/theme/tokens.ts; shapes and type live in src/app/static/base.css. Flip your system color scheme to proof dark mode.",
     colorRoles: "Color roles",

@@ -29,6 +29,8 @@ export function Patterns({ m }: { m: Messages }) {
       <p>{m.patterns.intro}</p>
       <p>
         <a href="/patterns/messages">{m.patterns.messagesLink}</a>
+        <br />
+        <a href="/patterns/qc">{m.patterns.qcLink}</a>
       </p>
 
       <h2>{m.patterns.colorRoles}</h2>

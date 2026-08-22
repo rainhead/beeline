@@ -76,6 +76,18 @@ describe("app scaffold", () => {
     expect(body).toContain("qcInstructions.locality_format");
   });
 
+  it("the QC-state proofing page renders every fixture state", async () => {
+    const app = await appOnMemoryDb("testuser");
+    const res = await app.request("/patterns/qc");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("All clear, synced");
+    expect(body).toContain("never synced");
+    expect(body).toContain("OBAS-00657");
+    expect(body).toContain("blocks printing");
+    expect(body).toContain("https://www.inaturalist.org/observations/123456789");
+  });
+
   it("the pattern library renders with its island tag", async () => {
     const app = await appOnMemoryDb("testuser");
     const res = await app.request("/patterns");

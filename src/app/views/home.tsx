@@ -1,11 +1,12 @@
-export function Home(props: { sampleCount: number; personCount: number }) {
+import type { Messages } from "../messages/index.js";
+
+export function Home(props: { m: Messages; sampleCount: number; personCount: number }) {
+  const { m } = props;
   return (
     <>
-      <h1>Beeline</h1>
-      <p>
-        Holding {props.sampleCount.toLocaleString("en")} samples from {props.personCount.toLocaleString("en")} people.
-      </p>
-      <p>The self-service QC experience lands here (beeline-2c3.6).</p>
+      <h1>{m.home.heading}</h1>
+      <p>{m.home.holdings(props.sampleCount, props.personCount)}</p>
+      <p>{m.home.qcTeaser}</p>
     </>
   );
 }

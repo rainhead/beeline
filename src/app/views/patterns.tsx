@@ -1,3 +1,5 @@
+import type { Messages } from "../messages/index.js";
+
 /**
  * The pattern library / proofing screen: every base-stylesheet pattern and
  * token on one authenticated page, so design changes are proofed here before
@@ -20,17 +22,13 @@ const COLOR_ROLES = [
 
 const TYPE_SCALE = ["display", "headline", "title", "body", "label"] as const;
 
-export function Patterns() {
+export function Patterns({ m }: { m: Messages }) {
   return (
     <>
-      <h1>Pattern library</h1>
-      <p>
-        Every pattern the app dresses in, on one page. Colors are generated from the seed in{" "}
-        <code>src/app/theme/tokens.ts</code>; shapes and type live in <code>src/app/static/base.css</code>. Flip your
-        system color scheme to proof dark mode.
-      </p>
+      <h1>{m.patterns.heading}</h1>
+      <p>{m.patterns.intro}</p>
 
-      <h2>Color roles</h2>
+      <h2>{m.patterns.colorRoles}</h2>
       <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 0.5rem">
         {COLOR_ROLES.map(([bg, fg]) => (
           <div
@@ -43,14 +41,14 @@ export function Patterns() {
         ))}
       </div>
 
-      <h2>Type scale</h2>
+      <h2>{m.patterns.typeScale}</h2>
       {TYPE_SCALE.map((step) => (
         <p style={`font: var(--md-sys-typescale-${step})`}>
           {step} — Andrena prunorum on Phacelia hastata
         </p>
       ))}
 
-      <h2>Buttons and chips</h2>
+      <h2>{m.patterns.buttonsChips}</h2>
       <p style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap">
         <button>Filled</button>
         <button class="tonal">Tonal</button>
@@ -59,7 +57,7 @@ export function Patterns() {
         <span class="chip error">locality too long</span>
       </p>
 
-      <h2>Form controls</h2>
+      <h2>{m.patterns.formControls}</h2>
       <form>
         <label for="p-locality">Locality</label>
         <input id="p-locality" type="text" value="Corvallis" />
@@ -74,7 +72,7 @@ export function Patterns() {
         </textarea>
       </form>
 
-      <h2>Table</h2>
+      <h2>{m.patterns.table}</h2>
       <table>
         <thead>
           <tr>
@@ -105,17 +103,14 @@ export function Patterns() {
         </tbody>
       </table>
 
-      <h2>Card</h2>
+      <h2>{m.patterns.card}</h2>
       <div class="card" style="max-width: 24rem">
         <h3 style="margin-top: 0">Sample 4 — Alsea Falls</h3>
         <p>Cards frame anything that isn't a table row.</p>
       </div>
 
-      <h2>Island</h2>
-      <p>
-        A Lit component hydrated client-side, in light DOM so this same stylesheet reaches in. If the counter counts,
-        the Vite island build and hydration chain work:
-      </p>
+      <h2>{m.patterns.island}</h2>
+      <p>{m.patterns.islandIntro}</p>
       <demo-counter></demo-counter>
     </>
   );

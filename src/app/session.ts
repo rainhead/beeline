@@ -18,7 +18,7 @@ export interface Session {
 export type SessionResolver = (c: Context) => Promise<Session | null>;
 
 /** The Hono environment every app route shares. */
-export type AppEnv = { Variables: { session: Session } };
+export type AppEnv = { Variables: { session: Session; m: import("./messages/index.js").Messages } };
 
 export const noSession: SessionResolver = async () => null;
 

@@ -98,9 +98,10 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
   app.get("/auth/inat/callback", async (c) => {
     const expected = getCookie(c, STATE_COOKIE);
     deleteCookie(c, STATE_COOKIE, { path: "/" });
+    const m = c.get("m");
     const code = c.req.query("code");
     if (!code || !expected || c.req.query("state") !== expected) {
-      return c.text("Sign-in failed (state mismatch or missing code) — try again from the sign-in page.", 400);
+      return c.text(m.signIn.failed, 400);
     }
     const accessToken = await deps.inat.exchangeCode(code, redirectUri);
     const identity = await deps.inat.identity(accessToken);
@@ -127,20 +128,17 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
     if (account === undefined) {
       return c.html(
         html`<!doctype html>${(
-          <html lang="en">
+          <html lang={m.locale}>
             <head>
               <meta charset="utf-8" />
-              <title>Almost there · Beeline</title>
+              <title>{m.layout.pageTitle(m.pendingApproval.title)}</title>
               <link rel="stylesheet" href="/tokens.css" />
               <link rel="stylesheet" href="/static/base.css" />
             </head>
             <body>
               <main>
-                <h1>Almost there</h1>
-                <p>
-                  You signed in as <strong>{identity.login}</strong>, but that iNaturalist account isn't connected to a
-                  member record yet. Your atlas's staff can connect it — nothing more for you to do here.
-                </p>
+                <h1>{m.pendingApproval.heading}</h1>
+                <p>{m.pendingApproval.body(identity.login)}</p>
               </main>
             </body>
           </html>

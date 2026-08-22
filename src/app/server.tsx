@@ -7,6 +7,7 @@ import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { islandsSrc } from "./assets.js";
 import { registerAuthRoutes, type InatClient } from "./auth.js";
+import { messagesFor } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, SESSION_COOKIE, type AppEnv, type Session, type SessionResolver } from "./session.js";
 import { tokensCss } from "./theme/tokens.js";
@@ -31,6 +32,13 @@ export function createApp({ db, config, inat, resolveSession }: AppDeps) {
   const app = new Hono<AppEnv>();
   const tokens = tokensCss();
 
+  // Every route (sign-in pages included) reads copy from the catalog; the
+  // locale becomes per-person once profiles carry one (beeline-1a7).
+  app.use(async (c, next) => {
+    c.set("m", messagesFor(null));
+    await next();
+  });
+
   // --- Public surface: assets, liveness, and the way in. ---
   app.get("/healthz", (c) => c.text("ok"));
   app.get("/tokens.css", (c) => c.body(tokens, 200, { "content-type": "text/css" }));
@@ -42,7 +50,7 @@ export function createApp({ db, config, inat, resolveSession }: AppDeps) {
   app.use(async (c, next) => {
     const origin = c.req.header("origin");
     if (origin !== undefined && origin !== config.origin && c.req.method !== "GET" && c.req.method !== "HEAD") {
-      return c.text("cross-origin request refused", 403);
+      return c.text(c.get("m").errors.crossOrigin, 403);
     }
     await next();
   });
@@ -51,21 +59,24 @@ export function createApp({ db, config, inat, resolveSession }: AppDeps) {
   app.use(async (c, next) => {
     const session = await resolveSession(c);
     if (session === null) {
+      const m = c.get("m");
       return c.html(
         html`<!doctype html>${(
-          <html lang="en">
+          <html lang={m.locale}>
             <head>
               <meta charset="utf-8" />
-              <title>Sign in · Beeline</title>
+              <title>{m.layout.pageTitle(m.signIn.title)}</title>
               <link rel="stylesheet" href="/tokens.css" />
               <link rel="stylesheet" href="/static/base.css" />
             </head>
             <body>
               <main>
-                <h1>Beeline</h1>
-                <p>Nothing here is public — sign in with iNaturalist to continue.</p>
+                <h1>{m.signIn.heading}</h1>
+                <p>{m.signIn.nothingPublic}</p>
                 <p>
-                  <a class="button" href="/auth/inat">Sign in with iNaturalist</a>
+                  <a class="button" href="/auth/inat">
+                    {m.signIn.button}
+                  </a>
                 </p>
               </main>
             </body>
@@ -86,10 +97,15 @@ export function createApp({ db, config, inat, resolveSession }: AppDeps) {
     return c.redirect("/");
   });
 
-  const page = async (c: { get(k: "session"): Session }, title: string, children: Child) =>
+  const page = async (c: { get<K extends "session" | "m">(k: K): AppEnv["Variables"][K] }, title: string, children: Child) =>
     html`<!doctype html>${(
       <Layout
-        env={{ environment: config.environment, islandsSrc: await islandsSrc(), session: c.get("session") }}
+        env={{
+          environment: config.environment,
+          islandsSrc: await islandsSrc(),
+          session: c.get("session"),
+          m: c.get("m"),
+        }}
         title={title}
       >
         {children}
@@ -101,10 +117,16 @@ export function createApp({ db, config, inat, resolveSession }: AppDeps) {
       db.selectFrom("sample").select(({ fn }) => fn.countAll().as("n")).executeTakeFirstOrThrow(),
       db.selectFrom("person").select(({ fn }) => fn.countAll().as("n")).executeTakeFirstOrThrow(),
     ]);
-    return c.html(await page(c, "Home", <Home sampleCount={Number(samples.n)} personCount={Number(people.n)} />));
+    const m = c.get("m");
+    return c.html(
+      await page(c, m.home.title, <Home m={m} sampleCount={Number(samples.n)} personCount={Number(people.n)} />),
+    );
   });
 
-  app.get("/patterns", async (c) => c.html(await page(c, "Pattern library", <Patterns />)));
+  app.get("/patterns", async (c) => {
+    const m = c.get("m");
+    return c.html(await page(c, m.patterns.title, <Patterns m={m} />));
+  });
 
   return app;
 }

@@ -19,10 +19,10 @@ beforeAll(async () => {
 describe("legacy promotion", () => {
   test("promotes the valid rows and blocks the junk row", () => {
     expect(counts).toEqual({
-      staged: 3,
+      staged: 4,
       people: 3, // two collectors + the determiner Lincoln Best
-      samples: 2,
-      specimens: 2,
+      samples: 2, // dddd4444 merges into Ada's sample 1
+      specimens: 3,
       locations: 2,
       // Spine (3) + Hymenoptera + 2 families + 2 genera + 3 species.
       animals: 11,
@@ -123,7 +123,32 @@ describe("legacy promotion", () => {
     expect(specimens).toEqual([
       ["25000001", 1],
       ["25000002", 2],
+      ["25000003", 2],
     ]);
+  });
+
+  test("within-sample disagreement becomes a sample-keyed warning finding", async () => {
+    // Ada's two rows disagree on locality; the earliest (_id-min) value won.
+    const [[locality]] = (await rows(
+      conn,
+      `SELECT locality FROM sample WHERE sample_number = '1'`,
+    )) as [[unknown]];
+    expect(locality).toBe("Corvallis");
+    const findings = await rows(
+      conn,
+      `SELECT f.details FROM qc_finding f
+       JOIN sample s ON s.entity_id = f.sample_id
+       WHERE s.sample_number = '1' AND f.rule_name = 'within_sample_disagreement'`,
+    );
+    expect(findings).toEqual([["locality: Corvallis | Philomath"]]);
+    // Empty county on one row is "no opinion", not a disagreement; and the
+    // warning does not block printing (the net sample stays printable).
+    const printable = await rows(
+      conn,
+      `SELECT 1 FROM printable_sample p JOIN sample s ON s.entity_id = p.sample_id
+       WHERE s.sample_number = '1'`,
+    );
+    expect(printable).toHaveLength(1);
   });
 
   test("model-level QC now runs over the promoted samples", async () => {

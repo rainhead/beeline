@@ -9,4 +9,7 @@ UNION ALL SELECT * FROM qc_rule_duplicate_sample_number
 UNION ALL SELECT * FROM qc_rule_non_tracheophyte_host
 UNION ALL SELECT * FROM qc_rule_count_mismatch
 UNION ALL SELECT * FROM qc_rule_count_below_printed
-UNION ALL SELECT * FROM qc_rule_observation_missing_upstream;
+UNION ALL SELECT * FROM qc_rule_observation_missing_upstream
+-- Stored ingestion-time findings join the derived ones (schema/050).
+UNION ALL SELECT sample_id, CAST(NULL AS INTEGER) AS specimen_id, rule_name, details
+FROM sample_promotion_finding;

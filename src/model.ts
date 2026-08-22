@@ -131,6 +131,12 @@ export interface QcRuleTable {
   instructions: string;
 }
 
+export interface SamplePromotionFindingTable {
+  sample_id: number;
+  rule_name: string;
+  details: string;
+}
+
 // Derived views (schema/1xx) — read-only.
 
 export interface QcFindingView {
@@ -156,6 +162,7 @@ export interface Database {
   specimen: SpecimenTable;
   determination: DeterminationTable;
   qc_rule: QcRuleTable;
+  sample_promotion_finding: SamplePromotionFindingTable;
   determination_of_record: DeterminationTable;
   qc_finding: QcFindingView;
   printable_sample: PrintableSampleView;

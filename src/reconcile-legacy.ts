@@ -10,21 +10,24 @@ import { pathToFileURL } from "node:url";
  */
 
 // Their flag name → predicate over our per-sample findings.
+// Legacy flags per ROW; we flag per SAMPLE — within_sample_disagreement
+// (details prefixed by the model field name) covers the rows whose value
+// lost the representative pick, the residual of the original comparison.
 const COMPARISONS: Array<{ theirs: string; ours: string; predicate: string }> = [
-  { theirs: "locality", ours: "locality_format or missing locality",
-    predicate: "rule_name = 'locality_format' OR (rule_name = 'missing_required_field' AND details LIKE '%locality%')" },
+  { theirs: "locality", ours: "locality_format or missing/disagreeing locality",
+    predicate: "rule_name = 'locality_format' OR (rule_name = 'missing_required_field' AND details LIKE '%locality%') OR (rule_name = 'within_sample_disagreement' AND details LIKE 'locality:%')" },
   { theirs: "coordinateUncertaintyInMeters", ours: "coordinate_uncertainty",
     predicate: "rule_name = 'coordinate_uncertainty'" },
-  { theirs: "county", ours: "missing_recommended_field",
-    predicate: "rule_name = 'missing_recommended_field'" },
-  { theirs: "samplingProtocol", ours: "missing protocol",
-    predicate: "rule_name = 'missing_required_field' AND details LIKE '%protocol%'" },
-  { theirs: "country", ours: "missing/unabbreviated country",
-    predicate: "(rule_name = 'missing_required_field' AND details LIKE '%country%') OR (rule_name = 'place_unabbreviated' AND details LIKE '%country%')" },
-  { theirs: "stateProvince", ours: "missing/unabbreviated state",
-    predicate: "(rule_name = 'missing_required_field' AND details LIKE '%state_province%') OR (rule_name = 'place_unabbreviated' AND details LIKE '%state_province%')" },
-  { theirs: "decimalLatitude", ours: "missing location",
-    predicate: "rule_name = 'missing_required_field' AND details LIKE '%location%'" },
+  { theirs: "county", ours: "missing/disagreeing county",
+    predicate: "rule_name = 'missing_recommended_field' OR (rule_name = 'within_sample_disagreement' AND details LIKE 'county:%')" },
+  { theirs: "samplingProtocol", ours: "missing/disagreeing protocol",
+    predicate: "(rule_name = 'missing_required_field' AND details LIKE '%protocol%') OR (rule_name = 'within_sample_disagreement' AND details LIKE 'protocol:%')" },
+  { theirs: "country", ours: "missing/unabbreviated/disagreeing country",
+    predicate: "(rule_name = 'missing_required_field' AND details LIKE '%country%') OR (rule_name = 'place_unabbreviated' AND details LIKE '%country%') OR (rule_name = 'within_sample_disagreement' AND details LIKE 'country:%')" },
+  { theirs: "stateProvince", ours: "missing/unabbreviated/disagreeing state",
+    predicate: "(rule_name = 'missing_required_field' AND details LIKE '%state_province%') OR (rule_name = 'place_unabbreviated' AND details LIKE '%state_province%') OR (rule_name = 'within_sample_disagreement' AND details LIKE 'state_province:%')" },
+  { theirs: "decimalLatitude", ours: "missing/disagreeing location",
+    predicate: "(rule_name = 'missing_required_field' AND details LIKE '%location%') OR (rule_name = 'within_sample_disagreement' AND details LIKE 'coordinates:%')" },
   // Ours reads taxon ancestry from synced observations, so only-legacy counts
   // are expected until inat:sync has covered the linked observations.
   { theirs: "phylumPlant", ours: "non_tracheophyte_host",

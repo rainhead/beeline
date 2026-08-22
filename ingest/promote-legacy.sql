@@ -248,8 +248,8 @@ QUALIFY row_number() OVER (PARTITION BY m.person_id ORDER BY c.login) = 1;
 
 -- ── Samples ─────────────────────────────────────────────────────────────
 -- One sample per (person, start date, sample number). Descriptive fields
--- take the representative row (min _id); within-group disagreement is a
--- known follow-up, not yet a finding.
+-- take the representative row (min _id); within-group disagreement becomes
+-- a sample_promotion_finding below.
 CREATE TABLE legacy_sample_map AS
 SELECT
   m.person_id,
@@ -317,3 +317,37 @@ JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTI
 JOIN legacy_sample_map s
   ON s.person_id = m.person_id AND s.sid = r.sid
  AND s.p_date_start IS NOT DISTINCT FROM r.p_date_start;
+
+-- ── Within-sample disagreement (beeline-o8g) ────────────────────────────
+-- The rows behind one sample can disagree on a descriptive field; the
+-- representative (min _id) value was kept above, and the disagreement is
+-- persisted as a sample-keyed finding — once staging is gone the model
+-- alone cannot re-derive it. An empty value is "no opinion", not a
+-- disagreement (a kept blank already surfaces through the missing_* rules).
+-- This is also the entire residual of the errorFlags reconciliation:
+-- legacy flagged per row, we flag per sample.
+INSERT INTO sample_promotion_finding (sample_id, rule_name, details)
+WITH member AS (
+  SELECT s.sample_id, r.country, r.stateProvince, r.county, r.locality,
+         r.samplingProtocol, r.p_lat, r.p_lon
+  FROM legacy_promotable r
+  JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
+  JOIN legacy_sample_map s
+    ON s.person_id = m.person_id AND s.sid = r.sid
+   AND s.p_date_start IS NOT DISTINCT FROM r.p_date_start
+), field_value AS (
+  SELECT sample_id, 'country' AS field, nullif(country, '') AS value FROM member
+  UNION ALL SELECT sample_id, 'state_province', nullif(stateProvince, '') FROM member
+  UNION ALL SELECT sample_id, 'county', nullif(county, '') FROM member
+  UNION ALL SELECT sample_id, 'locality', nullif(locality, '') FROM member
+  UNION ALL SELECT sample_id, 'protocol', nullif(samplingProtocol, '') FROM member
+  UNION ALL SELECT sample_id, 'coordinates',
+    CASE WHEN p_lat IS NOT NULL AND p_lon IS NOT NULL
+         THEN concat(p_lat, ' ', p_lon) END FROM member
+)
+SELECT sample_id, 'within_sample_disagreement',
+       concat(field, ': ', array_to_string(list_sort(list(DISTINCT value)), ' | '))
+FROM field_value
+WHERE value IS NOT NULL
+GROUP BY sample_id, field
+HAVING count(DISTINCT value) > 1;

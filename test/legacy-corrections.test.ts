@@ -26,9 +26,9 @@ beforeAll(async () => {
 describe("legacy correction overlay (ADR 0004, frozen upstream)", () => {
   test("corrections unblock the junk row; it promotes with the corrected identity", async () => {
     expect(counts).toMatchObject({
-      staged: 3,
+      staged: 4,
       samples: 3,
-      specimens: 3,
+      specimens: 4,
       blockedRows: 0, // cccc3333's missing person + bad specimenId corrected away
       correctionsApplied: 4, // 3 on cccc3333 + the conflicted latitude on bbbb2222
       correctionsRetired: 1,

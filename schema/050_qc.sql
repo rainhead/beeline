@@ -10,6 +10,17 @@ CREATE TABLE qc_rule (
 COMMENT ON TABLE qc_rule IS 'Metadata for the QC rules whose definitions are the qc_rule_* views. blocking prevents printing; warning informs.';
 COMMENT ON COLUMN qc_rule.instructions IS 'The self-service "what to do" copy shown with a finding.';
 
+-- Findings only ingestion can see: once staging is discarded, the model
+-- cannot re-derive them, so they are stored rows rather than a view —
+-- the one exception to findings-are-derived. Unioned into qc_finding
+-- (schema/130) like every rule view.
+CREATE TABLE sample_promotion_finding (
+  sample_id INTEGER NOT NULL REFERENCES sample(entity_id),
+  rule_name TEXT NOT NULL REFERENCES qc_rule(name),
+  details   TEXT NOT NULL
+);
+COMMENT ON TABLE sample_promotion_finding IS 'Sample-keyed findings persisted at ingestion time because only the staging layer can observe them (e.g. within-sample disagreement between the legacy rows that merged into one sample). Not an entity (ADR 0002): anchored on the sample it describes.';
+
 -- The required/recommended split mirrors the reference implementation
 -- (nonEmptyFields vs LABEL_REQUIRED_FIELDS): county is flagged when empty but
 -- does not block printing; elevation is derived, so never the collector's gap.
@@ -34,5 +45,7 @@ INSERT INTO qc_rule (name, severity, instructions) VALUES
    'Your iNaturalist observation and this sample disagree about how many specimens were collected. Update whichever side is wrong.'),
   ('count_below_printed', 'warning',
    'The specimen count is now lower than the number of labels already printed for this sample. Nothing to fix in the data — but some printed labels may never be attached to a specimen.'),
+  ('within_sample_disagreement', 'warning',
+   'The legacy records merged into this sample disagreed about a field; the earliest record''s value was kept. Review the alternatives listed and correct the sample if the kept value is wrong.'),
   ('observation_missing_upstream', 'blocking',
    'The iNaturalist observation backing this sample was not returned by a sync that should have included it. It may have been deleted, removed from the project, or had its observation date changed. Staff investigate before any further printing for this sample.');

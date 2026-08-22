@@ -1,19 +1,25 @@
 import { serve } from "@hono/node-server";
+import { inatClient, loadInatCredentials } from "./auth.js";
 import { configFromEnv } from "./config.js";
 import { openAppDb } from "./db.js";
 import { createApp } from "./server.js";
-import { noSession, type SessionResolver } from "./session.js";
+import { cookieSessionResolver, type SessionResolver } from "./session.js";
 
 const config = configFromEnv();
 const { db, close } = await openAppDb(config);
 
-// Until real auth (beeline-2c3.3): a development instance may stub a session
-// via BEELINE_DEV_LOGIN; everywhere else, nobody is signed in.
+if (config.privateDbKey === null) {
+  console.warn("BEELINE_PRIVATE_DB_KEY unset: private store is UNENCRYPTED (development only)");
+}
+
+// Real cookie sessions; a development instance may bypass them wholesale via
+// BEELINE_DEV_LOGIN (no OAuth round-trip, person id 0).
 const resolveSession: SessionResolver = config.devLogin
   ? async () => ({ personId: 0, login: config.devLogin! })
-  : noSession;
+  : cookieSessionResolver(db);
 
-const app = createApp({ db, config, resolveSession });
+const inat = inatClient(await loadInatCredentials());
+const app = createApp({ db, config, inat, resolveSession });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`beeline app (${config.environment}) listening on http://localhost:${info.port}`);
 });

@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
+import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { noSession } from "../src/app/session.js";
 import { createMemoryDb, insertCleanSample } from "./helpers.js";
+
+const unusedInat: InatClient = {
+  authorizeUrl: () => "https://inat.example/authorize",
+  exchangeCode: () => Promise.reject(new Error("not under test")),
+  identity: () => Promise.reject(new Error("not under test")),
+};
 
 async function appOnMemoryDb(sessionLogin: string | null) {
   const { instance, conn } = await createMemoryDb();
@@ -10,7 +17,12 @@ async function appOnMemoryDb(sessionLogin: string | null) {
   await insertCleanSample(conn);
   const db = createKysely(instance);
   const resolveSession = sessionLogin === null ? noSession : async () => ({ personId: 1, login: sessionLogin });
-  return createApp({ db, config: { environment: "development" as const }, resolveSession });
+  return createApp({
+    db,
+    config: { environment: "development" as const, origin: "http://localhost:3054" },
+    inat: unusedInat,
+    resolveSession,
+  });
 }
 
 describe("app scaffold", () => {

@@ -38,6 +38,23 @@ export interface AtlasTable {
   inat_place_id: BigIntCol | null;
 }
 
+// schema/private/010_auth.sql — the attached private store (ADR 0003)
+
+export interface InatOauthTokenTable {
+  inat_user_id: BigIntCol;
+  login: string;
+  access_token: string;
+  created_at: Generated<Date>;
+  last_login_at: Generated<Date>;
+}
+
+export interface SessionTable {
+  id: string;
+  person_id: number;
+  created_at: Generated<Date>;
+  last_seen_at: Generated<Date>;
+}
+
 // schema/020_animal.sql
 
 export interface AnimalTable {
@@ -166,4 +183,7 @@ export interface Database {
   determination_of_record: DeterminationTable;
   qc_finding: QcFindingView;
   printable_sample: PrintableSampleView;
+  // Attached private store (ADR 0003), catalog-qualified:
+  "private.inat_oauth_token": InatOauthTokenTable;
+  "private.session": SessionTable;
 }

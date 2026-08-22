@@ -36,7 +36,10 @@ export function Layout(props: { env: PageEnv; title: string; children?: Child })
           <nav>
             <a href="/patterns">Patterns</a>
           </nav>
-          <span style="margin-left: auto">{env.session.login}</span>
+          <form method="post" action="/auth/logout" style="margin-left: auto; display: flex; gap: 0.75rem; align-items: baseline">
+            <span>{env.session.login}</span>
+            <button class="outlined">Sign out</button>
+          </form>
         </header>
         <main>{props.children}</main>
       </body>

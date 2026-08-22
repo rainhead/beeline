@@ -1,12 +1,14 @@
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { deleteCookie, getCookie } from "hono/cookie";
 import { html } from "hono/html";
 import type { Child } from "hono/jsx";
 import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { islandsSrc } from "./assets.js";
+import { registerAuthRoutes, type InatClient } from "./auth.js";
 import type { AppConfig } from "./config.js";
-import { type Session, type SessionResolver } from "./session.js";
+import { deleteSession, SESSION_COOKIE, type AppEnv, type Session, type SessionResolver } from "./session.js";
 import { tokensCss } from "./theme/tokens.js";
 import { Home } from "./views/home.js";
 import { Layout } from "./views/layout.js";
@@ -14,27 +16,36 @@ import { Patterns } from "./views/patterns.js";
 
 export interface AppDeps {
   db: Kysely<Database>;
-  config: Pick<AppConfig, "environment">;
+  config: Pick<AppConfig, "environment" | "origin">;
+  inat: InatClient;
   resolveSession: SessionResolver;
 }
 
-type Env = { Variables: { session: Session } };
-
 /**
  * The app. Routes registered before the session gate are the public surface —
- * styling assets and the health check, nothing that touches data. Everything
- * added after the gate (and everything added later by other modules) sees a
+ * styling assets, the health check, and sign-in itself. Everything added
+ * after the gate (and everything added later by other modules) sees a
  * session or doesn't run: no anonymous reads, structurally.
  */
-export function createApp({ db, config, resolveSession }: AppDeps) {
-  const app = new Hono<Env>();
+export function createApp({ db, config, inat, resolveSession }: AppDeps) {
+  const app = new Hono<AppEnv>();
   const tokens = tokensCss();
 
-  // --- Public surface: assets and liveness only. ---
+  // --- Public surface: assets, liveness, and the way in. ---
   app.get("/healthz", (c) => c.text("ok"));
   app.get("/tokens.css", (c) => c.body(tokens, 200, { "content-type": "text/css" }));
   app.use("/static/*", serveStatic({ root: "./src/app" }));
   app.use("/assets/*", serveStatic({ root: "./dist/app" }));
+  registerAuthRoutes(app, { db, inat, origin: config.origin });
+
+  // --- CSRF: cross-origin writes die here (cookies are SameSite=Lax too). ---
+  app.use(async (c, next) => {
+    const origin = c.req.header("origin");
+    if (origin !== undefined && origin !== config.origin && c.req.method !== "GET" && c.req.method !== "HEAD") {
+      return c.text("cross-origin request refused", 403);
+    }
+    await next();
+  });
 
   // --- The session gate. ---
   app.use(async (c, next) => {
@@ -54,7 +65,7 @@ export function createApp({ db, config, resolveSession }: AppDeps) {
                 <h1>Beeline</h1>
                 <p>Nothing here is public — sign in with iNaturalist to continue.</p>
                 <p>
-                  <a class="button" href="/auth/inat">Sign in</a> (arrives with beeline-2c3.3)
+                  <a class="button" href="/auth/inat">Sign in with iNaturalist</a>
                 </p>
               </main>
             </body>
@@ -68,6 +79,13 @@ export function createApp({ db, config, resolveSession }: AppDeps) {
   });
 
   // --- Authenticated app. ---
+  app.post("/auth/logout", async (c) => {
+    const id = getCookie(c, SESSION_COOKIE);
+    if (id) await deleteSession(db, id);
+    deleteCookie(c, SESSION_COOKIE, { path: "/" });
+    return c.redirect("/");
+  });
+
   const page = async (c: { get(k: "session"): Session }, title: string, children: Child) =>
     html`<!doctype html>${(
       <Layout

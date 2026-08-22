@@ -144,6 +144,55 @@ describe("in-app editing of non-iNat samples", () => {
     expect(localityEvents[0]?.[3]).toBe("College Place");
   });
 
+  it("reverting to the staged value writes the identity event, so rebuilds keep the revert", async () => {
+    const { app, beaSample, correctionsPath } = await editApp();
+    await post(app, `/samples/${beaSample}/edit`, { locality: "Walla Walla" });
+    await post(app, `/samples/${beaSample}/edit`, { locality: "5th St, Walla Walla vicinity" });
+
+    // The stale X→Z row is replaced by X→X, which the merge retires.
+    const records = parseCsv(await readFile(correctionsPath, "utf8")).slice(1);
+    const localityEvents = records.filter((r) => r[0] === "bbbb2222" && r[1] === "locality");
+    expect(localityEvents).toEqual([
+      ["bbbb2222", "locality", "5th St, Walla Walla vicinity", "5th St, Walla Walla vicinity", "trapline", "edited in Beeline"],
+    ]);
+
+    const { conn: conn2 } = await createMemoryDb();
+    await loadLegacyStaging(conn2, FIXTURE);
+    await promoteLegacy(
+      conn2,
+      TAXONOMY,
+      "ingest/determiner-aliases.csv",
+      "ingest/determiner-register.csv",
+      CORRECTIONS,
+      correctionsPath,
+    );
+    const [[locality]] = (await rows(
+      conn2,
+      `SELECT locality FROM sample WHERE sample_number = 'OBAS-00657'`,
+    )) as [[string]];
+    expect(locality).toBe("5th St, Walla Walla vicinity");
+  });
+
+  it("a stale tab's untouched prefills do not revert a newer save", async () => {
+    const { app, conn, beaSample } = await editApp();
+    // Both tabs rendered the same form; tab A saves a locality fix first.
+    const rendered = { "base:locality": "5th St, Walla Walla vicinity", "base:county": "" };
+    await post(app, `/samples/${beaSample}/edit`, { ...rendered, locality: "Walla Walla" });
+    // Tab B, unaware, submits its stale locality prefill plus a county edit.
+    await post(app, `/samples/${beaSample}/edit`, {
+      ...rendered,
+      locality: "5th St, Walla Walla vicinity",
+      county: "WallaWallaCo",
+    });
+
+    const [[locality, county]] = (await rows(
+      conn,
+      `SELECT locality, county FROM sample WHERE entity_id = ${beaSample}`,
+    )) as [[string, string]];
+    expect(locality).toBe("Walla Walla"); // tab A's save survives
+    expect(county).toBe("WallaWallaCo"); // tab B's deliberate edit lands
+  });
+
   it("settles a stored within-sample disagreement for the edited field only", async () => {
     const { app, conn, beaSample } = await editApp();
     await conn.run(

@@ -81,6 +81,13 @@ async function stagingMembers(db: Kysely<Database>, sampleId: number): Promise<S
 
 export interface SampleEditInput {
   values: Partial<Record<EditableFieldName, string>>;
+  /**
+   * The values the form was rendered with (hidden base:* fields). A field
+   * submitted byte-equal to its base was never touched, so a stale tab
+   * cannot revert a newer save it never saw (beeline-0br). A field with no
+   * base falls back to diffing against the live row.
+   */
+  bases: Partial<Record<EditableFieldName, string>>;
   /** Optional free-text note; becomes the events' reason. */
   note: string;
   /** Who is editing (session login); becomes the events' author. */
@@ -103,7 +110,10 @@ export async function applySampleEdit(
   // deliberate clearing (the form always posts every field).
   const changed = EDITABLE_FIELDS.filter((f) => {
     const submitted = input.values[f.name];
-    return submitted !== undefined && submitted.trim() !== (sample[f.name] ?? "");
+    if (submitted === undefined) return false;
+    const base = input.bases[f.name];
+    if (base !== undefined) return submitted !== base;
+    return submitted.trim() !== (sample[f.name] ?? "");
   });
   if (changed.length === 0) return { outcome: "unchanged" };
 
@@ -116,7 +126,9 @@ export async function applySampleEdit(
     for (const f of changed) {
       const base = member[f.staging] ?? "";
       const newValue = (input.values[f.name] ?? "").trim();
-      if (base === newValue) continue; // this row already holds the value
+      // Identity events (base === new) are written too: they replace a stale
+      // app row and shadow any git-curated row for the key, so reverting to
+      // the staged value retires the correction on rebuild (beeline-eef).
       events.push({ _id: member._id, field: f.staging, base_value: base, new_value: newValue, author: input.author, reason });
     }
   }

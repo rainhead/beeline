@@ -18,6 +18,9 @@ export function SampleEditForm({ m, sample }: { m: Messages; sample: EditableSam
         {EDITABLE_FIELDS.map((f) => (
           <>
             <label for={`edit-${f.name}`}>{m.sampleEdit.fields[f.name]}</label>
+            {/* The rendered value rides along so the save can tell a touched
+                field from a stale prefill (beeline-0br). */}
+            <input type="hidden" name={`base:${f.name}`} value={sample[f.name] ?? ""} />
             <input id={`edit-${f.name}`} name={f.name} type="text" value={sample[f.name] ?? ""} />
           </>
         ))}

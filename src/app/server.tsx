@@ -183,13 +183,14 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     const body = await c.req.parseBody();
     // Absent fields stay untouched (applySampleEdit's contract); only strings pass.
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : undefined);
-    const values = Object.fromEntries(
-      (["locality", "country", "state_province", "county", "protocol"] as const)
-        .map((name) => [name, field(name)])
-        .filter(([, v]) => v !== undefined),
+    const names = ["locality", "country", "state_province", "county", "protocol"] as const;
+    const values = Object.fromEntries(names.map((name) => [name, field(name)]).filter(([, v]) => v !== undefined));
+    const bases = Object.fromEntries(
+      names.map((name) => [name, field(`base:${name}`)]).filter(([, v]) => v !== undefined),
     );
     const result = await applySampleEdit(db, corrections, sample, {
       values,
+      bases,
       note: field("note") ?? "",
       author: session.login,
     });

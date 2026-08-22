@@ -9,7 +9,7 @@ Ordered build-out toward a **December 2026 cutover**. Vocabulary per [CONTEXT.md
 1. **Data model in SQL, against DuckDB.** Render the schema sketch into runnable DDL and views. QC rule views and printability are part of the model, not an app feature. Smoke-test the intended app toolchain (Kysely + DuckDB dialect) here, while switching is cheap. *Trap tables stay provisional pending the staff trap questions.*
 2. **Legacy ingestion (MongoDB).** Single-shot in spirit, but re-runnable — it runs at least once more, at cutover. Includes taxonomy seeding: resolving verbatim determination names against the curated `taxon` table. **Acceptance test:** reconcile derived QC findings and record counts against production (`errorFlags`, ~38k flagged records).
 3. **iNaturalist ingestion.** Authenticated sync (trusted coordinate reads), iterated until it looks right. Design the correction-overlay rule here even though it only matters post-cutover: corrections apply over the latest load; upstream changing a corrected field resolves nothing — it surfaces a QC finding.
-4. **Web app.** Authenticated from the first page (iNat OAuth; no anonymous reads — `sample_true_location` makes leaks a live hazard). The self-service QC experience is the flagship. **Decision point: DuckDB vs PostgreSQL** for the app store (below).
+4. **Web app.** Authenticated from the first page (iNat OAuth; no anonymous reads — `sample_true_location` makes leaks a live hazard). The self-service QC experience is the flagship. The app-store decision is made ([ADR 0005](adr/0005-app-process-owns-the-store.md)): the app process owns the DuckDB store, ingestion moves in-process under interactivity SLAs; stack is Hono + SSR with Lit islands. Plan: epic beeline-2c3.
 5. **Label printing.** Design after the Arthur/Andony printing walkthrough (questions P1–P7). Mock exercises end to end: print runs, proofing pulls, reprints, mailing addresses.
 6. **Determinations UI.**
 7. **Export / archiving.** Ecdysis, Darwin Core/GBIF. Real backups start here — ahead of the first data that can't be regenerated.
@@ -19,4 +19,4 @@ Ordered build-out toward a **December 2026 cutover**. Vocabulary per [CONTEXT.md
 
 ## DuckDB vs PostgreSQL
 
-Decided as [ADR 0001](adr/0001-duckdb-first-with-portable-sql.md): DuckDB first, behind dialect-neutral SQL, no ORM owning the schema, Kysely as the query layer; the app-store engine is re-decided at phase 4, not during it.
+Decided as [ADR 0001](adr/0001-duckdb-first-with-portable-sql.md): DuckDB first, behind dialect-neutral SQL, no ORM owning the schema, Kysely as the query layer. The phase-4 re-decision landed as [ADR 0005](adr/0005-app-process-owns-the-store.md): the app store stays DuckDB, the single app process owns it (ingestion becomes in-process scheduled jobs under interactivity SLAs, with a night-window carve-out), and Postgres remains the escape hatch if the SLAs prove unmeetable.

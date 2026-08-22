@@ -1,6 +1,8 @@
 # ADR 0001: DuckDB first, behind dialect-neutral SQL
 
-**Status:** accepted (2026-08-20) · **Revisit:** roadmap phase 4 (web app)
+**Status:** accepted (2026-08-20) · **Revisited:** phase-4 decision resolved
+by [ADR 0005](0005-app-process-owns-the-store.md) (2026-08-22) — the app
+store stays DuckDB, owned by the app process
 
 ## Context
 

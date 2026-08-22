@@ -1,6 +1,8 @@
 # ADR 0003: Private data lives in a separately-secured store
 
-**Status:** accepted (2026-08-20) · **Review:** phase-4 app-store decision ([roadmap](../roadmap.md))
+**Status:** accepted (2026-08-20) · **Reviewed:** unchanged by the phase-4
+app-store decision ([ADR 0005](0005-app-process-owns-the-store.md),
+2026-08-22) — the owning app process `ATTACH`es the private store
 
 ## Context
 

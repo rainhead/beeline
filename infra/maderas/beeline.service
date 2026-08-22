@@ -1,0 +1,18 @@
+# User systemd unit for the Beeline sandbox (~/.config/systemd/user/) on
+# maderas — TEMPORARY hosting, revisit at cutover. One process, ever: it
+# owns beeline.duckdb (ADR 0005); a deploy is a restart.
+[Unit]
+Description=Beeline web app (sandbox; maderas hosting is temporary)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/dev/beeline
+# Secrets and settings live outside the repo and the databases (ADR 0003).
+EnvironmentFile=%h/.config/beeline/env
+# bash -l so nvm's node/pnpm are on PATH, as for beeatlas-api.
+ExecStart=/bin/bash -lc 'exec pnpm app:start'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

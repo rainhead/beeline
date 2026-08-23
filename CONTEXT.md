@@ -2,7 +2,7 @@
 
 Shared vocabulary for Beeline. Use these terms as defined here, in code, commits, and conversation. Update this file whenever a term is coined, sharpened, or deprecated.
 
-Beeline serves the Master Melittologist program (OSU Extension) and its member atlas projects. It has two jobs: it is the **authority for cataloging specimens** collected by atlas members and recording their taxonomic **determinations**, and it **governs the printing of specimen labels**. Downstream systems (reporting, GBIF, Ecdysis) consume its records. It replaces the reference implementation ([OBP-Server](https://github.com/oregon-bee-project/OBP-Server/), informally also "Beeline"); see [docs/reference-implementation.md](docs/reference-implementation.md) for what that system actually does.
+Beeline serves the Master Melittologist program (OSU Extension) and its member atlas projects. It has two jobs: it is the **authority for cataloging specimens** collected by atlas members and recording their taxonomic **determinations**, and it **governs the printing of specimen labels**. Downstream systems (reporting, GBIF, Ecdysis) consume its records. Beeline is the program's **internal** tool, for people already in it; the program's domain `melittologist.org` is expected in time to carry a **public** tier as well — what the atlases are, and how to join them. Two scopes, one domain ([docs/surrounding-systems.md](docs/surrounding-systems.md)). It replaces the reference implementation ([OBP-Server](https://github.com/oregon-bee-project/OBP-Server/), informally also "Beeline"); see [docs/reference-implementation.md](docs/reference-implementation.md) for what that system actually does.
 
 ## Core objects
 

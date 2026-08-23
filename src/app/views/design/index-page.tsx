@@ -46,6 +46,23 @@ export function DesignIndex() {
         </div>
       </div>
 
+      <h2>What this system covers, and what it does not</h2>
+      <p>
+        Everything here describes <strong>Beeline, the tool</strong> — the internal surface for people already in the
+        program. It is session-gated throughout and has no anonymous reads.
+      </p>
+      <p>
+        The program's domain, <code>melittologist.org</code>, is expected in time to carry a second scope: a{" "}
+        <strong>public tier</strong> saying what the Master Melittologist program and its member atlases are, and how
+        to join one. That surface has a different audience, a different voice, and almost certainly a different visual
+        register — none of which is designed yet, and none of which this system currently speaks for. Two scopes share
+        the domain; do not read a rule written here as binding on a page that does not exist.
+      </p>
+      <p>
+        The one place the two already touch is the sign-in page, which is the entire handoff today and says only that
+        nothing here is public.
+      </p>
+
       <h2>Sections</h2>
       <ul>
         {DESIGN_SECTIONS.filter((s) => s.path !== "/design").map((s) => (

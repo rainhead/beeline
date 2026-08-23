@@ -15,6 +15,13 @@ export function DesignVoice({ m }: { m: Messages }) {
         job is to make each problem small, specific, and obviously fixable. Staff surfaces (jobs, this design system)
         speak differently: terse and technical, because their audience is three people who built the thing.
       </p>
+      <p>
+        There is a third audience this system does <em>not</em> speak for: someone who has never heard of the program,
+        arriving at the public tier expected on <code>melittologist.org</code>. Persuading a stranger to volunteer is a
+        different job from helping a volunteer fix a record, and the voice below would be wrong for it — it assumes you
+        already collect bees, already have samples, and already know what a determination is. When that surface is
+        designed it needs its own voice section, not an extension of this one.
+      </p>
 
       <h2>The rules, and where they already hold</h2>
       <p>

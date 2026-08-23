@@ -74,7 +74,10 @@ describe("iNat OAuth sign-in", () => {
     const { app, db } = await testApp({ inatUserId: 999, login: "stranger" });
     const cb = await signIn(app);
     expect(cb.status).toBe(403);
-    expect(await cb.text()).toContain("connected to a member record");
+    const holding = await cb.text();
+    expect(holding).toContain("connected to a member record");
+    // The holding page is pre-session too, and says which instance it is (beeline-2u8).
+    expect(holding).toContain("development instance");
     expect(cb.headers.get("set-cookie") ?? "").not.toContain("beeline_session=");
 
     const token = await db

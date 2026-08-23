@@ -6,6 +6,8 @@ import { html } from "hono/html";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { SESSION_COOKIE, createSession, type AppEnv } from "./session.js";
+import { PublicPage } from "./views/layout.js";
+import type { PageEnv } from "./views/layout.js";
 
 const SITE = "https://www.inaturalist.org";
 const API = "https://api.inaturalist.org/v1";
@@ -79,6 +81,8 @@ export interface AuthDeps {
   db: Kysely<Database>;
   inat: InatClient;
   origin: string;
+  /** Non-production instances say so, on the pre-session pages too (beeline-2u8). */
+  environment: PageEnv["environment"];
 }
 
 /**
@@ -146,22 +150,10 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
     if (account === undefined) {
       return c.html(
         html`<!doctype html>${(
-          <html lang={m.locale}>
-            <head>
-              <meta charset="utf-8" />
-              <title>{m.layout.pageTitle(m.pendingApproval.title)}</title>
-              <link rel="stylesheet" href="/tokens.css" />
-              <link rel="stylesheet" href="/static/elements.css" />
-              <link rel="stylesheet" href="/static/layout.css" />
-              <link rel="stylesheet" href="/static/components.css" />
-            </head>
-            <body>
-              <main>
-                <h1>{m.pendingApproval.heading}</h1>
-                <p>{m.pendingApproval.body(identity.login)}</p>
-              </main>
-            </body>
-          </html>
+          <PublicPage environment={deps.environment} m={m} title={m.pendingApproval.title}>
+            <h1>{m.pendingApproval.heading}</h1>
+            <p>{m.pendingApproval.body(identity.login)}</p>
+          </PublicPage>
         )}`,
         403,
       );

@@ -62,7 +62,11 @@ describe("app scaffold", () => {
     for (const path of ["/", "/design", "/glossary", "/anything-not-registered"]) {
       const res = await app.request(path);
       expect(res.status, path).toBe(401);
-      expect(await res.text()).toContain("Sign in");
+      const body = await res.text();
+      expect(body).toContain("Sign in");
+      // beeline-2u8: the front door says which instance this is, before
+      // anyone signs in and mistakes a sandbox for the real thing.
+      expect(body).toContain("development instance — data here may be blown away");
     }
   });
 

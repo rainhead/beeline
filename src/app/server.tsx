@@ -11,7 +11,7 @@ import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, SESSION_COOKIE, type AppEnv, type Session, type SessionResolver } from "./session.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
-import { Layout } from "./views/layout.js";
+import { Layout, PublicPage } from "./views/layout.js";
 import type { Job } from "./jobs/framework.js";
 import { Glossary } from "./views/glossary.js";
 import { Jobs } from "./views/jobs.js";
@@ -83,7 +83,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   });
   app.use("/static/*", serveStatic({ root: "./src/app" }));
   app.use("/assets/*", serveStatic({ root: "./dist/app" }));
-  registerAuthRoutes(app, { db, inat, origin: config.origin });
+  registerAuthRoutes(app, { db, inat, origin: config.origin, environment: config.environment });
 
   // --- CSRF: cross-origin writes die here (cookies are SameSite=Lax too). ---
   app.use(async (c, next) => {
@@ -101,27 +101,15 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
       const m = c.get("m");
       return c.html(
         html`<!doctype html>${(
-          <html lang={m.locale}>
-            <head>
-              <meta charset="utf-8" />
-              <title>{m.layout.pageTitle(m.signIn.title)}</title>
-              <link rel="stylesheet" href="/tokens.css" />
-              <link rel="stylesheet" href="/static/elements.css" />
-              <link rel="stylesheet" href="/static/layout.css" />
-              <link rel="stylesheet" href="/static/components.css" />
-            </head>
-            <body>
-              <main>
-                <h1>{m.signIn.heading}</h1>
-                <p>{m.signIn.nothingPublic}</p>
-                <p>
-                  <a class="button" href="/auth/inat">
-                    {m.signIn.button}
-                  </a>
-                </p>
-              </main>
-            </body>
-          </html>
+          <PublicPage environment={config.environment} m={m} title={m.signIn.title}>
+            <h1>{m.signIn.heading}</h1>
+            <p>{m.signIn.nothingPublic}</p>
+            <p>
+              <a class="button" href="/auth/inat">
+                {m.signIn.button}
+              </a>
+            </p>
+          </PublicPage>
         )}`,
         401,
       );

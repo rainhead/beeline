@@ -32,6 +32,42 @@ function NavLinks({ m, admin }: { m: Messages; admin: boolean }) {
   );
 }
 
+/**
+ * The pages that exist before a session does — the sign-in door and the
+ * pending-approval holding page. Same head and same environment banner as
+ * the app proper (beeline-2u8 asks for the banner on the front door
+ * specifically: a volunteer must not mistake a sandbox for the real thing
+ * *before* signing in either), minus every piece of chrome that needs a
+ * session.
+ */
+export function PublicPage(props: {
+  environment: PageEnv["environment"];
+  m: Messages;
+  title: string;
+  children?: Child;
+}) {
+  const { m } = props;
+  return (
+    <html lang={m.locale}>
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="robots" content="noindex" />
+        <title>{m.layout.pageTitle(props.title)}</title>
+        {STYLESHEETS.map((href) => (
+          <link rel="stylesheet" href={href} />
+        ))}
+      </head>
+      <body>
+        {props.environment !== "production" && (
+          <div class="env-banner">{m.layout.envBanner(props.environment)}</div>
+        )}
+        <main>{props.children}</main>
+      </body>
+    </html>
+  );
+}
+
 export function Layout(props: {
   env: PageEnv;
   title: string;

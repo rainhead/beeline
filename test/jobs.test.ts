@@ -277,8 +277,13 @@ describe("/jobs page", () => {
       headers: { origin: "https://beeline.example" },
     });
     expect(run.status).toBe(403);
-    // The nav link disappears with the access.
-    expect(await (await gated.request("/patterns")).text()).not.toContain(`href="/jobs"`);
+    // The nav links to the admin surface disappear with the access; the
+    // glossary is a page a plain volunteer can still reach.
+    const volunteerNav = await (await gated.request("/glossary")).text();
+    expect(volunteerNav).not.toContain(`href="/jobs"`);
+    expect(volunteerNav).not.toContain(`href="/design"`);
+    expect(volunteerNav).toContain(`href="/glossary"`);
+    expect((await gated.request("/design")).status).toBe(403);
 
     const admin = appFor(["volunteer"]);
     expect((await admin.request("/jobs")).status).toBe(200);

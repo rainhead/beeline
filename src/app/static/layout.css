@@ -1,0 +1,112 @@
+/* Beeline layout chrome: the header, its dropdowns, the content column, and
+   the non-production banner. Everything here is page furniture — reusable
+   pieces live in components.css. */
+
+body > header {
+  background: var(--md-sys-color-surface-variant);
+  color: var(--md-sys-color-on-surface-variant);
+  padding: var(--space-1-5) var(--space-6);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+body > header .brand {
+  font: var(--md-sys-typescale-title);
+  color: var(--md-sys-color-on-surface);
+  text-decoration: none;
+}
+body > header .nav-inline { display: flex; gap: var(--space-4); }
+body > header .nav-inline a { font: var(--md-sys-typescale-label); text-decoration: none; }
+body > header .account-menu { margin-left: auto; }
+
+/* Header dropdowns: <details> so they work without JavaScript (the islands
+   bundle adds outside-click and Escape dismissal). The panel is absolutely
+   positioned against its <details>, so no top-layer/anchor tricks needed. */
+details.menu { position: relative; }
+details.menu > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+  border-radius: var(--radius-full);
+}
+details.menu > summary::-webkit-details-marker { display: none; }
+details.menu > summary:hover, details.menu[open] > summary { background: var(--md-sys-color-surface); }
+details.menu > .menu-panel {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  min-width: 12rem;
+  padding: var(--space-2) 0;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.18);
+  z-index: var(--layer-menu);
+  display: flex;
+  flex-direction: column;
+}
+.nav-menu > .menu-panel { left: 0; }
+.account-menu > .menu-panel { right: 0; }
+/* Menu rows: links and actions get one identical plain treatment — never
+   pill buttons — so the sign-out <button> is unstyled back to a row. */
+.menu-panel a, .menu-panel button {
+  font: var(--md-sys-typescale-label);
+  display: block;
+  width: 100%;
+  padding: var(--space-2-5) var(--space-4);
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--md-sys-color-on-surface);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.menu-panel a:visited { color: var(--md-sys-color-on-surface); }
+.menu-panel a:hover, .menu-panel button:hover { background: var(--md-sys-color-surface-variant); filter: none; }
+.menu-panel form { margin: 0; }
+/* Who is signed in — a status line, not a row: no hover, no focus, no action. */
+.menu-identity {
+  font: var(--md-sys-typescale-label);
+  color: var(--md-sys-color-on-surface-variant);
+  padding: var(--space-1) var(--space-4) var(--space-2-5);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  margin-bottom: var(--space-1);
+}
+
+.avatar {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+main {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: var(--space-6);
+}
+
+/* Mobile: the inline nav collapses into the hamburger menu. */
+.nav-menu { display: none; }
+@media (max-width: 640px) {
+  .nav-menu { display: block; }
+  body > header { padding: var(--space-1-5) var(--space-3); gap: var(--space-2); }
+  body > header .nav-inline { display: none; }
+  main { padding: var(--space-4); }
+}
+
+/* Environment banner: any instance that is not production says so
+   (sandbox-until-launch, beeline-2u8). */
+.env-banner {
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+  font: var(--md-sys-typescale-label);
+  text-align: center;
+  padding: var(--space-1) var(--space-4);
+}

@@ -1,0 +1,201 @@
+/* Beeline components. Every rule here backs a component in
+   src/app/views/components/ — if a screen needs a treatment, it gets a
+   component, not an inline style. Proofed at /design/components. */
+
+/* Two spacing primitives, so views stop hand-writing flex and grid. */
+.row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.row.baseline { align-items: baseline; }
+.stack {
+  display: grid;
+  gap: var(--space-2);
+}
+/* A <ul> that is a stack of things rather than a bulleted list. */
+.stack.plain {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+/* Page header — <h1> plus an optional lede and meta line. */
+.page-header { margin-bottom: var(--space-6); }
+.page-header > :last-child { margin-bottom: 0; }
+
+/* Meta: secondary text that annotates something else — a place and count
+   under a sample title, a job description under its name, the last sync
+   time. The most-repeated treatment in the app before it had a name. */
+.meta {
+  font: var(--md-sys-typescale-label);
+  color: var(--md-sys-color-on-surface-variant);
+}
+p.meta { margin: var(--space-1) 0; }
+
+/* Cards frame anything that isn't a table row. Outlined, never elevated:
+   depth is not part of this design (/design/space). */
+.card {
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+}
+.card + .card { margin-top: var(--space-4); }
+.card > :first-child { margin-top: 0; }
+.card > :last-child { margin-bottom: 0; }
+
+/* Chips carry status in one word.
+
+   Tone is carried by fill AND a left rule, never by fill alone. The palette
+   is seeded honey, so every warm container role lands within a few percent
+   of every other — warning-container and surface-variant are nearly the same
+   swatch. The rule is what actually separates them, and it keeps the
+   distinction for anyone who cannot see the fill difference at all. */
+.chip {
+  display: inline-block;
+  font: var(--md-sys-typescale-label);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-3);
+  border-left: 3px solid transparent;
+  background: var(--md-sys-color-surface-variant);
+  color: var(--md-sys-color-on-surface-variant);
+}
+.chip.blocking {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+  border-left-color: var(--md-sys-color-error);
+}
+.chip.warning {
+  background: var(--md-sys-color-warning-container);
+  color: var(--md-sys-color-on-warning-container);
+  border-left-color: var(--md-sys-color-warning);
+}
+.chip.success {
+  background: var(--md-sys-color-success-container);
+  color: var(--md-sys-color-on-success-container);
+  border-left-color: var(--md-sys-color-success);
+}
+
+/* :visited included: it outranks a bare class on specificity, so without it
+   a link dressed as a button turns tertiary-on-primary — illegible. */
+button, .button, a.button:visited {
+  font: var(--md-sys-typescale-label);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  border: none;
+  border-radius: var(--radius-full);
+  padding: var(--space-2-5) var(--space-6);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+button:hover, .button:hover { filter: brightness(1.08); }
+.tonal {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.outlined {
+  background: transparent;
+  color: var(--md-sys-color-primary);
+  border: 1px solid var(--md-sys-color-outline);
+}
+
+/* Tables. Wide tables scroll horizontally inside the wrapper, independent
+   of the page; the min-width keeps columns readable instead of crushed. */
+.table-scroll { overflow-x: auto; }
+.table-scroll table { min-width: 36rem; }
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+}
+th {
+  font: var(--md-sys-typescale-label);
+  color: var(--md-sys-color-on-surface-variant);
+  text-align: left;
+}
+th, td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+tbody tr:hover { background: var(--md-sys-color-surface-variant); }
+
+/* A single column of fields — the shape of every edit form here. Narrower
+   than the content column, because a long text input is harder to read, not
+   easier. */
+.form-column { max-width: 28rem; }
+
+/* Fields pair a label with its control and an optional hint. */
+.field { margin-bottom: var(--space-3); }
+.field-hint {
+  font: var(--md-sys-typescale-label);
+  color: var(--md-sys-color-on-surface-variant);
+  margin: var(--space-1) 0 0;
+}
+
+/* Callouts are asides: a status line, a note about why this screen behaves
+   the way it does. Outlined with a left rule, like chips — same reason. */
+.callout {
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-left: 3px solid var(--md-sys-color-outline);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+}
+.callout > :first-child { margin-top: 0; }
+.callout > :last-child { margin-bottom: 0; }
+.callout.warning { border-left-color: var(--md-sys-color-warning); }
+.callout.blocking { border-left-color: var(--md-sys-color-error); }
+.callout.success { border-left-color: var(--md-sys-color-success); }
+
+/* Empty states say what would be here and why it isn't. Never an apology,
+   and never a bare dash (/design/voice). */
+.empty {
+  border: 1px dashed var(--md-sys-color-outline-variant);
+  border-radius: var(--radius-md);
+  padding: var(--space-8) var(--space-5);
+  text-align: center;
+}
+.empty > :first-child { margin-top: 0; }
+.empty > :last-child { margin-bottom: 0; }
+
+/* Scientific names. The component decides what is italic; this only makes
+   italics italic and keeps vernacular subordinate. A taxon name is never
+   set in mono — see /design/names. */
+.taxon { font-style: normal; }
+.taxon i { font-style: italic; }
+.taxon-authorship { color: var(--md-sys-color-on-surface-variant); }
+.taxon-vernacular {
+  font: var(--md-sys-typescale-label);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* Glossary terms link to their definition on first use (/design/voice). */
+.term {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.15em;
+  color: inherit;
+}
+.term:visited { color: inherit; }
+
+/* The glossary itself: a definition list that can be linked into. */
+.glossary dt {
+  font: var(--md-sys-typescale-title);
+  margin-top: var(--space-6);
+  scroll-margin-top: var(--space-4);
+}
+.glossary dd {
+  margin: var(--space-1) 0 0;
+}
+.glossary dt:target {
+  background: var(--md-sys-color-warning-container);
+  color: var(--md-sys-color-on-warning-container);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  margin-left: calc(var(--space-2) * -1);
+}

@@ -151,7 +151,9 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
               <meta charset="utf-8" />
               <title>{m.layout.pageTitle(m.pendingApproval.title)}</title>
               <link rel="stylesheet" href="/tokens.css" />
-              <link rel="stylesheet" href="/static/base.css" />
+              <link rel="stylesheet" href="/static/elements.css" />
+              <link rel="stylesheet" href="/static/layout.css" />
+              <link rel="stylesheet" href="/static/components.css" />
             </head>
             <body>
               <main>

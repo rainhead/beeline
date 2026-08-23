@@ -1,0 +1,115 @@
+/* Proofing chrome for /design only — linked by the design-system pages, not
+   by the product. Nothing here may be used by a volunteer-facing screen: if
+   a treatment is worth keeping, it graduates into components.css first. */
+
+/* Masthead: what this system is, and the four facts you need before reading
+   any of it. */
+.masthead {
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  padding-bottom: var(--space-6);
+  margin-bottom: var(--space-6);
+}
+.masthead-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-5);
+  margin-top: var(--space-6);
+}
+.masthead-facts h4 {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--md-sys-color-on-surface-variant);
+  margin: 0 0 var(--space-1);
+}
+.masthead-facts p { margin: 0; }
+
+/* Section nav, on every design page. */
+.section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  font: var(--md-sys-typescale-label);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  padding: var(--space-3) 0;
+  margin-bottom: var(--space-6);
+}
+.section-nav a { text-decoration: none; }
+.section-nav a[aria-current="page"] {
+  color: var(--md-sys-color-on-surface);
+  font-weight: 700;
+}
+
+/* A specimen: the thing being proofed, framed so it reads as an exhibit
+   rather than as part of the page. */
+.specimen {
+  border: 1px dashed var(--md-sys-color-outline);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  margin: var(--space-4) 0;
+}
+.specimen > :first-child { margin-top: 0; }
+.specimen > :last-child { margin-bottom: 0; }
+
+/* Swatch grids for the color page. */
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: var(--space-2);
+}
+.swatch {
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  font: var(--md-sys-typescale-label);
+}
+.swatch small { display: block; opacity: 0.85; }
+
+/* Do / don't, side by side — the shape every section closes with. */
+.rules {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: var(--space-6);
+  margin: var(--space-4) 0;
+}
+.rules h3 { margin-top: 0; }
+.rules ul { margin: 0; padding-left: var(--space-5); }
+.rules li { margin-bottom: var(--space-2); }
+.rules .do h3 { color: var(--md-sys-color-success); }
+.rules .dont h3 { color: var(--md-sys-color-error); }
+
+/* A two-column reference row: the token or rule on the left, what it is
+   for on the right. */
+.reference {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: var(--space-2) var(--space-5);
+  align-items: baseline;
+  margin: var(--space-4) 0;
+}
+.reference dt { font-family: var(--md-sys-typescale-mono); font-size: 0.875em; }
+.reference dd { margin: 0; }
+
+/* Open questions — what this system does not answer yet. Every section that
+   has one says so rather than implying completeness. */
+.open-question {
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-left: 3px solid var(--md-sys-color-warning);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+}
+.open-question h4 {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--md-sys-color-on-surface-variant);
+  margin: 0 0 var(--space-1);
+}
+.open-question > :last-child { margin-bottom: 0; }
+
+/* Spacing scale visualisation. */
+.space-bar {
+  background: var(--md-sys-color-primary);
+  height: var(--space-4);
+  border-radius: var(--radius-sm);
+}

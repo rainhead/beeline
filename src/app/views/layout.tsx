@@ -1,6 +1,7 @@
 import type { Child } from "hono/jsx";
 import type { Messages } from "../messages/index.js";
 import type { Session } from "../session.js";
+import { MenuIcon, PersonIcon } from "./icons.js";
 
 export interface PageEnv {
   /** Non-production instances announce themselves (beeline-2u8). */
@@ -8,42 +9,36 @@ export interface PageEnv {
   /** URL of the built islands bundle, or null when it hasn't been built. */
   islandsSrc: string | null;
   session: Session;
-  /** Whether this session may see the admin surface (/jobs, beeline-6va). */
+  /** Whether this session may see the admin surface (/jobs, /design, beeline-6va). */
   admin: boolean;
   m: Messages;
 }
+
+/**
+ * The stylesheets, in cascade order. Split by concern so a design change
+ * lands in one obvious file; served statically rather than bundled so that
+ * `pnpm app:dev` picks up a CSS edit without restarting the server.
+ */
+const STYLESHEETS = ["/tokens.css", "/static/elements.css", "/static/layout.css", "/static/components.css"];
 
 /** The nav destinations, rendered twice: inline on wide screens, in the hamburger menu on narrow ones. */
 function NavLinks({ m, admin }: { m: Messages; admin: boolean }) {
   return (
     <>
-      <a href="/patterns">{m.layout.nav.patterns}</a>
+      <a href="/glossary">{m.layout.nav.glossary}</a>
+      {admin && <a href="/design">{m.layout.nav.design}</a>}
       {admin && <a href="/jobs">{m.layout.nav.jobs}</a>}
     </>
   );
 }
 
-function HamburgerIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24" aria-hidden="true">
-      <path stroke-linecap="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
-    </svg>
-  );
-}
-
-function PersonIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24" aria-hidden="true">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-      />
-    </svg>
-  );
-}
-
-export function Layout(props: { env: PageEnv; title: string; children?: Child }) {
+export function Layout(props: {
+  env: PageEnv;
+  title: string;
+  /** Extra stylesheets for this page only — /design's proofing chrome. */
+  stylesheets?: readonly string[];
+  children?: Child;
+}) {
   const { env, title } = props;
   const { m, session } = env;
   return (
@@ -54,8 +49,9 @@ export function Layout(props: { env: PageEnv; title: string; children?: Child })
         {/* No search engine has any business here: every page is private. */}
         <meta name="robots" content="noindex" />
         <title>{m.layout.pageTitle(title)}</title>
-        <link rel="stylesheet" href="/tokens.css" />
-        <link rel="stylesheet" href="/static/base.css" />
+        {[...STYLESHEETS, ...(props.stylesheets ?? [])].map((href) => (
+          <link rel="stylesheet" href={href} />
+        ))}
         {env.islandsSrc && <script type="module" src={env.islandsSrc}></script>}
       </head>
       <body>
@@ -65,7 +61,7 @@ export function Layout(props: { env: PageEnv; title: string; children?: Child })
         <header>
           <details class="menu nav-menu">
             <summary aria-label={m.layout.menu} title={m.layout.menu}>
-              <HamburgerIcon />
+              <MenuIcon />
             </summary>
             <nav class="menu-panel">
               <NavLinks m={m} admin={env.admin} />

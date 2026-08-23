@@ -1,5 +1,6 @@
 import type { QcSeverity } from "../../model.js";
 import type { Messages } from "../messages/index.js";
+import { Callout, Card, Chip, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
 
 /**
  * The flagship: a volunteer's samples that need attention, sample-keyed —
@@ -49,19 +50,19 @@ function SampleCard({ m, group }: { m: Messages; group: SampleGroup }) {
   const s = group.rows[0]!;
   const place = [s.locality, s.county, s.state_province].filter(Boolean).join(", ");
   return (
-    <article class="card" style="margin-bottom: 1rem">
-      <h3 style="margin-top: 0; display: flex; gap: 0.75rem; align-items: baseline; flex-wrap: wrap">
+    <Card as="article">
+      <h3 class="row baseline">
         {m.qc.sampleTitle(s.sample_number, s.date_start)}
-        <small style="font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant)">
+        <Meta>
           {place} · {m.qc.specimens(s.specimen_count)}
-        </small>
+        </Meta>
       </h3>
-      <ul style="list-style: none; padding: 0; margin: 0 0 0.75rem; display: grid; gap: 0.5rem">
+      <ul class="stack plain">
         {group.rows.map((row) => (
           <li>
-            <span class={row.severity === "blocking" ? "chip error" : "chip"}>
+            <Chip tone={row.severity === "blocking" ? "blocking" : "warning"}>
               {row.severity === "blocking" ? m.qc.blocksPrinting : m.qc.headsUp}
-            </span>{" "}
+            </Chip>{" "}
             {m.qcInstructions[row.rule_name] ?? row.rule_name}
             {row.details && (
               <>
@@ -73,20 +74,20 @@ function SampleCard({ m, group }: { m: Messages; group: SampleGroup }) {
         ))}
       </ul>
       {s.inat_observation_id !== null ? (
-        <a class="button" href={`https://www.inaturalist.org/observations/${s.inat_observation_id}`}>
-          {m.qc.fixOnInat}
-        </a>
+        <p>
+          <LinkButton href={`https://www.inaturalist.org/observations/${s.inat_observation_id}`}>
+            {m.qc.fixOnInat}
+          </LinkButton>
+        </p>
       ) : (
         <>
-          <p style="font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant); margin: 0 0 0.75rem">
-            {m.qc.notInatBacked}
+          <Meta block>{m.qc.notInatBacked}</Meta>
+          <p>
+            <LinkButton href={`/samples/${s.sample_id}/edit`}>{m.qc.editSample}</LinkButton>
           </p>
-          <a class="button" href={`/samples/${s.sample_id}/edit`}>
-            {m.qc.editSample}
-          </a>
         </>
       )}
-    </article>
+    </Card>
   );
 }
 
@@ -95,24 +96,25 @@ export function QcHome(props: { m: Messages; findings: FindingRow[]; syncedAt: D
   const groups = groupBySample(props.findings);
   const blocking = groups.reduce((sum, g) => sum + g.blocking, 0);
   const syncLine = (
-    <p style="font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant)">
-      {props.syncedAt === null ? m.qc.neverSynced : m.qc.lastSynced(props.syncedAt)} {m.qc.clearsNote}
-    </p>
+    <Callout>
+      <Meta block>
+        {props.syncedAt === null ? m.qc.neverSynced : m.qc.lastSynced(props.syncedAt)} {m.qc.clearsNote}
+      </Meta>
+    </Callout>
   );
 
   if (groups.length === 0) {
     return (
       <>
-        <h1>{m.qc.allClearHeading}</h1>
-        <p>{m.qc.allClear}</p>
+        <PageHeader title={m.qc.allClearHeading} />
+        <EmptyState>{m.qc.allClear}</EmptyState>
         {syncLine}
       </>
     );
   }
   return (
     <>
-      <h1>{m.qc.heading}</h1>
-      <p>{m.qc.summary(groups.length, blocking)}</p>
+      <PageHeader title={m.qc.heading} lede={m.qc.summary(groups.length, blocking)} />
       {syncLine}
       {groups.map((group) => (
         <SampleCard m={m} group={group} />

@@ -1,0 +1,103 @@
+/* Beeline elements: the non-color token scale, and Material 3 applied to
+   semantic HTML. Colors come exclusively from the generated tokens
+   (/tokens.css); no stylesheet in this app ever names a hex value.
+
+   Load order: tokens.css → elements.css → layout.css → components.css.
+   See /design/space and /design/type for what these values mean. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  /* Type — a hand-written slice of the MD3 scale, system fonts throughout.
+     Weight carries hierarchy, family never does (/design/type). */
+  --md-sys-typescale-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --md-sys-typescale-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --md-sys-typescale-display: 400 2.25rem/2.75rem var(--md-sys-typescale-font);
+  --md-sys-typescale-headline: 400 1.5rem/2rem var(--md-sys-typescale-font);
+  --md-sys-typescale-title: 500 1.125rem/1.75rem var(--md-sys-typescale-font);
+  --md-sys-typescale-body: 400 1rem/1.5rem var(--md-sys-typescale-font);
+  --md-sys-typescale-label: 500 0.875rem/1.25rem var(--md-sys-typescale-font);
+
+  /* Space — 0.25rem base. Finer than the 8px grid a marketing site would
+     use, because this is a dense data tool: table cells and chip padding
+     need the half-steps. */
+  --space-1: 0.25rem;
+  --space-1-5: 0.375rem;
+  --space-2: 0.5rem;
+  --space-2-5: 0.625rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  /* The minimum comfortable touch target, not a step on the scale. */
+  --touch-target: 2.75rem;
+
+  /* Shape — three radii and no more. */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-full: 999rem;
+
+  /* Layers. The app barely stacks: chrome dropdowns over content, and
+     nothing else. Any new value belongs here, not inline. */
+  --layer-raised: 10;
+  --layer-menu: 50;
+}
+
+body {
+  margin: 0;
+  font: var(--md-sys-typescale-body);
+  background: var(--md-sys-color-background);
+  color: var(--md-sys-color-on-background);
+}
+
+h1 { font: var(--md-sys-typescale-display); margin: 0 0 var(--space-4); }
+h2 { font: var(--md-sys-typescale-headline); margin: var(--space-8) 0 var(--space-3); }
+h3 { font: var(--md-sys-typescale-title); margin: var(--space-6) 0 var(--space-2); }
+h4 { font: var(--md-sys-typescale-label); margin: var(--space-4) 0 var(--space-1); }
+
+a { color: var(--md-sys-color-primary); }
+a:visited { color: var(--md-sys-color-tertiary); }
+
+/* Mono means "machine value" — an id, a timestamp, a coordinate, a raw
+   field name. Never a stylistic device, and never a scientific name
+   (/design/names). */
+code, pre, .mono {
+  font-family: var(--md-sys-typescale-mono);
+  font-size: 0.875em;
+  background: var(--md-sys-color-surface-variant);
+  color: var(--md-sys-color-on-surface-variant);
+  border-radius: var(--radius-sm);
+  padding: 0.1em 0.3em;
+}
+pre { padding: var(--space-3); overflow-x: auto; }
+pre code { background: none; padding: 0; }
+
+/* Forms */
+
+/* Forms are layout containers; the browser's default margin is never
+   what a page wants, least of all inside a table cell. */
+form { margin: 0; }
+
+label {
+  display: block;
+  font: var(--md-sys-typescale-label);
+  color: var(--md-sys-color-on-surface-variant);
+  margin: var(--space-3) 0 var(--space-1);
+}
+input:not([type="checkbox"], [type="radio"]), select, textarea {
+  font: var(--md-sys-typescale-body);
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface);
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  width: 100%;
+  max-width: 24rem;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible,
+button:focus-visible, a:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 1px;
+}

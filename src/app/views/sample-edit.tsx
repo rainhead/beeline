@@ -1,5 +1,6 @@
 import type { Messages } from "../messages/index.js";
 import { EDITABLE_FIELDS, type EditableSample } from "../sample-edit.js";
+import { Button, PageHeader, TextField } from "./components/index.js";
 
 /**
  * The edit form for a non-iNat-backed sample (beeline-2c3.8): the fields the
@@ -9,25 +10,26 @@ import { EDITABLE_FIELDS, type EditableSample } from "../sample-edit.js";
 export function SampleEditForm({ m, sample }: { m: Messages; sample: EditableSample }) {
   return (
     <>
-      <h1>{m.sampleEdit.heading(sample.sample_number)}</h1>
-      <p style="font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant)">
-        {m.qc.sampleTitle(sample.sample_number, sample.date_start)}
-      </p>
-      <p>{m.sampleEdit.intro}</p>
-      <form method="post" style="max-width: 28rem">
+      <PageHeader
+        title={m.sampleEdit.heading(sample.sample_number)}
+        meta={m.qc.sampleTitle(sample.sample_number, sample.date_start)}
+        lede={m.sampleEdit.intro}
+      />
+      <form method="post" class="form-column">
         {EDITABLE_FIELDS.map((f) => (
-          <>
-            <label for={`edit-${f.name}`}>{m.sampleEdit.fields[f.name]}</label>
-            {/* The rendered value rides along so the save can tell a touched
-                field from a stale prefill (beeline-0br). */}
-            <input type="hidden" name={`base:${f.name}`} value={sample[f.name] ?? ""} />
-            <input id={`edit-${f.name}`} name={f.name} type="text" value={sample[f.name] ?? ""} />
-          </>
+          /* The rendered value rides along as `base:` so the save can tell a
+             touched field from a stale prefill (beeline-0br). */
+          <TextField
+            id={`edit-${f.name}`}
+            name={f.name}
+            label={m.sampleEdit.fields[f.name]}
+            value={sample[f.name]}
+            base={sample[f.name]}
+          />
         ))}
-        <label for="edit-note">{m.sampleEdit.noteLabel}</label>
-        <input id="edit-note" name="note" type="text" placeholder={m.sampleEdit.noteHint} />
-        <p style="display: flex; gap: 0.75rem; align-items: center">
-          <button type="submit">{m.sampleEdit.save}</button>
+        <TextField id="edit-note" name="note" label={m.sampleEdit.noteLabel} placeholder={m.sampleEdit.noteHint} />
+        <p class="row">
+          <Button>{m.sampleEdit.save}</Button>
           <a href="/">{m.sampleEdit.cancel}</a>
         </p>
       </form>

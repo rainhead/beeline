@@ -7,17 +7,28 @@ import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { islandsSrc } from "./assets.js";
 import { registerAuthRoutes, type InatClient } from "./auth.js";
-import { messagesFor } from "./messages/index.js";
+import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, SESSION_COOKIE, type AppEnv, type Session, type SessionResolver } from "./session.js";
-import { tokensCss } from "./theme/tokens.js";
+import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout } from "./views/layout.js";
-import { MessagesProof } from "./views/messages-proof.js";
-import { Patterns } from "./views/patterns.js";
 import type { Job } from "./jobs/framework.js";
+import { Glossary } from "./views/glossary.js";
 import { Jobs } from "./views/jobs.js";
 import { QcHome, type FindingRow } from "./views/qc.js";
-import { QcProof } from "./views/qc-proof.js";
+import { DESIGN_STYLESHEETS } from "./views/design/shell.js";
+import { DesignIndex } from "./views/design/index-page.js";
+import { DesignColor } from "./views/design/color.js";
+import { DesignType } from "./views/design/type.js";
+import { DesignNames } from "./views/design/names.js";
+import { DesignIdentity } from "./views/design/identity.js";
+import { DesignIcons } from "./views/design/icons.js";
+import { DesignSpace } from "./views/design/space.js";
+import { DesignComponents } from "./views/design/components.js";
+import { DesignVoice } from "./views/design/voice.js";
+import { DesignImagery } from "./views/design/imagery.js";
+import { MessagesProof } from "./views/design/messages-proof.js";
+import { QcProof } from "./views/design/qc-proof.js";
 import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
 import { SampleEditForm } from "./views/sample-edit.js";
 
@@ -64,7 +75,12 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
 
   // --- Public surface: assets, liveness, and the way in. ---
   app.get("/healthz", (c) => c.text("ok"));
-  app.get("/tokens.css", (c) => c.body(tokens, 200, { "content-type": "text/css" }));
+  // The default seed is computed once; `?seed=` regenerates on demand so
+  // per-atlas colorways can be proofed at /design/identity (beeline-2c3.12).
+  app.get("/tokens.css", (c) => {
+    const seed = normalizeSeed(c.req.query("seed"));
+    return c.body(seed === SEED_COLOR ? tokens : tokensCss(seed), 200, { "content-type": "text/css" });
+  });
   app.use("/static/*", serveStatic({ root: "./src/app" }));
   app.use("/assets/*", serveStatic({ root: "./dist/app" }));
   registerAuthRoutes(app, { db, inat, origin: config.origin });
@@ -90,7 +106,9 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
               <meta charset="utf-8" />
               <title>{m.layout.pageTitle(m.signIn.title)}</title>
               <link rel="stylesheet" href="/tokens.css" />
-              <link rel="stylesheet" href="/static/base.css" />
+              <link rel="stylesheet" href="/static/elements.css" />
+              <link rel="stylesheet" href="/static/layout.css" />
+              <link rel="stylesheet" href="/static/components.css" />
             </head>
             <body>
               <main>
@@ -120,7 +138,12 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     return c.redirect("/");
   });
 
-  const page = async (c: { get<K extends "session" | "m">(k: K): AppEnv["Variables"][K] }, title: string, children: Child) =>
+  const page = async (
+    c: { get<K extends "session" | "m">(k: K): AppEnv["Variables"][K] },
+    title: string,
+    children: Child,
+    stylesheets?: readonly string[],
+  ) =>
     html`<!doctype html>${(
       <Layout
         env={{
@@ -131,6 +154,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
           m: c.get("m"),
         }}
         title={title}
+        stylesheets={stylesheets}
       >
         {children}
       </Layout>
@@ -204,20 +228,42 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     return c.redirect("/");
   });
 
-  app.get("/patterns", async (c) => {
+  // The glossary is volunteer-facing: in the nav for everyone, and the one
+  // page whose entire content is message-catalog copy.
+  app.get("/glossary", async (c) => {
     const m = c.get("m");
-    return c.html(await page(c, m.patterns.title, <Patterns m={m} />));
+    return c.html(await page(c, m.glossary.title, <Glossary m={m} />));
   });
 
-  app.get("/patterns/messages", async (c) => {
-    const m = c.get("m");
-    return c.html(await page(c, m.messagesProof.title, <MessagesProof m={m} />));
-  });
+  // --- The design system. Staff tooling, so admin-gated like /jobs, and
+  // English-only by policy: these views carry literal prose. Every section
+  // is listed in DESIGN_SECTIONS, and a test walks that list. ---
+  const designPages: ReadonlyArray<[string, string, (m: Messages) => Child]> = [
+    ["/design", "Design system", () => <DesignIndex />],
+    ["/design/color", "Color", () => <DesignColor />],
+    ["/design/type", "Typography", () => <DesignType />],
+    ["/design/names", "Scientific names", () => <DesignNames />],
+    ["/design/identity", "Identity", () => <DesignIdentity />],
+    ["/design/icons", "Iconography", () => <DesignIcons />],
+    ["/design/space", "Space & form", () => <DesignSpace />],
+    ["/design/components", "Components", (m) => <DesignComponents m={m} />],
+    ["/design/voice", "Voice", (m) => <DesignVoice m={m} />],
+    ["/design/imagery", "Imagery", () => <DesignImagery />],
+    ["/design/messages", "Message catalog", (m) => <MessagesProof m={m} />],
+    ["/design/qc", "QC states", (m) => <QcProof m={m} />],
+  ];
+  for (const [path, title, render] of designPages) {
+    app.get(path, async (c) => {
+      if (!isAdmin(c.get("session"))) return c.text("Admins only.", 403);
+      const m = c.get("m");
+      return c.html(await page(c, title, render(m), DESIGN_STYLESHEETS));
+    });
+  }
 
-  app.get("/patterns/qc", async (c) => {
-    const m = c.get("m");
-    return c.html(await page(c, m.qcProof.title, <QcProof m={m} />));
-  });
+  // The pattern library used to live here; keep the bookmarks working.
+  app.get("/patterns", (c) => c.redirect("/design", 301));
+  app.get("/patterns/messages", (c) => c.redirect("/design/messages", 301));
+  app.get("/patterns/qc", (c) => c.redirect("/design/qc", 301));
 
   app.get("/jobs", async (c) => {
     if (!isAdmin(c.get("session"))) return c.text("Admins only.", 403);

@@ -12,3 +12,6 @@ data/
 
 # Build output
 dist/
+
+# Reference material saved from shared artifacts, not source.
+orcasound/

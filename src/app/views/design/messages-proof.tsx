@@ -1,10 +1,12 @@
-import type { Messages } from "../messages/index.js";
+import type { Messages } from "../../messages/index.js";
+import { DataTable } from "../components/index.js";
+import { DesignPage } from "./shell.js";
 
 /**
- * The string-proofing screen (companion to /patterns): the whole catalog
- * rendered flat. Message functions are invoked with «sample» placeholders —
- * safe because messages only interpolate (a template coerces anything), and
- * the placeholders make each slot visible to the proofreader.
+ * The string-proofing screen: the whole catalog rendered flat. Message
+ * functions are invoked with «sample» placeholders — safe because messages
+ * only interpolate (a template coerces anything), and the placeholders make
+ * each slot visible to the proofreader.
  */
 
 const SAMPLE_ARG = "«sample»";
@@ -31,34 +33,26 @@ export function MessagesProof({ m }: { m: Messages }) {
   }
 
   return (
-    <>
-      <h1>{m.messagesProof.heading}</h1>
-      <p>{m.messagesProof.intro}</p>
+    <DesignPage
+      current="/design/messages"
+      title="Message catalog"
+      lede="Every message a volunteer can see, rendered. Functions are called with «sample» placeholders so each interpolation slot is visible. Proof copy here before any screen ships it."
+    >
       {[...sections].map(([section, entries]) => (
         <>
           <h2>{section}</h2>
-          <div class="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th style="width: 30%">{m.messagesProof.keyHeader}</th>
-                  <th>{m.messagesProof.textHeader}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map(([path, text]) => (
-                  <tr>
-                    <td>
-                      <code>{path}</code>
-                    </td>
-                    <td>{text}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable columns={["Key", "Rendered"]}>
+            {entries.map(([path, text]) => (
+              <tr>
+                <td>
+                  <code>{path}</code>
+                </td>
+                <td>{text}</td>
+              </tr>
+            ))}
+          </DataTable>
         </>
       ))}
-    </>
+    </DesignPage>
   );
 }

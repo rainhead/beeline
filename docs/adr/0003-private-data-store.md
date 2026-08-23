@@ -3,13 +3,8 @@
 **Status:** accepted (2026-08-20) · **Reviewed:** unchanged by the phase-4
 app-store decision ([ADR 0005](0005-app-process-owns-the-store.md),
 2026-08-22) — the owning app process `ATTACH`es the private store ·
-**Caveat** (2026-08-22, review): phase-3 sync stores whole observation
-projections — `private_geojson` included on trusted reads — in the **main**
-file (`observation_load`, [schema/060](../../schema/060_sync.sql)). True
-coordinates of obscured observations are not tokens or addresses, but they
-are exactly what geoprivacy hides, so "safe to copy by construction" is
-overstated until a snapshot boundary is decided (redact loads on export, or
-move load content to the private store) — tracked as a bead.
+**Amended** (2026-08-23, beeline-2yh): true coordinates stay in the main
+store; the copy claim is qualified. See *Whose privacy?* below.
 
 ## Context
 
@@ -17,7 +12,7 @@ Beeline holds three kinds of data that must never travel with the rest of the
 database: iNaturalist OAuth tokens (which do not expire — a leaked token is a
 credential forever), collectors' mailing addresses (the one truly private
 datum per [CONTEXT.md](../../CONTEXT.md)), and any email addresses we come to
-hold. Meanwhile the main database file is *meant* to be copied casually —
+hold. All three are **participant** data — they expose a person. Meanwhile the main database file is *meant* to be copied casually —
 backups, analytics, handing a snapshot to a student. Per-column encryption
 would protect these fields but taxes every read path with crypto code and
 leaves the policy invisible in the schema.
@@ -29,8 +24,8 @@ isolation a matter of *where the table lives*, not how its columns are coded.
 ## Decision
 
 **Private satellite tables live in a separate database file, encrypted as a
-whole, attached at runtime.** The main file contains no secrets and is safe to
-copy by construction.
+whole, attached at runtime.** The main file contains no participant secrets,
+and may be copied among people trusted with it.
 
 - Concretely today: a second DuckDB file (`private.duckdb`) using DuckDB's
   native database encryption (AES-256, ≥ 1.4), `ATTACH`ed with a key the app
@@ -43,6 +38,40 @@ copy by construction.
 - Tables that belong there: OAuth tokens, `mailing_address`, email if ever
   held. The default for a new column is the main file; placing a table in the
   private store is a deliberate act, argued from the data.
+
+### Whose privacy? (amended 2026-08-23, beeline-2yh)
+
+Trusted syncs store whole observation projections — `private_geojson` included
+— in the **main** file (`observation_load`, [schema/060](../../schema/060_sync.sql)),
+and believed-true coordinates land in `sample_location`. The review that
+surfaced this read it as a leak in the store boundary. It is not, because the
+two stores protect **different subjects**:
+
+- **The private store protects participants.** Tokens, addresses, email —
+  data that exposes a *person*, who did not sign up to be exposed and cannot
+  undo it.
+- **True coordinates protect sensitive plants.** Taxon-driven geoprivacy hides
+  a *population's* location from the public, to keep it from being dug up.
+  That is a real duty, but it is not participant privacy and it does not want
+  the same mechanism.
+
+**Anyone trusted with the main store is trusted to protect the plants too.**
+That is the decision: true coordinates are ordinary main-store data, no
+redaction on load, no private projection of `observation_load`.
+
+Two things follow. First, collector locations were never private anyway —
+collecting for the program implies willingness to say where
+([CONTEXT.md](../../CONTEXT.md)), so the only secrecy interest in a coordinate
+is the taxon-driven one. Second, the control moves from the file to the
+recipient: "safe to copy by construction" becomes "safe to copy to someone
+trusted", and the ADR's own casual example — handing a snapshot to a student
+— is the case that stops being casual. A student wants a derived export, and
+redaction belongs there (roadmap phase 7), not in the store.
+
+This says nothing about **revelation**: whether an atlas may show
+taxon-obscured coordinates on a label, in the app, or in an export remains
+per-atlas, open, and a go-live blocker ([questions](../questions.md)). Holding
+the data is what keeps either answer implementable.
 
 ### Retention is per class, not per store
 
@@ -61,6 +90,10 @@ Sharing a store does not mean sharing a lifecycle:
 
 - Queries joining private data name the attached store; keep such joins few
   and deliberate (they already are, by facet-table convention).
+- Who may receive a main-store copy is now a judgement, not a property of the
+  file. The data catalog below should say so explicitly, and any snapshot
+  handed outside the trusted circle goes through an export that redacts
+  taxon-obscured coordinates.
 - Key management is now the whole game: losing the key is losing the private
   store; the key's home must survive redeploys and never enter the repo or
   backups.

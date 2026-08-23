@@ -1,30 +1,11 @@
-import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
-import { readdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { DuckDBInstance } from "@duckdb/node-api";
+import { rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { applySchema } from "./schema.js";
 
-export const SCHEMA_DIR = new URL("../schema/", import.meta.url).pathname;
-
-/** Apply every schema/*.sql, in filename order, to an open connection. */
-export async function applySchema(conn: DuckDBConnection): Promise<void> {
-  const files = (await readdir(SCHEMA_DIR)).filter((f) => f.endsWith(".sql")).sort();
-  for (const file of files) {
-    const sql = await readFile(join(SCHEMA_DIR, file), "utf8");
-    try {
-      await conn.run(sql);
-    } catch (err) {
-      throw new Error(`applying schema/${file}: ${(err as Error).message}`, { cause: err });
-    }
-  }
-}
-
-/** Fresh in-memory database with the schema applied (tests, scratch work). */
-export async function createMemoryDb(): Promise<{ instance: DuckDBInstance; conn: DuckDBConnection }> {
-  const instance = await DuckDBInstance.create(":memory:");
-  const conn = await instance.connect();
-  await applySchema(conn);
-  return { instance, conn };
-}
+// The schema lives in ./schema.ts; re-exported here because callers (tests,
+// scratch work) have always reached for build-db.
+export { applySchema, createMemoryDb, SCHEMA_DIR } from "./schema.js";
 
 // CLI: pnpm db:build [target.duckdb] — blows away and rebuilds (pre-cutover stance).
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
@@ -33,6 +14,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const instance = await DuckDBInstance.create(target);
   const conn = await instance.connect();
   await applySchema(conn);
+  // A database built from the schema is current by construction (ADR 0006):
+  // stamp every migration so none of them ever runs against it.
+  const { baseline } = await import("./migrate.js");
+  const stamped = await baseline(conn);
   conn.closeSync();
-  console.log(`built ${target}`);
+  console.log(`built ${target} (${stamped.length} migrations stamped)`);
 }

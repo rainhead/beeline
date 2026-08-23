@@ -182,6 +182,12 @@ export interface JobRunTable {
   sla_breaches: Generated<number>;
 }
 
+// schema/000_schema_migration.sql
+export interface SchemaMigrationTable {
+  name: string;
+  applied_at: Generated<Date>;
+}
+
 // Derived views (schema/1xx) — read-only.
 
 export interface QcFindingView {
@@ -202,6 +208,7 @@ export interface PendingPrintSampleView {
 }
 
 export interface Database {
+  schema_migration: SchemaMigrationTable;
   person: PersonTable;
   inat_account: InatAccountTable;
   person_orcid: PersonOrcidTable;

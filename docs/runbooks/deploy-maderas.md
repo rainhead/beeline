@@ -10,8 +10,10 @@ unit, and the env template. The app listens on 3054 (`0xBEE`); Apache owns
 80/443.
 
 One process, ever: the service owns `beeline.duckdb` (ADR 0005). Anything
-else that wants the database (a CLI run, a rebuild) must stop the service
-first. A deploy is `git pull` + restart.
+else that wants the database (a CLI run, a rebuild, a migration) must stop the
+service first — which is why deploying is a script
+([`scripts/deploy-maderas.sh`](../../scripts/deploy-maderas.sh)) rather than a
+restart.
 
 ## One-time setup
 
@@ -101,24 +103,34 @@ The banner will read "sandbox instance" (BEELINE_ENV=sandbox).
 ## Deploying a change
 
 ```sh
-ssh maderas 'cd ~/dev/beeline && git pull && pnpm install && pnpm app:build && systemctl --user restart beeline'
+scripts/deploy-maderas.sh          # from a workstation checkout; host defaults to maderas
 ```
 
-From a non-interactive shell (agents, scripts), nvm isn't loaded and `node`
-is missing from PATH — source it explicitly:
+That is: pull `origin/main`, install, build the islands, **stop the service,
+`pnpm db:migrate`, start it again**, then wait for
+`https://beeline.beeatlas.net/healthz`. The stop is not incidental — one
+process owns `beeline.duckdb` (ADR 0005), so the file is only free to migrate
+while the app is down. Brief downtime is by design.
+
+Schema changes reach this store as migrations ([ADR
+0006](../adr/0006-migrations-for-deployed-stores.md)): write the change in
+`schema/`, copy the delta to `migrations/NNNN-slug.sql`, and the deploy
+applies it. `pnpm db:migrate --check` (service stopped) reports where the
+store has drifted from `schema/*.sql`, which is how a forgotten migration
+shows up. The tool `CHECKPOINT`s after every run, which matters: DuckDB
+≤1.5.5 fails WAL replay of an ALTER on a table with function/sequence
+defaults with an INTERNAL error, leaving the file unopenable until the WAL is
+deleted — so **any hand-written DDL must end with an explicit `CHECKPOINT`
+before closing**. Known upstream (duckdb/duckdb#18259, fixed on main by
+#21516); the fix is confirmed in 1.6.0 nightlies, so this rule can be dropped
+once we upgrade past 1.5.x (beeline-c1b).
+
+By hand, if the script isn't available — nvm isn't loaded in a
+non-interactive shell, so `node` is missing from PATH:
 
 ```sh
-ssh maderas 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; cd ~/dev/beeline && nvm use >/dev/null && git pull && pnpm install && pnpm app:build && systemctl --user restart beeline'
+ssh maderas 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; cd ~/dev/beeline && nvm use >/dev/null && git pull && pnpm install && pnpm app:build && systemctl --user stop beeline && pnpm db:migrate && systemctl --user start beeline'
 ```
-
-Brief downtime is by design (ADR 0005). Schema changes pre-cutover mean a
-database rebuild (or a one-off table apply while the service is stopped).
-**Any one-off DDL must end with an explicit `CHECKPOINT` before closing**:
-DuckDB ≤1.5.5 fails WAL replay of an ALTER on a table with function/sequence
-defaults with an INTERNAL error, leaving the file unopenable until the WAL
-is deleted. Known upstream (duckdb/duckdb#18259, fixed on main by #21516);
-the fix is confirmed in 1.6.0 nightlies, so this rule can be dropped once we
-upgrade past 1.5.x (beeline-c1b).
 
 ## Operational notes
 

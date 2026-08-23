@@ -8,6 +8,7 @@
     "app:build": "vite build",
     "app:start": "tsx src/app/main.ts",
     "db:build": "tsx src/build-db.ts",
+    "db:migrate": "tsx src/migrate.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "legacy:fetch": "scripts/fetch-legacy.sh",

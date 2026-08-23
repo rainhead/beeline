@@ -97,7 +97,8 @@ describe("app scaffold", () => {
     const res = await app.request("/design/qc");
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain("All clear, synced");
+    expect(body).toContain("All clear, nothing waiting");
+    expect(body).toContain("Waiting on labels");
     expect(body).toContain("never synced");
     expect(body).toContain("OBAS-00657");
     expect(body).toContain("blocks printing");

@@ -1,5 +1,5 @@
 import type { Messages } from "../../messages/index.js";
-import { QcHome, type FindingRow } from "../qc.js";
+import { QcHome, type FindingRow, type PendingRow } from "../qc.js";
 import { DesignPage, Specimen } from "./shell.js";
 
 /**
@@ -27,15 +27,40 @@ const row = (over: Partial<FindingRow>): FindingRow => ({
 
 const SYNCED = new Date("2026-08-21T02:50:00");
 
-const FIXTURES: Array<{ label: string; findings: FindingRow[]; syncedAt: Date | null }> = [
-  { label: "All clear, synced", findings: [], syncedAt: SYNCED },
-  { label: "All clear, never synced", findings: [], syncedAt: null },
+const pendingRow = (over: Partial<PendingRow>): PendingRow => ({
+  sample_id: 1,
+  sample_number: "3",
+  date_start: new Date("2026-07-14T12:00:00"),
+  locality: "Corvallis",
+  county: "BentonCo",
+  state_province: "OR",
+  pending_count: 3,
+  ...over,
+});
+
+const WAITING: PendingRow[] = [
+  pendingRow({}),
+  pendingRow({ sample_id: 7, sample_number: "4", pending_count: 1 }),
+  pendingRow({
+    sample_id: 8,
+    sample_number: "OBAS-00657",
+    date_start: new Date("2026-06-02T12:00:00"),
+    locality: "Finley NWR",
+    pending_count: 2140,
+  }),
+];
+
+const FIXTURES: Array<{ label: string; findings: FindingRow[]; pending: PendingRow[]; syncedAt: Date | null }> = [
+  { label: "All clear, nothing waiting", findings: [], pending: [], syncedAt: SYNCED },
+  { label: "All clear, samples waiting on labels", findings: [], pending: WAITING, syncedAt: SYNCED },
+  { label: "All clear, never synced", findings: [], pending: [], syncedAt: null },
   {
     label: "One sample: blocking + warning, iNat-backed",
     findings: [
       row({ details: "locality, protocol" }),
       row({ rule_name: "missing_recommended_field", details: "county", severity: "warning", county: null }),
     ],
+    pending: [],
     syncedAt: SYNCED,
   },
   {
@@ -51,6 +76,7 @@ const FIXTURES: Array<{ label: string; findings: FindingRow[]; syncedAt: Date | 
         specimen_count: 2140,
       }),
     ],
+    pending: [],
     syncedAt: SYNCED,
   },
   {
@@ -86,6 +112,9 @@ const FIXTURES: Array<{ label: string; findings: FindingRow[]; syncedAt: Date | 
         severity: "warning",
       }),
     ],
+    // Sample 10's finding is a warning, which doesn't block printing — so it
+    // is honestly in both lists at once.
+    pending: [pendingRow({ sample_id: 6, sample_number: "10", date_start: new Date("2026-06-02T12:00:00") })],
     syncedAt: SYNCED,
   },
 ];
@@ -95,13 +124,13 @@ export function QcProof({ m }: { m: Messages }) {
     <DesignPage
       current="/design/qc"
       title="QC states"
-      lede="The dashboard rendered from fixture data, one panel per state it can be in. Proof layout and copy here; the real page at / shows only your own findings."
+      lede="The dashboard rendered from fixture data, one panel per state it can be in — findings above, samples waiting on labels below. Proof layout and copy here; the real page at / shows only your own samples."
     >
       {FIXTURES.map((state) => (
         <>
           <h2>{state.label}</h2>
           <Specimen>
-            <QcHome m={m} findings={state.findings} syncedAt={state.syncedAt} />
+            <QcHome m={m} findings={state.findings} pending={state.pending} syncedAt={state.syncedAt} />
           </Specimen>
         </>
       ))}

@@ -1,6 +1,6 @@
 import type { QcSeverity } from "../../model.js";
 import type { Messages } from "../messages/index.js";
-import { Callout, Card, Chip, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
+import { Callout, Card, Chip, DataTable, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
 
 /**
  * The flagship: a volunteer's samples that need attention, sample-keyed —
@@ -23,6 +23,21 @@ export interface FindingRow {
   specimen_count: number;
   inat_observation_id: bigint | null;
 }
+
+/** A clean sample with labels still to print (the pending_print_sample view). */
+export interface PendingRow {
+  sample_id: number;
+  sample_number: string;
+  date_start: Date;
+  locality: string | null;
+  county: string | null;
+  state_province: string | null;
+  pending_count: number;
+}
+
+/** Where a sample was collected, as one line, from whichever parts we have. */
+const place = (s: { locality: string | null; county: string | null; state_province: string | null }) =>
+  [s.locality, s.county, s.state_province].filter(Boolean).join(", ");
 
 interface SampleGroup {
   rows: FindingRow[];
@@ -48,13 +63,12 @@ export function groupBySample(rows: FindingRow[]): SampleGroup[] {
 
 function SampleCard({ m, group }: { m: Messages; group: SampleGroup }) {
   const s = group.rows[0]!;
-  const place = [s.locality, s.county, s.state_province].filter(Boolean).join(", ");
   return (
     <Card as="article">
       <h3 class="row baseline">
         {m.qc.sampleTitle(s.sample_number, s.date_start)}
         <Meta>
-          {place} · {m.qc.specimens(s.specimen_count)}
+          {place(s)} · {m.qc.specimens(s.specimen_count)}
         </Meta>
       </h3>
       <ul class="stack plain">
@@ -91,7 +105,32 @@ function SampleCard({ m, group }: { m: Messages; group: SampleGroup }) {
   );
 }
 
-export function QcHome(props: { m: Messages; findings: FindingRow[]; syncedAt: Date | null }) {
+/**
+ * What is waiting on labels. Deliberately inert: a clean sample needs
+ * nothing from its collector, so the section reports and offers no actions.
+ * Membership is the pending_print_sample view's business, not this file's.
+ */
+function PendingPrint({ m, rows }: { m: Messages; rows: PendingRow[] }) {
+  if (rows.length === 0) return null;
+  const labels = rows.reduce((sum, r) => sum + r.pending_count, 0);
+  return (
+    <>
+      <h2>{m.pendingPrint.heading}</h2>
+      <Meta block>{m.pendingPrint.summary(rows.length, labels)}</Meta>
+      <DataTable columns={[m.pendingPrint.colSample, m.pendingPrint.colPlace, m.pendingPrint.colLabels]}>
+        {rows.map((r) => (
+          <tr>
+            <td>{m.qc.sampleTitle(r.sample_number, r.date_start)}</td>
+            <td>{place(r)}</td>
+            <td>{m.format.number(r.pending_count)}</td>
+          </tr>
+        ))}
+      </DataTable>
+    </>
+  );
+}
+
+export function QcHome(props: { m: Messages; findings: FindingRow[]; pending: PendingRow[]; syncedAt: Date | null }) {
   const { m } = props;
   const groups = groupBySample(props.findings);
   const blocking = groups.reduce((sum, g) => sum + g.blocking, 0);
@@ -103,22 +142,24 @@ export function QcHome(props: { m: Messages; findings: FindingRow[]; syncedAt: D
     </Callout>
   );
 
-  if (groups.length === 0) {
-    return (
-      <>
-        <PageHeader title={m.qc.allClearHeading} />
-        <EmptyState>{m.qc.allClear}</EmptyState>
-        {syncLine}
-      </>
-    );
-  }
   return (
     <>
-      <PageHeader title={m.qc.heading} lede={m.qc.summary(groups.length, blocking)} />
-      {syncLine}
-      {groups.map((group) => (
-        <SampleCard m={m} group={group} />
-      ))}
+      {groups.length === 0 ? (
+        <>
+          <PageHeader title={m.qc.allClearHeading} />
+          <EmptyState>{m.qc.allClear}</EmptyState>
+          {syncLine}
+        </>
+      ) : (
+        <>
+          <PageHeader title={m.qc.heading} lede={m.qc.summary(groups.length, blocking)} />
+          {syncLine}
+          {groups.map((group) => (
+            <SampleCard m={m} group={group} />
+          ))}
+        </>
+      )}
+      <PendingPrint m={m} rows={props.pending} />
     </>
   );
 }

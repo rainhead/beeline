@@ -20,7 +20,7 @@ export const en = {
   locale,
   brand: "Beeline",
   /** Locale-aware value formatters, for views composing values into markup. */
-  format: { date, dateTime },
+  format: { date, dateTime, number: n },
 
   layout: {
     /** Any instance that is not production says so (beeline-2u8). */
@@ -68,6 +68,21 @@ export const en = {
     editSample: "Edit this sample",
     blocksPrinting: "blocks printing",
     headsUp: "heads-up",
+  },
+
+  /**
+   * The passive counterpart to the findings list: samples that are clean and
+   * waiting on labels. No promises about when — printing is staff work whose
+   * shape is still being worked out (beeline-1kb.1).
+   */
+  pendingPrint: {
+    heading: "Waiting on labels",
+    summary: (samples: number, labels: number) =>
+      `${n(samples)} ${samples === 1 ? "sample is" : "samples are"} clean and waiting — ` +
+      `${n(labels)} ${labels === 1 ? "label" : "labels"} still to print. Nothing more for you to do with these.`,
+    colSample: "Sample",
+    colPlace: "Place",
+    colLabels: "Labels",
   },
 
   sampleEdit: {

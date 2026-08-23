@@ -116,6 +116,47 @@ describe("QC findings and printability", () => {
   });
 });
 
+async function pendingCount(sampleId: number): Promise<number | null> {
+  const r = await rows(conn, `SELECT pending_count FROM pending_print_sample WHERE sample_id = ${sampleId}`);
+  return r.length === 0 ? null : Number(r[0]![0]);
+}
+
+describe("what is waiting on labels", () => {
+  test("a clean, never-printed sample is pending for its whole count", async () => {
+    const id = await insertCleanSample(conn, { specimen_count: "3" });
+    expect(await pendingCount(id)).toBe(3);
+  });
+
+  test("a fully printed sample is not pending", async () => {
+    const id = await insertCleanSample(conn, { specimen_count: "2" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1), (${id}, 2)`);
+    expect(await pendingCount(id)).toBe(null);
+  });
+
+  test("a count raised after printing leaves only the difference pending", async () => {
+    const id = await insertCleanSample(conn, { specimen_count: "5" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1), (${id}, 2)`);
+    expect(await pendingCount(id)).toBe(3);
+  });
+
+  test("a count below what was printed is not pending — it is the other direction's problem", async () => {
+    const id = await insertCleanSample(conn, { specimen_count: "2" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1), (${id}, 2), (${id}, 3)`);
+    expect(await pendingCount(id)).toBe(null);
+  });
+
+  test("a blocked sample is never pending, however many labels it lacks", async () => {
+    const id = await insertCleanSample(conn, { locality: "NULL" });
+    expect(await isPrintable(id)).toBe(false);
+    expect(await pendingCount(id)).toBe(null);
+  });
+
+  test("a warning does not keep a sample out of the waiting list", async () => {
+    const id = await insertCleanSample(conn, { county: "NULL", specimen_count: "4" });
+    expect(await pendingCount(id)).toBe(4);
+  });
+});
+
 describe("determination of record", () => {
   test("latest expert wins; else latest volunteer", async () => {
     const sampleId = await insertCleanSample(conn);

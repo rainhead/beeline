@@ -27,8 +27,17 @@ async function qcApp() {
     county: "NULL",
     inat_observation_id: "123456",
   });
+  // Alice again: clean, four specimens, never printed — waiting on labels.
+  await insertCleanSample(conn, {
+    collector_id: String(alice),
+    sample_number: "'A-8'",
+    specimen_count: "4",
+    locality: "'Finley NWR'",
+  });
   // Bob: his own problem sample, invisible to Alice.
   await insertCleanSample(conn, { collector_id: String(bob), sample_number: "'B-9'", locality: "NULL" });
+  // Bob again: clean and waiting, and equally invisible to Alice.
+  await insertCleanSample(conn, { collector_id: String(bob), sample_number: "'B-10'" });
   await conn.run(
     `INSERT INTO sync_run (source, authenticated, started_at, completed_at)
      VALUES ('18521', true, TIMESTAMP '2026-08-20 03:00:00', TIMESTAMP '2026-08-20 03:10:00')`,
@@ -76,6 +85,31 @@ describe("self-service QC home", () => {
     expect(body).toContain("clears on the next sync");
   });
 
+  it("lists the collector's clean samples as waiting on labels", async () => {
+    const { app } = await qcApp();
+    const body = await (await app.request("/")).text();
+    expect(body).toContain("Waiting on labels");
+    expect(body).toContain("Sample A-8");
+    expect(body).toContain("Finley NWR");
+    // A-7 is blocked (no locality); B-10 is Bob's.
+    expect(body).not.toContain("B-10");
+    // 4 labels on A-8; A-7 contributes none because it cannot print.
+    expect(body).toContain("1 sample is clean and waiting — 4 labels still to print");
+  });
+
+  it("counts a printed sample out of the waiting list", async () => {
+    const { app, conn, alice } = await qcApp();
+    const [[id]] = (await rows(
+      conn,
+      `SELECT entity_id FROM sample WHERE collector_id = ${alice} AND sample_number = 'A-8'`,
+    )) as [[number]];
+    await conn.run(
+      `INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1), (${id}, 2), (${id}, 3), (${id}, 4)`,
+    );
+    const body = await (await app.request("/")).text();
+    expect(body).not.toContain("Waiting on labels");
+  });
+
   it("congratulates a clean record", async () => {
     const { app, conn, alice, bob } = await qcApp();
     // Repair Alice's sample; Bob's stays broken and must not spoil her all-clear.
@@ -87,5 +121,8 @@ describe("self-service QC home", () => {
     const body = await (await app.request("/")).text();
     expect(body).toContain("All clear");
     expect(body).toContain("every one of your samples is clean");
+    // All clear is not the end of the page: the repaired sample is now waiting.
+    expect(body).toContain("Waiting on labels");
+    expect(body).toContain("Sample A-7");
   });
 });

@@ -195,6 +195,12 @@ export interface PrintableSampleView {
   sample_id: number;
 }
 
+export interface PendingPrintSampleView {
+  sample_id: number;
+  /** Labels still to come: the working count less the specimens already printed. */
+  pending_count: number;
+}
+
 export interface Database {
   person: PersonTable;
   inat_account: InatAccountTable;
@@ -213,6 +219,7 @@ export interface Database {
   determination_of_record: DeterminationTable;
   qc_finding: QcFindingView;
   printable_sample: PrintableSampleView;
+  pending_print_sample: PendingPrintSampleView;
   // Attached private store (ADR 0003), catalog-qualified:
   "private.inat_oauth_token": InatOauthTokenTable;
   "private.session": SessionTable;

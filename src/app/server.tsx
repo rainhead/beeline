@@ -15,7 +15,7 @@ import { Layout } from "./views/layout.js";
 import type { Job } from "./jobs/framework.js";
 import { Glossary } from "./views/glossary.js";
 import { Jobs } from "./views/jobs.js";
-import { QcHome, type FindingRow } from "./views/qc.js";
+import { QcHome, type FindingRow, type PendingRow } from "./views/qc.js";
 import { DESIGN_STYLESHEETS } from "./views/design/shell.js";
 import { DesignIndex } from "./views/design/index-page.js";
 import { DesignColor } from "./views/design/color.js";
@@ -164,7 +164,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   app.get("/", async (c) => {
     const m = c.get("m");
     const session = c.get("session");
-    const [findings, sync] = await Promise.all([
+    const [findings, pending, sync] = await Promise.all([
       db
         .selectFrom("qc_finding as f")
         .innerJoin("sample as s", "s.entity_id", "f.sample_id")
@@ -186,13 +186,41 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
         .orderBy("s.date_start", "desc")
         .orderBy("s.entity_id")
         .execute(),
+      // The passive half of the dashboard: clean samples waiting on labels.
+      // Warnings don't block printing, so a sample can honestly appear in
+      // both lists.
+      db
+        .selectFrom("pending_print_sample as p")
+        .innerJoin("sample as s", "s.entity_id", "p.sample_id")
+        .where("s.collector_id", "=", session.personId)
+        .select([
+          "s.entity_id as sample_id",
+          "s.sample_number",
+          "s.date_start",
+          "s.locality",
+          "s.county",
+          "s.state_province",
+          "p.pending_count",
+        ])
+        .orderBy("s.date_start", "desc")
+        .orderBy("s.entity_id")
+        .execute(),
       db
         .selectFrom("sync_run")
         .select(({ fn }) => fn.max("completed_at").as("at"))
         .executeTakeFirst(),
     ]);
     return c.html(
-      await page(c, m.qc.title, <QcHome m={m} findings={findings as FindingRow[]} syncedAt={sync?.at ?? null} />),
+      await page(
+        c,
+        m.qc.title,
+        <QcHome
+          m={m}
+          findings={findings as FindingRow[]}
+          pending={pending as PendingRow[]}
+          syncedAt={sync?.at ?? null}
+        />,
+      ),
     );
   });
 

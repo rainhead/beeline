@@ -2,10 +2,12 @@
 -- exist (beeline-1kb.2) the proof of printing is the specimen row itself —
 -- specimens are individuated by printing, so a sample with fewer specimen rows
 -- than its working count has that many labels still to come. This is the same
--- proxy qc_rule_count_below_printed reads from the other direction. Legacy
--- promotion writes one specimen per historical row (production is essentially
--- all printed); iNat promotion writes only the count, so everything synced is
--- pending here.
+-- proxy qc_rule_count_below_printed reads from the other direction.
+-- Expect this view to be empty for now: legacy promotion is the only thing
+-- that creates samples today, and it writes one specimen per historical row
+-- (production is essentially all printed). Rows appear here when samples
+-- start arriving unprinted — sample creation from iNaturalist, in-app trap
+-- entry — or when a count is raised above what was already printed.
 -- Membership follows printable_sample, so the waiver clause and the per-atlas
 -- geoprivacy policy reach this view without the app knowing.
 CREATE VIEW pending_print_sample AS

@@ -39,7 +39,9 @@ deltas that bring an already-deployed database up to it.**
   than in an operator's memory.
 - `db:migrate --check` diffs a store's tables, views, and columns against a
   database built fresh from the schema — the answer to "did I forget to write
-  a migration?", which the duplication above makes possible to get wrong.
+  a migration?", which the duplication above makes possible to get wrong. It
+  judges only what the schema declares: a real store also holds the ingestion
+  pipeline's staging tables (`ingest/*.sql`), which are nobody's drift.
 - Deployment ([the runbook](../runbooks/deploy-maderas.md),
   `scripts/deploy-maderas.sh`) stops the service to migrate: one process owns
   the store (ADR 0005), so there is no other moment when the file is free.

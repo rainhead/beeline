@@ -115,28 +115,44 @@ export async function baseline(conn: DuckDBConnection, dir = MIGRATIONS_DIR): Pr
 
 /**
  * Where a database's shape differs from `schema/*.sql` — the answer to "did
- * I forget to write a migration?". Compares tables, views, and their columns
- * against a database freshly built from the schema. Reports differences as
- * lines; an empty array means the two agree.
+ * I forget to write a migration?". Compares the tables and views the schema
+ * declares, and their columns, against a database freshly built from it.
+ *
+ * Tables the schema does not declare are ignored on purpose: a real store
+ * also holds the ingestion pipeline's staging tables (`ingest/*.sql`), which
+ * are nobody's schema drift.
  */
 export async function schemaDrift(conn: DuckDBConnection): Promise<string[]> {
-  const shape = async (c: DuckDBConnection): Promise<Set<string>> => {
+  const shape = async (c: DuckDBConnection): Promise<Map<string, Set<string>>> => {
     const rows = await (
       await c.run(
         `SELECT table_name, column_name FROM information_schema.columns
          WHERE table_schema = 'main' ORDER BY table_name, column_name`,
       )
     ).getRows();
-    return new Set(rows.map(([t, col]) => `${String(t)}.${String(col)}`));
+    const byTable = new Map<string, Set<string>>();
+    for (const [t, col] of rows) {
+      const name = String(t);
+      if (!byTable.has(name)) byTable.set(name, new Set());
+      byTable.get(name)!.add(String(col));
+    }
+    return byTable;
   };
+
   const { instance, conn: fresh } = await createMemoryDb();
   try {
     const expected = await shape(fresh);
     const actual = await shape(conn);
-    const drift = [
-      ...[...expected].filter((k) => !actual.has(k)).map((k) => `missing here: ${k}`),
-      ...[...actual].filter((k) => !expected.has(k)).map((k) => `not in the schema: ${k}`),
-    ];
+    const drift: string[] = [];
+    for (const [table, columns] of expected) {
+      const here = actual.get(table);
+      if (here === undefined) {
+        drift.push(`missing: ${table}`);
+        continue;
+      }
+      for (const col of columns) if (!here.has(col)) drift.push(`missing: ${table}.${col}`);
+      for (const col of here) if (!columns.has(col)) drift.push(`not in the schema: ${table}.${col}`);
+    }
     return drift.sort();
   } finally {
     fresh.closeSync();

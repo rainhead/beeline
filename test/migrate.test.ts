@@ -76,14 +76,22 @@ describe("drift against the schema", () => {
 
   test("a missing view — the forgotten-migration case — is named", async () => {
     await conn.run("DROP VIEW pending_print_sample");
-    expect(await schemaDrift(conn)).toEqual([
-      "missing here: pending_print_sample.pending_count",
-      "missing here: pending_print_sample.sample_id",
-    ]);
+    expect(await schemaDrift(conn)).toEqual(["missing: pending_print_sample"]);
   });
 
-  test("something the schema does not declare is named too", async () => {
-    await conn.run("CREATE TABLE hand_made (id INTEGER)");
-    expect(await schemaDrift(conn)).toEqual(["not in the schema: hand_made.id"]);
+  test("a missing column on a table the schema declares is named", async () => {
+    await conn.run("ALTER TABLE job_run DROP COLUMN detail");
+    expect(await schemaDrift(conn)).toEqual(["missing: job_run.detail"]);
+  });
+
+  test("an extra column on a table the schema declares is named", async () => {
+    await conn.run("ALTER TABLE sample ADD COLUMN hand_added TEXT");
+    expect(await schemaDrift(conn)).toEqual(["not in the schema: sample.hand_added"]);
+  });
+
+  test("tables the schema never declared are not drift — the pipeline makes those", async () => {
+    // A real store also holds the legacy load's staging tables (ingest/*.sql).
+    await conn.run("CREATE TABLE legacy_staging_whatever (id INTEGER)");
+    expect(await schemaDrift(conn)).toEqual([]);
   });
 });

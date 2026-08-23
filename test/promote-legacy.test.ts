@@ -110,6 +110,19 @@ describe("legacy promotion", () => {
     ]);
   });
 
+  test("collectors keep their name parts, so a label can abbreviate them", async () => {
+    // display_name alone cannot yield "A. Collector" (beeline-77j).
+    const parts = await rows(
+      conn,
+      `SELECT display_name, given_name, family_name FROM person
+       WHERE given_name IS NOT NULL ORDER BY display_name`,
+    );
+    expect(parts).toEqual([
+      ["Ada Collector", "Ada", "Collector"],
+      ["Bea Trapper", "Bea", "Trapper"],
+    ]);
+  });
+
   test("locations carry elevation with legacy provenance", async () => {
     const locs = await rows(
       conn,

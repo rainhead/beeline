@@ -169,7 +169,7 @@ export function DesignComponents({ m }: { m: Messages }) {
       <h2>Taxon names</h2>
       <p>
         Set by construction from rank and ancestry. The rules and the full worked set are at{" "}
-        <a href="/design/names">Scientific names</a>.
+        <a href="/design/names">Names</a>.
       </p>
       <Specimen>
         <p>

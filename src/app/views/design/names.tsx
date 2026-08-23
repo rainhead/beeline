@@ -1,3 +1,4 @@
+import { labelName, type PersonNameParts } from "../../../person-name.js";
 import { TaxonName, type TaxonNameProps } from "../components/index.js";
 import { DesignPage, DoDont, OpenQuestion, Specimen } from "./shell.js";
 
@@ -74,12 +75,52 @@ const EXAMPLES: ReadonlyArray<{ props: TaxonNameProps; note: string }> = [
   },
 ];
 
+/**
+ * Real shapes from the legacy data (beeline-77j), so this doubles as the
+ * proof for `labelName`: every case that broke a "last whitespace token"
+ * rule is here.
+ */
+const PEOPLE: ReadonlyArray<{ person: PersonNameParts; note: string }> = [
+  {
+    person: { display_name: "Peter Abrahamsen", given_name: "Peter", family_name: "Abrahamsen" },
+    note: "The ordinary case: one initial, then the family name.",
+  },
+  {
+    person: { display_name: "Maarten Van Otterloo", given_name: "Maarten", family_name: "Van Otterloo" },
+    note: "A particle is part of the family name and is printed whole. Splitting on whitespace would print “M. Otterloo”, which is a different person.",
+  },
+  {
+    person: {
+      display_name: "Juan Manuel Benitez Alvarez",
+      given_name: "Juan Manuel",
+      family_name: "Benitez Alvarez",
+    },
+    note: "Two given names, two family names. Only the first given name is abbreviated, and the family name never is.",
+  },
+  {
+    person: { display_name: "Sarah Red-Laird", given_name: "Sarah", family_name: "Red-Laird" },
+    note: "A hyphenated family name needs no special handling — it is one name.",
+  },
+  {
+    person: { display_name: "Mary Jo Mosby", given_name: "Mary Jo", family_name: "Mosby" },
+    note: "A compound given name loses its second half. Anyone who wants “M. J. Mosby” sets label_name.",
+  },
+  {
+    person: { display_name: "Karen G. Barron", given_name: "Karen", family_name: "G. Barron", label_name: "K. Barron" },
+    note: "The import put a middle initial in the family name. label_name overrides the derived form rather than waiting for the data to be fixed.",
+  },
+  {
+    person: { display_name: "Michael O’Loughlin | Dan O’Loughlin" },
+    note: "No parts to abbreviate against — an unparted import — so the full form prints. A long name beats a wrong one.",
+  },
+];
+
 export function DesignNames() {
   return (
     <DesignPage
       current="/design/names"
-      title="Scientific names"
-      lede="How a taxon name is set is a function of its rank and its ancestry — so it is a component, not a habit."
+      title="Names"
+      lede="A taxon name is set by its rank and ancestry; a person's name is abbreviated from parts nobody should be re-splitting at print time. Both are derived, not typed."
     >
       <h2>Why this is not a style rule</h2>
       <p>
@@ -169,6 +210,41 @@ export function DesignNames() {
         </p>
       </OpenQuestion>
 
+      <h2>People’s names</h2>
+      <p>
+        A label prints the collector as <strong>P. Abrahamsen</strong>, which a display name cannot yield: “last
+        whitespace token” gets Van Otterloo, Vanden Heuvel and Benitez Alvarez wrong, and those are real people in
+        this data. So <code>person</code> stores the parts — <code>given_name</code> and <code>family_name</code> —
+        and <code>labelName()</code> derives the printed form: the first given initial, then the family name{" "}
+        <em>whole</em>. A family name is never re-split at print time.
+      </p>
+      <p>
+        Derivation is a default, not a law. <code>label_name</code> overrides it outright, for the cases the parts get
+        wrong and for people who would rather be written differently. With no family name at all — a mononym, an
+        import nobody has parted — the full display name prints unchanged.
+      </p>
+
+      <Specimen>
+        <dl class="reference">
+          {PEOPLE.map((e) => (
+            <>
+              <dt style="font-family: inherit; font-size: 1rem">
+                {labelName(e.person)} <span class="meta">← {e.person.display_name}</span>
+              </dt>
+              <dd class="meta">{e.note}</dd>
+            </>
+          ))}
+        </dl>
+      </Specimen>
+
+      <OpenQuestion bead="beeline-77j">
+        <p>
+          What a label prints for a sample with <em>several</em> collectors is undecided. The legacy data has 25,949
+          specimens whose collector is a pipe-separated list — “Michael O’Loughlin | Dan O’Loughlin”, active through
+          2025 — and <code>sample.collector_id</code> is a single reference.
+        </p>
+      </OpenQuestion>
+
       <DoDont
         dos={[
           <>
@@ -177,6 +253,10 @@ export function DesignNames() {
           "Treat a genus-rank determination as a complete answer and set it “Bombus sp.”, not “Bombus (unknown)”.",
           "Keep authorship when the data has it — it disambiguates homonyms.",
           "Say why a name is uncertain with cf. or aff. rather than dropping to genus.",
+          <>
+            Abbreviate a person's name through <code>labelName()</code>, and fix a wrong one with{" "}
+            <code>label_name</code> rather than by editing the parts to be untrue.
+          </>,
         ]}
         donts={[
           "Don't italicise by hand, and don't italicise a family name.",
@@ -184,6 +264,7 @@ export function DesignNames() {
           "Don't put cf. after the epithet, or sp. before it.",
           "Don't lead with an English name, and don't put one on a label or in an export.",
           "Don't set a scientific name in monospace, even inside a technical detail string.",
+          "Don't split a family name at print time — particles and second surnames belong to it.",
         ]}
       />
     </DesignPage>

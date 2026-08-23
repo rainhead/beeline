@@ -250,8 +250,11 @@ CREATE TABLE legacy_person_map AS
 SELECT fn, ln, nextval('entity_id_seq') AS person_id
 FROM (SELECT DISTINCT fn, ln FROM legacy_promotable);
 
-INSERT INTO person (entity_id, display_name)
-SELECT person_id, concat_ws(' ', fn, ln) FROM legacy_person_map;
+-- Name parts survive promotion: a label prints the initial and the whole
+-- family name, which cannot be recovered from a joined display name
+-- (Van Otterloo, Benitez Alvarez). See src/person-name.ts.
+INSERT INTO person (entity_id, display_name, given_name, family_name)
+SELECT person_id, concat_ws(' ', fn, ln), fn, ln FROM legacy_person_map;
 
 -- iNat accounts: only where login ↔ name pair is unambiguous both ways.
 INSERT INTO inat_account (person_id, inat_user_id, login)

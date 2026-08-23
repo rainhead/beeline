@@ -16,7 +16,7 @@ export const DESIGN_SECTIONS = [
   { path: "/design", label: "Overview" },
   { path: "/design/color", label: "Color" },
   { path: "/design/type", label: "Typography" },
-  { path: "/design/names", label: "Scientific names" },
+  { path: "/design/names", label: "Names" },
   { path: "/design/identity", label: "Identity" },
   { path: "/design/icons", label: "Iconography" },
   { path: "/design/space", label: "Space & form" },

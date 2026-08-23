@@ -60,7 +60,7 @@ export function DesignType() {
         </p>
         <p>
           A scientific name is <em>never</em> monospace, however technical it looks — it is a name, and it has its own
-          rules. See <a href="/design/names">Scientific names</a>.
+          rules. See <a href="/design/names">Names</a>.
         </p>
       </Specimen>
 

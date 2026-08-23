@@ -31,6 +31,12 @@ pnpm install --frozen-lockfile
 pnpm app:build
 
 systemctl --user stop beeline
+# Keep one copy from just before a migration. DuckDB <=1.6 can leave the file
+# unopenable if DDL reaches the WAL without a checkpoint (beeline-vyi), and
+# this store is production after cutover.
+if pnpm db:migrate --status | grep -q PENDING; then
+  cp -f beeline.duckdb beeline.duckdb.pre-migrate
+fi
 migrated=0
 pnpm db:migrate || migrated=$?
 systemctl --user start beeline

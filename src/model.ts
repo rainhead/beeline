@@ -17,6 +17,9 @@ export type Pronouns = "he" | "she" | "they";
 export interface PersonTable {
   entity_id: Generated<number>;
   display_name: string;
+  given_name: string | null;
+  family_name: string | null;
+  label_name: string | null;
   pronouns: Pronouns | null;
 }
 

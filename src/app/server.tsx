@@ -258,7 +258,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     ["/design", "Design system", () => <DesignIndex />],
     ["/design/color", "Color", () => <DesignColor />],
     ["/design/type", "Typography", () => <DesignType />],
-    ["/design/names", "Scientific names", () => <DesignNames />],
+    ["/design/names", "Names", () => <DesignNames />],
     ["/design/identity", "Identity", () => <DesignIdentity />],
     ["/design/icons", "Iconography", () => <DesignIcons />],
     ["/design/space", "Space & form", () => <DesignSpace />],

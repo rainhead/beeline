@@ -61,7 +61,7 @@ export function groupBySample(rows: FindingRow[]): SampleGroup[] {
   return [...groups.values()];
 }
 
-function SampleCard({ m, group }: { m: Messages; group: SampleGroup }) {
+function SampleCard({ m, group, others }: { m: Messages; group: SampleGroup; others: string[] }) {
   const s = group.rows[0]!;
   return (
     <Card as="article">
@@ -69,6 +69,7 @@ function SampleCard({ m, group }: { m: Messages; group: SampleGroup }) {
         {m.qc.sampleTitle(s.sample_number, s.date_start)}
         <Meta>
           {place(s)} · {m.qc.specimens(s.specimen_count)}
+          {others.length > 0 && <> · {m.qc.collectedWith(m.format.list(others))}</>}
         </Meta>
       </h3>
       <ul class="stack plain">
@@ -110,7 +111,7 @@ function SampleCard({ m, group }: { m: Messages; group: SampleGroup }) {
  * nothing from its collector, so the section reports and offers no actions.
  * Membership is the pending_print_sample view's business, not this file's.
  */
-function PendingPrint({ m, rows }: { m: Messages; rows: PendingRow[] }) {
+function PendingPrint({ m, rows, withOthers }: { m: Messages; rows: PendingRow[]; withOthers: CoCollectors }) {
   if (rows.length === 0) return null;
   const labels = rows.reduce((sum, r) => sum + r.pending_count, 0);
   return (
@@ -120,7 +121,12 @@ function PendingPrint({ m, rows }: { m: Messages; rows: PendingRow[] }) {
       <DataTable columns={[m.pendingPrint.colSample, m.pendingPrint.colPlace, m.pendingPrint.colLabels]}>
         {rows.map((r) => (
           <tr>
-            <td>{m.qc.sampleTitle(r.sample_number, r.date_start)}</td>
+            <td>
+              {m.qc.sampleTitle(r.sample_number, r.date_start)}
+              {(withOthers.get(r.sample_id) ?? []).length > 0 && (
+                <Meta block>{m.qc.collectedWith(m.format.list(withOthers.get(r.sample_id)!))}</Meta>
+              )}
+            </td>
             <td>{place(r)}</td>
             <td>{m.format.number(r.pending_count)}</td>
           </tr>
@@ -130,8 +136,19 @@ function PendingPrint({ m, rows }: { m: Messages; rows: PendingRow[] }) {
   );
 }
 
-export function QcHome(props: { m: Messages; findings: FindingRow[]; pending: PendingRow[]; syncedAt: Date | null }) {
+/** sample_id → the other people who collected it, in recordedBy order. */
+export type CoCollectors = ReadonlyMap<number, string[]>;
+
+export function QcHome(props: {
+  m: Messages;
+  findings: FindingRow[];
+  pending: PendingRow[];
+  /** Absent on proofing surfaces that render no shared samples. */
+  withOthers?: CoCollectors;
+  syncedAt: Date | null;
+}) {
   const { m } = props;
+  const withOthers: CoCollectors = props.withOthers ?? new Map();
   const groups = groupBySample(props.findings);
   const blocking = groups.reduce((sum, g) => sum + g.blocking, 0);
   const syncLine = (
@@ -155,11 +172,11 @@ export function QcHome(props: { m: Messages; findings: FindingRow[]; pending: Pe
           <PageHeader title={m.qc.heading} lede={m.qc.summary(groups.length, blocking)} />
           {syncLine}
           {groups.map((group) => (
-            <SampleCard m={m} group={group} />
+            <SampleCard m={m} group={group} others={withOthers.get(group.rows[0]!.sample_id) ?? []} />
           ))}
         </>
       )}
-      <PendingPrint m={m} rows={props.pending} />
+      <PendingPrint m={m} rows={props.pending} withOthers={withOthers} />
     </>
   );
 }

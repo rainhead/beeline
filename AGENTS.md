@@ -34,7 +34,9 @@ The schema **is** the `schema/*.sql` files, applied in filename order (0xx table
 
 - Build only what the current roadmap phase needs; the fuller domain sketch waits in [docs/schema-sketch.md](docs/schema-sketch.md) and is re-reviewed when its phase arrives.
 - Keep DDL dialect-neutral per ADR 0001: `TEXT` + `CHECK` for enum-ish columns, `concat()`/`concat_ws()` over `||`, no partial unique indexes.
-- Identity per [ADR 0002](docs/adr/0002-entities.md): entity tables have an `entity_id` PK drawn from the global `entity_id_seq`; facet tables (1:1 satellites) are keyed by their parent's id; only global-identity columns are named `entity_id`.
+- Collecting is often a pair (two thirds of legacy trap specimens), so collectors are a list: `sample_collector` in `recordedBy` order, position 1 being `sample.collector_id` (the primary, whose sample numbering it is). Every "my samples" query reads the list, never `collector_id` (beeline-77j).
+
+Identity per [ADR 0002](docs/adr/0002-entities.md): entity tables have an `entity_id` PK drawn from the global `entity_id_seq`; facet tables (1:1 satellites) are keyed by their parent's id; only global-identity columns are named `entity_id`.
 - Document tables and columns with `COMMENT ON` (queryable in-database); reserve `--` comments for design rationale spanning statements.
 - `src/model.ts` (Kysely types) follows the SQL by hand — update it with any schema change.
 - Kysely is pinned to 0.28.x until `kysely-duckdb` supports 0.29.

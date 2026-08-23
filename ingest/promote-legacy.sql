@@ -246,15 +246,62 @@ WHERE dup_rank = 1
   );
 
 -- ── People ──────────────────────────────────────────────────────────────
-CREATE TABLE legacy_person_map AS
-SELECT fn, ln, nextval('entity_id_seq') AS person_id
-FROM (SELECT DISTINCT fn, ln FROM legacy_promotable);
+-- Who collected is recordedBy, not firstName/lastName. Two thirds of trap
+-- specimens were collected by a pair, and only recordedBy holds them as a
+-- Darwin Core list — 'Michael O''Loughlin | Dan O''Loughlin' — while the name
+-- columns hold whatever the entry form allowed that year ('Michael and Dan',
+-- 'Michael | Dan', surnames doubled or not). Keying identity on the list's
+-- members is what stops one couple becoming three fake people, and it merges
+-- their joint rows with the samples each of them collected alone.
+CREATE OR REPLACE VIEW legacy_collector_name AS
+WITH pairs AS (
+  SELECT DISTINCT fn, ln,
+    CASE WHEN nullif(trim(recordedBy), '') IS NULL
+         THEN [concat_ws(' ', fn, ln)]  -- 4 rows in 383k; the name columns are the fallback
+         ELSE list_transform(string_split(recordedBy, '|'), x -> trim(x))
+    END AS names
+  FROM legacy_promotable
+)
+SELECT fn, ln, i AS pos, names[i] AS name
+FROM pairs, range(1, len(names) + 1) g(i)
+WHERE nullif(trim(names[i]), '') IS NOT NULL;
+
+-- A pair that names exactly one collector. Name parts and iNat accounts are
+-- believed only from these: on a joint row, firstName/lastName describe the
+-- group, and userLogin belongs to whoever happened to file it.
+CREATE OR REPLACE VIEW legacy_solo_pair AS
+SELECT fn, ln FROM legacy_collector_name GROUP BY fn, ln HAVING max(pos) = 1;
+
+CREATE TABLE legacy_person_name AS
+SELECT name, nextval('entity_id_seq') AS person_id
+FROM (SELECT DISTINCT name FROM legacy_collector_name);
 
 -- Name parts survive promotion: a label prints the initial and the whole
 -- family name, which cannot be recovered from a joined display name
--- (Van Otterloo, Benitez Alvarez). See src/person-name.ts.
+-- (Van Otterloo, Benitez Alvarez). See src/person-name.ts. Someone who only
+-- ever appears inside a joint recordedBy has no parted name to take, and
+-- keeps NULL parts — their label falls back to the full name.
+CREATE TABLE legacy_person_parts AS
+SELECT c.name,
+       arg_min(c.fn, concat(c.fn, ' ', c.ln)) AS fn,
+       arg_min(c.ln, concat(c.fn, ' ', c.ln)) AS ln
+FROM legacy_collector_name c
+JOIN legacy_solo_pair sp ON sp.fn IS NOT DISTINCT FROM c.fn AND sp.ln IS NOT DISTINCT FROM c.ln
+GROUP BY c.name;
+
 INSERT INTO person (entity_id, display_name, given_name, family_name)
-SELECT person_id, concat_ws(' ', fn, ln), fn, ln FROM legacy_person_map;
+SELECT n.person_id, n.name, nullif(p.fn, ''), nullif(p.ln, '')
+FROM legacy_person_name n
+LEFT JOIN legacy_person_parts p ON p.name = n.name;
+
+-- Every (fn, ln) pair resolves to the person named first in its recordedBy —
+-- the primary collector, whose sample numbering the rows carry. Downstream
+-- joins still key on the raw pair; the joint pairs now land on a real person.
+CREATE TABLE legacy_person_map AS
+SELECT c.fn, c.ln, n.person_id
+FROM legacy_collector_name c
+JOIN legacy_person_name n ON n.name = c.name
+WHERE c.pos = 1;
 
 -- iNat accounts: only where login ↔ name pair is unambiguous both ways.
 INSERT INTO inat_account (person_id, inat_user_id, login)
@@ -262,8 +309,9 @@ SELECT m.person_id, c.uid, c.login
 FROM (
   SELECT login, max(uid) AS uid, arg_min(fn, fn) AS fn, arg_min(ln, ln) AS ln
   FROM (
-    SELECT DISTINCT userLogin AS login, fn, ln, try_cast(userId AS BIGINT) AS uid
-    FROM legacy_promotable
+    SELECT DISTINCT userLogin AS login, r.fn, r.ln, try_cast(userId AS BIGINT) AS uid
+    FROM legacy_promotable r
+    JOIN legacy_solo_pair sp ON sp.fn IS NOT DISTINCT FROM r.fn AND sp.ln IS NOT DISTINCT FROM r.ln
     WHERE userLogin <> '' AND try_cast(userId AS BIGINT) IS NOT NULL
   ) pairs
   GROUP BY login
@@ -318,6 +366,27 @@ FROM legacy_sample_map s
 LEFT JOIN atlas a ON a.code = CASE s.state_province
   WHEN 'OR' THEN 'OBA' WHEN 'WA' THEN 'WaBA' WHEN 'BC' THEN 'BC'
   WHEN 'ID' THEN 'ID'  WHEN 'NM' THEN 'NM'   WHEN 'OK' THEN 'OK' END;
+
+-- Everyone who collected each sample, primary first. A sample can gather rows
+-- recorded both jointly and solo, and the O'Loughlins wrote their pair in both
+-- orders, so a person is taken once at their earliest position and the whole
+-- list is renumbered with the primary pinned to 1.
+INSERT INTO sample_collector (sample_id, person_id, position)
+SELECT sample_id, person_id,
+       row_number() OVER (PARTITION BY sample_id ORDER BY is_primary DESC, first_pos, person_id)
+FROM (
+  SELECT s.sample_id,
+         n.person_id,
+         min(c.pos) AS first_pos,
+         max(CASE WHEN n.person_id = s.person_id THEN 1 ELSE 0 END) AS is_primary
+  FROM legacy_promotable r
+  JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
+  JOIN legacy_sample_map s
+    ON s.person_id = m.person_id AND s.sid IS NOT DISTINCT FROM r.sid AND s.p_date_start = r.p_date_start
+  JOIN legacy_collector_name c ON c.fn IS NOT DISTINCT FROM r.fn AND c.ln IS NOT DISTINCT FROM r.ln
+  JOIN legacy_person_name n ON n.name = c.name
+  GROUP BY s.sample_id, n.person_id
+) g;
 
 -- ── Locations ───────────────────────────────────────────────────────────
 -- Production Mongo has no coordinate provenance (nothing obscured-marked

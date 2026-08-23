@@ -152,12 +152,16 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   app.get("/", async (c) => {
     const m = c.get("m");
     const session = c.get("session");
-    const [findings, pending, sync] = await Promise.all([
+    const [findings, pending, partners, sync] = await Promise.all([
       db
         .selectFrom("qc_finding as f")
         .innerJoin("sample as s", "s.entity_id", "f.sample_id")
         .innerJoin("qc_rule as r", "r.name", "f.rule_name")
-        .where("s.collector_id", "=", session.personId)
+        // Any sample you collected, not only the ones numbered under your
+        // name: a second collector is not a spectator (beeline-77j).
+        .innerJoin("sample_collector as mine", (join) =>
+          join.onRef("mine.sample_id", "=", "s.entity_id").on("mine.person_id", "=", session.personId),
+        )
         .select([
           "s.entity_id as sample_id",
           "f.rule_name",
@@ -180,7 +184,9 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
       db
         .selectFrom("pending_print_sample as p")
         .innerJoin("sample as s", "s.entity_id", "p.sample_id")
-        .where("s.collector_id", "=", session.personId)
+        .innerJoin("sample_collector as mine", (join) =>
+          join.onRef("mine.sample_id", "=", "s.entity_id").on("mine.person_id", "=", session.personId),
+        )
         .select([
           "s.entity_id as sample_id",
           "s.sample_number",
@@ -193,11 +199,29 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
         .orderBy("s.date_start", "desc")
         .orderBy("s.entity_id")
         .execute(),
+      // Who else collected those samples, so a card can say whose numbering
+      // it is you are looking at.
+      db
+        .selectFrom("sample_collector as mine")
+        .innerJoin("sample_collector as theirs", "theirs.sample_id", "mine.sample_id")
+        .innerJoin("person", "person.entity_id", "theirs.person_id")
+        .where("mine.person_id", "=", session.personId)
+        .where("theirs.person_id", "!=", session.personId)
+        .select(["mine.sample_id as sample_id", "person.display_name as display_name"])
+        .orderBy("theirs.position")
+        .execute(),
       db
         .selectFrom("sync_run")
         .select(({ fn }) => fn.max("completed_at").as("at"))
         .executeTakeFirst(),
     ]);
+    // sample_id → the other collectors' names, in recordedBy order.
+    const withOthers = new Map<number, string[]>();
+    for (const row of partners as Array<{ sample_id: number; display_name: string }>) {
+      const names = withOthers.get(row.sample_id) ?? [];
+      names.push(row.display_name);
+      withOthers.set(row.sample_id, names);
+    }
     return c.html(
       await page(
         c,
@@ -206,6 +230,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
           m={m}
           findings={findings as FindingRow[]}
           pending={pending as PendingRow[]}
+          withOthers={withOthers}
           syncedAt={sync?.at ?? null}
         />,
       ),

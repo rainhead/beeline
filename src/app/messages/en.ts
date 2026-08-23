@@ -11,6 +11,10 @@ const n = (x: number) => x.toLocaleString(locale);
 // «sample» placeholders survive; real callers always pass Date.
 const date = (d: Date | string) =>
   typeof d === "string" ? d : d.toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric" });
+// Like the date formatters: a plain string passes through, so the proofing
+// page's «sample» placeholder survives a formatter that expects a list.
+const listFormat = new Intl.ListFormat(locale, { style: "long", type: "conjunction" });
+const list = (xs: readonly string[] | string) => (Array.isArray(xs) ? listFormat.format(xs) : String(xs));
 const dateTime = (d: Date | string) =>
   typeof d === "string"
     ? d
@@ -20,7 +24,7 @@ export const en = {
   locale,
   brand: "Beeline",
   /** Locale-aware value formatters, for views composing values into markup. */
-  format: { date, dateTime, number: n },
+  format: { date, dateTime, number: n, list },
 
   layout: {
     /** Any instance that is not production says so (beeline-2u8). */
@@ -68,6 +72,12 @@ export const en = {
     editSample: "Edit this sample",
     blocksPrinting: "blocks printing",
     headsUp: "heads-up",
+    /**
+     * Whose sample you are looking at when it isn't only yours: the sample
+     * number belongs to the first collector's series, so a shared sample has
+     * to say who else was there (beeline-77j).
+     */
+    collectedWith: (people: string) => `collected with ${people}`,
   },
 
   /**

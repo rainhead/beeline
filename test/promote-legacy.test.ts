@@ -27,14 +27,14 @@ beforeAll(async () => {
 describe("legacy promotion", () => {
   test("promotes the valid rows and blocks the junk row", () => {
     expect(counts).toEqual({
-      staged: 4,
-      people: 3, // two collectors + the determiner Lincoln Best
-      samples: 2, // dddd4444 merges into Ada's sample 1
-      specimens: 3,
-      locations: 2,
+      staged: 5,
+      people: 3, // two collectors + the determiner Lincoln Best — the joint row adds nobody
+      samples: 3, // dddd4444 merges into Ada's sample 1; the joint trap sample is its own
+      specimens: 4,
+      locations: 3,
       // Spine (3) + Hymenoptera + 2 families + 2 genera + 3 species.
       animals: 11,
-      determinations: 2,
+      determinations: 3,
       blockedRows: 1,
       unresolvedDeterminations: 0,
       unresolvedDeterminerNames: 0,
@@ -68,6 +68,7 @@ describe("legacy promotion", () => {
     );
     expect(dets).toEqual([
       ["Bombus", false, null, "Bea Trapper", "female"],
+      ["Bombus", false, null, "Bea Trapper", "female"], // the joint sample's specimen
       // Verbatim name retained AND resolved to a single person record.
       ["Bombus vosnesenskii", true, "Lincoln Best", "Lincoln Best", "female"],
     ]);
@@ -90,6 +91,7 @@ describe("legacy promotion", () => {
     expect(kinds).toEqual([
       ["net", "1", "2025-07-14", "2025-07-14"],
       ["trap", "OBAS-00657", "2025-07-01", "2025-07-14"],
+      ["trap", "OBAS-00658", "2025-07-01", "2025-07-14"],
     ]);
   });
 
@@ -106,8 +108,51 @@ describe("legacy promotion", () => {
     expect(people).toEqual([
       ["Ada Collector", "adacollects", "OBA"],
       ["Bea Trapper", "trapline", "WaBA"],
+      ["Bea Trapper", "trapline", "WaBA"], // the joint sample, also hers
       ["Lincoln Best", null, null], // determiner-only person: no samples, no account yet
     ]);
+  });
+
+  test("a joint recordedBy becomes two collectors, not a third person", async () => {
+    // "Bea and Ada" / "Trapper/Collector" is how the entry form let a pair be
+    // written; recordedBy holds the real list (beeline-77j).
+    const collectors = await rows(
+      conn,
+      `SELECT s.sample_number, c.position, p.display_name
+       FROM sample_collector c
+       JOIN sample s ON s.entity_id = c.sample_id
+       JOIN person p ON p.entity_id = c.person_id
+       ORDER BY s.sample_number, c.position`,
+    );
+    expect(collectors).toEqual([
+      ["1", 1, "Ada Collector"],
+      ["OBAS-00657", 1, "Bea Trapper"],
+      ["OBAS-00658", 1, "Bea Trapper"],
+      ["OBAS-00658", 2, "Ada Collector"],
+    ]);
+    // No "Bea and Ada Trapper/Collector" person was invented.
+    expect(await rows(conn, `SELECT display_name FROM person ORDER BY display_name`)).toEqual([
+      ["Ada Collector"],
+      ["Bea Trapper"],
+      ["Lincoln Best"],
+    ]);
+  });
+
+  test("position 1 is the sample's own collector — the invariant the app reads", async () => {
+    const wrong = await rows(
+      conn,
+      `SELECT s.entity_id FROM sample s
+       JOIN sample_collector c ON c.sample_id = s.entity_id AND c.position = 1
+       WHERE c.person_id <> s.collector_id`,
+    );
+    expect(wrong).toEqual([]);
+    // And every sample has its list.
+    const missing = await rows(
+      conn,
+      `SELECT s.entity_id FROM sample s
+       WHERE NOT EXISTS (SELECT 1 FROM sample_collector c WHERE c.sample_id = s.entity_id)`,
+    );
+    expect(missing).toEqual([]);
   });
 
   test("collectors keep their name parts, so a label can abbreviate them", async () => {
@@ -133,6 +178,7 @@ describe("legacy promotion", () => {
     expect(locs).toEqual([
       [72, "legacy_import", true],
       [120, "legacy_import", true],
+      [120, "legacy_import", true], // the joint trap sample, same trap site
     ]);
   });
 
@@ -145,6 +191,7 @@ describe("legacy promotion", () => {
       ["25000001", 1],
       ["25000002", 2],
       ["25000003", 2],
+      ["25000005", 1],
     ]);
   });
 

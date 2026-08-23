@@ -37,6 +37,12 @@ export async function insertCleanSample(
     `INSERT INTO sample (${keys.join(", ")}) VALUES (${keys.map((k) => cols[k]).join(", ")}) RETURNING entity_id`,
   );
   const [[id]] = (await result.getRows()) as [[number]];
+  // Position 1 is the sample's own collector — the invariant every "my
+  // samples" query reads (beeline-77j).
+  await conn.run(
+    `INSERT INTO sample_collector (sample_id, person_id, position)
+     SELECT ${id}, collector_id, 1 FROM sample WHERE entity_id = ${id}`,
+  );
 
   if (location !== null) {
     const loc: Record<string, string> = {

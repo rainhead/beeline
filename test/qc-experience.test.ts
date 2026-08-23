@@ -38,6 +38,21 @@ async function qcApp() {
   await insertCleanSample(conn, { collector_id: String(bob), sample_number: "'B-9'", locality: "NULL" });
   // Bob again: clean and waiting, and equally invisible to Alice.
   await insertCleanSample(conn, { collector_id: String(bob), sample_number: "'B-10'" });
+  // Bob's trap line, which Alice ran with him: his numbering, her sample too
+  // (beeline-77j). One clean, one with a finding.
+  const together = await insertCleanSample(conn, {
+    collector_id: String(bob),
+    sample_number: "'B-11'",
+    specimen_count: "2",
+  });
+  const togetherBroken = await insertCleanSample(conn, {
+    collector_id: String(bob),
+    sample_number: "'B-12'",
+    locality: "NULL",
+  });
+  for (const id of [together, togetherBroken]) {
+    await conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${id}, ${alice}, 2)`);
+  }
   await conn.run(
     `INSERT INTO sync_run (source, authenticated, started_at, completed_at)
      VALUES ('18521', true, TIMESTAMP '2026-08-20 03:00:00', TIMESTAMP '2026-08-20 03:10:00')`,
@@ -58,7 +73,7 @@ describe("self-service QC home", () => {
     const { app } = await qcApp();
     const body = await (await app.request("/")).text();
     expect(body).toContain("Sample A-7");
-    expect(body).toContain("1 sample needs attention");
+    expect(body).toContain("2 samples need attention");
     expect(body).toContain("blocks printing");
     expect(body).toContain("A field the label needs is empty");
     // Blocking finding renders before the warning within the card.
@@ -94,7 +109,7 @@ describe("self-service QC home", () => {
     // A-7 is blocked (no locality); B-10 is Bob's.
     expect(body).not.toContain("B-10");
     // 4 labels on A-8; A-7 contributes none because it cannot print.
-    expect(body).toContain("1 sample is clean and waiting — 4 labels still to print");
+    expect(body).toContain("2 samples are clean and waiting — 6 labels still to print");
   });
 
   it("counts a printed sample out of the waiting list", async () => {
@@ -107,14 +122,27 @@ describe("self-service QC home", () => {
       `INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1), (${id}, 2), (${id}, 3), (${id}, 4)`,
     );
     const body = await (await app.request("/")).text();
-    expect(body).not.toContain("Waiting on labels");
+    expect(body).not.toContain("Sample A-8");
+  });
+
+  it("shows samples someone else numbered but you also collected", async () => {
+    const { app } = await qcApp();
+    const body = await (await app.request("/")).text();
+    // The clean one is waiting on labels; the broken one needs attention.
+    expect(body).toContain("Sample B-11");
+    expect(body).toContain("Sample B-12");
+    // And says whose series the number belongs to, in both places.
+    expect(body.match(/collected with Bob/g)?.length).toBe(2);
+    // Bob's solo samples stay his.
+    expect(body).not.toContain("B-9");
+    expect(body).not.toContain("B-10");
   });
 
   it("congratulates a clean record", async () => {
     const { app, conn, alice, bob } = await qcApp();
     // Repair Alice's sample; Bob's stays broken and must not spoil her all-clear.
     await conn.run(`UPDATE sample SET locality = 'Corvallis', county = 'BentonCo'
-                    WHERE collector_id = ${alice}`);
+                    WHERE entity_id IN (SELECT sample_id FROM sample_collector WHERE person_id = ${alice})`);
     expect(await rows(conn, `SELECT * FROM qc_finding f JOIN sample s ON s.entity_id = f.sample_id
                              WHERE s.collector_id = ${alice}`)).toHaveLength(0);
     void bob;

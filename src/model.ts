@@ -115,6 +115,13 @@ export interface SampleLocationTable {
   source: LocationSource;
 }
 
+export interface SampleCollectorTable {
+  sample_id: number;
+  person_id: number;
+  /** 1-based; position 1 is the sample's collector_id. */
+  position: number;
+}
+
 export interface SpecimenTable {
   entity_id: Generated<number>;
   sample_id: number;
@@ -220,6 +227,7 @@ export interface Database {
   sample: SampleTable;
   elevation_source: ElevationSourceTable;
   sample_location: SampleLocationTable;
+  sample_collector: SampleCollectorTable;
   specimen: SpecimenTable;
   determination: DeterminationTable;
   qc_rule: QcRuleTable;

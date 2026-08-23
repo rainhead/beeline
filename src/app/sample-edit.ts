@@ -33,7 +33,11 @@ export interface EditableSample {
   protocol: string | null;
 }
 
-/** The sample, only if this person may edit it: theirs, and not iNat-backed. */
+/**
+ * The sample, only if this person may edit it: theirs, and not iNat-backed.
+ * "Theirs" means any of its collectors — co-collectors are peers on a sample,
+ * not spectators (beeline-77j).
+ */
 export async function loadEditableSample(
   db: Kysely<Database>,
   sampleId: number,
@@ -42,7 +46,14 @@ export async function loadEditableSample(
   return db
     .selectFrom("sample")
     .where("entity_id", "=", sampleId)
-    .where("collector_id", "=", personId)
+    .where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom("sample_collector")
+          .whereRef("sample_collector.sample_id", "=", "sample.entity_id")
+          .where("sample_collector.person_id", "=", personId)
+          .select("sample_collector.person_id"),
+      ),
+    )
     .where("inat_observation_id", "is", null)
     .select(["entity_id", "sample_number", "date_start", "locality", "country", "state_province", "county", "protocol"])
     .executeTakeFirst();

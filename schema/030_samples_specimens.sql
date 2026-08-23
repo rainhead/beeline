@@ -38,6 +38,21 @@ COMMENT ON COLUMN sample.locality IS 'Place text (with country/state_province/co
 COMMENT ON COLUMN sample.protocol IS 'Free text today (''vane trap'', ''6 Vane Traps''); controlled vocabulary pending staff answers (docs/questions.md T3).';
 COMMENT ON COLUMN sample.sampling_effort IS 'Trap-count × trap-days etc., pending staff answers (docs/questions.md T6).';
 
+-- Collecting is often a pair: two thirds of trap specimens in the legacy data
+-- were recorded by two people (a couple running a trap line), and the same
+-- people also collect alone — so this is per sample, never a property of a
+-- person. The legacy system already wrote them as a Darwin Core list
+-- ('Michael O''Loughlin | Dan O''Loughlin' in recordedBy); this is that list,
+-- resolved to people and kept in order.
+CREATE TABLE sample_collector (
+  sample_id INTEGER NOT NULL REFERENCES sample(entity_id),
+  person_id INTEGER NOT NULL REFERENCES person(entity_id),
+  position  INTEGER NOT NULL CHECK (position >= 1),
+  PRIMARY KEY (sample_id, person_id)
+);
+COMMENT ON TABLE sample_collector IS 'Everyone who collected a sample, in order — including the primary collector at position 1. Sample.collector_id stays the primary (whose sample numbering it is); this table is what "my samples" and label attribution read, so a second collector is not invisible.';
+COMMENT ON COLUMN sample_collector.position IS 'Darwin Core recordedBy order, 1-based. Position 1 is sample.collector_id — an invariant promotion maintains, not a constraint the engine can express.';
+
 -- Where an elevation value came from: the legacy import, or (once Beeline
 -- derives its own) a specific DEM tile, identified by name and content hash so
 -- a re-derivation against updated data is distinguishable from the original.

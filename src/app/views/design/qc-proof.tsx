@@ -1,5 +1,5 @@
 import type { Messages } from "../../messages/index.js";
-import { QcHome, type FindingRow, type PendingRow } from "../qc.js";
+import { QcHome, type CoCollectors, type FindingRow, type PendingRow } from "../qc.js";
 import { DesignPage, Specimen } from "./shell.js";
 
 /**
@@ -50,9 +50,28 @@ const WAITING: PendingRow[] = [
   }),
 ];
 
-const FIXTURES: Array<{ label: string; findings: FindingRow[]; pending: PendingRow[]; syncedAt: Date | null }> = [
+/** Someone else's numbering, your sample too (beeline-77j). */
+const SHARED: CoCollectors = new Map([
+  [6, ["Dan O’Loughlin"]],
+  [7, ["Maggie Graham", "Henry Whitridge"]],
+]);
+
+const FIXTURES: Array<{
+  label: string;
+  findings: FindingRow[];
+  pending: PendingRow[];
+  withOthers?: CoCollectors;
+  syncedAt: Date | null;
+}> = [
   { label: "All clear, nothing waiting", findings: [], pending: [], syncedAt: SYNCED },
   { label: "All clear, samples waiting on labels", findings: [], pending: WAITING, syncedAt: SYNCED },
+  {
+    label: "A shared trap line: samples numbered under the other collector",
+    findings: [],
+    pending: [pendingRow({ sample_id: 7, sample_number: "OBAS-00658", pending_count: 96 })],
+    withOthers: SHARED,
+    syncedAt: SYNCED,
+  },
   { label: "All clear, never synced", findings: [], pending: [], syncedAt: null },
   {
     label: "One sample: blocking + warning, iNat-backed",
@@ -115,6 +134,7 @@ const FIXTURES: Array<{ label: string; findings: FindingRow[]; pending: PendingR
     // Sample 10's finding is a warning, which doesn't block printing — so it
     // is honestly in both lists at once.
     pending: [pendingRow({ sample_id: 6, sample_number: "10", date_start: new Date("2026-06-02T12:00:00") })],
+    withOthers: SHARED,
     syncedAt: SYNCED,
   },
 ];
@@ -130,7 +150,13 @@ export function QcProof({ m }: { m: Messages }) {
         <>
           <h2>{state.label}</h2>
           <Specimen>
-            <QcHome m={m} findings={state.findings} pending={state.pending} syncedAt={state.syncedAt} />
+            <QcHome
+              m={m}
+              findings={state.findings}
+              pending={state.pending}
+              withOthers={state.withOthers}
+              syncedAt={state.syncedAt}
+            />
           </Specimen>
         </>
       ))}

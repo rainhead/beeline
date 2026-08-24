@@ -11,7 +11,7 @@ import {
   toCsv,
   type ListingQuery,
 } from "../src/app/listings.js";
-import { createMemoryDb, insertCleanSample } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -213,6 +213,39 @@ describe("sample listing", () => {
     expect(await get(app, "/samples?scope=all&place=whatcom")).toContain("1 sample");
     expect(await get(app, "/samples?scope=all&qc=blocking")).toContain("1 sample");
     expect(await get(app, "/samples?scope=all&qc=clean")).toContain("3 samples");
+  });
+
+  // Every rule view emits NULL as specimen_id today, so nothing in the model
+  // exercises the other route a finding can take. Standing in a specimen-keyed
+  // definition for one rule is the cheapest way to prove the roll-up before a
+  // real specimen-level rule lands (beeline-2c3.29) — qc_finding unions the
+  // rule views by name, so replacing one is enough.
+  async function flagSpecimen(conn: Awaited<ReturnType<typeof listingApp>>["conn"], catalog: string) {
+    await conn.run(
+      `CREATE OR REPLACE VIEW qc_rule_observation_missing_upstream AS
+       SELECT CAST(NULL AS INTEGER) AS sample_id,
+              sp.entity_id AS specimen_id,
+              'observation_missing_upstream' AS rule_name,
+              'stood in for a specimen-level rule' AS details
+       FROM specimen sp WHERE sp.catalog_number = '${catalog}'`,
+    );
+  }
+
+  it("counts a finding on a specimen as a flag on its sample", async () => {
+    const { app, conn } = await listingApp("staffer");
+    // A-1 is the clean sample; OBA00001 is one of its two specimens.
+    expect(await get(app, "/samples?scope=all&qc=clean")).toContain("A-1");
+    await flagSpecimen(conn, "OBA00001");
+
+    // The chip and printability are the same question asked twice: a sample
+    // whose specimen blocks must not read clean while printing is refused.
+    const blocking = await get(app, "/samples?scope=all&qc=blocking");
+    expect(blocking).toContain("A-1");
+    expect(await get(app, "/samples?scope=all&qc=clean")).not.toContain("A-1");
+    const printable = await rows(conn, `SELECT sample_id FROM printable_sample`);
+    const blocked = await rows(conn, `SELECT sample_id FROM blocking_sample`);
+    expect(blocked.flat()).not.toEqual([]);
+    expect(printable.flat()).not.toContain(blocked.flat()[0]);
   });
 
   it("gives staff a collector filter, matching anyone on the sample", async () => {

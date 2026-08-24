@@ -177,7 +177,10 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     const session = c.get("session");
     const [flagged, pending, partners, sync] = await Promise.all([
       db
-        .selectFrom("qc_finding as f")
+        // The roll-up, not qc_finding: a finding on one of a sample's
+        // specimens is something to fix about that sample, and the dashboard
+        // has to say so or it disagrees with printability (beeline-2c3.29).
+        .selectFrom("sample_qc_finding as f")
         .innerJoin("sample as s", "s.entity_id", "f.sample_id")
         .innerJoin("qc_rule as r", "r.name", "f.rule_name")
         // Any sample you collected, not only the ones numbered under your

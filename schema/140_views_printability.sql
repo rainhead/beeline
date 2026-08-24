@@ -7,22 +7,16 @@
 -- records with true coordinates still print only because no rule yet says
 -- otherwise; the per-atlas policy gate lands when the answers do.
 
--- Which samples a blocking finding lands on, by both routes a finding can
--- take: keyed to the sample itself, or to one of its specimens. Written as a
--- UNION rather than as an OR inside printability's NOT EXISTS, because a
--- correlated OR over two different keys does not decorrelate — it degrades
--- into a scan of every finding per sample, and at 66k samples that was eleven
--- seconds on the flagship page (beeline-2c3.22).
+-- Which samples a blocking finding lands on. Both routes a finding can take
+-- are already resolved by sample_qc_finding (schema/130), so this is one key
+-- the planner can hash-anti-join against — the point of beeline-2c3.22, where
+-- an OR over two different keys inside printability's NOT EXISTS refused to
+-- decorrelate and cost eleven seconds on the flagship page.
 CREATE VIEW blocking_sample AS
-SELECT f.sample_id AS sample_id
-FROM qc_finding f
+SELECT DISTINCT f.sample_id AS sample_id
+FROM sample_qc_finding f
 JOIN qc_rule r ON r.name = f.rule_name AND r.severity = 'blocking'
-WHERE f.sample_id IS NOT NULL
-UNION
-SELECT sp.sample_id
-FROM qc_finding f
-JOIN qc_rule r ON r.name = f.rule_name AND r.severity = 'blocking'
-JOIN specimen sp ON sp.entity_id = f.specimen_id;
+WHERE f.sample_id IS NOT NULL;
 
 CREATE VIEW printable_sample AS
 SELECT s.entity_id AS sample_id

@@ -318,9 +318,10 @@ const collectedBy = (term: string) => sql<boolean>`EXISTS (
 
 /**
  * Blocking and warning counts per sample, joined in as one pass over
- * qc_finding rather than an EXISTS per row. Findings are all sample-level
- * today (every rule view selects NULL as specimen_id); a specimen-level rule
- * would need this to roll up through specimen.
+ * sample_qc_finding rather than an EXISTS per row. Reading the roll-up rather
+ * than qc_finding directly is what keeps a chip and printability agreeing once
+ * a specimen-level rule exists: a finding on a specimen is a flag on its
+ * sample, and both sides now learn that from the same view (beeline-2c3.29).
  *
  * Spelled inline in both listings rather than hoisted: Kysely types a joined
  * subquery against the query it lands in, and the two listings have
@@ -373,7 +374,7 @@ export async function listSamples(
     .leftJoin(
       (eb) =>
         eb
-          .selectFrom("qc_finding as f")
+          .selectFrom("sample_qc_finding as f")
           .innerJoin("qc_rule as r", "r.name", "f.rule_name")
           .where("f.sample_id", "is not", null)
           .groupBy("f.sample_id")
@@ -524,7 +525,7 @@ export async function listSpecimens(
     .leftJoin(
       (eb) =>
         eb
-          .selectFrom("qc_finding as f")
+          .selectFrom("sample_qc_finding as f")
           .innerJoin("qc_rule as r", "r.name", "f.rule_name")
           .where("f.sample_id", "is not", null)
           .groupBy("f.sample_id")

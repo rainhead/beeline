@@ -207,6 +207,18 @@ export interface QcFindingView {
   details: string | null;
 }
 
+/**
+ * Every finding keyed to the sample it belongs to, whether it arrived on the
+ * sample or on one of its specimens. The one roll-up both printability and the
+ * listings' flag chips read (beeline-2c3.29).
+ */
+export interface SampleQcFindingView {
+  sample_id: number | null;
+  specimen_id: number | null;
+  rule_name: string;
+  details: string | null;
+}
+
 /** One row: when the current collecting season began (1 March). */
 export interface SeasonView {
   started_on: Date;
@@ -251,6 +263,7 @@ export interface Database {
   job_run: JobRunTable;
   determination_of_record: DeterminationTable;
   qc_finding: QcFindingView;
+  sample_qc_finding: SampleQcFindingView;
   blocking_sample: BlockingSampleView;
   season: SeasonView;
   settled_sample: SettledSampleView;

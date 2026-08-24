@@ -28,6 +28,10 @@ import { promoteLegacy, type PromotionCounts } from "../src/promote-legacy.js";
  *   llll2222  Eve again, sample 12 — so the majority spelling has a majority
  *   mmmm3333  Eve a third time, sample 13, spelled "Evie Roberts": too far
  *             for the fold, so collector-aliases.csv carries it
+ *   nnnn5555  Fay, sample 14, spelled "Fay OConnor" in 2024
+ *   oooo6666  the same sample, same spelling
+ *   pppp7777  Fay in 2026, spelled "Fay O'Connor" — a spelling that succeeds
+ *             the other instead of interleaving with it
  *
  * Cy's and Dot's rows file under one login, which is the shared-account shape
  * the duplicate detector must surface without merging anything.
@@ -61,10 +65,10 @@ describe("legacy rows that merge into one sample", () => {
   test("every staged row becomes exactly one specimen", () => {
     // The invariant promotion checks for itself: specimens + blocked = staged.
     // A pair mapped to two people used to fan out here, inventing specimens.
-    expect(counts.staged).toBe(9);
+    expect(counts.staged).toBe(12);
     expect(counts.blockedRows).toBe(0);
-    expect(counts.specimens).toBe(9);
-    expect(counts.samples).toBe(6);
+    expect(counts.specimens).toBe(12);
+    expect(counts.samples).toBe(8);
   });
 
   test("two legacy series in one sample are renumbered, not collided", async () => {
@@ -83,6 +87,9 @@ describe("legacy rows that merge into one sample", () => {
       ["11", 2, "25000011"],
       ["12", 1, "25000012"],
       ["13", 1, "25000013"],
+      ["14", 1, "25000014"],
+      ["14", 2, "25000015"],
+      ["15", 1, "25000016"],
       ["9", 1, "25000007"],
       ["9", 2, "25000008"],
       ["OBAS-00657", 1, "25000002"],
@@ -128,6 +135,8 @@ describe("legacy rows that merge into one sample", () => {
       ["11", 1, "Eve Roberts"],
       ["12", 1, "Eve Roberts"],
       ["13", 1, "Eve Roberts"],
+      ["14", 1, "Fay O'Connor"],
+      ["15", 1, "Fay O'Connor"],
       ["9", 1, "Cy Ambiguous"],
       ["9", 2, "Dot Other"], // still recorded, just not the primary
       ["OBAS-00657", 1, "Bea Trapper"],
@@ -154,14 +163,29 @@ describe("legacy rows that merge into one sample", () => {
   test("two spellings of one name are one person, spelled the way most rows spell it", async () => {
     // 'Eve ROberts' and 'Eve Roberts' fold to the same identity key, so they
     // are one person and sample 11 has one collector, not two. The display
-    // name is the majority spelling — ingest/person-overlay.csv overrides it
-    // when the majority is the typo.
+    // name is the spelling used last, and Eve's two are interleaved — same
+    // date, so neither succeeds the other — which falls back to the one most
+    // rows carry.
     const people = await rows(
       conn,
       `SELECT display_name, given_name, family_name FROM person
        WHERE lower(display_name) LIKE 'eve %'`,
     );
     expect(people).toEqual([["Eve Roberts", "Eve", "Roberts"]]);
+  });
+
+  test("a spelling that succeeds another wins on recency, not on rows", async () => {
+    // A name changes only when somebody corrects it, so the newest spelling is
+    // the settled one however few seasons it has had. Fay is 'Fay OConnor' on
+    // two 2024 rows and \"Fay O'Connor\" on one from 2026, and the 2026 spelling
+    // wins — the real dump's 'MaryJo Mosby' through 2023 then 'Mary Jo Mosby'
+    // from 2025. It has to be a succession, not a blip: 'Amy GRotta' is one row
+    // inside a 1,549-row run of 'Amy Grotta' and must not rename her.
+    const fay = await rows(
+      conn,
+      `SELECT display_name FROM person WHERE lower(display_name) LIKE 'fay %'`,
+    );
+    expect(fay).toEqual([["Fay O'Connor"]]);
   });
 
   test("a spelling the fold cannot reach is merged by collector-aliases.csv", async () => {
@@ -205,6 +229,7 @@ describe("legacy rows that merge into one sample", () => {
       ["Cy Ambiguous", "Cy", "Ambiguous"],
       ["Dot Other", null, null],
       ["Eve Roberts", "Eve", "Roberts"],
+      ["Fay O'Connor", "Fay", "O'Connor"],
     ]);
   });
 });

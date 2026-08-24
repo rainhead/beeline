@@ -337,20 +337,58 @@ ids AS (
 SELECT k.name, k.name_key, i.person_id
 FROM keyed k JOIN ids i ON i.name_key = k.name_key;
 
--- Of the spellings that fold together, the one most rows actually carry.
--- Frequency is a guess about typography, not about the person: it picks
--- 'Amy Grotta' (1,549 rows to 1) and 'AC Quinn' (94 to 10) but also
--- 'Jackson Macpherson' (27 to 11), and ingest/person-overlay.csv is where a
--- display_name row overrides it when the majority is the typo.
+-- Of the spellings that fold together, the one in use LAST — because a name
+-- changes over time only when somebody corrects it, so the newest spelling is
+-- the settled one, however few seasons it has had to accumulate rows. Three of
+-- the four folds in 383k rows are that shape and none of them overlap: 'MaryJo
+-- Mosby' through 2023 then 'Mary Jo Mosby' from 2025, 'AC Quinn' through 2024
+-- then 'Ac Quinn', 'Jackson MacPherson' in 2024 then 'Jackson Macpherson'.
+--
+-- But only where the later spelling SUCCEEDS the earlier — first used after
+-- the other was last used. 'Amy GRotta' is one row inside a 1,549-row run of
+-- 'Amy Grotta', which is a keystroke and not a change of name, and under a
+-- plain last-used rule one such stray in a final season would rename someone.
+-- Interleaved spellings fall back to the one most rows carry.
+--
+-- Recency is the collection date, which is the only ordering the dump has:
+-- the staged _ids are content hashes with no timestamp in them, and
+-- dateLabelPrint is a batch print date in mixed formats. The catalogue
+-- sequence (fieldNumber) orders all four groups the same way, so the two
+-- available proxies agree. ingest/person-overlay.csv is where a display_name
+-- row overrides the result — 'Ac Quinn' is a form title-casing initials
+-- rather than anybody correcting anything, and that is a judgement about one
+-- name, not a rule promotion can carry.
 CREATE TABLE legacy_person_display AS
-SELECT person_id, name AS display_name FROM (
-  SELECT n.person_id, c.name,
-         row_number() OVER (PARTITION BY n.person_id ORDER BY count(*) DESC, c.name) AS rn
+WITH spelling AS (
+  SELECT n.person_id, c.name, count(*) AS rows_,
+         min(r.p_date_start) AS first_used, max(r.p_date_start) AS last_used
   FROM legacy_row_collector c
+  JOIN legacy_promotable r ON r._id = c._id
   JOIN legacy_person_name n ON n.name = c.name
   GROUP BY n.person_id, c.name
-) ranked
-WHERE rn = 1;
+),
+-- Only the spelling used latest can be the successor — its first use is after
+-- everything else's last use, so its last use is the latest too. lead() over
+-- that order therefore hands row 1 the runner-up's last use to clear.
+ranked AS (
+  SELECT s.*,
+         row_number() OVER (PARTITION BY person_id
+                            ORDER BY last_used DESC, rows_ DESC, name) AS by_recency,
+         row_number() OVER (PARTITION BY person_id
+                            ORDER BY rows_ DESC, name) AS by_count,
+         lead(last_used) OVER (PARTITION BY person_id
+                               ORDER BY last_used DESC, rows_ DESC, name) AS runner_up_last_used
+  FROM spelling s
+)
+SELECT person_id,
+       coalesce(
+         max(name) FILTER (WHERE by_recency = 1
+                             AND (runner_up_last_used IS NULL
+                                  OR first_used > runner_up_last_used)),
+         max(name) FILTER (WHERE by_count = 1)
+       ) AS display_name
+FROM ranked
+GROUP BY person_id;
 
 -- Name parts survive promotion: a label prints the initial and the whole
 -- family name, which cannot be recovered from a joined display name

@@ -12,7 +12,7 @@ Production facts to anchor the conversation: ~52k trap-collected records (14% of
 4. **Dates**: is the range's start date the previous servicing? Where is servicing recorded today?
 5. **Batch processing**: when a large catch is processed over weeks, what does the processor record per batch, and when do those specimens become printable?
 6. **For Darwin Core publication** we would want per sample: `samplingProtocol` (controlled term), `samplingEffort` (e.g. trap-count × trap-days), `eventDate` as a range, and possibly habitat and preservative/kill method. Which of these can staff actually supply, and which should the trap interface capture going forward?
-7. **What are the `G`/`R`/`LRB`/`SM`/`MMS` sample-number prefixes** in Oregon net data? (G/R look like the Gretchen/Robert `pandg` split; the others?)
+7. **What are the `LRB`/`SM`/`MMS` sample-number prefixes** in Oregon net data? (`G`/`R` are answered: 379 `G…` samples file under Gretchen Pederson and 351 `R…` under Robert, both 2019–2020, so the `pandg` household numbered a series each. See People and accounts below.)
 
 ## Taxon geoprivacy (⚠ blocker: must be answered before go-live)
 
@@ -23,6 +23,15 @@ Raised by Nora (2026-08-19). iNaturalist obscures coordinates for sensitive taxa
    - **Still open:** may one atlas's staff see another atlas's true coordinates? Beeline has no per-atlas staff role today (staff is a global allowlist, beeline-2c3.21), so the all-atlases scope currently shows them. Question pending to Andony; implementation proceeds meanwhile.
 2. **What binds each atlas here** — sensitive-species regulations, state natural-heritage data-sharing agreements, iNaturalist's obscured-coordinate terms?
 3. Until an atlas answers: do its taxon-obscured records stay unprintable (current behavior), or print with obscured coordinates?
+
+## People and accounts
+
+Raised 2026-08-24 by looking at `/people` (beeline-eyk, beeline-bwd). One iNaturalist login can belong to a household, and `inat_account.inat_user_id` is unique, so only one of the pair can hold it — the other has samples and no way to sign in and see them. 17 people, 2,329 samples, are in that position today; about seven of those stop existing once the duplicate-collector worksheet becomes alias lines, and the rest are real.
+
+1. **Who is Pete?** Robert Pederson's records file under `pandg`, which iNaturalist titles "Pete & Gretchen Pederson" — but every `recordedBy` string the household typed says "Robert Pederson", and his own field series is `R…` beside Gretchen's `G…`. Labels therefore print "R. Pederson", which is probably right. Is Robert also Pete (nickname, middle name), or is the account title stale? Only worth changing anything if he is Pete to everyone.
+2. **And who is Jane Pope?** 31 samples, 2019–2020, filing under `pandg` alongside the Pedersons. A third member of that household, a visitor they entered records for, or something else?
+3. **Would these people rather have their own accounts?** Gretchen holds `pandg`; Robert (1,087 samples) cannot sign in. Same shape for Steve Sheehy under Sarah Malaby's `smalaby` (420) and Julie Biddle under Tom Robertson's `tom_julie` (363). If they would each register an iNaturalist account, this dissolves with no change to the model. If the shared login is how they want to work, beeline-bwd has to let one account reach more than one person — worth knowing which before building it.
+4. **Does Emily Carlson have an iNaturalist account?** Her 254 samples carry `amelathopoulos` because Andony typed the records in, not because it is hers. She needs her own resolved, not a share of his.
 
 ## Printing and mailing (for the walkthrough with Arthur/Andony)
 

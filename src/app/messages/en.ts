@@ -171,7 +171,7 @@ export const en = {
       emptyMine:
         "None of your samples have specimens yet. A specimen becomes its own record when its label is printed.",
       emptyFiltered: "No specimens match these filters. Widen the dates, clear the taxon, or search for less.",
-      colCatalog: "Field number",
+      colFieldNumber: "Field number",
       colSample: "Sample",
       colDate: "Date",
       colCollectors: "Collectors",
@@ -180,7 +180,7 @@ export const en = {
       colDeterminer: "Determined by",
       colAtlas: "Atlas",
       /** A specimen whose label predates field numbering. */
-      noCatalogNumber: "not numbered",
+      noFieldNumber: "not numbered",
       undetermined: "not determined",
       expert: "expert",
     },
@@ -211,6 +211,10 @@ export const en = {
       detAny: "Any",
       detDetermined: "Determined",
       detUndetermined: "Not determined",
+      season: "Season",
+      seasonAny: "Any",
+      seasonOpen: "This season",
+      seasonSettled: "Earlier seasons",
       qc: "Flags",
       qcAny: "Any",
       qcFlagged: "Any flag",

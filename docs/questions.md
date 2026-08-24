@@ -18,7 +18,9 @@ Production facts to anchor the conversation: ~52k trap-collected records (14% of
 
 Raised by Nora (2026-08-19). iNaturalist obscures coordinates for sensitive taxa regardless of the collector's wishes, and each atlas sits in its own regulatory environment — this is not a decision Beeline can make on every atlas's behalf. Beeline retains **both** the public (possibly obscured) and true coordinate pairs, so either answer is implementable; what's open is *revelation*, per atlas:
 
-1. **May true coordinates of taxon-obscured records be revealed** — on printed labels, in the app (to staff? to the collector?), and in exports (Ecdysis/GBIF)? Answer needed per atlas.
+1. **May true coordinates of taxon-obscured records be revealed** — on printed labels, and in exports that leave the program (Ecdysis/GBIF)? Answer needed per atlas.
+   - **Decided in-app, 2026-08-23 (Peter):** there is no reason to withhold true coordinates *from the collector or from their own atlas's staff*. They are the coordinates the collector recorded on their own observation, they are printed on that collector's own labels, and CONTEXT.md's stance is that anyone trusted with the main store is trusted with these. The listings and their CSV exports carry coordinates, with each record's provenance and geoprivacy beside them ([beeline-2c3.26](../.beads/)). This is an *internal* read by a participant, not revelation.
+   - **Still open:** may one atlas's staff see another atlas's true coordinates? Beeline has no per-atlas staff role today (staff is a global allowlist, beeline-2c3.21), so the all-atlases scope currently shows them. Question pending to Andony; implementation proceeds meanwhile.
 2. **What binds each atlas here** — sensitive-species regulations, state natural-heritage data-sharing agreements, iNaturalist's obscured-coordinate terms?
 3. Until an atlas answers: do its taxon-obscured records stay unprintable (current behavior), or print with obscured coordinates?
 

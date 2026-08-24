@@ -3,6 +3,7 @@ import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import {
+  CSV_ROW_LIMIT,
   EMPTY_QUERY,
   listSamples,
   listingHref,
@@ -40,6 +41,9 @@ async function listingApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
   const alice = await person(conn, "Alice Adams");
   const bob = await person(conn, "Bob Barnes");
   const staffer = await person(conn, "Sam Staff");
+
+  // One of them has an iNat account, so search-by-login has something to find.
+  await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${alice}, 4242, 'aadams')`);
 
   const atlas = (code: string) => `(SELECT entity_id FROM atlas WHERE code = '${code}')`;
 
@@ -194,6 +198,8 @@ describe("sample listing", () => {
     const { app } = await listingApp("staffer");
     expect(await get(app, "/samples?scope=all&q=B-1")).toContain("1 sample");
     expect(await get(app, "/samples?scope=all&q=barnes")).toContain("2 samples");
+    // An iNat login finds the same person the collector filter would.
+    expect(await get(app, "/samples?scope=all&q=aadams")).toContain("3 samples");
     // A field number in hand: which sample is this specimen from?
     const byCatalog = await get(app, "/samples?scope=all&q=OBA00001");
     expect(byCatalog).toContain("1 sample");
@@ -335,6 +341,30 @@ describe("what is still waiting for a name", () => {
   });
 });
 
+describe("seasons", () => {
+  it("filters to earlier seasons, or to the open one", async () => {
+    const { app } = await listingApp("staffer");
+    // A-2 is dated 2025; everything else is this season (beeline-2c3.24).
+    const settled = await get(app, "/samples?scope=all&season=settled");
+    expect(settled).toContain("A-2");
+    expect(settled).not.toContain("A-1");
+    expect(settled).toContain("1 sample");
+
+    const open = await get(app, "/samples?scope=all&season=open");
+    expect(open).toContain("A-1");
+    expect(open).not.toContain("A-2");
+  });
+
+  it("is where the dashboard's settled link lands", async () => {
+    // The dashboard promises "older samples of yours that still carry flags";
+    // this is that set, and nothing wider.
+    const { app } = await listingApp();
+    const body = await get(app, "/samples?qc=flagged&season=settled");
+    expect(body).toContain("A-2");
+    expect(body).toContain("1 sample");
+  });
+});
+
 describe("CSV export", () => {
   it("downloads the filtered rows, coordinates and provenance included", async () => {
     const { app } = await listingApp("staffer");
@@ -366,6 +396,14 @@ describe("CSV export", () => {
     expect(csv).toContain("OBA00001");
     expect(csv).toContain("Bombus vosnesenskii");
     expect(csv).toContain("Radoszkowski, 1862");
+  });
+
+  it("says so inside the file when it stopped short", async () => {
+    // The page's warning does not travel with a bookmarked download.
+    const rows = Array.from({ length: CSV_ROW_LIMIT }, (_, i) => [i]);
+    const csv = toCsv(["n"], rows);
+    expect(csv.split("\r\n").at(-1)).toContain(`truncated at ${CSV_ROW_LIMIT} rows`);
+    expect(toCsv(["n"], [[1]]).split("\r\n")).toHaveLength(2);
   });
 
   it("quotes what must be quoted and defuses formulas", async () => {

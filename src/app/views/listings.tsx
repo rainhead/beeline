@@ -18,6 +18,7 @@ import {
   Chip,
   DataTable,
   EmptyState,
+  Field,
   FilterBar,
   Meta,
   PageHeader,
@@ -127,6 +128,17 @@ function Filters({
         ]}
       />
       <SelectField
+        id="season"
+        name="season"
+        label={f.season}
+        value={query.season}
+        options={[
+          ["any", f.seasonAny],
+          ["open", f.seasonOpen],
+          ["settled", f.seasonSettled],
+        ]}
+      />
+      <SelectField
         id="qc"
         name="qc"
         label={f.qc}
@@ -152,6 +164,7 @@ const emptyFilters = {
   collector: "",
   taxon: "",
   det: "any",
+  season: "any",
   qc: "any",
 } as const;
 
@@ -162,10 +175,9 @@ const emptyFilters = {
  */
 function DateField({ id, name, label, value }: { id: string; name: string; label: Child; value: string | null }) {
   return (
-    <div class="field">
-      <label for={id}>{label}</label>
+    <Field id={id} label={label}>
       <input id={id} name={name} type="date" value={value ?? ""} />
-    </div>
+    </Field>
   );
 }
 
@@ -299,7 +311,7 @@ export function SpecimenListing({ m, query, page, atlases, admin }: ListingProps
           <ResultsHeader m={m} path={path} query={query} total={page.total} count={copy.count} />
           <DataTable
             columns={[
-              copy.colCatalog,
+              copy.colFieldNumber,
               copy.colSample,
               copy.colDate,
               copy.colCollectors,
@@ -315,7 +327,7 @@ export function SpecimenListing({ m, query, page, atlases, admin }: ListingProps
                   {row.catalog_number !== null ? (
                     <span class="mono">{row.catalog_number}</span>
                   ) : (
-                    <Meta>{copy.noCatalogNumber}</Meta>
+                    <Meta>{copy.noFieldNumber}</Meta>
                   )}
                 </td>
                 <td>{row.sample_number}</td>

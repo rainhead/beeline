@@ -50,6 +50,14 @@ export const QC_STATUSES = ["any", "flagged", "blocking", "warning", "clean"] as
 export type DeterminationState = "any" | "determined" | "undetermined";
 export const DETERMINATION_STATES = ["any", "determined", "undetermined"] as const;
 
+/**
+ * Which seasons to show. The dashboard settles earlier ones (beeline-2c3.24)
+ * and then has to be able to point at exactly what it settled, so "earlier
+ * seasons" is a filter here rather than a set only the dashboard can name.
+ */
+export type SeasonState = "any" | "open" | "settled";
+export const SEASON_STATES = ["any", "open", "settled"] as const;
+
 export interface ListingQuery {
   /** MINE, ALL, or an atlas code. */
   scope: string;
@@ -74,6 +82,7 @@ export interface ListingQuery {
    * least one specimen still waiting for a name.
    */
   det: DeterminationState;
+  season: SeasonState;
   qc: QcStatus;
   /** 1-based. */
   page: number;
@@ -88,6 +97,7 @@ export const EMPTY_QUERY: ListingQuery = {
   collector: "",
   taxon: "",
   det: "any",
+  season: "any",
   qc: "any",
   page: 1,
 };
@@ -119,6 +129,7 @@ export function parseListingQuery(
   const to = params.get("to") ?? "";
   const qc = params.get("qc") ?? "";
   const det = params.get("det") ?? "";
+  const season = params.get("season") ?? "";
   const page = Number.parseInt(params.get("page") ?? "1", 10);
   return {
     scope: permitted ? requested : MINE,
@@ -130,6 +141,7 @@ export function parseListingQuery(
     collector: opts.admin ? text(params.get("collector")) : "",
     taxon: text(params.get("taxon")),
     det: (DETERMINATION_STATES as readonly string[]).includes(det) ? (det as DeterminationState) : "any",
+    season: (SEASON_STATES as readonly string[]).includes(season) ? (season as SeasonState) : "any",
     qc: (QC_STATUSES as readonly string[]).includes(qc) ? (qc as QcStatus) : "any",
     page: Number.isFinite(page) && page >= 1 ? Math.min(page, 10_000) : 1,
   };
@@ -148,6 +160,7 @@ export function listingHref(path: string, query: ListingQuery, overrides: Partia
   if (merged.collector !== "") params.set("collector", merged.collector);
   if (merged.taxon !== "") params.set("taxon", merged.taxon);
   if (merged.det !== "any") params.set("det", merged.det);
+  if (merged.season !== "any") params.set("season", merged.season);
   if (merged.qc !== "any") params.set("qc", merged.qc);
   if (merged.page > 1) params.set("page", String(merged.page));
   const search = params.toString();
@@ -163,6 +176,7 @@ export const isFiltered = (q: ListingQuery) =>
   q.collector !== "" ||
   q.taxon !== "" ||
   q.det !== "any" ||
+  q.season !== "any" ||
   q.qc !== "any";
 
 export interface AtlasOption {
@@ -286,6 +300,14 @@ export const BY_SAMPLE_NUMBER = sql`length(s.sample_number) DESC, s.sample_numbe
  * collector list counts: asking "show me Michael's samples" and getting only
  * the ones he numbered would be the same mistake the list exists to fix.
  */
+/** Settled seasons, or the open one — the same view the dashboard reads. */
+const inSeason = (state: SeasonState) =>
+  state === "any"
+    ? null
+    : sql<boolean>`${state === "settled" ? sql`` : sql`NOT `}EXISTS (
+        SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id
+      )`;
+
 const collectedBy = (term: string) => sql<boolean>`EXISTS (
   SELECT 1 FROM sample_collector c
   JOIN person p ON p.entity_id = c.person_id
@@ -383,13 +405,9 @@ export async function listSamples(
     base = base.where(({ eb, or, exists, selectFrom }) =>
       or([
         eb(sql<string>`lower(s.sample_number)`, "like", needle),
-        exists(
-          selectFrom("sample_collector as c")
-            .innerJoin("person as p", "p.entity_id", "c.person_id")
-            .select("c.sample_id")
-            .whereRef("c.sample_id", "=", "s.entity_id")
-            .where(sql<string>`lower(p.display_name)`, "like", needle),
-        ),
+        // The same match the collector filter makes, so one name behaves the
+        // same way in both boxes.
+        collectedBy(query.q),
         exists(
           selectFrom("specimen as sp")
             .select("sp.entity_id")
@@ -441,6 +459,8 @@ export async function listSamples(
         exists(selectFrom("specimen as sp").select("sp.entity_id").whereRef("sp.sample_id", "=", "s.entity_id")),
       );
   }
+  const season = inSeason(query.season);
+  if (season !== null) base = base.where(season);
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
 
@@ -538,13 +558,9 @@ export async function listSpecimens(
       or([
         eb(sql<string>`lower(sp.catalog_number)`, "like", needle),
         eb(sql<string>`lower(s.sample_number)`, "like", needle),
-        exists(
-          selectFrom("sample_collector as c")
-            .innerJoin("person as p", "p.entity_id", "c.person_id")
-            .select("c.sample_id")
-            .whereRef("c.sample_id", "=", "s.entity_id")
-            .where(sql<string>`lower(p.display_name)`, "like", needle),
-        ),
+        // The same match the collector filter makes, so one name behaves the
+        // same way in both boxes.
+        collectedBy(query.q),
       ]),
     );
   }
@@ -554,6 +570,8 @@ export async function listSpecimens(
   if (animals !== null) base = base.where("d.animal_id", "in", animals.length === 0 ? [-1] : animals);
   if (query.det === "undetermined") base = base.where("d.specimen_id", "is", null);
   if (query.det === "determined") base = base.where("d.specimen_id", "is not", null);
+  const season = inSeason(query.season);
+  if (season !== null) base = base.where(season);
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
 
@@ -646,14 +664,20 @@ export async function collectorsOf(
 /** RFC 4180 quoting, plus the leading-punctuation guard spreadsheets need. */
 function csvCell(value: unknown): string {
   if (value === null || value === undefined) return "";
-  let text = value instanceof Date ? isoDate(value) : String(value);
+  let cell = value instanceof Date ? isoDate(value) : String(value);
   // A cell starting with =, +, -, or @ is a formula to Excel and Sheets.
-  if (/^[=+\-@]/.test(text)) text = `'${text}`;
-  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+  if (/^[=+\-@]/.test(cell)) cell = `'${cell}`;
+  return /[",\n\r]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
 }
 
 export function toCsv(header: readonly string[], rows: ReadonlyArray<readonly unknown[]>): string {
-  return [header.join(","), ...rows.map((row) => row.map(csvCell).join(","))].join("\r\n");
+  const lines = [header.join(","), ...rows.map((row) => row.map(csvCell).join(","))];
+  // A file that stopped short must say so inside itself: the page's warning
+  // does not travel with a bookmarked download.
+  if (rows.length >= CSV_ROW_LIMIT) {
+    lines.push(csvCell(`truncated at ${CSV_ROW_LIMIT} rows — narrow the filters for the rest`));
+  }
+  return lines.join("\r\n");
 }
 
 /** Dates go out as ISO, whatever shape the driver handed back. */

@@ -1,4 +1,4 @@
--- Migration for schema/140_view_printable_sample.sql (beeline-2c3.22).
+-- Migration for schema/140_views_printability.sql (beeline-2c3.22).
 -- Same membership, different shape: printability's correlated NOT EXISTS
 -- tested sample-keyed and specimen-keyed findings with an OR, which does not
 -- decorrelate — 11 seconds over 66k samples, and every read of

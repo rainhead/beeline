@@ -1,3 +1,4 @@
+import { EMPTY_QUERY, listingHref, MINE } from "../listings.js";
 import type { QcSeverity } from "../../model.js";
 import type { Messages } from "../messages/index.js";
 import { Callout, Card, Chip, DataTable, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
@@ -163,7 +164,13 @@ export function QcHome(props: {
     <Callout>
       <Meta block>
         {m.qc.settled.note(settledFlagged)}{" "}
-        <a href={`/samples?qc=flagged`}>{m.qc.settled.link}</a>
+        {/* Exactly what settling took off this page: earlier seasons, this
+            person's own, flagged. Built through listingHref so the URL cannot
+            drift from what the listing parses — and with the scope named, so
+            a staff member's remembered scope does not answer instead. */}
+        <a href={listingHref("/samples", EMPTY_QUERY, { scope: MINE, qc: "flagged", season: "settled" })}>
+          {m.qc.settled.link}
+        </a>
       </Meta>
     </Callout>
   );

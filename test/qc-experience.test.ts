@@ -96,7 +96,9 @@ describe("self-service QC home", () => {
     expect(body).not.toContain("Sample A-2");
     // Settled is not silent — the count is on the page, with a way to them.
     expect(body).toContain("1 older sample of yours still carries a flag");
-    expect(body).toContain(`href="/samples?qc=flagged"`);
+    // Exactly what settling removed: this person's own, earlier seasons,
+    // flagged — not every flagged sample, and not a remembered staff scope.
+    expect(body).toContain(`href="/samples?season=settled&amp;qc=flagged"`);
     // And the current season is untouched.
     expect(body).toContain("Sample A-7");
   });

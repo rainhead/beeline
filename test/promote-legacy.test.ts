@@ -86,7 +86,7 @@ describe("legacy promotion", () => {
     const kinds = await rows(
       conn,
       `SELECT kind, sample_number, CAST(date_start AS VARCHAR), CAST(date_end AS VARCHAR)
-       FROM sample ORDER BY kind`,
+       FROM sample ORDER BY kind, sample_number`,
     );
     expect(kinds).toEqual([
       ["net", "1", "2025-07-14", "2025-07-14"],

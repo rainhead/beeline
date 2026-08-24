@@ -1,5 +1,5 @@
 import { sql, type Kysely } from "kysely";
-import type { Database } from "../model.js";
+import type { Database, MembershipKind } from "../model.js";
 
 /**
  * The people roster: who is in the store, which iNaturalist account each is
@@ -35,6 +35,12 @@ export interface RosterRow {
   login: string | null;
   inat_user_id: number | null;
   samples: number;
+  /**
+   * Where they belong (schema/010). Null kind = nobody has said; 'program' =
+   * somebody said, and the answer is Master Melittology itself with no member
+   * atlas — a real state, not a gap to chase (beeline-lcl).
+   */
+  membership: MembershipKind | null;
   atlas_code: string | null;
   is_admin: boolean;
   /** Records backing the bound login, null when there is nothing to weigh. */
@@ -145,6 +151,7 @@ export async function listRoster(db: Kysely<Database>, query: RosterQuery): Prom
              a.login,
              a.inat_user_id,
              (SELECT count(*) FROM sample_collector sc WHERE sc.person_id = p.entity_id) AS samples,
+             pm.kind AS membership,
              atl.code AS atlas_code,
              (adm.person_id IS NOT NULL) AS is_admin,
              ${boundRecords} AS bound_records,
@@ -153,8 +160,8 @@ export async function listRoster(db: Kysely<Database>, query: RosterQuery): Prom
              best.top_records
       FROM person p
       LEFT JOIN inat_account a ON a.person_id = p.entity_id
-      LEFT JOIN person_home_atlas ha ON ha.person_id = p.entity_id
-      LEFT JOIN atlas atl ON atl.entity_id = ha.atlas_id
+      LEFT JOIN person_membership pm ON pm.person_id = p.entity_id
+      LEFT JOIN atlas atl ON atl.entity_id = pm.atlas_id
       LEFT JOIN person_admin adm ON adm.person_id = p.entity_id
       LEFT JOIN best ON best.person_id = p.entity_id
     ),
@@ -223,12 +230,13 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
            a.login, a.inat_user_id,
            (SELECT count(*) FROM sample_collector sc WHERE sc.person_id = p.entity_id) AS samples,
            (SELECT count(*) FROM sample s WHERE s.collector_id = p.entity_id) AS primary_samples,
+           pm.kind AS membership,
            atl.code AS atlas_code,
            (adm.person_id IS NOT NULL) AS is_admin
     FROM person p
     LEFT JOIN inat_account a ON a.person_id = p.entity_id
-    LEFT JOIN person_home_atlas ha ON ha.person_id = p.entity_id
-    LEFT JOIN atlas atl ON atl.entity_id = ha.atlas_id
+    LEFT JOIN person_membership pm ON pm.person_id = p.entity_id
+    LEFT JOIN atlas atl ON atl.entity_id = pm.atlas_id
     LEFT JOIN person_admin adm ON adm.person_id = p.entity_id
     WHERE p.entity_id = ${personId}`.execute(db);
   const row = found.rows[0];

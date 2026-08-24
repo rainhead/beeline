@@ -1,8 +1,12 @@
 import type { Child } from "hono/jsx";
+import { PROGRAM_MEMBERSHIP } from "../../model.js";
 import {
   ALL,
   CSV_ROW_LIMIT,
+  MEMBER_ANY,
+  MEMBER_UNRECORDED,
   MINE,
+  OUTSIDE,
   PAGE_SIZE,
   isFiltered,
   listingHref,
@@ -42,12 +46,13 @@ const place = (r: { locality: string | null; county: string | null; state_provin
 
 /** How a listing describes itself, given who is looking and at what. */
 function lede(
-  copy: { ledeMine: string; ledeAtlas: (atlas: string) => string; ledeAll: string },
+  copy: { ledeMine: string; ledeAtlas: (atlas: string) => string; ledeAll: string; ledeOutside: string },
   query: ListingQuery,
   atlases: readonly AtlasOption[],
 ): string {
   if (query.scope === MINE) return copy.ledeMine;
   if (query.scope === ALL) return copy.ledeAll;
+  if (query.scope === OUTSIDE) return copy.ledeOutside;
   return copy.ledeAtlas(atlases.find((a) => a.code === query.scope)?.name ?? query.scope);
 }
 
@@ -57,7 +62,9 @@ function ScopeNote({ m, query, atlases }: { m: Messages; query: ListingQuery; at
   const what =
     query.scope === ALL
       ? m.listings.scope.staffNoteAll
-      : m.listings.scope.staffNoteAtlas(atlases.find((a) => a.code === query.scope)?.name ?? query.scope);
+      : query.scope === OUTSIDE
+        ? m.listings.scope.staffNoteOutside
+        : m.listings.scope.staffNoteAtlas(atlases.find((a) => a.code === query.scope)?.name ?? query.scope);
   return <Meta block>{m.listings.scope.staffNote(what)}</Meta>;
 }
 
@@ -101,6 +108,7 @@ function Filters({
           options={[
             [MINE, m.listings.scope.mine],
             ...atlases.map((a) => [a.code, a.name] as const),
+            [OUTSIDE, m.listings.scope.outside],
             [ALL, m.listings.scope.all],
           ]}
         />
@@ -112,6 +120,22 @@ function Filters({
       {/* Staff only: a volunteer's listing is already one collector's. */}
       {admin && (
         <TextField id="collector" name="collector" label={f.collector} value={query.collector} hint={f.collectorHint} />
+      )}
+      {/* The axis scope cannot answer: whose records, not whose ground. */}
+      {admin && (
+        <SelectField
+          id="member"
+          name="member"
+          label={f.member}
+          hint={f.memberHint}
+          value={query.member}
+          options={[
+            [MEMBER_ANY, f.memberAny] as const,
+            ...atlases.map((a) => [a.code, a.name] as const),
+            [PROGRAM_MEMBERSHIP, f.memberProgram] as const,
+            [MEMBER_UNRECORDED, f.memberUnrecorded] as const,
+          ]}
+        />
       )}
       <TextField id="taxon" name="taxon" label={f.taxon} value={query.taxon} hint={f.taxonHint} />
       {/* A taxon name only ever matches something already determined, so the

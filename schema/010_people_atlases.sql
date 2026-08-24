@@ -57,18 +57,83 @@ INSERT INTO atlas (code, name, inat_place_id) VALUES
   ('NM',   'New Mexico Bee Atlas',       NULL),
   ('OK',   'Oklahoma Bee Atlas',         NULL);
 
--- Which atlas a person belongs to, as distinct from where their samples fall.
--- Geography assigns a sample; it cannot assign a person, who may collect
+-- Which atlas covers a state or province — the mapping legacy promotion used
+-- to carry as a six-way CASE, moved into the schema so it can be queried and
+-- so its silences can be told apart (beeline-lcl).
+--
+-- A row with a NULL atlas_id is the point of the table: it says "we know this
+-- region and no member atlas covers it", which is what 632 samples in Nevada,
+-- Kansas, Arizona and the Yukon actually are — real Master Melittologist
+-- records, not failures. No row at all is the other thing: a place the model
+-- does not recognise, which is a defect worth flagging rather than filing
+-- silently under "outside" (qc_rule_place_unrecognised).
+--
+-- Keyed on the state or province alone. Adding country to the key would buy
+-- no discrimination — no US state code collides with a Canadian one — while
+-- costing the sample whose country is blank, and the one whose collector is
+-- Canadian and whose country field followed her rather than her coordinates.
+-- Country is recorded here so that disagreement can be reported instead.
+CREATE TABLE atlas_region (
+  state_province TEXT PRIMARY KEY,
+  country        TEXT NOT NULL,
+  atlas_id       INTEGER REFERENCES atlas(entity_id)
+);
+COMMENT ON TABLE atlas_region IS 'State/province → the member atlas covering it, for the US and Canada. Geography assigns samples to atlases (schema/030); this is the lookup it does. Deliberately complete rather than data-shaped: a region absent from this table means "unrecognised", so listing only the six would make every other real place look like a typo.';
+COMMENT ON COLUMN atlas_region.country IS 'ISO 3166-1 alpha-3, matching the ''USA'' the records already carry. Not part of the key — see the note above — but the truth a sample''s own country is checked against.';
+COMMENT ON COLUMN atlas_region.atlas_id IS 'Null ⇒ no member atlas covers this region. That is an answer, not a gap: these are the records that belong to the umbrella program itself.';
+
+INSERT INTO atlas_region (state_province, country, atlas_id)
+SELECT r.state_province, r.country, a.entity_id
+FROM (VALUES
+  -- The six, in the order schema declares them.
+  ('OR', 'USA', 'OBA'), ('WA', 'USA', 'WaBA'), ('BC', 'CAN', 'BC'),
+  ('ID', 'USA', 'ID'),  ('NM', 'USA', 'NM'),   ('OK', 'USA', 'OK'),
+  -- Everywhere else Master Melittologists have collected, or could.
+  ('AL', 'USA', NULL), ('AK', 'USA', NULL), ('AZ', 'USA', NULL), ('AR', 'USA', NULL),
+  ('CA', 'USA', NULL), ('CO', 'USA', NULL), ('CT', 'USA', NULL), ('DE', 'USA', NULL),
+  ('DC', 'USA', NULL), ('FL', 'USA', NULL), ('GA', 'USA', NULL), ('HI', 'USA', NULL),
+  ('IL', 'USA', NULL), ('IN', 'USA', NULL), ('IA', 'USA', NULL), ('KS', 'USA', NULL),
+  ('KY', 'USA', NULL), ('LA', 'USA', NULL), ('ME', 'USA', NULL), ('MD', 'USA', NULL),
+  ('MA', 'USA', NULL), ('MI', 'USA', NULL), ('MN', 'USA', NULL), ('MS', 'USA', NULL),
+  ('MO', 'USA', NULL), ('MT', 'USA', NULL), ('NE', 'USA', NULL), ('NV', 'USA', NULL),
+  ('NH', 'USA', NULL), ('NJ', 'USA', NULL), ('NY', 'USA', NULL), ('NC', 'USA', NULL),
+  ('ND', 'USA', NULL), ('OH', 'USA', NULL), ('PA', 'USA', NULL), ('RI', 'USA', NULL),
+  ('SC', 'USA', NULL), ('SD', 'USA', NULL), ('TN', 'USA', NULL), ('TX', 'USA', NULL),
+  ('UT', 'USA', NULL), ('VT', 'USA', NULL), ('VA', 'USA', NULL), ('WV', 'USA', NULL),
+  ('WI', 'USA', NULL), ('WY', 'USA', NULL),
+  ('AB', 'CAN', NULL), ('MB', 'CAN', NULL), ('NB', 'CAN', NULL), ('NL', 'CAN', NULL),
+  ('NS', 'CAN', NULL), ('NT', 'CAN', NULL), ('NU', 'CAN', NULL), ('ON', 'CAN', NULL),
+  ('PE', 'CAN', NULL), ('QC', 'CAN', NULL), ('SK', 'CAN', NULL), ('YT', 'CAN', NULL)
+) AS r(state_province, country, atlas_code)
+LEFT JOIN atlas a ON a.code = r.atlas_code;
+
+-- Where a person belongs in the program, as distinct from where their samples
+-- fall. Geography assigns a sample; it cannot assign a person, who may collect
 -- across a border, move, or belong to the program before collecting anything
 -- (beeline-2c3.11). Its own table because the answer is editorial — staff set
 -- it, promotion never guesses it — and because it carries the atlas colorway
 -- the volunteer's own pages are branded with.
-CREATE TABLE person_home_atlas (
+--
+-- Membership has two shapes, and the reason this is not just a nullable
+-- atlas_id is that a *missing row* has to keep meaning one thing. Master
+-- Melittology membership without a member atlas is real (beeline-lcl): a
+-- Nevada volunteer works under OBA staff's auspices without being an Oregon
+-- Bee Atlas volunteer, and writing OBA here would make them indistinguishable
+-- from a Corvallis regular in every listing, export, and atlas-branded page.
+-- So kind says which case it is, and absence is reserved for "not asked yet".
+--
+-- Who administers a program-only member is a separate fact, deliberately not
+-- modelled: OBA staff do, and there is no second administering body to tell
+-- them apart from until per-atlas staff roles exist (beeline-lcl).
+CREATE TABLE person_membership (
   person_id INTEGER PRIMARY KEY REFERENCES person(entity_id),
-  atlas_id  INTEGER NOT NULL REFERENCES atlas(entity_id)
+  kind      TEXT NOT NULL CHECK (kind IN ('atlas', 'program')),
+  atlas_id  INTEGER REFERENCES atlas(entity_id),
+  CHECK ((kind = 'atlas') = (atlas_id IS NOT NULL))
 );
-COMMENT ON TABLE person_home_atlas IS 'The atlas a person belongs to. Absent = unknown, which is the honest default: no row is not the same as OBA.';
-COMMENT ON COLUMN person_home_atlas.atlas_id IS 'Set by staff, never inferred from where their samples landed — a Washington volunteer collecting in Oregon is still WaBA.';
+COMMENT ON TABLE person_membership IS 'Where a person belongs: a member atlas, or the umbrella program with no atlas. A row is an answer somebody gave; absent = never asked, which is the honest default — no row is not the same as OBA, and it is not the same as "no atlas applies" either.';
+COMMENT ON COLUMN person_membership.kind IS '''atlas'' ⇒ a member atlas, named by atlas_id. ''program'' ⇒ Master Melittology itself, under OBA staff''s auspices, with no member atlas. iNat project 99706 (''outside of Oregon'') is this state''s operational expression, and is already administered that way upstream.';
+COMMENT ON COLUMN person_membership.atlas_id IS 'Set by staff, never inferred from where their samples landed — a Washington volunteer collecting in Oregon is still WaBA. Null exactly when kind is ''program''.';
 
 -- Who may use the admin surface. A table rather than a config array so the
 -- roster is editable by the people who own it (beeline-eft added five names

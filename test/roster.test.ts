@@ -139,10 +139,23 @@ describe("the roster screen", () => {
 
   it("sets a home atlas, and refuses a code no atlas has", async () => {
     await post(ctx.app, "/people/1/membership", { home_atlas: "WaBA", reason: "" });
-    const home = await ctx.db.selectFrom("person_home_atlas").where("person_id", "=", 1).selectAll().executeTakeFirst();
-    expect(home).toBeDefined();
+    const home = await ctx.db.selectFrom("person_membership").where("person_id", "=", 1).selectAll().executeTakeFirst();
+    expect(home?.kind).toBe("atlas");
     const bad = await post(ctx.app, "/people/1/membership", { home_atlas: "ZZ", reason: "" });
     expect(await bad.text()).toContain("no atlas with code");
+  });
+
+  // Absence has to keep meaning one thing: clearing is "nobody has said",
+  // and the program is somebody saying "no member atlas" (beeline-lcl).
+  it("records belonging to the program itself, which is not the same as clearing it", async () => {
+    await post(ctx.app, "/people/1/membership", { home_atlas: "program", reason: "collects in Nevada" });
+    const row = await ctx.db.selectFrom("person_membership").where("person_id", "=", 1).selectAll().executeTakeFirst();
+    expect(row).toMatchObject({ kind: "program", atlas_id: null });
+
+    await post(ctx.app, "/people/1/membership", { home_atlas: "", reason: "asked too soon" });
+    expect(
+      await ctx.db.selectFrom("person_membership").where("person_id", "=", 1).selectAll().executeTakeFirst(),
+    ).toBeUndefined();
   });
 
   it("saves name parts, and clears the label override with a blank", async () => {

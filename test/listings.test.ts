@@ -33,13 +33,20 @@ const person = async (conn: Awaited<ReturnType<typeof createMemoryDb>>["conn"], 
 };
 
 /**
- * Two collectors in two atlases, with specimens and determinations: enough
- * for every scope, filter, and column the listings have.
+ * Three collectors, two atlases, and the ground outside both — enough for
+ * every scope, filter, and column the listings have.
+ *
+ * The membership rows are deliberately uneven, because the store's are
+ * (beeline-lcl): Bob is a WaBA member who also collects in Nevada, Cleo
+ * belongs to Master Melittology itself with no atlas, and nobody has recorded
+ * where Alice belongs. Those are three different answers, and a listing has
+ * to be able to ask for each of them separately from where a sample fell.
  */
 async function listingApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
   const { instance, conn } = await createMemoryDb();
   const alice = await person(conn, "Alice Adams");
   const bob = await person(conn, "Bob Barnes");
+  const cleo = await person(conn, "Cleo Cortez");
   const staffer = await person(conn, "Sam Staff");
 
   // One of them has an iNat account, so search-by-login has something to find.
@@ -85,6 +92,29 @@ async function listingApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
     locality: "'Anacortes'",
     state_province: "'WA'",
   });
+  // Bob again, Nevada: a member of an atlas, collecting where none reaches.
+  await insertCleanSample(conn, {
+    collector_id: String(bob),
+    atlas_id: "NULL",
+    sample_number: "'B-3'",
+    locality: "'Gerlach'",
+    county: "'Washoe'",
+    state_province: "'NV'",
+  });
+  // Cleo, Nevada: no atlas to be a member of, and that is her answer.
+  await insertCleanSample(conn, {
+    collector_id: String(cleo),
+    atlas_id: "NULL",
+    sample_number: "'C-1'",
+    locality: "'Fallon'",
+    county: "'Churchill'",
+    state_province: "'NV'",
+  });
+
+  await conn.run(
+    `INSERT INTO person_membership (person_id, kind, atlas_id)
+     VALUES (${bob}, 'atlas', ${atlas("WaBA")}), (${cleo}, 'program', NULL)`,
+  );
 
   // A slice of taxonomy: family → genus → species, so a family filter has
   // something to descend through.
@@ -184,8 +214,50 @@ describe("sample listing", () => {
     expect(wa).toContain("Staff view: the Washington Bee Atlas");
 
     const all = await get(app, "/samples?scope=all");
-    expect(all).toContain("4 samples");
+    expect(all).toContain("6 samples");
     expect(all).toContain("Staff view: every atlas");
+  });
+
+  // The two axes, and the point is that they disagree: B-3 is outside every
+  // atlas AND collected by a WaBA member, so neither control alone finds
+  // what the other one does (beeline-lcl).
+  it("scopes to the ground outside every atlas, members travelling included", async () => {
+    const { app } = await listingApp("staffer");
+    const outside = await get(app, "/samples?scope=outside");
+    expect(outside).toContain("2 samples");
+    expect(outside).toContain("B-3");
+    expect(outside).toContain("C-1");
+    expect(outside).not.toContain("B-2");
+    expect(outside).toContain("Staff view: everywhere no member atlas reaches");
+  });
+
+  it("filters by where the collector belongs, which is not where they collected", async () => {
+    const { app } = await listingApp("staffer");
+
+    // A WaBA member's records, wherever they fell — B-3 is in Nevada.
+    const waba = await get(app, "/samples?scope=all&member=WaBA");
+    expect(waba).toContain("3 samples");
+    expect(waba).toContain("B-3");
+
+    // Belonging to the program itself is an answer, and finds only Cleo.
+    const program = await get(app, "/samples?scope=all&member=program");
+    expect(program).toContain("1 sample");
+    expect(program).toContain("C-1");
+
+    // Unrecorded is the absence — and it is a fact about every collector on
+    // the sample, so B-1 (Bob and Alice) is not unrecorded just because
+    // nobody has asked about Alice.
+    const unrecorded = await get(app, "/samples?scope=all&member=unrecorded");
+    expect(unrecorded).toContain("2 samples");
+    expect(unrecorded).toContain("A-1");
+    expect(unrecorded).not.toContain("B-1");
+  });
+
+  it("gives a volunteer neither control, and ignores them when typed", async () => {
+    const { app } = await listingApp();
+    const body = await get(app, "/samples?scope=outside&member=program");
+    expect(body).not.toContain(`name="member"`);
+    expect(body).toContain("3 samples"); // still only Alice's own
   });
 
   it("remembers a staff member's chosen scope for the next visit", async () => {
@@ -200,7 +272,7 @@ describe("sample listing", () => {
   it("searches sample numbers, collectors, and field numbers", async () => {
     const { app } = await listingApp("staffer");
     expect(await get(app, "/samples?scope=all&q=B-1")).toContain("1 sample");
-    expect(await get(app, "/samples?scope=all&q=barnes")).toContain("2 samples");
+    expect(await get(app, "/samples?scope=all&q=barnes")).toContain("3 samples");
     // An iNat login finds the same person the collector filter would.
     expect(await get(app, "/samples?scope=all&q=aadams")).toContain("3 samples");
     // A field number in hand: which sample is this specimen from?
@@ -211,11 +283,11 @@ describe("sample listing", () => {
 
   it("filters by date window, place, and QC state", async () => {
     const { app } = await listingApp("staffer");
-    expect(await get(app, "/samples?scope=all&from=2026-01-01")).toContain("3 samples");
+    expect(await get(app, "/samples?scope=all&from=2026-01-01")).toContain("5 samples");
     expect(await get(app, "/samples?scope=all&to=2025-12-31")).toContain("1 sample");
     expect(await get(app, "/samples?scope=all&place=whatcom")).toContain("1 sample");
     expect(await get(app, "/samples?scope=all&qc=blocking")).toContain("1 sample");
-    expect(await get(app, "/samples?scope=all&qc=clean")).toContain("3 samples");
+    expect(await get(app, "/samples?scope=all&qc=clean")).toContain("5 samples");
   });
 
   // Every rule view emits NULL as specimen_id today, so nothing in the model
@@ -259,7 +331,7 @@ describe("sample listing", () => {
     expect(alice).toContain("B-1");
     expect(alice).not.toContain("B-2");
     // By surname: Bob's own two, and not the ones only Alice collected.
-    expect(await get(app, "/samples?scope=all&collector=barnes")).toContain("2 samples");
+    expect(await get(app, "/samples?scope=all&collector=barnes")).toContain("3 samples");
     // Specimens take the same filter.
     expect(await get(app, "/specimens?scope=all&collector=adams")).toContain("OBA00001");
   });

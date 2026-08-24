@@ -93,6 +93,13 @@ export function DesignIdentity() {
         Each atlas has its own colour scheme, and the program logo is adapted to that scheme rather than each atlas
         having a separate mark.
       </p>
+      <p>
+        Not every volunteer has an atlas. Master Melittology membership without a member atlas is a real state, not a
+        gap — a Nevada volunteer works under OBA staff&apos;s auspices without being an Oregon Bee Atlas volunteer,
+        and roughly a dozen people in the store are in exactly that position. The model already answers it: with no
+        atlas to act on behalf of, the program acts as itself. Program identity carries the chrome as always, the
+        dashboard and profile carry no atlas colorway, and nothing has to be invented for the case.
+      </p>
 
       <h2>Atlas colorways</h2>
       <p>

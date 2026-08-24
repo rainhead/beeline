@@ -35,6 +35,8 @@ INSERT INTO qc_rule (name, severity, instructions) VALUES
    'The locality must be a short place name (18 characters or fewer) without commas, quotes, or street addresses — it is printed on a 3pt label. Example: Corvallis not 5th St, Corvallis OR.'),
   ('place_unabbreviated', 'blocking',
    'Country and state/province must be abbreviations (USA not United States; OR not Oregon) — the label cell is tiny.'),
+  ('place_unrecognised', 'warning',
+   'The state or province on this record is not one Beeline recognises, or does not agree with the country beside it. Use the two-letter US state or Canadian province code (UT, BC), and a country that matches it. Records from outside the US and Canada are expected here and are not a mistake — staff can confirm them.'),
   ('coordinate_uncertainty', 'blocking',
    'The location accuracy is worse than 250 m. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.'),
   ('non_tracheophyte_host', 'blocking',

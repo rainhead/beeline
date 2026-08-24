@@ -26,6 +26,35 @@ describe("schema application", () => {
     expect(codes.flat()).toEqual(["BC", "ID", "NM", "OBA", "OK", "WaBA"]);
   });
 
+  test("atlas_region knows the regions no atlas covers, not only the six", async () => {
+    // The point of the table: a NULL atlas on a real region is an answer.
+    const [[covered]] = (await rows(conn, "SELECT count(*) FROM atlas_region WHERE atlas_id IS NOT NULL")) as [[bigint]];
+    const [[outside]] = (await rows(conn, "SELECT count(*) FROM atlas_region WHERE atlas_id IS NULL")) as [[bigint]];
+    expect(Number(covered)).toBe(6);
+    expect(Number(outside)).toBeGreaterThan(50);
+    // Nevada is known and uncovered; Waikato is not a region we recognise.
+    expect(await rows(conn, "SELECT country, atlas_id FROM atlas_region WHERE state_province = 'NV'")).toEqual([
+      ["USA", null],
+    ]);
+    expect(await rows(conn, "SELECT count(*) FROM atlas_region WHERE state_province = 'Waikato'")).toEqual([[0n]]);
+  });
+
+  test("membership cannot say 'atlas' without one, or name one while saying 'program'", async () => {
+    const [[person]] = (await rows(
+      conn,
+      "INSERT INTO person (display_name) VALUES ('Eve Outsider') RETURNING entity_id",
+    )) as [[number]];
+    const oba = "(SELECT entity_id FROM atlas WHERE code = 'OBA')";
+    await expect(
+      conn.run(`INSERT INTO person_membership (person_id, kind, atlas_id) VALUES (${person}, 'atlas', NULL)`),
+    ).rejects.toThrow(/CHECK/i);
+    await expect(
+      conn.run(`INSERT INTO person_membership (person_id, kind, atlas_id) VALUES (${person}, 'program', ${oba})`),
+    ).rejects.toThrow(/CHECK/i);
+    await conn.run(`INSERT INTO person_membership (person_id, kind, atlas_id) VALUES (${person}, 'program', NULL)`);
+    expect(await rows(conn, `SELECT kind FROM person_membership WHERE person_id = ${person}`)).toEqual([["program"]]);
+  });
+
   test("pronouns accept the starting vocabulary and reject the rest", async () => {
     await conn.run(`INSERT INTO person (display_name, pronouns) VALUES ('Cay Determiner', 'they')`);
     await expect(
@@ -85,6 +114,6 @@ describe("schema application", () => {
 
   test("qc_rule metadata is seeded", async () => {
     const [[n]] = (await rows(conn, "SELECT count(*) FROM qc_rule")) as [[bigint]];
-    expect(Number(n)).toBe(12);
+    expect(Number(n)).toBe(13);
   });
 });

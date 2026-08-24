@@ -1,5 +1,6 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { pathToFileURL } from "node:url";
+import { PROGRAM_MEMBERSHIP } from "./model.js";
 import { parseRef, type OverlayField, type PersonOverlayRow } from "./person-overlay.js";
 
 /**
@@ -183,15 +184,26 @@ async function applyField(
   }
 
   if (field === "home_atlas") {
+    // Clearing goes back to "never asked", which is not the same as "asked,
+    // and no atlas applies" — that answer is PROGRAM_MEMBERSHIP, and telling
+    // the two apart is the whole point of person_membership (beeline-lcl).
     if (value === "") {
-      await conn.run(`DELETE FROM person_home_atlas WHERE person_id = $1`, [personId] as never);
+      await conn.run(`DELETE FROM person_membership WHERE person_id = $1`, [personId] as never);
+      return null;
+    }
+    if (value === PROGRAM_MEMBERSHIP) {
+      await conn.run(
+        `INSERT INTO person_membership (person_id, kind, atlas_id) VALUES ($1, 'program', NULL)
+         ON CONFLICT (person_id) DO UPDATE SET kind = 'program', atlas_id = NULL`,
+        [personId] as never,
+      );
       return null;
     }
     const atlas = await scalar(conn, `SELECT entity_id FROM atlas WHERE code = $1`, [value]);
-    if (atlas === null) return `no atlas with code '${value}'`;
+    if (atlas === null) return `no atlas with code '${value}' ('${PROGRAM_MEMBERSHIP}' for no atlas at all)`;
     await conn.run(
-      `INSERT INTO person_home_atlas (person_id, atlas_id) VALUES ($1, $2)
-       ON CONFLICT (person_id) DO UPDATE SET atlas_id = excluded.atlas_id`,
+      `INSERT INTO person_membership (person_id, kind, atlas_id) VALUES ($1, 'atlas', $2)
+       ON CONFLICT (person_id) DO UPDATE SET kind = 'atlas', atlas_id = excluded.atlas_id`,
       [personId, Number(atlas)] as never,
     );
     return null;

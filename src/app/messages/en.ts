@@ -148,6 +148,7 @@ export const en = {
       ledeMine: "Every sample you collected, most recent first.",
       ledeAtlas: (atlas: string) => `Every sample in the ${atlas}, most recent first.`,
       ledeAll: "Every sample in every atlas, most recent first.",
+      ledeOutside: "Every sample collected where no member atlas reaches, most recent first.",
       count: (total: number) => `${n(total)} ${total === 1 ? "sample" : "samples"}`,
       emptyHeading: "Nothing here yet",
       emptyMine: "None of your collecting has reached Beeline yet. Samples arrive from iNaturalist as they sync.",
@@ -173,6 +174,7 @@ export const en = {
       ledeMine: "Every specimen from your samples, most recent collecting first.",
       ledeAtlas: (atlas: string) => `Every specimen in the ${atlas}, most recent collecting first.`,
       ledeAll: "Every specimen in every atlas, most recent collecting first.",
+      ledeOutside: "Every specimen collected where no member atlas reaches, most recent collecting first.",
       count: (total: number) => `${n(total)} ${total === 1 ? "specimen" : "specimens"}`,
       emptyHeading: "Nothing here yet",
       emptyMine:
@@ -199,7 +201,13 @@ export const en = {
       all: "All atlases",
       /** Says plainly that this is more than the viewer's own collecting. */
       staffNote: (what: string) => `Staff view: ${what}. Volunteers only ever see their own records here.`,
+      /**
+       * Collecting outside the six is ordinary, not an error, and the label
+       * has to sound like it (beeline-lcl).
+       */
+      outside: "Outside the atlases",
       staffNoteAll: "every atlas",
+      staffNoteOutside: "everywhere no member atlas reaches",
       staffNoteAtlas: (atlas: string) => `the ${atlas}`,
     },
 
@@ -212,6 +220,16 @@ export const en = {
       placeHint: "Locality, county, state, or country",
       collector: "Collector",
       collectorHint: "Name or iNaturalist login — anyone on the sample",
+      /**
+       * The other axis from scope: where the collector belongs, not where the
+       * sample fell. Most records from outside the atlases are members
+       * travelling, so one control could not answer both (beeline-lcl).
+       */
+      member: "Collector belongs to",
+      memberHint: "Where the person belongs — not where they collected",
+      memberAny: "Anywhere",
+      memberProgram: "Master Melittology (no atlas)",
+      memberUnrecorded: "Not recorded",
       taxon: "Taxon",
       taxonHint: "A family, genus, or species — anything below it matches too",
       det: "Determination",
@@ -330,7 +348,8 @@ export const en = {
     colAccount: "iNaturalist account",
     colEvidence: "Evidence",
     colSamples: "Samples",
-    colAtlas: "Atlas",
+    /** Not "Atlas": the column's answer is sometimes the program itself. */
+    colMembership: "Belongs to",
     colAdmin: "Admin",
     noPeople: "Nobody matches.",
     noEvidenceBanner:
@@ -368,10 +387,15 @@ export const en = {
     boundMark: "bound",
     useThis: "Bind this one",
     membership: "Membership",
-    homeAtlas: "Home atlas",
-    homeAtlasHint: "Where this person belongs — not where their samples fell.",
+    belongsTo: "Belongs to",
+    belongsToHint:
+      "Where this person belongs — not where their samples fell. Master Melittology itself is an answer, not a blank: volunteers outside every member atlas work under OBA staff's auspices.",
     saveMembership: "Save membership",
-    noAtlas: "Unknown",
+    /** No row: nobody has answered. Distinct from having answered "no atlas". */
+    membershipUnrecorded: "Not recorded",
+    membershipProgram: "Master Melittology (no atlas)",
+    /** The same answer in a table cell, where the column is already "Atlas". */
+    membershipProgramShort: "Program",
     adminRights: "Admin rights",
     adminHint: "Admins reach Jobs, People, Design, and the atlas-wide listings.",
     grantAdmin: "Grant admin",
@@ -414,6 +438,8 @@ export const en = {
       "The locality must be a short place name (18 characters or fewer) without commas, quotes, or street addresses — it is printed on a 3pt label. Example: Corvallis not 5th St, Corvallis OR.",
     place_unabbreviated:
       "Country and state/province must be abbreviations (USA not United States; OR not Oregon) — the label cell is tiny.",
+    place_unrecognised:
+      "The state or province on this record is not one Beeline recognises, or does not agree with the country beside it. Use the two-letter US state or Canadian province code (UT, BC), and a country that matches it. Records from outside the US and Canada are expected here and are not a mistake — staff can confirm them.",
     coordinate_uncertainty:
       "The location accuracy is worse than 250 m. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.",
     non_tracheophyte_host:
@@ -469,7 +495,7 @@ export const en = {
       atlas: {
         term: "Atlas",
         definition:
-          "Your state or provincial bee atlas: Oregon, Washington, British Columbia, Idaho, New Mexico, or Oklahoma. Samples belong to an atlas by where they were collected, not by which iNaturalist project they arrived through.",
+          "Your state or provincial bee atlas: Oregon, Washington, British Columbia, Idaho, New Mexico, or Oklahoma. Samples belong to an atlas by where they were collected, not by which iNaturalist project they arrived through. Not everyone has one — you can be a Master Melittologist without a member atlas, and collecting somewhere no atlas covers is ordinary rather than a mistake.",
       },
       authorship: {
         term: "Authorship",
@@ -541,7 +567,7 @@ export const en = {
       "master-melittology": {
         term: "Master Melittology",
         definition:
-          "The program at Oregon State University Extension that trains and coordinates the atlases, and the umbrella all of them sit under. This site is run by the program on behalf of your atlas.",
+          "The program at Oregon State University Extension that trains and coordinates the atlases, and the umbrella all of them sit under. This site is run by the program on behalf of your atlas — or, if you belong to no member atlas, on its own behalf.",
       },
       "obscured-coordinates": {
         term: "Obscured coordinates",

@@ -116,6 +116,29 @@ SELECT s.entity_id AS sample_id,
 FROM sample s
 WHERE length(s.country) > 3 OR length(s.state_province) > 2;
 
+-- Whether the stated place resolves to a region at all — the rule that keeps
+-- sample.atlas_id honest (beeline-lcl). Collecting outside the six atlases is
+-- ordinary and unflagged: atlas_region carries a row for every US state and
+-- Canadian province, and a NULL atlas on one of those rows means "no member
+-- atlas covers this", not "something went wrong". What this fires on is a
+-- place the lookup cannot find, and a place whose country contradicts it —
+-- Bonnie Zand collecting in Kane County, Utah with her usual CAN in the
+-- country field, which the old six-way CASE filed silently under "outside".
+-- A missing state_province is missing_required_field's to report, not this
+-- rule's: one root cause, one flag.
+CREATE VIEW qc_rule_place_unrecognised AS
+SELECT s.entity_id AS sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'place_unrecognised' AS rule_name,
+       CASE WHEN reg.state_province IS NULL
+            THEN concat('state_province ''', s.state_province, ''' is not a US state or Canadian province')
+            ELSE concat('country ''', s.country, ''' disagrees: ', s.state_province, ' is in ', reg.country)
+       END AS details
+FROM sample s
+LEFT JOIN atlas_region reg ON reg.state_province = s.state_province
+WHERE s.state_province IS NOT NULL
+  AND (reg.state_province IS NULL OR (s.country IS NOT NULL AND s.country <> reg.country));
+
 CREATE VIEW qc_rule_coordinate_uncertainty AS
 SELECT loc.sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,

@@ -392,15 +392,22 @@ INSERT INTO sample (entity_id, kind, collector_id, atlas_id, sample_number,
                     host_name_as_observed, country, state_province, county,
                     locality, protocol)
 SELECT s.sample_id, s.kind, s.person_id,
-       a.entity_id,
+       -- Geography assigns the atlas, through the lookup that also knows the
+       -- regions no atlas covers (schema/010). Null here means one thing —
+       -- outside the six — and qc_rule_place_unrecognised is what fires when
+       -- the place did not resolve at all (beeline-lcl).
+       reg.atlas_id,
        s.sid, s.p_date_start, s.date_end, s.specimen_count, s.inat_obs_id,
        s.host_name,
-       nullif(s.country, ''), nullif(s.state_province, ''),
+       -- Country to ISO 3166-1 alpha-3, matching the 'USA' that most records
+       -- already carry. Canada arrived spelled both ways, splitting British
+       -- Columbia's records as well as the Yukon's.
+       CASE nullif(s.country, '') WHEN 'CA' THEN 'CAN' WHEN 'NZ' THEN 'NZL'
+                                  ELSE nullif(s.country, '') END,
+       nullif(s.state_province, ''),
        nullif(s.county, ''), nullif(s.locality, ''), nullif(s.protocol, '')
 FROM legacy_sample_map s
-LEFT JOIN atlas a ON a.code = CASE s.state_province
-  WHEN 'OR' THEN 'OBA' WHEN 'WA' THEN 'WaBA' WHEN 'BC' THEN 'BC'
-  WHEN 'ID' THEN 'ID'  WHEN 'NM' THEN 'NM'   WHEN 'OK' THEN 'OK' END;
+LEFT JOIN atlas_region reg ON reg.state_province = nullif(s.state_province, '');
 
 -- Everyone who collected each sample, primary first. A sample can gather rows
 -- recorded both jointly and solo, and the O'Loughlins wrote their pair in both

@@ -55,6 +55,35 @@ describe("QC findings and printability", () => {
     expect(await isPrintable(id)).toBe(true);
   });
 
+  // Collecting outside the six atlases is ordinary and unflagged; a place the
+  // lookup cannot find, or a country that contradicts it, is not (beeline-lcl).
+  test("collecting outside every member atlas is not a finding", async () => {
+    const id = await insertCleanSample(conn, { state_province: "'NV'" });
+    expect(await findings(id)).toEqual([]);
+    expect(await isPrintable(id)).toBe(true);
+  });
+
+  test("a place the region lookup cannot find is flagged", async () => {
+    const id = await insertCleanSample(conn, { country: "'NZL'", state_province: "'Waikato'" });
+    expect(await findings(id)).toEqual([
+      { rule: "place_unabbreviated", details: "state_province 'Waikato'" },
+      { rule: "place_unrecognised", details: "state_province 'Waikato' is not a US state or Canadian province" },
+    ]);
+    // Blocked by the abbreviation rule, not by this one — being somewhere the
+    // model does not know is a thing to look at, not a thing to stop.
+    expect(await isPrintable(id)).toBe(false);
+  });
+
+  test("a country that contradicts its own state is flagged by name", async () => {
+    // Bonnie Zand's two: Kane County, Utah, with a BC collector's usual CAN
+    // in the country field — which the old six-way CASE filed as "outside".
+    const id = await insertCleanSample(conn, { country: "'CAN'", state_province: "'UT'" });
+    expect(await findings(id)).toEqual([
+      { rule: "place_unrecognised", details: "country 'CAN' disagrees: UT is in USA" },
+    ]);
+    expect(await isPrintable(id)).toBe(true);
+  });
+
   test("locality format problems are named individually", async () => {
     const id = await insertCleanSample(conn, { locality: "'5th St, Corvallis Oregon'" });
     const [f] = await findings(id);

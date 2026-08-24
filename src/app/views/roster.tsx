@@ -1,3 +1,4 @@
+import { PROGRAM_MEMBERSHIP } from "../../model.js";
 import type { Messages } from "../messages/index.js";
 import type { AtlasOption } from "../listings.js";
 import {
@@ -33,6 +34,20 @@ import {
  * only the login, which is why the wrong one survived review for as long as
  * it did (beeline-eft).
  */
+
+/**
+ * What the "Belongs to" cell says. Three answers, not two: an atlas code, the
+ * program itself for someone who belongs to no member atlas, and a dash for
+ * the people nobody has been asked about yet (beeline-lcl). The column is
+ * narrow and already says what it is asking, so the program's answer is one
+ * word here and spelled out on the person's own page.
+ */
+const membershipCell = (m: Messages, row: { membership: string | null; atlas_code: string | null }) =>
+  row.membership === null
+    ? "—"
+    : row.membership === PROGRAM_MEMBERSHIP
+      ? m.people.membershipProgramShort
+      : (row.atlas_code ?? "—");
 
 const VERDICT_TONE: Record<BindingVerdict, Tone | undefined> = {
   supported: "success",
@@ -109,7 +124,7 @@ export function Roster({ m, page, query }: { m: Messages; page: RosterPage; quer
         <EmptyState>{p.noPeople}</EmptyState>
       ) : (
         <DataTable
-          columns={[p.colPerson, p.colAccount, p.colEvidence, p.colSamples, p.colAtlas, p.colAdmin]}
+          columns={[p.colPerson, p.colAccount, p.colEvidence, p.colSamples, p.colMembership, p.colAdmin]}
         >
           {page.rows.map((row) => (
             <tr>
@@ -130,7 +145,7 @@ export function Roster({ m, page, query }: { m: Messages; page: RosterPage; quer
                 <Verdict m={m} row={row} />
               </td>
               <td>{m.format.number(row.samples)}</td>
-              <td>{row.atlas_code ?? "—"}</td>
+              <td>{membershipCell(m, row)}</td>
               <td>{row.is_admin ? <Chip tone="success">{p.colAdmin}</Chip> : "—"}</td>
             </tr>
           ))}
@@ -269,10 +284,14 @@ export function PersonPage({
           <SelectField
             id="home_atlas"
             name="home_atlas"
-            label={p.homeAtlas}
-            hint={p.homeAtlasHint}
-            value={person.atlas_code ?? ""}
-            options={[["", p.noAtlas] as const, ...atlases.map((a) => [a.code, a.name] as const)]}
+            label={p.belongsTo}
+            hint={p.belongsToHint}
+            value={person.membership === PROGRAM_MEMBERSHIP ? PROGRAM_MEMBERSHIP : (person.atlas_code ?? "")}
+            options={[
+              ["", p.membershipUnrecorded] as const,
+              ...atlases.map((a) => [a.code, a.name] as const),
+              [PROGRAM_MEMBERSHIP, p.membershipProgram] as const,
+            ]}
           />
           <Reason m={m} id="membership_reason" />
           <p class="row">

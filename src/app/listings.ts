@@ -1,5 +1,5 @@
 import { sql, type Kysely } from "kysely";
-import type { Database, SampleKind } from "../model.js";
+import { PROGRAM_MEMBERSHIP, type Database, type SampleKind } from "../model.js";
 import { labelName } from "../person-name.js";
 
 /**
@@ -33,6 +33,25 @@ export const CSV_ROW_LIMIT = 20_000;
 export const MINE = "mine";
 /** Every atlas at once — the staff escape hatch for cross-atlas questions. */
 export const ALL = "all";
+/**
+ * Collected somewhere no member atlas covers: Nevada, Kansas, the Yukon —
+ * 632 samples that are real Master Melittologist records and were reachable
+ * only through ALL (beeline-lcl). A scope, not a membership: most of them are
+ * atlas members travelling, which is why `member` is a separate control.
+ */
+export const OUTSIDE = "outside";
+
+/**
+ * Whose records, by where their collector belongs — the other axis, and it
+ * genuinely is a second one. Scope asks where a sample was collected; this
+ * asks who collected it, and the two disagree for every OBA volunteer's
+ * Nevada trip. Staff-only, like the collector box, and for the same reason.
+ */
+export type MemberFilter = string;
+/** Nobody has recorded where this collector belongs — not "no atlas applies". */
+export const MEMBER_UNRECORDED = "unrecorded";
+/** Any membership: the filter off. */
+export const MEMBER_ANY = "";
 
 /**
  * QC status as a filter: the three buckets a row's chip can show, and they
@@ -74,6 +93,11 @@ export interface ListingQuery {
    * just its primary (beeline-77j).
    */
   collector: string;
+  /**
+   * An atlas code, PROGRAM_MEMBERSHIP, MEMBER_UNRECORDED, or MEMBER_ANY —
+   * matching any collector on the sample, as the collector filter does.
+   */
+  member: MemberFilter;
   /** A taxon name; anything below it in the taxonomy matches too. */
   taxon: string;
   /**
@@ -95,6 +119,7 @@ export const EMPTY_QUERY: ListingQuery = {
   to: null,
   place: "",
   collector: "",
+  member: MEMBER_ANY,
   taxon: "",
   det: "any",
   season: "any",
@@ -124,7 +149,12 @@ export function parseListingQuery(
   opts: { admin: boolean; atlasCodes: readonly string[]; preferred?: string | null },
 ): ListingQuery {
   const requested = params.get("scope") ?? opts.preferred ?? MINE;
-  const permitted = opts.admin && (requested === ALL || opts.atlasCodes.includes(requested));
+  const permitted =
+    opts.admin && (requested === ALL || requested === OUTSIDE || opts.atlasCodes.includes(requested));
+  const member = params.get("member") ?? "";
+  const memberPermitted =
+    opts.admin &&
+    (member === PROGRAM_MEMBERSHIP || member === MEMBER_UNRECORDED || opts.atlasCodes.includes(member));
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
   const qc = params.get("qc") ?? "";
@@ -139,6 +169,7 @@ export function parseListingQuery(
     place: text(params.get("place")),
     // Scoped like the scope control: only staff read beyond themselves.
     collector: opts.admin ? text(params.get("collector")) : "",
+    member: memberPermitted ? member : MEMBER_ANY,
     taxon: text(params.get("taxon")),
     det: (DETERMINATION_STATES as readonly string[]).includes(det) ? (det as DeterminationState) : "any",
     season: (SEASON_STATES as readonly string[]).includes(season) ? (season as SeasonState) : "any",
@@ -158,6 +189,7 @@ export function listingHref(path: string, query: ListingQuery, overrides: Partia
   if (merged.to !== null) params.set("to", merged.to);
   if (merged.place !== "") params.set("place", merged.place);
   if (merged.collector !== "") params.set("collector", merged.collector);
+  if (merged.member !== MEMBER_ANY) params.set("member", merged.member);
   if (merged.taxon !== "") params.set("taxon", merged.taxon);
   if (merged.det !== "any") params.set("det", merged.det);
   if (merged.season !== "any") params.set("season", merged.season);
@@ -174,6 +206,7 @@ export const isFiltered = (q: ListingQuery) =>
   q.to !== null ||
   q.place !== "" ||
   q.collector !== "" ||
+  q.member !== MEMBER_ANY ||
   q.taxon !== "" ||
   q.det !== "any" ||
   q.season !== "any" ||
@@ -317,6 +350,35 @@ const collectedBy = (term: string) => sql<boolean>`EXISTS (
 )`;
 
 /**
+ * Samples one of whose collectors belongs where the filter says. Any collector
+ * on the sample, not only the primary — the same reach as the collector box,
+ * because a pair collects together (beeline-77j).
+ *
+ * MEMBER_UNRECORDED is the absence, and it has to be an anti-join over the
+ * whole collector list rather than a NULL test: a sample collected by a WaBA
+ * member and someone nobody has asked about is not an unrecorded sample.
+ */
+const collectedByMember = (member: MemberFilter) =>
+  member === MEMBER_UNRECORDED
+    ? sql<boolean>`NOT EXISTS (
+        SELECT 1 FROM sample_collector mc
+        JOIN person_membership mm ON mm.person_id = mc.person_id
+        WHERE mc.sample_id = s.entity_id
+      )`
+    : member === PROGRAM_MEMBERSHIP
+      ? sql<boolean>`EXISTS (
+          SELECT 1 FROM sample_collector mc
+          JOIN person_membership mm ON mm.person_id = mc.person_id
+          WHERE mc.sample_id = s.entity_id AND mm.kind = 'program'
+        )`
+      : sql<boolean>`EXISTS (
+          SELECT 1 FROM sample_collector mc
+          JOIN person_membership mm ON mm.person_id = mc.person_id
+          JOIN atlas ma ON ma.entity_id = mm.atlas_id
+          WHERE mc.sample_id = s.entity_id AND ma.code = ${member}
+        )`;
+
+/**
  * Blocking and warning counts per sample, joined in as one pass over
  * sample_qc_finding rather than an EXISTS per row. Reading the roll-up rather
  * than qc_finding directly is what keeps a chip and printability agreeing once
@@ -392,6 +454,8 @@ export async function listSamples(
           .where("mine.person_id", "=", personId),
       ),
     );
+  } else if (query.scope === OUTSIDE) {
+    base = base.where("s.atlas_id", "is", null);
   } else if (query.scope !== ALL) {
     base = base.where("a.code", "=", query.scope);
   }
@@ -401,6 +465,7 @@ export async function listSamples(
   if (query.to !== null) base = base.where("s.date_start", "<=", asDate(query.to));
   if (query.place !== "") base = base.where(sql<boolean>`${placeHaystack} LIKE ${like(query.place)}`);
   if (query.collector !== "") base = base.where(collectedBy(query.collector));
+  if (query.member !== MEMBER_ANY) base = base.where(collectedByMember(query.member));
   if (query.q !== "") {
     const needle = like(query.q);
     base = base.where(({ eb, or, exists, selectFrom }) =>
@@ -546,6 +611,8 @@ export async function listSpecimens(
           .where("mine.person_id", "=", personId),
       ),
     );
+  } else if (query.scope === OUTSIDE) {
+    base = base.where("s.atlas_id", "is", null);
   } else if (query.scope !== ALL) {
     base = base.where("a.code", "=", query.scope);
   }
@@ -553,6 +620,7 @@ export async function listSpecimens(
   if (query.to !== null) base = base.where("s.date_start", "<=", asDate(query.to));
   if (query.place !== "") base = base.where(sql<boolean>`${placeHaystack} LIKE ${like(query.place)}`);
   if (query.collector !== "") base = base.where(collectedBy(query.collector));
+  if (query.member !== MEMBER_ANY) base = base.where(collectedByMember(query.member));
   if (query.q !== "") {
     const needle = like(query.q);
     base = base.where(({ eb, or, exists, selectFrom }) =>

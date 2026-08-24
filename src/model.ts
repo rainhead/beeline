@@ -13,6 +13,14 @@ type Timestamped = ColumnType<Date, Date | string | undefined, Date | string>;
 // schema/010_people_atlases.sql
 
 export type Pronouns = "he" | "she" | "they";
+/** A member atlas, or the umbrella program itself with no atlas (beeline-lcl). */
+export type MembershipKind = "atlas" | "program";
+/**
+ * The program-itself answer, wherever it is spelled rather than typed: the
+ * overlay's `home_atlas` value, the roster's select, the listings' member
+ * filter. One constant because those three have to agree.
+ */
+export const PROGRAM_MEMBERSHIP: MembershipKind = "program";
 
 export interface PersonTable {
   entity_id: Generated<number>;
@@ -34,9 +42,11 @@ export interface PersonOrcidTable {
   orcid: string;
 }
 
-export interface PersonHomeAtlasTable {
+/** Absent = never asked; 'program' = asked, and no member atlas applies. */
+export interface PersonMembershipTable {
   person_id: number;
-  atlas_id: number;
+  kind: MembershipKind;
+  atlas_id: number | null;
 }
 
 export interface PersonAdminTable {
@@ -50,6 +60,13 @@ export interface AtlasTable {
   code: string;
   name: string;
   inat_place_id: BigIntCol | null;
+}
+
+/** Null atlas_id = a region no member atlas covers, which is an answer. */
+export interface AtlasRegionTable {
+  state_province: string;
+  country: string;
+  atlas_id: number | null;
 }
 
 // schema/private/010_auth.sql — the attached private store (ADR 0003)
@@ -260,9 +277,10 @@ export interface Database {
   person: PersonTable;
   inat_account: InatAccountTable;
   person_orcid: PersonOrcidTable;
-  person_home_atlas: PersonHomeAtlasTable;
+  person_membership: PersonMembershipTable;
   person_admin: PersonAdminTable;
   atlas: AtlasTable;
+  atlas_region: AtlasRegionTable;
   animal: AnimalTable;
   sample: SampleTable;
   elevation_source: ElevationSourceTable;

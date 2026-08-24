@@ -249,6 +249,37 @@ WHERE dup_rank = 1
   );
 
 -- ── People ──────────────────────────────────────────────────────────────
+-- Identity is the recordedBy string folded to its letters and digits, not the
+-- string itself: 'Amy GRotta' and 'Amy Grotta' are one human, and so are
+-- 'MaryJo Mosby' / 'Mary Jo Mosby', 'AC Quinn' / 'Ac Quinn', and 'Jackson
+-- MacPherson' / 'Jackson Macpherson' — four splits in 383k rows, every one of
+-- them a person duplicated into two records (beeline-eyk). The fold only ever
+-- merges typography, and it is deliberately narrow: accented names fold to
+-- fewer letters than their unaccented twin, so it misses that merge rather
+-- than inventing one.
+CREATE OR REPLACE MACRO legacy_name_key(n) AS
+  regexp_replace(lower(n), '[^a-z0-9]', '', 'g');
+
+-- Two spellings that differ by an actual letter are still two people to the
+-- fold — 'Emma Hoskins' / 'Emily Hoskins', 'Barrett Barrett' / 'Mary Barrett'
+-- — and no wider fold can tell those from two siblings. They are curation, in
+-- the same shape determiner-aliases.csv already uses: one line per spelling,
+-- naming the person it belongs to, replayed on every rebuild. Matched through
+-- the fold, so a line does not need repeating per capitalisation, and the
+-- curation surface below lists the duplicates no line covers yet.
+-- One row per folded alias, because two lines claiming one spelling would
+-- fan the spelling's rows out across both people. Two such lines are a CSV
+-- mistake for review to catch, not a merge to attempt.
+CREATE TABLE legacy_collector_alias AS
+SELECT alias, person FROM (
+  SELECT trim(alias) AS alias, trim(person) AS person,
+         row_number() OVER (PARTITION BY legacy_name_key(trim(alias))
+                            ORDER BY trim(person)) AS rn
+  FROM read_csv('{{COLLECTOR_ALIASES}}', header = true,
+                columns = {'alias': 'VARCHAR', 'person': 'VARCHAR'})
+) deduped
+WHERE rn = 1;
+
 -- Who collected is recordedBy, not firstName/lastName. Two thirds of trap
 -- specimens were collected by a pair, and only recordedBy holds them as a
 -- Darwin Core list — 'Michael O''Loughlin | Dan O''Loughlin' — while the name
@@ -270,34 +301,29 @@ WITH named AS (
          ELSE list_transform(string_split(recordedBy, '|'), x -> trim(x))
     END AS names
   FROM legacy_promotable
+),
+exploded AS (
+  SELECT n._id, n.fn, n.ln, g.i AS pos, n.names[g.i] AS recorded_name
+  FROM named n, range(1, len(n.names) + 1) g(i)
+  WHERE nullif(trim(n.names[g.i]), '') IS NOT NULL
 )
-SELECT _id, fn, ln, i AS pos, names[i] AS name
-FROM named, range(1, len(names) + 1) g(i)
-WHERE nullif(trim(names[i]), '') IS NOT NULL;
+SELECT e._id, e.fn, e.ln, e.pos, e.recorded_name,
+       coalesce(a.person, e.recorded_name) AS name
+FROM exploded e
+LEFT JOIN legacy_collector_alias a
+  ON legacy_name_key(a.alias) = legacy_name_key(e.recorded_name);
 
 -- Pair grain: every name the pair ever recorded, in recordedBy position. What
 -- the pair *is* — its parts, its login, which person it resolves to — is read
 -- from here; who collected any one sample is read from the row grain above.
 CREATE OR REPLACE VIEW legacy_collector_name AS
-SELECT DISTINCT fn, ln, pos, name FROM legacy_row_collector;
+SELECT DISTINCT fn, ln, pos, recorded_name, name FROM legacy_row_collector;
 
 -- A pair that names exactly one collector. Name parts and iNat accounts are
 -- believed only from these: on a joint row, firstName/lastName describe the
 -- group, and userLogin belongs to whoever happened to file it.
 CREATE OR REPLACE VIEW legacy_solo_pair AS
 SELECT fn, ln FROM legacy_collector_name GROUP BY fn, ln HAVING max(pos) = 1;
-
--- Identity is the recordedBy string folded to its letters and digits, not the
--- string itself: 'Amy GRotta' and 'Amy Grotta' are one human, and so are
--- 'MaryJo Mosby' / 'Mary Jo Mosby', 'AC Quinn' / 'Ac Quinn', and 'Jackson
--- MacPherson' / 'Jackson Macpherson' — four splits in 383k rows, every one of
--- them a person duplicated into two records (beeline-eyk). The fold only ever
--- merges typography; two spellings that differ by a letter ('Emma Hoskins' /
--- 'Emily Hoskins') are still two people and need curation, not a wider fold.
--- Accented names fold to fewer letters than their unaccented twin, so the
--- fold misses that merge rather than inventing one.
-CREATE OR REPLACE MACRO legacy_name_key(n) AS
-  regexp_replace(lower(n), '[^a-z0-9]', '', 'g');
 
 CREATE TABLE legacy_person_name AS
 WITH keyed AS (
@@ -333,23 +359,31 @@ WHERE rn = 1;
 -- keeps NULL parts — their label falls back to the full name.
 -- ...and only where that one name is the pair's own: a pair whose recordedBy
 -- names somebody else ('Mark Gorman' rows recorded by 'Pam Arion') would
--- otherwise hand Pam the name parts off Mark's columns. Matched through the
--- identity fold, so 'Amy GRotta' still takes Amy's parts — and, where the fold
--- merged two spellings, parted the way the display name is spelled, so
--- /people cannot show 'Jackson Macpherson' and print 'J. MacPherson'.
+-- otherwise hand Pam the name parts off Mark's columns. The comparison is
+-- against what the row RECORDED, before aliasing — the alias says who the
+-- name belongs to, not how that person's columns were filled in.
+--
+-- Where several pairs now feed one person, the parts come from the pair whose
+-- columns spell the display name, so /people cannot show 'Jackson Macpherson'
+-- and print 'J. MacPherson', and 'Barrett Barrett' aliased to Mary does not
+-- part her as B. Barrett. A person the alias merged whose columns never spell
+-- the surviving name keeps the other spelling's parts — same initial, same
+-- family name, and ingest/person-overlay.csv for the rest.
 CREATE TABLE legacy_person_parts AS
 SELECT person_id, fn, ln FROM (
   SELECT n.person_id, c.fn, c.ln,
          row_number() OVER (
            PARTITION BY n.person_id
-           ORDER BY CASE WHEN c.name = d.display_name THEN 0 ELSE 1 END,
+           ORDER BY CASE WHEN legacy_name_key(concat_ws(' ', c.fn, c.ln))
+                            = legacy_name_key(d.display_name) THEN 0 ELSE 1 END,
+                    CASE WHEN c.name = d.display_name THEN 0 ELSE 1 END,
                     concat(c.fn, ' ', c.ln)
          ) AS rn
   FROM legacy_collector_name c
   JOIN legacy_solo_pair sp ON sp.fn IS NOT DISTINCT FROM c.fn AND sp.ln IS NOT DISTINCT FROM c.ln
   JOIN legacy_person_name n ON n.name = c.name
   JOIN legacy_person_display d ON d.person_id = n.person_id
-  WHERE legacy_name_key(c.name) = legacy_name_key(concat_ws(' ', c.fn, c.ln))
+  WHERE legacy_name_key(c.recorded_name) = legacy_name_key(concat_ws(' ', c.fn, c.ln))
 ) ranked
 WHERE rn = 1;
 
@@ -357,6 +391,60 @@ INSERT INTO person (entity_id, display_name, given_name, family_name)
 SELECT d.person_id, d.display_name, nullif(p.fn, ''), nullif(p.ln, '')
 FROM legacy_person_display d
 LEFT JOIN legacy_person_parts p ON p.person_id = d.person_id;
+
+-- Curation surfaces for the alias CSV, in the shape promote-determinations.sql
+-- uses for determiner strings: what the file claims that matches nothing, and
+-- what it has not covered yet.
+--
+-- The detector is the legacy iNat login. A login lands on a record because
+-- somebody typed that record in, so two names filing under one login are
+-- either one human spelled twice — 'Ed'/'Edward Lisowski', 'Shaw'/'Shawn
+-- Steinmetz' — or a genuinely shared account, which several of these are and
+-- which no rule can tell apart from the outside (pandg is the Pedersons,
+-- molfamily the O'Loughlins, tom_julie two people). So it is a worklist for a
+-- human, not a merge rule; an alias line drops its pair out by construction.
+CREATE OR REPLACE VIEW legacy_collector_alias_unused AS
+SELECT a.alias, a.person
+FROM legacy_collector_alias a
+WHERE NOT EXISTS (
+  SELECT 1 FROM legacy_row_collector c
+  WHERE legacy_name_key(c.recorded_name) = legacy_name_key(a.alias)
+);
+
+CREATE OR REPLACE VIEW legacy_collector_duplicate_candidate AS
+WITH person_row AS (
+  SELECT c._id, n.person_id
+  FROM legacy_row_collector c
+  JOIN legacy_person_name n ON n.name = c.name
+),
+filed AS (
+  SELECT r.userLogin AS login, pr.person_id, count(*) AS records
+  FROM legacy_promotable r
+  JOIN person_row pr ON pr._id = r._id
+  WHERE r.userLogin <> ''
+  GROUP BY 1, 2
+),
+-- Two names on one row collected together, so they are a pair and not a
+-- person spelled twice, however much of a login they share. Dropping them is
+-- what keeps the worklist to names a human might actually merge: the couples
+-- who share an account are most of the raw signal and none of the work.
+joint AS (
+  SELECT DISTINCT a.person_id AS p1, b.person_id AS p2
+  FROM person_row a
+  JOIN person_row b ON b._id = a._id AND b.person_id <> a.person_id
+),
+standalone AS (
+  SELECT f.* FROM filed f
+  WHERE NOT EXISTS (
+    SELECT 1 FROM filed g
+    JOIN joint j ON j.p1 = f.person_id AND j.p2 = g.person_id
+    WHERE g.login = f.login
+  )
+)
+SELECT s.login, s.person_id, d.display_name, s.records
+FROM standalone s
+JOIN legacy_person_display d ON d.person_id = s.person_id
+WHERE s.login IN (SELECT login FROM standalone GROUP BY login HAVING count(*) > 1);
 
 -- Every (fn, ln) pair resolves to the person named first in its recordedBy —
 -- the primary collector, whose sample numbering the rows carry. Downstream

@@ -26,11 +26,17 @@ import { promoteLegacy, type PromotionCounts } from "../src/promote-legacy.js";
  *   jjjj0000  Eve Roberts, sample 11, recordedBy "Eve ROberts"
  *   kkkk1111  the same sample, spelled "Eve Roberts"
  *   llll2222  Eve again, sample 12 — so the majority spelling has a majority
+ *   mmmm3333  Eve a third time, sample 13, spelled "Evie Roberts": too far
+ *             for the fold, so collector-aliases.csv carries it
+ *
+ * Cy's and Dot's rows file under one login, which is the shared-account shape
+ * the duplicate detector must surface without merging anything.
  */
 
 const FIXTURE = new URL("./fixtures/legacy-merges.jsonl", import.meta.url).pathname;
 const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
 const NO_APP_CORRECTIONS = new URL("./fixtures/empty-corrections.csv", import.meta.url).pathname;
+const ALIASES = new URL("./fixtures/collector-aliases.csv", import.meta.url).pathname;
 
 let conn: DuckDBConnection;
 let counts: PromotionCounts;
@@ -45,6 +51,9 @@ beforeAll(async () => {
     "ingest/determiner-register.csv",
     "ingest/legacy-corrections.csv",
     NO_APP_CORRECTIONS,
+    "ingest/person-overlay.csv",
+    "data/person-overlay.csv",
+    ALIASES,
   );
 });
 
@@ -52,10 +61,10 @@ describe("legacy rows that merge into one sample", () => {
   test("every staged row becomes exactly one specimen", () => {
     // The invariant promotion checks for itself: specimens + blocked = staged.
     // A pair mapped to two people used to fan out here, inventing specimens.
-    expect(counts.staged).toBe(8);
+    expect(counts.staged).toBe(9);
     expect(counts.blockedRows).toBe(0);
-    expect(counts.specimens).toBe(8);
-    expect(counts.samples).toBe(5);
+    expect(counts.specimens).toBe(9);
+    expect(counts.samples).toBe(6);
   });
 
   test("two legacy series in one sample are renumbered, not collided", async () => {
@@ -73,6 +82,7 @@ describe("legacy rows that merge into one sample", () => {
       ["11", 1, "25000010"],
       ["11", 2, "25000011"],
       ["12", 1, "25000012"],
+      ["13", 1, "25000013"],
       ["9", 1, "25000007"],
       ["9", 2, "25000008"],
       ["OBAS-00657", 1, "25000002"],
@@ -117,6 +127,7 @@ describe("legacy rows that merge into one sample", () => {
       ["10", 1, "Cy Ambiguous"], // Dot was named on sample 9, and only there
       ["11", 1, "Eve Roberts"],
       ["12", 1, "Eve Roberts"],
+      ["13", 1, "Eve Roberts"],
       ["9", 1, "Cy Ambiguous"],
       ["9", 2, "Dot Other"], // still recorded, just not the primary
       ["OBAS-00657", 1, "Bea Trapper"],
@@ -151,6 +162,34 @@ describe("legacy rows that merge into one sample", () => {
        WHERE lower(display_name) LIKE 'eve %'`,
     );
     expect(people).toEqual([["Eve Roberts", "Eve", "Roberts"]]);
+  });
+
+  test("a spelling the fold cannot reach is merged by collector-aliases.csv", async () => {
+    // 'Evie Roberts' differs from 'Eve Roberts' by a letter, which is where
+    // the fold stops and curation starts — the same shape as 'Emily Hoskins'
+    // and 'Barrett Barrett' in the real dump.
+    const evie = await rows(conn, `SELECT count(*) FROM person WHERE display_name = 'Evie Roberts'`);
+    expect(evie).toEqual([[0n]]);
+    // A line naming a spelling nothing carries is a CSV typo, and says so
+    // rather than doing nothing quietly.
+    expect(counts.unusedCollectorAliases).toBe(1);
+  });
+
+  test("two person records under one login are surfaced, not merged", async () => {
+    // The detector the alias CSV is curated from: a login lands on a record
+    // because somebody typed it in, so two names under one login are either
+    // one human spelled twice or a shared account. Cy and Dot are the second
+    // kind — a worklist entry, and nothing promotion may decide by itself.
+    expect(counts.collectorDuplicateLogins).toBe(1);
+    const candidates = await rows(
+      conn,
+      `SELECT login, display_name FROM legacy_collector_duplicate_candidate
+       ORDER BY display_name`,
+    );
+    expect(candidates).toEqual([
+      ["cyamb", "Cy Ambiguous"],
+      ["cyamb", "Dot Other"],
+    ]);
   });
 
   test("name parts are taken only from a row that is about that person", async () => {

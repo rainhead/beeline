@@ -18,6 +18,10 @@ export interface PromotionCounts {
   blockedRows: number;
   unresolvedDeterminations: number;
   unresolvedDeterminerNames: number;
+  /** Alias lines naming a spelling no staged row carries — a CSV typo. */
+  unusedCollectorAliases: number;
+  /** Logins two person records file under: one human twice, or a shared account. */
+  collectorDuplicateLogins: number;
   correctionsApplied: number;
   correctionsRetired: number;
   correctionConflicts: number;
@@ -37,6 +41,7 @@ export async function promoteLegacy(
   appCorrectionsPath = "data/corrections.csv",
   curatedOverlayPath = "ingest/person-overlay.csv",
   appOverlayPath = "data/person-overlay.csv",
+  collectorAliasesPath = "ingest/collector-aliases.csv",
 ): Promise<PromotionCounts> {
   const scalar = async (sql: string): Promise<number> => {
     const [[v]] = (await (await conn.run(sql)).getRows()) as [[bigint]];
@@ -50,7 +55,8 @@ export async function promoteLegacy(
   await conn.run(
     promoteSql
       .replaceAll("{{LEGACY_CORRECTIONS}}", legacyCorrectionsPath.replaceAll("'", "''"))
-      .replaceAll("{{APP_CORRECTIONS}}", appCorrectionsPath.replaceAll("'", "''")),
+      .replaceAll("{{APP_CORRECTIONS}}", appCorrectionsPath.replaceAll("'", "''"))
+      .replaceAll("{{COLLECTOR_ALIASES}}", collectorAliasesPath.replaceAll("'", "''")),
   );
   const seedSql = await readFile(`${INGEST_DIR}seed-animals.sql`, "utf8");
   await conn.run(seedSql.replaceAll("{{TAXONOMY_CSV}}", taxonomyCsvPath.replaceAll("'", "''")));
@@ -80,6 +86,10 @@ export async function promoteLegacy(
     ),
     unresolvedDeterminations: await scalar("SELECT count(*) FROM legacy_unresolved_determination"),
     unresolvedDeterminerNames: await scalar("SELECT count(*) FROM legacy_determiner_unresolved"),
+    unusedCollectorAliases: await scalar("SELECT count(*) FROM legacy_collector_alias_unused"),
+    collectorDuplicateLogins: await scalar(
+      "SELECT count(DISTINCT login) FROM legacy_collector_duplicate_candidate",
+    ),
     correctionsApplied: await scalar(
       "SELECT count(*) FROM legacy_correction_state WHERE status IN ('applies', 'conflict')",
     ),

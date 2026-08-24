@@ -7,6 +7,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { SESSION_COOKIE, createSession, type AppEnv } from "./session.js";
 import { PublicPage } from "./views/layout.js";
+import { styleVersion } from "./assets.js";
 import type { PageEnv } from "./views/layout.js";
 
 const SITE = "https://www.inaturalist.org";
@@ -150,7 +151,12 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
     if (account === undefined) {
       return c.html(
         html`<!doctype html>${(
-          <PublicPage environment={deps.environment} m={m} title={m.pendingApproval.title}>
+          <PublicPage
+            environment={deps.environment}
+            m={m}
+            title={m.pendingApproval.title}
+            styleVersion={await styleVersion()}
+          >
             <h1>{m.pendingApproval.heading}</h1>
             <p>{m.pendingApproval.body(identity.login)}</p>
           </PublicPage>

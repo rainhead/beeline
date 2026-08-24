@@ -55,6 +55,8 @@ export const en = {
     /** The avatar button that opens the account menu. */
     account: (login: string) => `Account: ${login}`,
     signOut: "Sign out",
+    /** BEELINE_DEV_LOGIN sessions ignore cookies, so there is nothing to sign out of. */
+    devSession: "Signed in by BEELINE_DEV_LOGIN — stop the dev server to change who you are.",
     pageTitle: (title: string) => `${title} · Beeline`,
   },
 
@@ -234,7 +236,9 @@ export const en = {
 
     csv: {
       download: "Download CSV",
-      note: "The CSV holds exactly what these filters select, minus coordinates — those stay in the app.",
+      note:
+        "The CSV holds exactly what these filters select, coordinates and all. " +
+        "Where iNaturalist obscures a record, its own columns say so — worth a look before anything is republished.",
       truncated: (limit: number) => `Only the first ${n(limit)} rows are exported — narrow the filters for the rest.`,
     },
   },

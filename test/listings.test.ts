@@ -328,7 +328,7 @@ describe("what is still waiting for a name", () => {
 });
 
 describe("CSV export", () => {
-  it("downloads the filtered rows, and never a coordinate", async () => {
+  it("downloads the filtered rows, coordinates and provenance included", async () => {
     const { app } = await listingApp("staffer");
     const res = await app.request("/samples.csv?scope=all&place=whatcom");
     expect(res.status).toBe(200);
@@ -336,11 +336,17 @@ describe("CSV export", () => {
     expect(res.headers.get("content-disposition")).toContain("beeline-samples.csv");
     const csv = await res.text();
     const [header, ...lines] = csv.split("\r\n");
-    expect(header).not.toContain("latitude");
-    expect(header).not.toContain("longitude");
-    expect(header).not.toContain("elevation");
+    // A collector's own coordinates are the ones they recorded and the ones
+    // their labels print; withholding them protected nobody (Peter, 2026-08-23).
+    expect(header).toContain("latitude");
+    expect(header).toContain("longitude");
+    // And a reader can tell what they are looking at without asking us.
+    expect(header).toContain("location_source");
+    expect(header).toContain("geoprivacy");
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("B-1");
+    expect(lines[0]).toContain("44.5646");
+    expect(lines[0]).toContain("inat_public");
     // Collectors ride along as the Darwin Core list they are.
     expect(lines[0]).toContain("Bob Barnes | Alice Adams");
   });

@@ -10,10 +10,17 @@ import type { Database, SampleKind } from "../model.js";
  * all live in the query string, so a filtered listing is a URL a staff
  * member can paste into an email (beeline-2c3.21).
  *
- * Two things this module deliberately does not do: it never joins
- * sample_location (a listing has no business carrying believed-true
- * coordinates, least of all into a CSV), and it never decides who may use
- * which scope — that gate is the caller's, applied at parse time.
+ * Coordinates ride along. They are the collector's own — recorded on their
+ * own observation, printed on their own labels — and CONTEXT.md's stance is
+ * that anyone trusted with this store is trusted with them; the open per-atlas
+ * question (docs/questions.md) is about revealing taxon-obscured coordinates
+ * *downstream*, on labels and in Ecdysis/GBIF exports, not about showing a
+ * participant their own data. What a row carries travels with it: a record
+ * whose coordinates are obscured upstream says so in its own columns, so
+ * nothing is republished in ignorance.
+ *
+ * The one thing this module does not do is decide who may use which scope —
+ * that gate is the caller's, applied at parse time.
  */
 
 /** Rows per page. Big enough to scan, small enough to render fast. */
@@ -200,6 +207,13 @@ export interface SampleRow {
   specimen_count: number;
   inat_observation_id: bigint | null;
   atlas_code: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  coordinate_uncertainty_m: number | null;
+  elevation_m: number | null;
+  location_source: string | null;
+  geoprivacy: string | null;
+  taxon_geoprivacy: string | null;
   blocking: number;
   warning: number;
   /** Whether the viewer is one of this sample's collectors. */
@@ -223,6 +237,13 @@ export interface SpecimenRow {
   sex: string | null;
   is_expert: boolean | null;
   determiner: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  coordinate_uncertainty_m: number | null;
+  elevation_m: number | null;
+  location_source: string | null;
+  geoprivacy: string | null;
+  taxon_geoprivacy: string | null;
 }
 
 export interface Page<Row> {
@@ -313,6 +334,8 @@ export async function listSamples(
   let base = db
     .selectFrom("sample as s")
     .leftJoin("atlas as a", "a.entity_id", "s.atlas_id")
+    // One row per sample (it is the PK), so this cannot fan the listing out.
+    .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
     .leftJoin(
       (eb) =>
         eb
@@ -426,6 +449,13 @@ export async function listSamples(
         "s.specimen_count",
         "s.inat_observation_id",
         "a.code as atlas_code",
+        "loc.latitude",
+        "loc.longitude",
+        "loc.coordinate_uncertainty_m",
+        "loc.elevation_m",
+        "loc.source as location_source",
+        "s.geoprivacy",
+        "s.taxon_geoprivacy",
         blockingCount.as("blocking"),
         warningCount.as("warning"),
         sql<boolean>`EXISTS (SELECT 1 FROM sample_collector mine
@@ -458,6 +488,7 @@ export async function listSpecimens(
     .selectFrom("specimen as sp")
     .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
     .leftJoin("atlas as a", "a.entity_id", "s.atlas_id")
+    .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
     .leftJoin(
       (eb) =>
         eb
@@ -534,6 +565,13 @@ export async function listSpecimens(
         "an.authorship",
         "d.sex",
         "d.is_expert",
+        "loc.latitude",
+        "loc.longitude",
+        "loc.coordinate_uncertainty_m",
+        "loc.elevation_m",
+        "loc.source as location_source",
+        "s.geoprivacy",
+        "s.taxon_geoprivacy",
         sql<string | null>`coalesce(det.display_name, d.determiner_name)`.as("determiner"),
       ])
       .orderBy("s.date_start", "desc")
@@ -585,8 +623,9 @@ export async function collectorsOf(db: Kysely<Database>, sampleIds: number[]): P
  *
  * Headers are stable machine names, not the table's column labels: a CSV is
  * read by a spreadsheet and by whatever script comes after it, so renaming a
- * screen must not rename a column. Coordinates are absent by construction —
- * this module never selects them.
+ * screen must not rename a column. Coordinates are in it, with the provenance
+ * and geoprivacy of the record beside them, so a row carries what a reader
+ * needs to judge it.
  */
 
 /** RFC 4180 quoting, plus the leading-punctuation guard spreadsheets need. */
@@ -624,6 +663,13 @@ export function sampleCsv(page: Page<SampleRow>): string {
       "country",
       "specimen_count",
       "atlas",
+      "latitude",
+      "longitude",
+      "coordinate_uncertainty_m",
+      "elevation_m",
+      "location_source",
+      "geoprivacy",
+      "taxon_geoprivacy",
       "qc_status",
       "inat_observation_id",
     ],
@@ -639,6 +685,13 @@ export function sampleCsv(page: Page<SampleRow>): string {
       r.country,
       r.specimen_count,
       r.atlas_code,
+      r.latitude,
+      r.longitude,
+      r.coordinate_uncertainty_m,
+      r.elevation_m,
+      r.location_source,
+      r.geoprivacy,
+      r.taxon_geoprivacy,
       qcLabel(r),
       r.inat_observation_id,
     ]),
@@ -657,6 +710,13 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       "county",
       "state_province",
       "atlas",
+      "latitude",
+      "longitude",
+      "coordinate_uncertainty_m",
+      "elevation_m",
+      "location_source",
+      "geoprivacy",
+      "taxon_geoprivacy",
       "scientific_name",
       "rank",
       "authorship",
@@ -674,6 +734,13 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       r.county,
       r.state_province,
       r.atlas_code,
+      r.latitude,
+      r.longitude,
+      r.coordinate_uncertainty_m,
+      r.elevation_m,
+      r.location_source,
+      r.geoprivacy,
+      r.taxon_geoprivacy,
       r.scientific_name,
       r.taxon_rank,
       r.authorship,

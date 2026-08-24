@@ -26,7 +26,7 @@ if (config.devLogin) {
     .executeTakeFirst();
   const personId = account?.person_id ?? 0;
   if (account === undefined) console.warn(`BEELINE_DEV_LOGIN '${config.devLogin}' has no inat_account; using person 0`);
-  resolveSession = async () => ({ personId, login: config.devLogin!, iconUrl: null });
+  resolveSession = async () => ({ personId, login: config.devLogin!, iconUrl: null, stub: true });
 }
 
 const jobs = buildJobs(config);

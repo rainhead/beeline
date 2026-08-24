@@ -5,7 +5,7 @@ import { html } from "hono/html";
 import type { Child } from "hono/jsx";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
-import { islandsSrc } from "./assets.js";
+import { islandsSrc, styleVersion } from "./assets.js";
 import { registerAuthRoutes, type InatClient } from "./auth.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
@@ -92,6 +92,12 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     const seed = normalizeSeed(c.req.query("seed"));
     return c.body(seed === SEED_COLOR ? tokens : tokensCss(seed), 200, { "content-type": "text/css" });
   });
+  // Versioned URLs (styleVersion) make caching these safe: a changed file is
+  // a changed URL, so nothing serves stale CSS the way it did before.
+  app.use("/static/*", async (c, next) => {
+    await next();
+    if (config.environment !== "development") c.header("cache-control", "public, max-age=3600");
+  });
   app.use("/static/*", serveStatic({ root: "./src/app" }));
   app.use("/assets/*", serveStatic({ root: "./dist/app" }));
   registerAuthRoutes(app, { db, inat, origin: config.origin, environment: config.environment });
@@ -112,7 +118,12 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
       const m = c.get("m");
       return c.html(
         html`<!doctype html>${(
-          <PublicPage environment={config.environment} m={m} title={m.signIn.title}>
+          <PublicPage
+            environment={config.environment}
+            m={m}
+            title={m.signIn.title}
+            styleVersion={await styleVersion()}
+          >
             <h1>{m.signIn.heading}</h1>
             <p>{m.signIn.nothingPublic}</p>
             <p>
@@ -148,6 +159,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
         env={{
           environment: config.environment,
           islandsSrc: await islandsSrc(),
+          styleVersion: await styleVersion(),
           session: c.get("session"),
           admin: isAdmin(c.get("session")),
           m: c.get("m"),

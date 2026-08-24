@@ -79,6 +79,27 @@ describe("app scaffold", () => {
     expect(body).toContain("testuser");
   });
 
+  it("offers sign-out only where there is a session to end", async () => {
+    // A real cookie session gets the button…
+    const real = await appOnMemoryDb("testuser");
+    expect(await (await real.request("/")).text()).toContain("/auth/logout");
+
+    // …and a BEELINE_DEV_LOGIN session does not, because that resolver
+    // ignores cookies: the button would delete a row nobody reads and leave
+    // you signed in (beeline-2c3.27).
+    const { instance, conn } = await createMemoryDb();
+    await conn.run(`INSERT INTO person (display_name) VALUES ('Dev Person')`);
+    const stubbed = createApp({
+      db: createKysely(instance),
+      config: { environment: "development" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId: 1, login: "devuser", iconUrl: null, stub: true }),
+    });
+    const body = await (await stubbed.request("/")).text();
+    expect(body).not.toContain("/auth/logout");
+    expect(body).toContain("BEELINE_DEV_LOGIN");
+  });
+
   it("non-production environments announce themselves", async () => {
     const app = await appOnMemoryDb("testuser");
     const body = await (await app.request("/")).text();

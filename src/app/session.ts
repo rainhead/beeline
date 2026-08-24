@@ -14,6 +14,13 @@ export interface Session {
   login: string;
   /** iNat profile picture, cached at sign-in; null for accountless people. */
   iconUrl: string | null;
+  /**
+   * True when this session came from BEELINE_DEV_LOGIN rather than from a
+   * cookie: the resolver ignores cookies wholesale, so there is nothing for
+   * signing out to end. The chrome says so instead of offering a button that
+   * cannot work (Peter hit exactly that, 2026-08-23).
+   */
+  stub?: boolean;
 }
 
 /** Resolves a request to a session, or null for anonymous. */

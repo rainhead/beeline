@@ -45,8 +45,20 @@ export interface AppConfig {
   sweepDays: number;
 }
 
-/** The admin roster, checked in: who may see /jobs and trigger ingestion. */
-const ADMIN_LOGINS = ["rainhead"];
+/**
+ * The admin roster, checked in: who may see /jobs and trigger ingestion.
+ * iNat logins, which are not names — 'beesofcanada' is Lincoln Best — and are
+ * matched exactly, so each was verified against the iNat API rather than
+ * inferred from a person's name (beeline-eft).
+ */
+const ADMIN_LOGINS = [
+  "rainhead", // Peter Abrahamsen, 728554
+  "amelathopoulos", // Andony Melathopoulos, 429964
+  "clankford", // Caleb Lankford, 8407319
+  "bzand", // Bonnie Zand, 3269791
+  "karen_wright", // Karen Wright, 6560268
+  "beesofcanada", // Lincoln R. Best, 760776
+];
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const environment = env.BEELINE_ENV ?? "development";

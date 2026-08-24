@@ -27,8 +27,17 @@ describe("configFromEnv deploy safety", () => {
     expect(config.origin).toBe("https://beeline.example");
   });
 
+  // Pinned exactly, not loosely: this is a permission list, and a name
+  // arriving in it should have to arrive in a diff too.
   it("the admin roster is checked in; the env var overrides it when set", () => {
-    expect(configFromEnv({}).adminLogins).toEqual(["rainhead"]);
+    expect(configFromEnv({}).adminLogins).toEqual([
+      "rainhead",
+      "amelathopoulos",
+      "clankford",
+      "bzand",
+      "karen_wright",
+      "beesofcanada",
+    ]);
     expect(configFromEnv({ BEELINE_ADMIN_LOGINS: "rainhead, amelathopoulos" }).adminLogins).toEqual([
       "rainhead",
       "amelathopoulos",

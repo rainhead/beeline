@@ -324,25 +324,39 @@ SELECT fn, ln, person_id FROM (
 ) ranked
 WHERE rn = 1;
 
--- iNat accounts: only where login ↔ name pair is unambiguous both ways.
+-- iNat accounts: the account a person actually files under, measured by how
+-- many of their records carry it (beeline-eft).
+--
+-- A login is not a name. It appears on a record because someone typed that
+-- record in, so an active volunteer's login also lands on records they
+-- entered for other people: 'amelathopoulos' sits on 3,019 of Andony's rows
+-- and 151 of Emily Carlson's. Treating that spread as ambiguity discarded the
+-- busiest — most trustworthy — logins and left the person bound to whatever
+-- stray survived, so one typo'd row beat three thousand good ones. Weight
+-- decides both directions instead: the account belongs to whoever files most
+-- under it, and a person is bound to the login most of their records carry.
 INSERT INTO inat_account (person_id, inat_user_id, login)
-SELECT m.person_id, c.uid, c.login
-FROM (
-  SELECT login, max(uid) AS uid, arg_min(fn, fn) AS fn, arg_min(ln, ln) AS ln
-  FROM (
-    SELECT DISTINCT userLogin AS login, r.fn, r.ln, try_cast(userId AS BIGINT) AS uid
-    FROM legacy_promotable r
-    JOIN legacy_solo_pair sp ON sp.fn IS NOT DISTINCT FROM r.fn AND sp.ln IS NOT DISTINCT FROM r.ln
-    WHERE userLogin <> '' AND try_cast(userId AS BIGINT) IS NOT NULL
-  ) pairs
-  GROUP BY login
-  HAVING count(DISTINCT (fn, ln)) = 1
-) c
-JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM c.fn AND m.ln IS NOT DISTINCT FROM c.ln
--- One row per person AND per iNat user id: a login change upstream leaves
--- two logins with the same uid, and inat_user_id is UNIQUE.
-QUALIFY row_number() OVER (PARTITION BY m.person_id ORDER BY c.login) = 1
-    AND row_number() OVER (PARTITION BY c.uid ORDER BY c.login) = 1;
+WITH login_person AS (
+  SELECT r.userLogin AS login, try_cast(r.userId AS BIGINT) AS uid,
+         m.person_id, count(*) AS records
+  FROM legacy_promotable r
+  JOIN legacy_solo_pair sp ON sp.fn IS NOT DISTINCT FROM r.fn AND sp.ln IS NOT DISTINCT FROM r.ln
+  JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
+  WHERE r.userLogin <> '' AND try_cast(r.userId AS BIGINT) IS NOT NULL
+  GROUP BY 1, 2, 3
+),
+-- Whose account it is. Keyed on uid, not the login string: the same account
+-- can appear under an old and a new name, and inat_user_id is what is
+-- actually unique. A tie names nobody — two people with equal claim on one
+-- account is a person-split to investigate, not a coin to flip.
+owned AS (
+  SELECT * FROM login_person
+  QUALIFY row_number() OVER (PARTITION BY uid ORDER BY records DESC, person_id) = 1
+      AND records > coalesce(lead(records) OVER (PARTITION BY uid ORDER BY records DESC, person_id), 0)
+)
+-- One row per person: of the accounts they own, the one they file under.
+SELECT person_id, uid, login FROM owned
+QUALIFY row_number() OVER (PARTITION BY person_id ORDER BY records DESC, login) = 1;
 
 -- ── Samples ─────────────────────────────────────────────────────────────
 -- One sample per (person, start date, sample number). Descriptive fields

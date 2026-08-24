@@ -2,6 +2,8 @@ import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { ensureCorrectionsFile } from "./corrections.js";
+import { applyPersonOverlay, type Unresolved } from "./apply-person-overlay.js";
+import { mergeOverlays, readOverlay } from "./person-overlay.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -19,6 +21,11 @@ export interface PromotionCounts {
   correctionsApplied: number;
   correctionsRetired: number;
   correctionConflicts: number;
+  /** Staff decisions about people replayed onto the fresh store (ADR 0004). */
+  personOverlayApplied: number;
+  personMerges: number;
+  /** Overlay rows that named nobody — reported, never guessed at. */
+  personOverlayUnresolved: Unresolved[];
 }
 
 /** Promote staged legacy_occurrence rows into the model. Fresh model only. */
@@ -29,6 +36,8 @@ export async function promoteLegacy(
   determinerRegisterPath = "ingest/determiner-register.csv",
   legacyCorrectionsPath = "ingest/legacy-corrections.csv",
   appCorrectionsPath = "data/corrections.csv",
+  curatedOverlayPath = "ingest/person-overlay.csv",
+  appOverlayPath = "data/person-overlay.csv",
 ): Promise<PromotionCounts> {
   const scalar = async (sql: string): Promise<number> => {
     const [[v]] = (await (await conn.run(sql)).getRows()) as [[bigint]];
@@ -52,6 +61,13 @@ export async function promoteLegacy(
       .replaceAll("{{DETERMINER_ALIASES}}", determinerAliasesPath.replaceAll("'", "''"))
       .replaceAll("{{DETERMINER_REGISTER}}", determinerRegisterPath.replaceAll("'", "''")),
   );
+  // Last: people and their accounts exist by now, and a merge has to be able
+  // to see everything that points at the person it dissolves.
+  const overlay = await applyPersonOverlay(
+    conn,
+    mergeOverlays(await readOverlay(curatedOverlayPath), await readOverlay(appOverlayPath)),
+  );
+
   return {
     staged: await scalar("SELECT count(*) FROM legacy_occurrence"),
     people: await scalar("SELECT count(*) FROM person"),
@@ -71,6 +87,9 @@ export async function promoteLegacy(
     correctionsRetired: await scalar(
       "SELECT count(*) FROM legacy_correction_state WHERE status = 'retired'",
     ),
+    personOverlayApplied: overlay.applied,
+    personMerges: overlay.merged,
+    personOverlayUnresolved: overlay.unresolved,
     correctionConflicts: await scalar(
       "SELECT count(*) FROM legacy_correction_state WHERE status = 'conflict'",
     ),

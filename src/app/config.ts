@@ -30,6 +30,13 @@ export interface AppConfig {
    */
   correctionsPath: string;
   /**
+   * App-written store of staff decisions about people — account bindings,
+   * home atlas, admin rights, name fixes, merges. Outside the blow-away path
+   * for the same reason corrections are (ADR 0004): a rebuild must replay
+   * them, not lose them.
+   */
+  personOverlayPath: string;
+  /**
    * Deployment environment. Anything but 'production' renders the
    * environment banner (sandbox-until-launch, beeline-2u8).
    */
@@ -107,6 +114,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
             .map((s) => s.trim())
             .filter((s) => s !== ""),
     correctionsPath: env.BEELINE_CORRECTIONS ?? "data/corrections.csv",
+    personOverlayPath: env.BEELINE_PERSON_OVERLAY ?? "data/person-overlay.csv",
     environment,
     devLogin: environment === "development" ? (env.BEELINE_DEV_LOGIN ?? null) : null,
     syncProjects,

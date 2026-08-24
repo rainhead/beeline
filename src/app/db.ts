@@ -78,3 +78,34 @@ export async function openAppDb(config: Pick<AppConfig, "dbPath" | "privateDbPat
     },
   };
 }
+
+/**
+ * Bootstrap the admin roster. The store is the authority (schema/010
+ * person_admin) so grants and revocations made in the app stick; the
+ * checked-in ADMIN_LOGINS is the seed that keeps a store nobody has granted
+ * anything from locking its keepers out.
+ *
+ * Seeds only when the table is EMPTY. Topping it up on every boot would
+ * resurrect a deliberate revocation at the next restart, which is the one
+ * thing a roster screen must not do.
+ */
+export async function seedAdmins(db: Kysely<Database>, logins: readonly string[]): Promise<number> {
+  if (logins.length === 0) return 0;
+  const existing = await db.selectFrom("person_admin").select("person_id").executeTakeFirst();
+  if (existing !== undefined) return 0;
+  const people = await db
+    .selectFrom("inat_account")
+    .where("login", "in", [...logins])
+    .select(["person_id", "login"])
+    .execute();
+  if (people.length === 0) return 0;
+  await db
+    .insertInto("person_admin")
+    .values(people.map((p) => ({ person_id: p.person_id, granted_by: "seed" })))
+    .execute();
+  const missing = logins.filter((l) => !people.some((p) => p.login === l));
+  if (missing.length > 0) {
+    console.warn(`admin seed: no inat_account for ${missing.join(", ")} — they cannot sign in yet`);
+  }
+  return people.length;
+}

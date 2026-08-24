@@ -56,3 +56,28 @@ INSERT INTO atlas (code, name, inat_place_id) VALUES
   ('ID',   'Idaho Bee Atlas',            NULL),
   ('NM',   'New Mexico Bee Atlas',       NULL),
   ('OK',   'Oklahoma Bee Atlas',         NULL);
+
+-- Which atlas a person belongs to, as distinct from where their samples fall.
+-- Geography assigns a sample; it cannot assign a person, who may collect
+-- across a border, move, or belong to the program before collecting anything
+-- (beeline-2c3.11). Its own table because the answer is editorial — staff set
+-- it, promotion never guesses it — and because it carries the atlas colorway
+-- the volunteer's own pages are branded with.
+CREATE TABLE person_home_atlas (
+  person_id INTEGER PRIMARY KEY REFERENCES person(entity_id),
+  atlas_id  INTEGER NOT NULL REFERENCES atlas(entity_id)
+);
+COMMENT ON TABLE person_home_atlas IS 'The atlas a person belongs to. Absent = unknown, which is the honest default: no row is not the same as OBA.';
+COMMENT ON COLUMN person_home_atlas.atlas_id IS 'Set by staff, never inferred from where their samples landed — a Washington volunteer collecting in Oregon is still WaBA.';
+
+-- Who may use the admin surface. A table rather than a config array so the
+-- roster is editable by the people who own it (beeline-eft added five names
+-- by deploy); src/app/config.ts ADMIN_LOGINS remains the bootstrap seed, so a
+-- store that has never been granted anything still lets its keeper in.
+CREATE TABLE person_admin (
+  person_id  INTEGER PRIMARY KEY REFERENCES person(entity_id),
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  granted_by TEXT
+);
+COMMENT ON TABLE person_admin IS 'Admin rights: /jobs, /people, /design, and the listings scope picker. Presence is the grant; revoking deletes the row.';
+COMMENT ON COLUMN person_admin.granted_by IS 'iNat login of whoever granted it, or ''seed'' for the checked-in bootstrap roster. Not a foreign key: the granter may be gone.';

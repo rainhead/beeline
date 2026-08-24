@@ -15,6 +15,11 @@ import { Layout, PublicPage } from "./views/layout.js";
 import type { Job } from "./jobs/framework.js";
 import { Glossary } from "./views/glossary.js";
 import { Jobs } from "./views/jobs.js";
+import { PersonPage, Roster } from "./views/roster.js";
+import { listRoster, nameIsUnique, parseRosterQuery, personDetail, personRef } from "./roster.js";
+import { upsertOverlay, valueProblem, type OverlayField, type PersonOverlayRow } from "../person-overlay.js";
+import { applyPersonOverlay } from "../apply-person-overlay.js";
+import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome, type FindingRow, type PendingRow } from "./views/qc.js";
 import { DESIGN_STYLESHEETS } from "./views/design/shell.js";
 import { DesignIndex } from "./views/design/index-page.js";
@@ -58,6 +63,14 @@ export interface AppDeps {
   jobs?: JobsDep;
   /** App-written correction store for in-app sample edits (config.correctionsPath). */
   correctionsPath?: string;
+  /** App-written store of staff decisions about people (ADR 0004 overlay). */
+  personOverlayPath?: string;
+  /**
+   * A raw connection, for the overlay applier. Kysely cannot run the applier's
+   * statements as one unit, and the app already keeps a spare connection for
+   * the scheduler (ADR 0005: one process, many connections, one writer).
+   */
+  conn?: DuckDBConnection;
 }
 
 /**
@@ -66,14 +79,24 @@ export interface AppDeps {
  * after the gate (and everything added later by other modules) sees a
  * session or doesn't run: no anonymous reads, structurally.
  */
-export function createApp({ db, config, inat, resolveSession, jobs, correctionsPath }: AppDeps) {
+export function createApp({ db, config, inat, resolveSession, jobs, correctionsPath, personOverlayPath, conn }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], runNow: async () => false };
   const corrections = correctionsPath ?? "data/corrections.csv";
-  // Admin surface (/jobs): everyone in development, allowlisted logins
-  // elsewhere — running ingestion is not for every approved volunteer
-  // (beeline-6va).
-  const isAdmin = (session: Session) =>
-    config.environment === "development" || (config.adminLogins ?? []).includes(session.login);
+  const overlayPath = personOverlayPath ?? "data/person-overlay.csv";
+  // Admin surface (/jobs, /people): everyone in development, and elsewhere
+  // whoever holds a person_admin row — the roster moved into the store so the
+  // people who own it can edit it (beeline-eft added five names by deploy).
+  // config.adminLogins is only the bootstrap seed now, applied at boot to a
+  // store that has never granted anything; a revocation here therefore sticks.
+  const isAdmin = async (session: Session) => {
+    if (config.environment === "development") return true;
+    const row = await db
+      .selectFrom("person_admin")
+      .where("person_id", "=", session.personId)
+      .select("person_id")
+      .executeTakeFirst();
+    return row !== undefined;
+  };
   const app = new Hono<AppEnv>();
   const tokens = tokensCss();
 
@@ -137,6 +160,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
       );
     }
     c.set("session", session);
+    c.set("admin", await isAdmin(session));
     await next();
   });
 
@@ -149,7 +173,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   });
 
   const page = async (
-    c: { get<K extends "session" | "m">(k: K): AppEnv["Variables"][K] },
+    c: { get<K extends "session" | "m" | "admin">(k: K): AppEnv["Variables"][K] },
     title: string,
     children: Child,
     stylesheets?: readonly string[],
@@ -161,7 +185,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
           islandsSrc: await islandsSrc(),
           styleVersion: await styleVersion(),
           session: c.get("session"),
-          admin: isAdmin(c.get("session")),
+          admin: c.get("admin"),
           m: c.get("m"),
         }}
         title={title}
@@ -289,7 +313,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
    */
   const listingRequest = async (c: Context<AppEnv>) => {
     const session = c.get("session");
-    const admin = isAdmin(session);
+    const admin = c.get("admin");
     const atlases = await atlasOptions(db);
     const query = parseListingQuery(new URL(c.req.url).searchParams, {
       admin,
@@ -405,7 +429,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   ];
   for (const [path, title, render] of designPages) {
     app.get(path, async (c) => {
-      if (!isAdmin(c.get("session"))) return c.text("Admins only.", 403);
+      if (!c.get("admin")) return c.text("Admins only.", 403);
       const m = c.get("m");
       return c.html(await page(c, title, render(m), DESIGN_STYLESHEETS));
     });
@@ -417,7 +441,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   app.get("/patterns/qc", (c) => c.redirect("/design/qc", 301));
 
   app.get("/jobs", async (c) => {
-    if (!isAdmin(c.get("session"))) return c.text("Admins only.", 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
     const runs = await db
       .selectFrom("job_run")
@@ -428,8 +452,111 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     return c.html(await page(c, m.jobs.title, <Jobs m={m} jobs={jobsDep.list} runs={runs} />));
   });
 
+  // --- People: the roster, its binding evidence, and the staff decisions
+  // that change any of it. Admin-gated like /jobs. Every write goes to the
+  // overlay first and is applied from there, so what a rebuild replays is
+  // exactly what the screen did — there is no second path into these rows. ---
+  app.get("/people", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    const query = parseRosterQuery(new URL(c.req.url).searchParams);
+    const listed = await listRoster(db, query);
+    return c.html(await page(c, m.people.title, <Roster m={m} page={listed} query={query} />));
+  });
+
+  const showPerson = async (c: Context<AppEnv>, notice?: string, problem?: string) => {
+    const m = c.get("m");
+    const id = Number(c.req.param("id"));
+    const person = Number.isInteger(id) ? await personDetail(db, id) : null;
+    if (person === null) return c.text(m.people.notFound, 404);
+    return c.html(
+      await page(
+        c,
+        person.display_name,
+        <PersonPage m={m} person={person} atlases={await atlasOptions(db)} notice={notice} problem={problem} />,
+      ),
+    );
+  };
+
+  app.get("/people/:id", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    return showPerson(c);
+  });
+
+  /**
+   * Record decisions and apply them. The overlay is written first: if the
+   * apply fails, the decision is still on disk to be replayed, whereas a
+   * store-first order would leave a change nothing remembers.
+   */
+  const decide = async (c: Context<AppEnv>, build: (form: FormData) => Array<[OverlayField, string]>) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    const id = Number(c.req.param("id"));
+    const person = Number.isInteger(id) ? await personDetail(db, id) : null;
+    if (person === null) return c.text(m.people.notFound, 404);
+
+    const form = await c.req.formData();
+    const author = c.get("session").login;
+    const reason = String(form.get("reason") ?? "").trim();
+    let ref: string;
+    try {
+      ref = personRef({ ...person, nameIsUnique: await nameIsUnique(db, person.display_name) });
+    } catch (err) {
+      return showPerson(c, undefined, (err as Error).message);
+    }
+
+    const rows: PersonOverlayRow[] = [];
+    for (const [field, value] of build(form)) {
+      const problem = valueProblem(field, value);
+      if (problem !== null) return showPerson(c, undefined, problem);
+      rows.push({ person_ref: ref, field, value, author, reason });
+    }
+    if (rows.length === 0) return c.redirect(`/people/${id}`);
+
+    await upsertOverlay(overlayPath, rows);
+    if (conn === undefined) return showPerson(c, m.people.saved);
+    const applied = await applyPersonOverlay(conn, rows);
+    if (applied.unresolved.length > 0) {
+      return showPerson(c, undefined, applied.unresolved.map((u) => u.reason).join("; "));
+    }
+    // A merge deletes this person, so there is no page left to return to.
+    if (rows.some((r) => r.field === "merged_into")) return c.redirect("/people");
+    return showPerson(c, m.people.savedRebuild);
+  };
+
+  const text = (form: FormData, name: string) => String(form.get(name) ?? "").trim();
+
+  app.post("/people/:id/account", (c) =>
+    decide(c, (form) => {
+      const uid = text(form, "inat_user_id");
+      const login = text(form, "login");
+      // Login rides along so the overlay reads as something a human can check.
+      return [["inat_user_id", uid === "" ? "" : login === "" ? uid : `${uid} ${login}`]];
+    }),
+  );
+
+  app.post("/people/:id/names", (c) =>
+    decide(c, (form) => [
+      ["display_name", text(form, "display_name")],
+      ["given_name", text(form, "given_name")],
+      ["family_name", text(form, "family_name")],
+      ["label_name", text(form, "label_name")],
+    ]),
+  );
+
+  app.post("/people/:id/membership", (c) => decide(c, (form) => [["home_atlas", text(form, "home_atlas")]]));
+
+  app.post("/people/:id/admin", (c) => decide(c, (form) => [["admin", text(form, "admin")]]));
+
+  app.post("/people/:id/merge", (c) =>
+    decide(c, (form) => {
+      const into = text(form, "merge_into");
+      return into === "" ? [] : [["merged_into", into.includes(":") ? into : `name:${into}`]];
+    }),
+  );
+
   app.post("/jobs/run/:name", async (c) => {
-    if (!isAdmin(c.get("session"))) return c.text("Admins only.", 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
     await jobsDep.runNow(c.req.param("name"));
     return c.redirect("/jobs");
   });

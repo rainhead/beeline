@@ -49,7 +49,14 @@ export const en = {
   layout: {
     /** Any instance that is not production says so (beeline-2u8). */
     envBanner: (environment: string) => `${environment} instance — data here may be blown away and rebuilt at any time`,
-    nav: { samples: "Samples", specimens: "Specimens", glossary: "Glossary", design: "Design", jobs: "Jobs" },
+    nav: {
+      samples: "Samples",
+      specimens: "Specimens",
+      glossary: "Glossary",
+      people: "People",
+      design: "Design",
+      jobs: "Jobs",
+    },
     /** The hamburger button that holds the nav on narrow screens. */
     menu: "Menu",
     /** The avatar button that opens the account menu. */
@@ -306,6 +313,94 @@ export const en = {
     outcomeRunning: "running…",
     durationSeconds: (s: number) => `${n(s)}s`,
     noRuns: "No runs yet.",
+  },
+
+  /** The people roster (/people). Staff-facing, like jobs. */
+  people: {
+    title: "People",
+    heading: "People",
+    intro:
+      "Everyone in the store, the iNaturalist account each one is bound to, and the evidence for that binding. A person with no account cannot sign in.",
+    search: "Name or login",
+    searchHint: "Matches the display name or the bound login.",
+    onlySuspect: "Only bindings to check",
+    apply: "Search",
+    clear: "Clear",
+    colPerson: "Person",
+    colAccount: "iNaturalist account",
+    colEvidence: "Evidence",
+    colSamples: "Samples",
+    colAtlas: "Atlas",
+    colAdmin: "Admin",
+    noPeople: "Nobody matches.",
+    noEvidenceBanner:
+      "This store has no legacy staging tables, so bindings cannot be weighed against the records behind them. Everything below is reported as bound or unbound only.",
+    found: (total: number) => `${n(total)} ${total === 1 ? "person" : "people"}`,
+    pageOf: (page: number, pages: number) => `Page ${n(page)} of ${n(pages)}`,
+    previous: "← Previous",
+    next: "Next →",
+
+    /** The binding verdicts, said plainly. */
+    verdictSupported: "backed",
+    verdictOutweighed: "check this",
+    verdictUnattested: "unattested",
+    verdictUnbound: "no account",
+    verdictNoEvidence: "no legacy records",
+    verdictWhy: {
+      supported: (records: number) => `${n(records)} of their records file under this account.`,
+      outweighed: (bound: number, top: string, top_records: number) =>
+        `Only ${n(bound)} of their records use this account, but ${n(top_records)} use ${top}. This is the shape of a wrong binding.`,
+      unattested: "No record of theirs names this account. It may be right, but nothing here says so.",
+      unbound: "No iNaturalist account, so they cannot sign in.",
+      noEvidence: "They have no legacy records, so there is nothing to weigh.",
+    },
+    filedAs: (login: string) => `filed as ${login}`,
+    records: (n_: number) => `${n(n_)} ${n_ === 1 ? "record" : "records"}`,
+
+    // Detail page.
+    backToRoster: "← All people",
+    identity: "Name",
+    account: "iNaturalist account",
+    accountHint:
+      "The iNaturalist user id is the binding; the login is shown because logins change and ids do not. Check a candidate on iNaturalist before saving it.",
+    loginsSeen: "Logins on their legacy records",
+    loginsSeenHint: "What promotion had to choose between. The bound account is marked.",
+    boundMark: "bound",
+    useThis: "Bind this one",
+    membership: "Membership",
+    homeAtlas: "Home atlas",
+    homeAtlasHint: "Where this person belongs — not where their samples fell.",
+    saveMembership: "Save membership",
+    noAtlas: "Unknown",
+    adminRights: "Admin rights",
+    adminHint: "Admins reach Jobs, People, Design, and the atlas-wide listings.",
+    grantAdmin: "Grant admin",
+    revokeAdmin: "Revoke admin",
+    isAdmin: "Has admin rights",
+    notAdmin: "No admin rights",
+    displayName: "Display name",
+    givenName: "Given name",
+    familyName: "Family name",
+    labelName: "Label name override",
+    labelNameHint: "Leave blank to keep the derived form. Only set this when derivation gets it wrong.",
+    saveNames: "Save names",
+    unbind: "Remove account",
+    inatUserId: "iNaturalist user id",
+    inatLogin: "Login",
+    bindAccount: "Save account",
+    merge: "Merge",
+    mergeInto: "Merge this person into",
+    mergeHint:
+      "Everything pointing at this person — samples, collecting, determinations, their account — moves to the person you name, and this row is deleted. Name them exactly as their display name reads.",
+    mergeConfirm: "Merge and delete this person",
+    reason: "Why",
+    reasonHint: "Recorded in the overlay beside the change, and read by whoever reviews it later.",
+    samplesCollected: (all: number, primary: number) =>
+      `${n(all)} collected, ${n(primary)} as primary collector`,
+    saved: "Saved.",
+    savedRebuild: "Saved. It is also recorded in the overlay, so a rebuild keeps it.",
+    notFound: "No such person.",
+    problem: (why: string) => `Not saved: ${why}`,
   },
 
   /**

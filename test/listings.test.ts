@@ -117,13 +117,16 @@ async function listingApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
      WHERE sp.field_number = 'WABA0001' AND an.scientific_name = 'Andrena'`,
   );
 
+  // Admin is a person_admin row now, not a config list (beeline-eft).
+  await conn.run(`INSERT INTO person_admin (person_id) VALUES (${staffer})`);
+
   const people = { alice, bob, staffer };
   const db = createKysely(instance);
   const app = createApp({
     db,
     // Sandbox, not development: development makes everyone an admin, which
     // is exactly what these tests need to tell apart (beeline-6va).
-    config: { environment: "sandbox" as const, origin: "http://localhost:3054", adminLogins: ["staffer"] },
+    config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
     inat: unusedInat,
     resolveSession: async () => ({ personId: people[signedInAs], login: signedInAs, iconUrl: null }),
   });

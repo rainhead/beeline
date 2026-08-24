@@ -34,6 +34,17 @@ export interface PersonOrcidTable {
   orcid: string;
 }
 
+export interface PersonHomeAtlasTable {
+  person_id: number;
+  atlas_id: number;
+}
+
+export interface PersonAdminTable {
+  person_id: number;
+  granted_at: Generated<Date>;
+  granted_by: string | null;
+}
+
 export interface AtlasTable {
   entity_id: Generated<number>;
   code: string;
@@ -249,6 +260,8 @@ export interface Database {
   person: PersonTable;
   inat_account: InatAccountTable;
   person_orcid: PersonOrcidTable;
+  person_home_atlas: PersonHomeAtlasTable;
+  person_admin: PersonAdminTable;
   atlas: AtlasTable;
   animal: AnimalTable;
   sample: SampleTable;

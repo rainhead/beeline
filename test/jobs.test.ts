@@ -254,23 +254,31 @@ describe("/jobs page", () => {
     expect(after).toContain("succeeded");
   });
 
-  it("outside development, /jobs is allowlist-only (beeline-6va)", async () => {
+  it("outside development, /jobs is admin-only (beeline-6va)", async () => {
     const deps = await jobDeps();
+    // The roster lives in the store now, not in config: a grant is a
+    // person_admin row, and person 1 is the signed-in volunteer below.
+    await deps.conn.run(`INSERT INTO person (entity_id, display_name) VALUES (1, 'A Volunteer')`);
+    const grant = async (yes: boolean) => {
+      await deps.conn.run(`DELETE FROM person_admin`);
+      if (yes) await deps.conn.run(`INSERT INTO person_admin (person_id) VALUES (1)`);
+    };
+    await grant(false);
     const inat: InatClient = {
       authorizeUrl: () => "unused",
       exchangeCode: () => Promise.reject(new Error("not under test")),
       identity: () => Promise.reject(new Error("not under test")),
     };
-    const appFor = (adminLogins: string[]) =>
+    const appFor = () =>
       createApp({
         db: deps.db,
-        config: { environment: "sandbox", origin: "https://beeline.example", adminLogins },
+        config: { environment: "sandbox", origin: "https://beeline.example" },
         inat,
         resolveSession: async () => ({ personId: 1, login: "volunteer", iconUrl: null }),
         jobs: { list: [], runNow: async () => true },
       });
 
-    const gated = appFor(["someone-else"]);
+    const gated = appFor();
     expect((await gated.request("/jobs")).status).toBe(403);
     const run = await gated.request("/jobs/run/nightly-pipeline", {
       method: "POST",
@@ -285,7 +293,8 @@ describe("/jobs page", () => {
     expect(volunteerNav).toContain(`href="/glossary"`);
     expect((await gated.request("/design")).status).toBe(403);
 
-    const admin = appFor(["volunteer"]);
+    await grant(true);
+    const admin = appFor();
     expect((await admin.request("/jobs")).status).toBe(200);
   });
 });

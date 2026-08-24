@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { inatClient, loadInatCredentials } from "./auth.js";
 import { configFromEnv } from "./config.js";
-import { openAppDb } from "./db.js";
+import { openAppDb, seedAdmins } from "./db.js";
 import { startScheduler } from "./jobs/framework.js";
 import { buildJobs } from "./jobs/registry.js";
 import { createApp } from "./server.js";
@@ -9,6 +9,9 @@ import { cookieSessionResolver, type SessionResolver } from "./session.js";
 
 const config = configFromEnv();
 const { db, instance, close } = await openAppDb(config);
+
+const seeded = await seedAdmins(db, config.adminLogins);
+if (seeded > 0) console.log(`admin roster was empty; seeded ${seeded} from the checked-in list`);
 
 if (config.privateDbKey === null) {
   console.warn("BEELINE_PRIVATE_DB_KEY unset: private store is UNENCRYPTED (development only)");
@@ -41,6 +44,8 @@ const app = createApp({
   resolveSession,
   jobs: { list: jobs, runNow: (name) => scheduler.runNow(name) },
   correctionsPath: config.correctionsPath,
+  personOverlayPath: config.personOverlayPath,
+  conn: jobConn,
 });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`beeline app (${config.environment}) listening on http://localhost:${info.port}`);

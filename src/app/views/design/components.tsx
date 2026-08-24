@@ -7,7 +7,10 @@ import {
   Chip,
   DataTable,
   EmptyState,
+  FilterBar,
   LinkButton,
+  Pager,
+  SelectField,
   Meta,
   TONES,
   TaxonName,
@@ -138,6 +141,56 @@ export function DesignComponents({ m }: { m: Messages }) {
             hint="Hints sit under the control, not inside it."
           />
         </div>
+      </Specimen>
+
+      <h2>Filters and paging</h2>
+      <p>
+        A listing's furniture. The filter bar is a plain GET form, so applying filters writes them into the query
+        string and the result is a URL a staff member can send someone — which is the point of a staff view at all.
+        The pager deliberately has no page numbers: with tens of thousands of rows, "page 27" means nothing, while
+        "of 1,340" tells you to go back and filter.
+      </p>
+      <Specimen>
+        <FilterBar
+          action="/design/components"
+          actions={
+            <>
+              <Button>Apply</Button>
+              <a href="/design/components">Clear</a>
+            </>
+          }
+        >
+          <SelectField
+            id="demo-scope"
+            name="scope"
+            label="Show"
+            value="OBA"
+            options={[
+              ["mine", "My records"],
+              ["OBA", "Oregon Bee Atlas"],
+              ["all", "All atlases"],
+            ]}
+          />
+          <TextField id="demo-search" name="q" label="Search" value="" hint="Sample number, collector, or catalog number" />
+          <SelectField
+            id="demo-qc"
+            name="qc"
+            label="Data quality"
+            value="any"
+            options={[
+              ["any", "Any"],
+              ["blocking", "Blocks printing"],
+              ["clean", "Clean"],
+            ]}
+          />
+        </FilterBar>
+        <Pager
+          summary="Page 3 of 1,340"
+          previousHref="/design/components"
+          nextHref="/design/components"
+          previousLabel="← Previous"
+          nextLabel="Next →"
+        />
       </Specimen>
 
       <h2>Tables</h2>

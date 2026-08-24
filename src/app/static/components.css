@@ -138,6 +138,43 @@ tbody tr:hover { background: var(--md-sys-color-surface-variant); }
   margin: var(--space-1) 0 0;
 }
 
+/* The filter bar above a listing. A plain GET form: fields flow into as
+   many columns as fit, and the actions row lands last on every width. */
+.filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-2) var(--space-4);
+  /* Fields top-align so their labels line up across a row; the actions
+     drop to the bottom of theirs, next to the last control. */
+  align-items: start;
+  margin-bottom: var(--space-5);
+}
+.filters .field { margin-bottom: 0; }
+/* Inputs stretch to their column here — the 24rem cap is for edit forms,
+   where a long line is harder to read; a filter is a short value. */
+.filters input, .filters select { max-width: none; }
+.filter-actions {
+  align-self: end;
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+/* The line between a listing's filters and its table: how many rows there
+   are, and how to take them away with you. */
+.results-header { gap: var(--space-4); }
+
+/* Where you are in a long list. Three slots, so the summary stays centred
+   whether or not both directions exist. */
+.pager {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+.pager > :last-child { text-align: right; }
+
 /* Callouts are asides: a status line, a note about why this screen behaves
    the way it does. Outlined with a left rule, like chips — same reason. */
 .callout {

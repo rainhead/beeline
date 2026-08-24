@@ -29,7 +29,7 @@ export const en = {
   layout: {
     /** Any instance that is not production says so (beeline-2u8). */
     envBanner: (environment: string) => `${environment} instance — data here may be blown away and rebuilt at any time`,
-    nav: { glossary: "Glossary", design: "Design", jobs: "Jobs" },
+    nav: { samples: "Samples", specimens: "Specimens", glossary: "Glossary", design: "Design", jobs: "Jobs" },
     /** The hamburger button that holds the nav on narrow screens. */
     menu: "Menu",
     /** The avatar button that opens the account menu. */
@@ -93,6 +93,111 @@ export const en = {
     colSample: "Sample",
     colPlace: "Place",
     colLabels: "Labels",
+  },
+
+  /**
+   * Browsing the collection (/samples, /specimens). Volunteer-facing, so
+   * every string is here — including the scope control, which only staff
+   * ever see but which sits on a volunteer's page.
+   */
+  listings: {
+    samples: {
+      title: "Samples",
+      heading: "Samples",
+      ledeMine: "Every sample you collected, most recent first.",
+      ledeAtlas: (atlas: string) => `Every sample in the ${atlas}, most recent first.`,
+      ledeAll: "Every sample in every atlas, most recent first.",
+      count: (total: number) => `${n(total)} ${total === 1 ? "sample" : "samples"}`,
+      emptyHeading: "Nothing here yet",
+      emptyMine: "None of your collecting has reached Beeline yet. Samples arrive from iNaturalist as they sync.",
+      emptyFiltered: "No samples match these filters. Widen the dates, clear the taxon, or search for less.",
+      colSample: "Sample",
+      colDate: "Date",
+      colCollectors: "Collectors",
+      colPlace: "Place",
+      colSpecimens: "Specimens",
+      colStatus: "Data quality",
+      colAtlas: "Atlas",
+      colLinks: "",
+      viewOnInat: "iNaturalist",
+      edit: "Edit",
+      /** Trap samples ran across a range; net samples are one day. */
+      dateRange: (start: Date | string, end: Date | string) =>
+        date(start) === date(end) ? date(start) : `${date(start)} – ${date(end)}`,
+    },
+
+    specimens: {
+      title: "Specimens",
+      heading: "Specimens",
+      ledeMine: "Every specimen from your samples, most recent collecting first.",
+      ledeAtlas: (atlas: string) => `Every specimen in the ${atlas}, most recent collecting first.`,
+      ledeAll: "Every specimen in every atlas, most recent collecting first.",
+      count: (total: number) => `${n(total)} ${total === 1 ? "specimen" : "specimens"}`,
+      emptyHeading: "Nothing here yet",
+      emptyMine:
+        "None of your samples have specimens yet. A specimen becomes its own record when its label is printed.",
+      emptyFiltered: "No specimens match these filters. Widen the dates, clear the taxon, or search for less.",
+      colCatalog: "Catalog number",
+      colSample: "Sample",
+      colDate: "Date",
+      colCollectors: "Collectors",
+      colPlace: "Place",
+      colDetermination: "Determination",
+      colDeterminer: "Determined by",
+      colAtlas: "Atlas",
+      /** A specimen whose label was printed before catalog numbers existed. */
+      noCatalogNumber: "not numbered",
+      undetermined: "not determined",
+      expert: "expert",
+    },
+
+    /** Whose records a listing shows. Staff see the control; nobody else does. */
+    scope: {
+      label: "Show",
+      mine: "My records",
+      all: "All atlases",
+      /** Says plainly that this is more than the viewer's own collecting. */
+      staffNote: (what: string) => `Staff view: ${what}. Volunteers only ever see their own records here.`,
+      staffNoteAll: "every atlas",
+      staffNoteAtlas: (atlas: string) => `the ${atlas}`,
+    },
+
+    filters: {
+      search: "Search",
+      searchHint: "Sample number, collector, or catalog number",
+      from: "Collected from",
+      to: "Collected to",
+      place: "Place",
+      placeHint: "Locality, county, state, or country",
+      taxon: "Taxon",
+      taxonHint: "A family, genus, or species — anything below it matches too",
+      qc: "Data quality",
+      qcAny: "Any",
+      qcBlocking: "Blocks printing",
+      qcWarning: "Heads-up only",
+      qcClean: "Clean",
+      apply: "Apply",
+      clear: "Clear",
+    },
+
+    /** Chips on a row, and the same three words the QC filter offers. */
+    status: {
+      blocking: (count: number) => `${n(count)} ${count === 1 ? "finding blocks" : "findings block"} printing`,
+      warning: (count: number) => `${n(count)} ${count === 1 ? "heads-up" : "heads-ups"}`,
+      clean: "clean",
+    },
+
+    paging: {
+      page: (page: number, pages: number) => `Page ${n(page)} of ${n(pages)}`,
+      previous: "← Previous",
+      next: "Next →",
+    },
+
+    csv: {
+      download: "Download CSV",
+      note: "The CSV holds exactly what these filters select. Coordinates are never included.",
+      truncated: (limit: number) => `Only the first ${n(limit)} rows are exported — narrow the filters for the rest.`,
+    },
   },
 
   sampleEdit: {

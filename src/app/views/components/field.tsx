@@ -55,3 +55,36 @@ export function TextField({
     </Field>
   );
 }
+
+/**
+ * A `<select>` with the same label-and-hint treatment as a text field.
+ * Options are (value, label) pairs so the value stays a stable code and the
+ * label stays translatable.
+ */
+export function SelectField({
+  id,
+  name,
+  label,
+  value,
+  options,
+  hint,
+}: {
+  id: string;
+  name: string;
+  label: Child;
+  value: string;
+  options: ReadonlyArray<readonly [string, Child]>;
+  hint?: Child;
+}) {
+  return (
+    <Field id={id} label={label} hint={hint}>
+      <select id={id} name={name}>
+        {options.map(([optionValue, optionLabel]) => (
+          <option value={optionValue} selected={optionValue === value}>
+            {optionLabel}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}

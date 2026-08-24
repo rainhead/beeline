@@ -1,6 +1,6 @@
 import { serveStatic } from "@hono/node-server/serve-static";
-import { Hono } from "hono";
-import { deleteCookie, getCookie } from "hono/cookie";
+import { Hono, type Context } from "hono";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html } from "hono/html";
 import type { Child } from "hono/jsx";
 import type { Kysely } from "kysely";
@@ -31,6 +31,16 @@ import { MessagesProof } from "./views/design/messages-proof.js";
 import { QcProof } from "./views/design/qc-proof.js";
 import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
 import { SampleEditForm } from "./views/sample-edit.js";
+import {
+  atlasOptions,
+  CSV_ROW_LIMIT,
+  listSamples,
+  listSpecimens,
+  parseListingQuery,
+  sampleCsv,
+  specimenCsv,
+} from "./listings.js";
+import { SampleListing, SpecimenListing } from "./views/listings.js";
 
 export interface JobsDep {
   list: Job[];
@@ -235,6 +245,79 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
         />,
       ),
     );
+  });
+
+  // --- Browsing the collection (beeline-2c3.21). The QC home says what
+  // needs attention; these say what is there. Scope, filters and page live
+  // in the query string, so a staff member helping a volunteer can send
+  // them the exact listing they are looking at. ---
+
+  /** The cookie that remembers a staff member's last scope, so nav lands where they left off. */
+  const SCOPE_COOKIE = "beeline_scope";
+
+  /**
+   * Parse a listing request. The scope gate is here and nowhere else:
+   * parseListingQuery forces MINE for anyone not on the admin allowlist, so
+   * a volunteer cannot reach another atlas by typing a query string.
+   */
+  const listingRequest = async (c: Context<AppEnv>) => {
+    const session = c.get("session");
+    const admin = isAdmin(session);
+    const atlases = await atlasOptions(db);
+    const query = parseListingQuery(new URL(c.req.url).searchParams, {
+      admin,
+      atlasCodes: atlases.map((a) => a.code),
+      preferred: getCookie(c, SCOPE_COOKIE),
+    });
+    // Remember an explicit choice only — a bare /samples keeps the cookie.
+    if (admin && c.req.query("scope") !== undefined) {
+      setCookie(c, SCOPE_COOKIE, query.scope, { path: "/", sameSite: "Lax", httpOnly: true });
+    }
+    return { session, admin, atlases, query };
+  };
+
+  const csv = (c: Context<AppEnv>, body: string, filename: string) =>
+    c.body(body, 200, {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="${filename}"`,
+    });
+
+  app.get("/samples", async (c) => {
+    const m = c.get("m");
+    const { session, admin, atlases, query } = await listingRequest(c);
+    const results = await listSamples(db, query, session.personId);
+    return c.html(
+      await page(
+        c,
+        m.listings.samples.title,
+        <SampleListing m={m} query={query} page={results} atlases={atlases} admin={admin} />,
+      ),
+    );
+  });
+
+  app.get("/samples.csv", async (c) => {
+    const { session, query } = await listingRequest(c);
+    const results = await listSamples(db, query, session.personId, { limit: CSV_ROW_LIMIT, offset: 0 });
+    return csv(c, sampleCsv(results), "beeline-samples.csv");
+  });
+
+  app.get("/specimens", async (c) => {
+    const m = c.get("m");
+    const { session, admin, atlases, query } = await listingRequest(c);
+    const results = await listSpecimens(db, query, session.personId);
+    return c.html(
+      await page(
+        c,
+        m.listings.specimens.title,
+        <SpecimenListing m={m} query={query} page={results} atlases={atlases} admin={admin} />,
+      ),
+    );
+  });
+
+  app.get("/specimens.csv", async (c) => {
+    const { session, query } = await listingRequest(c);
+    const results = await listSpecimens(db, query, session.personId, { limit: CSV_ROW_LIMIT, offset: 0 });
+    return csv(c, specimenCsv(results), "beeline-specimens.csv");
   });
 
   // Non-iNat samples are fixed here, not upstream (beeline-2c3.8). The gate

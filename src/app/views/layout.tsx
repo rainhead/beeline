@@ -25,6 +25,8 @@ const STYLESHEETS = ["/tokens.css", "/static/elements.css", "/static/layout.css"
 function NavLinks({ m, admin }: { m: Messages; admin: boolean }) {
   return (
     <>
+      <a href="/samples">{m.layout.nav.samples}</a>
+      <a href="/specimens">{m.layout.nav.specimens}</a>
       <a href="/glossary">{m.layout.nav.glossary}</a>
       {admin && <a href="/design">{m.layout.nav.design}</a>}
       {admin && <a href="/jobs">{m.layout.nav.jobs}</a>}

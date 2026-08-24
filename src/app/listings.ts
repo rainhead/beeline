@@ -1,0 +1,581 @@
+import { sql, type Kysely } from "kysely";
+import type { Database, SampleKind } from "../model.js";
+
+/**
+ * Browsing the collection: the query layer behind /samples and /specimens.
+ *
+ * The QC home answers "what needs my attention"; these listings answer
+ * "what is there" — for a volunteer, everything they collected; for staff
+ * helping someone, an atlas or the whole program. Scope, filters, and page
+ * all live in the query string, so a filtered listing is a URL a staff
+ * member can paste into an email (beeline-2c3.21).
+ *
+ * Two things this module deliberately does not do: it never joins
+ * sample_location (a listing has no business carrying believed-true
+ * coordinates, least of all into a CSV), and it never decides who may use
+ * which scope — that gate is the caller's, applied at parse time.
+ */
+
+/** Rows per page. Big enough to scan, small enough to render fast. */
+export const PAGE_SIZE = 50;
+/** A CSV is one query, not a crawl: past this the export says it was cut. */
+export const CSV_ROW_LIMIT = 20_000;
+
+/** The scope every volunteer has, and the only one they have. */
+export const MINE = "mine";
+/** Every atlas at once — the staff escape hatch for cross-atlas questions. */
+export const ALL = "all";
+
+/**
+ * QC status as a filter: the three buckets a row's chip can show, and they
+ * are disjoint. "warning" means warnings *and no blocking finding*, which
+ * is the question a person actually asks ("what is only a heads-up?").
+ */
+export type QcStatus = "any" | "blocking" | "warning" | "clean";
+export const QC_STATUSES = ["any", "blocking", "warning", "clean"] as const;
+
+export interface ListingQuery {
+  /** MINE, ALL, or an atlas code. */
+  scope: string;
+  /** Free text: sample number, collector name, catalog number. */
+  q: string;
+  /** Inclusive ISO dates bounding the collecting window; null = unbounded. */
+  from: string | null;
+  to: string | null;
+  /** Matches any of locality, county, state/province, country. */
+  place: string;
+  /** A taxon name; anything below it in the taxonomy matches too. */
+  taxon: string;
+  qc: QcStatus;
+  /** 1-based. */
+  page: number;
+}
+
+export const EMPTY_QUERY: ListingQuery = {
+  scope: MINE,
+  q: "",
+  from: null,
+  to: null,
+  place: "",
+  taxon: "",
+  qc: "any",
+  page: 1,
+};
+
+/** A real calendar date in ISO form — shape alone would admit 2026-13-99. */
+function isoDay(value: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  // Round-tripping catches the impossible days a regex cannot: Feb 31st
+  // parses to March, and month 13 does not parse at all.
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value ? null : value;
+}
+/** Free-text fields are trimmed and bounded — a filter is not an essay. */
+const text = (value: string | null) => (value ?? "").trim().slice(0, 100);
+
+/**
+ * Query string → a query, with the scope gate applied here rather than in
+ * the route: a parsed query is already one this session is allowed to run.
+ * `preferred` is the scope this person last chose (remembered in a cookie),
+ * used only when the URL doesn't say.
+ */
+export function parseListingQuery(
+  params: URLSearchParams,
+  opts: { admin: boolean; atlasCodes: readonly string[]; preferred?: string | null },
+): ListingQuery {
+  const requested = params.get("scope") ?? opts.preferred ?? MINE;
+  const permitted = opts.admin && (requested === ALL || opts.atlasCodes.includes(requested));
+  const from = params.get("from") ?? "";
+  const to = params.get("to") ?? "";
+  const qc = params.get("qc") ?? "";
+  const page = Number.parseInt(params.get("page") ?? "1", 10);
+  return {
+    scope: permitted ? requested : MINE,
+    q: text(params.get("q")),
+    from: isoDay(from),
+    to: isoDay(to),
+    place: text(params.get("place")),
+    taxon: text(params.get("taxon")),
+    qc: (QC_STATUSES as readonly string[]).includes(qc) ? (qc as QcStatus) : "any",
+    page: Number.isFinite(page) && page >= 1 ? Math.min(page, 10_000) : 1,
+  };
+}
+
+/** The listing's own URL, with some parts changed — paging, scope, reset. */
+export function listingHref(path: string, query: ListingQuery, overrides: Partial<ListingQuery> = {}): string {
+  const merged = { ...query, ...overrides };
+  const params = new URLSearchParams();
+  // Defaults stay out of the URL, so the plain path is the plain listing.
+  if (merged.scope !== MINE) params.set("scope", merged.scope);
+  if (merged.q !== "") params.set("q", merged.q);
+  if (merged.from !== null) params.set("from", merged.from);
+  if (merged.to !== null) params.set("to", merged.to);
+  if (merged.place !== "") params.set("place", merged.place);
+  if (merged.taxon !== "") params.set("taxon", merged.taxon);
+  if (merged.qc !== "any") params.set("qc", merged.qc);
+  if (merged.page > 1) params.set("page", String(merged.page));
+  const search = params.toString();
+  return search === "" ? path : `${path}?${search}`;
+}
+
+/** Whether any filter (scope aside) is narrowing the listing. */
+export const isFiltered = (q: ListingQuery) =>
+  q.q !== "" || q.from !== null || q.to !== null || q.place !== "" || q.taxon !== "" || q.qc !== "any";
+
+export interface AtlasOption {
+  code: string;
+  name: string;
+}
+
+export async function atlasOptions(db: Kysely<Database>): Promise<AtlasOption[]> {
+  return db.selectFrom("atlas").select(["code", "name"]).orderBy("name").execute();
+}
+
+/**
+ * The taxa a taxon filter names: everything whose name starts with the term,
+ * plus everything below them. Resolved to ids in one small query rather than
+ * a correlated recursive subquery, because `animal` is thousands of rows and
+ * the listing is tens of thousands — the expansion belongs on the small side.
+ * A genus term also matches its species directly (names are binomials), but
+ * the descent is what makes a family or an order work.
+ */
+export async function taxonIds(db: Kysely<Database>, term: string): Promise<number[]> {
+  const prefix = `${term.toLowerCase()}%`;
+  const result = await sql<{ entity_id: number }>`
+    WITH RECURSIVE matched(entity_id) AS (
+      SELECT entity_id FROM animal WHERE lower(scientific_name) LIKE ${prefix}
+      UNION
+      SELECT child.entity_id FROM animal child JOIN matched ON child.parent_id = matched.entity_id
+    )
+    SELECT entity_id FROM matched
+  `.execute(db);
+  return result.rows.map((row) => Number(row.entity_id));
+}
+
+export interface SampleRow {
+  sample_id: number;
+  sample_number: string;
+  kind: SampleKind;
+  date_start: Date;
+  date_end: Date;
+  locality: string | null;
+  county: string | null;
+  state_province: string | null;
+  country: string | null;
+  specimen_count: number;
+  inat_observation_id: bigint | null;
+  atlas_code: string | null;
+  blocking: number;
+  warning: number;
+  /** Whether the viewer is one of this sample's collectors. */
+  mine: boolean;
+}
+
+export interface SpecimenRow {
+  specimen_id: number;
+  specimen_number: number;
+  catalog_number: string | null;
+  sample_id: number;
+  sample_number: string;
+  date_start: Date;
+  locality: string | null;
+  county: string | null;
+  state_province: string | null;
+  atlas_code: string | null;
+  taxon_rank: string | null;
+  scientific_name: string | null;
+  authorship: string | null;
+  sex: string | null;
+  is_expert: boolean | null;
+  determiner: string | null;
+}
+
+export interface Page<Row> {
+  rows: Row[];
+  /** Rows the filters select in total, not the page's length. */
+  total: number;
+  /** sample_id → everyone who collected it, in recordedBy order. */
+  collectors: Map<number, string[]>;
+}
+
+const like = (term: string) => `%${term.toLowerCase()}%`;
+/** An ISO date from the query string, compared as a DATE rather than text. */
+const asDate = (iso: string) => sql<Date>`CAST(${iso} AS DATE)`;
+
+/**
+ * Blocking and warning counts per sample, joined in as one pass over
+ * qc_finding rather than an EXISTS per row. Findings are all sample-level
+ * today (every rule view selects NULL as specimen_id); a specimen-level rule
+ * would need this to roll up through specimen.
+ *
+ * Spelled inline in both listings rather than hoisted: Kysely types a joined
+ * subquery against the query it lands in, and the two listings have
+ * different shapes.
+ */
+const QC_COUNT_SELECTIONS = [
+  sql<number>`CAST(sum(CASE WHEN r.severity = 'blocking' THEN 1 ELSE 0 END) AS INTEGER)`.as("blocking"),
+  sql<number>`CAST(sum(CASE WHEN r.severity = 'warning' THEN 1 ELSE 0 END) AS INTEGER)`.as("warning"),
+] as const;
+
+/** The place columns as one haystack: a person types a place, not a column. */
+const placeHaystack = sql<string>`lower(concat_ws(' ', s.locality, s.county, s.state_province, s.country))`;
+
+const blockingCount = sql<number>`coalesce(qc.blocking, 0)`;
+const warningCount = sql<number>`coalesce(qc.warning, 0)`;
+
+/**
+ * The QC filter as a predicate over the joined counts — null for "any", so
+ * the default listing adds no condition at all.
+ */
+function qcPredicate(status: QcStatus) {
+  switch (status) {
+    case "blocking":
+      return sql<boolean>`${blockingCount} > 0`;
+    case "warning":
+      return sql<boolean>`${blockingCount} = 0 AND ${warningCount} > 0`;
+    case "clean":
+      return sql<boolean>`${blockingCount} = 0 AND ${warningCount} = 0`;
+    case "any":
+      return null;
+  }
+}
+
+export async function listSamples(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  opts: { limit?: number; offset?: number } = {},
+): Promise<Page<SampleRow>> {
+  const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
+  let base = db
+    .selectFrom("sample as s")
+    .leftJoin("atlas as a", "a.entity_id", "s.atlas_id")
+    .leftJoin(
+      (eb) =>
+        eb
+          .selectFrom("qc_finding as f")
+          .innerJoin("qc_rule as r", "r.name", "f.rule_name")
+          .where("f.sample_id", "is not", null)
+          .groupBy("f.sample_id")
+          .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS])
+          .as("qc"),
+      (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
+    );
+
+  if (query.scope === MINE) {
+    base = base.where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom("sample_collector as mine")
+          .select("mine.sample_id")
+          .whereRef("mine.sample_id", "=", "s.entity_id")
+          .where("mine.person_id", "=", personId),
+      ),
+    );
+  } else if (query.scope !== ALL) {
+    base = base.where("a.code", "=", query.scope);
+  }
+  // Overlap, not containment: a trap sample that was out across the window's
+  // start belongs in a window that names its end.
+  if (query.from !== null) base = base.where("s.date_end", ">=", asDate(query.from));
+  if (query.to !== null) base = base.where("s.date_start", "<=", asDate(query.to));
+  if (query.place !== "") base = base.where(sql<boolean>`${placeHaystack} LIKE ${like(query.place)}`);
+  if (query.q !== "") {
+    const needle = like(query.q);
+    base = base.where(({ eb, or, exists, selectFrom }) =>
+      or([
+        eb(sql<string>`lower(s.sample_number)`, "like", needle),
+        exists(
+          selectFrom("sample_collector as c")
+            .innerJoin("person as p", "p.entity_id", "c.person_id")
+            .select("c.sample_id")
+            .whereRef("c.sample_id", "=", "s.entity_id")
+            .where(sql<string>`lower(p.display_name)`, "like", needle),
+        ),
+        exists(
+          selectFrom("specimen as sp")
+            .select("sp.entity_id")
+            .whereRef("sp.sample_id", "=", "s.entity_id")
+            .where(sql<string>`lower(sp.catalog_number)`, "like", needle),
+        ),
+      ]),
+    );
+  }
+  if (animals !== null) {
+    base = base.where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom("determination_of_record as d")
+          .innerJoin("specimen as sp", "sp.entity_id", "d.specimen_id")
+          .select("d.entity_id")
+          .whereRef("sp.sample_id", "=", "s.entity_id")
+          .where("d.animal_id", "in", animals.length === 0 ? [-1] : animals),
+      ),
+    );
+  }
+  const qc = qcPredicate(query.qc);
+  if (qc !== null) base = base.where(qc);
+
+  const limit = opts.limit ?? PAGE_SIZE;
+  const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
+  const [rows, count] = await Promise.all([
+    base
+      .select([
+        "s.entity_id as sample_id",
+        "s.sample_number",
+        "s.kind",
+        "s.date_start",
+        "s.date_end",
+        "s.locality",
+        "s.county",
+        "s.state_province",
+        "s.country",
+        "s.specimen_count",
+        "s.inat_observation_id",
+        "a.code as atlas_code",
+        blockingCount.as("blocking"),
+        warningCount.as("warning"),
+        sql<boolean>`EXISTS (SELECT 1 FROM sample_collector mine
+                             WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})`.as("mine"),
+      ])
+      .orderBy("s.date_start", "desc")
+      .orderBy("s.entity_id")
+      .limit(limit)
+      .offset(offset)
+      .execute(),
+    base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
+  ]);
+  const sampleRows = rows as unknown as SampleRow[];
+  return {
+    rows: sampleRows,
+    total: Number(count?.n ?? 0),
+    collectors: await collectorsOf(db, sampleRows.map((r) => r.sample_id)),
+  };
+}
+
+export async function listSpecimens(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  opts: { limit?: number; offset?: number } = {},
+): Promise<Page<SpecimenRow>> {
+  const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
+  let base = db
+    .selectFrom("specimen as sp")
+    .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
+    .leftJoin("atlas as a", "a.entity_id", "s.atlas_id")
+    .leftJoin(
+      (eb) =>
+        eb
+          .selectFrom("qc_finding as f")
+          .innerJoin("qc_rule as r", "r.name", "f.rule_name")
+          .where("f.sample_id", "is not", null)
+          .groupBy("f.sample_id")
+          .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS])
+          .as("qc"),
+      (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
+    )
+    .leftJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")
+    .leftJoin("animal as an", "an.entity_id", "d.animal_id")
+    .leftJoin("person as det", "det.entity_id", "d.determiner_id");
+
+  if (query.scope === MINE) {
+    base = base.where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom("sample_collector as mine")
+          .select("mine.sample_id")
+          .whereRef("mine.sample_id", "=", "s.entity_id")
+          .where("mine.person_id", "=", personId),
+      ),
+    );
+  } else if (query.scope !== ALL) {
+    base = base.where("a.code", "=", query.scope);
+  }
+  if (query.from !== null) base = base.where("s.date_end", ">=", asDate(query.from));
+  if (query.to !== null) base = base.where("s.date_start", "<=", asDate(query.to));
+  if (query.place !== "") base = base.where(sql<boolean>`${placeHaystack} LIKE ${like(query.place)}`);
+  if (query.q !== "") {
+    const needle = like(query.q);
+    base = base.where(({ eb, or, exists, selectFrom }) =>
+      or([
+        eb(sql<string>`lower(sp.catalog_number)`, "like", needle),
+        eb(sql<string>`lower(s.sample_number)`, "like", needle),
+        exists(
+          selectFrom("sample_collector as c")
+            .innerJoin("person as p", "p.entity_id", "c.person_id")
+            .select("c.sample_id")
+            .whereRef("c.sample_id", "=", "s.entity_id")
+            .where(sql<string>`lower(p.display_name)`, "like", needle),
+        ),
+      ]),
+    );
+  }
+  // On a specimen listing the taxon filter is about *this* specimen's
+  // determination, not its sample's — two specimens from one sample are
+  // routinely different bees.
+  if (animals !== null) base = base.where("d.animal_id", "in", animals.length === 0 ? [-1] : animals);
+  const qc = qcPredicate(query.qc);
+  if (qc !== null) base = base.where(qc);
+
+  const limit = opts.limit ?? PAGE_SIZE;
+  const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
+  const [rows, count] = await Promise.all([
+    base
+      .select([
+        "sp.entity_id as specimen_id",
+        "sp.specimen_number",
+        "sp.catalog_number",
+        "s.entity_id as sample_id",
+        "s.sample_number",
+        "s.date_start",
+        "s.locality",
+        "s.county",
+        "s.state_province",
+        "a.code as atlas_code",
+        "an.rank as taxon_rank",
+        "an.scientific_name",
+        "an.authorship",
+        "d.sex",
+        "d.is_expert",
+        sql<string | null>`coalesce(det.display_name, d.determiner_name)`.as("determiner"),
+      ])
+      .orderBy("s.date_start", "desc")
+      .orderBy("sp.sample_id")
+      .orderBy("sp.specimen_number")
+      .limit(limit)
+      .offset(offset)
+      .execute(),
+    base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
+  ]);
+  const specimenRows = rows as unknown as SpecimenRow[];
+  return {
+    rows: specimenRows,
+    total: Number(count?.n ?? 0),
+    collectors: await collectorsOf(db, specimenRows.map((r) => r.sample_id)),
+  };
+}
+
+/**
+ * Everyone who collected these samples, in recordedBy order. A second
+ * collector is not a spectator (beeline-77j), so every listing names the
+ * whole list, not sample.collector_id.
+ */
+export async function collectorsOf(db: Kysely<Database>, sampleIds: number[]): Promise<Map<number, string[]>> {
+  const names = new Map<number, string[]>();
+  if (sampleIds.length === 0) return names;
+  const rows = await db
+    .selectFrom("sample_collector as c")
+    .innerJoin("person as p", "p.entity_id", "c.person_id")
+    .where("c.sample_id", "in", [...new Set(sampleIds)])
+    .select(["c.sample_id", "p.display_name", "c.position"])
+    .orderBy("c.position")
+    .execute();
+  for (const row of rows) {
+    const list = names.get(row.sample_id) ?? [];
+    list.push(row.display_name);
+    names.set(row.sample_id, list);
+  }
+  return names;
+}
+
+/**
+ * CSV export.
+ *
+ * Headers are stable machine names, not the table's column labels: a CSV is
+ * read by a spreadsheet and by whatever script comes after it, so renaming a
+ * screen must not rename a column. Coordinates are absent by construction —
+ * this module never selects them.
+ */
+
+/** RFC 4180 quoting, plus the leading-punctuation guard spreadsheets need. */
+function csvCell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  let text = value instanceof Date ? isoDate(value) : String(value);
+  // A cell starting with =, +, -, or @ is a formula to Excel and Sheets.
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+export function toCsv(header: readonly string[], rows: ReadonlyArray<readonly unknown[]>): string {
+  return [header.join(","), ...rows.map((row) => row.map(csvCell).join(","))].join("\r\n");
+}
+
+/** Dates go out as ISO, whatever shape the driver handed back. */
+function isoDate(value: Date | string): string {
+  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
+}
+
+const qcLabel = (row: { blocking: number; warning: number }) =>
+  row.blocking > 0 ? "blocking" : row.warning > 0 ? "warning" : "clean";
+
+export function sampleCsv(page: Page<SampleRow>): string {
+  return toCsv(
+    [
+      "sample_number",
+      "kind",
+      "date_start",
+      "date_end",
+      "collectors",
+      "locality",
+      "county",
+      "state_province",
+      "country",
+      "specimen_count",
+      "atlas",
+      "qc_status",
+      "inat_observation_id",
+    ],
+    page.rows.map((r) => [
+      r.sample_number,
+      r.kind,
+      isoDate(r.date_start),
+      isoDate(r.date_end),
+      (page.collectors.get(r.sample_id) ?? []).join(" | "),
+      r.locality,
+      r.county,
+      r.state_province,
+      r.country,
+      r.specimen_count,
+      r.atlas_code,
+      qcLabel(r),
+      r.inat_observation_id,
+    ]),
+  );
+}
+
+export function specimenCsv(page: Page<SpecimenRow>): string {
+  return toCsv(
+    [
+      "catalog_number",
+      "specimen_number",
+      "sample_number",
+      "date_start",
+      "collectors",
+      "locality",
+      "county",
+      "state_province",
+      "atlas",
+      "scientific_name",
+      "rank",
+      "authorship",
+      "sex",
+      "determined_by",
+      "expert_determination",
+    ],
+    page.rows.map((r) => [
+      r.catalog_number,
+      r.specimen_number,
+      r.sample_number,
+      isoDate(r.date_start),
+      (page.collectors.get(r.sample_id) ?? []).join(" | "),
+      r.locality,
+      r.county,
+      r.state_province,
+      r.atlas_code,
+      r.scientific_name,
+      r.taxon_rank,
+      r.authorship,
+      r.sex,
+      r.determiner,
+      r.is_expert === null ? "" : String(r.is_expert),
+    ]),
+  );
+}

@@ -5,6 +5,26 @@
  * Views never carry literal user-facing prose; they render from here.
  */
 
+import type { TaxonQualifier } from "../views/components/taxon.js";
+
+/**
+ * One glossary entry. `example` is a taxon name as data — rank and parts,
+ * never markup — so the page can set it correctly through TaxonName
+ * (beeline-0i2.6). The entries object satisfies this shape entry by entry,
+ * which is what makes a mistyped qualifier a compile error.
+ */
+export interface GlossaryEntry {
+  term: string;
+  definition: string;
+  example?: {
+    rank: string;
+    scientificName: string;
+    subgenus?: string;
+    qualifier?: TaxonQualifier;
+    authorship?: string;
+  };
+}
+
 const locale = "en";
 const n = (x: number) => x.toLocaleString(locale);
 // Date formatters pass strings through untouched so the proofing page's
@@ -59,16 +79,16 @@ export const en = {
     heading: "Samples needing attention",
     summary: (samples: number, blocking: number) =>
       `${n(samples)} ${samples === 1 ? "sample needs" : "samples need"} attention` +
-      (blocking > 0 ? ` — ${n(blocking)} ${blocking === 1 ? "finding blocks" : "findings block"} label printing.` : "."),
+      (blocking > 0 ? ` — ${n(blocking)} ${blocking === 1 ? "flag blocks" : "flags block"} label printing.` : "."),
     allClearHeading: "All clear",
     allClear: "Nothing needs your attention — every one of your samples is clean. Thank you!",
     lastSynced: (when: Date | string) => `Data last synced from iNaturalist ${dateTime(when)}.`,
     neverSynced: "This instance has not synced from iNaturalist yet.",
-    clearsNote: "Fix things on the iNaturalist observation and the finding clears on the next sync.",
+    clearsNote: "Fix things on the iNaturalist observation and the flag clears on the next sync.",
     sampleTitle: (sampleNumber: string, when: Date | string) => `Sample ${sampleNumber} · ${date(when)}`,
     specimens: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"}`,
     fixOnInat: "Fix on iNaturalist",
-    notInatBacked: "Not backed by an iNaturalist observation — edit it here and the findings update immediately.",
+    notInatBacked: "Not backed by an iNaturalist observation — edit it here and the flags update immediately.",
     editSample: "Edit this sample",
     blocksPrinting: "blocks printing",
     headsUp: "heads-up",
@@ -81,7 +101,7 @@ export const en = {
   },
 
   /**
-   * The passive counterpart to the findings list: samples that are clean and
+   * The passive counterpart to the flagged list: samples that are clean and
    * waiting on labels. No promises about when — printing is staff work whose
    * shape is still being worked out (beeline-1kb.1).
    */
@@ -116,7 +136,7 @@ export const en = {
       colCollectors: "Collectors",
       colPlace: "Place",
       colSpecimens: "Specimens",
-      colStatus: "Data quality",
+      colStatus: "Flags",
       colAtlas: "Atlas",
       colLinks: "",
       viewOnInat: "iNaturalist",
@@ -137,7 +157,7 @@ export const en = {
       emptyMine:
         "None of your samples have specimens yet. A specimen becomes its own record when its label is printed.",
       emptyFiltered: "No specimens match these filters. Widen the dates, clear the taxon, or search for less.",
-      colCatalog: "Catalog number",
+      colCatalog: "Field number",
       colSample: "Sample",
       colDate: "Date",
       colCollectors: "Collectors",
@@ -145,7 +165,7 @@ export const en = {
       colDetermination: "Determination",
       colDeterminer: "Determined by",
       colAtlas: "Atlas",
-      /** A specimen whose label was printed before catalog numbers existed. */
+      /** A specimen whose label predates field numbering. */
       noCatalogNumber: "not numbered",
       undetermined: "not determined",
       expert: "expert",
@@ -164,14 +184,14 @@ export const en = {
 
     filters: {
       search: "Search",
-      searchHint: "Sample number, collector, or catalog number",
+      searchHint: "Sample number, collector, or field number",
       from: "Collected from",
       to: "Collected to",
       place: "Place",
       placeHint: "Locality, county, state, or country",
       taxon: "Taxon",
       taxonHint: "A family, genus, or species — anything below it matches too",
-      qc: "Data quality",
+      qc: "Flags",
       qcAny: "Any",
       qcBlocking: "Blocks printing",
       qcWarning: "Heads-up only",
@@ -182,7 +202,7 @@ export const en = {
 
     /** Chips on a row, and the same three words the QC filter offers. */
     status: {
-      blocking: (count: number) => `${n(count)} ${count === 1 ? "finding blocks" : "findings block"} printing`,
+      blocking: (count: number) => `${n(count)} ${count === 1 ? "flag blocks" : "flags block"} printing`,
       warning: (count: number) => `${n(count)} ${count === 1 ? "heads-up" : "heads-ups"}`,
       clean: "clean",
     },
@@ -318,98 +338,124 @@ export const en = {
     heading: "Glossary",
     intro:
       "The words this site uses, and what they mean here. Some are ours; some come from iNaturalist or from the way scientific names are written. Nothing on this page is something you need to memorise — it is here so you can look it up.",
+    /**
+     * Alphabetical by term (beeline-0i2.1): a page called Glossary is a page
+     * someone looks a word up on. A test keeps it that way. The key is the
+     * anchor slug, so renaming one breaks every link to it.
+     *
+     * Nomenclature entries carry their example as data rather than as text,
+     * because the page has to set the example the way the entry says it
+     * should be set — italics and brackets come from TaxonName, which knows
+     * them from the rank (beeline-0i2.6).
+     */
     entries: {
-      sample: {
-        term: "Sample",
+      atlas: {
+        term: "Atlas",
         definition:
-          "Everything you collected in one place on one day. A sample is the unit this whole site is organised around: it holds your specimens, it gets its findings checked, and it is what labels are printed for.",
+          "Your state or provincial bee atlas: Oregon, Washington, British Columbia, Idaho, New Mexico, or Oklahoma. Samples belong to an atlas by where they were collected, not by which iNaturalist project they arrived through.",
       },
-      "sample-number": {
-        term: "Sample number",
+      authorship: {
+        term: "Authorship",
         definition:
-          "The number you gave a sample on the day you collected it. It only has to be unique among your own samples on that date — two people can both have a sample 3 on the same day.",
+          "The person who first published a name, and the year, written after it. It is part of the formal name, not a citation, and it is never italicised.",
+        example: { rank: "species", scientificName: "Bombus vosnesenskii", authorship: "Radoszkowski, 1862" },
       },
-      "trap-sample": {
-        term: "Trap sample",
+      "blocks-printing": {
+        term: "Blocks printing",
         definition:
-          "The contents of a trap, collected on the day you emptied it. Because a trap works unattended, its specimens are dated to the range since you last serviced it rather than to a single day. Trap samples usually have no iNaturalist observation, so they are corrected here instead of upstream.",
-      },
-      specimen: {
-        term: "Specimen",
-        definition: "One bee (or one piece of bycatch) from a sample. Each specimen gets its own label and its own catalog number.",
+          "A flag serious enough that labels cannot be printed for that sample until it is fixed — usually a missing field the label needs, or coordinates we cannot trust.",
       },
       bycatch: {
         term: "Bycatch",
         definition:
           "Anything that isn't a bee but ended up in your sample anyway — wasps, bee flies, beetles. It is kept, labelled, and identified like everything else.",
       },
-      observation: {
-        term: "Observation",
+      "catalog-number": {
+        term: "Catalog number",
         definition:
-          "A record on iNaturalist. For this site an observation is the evidence of a sample: the plant you photographed is the floral host, and the observation carries your sample number, your specimen count, the date, and the location.",
+          "The identifier a museum gives a specimen once the specimen is in its collection — Washington's come back from Ecdysis as WSDA_2303966. It is not the number on the label you print: that one is the field number.",
       },
-      "floral-host": {
-        term: "Floral host",
+      "cf-aff": {
+        term: "cf. and aff.",
         definition:
-          "The plant a sample was collected from, identified by the sample's iNaturalist observation. It must be a vascular plant — if the observation is identified as a moss or a fungus or as the bee itself, that raises a finding.",
+          "cf. means the specimen resembles that species and needs confirming; aff. means it is close to it but probably something else. Both sit in front of the species name.",
+        example: { rank: "species", scientificName: "Bombus occidentalis", qualifier: "cf." },
       },
       collector: {
         term: "Collector",
-        definition: "The person who collected a sample — you, on your own samples. Identified by your iNaturalist login.",
-      },
-      atlas: {
-        term: "Atlas",
         definition:
-          "Your state or provincial bee atlas: Oregon, Washington, British Columbia, Idaho, New Mexico, or Oklahoma. Samples belong to an atlas by where they were collected, not by which iNaturalist project they arrived through.",
+          "A person who collected a sample. A sample can name more than one — a trap line run by two people belongs to both of you, under the numbering of whoever is listed first.",
       },
-      "master-melittology": {
-        term: "Master Melittology",
+      "coordinate-uncertainty": {
+        term: "Coordinate uncertainty",
         definition:
-          "The program at Oregon State University Extension that trains and coordinates the atlases, and the umbrella all of them sit under. This site is run by the program on behalf of your atlas.",
+          "How far from the pin the true location might be, as recorded by iNaturalist. Beyond 250 m the location is too vague to print, usually because the phone had a poor fix.",
       },
       determination: {
         term: "Determination",
         definition:
           "Someone asserting what a specimen is. Determinations are a record of who said what and when, so a later identification never erases an earlier one — and an expert's determination is never overwritten by a volunteer's.",
       },
-      "catalog-number": {
-        term: "Catalog number",
+      "field-number": {
+        term: "Field number",
         definition:
-          "The unique number printed on a specimen's label. It is assigned only once the sample's data is clean, and once assigned it belongs to that specimen permanently.",
+          "The number printed on a specimen's label, issued here — 25000001. It is assigned only once the sample's data is clean, and once assigned it belongs to that specimen permanently. A museum may later add a catalog number of its own; the field number stays what it was.",
+      },
+      flag: {
+        term: "Flag",
+        definition:
+          "Something this site noticed about one of your samples. A flag is not a mark against you — it is a to-do. Flags are worked out fresh from your data every sync, so fixing the cause makes the flag disappear on its own.",
+      },
+      "floral-host": {
+        term: "Floral host",
+        definition:
+          "The plant a sample was collected from, identified by the sample's iNaturalist observation. It must be a vascular plant — if the observation is identified as a moss or a fungus or as the bee itself, that raises a flag. Bees taken off no flower have no floral host, and that is a complete answer, not a gap.",
+      },
+      "heads-up": {
+        term: "Heads-up",
+        definition:
+          "A flag worth fixing that does not stop labels being printed. Improving it makes the record better; leaving it does not hold anything up.",
       },
       label: {
         term: "Label",
         definition:
-          "The printed slip pinned with a specimen, carrying where and when it was collected, by whom, and its catalog number. Labels are printed about 3pt tall, which is why several of the findings here are about text being too long.",
+          "The printed slip pinned with a specimen, carrying where and when it was collected, by whom, and its field number. It is printed about 3pt tall, which is why the locality has to be a short place name rather than an address.",
       },
-      finding: {
-        term: "Finding",
+      "master-melittology": {
+        term: "Master Melittology",
         definition:
-          "Something this site noticed about one of your samples. A finding is not a mark against you — it is a to-do. Findings are worked out fresh from your data every sync, so fixing the cause makes the finding disappear on its own.",
-      },
-      "blocks-printing": {
-        term: "Blocks printing",
-        definition:
-          "A finding serious enough that labels cannot be printed for that sample until it is fixed — usually a missing field the label needs, or coordinates we cannot trust.",
-      },
-      "heads-up": {
-        term: "Heads-up",
-        definition: "A finding worth fixing that does not stop labels being printed. Improving it makes the record better; leaving it does not hold anything up.",
-      },
-      sync: {
-        term: "Sync",
-        definition:
-          "The nightly pull of your observations from iNaturalist. Changes you make on iNaturalist show up here after the next sync, not immediately.",
+          "The program at Oregon State University Extension that trains and coordinates the atlases, and the umbrella all of them sit under. This site is run by the program on behalf of your atlas.",
       },
       "obscured-coordinates": {
         term: "Obscured coordinates",
         definition:
           "iNaturalist sometimes shifts an observation's public coordinates — either because you set it to, or automatically for sensitive species. Obscured coordinates cannot go on a label, because they are not where the bee was actually collected.",
       },
-      "coordinate-uncertainty": {
-        term: "Coordinate uncertainty",
+      observation: {
+        term: "Observation",
         definition:
-          "How far from the pin the true location might be, as recorded by iNaturalist. Beyond 250 m the location is too vague to print, usually because the phone had a poor fix.",
+          "A record on iNaturalist. For this site an observation is the evidence of a sample: it carries your sample number, your specimen count, the date, and the location, and where there is a floral host it is the photograph of that plant. Bees collected off no flower still get an observation — one with no photo and no identification, there to carry the sample.",
+      },
+      rank: {
+        term: "Rank",
+        definition:
+          "How specific a name is — family, genus, species, subspecies, and the coarser ranks above them. Identifications do not always reach species, and a name at genus rank is a complete answer, not a failed one.",
+      },
+      "sensu-stricto": {
+        term: "s. str. and s. lat.",
+        definition:
+          "Short for sensu stricto and sensu lato — “in the narrow sense” and “in the broad sense”. They mark which of two competing definitions of a name is meant, and like other abbreviations they stay upright.",
+        example: { rank: "genus", scientificName: "Bombus", qualifier: "s. str." },
+      },
+      sample: {
+        term: "Sample",
+        definition:
+          "Everything you collected off one flower species in one place on one day — or, where there was no flower, everything you collected in that place that day. Two flower species in the same place on the same day are two samples. A sample is the unit this whole site is organised around: it holds your specimens, it gets its flags checked, and it is what labels are printed for.",
+      },
+      "sample-number": {
+        term: "Sample number",
+        definition:
+          "The number you gave a sample on the day you collected it. It only has to be unique among your own samples on that date — two people can both have a sample 3 on the same day.",
       },
       protocol: {
         term: "Sampling protocol",
@@ -418,44 +464,41 @@ export const en = {
       "scientific-name": {
         term: "Scientific name",
         definition:
-          "The formal Latin name of an organism, like Bombus vosnesenskii. Genus names and everything below them are written in italics; family names and above are not.",
-      },
-      rank: {
-        term: "Rank",
-        definition:
-          "How specific a name is — family, genus, species, subspecies, and the coarser ranks above them. Identifications do not always reach species, and a name at genus rank is a complete answer, not a failed one.",
-      },
-      subgenus: {
-        term: "Subgenus",
-        definition:
-          "A grouping inside a genus, written in brackets between the genus and the species: Bombus (Psithyrus) insularis. The brackets are part of the convention, not an aside.",
+          "The formal Latin name of an organism. Genus names and everything below them are written in italics; family names and above are not.",
+        example: { rank: "species", scientificName: "Bombus vosnesenskii" },
       },
       sp: {
         term: "sp. and spp.",
         definition:
-          "sp. means one unnamed species in that genus — Bombus sp. is “a bumble bee, genus known, species not”. spp. means several. Neither is italicised, because they are abbreviations rather than names.",
+          "sp. means one unnamed species in that genus — “a bumble bee, genus known, species not”. spp. means several. Neither is italicised, because they are abbreviations rather than names.",
+        example: { rank: "genus", scientificName: "Bombus", qualifier: "sp." },
       },
-      "sensu-stricto": {
-        term: "s. str. and s. lat.",
-        definition:
-          "Short for sensu stricto and sensu lato — “in the narrow sense” and “in the broad sense”. They mark which of two competing definitions of a name is meant, and like other abbreviations they stay upright.",
+      specimen: {
+        term: "Specimen",
+        definition: "One bee (or one piece of bycatch) from a sample. Each specimen gets its own label and its own field number.",
       },
-      "cf-aff": {
-        term: "cf. and aff.",
+      subgenus: {
+        term: "Subgenus",
         definition:
-          "cf. means the specimen resembles that species and needs confirming; aff. means it is close to it but probably something else. Both sit in front of the species name: Bombus cf. occidentalis.",
+          "A grouping inside a genus, written in brackets between the genus and the species. The brackets are part of the convention, not an aside.",
+        example: { rank: "species", scientificName: "Bombus insularis", subgenus: "Psithyrus" },
       },
-      authorship: {
-        term: "Authorship",
+      sync: {
+        term: "Sync",
         definition:
-          "The person who first published a name, and the year, written after it: Bombus vosnesenskii Radoszkowski, 1862. It is part of the formal name, not a citation, and it is never italicised.",
+          "This site pulling your observations from iNaturalist. Changes you make on iNaturalist show up here after the next sync, not the moment you make them.",
+      },
+      "trap-sample": {
+        term: "Trap sample",
+        definition:
+          "The contents of a trap, collected on the day you emptied it. Because a trap works unattended, its specimens are dated to the range since you last serviced it rather than to a single day. Trap samples usually have no iNaturalist observation, so they are corrected here instead of upstream.",
       },
       "vernacular-name": {
         term: "Vernacular name",
         definition:
           "An everyday English name, like “yellow-faced bumble bee”. Plants usually have one and bees usually do not, and the same name can mean different things in different places — so scientific names are what this site records.",
       },
-    },
+    } satisfies Record<string, GlossaryEntry>,
   },
 };
 

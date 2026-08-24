@@ -143,7 +143,7 @@ describe("sample listing", () => {
   it("carries the QC state of each row", async () => {
     const { app } = await listingApp();
     const body = await get(app, "/samples");
-    expect(body).toContain("1 finding blocks printing");
+    expect(body).toContain("1 flag blocks printing");
     expect(body).toContain("clean");
   });
 
@@ -182,11 +182,11 @@ describe("sample listing", () => {
     expect(await next.text()).toContain("B-2");
   });
 
-  it("searches sample numbers, collectors, and catalog numbers", async () => {
+  it("searches sample numbers, collectors, and field numbers", async () => {
     const { app } = await listingApp("staffer");
     expect(await get(app, "/samples?scope=all&q=B-1")).toContain("1 sample");
     expect(await get(app, "/samples?scope=all&q=barnes")).toContain("2 samples");
-    // A catalog number in hand: which sample is this specimen from?
+    // A field number in hand: which sample is this specimen from?
     const byCatalog = await get(app, "/samples?scope=all&q=OBA00001");
     expect(byCatalog).toContain("1 sample");
     expect(byCatalog).toContain("A-1");

@@ -77,7 +77,7 @@ export function DesignColor() {
         rows={[
           ["blocking", "This stops a label being printed. The volunteer cannot proceed until it is fixed."],
           ["warning", "A heads-up: worth fixing, holds nothing up. QC calls these warnings; volunteers see “heads-up”."],
-          ["success", "A thing that finished, or a state that is clean — a job that succeeded, a sample with no findings."],
+          ["success", "A thing that finished, or a state that is clean — a job that succeeded, a sample with no flags."],
           ["neutral", "Information with no valence: a count, a status that is neither good nor bad."],
         ]}
       />

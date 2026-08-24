@@ -175,7 +175,7 @@ export function DesignComponents({ m }: { m: Messages }) {
           <SelectField
             id="demo-qc"
             name="qc"
-            label="Data quality"
+            label="Flags"
             value="any"
             options={[
               ["any", "Any"],
@@ -241,7 +241,7 @@ export function DesignComponents({ m }: { m: Messages }) {
       </p>
       <Specimen>
         <p>
-          Your <Term m={m} slug="sample" /> has a finding because its{" "}
+          Your <Term m={m} slug="sample" /> has a flag because its{" "}
           <Term m={m} slug="floral-host">
             floral host
           </Term>{" "}

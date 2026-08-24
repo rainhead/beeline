@@ -229,6 +229,13 @@ tbody tr:hover { background: var(--md-sys-color-surface-variant); }
 .glossary dd {
   margin: var(--space-1) 0 0;
 }
+/* A worked example under a definition — a taxon name set the way the entry
+   says it should be set, never markup smuggled into the copy. */
+.glossary-example {
+  margin: var(--space-1) 0 0;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
 .glossary dt:target {
   background: var(--md-sys-color-warning-container);
   color: var(--md-sys-color-on-warning-container);

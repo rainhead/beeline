@@ -37,7 +37,7 @@ export const QC_STATUSES = ["any", "blocking", "warning", "clean"] as const;
 export interface ListingQuery {
   /** MINE, ALL, or an atlas code. */
   scope: string;
-  /** Free text: sample number, collector name, catalog number. */
+  /** Free text: sample number, collector name, field number. */
   q: string;
   /** Inclusive ISO dates bounding the collecting window; null = unbounded. */
   from: string | null;
@@ -479,6 +479,10 @@ export async function collectorsOf(db: Kysely<Database>, sampleIds: number[]): P
 /**
  * CSV export.
  *
+ * The printed number goes out as field_number, the name the program uses for
+ * it (beeline-nfo); the column it comes from is still spelled catalog_number
+ * until the printing phase renames it (beeline-1kb.11).
+ *
  * Headers are stable machine names, not the table's column labels: a CSV is
  * read by a spreadsheet and by whatever script comes after it, so renaming a
  * screen must not rename a column. Coordinates are absent by construction —
@@ -544,7 +548,7 @@ export function sampleCsv(page: Page<SampleRow>): string {
 export function specimenCsv(page: Page<SpecimenRow>): string {
   return toCsv(
     [
-      "catalog_number",
+      "field_number",
       "specimen_number",
       "sample_number",
       "date_start",

@@ -1,4 +1,5 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
+import { pathToFileURL } from "node:url";
 import { parseRef, type OverlayField, type PersonOverlayRow } from "./person-overlay.js";
 
 /**
@@ -211,4 +212,22 @@ async function applyField(
     personId,
   ] as never);
   return null;
+}
+
+// CLI: pnpm person:apply [db] — replay the overlay onto a store that already
+// exists. Promotion does this at the end of a rebuild; this is the same step
+// for a deployed store, where a bulk decision (a roster import, a curated file
+// graduated into git) has to land without one.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  const { DuckDBInstance } = await import("@duckdb/node-api");
+  const { mergeOverlays, readOverlay } = await import("./person-overlay.js");
+  const dbPath = process.argv[2] ?? "beeline.duckdb";
+  const curated = process.argv[3] ?? "ingest/person-overlay.csv";
+  const app = process.argv[4] ?? "data/person-overlay.csv";
+  const instance = await DuckDBInstance.create(dbPath);
+  const conn = await instance.connect();
+  const result = await applyPersonOverlay(conn, mergeOverlays(await readOverlay(curated), await readOverlay(app)));
+  await conn.run("CHECKPOINT");
+  conn.closeSync();
+  console.log(JSON.stringify(result, null, 2));
 }

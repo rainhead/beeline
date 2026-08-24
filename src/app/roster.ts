@@ -2,32 +2,35 @@ import { sql, type Kysely } from "kysely";
 import type { Database, MembershipKind } from "../model.js";
 
 /**
- * The people roster: who is in the store, which iNaturalist account each is
- * bound to, and — the part that earns the screen — the evidence for that
- * binding.
+ * The people roster: who is in the store, and which iNaturalist account each
+ * one signs in with. A listing of people, first and — after cutover — only.
  *
- * Binding evidence exists because a wrong binding is invisible in a list. The
- * account a person files under is a conclusion promotion drew from the legacy
- * records, and when it drew a wrong one (beeline-eft) nothing on any screen
- * said so: 'andonymelathopoulos' looked exactly as settled as 'amelathopoulos'
- * until someone counted the records behind each. So the roster shows the count
- * beside the binding, and shows the runners-up, and says plainly when the
- * bound login is not the one most of that person's records carry.
+ * The account a person files under is a conclusion promotion drew from their
+ * older records, and when it drew a wrong one (beeline-eft) nothing on any
+ * screen said so: 'andonymelathopoulos' looked exactly as settled as
+ * 'amelathopoulos' until someone counted the records behind each. So a wrong
+ * one still has to be visible here. But checking them is a job that ends when
+ * the legacy records stop being the source, so it does not get a column, a
+ * sort order, or a vocabulary of its own: a row says something only when
+ * something is wrong with it, in the words anyone would use.
  */
 
 export const PAGE_SIZE = 50;
 
 export type BindingVerdict =
-  /** The bound login is the one most of their records carry. */
+  /** The account is the one most of their records use. */
   | "supported"
-  /** Bound, but another login on their records is better attested. */
+  /** Another account on their records is used far more — probably wrong. */
   | "outweighed"
-  /** Bound to an account no legacy record of theirs mentions. */
+  /** An account no older record of theirs mentions. */
   | "unattested"
   /** No account: they cannot sign in. */
   | "unbound"
-  /** No legacy records to weigh — an iNat-native person, or a fresh store. */
+  /** Nothing to weigh — an iNat-native person, or a store without staging. */
   | "no-evidence";
+
+/** The two that mean something is wrong, and the only two a row reports. */
+export const LOOKS_WRONG: readonly BindingVerdict[] = ["outweighed", "unattested"];
 
 export interface RosterRow {
   person_id: number;
@@ -54,7 +57,7 @@ export interface RosterRow {
 
 export interface RosterQuery {
   search: string;
-  /** Only rows whose binding wants a human look. */
+  /** Only rows whose account does not match the records behind it. */
   suspect: boolean;
   page: number;
 }
@@ -80,8 +83,12 @@ export function rosterHref(query: RosterQuery, overrides: Partial<RosterQuery> =
   return s === "" ? "/people" : `/people?${s}`;
 }
 
-/** Whether legacy staging is still attached — a rebuilt store has it, a
- * store restored without it does not, and the evidence columns go quiet. */
+/**
+ * Whether legacy staging is still attached. Without it there is nothing to
+ * weigh an account against, so the screen drops the checking apparatus
+ * entirely rather than reporting a verdict it did not reach — which is also
+ * the shape this page takes after cutover.
+ */
 export async function hasLegacyEvidence(db: Kysely<Database>): Promise<boolean> {
   const found = await sql<{ n: number | bigint }>`
     SELECT count(*) AS n FROM information_schema.tables
@@ -107,8 +114,14 @@ export interface RosterPage {
   total: number;
   page: number;
   pages: number;
-  /** False when the store carries no legacy staging to weigh bindings against. */
+  /** False when the store carries no staging to weigh an account against. */
   evidence: boolean;
+  /**
+   * People anywhere in the store whose account does not match their records —
+   * not just on this page. The listing no longer sorts them to the front, so
+   * this is how someone learns there is anything to look at.
+   */
+  lookWrong: number;
 }
 
 export async function listRoster(db: Kysely<Database>, query: RosterQuery): Promise<RosterPage> {
@@ -143,7 +156,7 @@ export async function listRoster(db: Kysely<Database>, query: RosterQuery): Prom
                   OR (w.uid IS NULL AND lower(w.login) = lower(a.login))))`
     : sql`NULL::BIGINT`;
 
-  const base = sql`
+  const judged = sql`
     WITH ${weights}
     roster AS (
       SELECT p.entity_id AS person_id,
@@ -176,16 +189,24 @@ export async function listRoster(db: Kysely<Database>, query: RosterQuery): Prom
              END AS verdict
       FROM roster
     )
-    SELECT * FROM judged
+    SELECT * FROM judged`;
+
+  const base = sql`
+    SELECT * FROM (${judged})
     WHERE (${query.search === ""} OR lower(display_name) LIKE ${term} OR lower(coalesce(login, '')) LIKE ${term})
       AND (${!query.suspect} OR verdict IN ('outweighed', 'unattested'))`;
 
   const counted = await sql<{ n: number | bigint }>`SELECT count(*) AS n FROM (${base})`.execute(db);
   const total = Number(counted.rows[0]?.n ?? 0);
+  // Unfiltered on purpose: the count is an invitation to go and look, so it
+  // has to answer "is there anything to look at", not "on this page".
+  const wrong = await sql<{ n: number | bigint }>`
+    SELECT count(*) AS n FROM (${judged}) WHERE verdict IN ('outweighed', 'unattested')`.execute(db);
+  // Ordered as a listing of people, not as a worklist. Sorting the doubtful
+  // ones to the front made the first page a queue wearing a roster's name.
   const listed = await sql<RosterRow>`
     ${base}
-    ORDER BY CASE verdict WHEN 'outweighed' THEN 0 WHEN 'unattested' THEN 1 ELSE 2 END,
-             samples DESC, display_name
+    ORDER BY samples DESC, display_name
     LIMIT ${PAGE_SIZE} OFFSET ${offset}`.execute(db);
 
   return {
@@ -203,6 +224,7 @@ export async function listRoster(db: Kysely<Database>, query: RosterQuery): Prom
     page: query.page,
     pages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
     evidence,
+    lookWrong: Number(wrong.rows[0]?.n ?? 0),
   };
 }
 

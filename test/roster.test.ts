@@ -71,12 +71,79 @@ describe("the roster screen", () => {
     expect(body).toContain("Bo Netter");
     expect(body).toContain("adacollects");
     // Bo has no account, which is the whole reason to show them.
-    expect(body).toContain("No iNaturalist account");
+    expect(body).toContain("No account");
   });
 
-  it("says so when it has no legacy records to weigh bindings against", async () => {
+  it("is a listing of people, with no column about our own checking", async () => {
+    // beeline-eyk: 'Evidence' meant something to the one person doing the
+    // checking and nothing to anyone else. The columns are about people.
     const body = await (await ctx.app.request("/people")).text();
-    expect(body).toContain("cannot be weighed");
+    expect(body).not.toContain("Evidence");
+    expect(body).not.toContain("binding");
+    for (const column of ["Person", "iNaturalist account", "Samples", "Belongs to", "Admin"]) {
+      expect(body).toContain(`<th>${column}</th>`);
+    }
+  });
+
+  it("drops the checking apparatus entirely when there is nothing to check against", async () => {
+    // No legacy staging — which is also this screen after cutover. Not a
+    // banner explaining that verdicts are unavailable: no verdicts, no
+    // filter, nothing but people.
+    const body = await (await ctx.app.request("/people")).text();
+    expect(body).not.toContain("Only accounts that look wrong");
+    expect(body).not.toContain("do not match");
+  });
+
+  /**
+   * With staging attached there is something to weigh an account against, and
+   * the two shapes of wrong have to be visible without a column of their own.
+   */
+  describe("when an account can be weighed against the records behind it", () => {
+    beforeEach(async () => {
+      await ctx.conn.run(`CREATE TABLE legacy_person_map AS
+        SELECT * FROM (VALUES (1, 'Ada', 'Collector'), (3, 'Staff', 'Person'))
+        t(person_id, fn, ln)`);
+      // Ada's account is the one her records use. Staff Person is bound to an
+      // account one record mentions while forty use another — the Andony shape
+      // (beeline-eft), and the whole reason this screen weighs anything.
+      await ctx.conn.run(`CREATE TABLE legacy_occurrence AS
+        SELECT * FROM (VALUES
+          ('Ada', 'Collector', 'adacollects', '111', 5),
+          ('Staff', 'Person', 'staffer', '333', 1),
+          ('Staff', 'Person', 'busierlogin', '999', 40))
+        t(firstName, lastName, userLogin, userId, copies),
+        LATERAL range(copies)`);
+    });
+
+    it("says so on the row that is wrong, and says nothing on the ones that are not", async () => {
+      const body = await (await ctx.app.request("/people")).text();
+      expect(body).toContain("probably the wrong account");
+      // Ada's binding is fine, and a listing of people is quiet about that.
+      expect(body).not.toContain("backed");
+      expect(body.match(/probably the wrong account/g)).toHaveLength(1);
+    });
+
+    it("counts them above the table, since the listing no longer sorts them first", async () => {
+      // Ordered as a roster, so a wrong account on page 8 would otherwise be
+      // invisible to anyone who did not already know to go looking.
+      const body = await (await ctx.app.request("/people")).text();
+      expect(body).toContain("1 person has an account that does not match");
+      expect(body).toContain(`href="/people?suspect=1"`);
+    });
+
+    it("filters to exactly those, and stops counting once it has", async () => {
+      const body = await (await ctx.app.request("/people?suspect=1")).text();
+      expect(body).toContain("Staff Person");
+      expect(body).not.toContain(">Ada Collector<");
+      expect(body).not.toContain("does not match"); // the invitation, once taken
+    });
+
+    it("spells the doubt out where somebody acts on it", async () => {
+      // The row carries a chip; the person's own page carries the sentence,
+      // with the number that makes it a judgement rather than an assertion.
+      const body = await (await ctx.app.request("/people/3")).text();
+      expect(body).toContain("Only 1 of their records uses this account. 40 use busierlogin instead.");
+    });
   });
 
   it("searches by name and by login", async () => {

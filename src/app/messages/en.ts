@@ -337,43 +337,52 @@ export const en = {
   people: {
     title: "People",
     heading: "People",
+    /**
+     * What the page is, in the order it matters: people first. Which account
+     * promotion picked for each of them, and how sure that is, is a job that
+     * ends at cutover — so it is said in ordinary words and never given a
+     * column of its own.
+     */
     intro:
-      "Everyone in the store, the iNaturalist account each one is bound to, and the evidence for that binding. A person with no account cannot sign in.",
+      "Everyone in the store, and the iNaturalist account each one signs in with. Someone with no account cannot sign in until staff connect one.",
     search: "Name or login",
-    searchHint: "Matches the display name or the bound login.",
-    onlySuspect: "Only bindings to check",
+    searchHint: "Matches the display name or the account login.",
+    onlySuspect: "Only accounts that look wrong",
     apply: "Search",
     clear: "Clear",
     colPerson: "Person",
     colAccount: "iNaturalist account",
-    colEvidence: "Evidence",
     colSamples: "Samples",
     /** Not "Atlas": the column's answer is sometimes the program itself. */
     colMembership: "Belongs to",
     colAdmin: "Admin",
     noPeople: "Nobody matches.",
-    noEvidenceBanner:
-      "This store has no legacy staging tables, so bindings cannot be weighed against the records behind them. Everything below is reported as bound or unbound only.",
+    noAccount: "No account",
     found: (total: number) => `${n(total)} ${total === 1 ? "person" : "people"}`,
     pageOf: (page: number, pages: number) => `Page ${n(page)} of ${n(pages)}`,
     previous: "← Previous",
     next: "Next →",
 
-    /** The binding verdicts, said plainly. */
-    verdictSupported: "backed",
-    verdictOutweighed: "check this",
-    verdictUnattested: "unattested",
-    verdictUnbound: "no account",
-    verdictNoEvidence: "no legacy records",
-    verdictWhy: {
-      supported: (records: number) => `${n(records)} of their records file under this account.`,
+    /**
+     * A wrong account is invisible in a list that prints only the login, which
+     * is how one survived review (beeline-eft). So the two shapes of wrong say
+     * so on the row — and a right one says nothing at all, because a listing
+     * of people should be quiet when there is nothing to report.
+     */
+    accountLooksWrong: "probably the wrong account",
+    accountNotInRecords: "not in their records",
+    lookWrong: (people: number) =>
+      `${n(people)} ${people === 1 ? "person has an account that does not match" : "people have accounts that do not match"} ` +
+      `the records behind them.`,
+    showThem: "Show them",
+    accountWhy: {
+      supported: (records: number) => `${n(records)} of their records ${records === 1 ? "uses" : "use"} this account.`,
       outweighed: (bound: number, top: string, top_records: number) =>
-        `Only ${n(bound)} of their records use this account, but ${n(top_records)} use ${top}. This is the shape of a wrong binding.`,
-      unattested: "No record of theirs names this account. It may be right, but nothing here says so.",
+        `Only ${n(bound)} of their records ${bound === 1 ? "uses" : "use"} this account. ` +
+        `${n(top_records)} ${top_records === 1 ? "uses" : "use"} ${top} instead.`,
+      unattested: "No record of theirs uses this account. It may still be right — nothing here says so either way.",
       unbound: "No iNaturalist account, so they cannot sign in.",
-      noEvidence: "They have no legacy records, so there is nothing to weigh.",
     },
-    filedAs: (login: string) => `filed as ${login}`,
     records: (n_: number) => `${n(n_)} ${n_ === 1 ? "record" : "records"}`,
 
     // Detail page.
@@ -381,10 +390,11 @@ export const en = {
     identity: "Name",
     account: "iNaturalist account",
     accountHint:
-      "The iNaturalist user id is the binding; the login is shown because logins change and ids do not. Check a candidate on iNaturalist before saving it.",
-    loginsSeen: "Logins on their legacy records",
-    loginsSeenHint: "What promotion had to choose between. The bound account is marked.",
-    boundMark: "bound",
+      "The user id is what actually connects them; the login is shown alongside because logins change and ids do not. Check a candidate on iNaturalist before saving it.",
+    loginsSeen: "Accounts on their older records",
+    loginsSeenHint: "Every account that appears on records of theirs, most-used first. Only one can be theirs.",
+    colRecords: "Records",
+    boundMark: "in use",
     useThis: "Bind this one",
     membership: "Membership",
     belongsTo: "Belongs to",

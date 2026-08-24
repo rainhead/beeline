@@ -22,17 +22,20 @@ import {
   Pager,
   SelectField,
   TextField,
-  type Tone,
 } from "./components/index.js";
 
 /**
  * The roster. Two screens: everyone, and one person.
  *
- * The evidence column is the point of the listing. A binding that reads
- * "backed · 3,042 records" and one that reads "check this · 1 record, but
- * 3,042 use amelathopoulos" are indistinguishable in any view that prints
- * only the login, which is why the wrong one survived review for as long as
- * it did (beeline-eft).
+ * A listing of people, so it reads as one: name, account, how much they
+ * collected, where they belong. The account promotion picked can still be
+ * wrong — that is what went unnoticed in beeline-eft — so a row that is wrong
+ * says so, in the account cell, where the doubt actually is. A row that is
+ * fine says nothing, because a column of reassurances is a column about the
+ * checking rather than about the people, and the checking ends at cutover.
+ *
+ * The one person screen is where that work is done, so it explains itself
+ * there at length.
  */
 
 /**
@@ -49,29 +52,28 @@ const membershipCell = (m: Messages, row: { membership: string | null; atlas_cod
       ? m.people.membershipProgramShort
       : (row.atlas_code ?? "—");
 
-const VERDICT_TONE: Record<BindingVerdict, Tone | undefined> = {
-  supported: "success",
-  outweighed: "blocking",
-  unattested: "warning",
-  unbound: undefined,
-  "no-evidence": undefined,
+type Judged = {
+  verdict: BindingVerdict;
+  bound_records: number | null;
+  top_login: string | null;
+  top_records: number | null;
 };
 
-function verdictLabel(m: Messages, v: BindingVerdict): string {
+/**
+ * The short form, for a row: the two verdicts that mean something is wrong,
+ * and nothing at all for the three that do not. 'unbound' is silent here
+ * because the account cell already reads "No account", which says it.
+ */
+function wrongChip(m: Messages, verdict: BindingVerdict) {
   const p = m.people;
-  return v === "supported"
-    ? p.verdictSupported
-    : v === "outweighed"
-      ? p.verdictOutweighed
-      : v === "unattested"
-        ? p.verdictUnattested
-        : v === "unbound"
-          ? p.verdictUnbound
-          : p.verdictNoEvidence;
+  if (verdict === "outweighed") return <Chip tone="blocking">{p.accountLooksWrong}</Chip>;
+  if (verdict === "unattested") return <Chip tone="warning">{p.accountNotInRecords}</Chip>;
+  return null;
 }
 
-function verdictWhy(m: Messages, row: { verdict: BindingVerdict; bound_records: number | null; top_login: string | null; top_records: number | null }): string {
-  const w = m.people.verdictWhy;
+/** The long form, for the one screen where somebody acts on it. */
+function accountWhy(m: Messages, row: Judged): string | null {
+  const w = m.people.accountWhy;
   switch (row.verdict) {
     case "supported":
       return w.supported(row.bound_records ?? 0);
@@ -82,26 +84,21 @@ function verdictWhy(m: Messages, row: { verdict: BindingVerdict; bound_records: 
     case "unbound":
       return w.unbound;
     default:
-      return w.noEvidence;
+      // Nothing to weigh, so nothing to say. Saying "no legacy records" told
+      // the reader about our bookkeeping, not about the person.
+      return null;
   }
-}
-
-function Verdict({ m, row }: { m: Messages; row: Parameters<typeof verdictWhy>[1] }) {
-  const tone = VERDICT_TONE[row.verdict];
-  return (
-    <>
-      <Chip tone={tone}>{verdictLabel(m, row.verdict)}</Chip>
-      <Meta block>{verdictWhy(m, row)}</Meta>
-    </>
-  );
 }
 
 export function Roster({ m, page, query }: { m: Messages; page: RosterPage; query: RosterQuery }) {
   const p = m.people;
+  // No staging to weigh an account against: the checking apparatus is not
+  // dimmed or explained away, it is simply absent, and the page is a listing
+  // of people. That is also what this screen becomes after cutover.
+  const checking = page.evidence;
   return (
     <>
       <PageHeader title={p.heading} lede={p.intro} />
-      {!page.evidence && <Callout tone="warning">{p.noEvidenceBanner}</Callout>}
 
       <FilterBar
         action="/people"
@@ -115,17 +112,26 @@ export function Roster({ m, page, query }: { m: Messages; page: RosterPage; quer
         }
       >
         <TextField id="q" name="q" label={p.search} value={query.search} hint={p.searchHint} />
-        <CheckboxField id="suspect" name="suspect" label={p.onlySuspect} checked={query.suspect} />
+        {checking && (
+          <CheckboxField id="suspect" name="suspect" label={p.onlySuspect} checked={query.suspect} />
+        )}
       </FilterBar>
 
       <Meta block>{p.found(page.total)}</Meta>
 
+      {/* The listing no longer sorts the doubtful ones to the front, so this
+          is how anyone learns there are some. Said once, above the table,
+          rather than repeated down a column. */}
+      {checking && !query.suspect && page.lookWrong > 0 && (
+        <Callout tone="warning">
+          {p.lookWrong(page.lookWrong)} <a href={rosterHref(query, { suspect: true, page: 1 })}>{p.showThem}</a>
+        </Callout>
+      )}
+
       {page.rows.length === 0 ? (
         <EmptyState>{p.noPeople}</EmptyState>
       ) : (
-        <DataTable
-          columns={[p.colPerson, p.colAccount, p.colEvidence, p.colSamples, p.colMembership, p.colAdmin]}
-        >
+        <DataTable columns={[p.colPerson, p.colAccount, p.colSamples, p.colMembership, p.colAdmin]}>
           {page.rows.map((row) => (
             <tr>
               <td>
@@ -133,16 +139,14 @@ export function Roster({ m, page, query }: { m: Messages; page: RosterPage; quer
               </td>
               <td>
                 {row.login === null ? (
-                  "—"
+                  <Meta>{p.noAccount}</Meta>
                 ) : (
                   <>
                     <code>{row.login}</code>
                     <Meta block>{row.inat_user_id}</Meta>
+                    {checking && wrongChip(m, row.verdict)}
                   </>
                 )}
-              </td>
-              <td>
-                <Verdict m={m} row={row} />
               </td>
               <td>{m.format.number(row.samples)}</td>
               <td>{membershipCell(m, row)}</td>
@@ -194,7 +198,10 @@ export function PersonPage({
 
       <Card>
         <h2>{p.account}</h2>
-        <Verdict m={m} row={person} />
+        {/* Here the doubt is the work, so it is stated in full — a chip when
+            something is wrong, and the sentence either way. */}
+        {wrongChip(m, person.verdict)}
+        {accountWhy(m, person) !== null && <Meta block>{accountWhy(m, person)}</Meta>}
         <form id="account-form" method="post" action={`${action}/account`} class="form-column">
           <TextField
             id="inat_user_id"
@@ -231,7 +238,7 @@ export function PersonPage({
             {/* Status and action share the last column: 'bound' and 'Bind this
                 one' answer the same question for a row, so they line up under
                 one heading instead of straddling two. */}
-            <DataTable columns={[p.inatLogin, p.inatUserId, p.colEvidence, ""]}>
+            <DataTable columns={[p.inatLogin, p.inatUserId, p.colRecords, ""]}>
               {person.logins.map((l) => (
                 <tr>
                   <td>

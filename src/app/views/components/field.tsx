@@ -88,3 +88,35 @@ export function SelectField({
     </Field>
   );
 }
+
+/**
+ * A checkbox and its label, on one line.
+ *
+ * The label goes *after* the control here, against the pattern every other
+ * field follows, because a checkbox is read as a sentence you agree with
+ * rather than as a slot you fill. Stacking the label above a 13px box, as the
+ * generic field shape does, leaves it floating over nothing.
+ */
+export function CheckboxField({
+  id,
+  name,
+  label,
+  checked,
+  hint,
+}: {
+  id: string;
+  name: string;
+  label: Child;
+  checked?: boolean;
+  hint?: Child;
+}) {
+  return (
+    <div class="field">
+      <span class="row">
+        <input id={id} name={name} type="checkbox" value="1" checked={checked} />
+        <label for={id}>{label}</label>
+      </span>
+      {hint !== undefined && <p class="field-hint">{hint}</p>}
+    </div>
+  );
+}

@@ -16,15 +16,23 @@ const classes = (variant: ButtonVariant, base: string) =>
 export function Button({
   variant = "filled",
   type = "submit",
+  form,
   children,
 }: {
   variant?: ButtonVariant;
   type?: "submit" | "button";
+  /**
+   * The id of the form this button submits, for the case where two actions
+   * belong on one row but write to two different places. Forms cannot nest,
+   * so the alternative is stacking the buttons — which reads as a sequence
+   * rather than as a choice. Plain HTML: no script involved.
+   */
+  form?: string;
   children: Child;
 }) {
   const cls = classes(variant, "");
   return (
-    <button type={type} class={cls === "" ? undefined : cls}>
+    <button type={type} form={form} class={cls === "" ? undefined : cls}>
       {children}
     </button>
   );

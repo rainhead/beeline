@@ -10,6 +10,7 @@ import {
   FilterBar,
   LinkButton,
   Pager,
+  CheckboxField,
   SelectField,
   Meta,
   TONES,
@@ -139,6 +140,12 @@ export function DesignComponents({ m }: { m: Messages }) {
             label="Note (optional)"
             placeholder="Why the change, if it isn't obvious"
             hint="Hints sit under the control, not inside it."
+          />
+          <CheckboxField
+            id="demo-settled"
+            name="settled"
+            label="Include settled seasons"
+            hint="A checkbox takes its label after the control: it reads as a sentence, not as a slot."
           />
         </div>
       </Specimen>

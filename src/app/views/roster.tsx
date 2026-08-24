@@ -11,10 +11,10 @@ import {
   Button,
   Callout,
   Card,
+  CheckboxField,
   Chip,
   DataTable,
   EmptyState,
-  Field,
   FilterBar,
   Meta,
   PageHeader,
@@ -100,9 +100,7 @@ export function Roster({ m, page, query }: { m: Messages; page: RosterPage; quer
         }
       >
         <TextField id="q" name="q" label={p.search} value={query.search} hint={p.searchHint} />
-        <Field id="suspect" label={p.onlySuspect}>
-          <input id="suspect" name="suspect" type="checkbox" value="1" checked={query.suspect} />
-        </Field>
+        <CheckboxField id="suspect" name="suspect" label={p.onlySuspect} checked={query.suspect} />
       </FilterBar>
 
       <Meta block>{p.found(page.total)}</Meta>
@@ -181,10 +179,8 @@ export function PersonPage({
 
       <Card>
         <h2>{p.account}</h2>
-        <p>
-          <Verdict m={m} row={person} />
-        </p>
-        <form method="post" action={`${action}/account`}>
+        <Verdict m={m} row={person} />
+        <form id="account-form" method="post" action={`${action}/account`} class="form-column">
           <TextField
             id="inat_user_id"
             name="inat_user_id"
@@ -194,24 +190,32 @@ export function PersonPage({
           />
           <TextField id="login" name="login" label={p.inatLogin} value={person.login} />
           <Reason m={m} id="account_reason" />
-          <div class="filter-actions">
-            <Button>{p.bindAccount}</Button>
-          </div>
         </form>
-        {/* Its own form: forms do not nest, and unbinding is not a variant of
-            saving — it is the one action here that takes sign-in away. */}
+        {/* Unbinding needs its own form — it posts a blank id, not whatever is
+            in the field — but it belongs beside Save rather than under it, so
+            the buttons sit in one row and reach their forms by id. */}
         {person.inat_user_id !== null && (
-          <form method="post" action={`${action}/account`}>
+          <form id="unbind-form" method="post" action={`${action}/account`}>
             <input type="hidden" name="inat_user_id" value="" />
             <input type="hidden" name="reason" value={p.unbind} />
-            <Button variant="outlined">{p.unbind}</Button>
           </form>
         )}
+        <p class="row">
+          <Button form="account-form">{p.bindAccount}</Button>
+          {person.inat_user_id !== null && (
+            <Button form="unbind-form" variant="outlined">
+              {p.unbind}
+            </Button>
+          )}
+        </p>
 
         {person.logins.length > 0 && (
           <>
             <h3>{p.loginsSeen}</h3>
             <Meta block>{p.loginsSeenHint}</Meta>
+            {/* Status and action share the last column: 'bound' and 'Bind this
+                one' answer the same question for a row, so they line up under
+                one heading instead of straddling two. */}
             <DataTable columns={[p.inatLogin, p.inatUserId, p.colEvidence, ""]}>
               {person.logins.map((l) => (
                 <tr>
@@ -219,17 +223,11 @@ export function PersonPage({
                     <code>{l.login}</code>
                   </td>
                   <td>{l.uid ?? "—"}</td>
+                  <td>{p.records(l.records)}</td>
                   <td>
-                    {p.records(l.records)}
-                    {l.bound && (
-                      <>
-                        {" "}
-                        <Chip tone="success">{p.boundMark}</Chip>
-                      </>
-                    )}
-                  </td>
-                  <td>
-                    {!l.bound && l.uid !== null && (
+                    {l.bound ? (
+                      <Chip tone="success">{p.boundMark}</Chip>
+                    ) : l.uid === null ? null : (
                       <form method="post" action={`${action}/account`}>
                         <input type="hidden" name="inat_user_id" value={String(l.uid)} />
                         <input type="hidden" name="login" value={l.login} />
@@ -247,7 +245,7 @@ export function PersonPage({
 
       <Card>
         <h2>{p.identity}</h2>
-        <form method="post" action={`${action}/names`}>
+        <form method="post" action={`${action}/names`} class="form-column">
           <TextField id="display_name" name="display_name" label={p.displayName} value={person.display_name} />
           <TextField id="given_name" name="given_name" label={p.givenName} value={person.given_name} />
           <TextField id="family_name" name="family_name" label={p.familyName} value={person.family_name} />
@@ -259,15 +257,15 @@ export function PersonPage({
             hint={p.labelNameHint}
           />
           <Reason m={m} id="names_reason" />
-          <div class="filter-actions">
+          <p class="row">
             <Button>{p.saveNames}</Button>
-          </div>
+          </p>
         </form>
       </Card>
 
       <Card>
         <h2>{p.membership}</h2>
-        <form method="post" action={`${action}/membership`}>
+        <form method="post" action={`${action}/membership`} class="form-column">
           <SelectField
             id="home_atlas"
             name="home_atlas"
@@ -277,23 +275,29 @@ export function PersonPage({
             options={[["", p.noAtlas] as const, ...atlases.map((a) => [a.code, a.name] as const)]}
           />
           <Reason m={m} id="membership_reason" />
-          <div class="filter-actions">
+          <p class="row">
             <Button>{p.saveMembership}</Button>
-          </div>
-        </form>
-
-        <h3>{p.adminRights}</h3>
-        <Meta block>{p.adminHint}</Meta>
-        <p>{person.is_admin ? <Chip tone="success">{p.isAdmin}</Chip> : <Chip>{p.notAdmin}</Chip>}</p>
-        <form method="post" action={`${action}/admin`}>
-          <input type="hidden" name="admin" value={person.is_admin ? "no" : "yes"} />
-          <Reason m={m} id="admin_reason" />
-          <Button variant={person.is_admin ? "outlined" : "tonal"}>
-            {person.is_admin ? p.revokeAdmin : p.grantAdmin}
-          </Button>
+          </p>
         </form>
       </Card>
 
+      {/* Its own card, not a subsection of membership: which atlas someone
+          belongs to and whether they may run ingestion are unrelated
+          questions, and nesting the second under the first said otherwise. */}
+      <Card>
+        <h2>{p.adminRights}</h2>
+        <Meta block>{p.adminHint}</Meta>
+        <form method="post" action={`${action}/admin`} class="form-column">
+          <input type="hidden" name="admin" value={person.is_admin ? "no" : "yes"} />
+          <Reason m={m} id="admin_reason" />
+          <p class="row">
+            {person.is_admin ? <Chip tone="success">{p.isAdmin}</Chip> : <Chip>{p.notAdmin}</Chip>}
+            <Button variant={person.is_admin ? "outlined" : "tonal"}>
+              {person.is_admin ? p.revokeAdmin : p.grantAdmin}
+            </Button>
+          </p>
+        </form>
+      </Card>
     </>
   );
 }

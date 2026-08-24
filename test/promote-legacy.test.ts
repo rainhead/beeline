@@ -182,16 +182,24 @@ describe("legacy promotion", () => {
     ]);
   });
 
-  test("specimens keep verbatim catalog numbers", async () => {
+  test("specimens keep verbatim catalog numbers, and are numbered per sample", async () => {
     const specimens = await rows(
       conn,
-      `SELECT catalog_number, specimen_number FROM specimen ORDER BY catalog_number`,
+      `SELECT s.sample_number, sp.catalog_number, sp.specimen_number
+       FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id
+       ORDER BY sp.catalog_number`,
     );
+    // The catalog number is the physical identity, kept verbatim. The
+    // specimen number is 1..N within the sample (schema/030), assigned at
+    // promotion rather than copied from the legacy specimenId — Bea's row
+    // arrived as specimen 2 and is the only one in its sample. Merging
+    // series make the legacy number unusable as a key anyway
+    // (test/promote-legacy-merges.test.ts).
     expect(specimens).toEqual([
-      ["25000001", 1],
-      ["25000002", 2],
-      ["25000003", 2],
-      ["25000005", 1],
+      ["1", "25000001", 1],
+      ["OBAS-00657", "25000002", 1],
+      ["1", "25000003", 2],
+      ["OBAS-00658", "25000005", 1],
     ]);
   });
 

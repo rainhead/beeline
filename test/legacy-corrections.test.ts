@@ -45,7 +45,9 @@ describe("legacy correction overlay (ADR 0004, frozen upstream)", () => {
        JOIN specimen sp ON sp.sample_id = s.entity_id
        WHERE s.sample_number = '142'`,
     );
-    expect(promoted).toEqual([["Gretchen Pederson", "142", 3]]);
+    // specimen_number is the per-sample ordinal promotion assigns, not the
+    // legacy specimenId (3 here): this row is the only specimen in sample 142.
+    expect(promoted).toEqual([["Gretchen Pederson", "142", 1]]);
   });
 
   test("upstream converging to the corrected value retires the correction (no-op, no finding)", async () => {

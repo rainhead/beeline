@@ -281,12 +281,17 @@ FROM (SELECT DISTINCT name FROM legacy_collector_name);
 -- (Van Otterloo, Benitez Alvarez). See src/person-name.ts. Someone who only
 -- ever appears inside a joint recordedBy has no parted name to take, and
 -- keeps NULL parts — their label falls back to the full name.
+-- ...and only where that one name is the pair's own: a pair whose recordedBy
+-- names somebody else ('Mark Gorman' rows recorded by 'Pam Arion') would
+-- otherwise hand Pam the name parts off Mark's columns. Matched
+-- case-insensitively, so 'Amy GRotta' still takes Amy's parts.
 CREATE TABLE legacy_person_parts AS
 SELECT c.name,
        arg_min(c.fn, concat(c.fn, ' ', c.ln)) AS fn,
        arg_min(c.ln, concat(c.fn, ' ', c.ln)) AS ln
 FROM legacy_collector_name c
 JOIN legacy_solo_pair sp ON sp.fn IS NOT DISTINCT FROM c.fn AND sp.ln IS NOT DISTINCT FROM c.ln
+WHERE lower(c.name) = lower(concat_ws(' ', c.fn, c.ln))
 GROUP BY c.name;
 
 INSERT INTO person (entity_id, display_name, given_name, family_name)
@@ -297,11 +302,27 @@ LEFT JOIN legacy_person_parts p ON p.name = n.name;
 -- Every (fn, ln) pair resolves to the person named first in its recordedBy —
 -- the primary collector, whose sample numbering the rows carry. Downstream
 -- joins still key on the raw pair; the joint pairs now land on a real person.
+--
+-- Exactly one row per pair, or every downstream join fans out (a pair mapped
+-- to two people duplicates its samples, and with them its specimens). Five
+-- pairs in 383k rows disagree with themselves about who was listed first —
+-- 'Mark Gorman' rows whose recordedBy starts 'Pam Arion', 'Amy Grotta' rows
+-- spelled 'Amy GRotta'. The pair's own name columns break the tie, and plain
+-- name order breaks it when none matches, so the choice is deterministic;
+-- the person not chosen still exists and still lands in sample_collector.
 CREATE TABLE legacy_person_map AS
-SELECT c.fn, c.ln, n.person_id
-FROM legacy_collector_name c
-JOIN legacy_person_name n ON n.name = c.name
-WHERE c.pos = 1;
+SELECT fn, ln, person_id FROM (
+  SELECT c.fn, c.ln, n.person_id,
+         row_number() OVER (
+           PARTITION BY c.fn, c.ln
+           ORDER BY CASE WHEN lower(c.name) = lower(concat_ws(' ', c.fn, c.ln)) THEN 0 ELSE 1 END,
+                    c.name
+         ) AS rn
+  FROM legacy_collector_name c
+  JOIN legacy_person_name n ON n.name = c.name
+  WHERE c.pos = 1
+) ranked
+WHERE rn = 1;
 
 -- iNat accounts: only where login ↔ name pair is unambiguous both ways.
 INSERT INTO inat_account (person_id, inat_user_id, login)
@@ -408,13 +429,35 @@ FROM legacy_sample_map s
 WHERE s.lat IS NOT NULL AND s.lon IS NOT NULL;
 
 -- ── Specimens ───────────────────────────────────────────────────────────
-INSERT INTO specimen (sample_id, specimen_number, catalog_number)
-SELECT s.sample_id, r.p_specimen_number, nullif(r.fieldNumber, '')
+-- specimen_number is 1..N *within the sample* (schema/030), and a sample can
+-- now gather staged rows that legacy numbered in separate series: the
+-- O'Loughlins' trap line was recorded both as "Michael and Dan O'Loughlin"
+-- and as "Michael O'Loughlin", each numbered from 1, and both spellings
+-- resolve to one person and therefore one sample (beeline-77j). Copying the
+-- legacy number would collide on (sample_id, specimen_number) for 20 samples,
+-- so the number is assigned here, per sample, ordered by the legacy number
+-- and then by _id so a re-run assigns the same numbers.
+--
+-- Every staged row keeps its own specimen: the two series may or may not be
+-- the same physical bees (same print date, different fieldNumber batches,
+-- determinations on only one side — beeline-vyq), and ingestion does not get
+-- to decide that by dropping rows. fieldNumber, the identity that is
+-- physically on the label, rides along untouched.
+CREATE TABLE legacy_specimen_number AS
+SELECT r._id,
+       s.sample_id,
+       CAST(row_number() OVER (PARTITION BY s.sample_id
+                               ORDER BY r.p_specimen_number, r._id) AS INTEGER) AS specimen_number
 FROM legacy_promotable r
 JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
 JOIN legacy_sample_map s
   ON s.person_id = m.person_id AND s.sid = r.sid
  AND s.p_date_start IS NOT DISTINCT FROM r.p_date_start;
+
+INSERT INTO specimen (sample_id, specimen_number, catalog_number)
+SELECT n.sample_id, n.specimen_number, nullif(r.fieldNumber, '')
+FROM legacy_specimen_number n
+JOIN legacy_promotable r ON r._id = n._id;
 
 -- ── Within-sample disagreement (beeline-o8g) ────────────────────────────
 -- The rows behind one sample can disagree on a descriptive field; the

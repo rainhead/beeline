@@ -105,16 +105,15 @@ FROM (
   FROM legacy_promotable
 );
 
--- Promoted rows joined back to their specimen entity.
+-- Promoted rows joined back to their specimen entity. The link is the staged
+-- row's _id, not its legacy specimen number: promotion assigns numbers per
+-- sample (see promote-legacy.sql), so the legacy number is no longer a key
+-- into `specimen` once two legacy series merge into one sample.
 CREATE OR REPLACE VIEW legacy_specimen_map AS
-SELECT r._id, sp.entity_id AS specimen_id, sm.person_id AS collector_id
-FROM legacy_promotable r
-JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
-JOIN legacy_sample_map sm
-  ON sm.person_id = m.person_id AND sm.sid = r.sid
- AND sm.p_date_start IS NOT DISTINCT FROM r.p_date_start
-JOIN specimen sp
-  ON sp.sample_id = sm.sample_id AND sp.specimen_number = r.p_specimen_number;
+SELECT n._id, sp.entity_id AS specimen_id, s.collector_id
+FROM legacy_specimen_number n
+JOIN specimen sp ON sp.sample_id = n.sample_id AND sp.specimen_number = n.specimen_number
+JOIN sample s ON s.entity_id = n.sample_id;
 
 INSERT INTO determination (specimen_id, animal_id, sex, caste,
                            determiner_id, determiner_name, is_expert, channel)

@@ -299,5 +299,6 @@ Proofing (between `prepared` and `approved`) can pull records from a run; what A
 
 - **Trap sites / deployments / servicing** — sketched only as `sample.kind='trap'` + series numbers until the staff questions come back. The entities are coming; guessing their shape now would just be wrong.
 - **Roles/permissions** — high-trust environment; `atlas.prints_labels` plus a person↔atlas staff link when a need appears.
+- **Administration** — *who staffs* a person, as distinct from where they belong. `person_membership` records membership only (beeline-lcl); program-only volunteers are supported by OBA staff, and until a second administering body exists there is nothing for the model to tell apart. Arrives with the staff link above, not before.
 - **Notifications/feed** — derivable from `determination.recorded_at` and print-run events when that scope opens.
 - **Ecdysis/GBIF export tables** — exports consume the model; they shouldn't shape it. (Ecdysis is Washington's repository integration, not core.)

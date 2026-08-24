@@ -34,8 +34,9 @@ one thing in the whole model, forever.
   named **`entity_id`** (the future `correction.entity_id`). The name is the
   contract: any column named `entity_id` holds a value from the global space
   and is that row's identity or its target's.
-- **Named configuration is not an entity**: `qc_rule` is keyed by its name;
-  rules are code-adjacent definitions, referenced by name in findings.
+- **Named configuration is not an entity**: `qc_rule` is keyed by its name
+  and `atlas_region` by its state/province code; both are code-adjacent
+  definitions, referenced by that key and never pointed at from outside.
 - The sequence hands out plain INTEGERs (~400k entities/year against a 2.1B
   range); dialect-neutral per [ADR 0001](0001-duckdb-first-with-portable-sql.md).
 

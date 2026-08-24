@@ -397,3 +397,5 @@ name:Alan Yanahan,home_atlas,OBA,usernames.csv,"usernames.csv stateProvince OR, 
 name:Katherine Paterson,home_atlas,OBA,usernames.csv,"usernames.csv stateProvince OR, matched by login"
 name:Megan Asche,home_atlas,WaBA,rainhead,"Peter 2026-08-24: lives in Washington. usernames.csv says OR and is wrong or stale; geography agreed (93% of samples in WA)."
 name:Nancy Hill,home_atlas,OBA,rainhead,"Peter 2026-08-24: collected with OBA, likely lives just over the border. All 58 samples are 2021 and Oregon; inactive since. WaBA had 10 collectors in 2021 and did not reach 31 until 2023, so she predates it as a going concern. usernames.csv says WA."
+name:Ac Quinn,display_name,AC Quinn,rainhead,"Peter 2026-08-24: 'AC' is initials. Promotion takes the spelling used last where it succeeds the earlier (beeline-eyk), and 'Ac Quinn' does succeed 'AC Quinn' — 94 rows to 2024, then 10 from 2025 — but a form title-casing initials is not somebody correcting their name."
+name:Ac Quinn,given_name,AC,rainhead,"Peter 2026-08-24: follows the display_name above, so /people does not show 'AC Quinn' parted as Ac."

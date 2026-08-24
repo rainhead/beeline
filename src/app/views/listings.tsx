@@ -253,7 +253,9 @@ export function SampleListing({ m, query, page, atlases, admin }: ListingProps<S
               <tr>
                 <td>{row.sample_number}</td>
                 <td>{copy.dateRange(row.date_start, row.date_end)}</td>
-                <td>{m.format.list(page.collectors.get(row.sample_id) ?? [])}</td>
+                {/* The label form: on a listing, the question about a
+                    collector is whose name will be printed (/design/names). */}
+                <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
                 <td>{place(row)}</td>
                 <td>{m.format.number(row.specimen_count)}</td>
                 <td>
@@ -318,7 +320,7 @@ export function SpecimenListing({ m, query, page, atlases, admin }: ListingProps
                 </td>
                 <td>{row.sample_number}</td>
                 <td>{m.format.date(row.date_start)}</td>
-                <td>{m.format.list(page.collectors.get(row.sample_id) ?? [])}</td>
+                <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
                 <td>{place(row)}</td>
                 <td>
                   {row.scientific_name !== null && row.taxon_rank !== null ? (

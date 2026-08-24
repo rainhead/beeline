@@ -19,8 +19,14 @@ const unusedInat: InatClient = {
 };
 
 const person = async (conn: Awaited<ReturnType<typeof createMemoryDb>>["conn"], name: string) => {
+  // Parted, because a label prints "A. Adams" and that is derived from the
+  // parts, never re-split from the display name (src/person-name.ts).
+  const [given, family] = name.split(" ");
   const [[id]] = (await (
-    await conn.run(`INSERT INTO person (display_name) VALUES ('${name}') RETURNING entity_id`)
+    await conn.run(
+      `INSERT INTO person (display_name, given_name, family_name)
+       VALUES ('${name}', '${given}', '${family}') RETURNING entity_id`,
+    )
   ).getRows()) as [[number]];
   return id;
 };
@@ -134,7 +140,9 @@ describe("sample listing", () => {
     expect(body).toContain("A-2");
     // Bob's trap line, which Alice also collected: hers to see.
     expect(body).toContain("B-1");
-    expect(body).toContain("Bob Barnes");
+    // The label form, because that is the name that will be printed.
+    expect(body).toContain("B. Barnes");
+    expect(body).not.toContain("Bob Barnes");
     // Bob's solo sample stays his.
     expect(body).not.toContain("B-2");
     expect(body).toContain("3 samples");
@@ -271,7 +279,7 @@ describe("specimen listing", () => {
     expect(body).toContain("3 specimens");
     // Set by the component, not by eye: a species is italic (/design/names).
     expect(body).toContain("<i>Bombus</i> <i>vosnesenskii</i>");
-    expect(body).toContain("Bob Barnes");
+    expect(body).toContain("B. Barnes");
     expect(body).toContain("not determined");
   });
 
@@ -347,7 +355,8 @@ describe("CSV export", () => {
     expect(lines[0]).toContain("B-1");
     expect(lines[0]).toContain("44.5646");
     expect(lines[0]).toContain("inat_public");
-    // Collectors ride along as the Darwin Core list they are.
+    // The export keeps the full names: recordedBy means the whole name, not
+    // the abbreviation a label has room for.
     expect(lines[0]).toContain("Bob Barnes | Alice Adams");
   });
 

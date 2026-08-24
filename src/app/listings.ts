@@ -1,5 +1,6 @@
 import { sql, type Kysely } from "kysely";
 import type { Database, SampleKind } from "../model.js";
+import { labelName } from "../person-name.js";
 
 /**
  * Browsing the collection: the query layer behind /samples and /specimens.
@@ -246,12 +247,23 @@ export interface SpecimenRow {
   taxon_geoprivacy: string | null;
 }
 
+/**
+ * A collector, in both forms the app needs: the full name a screen and a
+ * Darwin Core export use, and the label form a 3pt label has room for
+ * (src/person-name.ts). A listing shows the label form, because the question
+ * a listing answers about a collector is whose name is going to be printed.
+ */
+export interface ListedCollector {
+  display: string;
+  label: string;
+}
+
 export interface Page<Row> {
   rows: Row[];
   /** Rows the filters select in total, not the page's length. */
   total: number;
   /** sample_id → everyone who collected it, in recordedBy order. */
-  collectors: Map<number, string[]>;
+  collectors: Map<number, ListedCollector[]>;
 }
 
 const like = (term: string) => `%${term.toLowerCase()}%`;
@@ -596,19 +608,22 @@ export async function listSpecimens(
  * collector is not a spectator (beeline-77j), so every listing names the
  * whole list, not sample.collector_id.
  */
-export async function collectorsOf(db: Kysely<Database>, sampleIds: number[]): Promise<Map<number, string[]>> {
-  const names = new Map<number, string[]>();
+export async function collectorsOf(
+  db: Kysely<Database>,
+  sampleIds: number[],
+): Promise<Map<number, ListedCollector[]>> {
+  const names = new Map<number, ListedCollector[]>();
   if (sampleIds.length === 0) return names;
   const rows = await db
     .selectFrom("sample_collector as c")
     .innerJoin("person as p", "p.entity_id", "c.person_id")
     .where("c.sample_id", "in", [...new Set(sampleIds)])
-    .select(["c.sample_id", "p.display_name", "c.position"])
+    .select(["c.sample_id", "p.display_name", "p.given_name", "p.family_name", "p.label_name", "c.position"])
     .orderBy("c.position")
     .execute();
   for (const row of rows) {
     const list = names.get(row.sample_id) ?? [];
-    list.push(row.display_name);
+    list.push({ display: row.display_name, label: labelName(row) });
     names.set(row.sample_id, list);
   }
   return names;
@@ -678,7 +693,7 @@ export function sampleCsv(page: Page<SampleRow>): string {
       r.kind,
       isoDate(r.date_start),
       isoDate(r.date_end),
-      (page.collectors.get(r.sample_id) ?? []).join(" | "),
+      (page.collectors.get(r.sample_id) ?? []).map((c) => c.display).join(" | "),
       r.locality,
       r.county,
       r.state_province,
@@ -729,7 +744,7 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       r.specimen_number,
       r.sample_number,
       isoDate(r.date_start),
-      (page.collectors.get(r.sample_id) ?? []).join(" | "),
+      (page.collectors.get(r.sample_id) ?? []).map((c) => c.display).join(" | "),
       r.locality,
       r.county,
       r.state_province,

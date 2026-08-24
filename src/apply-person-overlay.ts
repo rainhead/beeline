@@ -52,8 +52,18 @@ async function resolver(conn: DuckDBConnection, overlay: readonly PersonOverlayR
       byName.set(String(name), [...(byName.get(String(name)) ?? []), Number(id)]);
     }
   }
+  // Legacy's mapping is authoritative where it exists — it keeps the promoted
+  // name whatever the person is called now — so a name it already covers is
+  // left alone. Everyone else is APPENDED, not set: two people sharing a
+  // display name have to reach the ambiguity check below. Keeping only the
+  // first would resolve an ambiguous reference to whichever person the scan
+  // happened to reach first, which is the one outcome this whole module
+  // refuses to produce.
+  const fromLegacy = new Set(byName.keys());
   for (const [name, id] of await rows(conn, `SELECT display_name, entity_id FROM person`)) {
-    if (!byName.has(String(name))) byName.set(String(name), [Number(id)]);
+    const key = String(name);
+    if (fromLegacy.has(key)) continue;
+    byName.set(key, [...(byName.get(key) ?? []), Number(id)]);
   }
   const byInat = new Map<string, number>();
   for (const [uid, pid] of await rows(conn, `SELECT inat_user_id, person_id FROM inat_account`)) {

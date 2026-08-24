@@ -143,6 +143,14 @@ describe("applying the overlay", () => {
     expect(await one(`SELECT label_name FROM person WHERE entity_id = ${people["Ada Collector"]}`)).toEqual([null]);
   });
 
+  it("refuses a name two people share rather than picking one", async () => {
+    await conn.run(`INSERT INTO person (display_name) VALUES ('Ada Collector')`);
+    const r = await apply([row({ person_ref: "name:Ada Collector", field: "admin", value: "yes" })]);
+    expect(r.applied).toBe(0);
+    expect(r.unresolved[0]!.reason).toMatch(/names 2 people/);
+    expect(await one(`SELECT count(*) FROM person_admin`)).toEqual([0n]);
+  });
+
   it("reports a reference that names nobody instead of guessing", async () => {
     const r = await apply([row({ person_ref: "name:Nobody At All", field: "admin", value: "yes" })]);
     expect(r.applied).toBe(0);

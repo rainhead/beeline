@@ -65,6 +65,26 @@ cp -rf source dest          # NOT: cp -r source dest
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
 
+## Git Authority
+
+**This repository authorizes agents to commit and push without asking.** Work
+on `main`, as everyone here does; close the beads you finished and push when
+the work is done and its quality gates pass.
+
+This is the "repository profile" the Beads block below defers to, and it
+overrides that block's conservative default — stated here, outside the managed
+markers, so `bd setup` cannot regenerate it away.
+
+The reason is the era, not the tooling: pre-cutover the store is blown away and
+rebuilt at will, nothing downstream consumes it, and no volunteer sees it, so a
+bad commit costs a revert and nothing else. **Revisit at cutover (December
+2026)**, when minted field numbers become permanent and backups become
+mandatory — the blow-away era ending is what makes this stance expire.
+
+Still true regardless: don't commit someone else's uncommitted work, don't
+rewrite published history, and keep documentation current in the same commit as
+the change it describes.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
 

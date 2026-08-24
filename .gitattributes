@@ -1,0 +1,10 @@
+# TypeScript source is text by definition, so say so rather than letting git
+# guess. src/person-overlay.ts holds a NUL — the separator in rowKey, where a
+# space would collide because a display_name can contain one — and git's
+# heuristic reads that one byte as "binary" and refuses to diff the file.
+#
+# The NUL is correct and stays; what changes is git's guess about it. Scoped to
+# the language, not to the one file, so the next deliberate NUL does not
+# silently make another file unreviewable (beeline-e3q).
+*.ts  diff
+*.tsx diff

@@ -3,11 +3,14 @@
 -- here per ADR 0001. Runs once against a freshly built + staged database
 -- (src/promote-legacy.ts guards that the model is empty).
 --
--- Person grain is the NAME PAIR, not the iNat login (surveyed 2026-08-20):
--- 68,566 rows have no login at all (CSV-era), several logins are shared
--- accounts spanning multiple people (pandg, molfamily), and 67 name pairs
--- span multiple logins. Logins attach as inat_account only when the mapping
--- is unambiguous in both directions.
+-- Person grain is the recordedBy NAME, not the iNat login (surveyed
+-- 2026-08-20): 68,566 rows have no login at all (CSV-era), several logins are
+-- shared accounts spanning multiple people (pandg, molfamily), and 67 name
+-- pairs span multiple logins. Logins attach as inat_account only when the
+-- mapping is unambiguous in both directions. The name is folded to its
+-- letters and digits first, so typography does not split a person in two
+-- (beeline-eyk); a difference of an actual letter still does, and is
+-- curation, not a wider fold.
 --
 -- kind: a sample with a date range is a trap sample — the definitional
 -- criterion (CONTEXT.md); sampleId prefixes also occur on net data (G/R/…).
@@ -253,18 +256,30 @@ WHERE dup_rank = 1
 -- 'Michael | Dan', surnames doubled or not). Keying identity on the list's
 -- members is what stops one couple becoming three fake people, and it merges
 -- their joint rows with the samples each of them collected alone.
-CREATE OR REPLACE VIEW legacy_collector_name AS
-WITH pairs AS (
-  SELECT DISTINCT fn, ln,
+--
+-- Row grain, because collecting is a fact about a sample and not about a
+-- person: a (fn, ln) pair can name one collector on one row and a different
+-- one on the next, and rolling that up to the pair puts both on every sample
+-- the pair ever produced. One stray 'Pam Arion' row among 7,569 'Mark Gorman'
+-- rows used to make Pam a co-collector on 1,675 samples (beeline-eyk).
+CREATE TABLE legacy_row_collector AS
+WITH named AS (
+  SELECT _id, fn, ln,
     CASE WHEN nullif(trim(recordedBy), '') IS NULL
          THEN [concat_ws(' ', fn, ln)]  -- 4 rows in 383k; the name columns are the fallback
          ELSE list_transform(string_split(recordedBy, '|'), x -> trim(x))
     END AS names
   FROM legacy_promotable
 )
-SELECT fn, ln, i AS pos, names[i] AS name
-FROM pairs, range(1, len(names) + 1) g(i)
+SELECT _id, fn, ln, i AS pos, names[i] AS name
+FROM named, range(1, len(names) + 1) g(i)
 WHERE nullif(trim(names[i]), '') IS NOT NULL;
+
+-- Pair grain: every name the pair ever recorded, in recordedBy position. What
+-- the pair *is* — its parts, its login, which person it resolves to — is read
+-- from here; who collected any one sample is read from the row grain above.
+CREATE OR REPLACE VIEW legacy_collector_name AS
+SELECT DISTINCT fn, ln, pos, name FROM legacy_row_collector;
 
 -- A pair that names exactly one collector. Name parts and iNat accounts are
 -- believed only from these: on a joint row, firstName/lastName describe the
@@ -272,9 +287,44 @@ WHERE nullif(trim(names[i]), '') IS NOT NULL;
 CREATE OR REPLACE VIEW legacy_solo_pair AS
 SELECT fn, ln FROM legacy_collector_name GROUP BY fn, ln HAVING max(pos) = 1;
 
+-- Identity is the recordedBy string folded to its letters and digits, not the
+-- string itself: 'Amy GRotta' and 'Amy Grotta' are one human, and so are
+-- 'MaryJo Mosby' / 'Mary Jo Mosby', 'AC Quinn' / 'Ac Quinn', and 'Jackson
+-- MacPherson' / 'Jackson Macpherson' — four splits in 383k rows, every one of
+-- them a person duplicated into two records (beeline-eyk). The fold only ever
+-- merges typography; two spellings that differ by a letter ('Emma Hoskins' /
+-- 'Emily Hoskins') are still two people and need curation, not a wider fold.
+-- Accented names fold to fewer letters than their unaccented twin, so the
+-- fold misses that merge rather than inventing one.
+CREATE OR REPLACE MACRO legacy_name_key(n) AS
+  regexp_replace(lower(n), '[^a-z0-9]', '', 'g');
+
 CREATE TABLE legacy_person_name AS
-SELECT name, nextval('entity_id_seq') AS person_id
-FROM (SELECT DISTINCT name FROM legacy_collector_name);
+WITH keyed AS (
+  SELECT name, legacy_name_key(name) AS name_key
+  FROM (SELECT DISTINCT name FROM legacy_row_collector)
+),
+ids AS (
+  SELECT name_key, nextval('entity_id_seq') AS person_id
+  FROM (SELECT DISTINCT name_key FROM keyed)
+)
+SELECT k.name, k.name_key, i.person_id
+FROM keyed k JOIN ids i ON i.name_key = k.name_key;
+
+-- Of the spellings that fold together, the one most rows actually carry.
+-- Frequency is a guess about typography, not about the person: it picks
+-- 'Amy Grotta' (1,549 rows to 1) and 'AC Quinn' (94 to 10) but also
+-- 'Jackson Macpherson' (27 to 11), and ingest/person-overlay.csv is where a
+-- display_name row overrides it when the majority is the typo.
+CREATE TABLE legacy_person_display AS
+SELECT person_id, name AS display_name FROM (
+  SELECT n.person_id, c.name,
+         row_number() OVER (PARTITION BY n.person_id ORDER BY count(*) DESC, c.name) AS rn
+  FROM legacy_row_collector c
+  JOIN legacy_person_name n ON n.name = c.name
+  GROUP BY n.person_id, c.name
+) ranked
+WHERE rn = 1;
 
 -- Name parts survive promotion: a label prints the initial and the whole
 -- family name, which cannot be recovered from a joined display name
@@ -283,21 +333,30 @@ FROM (SELECT DISTINCT name FROM legacy_collector_name);
 -- keeps NULL parts — their label falls back to the full name.
 -- ...and only where that one name is the pair's own: a pair whose recordedBy
 -- names somebody else ('Mark Gorman' rows recorded by 'Pam Arion') would
--- otherwise hand Pam the name parts off Mark's columns. Matched
--- case-insensitively, so 'Amy GRotta' still takes Amy's parts.
+-- otherwise hand Pam the name parts off Mark's columns. Matched through the
+-- identity fold, so 'Amy GRotta' still takes Amy's parts — and, where the fold
+-- merged two spellings, parted the way the display name is spelled, so
+-- /people cannot show 'Jackson Macpherson' and print 'J. MacPherson'.
 CREATE TABLE legacy_person_parts AS
-SELECT c.name,
-       arg_min(c.fn, concat(c.fn, ' ', c.ln)) AS fn,
-       arg_min(c.ln, concat(c.fn, ' ', c.ln)) AS ln
-FROM legacy_collector_name c
-JOIN legacy_solo_pair sp ON sp.fn IS NOT DISTINCT FROM c.fn AND sp.ln IS NOT DISTINCT FROM c.ln
-WHERE lower(c.name) = lower(concat_ws(' ', c.fn, c.ln))
-GROUP BY c.name;
+SELECT person_id, fn, ln FROM (
+  SELECT n.person_id, c.fn, c.ln,
+         row_number() OVER (
+           PARTITION BY n.person_id
+           ORDER BY CASE WHEN c.name = d.display_name THEN 0 ELSE 1 END,
+                    concat(c.fn, ' ', c.ln)
+         ) AS rn
+  FROM legacy_collector_name c
+  JOIN legacy_solo_pair sp ON sp.fn IS NOT DISTINCT FROM c.fn AND sp.ln IS NOT DISTINCT FROM c.ln
+  JOIN legacy_person_name n ON n.name = c.name
+  JOIN legacy_person_display d ON d.person_id = n.person_id
+  WHERE legacy_name_key(c.name) = legacy_name_key(concat_ws(' ', c.fn, c.ln))
+) ranked
+WHERE rn = 1;
 
 INSERT INTO person (entity_id, display_name, given_name, family_name)
-SELECT n.person_id, n.name, nullif(p.fn, ''), nullif(p.ln, '')
-FROM legacy_person_name n
-LEFT JOIN legacy_person_parts p ON p.name = n.name;
+SELECT d.person_id, d.display_name, nullif(p.fn, ''), nullif(p.ln, '')
+FROM legacy_person_display d
+LEFT JOIN legacy_person_parts p ON p.person_id = d.person_id;
 
 -- Every (fn, ln) pair resolves to the person named first in its recordedBy —
 -- the primary collector, whose sample numbering the rows carry. Downstream
@@ -413,21 +472,35 @@ LEFT JOIN atlas_region reg ON reg.state_province = nullif(s.state_province, '');
 -- recorded both jointly and solo, and the O'Loughlins wrote their pair in both
 -- orders, so a person is taken once at their earliest position and the whole
 -- list is renumbered with the primary pinned to 1.
+--
+-- Read from the rows the sample is made of (legacy_row_collector, keyed by
+-- _id), never from everything the (fn, ln) pair ever recorded: a name that
+-- appears on one row belongs on that row's sample and nowhere else. The pair
+-- rollup put Pam Arion, named once, on all 1,675 of Mark Gorman's samples,
+-- and each of them then printed a two-person collecting pair (beeline-eyk).
+--
+-- The primary is unioned in unconditionally, because the sample carries their
+-- numbering by definition (legacy_sample_map keys on them) — a sample all of
+-- whose rows name somebody else is still theirs, with that somebody else
+-- beside them. Without this, position 1 could disagree with sample.collector_id.
 INSERT INTO sample_collector (sample_id, person_id, position)
 SELECT sample_id, person_id,
        row_number() OVER (PARTITION BY sample_id ORDER BY is_primary DESC, first_pos, person_id)
 FROM (
-  SELECT s.sample_id,
-         n.person_id,
-         min(c.pos) AS first_pos,
-         max(CASE WHEN n.person_id = s.person_id THEN 1 ELSE 0 END) AS is_primary
-  FROM legacy_promotable r
-  JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
-  JOIN legacy_sample_map s
-    ON s.person_id = m.person_id AND s.sid IS NOT DISTINCT FROM r.sid AND s.p_date_start = r.p_date_start
-  JOIN legacy_collector_name c ON c.fn IS NOT DISTINCT FROM r.fn AND c.ln IS NOT DISTINCT FROM r.ln
-  JOIN legacy_person_name n ON n.name = c.name
-  GROUP BY s.sample_id, n.person_id
+  SELECT sample_id, person_id, min(pos) AS first_pos, max(is_primary) AS is_primary
+  FROM (
+    SELECT s.sample_id, n.person_id, c.pos,
+           CASE WHEN n.person_id = s.person_id THEN 1 ELSE 0 END AS is_primary
+    FROM legacy_promotable r
+    JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
+    JOIN legacy_sample_map s
+      ON s.person_id = m.person_id AND s.sid IS NOT DISTINCT FROM r.sid AND s.p_date_start = r.p_date_start
+    JOIN legacy_row_collector c ON c._id = r._id
+    JOIN legacy_person_name n ON n.name = c.name
+    UNION ALL
+    SELECT s.sample_id, s.person_id, 1, 1 FROM legacy_sample_map s
+  ) named
+  GROUP BY sample_id, person_id
 ) g;
 
 -- ── Locations ───────────────────────────────────────────────────────────

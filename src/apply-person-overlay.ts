@@ -129,7 +129,7 @@ export async function applyPersonOverlay(
   for (const row of overlay) {
     const found = resolve(row.person_ref);
     if ("problem" in found) { fail(row, found.problem); continue; }
-    const problem = await applyField(conn, found.id, row.field, row.value);
+    const problem = await applyField(conn, found.id, row.field, row.value, row.author);
     if (problem !== null) fail(row, problem);
     else result.applied++;
   }
@@ -142,6 +142,8 @@ async function applyField(
   personId: number,
   field: OverlayField,
   value: string,
+  /** Who decided — the overlay row's author, recorded on the grant. */
+  author: string,
 ): Promise<string | null> {
   if (field === "inat_user_id") {
     if (value === "") {
@@ -173,7 +175,7 @@ async function applyField(
     } else {
       await conn.run(
         `INSERT INTO person_admin (person_id, granted_by) VALUES ($1, $2) ON CONFLICT (person_id) DO NOTHING`,
-        [personId, "overlay"] as never,
+        [personId, author] as never,
       );
     }
     return null;

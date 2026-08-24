@@ -105,6 +105,12 @@ describe("the roster screen", () => {
     ]);
   });
 
+  it("records who granted admin, not the mechanism that carried it", async () => {
+    await post(ctx.app, "/people/1/admin", { admin: "yes", reason: "runs the atlas" });
+    const grant = await ctx.db.selectFrom("person_admin").where("person_id", "=", 1).selectAll().executeTakeFirst();
+    expect(grant!.granted_by).toBe("whoever"); // the signed-in author, not 'overlay'
+  });
+
   it("rebinds an account, keeping the login beside the id in the record", async () => {
     await post(ctx.app, "/people/1/account", {
       inat_user_id: "429964",

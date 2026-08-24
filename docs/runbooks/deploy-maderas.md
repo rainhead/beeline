@@ -132,6 +132,48 @@ non-interactive shell, so `node` is missing from PATH:
 ssh maderas 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; cd ~/dev/beeline && nvm use >/dev/null && git pull && pnpm install && pnpm app:build && systemctl --user stop beeline && pnpm db:migrate && systemctl --user start beeline'
 ```
 
+## Re-deriving the model after a promotion change
+
+Migrations carry a change to the **schema**. They cannot carry a change to
+**promotion** — the rules deriving the model from staged rows — which leaves
+this store shaped right and derived wrong. `pnpm db:migrate --check` sees
+nothing, because nothing has drifted: the tables are correct and the rows in
+them are stale. beeline-eyk was the first of these; assume more before
+cutover, and check after any change under `ingest/`.
+
+Re-promoting is the fix and re-fetching is not, because the staged sources
+are already in the file — `legacy_occurrence`, and the `observation_*` rows
+whose presence proof deletion detection reads (beeline-3hj). `pnpm db:reseed`
+builds a fresh store from `schema/*.sql` and carries exactly those across.
+
+```sh
+scripts/deploy-maderas.sh          # code first — reseed runs the new rules
+scp data/legacy/taxonomy.csv maderas:dev/beeline/data/legacy/   # an input, not state
+ssh maderas 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; cd ~/dev/beeline && nvm use >/dev/null \
+  && systemctl --user stop beeline \
+  && pnpm db:reseed beeline.duckdb beeline-new.duckdb \
+  && pnpm legacy:promote beeline-new.duckdb \
+  && pnpm inat:promote beeline-new.duckdb \
+  && pnpm inat:backfill-accounts beeline-new.duckdb \
+  && pnpm elevation:derive beeline-new.duckdb'
+# swap only once the counts look right; keep the old file until the app is verified
+ssh maderas 'cd ~/dev/beeline && mv -f beeline.duckdb beeline-prev.duckdb \
+  && mv -f beeline-new.duckdb beeline.duckdb && systemctl --user start beeline'
+```
+
+The service must be stopped throughout: one process owns the store (ADR
+0005), and `db:reseed` reads it while promotion writes the new one. Downtime
+is the length of a promotion — about a minute for 383k rows.
+
+`private.duckdb` is untouched, so sessions and volunteer tokens survive. So
+does `data/person-overlay.csv`; the curated `ingest/person-overlay.csv`
+replays over the rebuilt store, which is what the overlay is for.
+
+Rehearse on a copy first — `scp` the store down and run the same sequence
+locally. Comparing the two side by side is how the 1,019
+`within_sample_disagreement` findings turned out to be the sandbox catching
+up rather than a regression.
+
 ## Operational notes
 
 - The nightly incremental pipeline runs at 02:00 **America/Los_Angeles** and the weekly anti-entropy sweep Sundays at 03:00; the beeatlas

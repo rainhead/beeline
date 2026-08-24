@@ -282,7 +282,7 @@ export const en = {
     descriptions: {
       "session-purge": "Deletes sign-in sessions idle for more than 30 days; their cookies stop working.",
       "nightly-pipeline":
-        "Pulls every observation changed since the last run (edits and new records, however old the observation), promotes into samples, and fills missing elevations from the SRTM tiles on disk.",
+        "Pulls every observation changed since the last run (edits and new records, however old the observation), promotes into samples, and fills missing elevations from the DEM tiles on disk.",
       "weekly-sweep":
         "Re-fetches the full trailing year from each project as a presence proof — the run that detects deletions and anything the incremental pulls missed — then promotes and derives elevations.",
     } as Record<string, string>,

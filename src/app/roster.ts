@@ -253,7 +253,15 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
     }
   }
   const top = logins[0];
-  const bound = logins.find((l) => l.bound);
+  // Summed, not the first match, so this agrees with the listing: one account
+  // can appear under more than one weight row (case-variant logins, or a
+  // rename recorded against the same id), and taking one of them would show a
+  // smaller count here than the roster shows for the same person.
+  const boundRows = logins.filter((l) => l.bound);
+  const bound =
+    boundRows.length === 0
+      ? undefined
+      : { uid: boundRows[0]!.uid, records: boundRows.reduce((sum, l) => sum + l.records, 0) };
   const verdict: BindingVerdict =
     row.login === null
       ? "unbound"

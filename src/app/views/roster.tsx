@@ -294,16 +294,6 @@ export function PersonPage({
         </form>
       </Card>
 
-      <Card>
-        <h2>{p.merge}</h2>
-        <form method="post" action={`${action}/merge`}>
-          <TextField id="merge_into" name="merge_into" label={p.mergeInto} hint={p.mergeHint} />
-          <Reason m={m} id="merge_reason" />
-          <div class="filter-actions">
-            <Button variant="outlined">{p.mergeConfirm}</Button>
-          </div>
-        </form>
-      </Card>
     </>
   );
 }

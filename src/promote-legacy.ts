@@ -23,7 +23,6 @@ export interface PromotionCounts {
   correctionConflicts: number;
   /** Staff decisions about people replayed onto the fresh store (ADR 0004). */
   personOverlayApplied: number;
-  personMerges: number;
   /** Overlay rows that named nobody — reported, never guessed at. */
   personOverlayUnresolved: Unresolved[];
 }
@@ -61,8 +60,8 @@ export async function promoteLegacy(
       .replaceAll("{{DETERMINER_ALIASES}}", determinerAliasesPath.replaceAll("'", "''"))
       .replaceAll("{{DETERMINER_REGISTER}}", determinerRegisterPath.replaceAll("'", "''")),
   );
-  // Last: people and their accounts exist by now, and a merge has to be able
-  // to see everything that points at the person it dissolves.
+  // Last: people and their accounts exist by now, so every reference an
+  // overlay row can name is there to be resolved.
   const overlay = await applyPersonOverlay(
     conn,
     mergeOverlays(await readOverlay(curatedOverlayPath), await readOverlay(appOverlayPath)),
@@ -88,7 +87,6 @@ export async function promoteLegacy(
       "SELECT count(*) FROM legacy_correction_state WHERE status = 'retired'",
     ),
     personOverlayApplied: overlay.applied,
-    personMerges: overlay.merged,
     personOverlayUnresolved: overlay.unresolved,
     correctionConflicts: await scalar(
       "SELECT count(*) FROM legacy_correction_state WHERE status = 'conflict'",

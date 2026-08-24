@@ -388,11 +388,6 @@ export const en = {
     inatUserId: "iNaturalist user id",
     inatLogin: "Login",
     bindAccount: "Save account",
-    merge: "Merge",
-    mergeInto: "Merge this person into",
-    mergeHint:
-      "Everything pointing at this person — samples, collecting, determinations, their account — moves to the person you name, and this row is deleted. Name them exactly as their display name reads.",
-    mergeConfirm: "Merge and delete this person",
     reason: "Why",
     reasonHint: "Recorded in the overlay beside the change, and read by whoever reviews it later.",
     samplesCollected: (all: number, primary: number) =>

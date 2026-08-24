@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { inatClient, loadInatCredentials } from "./auth.js";
 import { configFromEnv } from "./config.js";
 import { openAppDb, seedAdmins } from "./db.js";
+import { readOverlay } from "../person-overlay.js";
 import { startScheduler } from "./jobs/framework.js";
 import { buildJobs } from "./jobs/registry.js";
 import { createApp } from "./server.js";
@@ -10,7 +11,7 @@ import { cookieSessionResolver, type SessionResolver } from "./session.js";
 const config = configFromEnv();
 const { db, instance, close } = await openAppDb(config);
 
-const seeded = await seedAdmins(db, config.adminLogins);
+const seeded = await seedAdmins(db, config.adminLogins, await readOverlay(config.personOverlayPath));
 if (seeded > 0) console.log(`admin roster was empty; seeded ${seeded} from the checked-in list`);
 
 if (config.privateDbKey === null) {

@@ -519,8 +519,6 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     if (applied.unresolved.length > 0) {
       return showPerson(c, undefined, applied.unresolved.map((u) => u.reason).join("; "));
     }
-    // A merge deletes this person, so there is no page left to return to.
-    if (rows.some((r) => r.field === "merged_into")) return c.redirect("/people");
     return showPerson(c, m.people.savedRebuild);
   };
 
@@ -547,13 +545,6 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   app.post("/people/:id/membership", (c) => decide(c, (form) => [["home_atlas", text(form, "home_atlas")]]));
 
   app.post("/people/:id/admin", (c) => decide(c, (form) => [["admin", text(form, "admin")]]));
-
-  app.post("/people/:id/merge", (c) =>
-    decide(c, (form) => {
-      const into = text(form, "merge_into");
-      return into === "" ? [] : [["merged_into", into.includes(":") ? into : `name:${into}`]];
-    }),
-  );
 
   app.post("/jobs/run/:name", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);

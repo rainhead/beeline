@@ -42,7 +42,6 @@ describe("legacy promotion", () => {
       correctionsRetired: 0,
       correctionConflicts: 0,
       personOverlayApplied: 0,
-      personMerges: 0,
       personOverlayUnresolved: [],
     });
   });

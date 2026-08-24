@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import { createMemoryDb } from "./helpers.js";
 import { createApp } from "../src/app/server.js";
-import { readOverlay } from "../src/person-overlay.js";
+import { readOverlay, type PersonOverlayRow } from "../src/person-overlay.js";
+import { seedAdmins } from "../src/app/db.js";
 import type { InatClient } from "../src/app/auth.js";
 
 const unusedInat: InatClient = {
@@ -151,24 +152,6 @@ describe("the roster screen", () => {
     expect(person!.label_name).toBeNull();
   });
 
-  it("merges, then sends you back to the roster because the page is gone", async () => {
-    const res = await post(ctx.app, "/people/2/merge", { merge_into: "Ada Collector", reason: "same person" });
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/people");
-    expect(await ctx.db.selectFrom("person").where("entity_id", "=", 2).selectAll().executeTakeFirst()).toBeUndefined();
-    expect((await readOverlay(ctx.overlayPath))[0]).toMatchObject({
-      person_ref: "name:Bo Netter",
-      field: "merged_into",
-      value: "name:Ada Collector",
-    });
-  });
-
-  it("reports a merge target that names nobody, and merges nothing", async () => {
-    const res = await post(ctx.app, "/people/2/merge", { merge_into: "Nobody Here", reason: "" });
-    expect(await res.text()).toContain("no person named");
-    expect(await ctx.db.selectFrom("person").where("entity_id", "=", 2).selectAll().executeTakeFirst()).toBeDefined();
-  });
-
   it("revoking your own admin rights takes effect on the next request", async () => {
     // The roster is the one screen that can lock its user out; better that it
     // simply works than that it pretends to and leaves a stale session admin.
@@ -180,5 +163,45 @@ describe("the roster screen", () => {
     await post(ctx.app, "/people/1/admin", { admin: "yes", reason: "" });
     const text = await readFile(ctx.overlayPath, "utf8");
     expect(text.split("\n")[0]).toBe("person_ref,field,value,author,reason");
+  });
+});
+
+describe("the admin bootstrap seed", () => {
+  const store = async () => {
+    const { instance, conn } = await createMemoryDb();
+    await conn.run(`INSERT INTO person (entity_id, display_name) VALUES (1, 'Ada Collector')`);
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (1, 111, 'adacollects')`);
+    return { db: createKysely(instance), conn };
+  };
+  const decision = (field: string): PersonOverlayRow =>
+    ({ person_ref: "name:Ada Collector", field, value: "no", author: "staffer", reason: "" }) as PersonOverlayRow;
+
+  it("lets a store nobody has granted anything in", async () => {
+    const { db } = await store();
+    expect(await seedAdmins(db, ["adacollects"], [])).toBe(1);
+  });
+
+  it("does not top up a roster that already has someone", async () => {
+    const { db, conn } = await store();
+    await conn.run(`INSERT INTO person_admin (person_id) VALUES (1)`);
+    expect(await seedAdmins(db, ["adacollects"], [])).toBe(0);
+  });
+
+  it("does not resurrect a revocation that emptied the roster", async () => {
+    // The table alone cannot tell "never granted" from "deliberately revoked
+    // down to nobody". The overlay can, because every decision lands there
+    // first — so revoking the last admin stays revoked across a restart.
+    const { db } = await store();
+    expect(await seedAdmins(db, ["adacollects"], [decision("admin")])).toBe(0);
+  });
+
+  it("is not put off by decisions about anything else", async () => {
+    const { db } = await store();
+    expect(await seedAdmins(db, ["adacollects"], [decision("home_atlas")])).toBe(1);
+  });
+
+  it("skips a login with no account rather than failing the boot", async () => {
+    const { db } = await store();
+    expect(await seedAdmins(db, ["adacollects", "nobody-here"], [])).toBe(1);
   });
 });

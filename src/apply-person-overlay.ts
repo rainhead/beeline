@@ -21,7 +21,6 @@ export interface Unresolved {
 
 export interface ApplyResult {
   applied: number;
-  merged: number;
   unresolved: Unresolved[];
 }
 
@@ -107,93 +106,20 @@ async function resolver(conn: DuckDBConnection, overlay: readonly PersonOverlayR
   };
 }
 
-/** Every foreign key to person, repointed loser → winner. */
-async function mergePerson(conn: DuckDBConnection, loser: number, winner: number): Promise<void> {
-  await conn.run(`UPDATE determination SET determiner_id = $1 WHERE determiner_id = $2`, [winner, loser] as never);
-
-  // Updating sample would violate sample_collector's foreign key even though
-  // neither the key nor the referencing rows change: DuckDB <= 1.5 rewrites an
-  // UPDATE as delete + insert, and the delete half sees the children (the same
-  // limitation migration 0007 works around; beeline-c1b). So the children are
-  // lifted off, the parent updated, and the children put back — remapped,
-  // deduplicated, and reordered in the one pass.
-  //
-  // sample_collector is keyed (sample_id, person_id), so where both people
-  // collected the same sample the survivor appears once, at the earlier of the
-  // two positions, rather than twice.
-  await conn.run(`CREATE OR REPLACE TEMP TABLE merge_collectors AS
-    SELECT sample_id, min(position) AS position
-    FROM (SELECT sample_id, position, CASE WHEN person_id = $1 THEN $2 ELSE person_id END AS person_id
-          FROM sample_collector
-          WHERE sample_id IN (SELECT sample_id FROM sample_collector WHERE person_id IN ($1, $2)))
-    WHERE person_id = $2
-    GROUP BY sample_id`, [loser, winner] as never);
-  await conn.run(
-    `DELETE FROM sample_collector WHERE person_id IN ($1, $2)`,
-    [loser, winner] as never,
-  );
-  await conn.run(`UPDATE sample SET collector_id = $1 WHERE collector_id = $2`, [winner, loser] as never);
-  await conn.run(`UPDATE sample SET atlas_assigned_by = $1 WHERE atlas_assigned_by = $2`, [winner, loser] as never);
-  await conn.run(
-    `INSERT INTO sample_collector (sample_id, person_id, position)
-     SELECT sample_id, $1, position FROM merge_collectors`,
-    [winner] as never,
-  );
-  await conn.run(`DROP TABLE merge_collectors`);
-
-  // 1:1 facets: the winner's own row wins; the loser's is dropped, never
-  // silently overwriting a fact the winner already states.
-  for (const t of ["inat_account", "person_orcid", "person_home_atlas", "person_admin"]) {
-    await conn.run(
-      `DELETE FROM ${t} WHERE person_id = $1 AND EXISTS (SELECT 1 FROM ${t} w WHERE w.person_id = $2)`,
-      [loser, winner] as never,
-    );
-    await conn.run(`UPDATE ${t} SET person_id = $1 WHERE person_id = $2`, [winner, loser] as never);
-  }
-  await conn.run(`DELETE FROM person WHERE entity_id = $1`, [loser] as never);
-}
-
 export async function applyPersonOverlay(
   conn: DuckDBConnection,
   overlay: readonly PersonOverlayRow[],
 ): Promise<ApplyResult> {
-  const result: ApplyResult = { applied: 0, merged: 0, unresolved: [] };
+  const result: ApplyResult = { applied: 0, unresolved: [] };
   if (overlay.length === 0) return result;
   const resolve = await resolver(conn, overlay);
   const fail = (r: PersonOverlayRow, reason: string) =>
     result.unresolved.push({ person_ref: r.person_ref, field: r.field, reason });
 
-  // Merges first, so a later row naming the absorbed person lands on the
-  // person they were absorbed into rather than on a row that no longer exists.
-  const moved = new Map<number, number>();
-  const follow = (id: number): number => {
-    const seen = new Set<number>();
-    let at = id;
-    while (moved.has(at) && !seen.has(at)) {
-      seen.add(at);
-      at = moved.get(at)!;
-    }
-    return at;
-  };
-  for (const row of overlay.filter((r) => r.field === "merged_into")) {
-    const from = resolve(row.person_ref);
-    const into = resolve(row.value);
-    if ("problem" in from) { fail(row, from.problem); continue; }
-    if ("problem" in into) { fail(row, `merge target: ${into.problem}`); continue; }
-    const loser = follow(from.id);
-    const winner = follow(into.id);
-    if (loser === winner) { fail(row, "already the same person"); continue; }
-    await mergePerson(conn, loser, winner);
-    moved.set(loser, winner);
-    result.merged++;
-    result.applied++;
-  }
-
-  for (const row of overlay.filter((r) => r.field !== "merged_into")) {
+  for (const row of overlay) {
     const found = resolve(row.person_ref);
     if ("problem" in found) { fail(row, found.problem); continue; }
-    const id = follow(found.id);
-    const problem = await applyField(conn, id, row.field, row.value);
+    const problem = await applyField(conn, found.id, row.field, row.value);
     if (problem !== null) fail(row, problem);
     else result.applied++;
   }

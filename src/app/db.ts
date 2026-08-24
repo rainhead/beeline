@@ -85,12 +85,26 @@ export async function openAppDb(config: Pick<AppConfig, "dbPath" | "privateDbPat
  * checked-in ADMIN_LOGINS is the seed that keeps a store nobody has granted
  * anything from locking its keepers out.
  *
- * Seeds only when the table is EMPTY. Topping it up on every boot would
- * resurrect a deliberate revocation at the next restart, which is the one
- * thing a roster screen must not do.
+ * "Nobody has granted anything" cannot be read off person_admin alone. An
+ * empty table means either a store that has never been touched or one whose
+ * last admin was deliberately revoked, and re-seeding the second case would
+ * undo that decision at the next restart — the one thing a roster screen must
+ * not do. The overlay is what tells them apart: every grant and revocation the
+ * app makes is recorded there before it reaches a row, so an admin row in the
+ * overlay means the question has been answered by a person, whatever the table
+ * currently says.
+ *
+ * Seeding is therefore once per store, and the way back in after revoking
+ * everyone is to remove the admin rows from the overlay (or set
+ * BEELINE_ADMIN_LOGINS), not to restart and hope.
  */
-export async function seedAdmins(db: Kysely<Database>, logins: readonly string[]): Promise<number> {
+export async function seedAdmins(
+  db: Kysely<Database>,
+  logins: readonly string[],
+  decisions: ReadonlyArray<{ field: string }> = [],
+): Promise<number> {
   if (logins.length === 0) return 0;
+  if (decisions.some((d) => d.field === "admin")) return 0;
   const existing = await db.selectFrom("person_admin").select("person_id").executeTakeFirst();
   if (existing !== undefined) return 0;
   const people = await db

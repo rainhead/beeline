@@ -16,6 +16,8 @@ import { rows } from "./helpers.js";
  * presence rows deletion detection reads are already in the file.
  */
 
+const SOURCE_SYNC_RUN_ID = 722_365;
+
 let dir: string;
 let source: string;
 let target: string;
@@ -32,9 +34,11 @@ beforeAll(async () => {
   const seed = await seedInstance.connect();
   await applySchema(seed);
   await seed.run(`CREATE TABLE legacy_occurrence AS SELECT 'aaaa1111' AS _id, 'Bea Trapper' AS recordedBy`);
+  // A real store's sync runs are drawn AFTER promotion, so their ids are huge
+  // — 722,365 on the sandbox. That is what used to set the new store's floor.
   await seed.run(
-    `INSERT INTO sync_run (source, authenticated, updated_since, completed_at)
-     VALUES ('18521', true, NULL, now())`,
+    `INSERT INTO sync_run (entity_id, source, authenticated, updated_since, completed_at)
+     VALUES (${SOURCE_SYNC_RUN_ID}, '18521', true, NULL, now())`,
   );
   await seed.run(
     `INSERT INTO observation_load (inat_id, sync_run_id, content, content_hash)
@@ -46,6 +50,10 @@ beforeAll(async () => {
   );
   // Model rows, of the kind promotion derives and this tool must not carry.
   await seed.run(`INSERT INTO person (entity_id, display_name) VALUES (nextval('entity_id_seq'), 'Stale Person')`);
+  // And a sequence left where a promoted store leaves it: far ahead. Both
+  // catalogs are attached during the carry and both have a sequence by this
+  // name, so reading the wrong one reports the source's floor as the target's.
+  await seed.run(`SELECT max(nextval('entity_id_seq')) FROM range(5000)`);
   seed.closeSync();
 
   counts = await reseedStore(source, target);
@@ -86,14 +94,25 @@ describe("reseeding a store that cannot be blown away", () => {
     expect(joined).toEqual([["18521", 991n, 991n]]);
   });
 
-  test("the id sequence restarts past what came across", async () => {
-    // Ids are sequence draws (ADR 0002). A sequence left at 1 would hand
-    // promotion's first person the id a carried sync run already holds, and
-    // observation_load.sync_run_id would silently point at a person.
-    const highest = await rows(conn, `SELECT max(entity_id) FROM sync_run`);
-    expect(counts.sequenceRestartedAt).toBeGreaterThan(Number(highest[0]![0]));
+  test("carried rows take fresh ids, so reseeding does not ratchet the floor", async () => {
+    // The source's sync run holds a high id, drawn after a promotion. Carrying
+    // it verbatim forced the sequence past it and every later reseed past that
+    // — ids climbing by a million a run for no reason. This builds a new
+    // database, where a sync run's id is no more permanent than a person's.
+    const source = await rows(conn, `SELECT max(entity_id) FROM sync_run`);
+    expect(Number(source[0]![0])).toBeLessThan(SOURCE_SYNC_RUN_ID);
+    expect(counts.sequenceAt).toBeLessThan(SOURCE_SYNC_RUN_ID);
     const next = await rows(conn, `SELECT nextval('entity_id_seq')`);
-    expect(Number(next[0]![0])).toBe(counts.sequenceRestartedAt);
+    expect(Number(next[0]![0])).toBe(counts.sequenceAt);
+  });
+
+  test("reseeding the result again lands in the same id range", async () => {
+    // The property the old behaviour lacked: reseed twice and the floor was a
+    // million higher. A store should not accumulate id debt for being kept.
+    const again = join(dir, "again.duckdb");
+    const second = await reseedStore(target, again);
+    expect(second.carried).toEqual(counts.carried);
+    expect(second.sequenceAt).toBe(counts.sequenceAt);
   });
 
   test("the target is a schema build, so migrations are stamped and never run", async () => {
@@ -103,8 +122,8 @@ describe("reseeding a store that cannot be blown away", () => {
 
   test("a source that never synced reseeds anyway", async () => {
     // Skipping a missing table rather than failing: legacy-only stores exist,
-    // and so will iNat-only ones. The sequence still lands past the seed rows
-    // the schema itself inserts — the atlases hold the first ids in any store.
+    // and so will iNat-only ones. Nothing carried, so the sequence sits right
+    // after the seed rows the schema itself inserts — the atlases.
     const bare = join(dir, "bare.duckdb");
     const out = join(dir, "bare-target.duckdb");
     const instance = await DuckDBInstance.create(bare);
@@ -122,7 +141,7 @@ describe("reseeding a store that cannot be blown away", () => {
     const bareConn = await bareInstance.connect();
     const atlases = await rows(bareConn, `SELECT max(entity_id) FROM atlas`);
     bareConn.closeSync();
-    expect(bareCounts.sequenceRestartedAt).toBe(Number(atlases[0]![0]) + 1);
+    expect(bareCounts.sequenceAt).toBe(Number(atlases[0]![0]) + 1);
   });
 
   test("reseeding onto the source refuses rather than destroying it", async () => {

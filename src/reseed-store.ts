@@ -28,16 +28,24 @@ import { applySchema } from "./schema.js";
  * fail on a second run. The taxonomy CSV is an input, not state — pass its
  * path to promotion the way a fresh ingest does.
  *
- * Sequence-drawn ids come across unchanged, so the sequence has to be moved
- * past them or the first promoted row collides with a sync run.
+ * Ids are NOT carried. This builds a new database, so entity_id_seq starts at
+ * 1 and every person, sample and specimen is renumbered anyway — there is no
+ * sense in which a sync run's id is more permanent than a person's. ADR 0002
+ * says as much: an entity_id is a per-store sequence draw, which is why the
+ * person overlay refuses to key on one. Carrying them verbatim only forced
+ * the sequence past ~700k, and every later reseed past the one before, so a
+ * store's ids climbed by a million each time for no reason (beeline-eyk).
+ *
+ * The one thing that has to survive is the ASSOCIATION between a sync run and
+ * the loads and presence rows that point at it, and that is 18 rows to remap.
+ * Anything anchoring on staged observations later must key on inat_id and
+ * content_hash for the same reason the overlay keys on names.
  */
 
 /**
- * Staged and synced state, in an order that satisfies the foreign keys:
- * observation_load and observation_seen both point at sync_run.
- *
- * job_run is here for a softer reason — it is history rather than state, and
- * losing it would make /jobs claim the pipeline had never run.
+ * What comes across: the staged legacy dump, the iNat sync history, and the
+ * job log. Everything else in the store is a pure function of these, and
+ * promotion recomputes it.
  */
 export const CARRIED_TABLES = [
   "legacy_occurrence",
@@ -47,13 +55,10 @@ export const CARRIED_TABLES = [
   "job_run",
 ] as const;
 
-/** Tables holding an entity_id drawn from the shared sequence (ADR 0002). */
-const SEQUENCE_DRAWN = ["sync_run", "observation_load", "job_run"] as const;
-
 export interface ReseedCounts {
   carried: Record<string, number>;
-  /** Where entity_id_seq was left, so promotion cannot collide with what came across. */
-  sequenceRestartedAt: number;
+  /** The next id promotion will draw — where the carried rows left off. */
+  sequenceAt: number;
 }
 
 const scalar = async (conn: DuckDBConnection, sql: string): Promise<number> => {
@@ -79,57 +84,68 @@ export async function carryStaging(
   conn: DuckDBConnection,
   sourcePath: string,
 ): Promise<ReseedCounts> {
-  // Everything below this the fresh build has already handed out — the seed
-  // rows the schema inserts. Carried ids have to sit above it, and on a real
-  // store they do, having been drawn long after those seeds.
-  const firstFree =
-    (await scalar(
-      conn,
-      `SELECT coalesce(max(last_value), 0) FROM duckdb_sequences() WHERE sequence_name = 'entity_id_seq'`,
-    )) + 1;
-
   // The target's catalog is named after its file, so ask rather than assume.
   const [[target]] = (await (await conn.run(`SELECT current_database()`)).getRows()) as [[string]];
   await conn.run(`ATTACH '${sourcePath.replaceAll("'", "''")}' AS old (READ_ONLY)`);
   try {
     const carried: Record<string, number> = {};
-    for (const table of CARRIED_TABLES) {
-      if (!(await tableExists(conn, "old", table))) continue;
-      // Two shapes here. sync_run and friends are schema tables, so the fresh
-      // build already has them empty and BY NAME fills them — a column added
-      // to the schema since the source was built takes its default instead of
-      // shifting every value one to the left. legacy_occurrence is not in the
-      // schema at all (load-legacy makes it), so it arrives whole.
-      await conn.run(
-        (await tableExists(conn, target, table))
-          ? `INSERT INTO ${table} BY NAME SELECT * FROM old.${table}`
-          : `CREATE TABLE ${table} AS SELECT * FROM old.${table}`,
-      );
+    const has = (table: string) => tableExists(conn, "old", table);
+    const count = async (table: string) => {
       carried[table] = await scalar(conn, `SELECT count(*) FROM ${table}`);
+    };
+
+    // Not a schema table — load-legacy makes it — so it arrives whole. It
+    // carries no ids of its own.
+    if (await has("legacy_occurrence")) {
+      await conn.run(`CREATE TABLE legacy_occurrence AS SELECT * FROM old.legacy_occurrence`);
+      await count("legacy_occurrence");
     }
-    // Past the highest id that came across, or promotion's first draw reuses
-    // a sync run's id and the foreign keys start pointing at samples.
-    let highest = 0;
-    for (const table of SEQUENCE_DRAWN) {
-      if (!carried[table]) continue;
-      const [[lo, hi]] = (await (
-        await conn.run(`SELECT min(entity_id), max(entity_id) FROM ${table}`)
-      ).getRows()) as [[bigint, bigint]];
-      if (Number(lo) < firstFree) {
-        throw new Error(
-          `${table} carries entity_id ${lo}, which the rebuilt store already gave to a seed row — ` +
-            `ids are globally unique (ADR 0002), so this source cannot be reseeded as is`,
-        );
+
+    if (await has("sync_run")) {
+      // The one association worth keeping: loads and presence rows point at
+      // their run. Eighteen rows on a real store, so remapping them is cheaper
+      // than the id arithmetic that preserving them used to cost.
+      await conn.run(`CREATE OR REPLACE TEMP TABLE sync_run_id_map AS
+        SELECT entity_id AS old_id, nextval('entity_id_seq') AS new_id FROM old.sync_run`);
+      await conn.run(`INSERT INTO sync_run BY NAME
+        SELECT s.* REPLACE (m.new_id AS entity_id)
+        FROM old.sync_run s JOIN sync_run_id_map m ON m.old_id = s.entity_id`);
+      await count("sync_run");
+
+      // BY NAME with entity_id excluded, so the column's own default draws it.
+      if (await has("observation_load")) {
+        await conn.run(`INSERT INTO observation_load BY NAME
+          SELECT o.* EXCLUDE (entity_id) REPLACE (m.new_id AS sync_run_id)
+          FROM old.observation_load o JOIN sync_run_id_map m ON m.old_id = o.sync_run_id`);
+        await count("observation_load");
       }
-      highest = Math.max(highest, Number(hi));
+      // Not an entity (ADR 0002): a presence row is keyed by what it witnesses,
+      // so only the run it points at is rewritten.
+      if (await has("observation_seen")) {
+        await conn.run(`INSERT INTO observation_seen BY NAME
+          SELECT o.* REPLACE (m.new_id AS sync_run_id)
+          FROM old.observation_seen o JOIN sync_run_id_map m ON m.old_id = o.sync_run_id`);
+        await count("observation_seen");
+      }
+      await conn.run(`DROP TABLE sync_run_id_map`);
     }
-    // No ALTER SEQUENCE in DuckDB and no dropping one three dozen tables
-    // default from, so the sequence is drawn forward instead.
-    const restartAt = Math.max(highest + 1, firstFree);
-    if (restartAt > firstFree) {
-      await conn.run(`SELECT max(nextval('entity_id_seq')) FROM range(${restartAt - firstFree})`);
+
+    // Nothing points at a job run, so it simply takes a new id.
+    if (await has("job_run")) {
+      await conn.run(`INSERT INTO job_run BY NAME SELECT * EXCLUDE (entity_id) FROM old.job_run`);
+      await count("job_run");
     }
-    return { carried, sequenceRestartedAt: restartAt };
+
+    // Scoped to the target: both catalogs are attached and both have a
+    // sequence by this name, and reading the source's reported a number seven
+    // hundred thousand too high while the store itself was fine.
+    const sequenceAt =
+      (await scalar(
+        conn,
+        `SELECT coalesce(max(last_value), 0) FROM duckdb_sequences()
+         WHERE database_name = '${target}' AND sequence_name = 'entity_id_seq'`,
+      )) + 1;
+    return { carried, sequenceAt };
   } finally {
     await conn.run(`DETACH old`);
   }

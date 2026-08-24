@@ -144,7 +144,10 @@ cutover, and check after any change under `ingest/`.
 Re-promoting is the fix and re-fetching is not, because the staged sources
 are already in the file — `legacy_occurrence`, and the `observation_*` rows
 whose presence proof deletion detection reads (beeline-3hj). `pnpm db:reseed`
-builds a fresh store from `schema/*.sql` and carries exactly those across.
+builds a fresh store from `schema/*.sql` and carries exactly those across —
+renumbering them, because a new database renumbers everything else too and a
+sync run's id is no more permanent than a person's (ADR 0002). Only the
+association between a run and the rows pointing at it survives.
 
 ```sh
 scripts/deploy-maderas.sh          # code first — reseed runs the new rules

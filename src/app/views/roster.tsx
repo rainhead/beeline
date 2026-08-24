@@ -57,7 +57,11 @@ type Judged = {
   bound_records: number | null;
   top_login: string | null;
   top_records: number | null;
+  top_holder: string | null;
 };
+
+/** A date, or the dash that means it never happened. */
+const when = (m: Messages, d: Date | string | null) => (d === null ? m.people.never : m.format.date(d));
 
 /**
  * The short form, for a row: the two verdicts that mean something is wrong,
@@ -82,7 +86,12 @@ function accountWhy(m: Messages, row: Judged): string | null {
     case "unattested":
       return w.unattested;
     case "unbound":
-      return w.unbound;
+      // "No account" is the fact; whose account their records point at is the
+      // reason, and without it the row reads as an oversight rather than as a
+      // household sharing a login.
+      return row.top_login !== null && row.top_holder !== null
+        ? w.unboundHeldBy(row.top_records ?? 0, row.top_login, row.top_holder)
+        : w.unbound;
     default:
       // Nothing to weigh, so nothing to say. Saying "no legacy records" told
       // the reader about our bookkeeping, not about the person.
@@ -131,7 +140,17 @@ export function Roster({ m, page, query }: { m: Messages; page: RosterPage; quer
       {page.rows.length === 0 ? (
         <EmptyState>{p.noPeople}</EmptyState>
       ) : (
-        <DataTable columns={[p.colPerson, p.colAccount, p.colSamples, p.colMembership, p.colAdmin]}>
+        <DataTable
+          columns={[
+            p.colPerson,
+            p.colAccount,
+            p.colSamples,
+            p.colLastSample,
+            p.colLastSeen,
+            p.colMembership,
+            p.colAdmin,
+          ]}
+        >
           {page.rows.map((row) => (
             <tr>
               <td>
@@ -139,7 +158,12 @@ export function Roster({ m, page, query }: { m: Messages; page: RosterPage; quer
               </td>
               <td>
                 {row.login === null ? (
-                  <Meta>{p.noAccount}</Meta>
+                  <>
+                    <Meta>{p.noAccount}</Meta>
+                    {checking && row.top_login !== null && row.top_holder !== null && (
+                      <Meta block>{p.accountHeldBy(row.top_login, row.top_holder)}</Meta>
+                    )}
+                  </>
                 ) : (
                   <>
                     <code>{row.login}</code>
@@ -149,6 +173,8 @@ export function Roster({ m, page, query }: { m: Messages; page: RosterPage; quer
                 )}
               </td>
               <td>{m.format.number(row.samples)}</td>
+              <td>{when(m, row.last_sample)}</td>
+              <td>{when(m, row.last_seen)}</td>
               <td>{membershipCell(m, row)}</td>
               <td>{row.is_admin ? <Chip tone="success">{p.colAdmin}</Chip> : "—"}</td>
             </tr>
@@ -192,7 +218,13 @@ export function PersonPage({
       <p>
         <a href="/people">{p.backToRoster}</a>
       </p>
-      <PageHeader title={person.display_name} lede={p.samplesCollected(person.samples, person.primary_samples)} />
+      <PageHeader
+        title={person.display_name}
+        lede={p.samplesCollected(person.samples, person.primary_samples)}
+      />
+      <Meta block>
+        {p.colLastSample}: {when(m, person.last_sample)} · {p.colLastSeen}: {when(m, person.last_seen)}
+      </Meta>
       {problem !== undefined && <Callout tone="blocking">{p.problem(problem)}</Callout>}
       {notice !== undefined && <Callout tone="success">{notice}</Callout>}
 

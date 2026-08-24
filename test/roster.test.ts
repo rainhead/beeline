@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
+import { insertCleanSample } from "./helpers.js";
 import { createMemoryDb } from "./helpers.js";
 import { createApp } from "../src/app/server.js";
 import { readOverlay, type PersonOverlayRow } from "../src/person-overlay.js";
@@ -144,6 +145,53 @@ describe("the roster screen", () => {
       const body = await (await ctx.app.request("/people/3")).text();
       expect(body).toContain("Only 1 of their records uses this account. 40 use busierlogin instead.");
     });
+  });
+
+  /**
+   * A household shares one iNaturalist login, and inat_user_id is unique, so
+   * only one of them can hold it. The other's row is blank where the truth is
+   * "signs in as the other one" — Robert Pederson, 1,087 samples and no way
+   * in, beside Gretchen who holds pandg (beeline-eyk).
+   */
+  it("says whose account an unbound person's records point at", async () => {
+    await ctx.conn.run(`INSERT INTO person (entity_id, display_name) VALUES (4, 'Partner Pederson')`);
+    await ctx.conn.run(`CREATE TABLE legacy_person_map AS
+      SELECT * FROM (VALUES (1, 'Ada', 'Collector'), (4, 'Partner', 'Pederson')) t(person_id, fn, ln)`);
+    await ctx.conn.run(`CREATE TABLE legacy_occurrence AS
+      SELECT * FROM (VALUES ('Partner', 'Pederson', 'adacollects', '111', 9)) t(firstName, lastName, userLogin, userId, copies),
+      LATERAL range(copies)`);
+
+    const body = await (await ctx.app.request("/people?q=Partner")).text();
+    expect(body).toContain("No account");
+    expect(body).toContain("Their records use adacollects, which is Ada Collector&#39;s.");
+
+    // And at length where somebody would act on it.
+    const person = await (await ctx.app.request("/people/4")).text();
+    expect(person).toContain("9 of their records use adacollects, which is Ada Collector&#39;s");
+    expect(person).toContain("a shared login only one person can hold");
+  });
+
+  it("shows when they last collected and when they were last here", async () => {
+    // Two readings of the same question — is this person still active — and
+    // neither is derivable from the other: somebody can collect for years
+    // without signing in, and sign in without having collected since 2019.
+    await insertCleanSample(ctx.conn, {
+      collector_id: "1",
+      date_start: "DATE '2025-08-12'",
+      date_end: "DATE '2025-08-12'",
+    });
+    const body = await (await ctx.app.request("/people?q=Ada")).text();
+    expect(body).toContain("<th>Last sample</th>");
+    expect(body).toContain("<th>Last seen</th>");
+    expect(body).toContain("Aug 12, 2025");
+  });
+
+  it("has no answer for last seen rather than a wrong one, with no private store", async () => {
+    // createMemoryDb attaches no private store, which is also a CLI run or a
+    // restore. An em dash, not a crash and not today's date.
+    const body = await (await ctx.app.request("/people?q=Bo")).text();
+    expect(body).toContain("<th>Last seen</th>");
+    expect((await ctx.app.request("/people")).status).toBe(200);
   });
 
   it("searches by name and by login", async () => {

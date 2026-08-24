@@ -353,11 +353,23 @@ export const en = {
     colPerson: "Person",
     colAccount: "iNaturalist account",
     colSamples: "Samples",
+    /** The two activity columns: still collecting, still turning up here. */
+    colLastSample: "Last sample",
+    colLastSeen: "Last seen",
+    never: "—",
     /** Not "Atlas": the column's answer is sometimes the program itself. */
     colMembership: "Belongs to",
     colAdmin: "Admin",
     noPeople: "Nobody matches.",
     noAccount: "No account",
+    /**
+     * A household shares one iNaturalist login and only one of them can hold
+     * it, so the partner's row is blank where the truth is "signs in as the
+     * other one". Said on the row, because a blank invites the wrong guess.
+     */
+    accountHeldBy: (login: string, holder: string) => `Their records use ${login}, which is ${holder}'s.`,
+    accountRecordsPointAt: (records: number, login: string) =>
+      `${n(records)} of their records use ${login}, which nobody here holds.`,
     found: (total: number) => `${n(total)} ${total === 1 ? "person" : "people"}`,
     pageOf: (page: number, pages: number) => `Page ${n(page)} of ${n(pages)}`,
     previous: "← Previous",
@@ -382,6 +394,9 @@ export const en = {
         `${n(top_records)} ${top_records === 1 ? "uses" : "use"} ${top} instead.`,
       unattested: "No record of theirs uses this account. It may still be right — nothing here says so either way.",
       unbound: "No iNaturalist account, so they cannot sign in.",
+      unboundHeldBy: (records: number, login: string, holder: string) =>
+        `No iNaturalist account, so they cannot sign in. ${n(records)} of their records use ${login}, ` +
+        `which is ${holder}'s — a shared login only one person can hold.`,
     },
     records: (n_: number) => `${n(n_)} ${n_ === 1 ? "record" : "records"}`,
 

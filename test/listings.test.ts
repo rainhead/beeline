@@ -253,6 +253,18 @@ describe("sample listing", () => {
     expect(unrecorded).not.toContain("B-1");
   });
 
+  it("clears the membership filter along with every other one", async () => {
+    // Clear kept `member` while clearing the rest, because emptyFilters is
+    // spread over the query and the key was simply missing (CodeRabbit).
+    const { app } = await listingApp("staffer");
+    const body = await get(app, "/samples?scope=all&member=program&place=Fallon");
+    const clear = /href="([^"]*)"[^>]*>Clear</.exec(body)?.[1] ?? "";
+    expect(clear).not.toContain("member=");
+    expect(clear).not.toContain("place=");
+    // Scope survives: clearing is not signing out of an atlas.
+    expect(clear).toContain("scope=all");
+  });
+
   it("gives a volunteer neither control, and ignores them when typed", async () => {
     const { app } = await listingApp();
     const body = await get(app, "/samples?scope=outside&member=program");

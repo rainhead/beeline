@@ -179,18 +179,27 @@ function Filters({
   );
 }
 
-/** Every filter cleared, scope left alone: clearing is not signing out of an atlas. */
-const emptyFilters = {
+/**
+ * Every filter cleared, scope left alone: clearing is not signing out of an
+ * atlas.
+ *
+ * Typed as the whole query minus the two parts Clear deliberately keeps, so
+ * a filter added to ListingQuery and forgotten here fails to compile. It was
+ * spread into a Partial before, which let `member` be missing silently — and
+ * a Clear link that clears everything but one box is worse than none.
+ */
+const emptyFilters: Omit<ListingQuery, "scope" | "page"> = {
   q: "",
   from: null,
   to: null,
   place: "",
   collector: "",
+  member: MEMBER_ANY,
   taxon: "",
   det: "any",
   season: "any",
   qc: "any",
-} as const;
+};
 
 /**
  * A date input. Not a TextField with type=date bolted on: the value format

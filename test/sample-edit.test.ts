@@ -52,6 +52,11 @@ async function editApp(appCsv?: string) {
   );
   const bea = await personId(conn, "Bea Trapper");
   const beaSample = await sampleId(conn, "OBAS-00657");
+  // The fixture collects in July 2025, which is a settled season by now, and
+  // settled samples do not appear on the QC home (beeline-2c3.24). This test
+  // is about the edit path, not about settling, so move Bea's sample into the
+  // open season and leave the rest of the fixture where it is.
+  await conn.run(`UPDATE sample SET date_start = current_date, date_end = current_date WHERE entity_id = ${beaSample}`);
   const db = createKysely(instance);
   const app = createApp({
     db,

@@ -3,7 +3,7 @@ import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html } from "hono/html";
 import type { Child } from "hono/jsx";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { islandsSrc } from "./assets.js";
 import { registerAuthRoutes, type InatClient } from "./auth.js";
@@ -33,6 +33,7 @@ import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
 import { SampleEditForm } from "./views/sample-edit.js";
 import {
   atlasOptions,
+  BY_SAMPLE_NUMBER,
   CSV_ROW_LIMIT,
   listSamples,
   listSpecimens,
@@ -162,7 +163,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   app.get("/", async (c) => {
     const m = c.get("m");
     const session = c.get("session");
-    const [findings, pending, partners, sync] = await Promise.all([
+    const [flagged, pending, partners, sync] = await Promise.all([
       db
         .selectFrom("qc_finding as f")
         .innerJoin("sample as s", "s.entity_id", "f.sample_id")
@@ -184,8 +185,13 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
           "s.state_province",
           "s.specimen_count",
           "s.inat_observation_id",
+          // Settled seasons stay in this one read and are split out below:
+          // asking twice would mean computing the whole flag set twice, and
+          // that view is what the page costs (beeline-2c3.24).
+          sql<boolean>`EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id)`.as("settled"),
         ])
         .orderBy("s.date_start", "desc")
+        .orderBy(BY_SAMPLE_NUMBER)
         .orderBy("s.entity_id")
         .execute(),
       // The passive half of the dashboard: clean samples waiting on labels.
@@ -207,6 +213,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
           "p.pending_count",
         ])
         .orderBy("s.date_start", "desc")
+        .orderBy(BY_SAMPLE_NUMBER)
         .orderBy("s.entity_id")
         .execute(),
       // Who else collected those samples, so a card can say whose numbering
@@ -225,6 +232,10 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
         .select(({ fn }) => fn.max("completed_at").as("at"))
         .executeTakeFirst(),
     ]);
+    // This season asks; earlier ones only report their number.
+    const rows = flagged as Array<FindingRow & { settled: boolean }>;
+    const findings = rows.filter((row) => !row.settled);
+    const settledFlagged = new Set(rows.filter((row) => row.settled).map((row) => row.sample_id)).size;
     // sample_id → the other collectors' names, in recordedBy order.
     const withOthers = new Map<number, string[]>();
     for (const row of partners as Array<{ sample_id: number; display_name: string }>) {
@@ -238,10 +249,11 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
         m.qc.title,
         <QcHome
           m={m}
-          findings={findings as FindingRow[]}
+          findings={findings}
           pending={pending as PendingRow[]}
           withOthers={withOthers}
           syncedAt={sync?.at ?? null}
+          settledFlagged={settledFlagged}
         />,
       ),
     );

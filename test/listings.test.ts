@@ -201,6 +201,28 @@ describe("sample listing", () => {
     expect(await get(app, "/samples?scope=all&qc=clean")).toContain("3 samples");
   });
 
+  it("gives staff a collector filter, matching anyone on the sample", async () => {
+    const { app } = await listingApp("staffer");
+    // Bob numbered B-1; Alice collected it with him, so it is hers to find too.
+    const alice = await get(app, "/samples?scope=all&collector=alice");
+    expect(alice).toContain("A-1");
+    expect(alice).toContain("B-1");
+    expect(alice).not.toContain("B-2");
+    // By surname: Bob's own two, and not the ones only Alice collected.
+    expect(await get(app, "/samples?scope=all&collector=barnes")).toContain("2 samples");
+    // Specimens take the same filter.
+    expect(await get(app, "/specimens?scope=all&collector=adams")).toContain("OBA00001");
+  });
+
+  it("keeps the collector filter to staff", async () => {
+    const { app } = await listingApp();
+    const body = await get(app, "/samples?collector=barnes");
+    // A volunteer's listing is already one collector's: the parameter is
+    // dropped rather than obeyed, so this is still Alice's three samples.
+    expect(body).toContain("3 samples");
+    expect(body).not.toContain(`name="collector"`);
+  });
+
   it("filters by taxon, descending the taxonomy", async () => {
     const { app } = await listingApp("staffer");
     // The species itself, its genus, and its family all find the sample.
@@ -211,6 +233,27 @@ describe("sample listing", () => {
     }
     // A taxon nothing was determined as selects nothing, rather than everything.
     expect(await get(app, "/samples?scope=all&taxon=Megachile")).toContain("No samples match");
+  });
+
+  it("reads in the collector's own numbering within a day, not upload order", async () => {
+    // A day's samples reach iNaturalist in whatever order they were
+    // photographed; the collector numbered them 1, 2, 3 (Peter, 2026-08-23).
+    const { app, conn, alice } = await listingApp();
+    for (const n of ["3", "12", "9"]) {
+      await conn.run(
+        `INSERT INTO sample (kind, collector_id, sample_number, date_start, date_end, specimen_count, country, state_province, county, locality, protocol)
+         VALUES ('net', ${alice}, '${n}', DATE '2026-08-01', DATE '2026-08-01', 1, 'USA', 'OR', 'Benton', 'Corvallis', 'net')`,
+      );
+      await conn.run(
+        `INSERT INTO sample_collector (sample_id, person_id, position)
+         SELECT entity_id, ${alice}, 1 FROM sample WHERE sample_number = '${n}' AND date_start = DATE '2026-08-01'`,
+      );
+    }
+    const body = await get(app, "/samples");
+    const order = ["12", "9", "3"].map((n) => body.indexOf(`<td>${n}</td>`));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    // Descending, and 12 above 9 — length before text, so digits read as numbers.
+    expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
   it("says what is missing rather than showing an empty table", async () => {
@@ -246,6 +289,41 @@ describe("specimen listing", () => {
     expect(body).toContain("OBA00001");
     // Same sample, undetermined specimen — the taxon filter excludes it.
     expect(body).not.toContain("OBA00002");
+  });
+});
+
+describe("what is still waiting for a name", () => {
+  it("finds undetermined specimens, which a taxon name never can", async () => {
+    const { app } = await listingApp("staffer");
+    const undetermined = await get(app, "/specimens?scope=all&det=undetermined");
+    expect(undetermined).toContain("OBA00002");
+    expect(undetermined).not.toContain("OBA00001");
+    expect(undetermined).toContain("1 specimen");
+
+    const determined = await get(app, "/specimens?scope=all&det=determined");
+    expect(determined).toContain("OBA00001");
+    expect(determined).not.toContain("OBA00002");
+  });
+
+  it("on samples, means a sample with a specimen still waiting", async () => {
+    const { app } = await listingApp("staffer");
+    // A-1 has two specimens, one of them undetermined; B-1's only specimen is
+    // determined; A-2 has no specimens at all, so it is neither.
+    const waiting = await get(app, "/samples?scope=all&det=undetermined");
+    expect(waiting).toContain("A-1");
+    expect(waiting).not.toContain("B-1");
+    const done = await get(app, "/samples?scope=all&det=determined");
+    expect(done).toContain("B-1");
+    expect(done).not.toContain("A-1");
+    expect(done).toContain("1 sample");
+  });
+
+  it("finds everything carrying a flag, either severity", async () => {
+    const { app } = await listingApp("staffer");
+    // Where the dashboard sends a volunteer for their settled seasons.
+    const flagged = await get(app, "/samples?scope=all&qc=flagged");
+    expect(flagged).toContain("A-2");
+    expect(flagged).toContain("1 sample");
   });
 });
 

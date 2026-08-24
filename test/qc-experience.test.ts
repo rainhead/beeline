@@ -38,6 +38,15 @@ async function qcApp() {
   await insertCleanSample(conn, { collector_id: String(bob), sample_number: "'B-9'", locality: "NULL" });
   // Bob again: clean and waiting, and equally invisible to Alice.
   await insertCleanSample(conn, { collector_id: String(bob), sample_number: "'B-10'" });
+  // Alice, two seasons ago: flagged, but settled — the dashboard has stopped
+  // asking about it (beeline-2c3.24).
+  await insertCleanSample(conn, {
+    collector_id: String(alice),
+    sample_number: "'A-2'",
+    locality: "NULL",
+    date_start: "DATE '2024-07-14'",
+    date_end: "DATE '2024-07-14'",
+  });
   // Bob's trap line, which Alice ran with him: his numbering, her sample too
   // (beeline-77j). One clean, one with a finding.
   const together = await insertCleanSample(conn, {
@@ -78,6 +87,18 @@ describe("self-service QC home", () => {
     expect(body).toContain("A field the label needs is empty");
     // Blocking finding renders before the warning within the card.
     expect(body.indexOf("blocks printing")).toBeLessThan(body.indexOf("heads-up"));
+  });
+
+  it("stops asking about seasons that have settled, but says they are there", async () => {
+    const { app } = await qcApp();
+    const body = await (await app.request("/")).text();
+    // A-2 is Alice's, flagged, and from 2024: settled (beeline-2c3.24).
+    expect(body).not.toContain("Sample A-2");
+    // Settled is not silent — the count is on the page, with a way to them.
+    expect(body).toContain("1 older sample of yours still carries a flag");
+    expect(body).toContain(`href="/samples?qc=flagged"`);
+    // And the current season is untouched.
+    expect(body).toContain("Sample A-7");
   });
 
   it("never shows another collector's findings", async () => {

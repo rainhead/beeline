@@ -104,9 +104,18 @@ button:hover, .button:hover { filter: brightness(1.08); }
 }
 
 /* Tables. Wide tables scroll horizontally inside the wrapper, independent
-   of the page; the min-width keeps columns readable instead of crushed. */
+   of the page; the min-width keeps columns readable instead of crushed.
+
+   A table that is a page's content takes the full window rather than the
+   prose measure — a listing has a dozen columns and no reason to be 64rem
+   wide (see main's grid in layout.css). Only a direct child of main does
+   this: a table inside a card or a design-system specimen stays put. */
 .table-scroll { overflow-x: auto; }
 .table-scroll table { min-width: 36rem; }
+main > .table-scroll {
+  grid-column: full;
+  padding-inline: var(--space-6);
+}
 
 table {
   border-collapse: collapse;

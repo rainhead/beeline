@@ -98,6 +98,18 @@ export const en = {
      * to say who else was there (beeline-77j).
      */
     collectedWith: (people: string) => `collected with ${people}`,
+
+    /**
+     * Closed seasons stop asking (beeline-2c3.24). Said out loud rather than
+     * silently dropped: a flag that vanishes without explanation reads as a
+     * bug, and these are still fixable.
+     */
+    settled: {
+      note: (samples: number) =>
+        `${n(samples)} older ${samples === 1 ? "sample" : "samples"} of yours still ${samples === 1 ? "carries a flag" : "carry flags"}. ` +
+        `Seasons settle on 1 March, so earlier ones no longer wait for you here — fixing them is welcome, not expected.`,
+      link: "Show them",
+    },
   },
 
   /**
@@ -189,10 +201,17 @@ export const en = {
       to: "Collected to",
       place: "Place",
       placeHint: "Locality, county, state, or country",
+      collector: "Collector",
+      collectorHint: "Name or iNaturalist login — anyone on the sample",
       taxon: "Taxon",
       taxonHint: "A family, genus, or species — anything below it matches too",
+      det: "Determination",
+      detAny: "Any",
+      detDetermined: "Determined",
+      detUndetermined: "Not determined",
       qc: "Flags",
       qcAny: "Any",
+      qcFlagged: "Any flag",
       qcBlocking: "Blocks printing",
       qcWarning: "Heads-up only",
       qcClean: "Clean",
@@ -215,7 +234,7 @@ export const en = {
 
     csv: {
       download: "Download CSV",
-      note: "The CSV holds exactly what these filters select. Coordinates are never included.",
+      note: "The CSV holds exactly what these filters select, minus coordinates — those stay in the app.",
       truncated: (limit: number) => `Only the first ${n(limit)} rows are exported — narrow the filters for the rest.`,
     },
   },

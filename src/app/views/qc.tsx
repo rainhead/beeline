@@ -146,11 +146,27 @@ export function QcHome(props: {
   /** Absent on proofing surfaces that render no shared samples. */
   withOthers?: CoCollectors;
   syncedAt: Date | null;
+  /**
+   * How many of this person's samples from closed seasons still carry flags.
+   * They are deliberately not in `findings` — settling is what keeps the list
+   * about this season — so the page says the number out loud instead of
+   * letting them vanish (beeline-2c3.24).
+   */
+  settledFlagged?: number;
 }) {
   const { m } = props;
   const withOthers: CoCollectors = props.withOthers ?? new Map();
   const groups = groupBySample(props.findings);
   const blocking = groups.reduce((sum, g) => sum + g.blocking, 0);
+  const settledFlagged = props.settledFlagged ?? 0;
+  const settledLine = settledFlagged > 0 && (
+    <Callout>
+      <Meta block>
+        {m.qc.settled.note(settledFlagged)}{" "}
+        <a href={`/samples?qc=flagged`}>{m.qc.settled.link}</a>
+      </Meta>
+    </Callout>
+  );
   const syncLine = (
     <Callout>
       <Meta block>
@@ -166,11 +182,13 @@ export function QcHome(props: {
           <PageHeader title={m.qc.allClearHeading} />
           <EmptyState>{m.qc.allClear}</EmptyState>
           {syncLine}
+          {settledLine}
         </>
       ) : (
         <>
           <PageHeader title={m.qc.heading} lede={m.qc.summary(groups.length, blocking)} />
           {syncLine}
+          {settledLine}
           {groups.map((group) => (
             <SampleCard m={m} group={group} others={withOthers.get(group.rows[0]!.sample_id) ?? []} />
           ))}

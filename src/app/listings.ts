@@ -31,8 +31,16 @@ export const ALL = "all";
  * are disjoint. "warning" means warnings *and no blocking finding*, which
  * is the question a person actually asks ("what is only a heads-up?").
  */
-export type QcStatus = "any" | "blocking" | "warning" | "clean";
-export const QC_STATUSES = ["any", "blocking", "warning", "clean"] as const;
+export type QcStatus = "any" | "flagged" | "blocking" | "warning" | "clean";
+export const QC_STATUSES = ["any", "flagged", "blocking", "warning", "clean"] as const;
+
+/**
+ * Whether a specimen has been determined. A taxon name only ever finds
+ * determined specimens, so the gap — "what is still waiting for a name?" —
+ * needs its own control (Peter, 2026-08-23).
+ */
+export type DeterminationState = "any" | "determined" | "undetermined";
+export const DETERMINATION_STATES = ["any", "determined", "undetermined"] as const;
 
 export interface ListingQuery {
   /** MINE, ALL, or an atlas code. */
@@ -44,8 +52,20 @@ export interface ListingQuery {
   to: string | null;
   /** Matches any of locality, county, state/province, country. */
   place: string;
+  /**
+   * A collector's name or iNat login — staff only, because a volunteer's
+   * listing is already one collector's. Matches anyone on the sample, not
+   * just its primary (beeline-77j).
+   */
+  collector: string;
   /** A taxon name; anything below it in the taxonomy matches too. */
   taxon: string;
+  /**
+   * On specimens, whether this specimen carries a determination of record. On
+   * samples, whether every specimen does: "undetermined" is a sample with at
+   * least one specimen still waiting for a name.
+   */
+  det: DeterminationState;
   qc: QcStatus;
   /** 1-based. */
   page: number;
@@ -57,7 +77,9 @@ export const EMPTY_QUERY: ListingQuery = {
   from: null,
   to: null,
   place: "",
+  collector: "",
   taxon: "",
+  det: "any",
   qc: "any",
   page: 1,
 };
@@ -88,6 +110,7 @@ export function parseListingQuery(
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
   const qc = params.get("qc") ?? "";
+  const det = params.get("det") ?? "";
   const page = Number.parseInt(params.get("page") ?? "1", 10);
   return {
     scope: permitted ? requested : MINE,
@@ -95,7 +118,10 @@ export function parseListingQuery(
     from: isoDay(from),
     to: isoDay(to),
     place: text(params.get("place")),
+    // Scoped like the scope control: only staff read beyond themselves.
+    collector: opts.admin ? text(params.get("collector")) : "",
     taxon: text(params.get("taxon")),
+    det: (DETERMINATION_STATES as readonly string[]).includes(det) ? (det as DeterminationState) : "any",
     qc: (QC_STATUSES as readonly string[]).includes(qc) ? (qc as QcStatus) : "any",
     page: Number.isFinite(page) && page >= 1 ? Math.min(page, 10_000) : 1,
   };
@@ -111,7 +137,9 @@ export function listingHref(path: string, query: ListingQuery, overrides: Partia
   if (merged.from !== null) params.set("from", merged.from);
   if (merged.to !== null) params.set("to", merged.to);
   if (merged.place !== "") params.set("place", merged.place);
+  if (merged.collector !== "") params.set("collector", merged.collector);
   if (merged.taxon !== "") params.set("taxon", merged.taxon);
+  if (merged.det !== "any") params.set("det", merged.det);
   if (merged.qc !== "any") params.set("qc", merged.qc);
   if (merged.page > 1) params.set("page", String(merged.page));
   const search = params.toString();
@@ -120,7 +148,14 @@ export function listingHref(path: string, query: ListingQuery, overrides: Partia
 
 /** Whether any filter (scope aside) is narrowing the listing. */
 export const isFiltered = (q: ListingQuery) =>
-  q.q !== "" || q.from !== null || q.to !== null || q.place !== "" || q.taxon !== "" || q.qc !== "any";
+  q.q !== "" ||
+  q.from !== null ||
+  q.to !== null ||
+  q.place !== "" ||
+  q.collector !== "" ||
+  q.taxon !== "" ||
+  q.det !== "any" ||
+  q.qc !== "any";
 
 export interface AtlasOption {
   code: string;
@@ -203,6 +238,30 @@ const like = (term: string) => `%${term.toLowerCase()}%`;
 const asDate = (iso: string) => sql<Date>`CAST(${iso} AS DATE)`;
 
 /**
+ * Newest first, and within a day the collector's own numbering — descending,
+ * so the last sample of the day is the first one you see. Sample numbers are
+ * text ('3', 'OBAS-00657'), so length comes first: for the digit strings a
+ * collector actually types that is natural order (12 before 9, not after
+ * it), and for a fixed-width trap series it changes nothing. Ordering by the
+ * entity id instead would order by upload, and a day's samples reach
+ * iNaturalist in whatever order they were photographed (Peter, 2026-08-23).
+ */
+export const BY_SAMPLE_NUMBER = sql`length(s.sample_number) DESC, s.sample_number DESC`;
+
+/**
+ * Whoever ran this sample, by display name or iNat login. Anyone on the
+ * collector list counts: asking "show me Michael's samples" and getting only
+ * the ones he numbered would be the same mistake the list exists to fix.
+ */
+const collectedBy = (term: string) => sql<boolean>`EXISTS (
+  SELECT 1 FROM sample_collector c
+  JOIN person p ON p.entity_id = c.person_id
+  LEFT JOIN inat_account a ON a.person_id = p.entity_id
+  WHERE c.sample_id = s.entity_id
+    AND (lower(p.display_name) LIKE ${like(term)} OR lower(a.login) LIKE ${like(term)})
+)`;
+
+/**
  * Blocking and warning counts per sample, joined in as one pass over
  * qc_finding rather than an EXISTS per row. Findings are all sample-level
  * today (every rule view selects NULL as specimen_id); a specimen-level rule
@@ -229,6 +288,10 @@ const warningCount = sql<number>`coalesce(qc.warning, 0)`;
  */
 function qcPredicate(status: QcStatus) {
   switch (status) {
+    // Everything carrying a flag of either severity — where the dashboard
+    // sends you for the seasons it has stopped asking about (beeline-2c3.24).
+    case "flagged":
+      return sql<boolean>`${blockingCount} > 0 OR ${warningCount} > 0`;
     case "blocking":
       return sql<boolean>`${blockingCount} > 0`;
     case "warning":
@@ -279,6 +342,7 @@ export async function listSamples(
   if (query.from !== null) base = base.where("s.date_end", ">=", asDate(query.from));
   if (query.to !== null) base = base.where("s.date_start", "<=", asDate(query.to));
   if (query.place !== "") base = base.where(sql<boolean>`${placeHaystack} LIKE ${like(query.place)}`);
+  if (query.collector !== "") base = base.where(collectedBy(query.collector));
   if (query.q !== "") {
     const needle = like(query.q);
     base = base.where(({ eb, or, exists, selectFrom }) =>
@@ -311,6 +375,37 @@ export async function listSamples(
       ),
     );
   }
+  // "Undetermined" on a sample means at least one of its specimens is still
+  // waiting for a name; "determined" means none is, and there is something to
+  // determine. A sample with no specimens yet is neither.
+  if (query.det === "undetermined") {
+    base = base.where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom("specimen as sp")
+          .leftJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")
+          .select("sp.entity_id")
+          .whereRef("sp.sample_id", "=", "s.entity_id")
+          .where("d.specimen_id", "is", null),
+      ),
+    );
+  } else if (query.det === "determined") {
+    base = base
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("specimen as sp")
+              .leftJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")
+              .select("sp.entity_id")
+              .whereRef("sp.sample_id", "=", "s.entity_id")
+              .where("d.specimen_id", "is", null),
+          ),
+        ),
+      )
+      // ...and something to have determined: an unprinted sample is neither.
+      .where(({ exists, selectFrom }) =>
+        exists(selectFrom("specimen as sp").select("sp.entity_id").whereRef("sp.sample_id", "=", "s.entity_id")),
+      );
+  }
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
 
@@ -337,6 +432,7 @@ export async function listSamples(
                              WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})`.as("mine"),
       ])
       .orderBy("s.date_start", "desc")
+      .orderBy(BY_SAMPLE_NUMBER)
       .orderBy("s.entity_id")
       .limit(limit)
       .offset(offset)
@@ -392,6 +488,7 @@ export async function listSpecimens(
   if (query.from !== null) base = base.where("s.date_end", ">=", asDate(query.from));
   if (query.to !== null) base = base.where("s.date_start", "<=", asDate(query.to));
   if (query.place !== "") base = base.where(sql<boolean>`${placeHaystack} LIKE ${like(query.place)}`);
+  if (query.collector !== "") base = base.where(collectedBy(query.collector));
   if (query.q !== "") {
     const needle = like(query.q);
     base = base.where(({ eb, or, exists, selectFrom }) =>
@@ -412,6 +509,8 @@ export async function listSpecimens(
   // determination, not its sample's — two specimens from one sample are
   // routinely different bees.
   if (animals !== null) base = base.where("d.animal_id", "in", animals.length === 0 ? [-1] : animals);
+  if (query.det === "undetermined") base = base.where("d.specimen_id", "is", null);
+  if (query.det === "determined") base = base.where("d.specimen_id", "is not", null);
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
 
@@ -438,6 +537,7 @@ export async function listSpecimens(
         sql<string | null>`coalesce(det.display_name, d.determiner_name)`.as("determiner"),
       ])
       .orderBy("s.date_start", "desc")
+      .orderBy(BY_SAMPLE_NUMBER)
       .orderBy("sp.sample_id")
       .orderBy("sp.specimen_number")
       .limit(limit)

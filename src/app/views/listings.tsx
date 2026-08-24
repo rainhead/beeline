@@ -108,7 +108,24 @@ function Filters({
       <DateField id="from" name="from" label={f.from} value={query.from} />
       <DateField id="to" name="to" label={f.to} value={query.to} />
       <TextField id="place" name="place" label={f.place} value={query.place} hint={f.placeHint} />
+      {/* Staff only: a volunteer's listing is already one collector's. */}
+      {admin && (
+        <TextField id="collector" name="collector" label={f.collector} value={query.collector} hint={f.collectorHint} />
+      )}
       <TextField id="taxon" name="taxon" label={f.taxon} value={query.taxon} hint={f.taxonHint} />
+      {/* A taxon name only ever matches something already determined, so the
+          gap needs its own control rather than a magic word in the box. */}
+      <SelectField
+        id="det"
+        name="det"
+        label={f.det}
+        value={query.det}
+        options={[
+          ["any", f.detAny],
+          ["determined", f.detDetermined],
+          ["undetermined", f.detUndetermined],
+        ]}
+      />
       <SelectField
         id="qc"
         name="qc"
@@ -116,6 +133,7 @@ function Filters({
         value={query.qc}
         options={[
           ["any", f.qcAny],
+          ["flagged", f.qcFlagged],
           ["blocking", f.qcBlocking],
           ["warning", f.qcWarning],
           ["clean", f.qcClean],
@@ -126,7 +144,16 @@ function Filters({
 }
 
 /** Every filter cleared, scope left alone: clearing is not signing out of an atlas. */
-const emptyFilters = { q: "", from: null, to: null, place: "", taxon: "", qc: "any" } as const;
+const emptyFilters = {
+  q: "",
+  from: null,
+  to: null,
+  place: "",
+  collector: "",
+  taxon: "",
+  det: "any",
+  qc: "any",
+} as const;
 
 /**
  * A date input. Not a TextField with type=date bolted on: the value format

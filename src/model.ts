@@ -207,6 +207,16 @@ export interface QcFindingView {
   details: string | null;
 }
 
+/** One row: when the current collecting season began (1 March). */
+export interface SeasonView {
+  started_on: Date;
+}
+
+/** Samples from a closed season — still flagged and still editable, just not asking. */
+export interface SettledSampleView {
+  sample_id: number;
+}
+
 /** Samples carrying a blocking finding, by either route it can arrive on. */
 export interface BlockingSampleView {
   sample_id: number;
@@ -242,6 +252,8 @@ export interface Database {
   determination_of_record: DeterminationTable;
   qc_finding: QcFindingView;
   blocking_sample: BlockingSampleView;
+  season: SeasonView;
+  settled_sample: SettledSampleView;
   printable_sample: PrintableSampleView;
   pending_print_sample: PendingPrintSampleView;
   // Attached private store (ADR 0003), catalog-qualified:

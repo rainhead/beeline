@@ -238,7 +238,7 @@ export interface SampleRow {
 export interface SpecimenRow {
   specimen_id: number;
   specimen_number: number;
-  catalog_number: string | null;
+  field_number: string | null;
   sample_id: number;
   sample_number: string;
   date_start: Date;
@@ -413,7 +413,7 @@ export async function listSamples(
           selectFrom("specimen as sp")
             .select("sp.entity_id")
             .whereRef("sp.sample_id", "=", "s.entity_id")
-            .where(sql<string>`lower(sp.catalog_number)`, "like", needle),
+            .where(sql<string>`lower(sp.field_number)`, "like", needle),
         ),
       ]),
     );
@@ -557,7 +557,7 @@ export async function listSpecimens(
     const needle = like(query.q);
     base = base.where(({ eb, or, exists, selectFrom }) =>
       or([
-        eb(sql<string>`lower(sp.catalog_number)`, "like", needle),
+        eb(sql<string>`lower(sp.field_number)`, "like", needle),
         eb(sql<string>`lower(s.sample_number)`, "like", needle),
         // The same match the collector filter makes, so one name behaves the
         // same way in both boxes.
@@ -583,7 +583,7 @@ export async function listSpecimens(
       .select([
         "sp.entity_id as specimen_id",
         "sp.specimen_number",
-        "sp.catalog_number",
+        "sp.field_number",
         "s.entity_id as sample_id",
         "s.sample_number",
         "s.date_start",
@@ -650,10 +650,6 @@ export async function collectorsOf(
 
 /**
  * CSV export.
- *
- * The printed number goes out as field_number, the name the program uses for
- * it (beeline-nfo); the column it comes from is still spelled catalog_number
- * until the printing phase renames it (beeline-1kb.11).
  *
  * Headers are stable machine names, not the table's column labels: a CSV is
  * read by a spreadsheet and by whatever script comes after it, so renaming a
@@ -765,7 +761,7 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       "expert_determination",
     ],
     page.rows.map((r) => [
-      r.catalog_number,
+      r.field_number,
       r.specimen_number,
       r.sample_number,
       isoDate(r.date_start),

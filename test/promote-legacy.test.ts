@@ -185,9 +185,9 @@ describe("legacy promotion", () => {
   test("specimens keep verbatim catalog numbers, and are numbered per sample", async () => {
     const specimens = await rows(
       conn,
-      `SELECT s.sample_number, sp.catalog_number, sp.specimen_number
+      `SELECT s.sample_number, sp.field_number, sp.specimen_number
        FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id
-       ORDER BY sp.catalog_number`,
+       ORDER BY sp.field_number`,
     );
     // The catalog number is the physical identity, kept verbatim. The
     // specimen number is 1..N within the sample (schema/030), assigned at

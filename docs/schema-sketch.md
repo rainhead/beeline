@@ -1,6 +1,6 @@
 # Schema sketch
 
-> **Status:** the runnable schema lives in [`schema/*.sql`](../schema/) and deliberately covers **less** than this sketch — only what the current roadmap phase needs. Entities sketched here but not yet built — email/mailing addresses, QC waivers, print runs, `minted_catalog_number` — get re-reviewed against this sketch when their phase arrives. iNat sync history (`sync_run`/`observation_load`, phase 3) and corrections (phase 4) are built now, the latter as load-anchored events per [ADR 0004](adr/0004-correction-overlay.md) rather than this sketch's stored-old-value shape. Naming has also evolved in the implementation: `taxon` → `animal` (the curated taxonomy covers the animal side — specimens and bycatch — while floral hosts are iNat taxon references), `name` → `scientific_name`, and identity follows ADR 0002: entity tables have an `entity_id` PK from the single global `entity_id_seq`; 1:1 facet tables are keyed by their parent. Coordinates were restructured away from this sketch's iNat-inherited shape: the sample layer holds only **believed-true** coordinates (`sample_location`, with a `source` saying why we believe them, and elevation as a property of those coordinates); deliberately-shifted geoprivacy pairs never enter it, remaining verbatim in the staging/observation layer. `sample.latitude`-as-published and `sample_true_location` below are superseded by that shape.
+> **Status:** the runnable schema lives in [`schema/*.sql`](../schema/) and deliberately covers **less** than this sketch — only what the current roadmap phase needs. Entities sketched here but not yet built — email/mailing addresses, QC waivers, print runs, `minted_field_number` — get re-reviewed against this sketch when their phase arrives. iNat sync history (`sync_run`/`observation_load`, phase 3) and corrections (phase 4) are built now, the latter as load-anchored events per [ADR 0004](adr/0004-correction-overlay.md) rather than this sketch's stored-old-value shape. Naming has also evolved in the implementation: `taxon` → `animal` (the curated taxonomy covers the animal side — specimens and bycatch — while floral hosts are iNat taxon references), `name` → `scientific_name`, and identity follows ADR 0002: entity tables have an `entity_id` PK from the single global `entity_id_seq`; 1:1 facet tables are keyed by their parent. Coordinates were restructured away from this sketch's iNat-inherited shape: the sample layer holds only **believed-true** coordinates (`sample_location`, with a `source` saying why we believe them, and elevation as a property of those coordinates); deliberately-shifted geoprivacy pairs never enter it, remaining verbatim in the staging/observation layer. `sample.latitude`-as-published and `sample_true_location` below are superseded by that shape.
 
 A first concrete rendering of the domain model, for discussion — not an implementation. Vocabulary follows [CONTEXT.md](../CONTEXT.md); the requirements it answers are in [reference-implementation.md](reference-implementation.md). SQL is dialect-neutral where possible; places where the DuckDB-vs-PostgreSQL choice actually bites are called out. Trap-related tables are provisional pending the [staff questions](questions.md).
 
@@ -22,7 +22,7 @@ erDiagram
     observation_load }o--|| sample : "evidences (latest load)"
     specimen ||--o{ determination : "receives (events)"
     taxon ||--o{ determination : "asserts"
-    specimen ||--o| minted_catalog_number : "numbered"
+    specimen ||--o| minted_field_number : "numbered"
     print_run ||--o{ printed_label : "froze"
     specimen ||--o{ printed_label : "printed as"
     specimen ||--o{ reprint_request : "may need"
@@ -154,7 +154,7 @@ CREATE TABLE specimen (
   id              INTEGER PRIMARY KEY,
   sample_id       INTEGER NOT NULL REFERENCES sample(id),
   specimen_number INTEGER NOT NULL,       -- 1..N within the sample at freeze time
-  catalog_number  TEXT,                   -- opaque verbatim text: all four historical eras land here
+  field_number    TEXT,                   -- opaque verbatim text: all four historical eras land here
   created_at      TIMESTAMP NOT NULL,
   UNIQUE (sample_id, specimen_number)
 );
@@ -173,12 +173,12 @@ CREATE TABLE sample_true_location (
 
 Consequences worth naming: before printing, QC and self-service operate at the **sample** level (there are no specimen rows to flag); a count *decrease* before printing is just an edit, and only after printing becomes a finding (printed specimens vs current count). A canceled print run's numbers stay burned — sequence gaps are harmless, reuse never is.
 
-**No global UNIQUE on `specimen.catalog_number`** — history forbids it (`25051768` exists twice on paper). Instead, uniqueness is a hard guarantee only for what Beeline itself mints:
+**No global UNIQUE on `specimen.field_number`** — history forbids it (`25051768` exists twice on paper). Instead, uniqueness is a hard guarantee only for what Beeline itself mints:
 
 ```sql
 -- The governed sequence. Insert here *is* the mint; the PRIMARY KEY is the guarantee.
-CREATE TABLE minted_catalog_number (
-  catalog_number TEXT PRIMARY KEY,
+CREATE TABLE minted_field_number (
+  field_number   TEXT PRIMARY KEY,
   specimen_id    INTEGER NOT NULL UNIQUE REFERENCES specimen(id),
   minted_at      TIMESTAMP NOT NULL
 );
@@ -293,7 +293,7 @@ CREATE TABLE reprint_request (
 
 Proofing (between `prepared` and `approved`) can pull records from a run; what Arthur actually inspects there is [question P1](questions.md).
 
-*Open theme — artifact lifecycle.* The model is event-sourced about creation but has no vocabulary for destruction or retirement: nothing records that a physical label was scrapped (a reprint merely implies supersession), or that a catalog number was permanently voided. Provisional stance, to confirm with staff ([questions P6–P7](questions.md)): the catalog number is the specimen's permanent identity — fixing bad label data means a new print under the same number (the `printed_label` rows across runs already form that revision history; latest print = current intended label), with destruction of the old label a physical-workflow obligation the model may need to record rather than assume. Minting a *new* number is reserved for identity errors (two specimens sharing one number) and would be an explicit voiding event on `minted_catalog_number` — append-only, never an edit, with downstream (Ecdysis/GBIF) notification. Whether disposition needs first-class events (`label_scrapped`, `number_voided`) or stays derived-plus-convention awaits the staff answers.
+*Open theme — artifact lifecycle.* The model is event-sourced about creation but has no vocabulary for destruction or retirement: nothing records that a physical label was scrapped (a reprint merely implies supersession), or that a field number was permanently voided. Provisional stance, to confirm with staff ([questions P6–P7](questions.md)): the field number is the specimen's permanent identity — fixing bad label data means a new print under the same number (the `printed_label` rows across runs already form that revision history; latest print = current intended label), with destruction of the old label a physical-workflow obligation the model may need to record rather than assume. Minting a *new* number is reserved for identity errors (two specimens sharing one number) and would be an explicit voiding event on `minted_field_number` — append-only, never an edit, with downstream (Ecdysis/GBIF) notification. Whether disposition needs first-class events (`label_scrapped`, `number_voided`) or stays derived-plus-convention awaits the staff answers.
 
 ## Deliberately absent, for now
 

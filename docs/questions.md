@@ -31,5 +31,5 @@ Raised by Nora (2026-08-19). iNaturalist obscures coordinates for sensitive taxa
 3. How do other atlases plan to print and mail — equipment, label stock, postage/bulk-mail access?
 4. What does the `E` prefix on 2020–2022 Oregon field numbers (`E2000000`–`E2332481`, 1,400 records) denote? And the 2018 name-based identifiers (`First_Last:18.sss.nnn`) — are those printed verbatim on physical labels?
 5. Where did the historical cross-project duplicate field numbers live — this database, Ecdysis, or between them — and were they renumbered or do the physical labels still collide?
-6. **Label lifecycle**: when bad data is found on a printed label, is the remedy always a reprint under the *same* catalog number, with the old label removed and destroyed by whoever holds the pin? Is that swap ever confirmed, or taken on faith?
-7. **Catalog-number lifecycle**: has a number ever been permanently scrapped/voided — specimen destroyed, label printed but never pinned, duplicate collision? If a number were retired after publication, how would Ecdysis/GBIF learn of it?
+6. **Label lifecycle**: when bad data is found on a printed label, is the remedy always a reprint under the *same* field number, with the old label removed and destroyed by whoever holds the pin? Is that swap ever confirmed, or taken on faith?
+7. **Field-number lifecycle**: has a number ever been permanently scrapped/voided — specimen destroyed, label printed but never pinned, duplicate collision? If a number were retired after publication, how would Ecdysis/GBIF learn of it?

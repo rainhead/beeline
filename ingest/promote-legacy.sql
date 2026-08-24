@@ -454,7 +454,7 @@ JOIN legacy_sample_map s
   ON s.person_id = m.person_id AND s.sid = r.sid
  AND s.p_date_start IS NOT DISTINCT FROM r.p_date_start;
 
-INSERT INTO specimen (sample_id, specimen_number, catalog_number)
+INSERT INTO specimen (sample_id, specimen_number, field_number)
 SELECT n.sample_id, n.specimen_number, nullif(r.fieldNumber, '')
 FROM legacy_specimen_number n
 JOIN legacy_promotable r ON r._id = n._id;

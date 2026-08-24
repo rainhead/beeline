@@ -13,7 +13,7 @@ Ordered build-out toward a **December 2026 cutover**. Vocabulary per [CONTEXT.md
 5. **Label printing.** Design after the Arthur/Andony printing walkthrough (questions P1–P7). Mock exercises end to end: print runs, proofing pulls, reprints, mailing addresses.
 6. **Determinations UI.**
 7. **Export / archiving.** Ecdysis, Darwin Core/GBIF. Real backups start here — ahead of the first data that can't be regenerated.
-8. **Cutover — December 2026.** Collecting is quiet by December (confirm from observation seasonality once the iNat pipeline is up); up to a week of downtime is acceptable. Freeze the legacy system, final Mongo pull into a fresh database, first real print run. The blow-away era ends: minted catalog numbers are forever, backups are mandatory, and the correction overlay goes live. *Gated on the per-atlas geoprivacy answers and any other before-go-live questions.*
+8. **Cutover — December 2026.** Collecting is quiet by December (confirm from observation seasonality once the iNat pipeline is up); up to a week of downtime is acceptable. Freeze the legacy system, final Mongo pull into a fresh database, first real print run. The blow-away era ends: minted field numbers are forever, backups are mandatory, and the correction overlay goes live. *Gated on the per-atlas geoprivacy answers and any other before-go-live questions.*
 
 **Deferred past cutover:** notifications/feed (derivable from determination and print-run events); trap-sample entry interface (unknowable until the staff registry questions come back — until then iNat and the legacy import are the only data entry points).
 

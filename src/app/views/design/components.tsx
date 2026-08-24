@@ -171,7 +171,7 @@ export function DesignComponents({ m }: { m: Messages }) {
               ["all", "All atlases"],
             ]}
           />
-          <TextField id="demo-search" name="q" label="Search" value="" hint="Sample number, collector, or catalog number" />
+          <TextField id="demo-search" name="q" label="Search" value="" hint="Sample number, collector, or field number" />
           <SelectField
             id="demo-qc"
             name="qc"

@@ -61,7 +61,7 @@ needs enforcement — corrections, when they return.
   `printed_label` (a physical label wants identity the moment the
   artifact-lifecycle questions — scrapped, superseded, voided — get answers),
   `print_run`, `qc_waiver`, `correction`, and the trap-site entities when
-  staff answers arrive. `minted_catalog_number` keeps its natural key (the
+  staff answers arrive. `minted_field_number` keeps its natural key (the
   number is the identity; it references its specimen's entity id).
 - Promotion pipelines allocate from the same sequence (`nextval` in CTAS),
   so ingested and app-created rows share the space.

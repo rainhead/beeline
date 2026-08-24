@@ -67,11 +67,11 @@ describe("schema application", () => {
     // The historical duplicate 25051768 must be storable on two specimen rows.
     await conn.run(`INSERT INTO sample (kind, collector_id, sample_number, date_start, date_end, specimen_count)
                     VALUES ('net', (SELECT min(entity_id) FROM person), '1', DATE '2025-08-17', DATE '2025-08-17', 2)`);
-    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, catalog_number)
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number)
                     SELECT max(entity_id), 1, '25051768' FROM sample`);
-    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, catalog_number)
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number)
                     SELECT max(entity_id), 2, '25051768' FROM sample`);
-    const [[n]] = (await rows(conn, "SELECT count(*) FROM specimen WHERE catalog_number = '25051768'")) as [[bigint]];
+    const [[n]] = (await rows(conn, "SELECT count(*) FROM specimen WHERE field_number = '25051768'")) as [[bigint]];
     expect(Number(n)).toBe(2);
   });
 

@@ -91,10 +91,10 @@ CREATE TABLE specimen (
   entity_id       INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
   sample_id       INTEGER NOT NULL REFERENCES sample(entity_id),
   specimen_number INTEGER NOT NULL,
-  catalog_number  TEXT,
+  field_number    TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (sample_id, specimen_number)
 );
 COMMENT ON TABLE specimen IS 'One physical insect. Specimens are individuated by printing: until a print run freezes, a sample has only specimen_count. Historical ingestion also lands here — production is 99.9997% printed.';
 COMMENT ON COLUMN specimen.specimen_number IS '1..N within the sample at freeze time.';
-COMMENT ON COLUMN specimen.catalog_number IS 'Opaque verbatim text: all four historical identifier eras land here, including the era of duplicates — so no UNIQUE. Uniqueness becomes a hard guarantee only for numbers Beeline itself mints (minted_catalog_number, returning with the printing phase).';
+COMMENT ON COLUMN specimen.field_number IS 'The number Beeline issues and prints on the label (CONTEXT.md, beeline-nfo) — never the museum''s catalog number, which arrives from Ecdysis with its institutional prefix and gets its own column when import lands. Opaque verbatim text: all four historical identifier eras land here, including the era of duplicates — so no UNIQUE. Uniqueness becomes a hard guarantee only for the numbers Beeline itself mints, returning with the printing phase.';

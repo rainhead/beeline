@@ -59,7 +59,7 @@ describe("legacy rows that merge into one sample", () => {
     // number, then _id, so a re-run assigns the same numbers.
     const specimens = await rows(
       conn,
-      `SELECT s.sample_number, sp.specimen_number, sp.catalog_number
+      `SELECT s.sample_number, sp.specimen_number, sp.field_number
        FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id
        ORDER BY s.sample_number, sp.specimen_number`,
     );
@@ -77,12 +77,12 @@ describe("legacy rows that merge into one sample", () => {
     // merged. Getting this wrong silently reattributes determinations.
     const dets = await rows(
       conn,
-      `SELECT sp.catalog_number, a.scientific_name, p.display_name
+      `SELECT sp.field_number, a.scientific_name, p.display_name
        FROM determination d
        JOIN specimen sp ON sp.entity_id = d.specimen_id
        JOIN animal a ON a.entity_id = d.animal_id
        LEFT JOIN person p ON p.entity_id = d.determiner_id
-       ORDER BY sp.catalog_number`,
+       ORDER BY sp.field_number`,
     );
     expect(dets).toEqual([
       ["25000002", "Bombus", "Bea Trapper"],

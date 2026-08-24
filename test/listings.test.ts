@@ -101,20 +101,20 @@ async function listingApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
   await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('genus', 'Andrena')`);
 
   await conn.run(
-    `INSERT INTO specimen (sample_id, specimen_number, catalog_number)
+    `INSERT INTO specimen (sample_id, specimen_number, field_number)
      VALUES (${a1}, 1, 'OBA00001'), (${a1}, 2, 'OBA00002'), (${b1}, 1, 'WABA0001')`,
   );
   await conn.run(
     `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_id)
      SELECT sp.entity_id, an.entity_id, true, 'legacy_import', ${bob}
      FROM specimen sp, animal an
-     WHERE sp.catalog_number = 'OBA00001' AND an.scientific_name = 'Bombus vosnesenskii'`,
+     WHERE sp.field_number = 'OBA00001' AND an.scientific_name = 'Bombus vosnesenskii'`,
   );
   await conn.run(
     `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name)
      SELECT sp.entity_id, an.entity_id, false, 'legacy_import', 'A Volunteer'
      FROM specimen sp, animal an
-     WHERE sp.catalog_number = 'WABA0001' AND an.scientific_name = 'Andrena'`,
+     WHERE sp.field_number = 'WABA0001' AND an.scientific_name = 'Andrena'`,
   );
 
   const people = { alice, bob, staffer };
@@ -227,7 +227,7 @@ describe("sample listing", () => {
               sp.entity_id AS specimen_id,
               'observation_missing_upstream' AS rule_name,
               'stood in for a specimen-level rule' AS details
-       FROM specimen sp WHERE sp.catalog_number = '${catalog}'`,
+       FROM specimen sp WHERE sp.field_number = '${catalog}'`,
     );
   }
 

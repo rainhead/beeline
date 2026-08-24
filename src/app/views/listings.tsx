@@ -324,8 +324,8 @@ export function SpecimenListing({ m, query, page, atlases, admin }: ListingProps
             {page.rows.map((row) => (
               <tr>
                 <td>
-                  {row.catalog_number !== null ? (
-                    <span class="mono">{row.catalog_number}</span>
+                  {row.field_number !== null ? (
+                    <span class="mono">{row.field_number}</span>
                   ) : (
                     <Meta>{copy.noFieldNumber}</Meta>
                   )}

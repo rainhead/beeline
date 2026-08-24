@@ -17,7 +17,7 @@ are signing in to it. Adding one view to it meant stopping the service, hand
 writing a throwaway script, remembering the `CHECKPOINT` rule that keeps
 DuckDB ≤ 1.5.5 from corrupting its own WAL (beeline-vyi), and remembering it
 again next time. At cutover that same store becomes production, holding
-minted catalog numbers that cannot be regenerated.
+minted field numbers that cannot be regenerated.
 
 ## Decision
 

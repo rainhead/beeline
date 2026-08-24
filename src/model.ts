@@ -126,7 +126,7 @@ export interface SpecimenTable {
   entity_id: Generated<number>;
   sample_id: number;
   specimen_number: number;
-  catalog_number: string | null;
+  field_number: string | null;
   created_at: Timestamped;
 }
 

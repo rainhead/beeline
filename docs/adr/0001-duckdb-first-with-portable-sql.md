@@ -31,7 +31,7 @@ engine runs them owns the heart of the system.
     table — what "entity" means and the naming norms are
     [ADR 0002](0002-entities.md).
   - Enum-ish columns are `TEXT` with `CHECK` constraints, not native enum types.
-  - No partial unique indexes (Postgres-only) — the `minted_catalog_number`
+  - No partial unique indexes (Postgres-only) — the `minted_field_number`
     two-table design exists partly for this reason.
   - Known seam, accepted: `JSON` columns (Postgres would want `JSONB`).
 - **No ORM owns the schema.** The schema is `.sql` files applied in order;

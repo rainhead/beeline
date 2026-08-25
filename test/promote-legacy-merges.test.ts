@@ -199,6 +199,29 @@ describe("legacy rows that merge into one sample", () => {
     expect(counts.unusedCollectorAliases).toBe(1);
   });
 
+  test("an alias does not orphan a staff decision that named the old spelling", async () => {
+    // The bug filling the real alias CSV exposed: legacy_person_name keyed
+    // only on canonical spellings, so aliasing 'Shaw Steinmetz' away made
+    // `name:Shaw Steinmetz` in the overlay resolve to nobody — four home
+    // atlases silently lost. An alias line does not stop the old spelling
+    // being a name the records reproduce, which is what the overlay keys on.
+    const spellings = await rows(
+      conn,
+      `SELECT name FROM legacy_person_name
+       WHERE person_id = (SELECT person_id FROM legacy_person_name WHERE name = 'Eve Roberts')
+       ORDER BY name`,
+    );
+    expect(spellings.flat()).toContain("Evie Roberts");
+    expect(spellings.flat()).toContain("Eve Roberts");
+    // And every spelling names exactly one person, or downstream joins would
+    // fan a sample out across both.
+    const shared = await rows(
+      conn,
+      `SELECT name FROM legacy_person_name GROUP BY name HAVING count(*) > 1`,
+    );
+    expect(shared).toEqual([]);
+  });
+
   test("two person records under one login are surfaced, not merged", async () => {
     // The detector the alias CSV is curated from: a login lands on a record
     // because somebody typed it in, so two names under one login are either

@@ -325,17 +325,36 @@ SELECT DISTINCT fn, ln, pos, recorded_name, name FROM legacy_row_collector;
 CREATE OR REPLACE VIEW legacy_solo_pair AS
 SELECT fn, ln FROM legacy_collector_name GROUP BY fn, ln HAVING max(pos) = 1;
 
+--
+-- One row per SPELLING, all of a person's mapping to the one id — not just
+-- the canonical one. ingest/person-overlay.csv names people by the name a
+-- rebuild reproduces (src/apply-person-overlay.ts), and an alias line does
+-- not stop 'Shaw Steinmetz' being a name the records reproduce. Keying only
+-- on canonical spellings orphaned four staff decisions the moment the alias
+-- CSV was filled in, silently reassigning nobody and losing four home
+-- atlases. Downstream joins are unaffected: every one of them joins on
+-- legacy_row_collector.name, which is canonical by construction.
 CREATE TABLE legacy_person_name AS
-WITH keyed AS (
-  SELECT name, legacy_name_key(name) AS name_key
-  FROM (SELECT DISTINCT name FROM legacy_row_collector)
-),
+WITH canonical AS (SELECT DISTINCT name FROM legacy_row_collector),
 ids AS (
   SELECT name_key, nextval('entity_id_seq') AS person_id
-  FROM (SELECT DISTINCT name_key FROM keyed)
+  FROM (SELECT DISTINCT legacy_name_key(name) AS name_key FROM canonical)
+),
+spelling AS (
+  SELECT name, legacy_name_key(name) AS name_key, 0 AS rank FROM canonical
+  UNION ALL
+  SELECT DISTINCT recorded_name, legacy_name_key(name), 1 FROM legacy_row_collector
+),
+-- One row per name, or a canonical spelling that is also somebody else's
+-- recorded one would fan every downstream join out.
+picked AS (
+  SELECT name, name_key,
+         row_number() OVER (PARTITION BY name ORDER BY rank, name_key) AS rn
+  FROM spelling
 )
-SELECT k.name, k.name_key, i.person_id
-FROM keyed k JOIN ids i ON i.name_key = k.name_key;
+SELECT p.name, p.name_key, i.person_id
+FROM picked p JOIN ids i ON i.name_key = p.name_key
+WHERE p.rn = 1;
 
 -- Of the spellings that fold together, the one in use LAST — because a name
 -- changes over time only when somebody corrects it, so the newest spelling is

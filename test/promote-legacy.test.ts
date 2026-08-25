@@ -7,6 +7,7 @@ import { promoteLegacy, type PromotionCounts } from "../src/promote-legacy.js";
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
 const NO_APP_CORRECTIONS = new URL("./fixtures/empty-corrections.csv", import.meta.url).pathname;
+const NO_ALIASES = new URL("./fixtures/no-collector-aliases.csv", import.meta.url).pathname;
 // The curated overlay is the fixture's own, not ingest/person-overlay.csv:
 // that file names 398 real people, none of whom are in this fixture, so every
 // row of it would be reported unresolved here — true, and no test's business.
@@ -28,6 +29,8 @@ beforeAll(async () => {
     NO_APP_CORRECTIONS, // never the developer's live data/corrections.csv
     OVERLAY,
     NO_APP_OVERLAY,
+    NO_ALIASES, // never the curated ingest/collector-aliases.csv: its lines
+    // are about the real 383k rows and would all read as unused here
   );
 });
 

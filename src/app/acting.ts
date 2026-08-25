@@ -81,7 +81,18 @@ export async function resolveActing(
   return { personId: granted.personId, actingFor: granted, canActFor };
 }
 
-export const startActing = (c: Context, personId: number) =>
-  setCookie(c, ACTING_COOKIE, String(personId), { path: "/", httpOnly: true, sameSite: "Lax" });
+/**
+ * `secure` follows the origin, as the session and OAuth-state cookies do
+ * (src/app/auth.tsx) and as the scope cookie does not. This one sits with the
+ * session cookies rather than with scope: scope only filters what you read,
+ * while this decides whose records the sample-edit gate lets you WRITE.
+ */
+export const startActing = (c: Context, personId: number, origin: string) =>
+  setCookie(c, ACTING_COOKIE, String(personId), {
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: origin.startsWith("https:"),
+  });
 
 export const stopActing = (c: Context) => deleteCookie(c, ACTING_COOKIE, { path: "/" });

@@ -384,3 +384,59 @@ describe("the admin bootstrap seed", () => {
     expect(await seedAdmins(db, ["adacollects", "nobody-here"], [])).toBe(1);
   });
 });
+
+// beeline-oyl. Staff grant it, not the person represented — who by definition
+// cannot sign in, which is the whole reason the grant exists.
+describe("granting one person reach over another", () => {
+  let ctx: Awaited<ReturnType<typeof rosterApp>>;
+  beforeEach(async () => {
+    ctx = await rosterApp({ personId: 3, admin: true });
+  });
+
+  it("records the grant in the overlay and applies it to the store", async () => {
+    const res = await post(ctx.app, "/people/adacollects/delegate", {
+      acts_for: "name:Bo Netter",
+      reason: "one household, one login",
+    });
+    expect(res.status).toBe(200);
+
+    const written = await readOverlay(ctx.overlayPath);
+    expect(written).toContainEqual(
+      expect.objectContaining({
+        person_ref: "name:Ada Collector",
+        field: "acts_for",
+        value: "name:Bo Netter",
+        author: "whoever",
+        reason: "one household, one login",
+      }) as unknown as PersonOverlayRow,
+    );
+    const applied = await ctx.conn.run(
+      `SELECT p.display_name FROM person_delegate d JOIN person p ON p.entity_id = d.acts_for_id
+       WHERE d.person_id = 1`,
+    );
+    expect((await applied.getRows()).flat()).toEqual(["Bo Netter"]);
+  });
+
+  it("shows the current grant back in the form, in the words the overlay uses", async () => {
+    await post(ctx.app, "/people/adacollects/delegate", { acts_for: "name:Bo Netter", reason: "" });
+    const page = await (await ctx.app.request("/people/adacollects")).text();
+    expect(page).toContain('value="name:Bo Netter"');
+  });
+
+  it("revokes every grant on an empty field", async () => {
+    await post(ctx.app, "/people/adacollects/delegate", { acts_for: "name:Bo Netter", reason: "" });
+    await post(ctx.app, "/people/adacollects/delegate", { acts_for: "", reason: "moved out" });
+    const rows = await (await ctx.conn.run(`SELECT count(*) FROM person_delegate`)).getRows();
+    expect(rows.flat()).toEqual([0n]);
+  });
+
+  it("reports a reference that names nobody instead of guessing", async () => {
+    const res = await post(ctx.app, "/people/adacollects/delegate", {
+      acts_for: "name:Nobody At All",
+      reason: "",
+    });
+    // The apostrophes come back HTML-escaped, which is the point of rendering
+    // the reason rather than interpolating it.
+    expect(await res.text()).toContain("no person named &#39;Nobody At All&#39;");
+  });
+});

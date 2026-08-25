@@ -342,6 +342,29 @@ export function PersonPage({
         </form>
       </Card>
 
+      {/* Reach over somebody else's records (beeline-oyl). A text field of
+          references rather than a picker, because the combobox that would
+          make this pleasant does not exist yet (beeline-wn2) and the raw
+          form is at least exactly what lands in the overlay file. */}
+      <Card>
+        <h2>{p.delegation}</h2>
+        <Meta block>{p.delegationHint}</Meta>
+        <form method="post" action={`${action}/delegate`} class="form-column">
+          <TextField
+            id="acts_for"
+            name="acts_for"
+            label={p.actsFor}
+            hint={p.actsForHint}
+            value={person.acts_for}
+          />
+          <Reason m={m} id="delegate_reason" />
+          <p class="row">
+            {person.acts_for === "" && <Chip>{p.actsForNobody}</Chip>}
+            <Button>{p.saveDelegation}</Button>
+          </p>
+        </form>
+      </Card>
+
       {/* Its own card, not a subsection of membership: which atlas someone
           belongs to and whether they may run ingestion are unrelated
           questions, and nesting the second under the first said otherwise. */}

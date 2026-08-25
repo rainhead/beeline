@@ -19,7 +19,19 @@ const unusedInat: InatClient = {
  * so his samples are only reachable through a grant. The fixture is that
  * shape: two people, one sample each, and one account.
  */
-async function household({ granted }: { granted: boolean }) {
+async function household({
+  granted,
+  chain = false,
+  // Development makes everyone an admin (src/app/server.tsx isAdmin), so any
+  // test about admin rights has to leave it.
+  environment = "development" as "development" | "sandbox",
+  robertIsAdmin = false,
+}: {
+  granted: boolean;
+  chain?: boolean;
+  environment?: "development" | "sandbox";
+  robertIsAdmin?: boolean;
+}) {
   const { instance, conn } = await createMemoryDb();
   await conn.run(`INSERT INTO person (display_name) VALUES ('Gretchen Pederson'), ('Robert Pederson')`);
   const [[gretchen], [robert]] = (await (
@@ -29,22 +41,47 @@ async function household({ granted }: { granted: boolean }) {
     `INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${gretchen}, 111, 'pandg')`,
   );
   await insertCleanSample(conn, { collector_id: String(gretchen), sample_number: "'G-1'" });
-  await insertCleanSample(conn, { collector_id: String(robert), sample_number: "'R-1'" });
+  const robertSampleId = await insertCleanSample(conn, {
+    collector_id: String(robert),
+    sample_number: "'R-1'",
+  });
   if (granted) {
     await conn.run(
       `INSERT INTO person_delegate (person_id, acts_for_id, granted_by) VALUES (${gretchen}, ${robert}, 'peter')`,
     );
   }
+  // A third person Robert may act for, to prove the grant does not chain.
+  let jane = 0;
+  if (chain) {
+    await conn.run(`INSERT INTO person (display_name) VALUES ('Jane Pope')`);
+    const [[id]] = (await (
+      await conn.run(`SELECT entity_id FROM person WHERE display_name = 'Jane Pope'`)
+    ).getRows()) as [[number]];
+    jane = Number(id);
+    await conn.run(
+      `INSERT INTO person_delegate (person_id, acts_for_id, granted_by) VALUES (${robert}, ${jane}, 'peter')`,
+    );
+  }
+  if (robertIsAdmin) {
+    await conn.run(`INSERT INTO person_admin (person_id, granted_by) VALUES (${robert}, 'peter')`);
+  }
   const db = createKysely(instance);
   const app = createApp({
     db,
-    config: { environment: "development" as const, origin: "http://localhost:3054" },
+    config: { environment, origin: "http://localhost:3054" },
     inat: unusedInat,
     resolveSession: async () => ({ personId: Number(gretchen), login: "pandg", iconUrl: null }),
   });
   const get = (path: string, cookie?: string) =>
     app.request(path, cookie === undefined ? {} : { headers: { cookie } });
-  return { app, get, gretchen: Number(gretchen), robert: Number(robert) };
+  return {
+    app,
+    get,
+    gretchen: Number(gretchen),
+    robert: Number(robert),
+    jane,
+    robertSample: { id: robertSampleId, owner: Number(robert) },
+  };
 }
 
 describe("acting for somebody else", () => {
@@ -55,7 +92,7 @@ describe("acting for somebody else", () => {
     expect(await (await ungranted.get("/")).text()).not.toContain(en.layout.acting.start);
   });
 
-  it("makes `mine` mean the other person, and says so on every page", async () => {
+  it("makes `mine` mean the other person, on every surface that says mine", async () => {
     const { get, robert } = await household({ granted: true });
     const own = await (await get("/samples")).text();
     expect(own).toContain("G-1");
@@ -67,6 +104,49 @@ describe("acting for somebody else", () => {
     expect(acting).toContain("R-1");
     expect(acting).not.toContain("G-1");
     expect(acting).toContain(en.layout.acting.banner("Robert Pederson"));
+
+    // The QC home and the CSV are the other two "mine" surfaces, and a CSV
+    // that disagreed with the page above it would be the worst of the three.
+    const home = await (await get("/", `${ACTING_COOKIE}=${robert}`)).text();
+    expect(home).toContain(en.layout.acting.banner("Robert Pederson"));
+    const csv = await (await get("/samples.csv", `${ACTING_COOKIE}=${robert}`)).text();
+    expect(csv).toContain("R-1");
+    expect(csv).not.toContain("G-1");
+  });
+
+  // Reach means reach to ACT, not only to look — the edit gate follows the
+  // switch in both directions.
+  it("opens the other person's editable sample, and closes it again when switched off", async () => {
+    const { get, robertSample } = await household({ granted: true });
+    const cookie = `${ACTING_COOKIE}=${robertSample.owner}`;
+    expect((await get(`/samples/${robertSample.id}/edit`, cookie)).status).toBe(200);
+    // Without the switch it is somebody else's sample and stays shut.
+    expect((await get(`/samples/${robertSample.id}/edit`)).status).toBe(404);
+  });
+
+  it("confers no admin, even when the person acted for is an admin", async () => {
+    // The sharp version: Robert holds admin, Gretchen does not. If acting
+    // meant becoming, the switch would be a privilege escalation.
+    const { get, robert } = await household({
+      granted: true,
+      environment: "sandbox",
+      robertIsAdmin: true,
+    });
+    expect((await get("/people")).status).toBe(403);
+    expect((await get("/people", `${ACTING_COOKIE}=${robert}`)).status).toBe(403);
+  });
+
+  it("does not chain: reaching Robert is not reaching whoever Robert may reach", async () => {
+    const { get, robert, jane } = await household({ granted: true, chain: true });
+    // Gretchen may act for Robert; Robert may act for Jane. Gretchen may not
+    // reach Jane, because canActFor always derives from the SIGNED-IN person
+    // and never from whoever is currently being acted for.
+    const acting = await (await get("/", `${ACTING_COOKIE}=${robert}`)).text();
+    expect(acting).toContain(en.layout.acting.banner("Robert Pederson"));
+    expect(acting).not.toContain(en.layout.acting.startFor("Jane Pope"));
+    // And naming Jane directly resolves to nothing: no grant, no switch.
+    const direct = await (await get("/", `${ACTING_COOKIE}=${jane}`)).text();
+    expect(direct).not.toContain(en.layout.acting.banner("Jane Pope"));
   });
 
   it("ignores a cookie naming someone this session was never granted", async () => {
@@ -112,7 +192,20 @@ describe("acting for somebody else", () => {
       headers: { origin: "http://localhost:3054" },
     });
     expect(stopped.status).toBe(302);
-    // An expiry in the past is how a cookie is cleared.
-    expect(stopped.headers.get("set-cookie")).toContain(`${ACTING_COOKIE}=`);
+    // Prove it actually clears rather than merely mentioning the cookie:
+    // an empty value with Max-Age=0 is what deletion looks like on the wire.
+    const cleared = stopped.headers.get("set-cookie") ?? "";
+    expect(cleared).toMatch(new RegExp(`${ACTING_COOKIE}=;`));
+    expect(cleared).toContain("Max-Age=0");
+  });
+
+  it("signing out ends the switch too", async () => {
+    const { app } = await household({ granted: true });
+    const res = await app.request("/auth/logout", {
+      method: "POST",
+      headers: { origin: "http://localhost:3054" },
+    });
+    const cookies = res.headers.get("set-cookie") ?? "";
+    expect(cookies).toContain(ACTING_COOKIE);
   });
 });

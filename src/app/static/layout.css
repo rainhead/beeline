@@ -153,3 +153,11 @@ main > * {
 /* A labelled group inside a menu panel — the account menu's list of people
    this session may act for. */
 .menu-section { padding-bottom: var(--space-1); }
+
+/* A heading inside a menu panel. Distinct from .menu-identity, which says
+   who you are: this labels a group of choices. */
+.menu-heading {
+  font: var(--md-sys-typescale-label);
+  color: var(--md-sys-color-on-surface-variant);
+  padding: var(--space-1) var(--space-4) var(--space-1);
+}

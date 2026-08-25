@@ -173,6 +173,6 @@ CREATE TABLE person_delegate (
   CHECK (person_id <> acts_for_id)
 );
 COMMENT ON TABLE person_delegate IS 'person_id may see and act on acts_for_id''s samples (beeline-oyl). Presence is the grant; revoking deletes the row. Reach, not credit: attribution and Master Melittology progress stay with the person who collected.';
-COMMENT ON COLUMN person_delegate.person_id IS 'The delegate — the one who signs in. Holds an iNat account by definition, since a person who cannot sign in cannot act for anybody.';
+COMMENT ON COLUMN person_delegate.person_id IS 'The delegate — the one who signs in, so in practice the holder of the household''s iNat account. Not enforced: a grant to someone with no account is inert rather than refused, because the same overlay pass may bind their account after this row is applied.';
 COMMENT ON COLUMN person_delegate.acts_for_id IS 'The person acted for, typically the household partner who does not hold the shared login. Usually has no inat_account at all, which is the state this table exists to make workable.';
 COMMENT ON COLUMN person_delegate.granted_by IS 'iNat login of the staff member who granted it. Not a foreign key: the granter may be gone — same stance as person_admin.granted_by.';

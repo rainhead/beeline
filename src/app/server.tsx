@@ -181,6 +181,11 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     const id = getCookie(c, SESSION_COOKIE);
     if (id) await deleteSession(db, id);
     deleteCookie(c, SESSION_COOKIE, { path: "/" });
+    // The switch is scoped to the session that held the grant. Leaving it set
+    // is not exploitable — resolveActing re-checks the grant against whoever
+    // signs in next — but on a household's shared browser it would outlive
+    // the person who turned it on, which is its own kind of wrong.
+    stopActing(c);
     return c.redirect("/");
   });
 
@@ -197,7 +202,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     if (!c.get("acting").canActFor.some((d) => d.personId === wanted)) {
       return c.text(c.get("m").errors.forbidden, 403);
     }
-    startActing(c, wanted);
+    startActing(c, wanted, config.origin);
     return c.redirect("/");
   });
 
@@ -221,7 +226,6 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
           session: c.get("session"),
           admin: c.get("admin"),
           acting: c.get("acting"),
-          canActFor: c.get("acting").canActFor,
           m: c.get("m"),
         }}
         title={title}
@@ -604,6 +608,11 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   app.post("/people/:id/membership", (c) => decide(c, (form) => [["home_atlas", text(form, "home_atlas")]]));
 
   app.post("/people/:id/admin", (c) => decide(c, (form) => [["admin", text(form, "admin")]]));
+
+  // The whole set, not one grant: `acts_for` is latest-wins on a single
+  // overlay row, so the field states everyone this person may act for and an
+  // empty field revokes the lot (beeline-oyl).
+  app.post("/people/:id/delegate", (c) => decide(c, (form) => [["acts_for", text(form, "acts_for")]]));
 
   app.post("/jobs/run/:name", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);

@@ -1,6 +1,7 @@
 import type { Child } from "hono/jsx";
 import type { Messages } from "../messages/index.js";
 import type { Session } from "../session.js";
+import type { Acting } from "../acting.js";
 import { MenuIcon, PersonIcon } from "./icons.js";
 
 export interface PageEnv {
@@ -13,10 +14,12 @@ export interface PageEnv {
   session: Session;
   /** Whether this session may see the admin surface (/jobs, /design, beeline-6va). */
   admin: boolean;
-  /** Who this session may act for, and who it currently is (beeline-oyl). */
-  acting: { actingFor: { personId: number; name: string } | null };
-  /** Everyone this session may act for; empty for almost everybody. */
-  canActFor: readonly { personId: number; name: string }[];
+  /**
+   * Whose records `mine` means, and everyone this session could switch to
+   * (beeline-oyl). Empty for almost everybody: a grant is a staff decision
+   * about a household.
+   */
+  acting: Acting;
   m: Messages;
 }
 
@@ -139,10 +142,10 @@ export function Layout(props: {
             </summary>
             <div class="menu-panel">
               <div class="menu-identity">{session.login}</div>
-              {env.canActFor.length > 0 && (
+              {env.acting.canActFor.length > 0 && (
                 <div class="menu-section">
-                  <div class="menu-identity">{m.layout.acting.start}</div>
-                  {env.canActFor.map((person) => (
+                  <div class="menu-heading">{m.layout.acting.start}</div>
+                  {env.acting.canActFor.map((person) => (
                     <form method="post" action="/acting">
                       <input type="hidden" name="person" value={String(person.personId)} />
                       <button>{m.layout.acting.startFor(person.name)}</button>

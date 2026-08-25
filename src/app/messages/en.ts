@@ -351,6 +351,15 @@ export const en = {
 
   /** The people roster (/people). Staff-facing, like jobs. */
   people: {
+    /** Acting for somebody else (beeline-oyl). Staff-facing, English-only. */
+    delegation: "Acting for others",
+    delegationHint:
+      "Who this person may act for. A household shares one iNaturalist login, so the partner who does not hold it cannot sign in and their samples are unreachable without this. It grants reach, never credit: samples, labels and Master Melittology progress stay with whoever collected them.",
+    actsFor: "May act for",
+    actsForHint:
+      "One reference per person, separated by semicolons: name:Robert Pederson;inat:429964. This replaces the whole list — leave it empty to revoke every grant.",
+    saveDelegation: "Save",
+    actsForNobody: "Acts for nobody",
     title: "People",
     heading: "People",
     /**

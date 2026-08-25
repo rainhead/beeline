@@ -296,6 +296,13 @@ export interface PersonDetail extends RosterRow {
   logins: LoginWeight[];
   /** Samples where they are the primary collector. */
   primary_samples: number;
+  /**
+   * Who this person may act for, as the overlay spells it —
+   * `name:Robert Pederson;name:Jane Pope` — so the form staff edit and the
+   * file it is written to say the same thing (beeline-oyl). Empty for almost
+   * everybody.
+   */
+  acts_for: string;
 }
 
 export async function personDetail(db: Kysely<Database>, personId: number): Promise<PersonDetail | null> {
@@ -308,6 +315,10 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
            pm.kind AS membership,
            atl.code AS atlas_code,
            (adm.person_id IS NOT NULL) AS is_admin,
+           coalesce((SELECT array_to_string(list(concat('name:', p2.display_name) ORDER BY p2.display_name), ';')
+                     FROM person_delegate d
+                     JOIN person p2 ON p2.entity_id = d.acts_for_id
+                     WHERE d.person_id = p.entity_id), '') AS acts_for,
            ${lastSampleSql} AS last_sample,
            ${lastSeen} AS last_seen
     FROM person p

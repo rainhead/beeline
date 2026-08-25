@@ -1,0 +1,5 @@
+userLogin,fullName,firstName,firstNameInitial,lastName,email,address,city,stateProvince,zipPostal,country
+adacollects,Ada Collector,Ada,A.M.,Collector,ada@example.invalid,1 Test Way,Corvallis,OR,97330,USA
+trapline,Bea Trapperson,Bea,B.,Trapperson,bea@example.invalid,2 Test Way,Olympia,WA,98501,USA
+sharedlog,Pat Ellery,Pat,P.,Ellery,pat@example.invalid,3 Test Way,Bend,OR,97701,USA
+sharedlog,Nan Flower,Nan,N.,Flower,nan@example.invalid,3 Test Way,Bend,OR,97701,USA

@@ -13,6 +13,7 @@ const NO_ALIASES = new URL("./fixtures/no-collector-aliases.csv", import.meta.ur
 // row of it would be reported unresolved here — true, and no test's business.
 const OVERLAY = new URL("./fixtures/person-overlay.csv", import.meta.url).pathname;
 const NO_APP_OVERLAY = new URL("./fixtures/empty-person-overlay.csv", import.meta.url).pathname;
+const REGISTER = new URL("./fixtures/usernames.csv", import.meta.url).pathname;
 
 let conn: DuckDBConnection;
 let counts: PromotionCounts;
@@ -31,6 +32,7 @@ beforeAll(async () => {
     NO_APP_OVERLAY,
     NO_ALIASES, // never the curated ingest/collector-aliases.csv: its lines
     // are about the real 383k rows and would all read as unused here
+    REGISTER,
   );
 });
 
@@ -53,6 +55,8 @@ describe("legacy promotion", () => {
       correctionsApplied: 0,
       correctionsRetired: 0,
       correctionConflicts: 0,
+      registerNameConflicts: 3, // Bea's family name and full name, Ada's label initial
+      registerAmbiguousLogins: 1, // sharedlog, naming two people
       personOverlayApplied: 2,
       personOverlayUnresolved: [],
     });
@@ -263,5 +267,48 @@ describe("legacy promotion", () => {
 
   test("promotion refuses a non-empty model", async () => {
     await expect(promoteLegacy(conn)).rejects.toThrow(/freshly built/);
+  });
+});
+
+// beeline-8t8. The register is a second opinion about names, not an authority
+// over them: nothing here writes to person. What it produces is a worklist a
+// human graduates into ingest/person-overlay.csv.
+describe("the legacy name register", () => {
+  test("stages the name columns and not the mailing address", async () => {
+    const columns = await rows(
+      conn,
+      `SELECT column_name FROM duckdb_columns()
+       WHERE table_name = 'legacy_username_register' ORDER BY column_name`,
+    );
+    expect(columns.flat()).toEqual(["family_name", "full_name", "given_name", "label_initial", "login"]);
+  });
+
+  test("reports what the register spells differently, field by field", async () => {
+    const conflicts = await rows(
+      conn,
+      `SELECT login, field, store_value, register_value
+       FROM legacy_register_name_conflict ORDER BY login, field`,
+    );
+    expect(conflicts).toEqual([
+      // Ada's parts agree; her initial does not derive from them, so it is a
+      // genuine label override the way 'J.M.' is for Juan Manuel Benitez
+      // Alvarez — src/person-name.ts would render 'A. Collector'.
+      ["adacollects", "label_name", null, "A.M. Collector"],
+      ["trapline", "display_name", "Bea Trapper", "Bea Trapperson"],
+      ["trapline", "family_name", "Trapper", "Trapperson"],
+    ]);
+  });
+
+  test("a login naming two people is reported, never picked between", async () => {
+    const ambiguous = await rows(
+      conn,
+      `SELECT login, rows_, names FROM legacy_register_ambiguous_login`,
+    );
+    expect(ambiguous).toEqual([["sharedlog", 2n, "Nan Flower | Pat Ellery"]]);
+    const claimed = await rows(
+      conn,
+      `SELECT count(*) FROM legacy_register_name_conflict WHERE login = 'sharedlog'`,
+    );
+    expect(claimed).toEqual([[0n]]);
   });
 });

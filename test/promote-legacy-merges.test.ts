@@ -41,6 +41,7 @@ const FIXTURE = new URL("./fixtures/legacy-merges.jsonl", import.meta.url).pathn
 const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
 const NO_APP_CORRECTIONS = new URL("./fixtures/empty-corrections.csv", import.meta.url).pathname;
 const ALIASES = new URL("./fixtures/collector-aliases.csv", import.meta.url).pathname;
+const NO_REGISTER = new URL("./fixtures/no-usernames.csv", import.meta.url).pathname;
 
 let conn: DuckDBConnection;
 let counts: PromotionCounts;
@@ -58,6 +59,7 @@ beforeAll(async () => {
     "ingest/person-overlay.csv",
     "data/person-overlay.csv",
     ALIASES,
+    NO_REGISTER, // never the developer's fetched data/legacy/usernames.csv
   );
 });
 

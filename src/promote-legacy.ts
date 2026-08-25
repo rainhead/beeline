@@ -1,4 +1,5 @@
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { ensureCorrectionsFile } from "./corrections.js";
@@ -6,6 +7,21 @@ import { applyPersonOverlay, type Unresolved } from "./apply-person-overlay.js";
 import { mergeOverlays, readOverlay } from "./person-overlay.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
+
+/**
+ * The legacy name register is fetched, not checked in, so a store can be
+ * promoted without one — a fresh clone, or anyone who has the occurrence dump
+ * and not the register. Missing, it reads as empty rather than fatal: the
+ * staging table and its curation views exist either way, and report nothing.
+ */
+const REGISTER_COLUMNS = ["userLogin", "fullName", "firstName", "firstNameInitial", "lastName"];
+function registerSource(csvPath: string): string {
+  if (!existsSync(csvPath)) {
+    const nulls = REGISTER_COLUMNS.map((c) => `NULL::VARCHAR AS ${c}`).join(", ");
+    return `(SELECT ${nulls} WHERE false)`;
+  }
+  return `read_csv('${csvPath.replaceAll("'", "''")}', header = true, all_varchar = true)`;
+}
 
 export interface PromotionCounts {
   staged: number;
@@ -25,6 +41,10 @@ export interface PromotionCounts {
   correctionsApplied: number;
   correctionsRetired: number;
   correctionConflicts: number;
+  /** Name parts the legacy register spells differently — a worklist (beeline-8t8). */
+  registerNameConflicts: number;
+  /** Register logins carrying two different names: a shared account (beeline-oyl). */
+  registerAmbiguousLogins: number;
   /** Staff decisions about people replayed onto the fresh store (ADR 0004). */
   personOverlayApplied: number;
   /** Overlay rows that named nobody — reported, never guessed at. */
@@ -42,6 +62,7 @@ export async function promoteLegacy(
   curatedOverlayPath = "ingest/person-overlay.csv",
   appOverlayPath = "data/person-overlay.csv",
   collectorAliasesPath = "ingest/collector-aliases.csv",
+  usernameRegisterPath = "data/legacy/usernames.csv",
 ): Promise<PromotionCounts> {
   const scalar = async (sql: string): Promise<number> => {
     const [[v]] = (await (await conn.run(sql)).getRows()) as [[bigint]];
@@ -72,6 +93,11 @@ export async function promoteLegacy(
     conn,
     mergeOverlays(await readOverlay(curatedOverlayPath), await readOverlay(appOverlayPath)),
   );
+  // After the overlay: the register is compared against the bindings that
+  // survive it, so a login the overlay rebound is not reported as a conflict
+  // against the account it used to have.
+  const registerSql = await readFile(`${INGEST_DIR}promote-register.sql`, "utf8");
+  await conn.run(registerSql.replaceAll("{{REGISTER_SOURCE}}", registerSource(usernameRegisterPath)));
 
   return {
     staged: await scalar("SELECT count(*) FROM legacy_occurrence"),
@@ -96,6 +122,8 @@ export async function promoteLegacy(
     correctionsRetired: await scalar(
       "SELECT count(*) FROM legacy_correction_state WHERE status = 'retired'",
     ),
+    registerNameConflicts: await scalar("SELECT count(*) FROM legacy_register_name_conflict"),
+    registerAmbiguousLogins: await scalar("SELECT count(*) FROM legacy_register_ambiguous_login"),
     personOverlayApplied: overlay.applied,
     personOverlayUnresolved: overlay.unresolved,
     correctionConflicts: await scalar(

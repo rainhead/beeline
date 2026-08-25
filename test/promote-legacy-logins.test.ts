@@ -7,6 +7,7 @@ import { promoteLegacy } from "../src/promote-legacy.js";
 const FIXTURE = new URL("./fixtures/legacy-logins.jsonl", import.meta.url).pathname;
 const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
 const NO_APP_CORRECTIONS = new URL("./fixtures/empty-corrections.csv", import.meta.url).pathname;
+const NO_REGISTER = new URL("./fixtures/no-usernames.csv", import.meta.url).pathname;
 
 /**
  * Which iNat account a legacy person is bound to (beeline-eft). A login rides
@@ -27,6 +28,10 @@ beforeAll(async () => {
     "ingest/determiner-register.csv",
     "ingest/legacy-corrections.csv",
     NO_APP_CORRECTIONS,
+    "ingest/person-overlay.csv",
+    "data/person-overlay.csv",
+    "ingest/collector-aliases.csv",
+    NO_REGISTER, // never the developer's fetched data/legacy/usernames.csv
   );
 });
 

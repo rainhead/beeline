@@ -14,6 +14,7 @@ import { createMemoryDb, rows } from "./helpers.js";
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
 const CORRECTIONS = new URL("./fixtures/legacy-corrections.csv", import.meta.url).pathname;
+const NO_REGISTER = new URL("./fixtures/no-usernames.csv", import.meta.url).pathname;
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -49,6 +50,10 @@ async function editApp(appCsv?: string) {
     "ingest/determiner-register.csv",
     CORRECTIONS,
     correctionsPath,
+    "ingest/person-overlay.csv",
+    "data/person-overlay.csv",
+    "ingest/collector-aliases.csv",
+    NO_REGISTER, // never the developer's fetched data/legacy/usernames.csv
   );
   const bea = await personId(conn, "Bea Trapper");
   const beaSample = await sampleId(conn, "OBAS-00657");
@@ -170,6 +175,10 @@ describe("in-app editing of non-iNat samples", () => {
       "ingest/determiner-register.csv",
       CORRECTIONS,
       correctionsPath,
+      "ingest/person-overlay.csv",
+      "data/person-overlay.csv",
+      "ingest/collector-aliases.csv",
+      NO_REGISTER, // never the developer's fetched data/legacy/usernames.csv
     );
     const [[locality]] = (await rows(
       conn2,
@@ -241,6 +250,10 @@ describe("in-app editing of non-iNat samples", () => {
       "ingest/determiner-register.csv",
       CORRECTIONS,
       correctionsPath,
+      "ingest/person-overlay.csv",
+      "data/person-overlay.csv",
+      "ingest/collector-aliases.csv",
+      NO_REGISTER, // never the developer's fetched data/legacy/usernames.csv
     );
     const [[locality, county]] = (await rows(
       conn2,

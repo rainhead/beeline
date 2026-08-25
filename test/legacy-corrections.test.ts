@@ -9,6 +9,7 @@ const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
 const CORRECTIONS = new URL("./fixtures/legacy-corrections.csv", import.meta.url).pathname;
 const APP_CORRECTIONS = new URL("./fixtures/app-corrections.csv", import.meta.url).pathname;
 const NO_APP_CORRECTIONS = new URL("./fixtures/empty-corrections.csv", import.meta.url).pathname;
+const NO_REGISTER = new URL("./fixtures/no-usernames.csv", import.meta.url).pathname;
 
 let conn: DuckDBConnection;
 let counts: PromotionCounts;
@@ -23,6 +24,10 @@ beforeAll(async () => {
     "ingest/determiner-register.csv",
     CORRECTIONS,
     NO_APP_CORRECTIONS,
+    "ingest/person-overlay.csv",
+    "data/person-overlay.csv",
+    "ingest/collector-aliases.csv",
+    NO_REGISTER, // never the developer's fetched data/legacy/usernames.csv
   );
 });
 
@@ -123,6 +128,10 @@ describe("app-written corrections take precedence over the git CSV", () => {
       "ingest/determiner-register.csv",
       CORRECTIONS,
       APP_CORRECTIONS, // corrects bbbb2222 decimalLatitude too, anchored on the true staged value
+      "ingest/person-overlay.csv",
+      "data/person-overlay.csv",
+      "ingest/collector-aliases.csv",
+      NO_REGISTER, // never the developer's fetched data/legacy/usernames.csv
     );
     const [[latitude]] = (await rows(
       appConn,

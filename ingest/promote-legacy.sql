@@ -270,13 +270,21 @@ CREATE OR REPLACE MACRO legacy_name_key(n) AS
 -- One row per folded alias, because two lines claiming one spelling would
 -- fan the spelling's rows out across both people. Two such lines are a CSV
 -- mistake for review to catch, not a merge to attempt.
+--
+-- `basis` is what the decision rests on, and it is a column rather than a
+-- commit message because the bases differ in kind. 'iNat profile' is
+-- evidence, checkable by anyone. 'arbitrary' is a coin flip that will print
+-- on labels and reach Ecdysis and GBIF looking exactly as settled as the
+-- rest — which is the shape of the wrong binding this whole area exists to
+-- make visible (beeline-eft, beeline-eyk). Promotion does not read it; the
+-- reader does.
 CREATE TABLE legacy_collector_alias AS
-SELECT alias, person FROM (
-  SELECT trim(alias) AS alias, trim(person) AS person,
+SELECT alias, person, basis FROM (
+  SELECT trim(alias) AS alias, trim(person) AS person, trim(basis) AS basis,
          row_number() OVER (PARTITION BY legacy_name_key(trim(alias))
                             ORDER BY trim(person)) AS rn
   FROM read_csv('{{COLLECTOR_ALIASES}}', header = true,
-                columns = {'alias': 'VARCHAR', 'person': 'VARCHAR'})
+                columns = {'alias': 'VARCHAR', 'person': 'VARCHAR', 'basis': 'VARCHAR'})
 ) deduped
 WHERE rn = 1;
 
@@ -461,7 +469,7 @@ LEFT JOIN legacy_person_parts p ON p.person_id = d.person_id;
 -- molfamily the O'Loughlins, tom_julie two people). So it is a worklist for a
 -- human, not a merge rule; an alias line drops its pair out by construction.
 CREATE OR REPLACE VIEW legacy_collector_alias_unused AS
-SELECT a.alias, a.person
+SELECT a.alias, a.person, a.basis
 FROM legacy_collector_alias a
 WHERE NOT EXISTS (
   SELECT 1 FROM legacy_row_collector c

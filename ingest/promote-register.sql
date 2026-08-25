@@ -41,13 +41,24 @@ HAVING count(DISTINCT coalesce(full_name, '')) > 1;
 -- missing name part at all (the 15 people with no parts have no login, so the
 -- register cannot reach them), and it disagrees about twenty. Some of those
 -- disagreements are the register being right in a way promotion cannot see
--- ('Balock' → 'Blalock', 'Dusoleil' → 'DuSoleil', 'Lane' → 'Lancefield
--- Lane', 'MaryJo' → 'Mary Jo'); some are a nickname against a formal name in
--- both directions (Kim/Kimberly, but also William/Bill), which is a question
+-- ('MaryJo' → 'Mary Jo', which src/person-name.ts already cites as its worked
+-- example); some are the register being plainly WRONG, which is the half
+-- worth expecting — it says 'Hermann' for a woman whose login is 'mherrmann'
+-- and whose iNat profile reads 'Mady Herrmann'; some are a nickname against a
+-- formal name in both directions (Kim/Kimberly, but also William/Bill),
+-- which is a question
 -- about what a person calls themselves and not an error either way; some are
 -- the register's own bad rows ('Heather Davis' whose firstName is 'Davis');
 -- and one is a shared household login handing Tom Robertson the name Julie
--- Biddle. Overwriting from it would fix four names and break at least one.
+-- Biddle. Overwriting from it would fix perhaps one name and break several.
+--
+-- The cheap adjudicator, where one exists, is the login. 'blancefield'
+-- corroborates that Betsy Lane's fuller name really is Lancefield Lane — a
+-- maiden name, not the street it reads as — though she signs 'Betsy Lane' on
+-- all 37 of her records, which makes it hers to choose and not ours to fix.
+-- 'mherrmann' settles Herrmann against the register. Where the login says
+-- nothing — 'hailey_bird', for the Balock/Blalock question — nothing in this
+-- store can settle it and the person has to be asked.
 --
 -- So it lands where every other name decision in this project lands: a human
 -- reads the worklist and writes the verdicts into ingest/person-overlay.csv,

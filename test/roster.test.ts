@@ -200,6 +200,51 @@ describe("the roster screen", () => {
     expect(await (await ctx.app.request("/people?q=adacollects")).text()).toContain("Ada Collector");
   });
 
+  /**
+   * A person is reachable by login as well as by entity_id, and links prefer
+   * the login. Neither handle is permanent, but an entity_id is a per-store
+   * sequence draw (ADR 0002) that a rebuild redraws — /people/722436 was Steve
+   * Lang in one promotion of the sandbox and Robert Pederson in the next —
+   * while a login changes only when its owner changes it (beeline-eyk).
+   */
+  describe("addressing a person", () => {
+    it("resolves a login, and the numeric id still works", async () => {
+      const byLogin = await ctx.app.request("/people/adacollects");
+      expect(byLogin.status).toBe(200);
+      expect(await byLogin.text()).toContain("Ada Collector");
+      // Old links keep working; nothing about this is a migration.
+      const byId = await ctx.app.request("/people/1");
+      expect(byId.status).toBe(200);
+      expect(await byId.text()).toContain("Ada Collector");
+    });
+
+    it("matches a login case-insensitively, since a typed URL will not be cased", async () => {
+      expect((await ctx.app.request("/people/AdaCollects")).status).toBe(200);
+    });
+
+    it("links to the login where there is one, and to the id where there is not", async () => {
+      const body = await (await ctx.app.request("/people")).text();
+      expect(body).toContain(`href="/people/adacollects"`);
+      // Bo Netter has no account, so there is no login to prefer.
+      expect(body).toContain(`href="/people/2"`);
+    });
+
+    it("posts back to the handle the page was asked for", async () => {
+      // Rebinding an account can change the handle underneath the form, so the
+      // action has to be the one the URL used, not the one it will become.
+      const body = await (await ctx.app.request("/people/adacollects")).text();
+      expect(body).toContain(`action="/people/adacollects/account"`);
+      const res = await post(ctx.app, "/people/adacollects/admin", { admin: "yes", reason: "by login" });
+      expect(res.status).toBe(200);
+      const admins = await ctx.db.selectFrom("person_admin").select("person_id").execute();
+      expect(admins.map((a) => a.person_id)).toContain(1);
+    });
+
+    it("404s an unknown login rather than falling back to somebody", async () => {
+      expect((await ctx.app.request("/people/nobodyhere")).status).toBe(404);
+    });
+  });
+
   it("returns 404 for a person who is not there, rather than an empty page", async () => {
     expect((await ctx.app.request("/people/9999")).status).toBe(404);
   });

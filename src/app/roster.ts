@@ -387,6 +387,55 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
 }
 
 /**
+ * How a person is addressed in a URL: their login where they have one, and
+ * their entity_id otherwise.
+ *
+ * Neither handle is permanent, and the login is the less bad of the two. An
+ * entity_id is a per-store sequence draw (ADR 0002) that a rebuild or a
+ * reseed redraws, so /people/722436 was Steve Lang in one promotion of the
+ * same data and Robert Pederson in the next. A login changes only when its
+ * owner changes it, and sync refreshes the cached copy when they do.
+ *
+ * Distinct from personRef() below, which is how a person is named in the
+ * OVERLAY — a durable record replayed onto a store that does not exist yet,
+ * and so keyed on the display name rather than on anything iNaturalist owns.
+ */
+export function personHandle(row: { person_id: number; login: string | null }): string {
+  return row.login ?? String(row.person_id);
+}
+
+/**
+ * The parsed form of a URL segment naming a person. All digits is an
+ * entity_id; anything else is a login. Unambiguous because iNaturalist logins
+ * must begin with a letter — none of the 411 in the store is all digits — and
+ * an all-digit one would simply be reachable by its entity_id instead.
+ */
+export type PersonHandle = { id: number } | { login: string };
+
+export function parsePersonHandle(segment: string): PersonHandle | null {
+  const trimmed = segment.trim();
+  if (trimmed === "") return null;
+  if (/^\d+$/.test(trimmed)) {
+    const id = Number(trimmed);
+    return Number.isSafeInteger(id) && id > 0 ? { id } : null;
+  }
+  return { login: trimmed };
+}
+
+/** person_id for a handle, or null when nobody answers to it. */
+export async function resolvePersonHandle(
+  db: Kysely<Database>,
+  handle: PersonHandle,
+): Promise<number | null> {
+  if ("id" in handle) return handle.id;
+  // Case-insensitively: logins are displayed as their owner cased them, and a
+  // URL typed by hand will not be.
+  const found = await sql<{ person_id: number }>`
+    SELECT person_id FROM inat_account WHERE lower(login) = lower(${handle.login})`.execute(db);
+  return found.rows[0]?.person_id ?? null;
+}
+
+/**
  * How a person is named in the overlay — the key a rebuild reproduces.
  *
  * The display name is preferred even for people who have an account, because

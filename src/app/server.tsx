@@ -16,7 +16,15 @@ import type { Job } from "./jobs/framework.js";
 import { Glossary } from "./views/glossary.js";
 import { Jobs } from "./views/jobs.js";
 import { PersonPage, Roster } from "./views/roster.js";
-import { listRoster, nameIsUnique, parseRosterQuery, personDetail, personRef } from "./roster.js";
+import {
+  listRoster,
+  nameIsUnique,
+  parsePersonHandle,
+  parseRosterQuery,
+  personDetail,
+  personRef,
+  resolvePersonHandle,
+} from "./roster.js";
 import { upsertOverlay, valueProblem, type OverlayField, type PersonOverlayRow } from "../person-overlay.js";
 import { applyPersonOverlay } from "../apply-person-overlay.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
@@ -464,10 +472,21 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     return c.html(await page(c, m.people.title, <Roster m={m} page={listed} query={query} />));
   });
 
+  /**
+   * The person named by the URL, addressed by login or by entity_id. Both
+   * resolve; links are written with the login where there is one, because an
+   * entity_id is redrawn by every rebuild (personHandle, ADR 0002).
+   */
+  const personFromUrl = async (c: Context<AppEnv>) => {
+    const handle = parsePersonHandle(c.req.param("id") ?? "");
+    if (handle === null) return null;
+    const id = await resolvePersonHandle(db, handle);
+    return id === null ? null : await personDetail(db, id);
+  };
+
   const showPerson = async (c: Context<AppEnv>, notice?: string, problem?: string) => {
     const m = c.get("m");
-    const id = Number(c.req.param("id"));
-    const person = Number.isInteger(id) ? await personDetail(db, id) : null;
+    const person = await personFromUrl(c);
     if (person === null) return c.text(m.people.notFound, 404);
     return c.html(
       await page(
@@ -491,8 +510,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   const decide = async (c: Context<AppEnv>, build: (form: FormData) => Array<[OverlayField, string]>) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
-    const id = Number(c.req.param("id"));
-    const person = Number.isInteger(id) ? await personDetail(db, id) : null;
+    const person = await personFromUrl(c);
     if (person === null) return c.text(m.people.notFound, 404);
 
     const form = await c.req.formData();
@@ -511,7 +529,10 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
       if (problem !== null) return showPerson(c, undefined, problem);
       rows.push({ person_ref: ref, field, value, author, reason });
     }
-    if (rows.length === 0) return c.redirect(`/people/${id}`);
+    // Back to the URL as it was asked for: rebinding an account can change
+    // the handle underneath us, and redirecting to the new one would 404 a
+    // form post that succeeded.
+    if (rows.length === 0) return c.redirect(`/people/${encodeURIComponent(c.req.param("id") ?? "")}`);
 
     await upsertOverlay(overlayPath, rows);
     if (conn === undefined) return showPerson(c, m.people.saved);

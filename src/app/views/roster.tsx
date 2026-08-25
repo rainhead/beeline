@@ -6,6 +6,7 @@ import {
   type PersonDetail,
   type RosterPage,
   type RosterQuery,
+  personHandle,
   rosterHref,
 } from "../roster.js";
 import {
@@ -154,7 +155,7 @@ export function Roster({ m, page, query }: { m: Messages; page: RosterPage; quer
           {page.rows.map((row) => (
             <tr>
               <td>
-                <a href={`/people/${row.person_id}`}>{row.display_name}</a>
+                <a href={`/people/${encodeURIComponent(personHandle(row))}`}>{row.display_name}</a>
               </td>
               <td>
                 {row.login === null ? (
@@ -212,7 +213,9 @@ export function PersonPage({
   problem?: string;
 }) {
   const p = m.people;
-  const action = `/people/${person.person_id}`;
+  // Every form on this page posts back to the handle the URL was asked for,
+  // so a login-addressed page stays login-addressed.
+  const action = `/people/${encodeURIComponent(personHandle(person))}`;
   return (
     <>
       <p>

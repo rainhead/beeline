@@ -55,8 +55,8 @@ describe("legacy promotion", () => {
       correctionsApplied: 0,
       correctionsRetired: 0,
       correctionConflicts: 0,
+      registerStaged: 4,
       registerNameConflicts: 3, // Bea's family name and full name, Ada's label initial
-      registerAmbiguousLogins: 1, // sharedlog, naming two people
       personOverlayApplied: 2,
       personOverlayUnresolved: [],
     });
@@ -299,10 +299,50 @@ describe("the legacy name register", () => {
     ]);
   });
 
+  test("reaches nobody who has no iNat login, which is where the missing parts are", async () => {
+    const unreached = await rows(
+      conn,
+      `SELECT display_name, reason, parts_missing FROM legacy_register_unreached
+       ORDER BY display_name`,
+    );
+    // Lincoln Best is the determiner: a person the legacy rows name but who
+    // never collected under a login, so the register cannot see him at all.
+    expect(unreached).toEqual([["Lincoln Best", "no iNat account", true]]);
+  });
+
+  // The register is fetched, not checked in, so this is the fresh-clone path
+  // and the `pnpm db:reseed` path both: staging comes across, the fetched CSV
+  // does not. It must not be fatal, and it must not look like agreement —
+  // registerStaged is what tells the two apart (beeline-8t8).
+  test("promotes with no register at all, and says so rather than reporting agreement", async () => {
+    const { conn: bare } = await createMemoryDb();
+    await loadLegacyStaging(bare, FIXTURE);
+    const bareCounts = await promoteLegacy(
+      bare,
+      TAXONOMY,
+      "ingest/determiner-aliases.csv",
+      "ingest/determiner-register.csv",
+      "ingest/legacy-corrections.csv",
+      NO_APP_CORRECTIONS,
+      OVERLAY,
+      NO_APP_OVERLAY,
+      NO_ALIASES,
+      "data/legacy/no-such-register.csv",
+    );
+    expect(bareCounts.registerStaged).toBe(0);
+    expect(bareCounts.registerNameConflicts).toBe(0);
+    // The curation surfaces still exist; they simply have nothing to say.
+    const empty = await rows(bare, `SELECT count(*) FROM legacy_register_ambiguous_login`);
+    expect(empty).toEqual([[0n]]);
+    // And everyone is unreached, which is the honest answer for no register.
+    const unreached = await rows(bare, `SELECT count(*) FROM legacy_register_unreached`);
+    expect(unreached).toEqual([[3n]]);
+  });
+
   test("a login naming two people is reported, never picked between", async () => {
     const ambiguous = await rows(
       conn,
-      `SELECT login, rows_, names FROM legacy_register_ambiguous_login`,
+      `SELECT login, register_rows, names FROM legacy_register_ambiguous_login`,
     );
     expect(ambiguous).toEqual([["sharedlog", 2n, "Nan Flower | Pat Ellery"]]);
     const claimed = await rows(

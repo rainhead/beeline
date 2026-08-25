@@ -28,18 +28,35 @@ COMMENT ON TABLE legacy_username_register IS 'Legacy hand-curated name register 
 -- particular, so it is excluded from the comparison below rather than picked
 -- between.
 CREATE OR REPLACE VIEW legacy_register_ambiguous_login AS
-SELECT login, count(*) AS rows_,
+SELECT login, count(*) AS register_rows,
        array_to_string(list_sort(list(DISTINCT full_name)), ' | ') AS names
 FROM legacy_username_register
 GROUP BY login
 HAVING count(DISTINCT coalesce(full_name, '')) > 1;
+
+-- Who the register cannot reach at all. It is keyed by iNat login, so a
+-- person without one is invisible to it however well it knows the name — and
+-- that is most co-collectors, who appear only inside somebody else's joint
+-- recordedBy. This is the view behind the finding that the register fills no
+-- missing name part: every person with NULL parts is in here.
+CREATE OR REPLACE VIEW legacy_register_unreached AS
+SELECT p.entity_id AS person_id, p.display_name,
+       a.login,
+       CASE WHEN a.person_id IS NULL THEN 'no iNat account'
+            ELSE 'login absent from the register' END AS reason,
+       p.given_name IS NULL AND p.family_name IS NULL AS parts_missing
+FROM person p
+LEFT JOIN inat_account a ON a.person_id = p.entity_id
+WHERE NOT EXISTS (
+  SELECT 1 FROM legacy_username_register r WHERE r.login = lower(a.login)
+);
 
 -- What the register says that the store does not — a worklist, not a merge.
 --
 -- The register was assumed authoritative when this was filed. Measured
 -- against the real store it is not: of 414 people it matches, it fills no
 -- missing name part at all (the 15 people with no parts have no login, so the
--- register cannot reach them), and it disagrees about twenty. Some of those
+-- register cannot reach them), and it disagrees about 25. Some of those
 -- disagreements are the register being right in a way promotion cannot see
 -- ('MaryJo' → 'Mary Jo', which src/person-name.ts already cites as its worked
 -- example); some are the register being plainly WRONG, which is the half

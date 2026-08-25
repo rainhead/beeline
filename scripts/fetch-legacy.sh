@@ -27,36 +27,42 @@ ssh -o BatchMode=yes beeline \
 mv -f "$dir/taxonomy.csv.tmp" "$dir/taxonomy.csv"
 
 echo "exporting the curated usernames register…" >&2
-# Hand-curated, keyed by userLogin: the authoritative source for name parts
-# and the label initial (beeline-8t8). It also holds emails and mailing
-# addresses, which is why the checked-in copy upstream is a header only and
-# why this lands in gitignored data/legacy/ — the loader stages the name
-# columns and nothing else (src/load-legacy.ts).
+# Hand-curated, keyed by userLogin: name parts, the label initial, and the
+# mailing addresses that are why the copy checked into OBP-Server is a header
+# and nothing else. A second opinion about names rather than an authority over
+# them — see ingest/promote-register.sql, which stages the name columns and
+# leaves the addresses here.
+#
+# The file is hand-edited in Excel and is not always UTF-8: it carries stray
+# no-break spaces, 0xA0 (Windows-1252) and 0xCA (Mac Roman), inside address
+# fields — 'PA<0xCA>', '1st<0xA0>Ave'. DuckDB reads UTF-8 only and rejects the
+# file outright, so those two bytes are normalised to a plain space — but ONLY
+# once the file has already failed to decode, because both are also legal
+# UTF-8 lead bytes: 0xCA starts 'ʻ' (U+02BB), which is a letter in Hawaiian
+# names, and substituting blind would mangle a correctly encoded file. A file
+# that still will not decode names the lines at fault and fails: a name is not
+# a thing to guess at.
 ssh -o BatchMode=yes beeline \
   'docker exec server sh -c "cat /app/shared/data/usernames.csv"' \
-  > "$dir/usernames.csv.raw"
-# The register is hand-edited in Excel and is not UTF-8: it carries stray
-# no-break spaces, 0xA0 (Windows-1252/Latin-1) and 0xCA (Mac Roman), inside
-# address and state fields — 'PA<0xCA>', '1st<0xA0>Ave'. DuckDB reads UTF-8
-# only and rejects the file outright, so normalise those two bytes to a plain
-# space here. Any OTHER byte that will not decode is a character we would be
-# guessing at, and the fetch fails rather than guess: a name is not a thing to
-# mangle quietly.
-node -e '
+  | node -e '
   const fs = require("fs");
-  const [src, dst] = process.argv.slice(1);
-  const buf = fs.readFileSync(src);
+  const raw = fs.readFileSync(0);
+  const decodes = (b) => {
+    try { new TextDecoder("utf-8", { fatal: true }).decode(b); return true; }
+    catch { return false; }
+  };
   const NBSP = new Set([0xa0, 0xca]);
-  const out = Buffer.from(buf.map((b) => (b > 0x7f && NBSP.has(b) ? 0x20 : b)));
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  try { decoder.decode(out); } catch {
-    const at = [...out].findIndex((b) => b > 0x7f);
-    console.error(`usernames.csv: undecodable byte 0x${out[at].toString(16)} at offset ${at}`);
+  let out = raw;
+  if (!decodes(out)) out = Buffer.from(raw.map((b) => (NBSP.has(b) ? 0x20 : b)));
+  if (!decodes(out)) {
+    const lines = new TextDecoder("utf-8").decode(out).split("\n");
+    const bad = lines.flatMap((l, i) => (l.includes("\uFFFD") ? [i + 1] : []));
+    console.error(`usernames.csv: line(s) ${bad.join(", ")} are not UTF-8 and are not a`
+      + ` known stray no-break space — refusing to guess at them`);
     process.exit(1);
   }
-  fs.writeFileSync(dst, out);
-' "$dir/usernames.csv.raw" "$dir/usernames.csv.tmp"
-rm -f "$dir/usernames.csv.raw"
+  fs.writeFileSync(process.argv[1], out);
+' "$dir/usernames.csv.tmp"
 mv -f "$dir/usernames.csv.tmp" "$dir/usernames.csv"
 
 count=$(gzip -dc "$dir/occurrences.jsonl.gz" | wc -l | tr -d ' ')

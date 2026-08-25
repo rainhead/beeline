@@ -41,10 +41,15 @@ export interface PromotionCounts {
   correctionsApplied: number;
   correctionsRetired: number;
   correctionConflicts: number;
+  /**
+   * Rows staged from the legacy name register. Zero means there was no
+   * register to read, which is not the same as a register that agrees —
+   * `pnpm db:reseed` re-promotes from staging and would otherwise report a
+   * clean worklist for a file it never opened.
+   */
+  registerStaged: number;
   /** Name parts the legacy register spells differently — a worklist (beeline-8t8). */
   registerNameConflicts: number;
-  /** Register logins carrying two different names: a shared account (beeline-oyl). */
-  registerAmbiguousLogins: number;
   /** Staff decisions about people replayed onto the fresh store (ADR 0004). */
   personOverlayApplied: number;
   /** Overlay rows that named nobody — reported, never guessed at. */
@@ -122,8 +127,8 @@ export async function promoteLegacy(
     correctionsRetired: await scalar(
       "SELECT count(*) FROM legacy_correction_state WHERE status = 'retired'",
     ),
+    registerStaged: await scalar("SELECT count(*) FROM legacy_username_register"),
     registerNameConflicts: await scalar("SELECT count(*) FROM legacy_register_name_conflict"),
-    registerAmbiguousLogins: await scalar("SELECT count(*) FROM legacy_register_ambiguous_login"),
     personOverlayApplied: overlay.applied,
     personOverlayUnresolved: overlay.unresolved,
     correctionConflicts: await scalar(

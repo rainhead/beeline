@@ -147,3 +147,32 @@ CREATE TABLE person_admin (
 );
 COMMENT ON TABLE person_admin IS 'Admin rights: /jobs, /people, /design, and the listings scope picker. Presence is the grant; revoking deletes the row.';
 COMMENT ON COLUMN person_admin.granted_by IS 'iNat login of whoever granted it, or ''seed'' for the checked-in bootstrap roster. Not a foreign key: the granter may be gone.';
+
+-- Who may act for somebody else. A household shares one iNat login, but an
+-- account belongs to exactly one person (inat_account is 1:1, and beeline-oyl
+-- decided it stays that way): the partner who does not hold it has no way to
+-- sign in, and `mine` scope is forced for volunteers, so nobody who can log in
+-- can see their samples. The Pedersons are 1,146 and 1,087 samples under one
+-- login, correctly attributed to two people, and half of them unreachable.
+--
+-- This grants reach, never credit. Samples, labels, recordedBy and Master
+-- Melittology progress stay on the person who collected — a delegate sees and
+-- acts, and the work remains the other person's. Directional on purpose:
+-- Gretchen acting for Robert does not imply the reverse, because a household
+-- where only one partner still collects should not silently become mutual.
+--
+-- Granted by staff rather than by the person represented, which is the part
+-- that surprises: the obvious rule — the subject consents — cannot work here,
+-- since being unable to sign in is the whole reason the row exists.
+CREATE TABLE person_delegate (
+  person_id   INTEGER NOT NULL REFERENCES person(entity_id),
+  acts_for_id INTEGER NOT NULL REFERENCES person(entity_id),
+  granted_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  granted_by  TEXT,
+  PRIMARY KEY (person_id, acts_for_id),
+  CHECK (person_id <> acts_for_id)
+);
+COMMENT ON TABLE person_delegate IS 'person_id may see and act on acts_for_id''s samples (beeline-oyl). Presence is the grant; revoking deletes the row. Reach, not credit: attribution and Master Melittology progress stay with the person who collected.';
+COMMENT ON COLUMN person_delegate.person_id IS 'The delegate — the one who signs in. Holds an iNat account by definition, since a person who cannot sign in cannot act for anybody.';
+COMMENT ON COLUMN person_delegate.acts_for_id IS 'The person acted for, typically the household partner who does not hold the shared login. Usually has no inat_account at all, which is the state this table exists to make workable.';
+COMMENT ON COLUMN person_delegate.granted_by IS 'iNat login of the staff member who granted it. Not a foreign key: the granter may be gone — same stance as person_admin.granted_by.';

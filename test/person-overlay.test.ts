@@ -11,6 +11,7 @@ import {
   parseOverlay,
   parseRef,
   readOverlay,
+  splitRefs,
   upsertOverlay,
   type PersonOverlayRow,
 } from "../src/person-overlay.js";
@@ -41,6 +42,18 @@ describe("the overlay file", () => {
     expect(() => parseOverlay(`${head}name:Ada,admin,maybe,me,\n`, "f")).toThrow(/expected yes or no/);
     expect(() => parseOverlay(`${head}name:Ada,inat_user_id,amelathopoulos,me,\n`, "f")).toThrow(/not an iNat user id/);
     expect(() => parseOverlay(`${head}name:Ada,admin,yes,me\n`, "f")).toThrow(/4 fields, expected 5/);
+    expect(() => parseOverlay(`${head}name:Ada,acts_for,Bo,me,\n`, "f")).toThrow(/not a person reference/);
+  });
+
+  // beeline-oyl. One row per (person_ref, field) with latest-wins, so the
+  // value has to name the whole set — otherwise a second grant erases the
+  // first and there is no way to say "and also".
+  it("reads acts_for as a set of references, not one", () => {
+    expect(splitRefs("name:Robert Pederson")).toEqual(["name:Robert Pederson"]);
+    expect(splitRefs("name:Robert Pederson; inat:429964")).toEqual(["name:Robert Pederson", "inat:429964"]);
+    expect(splitRefs("")).toEqual([]);
+    const head = "person_ref,field,value,author,reason\n";
+    expect(parseOverlay(`${head}name:Ada,acts_for,name:Bo;name:Cy,me,\n`, "f")[0]!.value).toBe("name:Bo;name:Cy");
   });
 
   it("keeps the login beside the id, so the file is reviewable", () => {
@@ -109,6 +122,52 @@ describe("applying the overlay", () => {
     const r = await apply([row({ person_ref: "name:Ada Collector", field: "inat_user_id", value: "111 bonetter" })]);
     expect(r.unresolved[0]!.reason).toMatch(/already bound/);
     expect(await one(`SELECT count(*) FROM inat_account WHERE person_id = ${people["Ada Collector"]}`)).toEqual([0n]);
+  });
+
+  // beeline-oyl: reach, not credit. A household shares one login, only one of
+  // them can hold it, and the other's samples are unreachable without this.
+  it("grants one person the ability to act for another", async () => {
+    const r = await apply([
+      row({ person_ref: "name:Bo Netter", field: "acts_for", value: "name:Ada Collector", author: "peter" }),
+    ]);
+    expect(r.unresolved).toEqual([]);
+    expect(await one(`SELECT acts_for_id, granted_by FROM person_delegate WHERE person_id = ${people["Bo Netter"]}`))
+      .toEqual([people["Ada Collector"], "peter"]);
+  });
+
+  it("replaces the whole set, because one row cannot say 'and also'", async () => {
+    await apply([row({ person_ref: "name:Bo Netter", field: "acts_for", value: "name:Ada Collector" })]);
+    await apply([
+      row({ person_ref: "name:Bo Netter", field: "acts_for", value: "name:Ada Collector;name:Ada Collector Jr" }),
+    ]);
+    expect(await rows(conn, `SELECT count(*) FROM person_delegate WHERE person_id = ${people["Bo Netter"]}`))
+      .toEqual([[2n]]);
+    // ...and shrinking works the same way, which is what makes it replayable.
+    await apply([row({ person_ref: "name:Bo Netter", field: "acts_for", value: "name:Ada Collector Jr" })]);
+    expect(await one(`SELECT acts_for_id FROM person_delegate WHERE person_id = ${people["Bo Netter"]}`))
+      .toEqual([people["Ada Collector Jr"]]);
+  });
+
+  it("revokes every grant on a blank", async () => {
+    await apply([row({ person_ref: "name:Bo Netter", field: "acts_for", value: "name:Ada Collector" })]);
+    await apply([row({ person_ref: "name:Bo Netter", field: "acts_for", value: "" })]);
+    expect(await rows(conn, `SELECT count(*) FROM person_delegate`)).toEqual([[0n]]);
+  });
+
+  it("applies none of a set when one reference names nobody", async () => {
+    const r = await apply([
+      row({ person_ref: "name:Bo Netter", field: "acts_for", value: "name:Ada Collector;name:Nobody At All" }),
+    ]);
+    expect(r.unresolved[0]!.reason).toMatch(/no person named 'Nobody At All'/);
+    // Not one row: a half-applied grant set silently drops whoever came after
+    // the failure, and the reason is already reported.
+    expect(await rows(conn, `SELECT count(*) FROM person_delegate`)).toEqual([[0n]]);
+  });
+
+  it("refuses a person acting for themselves", async () => {
+    const r = await apply([row({ person_ref: "name:Bo Netter", field: "acts_for", value: "name:Bo Netter" })]);
+    expect(r.unresolved[0]!.reason).toMatch(/cannot act for themselves/);
+    expect(await rows(conn, `SELECT count(*) FROM person_delegate`)).toEqual([[0n]]);
   });
 
   it("unbinds on a blank, which is how someone loses the ability to sign in", async () => {

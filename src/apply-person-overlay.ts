@@ -1,7 +1,7 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { pathToFileURL } from "node:url";
 import { PROGRAM_MEMBERSHIP } from "./model.js";
-import { parseRef, type OverlayField, type PersonOverlayRow } from "./person-overlay.js";
+import { splitRefs, parseRef, type OverlayField, type PersonOverlayRow } from "./person-overlay.js";
 
 /**
  * Apply staff decisions about people to the store (ADR 0004 overlay, keyed as
@@ -131,7 +131,7 @@ export async function applyPersonOverlay(
   for (const row of overlay) {
     const found = resolve(row.person_ref);
     if ("problem" in found) { fail(row, found.problem); continue; }
-    const problem = await applyField(conn, found.id, row.field, row.value, row.author);
+    const problem = await applyField(conn, found.id, row.field, row.value, row.author, resolve);
     if (problem !== null) fail(row, problem);
     else result.applied++;
   }
@@ -146,6 +146,8 @@ async function applyField(
   value: string,
   /** Who decided — the overlay row's author, recorded on the grant. */
   author: string,
+  /** Resolves a person reference, for the fields whose VALUE names a person. */
+  resolve: (ref: string) => { id: number } | { problem: string },
 ): Promise<string | null> {
   if (field === "inat_user_id") {
     if (value === "") {
@@ -178,6 +180,31 @@ async function applyField(
       await conn.run(
         `INSERT INTO person_admin (person_id, granted_by) VALUES ($1, $2) ON CONFLICT (person_id) DO NOTHING`,
         [personId, author] as never,
+      );
+    }
+    return null;
+  }
+
+  if (field === "acts_for") {
+    // The row states the complete set, so replace it wholesale: latest-wins on
+    // one row per (person_ref, field) cannot express "add one more".
+    const refs = splitRefs(value);
+    const targets: number[] = [];
+    for (const ref of refs) {
+      const found = resolve(ref);
+      if ("problem" in found) return found.problem;
+      if (found.id === personId) return `cannot act for themselves ('${ref}')`;
+      targets.push(found.id);
+    }
+    // All or nothing: a half-applied grant set would silently drop whoever
+    // came after the reference that failed, and the failure is already
+    // reported. Deleting first is what makes a shrinking set replayable.
+    await conn.run(`DELETE FROM person_delegate WHERE person_id = $1`, [personId] as never);
+    for (const target of targets) {
+      await conn.run(
+        `INSERT INTO person_delegate (person_id, acts_for_id, granted_by) VALUES ($1, $2, $3)
+         ON CONFLICT (person_id, acts_for_id) DO NOTHING`,
+        [personId, target, author] as never,
       );
     }
     return null;

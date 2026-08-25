@@ -55,6 +55,13 @@ export interface PersonAdminTable {
   granted_by: string | null;
 }
 
+export interface PersonDelegateTable {
+  person_id: number;
+  acts_for_id: number;
+  granted_at: Generated<Date>;
+  granted_by: string | null;
+}
+
 export interface AtlasTable {
   entity_id: Generated<number>;
   code: string;
@@ -279,6 +286,7 @@ export interface Database {
   person_orcid: PersonOrcidTable;
   person_membership: PersonMembershipTable;
   person_admin: PersonAdminTable;
+  person_delegate: PersonDelegateTable;
   atlas: AtlasTable;
   atlas_region: AtlasRegionTable;
   animal: AnimalTable;

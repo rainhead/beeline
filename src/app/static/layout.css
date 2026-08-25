@@ -130,3 +130,26 @@ main > * {
   text-align: center;
   padding: var(--space-1) var(--space-4);
 }
+
+/* Acting for somebody else (beeline-oyl). Louder than the environment banner
+   above it: that one says where you are, this one says who the page thinks
+   you are, and getting it wrong means editing another person's records. It
+   sits in the error container colours for that reason — not because anything
+   has gone wrong, but because it is the one piece of chrome that must never
+   be skimmed past. */
+.acting-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+  font: var(--md-sys-typescale-label);
+  padding: var(--space-1) var(--space-4);
+}
+.acting-banner form { display: contents; }
+
+/* A labelled group inside a menu panel — the account menu's list of people
+   this session may act for. */
+.menu-section { padding-bottom: var(--space-1); }

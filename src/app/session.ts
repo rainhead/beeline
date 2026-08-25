@@ -32,6 +32,12 @@ export type AppEnv = {
     session: Session;
     /** Resolved once per request at the gate, from person_admin. */
     admin: boolean;
+    /**
+     * Whose records `mine` means, and whether that is somebody else
+     * (beeline-oyl). Resolved at the gate, re-checked against
+     * person_delegate every request.
+     */
+    acting: import("./acting.js").Acting;
     m: import("./messages/index.js").Messages;
   };
 };

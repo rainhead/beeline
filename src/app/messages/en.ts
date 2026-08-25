@@ -61,6 +61,20 @@ export const en = {
     menu: "Menu",
     /** The avatar button that opens the account menu. */
     account: (login: string) => `Account: ${login}`,
+    /**
+     * Acting for somebody else (beeline-oyl). A household shares one iNat
+     * login and only one of them holds it, so the other's records are only
+     * reachable this way. The banner is deliberately plain and constant: it
+     * has to be readable at a glance on every page, because everything the
+     * page says about "my" samples means somebody else while it is up.
+     */
+    acting: {
+      banner: (name: string) => `You are acting for ${name}. Samples shown as yours are theirs.`,
+      stop: "Stop acting",
+      /** The picker in the account menu, for a delegate with grants. */
+      start: "Act for someone",
+      startFor: (name: string) => `Act for ${name}`,
+    },
     signOut: "Sign out",
     /** BEELINE_DEV_LOGIN sessions ignore cookies, so there is nothing to sign out of. */
     devSession: "Signed in by BEELINE_DEV_LOGIN — stop the dev server to change who you are.",
@@ -295,6 +309,8 @@ export const en = {
 
   errors: {
     crossOrigin: "cross-origin request refused",
+    /** Asking to act for somebody nobody granted you (beeline-oyl). */
+    forbidden: "you have not been granted that",
   },
 
   jobs: {

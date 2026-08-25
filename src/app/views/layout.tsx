@@ -13,6 +13,10 @@ export interface PageEnv {
   session: Session;
   /** Whether this session may see the admin surface (/jobs, /design, beeline-6va). */
   admin: boolean;
+  /** Who this session may act for, and who it currently is (beeline-oyl). */
+  acting: { actingFor: { personId: number; name: string } | null };
+  /** Everyone this session may act for; empty for almost everybody. */
+  canActFor: readonly { personId: number; name: string }[];
   m: Messages;
 }
 
@@ -101,6 +105,17 @@ export function Layout(props: {
       </head>
       <body>
         {env.environment !== "production" && <div class="env-banner">{m.layout.envBanner(env.environment)}</div>}
+        {/* Acting for someone changes what every "my samples" surface means,
+            so it is stated at the top of every page rather than tucked into
+            the menu that switched it on (beeline-oyl). */}
+        {env.acting.actingFor !== null && (
+          <div class="acting-banner">
+            <span>{m.layout.acting.banner(env.acting.actingFor.name)}</span>
+            <form method="post" action="/acting/stop">
+              <button>{m.layout.acting.stop}</button>
+            </form>
+          </div>
+        )}
         {/* The dropdowns are <details> so they work with no JavaScript at all;
             the islands bundle adds outside-click/Escape dismissal on top. */}
         <header>
@@ -124,6 +139,17 @@ export function Layout(props: {
             </summary>
             <div class="menu-panel">
               <div class="menu-identity">{session.login}</div>
+              {env.canActFor.length > 0 && (
+                <div class="menu-section">
+                  <div class="menu-identity">{m.layout.acting.start}</div>
+                  {env.canActFor.map((person) => (
+                    <form method="post" action="/acting">
+                      <input type="hidden" name="person" value={String(person.personId)} />
+                      <button>{m.layout.acting.startFor(person.name)}</button>
+                    </form>
+                  ))}
+                </div>
+              )}
               {session.stub === true ? (
                 // A dev-login session has no cookie behind it to end.
                 <div class="menu-identity">{m.layout.devSession}</div>

@@ -10,6 +10,7 @@ import { registerAuthRoutes, type InatClient } from "./auth.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, SESSION_COOKIE, type AppEnv, type Session, type SessionResolver } from "./session.js";
+import { resolveActing, startActing, stopActing } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
 import type { Job } from "./jobs/framework.js";
@@ -169,6 +170,9 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     }
     c.set("session", session);
     c.set("admin", await isAdmin(session));
+    // Whose records `mine` means. Re-checked against person_delegate every
+    // request, so a revoked grant stops working at once (beeline-oyl).
+    c.set("acting", await resolveActing(db, session, c));
     await next();
   });
 
@@ -180,8 +184,30 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     return c.redirect("/");
   });
 
+  // Acting for somebody else (beeline-oyl). Both are POSTs because both
+  // change what every later GET means; redirecting home rather than back
+  // keeps it out of open-redirect territory, and home is the surface the
+  // switch most changes.
+  app.post("/acting", async (c) => {
+    const body = await c.req.parseBody();
+    const wanted = typeof body["person"] === "string" ? Number(body["person"]) : NaN;
+    // Refused rather than silently ignored: setting a cookie the resolver
+    // would throw away on the next request looks to the user like the switch
+    // simply not working.
+    if (!c.get("acting").canActFor.some((d) => d.personId === wanted)) {
+      return c.text(c.get("m").errors.forbidden, 403);
+    }
+    startActing(c, wanted);
+    return c.redirect("/");
+  });
+
+  app.post("/acting/stop", async (c) => {
+    stopActing(c);
+    return c.redirect("/");
+  });
+
   const page = async (
-    c: { get<K extends "session" | "m" | "admin">(k: K): AppEnv["Variables"][K] },
+    c: { get<K extends "session" | "m" | "admin" | "acting">(k: K): AppEnv["Variables"][K] },
     title: string,
     children: Child,
     stylesheets?: readonly string[],
@@ -194,6 +220,8 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
           styleVersion: await styleVersion(),
           session: c.get("session"),
           admin: c.get("admin"),
+          acting: c.get("acting"),
+          canActFor: c.get("acting").canActFor,
           m: c.get("m"),
         }}
         title={title}
@@ -206,7 +234,10 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   // The flagship is the front page: your samples needing attention.
   app.get("/", async (c) => {
     const m = c.get("m");
-    const session = c.get("session");
+    // The dashboard is the "mine" surface, so it follows the switch: while
+    // acting for Robert it is Robert's flagged samples that need attention,
+    // and the chrome says whose they are.
+    const { personId } = c.get("acting");
     const [flagged, pending, partners, sync] = await Promise.all([
       db
         // The roll-up, not qc_finding: a finding on one of a sample's
@@ -218,7 +249,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
         // Any sample you collected, not only the ones numbered under your
         // name: a second collector is not a spectator (beeline-77j).
         .innerJoin("sample_collector as mine", (join) =>
-          join.onRef("mine.sample_id", "=", "s.entity_id").on("mine.person_id", "=", session.personId),
+          join.onRef("mine.sample_id", "=", "s.entity_id").on("mine.person_id", "=", personId),
         )
         .select([
           "s.entity_id as sample_id",
@@ -248,7 +279,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
         .selectFrom("pending_print_sample as p")
         .innerJoin("sample as s", "s.entity_id", "p.sample_id")
         .innerJoin("sample_collector as mine", (join) =>
-          join.onRef("mine.sample_id", "=", "s.entity_id").on("mine.person_id", "=", session.personId),
+          join.onRef("mine.sample_id", "=", "s.entity_id").on("mine.person_id", "=", personId),
         )
         .select([
           "s.entity_id as sample_id",
@@ -269,8 +300,8 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
         .selectFrom("sample_collector as mine")
         .innerJoin("sample_collector as theirs", "theirs.sample_id", "mine.sample_id")
         .innerJoin("person", "person.entity_id", "theirs.person_id")
-        .where("mine.person_id", "=", session.personId)
-        .where("theirs.person_id", "!=", session.personId)
+        .where("mine.person_id", "=", personId)
+        .where("theirs.person_id", "!=", personId)
         .select(["mine.sample_id as sample_id", "person.display_name as display_name"])
         .orderBy("theirs.position")
         .execute(),
@@ -320,7 +351,9 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
    * a volunteer cannot reach another atlas by typing a query string.
    */
   const listingRequest = async (c: Context<AppEnv>) => {
-    const session = c.get("session");
+    // The effective person, not the signed-in one: MINE scope means the
+    // person being acted for while the switch is on (beeline-oyl).
+    const { personId } = c.get("acting");
     const admin = c.get("admin");
     const atlases = await atlasOptions(db);
     const query = parseListingQuery(new URL(c.req.url).searchParams, {
@@ -332,7 +365,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     if (admin && c.req.query("scope") !== undefined) {
       setCookie(c, SCOPE_COOKIE, query.scope, { path: "/", sameSite: "Lax", httpOnly: true });
     }
-    return { session, admin, atlases, query };
+    return { personId, admin, atlases, query };
   };
 
   const csv = (c: Context<AppEnv>, body: string, filename: string) =>
@@ -343,8 +376,8 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
 
   app.get("/samples", async (c) => {
     const m = c.get("m");
-    const { session, admin, atlases, query } = await listingRequest(c);
-    const results = await listSamples(db, query, session.personId);
+    const { personId, admin, atlases, query } = await listingRequest(c);
+    const results = await listSamples(db, query, personId);
     return c.html(
       await page(
         c,
@@ -355,15 +388,15 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   });
 
   app.get("/samples.csv", async (c) => {
-    const { session, query } = await listingRequest(c);
-    const results = await listSamples(db, query, session.personId, { limit: CSV_ROW_LIMIT, offset: 0 });
+    const { personId, query } = await listingRequest(c);
+    const results = await listSamples(db, query, personId, { limit: CSV_ROW_LIMIT, offset: 0 });
     return csv(c, sampleCsv(results), "beeline-samples.csv");
   });
 
   app.get("/specimens", async (c) => {
     const m = c.get("m");
-    const { session, admin, atlases, query } = await listingRequest(c);
-    const results = await listSpecimens(db, query, session.personId);
+    const { personId, admin, atlases, query } = await listingRequest(c);
+    const results = await listSpecimens(db, query, personId);
     return c.html(
       await page(
         c,
@@ -374,8 +407,8 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   });
 
   app.get("/specimens.csv", async (c) => {
-    const { session, query } = await listingRequest(c);
-    const results = await listSpecimens(db, query, session.personId, { limit: CSV_ROW_LIMIT, offset: 0 });
+    const { personId, query } = await listingRequest(c);
+    const results = await listSpecimens(db, query, personId, { limit: CSV_ROW_LIMIT, offset: 0 });
     return csv(c, specimenCsv(results), "beeline-specimens.csv");
   });
 
@@ -383,15 +416,20 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   // is in the query: your sample, and no observation to send you to.
   app.get("/samples/:id/edit", async (c) => {
     const m = c.get("m");
-    const sample = await loadEditableSample(db, Number(c.req.param("id")), c.get("session").personId);
+    // Acting for someone is reach to act, not only to look: the collector
+    // gate reads the effective person (beeline-oyl).
+    const sample = await loadEditableSample(db, Number(c.req.param("id")), c.get("acting").personId);
     if (sample === undefined) return c.text(m.sampleEdit.notEditable, 404);
     return c.html(await page(c, m.sampleEdit.title, <SampleEditForm m={m} sample={sample} />));
   });
 
   app.post("/samples/:id/edit", async (c) => {
     const m = c.get("m");
+    // The collector gate follows the switch, but the AUTHOR of the correction
+    // is whoever actually made it — acting for Robert does not make Robert
+    // the one who typed it (beeline-oyl: reach, never credit).
     const session = c.get("session");
-    const sample = await loadEditableSample(db, Number(c.req.param("id")), session.personId);
+    const sample = await loadEditableSample(db, Number(c.req.param("id")), c.get("acting").personId);
     if (sample === undefined) return c.text(m.sampleEdit.notEditable, 404);
     const body = await c.req.parseBody();
     // Absent fields stay untouched (applySampleEdit's contract); only strings pass.

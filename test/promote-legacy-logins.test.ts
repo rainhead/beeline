@@ -1,13 +1,10 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { createMemoryDb, rows } from "./helpers.js";
+import { createMemoryDb, FIXTURE_INPUTS, rows } from "./helpers.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
 
 const FIXTURE = new URL("./fixtures/legacy-logins.jsonl", import.meta.url).pathname;
-const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
-const NO_APP_CORRECTIONS = new URL("./fixtures/empty-corrections.csv", import.meta.url).pathname;
-const NO_REGISTER = new URL("./fixtures/no-usernames.csv", import.meta.url).pathname;
 
 /**
  * Which iNat account a legacy person is bound to (beeline-eft). A login rides
@@ -21,18 +18,7 @@ let conn: DuckDBConnection;
 beforeAll(async () => {
   ({ conn } = await createMemoryDb());
   await loadLegacyStaging(conn, FIXTURE);
-  await promoteLegacy(
-    conn,
-    TAXONOMY,
-    "ingest/determiner-aliases.csv",
-    "ingest/determiner-register.csv",
-    "ingest/legacy-corrections.csv",
-    NO_APP_CORRECTIONS,
-    "ingest/person-overlay.csv",
-    "data/person-overlay.csv",
-    "ingest/collector-aliases.csv",
-    NO_REGISTER, // never the developer's fetched data/legacy/usernames.csv
-  );
+  await promoteLegacy(conn, FIXTURE_INPUTS);
 });
 
 const accounts = () =>

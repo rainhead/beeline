@@ -9,12 +9,10 @@ import { createApp } from "../src/app/server.js";
 import { parseCsv } from "../src/corrections.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
-import { createMemoryDb, rows } from "./helpers.js";
+import { createMemoryDb, FIXTURE_INPUTS, rows } from "./helpers.js";
 
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
-const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
 const CORRECTIONS = new URL("./fixtures/legacy-corrections.csv", import.meta.url).pathname;
-const NO_REGISTER = new URL("./fixtures/no-usernames.csv", import.meta.url).pathname;
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -43,18 +41,11 @@ async function editApp(appCsv?: string) {
   const { instance, conn } = await createMemoryDb();
   await loadLegacyStaging(conn, FIXTURE);
   const correctionsPath = appCsv ?? join(await mkdtemp(join(tmpdir(), "beeline-edit-")), "corrections.csv");
-  await promoteLegacy(
-    conn,
-    TAXONOMY,
-    "ingest/determiner-aliases.csv",
-    "ingest/determiner-register.csv",
-    CORRECTIONS,
-    correctionsPath,
-    "ingest/person-overlay.csv",
-    "data/person-overlay.csv",
-    "ingest/collector-aliases.csv",
-    NO_REGISTER, // never the developer's fetched data/legacy/usernames.csv
-  );
+  await promoteLegacy(conn, {
+    ...FIXTURE_INPUTS,
+    legacyCorrections: CORRECTIONS,
+    appCorrections: correctionsPath,
+  });
   const bea = await personId(conn, "Bea Trapper");
   const beaSample = await sampleId(conn, "OBAS-00657");
   // The fixture collects in July 2025, which is a settled season by now, and
@@ -168,18 +159,11 @@ describe("in-app editing of non-iNat samples", () => {
 
     const { conn: conn2 } = await createMemoryDb();
     await loadLegacyStaging(conn2, FIXTURE);
-    await promoteLegacy(
-      conn2,
-      TAXONOMY,
-      "ingest/determiner-aliases.csv",
-      "ingest/determiner-register.csv",
-      CORRECTIONS,
-      correctionsPath,
-      "ingest/person-overlay.csv",
-      "data/person-overlay.csv",
-      "ingest/collector-aliases.csv",
-      NO_REGISTER, // never the developer's fetched data/legacy/usernames.csv
-    );
+    await promoteLegacy(conn2, {
+      ...FIXTURE_INPUTS,
+      legacyCorrections: CORRECTIONS,
+      appCorrections: correctionsPath,
+    });
     const [[locality]] = (await rows(
       conn2,
       `SELECT locality FROM sample WHERE sample_number = 'OBAS-00657'`,
@@ -243,18 +227,11 @@ describe("in-app editing of non-iNat samples", () => {
     // Blow away: new database, same staging, same correction files.
     const { conn: conn2 } = await createMemoryDb();
     await loadLegacyStaging(conn2, FIXTURE);
-    await promoteLegacy(
-      conn2,
-      TAXONOMY,
-      "ingest/determiner-aliases.csv",
-      "ingest/determiner-register.csv",
-      CORRECTIONS,
-      correctionsPath,
-      "ingest/person-overlay.csv",
-      "data/person-overlay.csv",
-      "ingest/collector-aliases.csv",
-      NO_REGISTER, // never the developer's fetched data/legacy/usernames.csv
-    );
+    await promoteLegacy(conn2, {
+      ...FIXTURE_INPUTS,
+      legacyCorrections: CORRECTIONS,
+      appCorrections: correctionsPath,
+    });
     const [[locality, county]] = (await rows(
       conn2,
       `SELECT locality, county FROM sample WHERE sample_number = 'OBAS-00657'`,

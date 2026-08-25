@@ -56,19 +56,63 @@ export interface PromotionCounts {
   personOverlayUnresolved: Unresolved[];
 }
 
+/**
+ * Every file promotion reads that is not the staged rows themselves.
+ *
+ * Named rather than positional, and required rather than defaulted, because
+ * half of these paths point at files that exist only on the machine that
+ * fetched or wrote them — `data/legacy/*` is gitignored, and so are
+ * `data/corrections.csv` and `data/person-overlay.csv`. A defaulted parameter
+ * a caller forgets is answered silently by whatever is in the developer's
+ * working copy, which is a test that passes here and means nothing anywhere
+ * else. So there is no default to forget: the ingest CLI names LIVE_INPUTS,
+ * tests name their fixtures, and the type will not let either skip one
+ * (beeline-cqk).
+ */
+export interface PromotionInputs {
+  /** Curated legacy taxonomy, fetched beside the occurrence dump. */
+  taxonomyCsv: string;
+  determinerAliases: string;
+  determinerRegister: string;
+  /** Git-curated corrections (ADR 0004). */
+  legacyCorrections: string;
+  /** Corrections the app wrote, which win over the curated ones. */
+  appCorrections: string;
+  /** Git-curated staff decisions about people. */
+  curatedOverlay: string;
+  /** Overlay rows the app wrote, merged over the curated ones. */
+  appOverlay: string;
+  collectorAliases: string;
+  /** The legacy name register (beeline-8t8); absent reads as empty. */
+  usernameRegister: string;
+}
+
+/**
+ * What a real ingest reads. Named in one place so that adding an input is one
+ * edit rather than one per call site, and so the gitignored paths are all
+ * visible together.
+ */
+export const LIVE_INPUTS: PromotionInputs = {
+  taxonomyCsv: "data/legacy/taxonomy.csv",
+  determinerAliases: "ingest/determiner-aliases.csv",
+  determinerRegister: "ingest/determiner-register.csv",
+  legacyCorrections: "ingest/legacy-corrections.csv",
+  appCorrections: "data/corrections.csv",
+  curatedOverlay: "ingest/person-overlay.csv",
+  appOverlay: "data/person-overlay.csv",
+  collectorAliases: "ingest/collector-aliases.csv",
+  usernameRegister: "data/legacy/usernames.csv",
+};
+
 /** Promote staged legacy_occurrence rows into the model. Fresh model only. */
 export async function promoteLegacy(
   conn: DuckDBConnection,
-  taxonomyCsvPath = "data/legacy/taxonomy.csv",
-  determinerAliasesPath = "ingest/determiner-aliases.csv",
-  determinerRegisterPath = "ingest/determiner-register.csv",
-  legacyCorrectionsPath = "ingest/legacy-corrections.csv",
-  appCorrectionsPath = "data/corrections.csv",
-  curatedOverlayPath = "ingest/person-overlay.csv",
-  appOverlayPath = "data/person-overlay.csv",
-  collectorAliasesPath = "ingest/collector-aliases.csv",
-  usernameRegisterPath = "data/legacy/usernames.csv",
+  inputs: PromotionInputs,
 ): Promise<PromotionCounts> {
+  const {
+    taxonomyCsv, determinerAliases, determinerRegister, legacyCorrections,
+    appCorrections, curatedOverlay, appOverlay, collectorAliases, usernameRegister,
+  } = inputs;
   const scalar = async (sql: string): Promise<number> => {
     const [[v]] = (await (await conn.run(sql)).getRows()) as [[bigint]];
     return Number(v);
@@ -76,33 +120,33 @@ export async function promoteLegacy(
   if ((await scalar("SELECT count(*) FROM person")) > 0) {
     throw new Error("model already contains people — promotion runs only against a freshly built database");
   }
-  await ensureCorrectionsFile(appCorrectionsPath); // read_csv fails on a missing file
+  await ensureCorrectionsFile(appCorrections); // read_csv fails on a missing file
   const promoteSql = await readFile(`${INGEST_DIR}promote-legacy.sql`, "utf8");
   await conn.run(
     promoteSql
-      .replaceAll("{{LEGACY_CORRECTIONS}}", legacyCorrectionsPath.replaceAll("'", "''"))
-      .replaceAll("{{APP_CORRECTIONS}}", appCorrectionsPath.replaceAll("'", "''"))
-      .replaceAll("{{COLLECTOR_ALIASES}}", collectorAliasesPath.replaceAll("'", "''")),
+      .replaceAll("{{LEGACY_CORRECTIONS}}", legacyCorrections.replaceAll("'", "''"))
+      .replaceAll("{{APP_CORRECTIONS}}", appCorrections.replaceAll("'", "''"))
+      .replaceAll("{{COLLECTOR_ALIASES}}", collectorAliases.replaceAll("'", "''")),
   );
   const seedSql = await readFile(`${INGEST_DIR}seed-animals.sql`, "utf8");
-  await conn.run(seedSql.replaceAll("{{TAXONOMY_CSV}}", taxonomyCsvPath.replaceAll("'", "''")));
+  await conn.run(seedSql.replaceAll("{{TAXONOMY_CSV}}", taxonomyCsv.replaceAll("'", "''")));
   const detSql = await readFile(`${INGEST_DIR}promote-determinations.sql`, "utf8");
   await conn.run(
     detSql
-      .replaceAll("{{DETERMINER_ALIASES}}", determinerAliasesPath.replaceAll("'", "''"))
-      .replaceAll("{{DETERMINER_REGISTER}}", determinerRegisterPath.replaceAll("'", "''")),
+      .replaceAll("{{DETERMINER_ALIASES}}", determinerAliases.replaceAll("'", "''"))
+      .replaceAll("{{DETERMINER_REGISTER}}", determinerRegister.replaceAll("'", "''")),
   );
   // Last: people and their accounts exist by now, so every reference an
   // overlay row can name is there to be resolved.
   const overlay = await applyPersonOverlay(
     conn,
-    mergeOverlays(await readOverlay(curatedOverlayPath), await readOverlay(appOverlayPath)),
+    mergeOverlays(await readOverlay(curatedOverlay), await readOverlay(appOverlay)),
   );
   // After the overlay: the register is compared against the bindings that
   // survive it, so a login the overlay rebound is not reported as a conflict
   // against the account it used to have.
   const registerSql = await readFile(`${INGEST_DIR}promote-register.sql`, "utf8");
-  await conn.run(registerSql.replaceAll("{{REGISTER_SOURCE}}", registerSource(usernameRegisterPath)));
+  await conn.run(registerSql.replaceAll("{{REGISTER_SOURCE}}", registerSource(usernameRegister)));
 
   return {
     staged: await scalar("SELECT count(*) FROM legacy_occurrence"),
@@ -142,7 +186,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const dbPath = process.argv[2] ?? "beeline.duckdb";
   const instance = await DuckDBInstance.create(dbPath);
   const conn = await instance.connect();
-  const counts = await promoteLegacy(conn);
+  const counts = await promoteLegacy(conn, LIVE_INPUTS);
   conn.closeSync();
   console.log(JSON.stringify(counts, null, 2));
   if (counts.specimens + counts.blockedRows !== counts.staged) {

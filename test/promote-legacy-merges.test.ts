@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { createMemoryDb, rows } from "./helpers.js";
+import { createMemoryDb, FIXTURE_INPUTS, rows } from "./helpers.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy, type PromotionCounts } from "../src/promote-legacy.js";
 
@@ -38,10 +38,7 @@ import { promoteLegacy, type PromotionCounts } from "../src/promote-legacy.js";
  */
 
 const FIXTURE = new URL("./fixtures/legacy-merges.jsonl", import.meta.url).pathname;
-const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
-const NO_APP_CORRECTIONS = new URL("./fixtures/empty-corrections.csv", import.meta.url).pathname;
 const ALIASES = new URL("./fixtures/collector-aliases.csv", import.meta.url).pathname;
-const NO_REGISTER = new URL("./fixtures/no-usernames.csv", import.meta.url).pathname;
 
 let conn: DuckDBConnection;
 let counts: PromotionCounts;
@@ -49,18 +46,7 @@ let counts: PromotionCounts;
 beforeAll(async () => {
   ({ conn } = await createMemoryDb());
   await loadLegacyStaging(conn, FIXTURE);
-  counts = await promoteLegacy(
-    conn,
-    TAXONOMY,
-    "ingest/determiner-aliases.csv",
-    "ingest/determiner-register.csv",
-    "ingest/legacy-corrections.csv",
-    NO_APP_CORRECTIONS,
-    "ingest/person-overlay.csv",
-    "data/person-overlay.csv",
-    ALIASES,
-    NO_REGISTER, // never the developer's fetched data/legacy/usernames.csv
-  );
+  counts = await promoteLegacy(conn, { ...FIXTURE_INPUTS, collectorAliases: ALIASES });
 });
 
 describe("legacy rows that merge into one sample", () => {

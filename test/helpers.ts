@@ -1,7 +1,38 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb } from "../src/build-db.js";
+import type { PromotionInputs } from "../src/promote-legacy.js";
 
 export { createMemoryDb };
+
+const fixture = (name: string) => new URL(`./fixtures/${name}`, import.meta.url).pathname;
+
+/**
+ * What promotion reads in a test. Every path here is either a fixture or a
+ * file checked into git; NONE of them is one of the gitignored, machine-local
+ * paths in LIVE_INPUTS, which is the whole point (beeline-cqk). A test that
+ * read `data/corrections.csv` or `data/legacy/usernames.csv` would be reading
+ * whatever the developer happened to fetch that morning, and would pass or
+ * fail for reasons nothing in the repository records.
+ *
+ * The two curated overlays are fixtures rather than the real
+ * `ingest/person-overlay.csv`: that file names 398 real people, none of whom
+ * appear in any fixture, so every row of it would report unresolved — true,
+ * and no test's business.
+ *
+ * Spread it and override the one input under test:
+ *   promoteLegacy(conn, { ...FIXTURE_INPUTS, legacyCorrections: CORRECTIONS })
+ */
+export const FIXTURE_INPUTS: PromotionInputs = {
+  taxonomyCsv: fixture("taxonomy.csv"),
+  determinerAliases: "ingest/determiner-aliases.csv",
+  determinerRegister: "ingest/determiner-register.csv",
+  legacyCorrections: "ingest/legacy-corrections.csv",
+  appCorrections: fixture("empty-corrections.csv"),
+  curatedOverlay: fixture("person-overlay.csv"),
+  appOverlay: fixture("empty-person-overlay.csv"),
+  collectorAliases: fixture("no-collector-aliases.csv"),
+  usernameRegister: fixture("no-usernames.csv"),
+};
 
 export async function rows(conn: DuckDBConnection, sql: string): Promise<unknown[][]> {
   const result = await conn.run(sql);

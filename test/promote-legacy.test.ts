@@ -1,18 +1,10 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { createMemoryDb, rows } from "./helpers.js";
+import { createMemoryDb, FIXTURE_INPUTS, rows } from "./helpers.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy, type PromotionCounts } from "../src/promote-legacy.js";
 
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
-const TAXONOMY = new URL("./fixtures/taxonomy.csv", import.meta.url).pathname;
-const NO_APP_CORRECTIONS = new URL("./fixtures/empty-corrections.csv", import.meta.url).pathname;
-const NO_ALIASES = new URL("./fixtures/no-collector-aliases.csv", import.meta.url).pathname;
-// The curated overlay is the fixture's own, not ingest/person-overlay.csv:
-// that file names 398 real people, none of whom are in this fixture, so every
-// row of it would be reported unresolved here — true, and no test's business.
-const OVERLAY = new URL("./fixtures/person-overlay.csv", import.meta.url).pathname;
-const NO_APP_OVERLAY = new URL("./fixtures/empty-person-overlay.csv", import.meta.url).pathname;
 const REGISTER = new URL("./fixtures/usernames.csv", import.meta.url).pathname;
 
 let conn: DuckDBConnection;
@@ -21,19 +13,7 @@ let counts: PromotionCounts;
 beforeAll(async () => {
   ({ conn } = await createMemoryDb());
   await loadLegacyStaging(conn, FIXTURE);
-  counts = await promoteLegacy(
-    conn,
-    TAXONOMY,
-    "ingest/determiner-aliases.csv",
-    "ingest/determiner-register.csv",
-    "ingest/legacy-corrections.csv",
-    NO_APP_CORRECTIONS, // never the developer's live data/corrections.csv
-    OVERLAY,
-    NO_APP_OVERLAY,
-    NO_ALIASES, // never the curated ingest/collector-aliases.csv: its lines
-    // are about the real 383k rows and would all read as unused here
-    REGISTER,
-  );
+  counts = await promoteLegacy(conn, { ...FIXTURE_INPUTS, usernameRegister: REGISTER });
 });
 
 describe("legacy promotion", () => {
@@ -266,7 +246,7 @@ describe("legacy promotion", () => {
   });
 
   test("promotion refuses a non-empty model", async () => {
-    await expect(promoteLegacy(conn)).rejects.toThrow(/freshly built/);
+    await expect(promoteLegacy(conn, FIXTURE_INPUTS)).rejects.toThrow(/freshly built/);
   });
 });
 
@@ -317,18 +297,10 @@ describe("the legacy name register", () => {
   test("promotes with no register at all, and says so rather than reporting agreement", async () => {
     const { conn: bare } = await createMemoryDb();
     await loadLegacyStaging(bare, FIXTURE);
-    const bareCounts = await promoteLegacy(
-      bare,
-      TAXONOMY,
-      "ingest/determiner-aliases.csv",
-      "ingest/determiner-register.csv",
-      "ingest/legacy-corrections.csv",
-      NO_APP_CORRECTIONS,
-      OVERLAY,
-      NO_APP_OVERLAY,
-      NO_ALIASES,
-      "data/legacy/no-such-register.csv",
-    );
+    const bareCounts = await promoteLegacy(bare, {
+      ...FIXTURE_INPUTS,
+      usernameRegister: "data/legacy/no-such-register.csv",
+    });
     expect(bareCounts.registerStaged).toBe(0);
     expect(bareCounts.registerNameConflicts).toBe(0);
     // The curation surfaces still exist; they simply have nothing to say.

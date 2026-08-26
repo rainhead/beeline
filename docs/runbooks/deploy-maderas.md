@@ -177,6 +177,39 @@ locally. Comparing the two side by side is how the 1,019
 `within_sample_disagreement` findings turned out to be the sandbox catching
 up rather than a regression.
 
+## Admitting a person who has no records
+
+Promotion mints people from the records — recordedBy names and iNat observers
+— so somebody who collects nothing (an intern, a coordinator) is in no store
+until the overlay says they exist, and cannot sign in at all: the approval
+gate is an `inat_account` row bound to a person. There is no screen for this
+yet (beeline-2c3.33); it is a curated-file decision.
+
+Add the rows to [`ingest/person-overlay.csv`](../../ingest/person-overlay.csv)
+— `create` first, then the account binding and whatever else is true of them:
+
+```csv
+name:Nora Jacobi,create,yes,rainhead,"why they belong in the store"
+name:Nora Jacobi,inat_user_id,10206031 njacobi,rainhead,"verified against the iNat API"
+name:Nora Jacobi,admin,yes,rainhead,"why"
+```
+
+Verify the iNat id first — `curl -s https://api.inaturalist.org/v1/users/<login>`
+— because the id is the binding and a lookalike account has survived review
+before. Then deploy the file and replay it (the service must be down: one
+process owns the store):
+
+```sh
+scripts/deploy-maderas.sh
+ssh maderas 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; cd ~/dev/beeline && nvm use >/dev/null \
+  && systemctl --user stop beeline && pnpm person:apply && systemctl --user start beeline'
+```
+
+`person:apply` prints what it applied and every row it could not resolve; it
+is idempotent, so a row that has already landed is a no-op and the same file
+replays on the next rebuild. A later `db:reseed` reconstructs this person from
+the same rows, which a hand-written `INSERT` would not survive.
+
 ## Operational notes
 
 - The nightly incremental pipeline runs at 02:00 **America/Los_Angeles** and the weekly anti-entropy sweep Sundays at 03:00; the beeatlas

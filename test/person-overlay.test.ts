@@ -48,6 +48,12 @@ describe("the overlay file", () => {
   // beeline-oyl. One row per (person_ref, field) with latest-wins, so the
   // value has to name the whole set — otherwise a second grant erases the
   // first and there is no way to say "and also".
+  it("has no 'create no': admitting a person is not something a row can undo", () => {
+    const head = "person_ref,field,value,author,reason\n";
+    expect(() => parseOverlay(`${head}name:Nan,create,no,me,\n`, "f")).toThrow(/expected yes/);
+    expect(parseOverlay(`${head}name:Nan,create,yes,me,\n`, "f")).toHaveLength(1);
+  });
+
   it("reads acts_for as a set of references, not one", () => {
     expect(splitRefs("name:Robert Pederson")).toEqual(["name:Robert Pederson"]);
     expect(splitRefs("name:Robert Pederson; inat:429964")).toEqual(["name:Robert Pederson", "inat:429964"]);
@@ -108,6 +114,51 @@ describe("applying the overlay", () => {
 
   const apply = (rs: PersonOverlayRow[]) => applyPersonOverlay(conn, rs);
   const one = async (sql: string) => (await rows(conn, sql))[0];
+
+  // beeline-2c3.32: promotion mints people from records, so a staffer who
+  // collects nothing has no other way into the store — and no way to sign in.
+  it("admits a person the records never mention", async () => {
+    const r = await apply([
+      row({ person_ref: "name:Nan Staffer", field: "create", value: "yes" }),
+      row({ person_ref: "name:Nan Staffer", field: "inat_user_id", value: "222 nanstaffer" }),
+      row({ person_ref: "name:Nan Staffer", field: "admin", value: "yes" }),
+    ]);
+    expect(r.unresolved).toEqual([]);
+    expect(
+      await one(`SELECT p.display_name, a.login, (e.person_id IS NOT NULL) AS admin
+                 FROM person p
+                 LEFT JOIN inat_account a ON a.person_id = p.entity_id
+                 LEFT JOIN person_admin e ON e.person_id = p.entity_id
+                 WHERE p.display_name = 'Nan Staffer'`),
+    ).toEqual(["Nan Staffer", "nanstaffer", true]);
+  });
+
+  it("creates before it decides, whatever order the rows are in", async () => {
+    const r = await apply([
+      row({ person_ref: "name:Nan Staffer", field: "admin", value: "yes" }),
+      row({ person_ref: "name:Nan Staffer", field: "create", value: "yes" }),
+    ]);
+    expect(r.unresolved).toEqual([]);
+    expect(await one(`SELECT count(*) FROM person_admin`)).toEqual([1n]);
+  });
+
+  it("is a replay, not a duplicate: creating someone already there does nothing", async () => {
+    await apply([row({ person_ref: "name:Ada Collector", field: "create", value: "yes" })]);
+    expect(await one(`SELECT count(*) FROM person WHERE display_name = 'Ada Collector'`)).toEqual([1n]);
+  });
+
+  it("refuses to mint a third person of a name two people already share", async () => {
+    await conn.run(`INSERT INTO person (display_name) VALUES ('Bo Netter')`);
+    const r = await apply([row({ person_ref: "name:Bo Netter", field: "create", value: "yes" })]);
+    expect(r.unresolved[0]!.reason).toMatch(/names 2 people/);
+    expect(await one(`SELECT count(*) FROM person WHERE display_name = 'Bo Netter'`)).toEqual([2n]);
+  });
+
+  it("refuses an iNat reference, which would leave the person with no name", async () => {
+    const r = await apply([row({ person_ref: "inat:999", field: "create", value: "yes" })]);
+    expect(r.unresolved[0]!.reason).toMatch(/names a person by name:/);
+    expect(await one(`SELECT count(*) FROM person`)).toEqual([3n]);
+  });
 
   it("binds an account, keeping the login given beside the id", async () => {
     const r = await apply([row({ person_ref: "name:Ada Collector", field: "inat_user_id", value: "429964 amelathopoulos" })]);

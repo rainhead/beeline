@@ -26,6 +26,9 @@ export interface ApplyResult {
   unresolved: Unresolved[];
 }
 
+/** A resolved person, or why not — `missing` marking the one recoverable case. */
+type Found = { id: number } | { problem: string; missing?: true };
+
 const rows = async (conn: DuckDBConnection, sql: string, params: unknown[] = []) =>
   (await (await conn.run(sql, params as never)).getRows()) as unknown[][];
 
@@ -91,7 +94,7 @@ async function resolver(conn: DuckDBConnection, overlay: readonly PersonOverlayR
     renamedFrom.set(r.value, parsed.key);
   }
 
-  const lookup = (key: string, seen: Set<string>): { id: number } | { problem: string } => {
+  const lookup = (key: string, seen: Set<string>): Found => {
     const ids = byName.get(key);
     if (ids !== undefined) {
       if (ids.length > 1) return { problem: `'${key}' names ${ids.length} people` };
@@ -104,10 +107,13 @@ async function resolver(conn: DuckDBConnection, overlay: readonly PersonOverlayR
         if ("id" in found) return found;
       }
     }
-    return { problem: `no person named '${key}'` };
+    // `missing` rather than just a reason: `create` may act on nobody-of-that-
+    // name, and must not act on a name two people share. Only this branch
+    // says the store has room for a new person.
+    return { problem: `no person named '${key}'`, missing: true };
   };
 
-  return (ref: string): { id: number } | { problem: string } => {
+  const resolve = (ref: string): Found => {
     const parsed = parseRef(ref);
     if (parsed === null) return { problem: `'${ref}' is not a person reference` };
     if (parsed.kind === "inat") {
@@ -116,6 +122,13 @@ async function resolver(conn: DuckDBConnection, overlay: readonly PersonOverlayR
     }
     return lookup(parsed.key, new Set([parsed.key]));
   };
+
+  // A person minted mid-run has to be findable by the rows that follow —
+  // the account binding and the admin grant are separate decisions about
+  // somebody who did not exist when these maps were built.
+  const remember = (name: string, id: number) => byName.set(name, [id]);
+
+  return { resolve, remember };
 }
 
 export async function applyPersonOverlay(
@@ -124,11 +137,22 @@ export async function applyPersonOverlay(
 ): Promise<ApplyResult> {
   const result: ApplyResult = { applied: 0, unresolved: [] };
   if (overlay.length === 0) return result;
-  const resolve = await resolver(conn, overlay);
+  const { resolve, remember } = await resolver(conn, overlay);
   const fail = (r: PersonOverlayRow, reason: string) =>
     result.unresolved.push({ person_ref: r.person_ref, field: r.field, reason });
 
+  // `create` first, whatever order the file is in. The overlay is a set of
+  // decisions rather than a script, and every other decision about a person
+  // admitted here would otherwise resolve to nobody depending on line order.
   for (const row of overlay) {
+    if (row.field !== "create") continue;
+    const problem = await create(conn, row.person_ref, resolve, remember);
+    if (problem !== null) fail(row, problem);
+    else result.applied++;
+  }
+
+  for (const row of overlay) {
+    if (row.field === "create") continue;
     const found = resolve(row.person_ref);
     if ("problem" in found) { fail(row, found.problem); continue; }
     const problem = await applyField(conn, found.id, row.field, row.value, row.author, resolve);
@@ -136,6 +160,41 @@ export async function applyPersonOverlay(
     else result.applied++;
   }
   return result;
+}
+
+/**
+ * Admit a person the records never mention (beeline-2c3.32). Promotion mints
+ * people from recordedBy names and iNat observers, so a staffer who collects
+ * nothing has no other way in — and no way to sign in, since the approval gate
+ * is an account bound to a person.
+ *
+ * Idempotent: a ref that already resolves is a replay, not a duplicate, which
+ * is what lets this row sit in the curated file and be applied on every
+ * rebuild. Ambiguity is refused rather than resolved by minting a third
+ * person of the same name.
+ */
+async function create(
+  conn: DuckDBConnection,
+  ref: string,
+  resolve: (ref: string) => Found,
+  remember: (name: string, id: number) => void,
+): Promise<string | null> {
+  const found = resolve(ref);
+  if ("id" in found) return null;
+  const parsed = parseRef(ref);
+  // An iNat id names an ACCOUNT, and a person the store has never seen holds
+  // none — there would be no display name to give them. The name is the ref,
+  // and the account follows as its own decision.
+  if (parsed === null || parsed.kind !== "name") {
+    return `create names a person by name: ('${ref}' would leave them with no name)`;
+  }
+  // Everything else the resolver refuses it still refuses: a name two people
+  // share must not become a name three people share.
+  if (!found.missing) return found.problem;
+  const id = await scalar(conn, `INSERT INTO person (display_name) VALUES ($1) RETURNING entity_id`, [parsed.key]);
+  if (id === null) return `could not create '${parsed.key}'`;
+  remember(parsed.key, Number(id));
+  return null;
 }
 
 /** One field onto one person; a string reason if it could not be set. */
@@ -147,7 +206,7 @@ async function applyField(
   /** Who decided — the overlay row's author, recorded on the grant. */
   author: string,
   /** Resolves a person reference, for the fields whose VALUE names a person. */
-  resolve: (ref: string) => { id: number } | { problem: string },
+  resolve: (ref: string) => Found,
 ): Promise<string | null> {
   if (field === "inat_user_id") {
     if (value === "") {

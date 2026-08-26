@@ -12,7 +12,7 @@ export interface PageEnv {
   /** URL of the built islands bundle, or null when it hasn't been built. */
   islandsSrc: string | null;
   session: Session;
-  /** Whether this session may see the admin surface (/jobs, /design, beeline-6va). */
+  /** Whether this session may see the admin surface (/jobs, /people, beeline-6va). */
   admin: boolean;
   /**
    * Whose records `mine` means, and everyone this session could switch to
@@ -41,6 +41,9 @@ function NavLinks({ m, admin }: { m: Messages; admin: boolean }) {
       <a href="/specimens">{m.layout.nav.specimens}</a>
       <a href="/glossary">{m.layout.nav.glossary}</a>
       {admin && <a href="/people">{m.layout.nav.people}</a>}
+      {/* /people and /jobs are gated; /design is only unlisted — it reads no
+          records, so keeping a volunteer out of it protects nothing, and the
+          reason to leave it off their nav is that it is not their tool. */}
       {admin && <a href="/design">{m.layout.nav.design}</a>}
       {admin && <a href="/jobs">{m.layout.nav.jobs}</a>}
     </>

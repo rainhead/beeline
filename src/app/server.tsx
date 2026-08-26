@@ -465,9 +465,13 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     return c.html(await page(c, m.glossary.title, <Glossary m={m} />));
   });
 
-  // --- The design system. Staff tooling, so admin-gated like /jobs, and
-  // English-only by policy: these views carry literal prose. Every section
-  // is listed in DESIGN_SECTIONS, and a test walks that list. ---
+  // --- The design system. English-only by policy: these views carry literal
+  // prose. Not gated, unlike /jobs and /people — it reads no records and
+  // decides nothing, so the only reason to keep a curious volunteer out was
+  // that it sits next to two surfaces that do. It is dropped from the nav
+  // for non-admins instead (NavLinks), which is what "staff tooling" here
+  // actually means. Every section is listed in DESIGN_SECTIONS, and a test
+  // walks that list. ---
   const designPages: ReadonlyArray<[string, string, (m: Messages) => Child]> = [
     ["/design", "Design system", () => <DesignIndex />],
     ["/design/color", "Color", () => <DesignColor />],
@@ -484,7 +488,6 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
   ];
   for (const [path, title, render] of designPages) {
     app.get(path, async (c) => {
-      if (!c.get("admin")) return c.text("Admins only.", 403);
       const m = c.get("m");
       return c.html(await page(c, title, render(m), DESIGN_STYLESHEETS));
     });

@@ -291,7 +291,9 @@ describe("/jobs page", () => {
     expect(volunteerNav).not.toContain(`href="/jobs"`);
     expect(volunteerNav).not.toContain(`href="/design"`);
     expect(volunteerNav).toContain(`href="/glossary"`);
-    expect((await gated.request("/design")).status).toBe(403);
+    // /design is off the nav but not walled off: it reads no records, so a
+    // volunteer who follows a link to it gets the page.
+    expect((await gated.request("/design")).status).toBe(200);
 
     await grant(true);
     const admin = appFor();

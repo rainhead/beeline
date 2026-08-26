@@ -32,15 +32,22 @@ async function testApp(identity: FakeIdentity) {
   return { app, db };
 }
 
-/** Run the OAuth dance against the app; returns the callback response. */
-async function signIn(app: Awaited<ReturnType<typeof testApp>>["app"]) {
-  const start = await app.request("/auth/inat");
+/**
+ * Run the OAuth dance against the app; returns the callback response. The
+ * browser is faked by carrying whatever `/auth/inat` set back to the
+ * callback, which is the whole mechanism behind the return-to.
+ */
+async function signIn(app: Awaited<ReturnType<typeof testApp>>["app"], from?: string) {
+  const start = await app.request(from === undefined ? "/auth/inat" : `/auth/inat?next=${encodeURIComponent(from)}`);
   expect(start.status).toBe(302);
-  const stateCookie = start.headers.get("set-cookie")!;
-  const state = /beeline_oauth_state=([a-f0-9]+)/.exec(stateCookie)![1];
-  return app.request(`/auth/inat/callback?code=abc&state=${state}`, {
-    headers: { cookie: `beeline_oauth_state=${state}` },
-  });
+  const setCookies = start.headers.getSetCookie();
+  const state = /beeline_oauth_state=([a-f0-9]+)/.exec(setCookies.join("; "))![1];
+  // Only cookies with a value survive; a deletion arrives as an empty one.
+  const jar = setCookies
+    .map((c) => c.split(";")[0] ?? "")
+    .filter((c) => c.split("=")[1])
+    .join("; ");
+  return app.request(`/auth/inat/callback?code=abc&state=${state}`, { headers: { cookie: jar } });
 }
 
 describe("iNat OAuth sign-in", () => {
@@ -127,6 +134,35 @@ describe("iNat OAuth sign-in", () => {
 
     const home = await app.request("/", { headers: { cookie: `beeline_session=${session}` } });
     expect(home.status).toBe(401);
+  });
+
+  it("sign-in comes back to the page that was asked for", async () => {
+    const { app } = await testApp({ inatUserId: 501, login: "memberbee" });
+
+    // The gate hangs the refused URL — query string and all — on the button.
+    const gated = await app.request("/samples?scope=mine&page=3");
+    expect(gated.status).toBe(401);
+    expect(await gated.text()).toContain(
+      `href="/auth/inat?next=${encodeURIComponent("/samples?scope=mine&page=3")}"`,
+    );
+
+    const cb = await signIn(app, "/samples?scope=mine&page=3");
+    expect(cb.headers.get("location")).toBe("/samples?scope=mine&page=3");
+  });
+
+  it("a POST refused by the gate has nothing to come back to", async () => {
+    const { app } = await testApp({ inatUserId: 501, login: "memberbee" });
+    const gated = await app.request("/samples/1/edit", { method: "POST", headers: { origin: ORIGIN } });
+    expect(gated.status).toBe(401);
+    expect(await gated.text()).toContain(`href="/auth/inat"`);
+  });
+
+  it("sign-in cannot be turned into an open redirect", async () => {
+    const { app } = await testApp({ inatUserId: 501, login: "memberbee" });
+    for (const evil of ["https://evil.example/", "//evil.example/", "/\\evil.example/", "/auth/inat"]) {
+      const cb = await signIn(app, evil);
+      expect(cb.headers.get("location")).toBe("/");
+    }
   });
 
   it("cross-origin writes are refused before any handler runs", async () => {

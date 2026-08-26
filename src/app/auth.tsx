@@ -13,6 +13,34 @@ import type { PageEnv } from "./views/layout.js";
 const SITE = "https://www.inaturalist.org";
 const API = "https://api.inaturalist.org/v1";
 const STATE_COOKIE = "beeline_oauth_state";
+/**
+ * Where to land once signed in. A separate cookie rather than a query
+ * parameter on the callback, because everything the callback receives came
+ * back through iNaturalist and is therefore attacker-suppliable: the cookie
+ * was set by us, on this site, in the same request that minted the state.
+ */
+const NEXT_COOKIE = "beeline_oauth_next";
+
+/**
+ * The requested URL, if it is somewhere on this site worth returning to.
+ * Same-site paths only — an absolute URL, a scheme-relative `//evil.example`,
+ * or a backslash Chrome would read as one, would turn sign-in into an open
+ * redirect. `/auth/…` is refused too: landing back on the way in is a loop,
+ * not a destination.
+ */
+export function returnTo(raw: string | undefined | null): string | null {
+  if (!raw || raw.length > 2000) return null;
+  if (!raw.startsWith("/")) return null;
+  if (raw.startsWith("//") || raw.startsWith("/\\")) return null;
+  if (raw === "/" || raw.startsWith("/auth/")) return null;
+  return raw;
+}
+
+/** The sign-in link for a request that was refused: `/auth/inat`, plus where to come back to. */
+export function signInHref(path: string | null): string {
+  const next = returnTo(path);
+  return next === null ? "/auth/inat" : `/auth/inat?next=${encodeURIComponent(next)}`;
+}
 
 export interface InatIdentity {
   inatUserId: number;
@@ -99,12 +127,21 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
   app.get("/auth/inat", (c) => {
     const state = randomBytes(16).toString("hex");
     setCookie(c, STATE_COOKIE, state, { httpOnly: true, sameSite: "Lax", secure, path: "/", maxAge: 600 });
+    // Revalidated on the way in as well as on the way out: this one arrives
+    // in a query parameter anyone can craft a link to.
+    const next = returnTo(c.req.query("next"));
+    if (next === null) deleteCookie(c, NEXT_COOKIE, { path: "/" });
+    else setCookie(c, NEXT_COOKIE, next, { httpOnly: true, sameSite: "Lax", secure, path: "/", maxAge: 600 });
     return c.redirect(deps.inat.authorizeUrl(state, redirectUri));
   });
 
   app.get("/auth/inat/callback", async (c) => {
     const expected = getCookie(c, STATE_COOKIE);
+    // Both cookies belong to this one attempt, however it ends: a failure
+    // that left them behind would send the next attempt somewhere stale.
+    const next = returnTo(getCookie(c, NEXT_COOKIE));
     deleteCookie(c, STATE_COOKIE, { path: "/" });
+    deleteCookie(c, NEXT_COOKIE, { path: "/" });
     const m = c.get("m");
     const code = c.req.query("code");
     if (!code || !expected || c.req.query("state") !== expected) {
@@ -167,6 +204,8 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
 
     const sessionId = await createSession(deps.db, account.person_id);
     setCookie(c, SESSION_COOKIE, sessionId, { httpOnly: true, sameSite: "Lax", secure, path: "/" });
-    return c.redirect("/");
+    // Back to whatever was asked for before the gate got in the way; home
+    // when sign-in was the errand itself (beeline-2c3.31).
+    return c.redirect(next ?? "/");
   });
 }

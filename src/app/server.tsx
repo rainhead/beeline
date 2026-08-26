@@ -6,7 +6,7 @@ import type { Child } from "hono/jsx";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { islandsSrc, styleVersion } from "./assets.js";
-import { registerAuthRoutes, type InatClient } from "./auth.js";
+import { registerAuthRoutes, signInHref, type InatClient } from "./auth.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, SESSION_COOKIE, type AppEnv, type Session, type SessionResolver } from "./session.js";
@@ -148,6 +148,11 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     const session = await resolveSession(c);
     if (session === null) {
       const m = c.get("m");
+      // Sign-in comes back to the page that was asked for. Only for GETs: a
+      // POST cannot be replayed after the detour through iNaturalist, so its
+      // sender lands home and does it again (beeline-2c3.31).
+      const url = new URL(c.req.url);
+      const wanted = c.req.method === "GET" ? `${url.pathname}${url.search}` : null;
       return c.html(
         html`<!doctype html>${(
           <PublicPage
@@ -159,7 +164,7 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
             <h1>{m.signIn.heading}</h1>
             <p>{m.signIn.nothingPublic}</p>
             <p>
-              <a class="button" href="/auth/inat">
+              <a class="button" href={signInHref(wanted)}>
                 {m.signIn.button}
               </a>
             </p>

@@ -135,8 +135,10 @@ async function listingApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
      VALUES (${a1}, 1, 'OBA00001'), (${a1}, 2, 'OBA00002'), (${b1}, 1, 'WABA0001')`,
   );
   await conn.run(
-    `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_id)
-     SELECT sp.entity_id, an.entity_id, true, 'legacy_import', ${bob}
+    `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_id,
+                                qualifier, verbatim_identification)
+     SELECT sp.entity_id, an.entity_id, true, 'legacy_import', ${bob},
+            'cf.', 'Bombus cf. vosnesenskii'
      FROM specimen sp, animal an
      WHERE sp.field_number = 'OBA00001' AND an.scientific_name = 'Bombus vosnesenskii'`,
   );
@@ -403,8 +405,9 @@ describe("specimen listing", () => {
     expect(body).toContain("OBA00001");
     expect(body).toContain("WABA0001");
     expect(body).toContain("3 specimens");
-    // Set by the component, not by eye: a species is italic (/design/names).
-    expect(body).toContain("<i>Bombus</i> <i>vosnesenskii</i>");
+    // Set by the component, not by eye: a species is italic, and a qualifier
+    // sits before the epithet rather than after the name (/design/names).
+    expect(body).toContain("<i>Bombus</i> cf. <i>vosnesenskii</i>");
     expect(body).toContain("B. Barnes");
     expect(body).toContain("not determined");
   });
@@ -516,6 +519,11 @@ describe("CSV export", () => {
     expect(csv).toContain("OBA00001");
     expect(csv).toContain("Bombus vosnesenskii");
     expect(csv).toContain("Radoszkowski, 1862");
+    // How sure the determiner was, and the words they wrote — a downstream
+    // consumer reading only scientific_name would read an assertion that was
+    // never made (beeline-tgu).
+    expect(csv.split("\r\n")[0]).toContain("identification_qualifier,verbatim_identification");
+    expect(csv).toContain("cf.,Bombus cf. vosnesenskii");
   });
 
   it("says so inside the file when it stopped short", async () => {

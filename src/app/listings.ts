@@ -283,6 +283,7 @@ export interface SpecimenRow {
   scientific_name: string | null;
   authorship: string | null;
   qualifier: DeterminationQualifier | null;
+  verbatim_identification: string | null;
   sex: string | null;
   is_expert: boolean | null;
   determiner: string | null;
@@ -664,6 +665,7 @@ export async function listSpecimens(
         "an.scientific_name",
         "an.authorship",
         "d.qualifier",
+        "d.verbatim_identification",
         "d.sex",
         "d.is_expert",
         "loc.latitude",
@@ -827,6 +829,7 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       "rank",
       "authorship",
       "identification_qualifier",
+      "verbatim_identification",
       "sex",
       "determined_by",
       "expert_determination",
@@ -852,6 +855,7 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       r.taxon_rank,
       r.authorship,
       r.qualifier,
+      r.verbatim_identification,
       r.sex,
       r.determiner,
       r.is_expert === null ? "" : String(r.is_expert),

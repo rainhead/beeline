@@ -44,3 +44,12 @@ Raised 2026-08-24 by looking at `/people` (beeline-eyk, beeline-oyl). One iNatur
 6. **Label lifecycle**: when bad data is found on a printed label, is the remedy always a reprint under the *same* field number, with the old label removed and destroyed by whoever holds the pin? Is that swap ever confirmed, or taken on faith?
 7. **Attribution for records belonging to no member atlas.** ~2,660 specimens were collected where none of the six atlases reaches, by people who are either atlas members travelling or Master Melittologists with no atlas at all (see Membership in [CONTEXT.md](../CONTEXT.md), beeline-lcl). Whose name goes on their labels, and on their Ecdysis/GBIF records — the program, or the atlas that happens to process them? Today the store can say "no atlas" honestly; it has no answer for what to *print*. Related: does processing a sample through an atlas (the Arizona-through-Washington arrangement) make that atlas the attribution, or only the handler?
 8. **Field-number lifecycle**: has a number ever been permanently scrapped/voided — specimen destroyed, label printed but never pinned, duplicate collision? If a number were retired after publication, how would Ecdysis/GBIF learn of it?
+
+## Taxonomy across the atlases
+
+Raised 2026-08-27 by Peter: the atlases disagree about taxonomy to some degree. Whether Beeline ever models that divergence is [beeline-0zb](../.beads/), and the stance there is to defer until a second opinion is actually being read — but the shape of the disagreement decides whether that is a curation conversation or a schema.
+
+1. **Which taxonomies do the atlases actually follow, and where do they concretely disagree?** A handful of contested genera is a curation problem; different backbones is not.
+2. **Does the disagreement change what goes on a label, or only how records are grouped for analysis?** A label prints one name — those are different problems with different answers.
+3. **When two atlases disagree, whose name reaches Ecdysis and GBIF?** Related to the attribution question for records belonging to no member atlas (Printing and mailing 7).
+4. **Do determiners use identification qualifiers beyond `cf.` and `aff.`** — and should a qualified determination be printable? The store has no column for any of them today ([beeline-tgu](../.beads/)); the glossary already teaches volunteers that they exist.

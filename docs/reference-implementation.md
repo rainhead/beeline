@@ -48,6 +48,7 @@ Then it's all undone at the API layer: `GET /api/occurrences?userLogin=X` is una
 ## Labels
 
 - 250 labels per US Letter sheet via pdf-lib; 3–5 pt auto-shrinking Oxygen Mono; DataMatrix barcode of the catalog number; blank cell between collectors. Location `USA:OR:BentonCo Corvallis`, date `14.VII2025-3.2` (day.RomanMonth year - sample.specimen).
+- **A label carries no taxon.** `LabelsSubtaskHandler.js:59-113` builds exactly six fields — location, coordinates (+elevation), date, collector, method, field number — and never reads `scientificName`, `genus`, `specificEpithet` or `identifiedBy`. The determinations subtask merges determination data into the database and produces no label of its own. So a label is a *collecting-event* label: printing happens before determination and is not gated on one (`errorFlags` names no taxon field either). The determination reaches the museum through Ecdysis, not through the pin.
 - Print state is a single mutable `dateLabelPrint` string per record. Reprints (via an ignore flag) overwrite it. **No print history, no sheet/batch record, no way to identify which physical labels a later data correction invalidates.**
 
 ## The task system

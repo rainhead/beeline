@@ -58,6 +58,23 @@ const CORPUS: Row[] = [
   { sci: "Not a bee" },
 ];
 
+/**
+ * The qualifier branches the corpus does not attest. Only `nr.` appears in
+ * production staging; `cf.`, `cfr.` and `aff.` are the same construction and
+ * the glossary teaches two of them, so the parser takes them — which means
+ * they need cover here, being the one part of this file not held down by a
+ * real string. Marked synthetic so nobody reads them as evidence.
+ */
+const SYNTHETIC_QUALIFIERS: Row[] = [
+  { sci: "Bombus cf. occidentalis", genus: "Bombus" },
+  { sci: "Bombus cfr. griseocollis", genus: "Bombus" },
+  { sci: "Andrena aff. nivalis", genus: "Andrena" },
+  // A qualifier needs a genus to hang on: with the genus column empty there
+  // is no species to attach it to, and it must not ride along on whatever
+  // coarser rank the row does resolve to.
+  { sci: "Bombus nr. mixtus" },
+];
+
 /** The other verbatim fields, in the shapes the corpus actually holds. */
 const OTHER_FIELDS: Row[] = [
   { sci: "Apis mellifera", genus: "Apis", epithet: "mellifera", recordedBy: "Bea Trapper | Ada Collector",
@@ -76,12 +93,17 @@ beforeAll(async () => {
   await conn.run(`CREATE TABLE legacy_promotable (
     _id TEXT, "order" TEXT, family TEXT, genus TEXT, subgenus TEXT,
     specificEpithet TEXT, scientificName TEXT, taxonRank TEXT,
-    recordedBy TEXT, month TEXT, url TEXT)`);
-  for (const [i, r] of [...CORPUS, ...OTHER_FIELDS].entries()) {
+    recordedBy TEXT, month TEXT, url TEXT,
+    identifiedBy TEXT, verbatimEventDate TEXT)`);
+  // legacy_verbatim_shape also sizes the two fields that answer through a
+  // worklist rather than a rule; the findings view is promote-legacy's.
+  await conn.run(`CREATE VIEW legacy_promotion_finding AS SELECT '' AS _id, '' AS rule WHERE false`);
+  for (const [i, r] of [...CORPUS, ...SYNTHETIC_QUALIFIERS, ...OTHER_FIELDS].entries()) {
     await conn.run(
       `INSERT INTO legacy_promotable (_id, "order", family, genus, subgenus,
-         specificEpithet, scientificName, taxonRank, recordedBy, month, url)
-       VALUES ($1, '', '', $2, $3, $4, $5, $6, $7, $8, $9)`,
+         specificEpithet, scientificName, taxonRank, recordedBy, month, url,
+         identifiedBy, verbatimEventDate)
+       VALUES ($1, '', '', $2, $3, $4, $5, $6, $7, $8, $9, 'Lincoln Best', '')`,
       [
         String(i), r.genus ?? "", r.subgenus ?? "", r.epithet ?? "", r.sci, r.rank ?? "",
         r.recordedBy ?? "Ada Collector", r.month ?? "7", r.url ?? "",
@@ -107,11 +129,11 @@ describe("taking a verbatim scientific name apart", () => {
       ["binomial", 2n], // Bombus vosnesenskii, plus Apis mellifera from OTHER_FIELDS
       ["binomial with authorship", 4n],
       ["morphospecies", 3n],
-      ["qualified", 1n],
+      ["qualified", 4n],
       ["subgenus", 2n],
       ["trinomial", 5n],
       ["uninomial", 1n],
-      ["unparsed", 1n],
+      ["unparsed", 2n], // "Not a bee", and the qualifier with no genus
     ]);
   });
 
@@ -185,6 +207,7 @@ describe("taking a verbatim scientific name apart", () => {
     expect(
       await rows(conn, "SELECT field, shape, records FROM legacy_verbatim_shape ORDER BY field, shape"),
     ).toEqual([
+      ["identifiedBy", "named", 25n],
       ["month", "roman numeral", 1n],
       ["recordedBy", "non-ASCII", 0n],
       ["recordedBy", "other separator (& , ; and)", 0n],
@@ -192,6 +215,8 @@ describe("taking a verbatim scientific name apart", () => {
       ["url", "canonical observation", 1n],
       ["url", "not an observation", 1n],
       ["url", "observation, other scheme or host", 1n],
+      ["verbatimEventDate", "date did not parse", 0n],
+      ["verbatimEventDate", "present", 0n],
     ]);
   });
 
@@ -205,11 +230,35 @@ describe("taking a verbatim scientific name apart", () => {
     ]);
   });
 
+  test("every qualifier spelling normalises to the three the store distinguishes", async () => {
+    expect(
+      await rows(
+        conn,
+        `SELECT sci, qualifier, qualified_epithet FROM legacy_det_taxa
+          WHERE qualifier IS NOT NULL ORDER BY sci`,
+      ),
+    ).toEqual([
+      ["Andrena aff. nivalis", "aff.", "nivalis"],
+      ["Bombus cf. occidentalis", "cf.", "occidentalis"],
+      // cfr. is a spelling of cf., normalised here rather than in the CHECK.
+      ["Bombus cfr. griseocollis", "cf.", "griseocollis"],
+      ["Lasioglossum nr. tenax", "nr.", "tenax"],
+    ]);
+  });
+
+  test("a qualifier with no genus to hang on is not a qualifier", async () => {
+    // 'Bombus nr. mixtus' with an empty genus column: reading the qualifier
+    // off the string alone would attach nr. to whatever coarser rank the row
+    // resolves to — a family or an order that nobody qualified.
+    expect(await parsed("Bombus nr. mixtus")).toEqual([[null, null, null, null, null, null, null]]);
+  });
+
   test("names the model has nowhere to put are named as such, not silently flattened", async () => {
     // Not a mistake anybody made: a determiner separated Melissodes sp.1 from
     // sp.5 deliberately. The model records the genus and loses the rest — so
     // the loss is at least visible (beeline-8g7).
     expect(await rows(conn, "SELECT sci, parse, lands_on FROM legacy_name_flattened ORDER BY sci")).toEqual([
+      ["Bombus nr. mixtus", "unparsed", ""], // synthetic: no genus, so nothing to attach
       ["Lasioglossum  sp.1", "morphospecies", "Lasioglossum"],
       ["Melissodes sp.1", "morphospecies", "Melissodes"],
       ["Not a bee", "unparsed", ""],

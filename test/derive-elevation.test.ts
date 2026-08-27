@@ -3,6 +3,8 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DuckDBInstance } from "@duckdb/node-api";
+import { readFile } from "node:fs/promises";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 import { deriveElevations, tileKeyFor } from "../src/derive-elevation.js";
 import { glo30Url } from "../src/fetch-dem.js";
@@ -202,6 +204,36 @@ describe("elevation derivation", () => {
       await rows(conn, `SELECT sample_id FROM sample_elevation_stale WHERE sample_id = ${nudged}`),
     ).toEqual([]);
     expect(await deriveElevations(conn, demDir)).toMatchObject({ filled: 0 });
+  });
+
+  test("an elevation with no point behind it is pending on a store that has no CHECK", async () => {
+    // Migration 0012 adds elevation_latitude/longitude and cannot add the
+    // CHECK pairing them with elevation_m, because DuckDB has no ALTER TABLE
+    // ADD CONSTRAINT (ADR 0006) — so it nominates these views as what keeps a
+    // deployed store honest instead. They only do that if a row with an
+    // elevation and no point is visible to them: `abs(NULL - latitude) >
+    // 5e-5` is NULL, which is neither stale nor pending, and the hole would
+    // be exactly on the stores that lack the CHECK.
+    //
+    // So the views are exercised here against the real schema/170 text on a
+    // table built without the constraints, which is the shape a migrated
+    // store actually has and the shape a fresh build cannot reproduce.
+    const bare = await (await DuckDBInstance.create(":memory:")).connect();
+    await bare.run(`CREATE TABLE sample_location (
+      sample_id INTEGER PRIMARY KEY, latitude DOUBLE, longitude DOUBLE,
+      elevation_m INTEGER, elevation_source_id INTEGER,
+      elevation_latitude DOUBLE, elevation_longitude DOUBLE)`);
+    await bare.run(await readFile("schema/170_views_elevation.sql", "utf8"));
+    await bare.run(`INSERT INTO sample_location VALUES
+      (1, 44.5, -123.2,   72, 1, NULL, NULL),   -- elevation, no point
+      (2, 44.9, -123.2,   72, 1, 44.5, -123.2), -- point it moved away from
+      (3, 44.5, -123.2,   72, 1, 44.5, -123.2), -- settled
+      (4, 44.5, -123.2, NULL, NULL, NULL, NULL)`); // never derived
+
+    expect(await rows(bare, "SELECT sample_id FROM sample_elevation_stale ORDER BY 1")).toEqual([[1], [2]]);
+    expect(await rows(bare, "SELECT sample_id FROM sample_elevation_pending ORDER BY 1")).toEqual([
+      [1], [2], [4],
+    ]);
   });
 
   test("SRTM wins where both datasets have the tile", async () => {

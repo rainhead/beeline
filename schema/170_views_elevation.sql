@@ -19,12 +19,21 @@
 -- carries 4 decimal places, so "same place, rounded" is a delta of at most
 -- 5e-5 degrees (~5.5 m, well under an SRTM cell). Below that a re-derivation
 -- would read the same DEM pixel and change nothing.
+-- An elevation whose point is unknown is not known to be about this point,
+-- so it is stale too. On a fresh build the CHECK makes that state
+-- unreachable; on a store migrated by 0012 it is reachable, because DuckDB
+-- cannot add a CHECK to an existing table (ADR 0006) — which is exactly the
+-- store this view is the safety net for. Without the NULL clause the
+-- comparison yields NULL, the row is neither stale nor pending, and the net
+-- has a hole precisely where it is load-bearing.
 CREATE VIEW sample_elevation_stale AS
 SELECT sample_id, latitude, longitude, elevation_m,
        elevation_latitude, elevation_longitude
 FROM sample_location
 WHERE elevation_m IS NOT NULL
-  AND (abs(elevation_latitude - latitude) > 5e-5
+  AND (elevation_latitude IS NULL
+    OR elevation_longitude IS NULL
+    OR abs(elevation_latitude - latitude) > 5e-5
     OR abs(elevation_longitude - longitude) > 5e-5);
 
 -- Everything the derive job should look at: never derived, or derived

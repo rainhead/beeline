@@ -52,6 +52,20 @@ deltas that bring an already-deployed database up to it.**
   long as any deployed store lags. That duplication is deliberate: it keeps
   the schema readable as a single current statement. `--check` is what keeps
   the two honest.
+- **A deployed store can lack a CHECK that a fresh build has, and `--check`
+  will not say so.** DuckDB has no `ALTER TABLE … ADD CONSTRAINT` (confirmed
+  2026-08-27, 1.5.x: *"No support for that ALTER TABLE option yet!"*), so a
+  migration that adds a column with a constraint on it can add the column and
+  not the constraint. `--check` compares `information_schema.columns` and the
+  table and view lists, never constraints, so it reports a match. Migrations
+  0012 and 0013 are both in that state deliberately.
+
+  So a constraint added this way is not enforced anywhere until the next
+  rebuild. When that matters, the invariant needs a second home the deployed
+  store *does* get — a view, which migrations carry fine: `sample_elevation_stale`
+  (schema/170) is the pattern, stating the rule the CHECK would have enforced
+  and answering it as a query instead. Say in the migration which of the two
+  applies, because the file is the only place a reader can find out.
 - **Blow-away stays the dev stance.** Nobody migrates a local database; they
   rebuild it. Migrations that only ever ran on the sandbox are still worth
   keeping, because the sandbox becomes production at cutover.

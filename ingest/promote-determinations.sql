@@ -68,7 +68,7 @@ GROUP BY 1;
 CREATE OR REPLACE VIEW legacy_expert_target AS
 SELECT _id,
   CASE
-    WHEN legacy_rank = 'Subspecies' AND sci IS NOT NULL THEN 'subspecies'
+    WHEN trinomial IS NOT NULL THEN 'subspecies'
     WHEN epithet IS NOT NULL AND base_genus IS NOT NULL THEN 'species'
     WHEN sub IS NOT NULL AND base_genus IS NOT NULL THEN 'subgenus'
     WHEN base_genus IS NOT NULL THEN 'genus'
@@ -76,7 +76,7 @@ SELECT _id,
     WHEN ord IS NOT NULL THEN 'order'
   END AS rank,
   CASE
-    WHEN legacy_rank = 'Subspecies' AND sci IS NOT NULL THEN sci
+    WHEN trinomial IS NOT NULL THEN trinomial
     WHEN epithet IS NOT NULL AND base_genus IS NOT NULL THEN concat(base_genus, ' ', epithet)
     WHEN sub IS NOT NULL AND base_genus IS NOT NULL THEN concat(base_genus, ' (', sub, ')')
     WHEN base_genus IS NOT NULL THEN base_genus

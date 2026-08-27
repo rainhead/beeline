@@ -3,6 +3,9 @@
 -- taxon verbatim determinations assert that the list doesn't cover — those
 -- extras are queryable for curator review (legacy_taxon_uncurated).
 --
+-- Verbatim names are already taken apart by ingest/parse-names.sql, which
+-- runs first; this file reads legacy_det_taxa and mints nodes from it.
+--
 -- Ranks derive from the data, not the legacy taxonRank column: subgenus
 -- determinations sometimes arrive as 'Lasioglossum (Dialictus)' in the genus
 -- column, and most genus rows carry no family (resolved via the curated CSV).
@@ -24,19 +27,6 @@ INSERT INTO animal (rank, scientific_name, parent_id)
 SELECT 'phylum', 'Arthropoda', entity_id FROM animal WHERE scientific_name = 'Animalia';
 INSERT INTO animal (rank, scientific_name, parent_id)
 SELECT 'class', 'Insecta', entity_id FROM animal WHERE scientific_name = 'Arthropoda';
-
--- ── Normalized determination taxonomy from staging ──────────────────────
-CREATE OR REPLACE VIEW legacy_det_taxa AS
-SELECT _id,
-  nullif(trim("order"), '')                                    AS ord,
-  nullif(trim(family), '')                                     AS family,
-  nullif(regexp_extract(trim(genus), '^([A-Za-z]+)', 1), '')   AS base_genus,
-  coalesce(nullif(trim(subgenus), ''),
-           nullif(regexp_extract(trim(genus), '\(([A-Za-z]+)\)', 1), '')) AS sub,
-  nullif(trim(specificEpithet), '')                            AS epithet,
-  nullif(trim(scientificName), '')                             AS sci,
-  taxonRank                                                    AS legacy_rank
-FROM legacy_promotable;
 
 -- ── Orders ──────────────────────────────────────────────────────────────
 INSERT INTO animal (rank, scientific_name, parent_id)
@@ -108,13 +98,14 @@ FROM (
 JOIN animal gen ON gen.rank = 'genus' AND gen.scientific_name = s.base_genus;
 
 -- ── Species ─────────────────────────────────────────────────────────────
--- Authorship best-effort from the verbatim scientificName remainder.
+-- Authorship best-effort from the verbatim scientificName remainder, vetted
+-- in legacy_det_taxa. any_value over a group is fine because the vetting
+-- leaves only real authorships, and a species has one.
 INSERT INTO animal (rank, scientific_name, parent_id, authorship)
 SELECT 'species', concat(sp.genus, ' ', sp.epithet), gen.entity_id, sp.authorship
 FROM (
   SELECT genus, epithet, any_value(authorship) AS authorship FROM (
-    SELECT base_genus AS genus, epithet,
-      nullif(trim(regexp_replace(sci, '^[A-Za-z]+( \([A-Za-z]+\))? [a-z-]+', '')), '') AS authorship
+    SELECT base_genus AS genus, epithet, authorship
     FROM legacy_det_taxa WHERE base_genus IS NOT NULL AND epithet IS NOT NULL
     UNION ALL
     SELECT genus, species, NULL FROM legacy_taxonomy_csv
@@ -128,12 +119,15 @@ FROM (
 JOIN animal gen ON gen.rank = 'genus' AND gen.scientific_name = sp.genus;
 
 -- ── Subspecies (trinomials in scientificName) ───────────────────────────
+-- Keyed on the name's shape, not on taxonRank, which calls two of the five
+-- trinomials 'Species' — Osmia montana montana and Bembix americana
+-- spinolae would otherwise land on their species node, losing the third
+-- epithet a determiner deliberately wrote.
 INSERT INTO animal (rank, scientific_name, parent_id)
-SELECT 'subspecies', t.sci, sp.entity_id
+SELECT 'subspecies', t.trinomial, sp.entity_id
 FROM (
-  SELECT DISTINCT sci, base_genus, epithet FROM legacy_det_taxa
-  WHERE legacy_rank = 'Subspecies' AND sci IS NOT NULL
-    AND base_genus IS NOT NULL AND epithet IS NOT NULL
+  SELECT DISTINCT trinomial, base_genus, epithet FROM legacy_det_taxa
+  WHERE trinomial IS NOT NULL AND base_genus IS NOT NULL AND epithet IS NOT NULL
 ) t
 JOIN animal sp ON sp.rank = 'species'
   AND sp.scientific_name = concat(t.base_genus, ' ', t.epithet);

@@ -128,6 +128,8 @@ export async function promoteLegacy(
       .replaceAll("{{APP_CORRECTIONS}}", appCorrections.replaceAll("'", "''"))
       .replaceAll("{{COLLECTOR_ALIASES}}", collectorAliases.replaceAll("'", "''")),
   );
+  // Names come apart before anything reads them apart (beeline-qcd).
+  await conn.run(await readFile(`${INGEST_DIR}parse-names.sql`, "utf8"));
   const seedSql = await readFile(`${INGEST_DIR}seed-animals.sql`, "utf8");
   await conn.run(seedSql.replaceAll("{{TAXONOMY_CSV}}", taxonomyCsv.replaceAll("'", "''")));
   const detSql = await readFile(`${INGEST_DIR}promote-determinations.sql`, "utf8");

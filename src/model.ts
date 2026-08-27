@@ -147,7 +147,27 @@ export interface SampleLocationTable {
   coordinate_uncertainty_m: number | null;
   elevation_m: number | null;
   elevation_source_id: number | null;
+  /** The coordinates the elevation was read at; CHECK-paired with it. */
+  elevation_latitude: number | null;
+  elevation_longitude: number | null;
   source: LocationSource;
+}
+
+/** schema/170: an elevation no longer about the point it sits beside. */
+export interface SampleElevationStaleView {
+  sample_id: number;
+  latitude: number;
+  longitude: number;
+  elevation_m: number;
+  elevation_latitude: number;
+  elevation_longitude: number;
+}
+
+/** schema/170: what the derive job looks at — never derived, or stale. */
+export interface SampleElevationPendingView {
+  sample_id: number;
+  latitude: number;
+  longitude: number;
 }
 
 export interface SampleCollectorTable {
@@ -306,6 +326,8 @@ export interface Database {
   blocking_sample: BlockingSampleView;
   season: SeasonView;
   settled_sample: SettledSampleView;
+  sample_elevation_stale: SampleElevationStaleView;
+  sample_elevation_pending: SampleElevationPendingView;
   printable_sample: PrintableSampleView;
   pending_print_sample: PendingPrintSampleView;
   // Attached private store (ADR 0003), catalog-qualified:

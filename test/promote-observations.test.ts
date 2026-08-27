@@ -81,6 +81,16 @@ describe("observation promotion", () => {
     await stage(obs(8, { private_geojson: { coordinates: [-123.26204, 44.56462], type: "Point" } }));
     await promoteObservations(conn);
     expect(await location(sampleId)).toEqual(["inat_trusted", 44.56462, -123.26204, 30, 72]);
+    // The elevation keeps pointing at the coordinates it was actually read
+    // at, not the sharper ones it now sits beside — the row stays honest
+    // about its own provenance, and stays out of the stale set.
+    expect(
+      await rows(
+        conn,
+        `SELECT elevation_latitude FROM sample_location WHERE sample_id = ${sampleId}`,
+      ),
+    ).toEqual([[44.5646]]);
+    expect(await rows(conn, "SELECT sample_id FROM sample_elevation_stale")).toEqual([]);
   });
 
   test("an open observation upgrades to inat_public and clears stale flags; taxon_geoprivacy 'open' means unobscured", async () => {
@@ -182,5 +192,13 @@ describe("observation promotion", () => {
       "SELECT (SELECT count(*) FROM sample_location), (SELECT count(*) FROM inat_account)",
     )) as [[unknown, unknown]];
     expect([locations, accounts]).toEqual([1n, 1n]);
+  });
+
+  test("promotion leaves no elevation describing a point the sample has moved away from", async () => {
+    // The invariant, over every sample the whole suite has promoted by now:
+    // whatever route a coordinate took, no row is left asserting an elevation
+    // for somewhere it was never measured (beeline-x5c). This is the check
+    // that survives a write path nobody remembered to teach.
+    expect(await rows(conn, "SELECT sample_id FROM sample_elevation_stale")).toEqual([]);
   });
 });

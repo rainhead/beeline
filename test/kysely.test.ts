@@ -61,6 +61,8 @@ test("insert returning generated ids", async () => {
       coordinate_uncertainty_m: 30,
       elevation_m: 72,
       elevation_source_id: dem.entity_id,
+      elevation_latitude: 44.5646,
+      elevation_longitude: -123.262,
       source: "inat_public",
     })
     .execute();

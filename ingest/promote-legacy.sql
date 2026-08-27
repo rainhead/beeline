@@ -664,13 +664,21 @@ FROM (
 INSERT INTO elevation_source (description)
 VALUES ('legacy verbatimElevation: OBP-Server SRTM 1-arc-second lookup, tile unrecorded');
 
+-- The legacy elevation's derived-from point is the sample's own coordinates:
+-- OBP-Server read the DEM at the coordinates it stored, and those are the
+-- ones arriving here. Recording them says so, and means a later coordinate
+-- upgrade makes the inherited elevation visibly stale (schema/170) rather
+-- than silently wrong.
 INSERT INTO sample_location (sample_id, latitude, longitude,
                              coordinate_uncertainty_m, elevation_m,
-                             elevation_source_id, source)
+                             elevation_source_id,
+                             elevation_latitude, elevation_longitude, source)
 SELECT s.sample_id, s.lat, s.lon, s.uncertainty, s.elevation,
        CASE WHEN s.elevation IS NOT NULL
             THEN (SELECT entity_id FROM elevation_source
                   WHERE description LIKE 'legacy verbatimElevation%') END,
+       CASE WHEN s.elevation IS NOT NULL THEN s.lat END,
+       CASE WHEN s.elevation IS NOT NULL THEN s.lon END,
        'legacy_import'
 FROM legacy_sample_map s
 WHERE s.lat IS NOT NULL AND s.lon IS NOT NULL;

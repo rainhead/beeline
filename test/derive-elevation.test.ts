@@ -165,6 +165,45 @@ describe("elevation derivation", () => {
     ).toEqual([[null]]);
   });
 
+  test("a moved coordinate re-derives without anyone clearing the elevation", async () => {
+    // The bug this guards: elevation_m is a statement about a point, and for
+    // one release the only thing keeping it true was that each coordinate
+    // writer remembered to null it (beeline-x5c). Here nothing does.
+    const moved = await gapAt("44.55", "-123.85");
+    await deriveElevations(conn, demDir);
+    expect(
+      await rows(conn, `SELECT elevation_m FROM sample_location WHERE sample_id = ${moved}`),
+    ).toEqual([[401]]);
+
+    // Shove it four rows south, leaving the elevation exactly where it was.
+    await conn.run(`UPDATE sample_location SET latitude = 44.95 WHERE sample_id = ${moved}`);
+    expect(
+      await rows(conn, `SELECT sample_id FROM sample_elevation_stale WHERE sample_id = ${moved}`),
+    ).toEqual([[moved]]);
+
+    // lat .95 → row 0; lon frac .15 → col 1 → 1.
+    await deriveElevations(conn, demDir);
+    expect(
+      await rows(
+        conn,
+        `SELECT elevation_m, elevation_latitude FROM sample_location WHERE sample_id = ${moved}`,
+      ),
+    ).toEqual([[1, 44.95]]);
+    expect(await rows(conn, "SELECT sample_id FROM sample_elevation_stale")).toEqual([]);
+  });
+
+  test("a coordinate that only rounds differently is not stale", async () => {
+    const nudged = await gapAt("44.55", "-123.85");
+    await deriveElevations(conn, demDir);
+    // Under the 5e-5 tolerance: the same DEM pixel, so re-reading it would
+    // change nothing and 383k legacy rows should not re-derive on a reload.
+    await conn.run(`UPDATE sample_location SET latitude = 44.550_02 WHERE sample_id = ${nudged}`);
+    expect(
+      await rows(conn, `SELECT sample_id FROM sample_elevation_stale WHERE sample_id = ${nudged}`),
+    ).toEqual([]);
+    expect(await deriveElevations(conn, demDir)).toMatchObject({ filled: 0 });
+  });
+
   test("SRTM wins where both datasets have the tile", async () => {
     const both = await gapAt("45.5", "-123.5");
     await deriveElevations(conn, demDir);

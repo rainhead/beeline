@@ -93,6 +93,13 @@ export async function insertCleanSample(
       const [[srcId]] = (await src.getRows()) as [[number]];
       loc.elevation_source_id = String(srcId);
     }
+    // An elevation is derived from a point, and the schema will not accept one
+    // without it (beeline-x5c). Default to the row's own coordinates: a fixture
+    // that wants a stale elevation says so by overriding these.
+    if (loc.elevation_m !== "NULL") {
+      loc.elevation_latitude ??= loc.latitude!;
+      loc.elevation_longitude ??= loc.longitude!;
+    }
     const locKeys = Object.keys(loc);
     await conn.run(
       `INSERT INTO sample_location (${locKeys.join(", ")}) VALUES (${locKeys.map((k) => loc[k]).join(", ")})`,

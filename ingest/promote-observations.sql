@@ -43,27 +43,28 @@ WHERE (f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL)
        AND nullif(f.taxon_geoprivacy, 'open') IS NULL);
 
 -- Upgrade in place. positional_accuracy describes the true location even on
--- obscured records, so it accompanies both sources. An elevation survives
--- when the coordinates it was derived from agree with the new pair within
--- the reference system's export precision — legacy Mongo carries exactly 4
--- decimal places (measured: 383,004/383,032 rows; every linked sample sits
--- within half-ULP of the iNat coordinates), so "same place, rounded" is a
--- delta of at most 5e-5 degrees (~5.5 m, well under an SRTM cell).
--- Genuinely moved coordinates clear the elevation together with its source
--- (CHECK pairs them), awaiting re-derivation (beeline-bqz).
+-- obscured records, so it accompanies both sources. Coordinates move here
+-- and the elevation stays where it was — which is exactly what makes the row
+-- stale, and the next statement is what notices.
 UPDATE sample_location SET
-  elevation_m = CASE WHEN abs(sample_location.latitude - c.latitude) <= 5e-5
-                      AND abs(sample_location.longitude - c.longitude) <= 5e-5
-                     THEN sample_location.elevation_m END,
-  elevation_source_id = CASE WHEN abs(sample_location.latitude - c.latitude) <= 5e-5
-                              AND abs(sample_location.longitude - c.longitude) <= 5e-5
-                             THEN sample_location.elevation_source_id END,
   latitude = c.latitude,
   longitude = c.longitude,
   coordinate_uncertainty_m = c.coordinate_uncertainty_m,
   source = c.source
 FROM observation_location_candidate c
 WHERE sample_location.sample_id = c.sample_id;
+
+-- Drop every elevation the move left behind, so the row says "unknown"
+-- rather than something confident about a place it was not read at, and
+-- awaits re-derivation (beeline-bqz). The predicate is sample_elevation_stale
+-- itself (schema/170) — the tolerance is stated once, there, and this and the
+-- derive job read the same definition of "moved enough to matter". A writer
+-- that skips this statement is not silently wrong any more, only late: the
+-- derive job's pending set is the same view (beeline-x5c).
+UPDATE sample_location SET
+  elevation_m = NULL, elevation_source_id = NULL,
+  elevation_latitude = NULL, elevation_longitude = NULL
+WHERE sample_id IN (SELECT sample_id FROM sample_elevation_stale);
 
 INSERT INTO sample_location (sample_id, latitude, longitude,
                              coordinate_uncertainty_m, source)

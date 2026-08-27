@@ -6,15 +6,19 @@ import { fromArrayBuffer } from "geotiff";
 
 /**
  * Derive missing elevations for believed-true coordinates (beeline-bqz).
- * Fills sample_location rows where elevation_m IS NULL from DEM GeoTIFF
+ * Fills the sample_location rows sample_elevation_pending names — never
+ * derived, or derived from a point the coordinates have since moved away
+ * from (schema/170, beeline-x5c) — from DEM GeoTIFF
  * tiles in data/dem/ — SRTM 1-arc-second first, so re-derived values stay
  * comparable with the legacy ones, falling back to Copernicus GLO-30 where
  * the SRTM archive has no tile (beeline-zjd). Each tile used gets one
  * elevation_source row (file name + sha256 + which dataset it is), reused
  * across runs; the CHECK on sample_location guarantees no elevation lands
- * without it. Idempotent: only NULL rows are touched, so promotion clearing
- * a moved coordinate's elevation is exactly what schedules its
- * re-derivation. Values < -10 are DEM voids (reference rule) and stay NULL.
+ * without it, and a second CHECK guarantees it never lands without the
+ * coordinates it was read at. Idempotent: a settled row is not pending, so a
+ * re-run is a no-op — and a coordinate that moved schedules its own
+ * re-derivation without any writer having to remember to clear anything.
+ * Values < -10 are DEM voids (reference rule) and stay NULL.
  */
 
 export interface ElevationResult {
@@ -93,9 +97,7 @@ export async function deriveElevations(
   demDir = "data/dem",
 ): Promise<ElevationResult> {
   const gaps = (await (
-    await conn.run(
-      `SELECT sample_id, latitude, longitude FROM sample_location WHERE elevation_m IS NULL`,
-    )
+    await conn.run(`SELECT sample_id, latitude, longitude FROM sample_elevation_pending`)
   ).getRows()) as Array<[number, number, number]>;
 
   const byTile = new Map<string, Array<[number, number, number]>>();
@@ -143,9 +145,15 @@ export async function deriveElevations(
           result.voids += 1;
           continue;
         }
+        // The coordinates go down with the elevation, not the ones the row
+        // happens to hold when someone next reads it: those are the same
+        // today and the whole point of the column tomorrow.
         await conn.run(
-          `UPDATE sample_location SET elevation_m = $1, elevation_source_id = $2 WHERE sample_id = $3`,
-          [Math.round(elevation), sourceId, sampleId],
+          `UPDATE sample_location
+              SET elevation_m = $1, elevation_source_id = $2,
+                  elevation_latitude = $3, elevation_longitude = $4
+            WHERE sample_id = $5`,
+          [Math.round(elevation), sourceId, latitude, longitude, sampleId],
         );
         result.filled += 1;
       }

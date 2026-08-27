@@ -39,7 +39,7 @@ const ITALIC_RANKS = new Set([
  * *epithet* and sit before it (`Bombus cf. occidentalis`); the rest qualify
  * the whole name and follow it (`Bombus sp.`, `Bombus s. str.`).
  */
-export const PREFIX_QUALIFIERS = ["cf.", "aff."] as const;
+export const PREFIX_QUALIFIERS = ["cf.", "aff.", "nr."] as const;
 export const SUFFIX_QUALIFIERS = ["sp.", "spp.", "sp. nov.", "s. str.", "s. lat."] as const;
 
 export type TaxonQualifier = (typeof PREFIX_QUALIFIERS)[number] | (typeof SUFFIX_QUALIFIERS)[number];

@@ -66,9 +66,10 @@ WHERE trim(identifiedBy) <> ''
 GROUP BY 1;
 
 CREATE OR REPLACE VIEW legacy_expert_target AS
-SELECT _id,
+SELECT _id, sci AS verbatim, qualifier,
   CASE
     WHEN trinomial IS NOT NULL THEN 'subspecies'
+    WHEN qualified_epithet IS NOT NULL AND base_genus IS NOT NULL THEN 'species'
     WHEN epithet IS NOT NULL AND base_genus IS NOT NULL THEN 'species'
     WHEN sub IS NOT NULL AND base_genus IS NOT NULL THEN 'subgenus'
     WHEN base_genus IS NOT NULL THEN 'genus'
@@ -77,6 +78,8 @@ SELECT _id,
   END AS rank,
   CASE
     WHEN trinomial IS NOT NULL THEN trinomial
+    WHEN qualified_epithet IS NOT NULL AND base_genus IS NOT NULL
+      THEN concat(base_genus, ' ', qualified_epithet)
     WHEN epithet IS NOT NULL AND base_genus IS NOT NULL THEN concat(base_genus, ' ', epithet)
     WHEN sub IS NOT NULL AND base_genus IS NOT NULL THEN concat(base_genus, ' (', sub, ')')
     WHEN base_genus IS NOT NULL THEN base_genus
@@ -115,9 +118,13 @@ FROM legacy_specimen_number n
 JOIN specimen sp ON sp.sample_id = n.sample_id AND sp.specimen_number = n.specimen_number
 JOIN sample s ON s.entity_id = n.sample_id;
 
-INSERT INTO determination (specimen_id, animal_id, sex, caste,
+-- The verbatim name rides along with the node it resolved to: staging is
+-- re-pullable today and frozen at cutover, after which this is the only
+-- record of what the determiner actually wrote (beeline-tgu).
+INSERT INTO determination (specimen_id, animal_id, qualifier,
+                           verbatim_identification, sex, caste,
                            determiner_id, determiner_name, is_expert, channel)
-SELECT s.specimen_id, an.entity_id,
+SELECT s.specimen_id, an.entity_id, t.qualifier, t.verbatim,
        nullif(lower(trim(r.sex)), ''), nullif(lower(trim(r.caste)), ''),
        dp.person_id, nullif(trim(r.identifiedBy), ''), true, 'legacy_import'
 FROM legacy_promotable r
@@ -126,6 +133,8 @@ JOIN animal an ON an.rank = t.rank AND an.scientific_name = t.name
 JOIN legacy_specimen_map s ON s._id = r._id
 LEFT JOIN legacy_determiner_person dp ON dp.alias = trim(r.identifiedBy);
 
+-- Volunteer determinations arrive already parted (familyVolDet/genusVolDet/
+-- speciesVolDet), so there is no verbatim string to keep and none is invented.
 INSERT INTO determination (specimen_id, animal_id, sex, caste,
                            determiner_id, is_expert, channel)
 SELECT s.specimen_id, an.entity_id,

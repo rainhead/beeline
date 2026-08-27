@@ -2,7 +2,8 @@
 -- else latest volunteer determination. "Latest" is by recorded_at — a late
 -- import of an old determination still supersedes, matching append-only intent.
 CREATE VIEW determination_of_record AS
-SELECT entity_id, specimen_id, animal_id, sex, caste, determiner_id, determiner_name,
+SELECT entity_id, specimen_id, animal_id, qualifier, verbatim_identification,
+       sex, caste, determiner_id, determiner_name,
        is_expert, channel, determined_on, recorded_at, notes
 FROM (
   SELECT d.*,

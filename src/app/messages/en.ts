@@ -569,9 +569,9 @@ export const en = {
           "The identifier a museum gives a specimen once the specimen is in its collection — Washington's come back from Ecdysis as WSDA_2303966. It is not the number on the label you print: that one is the field number.",
       },
       "cf-aff": {
-        term: "cf. and aff.",
+        term: "cf., aff. and nr.",
         definition:
-          "cf. means the specimen resembles that species and needs confirming; aff. means it is close to it but probably something else. Both sit in front of the species name.",
+          "Ways of naming a species without quite asserting it. cf. means the specimen resembles that species and needs confirming; aff. means it is close to it but probably something else; nr. means near it. All three sit in front of the species name, and all three say more than dropping back to the genus would.",
         example: { rank: "species", scientificName: "Bombus occidentalis", qualifier: "cf." },
       },
       collector: {

@@ -97,8 +97,8 @@ const parse = (sci: string) =>
 const parsed = (sci: string) =>
   rows(
     conn,
-    `SELECT base_genus, sub, epithet, authorship, trinomial FROM legacy_det_taxa
-      WHERE sci = '${sci.replaceAll("'", "''")}'`,
+    `SELECT base_genus, sub, epithet, authorship, trinomial, qualifier, qualified_epithet
+       FROM legacy_det_taxa WHERE sci = '${sci.replaceAll("'", "''")}'`,
   );
 
 describe("taking a verbatim scientific name apart", () => {
@@ -107,7 +107,7 @@ describe("taking a verbatim scientific name apart", () => {
       ["binomial", 2n], // Bombus vosnesenskii, plus Apis mellifera from OTHER_FIELDS
       ["binomial with authorship", 4n],
       ["morphospecies", 3n],
-      ["near", 1n],
+      ["qualified", 1n],
       ["subgenus", 2n],
       ["trinomial", 5n],
       ["uninomial", 1n],
@@ -119,9 +119,9 @@ describe("taking a verbatim scientific name apart", () => {
     // The bug: Osmia montana carried authorship "montana", Bembix americana
     // "spinolae", Colletes consors "pascoensis" — and authorship prints on a
     // label, which is permanent once printed.
-    expect(await parsed("Osmia montana montana")).toEqual([["Osmia", null, "montana", null, "Osmia montana montana"]]);
+    expect(await parsed("Osmia montana montana")).toEqual([["Osmia", null, "montana", null, "Osmia montana montana", null, null]]);
     expect(await parsed("Colletes consors pascoensis")).toEqual([
-      ["Colletes", null, "consors", null, "Colletes consors pascoensis"],
+      ["Colletes", null, "consors", null, "Colletes consors pascoensis", null, null],
     ]);
     expect(
       await rows(conn, "SELECT count(*) FROM legacy_det_taxa WHERE authorship ~ '^[a-z]'"),
@@ -160,19 +160,21 @@ describe("taking a verbatim scientific name apart", () => {
     // A shape-only rule (capitalised word, two lowercase words) read this as
     // a trinomial and minted a determination nothing could resolve. Anchoring
     // on the row's own genus and epithet is what excludes it.
-    expect(await parsed("Not a bee")).toEqual([[null, null, null, null, null]]);
+    expect(await parsed("Not a bee")).toEqual([[null, null, null, null, null, null, null]]);
     expect(await parse("Not a bee")).toEqual([["unparsed"]]);
   });
 
   test("an authored binomial is not mistaken for a trinomial", async () => {
     expect(await parsed("Bombus vosnesenskii Radoszkowski, 1862")).toEqual([
-      ["Bombus", null, "vosnesenskii", "Radoszkowski, 1862", null],
+      ["Bombus", null, "vosnesenskii", "Radoszkowski, 1862", null, null, null],
     ]);
   });
 
   test("subgenus comes from either column, bracketed or its own", async () => {
-    expect(await parsed("Lasioglossum (Dialictus)")).toEqual([["Lasioglossum", "Dialictus", null, null, null]]);
-    expect(await parsed("Andrena (Andrena)")).toEqual([["Andrena", "Andrena", null, null, null]]);
+    expect(await parsed("Lasioglossum (Dialictus)")).toEqual([
+      ["Lasioglossum", "Dialictus", null, null, null, null, null],
+    ]);
+    expect(await parsed("Andrena (Andrena)")).toEqual([["Andrena", "Andrena", null, null, null, null, null]]);
   });
 
   test("the other verbatim fields are surveyed too, so a new shape shows up", async () => {
@@ -193,14 +195,22 @@ describe("taking a verbatim scientific name apart", () => {
     ]);
   });
 
+  test("a qualified name reaches the species it stops short of, carrying the qualifier", async () => {
+    // "Lasioglossum nr. tenax" used to land on the bare genus: specificEpithet
+    // is empty on these rows, so the string was the only witness and nothing
+    // read it. The determination now points at Lasioglossum tenax and says
+    // nr. — which is what the determiner meant (beeline-tgu).
+    expect(await parsed("Lasioglossum nr. tenax")).toEqual([
+      ["Lasioglossum", null, null, null, null, "nr.", "tenax"],
+    ]);
+  });
+
   test("names the model has nowhere to put are named as such, not silently flattened", async () => {
-    // Neither is a mistake anybody made: a determiner separated Melissodes
-    // sp.1 from sp.5 deliberately, and "nr. tenax" says something precise.
-    // The model records the genus and loses the rest — so the loss is at
-    // least visible (beeline-tgu, beeline-8g7).
+    // Not a mistake anybody made: a determiner separated Melissodes sp.1 from
+    // sp.5 deliberately. The model records the genus and loses the rest — so
+    // the loss is at least visible (beeline-8g7).
     expect(await rows(conn, "SELECT sci, parse, lands_on FROM legacy_name_flattened ORDER BY sci")).toEqual([
       ["Lasioglossum  sp.1", "morphospecies", "Lasioglossum"],
-      ["Lasioglossum nr. tenax", "near", "Lasioglossum"],
       ["Melissodes sp.1", "morphospecies", "Melissodes"],
       ["Not a bee", "unparsed", ""],
       ["Stelis sp.7", "morphospecies", "Stelis"],

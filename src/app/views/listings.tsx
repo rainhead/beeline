@@ -369,7 +369,11 @@ export function SpecimenListing({ m, query, page, atlases, admin }: ListingProps
                 <td>{place(row)}</td>
                 <td>
                   {row.scientific_name !== null && row.taxon_rank !== null ? (
-                    <TaxonName rank={row.taxon_rank} scientificName={row.scientific_name} />
+                    <TaxonName
+                      rank={row.taxon_rank}
+                      scientificName={row.scientific_name}
+                      qualifier={row.qualifier ?? undefined}
+                    />
                   ) : (
                     <Meta>{copy.undetermined}</Meta>
                   )}

@@ -14,7 +14,7 @@ beforeAll(async () => {
 });
 
 test("stages every row", async () => {
-  expect(staged).toBe(5);
+  expect(staged).toBe(6);
 });
 
 test("everything arrives verbatim as strings", async () => {
@@ -33,5 +33,5 @@ test("everything arrives verbatim as strings", async () => {
 
 test("reloading replaces rather than appends", async () => {
   const again = await loadLegacyStaging(conn, FIXTURE);
-  expect(again).toBe(5);
+  expect(again).toBe(6);
 });

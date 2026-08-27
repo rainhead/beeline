@@ -189,10 +189,16 @@ export interface SpecimenTable {
 
 export type DeterminationChannel = "in_app" | "ecdysis_import" | "legacy_import";
 
+/** Open nomenclature: how sure the determiner was. Never sp./spp., which a
+ * genus-rank determination already says. */
+export type DeterminationQualifier = "cf." | "aff." | "nr.";
+
 export interface DeterminationTable {
   entity_id: Generated<number>;
   specimen_id: number;
   animal_id: number;
+  qualifier: DeterminationQualifier | null;
+  verbatim_identification: string | null;
   sex: string | null;
   caste: string | null;
   determiner_id: number | null;

@@ -19,14 +19,14 @@ beforeAll(async () => {
 describe("legacy promotion", () => {
   test("promotes the valid rows and blocks the junk row", () => {
     expect(counts).toEqual({
-      staged: 5,
+      staged: 6,
       people: 3, // two collectors + the determiner Lincoln Best — the joint row adds nobody
       samples: 3, // dddd4444 merges into Ada's sample 1; the joint trap sample is its own
-      specimens: 4,
+      specimens: 5,
       locations: 3,
       // Spine (3) + Hymenoptera + 2 families + 2 genera + 3 species.
-      animals: 11,
-      determinations: 3,
+      animals: 12,
+      determinations: 4,
       blockedRows: 1,
       unresolvedDeterminations: 0,
       unresolvedDeterminerNames: 0,
@@ -62,14 +62,40 @@ describe("legacy promotion", () => {
        FROM determination d
        JOIN animal a ON a.entity_id = d.animal_id
        LEFT JOIN person p ON p.entity_id = d.determiner_id
-       ORDER BY d.is_expert`,
+       ORDER BY d.is_expert, a.scientific_name`,
     );
     expect(dets).toEqual([
       ["Bombus", false, null, "Bea Trapper", "female"],
       ["Bombus", false, null, "Bea Trapper", "female"], // the joint sample's specimen
       // Verbatim name retained AND resolved to a single person record.
       ["Bombus vosnesenskii", true, "Lincoln Best", "Lincoln Best", "female"],
+      ["Lasioglossum tenax", true, "Lincoln Best", "Lincoln Best", "female"],
     ]);
+  });
+
+  test("a qualified determination keeps its qualifier and the words it was written in", async () => {
+    // 'Lasioglossum nr. tenax' has an empty specificEpithet, so before
+    // beeline-tgu the string was the only witness to what the determiner
+    // meant and nothing read it: the determination landed on the bare genus.
+    // It now points at the species and says how far short of asserting it
+    // the determiner stopped.
+    expect(
+      await rows(
+        conn,
+        `SELECT a.rank, a.scientific_name, d.qualifier, d.verbatim_identification
+         FROM determination d JOIN animal a ON a.entity_id = d.animal_id
+         WHERE d.qualifier IS NOT NULL`,
+      ),
+    ).toEqual([["species", "Lasioglossum tenax", "nr.", "Lasioglossum nr. tenax"]]);
+
+    // Volunteer determinations arrive already parted, so there is no verbatim
+    // string to keep and none is invented.
+    expect(
+      await rows(
+        conn,
+        "SELECT is_expert, count(verbatim_identification) FROM determination GROUP BY 1 ORDER BY 1",
+      ),
+    ).toEqual([[false, 0n], [true, 2n]]);
   });
 
   test("the junk row's problems are named findings", async () => {
@@ -198,6 +224,7 @@ describe("legacy promotion", () => {
       ["OBAS-00657", "25000002", 1],
       ["1", "25000003", 2],
       ["OBAS-00658", "25000005", 1],
+      ["1", "25000009", 3],
     ]);
   });
 

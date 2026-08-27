@@ -1,5 +1,5 @@
 import { sql, type Kysely } from "kysely";
-import { PROGRAM_MEMBERSHIP, type Database, type SampleKind } from "../model.js";
+import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
 import { labelName } from "../person-name.js";
 
 /**
@@ -282,6 +282,7 @@ export interface SpecimenRow {
   taxon_rank: string | null;
   scientific_name: string | null;
   authorship: string | null;
+  qualifier: DeterminationQualifier | null;
   sex: string | null;
   is_expert: boolean | null;
   determiner: string | null;
@@ -662,6 +663,7 @@ export async function listSpecimens(
         "an.rank as taxon_rank",
         "an.scientific_name",
         "an.authorship",
+        "d.qualifier",
         "d.sex",
         "d.is_expert",
         "loc.latitude",
@@ -824,6 +826,7 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       "scientific_name",
       "rank",
       "authorship",
+      "identification_qualifier",
       "sex",
       "determined_by",
       "expert_determination",
@@ -848,6 +851,7 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       r.scientific_name,
       r.taxon_rank,
       r.authorship,
+      r.qualifier,
       r.sex,
       r.determiner,
       r.is_expert === null ? "" : String(r.is_expert),

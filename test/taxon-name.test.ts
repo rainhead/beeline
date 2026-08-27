@@ -51,6 +51,10 @@ describe("TaxonName", () => {
     expect(render({ rank: "species", scientificName: "Lasioglossum zonulum", qualifier: "aff." })).toContain(
       "<i>Lasioglossum</i> aff. <i>zonulum</i>",
     );
+    // nr. is the one the legacy records actually carry (beeline-tgu).
+    expect(render({ rank: "species", scientificName: "Lasioglossum tenax", qualifier: "nr." })).toContain(
+      "<i>Lasioglossum</i> nr. <i>tenax</i>",
+    );
   });
 
   it("sets authorship upright after the name", () => {

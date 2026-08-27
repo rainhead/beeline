@@ -45,6 +45,10 @@ const EXAMPLES: ReadonlyArray<{ props: TaxonNameProps; note: string }> = [
     note: "Close to that species but probably something else — same position as cf.",
   },
   {
+    props: { rank: "species", scientificName: "Lasioglossum tenax", qualifier: "nr." },
+    note: "“Near”: the only qualifier the legacy records actually carry.",
+  },
+  {
     props: { rank: "subspecies", scientificName: "Apis mellifera scutellata" },
     note: "Zoological subspecies take no rank connector — no “subsp.”, no “var.”.",
   },

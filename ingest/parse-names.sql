@@ -36,7 +36,19 @@ SELECT * EXCLUDE (tail),
   -- A trinomial is this row's own genus and epithet followed by one more
   -- bare epithet — anchored on the parted columns rather than on the shape
   -- alone, which would read the string 'Not a bee' as a subspecies of Not a.
-  CASE WHEN tail IS NOT NULL AND regexp_matches(tail, '^[a-z-]+$') THEN sci END AS trinomial
+  CASE WHEN tail IS NOT NULL AND regexp_matches(tail, '^[a-z-]+$') THEN sci END AS trinomial,
+  -- Open nomenclature: 'Lasioglossum nr. tenax' says the determiner got to a
+  -- species and stopped short of asserting it. The parted columns are no help
+  -- — specificEpithet is empty on these rows, which is how the intent used to
+  -- be lost, the determination landing on the bare genus. Only nr. is attested
+  -- in the corpus (3 records); cf. and aff. are the same construction and the
+  -- glossary already teaches them (beeline-tgu).
+  -- cfr. is a spelling of cf.; determination.qualifier's CHECK holds the
+  -- three the domain distinguishes, so it normalises here rather than there.
+  CASE regexp_extract(sci, '^[A-Z][a-z]+ (nr|cf|cfr|aff)\. [a-z-]+$', 1)
+    WHEN 'nr'  THEN 'nr.'  WHEN 'cf'  THEN 'cf.'
+    WHEN 'cfr' THEN 'cf.'  WHEN 'aff' THEN 'aff.' END AS qualifier,
+  nullif(regexp_extract(sci, '^[A-Z][a-z]+ (?:nr|cf|cfr|aff)\. ([a-z-]+)$', 1), '') AS qualified_epithet
 FROM (
   SELECT *,
     CASE WHEN base_genus IS NOT NULL AND epithet IS NOT NULL
@@ -73,7 +85,7 @@ FROM (
 -- What the corpus actually holds, measured 2026-08-27 over 727 distinct
 -- names in 383,032 staged records:
 --   binomial 455 · binomial with authorship 156 · uninomial 86
---   subgenus 3 · trinomial 5 · morphospecies 25 · near 1 · unparsed 1
+--   subgenus 3 · trinomial 5 · morphospecies 25 · qualified 1 · unparsed 1
 -- The unparsed one is the string 'Not a bee' — which a shape-only trinomial
 -- rule cheerfully read as a subspecies, and which anchoring on the parted
 -- columns excludes.
@@ -83,7 +95,7 @@ SELECT sci, legacy_rank, count(*) AS records,
   CASE
     WHEN trinomial IS NOT NULL                                      THEN 'trinomial'
     WHEN regexp_matches(sci, '\bsp+\.[0-9]')                       THEN 'morphospecies'
-    WHEN regexp_matches(sci, '\b(nr|cf|aff)\.')                    THEN 'near'
+    WHEN qualified_epithet IS NOT NULL                              THEN 'qualified'
     WHEN regexp_matches(sci, '^[A-Za-z]+ \([A-Za-z]+\)$')           THEN 'subgenus'
     WHEN regexp_matches(sci, '^[A-Za-z]+$')                         THEN 'uninomial'
     WHEN authorship IS NOT NULL
@@ -129,8 +141,10 @@ UNION ALL SELECT 'url', 'not an observation', count(*) FROM legacy_promotable WH
 -- Names carrying information the model has nowhere to put, so a determination
 -- on one lands coarser than the determiner meant. Not a QC rule and not a
 -- promotion finding: nobody typed these wrong, and no volunteer can fix them
--- (beeline-tgu is the qualifier half, beeline-8g7 the morphospecies half).
+-- (beeline-8g7). Qualified names used to be on this list — 'Lasioglossum nr.
+-- tenax' landed on the bare genus, because the parted columns say nothing and
+-- the string was all there was — and are not any more (beeline-tgu).
 CREATE OR REPLACE VIEW legacy_name_flattened AS
 SELECT sci, parse, records, concat_ws(' ', base_genus, epithet) AS lands_on
 FROM legacy_name_parse
-WHERE parse IN ('morphospecies', 'near', 'unparsed');
+WHERE parse IN ('morphospecies', 'unparsed');

@@ -26,6 +26,9 @@ interface Row {
   subgenus?: string;
   epithet?: string;
   rank?: string;
+  recordedBy?: string;
+  month?: string;
+  url?: string;
 }
 
 /** Verbatim, from production staging. Counts are that corpus's, 2026-08-27. */
@@ -55,20 +58,34 @@ const CORPUS: Row[] = [
   { sci: "Not a bee" },
 ];
 
+/** The other verbatim fields, in the shapes the corpus actually holds. */
+const OTHER_FIELDS: Row[] = [
+  { sci: "Apis mellifera", genus: "Apis", epithet: "mellifera", recordedBy: "Bea Trapper | Ada Collector",
+    month: "VII", url: "https://www.inaturalist.org/observations/41624031" },
+  { sci: "Apis mellifera", genus: "Apis", epithet: "mellifera",
+    month: "6", url: "http://www.inaturalist.org/observations/41624032" },
+  { sci: "Apis mellifera", genus: "Apis", epithet: "mellifera",
+    url: "https://www.inaturalist.org/taxa/52821-Achillea-millefolium" },
+];
+
 let conn: DuckDBConnection;
 
 beforeAll(async () => {
   ({ conn } = await createMemoryDb());
-  // The parser reads legacy_promotable; these are the only columns it touches.
+  // parse-names.sql reads legacy_promotable; these are the columns it touches.
   await conn.run(`CREATE TABLE legacy_promotable (
     _id TEXT, "order" TEXT, family TEXT, genus TEXT, subgenus TEXT,
-    specificEpithet TEXT, scientificName TEXT, taxonRank TEXT)`);
-  for (const [i, r] of CORPUS.entries()) {
+    specificEpithet TEXT, scientificName TEXT, taxonRank TEXT,
+    recordedBy TEXT, month TEXT, url TEXT)`);
+  for (const [i, r] of [...CORPUS, ...OTHER_FIELDS].entries()) {
     await conn.run(
       `INSERT INTO legacy_promotable (_id, "order", family, genus, subgenus,
-         specificEpithet, scientificName, taxonRank)
-       VALUES ($1, '', '', $2, $3, $4, $5, $6)`,
-      [String(i), r.genus ?? "", r.subgenus ?? "", r.epithet ?? "", r.sci, r.rank ?? ""] as never,
+         specificEpithet, scientificName, taxonRank, recordedBy, month, url)
+       VALUES ($1, '', '', $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        String(i), r.genus ?? "", r.subgenus ?? "", r.epithet ?? "", r.sci, r.rank ?? "",
+        r.recordedBy ?? "Ada Collector", r.month ?? "7", r.url ?? "",
+      ] as never,
     );
   }
   await conn.run(await readFile("ingest/parse-names.sql", "utf8"));
@@ -87,7 +104,7 @@ const parsed = (sci: string) =>
 describe("taking a verbatim scientific name apart", () => {
   test("every string lands in exactly one category, and nothing is a surprise", async () => {
     expect(await rows(conn, "SELECT parse, count(*) FROM legacy_name_parse GROUP BY 1 ORDER BY 1")).toEqual([
-      ["binomial", 1n],
+      ["binomial", 2n], // Bombus vosnesenskii, plus Apis mellifera from OTHER_FIELDS
       ["binomial with authorship", 4n],
       ["morphospecies", 3n],
       ["near", 1n],
@@ -156,6 +173,24 @@ describe("taking a verbatim scientific name apart", () => {
   test("subgenus comes from either column, bracketed or its own", async () => {
     expect(await parsed("Lasioglossum (Dialictus)")).toEqual([["Lasioglossum", "Dialictus", null, null, null]]);
     expect(await parsed("Andrena (Andrena)")).toEqual([["Andrena", "Andrena", null, null, null]]);
+  });
+
+  test("the other verbatim fields are surveyed too, so a new shape shows up", async () => {
+    // recordedBy in production uses '|' and nothing else — no '&', no comma.
+    // Symbiota's duplicate matcher split 'B. & C. Durden' on '&' and matched
+    // the token 'B.' to two unrelated collectors; this view is how we would
+    // learn that our own corpus had started to look like that.
+    expect(
+      await rows(conn, "SELECT field, shape, records FROM legacy_verbatim_shape ORDER BY field, shape"),
+    ).toEqual([
+      ["month", "roman numeral", 1n],
+      ["recordedBy", "non-ASCII", 0n],
+      ["recordedBy", "other separator (& , ; and)", 0n],
+      ["recordedBy", "pipe-separated", 1n],
+      ["url", "canonical observation", 1n],
+      ["url", "not an observation", 1n],
+      ["url", "observation, other scheme or host", 1n],
+    ]);
   });
 
   test("names the model has nowhere to put are named as such, not silently flattened", async () => {

@@ -95,6 +95,37 @@ FROM legacy_det_taxa
 WHERE sci IS NOT NULL
 GROUP BY ALL;
 
+-- ── The other verbatim fields, surveyed the same way ────────────────────
+-- Scientific names are not the only strings promotion takes apart. This is
+-- one row per assumption the other parsers make, counted, so a Mongo pull
+-- that starts breaking one says so instead of quietly parsing it wrong. Read
+-- it after `pnpm legacy:load`; the counts below are from 2026-08-27.
+--
+-- What it said then, and what each answer licenses:
+--   recordedBy: 25,949 records use '|', and *nothing* uses '&', ',', ';' or
+--     ' and '. So splitting on '|' alone is complete, and the matcher that
+--     read 'B. & C. Durden' as three people cannot happen here.
+--   month: 1,731 records spell the month in Roman numerals (VI, VII, IV,
+--     VIII, V) beside the Arabic ones — legacy_month (promote-legacy.sql)
+--     takes both, and an unparseable date is already a promotion finding.
+--   url: 297,852 canonical, 41 on plain http, and 5 pointing at an iNat
+--     *taxon* page rather than an observation. The trailing-digits rule
+--     reads the first two right and yields nothing for the taxon pages,
+--     which is the correct answer rather than a lucky one.
+-- (Counts are over legacy_promotable, so they exclude the rows that never
+-- became samples — the view answers "what do the strings we parse look
+-- like", not "what is in Mongo".)
+CREATE OR REPLACE VIEW legacy_verbatim_shape AS
+SELECT 'recordedBy' AS field, 'pipe-separated' AS shape, count(*) AS records FROM legacy_promotable WHERE recordedBy LIKE '%|%'
+UNION ALL SELECT 'recordedBy', 'other separator (& , ; and)', count(*) FROM legacy_promotable
+  WHERE recordedBy LIKE '%&%' OR recordedBy LIKE '%,%' OR recordedBy LIKE '%;%' OR recordedBy LIKE '% and %'
+UNION ALL SELECT 'recordedBy', 'non-ASCII', count(*) FROM legacy_promotable WHERE NOT regexp_matches(recordedBy, '^[\x20-\x7E]*$')
+UNION ALL SELECT 'month', 'roman numeral', count(*) FROM legacy_promotable WHERE month <> '' AND try_cast(month AS INTEGER) IS NULL
+UNION ALL SELECT 'url', 'canonical observation', count(*) FROM legacy_promotable WHERE regexp_matches(url, '^https://www\.inaturalist\.org/observations/[0-9]+$')
+UNION ALL SELECT 'url', 'observation, other scheme or host', count(*) FROM legacy_promotable
+  WHERE url <> '' AND url LIKE '%/observations/%' AND NOT regexp_matches(url, '^https://www\.inaturalist\.org/observations/[0-9]+$')
+UNION ALL SELECT 'url', 'not an observation', count(*) FROM legacy_promotable WHERE url <> '' AND url NOT LIKE '%/observations/%';
+
 -- Names carrying information the model has nowhere to put, so a determination
 -- on one lands coarser than the determiner meant. Not a QC rule and not a
 -- promotion finding: nobody typed these wrong, and no volunteer can fix them

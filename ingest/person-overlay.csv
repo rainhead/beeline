@@ -405,3 +405,4 @@ name:Nora Jacobi,given_name,Nora,rainhead,"Peter 2026-08-26: parted by hand, sin
 name:Nora Jacobi,family_name,Jacobi,rainhead,"Peter 2026-08-26: parted by hand, since there is no recordedBy row to part."
 name:Nora Jacobi,inat_user_id,10206031 njacobi,rainhead,"Peter 2026-08-26: verified against the iNat API — account created 2026-03-17, no observations, no display name set."
 name:Nora Jacobi,admin,yes,rainhead,"Peter 2026-08-26: exploring the system; admin is what makes /people and /jobs visible and lets her look past her own (empty) records."
+name:Nora Jacobi,home_atlas,OBA,rainhead,"Peter 2026-08-27: Oregon Bee Atlas. She collects nothing, so there is no geography to derive it from — where somebody belongs is a decision here, and this is it rather than the 'nobody has asked' a missing row means (beeline-lcl)."

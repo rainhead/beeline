@@ -62,5 +62,15 @@ unopenable ([ADR 0006](0006-migrations-for-deployed-stores.md) records the
 first three; beeline-vyi the fourth). Every one costs nothing while a bad
 schema is fixed by rebuilding, and starts costing at cutover, when it is not.
 [beeline-yfb](../../.beads/) collects the evidence for the re-decision this
-ADR's escape hatch exists for; the portable-SQL discipline is what keeps that
-hatch real.
+ADR's escape hatch exists for.
+
+The hatch itself was tested for the first time on 2026-08-27, against
+PostgreSQL 17.11: all 23 tables, the `entity_id_seq` machinery, every CHECK,
+foreign key and `COMMENT ON` applied unchanged. Four construct families did
+not — `DOUBLE` where Postgres wants `DOUBLE PRECISION` (8, and a plain
+violation of the rule above), `json_extract`/`json_extract_string` with
+JSONPath (20), `list_contains` (1), and `try_cast` (2) — in three files, of
+which the JSON ones are all in the single view that shreds iNaturalist
+responses. About a day's work, and only `try_cast` needs thought rather than
+substitution. So the hatch is real; it had also drifted, silently, because
+nothing checks. [beeline-l6w](../../.beads/) is the check.

@@ -18,15 +18,29 @@ import { Glossary } from "./views/glossary.js";
 import { Jobs } from "./views/jobs.js";
 import { PersonPage, Roster } from "./views/roster.js";
 import {
+  linkChanges,
   listRoster,
   nameIsUnique,
   parsePersonHandle,
   parseRosterQuery,
   personDetail,
   personRef,
+  RECENT_CHANGES,
   resolvePersonHandle,
 } from "./roster.js";
 import { upsertOverlay, valueProblem, type OverlayField, type PersonOverlayRow } from "../person-overlay.js";
+import {
+  appendChanges,
+  CHANGE_LOG,
+  diffPerson,
+  historyFor,
+  knownPerson,
+  kyselyReader,
+  lastKnown,
+  readChanges,
+  readPersonStates,
+  recentChanges,
+} from "../person-change.js";
 import { applyPersonOverlay } from "../apply-person-overlay.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome, type FindingRow, type PendingRow } from "./views/qc.js";
@@ -83,6 +97,8 @@ export interface AppDeps {
   correctionsPath?: string;
   /** App-written store of staff decisions about people (ADR 0004 overlay). */
   personOverlayPath?: string;
+  /** Append-only log of what happened to a person, and when (beeline-o22). */
+  personChangesPath?: string;
   /**
    * A raw connection, for the overlay applier. Kysely cannot run the applier's
    * statements as one unit, and the app already keeps a spare connection for
@@ -97,10 +113,28 @@ export interface AppDeps {
  * after the gate (and everything added later by other modules) sees a
  * session or doesn't run: no anonymous reads, structurally.
  */
-export function createApp({ db, config, inat, resolveSession, jobs, correctionsPath, personOverlayPath, conn }: AppDeps) {
+export function createApp({
+  db,
+  config,
+  inat,
+  resolveSession,
+  jobs,
+  correctionsPath,
+  personOverlayPath,
+  personChangesPath,
+  conn,
+}: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], runNow: async () => false };
   const corrections = correctionsPath ?? "data/corrections.csv";
   const overlayPath = personOverlayPath ?? "data/person-overlay.csv";
+  const changesPath = personChangesPath ?? CHANGE_LOG;
+  // One person's state, as the change log describes it. The same query both
+  // producers use, so what the screen records and what a rebuild records are
+  // comparable (src/person-change.ts).
+  const stateOf = async (personId: number) => {
+    const read = await readPersonStates(kyselyReader(db), `p.entity_id = ${Number(personId)}`);
+    return { state: [...read.states.values()][0], names: read.names };
+  };
   // Admin surface (/jobs, /people): everyone in development, and elsewhere
   // whoever holds a person_admin row — the roster moved into the store so the
   // people who own it can edit it (beeline-eft added five names by deploy).
@@ -570,7 +604,19 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     const m = c.get("m");
     const query = parseRosterQuery(new URL(c.req.url).searchParams);
     const listed = await listRoster(db, query);
-    return c.html(await page(c, m.people.title, <Roster m={m} page={listed} query={query} />));
+    // Only on the unfiltered roster. The panel is about the store as a whole,
+    // and a search for one person that answers with somebody else's history
+    // reads as a filter that leaked (beeline-o22). The log is a file, so this
+    // is a read of every entry ever written; it stays cheap because there is
+    // one entry per change rather than one per promotion, which is the whole
+    // reason the ingest pass diffs at all.
+    const filtered = query.search !== "" || query.suspect;
+    const linked = filtered
+      ? []
+      : await linkChanges(db, recentChanges(await readChanges(changesPath), RECENT_CHANGES));
+    return c.html(
+      await page(c, m.people.title, <Roster m={m} page={listed} query={query} recent={linked} />),
+    );
   });
 
   /**
@@ -585,6 +631,12 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     return id === null ? null : await personDetail(db, id);
   };
 
+  /** One person's change history, as the log holds it (beeline-o22). */
+  const history = async (personId: number) => {
+    const { state, names } = await stateOf(personId);
+    return historyFor(await readChanges(changesPath), names, state);
+  };
+
   const showPerson = async (c: Context<AppEnv>, notice?: string, problem?: string) => {
     const m = c.get("m");
     const person = await personFromUrl(c);
@@ -593,7 +645,14 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
       await page(
         c,
         person.display_name,
-        <PersonPage m={m} person={person} atlases={await atlasOptions(db)} notice={notice} problem={problem} />,
+        <PersonPage
+          m={m}
+          person={person}
+          atlases={await atlasOptions(db)}
+          history={await history(person.person_id)}
+          notice={notice}
+          problem={problem}
+        />,
       ),
     );
   };
@@ -638,7 +697,38 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     await upsertOverlay(overlayPath, rows);
     if (conn === undefined) return showPerson(c, m.people.saved);
     const boundBefore = person.inat_user_id;
+    // What the person looks like now, so the log can say what they looked
+    // like before — the one thing the overlay's latest-wins row cannot carry
+    // (beeline-o22).
+    const before = (await stateOf(person.person_id)).state;
     const applied = await applyPersonOverlay(conn, rows);
+    // Recorded before the unresolved check, and against the same reference
+    // the overlay row used: a decision that half applied still changed
+    // somebody, and the history has to show what it did.
+    //
+    // Unless the change left them with no reference at all — unbinding the
+    // account of somebody who shares a display name does exactly that. They
+    // are still here; it is the log that can no longer name them, and
+    // diffing against nothing would record their name and account as
+    // *cleared*, over a staff member's own login. Say so instead.
+    const { state: after, names } = await stateOf(person.person_id);
+    if (after === undefined) {
+      console.warn(
+        `not recording: '${person.display_name}' now shares a display name with somebody else and holds no ` +
+          `account, so nothing names them in the change log`,
+      );
+    } else {
+      // Filed under the reference the LOG knows them by, exactly as a pass
+      // over the store would file it (knownPerson). Using the store's own
+      // reference instead put an edit made during a namesake era under a
+      // second key, and the next pass then diffed the whole person against
+      // that half-record and re-reported fields nobody had touched.
+      const seen = knownPerson({ known: lastKnown(await readChanges(changesPath)), names }, before ?? after);
+      await appendChanges(
+        changesPath,
+        diffPerson(seen?.ref ?? before?.ref ?? ref, before, after, { source: "app", author, reason }),
+      );
+    }
     if (applied.unresolved.length > 0) {
       return showPerson(c, undefined, applied.unresolved.map((u) => u.reason).join("; "));
     }

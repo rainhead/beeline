@@ -634,6 +634,67 @@ export const en = {
       `${n(all)} collected, ${n(primary)} as primary collector`,
     saved: "Saved.",
     savedRebuild: "Saved. It is also recorded in the overlay, so a rebuild keeps it.",
+
+    /**
+     * The change log (beeline-o22). Staff-facing, English-only like the rest
+     * of this screen. The overlay beside it keeps one current row per field,
+     * so it can say who last changed a thing and never when, what it was
+     * before, or that it changed twice; this says all of it.
+     */
+    history: {
+      heading: "History",
+      hint:
+        "Every change recorded for this person, newest first — from this screen, from a rebuild, or from an iNaturalist sync.",
+      empty: "Nothing recorded yet. Changes from here on appear in this list.",
+      colWhen: "When",
+      colWhat: "What",
+      colChange: "Change",
+      colWho: "Who",
+      colPerson: "Person",
+      /**
+       * A value arriving where there was none, and one going away. Prefixes
+       * rather than whole sentences because the value beside them is markup:
+       * an account id renders as code, a missing membership as "not
+       * recorded". Most of the log is arrivals — the first pass over a corpus
+       * records everything it finds — and "nothing → Ada Collector" reads as
+       * a correction that never happened.
+       */
+      set: "set to",
+      cleared: "cleared — was",
+      /** What the log's fields are called in the words this screen uses. */
+      field: {
+        display_name: "Display name",
+        given_name: "Given name",
+        family_name: "Family name",
+        label_name: "Label name override",
+        inat_user_id: "iNaturalist user id",
+        login: "Login",
+        membership: "Belongs to",
+        admin: "Admin rights",
+        acts_for: "May act for",
+      },
+      /**
+       * Who, where nobody can be named. Three of these are passes over the
+       * store that found a difference, which is a weaker claim than a staff
+       * member's login and is written to read like one.
+       */
+      source: {
+        app: "staff",
+        legacy_promotion: "a rebuild",
+        observation_promotion: "an iNaturalist sync",
+        reconcile: "found at startup",
+      },
+      /** An empty value, in a cell that has to show something. */
+      blank: "nothing",
+      admin: { yes: "yes", no: "no" },
+      membershipNone: "not recorded",
+      /** The roster's panel: the same entries, across everybody. */
+      recentHeading: "Recent changes",
+      recentHint: "The newest entries in the change log, across everyone.",
+      /** A person the store no longer holds, so there is nowhere to link. */
+      personGone: "no longer in the store",
+    },
+
     notFound: "No such person.",
     problem: (why: string) => `Not saved: ${why}`,
   },

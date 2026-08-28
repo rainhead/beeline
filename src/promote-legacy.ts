@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { ensureCorrectionsFile } from "./corrections.js";
 import { applyPersonOverlay, type Unresolved } from "./apply-person-overlay.js";
 import { mergeOverlays, readOverlay, CURATED_OVERLAY } from "./person-overlay.js";
+import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -185,12 +186,55 @@ export async function promoteLegacy(
 
 // CLI: pnpm legacy:promote [db]
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const dbPath = process.argv[2] ?? "beeline.duckdb";
+  const dbPath = process.argv[2] ?? DEFAULT_DB;
   const instance = await DuckDBInstance.create(dbPath);
   const conn = await instance.connect();
   const counts = await promoteLegacy(conn, LIVE_INPUTS);
+
+  // The admin seed, before the history is recorded rather than at the app's
+  // next boot. The people in the bootstrap roster hold their rights through
+  // this seed alone — never through an overlay row — so a freshly promoted
+  // store has nobody who can administer it until something applies it, and
+  // the change log would have recorded that gap as a revocation and the next
+  // boot as a re-grant: a flap, twice per rebuild, that no person performed.
+  //
+  // Through the app's own configuration, not through the constant behind it:
+  // a deployment that sets BEELINE_ADMIN_LOGINS or BEELINE_PERSON_OVERLAY has
+  // said who its admins are and where its decisions live, and a seed reading
+  // past both could re-grant somebody whose revocation it never read — which
+  // then sticks, because the app's boot seed skips anyone already holding a
+  // row (beeline-2c3.38).
+  const { createKysely } = await import("./db.js");
+  const { seedAdmins } = await import("./app/db.js");
+  const { configFromEnv } = await import("./app/config.js");
+  const appConfig = configFromEnv();
+  const db = createKysely(instance);
+  const seeded = await seedAdmins(
+    db,
+    appConfig.adminLogins,
+    mergeOverlays(await readOverlay(CURATED_OVERLAY), await readOverlay(appConfig.personOverlayPath)),
+  );
+
+  // Last of all, with the people this run produced finally settled: what a
+  // rebuild did to them is a change like any other, and used to leave no
+  // trace but the code that did it (beeline-o22). Compared against the log
+  // rather than against the old store, which this run has already replaced.
+  // The log belongs to the database this was pointed at — promoting a scratch
+  // copy must not diff its people against the deployed store's history.
+  const log = changeLogFor(dbPath, process.env);
+  const recorded =
+    log === null
+      ? null
+      : await recordPersonChanges(duckdbReader(conn), log, { source: "legacy_promotion" });
+  if (log === null) {
+    console.warn(
+      `not recording person history: ${dbPath} is not the database this environment keeps a change log for ` +
+        `(${process.env.BEELINE_DB ?? DEFAULT_DB})`,
+    );
+  }
+  await db.destroy();
   conn.closeSync();
-  console.log(JSON.stringify(counts, null, 2));
+  console.log(JSON.stringify({ ...counts, adminsSeeded: seeded, personChangesRecorded: recorded?.appended ?? null }, null, 2));
   if (counts.specimens + counts.blockedRows !== counts.staged) {
     console.error("specimens + blocked rows ≠ staged rows — investigate before trusting this run");
     process.exit(1);

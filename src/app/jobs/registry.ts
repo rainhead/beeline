@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import type { Kysely } from "kysely";
 import { deriveElevations } from "../../derive-elevation.js";
 import type { Database } from "../../model.js";
+import { duckdbReader, recordPersonChanges } from "../../person-change.js";
 import { promoteObservations } from "../../promote-observations.js";
 import { syncINat } from "../../sync-inat.js";
 import type { AppConfig } from "../config.js";
@@ -51,9 +52,17 @@ const UPDATED_SINCE_MARGIN_MS = 60 * 60 * 1000;
 const sweepStart = (sweepDays: number) => new Date(Date.now() - sweepDays * 86_400_000).toISOString().slice(0, 10);
 
 /** Promote and elevation, shared by both sync jobs. */
-async function pipelineTail(ctx: JobContext, parts: string[]): Promise<string> {
+async function pipelineTail(ctx: JobContext, parts: string[], personChanges: string): Promise<string> {
   const promoted = await ctx.step("promote observations", () => promoteObservations(ctx.conn));
   parts.push(`${promoted.linkedSamples} samples linked`);
+  // iNaturalist renames an account and promotion rewrites the cached login,
+  // which used to happen with no trace at all (beeline-o22). Recorded as its
+  // own step rather than inside promotion, because the log is the app's file
+  // and promotion is a pure store operation that tests run without one.
+  const recorded = await ctx.step("record person changes", () =>
+    recordPersonChanges(duckdbReader(ctx.conn), personChanges, { source: "observation_promotion" }),
+  );
+  if (recorded.appended > 0) parts.push(`${recorded.appended} person changes recorded`);
   const elevation = await ctx.step("derive elevations", () => deriveElevations(ctx.conn));
   parts.push(
     `elevation ${elevation.filled}/${elevation.gaps} filled` +
@@ -63,7 +72,7 @@ async function pipelineTail(ctx: JobContext, parts: string[]): Promise<string> {
   return parts.join("; ");
 }
 
-export function buildJobs(config: Pick<AppConfig, "syncProjects" | "sweepDays">): Job[] {
+export function buildJobs(config: Pick<AppConfig, "syncProjects" | "sweepDays" | "personChangesPath">): Job[] {
   return [
     {
       name: "session-purge",
@@ -98,7 +107,7 @@ export function buildJobs(config: Pick<AppConfig, "syncProjects" | "sweepDays">)
             parts.push(`project ${projectId} (updated since ${updatedSince.slice(0, 16)}Z): ${r.fetched} fetched, ${r.newLoads} new`);
           }
         }
-        return pipelineTail(ctx, parts);
+        return pipelineTail(ctx, parts, config.personChangesPath);
       },
     },
     {
@@ -119,7 +128,7 @@ export function buildJobs(config: Pick<AppConfig, "syncProjects" | "sweepDays">)
           const r = await ctx.step(`sweep ${projectId}`, () => syncINat(ctx.conn, { projectId, d1, token }));
           parts.push(`project ${projectId} (full sweep since ${d1}): ${r.fetched} fetched, ${r.newLoads} new`);
         }
-        return pipelineTail(ctx, parts);
+        return pipelineTail(ctx, parts, config.personChangesPath);
       },
     },
   ];

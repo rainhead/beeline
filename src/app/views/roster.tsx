@@ -3,6 +3,7 @@ import type { Messages } from "../messages/index.js";
 import type { AtlasOption } from "../listings.js";
 import {
   type BindingVerdict,
+  type LinkedChange,
   type PersonDetail,
   type RosterPage,
   type RosterRow,
@@ -10,6 +11,7 @@ import {
   personHandle,
   rosterHref,
 } from "../roster.js";
+import type { PersonChange } from "../../person-change.js";
 import {
   Button,
   Callout,
@@ -120,7 +122,94 @@ function accountWhy(m: Messages, row: Judged): string | null {
   }
 }
 
-export function Roster({ m, page, query }: { m: Messages; page: RosterPage; query: RosterQuery }) {
+/**
+ * A value as the change log holds it — a string, empty for absent — in the
+ * words this screen uses everywhere else. Only the three fields whose stored
+ * form is a code rather than a name need translating; the rest are already
+ * what a person typed.
+ */
+function changeValue(m: Messages, field: PersonChange["field"], value: string) {
+  const h = m.people.history;
+  if (value === "") return <Meta>{field === "membership" ? h.membershipNone : h.blank}</Meta>;
+  if (field === "admin") return <>{value === "yes" ? h.admin.yes : h.admin.no}</>;
+  if (field === "membership" && value === PROGRAM_MEMBERSHIP) return <>{m.people.membershipProgram}</>;
+  return <code>{value}</code>;
+}
+
+/** What happened, in one cell (see the catalog's `set` on why three forms). */
+function changeCell(m: Messages, row: PersonChange) {
+  const h = m.people.history;
+  const from = changeValue(m, row.field, row.old_value);
+  const to = changeValue(m, row.field, row.new_value);
+  if (row.old_value === "") return <>{h.set} {to}</>;
+  if (row.new_value === "") return <>{h.cleared} {from}</>;
+  return (
+    <>
+      {from} → {to}
+    </>
+  );
+}
+
+/**
+ * Who did it. A login is a person; anything else is a pass over the store
+ * that found a difference, and says so rather than borrowing a name.
+ */
+function whoCell(m: Messages, row: PersonChange) {
+  const h = m.people.history;
+  return (
+    <>
+      {row.author === "" ? <Meta>{h.source[row.source]}</Meta> : <code>{row.author}</code>}
+      {row.reason !== "" && <Meta block>{row.reason}</Meta>}
+    </>
+  );
+}
+
+/**
+ * The newest entries across everybody, on the roster. The count is small
+ * because this answers "has anything happened lately"; one person's whole
+ * story is on their own page.
+ */
+function RecentChanges({ m, changes }: { m: Messages; changes: readonly LinkedChange[] }) {
+  const h = m.people.history;
+  if (changes.length === 0) return null;
+  return (
+    <Card>
+      <h2>{h.recentHeading}</h2>
+      <Meta block>{h.recentHint}</Meta>
+      <DataTable columns={[h.colWhen, h.colPerson, h.colWhat, h.colChange, h.colWho]}>
+        {changes.map((row) => (
+          <tr>
+            <td>{m.format.dateTime(new Date(row.at))}</td>
+            <td>
+              {row.handle === null ? (
+                <>
+                  {row.current_name ?? row.person_ref} <Meta block>{h.personGone}</Meta>
+                </>
+              ) : (
+                <a href={`/people/${encodeURIComponent(row.handle)}`}>{row.current_name}</a>
+              )}
+            </td>
+            <td>{h.field[row.field]}</td>
+            <td>{changeCell(m, row)}</td>
+            <td>{whoCell(m, row)}</td>
+          </tr>
+        ))}
+      </DataTable>
+    </Card>
+  );
+}
+
+export function Roster({
+  m,
+  page,
+  query,
+  recent,
+}: {
+  m: Messages;
+  page: RosterPage;
+  query: RosterQuery;
+  recent: readonly LinkedChange[];
+}) {
   const p = m.people;
   // No staging to weigh an account against: the checking apparatus is not
   // dimmed or explained away, it is simply absent, and the page is a listing
@@ -210,6 +299,10 @@ export function Roster({ m, page, query }: { m: Messages; page: RosterPage; quer
         previousLabel={p.previous}
         nextLabel={p.next}
       />
+
+      {/* Below the listing, not above it: this page is a roster, and what
+          happened to somebody last week is not what anyone came here for. */}
+      <RecentChanges m={m} changes={recent} />
     </>
   );
 }
@@ -223,12 +316,15 @@ export function PersonPage({
   m,
   person,
   atlases,
+  history,
   notice,
   problem,
 }: {
   m: Messages;
   person: PersonDetail;
   atlases: readonly AtlasOption[];
+  /** Everything the change log holds about them, newest first (beeline-o22). */
+  history: readonly PersonChange[];
   notice?: string;
   problem?: string;
 }) {
@@ -401,6 +497,28 @@ export function PersonPage({
             </Button>
           </p>
         </form>
+      </Card>
+
+      {/* Last, under the forms that write to it: history is what you read
+          after asking "why is this like that", which is a question you have
+          while looking at the field it is about. */}
+      <Card>
+        <h2>{p.history.heading}</h2>
+        <Meta block>{p.history.hint}</Meta>
+        {history.length === 0 ? (
+          <EmptyState>{p.history.empty}</EmptyState>
+        ) : (
+          <DataTable columns={[p.history.colWhen, p.history.colWhat, p.history.colChange, p.history.colWho]}>
+            {history.map((row) => (
+              <tr>
+                <td>{m.format.dateTime(new Date(row.at))}</td>
+                <td>{p.history.field[row.field]}</td>
+                <td>{changeCell(m, row)}</td>
+                <td>{whoCell(m, row)}</td>
+              </tr>
+            ))}
+          </DataTable>
+        )}
       </Card>
     </>
   );

@@ -160,7 +160,7 @@ scp data/legacy/taxonomy.csv maderas:dev/beeline/data/legacy/   # an input, not 
 ssh maderas 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; cd ~/dev/beeline && nvm use >/dev/null \
   && systemctl --user stop beeline \
   && pnpm db:reseed beeline.duckdb beeline-new.duckdb \
-  && pnpm legacy:promote beeline-new.duckdb \
+  && BEELINE_DB=beeline-new.duckdb pnpm legacy:promote beeline-new.duckdb \
   && pnpm inat:promote beeline-new.duckdb \
   && pnpm inat:backfill-accounts beeline-new.duckdb \
   && pnpm elevation:derive beeline-new.duckdb'
@@ -186,6 +186,16 @@ signs everyone out exactly once.
 
 `data/person-overlay.csv` survives too; the curated `ingest/person-overlay.csv`
 replays over the rebuilt store, which is what the overlay is for.
+
+`data/person-change.csv` survives as well, and the `BEELINE_DB=` prefix on the
+promote line above is what makes the run record into it ([ADR
+0007](../adr/0007-authored-changes-are-events.md)). A change log belongs to
+exactly one database, so a run pointed at a file that is not the one this
+environment keeps a log for records nothing and says so — which is what should
+happen when somebody promotes a scratch copy, and would otherwise diff its
+people against the deployed store's history. Without the prefix nothing is
+lost: the app records the same differences at its next boot, attributed to
+that pass rather than to the promotion.
 
 Rehearse on a copy first — `scp` the store down and run the same sequence
 locally. Comparing the two side by side is how the 1,019

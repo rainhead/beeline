@@ -7,6 +7,7 @@ import { insertCleanSample } from "./helpers.js";
 import { createMemoryDb } from "./helpers.js";
 import { createApp } from "../src/app/server.js";
 import { readOverlay, type PersonOverlayRow } from "../src/person-overlay.js";
+import { readChanges } from "../src/person-change.js";
 import { attachPrivateStore, seedAdmins } from "../src/app/db.js";
 import type { InatClient } from "../src/app/auth.js";
 
@@ -36,6 +37,7 @@ async function rosterApp(signedIn: { personId: number; admin: boolean; privateSt
 
   const dir = await mkdtemp(join(tmpdir(), "roster-"));
   const overlayPath = join(dir, "person-overlay.csv");
+  const changesPath = join(dir, "person-change.csv");
   const db = createKysely(instance);
   const app = createApp({
     db,
@@ -43,9 +45,12 @@ async function rosterApp(signedIn: { personId: number; admin: boolean; privateSt
     inat: unusedInat,
     resolveSession: async () => ({ personId: signedIn.personId, login: "whoever", iconUrl: null }),
     personOverlayPath: overlayPath,
+    // Never the real log: the default is the developer's own file, and a test
+    // that appended to it would be writing history nobody asked for.
+    personChangesPath: changesPath,
     conn,
   });
-  return { app, db, conn, overlayPath };
+  return { app, db, conn, overlayPath, changesPath };
 }
 
 const post = (app: Awaited<ReturnType<typeof rosterApp>>["app"], path: string, body: Record<string, string>) =>
@@ -323,6 +328,107 @@ describe("the roster screen", () => {
     expect(saved).toEqual([
       { person_ref: "name:Ada Collector", field: "admin", value: "yes", author: "whoever", reason: "runs the atlas" },
     ]);
+  });
+
+  /**
+   * The change log (beeline-o22). The overlay above keeps one current row per
+   * field, so what it cannot answer — when, what it was before, that it
+   * changed twice — is what these check.
+   */
+  describe("and the history of it", () => {
+    it("records what a decision changed, who made it, and why", async () => {
+      await post(ctx.app, "/people/1/admin", { admin: "yes", reason: "runs the atlas" });
+
+      const logged = await readChanges(ctx.changesPath);
+      expect(logged).toEqual([
+        expect.objectContaining({
+          person_ref: "name:Ada Collector",
+          field: "admin",
+          old_value: "no",
+          new_value: "yes",
+          author: "whoever",
+          source: "app",
+          reason: "runs the atlas",
+        }),
+      ]);
+      expect(Date.parse(logged[0]!.at)).not.toBeNaN();
+    });
+
+    it("keeps both edits to one field, where the overlay keeps only the last", async () => {
+      await post(ctx.app, "/people/1/admin", { admin: "yes", reason: "runs the atlas" });
+      await post(ctx.app, "/people/1/admin", { admin: "no", reason: "stepped back" });
+
+      expect((await readOverlay(ctx.overlayPath)).filter((r) => r.field === "admin")).toHaveLength(1);
+      expect((await readChanges(ctx.changesPath)).map((c) => [c.old_value, c.new_value, c.reason])).toEqual([
+        ["no", "yes", "runs the atlas"],
+        ["yes", "no", "stepped back"],
+      ]);
+    });
+
+    it("records nothing for a save that changed nothing", async () => {
+      // The whole form, as the screen posts it: every name field re-submitted
+      // with the value it already had.
+      await post(ctx.app, "/people/1/names", {
+        display_name: "Ada Collector",
+        given_name: "Ada",
+        family_name: "Collector",
+        label_name: "",
+        reason: "no change",
+      });
+      expect(await readChanges(ctx.changesPath)).toEqual([]);
+    });
+
+    it("shows it on the person's own page", async () => {
+      await post(ctx.app, "/people/1/admin", { admin: "yes", reason: "runs the atlas" });
+      const body = await (await ctx.app.request("/people/adacollects")).text();
+      expect(body).toContain("History");
+      expect(body).toContain("runs the atlas");
+    });
+
+    it("follows a rename, so the history does not stay behind with the old name", async () => {
+      await post(ctx.app, "/people/1/admin", { admin: "yes", reason: "runs the atlas" });
+      await post(ctx.app, "/people/1/names", {
+        display_name: "Ada Collector-Smith",
+        given_name: "Ada",
+        family_name: "Collector",
+        label_name: "",
+        reason: "married",
+      });
+
+      const body = await (await ctx.app.request("/people/adacollects")).text();
+      expect(body).toContain("Ada Collector-Smith");
+      expect(body).toContain("runs the atlas");
+    });
+
+    it("does not hand a namesake somebody else's history", async () => {
+      // Two people called Ada Collector are two people. The one screen staff
+      // use to untangle a household must not answer both their pages with the
+      // entries filed under the name.
+      await post(ctx.app, "/people/1/admin", { admin: "yes", reason: "runs the atlas" });
+      await ctx.conn.run(`INSERT INTO person (entity_id, display_name) VALUES (4, 'Ada Collector')`);
+
+      const twin = await (await ctx.app.request("/people/4")).text();
+      expect(twin).toContain("History");
+      expect(twin).not.toContain("runs the atlas");
+    });
+
+    it("says so rather than recording a clearing, when a change leaves nobody to name", async () => {
+      // Unbinding the account of somebody who shares a display name: they are
+      // still here, and it is the log that can no longer name them.
+      await ctx.conn.run(`INSERT INTO person (entity_id, display_name) VALUES (4, 'Ada Collector')`);
+      await post(ctx.app, "/people/1/account", { inat_user_id: "", reason: "wrong person" });
+
+      expect(await readChanges(ctx.changesPath)).toEqual([]);
+    });
+
+    it("shows the newest entries on the roster, but not under a filter", async () => {
+      await post(ctx.app, "/people/1/admin", { admin: "yes", reason: "runs the atlas" });
+
+      expect(await (await ctx.app.request("/people")).text()).toContain("Recent changes");
+      // A search for one person answered with somebody else's history reads
+      // as a filter that leaked.
+      expect(await (await ctx.app.request("/people?q=netter")).text()).not.toContain("Recent changes");
+    });
   });
 
   it("records who granted admin, not the mechanism that carried it", async () => {

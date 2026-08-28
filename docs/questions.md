@@ -1,8 +1,12 @@
 # Outstanding questions for staff
 
-Questions we can't answer from code or data, queued for Peter's next meetings with Andony/Arthur/atlas staff. Move answers into [CONTEXT.md](../CONTEXT.md) or the relevant doc, then delete the question.
+Questions we can't answer from code or data, queued for Peter's next meetings with Andony/Arthur/Lincoln/atlas staff. Each section says who to ask where that is settled — asking the wrong person is slower than not asking. Move answers into [CONTEXT.md](../CONTEXT.md) or the relevant doc, then delete the question.
 
-## Trap sampling (mostly unknown territory — no reference implementation, spreadsheets unseen)
+## Trap sampling (ask Lincoln Best; mostly unknown territory — no reference implementation, spreadsheets unseen)
+
+**Direct these to Lincoln Best** (Peter, 2026-08-28), not to Andony. Trap
+sampling is its own practice with its own practitioners, and this whole section
+had been queued behind meetings with people who do not do it.
 
 Production facts to anchor the conversation: ~52k trap-collected records (14% of all), sample series `OBAS-00016`–`OBAS-00669`+ (Oregon vane traps, 33k records) and `WBAS-…` (487), single samples up to 2,252 specimens, 53k records carry end-dates (date ranges). The `within_sample_disagreement` findings (973 samples) add evidence for question 2: the largest clusters are trap groups whose rows carry *incrementing* localities along a route ("… Forest Service Road 2780 | 2781 | 2782 …") with coordinates differing to match — one (person, date, sample-number) group that looks like a trap line of distinct collecting spots, not one place.
 
@@ -12,7 +16,7 @@ Production facts to anchor the conversation: ~52k trap-collected records (14% of
 4. **Dates**: is the range's start date the previous servicing? Where is servicing recorded today?
 5. **Batch processing**: when a large catch is processed over weeks, what does the processor record per batch, and when do those specimens become printable?
 6. **For Darwin Core publication** we would want per sample: `samplingProtocol` (controlled term), `samplingEffort` (e.g. trap-count × trap-days), `eventDate` as a range, and possibly habitat and preservative/kill method. Which of these can staff actually supply, and which should the trap interface capture going forward?
-7. **What are the `LRB`/`SM`/`MMS` sample-number prefixes** in Oregon net data? (`G`/`R` are answered: 379 `G…` samples file under Gretchen Pederson and 351 `R…` under Robert, both 2019–2020, so the `pandg` household numbered a series each. See People and accounts below.)
+7. **What are the `LRB`/`SM`/`MMS` sample-number prefixes** in Oregon net data? `LRB` is plausibly Lincoln's own initials — worth putting to him first, since he is being asked the rest of this section anyway. (`G`/`R` are answered: 379 `G…` samples file under Gretchen Pederson and 351 `R…` under Robert, both 2019–2020, so the `pandg` household numbered a series each. See People and accounts below.)
 
 ## Taxon geoprivacy (⚠ blocker: must be answered before go-live)
 

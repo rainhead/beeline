@@ -64,9 +64,10 @@ and may be copied among people trusted with it.
   is *"private tables live in a separately-secured store"* — under a phase-4
   move to PostgreSQL this maps to a separate database or schema with its own
   access controls, not to `ATTACH`.
-- Tables that belong there: OAuth tokens, `mailing_address`, email if ever
-  held. The default for a new column is the main file; placing a table in the
-  private store is a deliberate act, argued from the data.
+- Tables that belong there: session ids, `mailing_address`, email if ever
+  held — and OAuth tokens, had we kept any (2026-08-28: we do not). The
+  default for a new column is the main file; placing a table in the private
+  store is a deliberate act, argued from the data.
 
 ### Whose privacy? (amended 2026-08-23, beeline-2yh)
 
@@ -76,9 +77,9 @@ and believed-true coordinates land in `sample_location`. The review that
 surfaced this read it as a leak in the store boundary. It is not, because the
 two stores protect **different subjects**:
 
-- **The private store protects participants.** Tokens, addresses, email —
+- **The private store protects participants.** Session ids, addresses, email —
   data that exposes a *person*, who did not sign up to be exposed and cannot
-  undo it.
+  undo it. (As written this said "tokens" first; see the 2026-08-28 amendment.)
 - **True coordinates protect sensitive plants.** Taxon-driven geoprivacy hides
   a *population's* location from the public, to keep it from being dug up.
   That is a real duty, but it is not participant privacy and it does not want
@@ -106,14 +107,17 @@ the data is what keeps either answer implementable.
 
 Sharing a store does not mean sharing a lifecycle:
 
-- **Tokens are credentials** — re-mintable by one OAuth click, so retention is
-  minimized: purged after months of login inactivity and on membership drop.
-  Stored at first login but not *used* until the person is approved.
+- **Credentials are re-mintable** — an OAuth click, a fresh sign-in — so
+  retention is minimized: sessions expire on a sliding 30-day idle cutoff and
+  are purged. This clause was written about volunteers' OAuth tokens, whose
+  retention is now zero (2026-08-28); it holds unchanged for the session ids
+  that replaced them as the credential this store keeps.
 - **Addresses are operational data** — expensive to reconstruct (chasing every
   collector) and load-bearing for label mailing, so they are backed up
   (encrypted) and kept.
 - Backup policy follows: the main file backs up freely; the private store's
-  backup is encrypted, and the tokens inside it are TTL-bounded anyway.
+  backup is encrypted, and the credentials inside it are TTL-bounded anyway —
+  more so since 2026-08-28, when the only non-expiring one stopped being kept.
 
 ## Consequences
 

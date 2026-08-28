@@ -129,7 +129,9 @@ cp -rf source dest          # NOT: cp -r source dest
 **This repository authorizes agents to commit and push without asking, and
 work lands as a pull request** (2026-08-28). Branch, commit, push, open it with
 `gh pr create`; close the beads you finished when it merges. No approval is
-needed to open one — the review, not the asking, is the point.
+needed to open one, or to merge a green one — the review, not the asking, is
+the point. **Do not commit or push to `main` directly**: nothing gets reviewed
+on the way in that way, which is the whole reason for the branch.
 
 This is the "repository profile" the Beads block below defers to, and it
 overrides that block's conservative default — stated here, outside the managed

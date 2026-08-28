@@ -91,6 +91,9 @@ describe("observation promotion", () => {
       ),
     ).toEqual([[44.5646]]);
     expect(await rows(conn, "SELECT sample_id FROM sample_elevation_stale")).toEqual([]);
+    // Observation promotion writes samples; if it ever writes collectors too,
+    // this is what will say so (schema/116, beeline-daa).
+    expect(await rows(conn, "SELECT sample_id FROM sample_primary_collector_mismatch")).toEqual([]);
   });
 
   test("an open observation upgrades to inat_public and clears stale flags; taxon_geoprivacy 'open' means unobscured", async () => {

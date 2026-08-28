@@ -103,6 +103,20 @@ export interface AnimalRankTable {
   italic: boolean;
 }
 
+/**
+ * schema/116: a sample whose collector_id is not the person at position 1 of
+ * its collector list — the invariant schema/030 can only state in a comment.
+ * `at_position_1` separates the three ways to be wrong: 0 = no head to the
+ * list, 1 = a head naming somebody else, 2+ = two heads.
+ */
+export interface SamplePrimaryCollectorMismatchView {
+  sample_id: number;
+  collector_id: number;
+  at_position_1: number;
+  /** Only meaningful where at_position_1 = 1; above that, one contender. */
+  first_collector: number | null;
+}
+
 /** schema/115: a qualifier on a determination too coarse to carry one. */
 export interface DeterminationMisplacedQualifierView {
   entity_id: number;
@@ -399,6 +413,7 @@ export interface Database {
   settled_sample: SettledSampleView;
   animal_rank: AnimalRankTable;
   determination_misplaced_qualifier: DeterminationMisplacedQualifierView;
+  sample_primary_collector_mismatch: SamplePrimaryCollectorMismatchView;
   elevation_derivation_limit: ElevationDerivationLimitView;
   sample_elevation_unsupportable: SampleElevationUnsupportableView;
   sample_elevation_stale: SampleElevationStaleView;

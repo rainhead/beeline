@@ -125,6 +125,64 @@ describe("schema application", () => {
     await conn.run("INSERT INTO animal (rank, scientific_name) VALUES ('subgenus', 'Bombus')");
   });
 
+  test("a primary collector who is not the head of the list is caught the same way", async () => {
+    // sample.collector_id and sample_collector position 1 are one fact
+    // written twice, across two tables and depending on a row's position, so
+    // no CHECK reaches it (schema/116, beeline-daa). An assertion view that
+    // cannot be made to fire is worth nothing, so all three ways of being
+    // wrong are exercised here. That it is *empty* on real data is asserted
+    // where real data exists — after each promotion — rather than here, where
+    // sibling tests leave samples with no collector list at all.
+    const { conn } = await createMemoryDb();
+
+    const person = async (name: string) => {
+      const [[id]] = (await rows(
+        conn,
+        `INSERT INTO person (display_name) VALUES ('${name}') RETURNING entity_id`,
+      )) as [[number]];
+      return id;
+    };
+    const ada = await person("Ada Collector");
+    const bo = await person("Bo Collector");
+    const sample = async (number: string, collector: number) => {
+      const [[id]] = (await rows(
+        conn,
+        `INSERT INTO sample (kind, collector_id, sample_number, date_start, date_end)
+         VALUES ('net', ${collector}, '${number}', DATE '2026-07-01', DATE '2026-07-01') RETURNING entity_id`,
+      )) as [[number]];
+      return id;
+    };
+
+    // 0 — collectors recorded, but none of them at the head of the list.
+    const headless = await sample("c0", ada);
+    await conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${headless}, ${ada}, 2)`);
+    // 1 — a head, naming somebody else. The drift that would show up as a
+    // sample missing from its own collector's "mine".
+    const wrongHead = await sample("c1", ada);
+    await conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${wrongHead}, ${bo}, 1)`);
+    // 2+ — two collectors both at position 1, which the primary key
+    // (sample_id, person_id) does nothing to stop.
+    const twoHeads = await sample("c2", ada);
+    await conn.run(
+      `INSERT INTO sample_collector (sample_id, person_id, position)
+       VALUES (${twoHeads}, ${ada}, 1), (${twoHeads}, ${bo}, 1)`,
+    );
+    // And one that is simply right, to prove the view is not just true.
+    const correct = await sample("c3", ada);
+    await conn.run(
+      `INSERT INTO sample_collector (sample_id, person_id, position)
+       VALUES (${correct}, ${ada}, 1), (${correct}, ${bo}, 2)`,
+    );
+
+    expect(
+      await rows(conn, "SELECT sample_id, at_position_1 FROM sample_primary_collector_mismatch ORDER BY sample_id"),
+    ).toEqual([
+      [headless, 0],
+      [wrongHead, 1],
+      [twoHeads, 2],
+    ]);
+  });
+
   test("a qualifier below species rank is caught by the view a CHECK cannot be", async () => {
     // The rule spans two tables — "species or finer" is a fact about
     // animal_rank — so the engine cannot hold it and the view does

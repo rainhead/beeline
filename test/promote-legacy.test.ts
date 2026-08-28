@@ -163,14 +163,13 @@ describe("legacy promotion", () => {
   });
 
   test("position 1 is the sample's own collector — the invariant the app reads", async () => {
-    const wrong = await rows(
-      conn,
-      `SELECT s.entity_id FROM sample s
-       JOIN sample_collector c ON c.sample_id = s.entity_id AND c.position = 1
-       WHERE c.person_id <> s.collector_id`,
-    );
-    expect(wrong).toEqual([]);
-    // And every sample has its list.
+    // Read through the view rather than spelled again here (schema/116,
+    // beeline-daa): this test used to be a third statement of the invariant,
+    // beside the COMMENT and the writer, and it missed two of the three ways
+    // to break it — a sample with collectors but none at position 1, and two
+    // collectors both claiming it.
+    expect(await rows(conn, "SELECT sample_id, at_position_1 FROM sample_primary_collector_mismatch")).toEqual([]);
+    // And every sample has a list at all, which the view does not ask.
     const missing = await rows(
       conn,
       `SELECT s.entity_id FROM sample s

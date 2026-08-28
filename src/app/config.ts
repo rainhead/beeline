@@ -1,3 +1,5 @@
+import { CHANGE_LOG } from "../person-change.js";
+
 /**
  * App configuration, read once from the environment at startup.
  *
@@ -37,6 +39,13 @@ export interface AppConfig {
    */
   personOverlayPath: string;
   /**
+   * The append-only log of what happened to a person, and when (beeline-o22).
+   * Outside the blow-away path like the two overlays, and for a sharper
+   * reason: a history a rebuild erases answers "who changed this" with
+   * "nobody, we rebuilt it".
+   */
+  personChangesPath: string;
+  /**
    * Deployment environment. Anything but 'production' renders the
    * environment banner (sandbox-until-launch, beeline-2u8).
    */
@@ -58,7 +67,7 @@ export interface AppConfig {
  * matched exactly, so each was verified against the iNat API rather than
  * inferred from a person's name (beeline-eft).
  */
-const ADMIN_LOGINS = [
+export const ADMIN_LOGINS = [
   "rainhead", // Peter Abrahamsen, 728554
   "amelathopoulos", // Andony Melathopoulos, 429964
   "clankford", // Caleb Lankford, 8407319
@@ -115,6 +124,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
             .filter((s) => s !== ""),
     correctionsPath: env.BEELINE_CORRECTIONS ?? "data/corrections.csv",
     personOverlayPath: env.BEELINE_PERSON_OVERLAY ?? "data/person-overlay.csv",
+    personChangesPath: env.BEELINE_PERSON_CHANGES ?? CHANGE_LOG,
     environment,
     devLogin: environment === "development" ? (env.BEELINE_DEV_LOGIN ?? null) : null,
     syncProjects,

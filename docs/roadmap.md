@@ -2,7 +2,7 @@
 
 Ordered build-out toward a **December 2026 cutover**. Vocabulary per [CONTEXT.md](../CONTEXT.md); the model being built is [schema-sketch.md](schema-sketch.md); open items that gate phases are in [questions.md](questions.md).
 
-**Working stance until cutover:** databases are blown away and re-ingested freely; the schema is `schema/*.sql`, never a history of migrations. The one exception is a database nobody can rebuild — the sandbox, which becomes production at cutover — and [ADR 0006](adr/0006-migrations-for-deployed-stores.md) is how those catch up (`migrations/`, `pnpm db:migrate`). Corrections deliberately sit **outside** the blow-away path (the git-curated CSV and the app-written `data/corrections.csv`, [ADR 0004](adr/0004-correction-overlay.md)) so rebuilding never loses them; a dev environment that wants a truly clean slate deletes `data/corrections.csv` too.
+**Working stance until cutover:** databases are blown away and re-ingested freely; the schema is `schema/*.sql`, never a history of migrations. The one exception is a database nobody can rebuild — the sandbox, which becomes production at cutover — and [ADR 0006](adr/0006-migrations-for-deployed-stores.md) is how those catch up (`migrations/`, `pnpm db:migrate`). Corrections deliberately sit **outside** the blow-away path (the git-curated CSV and the app-written `data/corrections.csv`, [ADR 0004](adr/0004-correction-overlay.md)) so rebuilding never loses them; a dev environment that wants a truly clean slate deletes `data/corrections.csv` too. The person change log (`data/person-change.csv`, [ADR 0007](adr/0007-authored-changes-are-events.md)) sits outside it for a sharper reason still: a history the blow-away erases has nothing left to say about who changed anything.
 
 ## Phases
 

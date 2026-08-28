@@ -1,6 +1,7 @@
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
 import { refreshObservationFields } from "./refresh-observation-fields.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
@@ -83,10 +84,23 @@ export async function promoteObservations(
 
 // CLI: pnpm inat:promote [db]
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const dbPath = process.argv[2] ?? "beeline.duckdb";
+  const dbPath = process.argv[2] ?? DEFAULT_DB;
   const instance = await DuckDBInstance.create(dbPath);
   const conn = await instance.connect();
   const counts = await promoteObservations(conn);
+  // A login iNaturalist has renamed is a change to a person; the nightly job
+  // records the same thing after the same step (beeline-o22). The log belongs
+  // to the database this was pointed at — promoting a scratch copy must not
+  // diff its people against the deployed store's history.
+  const log = changeLogFor(dbPath, process.env);
+  if (log === null) {
+    console.warn(
+      `not recording person history: ${dbPath} is not the database this environment keeps a change log for ` +
+        `(${process.env.BEELINE_DB ?? DEFAULT_DB})`,
+    );
+  }
+  const recorded =
+    log === null ? null : await recordPersonChanges(duckdbReader(conn), log, { source: "observation_promotion" });
   conn.closeSync();
-  console.log(JSON.stringify(counts, null, 2));
+  console.log(JSON.stringify({ ...counts, personChangesRecorded: recorded?.appended ?? null }, null, 2));
 }

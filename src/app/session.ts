@@ -48,9 +48,15 @@ export const SESSION_COOKIE = "beeline_session";
 /** Sliding expiry: a session dies 30 days after its last request. */
 const idleCutoff = sql<Date>`current_timestamp - INTERVAL 30 DAY`;
 
-export async function createSession(db: Kysely<Database>, personId: number): Promise<string> {
+/**
+ * Keyed on the iNat user, not the person: `entity_id` is a per-store sequence
+ * draw that a rebuild or a `db:reseed` redraws, so a session holding one
+ * resolved to whoever inherited the number (beeline-ten). The person is
+ * looked up through `inat_account` per request instead.
+ */
+export async function createSession(db: Kysely<Database>, inatUserId: number): Promise<string> {
   const id = randomBytes(32).toString("hex");
-  await db.insertInto("private.session").values({ id, person_id: personId }).execute();
+  await db.insertInto("private.session").values({ id, inat_user_id: inatUserId }).execute();
   return id;
 }
 
@@ -58,19 +64,24 @@ export async function deleteSession(db: Kysely<Database>, id: string): Promise<v
   await db.deleteFrom("private.session").where("id", "=", id).execute();
 }
 
-/** The real resolver: session cookie → private.session row → person. */
+/**
+ * The real resolver: session cookie → private.session row → iNat account →
+ * person. The account join is the binding, so unbinding an account ends its
+ * sessions and rebinding moves them — both of which are what staff mean by
+ * those words (/people).
+ */
 export function cookieSessionResolver(db: Kysely<Database>): SessionResolver {
   return async (c) => {
     const id = getCookie(c, SESSION_COOKIE);
     if (!id) return null;
     const row = await db
       .selectFrom("private.session")
-      .innerJoin("person", "person.entity_id", "private.session.person_id")
-      .leftJoin("inat_account", "inat_account.person_id", "person.entity_id")
-      .leftJoin("private.inat_oauth_token as token", "token.inat_user_id", "inat_account.inat_user_id")
+      .innerJoin("inat_account", "inat_account.inat_user_id", "private.session.inat_user_id")
+      .innerJoin("person", "person.entity_id", "inat_account.person_id")
+      .leftJoin("private.inat_oauth_token as token", "token.inat_user_id", "private.session.inat_user_id")
       .where("private.session.id", "=", id)
       .where("last_seen_at", ">", idleCutoff)
-      .select(["private.session.person_id", "person.display_name", "inat_account.login", "token.icon_url"])
+      .select(["inat_account.person_id", "person.display_name", "inat_account.login", "token.icon_url"])
       .executeTakeFirst();
     if (row === undefined) return null;
     await db

@@ -127,7 +127,9 @@ export async function hasSessions(db: Kysely<Database>): Promise<boolean> {
  * both live in the private store because they sit beside ones that are.
  */
 const lastSeenSql = sql`greatest(
-  (SELECT max(sn.last_seen_at) FROM private.session sn WHERE sn.person_id = p.entity_id),
+  (SELECT max(sn.last_seen_at) FROM private.session sn
+     JOIN inat_account ia ON ia.inat_user_id = sn.inat_user_id
+    WHERE ia.person_id = p.entity_id),
   (SELECT t.last_login_at FROM private.inat_oauth_token t WHERE t.inat_user_id = a.inat_user_id))`;
 
 /**

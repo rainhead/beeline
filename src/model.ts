@@ -89,7 +89,8 @@ export interface InatOauthTokenTable {
 
 export interface SessionTable {
   id: string;
-  person_id: number;
+  /** Who signed in — stable across a rebuild, unlike an entity_id (beeline-ten). */
+  inat_user_id: BigIntCol;
   created_at: Generated<Date>;
   last_seen_at: Generated<Date>;
 }

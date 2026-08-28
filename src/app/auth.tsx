@@ -202,7 +202,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
       );
     }
 
-    const sessionId = await createSession(deps.db, account.person_id);
+    const sessionId = await createSession(deps.db, identity.inatUserId);
     setCookie(c, SESSION_COOKIE, sessionId, { httpOnly: true, sameSite: "Lax", secure, path: "/" });
     // Back to whatever was asked for before the gate got in the way; home
     // when sign-in was the errand itself (beeline-2c3.31).

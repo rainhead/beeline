@@ -1,3 +1,6 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
@@ -172,6 +175,95 @@ describe("iNat OAuth sign-in", () => {
       headers: { origin: "https://evil.example" },
     });
     expect(res.status).toBe(403);
+  });
+
+  it("a session survives the renumbering a reseed does", async () => {
+    // The bug (beeline-ten): sessions held person.entity_id, and db:reseed
+    // redraws every id — so a signed-in volunteer resolved to whoever
+    // inherited their number and browsed as them, under a mine scope that is
+    // forced for volunteers. Sessions key on the iNat user instead, which is
+    // iNaturalist's number and survives any rebuild of ours.
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
+    const cb = await signIn(app);
+    const session = /beeline_session=([a-f0-9]+)/.exec(cb.headers.get("set-cookie")!)![1];
+
+    // What a reseed does to this store, in miniature: everybody's entity_id
+    // moves, and somebody else lands on the number that was Member Bee's.
+    await db.deleteFrom("inat_account").execute();
+    await db.deleteFrom("person").execute();
+    await db
+      .insertInto("person")
+      .values([
+        { entity_id: 11, display_name: "Somebody Else" },
+        { entity_id: 4242, display_name: "Member Bee" },
+      ])
+      .execute();
+    await db
+      .insertInto("inat_account")
+      .values({ person_id: 4242, inat_user_id: 501, login: "memberbee" })
+      .execute();
+
+    const home = await app.request("/", { headers: { cookie: `beeline_session=${session}` } });
+    expect(home.status).toBe(200);
+    const body = await home.text();
+    expect(body).toContain("memberbee");
+    expect(body).not.toContain("Somebody Else");
+  });
+
+  it("unbinding the account ends its sessions", async () => {
+    // The account join is the binding, so staff unbinding one on /people ends
+    // the sessions it authorised — which is what that word should mean.
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
+    const cb = await signIn(app);
+    const session = /beeline_session=([a-f0-9]+)/.exec(cb.headers.get("set-cookie")!)![1];
+    expect((await app.request("/", { headers: { cookie: `beeline_session=${session}` } })).status).toBe(200);
+
+    await db.deleteFrom("inat_account").where("inat_user_id", "=", 501n).execute();
+    const after = await app.request("/", { headers: { cookie: `beeline_session=${session}` } });
+    // Same as any session id that resolves to nobody.
+    expect(after.status).toBe(401);
+  });
+
+  it("a private store built before the rekey is repaired at boot", async () => {
+    // The private store outlives the blow-away era, so its schema changes are
+    // patched in at boot (src/app/db.ts) rather than by rebuild. Dropped
+    // rather than translated: rewriting the old rows would mean trusting the
+    // very ids that were the bug (beeline-ten).
+    const { instance, conn } = await createMemoryDb();
+    const file = join(await mkdtemp(join(tmpdir(), "beeline-private-")), "private.duckdb");
+    await conn.run(`ATTACH '${file}' AS legacy_private`);
+    await conn.run(`USE legacy_private`);
+    await conn.run(`CREATE TABLE inat_oauth_token (
+      inat_user_id BIGINT PRIMARY KEY, login TEXT NOT NULL, icon_url TEXT,
+      access_token TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+      last_login_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
+    await conn.run(`CREATE TABLE session (
+      id TEXT PRIMARY KEY, person_id INTEGER NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+      last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
+    await conn.run(`INSERT INTO session (id, person_id) VALUES ('stale', 11)`);
+    await conn.run(`INSERT INTO inat_oauth_token (inat_user_id, login, access_token)
+                    VALUES (501, 'memberbee', 'tok')`);
+    await conn.run(`USE memory`);
+    await conn.run(`DETACH legacy_private`);
+    conn.closeSync();
+
+    const { instance: fresh } = await createMemoryDb();
+    await attachPrivateStore(fresh, { path: file, key: null });
+    const db = createKysely(fresh);
+
+    // The session is gone with its key; the tokens, which were never the
+    // problem, are not.
+    expect(await db.selectFrom("private.session").selectAll().execute()).toEqual([]);
+    expect(await db.selectFrom("private.inat_oauth_token").select("login").execute()).toEqual([
+      { login: "memberbee" },
+    ]);
+    // And the new shape is there to sign in against.
+    await db.insertInto("private.session").values({ id: "new", inat_user_id: 501 }).execute();
+    expect(
+      await db.selectFrom("private.session").select("inat_user_id").execute(),
+    ).toEqual([{ inat_user_id: 501n }]);
   });
 
   it("stale session ids resolve to nobody", async () => {

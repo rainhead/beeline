@@ -48,6 +48,28 @@ export async function attachPrivateStore(
         await conn.run(`ALTER TABLE private.inat_oauth_token ADD COLUMN icon_url TEXT`);
         await conn.run(`CHECKPOINT private`);
       }
+      // Sessions used to be keyed on person.entity_id, which a rebuild
+      // redraws — so after a reseed each one resolved to whoever inherited
+      // its number (beeline-ten). Rekeyed on the iNat user, which is stable.
+      // Dropped rather than migrated: a session is a bearer credential with a
+      // 30-day sliding expiry, and translating the old rows would mean
+      // trusting the very ids that were the bug. Everyone signs in once more;
+      // their OAuth tokens are untouched, so it costs a redirect.
+      const oldKey = await conn.run(
+        `SELECT count(*) FROM information_schema.columns
+         WHERE table_catalog = 'private' AND table_name = 'session' AND column_name = 'person_id'`,
+      );
+      const [[oldKeyCount]] = (await oldKey.getRows()) as [[bigint]];
+      if (oldKeyCount > 0n) {
+        await conn.run(`DROP TABLE private.session`);
+        await conn.run(`CREATE TABLE private.session (
+          id           TEXT PRIMARY KEY,
+          inat_user_id BIGINT NOT NULL,
+          created_at   TIMESTAMP NOT NULL DEFAULT current_timestamp,
+          last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+        )`);
+        await conn.run(`CHECKPOINT private`);
+      }
     }
   } finally {
     conn.closeSync();

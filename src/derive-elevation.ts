@@ -19,12 +19,19 @@ import { fromArrayBuffer } from "geotiff";
  * re-run is a no-op — and a coordinate that moved schedules its own
  * re-derivation without any writer having to remember to clear anything.
  * Values < -10 are DEM voids (reference rule) and stay NULL.
+ *
+ * A coordinate too vague to deserve an elevation is never a gap at all: the
+ * pending view drops it, so it cannot sit in the backlog forever being
+ * re-attempted. Those are counted separately and reported (beeline-6vc).
  */
 
 export interface ElevationResult {
   gaps: number;
   filled: number;
   voids: number;
+  /** Coordinates too vague to deserve an elevation (schema/170). Reported so
+   * a shrinking gap count is not read as work quietly going undone. */
+  refused: number;
   /** Tile keys (n44_w124) no dataset in data/dem covers — those gaps stay NULL. */
   missingTiles: string[];
 }
@@ -107,7 +114,21 @@ export async function deriveElevations(
     byTile.get(key)!.push(row);
   }
 
-  const result: ElevationResult = { gaps: gaps.length, filled: 0, voids: 0, missingTiles: [] };
+  const [[refused]] = (await (
+    await conn.run(
+      `SELECT count(*) FROM sample_location
+        WHERE elevation_m IS NULL
+          AND coordinate_uncertainty_m >
+              (SELECT coordinate_uncertainty_m FROM elevation_derivation_limit)`,
+    )
+  ).getRows()) as [[bigint]];
+  const result: ElevationResult = {
+    gaps: gaps.length,
+    filled: 0,
+    voids: 0,
+    refused: Number(refused),
+    missingTiles: [],
+  };
   await conn.run("BEGIN TRANSACTION");
   try {
     for (const [key, rows] of byTile) {

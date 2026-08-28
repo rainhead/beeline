@@ -180,6 +180,19 @@ export interface SampleElevationStaleView {
   elevation_longitude: number;
 }
 
+/** schema/170: how vague a coordinate may be and still deserve an elevation. */
+export interface ElevationDerivationLimitView {
+  coordinate_uncertainty_m: number;
+}
+
+/** schema/170: an elevation the coordinate beside it cannot support. */
+export interface SampleElevationUnsupportableView {
+  sample_id: number;
+  coordinate_uncertainty_m: number;
+  elevation_m: number;
+  elevation_source_id: number;
+}
+
 /** schema/170: what the derive job looks at — never derived, or stale. */
 export interface SampleElevationPendingView {
   sample_id: number;
@@ -351,6 +364,8 @@ export interface Database {
   settled_sample: SettledSampleView;
   animal_rank: AnimalRankTable;
   determination_misplaced_qualifier: DeterminationMisplacedQualifierView;
+  elevation_derivation_limit: ElevationDerivationLimitView;
+  sample_elevation_unsupportable: SampleElevationUnsupportableView;
   sample_elevation_stale: SampleElevationStaleView;
   sample_elevation_pending: SampleElevationPendingView;
   printable_sample: PrintableSampleView;

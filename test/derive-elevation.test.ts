@@ -112,7 +112,7 @@ describe("elevation derivation", () => {
     const missing = await gapAt("29.5", "-95.5");
 
     const result = await deriveElevations(conn, demDir);
-    expect(result).toEqual({ gaps: 3, filled: 1, voids: 1, missingTiles: ["n29_w096"] });
+    expect(result).toEqual({ gaps: 3, filled: 1, voids: 1, refused: 0, missingTiles: ["n29_w096"] });
 
     const state = await rows(
       conn,
@@ -221,19 +221,73 @@ describe("elevation derivation", () => {
     const bare = await (await DuckDBInstance.create(":memory:")).connect();
     await bare.run(`CREATE TABLE sample_location (
       sample_id INTEGER PRIMARY KEY, latitude DOUBLE, longitude DOUBLE,
+      coordinate_uncertainty_m INTEGER,
       elevation_m INTEGER, elevation_source_id INTEGER,
       elevation_latitude DOUBLE, elevation_longitude DOUBLE)`);
     await bare.run(await readFile("schema/170_views_elevation.sql", "utf8"));
     await bare.run(`INSERT INTO sample_location VALUES
-      (1, 44.5, -123.2,   72, 1, NULL, NULL),   -- elevation, no point
-      (2, 44.9, -123.2,   72, 1, 44.5, -123.2), -- point it moved away from
-      (3, 44.5, -123.2,   72, 1, 44.5, -123.2), -- settled
-      (4, 44.5, -123.2, NULL, NULL, NULL, NULL)`); // never derived
+      (1, 44.5, -123.2, 30,   72, 1, NULL, NULL),   -- elevation, no point
+      (2, 44.9, -123.2, 30,   72, 1, 44.5, -123.2), -- point it moved away from
+      (3, 44.5, -123.2, 30,   72, 1, 44.5, -123.2), -- settled
+      (4, 44.5, -123.2, 30, NULL, NULL, NULL, NULL)`); // never derived
 
     expect(await rows(bare, "SELECT sample_id FROM sample_elevation_stale ORDER BY 1")).toEqual([[1], [2]]);
     expect(await rows(bare, "SELECT sample_id FROM sample_elevation_pending ORDER BY 1")).toEqual([
       [1], [2], [4],
     ]);
+  });
+
+  test("a coordinate too vague to place is refused, not left as a standing gap", async () => {
+    // A DEM lookup answers whatever you hand it: the corpus's worst is a
+    // 2,979 km uncertainty carrying a confident 260 m, and an elevation on a
+    // printed label is permanent (beeline-6vc). Refused rows leave the
+    // pending set entirely rather than being re-attempted every night, so the
+    // gap count stays the work that can actually be done — and they are
+    // counted separately so the shrinkage is not mistaken for progress.
+    const vague = await insertCleanSample(
+      conn,
+      { sample_number: `'${String(++sampleNumber)}'` },
+      { latitude: "44.55", longitude: "-123.85", elevation_m: "NULL", coordinate_uncertainty_m: "5000" },
+    );
+    const result = await deriveElevations(conn, demDir);
+    expect(result.refused).toBe(1);
+    expect(
+      await rows(conn, `SELECT sample_id FROM sample_elevation_pending WHERE sample_id = ${vague}`),
+    ).toEqual([]);
+    expect(
+      await rows(conn, `SELECT elevation_m FROM sample_location WHERE sample_id = ${vague}`),
+    ).toEqual([[null]]);
+
+    // An unstated uncertainty is not the same claim as a vague one: legacy
+    // records carry none, and treating absent as unbounded would be a much
+    // larger decision than this one.
+    const unstated = await insertCleanSample(
+      conn,
+      { sample_number: `'${String(++sampleNumber)}'` },
+      { latitude: "44.55", longitude: "-123.85", elevation_m: "NULL", coordinate_uncertainty_m: "NULL" },
+    );
+    await deriveElevations(conn, demDir);
+    expect(
+      await rows(conn, `SELECT elevation_m FROM sample_location WHERE sample_id = ${unstated}`),
+    ).toEqual([[401]]);
+  });
+
+  test("an elevation already sitting on a vague coordinate is named, not removed", async () => {
+    // Every one in the store is a legacy_import value, and 316 of them sit on
+    // records that still print. Naming them is this change; removing them is
+    // a separate decision with those labels behind it.
+    const legacy = await insertCleanSample(
+      conn,
+      { sample_number: `'${String(++sampleNumber)}'` },
+      { latitude: "44.55", longitude: "-123.85", elevation_m: "72", coordinate_uncertainty_m: "5000" },
+    );
+    expect(
+      await rows(conn, `SELECT elevation_m FROM sample_elevation_unsupportable WHERE sample_id = ${legacy}`),
+    ).toEqual([[72]]);
+    await deriveElevations(conn, demDir);
+    expect(
+      await rows(conn, `SELECT elevation_m FROM sample_location WHERE sample_id = ${legacy}`),
+    ).toEqual([[72]]);
   });
 
   test("SRTM wins where both datasets have the tile", async () => {

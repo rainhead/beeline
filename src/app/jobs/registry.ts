@@ -57,6 +57,7 @@ async function pipelineTail(ctx: JobContext, parts: string[]): Promise<string> {
   const elevation = await ctx.step("derive elevations", () => deriveElevations(ctx.conn));
   parts.push(
     `elevation ${elevation.filled}/${elevation.gaps} filled` +
+      (elevation.refused > 0 ? `, ${elevation.refused} refused as too uncertain` : "") +
       (elevation.missingTiles.length > 0 ? ` (missing tiles: ${elevation.missingTiles.join(", ")})` : ""),
   );
   return parts.join("; ");

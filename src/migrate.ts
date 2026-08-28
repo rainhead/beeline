@@ -190,7 +190,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     if (!flags.has("--status") || flags.has("--check")) {
       const drift = await schemaDrift(conn);
       if (drift.length > 0) {
-        console.warn(`\n${target} differs from schema/*.sql — a migration may be missing:`);
+        // Not always a missing migration: DuckDB cannot DROP COLUMN on a
+        // table anything depends on (ADR 0001, "Evidence since"), so a column
+        // the schema has dropped leaves a deployed store only at a reseed.
+        console.warn(`\n${target} differs from schema/*.sql — a migration or a reseed may be needed:`);
         for (const line of drift) console.warn(`  ${line}`);
       } else if (flags.has("--check")) {
         console.log(`${target} matches schema/*.sql`);

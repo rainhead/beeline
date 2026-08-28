@@ -126,19 +126,31 @@ cp -rf source dest          # NOT: cp -r source dest
 
 ## Git Authority
 
-**This repository authorizes agents to commit and push without asking.** Work
-on `main`, as everyone here does; close the beads you finished and push when
-the work is done and its quality gates pass.
+**This repository authorizes agents to commit and push without asking, and
+work lands as a pull request** (2026-08-28). Branch, commit, push, open it with
+`gh pr create`; close the beads you finished when it merges. No approval is
+needed to open one — the review, not the asking, is the point.
 
 This is the "repository profile" the Beads block below defers to, and it
 overrides that block's conservative default — stated here, outside the managed
 markers, so `bd setup` cannot regenerate it away.
 
-The reason is the era, not the tooling: pre-cutover the store is blown away and
-rebuilt at will, nothing downstream consumes it, and no volunteer sees it, so a
-bad commit costs a revert and nothing else. **Revisit at cutover (December
-2026)**, when minted field numbers become permanent and backups become
-mandatory — the blow-away era ending is what makes this stance expire.
+Committing straight to `main` was the stance until CodeRabbit began reviewing
+every pull request, and the reason to change was empirical rather than
+procedural: on beeline-o22 it found a real defect that four rounds of
+adversarial design review had missed — an identity shortcut on the sibling code
+path of one already fixed. A second reader that only ever sees pull requests is
+worth the branch, and it is good at exactly what design review is worst at.
+Triage what it says: fix what is real, and reply on the PR with the reason when
+declining.
+
+Why the commit authority itself is broad is the era, not the tooling:
+pre-cutover the store is blown away and rebuilt at will, nothing downstream
+consumes it, and no volunteer sees it, so a bad commit costs a revert and
+nothing else. **Revisit at cutover (December 2026)**, when minted field numbers
+become permanent and backups become mandatory — the blow-away era ending is
+what makes this stance expire, and is when a PR will want a human approving it
+rather than only a bot reading it.
 
 Still true regardless: don't commit someone else's uncommitted work, don't
 rewrite published history, and keep documentation current in the same commit as

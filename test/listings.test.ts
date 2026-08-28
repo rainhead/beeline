@@ -386,7 +386,9 @@ describe("sample listing", () => {
       );
     }
     const body = await get(app, "/samples");
-    const order = ["12", "9", "3"].map((n) => body.indexOf(`<td>${n}</td>`));
+    // The number is a link to the sample's own page (beeline-2c3.34), so
+    // match the link text rather than a bare cell.
+    const order = ["12", "9", "3"].map((n) => body.indexOf(`>${n}</a>`));
     expect(order.every((i) => i >= 0)).toBe(true);
     // Descending, and 12 above 9 — length before text, so digits read as numbers.
     expect(order).toEqual([...order].sort((a, b) => a - b));

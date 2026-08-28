@@ -1,4 +1,5 @@
 import { EMPTY_QUERY, listingHref, MINE } from "../listings.js";
+import { sampleHref } from "../record.js";
 import type { QcSeverity } from "../../model.js";
 import type { Messages } from "../messages/index.js";
 import { Callout, Card, Chip, DataTable, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
@@ -36,10 +37,6 @@ export interface PendingRow {
   pending_count: number;
 }
 
-/** Where a sample was collected, as one line, from whichever parts we have. */
-const place = (s: { locality: string | null; county: string | null; state_province: string | null }) =>
-  [s.locality, s.county, s.state_province].filter(Boolean).join(", ");
-
 interface SampleGroup {
   rows: FindingRow[];
   blocking: number;
@@ -67,9 +64,12 @@ function SampleCard({ m, group, others }: { m: Messages; group: SampleGroup; oth
   return (
     <Card as="article">
       <h3 class="row baseline">
-        {m.qc.sampleTitle(s.sample_number, s.date_start)}
+        {/* The whole record, for the questions a card cannot answer: what
+            the coordinates are, where they came from, what has been
+            determined off it (beeline-2c3.34). */}
+        <a href={sampleHref(s.sample_id)}>{m.qc.sampleTitle(s.sample_number, s.date_start)}</a>
         <Meta>
-          {place(s)} · {m.qc.specimens(s.specimen_count)}
+          {m.format.place([s.locality, s.county, s.state_province])} · {m.qc.specimens(s.specimen_count)}
           {others.length > 0 && <> · {m.qc.collectedWith(m.format.list(others))}</>}
         </Meta>
       </h3>
@@ -123,12 +123,12 @@ function PendingPrint({ m, rows, withOthers }: { m: Messages; rows: PendingRow[]
         {rows.map((r) => (
           <tr>
             <td>
-              {m.qc.sampleTitle(r.sample_number, r.date_start)}
+              <a href={sampleHref(r.sample_id)}>{m.qc.sampleTitle(r.sample_number, r.date_start)}</a>
               {(withOthers.get(r.sample_id) ?? []).length > 0 && (
                 <Meta block>{m.qc.collectedWith(m.format.list(withOthers.get(r.sample_id)!))}</Meta>
               )}
             </td>
-            <td>{place(r)}</td>
+            <td>{m.format.place([r.locality, r.county, r.state_province])}</td>
             <td>{m.format.number(r.pending_count)}</td>
           </tr>
         ))}

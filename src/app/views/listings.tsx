@@ -16,6 +16,7 @@ import {
   type SampleRow,
   type SpecimenRow,
 } from "../listings.js";
+import { sampleHref, specimenHref } from "../record.js";
 import type { Messages } from "../messages/index.js";
 import {
   Button,
@@ -39,10 +40,6 @@ import {
  * they answer the same question at two grains. What differs is the columns,
  * so that is all these two components hold; everything else is shared here.
  */
-
-/** Where a row was collected, as one line, from whichever parts we have. */
-const place = (r: { locality: string | null; county: string | null; state_province: string | null }) =>
-  [r.locality, r.county, r.state_province].filter(Boolean).join(", ");
 
 /** How a listing describes itself, given who is looking and at what. */
 function lede(
@@ -296,12 +293,14 @@ export function SampleListing({ m, query, page, atlases, admin }: ListingProps<S
           >
             {page.rows.map((row) => (
               <tr>
-                <td>{row.sample_number}</td>
-                <td>{copy.dateRange(row.date_start, row.date_end)}</td>
+                <td>
+                  <a href={sampleHref(row.sample_id)}>{row.sample_number}</a>
+                </td>
+                <td>{m.format.dateRange(row.date_start, row.date_end)}</td>
                 {/* The label form: on a listing, the question about a
                     collector is whose name will be printed (/design/names). */}
                 <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
-                <td>{place(row)}</td>
+                <td>{m.format.place([row.locality, row.county, row.state_province])}</td>
                 <td>{m.format.number(row.specimen_count)}</td>
                 <td>
                   <StatusChip m={m} blocking={row.blocking} warning={row.warning} />
@@ -357,16 +356,20 @@ export function SpecimenListing({ m, query, page, atlases, admin }: ListingProps
             {page.rows.map((row) => (
               <tr>
                 <td>
-                  {row.field_number !== null ? (
-                    <span class="mono">{row.field_number}</span>
-                  ) : (
-                    <Meta>{copy.noFieldNumber}</Meta>
-                  )}
+                  <a href={specimenHref(row.specimen_id)}>
+                    {row.field_number === null ? (
+                      <Meta>{copy.noFieldNumber}</Meta>
+                    ) : (
+                      <span class="mono">{row.field_number}</span>
+                    )}
+                  </a>
                 </td>
-                <td>{row.sample_number}</td>
+                <td>
+                  <a href={sampleHref(row.sample_id)}>{row.sample_number}</a>
+                </td>
                 <td>{m.format.date(row.date_start)}</td>
                 <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
-                <td>{place(row)}</td>
+                <td>{m.format.place([row.locality, row.county, row.state_province])}</td>
                 <td>
                   {row.scientific_name !== null && row.taxon_rank !== null ? (
                     <TaxonName

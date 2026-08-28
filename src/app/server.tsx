@@ -56,6 +56,15 @@ import {
   specimenCsv,
 } from "./listings.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
+import {
+  determinationHistory,
+  listSampleSpecimens,
+  loadSample,
+  loadSpecimen,
+  parsePage,
+  recordFindings,
+} from "./record.js";
+import { SamplePage, SpecimenPage } from "./views/record.js";
 
 export interface JobsDep {
   list: Job[];
@@ -421,6 +430,46 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     const { personId, query } = await listingRequest(c);
     const results = await listSpecimens(db, query, personId, { limit: CSV_ROW_LIMIT, offset: 0 });
     return csv(c, specimenCsv(results), "beeline-specimens.csv");
+  });
+
+  // --- One record (beeline-2c3.34). The listings answer "what is there";
+  // these answer everything about one, which is where the determination
+  // history — append-only events, not a flattened current name — is finally
+  // readable. Gating is the listings' with no filters left: the effective
+  // person reaches their own records, staff reach every one, and a record
+  // they cannot reach is a 404 rather than a 403, so a URL cannot be probed
+  // to learn that it exists. ---
+
+  app.get("/samples/:id", async (c) => {
+    const m = c.get("m");
+    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, c.get("admin"));
+    if (sample === null) return c.text(m.record.notFound, 404);
+    const [findings, specimens] = await Promise.all([
+      recordFindings(db, sample.sample_id),
+      listSampleSpecimens(db, sample.sample_id, parsePage(c.req.query("page"))),
+    ]);
+    return c.html(
+      await page(
+        c,
+        m.record.sample.title(sample.sample_number),
+        <SamplePage m={m} sample={sample} findings={findings} specimens={specimens} />,
+      ),
+    );
+  });
+
+  app.get("/specimens/:id", async (c) => {
+    const m = c.get("m");
+    const specimen = await loadSpecimen(db, Number(c.req.param("id")), c.get("acting").personId, c.get("admin"));
+    if (specimen === null) return c.text(m.record.notFound, 404);
+    const [events, findings] = await Promise.all([
+      determinationHistory(db, specimen.specimen_id),
+      recordFindings(db, specimen.sample.sample_id),
+    ]);
+    const title =
+      specimen.field_number === null
+        ? m.record.specimen.titleUnnumbered(specimen.specimen_number, specimen.sample.sample_number)
+        : m.record.specimen.title(specimen.field_number);
+    return c.html(await page(c, title, <SpecimenPage m={m} specimen={specimen} events={events} findings={findings} />));
   });
 
   // Non-iNat samples are fixed here, not upstream (beeline-2c3.8). The gate

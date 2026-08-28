@@ -6,6 +6,7 @@ import {
   Card,
   Chip,
   DataTable,
+  DetailList,
   EmptyState,
   FilterBar,
   LinkButton,
@@ -103,6 +104,27 @@ export function DesignComponents({ m }: { m: Messages }) {
           <h3>Sample 7 — Corvallis</h3>
           <p>The second card sets its own top margin, so no caller ever passes one.</p>
         </Card>
+      </Specimen>
+
+      <h2>Detail lists</h2>
+      <p>
+        The facts about one thing, labelled. A listing puts a heading above many values; a record page puts a label
+        beside one, and that is a different treatment rather than a one-column table. Real <code>&lt;dl&gt;</code>
+        markup, so the label is announced with its value, and two columns that stack on a narrow screen. A null entry
+        is dropped, so the caller decides row by row whether an absence is worth saying — "Elevation — not yet worked
+        out" is a gap made visible, while a floral-host row on a sample taken off no flower would invent one.
+      </p>
+      <Specimen>
+        <DetailList
+          items={[
+            { term: "Collected by", value: "Gretchen Pederson and Robert Pederson" },
+            { term: "Collected", value: "Jul 12 – Jul 19, 2026" },
+            { term: "Method", value: "Trap" },
+            { term: "Coordinates", value: <span class="mono">44.5646, -123.262</span> },
+            { term: "Elevation", value: <Meta>Not worked out yet.</Meta> },
+            null,
+          ]}
+        />
       </Specimen>
 
       <h2>Callouts</h2>

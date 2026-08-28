@@ -39,12 +39,23 @@ const dateTime = (d: Date | string) =>
   typeof d === "string"
     ? d
     : d.toLocaleString(locale, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+// A collecting window: one day for a net sample, a range for a trap left out
+// across several. One formatter rather than one per screen, because it is a
+// value formatting rule and not something a screen decides.
+const dateRange = (start: Date | string, end: Date | string) =>
+  date(start) === date(end) ? date(start) : `${date(start)} – ${date(end)}`;
+// Where a record was collected, from whichever parts it carries. A formatter
+// rather than a helper in each view: which separator joins a locality to its
+// county is a language's decision, not a screen's — and it was retyped in
+// three views before it had a home.
+const place = (parts: ReadonlyArray<string | null> | string) =>
+  (Array.isArray(parts) ? parts : [parts]).filter(Boolean).join(", ");
 
 export const en = {
   locale,
   brand: "Beeline",
   /** Locale-aware value formatters, for views composing values into markup. */
-  format: { date, dateTime, number: n, list },
+  format: { date, dateTime, dateRange, number: n, list, place },
 
   layout: {
     /** Any instance that is not production says so (beeline-2u8). */
@@ -177,9 +188,6 @@ export const en = {
       colLinks: "",
       viewOnInat: "iNaturalist",
       edit: "Edit",
-      /** Trap samples ran across a range; net samples are one day. */
-      dateRange: (start: Date | string, end: Date | string) =>
-        date(start) === date(end) ? date(start) : `${date(start)} – ${date(end)}`,
     },
 
     specimens: {
@@ -305,6 +313,156 @@ export const en = {
     cancel: "Cancel",
     notEditable: "This sample can't be edited here — it may not be yours, or its fixes belong on iNaturalist.",
     noStagingRows: "This sample has no underlying records to correct — ask staff to look into it.",
+  },
+
+  /**
+   * One record: /samples/:id and /specimens/:id (beeline-2c3.34).
+   *
+   * The listings show a determination in one cell — the conclusion without
+   * the argument. These pages carry the argument, so the copy has to name
+   * things a volunteer has never needed a word for: which channel an
+   * identification arrived through, and why a 2019 expert determination
+   * stands over a 2026 volunteer one. Where a word has a glossary entry the
+   * page links it rather than re-explaining it (/design/voice).
+   */
+  record: {
+    /** Unreachable and non-existent are one answer, so this covers both. */
+    notFound: "No such record, or not one you can see.",
+    staffNote: "Staff view: this is not one of your own records.",
+
+    sample: {
+      title: (sampleNumber: string) => `Sample ${sampleNumber}`,
+      back: "← All samples",
+      collectors: "Collected by",
+      collected: "Collected",
+      method: "Method",
+      methodNet: "Net",
+      methodTrap: "Trap",
+      protocol: "Sampling protocol",
+      effort: "Sampling effort",
+      place: "Place",
+      atlas: "Atlas",
+      /** Collecting outside the member atlases is ordinary (beeline-lcl). */
+      atlasOutside: "None — collected where no member atlas reaches",
+      host: "Floral host",
+      observation: "iNaturalist observation",
+      /** Trap samples usually have none, and that is not a gap. */
+      observationNone: "None — this sample did not come from an observation, so it is corrected here rather than upstream.",
+      viewOnInat: "View on iNaturalist",
+      edit: "Edit this sample",
+      /** Every value the record simply does not carry. */
+      unknown: "not recorded",
+
+      where: {
+        heading: "Where it was collected",
+        coordinates: "Coordinates",
+        /**
+         * Absence is a statement here, not a blank: shifted coordinates are
+         * deliberately never brought across, so "none" means none believed.
+         */
+        coordinatesNone:
+          "Beeline holds no coordinates for this sample. Where iNaturalist has shifted an observation's coordinates, the shifted pair is deliberately never brought across — so nothing here means nothing we believe.",
+        accuracy: "Accuracy",
+        accuracyValue: (metres: number) => `within ${n(metres)} m`,
+        source: "Where they came from",
+        sources: {
+          inat_trusted:
+            "Read from your iNaturalist observation with trusted access, so these are the true coordinates even where the public map shows them shifted.",
+          inat_public: "Read from your iNaturalist observation, which publishes them as they are.",
+          legacy_import:
+            "Imported from the old atlas database, which recorded nothing about where its coordinates came from. These are the ones already printed on labels.",
+          staff_entry: "Entered by staff.",
+        } as Record<string, string>,
+        privacy: "On iNaturalist",
+        privacyOpen: "Published as they are — nothing about this observation is obscured.",
+        privacyObscured:
+          "You set this observation's coordinates to obscured, so the map shows a shifted pair. What is above is the true location.",
+        privacyPrivate:
+          "You set this observation's coordinates to private, so the map shows none. What is above is the true location.",
+        privacyTaxonObscured:
+          "iNaturalist obscures this observation's public coordinates because of the species identified on it — not because of anything you set. What is above is the true location.",
+        privacyTaxonPrivate:
+          "iNaturalist withholds this observation's public coordinates because of the species identified on it — not because of anything you set. What is above is the true location.",
+        elevation: "Elevation",
+        elevationValue: (metres: number) => `${n(metres)} m`,
+        /** Derived from the coordinates, so never anyone's gap to fill. */
+        elevationNone: "Not worked out yet. Elevation is read from the coordinates rather than entered, so there is nothing to do about it.",
+        elevationFrom: (source: string) => `Read from ${source}.`,
+        elevationStale:
+          "Read at a point that is no longer where the coordinates above say — it will be read again on the next elevation run.",
+      },
+
+      flags: {
+        heading: "Flags",
+        clean: "Nothing is flagged on this sample.",
+        onSpecimen: (fieldNumber: string) => `on specimen ${fieldNumber}`,
+        onOneSpecimen: "on one of its specimens",
+      },
+
+      specimens: {
+        heading: "Specimens",
+        count: (total: number) => `${n(total)} ${total === 1 ? "specimen" : "specimens"}`,
+        none: "No specimens yet. A specimen becomes its own record when its label is printed.",
+        /** The working count and the printed rows can honestly disagree. */
+        counted: (expected: number, printed: number) =>
+          `The sample is counted at ${n(expected)}; ${n(printed)} ${printed === 1 ? "has" : "have"} been individuated by printing.`,
+        colFieldNumber: "Field number",
+        colNumber: "#",
+        colDetermination: "Determination",
+        colDeterminer: "Determined by",
+        noFieldNumber: "not numbered",
+        undetermined: "not determined",
+        expert: "expert",
+      },
+    },
+
+    specimen: {
+      title: (fieldNumber: string) => `Specimen ${fieldNumber}`,
+      /** Pre-field-number labels: the only handle is its place in the sample. */
+      titleUnnumbered: (specimenNumber: number, sampleNumber: string) =>
+        `Specimen ${n(specimenNumber)} of sample ${sampleNumber}`,
+      back: (sampleNumber: string) => `← Sample ${sampleNumber}`,
+      fieldNumber: "Field number",
+      fieldNumberNone: "Not numbered — this specimen's label predates field numbering.",
+      inSample: "Number in its sample",
+      fromSample: "From sample",
+    },
+
+    determinations: {
+      heading: "Determinations",
+      intro:
+        "Every identification anyone has recorded for this specimen, newest first. Nothing here is ever overwritten: a correction is a new entry and the earlier one stays.",
+      /**
+       * Stated whenever there is a history to read, because the rule is not
+       * guessable from the rows: determination_of_record is not simply the
+       * newest (schema/110).
+       */
+      recordRule:
+        "The one marked of record is the one the rest of this site uses: the most recent expert determination, or the most recent of any kind if no expert has looked.",
+      recordNotNewest:
+        "It is not the newest entry here — an expert's determination stands until another expert revises it, so a later identification does not displace it.",
+      empty: "Nobody has identified this specimen yet.",
+      colDetermination: "Determination",
+      colDeterminer: "Determined by",
+      colDetermined: "Determined",
+      colRecorded: "Reached Beeline",
+      /** The status column carries the chip and needs no heading. */
+      colStatus: "",
+      ofRecord: "of record",
+      expert: "expert",
+      determinerUnknown: "not recorded",
+      determinedUnknown: "date not recorded",
+      /** The name as the source wrote it, kept beside the node it resolved to. */
+      verbatim: (text: string) => `written as “${text}”`,
+      sex: (value: string) => `sex ${value}`,
+      caste: (value: string) => `caste ${value}`,
+      /** How the determination reached Beeline, in a volunteer's words. */
+      channels: {
+        in_app: "entered here",
+        ecdysis_import: "imported from Ecdysis",
+        legacy_import: "imported from the old atlas database",
+      } as Record<string, string>,
+    },
   },
 
   errors: {

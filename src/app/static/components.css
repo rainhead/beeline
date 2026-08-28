@@ -210,6 +210,26 @@ tbody tr:hover { background: var(--md-sys-color-surface-variant); }
 .empty > :first-child { margin-top: 0; }
 .empty > :last-child { margin-bottom: 0; }
 
+/* Labelled facts about one thing: the record pages' answer to a listing's
+   column headings. Two columns while the labels stay short, stacking on a
+   narrow screen rather than squeezing the values into a gutter. */
+.details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-5);
+  margin: 0;
+}
+.details dt {
+  font: var(--md-sys-typescale-label);
+  color: var(--md-sys-color-on-surface-variant);
+}
+.details dd { margin: 0; }
+@media (max-width: 34rem) {
+  .details { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .details dd { margin: 0 0 var(--space-3); }
+  .details dd:last-child { margin-bottom: 0; }
+}
+
 /* Scientific names. The component decides what is italic; this only makes
    italics italic and keeps vernacular subordinate. A taxon name is never
    set in mono — see /design/names. */

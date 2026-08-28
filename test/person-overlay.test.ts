@@ -37,7 +37,7 @@ describe("the overlay file", () => {
 
   it("refuses a bad row rather than dropping it, because a save rewrites the file", () => {
     const head = "person_ref,field,value,author,reason\n";
-    expect(() => parseOverlay(`${head}name:Ada,pronouns,they,me,\n`, "f")).toThrow(/not an overlay field/);
+    expect(() => parseOverlay(`${head}name:Ada,favourite_colour,blue,me,\n`, "f")).toThrow(/not an overlay field/);
     expect(() => parseOverlay(`${head}Ada,admin,yes,me,\n`, "f")).toThrow(/not a person reference/);
     expect(() => parseOverlay(`${head}name:Ada,admin,maybe,me,\n`, "f")).toThrow(/expected yes or no/);
     expect(() => parseOverlay(`${head}name:Ada,inat_user_id,amelathopoulos,me,\n`, "f")).toThrow(/not an iNat user id/);

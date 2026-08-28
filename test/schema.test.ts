@@ -56,13 +56,6 @@ describe("schema application", () => {
     expect(await rows(conn, `SELECT kind FROM person_membership WHERE person_id = ${person}`)).toEqual([["program"]]);
   });
 
-  test("pronouns accept the starting vocabulary and reject the rest", async () => {
-    await conn.run(`INSERT INTO person (display_name, pronouns) VALUES ('Cay Determiner', 'they')`);
-    await expect(
-      conn.run(`INSERT INTO person (display_name, pronouns) VALUES ('Dee Determiner', 'purple')`),
-    ).rejects.toThrow(/CHECK/i);
-  });
-
   test("enum-ish CHECK constraints reject unknown values", async () => {
     await expect(
       conn.run(`INSERT INTO sample (kind, collector_id, sample_number, date_start, date_end)

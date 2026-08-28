@@ -52,6 +52,22 @@ deltas that bring an already-deployed database up to it.**
   long as any deployed store lags. That duplication is deliberate: it keeps
   the schema readable as a single current statement. `--check` is what keeps
   the two honest.
+- **Some changes are not migratable at all, and the answer is `db:reseed`.**
+  DuckDB refuses `ALTER TABLE … DROP COLUMN` on a table anything references,
+  and `person` is referenced by nine others — so removing a column from it
+  fails however the statement is arranged (confirmed 2026-08-27, 1.5.x:
+  *"Cannot alter entry person because there are entries that depend on it"*;
+  dropping the dependent views first is not enough). Rebuilding the table
+  would mean dropping every table that points at it.
+
+  The store already has a tool for this: `pnpm db:reseed` builds a fresh
+  database from `schema/*.sql` and carries the staged sources across, so the
+  model is re-derived without the column. It is the same procedure a change to
+  `ingest/` needs ([the runbook](../runbooks/deploy-maderas.md)), and it is
+  minutes of downtime rather than a migration. So: write the change in
+  `schema/`, write no migration, and reseed on deploy. `--check` will report
+  the extra column until then, correctly — the store really has drifted.
+
 - **A deployed store can lack a CHECK that a fresh build has, and `--check`
   will not say so.** DuckDB has no `ALTER TABLE … ADD CONSTRAINT` (confirmed
   2026-08-27, 1.5.x: *"No support for that ALTER TABLE option yet!"*), so a

@@ -57,12 +57,4 @@ describe("message catalog", () => {
     }
   });
 
-  it("has all three pronoun sets the schema allows", () => {
-    // person.pronouns CHECK ('he','she','they') — the catalog must cover them.
-    for (const set of ["he", "she", "they"] as const) {
-      expect(en.pronounForms[set].subject).toBeTruthy();
-      expect(en.pronounForms[set].object).toBeTruthy();
-      expect(en.pronounForms[set].possessive).toBeTruthy();
-    }
-  });
 });

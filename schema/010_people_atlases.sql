@@ -13,15 +13,13 @@ CREATE TABLE person (
   display_name TEXT NOT NULL,
   given_name   TEXT,
   family_name  TEXT,
-  label_name   TEXT,
-  pronouns     TEXT CHECK (pronouns IN ('he', 'she', 'they'))
+  label_name   TEXT
 );
-COMMENT ON TABLE person IS 'An identity to hang facts on — deliberately anemic. Every concern lives in its own satellite table with its own privacy and lifecycle; joining one in is a deliberate act. Name parts and pronouns sit here together because all of them answer "how to refer to this person".';
+COMMENT ON TABLE person IS 'An identity to hang facts on — deliberately anemic. Every concern lives in its own satellite table with its own privacy and lifecycle; joining one in is a deliberate act. Name parts sit here because they answer "how to refer to this person"; a pronouns column sat here too until 2026-08-27, when it was removed as sensitive and unnecessary — anyone who wants to state theirs can say so in prose (beeline-6bw).';
 COMMENT ON COLUMN person.display_name IS 'The full form, as this person is named on screen and in exports (Darwin Core recordedBy).';
 COMMENT ON COLUMN person.given_name IS 'Given name(s), kept apart from the family name because a label prints the initial: P. Abrahamsen. Null where a name could not be parted (mononym, unparsed import) — the label form then falls back to display_name.';
 COMMENT ON COLUMN person.family_name IS 'The whole family name, particles included (Van Otterloo, Vanden Heuvel, Benitez Alvarez): it is what survives abbreviation, so it is never re-split at print time.';
 COMMENT ON COLUMN person.label_name IS 'What a label prints when derivation is wrong or unwanted — an override, so the derived form stays the default (see src/person-name.ts). Null ⇒ derived.';
-COMMENT ON COLUMN person.pronouns IS 'Self-filled; null = unstated (render neutrally, never guess). Starting vocabulary he/she/they — widening the CHECK is expected, and is cheap pre-cutover.';
 
 CREATE TABLE inat_account (
   person_id    INTEGER PRIMARY KEY REFERENCES person(entity_id),

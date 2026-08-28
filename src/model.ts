@@ -12,7 +12,6 @@ type Timestamped = ColumnType<Date, Date | string | undefined, Date | string>;
 
 // schema/010_people_atlases.sql
 
-export type Pronouns = "he" | "she" | "they";
 /** A member atlas, or the umbrella program itself with no atlas (beeline-lcl). */
 export type MembershipKind = "atlas" | "program";
 /**
@@ -28,7 +27,6 @@ export interface PersonTable {
   given_name: string | null;
   family_name: string | null;
   label_name: string | null;
-  pronouns: Pronouns | null;
 }
 
 export interface InatAccountTable {

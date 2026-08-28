@@ -97,9 +97,10 @@ export function DesignVoice({ m }: { m: Messages }) {
 
       <h2>People</h2>
       <p>
-        Never guess someone's pronouns, and never infer them from a name. The catalog carries pronoun forms for the
-        three sets the schema admits, and unstated means neutral — <em>they</em>, not a guess and not an awkward
-        rewrite that avoids referring to the person at all.
+        Never infer how to refer to someone from their name. Write neutrally — <em>they</em>, not a guess and not an
+        awkward rewrite that avoids referring to the person at all. The store holds no pronouns to consult: it held a
+        column briefly and it was removed as sensitive and unnecessary, so neutral is not a fallback here, it is the
+        whole rule.
       </p>
 
       <DoDont
@@ -116,7 +117,7 @@ export function DesignVoice({ m }: { m: Messages }) {
           "Don't say “error” or “invalid” to a volunteer; say what it blocks.",
           "Don't put volunteer-facing prose in a view.",
           "Don't use emoji, and don't over-punctuate — one exclamation mark in the whole product is plenty.",
-          "Don't guess pronouns.",
+          "Don't guess how to refer to someone, and don't infer it from a name.",
         ]}
       />
     </DesignPage>

@@ -134,6 +134,11 @@ ssh maderas 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; cd ~/dev/beeline 
 
 ## Re-deriving the model after a promotion change
 
+(Also the answer when a schema change cannot be migrated at all — dropping a
+column from `person` is refused by DuckDB whatever order the statements are
+in, because nine tables reference it. [ADR 0006](../adr/0006-migrations-for-deployed-stores.md)
+has the reasoning; the procedure is the one below.)
+
 Migrations carry a change to the **schema**. They cannot carry a change to
 **promotion** — the rules deriving the model from staged rows — which leaves
 this store shaped right and derived wrong. `pnpm db:migrate --check` sees

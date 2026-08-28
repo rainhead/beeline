@@ -507,17 +507,6 @@ export const en = {
   } as Record<string, string>,
 
   /**
-   * Pronoun vocabulary (beeline-0qr's home): grammatical forms per set, so
-   * prose about a person can be written without hardcoding English forms.
-   * person.pronouns is null = unstated: render neutrally via `they`.
-   */
-  pronounForms: {
-    he: { subject: "he", object: "him", possessive: "his" },
-    she: { subject: "she", object: "her", possessive: "her" },
-    they: { subject: "they", object: "them", possessive: "their" },
-  },
-
-  /**
    * The glossary (/glossary). Volunteers meet a lot of vocabulary here that
    * nobody explained to them — some of it ours, some of it nomenclature.
    * Keys are the anchor slugs, so renaming one breaks a link: a test pins

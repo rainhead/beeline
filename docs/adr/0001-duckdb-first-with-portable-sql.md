@@ -74,3 +74,17 @@ which the JSON ones are all in the single view that shreds iNaturalist
 responses. About a day's work, and only `try_cast` needs thought rather than
 substitution. So the hatch is real; it had also drifted, silently, because
 nothing checks. [beeline-l6w](../../.beads/) is the check.
+
+Syntax is the shallow layer, though, and no cheaper to fix later than now.
+What this rule does **not** cover is where DuckDB's capabilities have shaped
+the design, and the sharpest of those is that `schema/*.sql` declares **no
+indexes at all**: every lookup is a full scan over 380k specimens and 256k
+determinations, which is free in a columnar engine and is not free in
+Postgres — and the QC rules, printability and determination-of-record are a
+stack of views over exactly those scans. Nobody has had to think about access
+paths once. That, [ADR 0005](0005-app-process-owns-the-store.md)'s embedded
+single-writer model, and the 1,464 lines of ingestion SQL that materialise
+tables from `read_csv`/`read_ndjson` are the real cost of a move;
+[ADR 0003](0003-private-data-store.md)'s separate encrypted file is *not* —
+it becomes a schema, and its rationale (a main file "meant to be copied
+casually") is itself a DuckDB property. beeline-yfb has the reasoning.

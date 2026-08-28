@@ -51,3 +51,16 @@ engine runs them owns the heart of the system.
   the model and ingestion are being built.
 - Writing DDL means resisting engine-specific conveniences (DuckDB macros,
   Postgres partial indexes) unless confined to clearly-marked derived layers.
+
+## Evidence since
+
+Schema evolution is where this bet is weakest, and the blow-away era hides it:
+four distinct DDL limitations were hit on 2026-08-27 alone — no `ALTER TABLE …
+ADD CONSTRAINT`, no `DROP COLUMN` on a referenced table, `db:migrate --check`
+unable to compare either, and WAL replay after DDL able to leave the file
+unopenable ([ADR 0006](0006-migrations-for-deployed-stores.md) records the
+first three; beeline-vyi the fourth). Every one costs nothing while a bad
+schema is fixed by rebuilding, and starts costing at cutover, when it is not.
+[beeline-yfb](../../.beads/) collects the evidence for the re-decision this
+ADR's escape hatch exists for; the portable-SQL discipline is what keeps that
+hatch real.

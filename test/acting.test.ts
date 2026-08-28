@@ -84,6 +84,14 @@ async function household({
   };
 }
 
+/**
+ * The cookie names the person, not their id (beeline-ten's second home): an
+ * id is a per-store draw a rebuild redraws, and this cookie is client-held so
+ * no rebuild can reach it.
+ */
+const actingCookie = (name: string) => `${ACTING_COOKIE}=${encodeURIComponent(name)}`;
+const ROBERT = "Robert Pederson";
+
 describe("acting for somebody else", () => {
   it("offers the switch only to someone who holds a grant", async () => {
     const granted = await household({ granted: true });
@@ -98,7 +106,7 @@ describe("acting for somebody else", () => {
     expect(own).toContain("G-1");
     expect(own).not.toContain("R-1");
 
-    const acting = await (await get("/samples", `${ACTING_COOKIE}=${robert}`)).text();
+    const acting = await (await get("/samples", actingCookie(ROBERT))).text();
     // `mine` is now Robert's — not both, which is the whole point of a
     // switch rather than a widening.
     expect(acting).toContain("R-1");
@@ -107,9 +115,9 @@ describe("acting for somebody else", () => {
 
     // The QC home and the CSV are the other two "mine" surfaces, and a CSV
     // that disagreed with the page above it would be the worst of the three.
-    const home = await (await get("/", `${ACTING_COOKIE}=${robert}`)).text();
+    const home = await (await get("/", actingCookie(ROBERT))).text();
     expect(home).toContain(en.layout.acting.banner("Robert Pederson"));
-    const csv = await (await get("/samples.csv", `${ACTING_COOKIE}=${robert}`)).text();
+    const csv = await (await get("/samples.csv", actingCookie(ROBERT))).text();
     expect(csv).toContain("R-1");
     expect(csv).not.toContain("G-1");
   });
@@ -118,7 +126,7 @@ describe("acting for somebody else", () => {
   // switch in both directions.
   it("opens the other person's editable sample, and closes it again when switched off", async () => {
     const { get, robertSample } = await household({ granted: true });
-    const cookie = `${ACTING_COOKIE}=${robertSample.owner}`;
+    const cookie = actingCookie(ROBERT);
     expect((await get(`/samples/${robertSample.id}/edit`, cookie)).status).toBe(200);
     // Without the switch it is somebody else's sample and stays shut.
     expect((await get(`/samples/${robertSample.id}/edit`)).status).toBe(404);
@@ -133,7 +141,7 @@ describe("acting for somebody else", () => {
       robertIsAdmin: true,
     });
     expect((await get("/people")).status).toBe(403);
-    expect((await get("/people", `${ACTING_COOKIE}=${robert}`)).status).toBe(403);
+    expect((await get("/people", actingCookie(ROBERT))).status).toBe(403);
   });
 
   it("does not chain: reaching Robert is not reaching whoever Robert may reach", async () => {
@@ -141,17 +149,31 @@ describe("acting for somebody else", () => {
     // Gretchen may act for Robert; Robert may act for Jane. Gretchen may not
     // reach Jane, because canActFor always derives from the SIGNED-IN person
     // and never from whoever is currently being acted for.
-    const acting = await (await get("/", `${ACTING_COOKIE}=${robert}`)).text();
+    const acting = await (await get("/", actingCookie(ROBERT))).text();
     expect(acting).toContain(en.layout.acting.banner("Robert Pederson"));
     expect(acting).not.toContain(en.layout.acting.startFor("Jane Pope"));
     // And naming Jane directly resolves to nothing: no grant, no switch.
-    const direct = await (await get("/", `${ACTING_COOKIE}=${jane}`)).text();
+    const direct = await (await get("/", actingCookie("Jane Pope"))).text();
     expect(direct).not.toContain(en.layout.acting.banner("Jane Pope"));
+  });
+
+  it("a stale cookie cannot land on a different granted person", async () => {
+    // beeline-ten's second home. The cookie is client-held, so no rebuild can
+    // reach it, and a rebuild redraws every entity_id — a delegate holding two
+    // grants whose numbers permute would have had the old cookie silently
+    // select the *other* one, on a switch that gates writes. Naming the person
+    // means a stale value either still names them or names nobody.
+    const { get } = await household({ granted: true });
+    // The number Robert used to be, now belonging to somebody else entirely.
+    const stale = `${ACTING_COOKIE}=1`;
+    const body = await (await get("/samples", stale)).text();
+    expect(body).toContain("G-1");
+    expect(body).not.toContain("R-1");
   });
 
   it("ignores a cookie naming someone this session was never granted", async () => {
     const { get, robert } = await household({ granted: false });
-    const res = await get("/samples", `${ACTING_COOKIE}=${robert}`);
+    const res = await get("/samples", actingCookie(ROBERT));
     const body = await res.text();
     // Falls back to the signed-in person rather than erroring: this is also
     // what a revoked grant looks like from here.
@@ -185,7 +207,7 @@ describe("acting for somebody else", () => {
       body: `person=${robert}`,
     });
     expect(started.status).toBe(302);
-    expect(started.headers.get("set-cookie")).toContain(`${ACTING_COOKIE}=${robert}`);
+    expect(started.headers.get("set-cookie")).toContain(actingCookie(ROBERT));
 
     const stopped = await app.request("/acting/stop", {
       method: "POST",

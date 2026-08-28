@@ -29,6 +29,15 @@ import type { Session } from "./session.js";
  * So it is a cookie, and the grant behind it is re-checked on every request —
  * a revoked delegation stops working at once, and a forged cookie names a
  * person the signed-in user was never granted and resolves to nothing.
+ *
+ * It names that person the way the overlay does — by display name, not by
+ * `entity_id`. An id is a per-store sequence draw that a rebuild or a
+ * `db:reseed` redraws, and this cookie is client-held, so no rebuild can
+ * reach it: a delegate holding two grants whose numbers permute would have
+ * had a stale cookie land on a *different* granted person, silently, on a
+ * switch that gates writes. That is the session bug (beeline-ten) in its
+ * second home. A name that no longer matches falls back to self, which is
+ * the safe direction; an ambiguous one does too, rather than pick.
  */
 export const ACTING_COOKIE = "beeline_acting";
 
@@ -75,8 +84,12 @@ export async function resolveActing(
   const canActFor = await delegations(db, session.personId);
   const self: Acting = { personId: session.personId, actingFor: null, canActFor };
   const raw = getCookie(c, ACTING_COOKIE);
-  if (raw === undefined || !/^\d+$/.test(raw)) return self;
-  const granted = canActFor.find((d) => d.personId === Number(raw));
+  if (raw === undefined || raw === "") return self;
+  // Exactly one, or nobody: two grants sharing a display name is a household
+  // naming problem, and guessing between them is how the wrong person gets
+  // written to.
+  const matches = canActFor.filter((d) => d.name === raw);
+  const granted = matches.length === 1 ? matches[0] : undefined;
   if (granted === undefined) return self;
   return { personId: granted.personId, actingFor: granted, canActFor };
 }
@@ -87,8 +100,8 @@ export async function resolveActing(
  * session cookies rather than with scope: scope only filters what you read,
  * while this decides whose records the sample-edit gate lets you WRITE.
  */
-export const startActing = (c: Context, personId: number, origin: string) =>
-  setCookie(c, ACTING_COOKIE, String(personId), {
+export const startActing = (c: Context, name: string, origin: string) =>
+  setCookie(c, ACTING_COOKIE, name, {
     path: "/",
     httpOnly: true,
     sameSite: "Lax",

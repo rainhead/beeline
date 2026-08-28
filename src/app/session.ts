@@ -10,9 +10,9 @@ import type { Database } from "../model.js";
  */
 export interface Session {
   personId: number;
-  /** iNat login (or display name for the rare accountless person). */
+  /** iNat login: the account join is now inner, so there is always one. */
   login: string;
-  /** iNat profile picture, cached at sign-in; null for accountless people. */
+  /** iNat profile picture, cached at sign-in; null until they sign in again. */
   iconUrl: string | null;
   /**
    * True when this session came from BEELINE_DEV_LOGIN rather than from a
@@ -89,14 +89,45 @@ export function cookieSessionResolver(db: Kysely<Database>): SessionResolver {
       .set({ last_seen_at: sql`current_timestamp` })
       .where("id", "=", id)
       .execute();
-    return { personId: row.person_id, login: row.login ?? row.display_name, iconUrl: row.icon_url };
+    return { personId: row.person_id, login: row.login, iconUrl: row.icon_url };
   };
 }
 
-/** Expired sessions linger until this runs (a scheduled job, beeline-2c3.4). */
+/**
+ * End every session for an iNat account, because the account no longer means
+ * what it meant when they were issued.
+ *
+ * Resolution failing is not revocation. An unbound session's `last_seen_at`
+ * stops sliding, so the row never ages out — and binding that iNat user to a
+ * different person revives every cookie ever issued for it, as that person,
+ * with whatever rights they hold. Unbind-then-rebind is exactly what /people
+ * is for, so this is the realistic path, not a contrived one.
+ */
+export async function endSessionsFor(db: Kysely<Database>, inatUserId: number | bigint): Promise<void> {
+  await db.deleteFrom("private.session").where("inat_user_id", "=", BigInt(inatUserId)).execute();
+}
+
+/**
+ * Expired sessions linger until this runs (a scheduled job, beeline-2c3.4) —
+ * and so do sessions whose account has since been unbound, which resolution
+ * refuses but nothing was deleting: their `last_seen_at` stops moving the
+ * moment they stop resolving, so the idle cutoff never reaches them.
+ */
 export async function purgeIdleSessions(db: Kysely<Database>): Promise<void> {
   await db
     .deleteFrom("private.session")
     .where("last_seen_at", "<=", idleCutoff)
+    .execute();
+  await db
+    .deleteFrom("private.session")
+    .where(({ not, exists, selectFrom }) =>
+      not(
+        exists(
+          selectFrom("inat_account")
+            .select("inat_account.person_id")
+            .whereRef("inat_account.inat_user_id", "=", "private.session.inat_user_id"),
+        ),
+      ),
+    )
     .execute();
 }

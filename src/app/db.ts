@@ -8,6 +8,8 @@ import type { Database } from "../model.js";
 import type { AppConfig } from "./config.js";
 
 const PRIVATE_SCHEMA_DIR = fileURLToPath(new URL("../../schema/private/", import.meta.url));
+/** The one home of the session DDL, re-applied on its own by the patch below. */
+const SESSION_SCHEMA = "020_session.sql";
 
 const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
 
@@ -24,52 +26,81 @@ export async function attachPrivateStore(
   try {
     const options = opts.key === null ? "" : ` (ENCRYPTION_KEY ${quote(opts.key)})`;
     await conn.run(`ATTACH IF NOT EXISTS ${quote(opts.path)} AS private${options}`);
-    const existing = await conn.run(
-      `SELECT count(*) FROM information_schema.tables WHERE table_catalog = 'private' AND table_name = 'session'`,
-    );
-    const [[count]] = (await existing.getRows()) as [[bigint]];
-    if (count === 0n) {
+
+    const count = async (sql: string, params: unknown[]) => {
+      const found = await conn.run(sql, params as never);
+      const [[n]] = (await found.getRows()) as [[bigint]];
+      return n > 0n;
+    };
+    const tableExists = (table: string) =>
+      count(
+        `SELECT count(*) FROM information_schema.tables
+          WHERE table_catalog = 'private' AND table_name = $1`,
+        [table],
+      );
+    const columnExists = (table: string, column: string) =>
+      count(
+        `SELECT count(*) FROM information_schema.columns
+          WHERE table_catalog = 'private' AND table_name = $1 AND column_name = $2`,
+        [table, column],
+      );
+    const readDdl = (file: string) => readFile(join(PRIVATE_SCHEMA_DIR, file), "utf8");
+    const apply = async (ddl: string) => {
       await conn.run(`USE private`);
-      const files = (await readdir(PRIVATE_SCHEMA_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      for (const file of files) {
-        await conn.run(await readFile(join(PRIVATE_SCHEMA_DIR, file), "utf8"));
+      try {
+        await conn.run(ddl);
+      } finally {
+        await conn.run(`USE memory`);
       }
-    } else {
-      // The private store outlives the blow-away era (it holds live sessions
-      // and tokens), so columns added to its schema are patched in here rather
-      // than by rebuild. CHECKPOINT per docs/runbooks: DuckDB < 1.6 can fail
-      // WAL replay after DDL (beeline-vyi).
-      const hasIconUrl = await conn.run(
-        `SELECT count(*) FROM information_schema.columns
-         WHERE table_catalog = 'private' AND table_name = 'inat_oauth_token' AND column_name = 'icon_url'`,
-      );
-      const [[iconUrlCount]] = (await hasIconUrl.getRows()) as [[bigint]];
-      if (iconUrlCount === 0n) {
-        await conn.run(`ALTER TABLE private.inat_oauth_token ADD COLUMN icon_url TEXT`);
-        await conn.run(`CHECKPOINT private`);
-      }
-      // Sessions used to be keyed on person.entity_id, which a rebuild
-      // redraws — so after a reseed each one resolved to whoever inherited
-      // its number (beeline-ten). Rekeyed on the iNat user, which is stable.
-      // Dropped rather than migrated: a session is a bearer credential with a
-      // 30-day sliding expiry, and translating the old rows would mean
-      // trusting the very ids that were the bug. Everyone signs in once more;
-      // their OAuth tokens are untouched, so it costs a redirect.
-      const oldKey = await conn.run(
-        `SELECT count(*) FROM information_schema.columns
-         WHERE table_catalog = 'private' AND table_name = 'session' AND column_name = 'person_id'`,
-      );
-      const [[oldKeyCount]] = (await oldKey.getRows()) as [[bigint]];
-      if (oldKeyCount > 0n) {
+    };
+
+    // Per table, not all-or-nothing. This store outlives the blow-away era, so
+    // it is met in more states than "fresh" and "current": the patch below
+    // drops a table, and a crash in the wrong microsecond would leave the
+    // store holding some of its tables and not others. Creating whatever is
+    // missing repairs every one of those states — where a single "is it
+    // fresh?" probe sent a half-patched store down the fresh path to re-run
+    // DDL for a table that still existed, which is an unrecoverable boot crash
+    // on the store holding the OAuth tokens.
+    const files = (await readdir(PRIVATE_SCHEMA_DIR)).filter((f) => f.endsWith(".sql")).sort();
+    let created = false;
+    for (const file of files) {
+      const ddl = await readDdl(file);
+      const table = /CREATE TABLE (\w+)/.exec(ddl)?.[1];
+      if (table === undefined || (await tableExists(table))) continue;
+      await apply(ddl);
+      created = true;
+    }
+    // CHECKPOINT per docs/runbooks: DuckDB < 1.6 can fail WAL replay after DDL
+    // and leave the file unopenable (beeline-vyi).
+    if (created) await conn.run(`CHECKPOINT private`);
+
+    // Columns added to a table that already exists are patched in rather than
+    // rebuilt, since the rows are live.
+    if (!(await columnExists("inat_oauth_token", "icon_url"))) {
+      await conn.run(`ALTER TABLE private.inat_oauth_token ADD COLUMN icon_url TEXT`);
+      await conn.run(`CHECKPOINT private`);
+    }
+
+    // Sessions used to be keyed on person.entity_id, which a rebuild redraws —
+    // so after a reseed each one resolved to whoever inherited its number
+    // (beeline-ten). Rekeyed on the iNat user, which is stable. Dropped rather
+    // than translated: rewriting the rows would mean trusting the very ids
+    // that were the bug. Everyone signs in once more, their OAuth tokens
+    // untouched; last_seen_at goes with the rows (beeline-dji).
+    if (await columnExists("session", "person_id")) {
+      // One transaction, so a crash cannot leave the store with tokens and no
+      // session table — and the loop above would repair it even if it did.
+      await conn.run(`BEGIN TRANSACTION`);
+      try {
         await conn.run(`DROP TABLE private.session`);
-        await conn.run(`CREATE TABLE private.session (
-          id           TEXT PRIMARY KEY,
-          inat_user_id BIGINT NOT NULL,
-          created_at   TIMESTAMP NOT NULL DEFAULT current_timestamp,
-          last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp
-        )`);
-        await conn.run(`CHECKPOINT private`);
+        await apply(await readDdl(SESSION_SCHEMA));
+        await conn.run(`COMMIT`);
+      } catch (err) {
+        await conn.run(`ROLLBACK`);
+        throw err;
       }
+      await conn.run(`CHECKPOINT private`);
     }
   } finally {
     conn.closeSync();

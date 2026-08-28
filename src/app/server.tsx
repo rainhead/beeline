@@ -9,7 +9,7 @@ import { islandsSrc, styleVersion } from "./assets.js";
 import { registerAuthRoutes, signInHref, type InatClient } from "./auth.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
-import { deleteSession, SESSION_COOKIE, type AppEnv, type Session, type SessionResolver } from "./session.js";
+import { deleteSession, endSessionsFor, SESSION_COOKIE, type AppEnv, type Session, type SessionResolver } from "./session.js";
 import { resolveActing, startActing, stopActing } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
@@ -204,10 +204,12 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
     // Refused rather than silently ignored: setting a cookie the resolver
     // would throw away on the next request looks to the user like the switch
     // simply not working.
-    if (!c.get("acting").canActFor.some((d) => d.personId === wanted)) {
+    const grant = c.get("acting").canActFor.find((d) => d.personId === wanted);
+    if (grant === undefined) {
       return c.text(c.get("m").errors.forbidden, 403);
     }
-    startActing(c, wanted, config.origin);
+    // The cookie carries the name, not the id it was picked by (acting.ts).
+    startActing(c, grant.name, config.origin);
     return c.redirect("/");
   });
 
@@ -586,9 +588,25 @@ export function createApp({ db, config, inat, resolveSession, jobs, correctionsP
 
     await upsertOverlay(overlayPath, rows);
     if (conn === undefined) return showPerson(c, m.people.saved);
+    const boundBefore = person.inat_user_id;
     const applied = await applyPersonOverlay(conn, rows);
     if (applied.unresolved.length > 0) {
       return showPerson(c, undefined, applied.unresolved.map((u) => u.reason).join("; "));
+    }
+    // Whatever this account was, it stops being it now: a session issued under
+    // the old binding must not survive to be revived under the new one
+    // (beeline-ten). Both sides — the iNat user being taken away and the one
+    // being given — so neither a departing volunteer nor the person inheriting
+    // their account keeps a cookie the other made.
+    if (rows.some((r) => r.field === "inat_user_id")) {
+      const boundAfter = await db
+        .selectFrom("inat_account")
+        .select("inat_user_id")
+        .where("person_id", "=", person.person_id)
+        .executeTakeFirst();
+      for (const uid of [boundBefore, boundAfter?.inat_user_id]) {
+        if (uid !== null && uid !== undefined) await endSessionsFor(db, uid);
+      }
     }
     return showPerson(c, m.people.savedRebuild);
   };

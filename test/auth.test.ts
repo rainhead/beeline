@@ -6,7 +6,7 @@ import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { attachPrivateStore } from "../src/app/db.js";
 import { createApp } from "../src/app/server.js";
-import { cookieSessionResolver } from "../src/app/session.js";
+import { cookieSessionResolver, endSessionsFor, purgeIdleSessions } from "../src/app/session.js";
 import { createMemoryDb } from "./helpers.js";
 
 const ORIGIN = "http://localhost:3054";
@@ -264,6 +264,70 @@ describe("iNat OAuth sign-in", () => {
     expect(
       await db.selectFrom("private.session").select("inat_user_id").execute(),
     ).toEqual([{ inat_user_id: 501n }]);
+  });
+
+  it("a store left holding tokens and no session table boots and repairs itself", async () => {
+    // The crash window the rekey used to open: DROP committed, CREATE not.
+    // The old probe asked "is there a session table?", got no, and replayed
+    // the whole private schema — including a CREATE for the token table that
+    // still existed, which is an unrecoverable boot crash on the store
+    // holding real OAuth tokens. Each table is now created on its own.
+    const { instance, conn } = await createMemoryDb();
+    const file = join(await mkdtemp(join(tmpdir(), "beeline-private-")), "private.duckdb");
+    await conn.run(`ATTACH '${file}' AS half`);
+    await conn.run(`USE half`);
+    await conn.run(`CREATE TABLE inat_oauth_token (
+      inat_user_id BIGINT PRIMARY KEY, login TEXT NOT NULL, icon_url TEXT,
+      access_token TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+      last_login_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
+    await conn.run(`INSERT INTO inat_oauth_token (inat_user_id, login, access_token)
+                    VALUES (501, 'memberbee', 'tok')`);
+    await conn.run(`USE memory`);
+    await conn.run(`DETACH half`);
+    conn.closeSync();
+
+    const { instance: fresh } = await createMemoryDb();
+    await attachPrivateStore(fresh, { path: file, key: null });
+    const db = createKysely(fresh);
+    // The missing table is built; the surviving one is untouched.
+    await db.insertInto("private.session").values({ id: "s", inat_user_id: 501 }).execute();
+    expect(await db.selectFrom("private.inat_oauth_token").select("login").execute()).toEqual([
+      { login: "memberbee" },
+    ]);
+  });
+
+  it("rebinding an account does not revive the sessions it used to authorise", async () => {
+    // Resolution failing is not revocation: an unbound session's last_seen_at
+    // stops sliding, so the idle cutoff never reaches it, and binding that
+    // iNat user to somebody else revived every cookie ever issued for it — as
+    // that person, with their rights. Unbind-then-rebind is what /people is
+    // for, so this is the ordinary path (beeline-ten).
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
+    const cb = await signIn(app);
+    const session = /beeline_session=([a-f0-9]+)/.exec(cb.headers.get("set-cookie")!)![1];
+
+    await db.deleteFrom("inat_account").where("inat_user_id", "=", 501n).execute();
+    await db.insertInto("person").values({ entity_id: 12, display_name: "Someone Else" }).execute();
+    await db
+      .insertInto("inat_account")
+      .values({ person_id: 12, inat_user_id: 501, login: "memberbee" })
+      .execute();
+
+    // Without the revocation this is a 200 — as person 12.
+    await endSessionsFor(db, 501);
+    expect((await app.request("/", { headers: { cookie: `beeline_session=${session}` } })).status).toBe(401);
+  });
+
+  it("the idle purge also collects sessions whose account is gone", async () => {
+    // They can never age out on their own: last_seen_at stops moving the
+    // moment they stop resolving.
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
+    await signIn(app);
+    await db.deleteFrom("inat_account").where("inat_user_id", "=", 501n).execute();
+    expect(await db.selectFrom("private.session").selectAll().execute()).toHaveLength(1);
+    await purgeIdleSessions(db);
+    expect(await db.selectFrom("private.session").selectAll().execute()).toEqual([]);
   });
 
   it("stale session ids resolve to nobody", async () => {

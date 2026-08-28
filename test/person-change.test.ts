@@ -297,6 +297,32 @@ describe("recording what a pass over the store found", () => {
     expect((await record(promotion)).appended).toBe(0);
   });
 
+  it("does not hand a login's next holder the last one's history when neither has a name of their own", async () => {
+    // The handover again, with the newcomer ALSO sharing a display name, so
+    // the account is the reference on both sides and the exact hit is the
+    // only evidence there is. It is not evidence: an account is exactly the
+    // thing that moves between people here.
+    await add(`INSERT INTO person (entity_id, display_name, given_name) VALUES
+                 (1, 'Pat Pederson', 'Pat'), (3, 'Pat Pederson', 'Patricia')`);
+    await add(`INSERT INTO inat_account VALUES (1, 111, 'pandg')`);
+    await record(promotion);
+
+    await add(`DELETE FROM inat_account WHERE person_id = 1`);
+    await add(`INSERT INTO person (entity_id, display_name, given_name) VALUES
+                 (2, 'Robert Pederson', 'Robert'), (4, 'Robert Pederson', 'Bob')`);
+    await add(`INSERT INTO inat_account VALUES (2, 111, 'pandg')`);
+    await record(promotion);
+
+    // Nothing of Pat's is rewritten: Robert arrives, with nothing said about
+    // what he was before, because he was not anything before. The two do
+    // share the reference — an account is the only thing naming either of
+    // them, and it has moved — which is the limit a name-or-account
+    // vocabulary has and the module docstring states.
+    const onTheAccount = (await logged()).filter((r) => r[0] === "inat:111");
+    expect(onTheAccount.filter((r) => r[2] !== "")).toEqual([]);
+    expect((await record(promotion)).appended).toBe(0);
+  });
+
   it("does not hand a household's incoming partner the login-holder's history", async () => {
     // The Pedersons: a shared login moved off Pat and onto the newly admitted
     // Robert, the way an overlay `create` plus a binding does it. An account

@@ -96,6 +96,23 @@ export interface SessionTable {
 
 // schema/020_animal.sql
 
+/** schema/020: the ranks animal.rank may take, in order. */
+export interface AnimalRankTable {
+  rank: string;
+  /** Deeper is larger, gapped by 10. Compare, never display. */
+  ordinal: number;
+  italic: boolean;
+}
+
+/** schema/115: a qualifier on a determination too coarse to carry one. */
+export interface DeterminationMisplacedQualifierView {
+  entity_id: number;
+  specimen_id: number;
+  qualifier: DeterminationQualifier;
+  rank: string;
+  scientific_name: string;
+}
+
 export interface AnimalTable {
   entity_id: Generated<number>;
   parent_id: number | null;
@@ -332,6 +349,8 @@ export interface Database {
   blocking_sample: BlockingSampleView;
   season: SeasonView;
   settled_sample: SettledSampleView;
+  animal_rank: AnimalRankTable;
+  determination_misplaced_qualifier: DeterminationMisplacedQualifierView;
   sample_elevation_stale: SampleElevationStaleView;
   sample_elevation_pending: SampleElevationPendingView;
   printable_sample: PrintableSampleView;

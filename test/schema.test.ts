@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb, rows } from "./helpers.js";
+import { isItalicRank } from "../src/app/views/components/taxon.js";
 
 let conn: DuckDBConnection;
 
@@ -90,6 +91,65 @@ describe("schema application", () => {
       conn.run(`INSERT INTO sample_location (sample_id, latitude, longitude, elevation_m, source)
                 SELECT max(entity_id), 44.5, -123.2, 72, 'inat_public' FROM sample`),
     ).rejects.toThrow(/CHECK/i);
+  });
+
+  test("the rank table and the renderer agree about italics", async () => {
+    // Two lists that must not drift, kept separate on purpose: animal_rank
+    // holds the ranks this store admits, and TaxonName's set errs wider
+    // because it has to do something sensible with a rank it has never heard
+    // of. Where they overlap they have to say the same thing, or a name is
+    // set one way in a listing and another on a label.
+    const ranks = (await rows(conn, "SELECT rank, italic FROM animal_rank ORDER BY ordinal")) as [
+      string,
+      boolean,
+    ][];
+    expect(ranks.length).toBeGreaterThan(0);
+    for (const [rank, italic] of ranks) {
+      expect([rank, isItalicRank(rank)]).toEqual([rank, italic]);
+    }
+  });
+
+  test("ranks order deeper-is-larger, with room to insert one", async () => {
+    const [[genus], [species]] = (await rows(
+      conn,
+      "SELECT ordinal FROM animal_rank WHERE rank IN ('genus', 'species') ORDER BY ordinal",
+    )) as [[number], [number]];
+    expect(species).toBeGreaterThan(genus);
+    // Gapped, so a rank between two others does not renumber the rest.
+    expect(species - genus).toBeGreaterThan(1);
+  });
+
+  test("a rank the store does not admit is refused, and so is a duplicate name", async () => {
+    await expect(
+      conn.run("INSERT INTO animal (rank, scientific_name) VALUES ('cultivar', 'Whatever')"),
+    ).rejects.toThrow();
+    await conn.run("INSERT INTO animal (rank, scientific_name) VALUES ('genus', 'Bombus')");
+    await expect(
+      conn.run("INSERT INTO animal (rank, scientific_name) VALUES ('genus', 'Bombus')"),
+    ).rejects.toThrow();
+    // Same name at a different rank is not a duplicate: subgenus Bombus is a
+    // real node inside genus Bombus.
+    await conn.run("INSERT INTO animal (rank, scientific_name) VALUES ('subgenus', 'Bombus')");
+  });
+
+  test("a qualifier below species rank is caught by the view a CHECK cannot be", async () => {
+    // The rule spans two tables — "species or finer" is a fact about
+    // animal_rank — so the engine cannot hold it and the view does
+    // (schema/115). Nothing produces this today; the determination UI will be
+    // the first writer that can (beeline-tgu).
+    expect(await rows(conn, "SELECT entity_id FROM determination_misplaced_qualifier")).toEqual([]);
+
+    await conn.run(`INSERT INTO sample (kind, collector_id, sample_number, date_start, date_end)
+                    VALUES ('net', (SELECT min(entity_id) FROM person), 'q1', DATE '2026-07-01', DATE '2026-07-01')`);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number)
+                    SELECT max(entity_id), 1 FROM sample`);
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, qualifier, is_expert, channel)
+                    SELECT (SELECT max(entity_id) FROM specimen),
+                           (SELECT entity_id FROM animal WHERE rank = 'genus' AND scientific_name = 'Bombus'),
+                           'cf.', true, 'in_app'`);
+    expect(
+      await rows(conn, "SELECT rank, scientific_name, qualifier FROM determination_misplaced_qualifier"),
+    ).toEqual([["genus", "Bombus", "cf."]]);
   });
 
   test("verbatim catalog numbers admit historical duplicates", async () => {

@@ -93,6 +93,18 @@ export interface SessionTable {
   last_seen_at: Generated<Date>;
 }
 
+// schema/private/030_activity.sql
+
+/**
+ * When somebody was last here, outliving the session that observed it —
+ * destroying sessions is a normal part of auth and used to age the roster's
+ * "Last seen" silently (beeline-dji).
+ */
+export interface PersonActivityTable {
+  inat_user_id: BigIntCol;
+  last_seen_at: Generated<Date>;
+}
+
 // schema/020_animal.sql
 
 /** schema/020: the ranks animal.rank may take, in order. */
@@ -424,4 +436,5 @@ export interface Database {
   // Attached private store (ADR 0003), catalog-qualified:
   "private.inat_oauth_token": InatOauthTokenTable;
   "private.session": SessionTable;
+  "private.person_activity": PersonActivityTable;
 }

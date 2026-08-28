@@ -64,7 +64,11 @@ export interface RosterRow {
   /** When they last collected, and when they were last here. Both say the
    * same thing in different registers: is this person still active. */
   last_sample: Date | string | null;
-  last_seen: Date | string | null;
+  /** A request they made. Null for anyone who has not been here since
+   * person_activity existed, which is when the sign-in below has to answer. */
+  last_visit: Date | string | null;
+  /** When they last signed in — the weaker answer, printed as itself. */
+  last_login: Date | string | null;
 }
 
 export interface RosterQuery {
@@ -111,26 +115,40 @@ export async function hasLegacyEvidence(db: Kysely<Database>): Promise<boolean> 
 /**
  * Whether the private store is attached (ADR 0003). It holds when somebody
  * was last here; a store opened without it — tests, a CLI run — simply has no
- * answer, rather than failing to have one.
+ * answer, rather than failing to have one. All three tables or none: the app
+ * creates whichever are missing at boot (src/app/db.ts), so a store holding
+ * two of them is a state only something other than the app could produce, and
+ * a blank column is the right answer to it.
  */
 export async function hasSessions(db: Kysely<Database>): Promise<boolean> {
   const found = await sql<{ n: number | bigint }>`
     SELECT count(*) AS n FROM information_schema.tables
-    WHERE table_catalog = 'private' AND table_name IN ('session', 'inat_oauth_token')`.execute(db);
-  return Number(found.rows[0]?.n ?? 0) === 2;
+    WHERE table_catalog = 'private'
+      AND table_name IN ('session', 'inat_oauth_token', 'person_activity')`.execute(db);
+  return Number(found.rows[0]?.n ?? 0) === 3;
 }
 
 /**
- * When somebody was last here. The session row is the truer answer — it slides
- * with every request — but sessions expire and are purged, so the sign-in
- * behind them is the fallback that survives longer. Neither is a credential;
- * both live in the private store because they sit beside ones that are.
+ * When somebody was last here — a visit, meaning a request they actually made.
+ * `person_activity` is the durable record and `session` the live one, fresher
+ * inside the activity table's one-hour throttle; both are the same kind of
+ * evidence, so the later wins.
  */
-const lastSeenSql = sql`greatest(
+const lastVisitSql = sql`greatest(
+  (SELECT act.last_seen_at FROM private.person_activity act WHERE act.inat_user_id = a.inat_user_id),
   (SELECT max(sn.last_seen_at) FROM private.session sn
      JOIN inat_account ia ON ia.inat_user_id = sn.inat_user_id
-    WHERE ia.person_id = p.entity_id),
-  (SELECT t.last_login_at FROM private.inat_oauth_token t WHERE t.inat_user_id = a.inat_user_id))`;
+    WHERE ia.person_id = p.entity_id))`;
+
+/**
+ * When they last signed in — weaker evidence, and kept apart from the visit
+ * rather than folded into one date with it. Tokens do not expire, so this can
+ * be months behind somebody who has used the site every week since; the roster
+ * reads the column to judge whether a person is still active, and that is
+ * exactly the judgement a silent fallback got wrong (beeline-dji).
+ */
+const lastLoginSql = sql`(
+  SELECT t.last_login_at FROM private.inat_oauth_token t WHERE t.inat_user_id = a.inat_user_id)`;
 
 /**
  * When they last collected. Read from sample_collector, never from
@@ -174,7 +192,8 @@ export interface RosterPage {
 export async function listRoster(db: Kysely<Database>, query: RosterQuery): Promise<RosterPage> {
   const evidence = await hasLegacyEvidence(db);
   const sessions = await hasSessions(db);
-  const lastSeen = sessions ? lastSeenSql : sql`NULL::TIMESTAMP`;
+  const lastVisit = sessions ? lastVisitSql : sql`NULL::TIMESTAMP`;
+  const lastLogin = sessions ? lastLoginSql : sql`NULL::TIMESTAMP`;
   const offset = (query.page - 1) * PAGE_SIZE;
   const term = `%${query.search.toLowerCase()}%`;
 
@@ -224,7 +243,8 @@ export async function listRoster(db: Kysely<Database>, query: RosterQuery): Prom
               JOIN person h ON h.entity_id = ia.person_id
               WHERE ia.inat_user_id = best.top_uid AND ia.person_id <> p.entity_id) AS top_holder,
              ${lastSampleSql} AS last_sample,
-             ${lastSeen} AS last_seen
+             ${lastVisit} AS last_visit,
+             ${lastLogin} AS last_login
       FROM person p
       LEFT JOIN inat_account a ON a.person_id = p.entity_id
       LEFT JOIN person_membership pm ON pm.person_id = p.entity_id
@@ -308,7 +328,9 @@ export interface PersonDetail extends RosterRow {
 }
 
 export async function personDetail(db: Kysely<Database>, personId: number): Promise<PersonDetail | null> {
-  const lastSeen = (await hasSessions(db)) ? lastSeenSql : sql`NULL::TIMESTAMP`;
+  const sessions = await hasSessions(db);
+  const lastVisit = sessions ? lastVisitSql : sql`NULL::TIMESTAMP`;
+  const lastLogin = sessions ? lastLoginSql : sql`NULL::TIMESTAMP`;
   const found = await sql<PersonDetail>`
     SELECT p.entity_id AS person_id, p.display_name, p.given_name, p.family_name, p.label_name,
            a.login, a.inat_user_id,
@@ -322,7 +344,8 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
                      JOIN person p2 ON p2.entity_id = d.acts_for_id
                      WHERE d.person_id = p.entity_id), '') AS acts_for,
            ${lastSampleSql} AS last_sample,
-           ${lastSeen} AS last_seen
+           ${lastVisit} AS last_visit,
+           ${lastLogin} AS last_login
     FROM person p
     LEFT JOIN inat_account a ON a.person_id = p.entity_id
     LEFT JOIN person_membership pm ON pm.person_id = p.entity_id

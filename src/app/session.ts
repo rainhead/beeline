@@ -49,6 +49,31 @@ export const SESSION_COOKIE = "beeline_session";
 const idleCutoff = sql<Date>`current_timestamp - INTERVAL 30 DAY`;
 
 /**
+ * Record that this person was here, in the private store's `person_activity`
+ * — outside the session, so that ending sessions cannot age it (beeline-dji).
+ *
+ * Throttled to an hour, and that is the whole reason this is not simply a
+ * second column on `session`: the session row slides on every request because
+ * a 30-day expiry has to be measured from the real last one, while the only
+ * question asked of this table is whether a volunteer is still turning up.
+ * An hour costs one write per person per hour instead of one per request.
+ *
+ * It cannot replace `session.last_seen_at` either, in the other direction:
+ * the idle cutoff is per credential, so a person's activity on their phone
+ * would otherwise keep an abandoned laptop's cookie alive forever.
+ *
+ * `now()` rather than `current_timestamp` in the conflict clause: DuckDB binds
+ * a bare identifier there against the target table and reports the keyword as
+ * a missing column. Both engines have `now()`.
+ */
+async function recordActivity(db: Kysely<Database>, inatUserId: bigint | number): Promise<void> {
+  await sql`
+    INSERT INTO private.person_activity (inat_user_id, last_seen_at) VALUES (${inatUserId}, now())
+    ON CONFLICT (inat_user_id) DO UPDATE SET last_seen_at = excluded.last_seen_at
+     WHERE person_activity.last_seen_at < now() - INTERVAL '1 hour'`.execute(db);
+}
+
+/**
  * Keyed on the iNat user, not the person: `entity_id` is a per-store sequence
  * draw that a rebuild or a `db:reseed` redraws, so a session holding one
  * resolved to whoever inherited the number (beeline-ten). The person is
@@ -81,7 +106,13 @@ export function cookieSessionResolver(db: Kysely<Database>): SessionResolver {
       .leftJoin("private.inat_oauth_token as token", "token.inat_user_id", "private.session.inat_user_id")
       .where("private.session.id", "=", id)
       .where("last_seen_at", ">", idleCutoff)
-      .select(["inat_account.person_id", "person.display_name", "inat_account.login", "token.icon_url"])
+      .select([
+        "inat_account.person_id",
+        "inat_account.inat_user_id",
+        "person.display_name",
+        "inat_account.login",
+        "token.icon_url",
+      ])
       .executeTakeFirst();
     if (row === undefined) return null;
     await db
@@ -89,6 +120,7 @@ export function cookieSessionResolver(db: Kysely<Database>): SessionResolver {
       .set({ last_seen_at: sql`current_timestamp` })
       .where("id", "=", id)
       .execute();
+    await recordActivity(db, row.inat_user_id);
     return { personId: row.person_id, login: row.login, iconUrl: row.icon_url };
   };
 }

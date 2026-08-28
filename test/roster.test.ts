@@ -7,7 +7,7 @@ import { insertCleanSample } from "./helpers.js";
 import { createMemoryDb } from "./helpers.js";
 import { createApp } from "../src/app/server.js";
 import { readOverlay, type PersonOverlayRow } from "../src/person-overlay.js";
-import { seedAdmins } from "../src/app/db.js";
+import { attachPrivateStore, seedAdmins } from "../src/app/db.js";
 import type { InatClient } from "../src/app/auth.js";
 
 const unusedInat: InatClient = {
@@ -20,8 +20,12 @@ const unusedInat: InatClient = {
  * The roster screen. Sandbox, not development, because development makes
  * everyone an admin and the gate is half of what these tests check.
  */
-async function rosterApp(signedIn: { personId: number; admin: boolean }) {
+async function rosterApp(signedIn: { personId: number; admin: boolean; privateStore?: boolean }) {
   const { instance, conn } = await createMemoryDb();
+  // Off by default: most of these tests are about the roster's own reasoning,
+  // and a store with no private half is a real state (a CLI run, a restore)
+  // that one of them checks. The activity tests below ask for it.
+  if (signedIn.privateStore) await attachPrivateStore(instance, { path: ":memory:", key: null });
   await conn.run(`INSERT INTO person (entity_id, display_name, given_name, family_name)
                   VALUES (1, 'Ada Collector', 'Ada', 'Collector'),
                          (2, 'Bo Netter', 'Bo', 'Netter'),
@@ -184,6 +188,62 @@ describe("the roster screen", () => {
     expect(body).toContain("<th>Last sample</th>");
     expect(body).toContain("<th>Last seen</th>");
     expect(body).toContain("Aug 12, 2025");
+  });
+
+  /**
+   * "Last seen" answers from two sources of different strength, and used to
+   * print them as one date. Sessions are destroyed for ordinary reasons — an
+   * expiry purge, an account rebind, the beeline-ten rekey — and each one
+   * silently dropped the column back to the sign-in, which for a non-expiring
+   * iNat token can be months behind somebody who has been here every week
+   * (beeline-dji). So the weak answer now says that it is the weak one.
+   */
+  describe("last seen says which evidence it is", () => {
+    const visited = async (when: string) => {
+      const ctx = await rosterApp({ personId: 3, admin: true, privateStore: true });
+      await ctx.conn.run(`INSERT INTO private.person_activity (inat_user_id, last_seen_at)
+                          VALUES (111, TIMESTAMP '${when}')`);
+      return ctx;
+    };
+    const signedIn = async (when: string) => {
+      const ctx = await rosterApp({ personId: 3, admin: true, privateStore: true });
+      await ctx.conn.run(`INSERT INTO private.inat_oauth_token (inat_user_id, login, access_token, last_login_at)
+                          VALUES (111, 'adacollects', 'tok', TIMESTAMP '${when}')`);
+      return ctx;
+    };
+
+    it("prints a visit plain", async () => {
+      const ctx = await visited("2026-03-04 09:00:00");
+      const body = await (await ctx.app.request("/people?q=Ada")).text();
+      expect(body).toContain("Mar 4, 2026");
+      expect(body).not.toContain("sign-in only");
+    });
+
+    it("says so when all it has is a sign-in", async () => {
+      const ctx = await signedIn("2026-03-04 09:00:00");
+      const body = await (await ctx.app.request("/people?q=Ada")).text();
+      expect(body).toContain("Mar 4, 2026");
+      expect(body).toContain("sign-in only");
+    });
+
+    it("prefers the visit, and stops qualifying once there is one", async () => {
+      // The sign-in is the older fact here, which is the normal shape: people
+      // sign in once and then keep turning up.
+      const ctx = await visited("2026-03-04 09:00:00");
+      await ctx.conn.run(`INSERT INTO private.inat_oauth_token (inat_user_id, login, access_token, last_login_at)
+                          VALUES (111, 'adacollects', 'tok', TIMESTAMP '2025-11-01 09:00:00')`);
+      const body = await (await ctx.app.request("/people?q=Ada")).text();
+      expect(body).toContain("Mar 4, 2026");
+      expect(body).not.toContain("Nov 1, 2025");
+      expect(body).not.toContain("sign-in only");
+    });
+
+    it("still says never when neither happened", async () => {
+      const ctx = await rosterApp({ personId: 3, admin: true, privateStore: true });
+      const body = await (await ctx.app.request("/people?q=Ada")).text();
+      expect(body).not.toContain("sign-in only");
+      expect(body).toContain("<th>Last seen</th>");
+    });
   });
 
   it("has no answer for last seen rather than a wrong one, with no private store", async () => {

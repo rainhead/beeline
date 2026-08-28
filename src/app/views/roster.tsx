@@ -5,6 +5,7 @@ import {
   type BindingVerdict,
   type PersonDetail,
   type RosterPage,
+  type RosterRow,
   type RosterQuery,
   personHandle,
   rosterHref,
@@ -63,6 +64,25 @@ type Judged = {
 
 /** A date, or the dash that means it never happened. */
 const when = (m: Messages, d: Date | string | null) => (d === null ? m.people.never : m.format.date(d));
+
+/**
+ * Last seen, printed as the kind of evidence it is. A visit is a request they
+ * made; a sign-in is only that, and since iNat tokens never expire it can be
+ * months behind somebody who has been here every week. The two used to print
+ * as one date, so a person whose sessions had been destroyed read exactly like
+ * one who had really stopped coming (beeline-dji). Said only when it is the
+ * weak one — the strong answer needs no qualifier.
+ */
+const lastSeen = (m: Messages, row: Pick<RosterRow, "last_visit" | "last_login">) =>
+  row.last_visit !== null ? (
+    <>{m.format.date(row.last_visit)}</>
+  ) : row.last_login !== null ? (
+    <>
+      {m.format.date(row.last_login)} <Meta>{m.people.lastSeenSignInOnly}</Meta>
+    </>
+  ) : (
+    <>{m.people.never}</>
+  );
 
 /**
  * The short form, for a row: the two verdicts that mean something is wrong,
@@ -175,7 +195,7 @@ export function Roster({ m, page, query }: { m: Messages; page: RosterPage; quer
               </td>
               <td>{m.format.number(row.samples)}</td>
               <td>{when(m, row.last_sample)}</td>
-              <td>{when(m, row.last_seen)}</td>
+              <td>{lastSeen(m, row)}</td>
               <td>{membershipCell(m, row)}</td>
               <td>{row.is_admin ? <Chip tone="success">{p.colAdmin}</Chip> : "—"}</td>
             </tr>
@@ -226,7 +246,7 @@ export function PersonPage({
         lede={p.samplesCollected(person.samples, person.primary_samples)}
       />
       <Meta block>
-        {p.colLastSample}: {when(m, person.last_sample)} · {p.colLastSeen}: {when(m, person.last_seen)}
+        {p.colLastSample}: {when(m, person.last_sample)} · {p.colLastSeen}: {lastSeen(m, person)}
       </Meta>
       {problem !== undefined && <Callout tone="blocking">{p.problem(problem)}</Callout>}
       {notice !== undefined && <Callout tone="success">{notice}</Callout>}

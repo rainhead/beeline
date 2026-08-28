@@ -539,6 +539,14 @@ export const en = {
     /** The two activity columns: still collecting, still turning up here. */
     colLastSample: "Last sample",
     colLastSeen: "Last seen",
+    /**
+     * Said on the row only where the date is a sign-in rather than a visit.
+     * iNat tokens never expire, so that date can be months behind somebody who
+     * has used the site every week since — and the column is read to judge
+     * whether a person is still active, which is the judgement it would
+     * quietly get wrong (beeline-dji).
+     */
+    lastSeenSignInOnly: "sign-in only",
     never: "—",
     /** Not "Atlas": the column's answer is sometimes the program itself. */
     colMembership: "Belongs to",

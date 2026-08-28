@@ -1,6 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sql } from "kysely";
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
@@ -334,5 +335,67 @@ describe("iNat OAuth sign-in", () => {
     const { app } = await testApp({ inatUserId: 501, login: "memberbee" });
     const res = await app.request("/", { headers: { cookie: "beeline_session=deadbeef" } });
     expect(res.status).toBe(401);
+  });
+});
+
+/**
+ * Activity is a fact about a person, not about a credential. It used to be
+ * read from the session row, and sessions are destroyed for reasons that have
+ * nothing to do with whether somebody is still turning up: an expiry purge, an
+ * account rebind, and — twice on 2026-08-27 — the beeline-ten rekey, which
+ * dropped the table rather than translate rows keyed on an id that had become
+ * untrustworthy. Each of those quietly aged the roster's "Last seen" back to
+ * the sign-in behind it (beeline-dji).
+ */
+describe("when somebody was last here", () => {
+  const cookieFrom = (cb: Response) => `beeline_session=${/beeline_session=([a-f0-9]+)/.exec(cb.headers.get("set-cookie")!)![1]}`;
+  const activity = (db: Awaited<ReturnType<typeof testApp>>["db"]) =>
+    db.selectFrom("private.person_activity").selectAll().execute();
+
+  it("is recorded on the request path, keyed on the iNat user", async () => {
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
+    const cookie = cookieFrom(await signIn(app));
+    expect(await activity(db)).toHaveLength(0);
+
+    await app.request("/", { headers: { cookie } });
+    const [row] = await activity(db);
+    // Never person.entity_id, which is 11 here: a db:reseed redraws those,
+    // and outliving a rebuild is the point of the row (beeline-ten).
+    expect(row?.inat_user_id).toBe(501n);
+  });
+
+  it("survives every session that observed it being destroyed", async () => {
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
+    await app.request("/", { headers: { cookie: cookieFrom(await signIn(app)) } });
+
+    // The rekey drops the table; a rebind ends the sessions; the purge
+    // collects the rest. All three leave activity alone.
+    await endSessionsFor(db, 501);
+    await purgeIdleSessions(db);
+    expect(await db.selectFrom("private.session").selectAll().execute()).toHaveLength(0);
+    expect(await activity(db)).toHaveLength(1);
+  });
+
+  it("is throttled to an hour, so it costs one write per person per hour", async () => {
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
+    const cookie = cookieFrom(await signIn(app));
+    await app.request("/", { headers: { cookie } });
+    const first = (await activity(db))[0]!.last_seen_at;
+
+    // A second request inside the hour leaves the row where it is. The
+    // session's own last_seen_at still slides on every request — the 30-day
+    // expiry has to be measured from the real last one — which is why this is
+    // a separate table rather than a second column on it.
+    await app.request("/", { headers: { cookie } });
+    expect((await activity(db))[0]!.last_seen_at).toEqual(first);
+
+    // Once it is stale, the next request moves it.
+    await db
+      .updateTable("private.person_activity")
+      .set({ last_seen_at: sql`now() - INTERVAL '2 hours'` })
+      .execute();
+    await app.request("/", { headers: { cookie } });
+    expect((await activity(db))[0]!.last_seen_at).not.toEqual(first);
+    expect((await activity(db))[0]!.last_seen_at.getTime()).toBeGreaterThan(Date.now() - 60_000);
   });
 });

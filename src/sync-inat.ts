@@ -2,6 +2,7 @@ import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { refreshObservationFields } from "./refresh-observation-fields.js";
 
 /**
  * Authenticated iNaturalist sync (v2 API). One run = one source + window,
@@ -180,6 +181,11 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
       );
     }
 
+    // Inside the run's own transaction, so a store never holds loads whose
+    // shredded form does not match them: this table is the only stored
+    // derivation in the schema and its correctness is entirely that the
+    // refresh ran (schema/060, beeline-2c3.36).
+    await refreshObservationFields(conn);
     await conn.run(`UPDATE sync_run SET completed_at = now() WHERE entity_id = $1`, [syncRunId]);
     await conn.run("COMMIT");
     return { syncRunId, fetched, newLoads, unchanged };

@@ -166,7 +166,7 @@ JOIN (
 -- and a host must be a vascular plant: anything else — a moss, a fungus, or
 -- the bee itself — means the observation is identified as the wrong subject.
 -- Mirrors the reference phylumPlant ≠ Tracheophyta check, with ancestry read
--- from the cached projection (observation_current_fields) instead of a
+-- from the stored projection (observation_field, schema/060) instead of a
 -- Darwin Core phylum string. IS FALSE keeps stale loads silent: NULL means
 -- no taxon or a load predating ancestor_ids, not a non-plant host.
 CREATE VIEW qc_rule_non_tracheophyte_host AS
@@ -176,7 +176,7 @@ SELECT s.entity_id AS sample_id,
        concat('observation taxon ', coalesce(f.host_taxon_name, CAST(f.host_taxon_id AS TEXT)),
               ' is not a vascular plant') AS details
 FROM sample s
-JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id
+JOIN observation_field f ON f.inat_id = s.inat_observation_id
 WHERE f.host_is_tracheophyte IS FALSE;
 
 -- The sample's evidencing observation asserts a different specimen count
@@ -188,7 +188,7 @@ SELECT s.entity_id AS sample_id,
        'count_mismatch' AS rule_name,
        concat('observation says ', f.specimen_count_raw, ' but sample count is ', s.specimen_count) AS details
 FROM sample s
-JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id
+JOIN observation_field f ON f.inat_id = s.inat_observation_id
 WHERE try_cast(f.specimen_count_raw AS INTEGER) IS NOT NULL
   AND try_cast(f.specimen_count_raw AS INTEGER) <> s.specimen_count;
 
@@ -219,7 +219,7 @@ SELECT s.entity_id AS sample_id,
               count(*), ' completed covering run(s), latest started ',
               max(r.started_at)) AS details
 FROM sample s
-JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id
+JOIN observation_field f ON f.inat_id = s.inat_observation_id
 JOIN last_seen ls ON ls.inat_id = f.inat_id
 JOIN seen_source ss ON ss.inat_id = f.inat_id
 JOIN sync_run r

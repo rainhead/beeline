@@ -268,6 +268,41 @@ export interface SyncRunTable {
   completed_at: ColumnType<Date, Date | string, Date | string> | null;
 }
 
+/**
+ * schema/060: the stored form of the projection observation_current_fields
+ * defines. Read this rather than the view — the view costs ~200 ms a scan
+ * and three QC rules go through it (beeline-2c3.36). Refreshed whole inside
+ * the sync run that writes observation_load, and never otherwise.
+ */
+export interface ObservationFieldTable {
+  inat_id: BigIntCol;
+  observed_on: ColumnType<Date, Date | string, Date | string> | null;
+  latitude: number | null;
+  longitude: number | null;
+  private_latitude: number | null;
+  private_longitude: number | null;
+  positional_accuracy: number | null;
+  public_positional_accuracy: number | null;
+  geoprivacy: string | null;
+  taxon_geoprivacy: string | null;
+  viewer_trusted: boolean | null;
+  user_id: BigIntCol | null;
+  user_login: string | null;
+  place_guess: string | null;
+  host_taxon_id: BigIntCol | null;
+  host_taxon_name: string | null;
+  /** Null = no taxon, or a load predating ancestor_ids — not "not a plant". */
+  host_is_tracheophyte: boolean | null;
+  quality_grade: string | null;
+  sample_number_raw: string | null;
+  specimen_count_raw: string | null;
+}
+
+/** schema/105: observation_field disagreeing with a fresh shred of the loads. */
+export interface ObservationFieldStaleView {
+  inat_id: BigIntCol;
+}
+
 // schema/070_jobs.sql
 
 export type JobOutcome = "succeeded" | "failed";
@@ -354,6 +389,7 @@ export interface Database {
   qc_rule: QcRuleTable;
   sample_promotion_finding: SamplePromotionFindingTable;
   sync_run: SyncRunTable;
+  observation_field: ObservationFieldTable;
   job_run: JobRunTable;
   determination_of_record: DeterminationTable;
   qc_finding: QcFindingView;
@@ -369,6 +405,7 @@ export interface Database {
   sample_elevation_pending: SampleElevationPendingView;
   printable_sample: PrintableSampleView;
   pending_print_sample: PendingPrintSampleView;
+  observation_field_stale: ObservationFieldStaleView;
   // Attached private store (ADR 0003), catalog-qualified:
   "private.inat_oauth_token": InatOauthTokenTable;
   "private.session": SessionTable;

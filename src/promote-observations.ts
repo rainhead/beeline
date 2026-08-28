@@ -1,6 +1,7 @@
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { refreshObservationFields } from "./refresh-observation-fields.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -31,12 +32,19 @@ export async function promoteObservations(
 
   await conn.run("BEGIN TRANSACTION");
   try {
+    // Before anything reads it. A sync already refreshed this, but promotion
+    // is also how a reseeded store, a hand-staged test store, or a rebuild
+    // gets promoted — and promotion writes believed-true coordinates onto
+    // samples from this table, so reading an empty one would link nothing
+    // and say so as a number rather than as an error
+    // (src/refresh-observation-fields.ts).
+    await refreshObservationFields(conn);
     const accountsBefore = await scalar("SELECT count(*) FROM inat_account");
     await conn.run(await readFile(`${INGEST_DIR}promote-observations.sql`, "utf8"));
     const counts: ObservationPromotionCounts = {
       linkedSamples: await scalar(
         `SELECT count(*) FROM sample s
-         JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id`,
+         JOIN observation_field f ON f.inat_id = s.inat_observation_id`,
       ),
       trustedLocations: await scalar(
         `SELECT count(*) FROM observation_location_candidate WHERE source = 'inat_trusted'`,
@@ -46,7 +54,7 @@ export async function promoteObservations(
       ),
       obscuredWithheld: await scalar(
         `SELECT count(*) FROM sample s
-         JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id
+         JOIN observation_field f ON f.inat_id = s.inat_observation_id
          LEFT JOIN observation_location_candidate c ON c.sample_id = s.entity_id
          WHERE c.sample_id IS NULL`,
       ),

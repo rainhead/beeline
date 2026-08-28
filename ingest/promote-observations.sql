@@ -13,7 +13,7 @@
 UPDATE sample SET
   geoprivacy       = nullif(f.geoprivacy, 'open'),
   taxon_geoprivacy = nullif(f.taxon_geoprivacy, 'open')
-FROM observation_current_fields f
+FROM observation_field f
 WHERE sample.inat_observation_id = f.inat_id;
 
 -- ── Location candidates ──────────────────────────────────────────────────
@@ -36,7 +36,7 @@ SELECT s.entity_id AS sample_id,
             THEN f.private_longitude ELSE f.longitude END AS longitude,
        f.positional_accuracy                              AS coordinate_uncertainty_m
 FROM sample s
-JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id
+JOIN observation_field f ON f.inat_id = s.inat_observation_id
 WHERE (f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL)
    OR (f.latitude IS NOT NULL AND f.longitude IS NOT NULL
        AND nullif(f.geoprivacy, 'open') IS NULL
@@ -83,7 +83,7 @@ SELECT s.collector_id                    AS person_id,
        f.user_id,
        arg_max(f.user_login, f.inat_id)  AS login
 FROM sample s
-JOIN observation_current_fields f ON f.inat_id = s.inat_observation_id
+JOIN observation_field f ON f.inat_id = s.inat_observation_id
 WHERE f.user_id IS NOT NULL AND f.user_login IS NOT NULL
 GROUP BY s.collector_id, f.user_id;
 

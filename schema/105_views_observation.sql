@@ -46,3 +46,32 @@ SELECT o.inat_id,
      FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
      WHERE j.j ->> '$.name' = 'Number of bees collected' LIMIT 1))       AS specimen_count_raw
 FROM observation_current o;
+
+-- Whether the stored projection still says what shredding the loads would.
+--
+-- observation_field (schema/060) is the one place a view's output is kept,
+-- and the whole of its correctness is that a refresh ran. Nothing in the
+-- engine enforces that: a sync that wrote loads and skipped the refresh, or
+-- a store whose loads were inserted by hand, leaves three QC rules reading
+-- an older answer with no way to tell. So the disagreement gets a name, the
+-- same way sample_elevation_stale names an elevation about somewhere else
+-- (schema/170) — and for the same reason, that correctness living in every
+-- writer remembering is correctness one new writer can drop.
+--
+-- Symmetric: a row shredded differently, a load with no row, and a row whose
+-- observation is gone are all staleness, and EXCEPT treats NULLs as equal,
+-- which is what comparing two projections of the same JSON wants. A test
+-- asserts it empty after a sync; nothing reads it at request time, so its
+-- cost is the shred it is checking.
+CREATE VIEW observation_field_stale AS
+SELECT inat_id FROM (
+  SELECT * FROM observation_current_fields
+  EXCEPT
+  SELECT * FROM observation_field
+) missing
+UNION
+SELECT inat_id FROM (
+  SELECT * FROM observation_field
+  EXCEPT
+  SELECT * FROM observation_current_fields
+) extra;

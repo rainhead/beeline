@@ -48,11 +48,12 @@ import type { ListedCollector } from "./listings.js";
  * cutover, which is also when the numbers it names stop moving.
  *
  * Cost. `recordFindings` reads `sample_qc_finding`, whose filter does not
- * push through the union underneath it: about 440 ms on the dev store,
- * whatever the sample. That is the same scan the QC home and both listings
- * already pay per page (beeline-2c3.23), and reading anything else would be
- * a second definition of "what is wrong with this sample", which is exactly
- * what beeline-2c3.29 collapsed into one.
+ * push through the union underneath it: ~200 ms on the dev store, whatever
+ * the sample (it was ~440 until beeline-2c3.36 stored the observation
+ * projection). That is the same scan the QC home and both listings already
+ * pay per page (beeline-2c3.23), and reading anything else would be a second
+ * definition of "what is wrong with this sample", which is exactly what
+ * beeline-2c3.29 collapsed into one.
  */
 
 /** Rows of the sample page's specimen list. The largest trap sample in the

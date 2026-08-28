@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { ensureCorrectionsFile } from "./corrections.js";
 import { applyPersonOverlay, type Unresolved } from "./apply-person-overlay.js";
-import { mergeOverlays, readOverlay } from "./person-overlay.js";
+import { mergeOverlays, readOverlay, CURATED_OVERLAY } from "./person-overlay.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -98,7 +98,7 @@ export const LIVE_INPUTS: PromotionInputs = {
   determinerRegister: "ingest/determiner-register.csv",
   legacyCorrections: "ingest/legacy-corrections.csv",
   appCorrections: "data/corrections.csv",
-  curatedOverlay: "ingest/person-overlay.csv",
+  curatedOverlay: CURATED_OVERLAY,
   appOverlay: "data/person-overlay.csv",
   collectorAliases: "ingest/collector-aliases.csv",
   usernameRegister: "data/legacy/usernames.csv",

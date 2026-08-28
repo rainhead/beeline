@@ -2,7 +2,7 @@ import { serve } from "@hono/node-server";
 import { inatClient, loadInatCredentials } from "./auth.js";
 import { configFromEnv } from "./config.js";
 import { openAppDb, seedAdmins } from "./db.js";
-import { readOverlay } from "../person-overlay.js";
+import { CURATED_OVERLAY, mergeOverlays, readOverlay } from "../person-overlay.js";
 import { startScheduler } from "./jobs/framework.js";
 import { buildJobs } from "./jobs/registry.js";
 import { createApp } from "./server.js";
@@ -11,8 +11,14 @@ import { cookieSessionResolver, type SessionResolver } from "./session.js";
 const config = configFromEnv();
 const { db, instance, close } = await openAppDb(config);
 
-const seeded = await seedAdmins(db, config.adminLogins, await readOverlay(config.personOverlayPath));
-if (seeded > 0) console.log(`admin roster was empty; seeded ${seeded} from the checked-in list`);
+// Both overlays, merged as promotion merges them: the guard's job is to spot
+// a decision a person made, and half the decisions are curated in git.
+const decisions = mergeOverlays(
+  await readOverlay(CURATED_OVERLAY),
+  await readOverlay(config.personOverlayPath),
+);
+const seeded = await seedAdmins(db, config.adminLogins, decisions);
+if (seeded > 0) console.log(`seeded ${seeded} admin(s) from the checked-in list`);
 
 if (config.privateDbKey === null) {
   console.warn("BEELINE_PRIVATE_DB_KEY unset: private store is UNENCRYPTED (development only)");

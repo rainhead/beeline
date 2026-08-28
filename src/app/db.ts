@@ -143,36 +143,69 @@ export async function openAppDb(config: Pick<AppConfig, "dbPath" | "privateDbPat
  * last admin was deliberately revoked, and re-seeding the second case would
  * undo that decision at the next restart — the one thing a roster screen must
  * not do. The overlay is what tells them apart: every grant and revocation the
- * app makes is recorded there before it reaches a row, so an admin row in the
- * overlay means the question has been answered by a person, whatever the table
- * currently says.
+ * app makes is recorded there before it reaches a row, so a decision in the
+ * overlay is one a person made, whatever the table currently says.
  *
- * Seeding is therefore once per store, and the way back in after revoking
- * everyone is to remove the admin rows from the overlay (or set
- * BEELINE_ADMIN_LOGINS), not to restart and hope.
+ * The question is asked **per person**, and that is the whole of this
+ * function's design. It used to be asked of the store — seed nothing if the
+ * table holds anyone, or if the overlay records any admin decision at all —
+ * and both halves locked the sandbox out on 2026-08-28. `db:reseed` does not
+ * carry person_admin (CARRIED_TABLES is staging; the comment there says the
+ * rest is "a pure function of these, and promotion recomputes it", which is
+ * true of everything except this), so a reseeded store rebuilds the roster
+ * from the overlay alone. The only admin decision anyone had written was a
+ * grant to one new staff member — so the table came back holding exactly her,
+ * which satisfied *both* guards and permanently disabled the bootstrap for
+ * the five people who had only ever been in it. Nobody was revoked; they were
+ * simply never re-granted, and could not grant themselves because granting
+ * requires being an admin.
+ *
+ * So: someone else's grant is none of this person's business, and only a
+ * revocation of *this* person is. A `no` for them sticks across restarts,
+ * which is the property the old shape was reaching for; anything else about
+ * anyone else is ignored. Already holding a row is not a reason to skip the
+ * rest of the list.
+ *
+ * Refs are matched the two ways the roster screen writes them (personRef:
+ * `name:<display_name>` where the name is unique, `inat:<user_id>`
+ * otherwise). A hand-curated `name:` row written against a display name that
+ * promotion has since changed will not match — the rename case the applier's
+ * own resolver handles — and errs toward re-granting rather than toward
+ * locking someone out, which is the safe direction for a bootstrap.
  */
 export async function seedAdmins(
   db: Kysely<Database>,
   logins: readonly string[],
-  decisions: ReadonlyArray<{ field: string }> = [],
+  decisions: ReadonlyArray<{ person_ref: string; field: string; value: string }> = [],
 ): Promise<number> {
   if (logins.length === 0) return 0;
-  if (decisions.some((d) => d.field === "admin")) return 0;
-  const existing = await db.selectFrom("person_admin").select("person_id").executeTakeFirst();
-  if (existing !== undefined) return 0;
+  // Only revocations matter. A grant in the overlay has already put the row
+  // there (promotion applies it), so "already holds one" covers it without
+  // this needing to know whose grant it was.
+  const revoked = new Set(
+    decisions.filter((d) => d.field === "admin" && d.value === "no").map((d) => d.person_ref),
+  );
   const people = await db
-    .selectFrom("inat_account")
-    .where("login", "in", [...logins])
-    .select(["person_id", "login"])
-    .execute();
-  if (people.length === 0) return 0;
-  await db
-    .insertInto("person_admin")
-    .values(people.map((p) => ({ person_id: p.person_id, granted_by: "seed" })))
+    .selectFrom("inat_account as a")
+    .innerJoin("person as p", "p.entity_id", "a.person_id")
+    .leftJoin("person_admin as adm", "adm.person_id", "a.person_id")
+    .where("a.login", "in", [...logins])
+    .select(["a.person_id", "a.login", "a.inat_user_id", "p.display_name", "adm.person_id as holds"])
     .execute();
   const missing = logins.filter((l) => !people.some((p) => p.login === l));
   if (missing.length > 0) {
     console.warn(`admin seed: no inat_account for ${missing.join(", ")} — they cannot sign in yet`);
   }
-  return people.length;
+  const grant = people.filter(
+    (p) =>
+      p.holds === null &&
+      !revoked.has(`name:${p.display_name}`) &&
+      !revoked.has(`inat:${p.inat_user_id}`),
+  );
+  if (grant.length === 0) return 0;
+  await db
+    .insertInto("person_admin")
+    .values(grant.map((p) => ({ person_id: p.person_id, granted_by: "seed" })))
+    .execute();
+  return grant.length;
 }

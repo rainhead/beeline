@@ -352,26 +352,27 @@ describe("the admin bootstrap seed", () => {
     await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (1, 111, 'adacollects')`);
     return { db: createKysely(instance), conn };
   };
-  const decision = (field: string): PersonOverlayRow =>
-    ({ person_ref: "name:Ada Collector", field, value: "no", author: "staffer", reason: "" }) as PersonOverlayRow;
+  const decision = (field: string, value = "no", ref = "name:Ada Collector"): PersonOverlayRow =>
+    ({ person_ref: ref, field, value, author: "staffer", reason: "" }) as PersonOverlayRow;
 
   it("lets a store nobody has granted anything in", async () => {
     const { db } = await store();
     expect(await seedAdmins(db, ["adacollects"], [])).toBe(1);
   });
 
-  it("does not top up a roster that already has someone", async () => {
+  it("leaves someone who already holds it alone, and says so by seeding nobody", async () => {
     const { db, conn } = await store();
     await conn.run(`INSERT INTO person_admin (person_id) VALUES (1)`);
     expect(await seedAdmins(db, ["adacollects"], [])).toBe(0);
   });
 
-  it("does not resurrect a revocation that emptied the roster", async () => {
-    // The table alone cannot tell "never granted" from "deliberately revoked
-    // down to nobody". The overlay can, because every decision lands there
-    // first — so revoking the last admin stays revoked across a restart.
+  it("does not resurrect a revocation of this person", async () => {
+    // The table alone cannot tell "never granted" from "deliberately revoked".
+    // The overlay can, because every decision lands there first — so revoking
+    // someone on the checked-in list stays revoked across a restart.
     const { db } = await store();
     expect(await seedAdmins(db, ["adacollects"], [decision("admin")])).toBe(0);
+    expect(await seedAdmins(db, ["adacollects"], [decision("admin", "no", "inat:111")])).toBe(0);
   });
 
   it("is not put off by decisions about anything else", async () => {
@@ -382,6 +383,36 @@ describe("the admin bootstrap seed", () => {
   it("skips a login with no account rather than failing the boot", async () => {
     const { db } = await store();
     expect(await seedAdmins(db, ["adacollects", "nobody-here"], [])).toBe(1);
+  });
+
+  // What locked the sandbox out on 2026-08-28. db:reseed does not carry
+  // person_admin, so a reseeded store rebuilds the roster from the overlay
+  // alone — and the only admin decision anyone had written was a grant to one
+  // new staff member. Her row alone made the table non-empty and the overlay
+  // non-silent, which under the old all-or-nothing guard disabled the
+  // bootstrap for everyone who had only ever been in it.
+  it("re-grants the checked-in list after a reseed leaves somebody else's grant standing", async () => {
+    const { db, conn } = await store();
+    await conn.run(`INSERT INTO person (entity_id, display_name) VALUES (2, 'Nora Jacobi')`);
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (2, 222, 'norajacobi')`);
+    // Promotion applied her grant; nobody else has a row.
+    await conn.run(`INSERT INTO person_admin (person_id, granted_by) VALUES (2, 'rainhead')`);
+    expect(await seedAdmins(db, ["adacollects"], [decision("admin", "yes", "name:Nora Jacobi")])).toBe(1);
+    const rows = await db.selectFrom("person_admin").select("person_id").orderBy("person_id").execute();
+    expect(rows.map((r) => r.person_id)).toEqual([1, 2]);
+  });
+
+  // The same bug's quietest symptom: an account backfilled after the seed ran
+  // meant that person was never an admin at all, because the roster was no
+  // longer empty and the seed refused to top it up.
+  it("tops up someone whose account arrived after the first seed", async () => {
+    const { db, conn } = await store();
+    await conn.run(`INSERT INTO person_admin (person_id, granted_by) VALUES (1, 'seed')`);
+    await conn.run(`INSERT INTO person (entity_id, display_name) VALUES (3, 'Caleb Lankford')`);
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (3, 333, 'clankford')`);
+    expect(await seedAdmins(db, ["adacollects", "clankford"], [])).toBe(1);
+    const rows = await db.selectFrom("person_admin").select("person_id").orderBy("person_id").execute();
+    expect(rows.map((r) => r.person_id)).toEqual([1, 3]);
   });
 });
 

@@ -91,12 +91,15 @@ describe("iNat OAuth sign-in", () => {
     expect(holding).toContain("development instance");
     expect(cb.headers.get("set-cookie") ?? "").not.toContain("beeline_session=");
 
-    const token = await db
+    // Signing in records who was here, and NOT the access token it was given:
+    // nothing ever read one back, and a non-expiring credential kept for no
+    // reason is one leaked for no reason (Peter, 2026-08-28).
+    const recorded = await db
       .selectFrom("private.inat_oauth_token")
       .selectAll()
       .executeTakeFirstOrThrow();
-    expect(token.login).toBe("stranger");
-    expect(token.access_token).toBe("access-token-123");
+    expect(recorded.login).toBe("stranger");
+    expect(Object.keys(recorded)).not.toContain("access_token");
   });
 
   it("a failed token exchange is a sign-in failure, not a 500", async () => {
@@ -245,7 +248,7 @@ describe("iNat OAuth sign-in", () => {
       last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
     await conn.run(`INSERT INTO session (id, person_id) VALUES ('stale', 11)`);
     await conn.run(`INSERT INTO inat_oauth_token (inat_user_id, login, access_token)
-                    VALUES (501, 'memberbee', 'tok')`);
+                    VALUES (501, 'memberbee', 'a-token-nothing-ever-read')`);
     await conn.run(`USE memory`);
     await conn.run(`DETACH legacy_private`);
     conn.closeSync();
@@ -254,12 +257,20 @@ describe("iNat OAuth sign-in", () => {
     await attachPrivateStore(fresh, { path: file, key: null });
     const db = createKysely(fresh);
 
-    // The session is gone with its key; the tokens, which were never the
-    // problem, are not.
+    // The session is gone with its key; who signed in, which was never the
+    // problem, is not.
     expect(await db.selectFrom("private.session").selectAll().execute()).toEqual([]);
     expect(await db.selectFrom("private.inat_oauth_token").select("login").execute()).toEqual([
       { login: "memberbee" },
     ]);
+    // And the access token that store had been keeping since its first
+    // sign-in is gone — dropping the column is what actually deletes it from
+    // a deployed store, so booting against one is the only thing that does.
+    const columns = await sql<{ n: number | bigint }>`
+      SELECT count(*) AS n FROM information_schema.columns
+       WHERE table_catalog = 'private' AND table_name = 'inat_oauth_token'
+         AND column_name = 'access_token'`.execute(db);
+    expect(Number(columns.rows[0]!.n)).toBe(0);
     // And the new shape is there to sign in against.
     await db.insertInto("private.session").values({ id: "new", inat_user_id: 501 }).execute();
     expect(

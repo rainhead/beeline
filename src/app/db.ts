@@ -61,7 +61,7 @@ export async function attachPrivateStore(
     // missing repairs every one of those states — where a single "is it
     // fresh?" probe sent a half-patched store down the fresh path to re-run
     // DDL for a table that still existed, which is an unrecoverable boot crash
-    // on the store holding the OAuth tokens.
+    // on the store holding everyone's live sessions.
     const files = (await readdir(PRIVATE_SCHEMA_DIR)).filter((f) => f.endsWith(".sql")).sort();
     let created = false;
     for (const file of files) {
@@ -82,15 +82,28 @@ export async function attachPrivateStore(
       await conn.run(`CHECKPOINT private`);
     }
 
+    // And a column removed the same way. Every volunteer's non-expiring iNat
+    // access token was stored here and never read back — the session cookie
+    // authenticates a request, and sync authenticates as the pipeline rather
+    // than as a volunteer (Peter, 2026-08-28). Dropping the column is what
+    // actually deletes them from a store that has been collecting them since
+    // the first sign-in, so it is a patch rather than a schema change alone.
+    if (await columnExists("inat_oauth_token", "access_token")) {
+      await conn.run(`ALTER TABLE private.inat_oauth_token DROP COLUMN access_token`);
+      await conn.run(`CHECKPOINT private`);
+      console.log("dropped stored iNaturalist access tokens: nothing read them");
+    }
+
     // Sessions used to be keyed on person.entity_id, which a rebuild redraws —
     // so after a reseed each one resolved to whoever inherited its number
     // (beeline-ten). Rekeyed on the iNat user, which is stable. Dropped rather
     // than translated: rewriting the rows would mean trusting the very ids
-    // that were the bug. Everyone signs in once more, their OAuth tokens
-    // untouched; last_seen_at goes with the rows (beeline-dji).
+    // that were the bug. Everyone signs in once more; last_seen_at goes with
+    // the rows (beeline-dji).
     if (await columnExists("session", "person_id")) {
-      // One transaction, so a crash cannot leave the store with tokens and no
-      // session table — and the loop above would repair it even if it did.
+      // One transaction, so a crash cannot leave the store with sign-in rows
+      // and no session table — and the loop above would repair it even if it
+      // did.
       await conn.run(`BEGIN TRANSACTION`);
       try {
         await conn.run(`DROP TABLE private.session`);

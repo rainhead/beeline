@@ -4,9 +4,38 @@
 app-store decision ([ADR 0005](0005-app-process-owns-the-store.md),
 2026-08-22) — the owning app process `ATTACH`es the private store ·
 **Amended** (2026-08-23, beeline-2yh): true coordinates stay in the main
-store; the copy claim is qualified. See *Whose privacy?* below.
+store; the copy claim is qualified. See *Whose privacy?* below. ·
+**Amended** (2026-08-28): volunteers' OAuth tokens are no longer stored at
+all. See *What is actually in here* below.
+
+## What is actually in here (2026-08-28)
+
+The first of the three motivating data classes is gone. Beeline stored every
+volunteer's iNaturalist access token at sign-in and **never read one back**:
+the session cookie is what authenticates a request, and sync authenticates as
+the pipeline rather than as a volunteer. A non-expiring credential kept for no
+reason is one leaked for no reason, so the column is dropped and the app's boot
+patch deletes it from stores that have been accumulating them (`src/app/db.ts`).
+
+One iNaturalist token is still kept and is deliberately not in here: the
+**pipeline credential** that authenticated sync reads use, in
+`data/secrets/inat-oauth-token` at mode 600. It belongs to the program rather
+than to a participant — Peter's registration today, Andony's in production
+(beeline-5ep) — and losing it costs a re-authorization rather than a person's
+account. Whether it should move into this store is worth asking once there is a
+second one.
+
+So the store now holds **session ids** — bearer credentials in their own right,
+which is reason enough for it to exist and to be encrypted — and **who has been
+here and when** (`person_activity`, beeline-dji), which is nobody's business
+but the program's. Mailing addresses and email arrive when their features do.
+
+If a per-volunteer token is ever needed, it wants its own decision and its own
+retention rule, not the quiet revival of a column nothing read.
 
 ## Context
+
+*(As originally written. The token class is no longer held — see above.)*
 
 Beeline holds three kinds of data that must never travel with the rest of the
 database: iNaturalist OAuth tokens (which do not expire — a leaked token is a

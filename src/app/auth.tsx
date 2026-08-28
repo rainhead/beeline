@@ -166,13 +166,11 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
         inat_user_id: identity.inatUserId,
         login: identity.login,
         icon_url: identity.iconUrl,
-        access_token: accessToken,
       })
       .onConflict((oc) =>
         oc.column("inat_user_id").doUpdateSet({
           login: identity.login,
           icon_url: identity.iconUrl,
-          access_token: accessToken,
           // Bare current_timestamp binds as a column ref in DuckDB's DO UPDATE SET; now() doesn't.
           last_login_at: sql`now()`,
         }),

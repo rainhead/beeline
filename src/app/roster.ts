@@ -513,8 +513,10 @@ export async function nameIsUnique(db: Kysely<Database>, displayName: string): P
  * written and neither the name nor the handle is what it names (beeline-o22).
  *
  * Null handle where the store cannot answer — a person the last rebuild no
- * longer mints, or a name two people now share. The entry still shows; it is
- * the link that goes, since a link to the wrong person is worse than none.
+ * longer mints, a name two people now share, or an entry the log knows only
+ * by an account, which may since have changed hands. The entry still shows;
+ * it is the link that goes, since a link to the wrong person is worse than
+ * none.
  */
 export interface LinkedChange extends PersonChange {
   current_name: string | null;
@@ -526,22 +528,16 @@ export async function linkChanges(
   changes: ReadonlyArray<PersonChange & { current_name: string | null }>,
 ): Promise<LinkedChange[]> {
   if (changes.length === 0) return [];
+  // By name only. An entry filed under an account reference is deliberately
+  // NOT resolved through whoever holds that account now: an account moves
+  // between people here on purpose, so the current holder is exactly who this
+  // entry might not be about (beeline-o22). Such a row shows without a link
+  // rather than with a wrong one.
   const names = [...new Set(changes.map((c) => c.current_name).filter((n): n is string => n !== null))];
-  const uids = [
-    ...new Set(
-      changes
-        .filter((c) => c.current_name === null && c.person_ref.startsWith("inat:"))
-        .map((c) => c.person_ref.slice("inat:".length)),
-    ),
-  ];
   const found = await sql<{ key: string; display_name: string; login: string | null; person_id: number }>`
     SELECT p.display_name AS key, p.display_name, a.login, p.entity_id AS person_id
     FROM person p LEFT JOIN inat_account a ON a.person_id = p.entity_id
-    WHERE ${names.length === 0 ? sql`false` : sql`p.display_name IN ${sql`(${sql.join(names.map((n) => sql`${n}`))})`}`}
-    UNION ALL
-    SELECT concat('inat:', CAST(a.inat_user_id AS VARCHAR)), p.display_name, a.login, p.entity_id
-    FROM inat_account a JOIN person p ON p.entity_id = a.person_id
-    WHERE ${uids.length === 0 ? sql`false` : sql`CAST(a.inat_user_id AS VARCHAR) IN ${sql`(${sql.join(uids.map((u) => sql`${u}`))})`}`}`.execute(db);
+    WHERE ${names.length === 0 ? sql`false` : sql`p.display_name IN ${sql`(${sql.join(names.map((n) => sql`${n}`))})`}`}`.execute(db);
   const by = new Map<string, { display_name: string; handle: string } | null>();
   for (const row of found.rows) {
     // A key two people answer to names nobody: recorded as null so the entry
@@ -549,7 +545,7 @@ export async function linkChanges(
     by.set(row.key, by.has(row.key) ? null : { display_name: row.display_name, handle: personHandle({ person_id: Number(row.person_id), login: row.login }) });
   }
   return changes.map((c) => {
-    const match = by.get(c.current_name ?? c.person_ref) ?? null;
-    return { ...c, current_name: c.current_name ?? match?.display_name ?? null, handle: match?.handle ?? null };
+    const match = c.current_name === null ? null : (by.get(c.current_name) ?? null);
+    return { ...c, handle: match?.handle ?? null };
   });
 }

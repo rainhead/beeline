@@ -441,9 +441,20 @@ export function lastKnown(changes: readonly PersonChange[]): LastKnown {
  *                             is unique, so it tells the two namesakes apart
  *                             even though the name cannot.
  */
-function referenced(known: LastKnown, state: PersonState): KnownPerson | undefined {
+function referenced(known: LastKnown, names: ReadonlySet<string>, state: PersonState): KnownPerson | undefined {
   const direct = known.of(state.ref);
-  if (direct !== undefined) return direct;
+  // A `name:` reference matches on the name by construction, and a name does
+  // not move to somebody else on its own. An `inat:` one matches on the
+  // account, which moves between people here on purpose — so an exact hit on
+  // it is not on its own evidence of anything, and gets the same test as the
+  // account index: the person it names may not be somebody the store still
+  // calls by another name.
+  if (direct !== undefined) {
+    if (!state.ref.startsWith("inat:")) return direct;
+    const was = direct.fields.get("display_name") ?? "";
+    if (was === state.fields.display_name || !names.has(was)) return direct;
+    return undefined;
+  }
   const alt = known.of(state.altRef);
   if (alt === undefined) return undefined;
   const agrees = state.ref.startsWith("name:")
@@ -548,7 +559,7 @@ export function proposeMatches(ctx: MatchContext, states: Iterable<PersonState>)
   const proposed = new Map<PersonState, KnownPerson>();
   for (const state of all) {
     const found =
-      referenced(known, state) ??
+      referenced(known, names, state) ??
       byName.get(state.fields.display_name) ??
       account(byAccount, names, state);
     if (found != null) proposed.set(state, found);

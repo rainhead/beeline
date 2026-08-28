@@ -2,11 +2,16 @@
 
 Questions we can't answer from code or data, queued for Peter's next meetings with Andony/Arthur/Lincoln/atlas staff. Each section says who to ask where that is settled — asking the wrong person is slower than not asking. Move answers into [CONTEXT.md](../CONTEXT.md) or the relevant doc, then delete the question.
 
-## Trap sampling (ask Lincoln Best; mostly unknown territory — no reference implementation, spreadsheets unseen)
+## Trap sampling (ask Lincoln Best, Olivia Messinger-Carrill, Karen Wright; mostly unknown territory — no reference implementation, spreadsheets unseen)
 
-**Direct these to Lincoln Best** (Peter, 2026-08-28), not to Andony. Trap
-sampling is its own practice with its own practitioners, and this whole section
-had been queued behind meetings with people who do not do it.
+**Direct these to Lincoln Best, Olivia Messinger-Carrill and Karen Wright**
+(Peter, 2026-08-28), not to Andony. Trap sampling is its own practice with its
+own practitioners, and this whole section had been queued behind meetings with
+people who do not do it. Three people rather than one is worth knowing about
+in advance: the questions below about what a trap *site* is, and what protocol
+vocabulary staff think in, may well get different answers per atlas — which is
+itself the finding, and the difference between a controlled vocabulary and a
+per-atlas one.
 
 Production facts to anchor the conversation: ~52k trap-collected records (14% of all), sample series `OBAS-00016`–`OBAS-00669`+ (Oregon vane traps, 33k records) and `WBAS-…` (487), single samples up to 2,252 specimens, 53k records carry end-dates (date ranges). The `within_sample_disagreement` findings (973 samples) add evidence for question 2: the largest clusters are trap groups whose rows carry *incrementing* localities along a route ("… Forest Service Road 2780 | 2781 | 2782 …") with coordinates differing to match — one (person, date, sample-number) group that looks like a trap line of distinct collecting spots, not one place.
 
@@ -36,7 +41,8 @@ Raised 2026-08-24 by looking at `/people` (beeline-eyk, beeline-oyl). One iNatur
 2. **And who is Jane Pope?** 31 samples, 2019–2020, filing under `pandg` alongside the Pedersons. A third member of that household, a visitor they entered records for, or something else? This one now has a consequence attached: Gretchen has been granted reach over Jane's records (`ingest/person-overlay.csv`, 2026-08-28) on the assumption that filing under `pandg` makes her household. If she is not, that grant is the one to withdraw — a blank `acts_for` value removes it.
 3. **Would these people rather have their own accounts?** Gretchen holds `pandg`; Robert (1,087 samples) cannot sign in. Same shape for Steve Sheehy under Sarah Malaby's `smalaby` (420) and Julie Biddle under Tom Robertson's `tom_julie` (363). No longer blocking anything: delegation (beeline-oyl) is built and the three grants are recorded, so each household's account holder can now reach the partner's records. The question is now about preference rather than access — an own account is still the better answer for anyone who wants one, since delegation grants reach and never credit, and Master Melittology progress accrues to the person either way.
 4. **Emma or Emily Hoskins?** Her records spell it both ways, 25 and 21, interleaved through the 2024 season, so nothing in the data breaks the tie. Both spellings now merge into one person under `Emma` — chosen **arbitrarily** (Peter, 2026-08-24), unlike the other ten merges, which came from reading iNaturalist profiles. It will print on her labels and reach Ecdysis and GBIF looking exactly as settled as the rest. One line in `ingest/collector-aliases.csv` reverses it.
-5. **Does Emily Carlson have an iNaturalist account?** Her 254 samples carry `amelathopoulos` because Andony typed the records in, not because it is hers. She needs her own resolved, not a share of his.
+5. **Is Karen Wright's atlas right?** Her `person_membership` row says WaBA, and its provenance is a `usernames.csv` state code matched by login (`ingest/person-overlay.csv`) rather than anybody asking her — the weakest kind of row in that file. She is being asked about trap sampling anyway, and CONTEXT.md lists her among the program's taxonomists rather than under any one atlas, so this is a cheap thing to confirm while she is on the phone.
+6. **Does Emily Carlson have an iNaturalist account?** Her 254 samples carry `amelathopoulos` because Andony typed the records in, not because it is hers. She needs her own resolved, not a share of his.
 
 ## Printing and mailing (for the walkthrough with Arthur/Andony)
 

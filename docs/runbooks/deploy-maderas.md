@@ -168,8 +168,22 @@ The service must be stopped throughout: one process owns the store (ADR
 0005), and `db:reseed` reads it while promotion writes the new one. Downtime
 is the length of a promotion — about a minute for 383k rows.
 
-`private.duckdb` is untouched, so sessions and volunteer tokens survive. So
-does `data/person-overlay.csv`; the curated `ingest/person-overlay.csv`
+`private.duckdb` is untouched, so volunteer **tokens** survive —
+`inat_oauth_token` is keyed by `inat_user_id`, which is stable across a
+rebuild. **Sessions do not, and must be purged in the same breath as the
+swap.** `private.session.person_id` is a `person.entity_id` with no
+cross-database FK, and a reseed redraws every id, so a surviving session
+resolves to whoever inherited its number — a signed-in volunteer browsing and
+acting as somebody else, under a `mine` scope that is forced for them. This is
+[beeline-ten](../../.beads/); until it is fixed in the reseed path, do it by
+hand while the service is down:
+
+```sh
+ssh maderas 'set -a; . ~/.config/beeline/env; set +a; cd ~/dev/beeline \
+  && duckdb -c "ATTACH '"'"'private.duckdb'"'"' AS p (ENCRYPTION_KEY '"'"'$BEELINE_PRIVATE_DB_KEY'"'"'); DELETE FROM p.session;"'
+```
+
+`data/person-overlay.csv` survives too; the curated `ingest/person-overlay.csv`
 replays over the rebuilt store, which is what the overlay is for.
 
 Rehearse on a copy first — `scp` the store down and run the same sequence

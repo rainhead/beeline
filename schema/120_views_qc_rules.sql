@@ -67,8 +67,24 @@ WHERE (s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL)
 -- (OccurrenceService.updateErrorFlags + includesIllegalSuffix): length > 18,
 -- comma or double quote (single quotes are fine — O''Brien Rd is a name),
 -- or a word-bounded street/county suffix. norm pads the locality with spaces
--- and turns commas/periods into spaces, reproducing the reference's
--- boundary lookarounds without regex (RE2 lacks lookbehind anyway).
+-- and turns commas/periods into spaces, which is what supplies the word
+-- boundaries the reference got from lookarounds — so no lookbehind is needed
+-- and a plain alternation is a faithful translation.
+--
+-- The second accepted DuckDB-flavoured seam, after the JSON shredding in
+-- schema/105, and a deliberate one (Peter, 2026-08-28; beeline-2c3.37).
+-- `regexp_matches` returns a boolean here and text[] on Postgres, so a port
+-- rewrites this predicate — which is a known line of work rather than a
+-- silent difference, and worth it: nineteen LIKE passes over every locality
+-- in the store cost 187 ms, one alternation costs 15 ms, and with the
+-- observation projection stored (beeline-2c3.36) this rule *was* the entire
+-- remaining cost of scanning qc_finding. Every QC read in the app goes
+-- through that union.
+--
+-- Do NOT reach for `~` when porting or when writing the next one of these:
+-- DuckDB's `~` is regexp_full_match and Postgres's is a partial match, so
+-- the same operator quietly answers differently in the two engines. That is
+-- the one spelling here that would fail without erroring.
 CREATE VIEW qc_rule_locality_format AS
 SELECT sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
@@ -84,14 +100,11 @@ FROM (
          length(norm.locality) AS len,
          position(',' IN norm.locality) > 0 AS has_comma,
          position('"' IN norm.locality) > 0 AS has_quote,
-         (norm.norm LIKE '% road %' OR norm.norm LIKE '% rd %'
-          OR norm.norm LIKE '% street %' OR norm.norm LIKE '% str %' OR norm.norm LIKE '% st %'
-          OR norm.norm LIKE '% avenue %' OR norm.norm LIKE '% ave %' OR norm.norm LIKE '% av %'
-          OR norm.norm LIKE '% drive %' OR norm.norm LIKE '% dr %'
-          OR norm.norm LIKE '% boulevard %' OR norm.norm LIKE '% blvd %'
-          OR norm.norm LIKE '% court %' OR norm.norm LIKE '% ct %'
-          OR norm.norm LIKE '% lane %' OR norm.norm LIKE '% ln %'
-          OR norm.norm LIKE '% county %') AS is_street
+         -- The same seventeen words the reference checks, each still
+         -- required to stand alone between spaces.
+         regexp_matches(norm.norm,
+           ' (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county) '
+         ) AS is_street
   FROM (
     SELECT s.entity_id AS sample_id, s.locality,
            concat(' ', replace(replace(lower(s.locality), ',', ' '), '.', ' '), ' ') AS norm

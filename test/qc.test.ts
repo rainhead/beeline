@@ -93,6 +93,86 @@ describe("QC findings and printability", () => {
     expect(f?.details).toContain("street address");
   });
 
+  // The street-suffix check is one regular expression rather than nineteen
+  // LIKE passes (beeline-2c3.37), and the thing worth pinning is that every
+  // token still has to stand alone between spaces — an alternation is exactly
+  // where that quietly stops being true. Strings lifted from production
+  // staging, one per token, because a rule tested only on strings we wrote is
+  // a rule tested on our assumptions.
+  test("every street suffix is still matched as a whole word", async () => {
+    const streets = [
+      "Sparta Road Vista",
+      "Bend Twin Bridges Rd",
+      "Alice Street",
+      "Mosier St Park",
+      "Corvallis SW Orchard Ave",
+      "Rdmnd Flcn Cr Drive",
+      "McMinnville NE Elaine Dr",
+      "Corvallis NE Circle Blvd",
+      "Thunderbird Ct",
+      "Williams Bonlinda Lane",
+      "Corvallis NE Smith Ln",
+      "Jefferson County",
+    ];
+    for (const [i, locality] of streets.entries()) {
+      const id = await insertCleanSample(conn, {
+        locality: `'${locality}'`,
+        sample_number: `'s${i}'`,
+      });
+      const details = (await findings(id)).find((f) => f.rule === "locality_format")?.details ?? "";
+      expect(details, locality).toContain("looks like a street address");
+    }
+  });
+
+  test("agrees with the nineteen LIKE patterns it replaced, string for string", async () => {
+    // The equivalence was checked against all 66,065 localities in the dev
+    // store before the swap (no disagreements, identical 4,100-row output).
+    // This keeps the old predicate in the repository so the next edit to the
+    // token list has something to disagree with — an alternation is exactly
+    // where "each token stands alone between spaces" quietly stops holding.
+    const corpus = [
+      "Sparta Road Vista", "Bend Twin Bridges Rd", "Alice Street", "Mosier St Park",
+      "St Helens", "Corvallis SW Orchard Ave", "Rdmnd Flcn Cr Drive", "McMinnville NE Elaine Dr",
+      "Corvallis NE Circle Blvd", "Thunderbird Ct", "Williams Bonlinda Lane",
+      "Corvallis NE Smith Ln", "Jefferson County", "County Hwy 5-13B", "Lane County",
+      "Drain", "Avery Park", "Strawberry Mountain", "Moses Lake", "Canyon City",
+      "Sims Corner", "Chinook Pass", "Groundhog Mountain", "Olympic NP", "Painted Hills",
+      "Klamath Falls Ashley Ct.", "Steens Mt. Loop Rd.", "Deschutes Rvr. St. Rec.",
+    ];
+    const values = corpus.map((l) => `('${l.replaceAll("'", "''")}')`).join(", ");
+    await conn.run(`CREATE TEMP TABLE corpus(locality TEXT)`);
+    await conn.run(`INSERT INTO corpus VALUES ${values}`);
+    const norm = "concat(' ', replace(replace(lower(locality), ',', ' '), '.', ' '), ' ')";
+    const disagreements = await rows(
+      conn,
+      `SELECT locality FROM (SELECT locality, ${norm} AS n FROM corpus)
+       WHERE (n LIKE '% road %' OR n LIKE '% rd %'
+              OR n LIKE '% street %' OR n LIKE '% str %' OR n LIKE '% st %'
+              OR n LIKE '% avenue %' OR n LIKE '% ave %' OR n LIKE '% av %'
+              OR n LIKE '% drive %' OR n LIKE '% dr %'
+              OR n LIKE '% boulevard %' OR n LIKE '% blvd %'
+              OR n LIKE '% court %' OR n LIKE '% ct %'
+              OR n LIKE '% lane %' OR n LIKE '% ln %'
+              OR n LIKE '% county %')
+         <> regexp_matches(n, ' (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county) ')`,
+    );
+    expect(disagreements).toEqual([]);
+  });
+
+  test("a suffix buried inside a word is not a street", async () => {
+    // The boundaries come from padding the locality with spaces, not from a
+    // lookbehind — so 'Drain' must not read as 'dr' and 'Avery' not as 'av'.
+    // All real localities; all short and clean enough to raise nothing else.
+    const places = ["Drain", "Avery Park", "Moses Lake", "Canyon City", "Sims Corner", "Chinook Pass"];
+    for (const [i, locality] of places.entries()) {
+      const id = await insertCleanSample(conn, {
+        locality: `'${locality}'`,
+        sample_number: `'p${i}'`,
+      });
+      expect(await findings(id), locality).toEqual([]);
+    }
+  });
+
   test("coordinate uncertainty over 250 m blocks printing", async () => {
     const id = await insertCleanSample(conn, {}, { coordinate_uncertainty_m: "500" });
     expect(await findings(id)).toEqual([

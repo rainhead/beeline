@@ -34,6 +34,23 @@ engine runs them owns the heart of the system.
   - No partial unique indexes (Postgres-only) — the `minted_field_number`
     two-table design exists partly for this reason.
   - Known seam, accepted: `JSON` columns (Postgres would want `JSONB`).
+  - **Named exceptions, taken deliberately and measured first.** Two so far,
+    both DuckDB-only and both because the dialect-neutral spelling was the
+    dominant cost of a page: the view that shreds iNaturalist responses
+    (`schema/105`, now materialised into `observation_field`), and the
+    street-suffix predicate in `qc_rule_locality_format` (`schema/120`),
+    which was nineteen `LIKE` passes over every locality in the store and
+    is now one `regexp_matches` — 206 ms to 16 ms, and with the two of them
+    the whole `qc_finding` union went 518 ms to 25 ms (Peter, 2026-08-28;
+    beeline-2c3.36, beeline-2c3.37). Each is marked in place with what a
+    port has to rewrite. The rule is not "never"; it is that an exception
+    is a decision with a number behind it, not a convenience reached for.
+  - **Never `~`.** DuckDB's `~` is `regexp_full_match`; Postgres's is a
+    partial match. It is the one construct found so far that answers
+    differently in the two engines *without erroring*, so it would survive
+    a port and quietly change what a rule fires on. `regexp_matches` breaks
+    loudly (boolean here, `text[]` there), which is what makes it the
+    honest choice where a regex is worth it at all.
 - **No ORM owns the schema.** The schema is `.sql` files applied in order;
   Prisma is ruled out (no DuckDB support, migration engine wants schema
   ownership). **Kysely** is the query layer for app/pipeline code — Postgres

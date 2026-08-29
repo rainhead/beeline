@@ -164,6 +164,27 @@ Still true regardless: don't commit someone else's uncommitted work, don't
 rewrite published history, and keep documentation current in the same commit as
 the change it describes.
 
+## Agent skills
+
+Per-repo configuration the engineering skills read. Written by
+`/setup-matt-pocock-skills`; edit `docs/agents/*.md` directly to change it.
+
+### Issue tracker
+
+Two trackers, split by audience: GitHub Issues for discussion-shaped work and
+customer requests, beads (`bd`) for everything else. See
+[docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+The five canonical roles, each label string equal to its name, applied to
+GitHub Issues only. See [docs/agents/triage-labels.md](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Single-context: [CONTEXT.md](CONTEXT.md) + [docs/adr/](docs/adr/) at the repo
+root. See [docs/agents/domain.md](docs/agents/domain.md).
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
 

@@ -8,9 +8,7 @@ import type { InatClient } from "../src/app/auth.js";
 import { attachPrivateStore } from "../src/app/db.js";
 import { createApp } from "../src/app/server.js";
 import { cookieSessionResolver, endSessionsFor, purgeIdleSessions } from "../src/app/session.js";
-import { applySchema } from "../src/schema.js";
-import { DuckDBInstance } from "@duckdb/node-api";
-import { createMemoryDb } from "./helpers.js";
+import { createFileDb, createMemoryDb } from "./helpers.js";
 
 const ORIGIN = "http://localhost:3054";
 
@@ -427,17 +425,8 @@ describe("the private store against a file-backed main database", () => {
    * So these two open the main database as a file too. They are slower for
    * it, and that is the price of testing the shape production actually runs.
    */
-  const fileDb = async (): Promise<{ instance: DuckDBInstance; privatePath: string }> => {
-    const dir = await mkdtemp(join(tmpdir(), "beeline-filedb-"));
-    const instance = await DuckDBInstance.create(join(dir, "beeline.duckdb"));
-    const conn = await instance.connect();
-    await applySchema(conn);
-    conn.closeSync();
-    return { instance, privatePath: join(dir, "private.duckdb") };
-  };
-
   it("creates its tables rather than crashing on the way back out", async () => {
-    const { instance, privatePath } = await fileDb();
+    const { instance, privatePath } = await createFileDb();
     await attachPrivateStore(instance, { path: privatePath, key: null });
     const db = createKysely(instance);
     // All three, in one boot. This used to manage one per boot and die: the
@@ -457,7 +446,7 @@ describe("the private store against a file-backed main database", () => {
     // so the rollback took the CREATE back out along with the DROP and left
     // the store in the shape it started in — same branch next boot, same
     // crash, and a store holding the old session shape could never start.
-    const { instance, privatePath } = await fileDb();
+    const { instance, catalog, privatePath } = await createFileDb();
     const conn = await instance.connect();
     await conn.run(`ATTACH '${privatePath}' AS seed`);
     await conn.run(`USE seed`);
@@ -466,7 +455,7 @@ describe("the private store against a file-backed main database", () => {
       created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
       last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
     await conn.run(`INSERT INTO session (id, person_id) VALUES ('stale', 11)`);
-    await conn.run(`USE beeline`);
+    await conn.run(`USE ${catalog}`);
     await conn.run(`DETACH seed`);
     conn.closeSync();
 
@@ -482,11 +471,11 @@ describe("the private store against a file-backed main database", () => {
     // The property the fix turns on, asserted directly: whatever runs after
     // attachPrivateStore reads unqualified names, and a connection left
     // pointing at `private` would resolve them against the wrong store.
-    const { instance, privatePath } = await fileDb();
+    const { instance, catalog, privatePath } = await createFileDb();
     await attachPrivateStore(instance, { path: privatePath, key: null });
     const conn = await instance.connect();
     const [[current]] = (await (await conn.run("SELECT current_database()")).getRows()) as [[string]];
-    expect(current).toBe("beeline");
+    expect(current).toBe(catalog);
     conn.closeSync();
   });
 });

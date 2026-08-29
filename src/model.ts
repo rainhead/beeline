@@ -338,6 +338,11 @@ export interface ObservationFieldTable {
   /** 'OBA Collection Method': net, pan trap, vane trap, nest block. New
    *  columns go LAST — the refresh inserts positionally (schema/060). */
   collection_method_raw: string | null;
+  /** The locality text iNat withholds on a private observation and delivers
+   *  to a trusted reader. Preferred over place_guess wherever a locality is
+   *  derived; empty across the dev corpus, synced without trust. LAST — the
+   *  refresh inserts positionally (schema/060). */
+  private_place_guess: string | null;
 }
 
 /** schema/105: observation_field disagreeing with a fresh shred of the loads. */
@@ -374,6 +379,137 @@ export interface ObservationPlaceAmbiguousView {
   admin_level: number;
   places: number;
   names: string;
+}
+
+/** The street-suffix word list, in one place (schema/108). */
+export interface LocalityStreetSuffixPatternView {
+  pattern: string;
+}
+
+/** The locality a sample minted from an observation carries: the first
+ *  comma-separated component of its place_guess that reads like a place name.
+ *  Absent for an observation with no such component — the sample it mints
+ *  blocks as missing_required_field, which the volunteer fixes upstream. */
+export interface ObservationLocalityView {
+  inat_id: BigIntCol;
+  locality: string;
+  /** Which comma-separated component it came from, 1-based. */
+  component: number;
+}
+
+/** An observation the project's own fields say is a collection record: a
+ *  sample number, a positive specimen count, a date. The single definition,
+ *  shared by minting and by the unclaimed screen (beeline-e85). */
+export interface ObservationSampleCandidateView {
+  inat_id: BigIntCol;
+  user_id: BigIntCol | null;
+  user_login: string | null;
+  sample_number: string;
+  specimen_count: number;
+  observed_on: ColumnType<Date, Date | string, Date | string>;
+}
+
+/** An observation naming a sample number that cannot become a sample. */
+export interface ObservationSampleUnusableView {
+  inat_id: BigIntCol;
+  user_id: BigIntCol | null;
+  user_login: string | null;
+  observed_on: ColumnType<Date, Date | string, Date | string> | null;
+  sample_number_raw: string | null;
+  specimen_count_raw: string | null;
+  reason: string;
+}
+
+/** A collection record whose observer the store holds no account for.
+ *  Nothing mints it; beeline-e85's unclaimed screen reads this. */
+export interface ObservationSampleUnresolvedView {
+  inat_id: BigIntCol;
+  user_id: BigIntCol | null;
+  user_login: string | null;
+  sample_number: string;
+  specimen_count: number;
+  observed_on: ColumnType<Date, Date | string, Date | string>;
+}
+
+/** Unlinked collection records grouped into the sample each belongs to. */
+export interface SampleMintGroupView {
+  person_id: number;
+  sample_number: string;
+  observed_on: ColumnType<Date, Date | string, Date | string>;
+  observations: number;
+  lead_inat_id: BigIntCol;
+  specimen_count: number;
+}
+
+/** A group against the existing sample it is already recorded as. */
+export interface SampleMintMatchView {
+  person_id: number;
+  sample_number: string;
+  observed_on: ColumnType<Date, Date | string, Date | string>;
+  lead_inat_id: BigIntCol;
+  sample_id: number;
+  inat_observation_id: BigIntCol | null;
+}
+
+/** A group matching two or more existing samples: neither linked nor minted.
+ *  The alarm on the reconcile, in observation_place_ambiguous's idiom. */
+export interface SampleMintAmbiguousView {
+  person_id: number;
+  sample_number: string;
+  observed_on: ColumnType<Date, Date | string, Date | string>;
+  lead_inat_id: BigIntCol;
+  samples: number;
+  sample_ids: string;
+}
+
+/** An existing sample that cites no observation and matches one. */
+export interface SampleMintFreeLinkView {
+  sample_id: number;
+  lead_inat_id: BigIntCol;
+  person_id: number;
+  sample_number: string;
+  observed_on: ColumnType<Date, Date | string, Date | string>;
+}
+
+/** What the next mint will create. */
+export interface SampleMintPendingView {
+  person_id: number;
+  sample_number: string;
+  observed_on: ColumnType<Date, Date | string, Date | string>;
+  observations: number;
+  lead_inat_id: BigIntCol;
+  specimen_count: number;
+}
+
+/** A sample in a member atlas's region carrying no atlas, which no UPDATE can
+ *  fix: DuckDB will not write an indexed column on a row an incoming foreign
+ *  key references, so sample.atlas_id is set at insert or never. */
+export interface SampleAtlasUnfilledView {
+  sample_id: number;
+  state_province: string;
+  should_be: number;
+}
+
+/** A sample iNaturalist records in several observations. It cites one; this
+ *  is what explains a count_mismatch on a sample whose count is right. */
+export interface SampleMultiObservationView {
+  sample_id: number;
+  cited_inat_id: BigIntCol;
+  other_observations: number;
+  other_specimen_count: number;
+}
+
+/** A sample whose cited observation now reports a different number or date —
+ *  the cost of never rewriting an existing sample, made visible. */
+export interface SampleObservationNumberMismatchView {
+  sample_id: number;
+  inat_observation_id: BigIntCol;
+  sample_number: string;
+  observation_sample_number: string | null;
+  date_start: ColumnType<Date, Date | string, Date | string>;
+  date_end: ColumnType<Date, Date | string, Date | string>;
+  observed_on: ColumnType<Date, Date | string, Date | string> | null;
+  details: string;
 }
 
 /** Places an observation names that the cache has never been told about. */
@@ -479,6 +615,19 @@ export interface Database {
   determination_misplaced_qualifier: DeterminationMisplacedQualifierView;
   sample_primary_collector_mismatch: SamplePrimaryCollectorMismatchView;
   elevation_derivation_limit: ElevationDerivationLimitView;
+  locality_street_suffix_pattern: LocalityStreetSuffixPatternView;
+  observation_locality: ObservationLocalityView;
+  observation_sample_candidate: ObservationSampleCandidateView;
+  observation_sample_unusable: ObservationSampleUnusableView;
+  observation_sample_unresolved: ObservationSampleUnresolvedView;
+  sample_mint_group: SampleMintGroupView;
+  sample_mint_match: SampleMintMatchView;
+  sample_mint_ambiguous: SampleMintAmbiguousView;
+  sample_mint_free_link: SampleMintFreeLinkView;
+  sample_mint_pending: SampleMintPendingView;
+  sample_atlas_unfilled: SampleAtlasUnfilledView;
+  sample_multi_observation: SampleMultiObservationView;
+  sample_observation_number_mismatch: SampleObservationNumberMismatchView;
   sample_elevation_unsupportable: SampleElevationUnsupportableView;
   sample_elevation_stale: SampleElevationStaleView;
   sample_elevation_pending: SampleElevationPendingView;

@@ -1,9 +1,14 @@
--- Promote current observation state onto linked samples (linked =
--- sample.inat_observation_id has a row in observation_current). Three
--- concerns: geoprivacy flags, believed-true locations, and observer →
--- collector iNat account linkage. The whole file is a pure function of
--- observation_current_fields and the existing model — idempotent, meant to
--- re-run after every sync.
+-- Promote current observation state onto linked samples: geoprivacy flags
+-- and believed-true locations. A pure function of observation_field and the
+-- existing model — idempotent, meant to re-run after every sync.
+--
+-- THIRD of three steps, and the order is the point (beeline-oyq).
+-- ingest/harvest-inat-accounts.sql runs first, so that minting can resolve an
+-- observer to a person; ingest/mint-samples.sql runs second and sets
+-- inat_observation_id on the samples it creates and free-links; and this file
+-- keys on that column, so a sample minted on this pass gets its coordinates
+-- on this pass. src/promote-observations.ts runs all three in one
+-- transaction.
 
 -- ── Geoprivacy flags ─────────────────────────────────────────────────────
 -- The observation is the source of truth for its own privacy state, in both
@@ -72,33 +77,3 @@ SELECT c.sample_id, c.latitude, c.longitude, c.coordinate_uncertainty_m, c.sourc
 FROM observation_location_candidate c
 LEFT JOIN sample_location loc ON loc.sample_id = c.sample_id
 WHERE loc.sample_id IS NULL;
-
--- ── iNat accounts (beeline-gju rides along) ──────────────────────────────
--- The observer of a sample's evidencing observation is its collector.
--- Candidate pairs are written only when unambiguous both ways: one observer
--- account per collector across their linked samples, one collector per
--- account, and neither side already claimed. Conflicts stay for staff.
-CREATE OR REPLACE TEMP TABLE observer_collector_pair AS
-SELECT s.collector_id                    AS person_id,
-       f.user_id,
-       arg_max(f.user_login, f.inat_id)  AS login
-FROM sample s
-JOIN observation_field f ON f.inat_id = s.inat_observation_id
-WHERE f.user_id IS NOT NULL AND f.user_login IS NOT NULL
-GROUP BY s.collector_id, f.user_id;
-
--- Logins change; user id is the stable key. Refresh the cache.
-UPDATE inat_account SET login = p.login
-FROM observer_collector_pair p
-WHERE inat_account.inat_user_id = p.user_id
-  AND inat_account.login <> p.login;
-
-INSERT INTO inat_account (person_id, inat_user_id, login)
-SELECT p.person_id, p.user_id, p.login
-FROM observer_collector_pair p
-WHERE (SELECT count(*) FROM observer_collector_pair q
-       WHERE q.person_id = p.person_id) = 1
-  AND (SELECT count(*) FROM observer_collector_pair q
-       WHERE q.user_id = p.user_id) = 1
-  AND NOT EXISTS (SELECT 1 FROM inat_account a WHERE a.person_id = p.person_id)
-  AND NOT EXISTS (SELECT 1 FROM inat_account a WHERE a.inat_user_id = p.user_id);

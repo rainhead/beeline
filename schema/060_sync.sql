@@ -88,10 +88,12 @@ CREATE TABLE observation_field (
   -- Append only. The refresh inserts positionally and observation_field_stale
   -- compares with EXCEPT, so column ORDER here is load-bearing and must match
   -- observation_current_fields exactly (schema/105 says the same thing there).
-  collection_method_raw      TEXT
+  collection_method_raw      TEXT,
+  private_place_guess        TEXT
 );
 COMMENT ON TABLE observation_field IS 'The materialisation of observation_current_fields (schema/105), which remains its definition. Refreshed whole inside the sync run that changes observation_load — its only input — and never written by anything else. Read this, not the view: the view costs ~200 ms per scan and three QC rules go through it.';
 COMMENT ON COLUMN observation_field.inat_id IS 'One row per observation, so the PRIMARY KEY is the observation itself — the constraint says out loud what the "current load" definition already guarantees.';
 COMMENT ON COLUMN observation_field.host_is_tracheophyte IS 'NULL when the taxon is absent or the load predates ancestor_ids in the projection — the distinction qc_rule_non_tracheophyte_host relies on, so it is carried rather than defaulted.';
 COMMENT ON COLUMN observation_field.sample_number_raw IS 'The volunteer''s own sample number, from whichever of the two observation fields carries it — ''sampleId'' from 2019, ''sample id'' in 2018 (schema/105). Verbatim: values include junk (''ID 1'') and prefixed series (''dto41''), and findings judge validity.';
+COMMENT ON COLUMN observation_field.private_place_guess IS 'The locality text iNaturalist withholds on a private observation and delivers to a trusted reader, preferred over place_guess wherever a locality is derived (observation_locality, schema/108) — the same private-first rule the coordinate and place-id rules apply. Empty across the whole dev corpus, which was synced without trust.';
 COMMENT ON COLUMN observation_field.collection_method_raw IS '''OBA Collection Method'': net, pan trap, vane trap, or nest block. The only controlled vocabulary the source offers for how a bee was caught, and evidence for the open protocol-vocabulary question (docs/questions.md, Trap sampling q3). DO NOT drive sample.protocol from it: an iNat-backed sample is an aerial-net sample (Peter, 2026-08-29), which the corpus bears out — 56,937 of 57,278 linked samples carry ''aerial net'' whatever this field says, its 83 non-net values disagree with the record about a third of the time (''pan trap'' here against ''aerial net'' there, 12 of 52), and an observation carries one date so it cannot evidence a trap''s range anyway.';

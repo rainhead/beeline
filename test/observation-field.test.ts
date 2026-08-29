@@ -167,32 +167,67 @@ describe("the migration for deployed stores", () => {
    * maintain a fiction, the test follows the head of the chain — which is
    * where the risk actually is, since that is the migration nothing has run
    * yet.
+   *
+   * So it moves. It pinned 0020; the head is now 0021 (beeline-oyq), and the
+   * unwind below is correspondingly longer because that migration adds a
+   * twenty-second column, a file's worth of views, and a rewrite of
+   * qc_rule_locality_format. Whoever adds 0022 moves it again — which is the
+   * cost of the doctrine and cheaper than the fiction it replaced.
    */
   test("brings a store built from the previous schema up to this one, filled", async () => {
     const { conn: old } = await createMemoryDb();
 
-    // Unwind beeline-2yt: the places cache and its views, the conflict view,
-    // atlas_region's new column, and the projection's new column — in both
-    // the table and the view, since the pre-state had neither.
+    // Unwind beeline-oyq: the whole of schema/108, the projection's
+    // twenty-second column in both the table and the view, and
+    // qc_rule_locality_format's inline copy of the street-suffix list.
+    // Dependents first — sample_mint_free_link and sample_mint_pending read
+    // sample_mint_match, which reads sample_mint_group.
     for (const view of [
-      "inat_place_uncached", "observation_place_ambiguous", "observation_place",
-      "observation_sample_number_conflict", "observation_field_stale",
+      "observation_locality", "sample_mint_free_link", "sample_mint_pending",
+      "sample_mint_ambiguous", "sample_mint_match", "sample_mint_group",
+      "observation_sample_unresolved", "observation_sample_unusable",
+      "observation_sample_candidate", "sample_atlas_unfilled",
+      "sample_multi_observation", "sample_observation_number_mismatch",
+      "observation_field_stale",
     ]) {
       await old.run(`DROP VIEW ${view}`);
     }
-    await old.run("DROP TABLE inat_place");
-    await old.run("DROP INDEX atlas_region_inat_place_id_key");
-    await old.run("ALTER TABLE atlas_region DROP COLUMN inat_place_id");
-    await old.run("ALTER TABLE observation_field DROP COLUMN collection_method_raw");
+    // Back to the inline word list, so that dropping the shared one is
+    // possible at all — a pre-0021 store has no such view to read.
+    await old.run(`CREATE OR REPLACE VIEW qc_rule_locality_format AS
+      SELECT sample_id, CAST(NULL AS INTEGER) AS specimen_id,
+             'locality_format' AS rule_name,
+             concat_ws('; ',
+               CASE WHEN len > 18 THEN concat('longer than 18 chars (', len, ')') END,
+               CASE WHEN has_comma THEN 'contains comma' END,
+               CASE WHEN has_quote THEN 'contains double quote' END,
+               CASE WHEN is_street THEN 'looks like a street address' END) AS details
+      FROM (
+        SELECT norm.sample_id, length(norm.locality) AS len,
+               position(',' IN norm.locality) > 0 AS has_comma,
+               position('"' IN norm.locality) > 0 AS has_quote,
+               regexp_matches(norm.norm,
+                 ' (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county) '
+               ) AS is_street
+        FROM (
+          SELECT s.entity_id AS sample_id, s.locality,
+                 concat(' ', replace(replace(lower(s.locality), ',', ' '), '.', ' '), ' ') AS norm
+          FROM sample s WHERE s.locality IS NOT NULL
+        ) norm
+      ) flags
+      WHERE len > 18 OR has_comma OR has_quote OR is_street`);
+    await old.run("DROP VIEW locality_street_suffix_pattern");
+    await old.run("ALTER TABLE observation_field DROP COLUMN private_place_guess");
     await old.run("DROP VIEW observation_current_fields");
     await old.run(`CREATE VIEW observation_current_fields AS
       SELECT inat_id, observed_on, latitude, longitude, private_latitude, private_longitude,
              positional_accuracy, public_positional_accuracy, geoprivacy, taxon_geoprivacy,
              viewer_trusted, user_id, user_login, place_guess, host_taxon_id, host_taxon_name,
-             host_is_tracheophyte, quality_grade, sample_number_raw, specimen_count_raw
+             host_is_tracheophyte, quality_grade, sample_number_raw, specimen_count_raw,
+             collection_method_raw
       FROM observation_field`);
-    // The stale view has to come back too — 0020 does not create it, and a
-    // real pre-0020 store has it. Pointed at the same 20 columns.
+    // The stale view has to come back too — 0021 does not create it, and a
+    // real pre-0021 store has it. Pointed at the same 21 columns.
     await old.run(`CREATE VIEW observation_field_stale AS
       SELECT inat_id FROM (
         SELECT * FROM observation_current_fields EXCEPT SELECT * FROM observation_field
@@ -214,7 +249,7 @@ describe("the migration for deployed stores", () => {
       ] }))] as never,
     );
 
-    const sql = await readFile(join(MIGRATIONS_DIR, "0020-observation-places-and-2018-sample-id.sql"), "utf8");
+    const sql = await readFile(join(MIGRATIONS_DIR, "0021-observations-become-samples.sql"), "utf8");
     await old.run(sql);
 
     expect(await schemaDrift(old)).toEqual([]);
@@ -233,5 +268,9 @@ describe("the migration for deployed stores", () => {
       await old.run("SELECT count(*), count(inat_place_id) FROM atlas_region")
     ).getRows();
     expect(regions).toEqual([[64n, 64n]]);
+    // And the reconcile the migration exists to make possible can be asked
+    // its question on a store that has never rebuilt.
+    const candidates = await (await old.run("SELECT count(*) FROM observation_sample_candidate")).getRows();
+    expect(Number(candidates[0]![0])).toBe(1);
   });
 });

@@ -101,9 +101,12 @@ FROM (
          position(',' IN norm.locality) > 0 AS has_comma,
          position('"' IN norm.locality) > 0 AS has_quote,
          -- The same seventeen words the reference checks, each still
-         -- required to stand alone between spaces.
-         regexp_matches(norm.norm,
-           ' (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county) '
+         -- required to stand alone between spaces. The list itself lives in
+         -- locality_street_suffix_pattern (schema/108), because
+         -- observation_locality applies it too — to pick a locality that does
+         -- not exist yet, where this judges one that does — and a word list
+         -- kept in two files is a word list that will one day be two lists.
+         regexp_matches(norm.norm, (SELECT pattern FROM locality_street_suffix_pattern)
          ) AS is_street
   FROM (
     SELECT s.entity_id AS sample_id, s.locality,

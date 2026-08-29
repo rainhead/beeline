@@ -171,8 +171,10 @@ Per-repo configuration the engineering skills read. Written by
 
 ### Issue tracker
 
-Two trackers, split by audience: GitHub Issues for discussion-shaped work and
-customer requests, beads (`bd`) for everything else. See
+Two trackers, split by audience: GitHub Issues for discussion-shaped work,
+customer requests, and bugs someone reported; beads (`bd`) for everything else,
+including bugs found while working. Where this disagrees with the managed Beads
+block below ("use `bd` for ALL task tracking"), the tracker doc wins. See
 [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
 
 ### Triage labels

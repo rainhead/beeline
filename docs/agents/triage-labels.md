@@ -20,11 +20,15 @@ labels onto beads; a bead is already triaged by the person who filed it. See
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding
 label string from this table.
 
-`wontfix` already exists in the repo's GitHub labels. The other four do not yet; create one on
-first use rather than provisioning them upfront:
+`wontfix` already exists in the repo's GitHub labels. The other four do not yet; create the one
+you need on first use rather than provisioning all four upfront. The exact commands, so a colour
+is not invented per invocation:
 
 ```bash
-gh label create needs-triage --description "Maintainer needs to evaluate this issue" --color FBCA04
+gh label create needs-triage    --description "Maintainer needs to evaluate this issue"  --color FBCA04
+gh label create needs-info      --description "Waiting on reporter for more information" --color D4C5F9
+gh label create ready-for-agent --description "Fully specified, ready for an AFK agent"   --color 0E8A16
+gh label create ready-for-human --description "Requires human implementation"             --color 1D76DB
 ```
 
 The repo's own labels — `cross-cutting`, `decision-watch`, `ops` in beads, and GitHub's

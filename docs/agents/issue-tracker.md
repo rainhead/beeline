@@ -12,7 +12,11 @@ This repo tracks work in **two** places, split by audience — the split is stat
 **Which one to use.** Ask who else needs to read it. If the answer includes someone outside
 the codebase — a question for staff, a bug a volunteer hit, a request from an atlas — it is a
 GitHub issue. If it is engineering work whose whole audience is whoever picks it up next, it is
-a bead. When a GitHub discussion resolves into implementation work, the outcome becomes one or
+a bead. **Bugs split on the same test rather than landing wholesale in either tracker**: one a
+volunteer or staff member reported is a GitHub issue, because the reporter needs to follow it;
+one found while working is a bead (`beeline-d34`, `beeline-oyq`). Where this file and the
+managed Beads block below it disagree — that block says to use `bd` for *all* task tracking —
+this file wins, and README.md is the authority behind it. When a GitHub discussion resolves into implementation work, the outcome becomes one or
 more beads that reference the issue by URL; the GitHub issue stays as the conversation.
 
 The repo is public ([memory](https://github.com/rainhead/beeline)): no volunteer PII in either
@@ -50,8 +54,10 @@ Use the `gh` CLI; it infers the repo from `git remote -v` inside a clone.
 
 - **Create**: `gh issue create --title "..." --body "..."` (heredoc for multi-line bodies).
 - **Read**: `gh issue view <number> --comments`.
-- **List**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'`,
-  with `--label` / `--state` filters.
+- **List**: `gh issue list --state open --limit 100 --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'`,
+  with `--label` / `--state` filters. `--limit` is not optional: without it `gh` returns the
+  first 30 and says nothing about the rest, so a triage pass would silently skip issues. If a
+  listing ever comes back at the limit, raise it rather than assuming that was all of them.
 - **Comment**: `gh issue comment <number> --body "..."` — append 🤖 to anything an agent authors,
   here and in PR comments.
 - **Labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`.
@@ -91,8 +97,9 @@ staff-facing conversation. The **map** is a bead with **child** beads as tickets
   `<type>` is `research` / `prototype` / `grilling` / `task`. Order is the dotted child number.
 - **Blocking**: `bd dep add <child> <blocker>` — native beads dependencies. A ticket is unblocked
   when every blocker is closed.
-- **Frontier query**: `bd ready` scoped to the map's children, else `bd show <map-id> --children`
-  filtered to open, unassigned beads with no open blocker; lowest child number wins.
+- **Frontier query**: `bd ready --parent <map-id> --json` — `--parent` filters to descendants of
+  that bead, so without it the frontier picks up ready work from the rest of the store. Lowest
+  child number wins.
 - **Claim**: `bd update <id> --claim` — the session's first write.
 - **Resolve**: `bd comment <id> "<answer>"`, then `bd close <id> -r "<gist>"`, then append a
   context pointer to the map's Decisions-so-far (`bd update <map-id> --append-notes "..."`).

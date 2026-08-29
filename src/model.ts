@@ -72,6 +72,20 @@ export interface AtlasRegionTable {
   state_province: string;
   country: string;
   atlas_id: number | null;
+  /** The region's iNat place — the only route from an observation to a state. */
+  inat_place_id: BigIntCol | null;
+}
+
+// schema/065_places.sql
+
+export interface InatPlaceTable {
+  inat_place_id: BigIntCol;
+  name: string;
+  /** 0 country, 10 state/province, 20 county; null for the ecoregions and
+   *  user-drawn places that make up most of an observation's place_ids. */
+  admin_level: number | null;
+  ancestor_place_ids: BigIntCol[] | null;
+  fetched_at: Generated<Date>;
 }
 
 // schema/private/010_auth.sql — the attached private store (ADR 0003)
@@ -321,11 +335,50 @@ export interface ObservationFieldTable {
   quality_grade: string | null;
   sample_number_raw: string | null;
   specimen_count_raw: string | null;
+  /** 'OBA Collection Method': net, pan trap, vane trap, nest block. New
+   *  columns go LAST — the refresh inserts positionally (schema/060). */
+  collection_method_raw: string | null;
 }
 
 /** schema/105: observation_field disagreeing with a fresh shred of the loads. */
 export interface ObservationFieldStaleView {
   inat_id: BigIntCol;
+}
+
+/** schema/105: an observation whose two sample-number fields disagree. */
+export interface ObservationSampleNumberConflictView {
+  inat_id: BigIntCol;
+  sample_id_value: string | null;
+  sample_id_2018_value: string | null;
+}
+
+// schema/107_views_place.sql
+
+/** An observation's place_ids resolved to country / state / county. */
+export interface ObservationPlaceView {
+  inat_id: BigIntCol;
+  country_place_id: BigIntCol | null;
+  country_name: string | null;
+  state_place_id: BigIntCol | null;
+  state_name: string | null;
+  /** The two-letter code a sample carries; null when atlas_region has no row. */
+  state_province: string | null;
+  country_code: string | null;
+  county_place_id: BigIntCol | null;
+  county_name: string | null;
+}
+
+/** Two places at one administrative level — the tie observation_place breaks. */
+export interface ObservationPlaceAmbiguousView {
+  inat_id: BigIntCol;
+  admin_level: number;
+  places: number;
+  names: string;
+}
+
+/** Places an observation names that the cache has never been told about. */
+export interface InatPlaceUncachedView {
+  inat_place_id: BigIntCol;
 }
 
 // schema/070_jobs.sql
@@ -432,6 +485,11 @@ export interface Database {
   printable_sample: PrintableSampleView;
   pending_print_sample: PendingPrintSampleView;
   observation_field_stale: ObservationFieldStaleView;
+  observation_sample_number_conflict: ObservationSampleNumberConflictView;
+  inat_place: InatPlaceTable;
+  observation_place: ObservationPlaceView;
+  observation_place_ambiguous: ObservationPlaceAmbiguousView;
+  inat_place_uncached: InatPlaceUncachedView;
   // Attached private store (ADR 0003), catalog-qualified:
   "private.inat_oauth_token": InatOauthTokenTable;
   "private.session": SessionTable;

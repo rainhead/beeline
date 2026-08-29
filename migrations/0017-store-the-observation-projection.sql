@@ -46,7 +46,25 @@ COMMENT ON TABLE observation_field IS 'The materialisation of observation_curren
 COMMENT ON COLUMN observation_field.inat_id IS 'One row per observation, so the PRIMARY KEY is the observation itself — the constraint says out loud what the "current load" definition already guarantees.';
 COMMENT ON COLUMN observation_field.host_is_tracheophyte IS 'NULL when the taxon is absent or the load predates ancestor_ids in the projection — the distinction qc_rule_non_tracheophyte_host relies on, so it is carried rather than defaulted.';
 
-INSERT INTO observation_field SELECT * FROM observation_current_fields;
+-- Columns named rather than SELECT *, which this said until beeline-2yt gave
+-- the view a twenty-first column and made this line insert 21 values into the
+-- 20-column table above. A migration is a delta pinned to its own moment, but
+-- it reads the view as the schema defines it TODAY — so every later column
+-- would break a store that had not yet run this one. Naming them fixes that
+-- for good. No store that has already applied this re-runs it (migrations are
+-- recorded by name), so the edit changes nothing that has happened.
+INSERT INTO observation_field (
+  inat_id, observed_on, latitude, longitude, private_latitude, private_longitude,
+  positional_accuracy, public_positional_accuracy, geoprivacy, taxon_geoprivacy,
+  viewer_trusted, user_id, user_login, place_guess, host_taxon_id, host_taxon_name,
+  host_is_tracheophyte, quality_grade, sample_number_raw, specimen_count_raw
+)
+SELECT
+  inat_id, observed_on, latitude, longitude, private_latitude, private_longitude,
+  positional_accuracy, public_positional_accuracy, geoprivacy, taxon_geoprivacy,
+  viewer_trusted, user_id, user_login, place_guess, host_taxon_id, host_taxon_name,
+  host_is_tracheophyte, quality_grade, sample_number_raw, specimen_count_raw
+FROM observation_current_fields;
 
 -- The three rules, repointed from the view to the table. DuckDB will not drop
 -- a view something else depends on, and the qc_finding union — plus

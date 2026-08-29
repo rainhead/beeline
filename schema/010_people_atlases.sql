@@ -47,6 +47,16 @@ COMMENT ON COLUMN atlas.inat_place_id IS 'The atlas''s iNaturalist place (Washin
 
 -- The six member atlases. Place ids are filled in as they are verified
 -- against iNat (only Washington's is documented so far).
+--
+-- Deliberately left alone by beeline-2yt, which gave every atlas_region a
+-- verified place id including these six. Nothing reads this column — not a
+-- query, view, or page — and atlas_region's is what observation_place joins
+-- on, so filling these in would duplicate a fact to no reader. It would also
+-- have to be an UPDATE on a deployed store, and DuckDB refuses to update a
+-- row an incoming foreign key references (atlas_region.atlas_id does), which
+-- is a fight worth having only for a value somebody wants. A test asserts the
+-- one id here agrees with atlas_region's, so the two cannot drift apart while
+-- both exist.
 INSERT INTO atlas (code, name, inat_place_id) VALUES
   ('OBA',  'Oregon Bee Atlas',           NULL),
   ('WaBA', 'Washington Bee Atlas',       46),
@@ -74,36 +84,51 @@ INSERT INTO atlas (code, name, inat_place_id) VALUES
 CREATE TABLE atlas_region (
   state_province TEXT PRIMARY KEY,
   country        TEXT NOT NULL,
-  atlas_id       INTEGER REFERENCES atlas(entity_id)
+  atlas_id       INTEGER REFERENCES atlas(entity_id),
+  inat_place_id  BIGINT
 );
+-- Uniqueness as a named index rather than an inline UNIQUE, so that a store
+-- brought forward by migration 0020 and one built fresh from here are the
+-- same shape: a migration can only add the constraint this way (DuckDB has no
+-- ALTER TABLE ADD CONSTRAINT), and two stores that differ in how they spell
+-- the same rule are exactly what ADR 0006 exists to prevent.
+CREATE UNIQUE INDEX atlas_region_inat_place_id_key ON atlas_region (inat_place_id);
 COMMENT ON TABLE atlas_region IS 'State/province → the member atlas covering it, for the US and Canada. Geography assigns samples to atlases (schema/030); this is the lookup it does. Deliberately complete rather than data-shaped: a region absent from this table means "unrecognised", so listing only the six would make every other real place look like a typo.';
 COMMENT ON COLUMN atlas_region.state_province IS 'The two-letter USPS or Canada Post code, exactly as a sample carries it — this is the join key, so the format is load-bearing: qc_rule_place_unrecognised fires on anything that does not match a row here.';
 COMMENT ON COLUMN atlas_region.country IS 'ISO 3166-1 alpha-3, matching the ''USA'' the records already carry. Not part of the key — see the note above — but the truth a sample''s own country is checked against.';
 COMMENT ON COLUMN atlas_region.atlas_id IS 'Null ⇒ no member atlas covers this region. That is an answer, not a gap: these are the records that belong to the umbrella program itself.';
+COMMENT ON COLUMN atlas_region.inat_place_id IS 'This region''s iNaturalist place, so a sample minted from an observation can be given a state at all: iNat stamps observations with place ids and place_guess is free text ("Leach Botanical Garden"), so the two-letter code has to be reached through here (beeline-2yt). atlas.inat_place_id answers the same question for the six atlases only; every region needs one, and a test pins the six to agree.';
 
-INSERT INTO atlas_region (state_province, country, atlas_id)
-SELECT r.state_province, r.country, a.entity_id
+-- Place ids were derived twice and agreed: iNaturalist's own autocomplete
+-- filtered to admin_level 10 under the right country, and — independently —
+-- the place id that actually appears on the observations behind the samples
+-- already filed under each code. The second reaches only the 22 regions the
+-- corpus has records for, which is exactly why it is worth having: it is what
+-- would catch a plausible-but-wrong name match. Oregon 10, Washington 46
+-- (agreeing with atlas.inat_place_id, the one id documented before this).
+INSERT INTO atlas_region (state_province, country, atlas_id, inat_place_id)
+SELECT r.state_province, r.country, a.entity_id, r.inat_place_id
 FROM (VALUES
   -- The six, in the order schema declares them.
-  ('OR', 'USA', 'OBA'), ('WA', 'USA', 'WaBA'), ('BC', 'CAN', 'BC'),
-  ('ID', 'USA', 'ID'),  ('NM', 'USA', 'NM'),   ('OK', 'USA', 'OK'),
+  ('OR', 'USA', 'OBA', 10), ('WA', 'USA', 'WaBA', 46), ('BC', 'CAN', 'BC', 7085),
+  ('ID', 'USA', 'ID', 22),  ('NM', 'USA', 'NM', 9),   ('OK', 'USA', 'OK', 12),
   -- Everywhere else Master Melittologists have collected, or could.
-  ('AL', 'USA', NULL), ('AK', 'USA', NULL), ('AZ', 'USA', NULL), ('AR', 'USA', NULL),
-  ('CA', 'USA', NULL), ('CO', 'USA', NULL), ('CT', 'USA', NULL), ('DE', 'USA', NULL),
-  ('DC', 'USA', NULL), ('FL', 'USA', NULL), ('GA', 'USA', NULL), ('HI', 'USA', NULL),
-  ('IL', 'USA', NULL), ('IN', 'USA', NULL), ('IA', 'USA', NULL), ('KS', 'USA', NULL),
-  ('KY', 'USA', NULL), ('LA', 'USA', NULL), ('ME', 'USA', NULL), ('MD', 'USA', NULL),
-  ('MA', 'USA', NULL), ('MI', 'USA', NULL), ('MN', 'USA', NULL), ('MS', 'USA', NULL),
-  ('MO', 'USA', NULL), ('MT', 'USA', NULL), ('NE', 'USA', NULL), ('NV', 'USA', NULL),
-  ('NH', 'USA', NULL), ('NJ', 'USA', NULL), ('NY', 'USA', NULL), ('NC', 'USA', NULL),
-  ('ND', 'USA', NULL), ('OH', 'USA', NULL), ('PA', 'USA', NULL), ('RI', 'USA', NULL),
-  ('SC', 'USA', NULL), ('SD', 'USA', NULL), ('TN', 'USA', NULL), ('TX', 'USA', NULL),
-  ('UT', 'USA', NULL), ('VT', 'USA', NULL), ('VA', 'USA', NULL), ('WV', 'USA', NULL),
-  ('WI', 'USA', NULL), ('WY', 'USA', NULL),
-  ('AB', 'CAN', NULL), ('MB', 'CAN', NULL), ('NB', 'CAN', NULL), ('NL', 'CAN', NULL),
-  ('NS', 'CAN', NULL), ('NT', 'CAN', NULL), ('NU', 'CAN', NULL), ('ON', 'CAN', NULL),
-  ('PE', 'CAN', NULL), ('QC', 'CAN', NULL), ('SK', 'CAN', NULL), ('YT', 'CAN', NULL)
-) AS r(state_province, country, atlas_code)
+  ('AL', 'USA', NULL, 19), ('AK', 'USA', NULL, 6), ('AZ', 'USA', NULL, 40), ('AR', 'USA', NULL, 36),
+  ('CA', 'USA', NULL, 14), ('CO', 'USA', NULL, 34), ('CT', 'USA', NULL, 49), ('DE', 'USA', NULL, 4),
+  ('DC', 'USA', NULL, 5), ('FL', 'USA', NULL, 21), ('GA', 'USA', NULL, 23), ('HI', 'USA', NULL, 11),
+  ('IL', 'USA', NULL, 35), ('IN', 'USA', NULL, 20), ('IA', 'USA', NULL, 24), ('KS', 'USA', NULL, 25),
+  ('KY', 'USA', NULL, 26), ('LA', 'USA', NULL, 27), ('ME', 'USA', NULL, 17), ('MD', 'USA', NULL, 39),
+  ('MA', 'USA', NULL, 2), ('MI', 'USA', NULL, 29), ('MN', 'USA', NULL, 38), ('MS', 'USA', NULL, 37),
+  ('MO', 'USA', NULL, 28), ('MT', 'USA', NULL, 16), ('NE', 'USA', NULL, 3), ('NV', 'USA', NULL, 50),
+  ('NH', 'USA', NULL, 41), ('NJ', 'USA', NULL, 51), ('NY', 'USA', NULL, 48), ('NC', 'USA', NULL, 30),
+  ('ND', 'USA', NULL, 13), ('OH', 'USA', NULL, 31), ('PA', 'USA', NULL, 42), ('RI', 'USA', NULL, 8),
+  ('SC', 'USA', NULL, 43), ('SD', 'USA', NULL, 44), ('TN', 'USA', NULL, 45), ('TX', 'USA', NULL, 18),
+  ('UT', 'USA', NULL, 52), ('VT', 'USA', NULL, 47), ('VA', 'USA', NULL, 7), ('WV', 'USA', NULL, 33),
+  ('WI', 'USA', NULL, 32), ('WY', 'USA', NULL, 15),
+  ('AB', 'CAN', NULL, 6834), ('MB', 'CAN', NULL, 7590), ('NB', 'CAN', NULL, 7587), ('NL', 'CAN', NULL, 7289),
+  ('NS', 'CAN', NULL, 6853), ('NT', 'CAN', NULL, 9079), ('NU', 'CAN', NULL, 13335), ('ON', 'CAN', NULL, 6883),
+  ('PE', 'CAN', NULL, 9116), ('QC', 'CAN', NULL, 13336), ('SK', 'CAN', NULL, 7953), ('YT', 'CAN', NULL, 13337)
+) AS r(state_province, country, atlas_code, inat_place_id)
 LEFT JOIN atlas a ON a.code = r.atlas_code;
 
 -- Where a person belongs in the program, as distinct from where their samples

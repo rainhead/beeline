@@ -152,37 +152,86 @@ describe("the rules that read it", () => {
 });
 
 describe("the migration for deployed stores", () => {
+  /**
+   * The sandbox cannot be rebuilt (ADR 0006), so the newest delta has to stand
+   * on its own: apply it to a store built from the schema *without* that
+   * change and there must be no drift left, and no empty window where the
+   * rules read nothing.
+   *
+   * This used to pin 0017, the migration that created observation_field, and
+   * it simulated the pre-state by dropping the table and its alarm view out
+   * from under a current store. That stopped being an accurate simulation the
+   * moment beeline-2yt gave observation_current_fields a twenty-first column:
+   * a real pre-0017 store carries the pre-0017 *view* as well, and no amount
+   * of dropping tables from a current one reproduces that. Rather than
+   * maintain a fiction, the test follows the head of the chain — which is
+   * where the risk actually is, since that is the migration nothing has run
+   * yet.
+   */
   test("brings a store built from the previous schema up to this one, filled", async () => {
-    // The sandbox cannot be rebuilt (ADR 0006), so the delta has to stand on
-    // its own: apply it to a store that predates the table and there must be
-    // no drift left, and no empty window where the rules read nothing.
-    // The pre-state is a store that predates the change: no table, no alarm
-    // view, and the eight views still written against observation_current_
-    // fields. DuckDB resolves a view's body lazily, so dropping the table out
-    // from under them leaves exactly the catalog a pre-migration store has —
-    // and leaves the migration's own DROPs something to drop.
     const { conn: old } = await createMemoryDb();
-    await old.run("DROP VIEW observation_field_stale");
-    await old.run("DROP TABLE observation_field");
+
+    // Unwind beeline-2yt: the places cache and its views, the conflict view,
+    // atlas_region's new column, and the projection's new column — in both
+    // the table and the view, since the pre-state had neither.
+    for (const view of [
+      "inat_place_uncached", "observation_place_ambiguous", "observation_place",
+      "observation_sample_number_conflict", "observation_field_stale",
+    ]) {
+      await old.run(`DROP VIEW ${view}`);
+    }
+    await old.run("DROP TABLE inat_place");
+    await old.run("DROP INDEX atlas_region_inat_place_id_key");
+    await old.run("ALTER TABLE atlas_region DROP COLUMN inat_place_id");
+    await old.run("ALTER TABLE observation_field DROP COLUMN collection_method_raw");
+    await old.run("DROP VIEW observation_current_fields");
+    await old.run(`CREATE VIEW observation_current_fields AS
+      SELECT inat_id, observed_on, latitude, longitude, private_latitude, private_longitude,
+             positional_accuracy, public_positional_accuracy, geoprivacy, taxon_geoprivacy,
+             viewer_trusted, user_id, user_login, place_guess, host_taxon_id, host_taxon_name,
+             host_is_tracheophyte, quality_grade, sample_number_raw, specimen_count_raw
+      FROM observation_field`);
+    // The stale view has to come back too — 0020 does not create it, and a
+    // real pre-0020 store has it. Pointed at the same 20 columns.
+    await old.run(`CREATE VIEW observation_field_stale AS
+      SELECT inat_id FROM (
+        SELECT * FROM observation_current_fields EXCEPT SELECT * FROM observation_field
+      ) missing
+      UNION
+      SELECT inat_id FROM (
+        SELECT * FROM observation_field EXCEPT SELECT * FROM observation_current_fields
+      ) extra`);
     await baseline(old);
-    expect(await schemaDrift(old)).toEqual(["missing: observation_field", "missing: observation_field_stale"]);
 
     await old.run("INSERT INTO sync_run (source, authenticated, completed_at) VALUES ('t', true, now())");
     await old.run(
       `INSERT INTO observation_load (inat_id, sync_run_id, content, content_hash)
        VALUES (7, (SELECT max(entity_id) FROM sync_run), $1, 'h7')`,
-      [canonicalJson(obs(7))] as never,
+      [canonicalJson(obs(7, { ofvs: [
+        { name: "sampleId", value: "1" },
+        { name: "numberOfSpecimens", value: "3" },
+        { name: "OBA Collection Method", value: "net" },
+      ] }))] as never,
     );
 
-    const sql = await readFile(join(MIGRATIONS_DIR, "0017-store-the-observation-projection.sql"), "utf8");
+    const sql = await readFile(join(MIGRATIONS_DIR, "0020-observation-places-and-2018-sample-id.sql"), "utf8");
     await old.run(sql);
 
     expect(await schemaDrift(old)).toEqual([]);
-    // Filled by the migration itself: an empty table would have left the
-    // three rules silently reporting nothing until the next promotion.
-    const filled = await (await old.run("SELECT inat_id, specimen_count_raw FROM observation_field")).getRows();
-    expect(filled).toEqual([[7n, "3"]]);
+    // Refilled by the migration itself, and reading the new field: an
+    // unrefreshed table would have left the rules quietly reporting an older
+    // answer, with observation_field_stale the only thing that knew.
+    const filled = await (
+      await old.run("SELECT inat_id, specimen_count_raw, collection_method_raw FROM observation_field")
+    ).getRows();
+    expect(filled).toEqual([[7n, "3", "net"]]);
     const stale = await (await old.run("SELECT count(*) FROM observation_field_stale")).getRows();
     expect(Number(stale[0]![0])).toBe(0);
+    // And every region got its place id, which is what the whole places half
+    // of the migration exists to make possible.
+    const regions = await (
+      await old.run("SELECT count(*), count(inat_place_id) FROM atlas_region")
+    ).getRows();
+    expect(regions).toEqual([[64n, 64n]]);
   });
 });

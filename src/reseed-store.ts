@@ -43,9 +43,23 @@ import { applySchema } from "./schema.js";
  */
 
 /**
- * What comes across: the staged legacy dump, the iNat sync history, and the
- * job log. Everything else in the store is a pure function of these, and
- * promotion recomputes it.
+ * What comes across: the staged legacy dump, the iNat sync history, the job
+ * log, and the places cache. Everything else in the store is a pure function
+ * of these, and promotion recomputes it.
+ *
+ * inat_place is here because it is the one carried table promotion CANNOT
+ * recompute: it comes from an outbound HTTP fetch, not from anything in the
+ * store (src/fetch-places.ts, beeline-2yt). Leaving it out would be silent —
+ * a reseeded store would resolve no observation to a state, and so give
+ * nothing an atlas, until somebody noticed and ran the fetch again.
+ *
+ * This list is DECLARATIVE — carryStaging copies each table by hand, because
+ * three of them need their ids or their sync_run reference rewritten and no
+ * loop expresses that. So the list can say a table is carried while nothing
+ * copies it, which is exactly what happened when inat_place was added to it
+ * (CodeRabbit on PR #19). A test now asserts the two agree: every name here
+ * must arrive in a reseeded store, so the list is a claim something checks
+ * rather than a comment that reads like one.
  */
 export const CARRIED_TABLES = [
   "legacy_occurrence",
@@ -53,6 +67,7 @@ export const CARRIED_TABLES = [
   "observation_load",
   "observation_seen",
   "job_run",
+  "inat_place",
 ] as const;
 
 export interface ReseedCounts {
@@ -136,6 +151,20 @@ export async function carryStaging(
       await count("job_run");
     }
 
+    // Whole, ids and all: inat_place is keyed by iNaturalist's own place id,
+    // not by entity_id_seq, so there is nothing to renumber. fetched_at comes
+    // across with it — the row's value is when iNat was actually asked, and
+    // rewriting it to now() would claim a freshness the reseed did not earn.
+    //
+    // The only carried table promotion cannot recompute: it comes from an
+    // outbound fetch (src/fetch-places.ts), so losing it would leave a
+    // reseeded store able to resolve no observation to a state, and therefore
+    // to give nothing an atlas, with nothing to say why.
+    if (await has("inat_place")) {
+      await conn.run(`INSERT INTO inat_place BY NAME SELECT * FROM old.inat_place`);
+      await count("inat_place");
+    }
+
     // Scoped to the target: both catalogs are attached and both have a
     // sequence by this name, and reading the source's reported a number seven
     // hundred thousand too high while the store itself was fine.
@@ -186,7 +215,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   console.log(JSON.stringify(counts, null, 2));
   console.log(
     `\n${target} has the schema and ${source}'s staging, and no model.\n` +
-      `Derive it: pnpm legacy:promote ${target} && pnpm inat:promote ${target} && ` +
-      `pnpm inat:backfill-accounts ${target} && pnpm elevation:derive ${target}`,
+      `Derive it: pnpm legacy:promote ${target} && pnpm inat:fetch-places ${target} && ` +
+      `pnpm inat:promote ${target} && pnpm inat:backfill-accounts ${target} && ` +
+      `pnpm elevation:derive ${target}`,
   );
 }

@@ -18,6 +18,7 @@
     "legacy:reconcile": "tsx src/reconcile-legacy.ts",
     "inat:sync": "tsx src/sync-inat.ts",
     "inat:promote": "tsx src/promote-observations.ts",
+    "inat:fetch-places": "tsx src/fetch-places.ts",
     "inat:backfill-accounts": "tsx src/backfill-inat-accounts.ts",
     "inat:login": "tsx src/inat-login.ts",
     "elevation:fetch": "tsx src/fetch-dem.ts",

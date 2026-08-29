@@ -35,17 +35,81 @@ SELECT o.inat_id,
   -- predates ancestor_ids in the projection (clears on the next sync).
   list_contains(CAST(json_extract(o.content, '$.taxon.ancestor_ids') AS BIGINT[]), 211194) AS host_is_tracheophyte,
   json_extract_string(o.content, '$.quality_grade')                      AS quality_grade,
-  (SELECT j.j ->> '$.value'
-   FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-   WHERE j.j ->> '$.name' = 'sampleId' LIMIT 1)                          AS sample_number_raw,
+  -- Two field names, two eras. 'sampleId' is the 2019-onwards field; the 2018
+  -- season used one named 'sample id', which nothing in Beeline or in the
+  -- reference implementation has ever read (docs/reference-implementation.md:
+  -- "No sample id ⇒ no rows"). It is not a stray: 1,054 of its 1,532 usable
+  -- values match a sample already in the store on (collector, number, date),
+  -- which a field nobody meant could not do. 1,608 of its 1,636 uses are
+  -- 2018; the rest are stragglers, so this reads it by name rather than by
+  -- season. Where an observation carries both, 'sampleId' wins and
+  -- observation_sample_number_conflict names the disagreement — 14 of the 31
+  -- that carry both, which is too many to prefer one silently.
+  --
+  -- A BLANK field counts as absent, which is why each arm tests the value
+  -- rather than letting coalesce do it: coalesce falls through on NULL only,
+  -- so a present-but-empty 'sampleId' would win, project as '', and take the
+  -- real 2018 value with it — silently, since the conflict view drops blanks
+  -- too. 119 observations carry a blank 'sampleId' and 2 of them carry a real
+  -- 'sample id' underneath it. The same guard is on the count arms below: no
+  -- observation needs it there today (349 blanks, none masking a value), and
+  -- it is the same rule, so it is spelled the same way rather than waiting
+  -- for the first one that does.
   coalesce(
     (SELECT j.j ->> '$.value'
      FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'numberOfSpecimens' LIMIT 1),
+     WHERE j.j ->> '$.name' = 'sampleId'
+       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1),
     (SELECT j.j ->> '$.value'
      FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'Number of bees collected' LIMIT 1))       AS specimen_count_raw
+     WHERE j.j ->> '$.name' = 'sample id'
+       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1))                      AS sample_number_raw,
+  coalesce(
+    (SELECT j.j ->> '$.value'
+     FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
+     WHERE j.j ->> '$.name' = 'numberOfSpecimens'
+       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1),
+    (SELECT j.j ->> '$.value'
+     FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
+     WHERE j.j ->> '$.name' = 'Number of bees collected'
+       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1))       AS specimen_count_raw,
+  -- How the bee was caught, and the only controlled vocabulary in any of
+  -- this: four values across 10,178 observations — net, pan trap, vane trap,
+  -- nest block — with no effort smuggled into the string, which is exactly
+  -- the failure mode the production free text shows ('6 Vane Traps') and
+  -- docs/questions.md asks about (Trap sampling, q3). Verbatim like every
+  -- other extraction here; whether it maps onto sample.protocol's vocabulary
+  -- is a question for staff, not for this view.
+  --
+  -- NEW COLUMNS GO LAST, always: refreshObservationFields inserts positionally
+  -- (INSERT INTO observation_field SELECT * FROM this view) and
+  -- observation_field_stale below compares with EXCEPT, which is positional
+  -- too — so a TEXT column added in the middle swaps silently with
+  -- sample_number_raw and the alarm built for exactly that cannot see it.
+  (SELECT j.j ->> '$.value'
+   FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
+   WHERE j.j ->> '$.name' = 'OBA Collection Method' LIMIT 1)             AS collection_method_raw
 FROM observation_current o;
+
+-- The two sample-number fields disagreeing on one observation.
+--
+-- sample_number_raw above prefers 'sampleId', and a preference is only honest
+-- if the thing it overrules is visible: 31 observations carry both fields and
+-- 14 of them say different things. A view rather than a QC rule because it is
+-- about an observation, and a finding is keyed to a sample (schema/050) —
+-- most of these have no sample yet, which is the whole of beeline-oyq.
+CREATE VIEW observation_sample_number_conflict AS
+SELECT o.inat_id, modern.value AS sample_id_value, legacy.value AS sample_id_2018_value
+FROM observation_current o,
+LATERAL (SELECT (SELECT j.j ->> '$.value'
+                 FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
+                 WHERE j.j ->> '$.name' = 'sampleId' LIMIT 1) AS value) modern,
+LATERAL (SELECT (SELECT j.j ->> '$.value'
+                 FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
+                 WHERE j.j ->> '$.name' = 'sample id' LIMIT 1) AS value) legacy
+WHERE nullif(trim(modern.value), '') IS NOT NULL
+  AND nullif(trim(legacy.value), '') IS NOT NULL
+  AND trim(modern.value) <> trim(legacy.value);
 
 -- Whether the stored projection still says what shredding the loads would.
 --

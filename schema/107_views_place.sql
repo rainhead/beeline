@@ -2,12 +2,30 @@
 -- province, a county (beeline-2yt).
 --
 -- The source is `place_ids` — the places iNaturalist stamped the observation
--- with — resolved through the inat_place cache (schema/065). Not
--- `place_guess`, which is whatever the observer's phone wrote: 'Leach
--- Botanical Garden', 'Parkrose community orchard', 'Smith Ln, Corvallis, OR,
--- US'. Only 107 of the 1,441 samples a first minting pass would create have a
--- place_guess that could survive qc_rule_locality_format, so it is not a
--- locality either — that stays the volunteer's to supply.
+-- with — resolved through the inat_place cache (schema/065). Country, state
+-- and county come from here and nowhere else, because they have to be exact
+-- codes a lookup can join on.
+--
+-- LOCALITY IS A DIFFERENT QUESTION and this view deliberately does not answer
+-- it. `place_guess` is not raw geocoder output to be discarded: it is the
+-- designed input to locality, and shaping it is part of the volunteer's
+-- collecting workflow. The reference implementation reads it that way —
+-- OccurrenceService.parseLocalityFromPlaceGuess splits on commas, takes the
+-- first component when there are exactly three ('Corvallis, OR, US' ->
+-- 'Corvallis'), and otherwise wraps the whole string in quote characters,
+-- which is what makes qc_rule_locality_format's double-quote test fire. The
+-- quoting IS the "a human must fix this" marker, and the fix is upstream on
+-- iNaturalist, where the next sync collects it.
+--
+-- That rule produced the corpus we have: of 45,906 linked samples whose
+-- place_guess has three parts, 38,212 carry exactly its first component as
+-- their locality. Applied to the 1,441 samples a first minting pass would
+-- create, it yields a clean label-usable locality for 566 of them and marks
+-- the rest for a human — a worklist, not noise (beeline-oyq).
+--
+-- Note for whoever wires that up: the reference prefers `private_place_guess`
+-- over `place_guess`, the same private-first rule this view applies to place
+-- ids, and observation_current_fields does not extract it yet.
 --
 -- Deliberately NOT folded into observation_field. That table is stored rather
 -- than derived, and the whole licence for storing it is that its only input

@@ -264,6 +264,43 @@ describe("the two observation fields nothing was reading", () => {
     expect(await count("SELECT count(*) FROM observation_sample_number_conflict")).toBe(0);
   });
 
+  test("a blank sampleId does not swallow a real 2018 value", async () => {
+    // coalesce falls through on NULL only, so a present-but-empty 'sampleId'
+    // would win, project as '', and take the 2018 value with it — silently,
+    // since the conflict view drops blanks too. 119 observations in the
+    // corpus carry a blank 'sampleId'; 2 have a real 'sample id' under it.
+    await stageLoad(withOfvs(1, [
+      { name: "sampleId", value: "   " },
+      { name: "sample id", value: "17" },
+    ]));
+    await refreshObservationFields(conn);
+    expect(await rows(conn, "SELECT sample_number_raw FROM observation_field")).toEqual([["17"]]);
+  });
+
+  test("a blank in both leaves no sample number rather than an empty string", async () => {
+    await stageLoad(withOfvs(1, [{ name: "sampleId", value: "" }]));
+    await refreshObservationFields(conn);
+    expect(await rows(conn, "SELECT sample_number_raw FROM observation_field")).toEqual([[null]]);
+  });
+
+  test("a non-blank number is stored verbatim, untrimmed", async () => {
+    // The guard belongs in the WHERE, not around the value: the column is
+    // documented verbatim, and trimming here would quietly rewrite what the
+    // volunteer typed.
+    await stageLoad(withOfvs(1, [{ name: "sampleId", value: " 17 " }]));
+    await refreshObservationFields(conn);
+    expect(await rows(conn, "SELECT sample_number_raw FROM observation_field")).toEqual([[" 17 "]]);
+  });
+
+  test("the same guard is on the count arms", async () => {
+    await stageLoad(withOfvs(1, [
+      { name: "numberOfSpecimens", value: "" },
+      { name: "Number of bees collected", value: "4" },
+    ]));
+    await refreshObservationFields(conn);
+    expect(await rows(conn, "SELECT specimen_count_raw FROM observation_field")).toEqual([["4"]]);
+  });
+
   test("collection method is read verbatim", async () => {
     await stageLoad(withOfvs(1, [{ name: "OBA Collection Method", value: "vane trap" }]));
     await refreshObservationFields(conn);

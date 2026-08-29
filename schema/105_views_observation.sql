@@ -45,20 +45,34 @@ SELECT o.inat_id,
   -- season. Where an observation carries both, 'sampleId' wins and
   -- observation_sample_number_conflict names the disagreement — 14 of the 31
   -- that carry both, which is too many to prefer one silently.
+  --
+  -- A BLANK field counts as absent, which is why each arm tests the value
+  -- rather than letting coalesce do it: coalesce falls through on NULL only,
+  -- so a present-but-empty 'sampleId' would win, project as '', and take the
+  -- real 2018 value with it — silently, since the conflict view drops blanks
+  -- too. 119 observations carry a blank 'sampleId' and 2 of them carry a real
+  -- 'sample id' underneath it. The same guard is on the count arms below: no
+  -- observation needs it there today (349 blanks, none masking a value), and
+  -- it is the same rule, so it is spelled the same way rather than waiting
+  -- for the first one that does.
   coalesce(
     (SELECT j.j ->> '$.value'
      FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'sampleId' LIMIT 1),
+     WHERE j.j ->> '$.name' = 'sampleId'
+       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1),
     (SELECT j.j ->> '$.value'
      FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'sample id' LIMIT 1))                      AS sample_number_raw,
+     WHERE j.j ->> '$.name' = 'sample id'
+       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1))                      AS sample_number_raw,
   coalesce(
     (SELECT j.j ->> '$.value'
      FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'numberOfSpecimens' LIMIT 1),
+     WHERE j.j ->> '$.name' = 'numberOfSpecimens'
+       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1),
     (SELECT j.j ->> '$.value'
      FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'Number of bees collected' LIMIT 1))       AS specimen_count_raw,
+     WHERE j.j ->> '$.name' = 'Number of bees collected'
+       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1))       AS specimen_count_raw,
   -- How the bee was caught, and the only controlled vocabulary in any of
   -- this: four values across 10,178 observations — net, pan trap, vane trap,
   -- nest block — with no effort smuggled into the string, which is exactly

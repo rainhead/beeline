@@ -60,17 +60,21 @@ SELECT o.inat_id,
   coalesce(
     (SELECT j.j ->> '$.value'
      FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'sampleId' LIMIT 1),
+     WHERE j.j ->> '$.name' = 'sampleId'
+       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1),
     (SELECT j.j ->> '$.value'
      FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'sample id' LIMIT 1))                      AS sample_number_raw,
+     WHERE j.j ->> '$.name' = 'sample id'
+       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1))                      AS sample_number_raw,
   coalesce(
     (SELECT j.j ->> '$.value'
      FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'numberOfSpecimens' LIMIT 1),
+     WHERE j.j ->> '$.name' = 'numberOfSpecimens'
+       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1),
     (SELECT j.j ->> '$.value'
      FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'Number of bees collected' LIMIT 1))       AS specimen_count_raw,
+     WHERE j.j ->> '$.name' = 'Number of bees collected'
+       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1))       AS specimen_count_raw,
   (SELECT j.j ->> '$.value'
    FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
    WHERE j.j ->> '$.name' = 'OBA Collection Method' LIMIT 1)             AS collection_method_raw

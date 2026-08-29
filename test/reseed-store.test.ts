@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applySchema } from "../src/schema.js";
-import { carryStaging, reseedStore, type ReseedCounts } from "../src/reseed-store.js";
+import { CARRIED_TABLES, carryStaging, reseedStore, type ReseedCounts } from "../src/reseed-store.js";
 import { rows } from "./helpers.js";
 
 /**
@@ -48,6 +48,15 @@ beforeAll(async () => {
   await seed.run(
     `INSERT INTO job_run (job_name, outcome, detail) VALUES ('nightly-pipeline', 'succeeded', 'ok')`,
   );
+  // The one carried table promotion cannot recompute: it comes from an
+  // outbound fetch, so a reseed that dropped it would leave the store unable
+  // to resolve any observation to a state. fetched_at is set to a distinct
+  // past instant so the carry can be shown to preserve it rather than stamp
+  // a new one.
+  await seed.run(
+    `INSERT INTO inat_place (inat_place_id, name, admin_level, ancestor_place_ids, fetched_at)
+     VALUES (10, 'Oregon', 10, [97394, 1, 10], TIMESTAMPTZ '2026-08-01 12:00:00+00')`,
+  );
   // Model rows, of the kind promotion derives and this tool must not carry.
   await seed.run(`INSERT INTO person (entity_id, display_name) VALUES (nextval('entity_id_seq'), 'Stale Person')`);
   // And a sequence left where a promoted store leaves it: far ahead. Both
@@ -67,6 +76,18 @@ afterAll(async () => {
 });
 
 describe("reseeding a store that cannot be blown away", () => {
+  test("CARRIED_TABLES is a claim something checks, not a comment", async () => {
+    // carryStaging copies each table by hand — three of them need their ids
+    // or their sync_run reference rewritten, and no loop expresses that — so
+    // the list can name a table that nothing actually copies. That is not
+    // hypothetical: inat_place was added to the list and to no branch, which
+    // would have silently dropped the places cache on every reseed and left
+    // the store unable to give anything an atlas (CodeRabbit, PR #19). The
+    // source store above holds a row in every one of these, so a name here
+    // that carryStaging forgets shows up as a missing key.
+    expect(Object.keys(counts.carried).sort()).toEqual([...CARRIED_TABLES].sort());
+  });
+
   test("staged and synced state comes across, and the model does not", async () => {
     expect(counts.carried).toEqual({
       legacy_occurrence: 1,
@@ -74,7 +95,17 @@ describe("reseeding a store that cannot be blown away", () => {
       observation_load: 1,
       observation_seen: 1,
       job_run: 1,
+      inat_place: 1,
     });
+    // The place cache comes across whole, keeping the instant iNat was
+    // actually asked: now() would claim a freshness the reseed did not earn.
+    expect(
+      await rows(conn, `SELECT inat_place_id, name, admin_level,
+                               array_to_string(ancestor_place_ids, ','),
+                               fetched_at = TIMESTAMPTZ '2026-08-01 12:00:00+00'
+                        FROM inat_place`),
+    ).toEqual([[10n, "Oregon", 10, "97394,1,10", true]]);
+
     // The whole point: the model is empty, so promotion may run against it.
     expect(await rows(conn, `SELECT count(*) FROM person`)).toEqual([[0n]]);
     expect(await rows(conn, `SELECT count(*) FROM sample`)).toEqual([[0n]]);
@@ -131,11 +162,14 @@ describe("reseeding a store that cannot be blown away", () => {
     await applySchema(c);
     c.closeSync();
     const bareCounts = await reseedStore(bare, out);
+    // Every schema table reports zero; legacy_occurrence is absent because
+    // load-legacy makes it and this store never ran one.
     expect(bareCounts.carried).toEqual({
       sync_run: 0,
       observation_load: 0,
       observation_seen: 0,
       job_run: 0,
+      inat_place: 0,
     });
     const bareInstance = await DuckDBInstance.create(out);
     const bareConn = await bareInstance.connect();

@@ -43,9 +43,15 @@ import { applySchema } from "./schema.js";
  */
 
 /**
- * What comes across: the staged legacy dump, the iNat sync history, and the
- * job log. Everything else in the store is a pure function of these, and
- * promotion recomputes it.
+ * What comes across: the staged legacy dump, the iNat sync history, the job
+ * log, and the places cache. Everything else in the store is a pure function
+ * of these, and promotion recomputes it.
+ *
+ * inat_place is here because it is the one carried table promotion CANNOT
+ * recompute: it comes from an outbound HTTP fetch, not from anything in the
+ * store (src/fetch-places.ts, beeline-2yt). Leaving it out would be silent —
+ * a reseeded store would resolve no observation to a state, and so give
+ * nothing an atlas, until somebody noticed and ran the fetch again.
  */
 export const CARRIED_TABLES = [
   "legacy_occurrence",
@@ -53,6 +59,7 @@ export const CARRIED_TABLES = [
   "observation_load",
   "observation_seen",
   "job_run",
+  "inat_place",
 ] as const;
 
 export interface ReseedCounts {
@@ -186,7 +193,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   console.log(JSON.stringify(counts, null, 2));
   console.log(
     `\n${target} has the schema and ${source}'s staging, and no model.\n` +
-      `Derive it: pnpm legacy:promote ${target} && pnpm inat:promote ${target} && ` +
-      `pnpm inat:backfill-accounts ${target} && pnpm elevation:derive ${target}`,
+      `Derive it: pnpm legacy:promote ${target} && pnpm inat:fetch-places ${target} && ` +
+      `pnpm inat:promote ${target} && pnpm inat:backfill-accounts ${target} && ` +
+      `pnpm elevation:derive ${target}`,
   );
 }

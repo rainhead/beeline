@@ -35,8 +35,8 @@ COMMENT ON COLUMN sample.geoprivacy IS 'The observer''s own iNat geoprivacy sett
 COMMENT ON COLUMN sample.taxon_geoprivacy IS 'iNat taxon-driven obscuring. Whether an atlas may reveal true coordinates of taxon-obscured records is per-atlas, open, and a go-live blocker (docs/questions.md).';
 COMMENT ON COLUMN sample.host_inat_taxon_id IS 'Floral host as an iNat taxon reference — hosts never live in the curated animal table.';
 COMMENT ON COLUMN sample.locality IS 'Place text (with country/state_province/county): label text at place-name granularity, ingested private-preferred like the reference implementation.';
-COMMENT ON COLUMN sample.protocol IS 'Free text today (''vane trap'', ''6 Vane Traps''); controlled vocabulary pending staff answers (docs/questions.md T3).';
-COMMENT ON COLUMN sample.sampling_effort IS 'Trap-count × trap-days etc., pending staff answers (docs/questions.md T6).';
+COMMENT ON COLUMN sample.protocol IS 'Free text today (''vane trap'', ''6 Vane Traps''); controlled vocabulary pending staff answers (docs/questions.md, Trap sampling q3).';
+COMMENT ON COLUMN sample.sampling_effort IS 'Trap-count × trap-days etc., pending staff answers (docs/questions.md, Trap sampling q6).';
 
 -- Collecting is often a pair: two thirds of trap specimens in the legacy data
 -- were recorded by two people (a couple running a trap line), and the same

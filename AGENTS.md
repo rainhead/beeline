@@ -133,6 +133,12 @@ needed to open one, or to merge a green one — the review, not the asking, is
 the point. **Do not commit or push to `main` directly**: nothing gets reviewed
 on the way in that way, which is the whole reason for the branch.
 
+**Beads are the exception** (Peter, 2026-08-28). Issue work syncs with `bd
+dolt push`, and the `.beads/*.jsonl` exports it changes are committed straight
+to `main`. They are a passive export of a store that has already been synced —
+there is nothing in them for a reviewer to read, and wrapping them in a pull
+request spends a review cycle on a machine-written file.
+
 This is the "repository profile" the Beads block below defers to, and it
 overrides that block's conservative default — stated here, outside the managed
 markers, so `bd setup` cannot regenerate it away.

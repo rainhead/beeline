@@ -12,6 +12,8 @@ const PRIVATE_SCHEMA_DIR = fileURLToPath(new URL("../../schema/private/", import
 const SESSION_SCHEMA = "020_session.sql";
 
 const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
+/** Identifier quoting, for a catalog name that came out of the database. */
+const quoteIdent = (s: string) => `"${s.replaceAll('"', '""')}"`;
 
 /**
  * Attach the private store (ADR 0003) and create its tables if missing —
@@ -45,12 +47,36 @@ export async function attachPrivateStore(
         [table, column],
       );
     const readDdl = (file: string) => readFile(join(PRIVATE_SCHEMA_DIR, file), "utf8");
+
+    // The DDL files name their tables unqualified (schema/private/*.sql), so
+    // applying one means switching catalog and switching back. What to switch
+    // BACK to has to be read, not assumed: `memory` is the default catalog's
+    // name only when the main database is in-memory, and a file-backed store's
+    // is named after its file — so the hardcoded `USE memory` this used to end
+    // with threw "No catalog + schema named memory" on every real store
+    // (beeline-d34).
+    //
+    // It threw from a `finally`, which is what made it so quiet: the DDL had
+    // already succeeded, so a fresh table WAS created and the next boot found
+    // it and skipped it. One crash and restart per new private table, and the
+    // sandbox wore exactly that for a day. The session rekey below is where it
+    // stopped being survivable — that one wraps this call in a transaction, so
+    // the rollback took the CREATE back out with the DROP and left the store in
+    // the same pre-patch shape it started in. Same branch next boot, same
+    // crash, forever: any store still holding the pre-beeline-ten session
+    // shape could not start at all.
+    const currentCatalog = async (): Promise<string> => {
+      const found = await conn.run("SELECT current_database()");
+      const [[name]] = (await found.getRows()) as [[string]];
+      return name;
+    };
     const apply = async (ddl: string) => {
+      const previous = await currentCatalog();
       await conn.run(`USE private`);
       try {
         await conn.run(ddl);
       } finally {
-        await conn.run(`USE memory`);
+        await conn.run(`USE ${quoteIdent(previous)}`);
       }
     };
 

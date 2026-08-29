@@ -8,6 +8,8 @@ import type { InatClient } from "../src/app/auth.js";
 import { attachPrivateStore } from "../src/app/db.js";
 import { createApp } from "../src/app/server.js";
 import { cookieSessionResolver, endSessionsFor, purgeIdleSessions } from "../src/app/session.js";
+import { applySchema } from "../src/schema.js";
+import { DuckDBInstance } from "@duckdb/node-api";
 import { createMemoryDb } from "./helpers.js";
 
 const ORIGIN = "http://localhost:3054";
@@ -408,5 +410,83 @@ describe("when somebody was last here", () => {
     await app.request("/", { headers: { cookie } });
     expect((await activity(db))[0]!.last_seen_at).not.toEqual(first);
     expect((await activity(db))[0]!.last_seen_at.getTime()).toBeGreaterThan(Date.now() - 60_000);
+  });
+});
+
+describe("the private store against a file-backed main database", () => {
+  /**
+   * Every other test in this file opens the private store as a FILE and the
+   * main database in memory, which is precisely the combination that cannot
+   * see beeline-d34: applying private DDL means switching catalog and
+   * switching back, and the code switched back to a hardcoded `memory` —
+   * which is the default catalog's name only when the main database is
+   * in-memory. A file-backed one is named after its file, so `USE memory`
+   * threw "No catalog + schema named memory" on every real store, and on
+   * none of these tests.
+   *
+   * So these two open the main database as a file too. They are slower for
+   * it, and that is the price of testing the shape production actually runs.
+   */
+  const fileDb = async (): Promise<{ instance: DuckDBInstance; privatePath: string }> => {
+    const dir = await mkdtemp(join(tmpdir(), "beeline-filedb-"));
+    const instance = await DuckDBInstance.create(join(dir, "beeline.duckdb"));
+    const conn = await instance.connect();
+    await applySchema(conn);
+    conn.closeSync();
+    return { instance, privatePath: join(dir, "private.duckdb") };
+  };
+
+  it("creates its tables rather than crashing on the way back out", async () => {
+    const { instance, privatePath } = await fileDb();
+    await attachPrivateStore(instance, { path: privatePath, key: null });
+    const db = createKysely(instance);
+    // All three, in one boot. This used to manage one per boot and die: the
+    // DDL succeeded and the throw came from the finally after it, so the
+    // table was created and the next restart found it and moved on to the
+    // next one.
+    await db.insertInto("private.session").values({ id: "s", inat_user_id: 501 }).execute();
+    await db
+      .insertInto("private.inat_oauth_token")
+      .values({ inat_user_id: 501, login: "memberbee" })
+      .execute();
+    await db.insertInto("private.person_activity").values({ inat_user_id: 501 }).execute();
+  });
+
+  it("rekeys a pre-beeline-ten session table instead of looping forever", async () => {
+    // The unrecoverable one. The rekey wraps the same call in a transaction,
+    // so the rollback took the CREATE back out along with the DROP and left
+    // the store in the shape it started in — same branch next boot, same
+    // crash, and a store holding the old session shape could never start.
+    const { instance, privatePath } = await fileDb();
+    const conn = await instance.connect();
+    await conn.run(`ATTACH '${privatePath}' AS seed`);
+    await conn.run(`USE seed`);
+    await conn.run(`CREATE TABLE session (
+      id TEXT PRIMARY KEY, person_id INTEGER NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+      last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
+    await conn.run(`INSERT INTO session (id, person_id) VALUES ('stale', 11)`);
+    await conn.run(`USE beeline`);
+    await conn.run(`DETACH seed`);
+    conn.closeSync();
+
+    await attachPrivateStore(instance, { path: privatePath, key: null });
+    const db = createKysely(instance);
+    await db.insertInto("private.session").values({ id: "new", inat_user_id: 501 }).execute();
+    expect(await db.selectFrom("private.session").select("inat_user_id").execute()).toEqual([
+      { inat_user_id: 501n },
+    ]);
+  });
+
+  it("leaves the caller in the catalog it found them in", async () => {
+    // The property the fix turns on, asserted directly: whatever runs after
+    // attachPrivateStore reads unqualified names, and a connection left
+    // pointing at `private` would resolve them against the wrong store.
+    const { instance, privatePath } = await fileDb();
+    await attachPrivateStore(instance, { path: privatePath, key: null });
+    const conn = await instance.connect();
+    const [[current]] = (await (await conn.run("SELECT current_database()")).getRows()) as [[string]];
+    expect(current).toBe("beeline");
+    conn.closeSync();
   });
 });

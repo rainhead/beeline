@@ -244,8 +244,10 @@ describe("the two observation fields nothing was reading", () => {
   });
 
   test("'sampleId' wins where an observation carries both, and the conflict is named", async () => {
-    // 31 observations in the corpus carry both fields and 14 disagree, which
-    // is too many to prefer one silently.
+    // No observation in the corpus actually disagrees — of the 31 carrying
+    // both fields, the 17 with a value in each all agree — so this is the
+    // guard rather than a report on known data. Nothing enforces that the two
+    // fields stay in step, and the view is what would notice.
     await stageLoad(withOfvs(1, [
       { name: "sampleId", value: "5" },
       { name: "sample id", value: "17" },

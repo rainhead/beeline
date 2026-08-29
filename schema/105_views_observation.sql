@@ -43,8 +43,12 @@ SELECT o.inat_id,
   -- which a field nobody meant could not do. 1,608 of its 1,636 uses are
   -- 2018; the rest are stragglers, so this reads it by name rather than by
   -- season. Where an observation carries both, 'sampleId' wins and
-  -- observation_sample_number_conflict names the disagreement — 14 of the 31
-  -- that carry both, which is too many to prefer one silently.
+  -- observation_sample_number_conflict names any disagreement. Empty on the
+  -- corpus as it stands: 31 observations carry both fields, 17 with a value in
+  -- each, and every one of those 17 agrees. The view earns its place as a
+  -- guard rather than as a worklist — nothing enforces that the two fields
+  -- stay in step, and a preference is only honest while the thing it overrules
+  -- is visible.
   --
   -- A BLANK field counts as absent, which is why each arm tests the value
   -- rather than letting coalesce do it: coalesce falls through on NULL only,
@@ -94,8 +98,12 @@ FROM observation_current o;
 -- The two sample-number fields disagreeing on one observation.
 --
 -- sample_number_raw above prefers 'sampleId', and a preference is only honest
--- if the thing it overrules is visible: 31 observations carry both fields and
--- 14 of them say different things. A view rather than a QC rule because it is
+-- if the thing it overrules is visible. Empty today: of the 31 observations
+-- carrying both fields, 17 have a value in each and all 17 agree. (The other
+-- 14 have a blank on one side, which is not a disagreement and is handled
+-- above by treating blank as absent — the two were conflated when this was
+-- first written, and the 14 was reported here as a conflict count.) A view
+-- rather than a QC rule because it is
 -- about an observation, and a finding is keyed to a sample (schema/050) —
 -- most of these have no sample yet, which is the whole of beeline-oyq.
 CREATE VIEW observation_sample_number_conflict AS

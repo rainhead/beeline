@@ -3,6 +3,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 import { canonicalJson } from "../src/sync-inat.js";
 import { promoteObservations } from "../src/promote-observations.js";
+import { refreshObservationFields } from "../src/refresh-observation-fields.js";
 
 /**
  * Minting samples from observations (beeline-oyq).
@@ -181,6 +182,17 @@ describe("what is not minted", () => {
     expect(await one("SELECT reason FROM observation_sample_unusable")).toEqual([reason]);
   });
 
+  test("a negative count says so, rather than arriving with an empty reason", async () => {
+    // Six on the dev store. They fall out of the candidate set correctly
+    // either way; the bug was that every CASE arm missed them, so the
+    // unclaimed screen got a record with nothing said about it.
+    await stage(obs(7, { ofvs: ofvs("7", "-1") }));
+    expect((await promoteObservations(conn)).samplesMinted).toBe(0);
+    expect(await one("SELECT reason FROM observation_sample_unusable")).toEqual([
+      "specimen count -1 is negative",
+    ]);
+  });
+
   test("no date is unusable", async () => {
     await stage(obs(7, { observed_on: null }));
     expect((await promoteObservations(conn)).samplesMinted).toBe(0);
@@ -263,6 +275,44 @@ describe("reconciling against samples the store already holds", () => {
     // And the disagreement is named rather than silent.
     expect(await one("SELECT sample_number, observation_sample_number FROM sample_observation_number_mismatch"))
       .toEqual(["7", "8"]);
+  });
+
+  test("a trap sample matched on two of its days links once, to the lowest observation id", async () => {
+    // sample_mint_group groups by observed_on, so a sample spanning several
+    // days matches one group per day its observations fall on — a trap set on
+    // one day and collected on another. Two on the dev store. Both belong to
+    // the sample and inat_observation_id holds one, and `UPDATE ... FROM` with
+    // several source rows for one target picks an arbitrary one, so without a
+    // tie-break the sample's coordinates would be decided by whatever the join
+    // emitted and could differ on a re-promotion.
+    const sampleId = await insertCleanSample(conn, {
+      kind: "'trap'",
+      sample_number: "'7'",
+      date_start: "DATE '2026-07-10'",
+      date_end: "DATE '2026-07-14'",
+    });
+    await stage(obs(30587701, { observed_on: "2026-07-14" }));
+    await stage(obs(30494816, { observed_on: "2026-07-10" }));
+
+    // One row, not two — the count is samples linked, not matches found.
+    // (Refreshed by hand because the view reads the stored projection, which
+    // promotion is otherwise the first thing to fill.)
+    await refreshObservationFields(conn);
+    expect(await count("SELECT count(*) FROM sample_mint_match")).toBe(2);
+    expect(await count("SELECT count(*) FROM sample_mint_free_link")).toBe(1);
+    const counts = await promoteObservations(conn);
+    expect(counts).toMatchObject({ samplesMinted: 0, freeLinks: 1 });
+    expect(await count("SELECT count(*) FROM sample")).toBe(1);
+    expect(await one(`SELECT inat_observation_id FROM sample WHERE entity_id = ${sampleId}`))
+      .toEqual([30494816n]);
+    // The day it did not take is not lost, and not minted into a second
+    // sample either: it is the same collecting event, and this is what says so.
+    expect(await one("SELECT sample_id, cited_inat_id, other_observations FROM sample_multi_observation"))
+      .toEqual([sampleId, 30494816n, 1]);
+    // And a second pass changes nothing, rather than swapping the citation.
+    expect((await promoteObservations(conn)).freeLinks).toBe(0);
+    expect(await one(`SELECT inat_observation_id FROM sample WHERE entity_id = ${sampleId}`))
+      .toEqual([30494816n]);
   });
 
   test("several observations of one collecting event make one sample, counting them all", async () => {

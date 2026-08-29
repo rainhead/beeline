@@ -321,6 +321,12 @@ SELECT f.inat_id, f.user_id, f.user_login, f.observed_on,
                AND try_cast(f.specimen_count_raw AS INTEGER) IS NULL
               THEN concat('specimen count ''', f.specimen_count_raw, ''' is not a number') END,
          CASE WHEN try_cast(f.specimen_count_raw AS INTEGER) = 0 THEN 'specimen count is zero' END,
+         -- Six of these on the dev store. Without an arm of their own they
+         -- fall out of the candidate set correctly and arrive here with an
+         -- EMPTY reason, which is worse than either answer: the unclaimed
+         -- screen shows a record with nothing said about it.
+         CASE WHEN try_cast(f.specimen_count_raw AS INTEGER) < 0
+              THEN concat('specimen count ', f.specimen_count_raw, ' is negative') END,
          CASE WHEN f.observed_on IS NULL THEN 'no observed date' END
        ) AS reason
 FROM observation_field f
@@ -415,14 +421,42 @@ HAVING count(*) > 1;
 COMMENT ON VIEW sample_mint_ambiguous IS 'A group of unlinked observations that matches two or more existing samples. Neither linked nor minted — the store already holds duplicate collecting events under that number, and picking one silently would be worse than saying so.';
 
 -- A group whose sample exists and cites no observation yet: free evidence.
+--
+-- ONE ROW PER SAMPLE, and the tie-break is not a formality. sample_mint_group
+-- groups by observed_on, so a trap sample spanning several days matches one
+-- group per day its observations fall on: two on the dev store, both trap
+-- samples running 2019-08-08 to 2019-08-10 with an observation when the trap
+-- went in and another when it came out. Both belong to the sample and
+-- inat_observation_id can hold one, so something has to choose — and
+-- `UPDATE ... FROM` with several source rows for one target does not: DuckDB
+-- deduplicates to an arbitrary match, unspecified as in Postgres and SQLite.
+-- Left alone, which observation a sample cites — and therefore its
+-- coordinates, its geoprivacy and its host taxon — would be settled by
+-- whatever the join happened to emit, differently on a re-promotion or a
+-- db:reseed, with nothing to show for the change. That is the same objection
+-- observation_place's tie-break comment makes (schema/107).
+--
+-- Lowest inat_id, as everywhere else here and as legacy_sample_map's arg_min
+-- does: arbitrary, but STABLE, which is the property that matters. (Preferring
+-- the observation dated on date_end — a trap's retrieval, the one that
+-- actually carries the catch — is arguable and is a domain claim nobody has
+-- made; noted here so choosing the id stays a choice rather than an oversight.)
+-- The group not chosen is not lost: it matches the sample on the next run,
+-- finds it citing another observation, and is left alone, which is what
+-- sample_multi_observation names.
 CREATE VIEW sample_mint_free_link AS
-SELECT m.sample_id, m.lead_inat_id, m.person_id, m.sample_number, m.observed_on
-FROM sample_mint_match m
-WHERE m.inat_observation_id IS NULL
-  AND NOT EXISTS (SELECT 1 FROM sample_mint_ambiguous a
-                  WHERE a.person_id = m.person_id
-                    AND a.sample_number = m.sample_number
-                    AND a.observed_on = m.observed_on);
+SELECT sample_id, lead_inat_id, person_id, sample_number, observed_on
+FROM (
+  SELECT m.sample_id, m.lead_inat_id, m.person_id, m.sample_number, m.observed_on,
+         row_number() OVER (PARTITION BY m.sample_id ORDER BY m.lead_inat_id) AS rn
+  FROM sample_mint_match m
+  WHERE m.inat_observation_id IS NULL
+    AND NOT EXISTS (SELECT 1 FROM sample_mint_ambiguous a
+                    WHERE a.person_id = m.person_id
+                      AND a.sample_number = m.sample_number
+                      AND a.observed_on = m.observed_on)
+) ranked
+WHERE rn = 1;
 COMMENT ON VIEW sample_mint_free_link IS 'An existing sample that cites no observation and whose collector, number and date range an unlinked observation matches: the link is free, and it is what carries believed-true coordinates and geoprivacy onto a record the legacy dump supplied without them.';
 
 -- What minting actually creates: a group that matches no existing sample.

@@ -21,6 +21,13 @@ SELECT o.inat_id,
   CAST(json_extract(o.content, '$.private_geojson.coordinates[1]') AS DOUBLE) AS private_latitude,
   CAST(json_extract(o.content, '$.private_geojson.coordinates[0]') AS DOUBLE) AS private_longitude,
   CAST(json_extract(o.content, '$.positional_accuracy') AS INTEGER)      AS positional_accuracy,
+  -- Stored because this view is a faithful shred of the load, NOT because
+  -- anything should read it: an obscured public coordinate is a deliberately
+  -- shifted pair with an inflated uncertainty, so it is not a weaker
+  -- measurement of the location but not a measurement of it at all. Only true
+  -- coordinates are useful, for us or for display (Peter, 2026-08-29) — which
+  -- is the same stance that keeps shifted pairs out of the sample layer
+  -- entirely (ADR 0003).
   CAST(json_extract(o.content, '$.public_positional_accuracy') AS INTEGER) AS public_positional_accuracy,
   nullif(json_extract_string(o.content, '$.geoprivacy'), 'null')         AS geoprivacy,
   nullif(json_extract_string(o.content, '$.taxon_geoprivacy'), 'null')   AS taxon_geoprivacy,

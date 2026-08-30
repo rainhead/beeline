@@ -107,7 +107,15 @@ async function fetchTile(
   const target = `${demDir}/${tileFileName(key, dataset)}`;
   const partial = `${target}.partial`;
   const res = await fetch(url, { signal: AbortSignal.timeout(10 * 60_000) });
-  if (res.status === 404) return false;
+  if (res.status === 404) {
+    // Node's fetch holds the pooled connection until the body is read or
+    // cancelled, and unlike a browser's it will not collect it promptly on its
+    // own. A 404 is the ordinary case here, not the exceptional one — every
+    // tile above 60°N takes one before falling through to GLO-30 — so leaving
+    // them unread would have each miss slow the tiles behind it.
+    await res.body?.cancel();
+    return false;
+  }
   if (!res.ok || res.body === null) throw new Error(`${key} from ${url}: HTTP ${res.status}`);
   try {
     await pipeline(Readable.fromWeb(res.body as WebReadableStream<Uint8Array>), createWriteStream(partial));

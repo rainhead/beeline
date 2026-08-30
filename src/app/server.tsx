@@ -554,9 +554,15 @@ export function createApp({
     if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
     // Record what just changed, credited to whoever typed it — the fact a
     // later pass over the store could never recover (ADR 0007). Narrowed to
-    // this sample, so the author is charged with this edit and nothing else;
-    // a failure is reported and left for the next pass, which attributes it
-    // to that pass instead.
+    // this sample, so the author is charged with this sample's pending
+    // differences and no other sample's; in the rare case another writer
+    // changed THIS sample and failed to record, that change rides along
+    // under this author's name — the cost of recording state rather than
+    // intent, and bounded to one sample by the narrowing. A failure here is
+    // reported and left for the next pass, which attributes the edit to
+    // itself — the author and reason are not lost with it, because
+    // applySampleEdit durably wrote them to the corrections overlay before
+    // the store was touched. The log records; it never gates the edit.
     if (result.outcome === "saved") {
       try {
         await recordSampleChanges(kyselyReader(db), samplePaths, {

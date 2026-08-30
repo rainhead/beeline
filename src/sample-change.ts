@@ -223,6 +223,17 @@ export const SAMPLE_STATE_SQL = `
 export interface SampleStates {
   /** Keyed by triple. */
   states: Map<string, SampleState>;
+  /**
+   * What the pass cannot speak for, so the snapshot must keep saying what it
+   * last said: the triples of colliding samples, and the observation links of
+   * every suppressed sample (collided or unreferenceable). Without the
+   * carry-forward, a full restatement drops their rows — and the pass after
+   * the duplicate or the namesake is RESOLVED then records every field as a
+   * spurious arrival, permanently (CodeRabbit on PR #32). A sample that truly
+   * vanished is in neither set and still loses its row.
+   */
+  suppressedKeys: Set<string>;
+  suppressedObservations: Set<string>;
   /** Samples whose collector no reference names: unrecordable, so counted. */
   unreferenceable: number;
   /**
@@ -240,13 +251,15 @@ export interface SampleStates {
 export async function readSampleStates(read: StateReader, where = ""): Promise<SampleStates> {
   const rows = await read(where === "" ? SAMPLE_STATE_SQL : `${SAMPLE_STATE_SQL}\n  WHERE ${where}`);
   const states = new Map<string, SampleState>();
-  const collided = new Set<string>();
+  const suppressedKeys = new Set<string>();
+  const suppressedObservations = new Set<string>();
   let unreferenceable = 0;
   for (const row of rows) {
     const text = (k: string) => String(row[k] ?? "");
     const collector = row.collector == null ? "" : String(row.collector);
     if (collector === "") {
       unreferenceable++;
+      if (text("observation") !== "") suppressedObservations.add(text("observation"));
       continue;
     }
     const state: SampleState = {
@@ -257,8 +270,16 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
     };
     state.fields.collector = collector;
     const key = stateKey(state);
-    if (states.has(key) || collided.has(key)) {
-      collided.add(key);
+    if (states.has(key) || suppressedKeys.has(key)) {
+      // Both colliding samples are suppressed: their observations mark the
+      // snapshot rows each may have moved OFF of, which the carry-forward
+      // must also keep for the day the duplicate is resolved.
+      const other = states.get(key);
+      if (other !== undefined && other.fields.observation !== "") {
+        suppressedObservations.add(other.fields.observation);
+      }
+      if (state.fields.observation !== "") suppressedObservations.add(state.fields.observation);
+      suppressedKeys.add(key);
       states.delete(key);
       continue;
     }
@@ -269,9 +290,9 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
   for (const row of rows) {
     const collector = row.collector == null ? "" : String(row.collector);
     if (collector === "") continue;
-    if (collided.has(keyOf(collector, String(row.sample_number ?? ""), String(row.date_start ?? "")))) colliding++;
+    if (suppressedKeys.has(keyOf(collector, String(row.sample_number ?? ""), String(row.date_start ?? "")))) colliding++;
   }
-  return { states, unreferenceable, colliding };
+  return { states, suppressedKeys, suppressedObservations, unreferenceable, colliding };
 }
 
 // ── The snapshot ─────────────────────────────────────────────────────────
@@ -317,11 +338,16 @@ export async function readSnapshot(path: string): Promise<Map<string, SampleStat
  * previous statement rather than half of one. Sorted by triple so that two
  * identical states produce byte-identical files.
  */
+let tmpCounter = 0;
+
 export async function writeSnapshot(path: string, states: Iterable<SampleState>): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const rows = [...states].sort((a, b) => (stateKey(a) < stateKey(b) ? -1 : 1));
   const lines = rows.map((s) => STATE_COLUMNS.map((c) => cell(s.fields[c as SampleField] ?? "")).join(","));
-  const tmp = `${path}.tmp`;
+  // Unique per write: passes are serialized within this process, but a CLI
+  // and the app pointed at one store (against ADR 0005) must at worst lose a
+  // restatement, never splice two.
+  const tmp = `${path}.${process.pid}.${tmpCounter++}.tmp`;
   await writeFile(tmp, `${STATE_HEADER}\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`);
   await rename(tmp, path);
 }
@@ -536,7 +562,33 @@ export async function recordSampleChanges(
   paths: SampleLogPaths,
   opts: SampleRecordOptions,
 ): Promise<SampleRecordResult> {
-  const { states, unreferenceable, colliding } = await readSampleStates(read, opts.where ?? "");
+  // One pass at a time per snapshot: the app records an authored edit per
+  // request and the nightly reconciles in the same process, and two passes
+  // interleaving their read-diff-restate would re-derive each other's
+  // differences into the append-only log (CodeRabbit on PR #32). The same
+  // queue shape appendSampleChanges uses.
+  const queued = (recordQueues.get(paths.state) ?? Promise.resolve()).then(() =>
+    recordPass(read, paths, opts),
+  );
+  recordQueues.set(
+    paths.state,
+    queued.then(
+      () => {},
+      () => {},
+    ),
+  );
+  return queued;
+}
+
+const recordQueues = new Map<string, Promise<unknown>>();
+
+async function recordPass(
+  read: StateReader,
+  paths: SampleLogPaths,
+  opts: SampleRecordOptions,
+): Promise<SampleRecordResult> {
+  const { states, suppressedKeys, suppressedObservations, unreferenceable, colliding } =
+    await readSampleStates(read, opts.where ?? "");
   const snapshot = await readSnapshot(paths.state);
 
   // First pass: the store as it stands is the baseline, and nothing is an
@@ -587,11 +639,23 @@ export async function recordSampleChanges(
 
   await appendSampleChanges(paths.log, rows);
 
-  // Restate the snapshot. A full pass restates the store; a narrowed one
-  // patches: matched rows move to their new triple, new samples arrive, and
-  // every sample outside the narrowing keeps its row.
+  // Restate the snapshot. A full pass restates the store — carrying forward
+  // the rows of samples this pass suppressed (colliding, or unreferenceable
+  // with a link), so that a resolved duplicate reconnects to its history
+  // instead of arriving all over again; a truly vanished sample is in
+  // neither set and loses its row. A narrowed pass patches: matched rows
+  // move to their new triple, new samples arrive, and every sample outside
+  // the narrowing keeps its row.
   if (opts.where == null) {
-    await writeSnapshot(paths.state, states.values());
+    const next = new Map<string, SampleState>();
+    for (const [key, state] of states) next.set(key, state);
+    for (const [key, row] of snapshot) {
+      if (next.has(key)) continue;
+      if (suppressedKeys.has(key) || suppressedObservations.has(row.fields.observation)) {
+        next.set(key, row);
+      }
+    }
+    await writeSnapshot(paths.state, next.values());
   } else {
     const next = new Map(snapshot);
     for (const [key, state] of states) {

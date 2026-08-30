@@ -198,6 +198,36 @@ describe("a corrected reference moves, and the history follows", () => {
     expect(await readSampleChanges(paths.log)).toEqual([]);
   });
 
+  it("a resolved collision reconnects to its history instead of arriving again", async () => {
+    // The snapshot carries the rows of samples a pass cannot speak for
+    // (CodeRabbit on PR #32): without that, resolving the duplicate would
+    // record every field of both samples as a spurious arrival, permanently.
+    const a = await insertCleanSample(conn, { inat_observation_id: "77" });
+    await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "88" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${a}`);
+    await record(); // collision: nothing recorded, rows carried
+    await conn.run(`UPDATE sample SET sample_number = '1' WHERE entity_id = ${a}`);
+    const resolved = await record();
+    // A is back on its own triple, B never left hers: the pass has nothing
+    // to say, because nothing (net of the collision) changed.
+    expect(resolved).toMatchObject({ appended: 0, colliding: 0, contested: 0 });
+    // And a REAL change after the resolution records as exactly one entry.
+    await conn.run(`UPDATE sample SET locality = 'Alsea' WHERE entity_id = ${a}`);
+    expect((await record()).appended).toBe(1);
+  });
+
+  it("concurrent passes over one snapshot are serialized, not interleaved", async () => {
+    const id = await insertCleanSample(conn);
+    await record();
+    await conn.run(`UPDATE sample SET locality = 'Alsea' WHERE entity_id = ${id}`);
+    // Fired together: without the queue, both read the pre-change snapshot
+    // and both append the same difference to an append-only file.
+    const [first, second] = await Promise.all([record(), record()]);
+    expect(first.appended + second.appended).toBe(1);
+    expect(await readSampleChanges(paths.log)).toHaveLength(1);
+  });
+
   it("the fold never moves a history onto a triple it already knows a sample by", () => {
     // Synthetic on purpose: a recording pass refuses to create this shape
     // (the collision test above), so the guard is exercised directly — it

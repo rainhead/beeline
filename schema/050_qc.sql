@@ -39,6 +39,8 @@ INSERT INTO qc_rule (name, severity, instructions) VALUES
    'The state or province on this record is not one Beeline recognises, or does not agree with the country beside it. Use the two-letter US state or Canadian province code (UT, BC), and a country that matches it. Records from outside the US and Canada are expected here and are not a mistake — staff can confirm them.'),
   ('coordinate_uncertainty', 'blocking',
    'The location accuracy is worse than 250 m. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.'),
+  ('coordinate_out_of_region', 'blocking',
+   'The coordinates on this record are not in North America, but the record says they should be. Usually the pin was moved on the observation after its location text was written, or a longitude lost its minus sign. Check the pin on the iNaturalist observation — if the record really was collected outside North America, set its country to match and ask staff to confirm it.'),
   ('non_tracheophyte_host', 'blocking',
    'The iNaturalist observation should be identified as the floral host — a vascular plant. Its current identification is something else (a moss, alga, fungus, or the bee itself). Correct the observation''s identification to the plant the bee was collected from and it will clear on the next sync.'),
   ('duplicate_sample_number', 'blocking',

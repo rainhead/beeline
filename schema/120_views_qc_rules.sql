@@ -172,6 +172,46 @@ SELECT loc.sample_id,
 FROM sample_location loc
 WHERE loc.coordinate_uncertainty_m > 250;
 
+-- A coordinate that cannot be where the record says it is: outside North
+-- America and its waters, on a record whose own country is a North American
+-- one or is absent (beeline-iwf).
+--
+-- The signature is a pin that moved after its place_guess was written.
+-- iNaturalist recomputes place_ids and leaves place_guess alone, so such an
+-- observation carries an Oregon locality string and an EMPTY place list —
+-- an open-ocean point is inside no place. Nothing else in the store notices:
+-- the atlas comes from state_province rather than from the point, so the
+-- record looks well placed everywhere except the point itself.
+--
+-- coordinate_uncertainty catches one of these today, and only by luck — the
+-- observation behind sample 122269 carries an accuracy circle of 1,196 km.
+-- The others do not: two of the four are a longitude with its sign flipped
+-- (44.1360, +120.7010 and 44.6807, +121.1523 — central Oregon written as
+-- central Asia), which is as precise as any other pin.
+--
+-- The box is deliberately generous: 14..84 N, 172..50 W is Mexico through
+-- Alaska and Greenland, plus coastal water. A member collecting in Baja or
+-- the Yukon is not a defect, and the atlases' own footprint would be the
+-- wrong bound — 144 open-season locations sit outside the western states,
+-- which is members travelling.
+--
+-- The country clause is what stops this being the kind of finding that
+-- damages data (beeline-4dt): a record that says NZL and sits in New Zealand
+-- is honest, there is no way to satisfy a flag on it, and findings have no
+-- accepted state. Four rows fire on the dev store, all settled, all of them
+-- errors; the fifth row outside the box is that New Zealand record.
+CREATE VIEW qc_rule_coordinate_out_of_region AS
+SELECT loc.sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'coordinate_out_of_region' AS rule_name,
+       concat(round(loc.latitude, 4), ', ', round(loc.longitude, 4),
+              ' is not in North America, but this record says ',
+              coalesce(s.country, 'no country at all')) AS details
+FROM sample_location loc
+JOIN sample s ON s.entity_id = loc.sample_id
+WHERE NOT (loc.latitude BETWEEN 14 AND 84 AND loc.longitude BETWEEN -172 AND -50)
+  AND (s.country IS NULL OR s.country IN ('USA', 'CAN', 'MEX'));
+
 -- Same collector, same day, same sample number, more than one sample: an
 -- identity collision the reference implementation silently merged.
 CREATE VIEW qc_rule_duplicate_sample_number AS

@@ -267,6 +267,63 @@ describe("QC findings and printability", () => {
     expect(await isPrintable(id)).toBe(false);
   });
 
+  test("a coordinate outside North America blocks, on a record that claims to be in it", async () => {
+    // The shape this rule exists for: the pin moved after the place_guess was
+    // written, so every text field still says Oregon (real case, sample 122269
+    // — Corvallis, at a point 2,000 km west of Peru).
+    const pacific = await insertCleanSample(
+      conn,
+      {},
+      { latitude: "-7.079786", longitude: "-121.581916", elevation_m: "NULL" },
+    );
+    expect(await findings(pacific)).toEqual([
+      {
+        rule: "coordinate_out_of_region",
+        details: "-7.0798, -121.5819 is not in North America, but this record says USA",
+      },
+    ]);
+    expect(await isPrintable(pacific)).toBe(false);
+
+    // A longitude that lost its minus sign: Warm Springs, Oregon read as
+    // central Asia. As precise as any other pin, so coordinate_uncertainty
+    // never sees it — and this record carries no country at all.
+    const flipped = await insertCleanSample(
+      conn,
+      { sample_number: "'2'", country: "NULL" },
+      { latitude: "44.68", longitude: "121.15", elevation_m: "NULL" },
+    );
+    expect(await findings(flipped)).toContainEqual({
+      rule: "coordinate_out_of_region",
+      details: "44.68, 121.15 is not in North America, but this record says no country at all",
+    });
+  });
+
+  test("a record that says it was collected abroad, and was, is not a finding", async () => {
+    // The fifth row outside the box on the dev store, and the reason for the
+    // country clause: there is no way to satisfy a flag on an honest record,
+    // and a finding has no accepted state (beeline-4dt).
+    const nz = await insertCleanSample(
+      conn,
+      { sample_number: "'3'", country: "'NZL'", state_province: "NULL", county: "NULL" },
+      { latitude: "-38.39", longitude: "176.02", elevation_m: "NULL" },
+    );
+    expect((await findings(nz)).map((f) => f.rule)).not.toContain("coordinate_out_of_region");
+
+    // And the box is generous on purpose: collecting in Baja or the Yukon is
+    // not a defect.
+    for (const [n, lat, lon] of [
+      ["4", "23.05", "-109.7"], // Cabo San Lucas
+      ["5", "64.06", "-139.43"], // Dawson City
+    ] as const) {
+      const away = await insertCleanSample(
+        conn,
+        { sample_number: `'${n}'` },
+        { latitude: lat, longitude: lon, elevation_m: "NULL" },
+      );
+      expect((await findings(away)).map((f) => f.rule)).not.toContain("coordinate_out_of_region");
+    }
+  });
+
   test("user- and taxon-driven obscuring both block until true coordinates arrive", async () => {
     // Obscured without trust: the shifted pair never enters the sample layer,
     // so there is no location row — and the obscured rule alone fires, not

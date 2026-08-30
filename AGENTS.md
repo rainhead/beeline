@@ -24,7 +24,7 @@ pnpm inat:login                             # OAuth sign-in; mints the 24h JWT s
 pnpm inat:sync <projectId> [d1] [d2]        # observation window → append-only loads
 pnpm inat:promote                           # current observation state → samples
 pnpm inat:backfill-accounts                 # resolve legacy logins → iNat accounts
-pnpm elevation:fetch && pnpm elevation:derive  # DEM tiles (legacy SRTM archive, Copernicus GLO-30 fallback) → missing elevations
+pnpm elevation:fetch && pnpm elevation:derive  # DEM tiles (SRTM 1-arc-second, Copernicus GLO-30 where SRTM does not reach) → missing elevations
 ```
 
 ## Architecture Overview

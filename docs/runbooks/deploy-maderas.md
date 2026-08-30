@@ -247,6 +247,39 @@ is idempotent, so a row that has already landed is a no-op and the same file
 replays on the next rebuild. A later `db:reseed` reconstructs this person from
 the same rows, which a hand-written `INSERT` would not survive.
 
+## DEM tiles
+
+`pnpm elevation:derive` reads tiles from `data/dem/` and names the ones it
+lacks; `pnpm elevation:fetch` ([`src/fetch-dem.ts`](../../src/fetch-dem.ts))
+puts them there, over plain HTTPS from two public datasets — SRTM
+1-arc-second, then Copernicus GLO-30 beyond the 60°N–56°S band the shuttle
+flew. **Neither wants a credential**, so this runs on any host:
+
+```sh
+ssh maderas
+cd dev/beeline && systemctl --user stop beeline   # single writer (ADR 0005)
+pnpm elevation:fetch && pnpm elevation:derive
+systemctl --user start beeline
+```
+
+The stop is the only requirement, and it is the usual one: `elevation:fetch`
+scopes itself by reading the store's current gaps, so it opens the database.
+
+The tiles used to be rsynced from the legacy server's own archive, which meant
+an ssh key or a forwarded agent on every host that fetched one — something the
+nightly, running unattended, cannot hold — and an unreachable archive failed
+the run outright rather than falling through to GLO-30 (beeline-oxi). That
+archive was a mirror of a public dataset; the fetch now reads the public
+dataset. `beeline` in `~/.ssh/config` is still needed for
+[`pnpm legacy:fetch`](../../scripts/fetch-legacy.sh), which pulls the Mongo
+export, the taxonomy CSV and the usernames register from production — but no
+longer for elevations.
+
+The nightly pipeline still only *derives*, so a tile it lacks is reported and
+waits for someone to run the fetch. Nothing is blocked meanwhile: an unfetched
+tile is a NULL elevation, which is never a QC finding and never stops a label
+printing.
+
 ## Operational notes
 
 - The nightly incremental pipeline runs at 02:00 **America/Los_Angeles** and the weekly anti-entropy sweep Sundays at 03:00; the beeatlas

@@ -7,7 +7,7 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import { readFile } from "node:fs/promises";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 import { deriveElevations, tileKeyFor } from "../src/derive-elevation.js";
-import { glo30Url } from "../src/fetch-dem.js";
+import { glo30Url, srtmUrl } from "../src/fetch-dem.js";
 
 /** Minimal single-strip little-endian TIFF — geotiff's own writer mangles
  * anything wider than 8 bits, so we emit the ~200 bytes by hand. SRTM tiles
@@ -96,6 +96,13 @@ describe("elevation derivation", () => {
     // Both archives zero-pad; an unpadded n5 is simply not a tile they have.
     expect(tileKeyFor(5.2, 36.4)).toBe("n05_e036");
     expect(tileKeyFor(-0.5, -0.5)).toBe("s01_w001");
+  });
+
+  test("SRTM object names key off the same corner the tile key does", () => {
+    expect(srtmUrl("n44_w123")).toContain("/N44W123.tif");
+    expect(srtmUrl("s39_e176")).toContain("/S39E176.tif");
+    // The padding is the archive's, not ours to trim: N05E036, never N5E36.
+    expect(srtmUrl("n05_e036")).toContain("/N05E036.tif");
   });
 
   test("GLO-30 object names key off the same corner the tile key does", () => {

@@ -92,7 +92,15 @@ SELECT o.inat_id,
   -- sample_number_raw and the alarm built for exactly that cannot see it.
   (SELECT j.j ->> '$.value'
    FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-   WHERE j.j ->> '$.name' = 'OBA Collection Method' LIMIT 1)             AS collection_method_raw
+   WHERE j.j ->> '$.name' = 'OBA Collection Method' LIMIT 1)             AS collection_method_raw,
+  -- The locality text, private-preferred, exactly as the coordinate rule and
+  -- observation_place prefer their private forms: iNaturalist withholds
+  -- place_guess on a private observation and delivers private_place_guess
+  -- instead when the reader is trusted. Unexercised by the dev corpus, which
+  -- was synced without trust (0 of 63,280 loads carry it) — carried because
+  -- the reference implementation reads it first and a minted sample's
+  -- locality is derived from it (observation_locality, schema/108).
+  nullif(json_extract_string(o.content, '$.private_place_guess'), '')    AS private_place_guess
 FROM observation_current o;
 
 -- The two sample-number fields disagreeing on one observation.

@@ -7,15 +7,29 @@ import { refreshObservationFields } from "./refresh-observation-fields.js";
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
 /**
- * Provenance upgrades from sync: promote the current observation state onto
- * linked samples — geoprivacy flags, believed-true locations
- * (private/trusted > public-unobscured; obscured-untrusted writes nothing),
- * and observer→collector iNat account linkage. Idempotent; run after every
- * sync. The SQL lives in ingest/promote-observations.sql.
+ * Promote the current observation state into the model. Idempotent; run after
+ * every sync. Three SQL files, in one transaction, and the order is the point
+ * (beeline-oyq):
+ *
+ * 1. ingest/harvest-inat-accounts.sql — observer→collector iNat account
+ *    linkage, first because minting resolves an observer through it.
+ * 2. ingest/mint-samples.sql — observations that evidence a collecting event
+ *    the store does not hold become samples; ones it does hold become free
+ *    links. This is the only thing in Beeline that creates a sample from
+ *    iNaturalist, and at cutover it becomes the only thing that creates one
+ *    at all.
+ * 3. ingest/promote-observations.sql — geoprivacy flags and believed-true
+ *    locations (private/trusted > public-unobscured; obscured-untrusted
+ *    writes nothing), keyed on the inat_observation_id step 2 has just set,
+ *    so a sample minted on this pass is located on this pass.
  */
 
 export interface ObservationPromotionCounts {
   linkedSamples: number;
+  samplesMinted: number;
+  freeLinks: number;
+  ambiguousGroups: number;
+  unresolvedObservers: number;
   trustedLocations: number;
   publicLocations: number;
   obscuredWithheld: number;
@@ -41,12 +55,26 @@ export async function promoteObservations(
     // (src/refresh-observation-fields.ts).
     await refreshObservationFields(conn);
     const accountsBefore = await scalar("SELECT count(*) FROM inat_account");
+    await conn.run(await readFile(`${INGEST_DIR}harvest-inat-accounts.sql`, "utf8"));
+    // Counted BEFORE minting runs, because both views are defined over what
+    // is still unlinked: afterwards they are empty, which is the point but
+    // makes them useless as a report of what just happened.
+    const freeLinks = await scalar("SELECT count(*) FROM sample_mint_free_link");
+    const ambiguousGroups = await scalar("SELECT count(*) FROM sample_mint_ambiguous");
+    await conn.run(await readFile(`${INGEST_DIR}mint-samples.sql`, "utf8"));
     await conn.run(await readFile(`${INGEST_DIR}promote-observations.sql`, "utf8"));
     const counts: ObservationPromotionCounts = {
       linkedSamples: await scalar(
         `SELECT count(*) FROM sample s
          JOIN observation_field f ON f.inat_id = s.inat_observation_id`,
       ),
+      samplesMinted: await scalar("SELECT count(*) FROM minted_sample"),
+      freeLinks,
+      ambiguousGroups,
+      // Collection records nothing can mint because the store holds no
+      // account for the observer — beeline-e85's queue, reported as a number
+      // here so a growing one is visible without opening a screen.
+      unresolvedObservers: await scalar("SELECT count(*) FROM observation_sample_unresolved"),
       trustedLocations: await scalar(
         `SELECT count(*) FROM observation_location_candidate WHERE source = 'inat_trusted'`,
       ),

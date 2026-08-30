@@ -52,11 +52,18 @@ COMMENT ON COLUMN atlas.inat_place_id IS 'The atlas''s iNaturalist place (Washin
 -- verified place id including these six. Nothing reads this column — not a
 -- query, view, or page — and atlas_region's is what observation_place joins
 -- on, so filling these in would duplicate a fact to no reader. It would also
--- have to be an UPDATE on a deployed store, and DuckDB refuses to update a
--- row an incoming foreign key references (atlas_region.atlas_id does), which
--- is a fight worth having only for a value somebody wants. A test asserts the
--- one id here agrees with atlas_region's, so the two cannot drift apart while
--- both exist.
+-- have to be an UPDATE on a deployed store, and DuckDB 1.5.5 refuses to write
+-- an INDEXED column of a row an incoming foreign key references: inat_place_id
+-- is UNIQUE and so indexed, and atlas_region.atlas_id references every row
+-- here. That is a fight worth having only for a value somebody wants.
+--
+-- The index is the discriminator and the inbound reference alone is not:
+-- UPDATE atlas SET name succeeds on the very same row. This comment used to
+-- state only the second half, which also predicts that a sample's locality
+-- cannot be refreshed — it can, and minting depends on it (beeline-6e9).
+-- Both halves are pinned by test in test/schema.test.ts, so the day DuckDB
+-- changes is a day something says so. A test also asserts the one id here
+-- agrees with atlas_region's, so the two cannot drift apart while both exist.
 INSERT INTO atlas (code, name, inat_place_id) VALUES
   ('OBA',  'Oregon Bee Atlas',           NULL),
   ('WaBA', 'Washington Bee Atlas',       46),

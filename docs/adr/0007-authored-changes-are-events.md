@@ -2,7 +2,8 @@
 
 **Status:** accepted (2026-08-28) · sits beside
 [ADR 0004](0004-correction-overlay.md), which it deliberately does not change ·
-first instance is the person change log (beeline-o22)
+first instance is the person change log (beeline-o22) · second is the sample
+change log (beeline-ewl, 2026-08-30 — see the addendum below)
 
 ## Context
 
@@ -157,3 +158,34 @@ Two questions hide in "audit", and they want different answers:
   designing around a constraint about to disappear; the per-column inventory
   of what such a mechanism would have to carry is beeline-bla, which usefully
   precedes it.
+
+## Addendum: the sample log, and where it deliberately differs (2026-08-30)
+
+The second instance (`src/sample-change.ts`, beeline-ewl) keeps every
+mechanism above — state not instructions, differences against what the log
+last said, one query for every producer, moves followed forward-only and
+never onto a known reference, the unattributable recorded as nothing and
+counted — and varies in three places, each a consequence of the corpus being
+67,887 samples wide instead of 580 people:
+
+- **The baseline lives in a snapshot beside the log**, not in the log.
+  The person baseline is 2,590 entries read and folded on every request; the
+  same trick here is a million rows. `data/sample-state.csv` is one current
+  row per sample, restated wholesale by each recording pass (the overlays'
+  shape), and the log gets only differences — 11.2 MB of snapshot against a
+  log that grows by what actually changed. "What the log last said" *is* the
+  snapshot; the consequence is that a reference falling silent is dropped
+  from the snapshot, so a history interrupted by a silence reconnects only
+  through the log's own recorded moves, where the person log's memory is
+  unbounded.
+- **The reference is a derived triple** — the primary collector as the
+  person overlay names them, the sample number, the start date — carried as
+  three columns because a sample number is free text no separator survives.
+  Three fields can move it (the person log's one), so the writer files each
+  mover under the triple as moved by the movers before it, and the fold
+  stays one lookup per entry.
+- **A moved reference is recognised by the observation link first**, the
+  identity-once-made of beeline-oyq, then by number-and-date where the link
+  cannot dispute it. Two samples colliding on one triple — a live
+  `duplicate_sample_number` — are recorded as nothing and counted, since one
+  reference naming two samples can only hand one the other's history.

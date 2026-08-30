@@ -326,6 +326,52 @@ export const en = {
    * page links it rather than re-explaining it (/design/voice).
    */
   record: {
+    /**
+     * The sample's own change history (beeline-ewl): what the change log
+     * recorded, newest first, in the words of this page. The log's fields
+     * are the sample's state, so most values render as themselves.
+     */
+    history: {
+      heading: "History",
+      hint: "Every change recorded for this sample, newest first — an edit made here, an iNaturalist sync moving something, or a rebuild.",
+      empty: "No changes recorded — this sample has not changed since Beeline began keeping history. Changes from here on appear in this list.",
+      colWhen: "When",
+      colWhat: "What",
+      colChange: "Change",
+      colWho: "Who",
+      set: "set to",
+      cleared: "cleared — was",
+      blank: "nothing",
+      field: {
+        kind: "Kind",
+        date_end: "End date",
+        specimen_count: "Specimen count",
+        observation: "iNaturalist observation",
+        location: "Coordinates",
+        location_source: "Coordinate source",
+        geoprivacy: "Geoprivacy",
+        taxon_geoprivacy: "Taxon geoprivacy",
+        country: "Country",
+        state_province: "State/Province",
+        county: "County",
+        locality: "Locality",
+        protocol: "Protocol",
+        sampling_effort: "Sampling effort",
+        host: "Floral host",
+        atlas: "Atlas",
+        atlas_assigned_by: "Atlas assigned by",
+        co_collectors: "Co-collectors",
+        collector: "Collector",
+        sample_number: "Sample number",
+        date_start: "Start date",
+      },
+      source: {
+        app: "staff",
+        legacy_promotion: "a rebuild",
+        observation_promotion: "an iNaturalist sync",
+        reconcile: "found at startup",
+      },
+    },
     /** Unreachable and non-existent are one answer, so this covers both. */
     notFound: "No such record, or not one you can see.",
     staffNote: "Staff view: this is not one of your own records.",

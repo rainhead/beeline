@@ -6,6 +6,7 @@ import { ensureCorrectionsFile } from "./corrections.js";
 import { applyPersonOverlay, type Unresolved } from "./apply-person-overlay.js";
 import { mergeOverlays, readOverlay, CURATED_OVERLAY } from "./person-overlay.js";
 import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
+import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -226,15 +227,35 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     log === null
       ? null
       : await recordPersonChanges(duckdbReader(conn), log, { source: "legacy_promotion" });
+  // Samples too (beeline-ewl, the second instance of ADR 0007): same pass
+  // shape, same environment gate, baseline in the snapshot rather than the
+  // log because this corpus is 67,887 rows wide.
+  const samplePaths = sampleLogFor(dbPath, process.env);
+  const sampleRecorded =
+    samplePaths === null
+      ? null
+      : await recordSampleChanges(duckdbReader(conn), samplePaths, { source: "legacy_promotion" });
   if (log === null) {
     console.warn(
-      `not recording person history: ${dbPath} is not the database this environment keeps a change log for ` +
+      `not recording person or sample history: ${dbPath} is not the database this environment keeps a change log for ` +
         `(${process.env.BEELINE_DB ?? DEFAULT_DB})`,
     );
   }
   await db.destroy();
   conn.closeSync();
-  console.log(JSON.stringify({ ...counts, adminsSeeded: seeded, personChangesRecorded: recorded?.appended ?? null }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        ...counts,
+        adminsSeeded: seeded,
+        personChangesRecorded: recorded?.appended ?? null,
+        sampleChangesRecorded: sampleRecorded?.appended ?? null,
+        sampleBaselined: sampleRecorded?.baselined ?? false,
+      },
+      null,
+      2,
+    ),
+  );
   if (counts.specimens + counts.blockedRows !== counts.staged) {
     console.error("specimens + blocked rows ≠ staged rows — investigate before trusting this run");
     process.exit(1);

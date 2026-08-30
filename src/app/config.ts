@@ -1,4 +1,5 @@
 import { CHANGE_LOG } from "../person-change.js";
+import { SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
 
 /**
  * App configuration, read once from the environment at startup.
@@ -45,6 +46,10 @@ export interface AppConfig {
    * "nobody, we rebuilt it".
    */
   personChangesPath: string;
+  /** Where sample history lives — the log, and the snapshot that is its
+   * baseline (beeline-ewl; the split is deliberate, see src/sample-change.ts). */
+  sampleChangesPath: string;
+  sampleStatePath: string;
   /**
    * Deployment environment. Anything but 'production' renders the
    * environment banner (sandbox-until-launch, beeline-2u8).
@@ -125,6 +130,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     correctionsPath: env.BEELINE_CORRECTIONS ?? "data/corrections.csv",
     personOverlayPath: env.BEELINE_PERSON_OVERLAY ?? "data/person-overlay.csv",
     personChangesPath: env.BEELINE_PERSON_CHANGES ?? CHANGE_LOG,
+    sampleChangesPath: env.BEELINE_SAMPLE_CHANGES ?? SAMPLE_CHANGE_LOG,
+    sampleStatePath: env.BEELINE_SAMPLE_STATE ?? SAMPLE_STATE_SNAPSHOT,
     environment,
     devLogin: environment === "development" ? (env.BEELINE_DEV_LOGIN ?? null) : null,
     syncProjects,

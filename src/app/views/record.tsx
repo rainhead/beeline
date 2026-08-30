@@ -1,5 +1,6 @@
 import type { Child } from "hono/jsx";
 import type { Messages } from "../messages/index.js";
+import type { SampleChange } from "../../sample-change.js";
 import {
   sampleHref,
   specimenHref,
@@ -313,11 +314,13 @@ export function SamplePage({
   sample,
   findings,
   specimens,
+  history,
 }: {
   m: Messages;
   sample: SampleDetail;
   findings: readonly RecordFinding[];
   specimens: SampleSpecimenPage;
+  history: readonly SampleChange[];
 }) {
   return (
     <>
@@ -346,6 +349,57 @@ export function SamplePage({
       <Card>
         <SampleSpecimens m={m} sample={sample} page={specimens} />
       </Card>
+      {/* Last, like the person page: history is what you read after acting. */}
+      <Card>
+        <SampleHistory m={m} history={history} />
+      </Card>
+    </>
+  );
+}
+
+/**
+ * What the change log recorded about this sample, newest first (beeline-ewl,
+ * the second instance of ADR 0007). Shaped like the person page's history —
+ * same columns, same "set to"/"cleared" reading — because staff read both.
+ */
+function SampleHistory({ m, history }: { m: Messages; history: readonly SampleChange[] }) {
+  const h = m.record.history;
+  const value = (v: string) => (v === "" ? <Meta>{h.blank}</Meta> : <code>{v}</code>);
+  return (
+    <>
+      <h2>{h.heading}</h2>
+      <Meta block>{h.hint}</Meta>
+      {history.length === 0 ? (
+        <Meta block>{h.empty}</Meta>
+      ) : (
+        <DataTable columns={[h.colWhen, h.colWhat, h.colChange, h.colWho]}>
+          {history.map((row) => (
+            <tr>
+              <td>{m.format.dateTime(new Date(row.at))}</td>
+              <td>{h.field[row.field]}</td>
+              <td>
+                {row.old_value === "" ? (
+                  <>
+                    {h.set} {value(row.new_value)}
+                  </>
+                ) : row.new_value === "" ? (
+                  <>
+                    {h.cleared} {value(row.old_value)}
+                  </>
+                ) : (
+                  <>
+                    {value(row.old_value)} → {value(row.new_value)}
+                  </>
+                )}
+              </td>
+              <td>
+                {row.author === "" ? <Meta>{h.source[row.source]}</Meta> : <code>{row.author}</code>}
+                {row.reason !== "" && <Meta block>{row.reason}</Meta>}
+              </td>
+            </tr>
+          ))}
+        </DataTable>
+      )}
     </>
   );
 }

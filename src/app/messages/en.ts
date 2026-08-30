@@ -341,6 +341,27 @@ export const en = {
       protocol: "Sampling protocol",
       effort: "Sampling effort",
       place: "Place",
+      /**
+       * The observation's own place text, beside what the model made of it —
+       * the same stance verbatim_identification takes for a determination
+       * (schema/040). The observation is not listed anywhere on the site, so
+       * this is the only place a volunteer sees the string their record came
+       * from.
+       *
+       * "Recorded in iNaturalist as" rather than "iNaturalist records this
+       * as" (Peter, 2026-08-29), and the neutrality is the point: iNaturalist
+       * AUTO-ASSIGNS place_guess by reverse geocoding, most observers never
+       * touch it, and our volunteers are instructed to set it themselves. So
+       * the string is sometimes theirs and sometimes the geocoder's, and the
+       * copy should not claim to know which.
+       *
+       * Which is also what a refused locality means. "Snohomish County,
+       * US-WA, US" is an untouched auto-assignment and "Verlot, WA, US" is a
+       * volunteer who followed the instruction — so missing_required_field on
+       * a minted sample is not bad data, it is the nudge to go and do the
+       * step that was asked for, and this row is the evidence for it.
+       */
+      asRecorded: (text: string) => `Recorded in iNaturalist as “${text}”.`,
       atlas: "Atlas",
       /** Collecting outside the member atlases is ordinary (beeline-lcl). */
       atlasOutside: "None — collected where no member atlas reaches",
@@ -364,7 +385,7 @@ export const en = {
           "Beeline holds no coordinates for this sample. Where iNaturalist has shifted an observation's coordinates, the shifted pair is deliberately never brought across — so nothing here means nothing we believe.",
         accuracy: "Accuracy",
         accuracyValue: (metres: number) => `within ${n(metres)} m`,
-        source: "Where they came from",
+        source: "Source",
         sources: {
           inat_trusted:
             "Read from your iNaturalist observation with trusted access, so these are the true coordinates even where the public map shows them shifted.",
@@ -373,8 +394,19 @@ export const en = {
             "Imported from the old atlas database, which recorded nothing about where its coordinates came from. These are the ones already printed on labels.",
           staff_entry: "Entered by staff.",
         } as Record<string, string>,
-        privacy: "On iNaturalist",
-        privacyOpen: "Published as they are — nothing about this observation is obscured.",
+        /**
+         * What the public sees, and shown ONLY where that differs from the
+         * true coordinates above — an obscured observation still has true
+         * coordinates here, and saying so is the point of the row.
+         *
+         * It used to render for every sample, with an "open" line saying
+         * nothing was obscured. That was redundant beside `source`, which
+         * already says iNaturalist publishes them as they are, and it was
+         * nonsense on the 6,365 samples that carry coordinates and no
+         * observation: they were told that nothing about "this observation"
+         * was obscured, about an observation that does not exist.
+         */
+        privacy: "Public coordinates",
         privacyObscured:
           "You set this observation's coordinates to obscured, so the map shows a shifted pair. What is above is the true location.",
         privacyPrivate:

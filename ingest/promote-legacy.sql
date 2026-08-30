@@ -590,6 +590,18 @@ SELECT
   arg_min(coalesce(
     nullif(r.speciesPlant, ''), nullif(r.genusPlant, ''), nullif(r.familyPlant, ''),
     nullif(r.orderPlant, ''), nullif(r.phylumPlant, '')), r._id) AS host_name,
+  -- The rank is not written down anywhere: it is WHICH COLUMN supplied the
+  -- name, which is why this repeats the coalesce order rather than reading a
+  -- field. Same arg_min key as the name above, so both come off the same row.
+  -- Needed because italics are derived from rank and a name cannot be read
+  -- for it (schema/030).
+  arg_min(CASE
+    WHEN nullif(r.speciesPlant, '') IS NOT NULL THEN 'species'
+    WHEN nullif(r.genusPlant, '')   IS NOT NULL THEN 'genus'
+    WHEN nullif(r.familyPlant, '')  IS NOT NULL THEN 'family'
+    WHEN nullif(r.orderPlant, '')   IS NOT NULL THEN 'order'
+    WHEN nullif(r.phylumPlant, '')  IS NOT NULL THEN 'phylum'
+  END, r._id)                                       AS host_rank,
   arg_min(r.p_lat, r._id)                           AS lat,
   arg_min(r.p_lon, r._id)                           AS lon,
   arg_min(r.p_uncertainty, r._id)                   AS uncertainty,
@@ -601,7 +613,7 @@ GROUP BY m.person_id, r.sid, r.p_date_start;
 
 INSERT INTO sample (entity_id, kind, collector_id, atlas_id, sample_number,
                     date_start, date_end, specimen_count, inat_observation_id,
-                    host_name_as_observed, country, state_province, county,
+                    host_name_as_observed, host_rank, country, state_province, county,
                     locality, protocol)
 SELECT s.sample_id, s.kind, s.person_id,
        -- Geography assigns the atlas, through the lookup that also knows the
@@ -610,7 +622,7 @@ SELECT s.sample_id, s.kind, s.person_id,
        -- the place did not resolve at all (beeline-lcl).
        reg.atlas_id,
        s.sid, s.p_date_start, s.date_end, s.specimen_count, s.inat_obs_id,
-       s.host_name,
+       s.host_name, s.host_rank,
        -- Country to ISO 3166-1 alpha-3, matching the 'USA' that most records
        -- already carry. Canada arrived spelled both ways, splitting British
        -- Columbia's records as well as the Yukon's.
@@ -747,3 +759,59 @@ FROM field_value
 WHERE value IS NOT NULL
 GROUP BY sample_id, field
 HAVING count(DISTINCT value) > 1;
+
+-- ── Where iNaturalist and the import disagree about the coordinates ──────
+--
+-- A sample whose coordinates came from iNaturalist, against the pair the
+-- legacy dump staged for the same observation. Promotion resolves this
+-- silently today: ingest/promote-observations.sql overwrites sample_location
+-- unconditionally, `source` included, so iNaturalist wins and the imported
+-- pair is gone with no record that it ever differed. Those imported
+-- coordinates are the ones already printed on labels (CONTEXT.md), so the
+-- disagreement is a label and a record saying different things.
+--
+-- 200 METRES, and the threshold is doing real work rather than filtering
+-- noise. Every staged coordinate carries exactly four decimal places, so the
+-- export can only account for about 6 m — but the corpus disagrees far more
+-- widely than that: 23,284 samples differ by 20-200 m, which is genuine
+-- movement and far too many for anyone to look at. Above 200 m there are 310,
+-- and split at season.started_on (schema/160) only SIX are in the open season.
+-- That is a worklist; the 304 settled ones are the wild west and nobody is
+-- going to work through them (Peter, 2026-08-29).
+--
+-- The extremes are not drift at all. The worst is a SIGN FLIP — one sample
+-- staged at -120.701 and now carrying +120.701, Oregon against central Asia —
+-- and others move a clean 3° of latitude, which is a typo somewhere rather
+-- than an observer refining a pin.
+--
+-- A REPORT, NOT A QC RULE, and explicitly a stopgap. Which side is right is a
+-- staff judgement, and sometimes it is plainly the import. The real answer is
+-- that overwriting a sample's coordinates is a CHANGE and should be recorded
+-- as an event the way ADR 0007 records changes to a person — this view only
+-- describes the symptom, and it can only do so while the staging that holds
+-- the original is still here.
+CREATE OR REPLACE VIEW legacy_location_conflict AS
+SELECT sample_id, date_end, source, legacy_latitude, legacy_longitude,
+       latitude, longitude, CAST(round(metres) AS INTEGER) AS metres_apart
+FROM (
+  SELECT s.entity_id AS sample_id, s.date_end, l.source,
+         l.latitude, l.longitude,
+         min(try_cast(o.decimalLatitude AS DOUBLE))  AS legacy_latitude,
+         min(try_cast(o.decimalLongitude AS DOUBLE)) AS legacy_longitude
+  FROM sample s
+  JOIN sample_location l ON l.sample_id = s.entity_id
+  JOIN legacy_occurrence o
+    ON try_cast(regexp_extract(o.url, '([0-9]+)$', 1) AS BIGINT) = s.inat_observation_id
+  -- Only where iNaturalist answered: a row still carrying legacy_import
+  -- coordinates has nothing to disagree with.
+  WHERE l.source IN ('inat_public', 'inat_trusted')
+  GROUP BY 1, 2, 3, 4, 5
+) paired,
+-- Degrees to metres, roughly and deliberately: 1° of latitude is ~111,320 m
+-- and a longitude degree is shorter by cos(latitude), ~0.71 at 45°N. Taking
+-- the larger axis rather than the true distance is enough for a threshold
+-- this coarse, and keeps the view free of trigonometry a port would rewrite.
+LATERAL (SELECT 111320 * greatest(abs(paired.latitude - paired.legacy_latitude),
+                                  abs(paired.longitude - paired.legacy_longitude) * 0.71) AS metres) d
+WHERE paired.legacy_latitude IS NOT NULL AND d.metres > 200;
+COMMENT ON VIEW legacy_location_conflict IS 'Samples whose iNaturalist coordinates disagree with the pair the legacy dump staged for the same observation by more than 200 m — 310 on the dev store, of which only 6 are in the open season. A report rather than a worklist or a QC rule: which side is right is a staff judgement, and the worst case is a sign flip in the import. Lives only while the legacy staging does; the durable answer is recording the overwrite as an event (ADR 0007).';

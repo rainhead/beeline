@@ -178,6 +178,8 @@ export interface SampleTable {
   inat_observation_id: BigIntCol | null;
   host_inat_taxon_id: BigIntCol | null;
   host_name_as_observed: string | null;
+  /** Decides whether the name is italicised; the string cannot be read for it. */
+  host_rank: string | null;
   geoprivacy: Geoprivacy | null;
   taxon_geoprivacy: Geoprivacy | null;
   country: string | null;
@@ -343,6 +345,8 @@ export interface ObservationFieldTable {
    *  derived; empty across the dev corpus, synced without trust. LAST — the
    *  refresh inserts positionally (schema/060). */
   private_place_guess: string | null;
+  /** iNaturalist's rank for the floral host — what italics are derived from. */
+  host_taxon_rank: string | null;
 }
 
 /** schema/105: observation_field disagreeing with a fresh shred of the loads. */

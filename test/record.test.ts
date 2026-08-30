@@ -203,6 +203,87 @@ describe("the sample page", () => {
     expect(body).not.toContain("You set this observation");
   });
 
+  it("says what the public sees only where that differs from the true coordinates", async () => {
+    // The row used to render on every sample, with an "open" line saying
+    // nothing was obscured. Redundant beside Source, which already says
+    // iNaturalist publishes them as they are — and nonsense on the 6,365
+    // samples that carry coordinates and no observation at all, which were
+    // told that nothing about "this observation" was obscured.
+    const { app, conn, aliceSample } = await recordApp();
+    await conn.run(
+      `UPDATE sample SET geoprivacy = NULL, taxon_geoprivacy = NULL WHERE entity_id = ${aliceSample}`,
+    );
+    const body = await get(app, `/samples/${aliceSample}`);
+    expect(body).not.toContain("Public coordinates");
+    // The coordinates and where they came from stay: those are facts about
+    // the sample rather than about what iNaturalist shows.
+    expect(body).toContain("44.5646, -123.262");
+    expect(body).toContain("Source");
+
+    // A sample with no observation cannot carry geoprivacy either, so it
+    // takes the same path — which is the case that prompted this.
+    const { app: legacy, conn: conn2, aliceSample: a2 } = await recordApp();
+    await conn2.run(
+      `UPDATE sample SET inat_observation_id = NULL, geoprivacy = NULL, taxon_geoprivacy = NULL
+       WHERE entity_id = ${a2}`,
+    );
+    expect(await get(legacy, `/samples/${a2}`)).not.toContain("this observation");
+  });
+
+  it("shows what the observation says about the place, since nothing else does", async () => {
+    // The observation is not listed anywhere on the site, so the string a
+    // record was derived from is otherwise invisible — and where a locality
+    // was refused for being too coarse, it is exactly the string the
+    // volunteer has to go and fix upstream (Peter, 2026-08-29).
+    const { app, conn, aliceSample } = await recordApp();
+    await conn.run(
+      `INSERT INTO observation_field (inat_id, place_guess) VALUES (998877, 'Verlot, WA, US')`,
+    );
+    const body = await get(app, `/samples/${aliceSample}`);
+    expect(body).toContain("Recorded in iNaturalist as");
+    expect(body).toContain("Verlot, WA, US");
+
+    // A sample with no observation has no verbatim to show, and says nothing
+    // rather than showing an empty row.
+    const { app: legacy, conn: c2, aliceSample: a2 } = await recordApp();
+    await conn.run.call(c2, `UPDATE sample SET inat_observation_id = NULL WHERE entity_id = ${a2}`);
+    expect(await get(legacy, `/samples/${a2}`)).not.toContain("Recorded in iNaturalist as");
+  });
+
+  it("prints the floral host as a scientific name, italicised from its rank", async () => {
+    // Names are derived, never typed: TaxonName reads the RANK because the
+    // string cannot be read for it. 'Onagraceae' (family) and 'Chamaenerion'
+    // (genus) are both one word and only the second is italic, and ~1,500 of
+    // the corpus's 60,196 hosts sit at tribe, family, subfamily or subtribe.
+    const { app, conn, aliceSample } = await recordApp();
+    await conn.run(
+      `UPDATE sample SET host_name_as_observed = 'Chamaenerion angustifolium', host_rank = 'species'
+       WHERE entity_id = ${aliceSample}`,
+    );
+    // Each word is wrapped on its own, which is how TaxonName renders.
+    const body = await get(app, `/samples/${aliceSample}`);
+    expect(body).toContain("<i>Chamaenerion</i>");
+    expect(body).toContain("<i>angustifolium</i>");
+
+    // A rank above genus is upright, which is the case a word count gets
+    // wrong: this name is one word, exactly like a genus.
+    const { app: fam, conn: c2, aliceSample: a2 } = await recordApp();
+    await conn.run.call(c2, `UPDATE sample SET host_name_as_observed = 'Onagraceae', host_rank = 'family'
+       WHERE entity_id = ${a2}`);
+    const famBody = await get(fam, `/samples/${a2}`);
+    expect(famBody).toContain("Onagraceae");
+    expect(famBody).not.toContain("<i>Onagraceae</i>");
+
+    // 4,186 hosts have no rank the store can know — the legacy import, and
+    // observations no longer in the corpus. Upright is the honest answer.
+    const { app: bare, conn: c3, aliceSample: a3 } = await recordApp();
+    await conn.run.call(c3, `UPDATE sample SET host_name_as_observed = 'Grindelia hirsutula', host_rank = NULL
+       WHERE entity_id = ${a3}`);
+    const bareBody = await get(bare, `/samples/${a3}`);
+    expect(bareBody).toContain("Grindelia hirsutula");
+    expect(bareBody).not.toContain("<i>Grindelia hirsutula</i>");
+  });
+
   it("names the tile an elevation was read from", async () => {
     const { app, aliceSample } = await recordApp();
     const body = await get(app, `/samples/${aliceSample}`);

@@ -63,7 +63,17 @@ export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }
     sample.sampling_effort === null ? null : { term: s.effort, value: sample.sampling_effort },
     {
       term: s.place,
-      value: orUnknown(m, m.format.place([sample.locality, sample.county, sample.state_province, sample.country]) || null),
+      value: (
+        <>
+          {orUnknown(m, m.format.place([sample.locality, sample.county, sample.state_province, sample.country]) || null)}
+          {/* The observation's own words, beside what the model made of them.
+              Nothing else on the site shows them, and where the locality is
+              missing this is the string that has to change upstream. */}
+          {sample.observation_place_guess === null ? null : (
+            <Meta block>{s.asRecorded(sample.observation_place_guess)}</Meta>
+          )}
+        </>
+      ),
     },
     {
       term: <Term m={m} slug="atlas">{s.atlas}</Term>,
@@ -75,7 +85,15 @@ export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }
     // so the row is absent rather than reading as something missing.
     sample.host_name_as_observed === null
       ? null
-      : { term: <Term m={m} slug="floral-host">{s.host}</Term>, value: sample.host_name_as_observed },
+      : {
+          term: <Term m={m} slug="floral-host">{s.host}</Term>,
+          // A scientific name, so it is printed like one. Italics come from
+          // the rank and never from the string: 'Onagraceae' and
+          // 'Chamaenerion' are both one word and only the second is italic.
+          // An unknown rank prints upright, which is the honest answer for
+          // the legacy hosts whose source column is unrecoverable.
+          value: <TaxonName rank={sample.host_rank ?? ""} scientificName={sample.host_name_as_observed} />,
+        },
     {
       term: <Term m={m} slug="observation">{s.observation}</Term>,
       value:
@@ -110,6 +128,11 @@ export function WhereCollected({ m, sample }: { m: Messages; sample: SampleDetai
       </>
     );
   }
+  // Only says something where the public view DIFFERS from what is above.
+  // Null on both means iNaturalist publishes the coordinates as they are,
+  // which the Source row has already said — and on the 6,365 samples that
+  // have coordinates and no observation at all it said it about an
+  // observation that does not exist.
   const privacy =
     sample.geoprivacy === "private"
       ? w.privacyPrivate
@@ -119,7 +142,7 @@ export function WhereCollected({ m, sample }: { m: Messages; sample: SampleDetai
           ? w.privacyTaxonPrivate
           : sample.taxon_geoprivacy === "obscured"
             ? w.privacyTaxonObscured
-            : w.privacyOpen;
+            : null;
   return (
     <>
       <h2>{w.heading}</h2>
@@ -139,10 +162,12 @@ export function WhereCollected({ m, sample }: { m: Messages; sample: SampleDetai
             term: w.source,
             value: <Meta>{w.sources[sample.location_source ?? ""] ?? sample.location_source}</Meta>,
           },
-          {
-            term: <Term m={m} slug="obscured-coordinates">{w.privacy}</Term>,
-            value: <Meta>{privacy}</Meta>,
-          },
+          privacy === null
+            ? null
+            : {
+                term: <Term m={m} slug="obscured-coordinates">{w.privacy}</Term>,
+                value: <Meta>{privacy}</Meta>,
+              },
           {
             term: w.elevation,
             value:

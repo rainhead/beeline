@@ -80,6 +80,9 @@ export interface SampleDetail {
   inat_observation_id: bigint | null;
   host_inat_taxon_id: bigint | null;
   host_name_as_observed: string | null;
+  host_rank: string | null;
+  /** place_guess as the observation carries it — private-preferred. */
+  observation_place_guess: string | null;
   geoprivacy: Geoprivacy | null;
   taxon_geoprivacy: Geoprivacy | null;
   atlas_code: string | null;
@@ -179,12 +182,19 @@ const sampleColumns = (personId: number) => sql`
   s.kind, s.sample_number, s.date_start, s.date_end, s.specimen_count,
   s.locality, s.county, s.state_province, s.country,
   s.protocol, s.sampling_effort,
-  s.inat_observation_id, s.host_inat_taxon_id, s.host_name_as_observed,
+  s.inat_observation_id, s.host_inat_taxon_id, s.host_name_as_observed, s.host_rank,
   s.geoprivacy, s.taxon_geoprivacy,
   a.code AS atlas_code, a.name AS atlas_name,
   loc.latitude, loc.longitude, loc.coordinate_uncertainty_m,
   loc.source AS location_source, loc.elevation_m,
   es.description AS elevation_source, es.file_name AS elevation_file,
+  -- What the observation itself says, verbatim, beside what the model made of
+  -- it. The observation is not listed anywhere on the site (Peter,
+  -- 2026-08-29), so this is the only place a volunteer can see the string
+  -- their record was derived from — and where a locality was refused for
+  -- being too coarse, it is the string they have to go and fix. Private
+  -- first, as everything that reads a place_guess does.
+  coalesce(nullif(trim(f.private_place_guess), ''), nullif(trim(f.place_guess), '')) AS observation_place_guess,
   EXISTS (SELECT 1 FROM sample_elevation_stale st WHERE st.sample_id = s.entity_id) AS elevation_stale,
   ${isMine(personId)} AS mine`;
 
@@ -192,7 +202,8 @@ const SAMPLE_JOINS = sql`
   FROM sample s
   LEFT JOIN atlas a ON a.entity_id = s.atlas_id
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
-  LEFT JOIN elevation_source es ON es.entity_id = loc.elevation_source_id`;
+  LEFT JOIN elevation_source es ON es.entity_id = loc.elevation_source_id
+  LEFT JOIN observation_field f ON f.inat_id = s.inat_observation_id`;
 
 /** Numbers arrive from DuckDB as bigint or string depending on the column. */
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));

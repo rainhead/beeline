@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { createMemoryDb, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 import { isItalicRank } from "../src/app/views/components/taxon.js";
 
 let conn: DuckDBConnection;
@@ -226,5 +226,129 @@ describe("schema application", () => {
   test("qc_rule metadata is seeded", async () => {
     const [[n]] = (await rows(conn, "SELECT count(*) FROM qc_rule")) as [[bigint]];
     expect(Number(n)).toBe(13);
+  });
+});
+
+/**
+ * What DuckDB 1.5.5 will and will not let an UPDATE write, pinned so that the
+ * day it changes is a day something tells us (beeline-6e9).
+ *
+ * The store is built around this limitation in several places — the atlas is
+ * set at INSERT or never (ingest/mint-samples.sql, sample_atlas_unfilled),
+ * atlas.inat_place_id is left null (schema/010), the staff override screen
+ * cannot reassign a collector — and every one of those is a comment claiming
+ * an engine behaviour that nothing checked. A claim about the engine, made in
+ * prose, in five files, is exactly the kind that quietly stops being true.
+ *
+ * The rule as measured: DuckDB refuses an UPDATE that writes an INDEXED
+ * column of a row an incoming foreign key currently references. The update is
+ * a delete-and-insert, and the delete trips the inbound check. Both halves are
+ * necessary and neither alone is sufficient, which is what these tests
+ * separate — the repo used to state only the second half, and that version
+ * says locality cannot be written either, which is false and load-bearing.
+ */
+describe("updating a row an incoming foreign key references", () => {
+  let db: DuckDBConnection;
+  let ada: number;
+  let bo: number;
+
+  beforeAll(async () => {
+    ({ conn: db } = await createMemoryDb());
+    [[ada], [bo]] = (await rows(
+      db,
+      `INSERT INTO person (display_name)
+       VALUES ('Ada Collector'), ('Bo Collector') RETURNING entity_id`,
+    )) as [[number], [number]];
+  });
+
+  /**
+   * A sample with a sample_collector row — every sample in a real store. Ada
+   * collects it: insertCleanSample takes the lowest person id, and she is it.
+   */
+  const referenced = () => insertCleanSample(db, {}, null);
+  /**
+   * A sample nothing points at, which no promotion produces and this needs.
+   * Bo collects it, so that writing Ada onto it is a real change: a test whose
+   * update is a no-op in value cannot tell "refused" from "wrote what was
+   * already there" (CodeRabbit on PR #26).
+   */
+  const unreferenced = async () => {
+    const [[id]] = (await rows(
+      db,
+      `INSERT INTO sample (kind, collector_id, sample_number, date_start, date_end)
+       VALUES ('net', ${bo}, 'u1', DATE '2026-07-01', DATE '2026-07-01') RETURNING entity_id`,
+    )) as [[number]];
+    return id;
+  };
+  const collectorOf = (id: number) => rows(db, `SELECT collector_id FROM sample WHERE entity_id = ${id}`);
+  const violation = /still referenced by a foreign key/;
+
+  test("an unindexed column is writable — which is what the descriptive refresh rides on", async () => {
+    const id = await referenced();
+    await db.run(`UPDATE sample SET locality = 'Alsea', county = 'BentonCo' WHERE entity_id = ${id}`);
+    expect(await rows(db, `SELECT locality FROM sample WHERE entity_id = ${id}`)).toEqual([["Alsea"]]);
+  });
+
+  test("an indexed column is not: a sample's atlas and collector cannot be changed", async () => {
+    const id = await referenced();
+    const oba = "(SELECT entity_id FROM atlas WHERE code = 'OBA')";
+    await expect(db.run(`UPDATE sample SET atlas_id = ${oba} WHERE entity_id = ${id}`)).rejects.toThrow(violation);
+    await expect(db.run(`UPDATE sample SET collector_id = ${ada} WHERE entity_id = ${id}`)).rejects.toThrow(violation);
+  });
+
+  test("writing the value the column already holds fails too", async () => {
+    // So it is the statement that is refused, not the change: an UPDATE that
+    // would be a no-op cannot be used to prove the row is already correct.
+    const id = await referenced();
+    await expect(
+      db.run(`UPDATE sample SET collector_id = collector_id WHERE entity_id = ${id}`),
+    ).rejects.toThrow(violation);
+  });
+
+  test("the same write succeeds on a row nothing references", async () => {
+    // The index alone is not the problem — which is why a mutable indexed
+    // column is safe on a satellite table nothing points at.
+    const id = await unreferenced();
+    await db.run(`UPDATE sample SET atlas_id = (SELECT entity_id FROM atlas WHERE code = 'OBA') WHERE entity_id = ${id}`);
+    expect(await rows(db, `SELECT atlas_id IS NOT NULL FROM sample WHERE entity_id = ${id}`)).toEqual([[true]]);
+  });
+
+  test("one referenced row poisons a bulk update of rows that are not", async () => {
+    const free = await unreferenced();
+    const held = await referenced();
+    await expect(
+      db.run(`UPDATE sample SET collector_id = ${ada} WHERE entity_id IN (${free}, ${held})`),
+    ).rejects.toThrow(violation);
+    // The statement wrote NOTHING — not even the row it was allowed to write.
+    // That is the half worth pinning: a partial write would leave a caller
+    // that catches the error believing it had changed nothing.
+    expect(await collectorOf(free)).toEqual([[bo]]);
+    // So the escape is to exclude the referenced row and run it again.
+    await db.run(`UPDATE sample SET collector_id = ${ada} WHERE entity_id = ${free}`);
+    expect(await collectorOf(free)).toEqual([[ada]]);
+  });
+
+  test("atlas is the pair the repo used to describe wrongly", async () => {
+    // atlas_region.atlas_id references every atlas row, so the old statement
+    // of the rule ("cannot update a row an incoming foreign key references")
+    // predicts both of these fail. Only the indexed one does; inat_place_id is
+    // BIGINT UNIQUE, name is not — which is the whole correction (schema/010).
+    await db.run("UPDATE atlas SET name = 'Oregon Bee Atlas (renamed)' WHERE code = 'OBA'");
+    expect(await rows(db, "SELECT name FROM atlas WHERE code = 'OBA'")).toEqual([["Oregon Bee Atlas (renamed)"]]);
+    await expect(db.run("UPDATE atlas SET inat_place_id = 10 WHERE code = 'OBA'")).rejects.toThrow(violation);
+  });
+
+  test("deleting the child rows first does not help inside a transaction", async () => {
+    // The obvious workaround, and it does not work: the foreign key check
+    // reads committed state, so a child row deleted in this transaction still
+    // counts as referencing. It succeeds only as separate autocommit
+    // statements, which means a crash between them leaves a sample with no
+    // collectors — so this is not a workaround the store can adopt.
+    const id = await referenced();
+    await db.run("BEGIN");
+    await db.run(`DELETE FROM sample_collector WHERE sample_id = ${id}`);
+    await expect(db.run(`UPDATE sample SET collector_id = ${ada} WHERE entity_id = ${id}`)).rejects.toThrow(violation);
+    await db.run("ROLLBACK");
+    expect(await rows(db, `SELECT count(*) FROM sample_collector WHERE sample_id = ${id}`)).toEqual([[1n]]);
   });
 });

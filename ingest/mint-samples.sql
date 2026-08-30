@@ -131,10 +131,13 @@ WHERE sample.inat_observation_id = pl.inat_id
 -- carries a foreign key, which is indexed, and every sample has a
 -- sample_collector row pointing at it — so `UPDATE sample SET atlas_id` fails
 -- for every sample in the store, always. (An unindexed column is fine, which
--- is why the fill above works. schema/010 and migration 0020 state the rule
--- more broadly, as "a row an incoming foreign key references"; the sharper
--- version is that it is about the column being indexed, and it is what lets
--- locality and county be refreshed here at all.)
+-- is why the fill above works — and "indexed" means any index, a plain
+-- CREATE INDEX as much as a PRIMARY KEY, UNIQUE or FOREIGN KEY. Writing the
+-- value the column already holds fails too, so it is the statement and not
+-- the change that is refused. Measured and pinned by test in
+-- test/schema.test.ts under beeline-6e9, which also corrected schema/010 and
+-- migration 0020 where they stated the rule as "a row an incoming foreign key
+-- references" — a version that says this refresh is impossible.)
 --
 -- So the atlas is set once, in the INSERT above, and a sample minted before
 -- its geography was known keeps a null atlas that nothing can repair.

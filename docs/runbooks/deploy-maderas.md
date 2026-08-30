@@ -247,6 +247,38 @@ is idempotent, so a row that has already landed is a no-op and the same file
 replays on the next rebuild. A later `db:reseed` reconstructs this person from
 the same rows, which a hand-written `INSERT` would not survive.
 
+## Fetching DEM tiles: a forwarded agent, not a key
+
+`pnpm elevation:derive` reads tiles from `data/dem/` and reports the ones it
+lacks; `pnpm elevation:fetch` is what puts them there, and on maderas it needs
+an agent forwarded from a workstation:
+
+```sh
+ssh -A -o ControlPath=none maderas   # -o ControlPath=none: an existing
+                                     # multiplexed session forwards nothing
+cd dev/beeline && systemctl --user stop beeline   # single writer (ADR 0005)
+pnpm elevation:fetch && pnpm elevation:derive
+systemctl --user start beeline
+```
+
+The tiles come from the legacy server's SRTM archive by rsync over ssh
+([`src/fetch-dem.ts`](../../src/fetch-dem.ts)), so the fetching host needs
+`beeline` in its `~/.ssh/config` — written on maderas, pointing at the same
+address the workstation's does. It holds **no key** for that server and should
+not: the credential stays on the workstation and reaches maderas only for the
+length of a forwarded-agent session, which is why this is not something the
+nightly can do. The nightly only derives, so a tile it lacks is reported and
+waits for someone to run the above; elevation is never a QC finding and never
+blocks printing, so waiting costs nothing.
+
+Without an agent the rsync fails to authenticate and `elevation:fetch` aborts
+**before** its Copernicus GLO-30 fallback, so an unattended host cannot fetch
+even the tiles that archive has never held — beeline-oxi. Until that is fixed,
+a GLO-30 tile can be placed by hand: the URL is
+[`glo30Url`](../../src/fetch-dem.ts)'s, and the file name on disk is the tile
+key plus `_glo30.tif` (`n42_w115_glo30.tif`), which is what `locateTile` looks
+for.
+
 ## Operational notes
 
 - The nightly incremental pipeline runs at 02:00 **America/Los_Angeles** and the weekly anti-entropy sweep Sundays at 03:00; the beeatlas

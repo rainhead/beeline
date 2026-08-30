@@ -98,7 +98,12 @@ describe("self-service QC home", () => {
     expect(body).toContain("1 older sample of yours still carries a flag");
     // Exactly what settling removed: this person's own, earlier seasons,
     // flagged — not every flagged sample, and not a remembered staff scope.
-    expect(body).toContain(`href="/samples?season=settled&amp;qc=flagged"`);
+    // scope=mine is named rather than left implicit: it is the default only
+    // for a volunteer, and for staff parseListingQuery falls back to the
+    // remembered scope cookie, so leaving it out sent this link to everyone's
+    // flagged samples while the sentence above it said "of yours"
+    // (beeline-3kl).
+    expect(body).toContain(`href="/samples?scope=mine&amp;season=settled&amp;qc=flagged"`);
     // And the current season is untouched.
     expect(body).toContain("Sample A-7");
   });

@@ -7,6 +7,7 @@ import {
   EMPTY_QUERY,
   listSamples,
   listingHref,
+  MINE,
   parseListingQuery,
   toCsv,
   type ListingQuery,
@@ -570,6 +571,34 @@ describe("listing queries", () => {
     expect(listingHref("/samples", EMPTY_QUERY)).toBe("/samples");
     const [, search] = href.split("?");
     expect(parse(search!, true)).toEqual(query);
+  });
+
+  it("names mine when a caller asks for it, because scope has no single default", () => {
+    // MINE is the default for a volunteer and NOT for staff: parseListingQuery
+    // falls back to the remembered scope cookie, so a link that leaves scope
+    // out resolves to whatever that person last browsed. The QC home's "1
+    // older sample of yours ... Show them" therefore went to everybody's
+    // (beeline-3kl).
+    expect(listingHref("/samples", EMPTY_QUERY, { scope: MINE, qc: "flagged", season: "settled" })).toBe(
+      "/samples?scope=mine&season=settled&qc=flagged",
+    );
+    // The round trip is the property that actually matters: what the link
+    // says has to survive a staff member whose cookie says otherwise.
+    const preferred = parseListingQuery(new URLSearchParams("scope=mine&season=settled&qc=flagged"), {
+      admin: true,
+      atlasCodes: ["OBA", "WaBA"],
+      preferred: "all",
+    });
+    expect(preferred.scope).toBe(MINE);
+    // Without the scope named, the same cookie wins — which is correct for a
+    // bare listing and is exactly why the link has to name it.
+    expect(
+      parseListingQuery(new URLSearchParams("season=settled&qc=flagged"), {
+        admin: true,
+        atlasCodes: ["OBA", "WaBA"],
+        preferred: "all",
+      }).scope,
+    ).toBe("all");
   });
 
   it("counts everything the filters select, not just the page", async () => {

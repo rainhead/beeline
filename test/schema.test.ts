@@ -250,27 +250,37 @@ describe("schema application", () => {
 describe("updating a row an incoming foreign key references", () => {
   let db: DuckDBConnection;
   let ada: number;
+  let bo: number;
 
   beforeAll(async () => {
     ({ conn: db } = await createMemoryDb());
-    const [[id]] = (await rows(
+    [[ada], [bo]] = (await rows(
       db,
-      "INSERT INTO person (display_name) VALUES ('Ada Collector') RETURNING entity_id",
-    )) as [[number]];
-    ada = id;
+      `INSERT INTO person (display_name)
+       VALUES ('Ada Collector'), ('Bo Collector') RETURNING entity_id`,
+    )) as [[number], [number]];
   });
 
-  /** A sample with a sample_collector row — every sample in a real store. */
+  /**
+   * A sample with a sample_collector row — every sample in a real store. Ada
+   * collects it: insertCleanSample takes the lowest person id, and she is it.
+   */
   const referenced = () => insertCleanSample(db, {}, null);
-  /** A sample nothing points at, which no promotion produces and this needs. */
+  /**
+   * A sample nothing points at, which no promotion produces and this needs.
+   * Bo collects it, so that writing Ada onto it is a real change: a test whose
+   * update is a no-op in value cannot tell "refused" from "wrote what was
+   * already there" (CodeRabbit on PR #26).
+   */
   const unreferenced = async () => {
     const [[id]] = (await rows(
       db,
       `INSERT INTO sample (kind, collector_id, sample_number, date_start, date_end)
-       VALUES ('net', ${ada}, 'u1', DATE '2026-07-01', DATE '2026-07-01') RETURNING entity_id`,
+       VALUES ('net', ${bo}, 'u1', DATE '2026-07-01', DATE '2026-07-01') RETURNING entity_id`,
     )) as [[number]];
     return id;
   };
+  const collectorOf = (id: number) => rows(db, `SELECT collector_id FROM sample WHERE entity_id = ${id}`);
   const violation = /still referenced by a foreign key/;
 
   test("an unindexed column is writable — which is what the descriptive refresh rides on", async () => {
@@ -309,8 +319,13 @@ describe("updating a row an incoming foreign key references", () => {
     await expect(
       db.run(`UPDATE sample SET collector_id = ${ada} WHERE entity_id IN (${free}, ${held})`),
     ).rejects.toThrow(violation);
-    // And the statement wrote nothing, so the escape is to exclude the row.
+    // The statement wrote NOTHING — not even the row it was allowed to write.
+    // That is the half worth pinning: a partial write would leave a caller
+    // that catches the error believing it had changed nothing.
+    expect(await collectorOf(free)).toEqual([[bo]]);
+    // So the escape is to exclude the referenced row and run it again.
     await db.run(`UPDATE sample SET collector_id = ${ada} WHERE entity_id = ${free}`);
+    expect(await collectorOf(free)).toEqual([[ada]]);
   });
 
   test("atlas is the pair the repo used to describe wrongly", async () => {

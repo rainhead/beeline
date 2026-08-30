@@ -188,6 +188,31 @@ describe("schema application", () => {
     expect(
       await rows(conn, `SELECT person_id FROM sample_primary_collector WHERE sample_id = ${correct}`),
     ).toEqual([[ada]]);
+
+    // Reassignment, in the two shapes schema/100 documents (the writable
+    // list is the whole point of beeline-6e9). Promoting a collector already
+    // on the list is a position swap — retargeting person_id onto them would
+    // collide with the (sample_id, person_id) primary key (CodeRabbit on
+    // PR #31) — and a person not on the list arrives by retargeting a slot.
+    await conn.run(
+      `UPDATE sample_collector SET position = CASE position WHEN 1 THEN 2 ELSE 1 END
+       WHERE sample_id = ${correct}`,
+    );
+    expect(
+      await rows(conn, `SELECT person_id FROM sample_primary_collector WHERE sample_id = ${correct}`),
+    ).toEqual([[bo]]);
+    const cy = await person("Cy Collector");
+    await conn.run(
+      `UPDATE sample_collector SET person_id = ${cy} WHERE sample_id = ${correct} AND position = 1`,
+    );
+    expect(
+      await rows(conn, `SELECT person_id FROM sample_primary_collector WHERE sample_id = ${correct}`),
+    ).toEqual([[cy]]);
+    // And the collision the swap exists to avoid, pinned so the docs cannot
+    // drift back to "just SET person_id".
+    await expect(
+      conn.run(`UPDATE sample_collector SET person_id = ${ada} WHERE sample_id = ${correct} AND position = 1`),
+    ).rejects.toThrow(/primary key/i);
   });
 
   test("a qualifier below species rank is caught by the view a CHECK cannot be", async () => {

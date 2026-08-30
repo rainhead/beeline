@@ -9,8 +9,12 @@
 -- same fact written twice, a view existed only to police the copy, and the
 -- copy could never be UPDATEd — DuckDB refuses to write an indexed column on
 -- a row an incoming foreign key references, and every sample is referenced.
--- Reassigning a collector is now UPDATE sample_collector SET person_id,
--- which works, because nothing references sample_collector.
+-- Reassigning a collector is now an UPDATE on sample_collector — which
+-- works, because nothing references sample_collector — in one of two shapes:
+-- SET person_id retargets a slot to somebody new, and promoting a collector
+-- already on the list is SET position (a swap), because retargeting onto a
+-- listed person collides with the (sample_id, person_id) primary key. Both
+-- are pinned in test/schema.test.ts.
 --
 -- Exactly one row per sample is the invariant, not a property of the query:
 -- a sample with no position-1 row is absent here, and one with two appears

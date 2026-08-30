@@ -75,7 +75,15 @@ export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }
     // so the row is absent rather than reading as something missing.
     sample.host_name_as_observed === null
       ? null
-      : { term: <Term m={m} slug="floral-host">{s.host}</Term>, value: sample.host_name_as_observed },
+      : {
+          term: <Term m={m} slug="floral-host">{s.host}</Term>,
+          // A scientific name, so it is printed like one. Italics come from
+          // the rank and never from the string: 'Onagraceae' and
+          // 'Chamaenerion' are both one word and only the second is italic.
+          // An unknown rank prints upright, which is the honest answer for
+          // the legacy hosts whose source column is unrecoverable.
+          value: <TaxonName rank={sample.host_rank ?? ""} scientificName={sample.host_name_as_observed} />,
+        },
     {
       term: <Term m={m} slug="observation">{s.observation}</Term>,
       value:

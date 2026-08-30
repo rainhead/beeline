@@ -80,6 +80,7 @@ export interface SampleDetail {
   inat_observation_id: bigint | null;
   host_inat_taxon_id: bigint | null;
   host_name_as_observed: string | null;
+  host_rank: string | null;
   geoprivacy: Geoprivacy | null;
   taxon_geoprivacy: Geoprivacy | null;
   atlas_code: string | null;
@@ -179,7 +180,7 @@ const sampleColumns = (personId: number) => sql`
   s.kind, s.sample_number, s.date_start, s.date_end, s.specimen_count,
   s.locality, s.county, s.state_province, s.country,
   s.protocol, s.sampling_effort,
-  s.inat_observation_id, s.host_inat_taxon_id, s.host_name_as_observed,
+  s.inat_observation_id, s.host_inat_taxon_id, s.host_name_as_observed, s.host_rank,
   s.geoprivacy, s.taxon_geoprivacy,
   a.code AS atlas_code, a.name AS atlas_name,
   loc.latitude, loc.longitude, loc.coordinate_uncertainty_m,

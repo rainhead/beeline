@@ -38,7 +38,7 @@ function obs(id: number, extra: Record<string, unknown> = {}): Record<string, un
     taxon_geoprivacy: null,
     user: { id: 100, login: "adacollects" },
     // ancestor_ids is self-inclusive; 211194 = Tracheophyta.
-    taxon: { id: 51048, name: "Salvia officinalis", ancestor_ids: [211194, 51048] },
+    taxon: { id: 51048, name: "Salvia officinalis", rank: "species", ancestor_ids: [211194, 51048] },
     ofvs: [
       { name: "sampleId", value: "1" },
       { name: "numberOfSpecimens", value: "3" },
@@ -168,11 +168,26 @@ describe("the migration for deployed stores", () => {
    * where the risk actually is, since that is the migration nothing has run
    * yet.
    *
-   * So it moves. It pinned 0020; the head is now 0021 (beeline-oyq), and the
-   * unwind below is correspondingly longer because that migration adds a
-   * twenty-second column, a file's worth of views, and a rewrite of
-   * qc_rule_locality_format. Whoever adds 0022 moves it again — which is the
-   * cost of the doctrine and cheaper than the fiction it replaced.
+   * So it moves. It pinned 0020, then 0021 (beeline-oyq).
+   *
+   * IT CANNOT FOLLOW THE HEAD ALL THE WAY ANY MORE, and the reason is an
+   * engine limitation rather than a choice. 0022 adds a column to `sample`,
+   * and DuckDB refuses ALTER TABLE ... DROP COLUMN on a table involved in a
+   * foreign key ("Cannot alter entry sample because there are entries that
+   * depend on it" — the same wall migration 0007 hit and had to rebuild the
+   * table to get around). There is no way to construct a store that has the
+   * current schema minus that column, so there is nothing to apply 0022 to.
+   *
+   * What it does instead: unwind to pre-0021, run 0021 whole, then run the
+   * PROJECTION half of 0022 — everything above its `-- ── The sample ──`
+   * marker, which is the half that can be simulated — and assert no drift in
+   * what those two touch. The `sample` half is verified against the real
+   * corpus by `pnpm db:migrate --check`, which reported the migrated dev
+   * store matching schema/*.sql, and that is the check this stands in for.
+   *
+   * A migration that only touches unconstrained tables can go back to being
+   * pinned whole. One that adds to `sample` cannot, until DuckDB grows a
+   * DROP COLUMN that works or the test starts keeping schema snapshots.
    */
   test("brings a store built from the previous schema up to this one, filled", async () => {
     const { conn: old } = await createMemoryDb();
@@ -217,6 +232,10 @@ describe("the migration for deployed stores", () => {
       ) flags
       WHERE len > 18 OR has_comma OR has_quote OR is_street`);
     await old.run("DROP VIEW locality_street_suffix_pattern");
+    // Both added columns go: we are unwinding to pre-0021, and 0022's column
+    // is applied again below. observation_field carries no foreign key, which
+    // is the only reason either can be dropped at all.
+    await old.run("ALTER TABLE observation_field DROP COLUMN host_taxon_rank");
     await old.run("ALTER TABLE observation_field DROP COLUMN private_place_guess");
     await old.run("DROP VIEW observation_current_fields");
     await old.run(`CREATE VIEW observation_current_fields AS
@@ -249,17 +268,25 @@ describe("the migration for deployed stores", () => {
       ] }))] as never,
     );
 
-    const sql = await readFile(join(MIGRATIONS_DIR, "0021-observations-become-samples.sql"), "utf8");
-    await old.run(sql);
+    await old.run(await readFile(join(MIGRATIONS_DIR, "0021-observations-become-samples.sql"), "utf8"));
+    // 0022's projection half only — see the note above on why its `sample`
+    // half cannot be simulated. Split on the marker rather than by line
+    // number so that editing the migration cannot silently change what runs.
+    const next = await readFile(join(MIGRATIONS_DIR, "0022-floral-host-rank.sql"), "utf8");
+    const marker = "-- ── The sample ─";
+    expect(next).toContain(marker);
+    await old.run(next.slice(0, next.indexOf(marker)));
 
     expect(await schemaDrift(old)).toEqual([]);
     // Refilled by the migration itself, and reading the new field: an
     // unrefreshed table would have left the rules quietly reporting an older
     // answer, with observation_field_stale the only thing that knew.
     const filled = await (
-      await old.run("SELECT inat_id, specimen_count_raw, collection_method_raw FROM observation_field")
+      await old.run(
+        "SELECT inat_id, specimen_count_raw, collection_method_raw, host_taxon_rank FROM observation_field",
+      )
     ).getRows();
-    expect(filled).toEqual([[7n, "3", "net"]]);
+    expect(filled).toEqual([[7n, "3", "net", "species"]]);
     const stale = await (await old.run("SELECT count(*) FROM observation_field_stale")).getRows();
     expect(Number(stale[0]![0])).toBe(0);
     // And every region got its place id, which is what the whole places half

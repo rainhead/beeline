@@ -590,6 +590,18 @@ SELECT
   arg_min(coalesce(
     nullif(r.speciesPlant, ''), nullif(r.genusPlant, ''), nullif(r.familyPlant, ''),
     nullif(r.orderPlant, ''), nullif(r.phylumPlant, '')), r._id) AS host_name,
+  -- The rank is not written down anywhere: it is WHICH COLUMN supplied the
+  -- name, which is why this repeats the coalesce order rather than reading a
+  -- field. Same arg_min key as the name above, so both come off the same row.
+  -- Needed because italics are derived from rank and a name cannot be read
+  -- for it (schema/030).
+  arg_min(CASE
+    WHEN nullif(r.speciesPlant, '') IS NOT NULL THEN 'species'
+    WHEN nullif(r.genusPlant, '')   IS NOT NULL THEN 'genus'
+    WHEN nullif(r.familyPlant, '')  IS NOT NULL THEN 'family'
+    WHEN nullif(r.orderPlant, '')   IS NOT NULL THEN 'order'
+    WHEN nullif(r.phylumPlant, '')  IS NOT NULL THEN 'phylum'
+  END, r._id)                                       AS host_rank,
   arg_min(r.p_lat, r._id)                           AS lat,
   arg_min(r.p_lon, r._id)                           AS lon,
   arg_min(r.p_uncertainty, r._id)                   AS uncertainty,
@@ -601,7 +613,7 @@ GROUP BY m.person_id, r.sid, r.p_date_start;
 
 INSERT INTO sample (entity_id, kind, collector_id, atlas_id, sample_number,
                     date_start, date_end, specimen_count, inat_observation_id,
-                    host_name_as_observed, country, state_province, county,
+                    host_name_as_observed, host_rank, country, state_province, county,
                     locality, protocol)
 SELECT s.sample_id, s.kind, s.person_id,
        -- Geography assigns the atlas, through the lookup that also knows the
@@ -610,7 +622,7 @@ SELECT s.sample_id, s.kind, s.person_id,
        -- the place did not resolve at all (beeline-lcl).
        reg.atlas_id,
        s.sid, s.p_date_start, s.date_end, s.specimen_count, s.inat_obs_id,
-       s.host_name,
+       s.host_name, s.host_rank,
        -- Country to ISO 3166-1 alpha-3, matching the 'USA' that most records
        -- already carry. Canada arrived spelled both ways, splitting British
        -- Columbia's records as well as the Yukon's.

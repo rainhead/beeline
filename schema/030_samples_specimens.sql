@@ -17,6 +17,7 @@ CREATE TABLE sample (
   inat_observation_id BIGINT,
   host_inat_taxon_id BIGINT,
   host_name_as_observed TEXT,
+  host_rank          TEXT,
   geoprivacy         TEXT CHECK (geoprivacy IN ('obscured', 'private')),
   taxon_geoprivacy   TEXT CHECK (taxon_geoprivacy IN ('obscured', 'private')),
   country            TEXT,
@@ -33,6 +34,7 @@ COMMENT ON COLUMN sample.sample_number IS 'Per collector per day for net (''3'')
 COMMENT ON COLUMN sample.specimen_count IS 'The working count: free to move up or down until printing freezes specimens.';
 COMMENT ON COLUMN sample.geoprivacy IS 'The observer''s own iNat geoprivacy setting — a fact about the source, kept because it drives QC and reads. Both flags blank ⇒ open coordinates.';
 COMMENT ON COLUMN sample.taxon_geoprivacy IS 'iNat taxon-driven obscuring. Whether an atlas may reveal true coordinates of taxon-obscured records is per-atlas, open, and a go-live blocker (docs/questions.md).';
+COMMENT ON COLUMN sample.host_rank IS 'The rank host_name_as_observed is at, so the name can be printed correctly: italics are derived from rank and the string cannot be read for it — ''Onagraceae'' (family) and ''Chamaenerion'' (genus) are both one word. From iNaturalist''s taxon.rank where the sample has an observation, and from which of the legacy plant columns supplied the name where it does not. Nullable: the legacy import has hosts whose column is unrecoverable, and an unknown rank prints upright rather than guessing.';
 COMMENT ON COLUMN sample.host_inat_taxon_id IS 'Floral host as an iNat taxon reference — hosts never live in the curated animal table.';
 COMMENT ON COLUMN sample.locality IS 'Place text (with country/state_province/county): label text at place-name granularity, ingested private-preferred like the reference implementation.';
 COMMENT ON COLUMN sample.protocol IS 'Free text today (''vane trap'', ''6 Vane Traps''); controlled vocabulary pending staff answers (docs/questions.md, Trap sampling q3).';

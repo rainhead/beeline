@@ -230,6 +230,40 @@ describe("the sample page", () => {
     expect(await get(legacy, `/samples/${a2}`)).not.toContain("this observation");
   });
 
+  it("prints the floral host as a scientific name, italicised from its rank", async () => {
+    // Names are derived, never typed: TaxonName reads the RANK because the
+    // string cannot be read for it. 'Onagraceae' (family) and 'Chamaenerion'
+    // (genus) are both one word and only the second is italic, and ~1,500 of
+    // the corpus's 60,196 hosts sit at tribe, family, subfamily or subtribe.
+    const { app, conn, aliceSample } = await recordApp();
+    await conn.run(
+      `UPDATE sample SET host_name_as_observed = 'Chamaenerion angustifolium', host_rank = 'species'
+       WHERE entity_id = ${aliceSample}`,
+    );
+    // Each word is wrapped on its own, which is how TaxonName renders.
+    const body = await get(app, `/samples/${aliceSample}`);
+    expect(body).toContain("<i>Chamaenerion</i>");
+    expect(body).toContain("<i>angustifolium</i>");
+
+    // A rank above genus is upright, which is the case a word count gets
+    // wrong: this name is one word, exactly like a genus.
+    const { app: fam, conn: c2, aliceSample: a2 } = await recordApp();
+    await conn.run.call(c2, `UPDATE sample SET host_name_as_observed = 'Onagraceae', host_rank = 'family'
+       WHERE entity_id = ${a2}`);
+    const famBody = await get(fam, `/samples/${a2}`);
+    expect(famBody).toContain("Onagraceae");
+    expect(famBody).not.toContain("<i>Onagraceae</i>");
+
+    // 4,186 hosts have no rank the store can know — the legacy import, and
+    // observations no longer in the corpus. Upright is the honest answer.
+    const { app: bare, conn: c3, aliceSample: a3 } = await recordApp();
+    await conn.run.call(c3, `UPDATE sample SET host_name_as_observed = 'Grindelia hirsutula', host_rank = NULL
+       WHERE entity_id = ${a3}`);
+    const bareBody = await get(bare, `/samples/${a3}`);
+    expect(bareBody).toContain("Grindelia hirsutula");
+    expect(bareBody).not.toContain("<i>Grindelia hirsutula</i>");
+  });
+
   it("names the tile an elevation was read from", async () => {
     const { app, aliceSample } = await recordApp();
     const body = await get(app, `/samples/${aliceSample}`);

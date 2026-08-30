@@ -1,18 +1,29 @@
--- Current state of an observation = its latest load.
-CREATE VIEW observation_current AS
-SELECT entity_id, inat_id, sync_run_id, fetched_at, content, content_hash
-FROM (
-  SELECT ol.*,
-         row_number() OVER (PARTITION BY inat_id ORDER BY fetched_at DESC, entity_id DESC) AS rn
-  FROM observation_load ol
-) latest
-WHERE rn = 1;
+-- Migration for schema/030, schema/060 and schema/105: carry the floral
+-- host's rank, so its name can be printed as a scientific name.
+--
+-- The sample page rendered the host as bare text. By the project's own rule
+-- names are derived, never typed (src/app/views/components/taxon.tsx): italics
+-- come from the RANK, because the string cannot be read for it — 'Onagraceae'
+-- (family, upright) and 'Chamaenerion' (genus, italic) are both one word. The
+-- corpus makes that concrete: of 60,196 samples with a host, ~1,500 sit at
+-- tribe, family, subfamily or subtribe, where italics would be wrong.
+--
+-- No re-sync is needed. `taxon.rank` has been in the sync's field whitelist
+-- and in every stored load all along; observation_current_fields simply never
+-- read it. So this migration can fill the column from what the store already
+-- holds.
+--
+-- The 2,926 hosts that came from the legacy import rather than an observation
+-- get their rank from ingest/promote-legacy.sql, which knows it as *which
+-- plant column supplied the name* — nothing else records it.
 
--- Typed extraction over the JSON projection, so downstream rules stay free
--- of JSON functions. This view is the accepted DuckDB-flavored seam (ADR
--- 0001): json_extract and JSON[] casts would spell differently on Postgres.
--- The count OFV appears in the wild under two names; sampleId OFV values
--- include junk ('ID 1') — extraction is verbatim, findings judge validity.
+-- ── The projection ───────────────────────────────────────────────────────
+-- APPENDED LAST, as always: refreshObservationFields inserts positionally and
+-- observation_field_stale compares with EXCEPT.
+ALTER TABLE observation_field ADD COLUMN host_taxon_rank TEXT;
+COMMENT ON COLUMN observation_field.host_taxon_rank IS 'The floral host''s rank, as iNaturalist gives it. Carried because italics are derived from rank and cannot be read off the name — ''Onagraceae'' and ''Chamaenerion'' are both one word and only one of them is italic (src/app/views/components/taxon.tsx).';
+
+DROP VIEW observation_current_fields;
 CREATE VIEW observation_current_fields AS
 SELECT o.inat_id,
   CAST(json_extract_string(o.content, '$.observed_on') AS DATE)          AS observed_on,
@@ -111,55 +122,36 @@ SELECT o.inat_id,
   json_extract_string(o.content, '$.taxon.rank')                         AS host_taxon_rank
 FROM observation_current o;
 
--- The two sample-number fields disagreeing on one observation.
---
--- sample_number_raw above prefers 'sampleId', and a preference is only honest
--- if the thing it overrules is visible. Empty today: of the 31 observations
--- carrying both fields, 17 have a value in each and all 17 agree. (The other
--- 14 have a blank on one side, which is not a disagreement and is handled
--- above by treating blank as absent — the two were conflated when this was
--- first written, and the 14 was reported here as a conflict count.) A view
--- rather than a QC rule because it is
--- about an observation, and a finding is keyed to a sample (schema/050) —
--- most of these have no sample yet, which is the whole of beeline-oyq.
-CREATE VIEW observation_sample_number_conflict AS
-SELECT o.inat_id, modern.value AS sample_id_value, legacy.value AS sample_id_2018_value
-FROM observation_current o,
-LATERAL (SELECT (SELECT j.j ->> '$.value'
-                 FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-                 WHERE j.j ->> '$.name' = 'sampleId' LIMIT 1) AS value) modern,
-LATERAL (SELECT (SELECT j.j ->> '$.value'
-                 FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-                 WHERE j.j ->> '$.name' = 'sample id' LIMIT 1) AS value) legacy
-WHERE nullif(trim(modern.value), '') IS NOT NULL
-  AND nullif(trim(legacy.value), '') IS NOT NULL
-  AND trim(modern.value) <> trim(legacy.value);
+-- Refilled here rather than left for the next promotion, for the reason
+-- migrations 0017, 0020 and 0021 all give: an unrefreshed table is not a
+-- visibly broken one. Columns named, never SELECT *.
+DELETE FROM observation_field;
+INSERT INTO observation_field (
+  inat_id, observed_on, latitude, longitude, private_latitude, private_longitude,
+  positional_accuracy, public_positional_accuracy, geoprivacy, taxon_geoprivacy,
+  viewer_trusted, user_id, user_login, place_guess, host_taxon_id, host_taxon_name,
+  host_is_tracheophyte, quality_grade, sample_number_raw, specimen_count_raw,
+  collection_method_raw, private_place_guess, host_taxon_rank
+)
+SELECT
+  inat_id, observed_on, latitude, longitude, private_latitude, private_longitude,
+  positional_accuracy, public_positional_accuracy, geoprivacy, taxon_geoprivacy,
+  viewer_trusted, user_id, user_login, place_guess, host_taxon_id, host_taxon_name,
+  host_is_tracheophyte, quality_grade, sample_number_raw, specimen_count_raw,
+  collection_method_raw, private_place_guess, host_taxon_rank
+FROM observation_current_fields;
 
--- Whether the stored projection still says what shredding the loads would.
---
--- observation_field (schema/060) is the one place a view's output is kept,
--- and the whole of its correctness is that a refresh ran. Nothing in the
--- engine enforces that: a sync that wrote loads and skipped the refresh, or
--- a store whose loads were inserted by hand, leaves three QC rules reading
--- an older answer with no way to tell. So the disagreement gets a name, the
--- same way sample_elevation_stale names an elevation about somewhere else
--- (schema/170) — and for the same reason, that correctness living in every
--- writer remembering is correctness one new writer can drop.
---
--- Symmetric: a row shredded differently, a load with no row, and a row whose
--- observation is gone are all staleness, and EXCEPT treats NULLs as equal,
--- which is what comparing two projections of the same JSON wants. A test
--- asserts it empty after a sync; nothing reads it at request time, so its
--- cost is the shred it is checking.
-CREATE VIEW observation_field_stale AS
-SELECT inat_id FROM (
-  SELECT * FROM observation_current_fields
-  EXCEPT
-  SELECT * FROM observation_field
-) missing
-UNION
-SELECT inat_id FROM (
-  SELECT * FROM observation_field
-  EXCEPT
-  SELECT * FROM observation_current_fields
-) extra;
+-- ── The sample ───────────────────────────────────────────────────────────
+ALTER TABLE sample ADD COLUMN host_rank TEXT;
+COMMENT ON COLUMN sample.host_rank IS 'The rank host_name_as_observed is at, so the name can be printed correctly: italics are derived from rank and the string cannot be read for it — ''Onagraceae'' (family) and ''Chamaenerion'' (genus) are both one word. From iNaturalist''s taxon.rank where the sample has an observation, and from which of the legacy plant columns supplied the name where it does not. Nullable: the legacy import has hosts whose column is unrecoverable, and an unknown rank prints upright rather than guessing.';
+
+-- Fill what the store can already answer. The iNat-backed hosts come from the
+-- projection just refreshed above; ingest/mint-samples.sql keeps them filled
+-- on the same fill-only terms from here on. The legacy-only hosts stay NULL
+-- until a re-promotion, and print upright meanwhile, which is the honest
+-- answer rather than a guess.
+UPDATE sample SET host_rank = f.host_taxon_rank
+FROM observation_field f
+WHERE sample.inat_observation_id = f.inat_id
+  AND sample.host_rank IS NULL
+  AND f.host_taxon_rank IS NOT NULL;

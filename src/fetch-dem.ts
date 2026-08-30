@@ -1,11 +1,11 @@
 import { DuckDBInstance } from "@duckdb/node-api";
-import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { mkdir, rm, rename, writeFile } from "node:fs/promises";
+import { mkdir, rm, rename } from "node:fs/promises";
 import { Readable } from "node:stream";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
+import type { DemDataset } from "./derive-elevation.js";
 import { GLO30, SRTM, locateTile, tileFileName, tileKeyFor } from "./derive-elevation.js";
 
 /**
@@ -15,16 +15,51 @@ import { GLO30, SRTM, locateTile, tileFileName, tileKeyFor } from "./derive-elev
  * needs, and a later run picks up tiles for newly cleared elevations. Tiles
  * already present are skipped.
  *
- * Two sources, in the order derivation prefers them: SRTM 1-arc-second
- * rsynced from the legacy server's archive (requires `beeline` in
- * ~/.ssh/config, like scripts/fetch-legacy.sh), then Copernicus GLO-30 for
- * whatever that archive lacks (beeline-zjd) — out-of-atlas records, and
- * anything north of 60°N where SRTM has no coverage at all. Tiles neither
- * source has are printed; those elevations stay NULL, which is fine —
- * elevation is never a QC finding and never blocks printing.
+ * Two sources over plain HTTPS, in the order derivation prefers them: SRTM
+ * 1-arc-second, then Copernicus GLO-30 for whatever SRTM does not reach
+ * (beeline-zjd) — anything north of 60°N or south of 56°S, where the shuttle
+ * simply did not fly. Tiles neither source has are printed; those elevations
+ * stay NULL, which is fine — elevation is never a QC finding and never blocks
+ * printing.
+ *
+ * Neither source wants a credential, and that is the point (beeline-oxi). The
+ * SRTM tiles used to be rsynced from the legacy server's own archive, so any
+ * host that fetched one needed an ssh key or an agent forwarded to it — which
+ * the nightly pipeline, running unattended, has no way to hold. Worse, an
+ * unreachable archive failed the whole run rather than falling through to
+ * GLO-30, so a host without that key could not fetch even the tiles SRTM has
+ * never held. The archive was a mirror of a public dataset; this reads the
+ * public dataset.
  */
 
-const REMOTE = "beeline:/root/app/OBP-Server/shared/data/elevation/";
+/**
+ * Public, no-auth mirror of SRTM 1 Arc-Second Global v3, one GeoTIFF per
+ * 1°×1° tile. The authoritative distribution is NASA's LP DAAC, which is
+ * behind an Earthdata Login: a credential is the thing this is here to avoid,
+ * and the data is identical public-domain SRTM either way.
+ *
+ * Not byte-identical to the legacy archive's rendition of the same tiles,
+ * which is a property of SRTM and not of this mirror: renditions differ in
+ * how they fill the voids the radar left in steep terrain. Measured on
+ * n44_w123 — same 3601x3601 grid, same bounding box, 53,306 of 12,967,201
+ * pixels differing (0.4%), all of them in the rugged eastern third and none
+ * on the valley floor, and NOT a shift (the four one-pixel offsets are two
+ * orders of magnitude worse). At the 1,416 sample coordinates the store
+ * actually holds in that tile, the two agree exactly on 1,414 and by 10 m or
+ * better on the rest: samples sit in valleys and along roads, where there
+ * were no voids to disagree about. Tiles land under the archive's own file
+ * name, so a cache filled either way still resolves, and the differing
+ * rendition is visible where it belongs — elevation_source keys on the file
+ * hash, so a re-fetched tile is a new source row rather than a silent
+ * substitution.
+ */
+const SRTM_BUCKET = "https://opentopography.s3.sdsc.edu/raster/SRTM_GL1/SRTM_GL1_srtm";
+
+/** SRTM's object name for a tile key: the same southwest corner, capitalised
+ * and without the separator, so n44_w123 is N44W123. */
+export function srtmUrl(key: string): string {
+  return `${SRTM_BUCKET}/${key.toUpperCase().replace("_", "")}.tif`;
+}
 
 /** Public, no-auth, requester-pays-free mirror of Copernicus DEM GLO-30. */
 const GLO30_BUCKET = "https://copernicus-dem-30m.s3.amazonaws.com";
@@ -56,33 +91,32 @@ async function absentTiles(demDir: string, keys: string[]): Promise<string[]> {
   return absent;
 }
 
-/** Pull SRTM tiles from the legacy archive. Tiles the server does not have
- * are simply not transferred; the caller re-checks what landed. */
-async function rsyncFromLegacy(demDir: string, keys: string[]): Promise<void> {
-  const listPath = `${demDir}/.fetch-list`;
-  await writeFile(listPath, keys.map((key) => tileFileName(key, SRTM)).join("\n") + "\n");
-  const rsync = spawn("rsync", ["-a", `--files-from=${listPath}`, REMOTE, demDir], {
-    stdio: ["ignore", "inherit", "inherit"],
-  });
-  // A null close code means rsync died on a signal — never success.
-  const code = await new Promise<number>((resolve) => rsync.on("close", (c) => resolve(c ?? 1)));
-  // 23/24: partial transfer — tiles the server lacks; the caller's re-check
-  // reports exactly which. (macOS rsync predates --ignore-missing-args.)
-  if (code !== 0 && code !== 23 && code !== 24) throw new Error(`rsync exited ${code}`);
-}
-
 /**
- * Stream one GLO-30 tile in, returning false for the 404 that means the tile
- * genuinely does not exist (all ocean). Downloads to a temp name and renames,
- * so an interrupted transfer never leaves a truncated tile behind for
- * derivation to hash and trust.
+ * Stream one tile in, returning false for the 404 that means this dataset
+ * does not have it: all ocean, or — for SRTM — outside the 60°N–56°S band the
+ * shuttle flew. Downloads to a temp name and renames, so an interrupted
+ * transfer never leaves a truncated tile behind for derivation to hash and
+ * trust.
  */
-async function fetchGlo30(demDir: string, key: string): Promise<boolean> {
-  const target = `${demDir}/${tileFileName(key, GLO30)}`;
+async function fetchTile(
+  demDir: string,
+  key: string,
+  dataset: DemDataset,
+  url: string,
+): Promise<boolean> {
+  const target = `${demDir}/${tileFileName(key, dataset)}`;
   const partial = `${target}.partial`;
-  const res = await fetch(glo30Url(key), { signal: AbortSignal.timeout(10 * 60_000) });
-  if (res.status === 404) return false;
-  if (!res.ok || res.body === null) throw new Error(`GLO-30 ${key}: HTTP ${res.status}`);
+  const res = await fetch(url, { signal: AbortSignal.timeout(10 * 60_000) });
+  if (res.status === 404) {
+    // Node's fetch holds the pooled connection until the body is read or
+    // cancelled, and unlike a browser's it will not collect it promptly on its
+    // own. A 404 is the ordinary case here, not the exceptional one — every
+    // tile above 60°N takes one before falling through to GLO-30 — so leaving
+    // them unread would have each miss slow the tiles behind it.
+    await res.body?.cancel();
+    return false;
+  }
+  if (!res.ok || res.body === null) throw new Error(`${key} from ${url}: HTTP ${res.status}`);
   try {
     await pipeline(Readable.fromWeb(res.body as WebReadableStream<Uint8Array>), createWriteStream(partial));
     await rename(partial, target);
@@ -102,30 +136,28 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const toFetch = await absentTiles(demDir, needed);
   console.error(`${needed.length} tiles needed, ${toFetch.length} to fetch`);
 
-  if (toFetch.length > 0) await rsyncFromLegacy(demDir, toFetch);
-  const beyondLegacy = await absentTiles(demDir, toFetch);
-  if (beyondLegacy.length > 0) {
-    console.error(`${beyondLegacy.length} not in the legacy archive — trying Copernicus GLO-30`);
-  }
-
+  // Per tile rather than per dataset: SRTM's absence at one key says nothing
+  // about the next.
+  const fromSrtm: string[] = [];
   const fromGlo30: string[] = [];
   const unavailable: string[] = [];
-  for (const key of beyondLegacy) {
+  for (const key of toFetch) {
     console.error(`  ${key}`);
-    if (await fetchGlo30(demDir, key)) fromGlo30.push(key);
+    // A transport failure on the first source is reported and then treated as
+    // "this dataset does not have it", because an unreachable source failing
+    // the whole run is precisely what left a host unable to fetch even the
+    // tiles the other source holds (beeline-oxi). Both sources failing still
+    // throws: that is an outage, not a gap.
+    let srtm = false;
+    try {
+      srtm = await fetchTile(demDir, key, SRTM, srtmUrl(key));
+    } catch (err) {
+      console.error(`    SRTM unavailable: ${(err as Error).message}`);
+    }
+    if (srtm) fromSrtm.push(key);
+    else if (await fetchTile(demDir, key, GLO30, glo30Url(key))) fromGlo30.push(key);
     else unavailable.push(key);
   }
 
-  console.log(
-    JSON.stringify(
-      {
-        needed: needed.length,
-        fromLegacy: toFetch.length - beyondLegacy.length,
-        fromGlo30,
-        unavailable,
-      },
-      null,
-      2,
-    ),
-  );
+  console.log(JSON.stringify({ needed: needed.length, fromSrtm, fromGlo30, unavailable }, null, 2));
 }

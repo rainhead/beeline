@@ -134,10 +134,17 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   // them, and the location writes move them — this is the nightly's record
   // of all three.
   const samplePaths = sampleLogFor(dbPath, process.env);
-  const sampleRecorded =
-    samplePaths === null
-      ? null
-      : await recordSampleChanges(duckdbReader(conn), samplePaths, { source: "observation_promotion" });
+  // Guarded like the boot pass — see promote-legacy.ts on why a
+  // history-write failure must not abort a run whose data already committed.
+  let sampleRecorded = null;
+  try {
+    sampleRecorded =
+      samplePaths === null
+        ? null
+        : await recordSampleChanges(duckdbReader(conn), samplePaths, { source: "observation_promotion" });
+  } catch (err) {
+    console.warn(`could not record sample history: ${(err as Error).message}`);
+  }
   conn.closeSync();
   console.log(
     JSON.stringify(

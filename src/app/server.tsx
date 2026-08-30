@@ -565,12 +565,23 @@ export function createApp({
     // the store was touched. The log records; it never gates the edit.
     if (result.outcome === "saved") {
       try {
-        await recordSampleChanges(kyselyReader(db), samplePaths, {
+        const recorded = await recordSampleChanges(kyselyReader(db), samplePaths, {
           source: "app",
           author: session.login,
           reason: field("note")?.trim() || undefined,
           where: `s.entity_id = ${sample.entity_id}`,
         });
+        // A missing snapshot turns this pass into the baseline, which
+        // records the edit as part of "the corpus as it stands" — no entry,
+        // no author. Say so: silence here would hide that the one fact no
+        // later pass can recover went unrecorded (the corrections overlay
+        // still holds it, durably, from applySampleEdit).
+        if (recorded.baselined) {
+          console.warn(
+            `sample edit by ${session.login} fell on a missing snapshot and was baselined, not recorded; ` +
+              `the corrections overlay carries the attribution`,
+          );
+        }
       } catch (err) {
         console.warn(`could not record the sample edit: ${(err as Error).message}`);
       }

@@ -190,7 +190,8 @@ const sampleColumns = (personId: number) => sql`
 
 const SAMPLE_JOINS = sql`
   FROM sample s
-  LEFT JOIN atlas a ON a.entity_id = s.atlas_id
+  LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
+  LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
   LEFT JOIN elevation_source es ON es.entity_id = loc.elevation_source_id`;
 

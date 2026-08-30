@@ -220,12 +220,16 @@ SELECT s.entity_id AS sample_id,
        'duplicate_sample_number' AS rule_name,
        concat('sample number ', s.sample_number, ' used ', dup.n, ' times on ', s.date_start) AS details
 FROM sample s
+JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
 JOIN (
-  SELECT collector_id, date_start, sample_number, count(*) AS n
-  FROM sample
-  GROUP BY collector_id, date_start, sample_number
+  SELECT pc.person_id, s.date_start, s.sample_number, count(*) AS n
+  FROM sample s
+  JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+  GROUP BY pc.person_id, s.date_start, s.sample_number
   HAVING count(*) > 1
-) dup USING (collector_id, date_start, sample_number);
+) dup ON dup.person_id = pc.person_id
+     AND dup.date_start = s.date_start
+     AND dup.sample_number = s.sample_number;
 
 -- The evidencing observation's taxon is the floral host in this protocol,
 -- and a host must be a vascular plant: anything else — a moss, a fungus, or

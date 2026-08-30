@@ -4,12 +4,19 @@
 -- finding there. Descriptive fields are nullable because completeness is QC's
 -- job, not the schema's.
 
+-- No collector column and no atlas column, and that is the fix for a real
+-- bug rather than a style choice (beeline-6e9): DuckDB refuses an UPDATE
+-- that writes an INDEXED column of a row an incoming foreign key references
+-- (duckdb/duckdb#20246, dormant upstream), and every sample is referenced by
+-- its sample_collector rows. With collector_id and atlas_id on this table,
+-- reassigning a collector or moving a sample between atlases was impossible
+-- for every sample in the store, always. So the primary collector is
+-- sample_collector position 1 — the fact was already there, written twice —
+-- and the atlas lives in sample_atlas below, a satellite nothing references,
+-- where both columns stay writable with every foreign key intact.
 CREATE TABLE sample (
   entity_id          INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
   kind               TEXT NOT NULL CHECK (kind IN ('net', 'trap')),
-  collector_id       INTEGER NOT NULL REFERENCES person(entity_id),
-  atlas_id           INTEGER REFERENCES atlas(entity_id),
-  atlas_assigned_by  INTEGER REFERENCES person(entity_id),
   sample_number      TEXT NOT NULL,
   date_start         DATE NOT NULL,
   date_end           DATE NOT NULL,
@@ -27,8 +34,7 @@ CREATE TABLE sample (
   sampling_effort    TEXT,
   CHECK (date_end >= date_start)
 );
-COMMENT ON TABLE sample IS 'The collecting event that yields specimens: one collector, one place, one floral host (or none), one day (net) or date range (trap). Coordinates live in sample_location — and only believed-true ones; deliberately-shifted (geoprivacy-obscured) coordinates never enter the sample layer, remaining verbatim in the ingestion staging/observation history.';
-COMMENT ON COLUMN sample.atlas_assigned_by IS 'Null ⇒ assigned by geography; set ⇒ explicit administrative assignment (border ambiguity, out-of-region collecting).';
+COMMENT ON TABLE sample IS 'The collecting event that yields specimens: collectors in sample_collector (position 1 is the primary), atlas in sample_atlas, one place, one floral host (or none), one day (net) or date range (trap). Coordinates live in sample_location — and only believed-true ones; deliberately-shifted (geoprivacy-obscured) coordinates never enter the sample layer, remaining verbatim in the ingestion staging/observation history.';
 COMMENT ON COLUMN sample.sample_number IS 'Per collector per day for net (''3''); trap series numbers (''OBAS-00657'') for trap.';
 COMMENT ON COLUMN sample.specimen_count IS 'The working count: free to move up or down until printing freezes specimens.';
 COMMENT ON COLUMN sample.geoprivacy IS 'The observer''s own iNat geoprivacy setting — a fact about the source, kept because it drives QC and reads. Both flags blank ⇒ open coordinates.';
@@ -50,8 +56,26 @@ CREATE TABLE sample_collector (
   position  INTEGER NOT NULL CHECK (position >= 1),
   PRIMARY KEY (sample_id, person_id)
 );
-COMMENT ON TABLE sample_collector IS 'Everyone who collected a sample, in order — including the primary collector at position 1. Sample.collector_id stays the primary (whose sample numbering it is); this table is what "my samples" and label attribution read, so a second collector is not invisible.';
-COMMENT ON COLUMN sample_collector.position IS 'Darwin Core recordedBy order, 1-based. Position 1 is sample.collector_id — an invariant promotion maintains, not a constraint the engine can express.';
+COMMENT ON TABLE sample_collector IS 'Everyone who collected a sample, in order. Position 1 IS the primary collector — whose sample numbering it is — not a copy of a column elsewhere: sample.collector_id was dropped (beeline-6e9) because a second copy of the same fact needed a view to police it and made the primary unchangeable. This table is what "my samples", label attribution, and every primary-collector read go through.';
+COMMENT ON COLUMN sample_collector.position IS 'Darwin Core recordedBy order, 1-based. Exactly one row per sample at position 1 is the invariant — the primary key (sample_id, person_id) cannot express it, so sample_primary_collector_invalid (schema/116) is the check, asserted empty by test.';
+
+-- Which atlas a sample belongs to, as a satellite rather than a column, so
+-- that it can be WRITTEN (beeline-6e9): nothing references this table, so its
+-- indexed columns stay updatable, where a column on sample was frozen at
+-- INSERT by the engine limitation described above. Absence of a row is the
+-- ordinary answer — collected where no member atlas reaches — and a row with
+-- a NULL atlas is reserved for a human stating that a sample geography would
+-- file under an atlas belongs to none: the CHECK admits that state only with
+-- assigned_by set, so geography's "no atlas" stays no-row and the two cannot
+-- be confused.
+CREATE TABLE sample_atlas (
+  sample_id   INTEGER PRIMARY KEY REFERENCES sample(entity_id),
+  atlas_id    INTEGER REFERENCES atlas(entity_id),
+  assigned_by INTEGER REFERENCES person(entity_id),
+  CHECK (atlas_id IS NOT NULL OR assigned_by IS NOT NULL)
+);
+COMMENT ON TABLE sample_atlas IS 'The atlas a sample files under. No row ⇒ no member atlas covers where it was collected (ordinary, what the "outside" scope lists). A satellite of sample so the assignment is writable — beeline-6e9: DuckDB will not update an indexed column on a row an incoming foreign key references, and every sample is referenced.';
+COMMENT ON COLUMN sample_atlas.assigned_by IS 'Null ⇒ assigned by geography (atlas_region lookup at promotion, or the fill-only refresh); set ⇒ explicit administrative assignment (border ambiguity, out-of-region collecting), which the refresh never overwrites.';
 
 -- Where an elevation value came from: the legacy import, or (once Beeline
 -- derives its own) a specific DEM tile, identified by name and content hash so

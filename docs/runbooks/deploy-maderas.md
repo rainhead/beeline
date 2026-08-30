@@ -171,14 +171,16 @@ ssh maderas 'cd ~/dev/beeline && mv -f beeline.duckdb beeline-prev.duckdb \
   && mv -f beeline-new.duckdb beeline.duckdb && systemctl --user start beeline'
 ```
 
-`inat:fetch-places` goes **before** `inat:promote`, not after, and it is not
-optional. Minting reads `observation_place` for a sample's country, state and
-county, and sets its `atlas_id` in the INSERT — where it stays, because DuckDB
-will not update an indexed column on a row an incoming foreign key references
-(beeline-6e9). A sample minted while a place it names is uncached therefore
-keeps a null atlas that no later fetch can repair. `inat_place` is carried
-across by `db:reseed`, so the cache is not empty; the fetch is for the places
-observations synced since the last one have started naming.
+`inat:fetch-places` goes **before** `inat:promote` — tidy order, no longer
+load-bearing. It used to be mandatory: the atlas was a column on `sample`
+that DuckDB would never let an UPDATE touch (beeline-6e9), so a sample minted
+while a place it names was uncached kept a null atlas nothing could repair.
+The atlas now lives in the writable `sample_atlas` satellite and the
+fill-only refresh drains `sample_atlas_unfilled` on every promotion, so a
+sample minted too early gets its atlas on the pass after the fetch instead
+of never. `inat_place` is carried across by `db:reseed`, so the cache is not
+empty; the fetch is for the places observations synced since the last one
+have started naming.
 
 The service must be stopped throughout: one process owns the store (ADR
 0005), and `db:reseed` reads it while promotion writes the new one. Downtime

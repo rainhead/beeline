@@ -55,16 +55,11 @@ FROM sample_mint_pending p;
 -- date_start = date_end = observed_on follows from that: a net sample is one
 -- day. Note this makes kind='trap' impossible here, which is deliberate — a
 -- trap range is a fact iNaturalist does not carry.
-INSERT INTO sample (entity_id, kind, collector_id, atlas_id, sample_number,
+INSERT INTO sample (entity_id, kind, sample_number,
                     date_start, date_end, specimen_count, inat_observation_id,
                     host_inat_taxon_id, host_name_as_observed,
                     country, state_province, county, locality, protocol)
-SELECT m.sample_id, 'net', m.person_id,
-       -- Geography assigns the atlas, through the same lookup legacy
-       -- promotion uses (schema/010). Null means "no member atlas covers
-       -- this", which is ordinary; qc_rule_place_unrecognised is what fires
-       -- when the place did not resolve at all.
-       reg.atlas_id,
+SELECT m.sample_id, 'net',
        m.sample_number, m.observed_on, m.observed_on, m.specimen_count,
        m.lead_inat_id,
        f.host_taxon_id, f.host_taxon_name,
@@ -73,8 +68,20 @@ SELECT m.sample_id, 'net', m.person_id,
 FROM minted_sample m
 JOIN observation_field f ON f.inat_id = m.lead_inat_id
 LEFT JOIN observation_place pl ON pl.inat_id = m.lead_inat_id
-LEFT JOIN observation_locality loc ON loc.inat_id = m.lead_inat_id
-LEFT JOIN atlas_region reg ON reg.state_province = pl.state_province;
+LEFT JOIN observation_locality loc ON loc.inat_id = m.lead_inat_id;
+
+-- Geography assigns the atlas, through the same lookup legacy promotion uses
+-- (schema/010). No row means "no member atlas covers this", which is
+-- ordinary; qc_rule_place_unrecognised is what fires when the place did not
+-- resolve at all. A sample whose geography is not yet cached gets its row
+-- from the fill-only refresh below on a later pass — the gap this INSERT
+-- leaves is repairable now (beeline-6e9), not permanent.
+INSERT INTO sample_atlas (sample_id, atlas_id)
+SELECT m.sample_id, reg.atlas_id
+FROM minted_sample m
+JOIN observation_place pl ON pl.inat_id = m.lead_inat_id
+JOIN atlas_region reg ON reg.state_province = pl.state_province
+WHERE reg.atlas_id IS NOT NULL;
 
 -- The observer becomes the primary collector, at position 1, so
 -- sample_primary_collector_mismatch (schema/116) stays empty. That view's
@@ -125,25 +132,19 @@ WHERE sample.inat_observation_id = pl.inat_id
   AND (sample.country IS NULL OR sample.state_province IS NULL
     OR sample.county IS NULL OR sample.locality IS NULL);
 
--- THE ATLAS CANNOT JOIN THAT REFRESH, and the reason is an engine limitation
--- rather than a decision. DuckDB 1.5.5 will not update an INDEXED column on a
--- row that an incoming foreign key references: the update becomes a
--- delete-and-insert and the delete trips the inbound check. sample.atlas_id
--- carries a foreign key, which is indexed, and every sample has a
--- sample_collector row pointing at it — so `UPDATE sample SET atlas_id` fails
--- for every sample in the store, always. (An unindexed column is fine, which
--- is why the fill above works — and "indexed" means any index, a plain
--- CREATE INDEX as much as a PRIMARY KEY, UNIQUE or FOREIGN KEY. Writing the
--- value the column already holds fails too, so it is the statement and not
--- the change that is refused. Measured and pinned by test in
--- test/schema.test.ts under beeline-6e9, which also corrected schema/010 and
--- migration 0020 where they stated the rule as "a row an incoming foreign key
--- references" — a version that says this refresh is impossible.)
---
--- So the atlas is set once, in the INSERT above, and a sample minted before
--- its geography was known keeps a null atlas that nothing can repair.
--- sample_atlas_unfilled (schema/108) names that population — empty on the dev
--- store — and the reseed recipe runs pnpm inat:fetch-places BEFORE promoting
--- so it stays that way (docs/roadmap.md). Fixing it properly means being able
--- to reassign a sample's atlas and its collector at all, which the staff
--- override screen needs too (beeline-6e9).
+-- The atlas joins the refresh now (beeline-6e9). It could not while it was a
+-- column on sample: DuckDB will not update an INDEXED column on a row an
+-- incoming foreign key references — measured and pinned in test/schema.test.ts
+-- — and every sample has a sample_collector row pointing at it, so
+-- `UPDATE sample SET atlas_id` failed for every sample in the store, always,
+-- and the atlas was set at INSERT or never. As a sample_atlas satellite
+-- nothing references, the assignment is writable, and this INSERT drains
+-- sample_atlas_unfilled (schema/108) on every promotion: a sample whose
+-- geography was uncached when it was minted gets its atlas on the pass after
+-- the places fetch instead of never. Fill-only in the same sense as the
+-- UPDATE above — the view it reads excludes every human assignment
+-- (assigned_by set), including "belongs to none", so the refresh cannot
+-- argue with a person.
+INSERT INTO sample_atlas (sample_id, atlas_id)
+SELECT u.sample_id, u.should_be
+FROM sample_atlas_unfilled u;

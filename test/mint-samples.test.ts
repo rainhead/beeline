@@ -92,10 +92,10 @@ describe("minting a sample from an observation", () => {
     expect(counts).toMatchObject({ samplesMinted: 1, freeLinks: 0, unresolvedObservers: 0 });
 
     expect(
-      await one(`SELECT kind, collector_id, sample_number, CAST(date_start AS VARCHAR), CAST(date_end AS VARCHAR), specimen_count,
-                        inat_observation_id, protocol, country, state_province, county, locality,
-                        host_inat_taxon_id, host_name_as_observed
-                 FROM sample`),
+      await one(`SELECT s.kind, pc.person_id, s.sample_number, CAST(s.date_start AS VARCHAR), CAST(s.date_end AS VARCHAR), s.specimen_count,
+                        s.inat_observation_id, s.protocol, s.country, s.state_province, s.county, s.locality,
+                        s.host_inat_taxon_id, s.host_name_as_observed
+                 FROM sample s JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id`),
     ).toEqual([
       "net",
       ada,
@@ -121,7 +121,7 @@ describe("minting a sample from an observation", () => {
     await stage(obs(7));
     await promoteObservations(conn);
     expect(await one("SELECT person_id, position FROM sample_collector")).toEqual([ada, 1]);
-    expect(await count("SELECT count(*) FROM sample_primary_collector_mismatch")).toBe(0);
+    expect(await count("SELECT count(*) FROM sample_primary_collector_invalid")).toBe(0);
   });
 
   test("the location and geoprivacy statements reach a sample minted on the same pass", async () => {
@@ -152,14 +152,17 @@ describe("minting a sample from an observation", () => {
     // Bo holds no inat_account; the harvest can only learn one from a sample
     // that already cites an observation of theirs.
     await insertCleanSample(conn, { collector_id: String(bo), inat_observation_id: "8", sample_number: "'1'" });
-    await conn.run(`UPDATE sample_collector SET person_id = ${bo} WHERE sample_id = (SELECT max(entity_id) FROM sample)`);
     await stage(obs(8, { user: { id: 200, login: "bonew" }, ofvs: ofvs("1", "3") }));
     await stage(obs(9, { user: { id: 200, login: "bonew" }, observed_on: "2026-07-20", ofvs: ofvs("2", "5") }));
 
     const counts = await promoteObservations(conn);
     expect(counts.accountsLinked).toBe(1);
     expect(counts.samplesMinted).toBe(1);
-    expect(await one("SELECT sample_number, collector_id FROM sample WHERE inat_observation_id = 9")).toEqual(["2", bo]);
+    expect(
+      await one(`SELECT s.sample_number, pc.person_id FROM sample s
+                 JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+                 WHERE s.inat_observation_id = 9`),
+    ).toEqual(["2", bo]);
   });
 });
 
@@ -365,13 +368,34 @@ describe("descriptive fields are a fill-only refresh", () => {
   });
 
   test("an atlas a human assigned is not moved by the lookup", async () => {
+    // A row with a NULL atlas and assigned_by set is a person stating
+    // "belongs to none" — the one state the CHECK admits a NULL atlas for —
+    // and the refresh reads a worklist that excludes every human assignment.
     const sampleId = await insertCleanSample(conn, {
-      inat_observation_id: "7", sample_number: "'7'", atlas_id: "NULL",
-      atlas_assigned_by: `(SELECT min(entity_id) FROM person)`,
+      inat_observation_id: "7", sample_number: "'7'",
     });
+    await conn.run(
+      `INSERT INTO sample_atlas (sample_id, atlas_id, assigned_by)
+       VALUES (${sampleId}, NULL, (SELECT min(entity_id) FROM person))`,
+    );
     await stage(obs(7));
     await promoteObservations(conn);
-    expect(await one(`SELECT atlas_id FROM sample WHERE entity_id = ${sampleId}`)).toEqual([null]);
+    expect(await one(`SELECT atlas_id FROM sample_atlas WHERE sample_id = ${sampleId}`)).toEqual([null]);
+  });
+
+  test("a sample minted before its geography was cached gets its atlas on the next pass", async () => {
+    // The gap the column version made permanent (beeline-6e9): the atlas was
+    // set at INSERT or never, so the reseed recipe's fetch-places-first
+    // ordering was load-bearing. Now the refresh drains sample_atlas_unfilled.
+    const sampleId = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'",
+    });
+    expect(await count("SELECT count(*) FROM sample_atlas_unfilled")).toBe(1);
+    await stage(obs(7));
+    await promoteObservations(conn);
+    expect(await one(`SELECT a.code FROM sample_atlas sa JOIN atlas a ON a.entity_id = sa.atlas_id
+                      WHERE sa.sample_id = ${sampleId}`)).toEqual(["OBA"]);
+    expect(await count("SELECT count(*) FROM sample_atlas_unfilled")).toBe(0);
   });
 });
 

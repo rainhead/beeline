@@ -129,17 +129,23 @@ export interface AnimalRankTable {
 }
 
 /**
- * schema/116: a sample whose collector_id is not the person at position 1 of
- * its collector list — the invariant schema/030 can only state in a comment.
- * `at_position_1` separates the three ways to be wrong: 0 = no head to the
- * list, 1 = a head naming somebody else, 2+ = two heads.
+ * schema/116: a sample whose primary collector is not well-defined — no
+ * position-1 row in its collector list (0), or more than one (2+). The
+ * middle arm of the old mismatch view died with sample.collector_id
+ * (beeline-6e9): the fact is written once now, so nothing is left to
+ * disagree.
  */
-export interface SamplePrimaryCollectorMismatchView {
+export interface SamplePrimaryCollectorInvalidView {
   sample_id: number;
-  collector_id: number;
   at_position_1: number;
-  /** Only meaningful where at_position_1 = 1; above that, one contender. */
-  first_collector: number | null;
+}
+
+/** schema/100: the head of each sample's collector list — whose sample
+ *  numbering it is. The one definition of "primary collector" since
+ *  sample.collector_id was dropped (beeline-6e9). */
+export interface SamplePrimaryCollectorView {
+  sample_id: number;
+  person_id: number;
 }
 
 /** schema/115: a qualifier on a determination too coarse to carry one. */
@@ -168,9 +174,6 @@ export type LocationSource = "inat_trusted" | "inat_public" | "legacy_import" | 
 export interface SampleTable {
   entity_id: Generated<number>;
   kind: SampleKind;
-  collector_id: number;
-  atlas_id: number | null;
-  atlas_assigned_by: number | null;
   sample_number: string;
   date_start: ColumnType<Date, Date | string, Date | string>;
   date_end: ColumnType<Date, Date | string, Date | string>;
@@ -241,8 +244,17 @@ export interface SampleElevationPendingView {
 export interface SampleCollectorTable {
   sample_id: number;
   person_id: number;
-  /** 1-based; position 1 is the sample's collector_id. */
+  /** 1-based; position 1 IS the primary collector (beeline-6e9). */
   position: number;
+}
+
+/** The atlas a sample files under, as a writable satellite (beeline-6e9).
+ *  No row ⇒ outside every member atlas. atlas_id NULL only with assigned_by
+ *  set: a human stating "belongs to none". */
+export interface SampleAtlasTable {
+  sample_id: number;
+  atlas_id: number | null;
+  assigned_by: number | null;
 }
 
 export interface SpecimenTable {
@@ -476,9 +488,9 @@ export interface SampleMintPendingView {
   specimen_count: number;
 }
 
-/** A sample in a member atlas's region carrying no atlas, which no UPDATE can
- *  fix: DuckDB will not write an indexed column on a row an incoming foreign
- *  key references, so sample.atlas_id is set at insert or never. */
+/** A sample in a member atlas's region with no sample_atlas row: the
+ *  worklist the fill-only atlas refresh drains on every promotion
+ *  (beeline-6e9 made the assignment writable). */
 export interface SampleAtlasUnfilledView {
   sample_id: number;
   state_province: string;
@@ -608,7 +620,9 @@ export interface Database {
   settled_sample: SettledSampleView;
   animal_rank: AnimalRankTable;
   determination_misplaced_qualifier: DeterminationMisplacedQualifierView;
-  sample_primary_collector_mismatch: SamplePrimaryCollectorMismatchView;
+  sample_primary_collector: SamplePrimaryCollectorView;
+  sample_primary_collector_invalid: SamplePrimaryCollectorInvalidView;
+  sample_atlas: SampleAtlasTable;
   elevation_derivation_limit: ElevationDerivationLimitView;
   observation_locality: ObservationLocalityView;
   observation_sample_candidate: ObservationSampleCandidateView;

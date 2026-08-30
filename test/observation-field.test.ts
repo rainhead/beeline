@@ -1,12 +1,10 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 import { canonicalJson, syncINat } from "../src/sync-inat.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
 import { promoteObservations } from "../src/promote-observations.js";
-import { baseline, MIGRATIONS_DIR, schemaDrift } from "../src/migrate.js";
+import { schemaDrift } from "../src/migrate.js";
 
 /**
  * The stored observation projection (beeline-2c3.36).
@@ -153,132 +151,39 @@ describe("the rules that read it", () => {
 
 describe("the migration for deployed stores", () => {
   /**
-   * The sandbox cannot be rebuilt (ADR 0006), so the newest delta has to stand
-   * on its own: apply it to a store built from the schema *without* that
-   * change and there must be no drift left, and no empty window where the
-   * rules read nothing.
+   * This block used to walk the head of the migration chain: unwind a
+   * current store to before the newest migration, apply it, and expect no
+   * drift — "the newest delta has to stand on its own" (its comment, from
+   * 0017 through 0022, is in git history).
    *
-   * This used to pin 0017, the migration that created observation_field, and
-   * it simulated the pre-state by dropping the table and its alarm view out
-   * from under a current store. That stopped being an accurate simulation the
-   * moment beeline-2yt gave observation_current_fields a twenty-first column:
-   * a real pre-0017 store carries the pre-0017 *view* as well, and no amount
-   * of dropping tables from a current one reproduces that. Rather than
-   * maintain a fiction, the test follows the head of the chain — which is
-   * where the risk actually is, since that is the migration nothing has run
-   * yet.
+   * beeline-6e9 ended the walk's premise. Rebuilding `sample` — collector_id
+   * and atlas_id off the table, sample_atlas and sample_primary_collector in
+   * — is ADR 0006's "not migratable at all" case: DuckDB cannot drop a
+   * column on a table five others reference, so there is no 0024 to walk,
+   * and the deployed store catches up by `pnpm db:reseed` instead.
+   * Migrations 0001–0023 remain correct for the epoch they served and are
+   * now unwalkable from this schema: 0021 recreates views that read
+   * sample.collector_id, which a store built from schema/*.sql no longer
+   * has. No store will walk them again — a fresh build stamps them, a
+   * reseeded store is built from the schema and stamps them too.
    *
-   * So it moves. It pinned 0020; the head is now 0022, and the store is
-   * unwound to before 0021 (beeline-oyq) — which adds a twenty-second
-   * column, a file's worth of views, and a rewrite of
-   * qc_rule_locality_format — then walked forward through both. 0022
-   * (beeline-4dt) needs no unwinding of its own: it only rewrites view
-   * bodies, and 0021 recreates them in their pre-4dt form on the way past.
-   * Whoever adds 0023 extends the walk — which is the cost of the doctrine
-   * and cheaper than the fiction it replaced.
+   * What is left to pin is the half the operator relies on: a store shaped
+   * before the reseed epoch must be REPORTED as drifted, because
+   * `db:migrate --check` saying "a migration or a reseed may be needed" is
+   * the only thing standing between the sandbox and running new code on an
+   * old shape.
    */
-  test("brings a store built from the previous schema up to this one, filled", async () => {
+  test("a pre-reseed store is reported as drifted, naming the sample rework", async () => {
     const { conn: old } = await createMemoryDb();
-
-    // Unwind beeline-oyq: the whole of schema/108, the projection's
-    // twenty-second column in both the table and the view, and
-    // qc_rule_locality_format's inline copy of the street-suffix list.
-    // Dependents first — sample_mint_free_link and sample_mint_pending read
-    // sample_mint_match, which reads sample_mint_group.
-    for (const view of [
-      "observation_locality", "sample_mint_free_link", "sample_mint_pending",
-      "sample_mint_ambiguous", "sample_mint_match", "sample_mint_group",
-      "observation_sample_unresolved", "observation_sample_unusable",
-      "observation_sample_candidate", "sample_atlas_unfilled",
-      "sample_multi_observation", "sample_observation_number_mismatch",
-      "observation_field_stale",
-    ]) {
-      await old.run(`DROP VIEW ${view}`);
-    }
-    // Back to the inline word list, so that dropping the shared one is
-    // possible at all — a pre-0021 store has no such view to read.
-    await old.run(`CREATE OR REPLACE VIEW qc_rule_locality_format AS
-      SELECT sample_id, CAST(NULL AS INTEGER) AS specimen_id,
-             'locality_format' AS rule_name,
-             concat_ws('; ',
-               CASE WHEN len > 18 THEN concat('longer than 18 chars (', len, ')') END,
-               CASE WHEN has_comma THEN 'contains comma' END,
-               CASE WHEN has_quote THEN 'contains double quote' END,
-               CASE WHEN is_street THEN 'looks like a street address' END) AS details
-      FROM (
-        SELECT norm.sample_id, length(norm.locality) AS len,
-               position(',' IN norm.locality) > 0 AS has_comma,
-               position('"' IN norm.locality) > 0 AS has_quote,
-               regexp_matches(norm.norm,
-                 ' (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county) '
-               ) AS is_street
-        FROM (
-          SELECT s.entity_id AS sample_id, s.locality,
-                 concat(' ', replace(replace(lower(s.locality), ',', ' '), '.', ' '), ' ') AS norm
-          FROM sample s WHERE s.locality IS NOT NULL
-        ) norm
-      ) flags
-      WHERE len > 18 OR has_comma OR has_quote OR is_street`);
-    // A macro since 0022; 0021 recreates it as the one-row view it was.
-    await old.run("DROP MACRO locality_street_suffix_pattern");
-    await old.run("ALTER TABLE observation_field DROP COLUMN private_place_guess");
-    await old.run("DROP VIEW observation_current_fields");
-    await old.run(`CREATE VIEW observation_current_fields AS
-      SELECT inat_id, observed_on, latitude, longitude, private_latitude, private_longitude,
-             positional_accuracy, public_positional_accuracy, geoprivacy, taxon_geoprivacy,
-             viewer_trusted, user_id, user_login, place_guess, host_taxon_id, host_taxon_name,
-             host_is_tracheophyte, quality_grade, sample_number_raw, specimen_count_raw,
-             collection_method_raw
-      FROM observation_field`);
-    // The stale view has to come back too — 0021 does not create it, and a
-    // real pre-0021 store has it. Pointed at the same 21 columns.
-    await old.run(`CREATE VIEW observation_field_stale AS
-      SELECT inat_id FROM (
-        SELECT * FROM observation_current_fields EXCEPT SELECT * FROM observation_field
-      ) missing
-      UNION
-      SELECT inat_id FROM (
-        SELECT * FROM observation_field EXCEPT SELECT * FROM observation_current_fields
-      ) extra`);
-    await baseline(old);
-
-    await old.run("INSERT INTO sync_run (source, authenticated, completed_at) VALUES ('t', true, now())");
-    await old.run(
-      `INSERT INTO observation_load (inat_id, sync_run_id, content, content_hash)
-       VALUES (7, (SELECT max(entity_id) FROM sync_run), $1, 'h7')`,
-      [canonicalJson(obs(7, { ofvs: [
-        { name: "sampleId", value: "1" },
-        { name: "numberOfSpecimens", value: "3" },
-        { name: "OBA Collection Method", value: "net" },
-      ] }))] as never,
-    );
-
-    for (const file of [
-      "0021-observations-become-samples.sql",
-      "0022-a-street-suffix-ends-its-phrase.sql",
-    ]) {
-      await old.run(await readFile(join(MIGRATIONS_DIR, file), "utf8"));
-    }
-
-    expect(await schemaDrift(old)).toEqual([]);
-    // Refilled by the migration itself, and reading the new field: an
-    // unrefreshed table would have left the rules quietly reporting an older
-    // answer, with observation_field_stale the only thing that knew.
-    const filled = await (
-      await old.run("SELECT inat_id, specimen_count_raw, collection_method_raw FROM observation_field")
-    ).getRows();
-    expect(filled).toEqual([[7n, "3", "net"]]);
-    const stale = await (await old.run("SELECT count(*) FROM observation_field_stale")).getRows();
-    expect(Number(stale[0]![0])).toBe(0);
-    // And every region got its place id, which is what the whole places half
-    // of the migration exists to make possible.
-    const regions = await (
-      await old.run("SELECT count(*), count(inat_place_id) FROM atlas_region")
-    ).getRows();
-    expect(regions).toEqual([[64n, 64n]]);
-    // And the reconcile the migration exists to make possible can be asked
-    // its question on a store that has never rebuilt.
-    const candidates = await (await old.run("SELECT count(*) FROM observation_sample_candidate")).getRows();
-    expect(Number(candidates[0]![0])).toBe(1);
+    // The pre-6e9 shape, in miniature: the satellite and the head view are
+    // missing, and sample carries the dropped columns. ADD COLUMN suffices
+    // to simulate — the drift check compares shapes, not data.
+    await old.run("DROP VIEW sample_primary_collector_invalid");
+    await old.run("DROP VIEW sample_primary_collector");
+    await old.run("ALTER TABLE sample ADD COLUMN collector_id INTEGER");
+    const drift = await schemaDrift(old);
+    expect(drift).toContain("missing: sample_primary_collector");
+    expect(drift).toContain("missing: sample_primary_collector_invalid");
+    expect(drift).toContain("not in the schema: sample.collector_id");
   });
 });

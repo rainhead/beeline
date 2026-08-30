@@ -599,16 +599,11 @@ FROM legacy_promotable r
 JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
 GROUP BY m.person_id, r.sid, r.p_date_start;
 
-INSERT INTO sample (entity_id, kind, collector_id, atlas_id, sample_number,
+INSERT INTO sample (entity_id, kind, sample_number,
                     date_start, date_end, specimen_count, inat_observation_id,
                     host_name_as_observed, country, state_province, county,
                     locality, protocol)
-SELECT s.sample_id, s.kind, s.person_id,
-       -- Geography assigns the atlas, through the lookup that also knows the
-       -- regions no atlas covers (schema/010). Null here means one thing —
-       -- outside the six — and qc_rule_place_unrecognised is what fires when
-       -- the place did not resolve at all (beeline-lcl).
-       reg.atlas_id,
+SELECT s.sample_id, s.kind,
        s.sid, s.p_date_start, s.date_end, s.specimen_count, s.inat_obs_id,
        s.host_name,
        -- Country to ISO 3166-1 alpha-3, matching the 'USA' that most records
@@ -618,8 +613,18 @@ SELECT s.sample_id, s.kind, s.person_id,
                                   ELSE nullif(s.country, '') END,
        nullif(s.state_province, ''),
        nullif(s.county, ''), nullif(s.locality, ''), nullif(s.protocol, '')
+FROM legacy_sample_map s;
+
+-- Geography assigns the atlas, through the lookup that also knows the
+-- regions no atlas covers (schema/010). No row here means one thing —
+-- outside the six — and qc_rule_place_unrecognised is what fires when the
+-- place did not resolve at all (beeline-lcl). A satellite row rather than a
+-- column on sample so it stays writable (beeline-6e9).
+INSERT INTO sample_atlas (sample_id, atlas_id)
+SELECT s.sample_id, reg.atlas_id
 FROM legacy_sample_map s
-LEFT JOIN atlas_region reg ON reg.state_province = nullif(s.state_province, '');
+JOIN atlas_region reg ON reg.state_province = nullif(s.state_province, '')
+WHERE reg.atlas_id IS NOT NULL;
 
 -- Everyone who collected each sample, primary first. A sample can gather rows
 -- recorded both jointly and solo, and the O'Loughlins wrote their pair in both
@@ -635,7 +640,10 @@ LEFT JOIN atlas_region reg ON reg.state_province = nullif(s.state_province, '');
 -- The primary is unioned in unconditionally, because the sample carries their
 -- numbering by definition (legacy_sample_map keys on them) — a sample all of
 -- whose rows name somebody else is still theirs, with that somebody else
--- beside them. Without this, position 1 could disagree with sample.collector_id.
+-- beside them. Position 1 IS the primary collector (beeline-6e9 dropped the
+-- collector_id column this used to have to agree with), so without this a
+-- sample could have no head at all — sample_primary_collector_invalid names
+-- that state.
 INSERT INTO sample_collector (sample_id, person_id, position)
 SELECT sample_id, person_id,
        row_number() OVER (PARTITION BY sample_id ORDER BY is_primary DESC, first_pos, person_id)

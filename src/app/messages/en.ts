@@ -334,7 +334,7 @@ export const en = {
     history: {
       heading: "History",
       hint: "Every change recorded for this sample, newest first — an edit made here, an iNaturalist sync moving something, or a rebuild.",
-      empty: "Nothing recorded yet. Changes from here on appear in this list.",
+      empty: "No changes recorded — this sample has not changed since Beeline began keeping history. Changes from here on appear in this list.",
       colWhen: "When",
       colWhat: "What",
       colChange: "Change",

@@ -230,6 +230,26 @@ describe("the sample page", () => {
     expect(await get(legacy, `/samples/${a2}`)).not.toContain("this observation");
   });
 
+  it("shows what the observation says about the place, since nothing else does", async () => {
+    // The observation is not listed anywhere on the site, so the string a
+    // record was derived from is otherwise invisible — and where a locality
+    // was refused for being too coarse, it is exactly the string the
+    // volunteer has to go and fix upstream (Peter, 2026-08-29).
+    const { app, conn, aliceSample } = await recordApp();
+    await conn.run(
+      `INSERT INTO observation_field (inat_id, place_guess) VALUES (998877, 'Verlot, WA, US')`,
+    );
+    const body = await get(app, `/samples/${aliceSample}`);
+    expect(body).toContain("Recorded in iNaturalist as");
+    expect(body).toContain("Verlot, WA, US");
+
+    // A sample with no observation has no verbatim to show, and says nothing
+    // rather than showing an empty row.
+    const { app: legacy, conn: c2, aliceSample: a2 } = await recordApp();
+    await conn.run.call(c2, `UPDATE sample SET inat_observation_id = NULL WHERE entity_id = ${a2}`);
+    expect(await get(legacy, `/samples/${a2}`)).not.toContain("Recorded in iNaturalist as");
+  });
+
   it("prints the floral host as a scientific name, italicised from its rank", async () => {
     // Names are derived, never typed: TaxonName reads the RANK because the
     // string cannot be read for it. 'Onagraceae' (family) and 'Chamaenerion'

@@ -341,6 +341,27 @@ export const en = {
       protocol: "Sampling protocol",
       effort: "Sampling effort",
       place: "Place",
+      /**
+       * The observation's own place text, beside what the model made of it —
+       * the same stance verbatim_identification takes for a determination
+       * (schema/040). The observation is not listed anywhere on the site, so
+       * this is the only place a volunteer sees the string their record came
+       * from.
+       *
+       * "Recorded in iNaturalist as" rather than "iNaturalist records this
+       * as" (Peter, 2026-08-29), and the neutrality is the point: iNaturalist
+       * AUTO-ASSIGNS place_guess by reverse geocoding, most observers never
+       * touch it, and our volunteers are instructed to set it themselves. So
+       * the string is sometimes theirs and sometimes the geocoder's, and the
+       * copy should not claim to know which.
+       *
+       * Which is also what a refused locality means. "Snohomish County,
+       * US-WA, US" is an untouched auto-assignment and "Verlot, WA, US" is a
+       * volunteer who followed the instruction — so missing_required_field on
+       * a minted sample is not bad data, it is the nudge to go and do the
+       * step that was asked for, and this row is the evidence for it.
+       */
+      asRecorded: (text: string) => `Recorded in iNaturalist as “${text}”.`,
       atlas: "Atlas",
       /** Collecting outside the member atlases is ordinary (beeline-lcl). */
       atlasOutside: "None — collected where no member atlas reaches",

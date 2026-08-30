@@ -63,7 +63,17 @@ export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }
     sample.sampling_effort === null ? null : { term: s.effort, value: sample.sampling_effort },
     {
       term: s.place,
-      value: orUnknown(m, m.format.place([sample.locality, sample.county, sample.state_province, sample.country]) || null),
+      value: (
+        <>
+          {orUnknown(m, m.format.place([sample.locality, sample.county, sample.state_province, sample.country]) || null)}
+          {/* The observation's own words, beside what the model made of them.
+              Nothing else on the site shows them, and where the locality is
+              missing this is the string that has to change upstream. */}
+          {sample.observation_place_guess === null ? null : (
+            <Meta block>{s.asRecorded(sample.observation_place_guess)}</Meta>
+          )}
+        </>
+      ),
     },
     {
       term: <Term m={m} slug="atlas">{s.atlas}</Term>,

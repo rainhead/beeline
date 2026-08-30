@@ -364,7 +364,7 @@ export const en = {
           "Beeline holds no coordinates for this sample. Where iNaturalist has shifted an observation's coordinates, the shifted pair is deliberately never brought across — so nothing here means nothing we believe.",
         accuracy: "Accuracy",
         accuracyValue: (metres: number) => `within ${n(metres)} m`,
-        source: "Where they came from",
+        source: "Source",
         sources: {
           inat_trusted:
             "Read from your iNaturalist observation with trusted access, so these are the true coordinates even where the public map shows them shifted.",
@@ -373,8 +373,19 @@ export const en = {
             "Imported from the old atlas database, which recorded nothing about where its coordinates came from. These are the ones already printed on labels.",
           staff_entry: "Entered by staff.",
         } as Record<string, string>,
-        privacy: "On iNaturalist",
-        privacyOpen: "Published as they are — nothing about this observation is obscured.",
+        /**
+         * What the public sees, and shown ONLY where that differs from the
+         * true coordinates above — an obscured observation still has true
+         * coordinates here, and saying so is the point of the row.
+         *
+         * It used to render for every sample, with an "open" line saying
+         * nothing was obscured. That was redundant beside `source`, which
+         * already says iNaturalist publishes them as they are, and it was
+         * nonsense on the 6,365 samples that carry coordinates and no
+         * observation: they were told that nothing about "this observation"
+         * was obscured, about an observation that does not exist.
+         */
+        privacy: "Public coordinates",
         privacyObscured:
           "You set this observation's coordinates to obscured, so the map shows a shifted pair. What is above is the true location.",
         privacyPrivate:

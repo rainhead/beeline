@@ -110,6 +110,11 @@ export function WhereCollected({ m, sample }: { m: Messages; sample: SampleDetai
       </>
     );
   }
+  // Only says something where the public view DIFFERS from what is above.
+  // Null on both means iNaturalist publishes the coordinates as they are,
+  // which the Source row has already said — and on the 6,365 samples that
+  // have coordinates and no observation at all it said it about an
+  // observation that does not exist.
   const privacy =
     sample.geoprivacy === "private"
       ? w.privacyPrivate
@@ -119,7 +124,7 @@ export function WhereCollected({ m, sample }: { m: Messages; sample: SampleDetai
           ? w.privacyTaxonPrivate
           : sample.taxon_geoprivacy === "obscured"
             ? w.privacyTaxonObscured
-            : w.privacyOpen;
+            : null;
   return (
     <>
       <h2>{w.heading}</h2>
@@ -139,10 +144,12 @@ export function WhereCollected({ m, sample }: { m: Messages; sample: SampleDetai
             term: w.source,
             value: <Meta>{w.sources[sample.location_source ?? ""] ?? sample.location_source}</Meta>,
           },
-          {
-            term: <Term m={m} slug="obscured-coordinates">{w.privacy}</Term>,
-            value: <Meta>{privacy}</Meta>,
-          },
+          privacy === null
+            ? null
+            : {
+                term: <Term m={m} slug="obscured-coordinates">{w.privacy}</Term>,
+                value: <Meta>{privacy}</Meta>,
+              },
           {
             term: w.elevation,
             value:

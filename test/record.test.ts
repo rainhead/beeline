@@ -203,6 +203,33 @@ describe("the sample page", () => {
     expect(body).not.toContain("You set this observation");
   });
 
+  it("says what the public sees only where that differs from the true coordinates", async () => {
+    // The row used to render on every sample, with an "open" line saying
+    // nothing was obscured. Redundant beside Source, which already says
+    // iNaturalist publishes them as they are — and nonsense on the 6,365
+    // samples that carry coordinates and no observation at all, which were
+    // told that nothing about "this observation" was obscured.
+    const { app, conn, aliceSample } = await recordApp();
+    await conn.run(
+      `UPDATE sample SET geoprivacy = NULL, taxon_geoprivacy = NULL WHERE entity_id = ${aliceSample}`,
+    );
+    const body = await get(app, `/samples/${aliceSample}`);
+    expect(body).not.toContain("Public coordinates");
+    // The coordinates and where they came from stay: those are facts about
+    // the sample rather than about what iNaturalist shows.
+    expect(body).toContain("44.5646, -123.262");
+    expect(body).toContain("Source");
+
+    // A sample with no observation cannot carry geoprivacy either, so it
+    // takes the same path — which is the case that prompted this.
+    const { app: legacy, conn: conn2, aliceSample: a2 } = await recordApp();
+    await conn2.run(
+      `UPDATE sample SET inat_observation_id = NULL, geoprivacy = NULL, taxon_geoprivacy = NULL
+       WHERE entity_id = ${a2}`,
+    );
+    expect(await get(legacy, `/samples/${a2}`)).not.toContain("this observation");
+  });
+
   it("names the tile an elevation was read from", async () => {
     const { app, aliceSample } = await recordApp();
     const body = await get(app, `/samples/${aliceSample}`);

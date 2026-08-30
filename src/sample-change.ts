@@ -225,15 +225,22 @@ export interface SampleStates {
   states: Map<string, SampleState>;
   /**
    * What the pass cannot speak for, so the snapshot must keep saying what it
-   * last said: the triples of colliding samples, and the observation links of
-   * every suppressed sample (collided or unreferenceable). Without the
-   * carry-forward, a full restatement drops their rows — and the pass after
-   * the duplicate or the namesake is RESOLVED then records every field as a
-   * spurious arrival, permanently (CodeRabbit on PR #32). A sample that truly
-   * vanished is in neither set and still loses its row.
+   * last said: the triples of colliding samples, the observation links of
+   * every suppressed sample, and the (number, date) pairs of the
+   * unreferenceable ones — an unlinked sample with an unnameable collector
+   * has no link to carry its row by, and its number and date have not moved
+   * (only the collector became unnameable), so the pair reaches it. Without
+   * the carry-forward, a full restatement drops the rows — and the pass
+   * after the duplicate or the namesake is RESOLVED then records every field
+   * as a spurious arrival, permanently (CodeRabbit and the adversarial
+   * review of PR #32). A sample that truly vanished is in none of the sets
+   * and still loses its row. The one residue: an unlinked COLLIDING sample's
+   * pre-move row sits under a pair the collision changed, which no evidence
+   * reaches — it restarts on resolution, and honestly.
    */
   suppressedKeys: Set<string>;
   suppressedObservations: Set<string>;
+  suppressedPairs: Set<string>;
   /** Samples whose collector no reference names: unrecordable, so counted. */
   unreferenceable: number;
   /**
@@ -253,6 +260,7 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
   const states = new Map<string, SampleState>();
   const suppressedKeys = new Set<string>();
   const suppressedObservations = new Set<string>();
+  const suppressedPairs = new Set<string>();
   let unreferenceable = 0;
   for (const row of rows) {
     const text = (k: string) => String(row[k] ?? "");
@@ -260,6 +268,7 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
     if (collector === "") {
       unreferenceable++;
       if (text("observation") !== "") suppressedObservations.add(text("observation"));
+      suppressedPairs.add(`${text("sample_number")}${SEP}${text("date_start")}`);
       continue;
     }
     const state: SampleState = {
@@ -292,12 +301,22 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
     if (collector === "") continue;
     if (suppressedKeys.has(keyOf(collector, String(row.sample_number ?? ""), String(row.date_start ?? "")))) colliding++;
   }
-  return { states, suppressedKeys, suppressedObservations, unreferenceable, colliding };
+  return { states, suppressedKeys, suppressedObservations, suppressedPairs, unreferenceable, colliding };
 }
 
 // ── The snapshot ─────────────────────────────────────────────────────────
 
-/** Read the snapshot; missing reads as "first pass" (null, not empty). */
+/**
+ * Read the snapshot; missing reads as "first pass" (null, not empty).
+ *
+ * A header this code did not write reads as first pass TOO, and loudly:
+ * STATE_COLUMNS is derived from SAMPLE_FIELDS, so the pass after a field is
+ * added would find every existing row the wrong width, count all 67,887
+ * malformed behind one warning, and — with an empty-but-non-null map — append
+ * a million spurious arrivals to a file that cannot be un-appended
+ * (adversarial review of PR #32). Re-baselining costs the changes made since
+ * the last pass, which is bounded and visible; the arrivals are neither.
+ */
 export async function readSnapshot(path: string): Promise<Map<string, SampleState> | null> {
   let text: string;
   try {
@@ -305,6 +324,15 @@ export async function readSnapshot(path: string): Promise<Map<string, SampleStat
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
+  }
+  const headerEnd = text.indexOf("\n");
+  const header = headerEnd === -1 ? text : text.slice(0, headerEnd);
+  if (header.replace(/\r$/, "") !== STATE_HEADER) {
+    console.warn(
+      `${path}: snapshot header does not match this code's columns — re-baselining ` +
+        `(changes since the last pass will not be recorded)`,
+    );
+    return null;
   }
   const records = parseCsv(text);
   const states = new Map<string, SampleState>();
@@ -345,8 +373,14 @@ export async function writeSnapshot(path: string, states: Iterable<SampleState>)
   const rows = [...states].sort((a, b) => (stateKey(a) < stateKey(b) ? -1 : 1));
   const lines = rows.map((s) => STATE_COLUMNS.map((c) => cell(s.fields[c as SampleField] ?? "")).join(","));
   // Unique per write: passes are serialized within this process, but a CLI
-  // and the app pointed at one store (against ADR 0005) must at worst lose a
-  // restatement, never splice two.
+  // and the app pointed at one store (against ADR 0005) can still race. The
+  // unique name means they can never splice two restatements into one file;
+  // what a lost restatement costs is honest duplicates — the winner's
+  // snapshot lags the loser's log entries, and the next pass re-derives and
+  // re-appends them, attributed to itself. Appending first and restating
+  // second errs the same way on a crash between the two, and deliberately:
+  // a duplicate in a log is legible where a lost row is not (the appender's
+  // own rule).
   const tmp = `${path}.${process.pid}.${tmpCounter++}.tmp`;
   await writeFile(tmp, `${STATE_HEADER}\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`);
   await rename(tmp, path);
@@ -381,7 +415,26 @@ export function parseSampleChanges(text: string): { changes: SampleChange[]; mal
   return { changes, malformed };
 }
 
+// The record page folds the whole log per request, which the person page's
+// precedent licensed at 248 KB and this log will outgrow. Cache the parse and
+// fold on the file's identity; appends change both mtime and size.
+const readCache = new Map<string, { mtimeMs: number; size: number; changes: SampleChange[] }>();
+
 export async function readSampleChanges(path: string): Promise<SampleChange[]> {
+  try {
+    const s = await stat(path);
+    const hit = readCache.get(path);
+    if (hit !== undefined && hit.mtimeMs === s.mtimeMs && hit.size === s.size) return hit.changes;
+    const changes = await readSampleChangesUncached(path);
+    readCache.set(path, { mtimeMs: s.mtimeMs, size: s.size, changes });
+    return changes;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+}
+
+async function readSampleChangesUncached(path: string): Promise<SampleChange[]> {
   let text: string;
   try {
     text = await readFile(path, "utf8");
@@ -444,6 +497,12 @@ export interface SampleMatching {
   /** Store samples reaching a history the pass could not attribute: recorded
    * as nothing, and counted (ADR 0007). */
   contested: Set<string>;
+  /** The snapshot rows those samples were reaching for. The restatement must
+   * carry these unchanged: writing the claimants' CURRENT state instead
+   * buries the contest — the next pass direct-matches the fresh rows, finds
+   * no difference, and the unattributable transition is never recorded by
+   * any pass (adversarial review of PR #32). */
+  contestedRows: Set<string>;
 }
 
 /**
@@ -471,6 +530,7 @@ export interface SampleMatching {
 export function matchSamples(
   snapshot: ReadonlyMap<string, SampleState>,
   states: ReadonlyMap<string, SampleState>,
+  { directOnly = false } = {},
 ): SampleMatching {
   const rows = [...snapshot.values()];
   const byObservation = valueIndex(rows, (s) => s.fields.observation);
@@ -489,6 +549,14 @@ export function matchSamples(
       proposed.set(state, direct);
       continue;
     }
+    // The weaker tiers exist only for a FULL pass. Their guards — one
+    // observation holder per link, two claimants record nothing — are built
+    // from the whole store, and a pass narrowed to one sample has an empty
+    // holder index and can never see a second claimant, so it would grant a
+    // weak match a full pass refuses and then delete a live sibling's
+    // snapshot row (adversarial review of PR #32). A narrowed miss records
+    // nothing and defers to the next full pass.
+    if (directOnly) continue;
     const byObs = state.fields.observation === "" ? null : byObservation.get(state.fields.observation);
     if (byObs != null) {
       proposed.set(state, byObs);
@@ -506,11 +574,14 @@ export function matchSamples(
   for (const row of proposed.values()) claimants.set(row, (claimants.get(row) ?? 0) + 1);
   const matched = new Map<string, SampleState>();
   const contested = new Set<string>();
+  const contestedRows = new Set<string>();
   for (const [state, row] of proposed) {
-    if ((claimants.get(row) ?? 0) > 1) contested.add(stateKey(state));
-    else matched.set(stateKey(state), row);
+    if ((claimants.get(row) ?? 0) > 1) {
+      contested.add(stateKey(state));
+      contestedRows.add(stateKey(row));
+    } else matched.set(stateKey(state), row);
   }
-  return { matched, contested };
+  return { matched, contested, contestedRows };
 }
 
 // ── Recording ────────────────────────────────────────────────────────────
@@ -587,7 +658,7 @@ async function recordPass(
   paths: SampleLogPaths,
   opts: SampleRecordOptions,
 ): Promise<SampleRecordResult> {
-  const { states, suppressedKeys, suppressedObservations, unreferenceable, colliding } =
+  const { states, suppressedKeys, suppressedObservations, suppressedPairs, unreferenceable, colliding } =
     await readSampleStates(read, opts.where ?? "");
   const snapshot = await readSnapshot(paths.state);
 
@@ -600,12 +671,20 @@ async function recordPass(
     return { appended: 0, baselined: true, unreferenceable, colliding, contested: 0 };
   }
 
-  const { matched, contested } = matchSamples(snapshot, states);
+  const { matched, contested, contestedRows } = matchSamples(snapshot, states, {
+    directOnly: opts.where != null,
+  });
   const at = opts.at ?? new Date().toISOString();
   const rows: SampleChange[] = [];
   for (const [key, state] of states) {
     if (contested.has(key)) continue;
     const before = matched.get(key);
+    // A narrowed pass that cannot match its sample DIRECTLY defers whole:
+    // recording it as an arrival would start a second history for a sample
+    // the next full pass will recognise through the weak tiers. The full
+    // pass records it then, attributed to itself; only the author's name is
+    // lost to the log, and the corrections overlay holds that durably.
+    if (opts.where != null && before === undefined) continue;
     // Filed under the triple the LOG knows the sample by — and each mover
     // under the triple as moved by the movers before it (see MOVERS).
     const ref = {
@@ -639,32 +718,54 @@ async function recordPass(
 
   await appendSampleChanges(paths.log, rows);
 
-  // Restate the snapshot. A full pass restates the store — carrying forward
-  // the rows of samples this pass suppressed (colliding, or unreferenceable
-  // with a link), so that a resolved duplicate reconnects to its history
-  // instead of arriving all over again; a truly vanished sample is in
-  // neither set and loses its row. A narrowed pass patches: matched rows
-  // move to their new triple, new samples arrive, and every sample outside
-  // the narrowing keeps its row.
+  // Restate the snapshot. The rule is: **a pass may only restate what it
+  // recorded.** A full pass writes the state of every sample it recorded and
+  // carries forward, unchanged, the rows of everything it could not speak
+  // for — colliding triples, suppressed observation links and number-date
+  // pairs, and the rows contested claimants were reaching for. Restating a
+  // contested sample's current state would bury the contest: the next pass
+  // direct-matches the fresh row, finds no difference, and the transition is
+  // never recorded by any pass. A truly vanished sample is in none of those
+  // sets and loses its row. A narrowed pass patches: matched rows move to
+  // their new triple, new samples arrive, and everything outside the
+  // narrowing keeps its row.
   if (opts.where == null) {
     const next = new Map<string, SampleState>();
-    for (const [key, state] of states) next.set(key, state);
+    for (const [key, state] of states) {
+      if (!contested.has(key)) next.set(key, state);
+    }
     for (const [key, row] of snapshot) {
       if (next.has(key)) continue;
-      if (suppressedKeys.has(key) || suppressedObservations.has(row.fields.observation)) {
+      if (
+        suppressedKeys.has(key) ||
+        contestedRows.has(key) ||
+        (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation)) ||
+        suppressedPairs.has(`${row.sample_number}${SEP}${row.date_start}`)
+      ) {
         next.set(key, row);
       }
     }
-    await writeSnapshot(paths.state, next.values());
+    // Nothing recorded and nothing moved: leave the file alone. The
+    // restatement is byte-deterministic, so rewriting 11 MB to say the same
+    // thing again is pure cost — and it is the steady case (adversarial
+    // review of PR #32).
+    if (rows.length > 0 || next.size !== snapshot.size || [...next.keys()].some((k) => !snapshot.has(k))) {
+      await writeSnapshot(paths.state, next.values());
+    }
   } else {
     const next = new Map(snapshot);
+    let touched = false;
     for (const [key, state] of states) {
       if (contested.has(key)) continue;
       const before = matched.get(key);
+      // The same deferral as the emit loop: an unmatched sample is the next
+      // full pass's to place, and patching it in here would pre-empt that.
+      if (before === undefined && !snapshot.has(key)) continue;
       if (before !== undefined) next.delete(stateKey(before));
       next.set(key, state);
+      touched = true;
     }
-    await writeSnapshot(paths.state, next.values());
+    if (touched) await writeSnapshot(paths.state, next.values());
   }
   return { appended: rows.length, baselined: false, unreferenceable, colliding, contested: contested.size };
 }
@@ -703,6 +804,12 @@ export function foldSampleChanges(changes: readonly SampleChange[]): Map<string,
  * One sample's history, newest first, addressed by the triple the STORE
  * derives for it — the record page has the sample in hand and asks with its
  * current reference, which the fold has followed every recorded move to.
+ *
+ * The caller must first ask whether the triple names this sample ALONE
+ * (sampleChangeHistory does): during a live duplicate_sample_number two
+ * samples derive the same triple, and answering both pages with the carried
+ * history would show one sample the other's provenance on the very screen
+ * staff would use to untangle them (adversarial review of PR #32).
  */
 export function sampleHistory(
   changes: readonly SampleChange[],

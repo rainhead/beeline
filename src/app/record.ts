@@ -411,6 +411,21 @@ export async function sampleChangeHistory(
       WHERE s.entity_id = ${sql.lit(Math.trunc(sampleId))}`.execute(db);
     const row = found.rows[0];
     if (row === undefined || row.collector === null) return [];
+    // During a live duplicate_sample_number two samples derive this same
+    // triple, and the recorder correctly refuses to write for either — but a
+    // reader that answers anyway shows both pages the same carried history,
+    // one of them somebody else's provenance. The history is nobody's to
+    // show until the duplicate is resolved.
+    const siblings = await sql<{ n: number }>`
+      SELECT count(*) AS n
+      FROM sample s
+      JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+      JOIN sample other ON other.sample_number = s.sample_number
+                       AND other.date_start = s.date_start
+      JOIN sample_primary_collector opc ON opc.sample_id = other.entity_id
+                                        AND opc.person_id = pc.person_id
+      WHERE s.entity_id = ${sql.lit(Math.trunc(sampleId))}`.execute(db);
+    if (Number(siblings.rows[0]?.n ?? 1) > 1) return [];
     const changes = await readSampleChanges(changesPath);
     return sampleHistory(changes, {
       collector: row.collector,

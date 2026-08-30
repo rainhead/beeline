@@ -257,7 +257,7 @@ describe("a corrected reference moves, and the history follows", () => {
     expect(sizes).toEqual([1, 2]);
   });
 
-  it("two claimants on one history record nothing, and are counted", async () => {
+  it("two claimants on one history record nothing, and are counted — every pass, not once", async () => {
     // The snapshot row is reachable directly by one sample and via its
     // observation by another: iteration order must not pick the heir.
     const a = await insertCleanSample(conn, { inat_observation_id: "77" });
@@ -268,10 +268,69 @@ describe("a corrected reference moves, and the history follows", () => {
     const result = await record();
     expect(result.contested).toBe(2);
     expect(result.appended).toBe(0);
+    // The restatement must not write the claimants' current state into the
+    // snapshot: that buries the contest — the next pass direct-matches the
+    // fresh rows, counts nothing, and the transition is never recorded by
+    // any pass (adversarial review of PR #32). The contest stands until a
+    // human resolves it, like the person log's.
+    const again = await record();
+    expect(again.contested).toBe(2);
+    expect(again.appended).toBe(0);
+  });
+
+  it("a snapshot whose header this code did not write re-baselines instead of appending a million arrivals", async () => {
+    await insertCleanSample(conn);
+    await record();
+    // A future field addition changes STATE_COLUMNS; simulate by rewriting
+    // the header. Every row is then the wrong width, and an
+    // empty-but-non-null read would record the whole corpus as arrivals in
+    // an append-only file.
+    const { readFile: rf, writeFile: wf } = await import("node:fs/promises");
+    const text = await rf(paths.state, "utf8");
+    await wf(paths.state, text.replace(/^[^\n]+/, "a,b,c"));
+    const result = await record();
+    expect(result).toMatchObject({ appended: 0, baselined: true });
+    expect(await readSampleChanges(paths.log)).toEqual([]);
+  });
+
+  it("a steady pass leaves the snapshot file untouched", async () => {
+    await insertCleanSample(conn);
+    await record();
+    const { stat } = await import("node:fs/promises");
+    const before = await stat(paths.state);
+    await new Promise((r) => setTimeout(r, 10));
+    await record();
+    const after = await stat(paths.state);
+    expect(after.mtimeMs).toBe(before.mtimeMs);
   });
 });
 
 describe("the authored, narrowed pass", () => {
+  it("matches on the reference alone: a moved triple defers to the next full pass", async () => {
+    // The weak tiers' guards are built from the whole store; a one-sample
+    // pass has an empty holder index and can never see a second claimant, so
+    // granting them here could file this sample's entries under a live
+    // sibling's history and delete its snapshot row (adversarial review of
+    // PR #32).
+    const id = await insertCleanSample(conn, { inat_observation_id: "77" });
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '9', locality = 'Alsea' WHERE entity_id = ${id}`);
+    const narrowed = await record({ source: "app", author: "ada", where: `s.entity_id = ${id}` });
+    // Direct miss (the triple moved): nothing recorded, nothing deleted.
+    expect(narrowed.appended).toBe(0);
+    expect((await readSnapshot(paths.state))?.size).toBe(1);
+    // The full pass follows the observation link and records both changes.
+    const full = await record();
+    expect(full.appended).toBe(2);
+    const history = sampleHistory(await readSampleChanges(paths.log), {
+      collector: "name:Ada Collector",
+      sample_number: "9",
+      date_start: "2026-07-14",
+    });
+    expect(history.map((e) => e.field).sort()).toEqual(["locality", "sample_number"]);
+  });
+
+
   it("credits the author with their edit and nothing else", async () => {
     const edited = await insertCleanSample(conn);
     const other = await insertCleanSample(conn, { sample_number: "'2'" }, null);

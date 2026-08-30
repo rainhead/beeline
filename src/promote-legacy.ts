@@ -231,10 +231,20 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   // shape, same environment gate, baseline in the snapshot rather than the
   // log because this corpus is 67,887 rows wide.
   const samplePaths = sampleLogFor(dbPath, process.env);
-  const sampleRecorded =
-    samplePaths === null
-      ? null
-      : await recordSampleChanges(duckdbReader(conn), samplePaths, { source: "legacy_promotion" });
+  // Guarded like the boot pass: the promotion's own data committed long
+  // before this line, and a history-write failure (disk full, an unwritable
+  // data/) must not abort the run past the summary and the staged-rows
+  // invariant check below. The next pass records the same differences,
+  // attributed to itself.
+  let sampleRecorded = null;
+  try {
+    sampleRecorded =
+      samplePaths === null
+        ? null
+        : await recordSampleChanges(duckdbReader(conn), samplePaths, { source: "legacy_promotion" });
+  } catch (err) {
+    console.warn(`could not record sample history: ${(err as Error).message}`);
+  }
   if (log === null) {
     console.warn(
       `not recording person or sample history: ${dbPath} is not the database this environment keeps a change log for ` +

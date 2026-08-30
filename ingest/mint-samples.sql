@@ -103,8 +103,8 @@ SELECT m.sample_id, m.person_id, 1 FROM minted_sample m;
 -- The same applies to a locality the store learns to read later, and it has
 -- already paid off once: beeline-4dt's anchored street-suffix predicate
 -- fills in the six samples that were refused a locality only because 'st'
--- was in the word list — 4 of them open-season, so live work rather than
--- residue — on the next promotion, with no backfill script.
+-- was in the word list — 4 open-season against 2 settled, so live work
+-- rather than residue — on the next promotion, with no backfill script.
 --
 -- FILL-ONLY, never overwrite, and that is what makes it safe to run over
 -- every iNat-linked sample rather than only over minted ones. It cannot

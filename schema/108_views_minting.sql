@@ -134,6 +134,24 @@ CREATE MACRO locality_street_suffix_pattern() AS
 --                      the accident of `lane` being a street suffix, and the
 --                      anchor takes that accident away.
 --
+--                      The county is matched ONLY with 'County', 'Co' or
+--                      'Co.' after it, and never bare — which is the one
+--                      place this clause is deliberately weaker than the
+--                      state and country clauses beside it. A county is
+--                      routinely named after its own seat, and iNaturalist
+--                      writes plain 'City, State, Country', so a bare
+--                      component equal to the county name is nearly always
+--                      the CITY: over the corpus 1,304 observations have
+--                      one, and they are Hood River (258), Yakima (249),
+--                      Nanaimo (128), Walla Walla (53), Spokane (41),
+--                      Tillamook, Boise, Union, Toronto, Los Angeles. About
+--                      200 are genuinely coarse — the BC regional districts
+--                      ('Cariboo', 'Capital'), which is all their guess
+--                      offers anyway. Matching bare would take the locality
+--                      off all 1,304 to reach those 200. A state's name is
+--                      not a town in that same state, which is why the
+--                      clause above it can afford the exact match.
+--
 -- The administrative clause is why this is not a pure string function: 1,620
 -- of the 1,624 two- and three-letter components in the corpus are state or
 -- country codes ('US' 615, 'OR' 362, 'USA' 250). The three that are not are

@@ -120,6 +120,12 @@ WHERE s.specimen_count > coalesce(printed.n, 0);
 -- 'Wheeler County' was ever refused, so 583 observations read 'Deschutes
 -- Co.' where the guess also said 'Bend'. Existing samples keep the locality
 -- they have; the refresh is fill-only.
+--
+-- Matched only with 'County', 'Co' or 'Co.' after it and never bare: a
+-- county is routinely named after its own seat and iNaturalist writes plain
+-- 'City, State, Country', so a bare component equal to the county name is
+-- nearly always the city — 1,304 of them in the corpus, Hood River and
+-- Yakima and Nanaimo. schema/108_views_minting.sql has the full count.
 CREATE VIEW observation_locality AS
 WITH guess AS (
   SELECT f.inat_id,

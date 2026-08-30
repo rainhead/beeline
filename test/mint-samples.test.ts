@@ -450,6 +450,14 @@ describe("the locality a minted sample carries", () => {
     // A bare county and nothing else is a guess too coarse to use, which is
     // the volunteer's to fix upstream on iNaturalist.
     ["Benton Co., OR, US", null],
+    // But NEVER the bare name: a county is routinely named after its own
+    // seat and iNaturalist writes plain 'City, State, Country', so this is
+    // the city of Benton and not Benton County. Matching bare would take
+    // the locality off 1,304 observations in the corpus — Hood River,
+    // Yakima, Nanaimo, Walla Walla, Spokane — to catch the ~200 that are
+    // genuinely coarse. The state clause beside it can afford an exact
+    // match because a state's name is not a town in that same state.
+    ["Benton, OR, US", "Benton"],
   ])("the observation's own county is not a locality: %s -> %s", async (guess, expected) => {
     await stage(obs(7, { place_guess: guess }));
     await promoteObservations(conn);

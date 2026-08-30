@@ -34,17 +34,27 @@ engine runs them owns the heart of the system.
   - No partial unique indexes (Postgres-only) — the `minted_field_number`
     two-table design exists partly for this reason.
   - Known seam, accepted: `JSON` columns (Postgres would want `JSONB`).
-  - **Named exceptions, taken deliberately and measured first.** Two so far,
-    both DuckDB-only and both because the dialect-neutral spelling was the
+  - **Named exceptions, taken deliberately and measured first.** Three so
+    far, all DuckDB-only and all because the dialect-neutral spelling was the
     dominant cost of a page: the view that shreds iNaturalist responses
-    (`schema/105`, now materialised into `observation_field`), and the
+    (`schema/105`, now materialised into `observation_field`); the
     street-suffix predicate in `qc_rule_locality_format` (`schema/120`),
     which was nineteen `LIKE` passes over every locality in the store and
     is now one `regexp_matches` — 206 ms to 16 ms, and with the two of them
     the whole `qc_finding` union went 518 ms to 25 ms (Peter, 2026-08-28;
-    beeline-2c3.36, beeline-2c3.37). Each is marked in place with what a
-    port has to rewrite. The rule is not "never"; it is that an exception
-    is a decision with a number behind it, not a convenience reached for.
+    beeline-2c3.36, beeline-2c3.37); and that predicate's pattern, which is
+    a `MACRO` (`schema/108`) rather than the one-row view a shared constant
+    would otherwise be. The third is the second's own tail: giving the word
+    list one home put the pattern behind a scalar subquery, and DuckDB
+    compiles a regex once for a literal and once **per row** for anything
+    else, so the union went back to 1.1 s until the macro gave the compiler
+    its literal back — 34 ms measured on the same store (beeline-5bm). A
+    threshold in a one-row view costs nothing, because nothing is compiled;
+    a pattern is different in kind. Each is marked in place with what a port
+    has to rewrite — here, one `IMMUTABLE` SQL function beside the
+    `regexp_matches` rewrite the same predicate already needs. The rule is
+    not "never"; it is that an exception is a decision with a number behind
+    it, not a convenience reached for.
   - **Never `~`.** DuckDB's `~` is `regexp_full_match`; Postgres's is a
     partial match. It is the one construct found so far that answers
     differently in the two engines *without erroring*, so it would survive

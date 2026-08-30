@@ -422,17 +422,37 @@ describe("the locality a minted sample carries", () => {
     expect(await one("SELECT locality FROM sample")).toEqual(["Bald Hill"]);
   });
 
-  test("the street-suffix list has one home, and both readers use it", async () => {
+  test("the street-suffix predicate has one home, and both readers use it", async () => {
     // qc_rule_locality_format judges a locality a sample carries;
-    // observation_locality picks one that does not exist yet. beeline-4dt is
-    // a pending edit to that list ('st' is Street, so "St Helens" reads as a
-    // street address) and it has to land once and reach both.
-    const [[pattern]] = (await rows(conn, "SELECT pattern FROM locality_street_suffix_pattern")) as [[string]];
+    // observation_locality picks one that does not exist yet. beeline-4dt
+    // landed in the one place and reached both: 'st' is Saint here, so the
+    // component is a place name and the sample gets a locality it used to be
+    // refused — and qc_rule_locality_format agrees, which is the half that
+    // used to disagree.
+    const [[pattern]] = (await rows(conn, "SELECT locality_street_suffix_pattern()")) as [[string]];
     expect(pattern).toContain("boulevard");
-    // The inherited defect, pinned so that fixing it fails this test and
-    // whoever fixes it sees both readers change together.
-    await stage(obs(7, { place_guess: "St Helens, OR, US" }));
+    await stage(obs(7, { place_guess: "St Helens, OR, US", ofvs: ofvs("7", "1") }));
     await promoteObservations(conn);
-    expect(await one("SELECT locality FROM sample")).toEqual([null]);
+    expect(await one("SELECT locality FROM sample")).toEqual(["St Helens"]);
+    expect(await count("SELECT count(*) FROM qc_finding WHERE rule_name = 'locality_format'")).toBe(0);
+  });
+
+  // The county is its own label field, so a locality restating it prints
+  // nothing — and since the rule takes the FIRST usable component, and these
+  // guesses put the county first, it beat the town sitting right behind it.
+  // Only the long spelling was ever refused, and only by the accident of
+  // `lane` and `county` being street suffixes; beeline-4dt's anchor takes
+  // the accident away, so the administrative clause states it (beeline-bev).
+  test.each([
+    ["Benton Co., Bald Hill, OR, US", "Bald Hill"],
+    ["Benton Co, Bald Hill, OR, US", "Bald Hill"],
+    ["Benton County, Bald Hill, OR, US", "Bald Hill"],
+    // A bare county and nothing else is a guess too coarse to use, which is
+    // the volunteer's to fix upstream on iNaturalist.
+    ["Benton Co., OR, US", null],
+  ])("the observation's own county is not a locality: %s -> %s", async (guess, expected) => {
+    await stage(obs(7, { place_guess: guess }));
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual([expected]);
   });
 });

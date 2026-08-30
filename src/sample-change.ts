@@ -225,23 +225,26 @@ export interface SampleStates {
   states: Map<string, SampleState>;
   /**
    * What the pass cannot speak for, so the snapshot must keep saying what it
-   * last said: the triples of colliding samples, the observation links of
-   * every suppressed sample, and the (number, date) pairs of the
-   * unreferenceable ones — an unlinked sample with an unnameable collector
-   * has no link to carry its row by, and its number and date have not moved
-   * (only the collector became unnameable), so the pair reaches it. Without
-   * the carry-forward, a full restatement drops the rows — and the pass
-   * after the duplicate or the namesake is RESOLVED then records every field
-   * as a spurious arrival, permanently (CodeRabbit and the adversarial
-   * review of PR #32). A sample that truly vanished is in none of the sets
-   * and still loses its row. The one residue: an unlinked COLLIDING sample's
-   * pre-move row sits under a pair the collision changed, which no evidence
-   * reaches — it restarts on resolution, and honestly.
+   * last said: the triples of colliding samples, and the observation links
+   * of every suppressed sample. Without the carry-forward, a full
+   * restatement drops the rows — and the pass after the duplicate or the
+   * namesake is RESOLVED then records every field as a spurious arrival,
+   * permanently (CodeRabbit and the adversarial review of PR #32). A sample
+   * that truly vanished is in neither set and still loses its row.
+   *
+   * Deliberately NOT carried: rows reached only by a (number, date) pair.
+   * An earlier revision kept them for unlinked unreferenceable samples, and
+   * that kept a vanished collector's row alive for exactly the claim the
+   * matcher's liveness gate cannot refuse — the collector being gone is the
+   * gate's pass condition — so an unrelated sample sharing the pair could
+   * inherit the row's history permanently (CodeRabbit on PR #33). The cost
+   * of not carrying is a spurious re-arrival when an UNLINKED
+   * unreferenceable sample is resolved: noise, filed under the right
+   * sample, against a fabricated inheritance filed under the wrong one.
    */
   suppressedKeys: Set<string>;
   suppressedObservations: Set<string>;
-  suppressedPairs: Set<string>;
-  /** Samples whose collector no reference names: unrecordable, so counted. */
+    /** Samples whose collector no reference names: unrecordable, so counted. */
   unreferenceable: number;
   /**
    * Samples sharing one triple — a live duplicate_sample_number. The
@@ -260,7 +263,6 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
   const states = new Map<string, SampleState>();
   const suppressedKeys = new Set<string>();
   const suppressedObservations = new Set<string>();
-  const suppressedPairs = new Set<string>();
   let unreferenceable = 0;
   for (const row of rows) {
     const text = (k: string) => String(row[k] ?? "");
@@ -268,7 +270,6 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
     if (collector === "") {
       unreferenceable++;
       if (text("observation") !== "") suppressedObservations.add(text("observation"));
-      suppressedPairs.add(`${text("sample_number")}${SEP}${text("date_start")}`);
       continue;
     }
     const state: SampleState = {
@@ -301,7 +302,7 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
     if (collector === "") continue;
     if (suppressedKeys.has(keyOf(collector, String(row.sample_number ?? ""), String(row.date_start ?? "")))) colliding++;
   }
-  return { states, suppressedKeys, suppressedObservations, suppressedPairs, unreferenceable, colliding };
+  return { states, suppressedKeys, suppressedObservations, unreferenceable, colliding };
 }
 
 // ── The snapshot ─────────────────────────────────────────────────────────
@@ -534,12 +535,14 @@ export function matchSamples(
 ): SampleMatching {
   const rows = [...snapshot.values()];
   const byObservation = valueIndex(rows, (s) => s.fields.observation);
-  const byNumberDate = valueIndex(rows, (s) => `${s.sample_number}${s.date_start}`);
+  const byNumberDate = valueIndex(rows, (s) => `${s.sample_number}${SEP}${s.date_start}`);
   // Which store sample holds each observation now — the store's answer, not
   // the snapshot's, because the snapshot keeps whatever a sample last held.
   const holder = new Map<string, SampleState>();
+  const liveCollectors = new Set<string>();
   for (const state of states.values()) {
     if (state.fields.observation !== "") holder.set(state.fields.observation, state);
+    liveCollectors.add(state.collector);
   }
 
   const proposed = new Map<SampleState, SampleState>();
@@ -562,11 +565,18 @@ export function matchSamples(
       proposed.set(state, byObs);
       continue;
     }
-    const byPair = byNumberDate.get(`${state.sample_number}${state.date_start}`);
+    const byPair = byNumberDate.get(`${state.sample_number}${SEP}${state.date_start}`);
     if (byPair == null) continue;
     // The refusal described above: the row's own link points at somebody else.
     const linkedTo = byPair.fields.observation === "" ? undefined : holder.get(byPair.fields.observation);
     if (linkedTo !== undefined && linkedTo !== state) continue;
+    // The person log's gate, ported: a collector reference the store still
+    // answers to means that collector is still here, and their row is not
+    // somebody else's to claim on a number-and-date coincidence — however
+    // unique the pair happens to be. Only a row whose collector nobody
+    // answers to any more can be recognised this way, which is the
+    // ref-moved case this tier exists for (CodeRabbit on PR #33).
+    if (byPair.collector !== state.collector && liveCollectors.has(byPair.collector)) continue;
     proposed.set(state, byPair);
   }
 
@@ -658,7 +668,7 @@ async function recordPass(
   paths: SampleLogPaths,
   opts: SampleRecordOptions,
 ): Promise<SampleRecordResult> {
-  const { states, suppressedKeys, suppressedObservations, suppressedPairs, unreferenceable, colliding } =
+  const { states, suppressedKeys, suppressedObservations, unreferenceable, colliding } =
     await readSampleStates(read, opts.where ?? "");
   const snapshot = await readSnapshot(paths.state);
 
@@ -739,8 +749,7 @@ async function recordPass(
       if (
         suppressedKeys.has(key) ||
         contestedRows.has(key) ||
-        (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation)) ||
-        suppressedPairs.has(`${row.sample_number}${SEP}${row.date_start}`)
+        (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation))
       ) {
         next.set(key, row);
       }

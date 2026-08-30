@@ -387,6 +387,30 @@ describe("the file", () => {
   });
 });
 
+describe("a number-and-date coincidence is not an identity", () => {
+  it("a live collector's row cannot be claimed by somebody else's matching pair", async () => {
+    // Ada's unlinked sample and Bo's unlinked sample; Ada renumbers hers so
+    // her old row sits unclaimed, and Bo renumbers HIS onto that exact
+    // (number, date) pair in the same pass. The pair is unique in the
+    // snapshot — but Ada still collects here, so her row is not Bo's to
+    // inherit (the person log's liveness gate, ported; CodeRabbit on PR #33).
+    await conn.run("INSERT INTO person (display_name) VALUES ('Bo Collector')");
+    const bo = "(SELECT entity_id FROM person WHERE display_name = 'Bo Collector')";
+    const ada = await insertCleanSample(conn, { sample_number: "'7'" }, null);
+    const his = await insertCleanSample(conn, { sample_number: "'8'", collector_id: bo }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '9' WHERE entity_id = ${ada}`);
+    await conn.run(`UPDATE sample SET sample_number = '7' WHERE entity_id = ${his}`);
+    await record();
+    const entries = await readSampleChanges(paths.log);
+    // Nothing of Ada's history was handed to Bo: every entry under her
+    // collector ref stays hers, and Bo's renumber is recognised (or arrives)
+    // under his own.
+    expect(entries.some((e) => e.collector === "name:Ada Collector" && e.author === "" &&
+                               e.field === "sample_number" && e.new_value === "7")).toBe(false);
+  });
+});
+
 describe("what the pass deliberately does not say", () => {
   it("a vanished sample records nothing — its history simply stops", async () => {
     const id = await insertCleanSample(conn);

@@ -168,11 +168,14 @@ describe("the migration for deployed stores", () => {
    * where the risk actually is, since that is the migration nothing has run
    * yet.
    *
-   * So it moves. It pinned 0020; the head is now 0021 (beeline-oyq), and the
-   * unwind below is correspondingly longer because that migration adds a
-   * twenty-second column, a file's worth of views, and a rewrite of
-   * qc_rule_locality_format. Whoever adds 0022 moves it again — which is the
-   * cost of the doctrine and cheaper than the fiction it replaced.
+   * So it moves. It pinned 0020; the head is now 0022, and the store is
+   * unwound to before 0021 (beeline-oyq) — which adds a twenty-second
+   * column, a file's worth of views, and a rewrite of
+   * qc_rule_locality_format — then walked forward through both. 0022
+   * (beeline-4dt) needs no unwinding of its own: it only rewrites view
+   * bodies, and 0021 recreates them in their pre-4dt form on the way past.
+   * Whoever adds 0023 extends the walk — which is the cost of the doctrine
+   * and cheaper than the fiction it replaced.
    */
   test("brings a store built from the previous schema up to this one, filled", async () => {
     const { conn: old } = await createMemoryDb();
@@ -216,7 +219,8 @@ describe("the migration for deployed stores", () => {
         ) norm
       ) flags
       WHERE len > 18 OR has_comma OR has_quote OR is_street`);
-    await old.run("DROP VIEW locality_street_suffix_pattern");
+    // A macro since 0022; 0021 recreates it as the one-row view it was.
+    await old.run("DROP MACRO locality_street_suffix_pattern");
     await old.run("ALTER TABLE observation_field DROP COLUMN private_place_guess");
     await old.run("DROP VIEW observation_current_fields");
     await old.run(`CREATE VIEW observation_current_fields AS
@@ -249,8 +253,12 @@ describe("the migration for deployed stores", () => {
       ] }))] as never,
     );
 
-    const sql = await readFile(join(MIGRATIONS_DIR, "0021-observations-become-samples.sql"), "utf8");
-    await old.run(sql);
+    for (const file of [
+      "0021-observations-become-samples.sql",
+      "0022-a-street-suffix-ends-its-phrase.sql",
+    ]) {
+      await old.run(await readFile(join(MIGRATIONS_DIR, file), "utf8"));
+    }
 
     expect(await schemaDrift(old)).toEqual([]);
     // Refilled by the migration itself, and reading the new field: an

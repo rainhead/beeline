@@ -381,11 +381,6 @@ export interface ObservationPlaceAmbiguousView {
   names: string;
 }
 
-/** The street-suffix word list, in one place (schema/108). */
-export interface LocalityStreetSuffixPatternView {
-  pattern: string;
-}
-
 /** The locality a sample minted from an observation carries: the first
  *  comma-separated component of its place_guess that reads like a place name.
  *  Absent for an observation with no such component — the sample it mints
@@ -615,7 +610,6 @@ export interface Database {
   determination_misplaced_qualifier: DeterminationMisplacedQualifierView;
   sample_primary_collector_mismatch: SamplePrimaryCollectorMismatchView;
   elevation_derivation_limit: ElevationDerivationLimitView;
-  locality_street_suffix_pattern: LocalityStreetSuffixPatternView;
   observation_locality: ObservationLocalityView;
   observation_sample_candidate: ObservationSampleCandidateView;
   observation_sample_unusable: ObservationSampleUnusableView;

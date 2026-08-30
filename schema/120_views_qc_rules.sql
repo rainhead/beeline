@@ -63,13 +63,18 @@ WHERE (s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL)
   AND loc.sample_id IS NULL;
 
 -- Locality must fit a 3-5pt label cell: short place name, no punctuation, no
--- street addresses. Semantics match the reference implementation exactly
+-- street addresses. Semantics follow the reference implementation
 -- (OccurrenceService.updateErrorFlags + includesIllegalSuffix): length > 18,
 -- comma or double quote (single quotes are fine — O''Brien Rd is a name),
--- or a word-bounded street/county suffix. norm pads the locality with spaces
--- and turns commas/periods into spaces, which is what supplies the word
--- boundaries the reference got from lookarounds — so no lookbehind is needed
--- and a plain alternation is a faithful translation.
+-- or a word-bounded street/county suffix. norm pads the locality with
+-- spaces, turns periods into spaces and isolates commas, which is what
+-- supplies the word boundaries the reference got from lookarounds — so no
+-- lookbehind is needed and a plain alternation is a faithful translation.
+--
+-- The one place it deliberately parts from the reference is WHERE the
+-- suffix may sit: it has to end its phrase, or 'St Helens' is a street
+-- address. locality_street_suffix_pattern (schema/108) carries that
+-- argument and the measurements behind it (beeline-4dt).
 --
 -- The second accepted DuckDB-flavoured seam, after the JSON shredding in
 -- schema/105, and a deliberate one (Peter, 2026-08-28; beeline-2c3.37).
@@ -101,16 +106,20 @@ FROM (
          position(',' IN norm.locality) > 0 AS has_comma,
          position('"' IN norm.locality) > 0 AS has_quote,
          -- The same seventeen words the reference checks, each still
-         -- required to stand alone between spaces. The list itself lives in
-         -- locality_street_suffix_pattern (schema/108), because
-         -- observation_locality applies it too — to pick a locality that does
-         -- not exist yet, where this judges one that does — and a word list
-         -- kept in two files is a word list that will one day be two lists.
-         regexp_matches(norm.norm, (SELECT pattern FROM locality_street_suffix_pattern)
-         ) AS is_street
+         -- required to stand alone between spaces — and, since beeline-4dt,
+         -- to END its phrase, because `st` is Saint and State as well as
+         -- Street. The predicate lives in locality_street_suffix_pattern
+         -- (schema/108), which says why — and as a macro, because a regex
+         -- read from a subquery is recompiled per row — because
+         -- observation_locality applies it too, to pick a locality that does
+         -- not exist yet where this judges one that does.
+         regexp_matches(norm.norm, locality_street_suffix_pattern()) AS is_street
   FROM (
+    -- A comma ends a phrase, so it survives normalisation as its own token
+    -- rather than becoming a space: 'NW Harrison Blvd, Corvallis' is an
+    -- address and the anchor has to be able to see that.
     SELECT s.entity_id AS sample_id, s.locality,
-           concat(' ', replace(replace(lower(s.locality), ',', ' '), '.', ' '), ' ') AS norm
+           concat(' ', replace(replace(lower(s.locality), '.', ' '), ',', ' , '), ' ') AS norm
     FROM sample s
     WHERE s.locality IS NOT NULL
   ) norm

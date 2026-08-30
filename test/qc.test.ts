@@ -101,10 +101,10 @@ describe("QC findings and printability", () => {
   // a rule tested on our assumptions.
   test("every street suffix is still matched as a whole word", async () => {
     const streets = [
-      "Sparta Road Vista",
+      "Sisters, Road 1018",
       "Bend Twin Bridges Rd",
       "Alice Street",
-      "Mosier St Park",
+      "Eugene Olive St",
       "Corvallis SW Orchard Ave",
       "Rdmnd Flcn Cr Drive",
       "McMinnville NE Elaine Dr",
@@ -124,12 +124,76 @@ describe("QC findings and printability", () => {
     }
   });
 
-  test("agrees with the nineteen LIKE patterns it replaced, string for string", async () => {
-    // The equivalence was checked against all 66,065 localities in the dev
-    // store before the swap (no disagreements, identical 4,100-row output).
-    // This keeps the old predicate in the repository so the next edit to the
-    // token list has something to disagree with — an alternation is exactly
-    // where "each token stands alone between spaces" quietly stops holding.
+  // beeline-4dt: `st` is Saint and the abbreviation for State as well as
+  // Street, and telling a volunteer that St Helens looks like a street
+  // address is the one kind of finding that damages data — the only way to
+  // satisfy it is to write the locality wrongly. All real localities, all
+  // short and clean enough to raise nothing else.
+  test("a suffix that does not end its phrase is part of a place name", async () => {
+    const places = [
+      "St Helens", // the town in Columbia County, 121 samples
+      "St. Helens",
+      "St.Helens",
+      "W. St. Helens",
+      "St. Johns",
+      "Mosier St Park", // State, not Street
+      "Smith Rock St Prk",
+      "Lane Creek",
+      "Buell County Park",
+    ];
+    for (const [i, locality] of places.entries()) {
+      const id = await insertCleanSample(conn, {
+        locality: `'${locality}'`,
+        sample_number: `'n${i}'`,
+      });
+      expect(await findings(id), locality).toEqual([]);
+    }
+  });
+
+  // What "ends its phrase" allows either side of the anchor: a comma ends a
+  // phrase the way the end of the string does, and a directional or a road
+  // number after the suffix is still part of the address.
+  test("a comma ends a phrase, and a directional or road number does not", async () => {
+    const streets = ["NW Harrison Blvd, Corvallis", "Salem, Vista Ave SE", "BLM Rd 39-6-36"];
+    for (const [i, locality] of streets.entries()) {
+      const id = await insertCleanSample(conn, {
+        locality: `'${locality}'`,
+        sample_number: `'a${i}'`,
+      });
+      const details = (await findings(id)).find((f) => f.rule === "locality_format")?.details ?? "";
+      expect(details, locality).toContain("looks like a street address");
+    }
+  });
+
+  // DuckDB compiles a regex once when the pattern is a literal and once PER
+  // ROW when it is anything else, so the shared predicate is a macro (which
+  // the binder expands into a literal) and not the one-row view a shared
+  // constant would otherwise be. Reading it out of a view cost 1.1 s over
+  // the dev store's 67,304 localities against 18 ms — and every QC read in
+  // the app goes through this union. A timing assertion would be flaky, so
+  // what is pinned is the spelling that makes it fast (ADR 0001, beeline-5bm).
+  test("both readers reach the predicate through the macro, not a subquery", async () => {
+    const bodies = (await rows(
+      conn,
+      `SELECT view_name, sql FROM duckdb_views()
+       WHERE view_name IN ('qc_rule_locality_format', 'observation_locality')
+       ORDER BY view_name`,
+    )) as [string, string][];
+    expect(bodies.map(([name]) => name)).toEqual(["observation_locality", "qc_rule_locality_format"]);
+    for (const [name, sql] of bodies) {
+      expect(sql, name).toContain("locality_street_suffix_pattern()");
+      expect(sql, name).not.toContain("FROM locality_street_suffix_pattern");
+    }
+  });
+
+  test("parts from the reference implementation only where a suffix does not end its phrase", async () => {
+    // The reference's own predicate, kept in the repository so the rule has
+    // something to disagree with — first because an alternation is exactly
+    // where "each token stands alone between spaces" quietly stops holding,
+    // and now because beeline-4dt makes the disagreement itself the point.
+    // Every string below is a real locality from production staging; the
+    // expected set is the whole of what changed, so a later edit that widens
+    // or narrows the divergence has to say so here.
     const corpus = [
       "Sparta Road Vista", "Bend Twin Bridges Rd", "Alice Street", "Mosier St Park",
       "St Helens", "Corvallis SW Orchard Ave", "Rdmnd Flcn Cr Drive", "McMinnville NE Elaine Dr",
@@ -138,25 +202,47 @@ describe("QC findings and printability", () => {
       "Drain", "Avery Park", "Strawberry Mountain", "Moses Lake", "Canyon City",
       "Sims Corner", "Chinook Pass", "Groundhog Mountain", "Olympic NP", "Painted Hills",
       "Klamath Falls Ashley Ct.", "Steens Mt. Loop Rd.", "Deschutes Rvr. St. Rec.",
+      "Cottonwood Canyon St Prk", "Mike Miller County Park", "Lane Creek", "St. Johns",
+      "Luckiamute St Natural Area", "NW Harrison Blvd, Corvallis", "Sisters, Road 1018",
+      "Eugene Olive St", "Salem, Vista Ave SE",
     ];
     const values = corpus.map((l) => `('${l.replaceAll("'", "''")}')`).join(", ");
     await conn.run(`CREATE TEMP TABLE corpus(locality TEXT)`);
     await conn.run(`INSERT INTO corpus VALUES ${values}`);
-    const norm = "concat(' ', replace(replace(lower(locality), ',', ' '), '.', ' '), ' ')";
+    // The reference reads a locality with commas and periods flattened to
+    // spaces; ours keeps the comma as a token, which is where the anchor is.
+    const referenceNorm = "concat(' ', replace(replace(lower(locality), ',', ' '), '.', ' '), ' ')";
+    const ourNorm = "concat(' ', replace(replace(lower(locality), '.', ' '), ',', ' , '), ' ')";
     const disagreements = await rows(
       conn,
-      `SELECT locality FROM (SELECT locality, ${norm} AS n FROM corpus)
-       WHERE (n LIKE '% road %' OR n LIKE '% rd %'
-              OR n LIKE '% street %' OR n LIKE '% str %' OR n LIKE '% st %'
-              OR n LIKE '% avenue %' OR n LIKE '% ave %' OR n LIKE '% av %'
-              OR n LIKE '% drive %' OR n LIKE '% dr %'
-              OR n LIKE '% boulevard %' OR n LIKE '% blvd %'
-              OR n LIKE '% court %' OR n LIKE '% ct %'
-              OR n LIKE '% lane %' OR n LIKE '% ln %'
-              OR n LIKE '% county %')
-         <> regexp_matches(n, ' (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county) ')`,
+      `SELECT locality FROM (SELECT locality, ${referenceNorm} AS r, ${ourNorm} AS n FROM corpus)
+       WHERE (r LIKE '% road %' OR r LIKE '% rd %'
+              OR r LIKE '% street %' OR r LIKE '% str %' OR r LIKE '% st %'
+              OR r LIKE '% avenue %' OR r LIKE '% ave %' OR r LIKE '% av %'
+              OR r LIKE '% drive %' OR r LIKE '% dr %'
+              OR r LIKE '% boulevard %' OR r LIKE '% blvd %'
+              OR r LIKE '% court %' OR r LIKE '% ct %'
+              OR r LIKE '% lane %' OR r LIKE '% ln %'
+              OR r LIKE '% county %')
+         <> regexp_matches(n, locality_street_suffix_pattern())
+       ORDER BY locality`,
     );
-    expect(disagreements).toEqual([]);
+    // Eight of the ten are the inherited false positive — Saint, State, and
+    // the two words that are also place names. The other two are backcountry
+    // road references with the number in the middle, which is the measured
+    // cost of the anchor (schema/108_views_minting.sql).
+    expect(disagreements.map(([l]) => l)).toEqual([
+      "Cottonwood Canyon St Prk",
+      "County Hwy 5-13B",
+      "Deschutes Rvr. St. Rec.",
+      "Lane Creek",
+      "Luckiamute St Natural Area",
+      "Mike Miller County Park",
+      "Mosier St Park",
+      "Sparta Road Vista",
+      "St Helens",
+      "St. Johns",
+    ]);
   });
 
   test("a suffix buried inside a word is not a street", async () => {

@@ -42,6 +42,7 @@ Then it's all undone at the API layer: `GET /api/occurrences?userLogin=X` is una
 
 - One function computes `errorFlags` — a semicolon-joined string of offending field names (missing required fields; obscured coords; unabbreviated country/state; locality containing street suffixes, commas, quotes, or >18 chars; coordinate uncertainty >250 m; non-tracheophyte host). String-typed, so "which records are flagged for X" cannot be queried server-side; printability is decided by loading rows into Node.
 - Wyoming is missing from the state-abbreviation table, so every WY record is permanently flagged.
+- The street-suffix list matches its seventeen words anywhere in the locality, so `St Helens` — a town in Columbia County — is reported as a street address, as is any Saint or any `X St Park`. Beeline anchors the word to the end of its phrase instead ([`locality_street_suffix_pattern`](../schema/108_views_minting.sql), beeline-4dt); the live system has the defect still.
 - **Duplicate sample numbers between collectors are never detected** (same-collector duplicates collide on the hash id and are counted, not reported).
 - The "weekly emails" are a CSV of addresses bucketed by error category that a human downloads and pastes into a mail client. There is no SMTP anywhere. The weekly cadence is operator convention.
 

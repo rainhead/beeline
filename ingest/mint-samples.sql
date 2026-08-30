@@ -82,10 +82,10 @@ LEFT JOIN atlas_region reg ON reg.state_province = pl.state_province;
 -- this is that writer.
 --
 -- Taking the observer as collector is settled (Peter, 2026-08-29) and the
--- household-login risk it carries is 98% historical — 150 of the 902 minted
--- samples dated before 2026 land under a shared login against 9 of the 519
--- from 2026, and collectors are being moved to individual iNaturalist
--- accounts. Where that is wrong it is staff's to override, not the model's to
+-- household-login risk it carries is 94% historical — split at
+-- season.started_on (schema/160), 150 of the 903 minted samples from settled
+-- seasons land under a shared login against 9 of the 518 from the open one,
+-- and collectors are being moved to individual iNaturalist accounts. Where that is wrong it is staff's to override, not the model's to
 -- guess (beeline-v0j).
 --
 -- One collector, never a list: an observation carries one observer and
@@ -102,8 +102,8 @@ SELECT m.sample_id, m.person_id, 1 FROM minted_sample m;
 -- null — and since minting never rewrites, no later fetch could repair them.
 -- The same applies to a locality the store learns to read later: fixing
 -- beeline-4dt's street-suffix list fills in the six samples refused a
--- locality only because 'st' is in it, on the next promotion, with no
--- backfill script.
+-- locality only because 'st' is in it — 4 of them open-season, so live work
+-- rather than residue — on the next promotion, with no backfill script.
 --
 -- FILL-ONLY, never overwrite, and that is what makes it safe to run over
 -- every iNat-linked sample rather than only over minted ones. It cannot

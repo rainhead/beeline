@@ -4,8 +4,9 @@
 -- from a sample that already existed, so observation promotion was a
 -- provenance UPGRADE on records the legacy Mongo dump had already supplied
 -- and never a source of records. An observation with no matching legacy row
--- was synced, shredded into observation_field, and stopped there — 6,134 of
--- them on the dev store, the newest five days old. At cutover the legacy
+-- was synced, shredded into observation_field, and stopped there — 6,105 of
+-- them on the dev store, 1,625 of those in the open season against 4,480 in
+-- settled ones, the newest five days old. At cutover the legacy
 -- import freezes and iNaturalist becomes the only entry point, so a season
 -- collected after the freeze would have been invisible end to end rather
 -- than visibly broken.
@@ -49,9 +50,10 @@ COMMENT ON VIEW locality_street_suffix_pattern IS 'The street-suffix word list, 
 -- two shapes that are not dirty data at all: a hand-typed place name with no
 -- commas ('Steigerwald NWR'), and a four-part guess whose second component is
 -- the town ('Peckham Rd, Wilder, ID, US' -> 'Wilder'). Measured over the
--- samples a first minting pass creates, the reference rule yields a usable
--- locality for 24% of the pre-2026 set and 68% of 2026; this one yields 66%
--- and 86%.
+-- samples a first minting pass creates, split at season.started_on
+-- (schema/160): the reference rule yields a usable locality for 24% of the
+-- settled seasons and 68% of the open one; this rule yields 66% (596 of 903)
+-- and 86% (445 of 518).
 --
 -- So: the FIRST comma-separated component that reads like a place name.
 -- Each clause was measured against the corpus rather than supposed —
@@ -60,9 +62,12 @@ COMMENT ON VIEW locality_street_suffix_pattern IS 'The street-suffix word list, 
 --                      so a longer component would be written only to be
 --                      flagged on the same promotion run. It costs the
 --                      single-component garden names ('Leach Botanical
---                      Garden', 22 chars, 59 samples), which arrive as
+--                      Garden', 22 chars), which arrive as
 --                      missing_required_field instead and are the
---                      volunteer's to shorten upstream.
+--                      volunteer's to shorten upstream — and it costs them
+--                      only in the past: 166 settled samples against 0 in the
+--                      open season, so current practice does not write that
+--                      shape at all.
 --   no street suffix   the shared pattern above. Also what refuses
 --                      county-only guesses, `county` being one of the words.
 --   no postcode        a run of five digits.
@@ -88,9 +93,12 @@ COMMENT ON VIEW locality_street_suffix_pattern IS 'The street-suffix word list, 
 -- ('Linn County, US-OR, US', 8) and country-only ('United States', 2) —
 -- with one exception, 'St Helens, OR, US', which is beeline-4dt's inherited
 -- defect and not this rule's. Six of the 1,421 minted samples are refused a
--- locality for that reason alone; fixing the word list above fills them in on
--- the next promotion, because the descriptive fields are a fill-only refresh
--- (ingest/mint-samples.sql) rather than written once.
+-- locality for that reason alone — and unlike everything else here that count
+-- does NOT fall away with the wild west: 4 of the 6 are open-season records
+-- against 2 settled, so it is live work rather than residue. Fixing the word
+-- list above fills them in on the next promotion, because the descriptive
+-- fields are a fill-only refresh (ingest/mint-samples.sql) rather than
+-- written once.
 CREATE VIEW observation_locality AS
 WITH guess AS (
   -- Private first, exactly as observation_place and the coordinate rule do.
@@ -162,7 +170,8 @@ SELECT f.inat_id, f.user_id, f.user_login, f.observed_on,
                AND try_cast(f.specimen_count_raw AS INTEGER) IS NULL
               THEN concat('specimen count ''', f.specimen_count_raw, ''' is not a number') END,
          CASE WHEN try_cast(f.specimen_count_raw AS INTEGER) = 0 THEN 'specimen count is zero' END,
-         -- Six of these on the dev store. Without an arm of their own they
+         -- Six on the dev store, 1 open-season and 5 settled. Without an arm
+         -- of their own they
          -- fall out of the candidate set correctly and arrive here with an
          -- EMPTY reason, which is worse than either answer: the unclaimed
          -- screen shows a record with nothing said about it.
@@ -247,8 +256,9 @@ COMMENT ON VIEW sample_mint_match IS 'A group of unlinked observations against t
 -- number two samples already carry manufactures the duplicate it was trying
 -- to avoid.
 --
--- Three on the dev store, all one collector, all trap samples of the same
--- number with overlapping ranges — pre-existing duplicate collecting events
+-- Three on the dev store, none in the open season: all one collector, all
+-- trap samples of the same number with overlapping ranges — pre-existing
+-- duplicate collecting events
 -- that qc_rule_duplicate_sample_number cannot see because it groups on
 -- date_start. Refusing names them; a test asserts nothing more than that the
 -- refusal is what happens.
@@ -265,8 +275,8 @@ COMMENT ON VIEW sample_mint_ambiguous IS 'A group of unlinked observations that 
 --
 -- ONE ROW PER SAMPLE, and the tie-break is not a formality. sample_mint_group
 -- groups by observed_on, so a trap sample spanning several days matches one
--- group per day its observations fall on: two on the dev store, both trap
--- samples running 2019-08-08 to 2019-08-10 with an observation when the trap
+-- group per day its observations fall on: two on the dev store, both settled,
+-- both trap samples running 2019-08-08 to 2019-08-10 with an observation when the trap
 -- went in and another when it came out. Both belong to the sample and
 -- inat_observation_id can hold one, so something has to choose — and
 -- `UPDATE ... FROM` with several source rows for one target does not: DuckDB
@@ -339,7 +349,7 @@ COMMENT ON VIEW sample_atlas_unfilled IS 'A sample in a member atlas''s region c
 -- its specimen_count is the total over all of them, so
 -- qc_rule_count_mismatch — which compares against the ONE cited observation
 -- — reports a disagreement in which both sides are right. 33 minted samples
--- are born flagged this way. The finding is a warning, not a block, and this
+-- are born flagged this way, 12 of them in the open season and 21 settled. The finding is a warning, not a block, and this
 -- is what explains it; teaching the rule to sum would take count_mismatch
 -- from 1,121 findings to 1,959 across the existing corpus, which is a change
 -- to a live rule and not this step's to make.

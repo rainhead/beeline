@@ -58,6 +58,7 @@ import { DesignImagery } from "./views/design/imagery.js";
 import { MessagesProof } from "./views/design/messages-proof.js";
 import { QcProof } from "./views/design/qc-proof.js";
 import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
+import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
 import { SampleEditForm } from "./views/sample-edit.js";
 import {
   atlasOptions,
@@ -77,6 +78,7 @@ import {
   loadSpecimen,
   parsePage,
   recordFindings,
+  sampleChangeHistory,
 } from "./record.js";
 import { SamplePage, SpecimenPage } from "./views/record.js";
 
@@ -99,6 +101,9 @@ export interface AppDeps {
   personOverlayPath?: string;
   /** Append-only log of what happened to a person, and when (beeline-o22). */
   personChangesPath?: string;
+  /** Sample history: the append-only log and its snapshot baseline (beeline-ewl). */
+  sampleChangesPath?: string;
+  sampleStatePath?: string;
   /**
    * A raw connection, for the overlay applier. Kysely cannot run the applier's
    * statements as one unit, and the app already keeps a spare connection for
@@ -122,12 +127,18 @@ export function createApp({
   correctionsPath,
   personOverlayPath,
   personChangesPath,
+  sampleChangesPath,
+  sampleStatePath,
   conn,
 }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], runNow: async () => false };
   const corrections = correctionsPath ?? "data/corrections.csv";
   const overlayPath = personOverlayPath ?? "data/person-overlay.csv";
   const changesPath = personChangesPath ?? CHANGE_LOG;
+  const samplePaths = {
+    log: sampleChangesPath ?? SAMPLE_CHANGE_LOG,
+    state: sampleStatePath ?? SAMPLE_STATE_SNAPSHOT,
+  };
   // One person's state, as the change log describes it. The same query both
   // producers use, so what the screen records and what a rebuild records are
   // comparable (src/person-change.ts).
@@ -478,15 +489,16 @@ export function createApp({
     const m = c.get("m");
     const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, c.get("admin"));
     if (sample === null) return c.text(m.record.notFound, 404);
-    const [findings, specimens] = await Promise.all([
+    const [findings, specimens, history] = await Promise.all([
       recordFindings(db, sample.sample_id),
       listSampleSpecimens(db, sample.sample_id, parsePage(c.req.query("page"))),
+      sampleChangeHistory(db, samplePaths.log, sample.sample_id),
     ]);
     return c.html(
       await page(
         c,
         m.record.sample.title(sample.sample_number),
-        <SamplePage m={m} sample={sample} findings={findings} specimens={specimens} />,
+        <SamplePage m={m} sample={sample} findings={findings} specimens={specimens} history={history} />,
       ),
     );
   });
@@ -540,6 +552,23 @@ export function createApp({
       author: session.login,
     });
     if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
+    // Record what just changed, credited to whoever typed it — the fact a
+    // later pass over the store could never recover (ADR 0007). Narrowed to
+    // this sample, so the author is charged with this edit and nothing else;
+    // a failure is reported and left for the next pass, which attributes it
+    // to that pass instead.
+    if (result.outcome === "saved") {
+      try {
+        await recordSampleChanges(kyselyReader(db), samplePaths, {
+          source: "app",
+          author: session.login,
+          reason: field("note")?.trim() || undefined,
+          where: `s.entity_id = ${sample.entity_id}`,
+        });
+      } catch (err) {
+        console.warn(`could not record the sample edit: ${(err as Error).message}`);
+      }
+    }
     return c.redirect("/");
   });
 

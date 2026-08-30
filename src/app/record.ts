@@ -10,6 +10,7 @@ import type {
 } from "../model.js";
 import { labelName } from "../person-name.js";
 import type { ListedCollector } from "./listings.js";
+import { readSampleChanges, sampleHistory, SAMPLE_STATE_SQL, type SampleChange } from "../sample-change.js";
 
 /**
  * One record: the query layer behind /samples/:id and /specimens/:id.
@@ -390,3 +391,34 @@ export function parsePage(raw: string | undefined): number {
 export const sampleHref = (sampleId: number, page = 1) =>
   page > 1 ? `/samples/${sampleId}?page=${page}` : `/samples/${sampleId}`;
 export const specimenHref = (specimenId: number) => `/specimens/${specimenId}`;
+
+/**
+ * What happened to this sample, newest first (beeline-ewl). Addressed by the
+ * reference the STORE derives — collector as the overlay names them, number,
+ * start date — which the log's fold has followed every recorded move to. A
+ * sample whose collector no reference names has no history to ask for, and
+ * an unreadable log answers empty rather than taking the page down: the log
+ * records the store, it does not gate it.
+ */
+export async function sampleChangeHistory(
+  db: Kysely<Database>,
+  changesPath: string,
+  sampleId: number,
+): Promise<SampleChange[]> {
+  try {
+    const found = await sql<{ collector: string | null; sample_number: string; date_start: string }>`
+      ${sql.raw(SAMPLE_STATE_SQL)}
+      WHERE s.entity_id = ${sql.lit(Math.trunc(sampleId))}`.execute(db);
+    const row = found.rows[0];
+    if (row === undefined || row.collector === null) return [];
+    const changes = await readSampleChanges(changesPath);
+    return sampleHistory(changes, {
+      collector: row.collector,
+      sample_number: row.sample_number,
+      date_start: String(row.date_start),
+    });
+  } catch (err) {
+    console.warn(`could not read the sample change log: ${(err as Error).message}`);
+    return [];
+  }
+}

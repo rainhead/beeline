@@ -125,8 +125,9 @@ describe("legacy promotion", () => {
       `SELECT p.display_name, i.login, a.code
        FROM person p
        LEFT JOIN inat_account i ON i.person_id = p.entity_id
-       LEFT JOIN sample s ON s.collector_id = p.entity_id
-       LEFT JOIN atlas a ON a.entity_id = s.atlas_id
+       LEFT JOIN sample_primary_collector pc ON pc.person_id = p.entity_id
+       LEFT JOIN sample_atlas sa ON sa.sample_id = pc.sample_id
+       LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
        ORDER BY p.display_name`,
     );
     expect(people).toEqual([
@@ -162,13 +163,12 @@ describe("legacy promotion", () => {
     ]);
   });
 
-  test("position 1 is the sample's own collector — the invariant the app reads", async () => {
+  test("every sample has exactly one head to its collector list", async () => {
     // Read through the view rather than spelled again here (schema/116,
-    // beeline-daa): this test used to be a third statement of the invariant,
-    // beside the COMMENT and the writer, and it missed two of the three ways
-    // to break it — a sample with collectors but none at position 1, and two
-    // collectors both claiming it.
-    expect(await rows(conn, "SELECT sample_id, at_position_1 FROM sample_primary_collector_mismatch")).toEqual([]);
+    // beeline-daa). Since beeline-6e9 the head IS the primary collector —
+    // there is no column for it to agree with, so a headless list is the
+    // failure that would make a sample invisible to its own collector.
+    expect(await rows(conn, "SELECT sample_id, at_position_1 FROM sample_primary_collector_invalid")).toEqual([]);
     // And every sample has a list at all, which the view does not ask.
     const missing = await rows(
       conn,

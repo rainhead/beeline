@@ -32,7 +32,8 @@ describe("legacy correction overlay (ADR 0004, frozen upstream)", () => {
       conn,
       `SELECT p.display_name, s.sample_number, sp.specimen_number
        FROM sample s
-       JOIN person p ON p.entity_id = s.collector_id
+       JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+       JOIN person p ON p.entity_id = pc.person_id
        JOIN specimen sp ON sp.sample_id = s.entity_id
        WHERE s.sample_number = '142'`,
     );
@@ -45,7 +46,8 @@ describe("legacy correction overlay (ADR 0004, frozen upstream)", () => {
     const [[sampleNumber]] = (await rows(
       conn,
       `SELECT s.sample_number FROM sample s
-       JOIN person p ON p.entity_id = s.collector_id WHERE p.display_name = 'Ada Collector'`,
+       JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+       JOIN person p ON p.entity_id = pc.person_id WHERE p.display_name = 'Ada Collector'`,
     )) as [[unknown]];
     expect(sampleNumber).toBe("1"); // unchanged: staged already equals new_value
     const findings = await rows(

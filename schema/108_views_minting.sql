@@ -274,7 +274,7 @@ WHERE nullif(trim(f.sample_number_raw), '') IS NOT NULL
 COMMENT ON VIEW observation_sample_unusable IS 'An observation that names a sample number and cannot become a sample: no specimen count, an unparseable one, a count of zero (nothing was collected), or no date.';
 
 -- A collection record whose observer the store cannot resolve to a person.
--- These are NOT minted: sample.collector_id is NOT NULL, and a placeholder
+-- These are NOT minted: every sample has a primary collector, and a placeholder
 -- person would be a person the roster then has to explain. They are staged
 -- here instead, which is what beeline-e85's per-atlas unclaimed screen reads.
 CREATE VIEW observation_sample_unresolved AS
@@ -282,7 +282,7 @@ SELECT c.*
 FROM observation_sample_candidate c
 WHERE NOT EXISTS (SELECT 1 FROM inat_account a WHERE a.inat_user_id = c.user_id)
   AND NOT EXISTS (SELECT 1 FROM sample s WHERE s.inat_observation_id = c.inat_id);
-COMMENT ON VIEW observation_sample_unresolved IS 'A collection record from an iNaturalist user the store holds no account for: nothing mints it, because sample.collector_id is NOT NULL and a placeholder person is worse than a queue. The unclaimed-samples screen (beeline-e85) reads this.';
+COMMENT ON VIEW observation_sample_unresolved IS 'A collection record from an iNaturalist user the store holds no account for: nothing mints it, because every sample has a primary collector and a placeholder person is worse than a queue. The unclaimed-samples screen (beeline-e85) reads this.';
 
 -- ── The reconcile ────────────────────────────────────────────────────────
 -- Every unlinked candidate whose observer resolves, grouped into the sample
@@ -324,7 +324,8 @@ SELECT g.person_id, g.sample_number, g.observed_on, g.lead_inat_id,
        s.entity_id AS sample_id,
        s.inat_observation_id
 FROM sample_mint_group g
-JOIN sample s ON s.collector_id = g.person_id
+JOIN sample_primary_collector pc ON pc.person_id = g.person_id
+JOIN sample s ON s.entity_id = pc.sample_id
              AND s.sample_number = g.sample_number
              AND g.observed_on BETWEEN s.date_start AND s.date_end;
 COMMENT ON VIEW sample_mint_match IS 'A group of unlinked observations against the existing sample it is already recorded as, keyed on the collector, the sample number, and the observed date falling inside the sample''s date range.';
@@ -405,21 +406,24 @@ COMMENT ON VIEW sample_mint_pending IS 'The samples ingest/mint-samples.sql will
 -- A sample whose state names an atlas and which carries none, with no human
 -- having placed it deliberately.
 --
--- This exists because nothing can repair it. DuckDB will not update an
--- indexed column on a row an incoming foreign key references, and
--- sample.atlas_id is a foreign key with a sample_collector row pointing at
--- every sample — so the atlas is set at INSERT and never afterwards
--- (ingest/mint-samples.sql). A sample minted before pnpm inat:fetch-places
--- had run would land here permanently, which is why the reseed recipe fetches
--- places first. Empty on the dev store, and a test says so.
+-- This used to name permanent damage: with the atlas a column on sample, the
+-- engine limitation beeline-6e9 measured meant it was set at INSERT or never,
+-- and a sample minted before pnpm inat:fetch-places had run kept a null
+-- atlas nothing could repair. The atlas now lives in sample_atlas, a
+-- satellite nothing references, so this view is the WORKLIST the fill-only
+-- refresh in ingest/mint-samples.sql reads and drains on every promotion —
+-- fetching places before promoting is still the tidy order, but no longer
+-- load-bearing. A row a human placed (assigned_by set) is excluded even when
+-- its atlas is NULL: that is somebody stating "belongs to none", and the
+-- refresh must not argue.
 CREATE VIEW sample_atlas_unfilled AS
 SELECT s.entity_id AS sample_id, s.state_province, reg.atlas_id AS should_be
 FROM sample s
 JOIN atlas_region reg ON reg.state_province = s.state_province
-WHERE s.atlas_id IS NULL
-  AND s.atlas_assigned_by IS NULL
+LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
+WHERE sa.sample_id IS NULL
   AND reg.atlas_id IS NOT NULL;
-COMMENT ON VIEW sample_atlas_unfilled IS 'A sample in a member atlas''s region carrying no atlas, which no UPDATE can fix: DuckDB will not write an indexed column on a row an incoming foreign key references, so sample.atlas_id is set when the row is inserted or never. Empty, and meant to stay that way.';
+COMMENT ON VIEW sample_atlas_unfilled IS 'A sample in a member atlas''s region with no sample_atlas row: the worklist the fill-only atlas refresh (ingest/mint-samples.sql) drains on every promotion. A human assignment — any sample_atlas row with assigned_by set, atlas or none — never reappears here.';
 
 -- ── What the scalar link cannot say ──────────────────────────────────────
 -- sample.inat_observation_id stays scalar (no sample_observation list), which
@@ -440,7 +444,8 @@ SELECT s.entity_id AS sample_id, s.inat_observation_id AS cited_inat_id,
        CAST(count(*) AS INTEGER) AS other_observations,
        CAST(sum(c.specimen_count) AS INTEGER) AS other_specimen_count
 FROM sample s
-JOIN inat_account a ON a.person_id = s.collector_id
+JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+JOIN inat_account a ON a.person_id = pc.person_id
 JOIN observation_sample_candidate c ON c.user_id = a.inat_user_id
                                    AND c.sample_number = s.sample_number
                                    AND c.observed_on BETWEEN s.date_start AND s.date_end

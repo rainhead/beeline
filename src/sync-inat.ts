@@ -1,4 +1,5 @@
-import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { DuckDBConnection } from "@duckdb/node-api";
+import { openDuckDb } from "./db.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -207,7 +208,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     console.error("usage: pnpm inat:sync <projectId> [d1] [d2] [--anonymous] [--db path]");
     process.exit(2);
   }
-  const instance = await DuckDBInstance.create(dbPath);
+  const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
   const result = await syncINat(conn, { projectId: Number(projectId), d1, d2, anonymous });
   conn.closeSync();

@@ -1,4 +1,5 @@
-import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { DuckDBConnection } from "@duckdb/node-api";
+import { openDuckDb } from "./db.js";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -188,7 +189,7 @@ export async function promoteLegacy(
 // CLI: pnpm legacy:promote [db]
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const dbPath = process.argv[2] ?? DEFAULT_DB;
-  const instance = await DuckDBInstance.create(dbPath);
+  const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
   const counts = await promoteLegacy(conn, LIVE_INPUTS);
 

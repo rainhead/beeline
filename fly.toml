@@ -1,0 +1,91 @@
+# Beeline on Fly — the sandbox, and production after cutover.
+#
+# TEMPORARY hosting in the same sense maderas was (infra/maderas/): the
+# hosting decision is re-made with Andony at cutover, December 2026.
+#
+# One machine, one volume, one region, forever. That is not a sandbox
+# shortcut — exactly one process may hold beeline.duckdb (ADR 0005), and a Fly
+# volume attaches to exactly one Machine, so the platform enforces what the
+# systemd unit could only ask for. The corollary is that there is no replica
+# and no rolling deploy: see docs/runbooks/deploy-fly.md on backups.
+
+app = "beeline"
+primary_region = "sea"        # Seattle: the atlases and their volunteers are PNW
+
+[build]
+
+[env]
+  BEELINE_ENV = "sandbox"
+  BEELINE_ORIGIN = "https://beeline.beeatlas.net"
+  PORT = "3054"
+
+  # Everything else the app reads from data/ is relative to the working
+  # directory and lands on the volume unchanged; only the two stores default
+  # to the repo root and so have to be named.
+  BEELINE_DB = "/app/data/beeline.duckdb"
+  BEELINE_PRIVATE_DB = "/app/data/private.duckdb"
+
+  # Stated rather than detected — see the comment on duckDbConfig in
+  # src/db.ts. Left unset, DuckDB would size itself from a cgroup reading and
+  # can plan against memory this machine will not give it; stated, an
+  # over-large query spills to disk instead of being OOM-killed. Measured: a
+  # full legacy promotion completes at 244 MiB, 16% slower than uncapped.
+  BEELINE_DUCKDB_MEMORY_LIMIT = "384MB"
+  BEELINE_DUCKDB_THREADS = "2"
+
+  BEELINE_SYNC_PROJECTS = "18521,166376,99706"
+  BEELINE_SWEEP_DAYS = "365"
+
+# Secrets, set with `fly secrets set` and never here:
+#   BEELINE_PRIVATE_DB_KEY  losing it is losing the private store (ADR 0003)
+#   INAT_CLIENT_ID / INAT_CLIENT_SECRET
+# The nightly's pipeline token stays a file on the volume
+# (data/secrets/inat-oauth-token), which is where mintJwt reads it.
+
+[mounts]
+  source = "beeline_data"
+  destination = "/app/data"
+  # 4.6 GB of DEM tiles plus a 266 MB store that only grows.
+  initial_size = "10gb"
+  auto_extend_size_threshold = 80
+  auto_extend_size_increment = "5gb"
+  auto_extend_size_limit = "40gb"
+  # Fly's own advice is that snapshots are not a backup and that an app should
+  # have two volumes. We can take neither: hence the off-host copy of the
+  # non-reconstructible CSVs, and a longer retention than the 5-day default.
+  snapshot_retention = 14
+
+[http_service]
+  internal_port = 3054
+  force_https = true
+  # The scheduler is in-process (src/app/jobs/): a stopped or suspended
+  # machine runs no nightly at 02:00 and no Sunday sweep, and nothing would
+  # alarm — the data would just quietly stop arriving.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+    # Boot opens a 266 MB store, applies migrations, and reconciles both
+    # change logs before it listens.
+    grace_period = "60s"
+
+# DuckDB must checkpoint and close cleanly: <= 1.5.5 can leave the file
+# unopenable when DDL reaches the WAL uncheckpointed (beeline-c1b,
+# duckdb/duckdb#18259). Five seconds — the default — is not enough, and host
+# maintenance restarts machines without much warning, so this fires eventually.
+# main.ts handles both SIGINT and SIGTERM.
+kill_signal = "SIGTERM"
+kill_timeout = "120s"
+
+[[vm]]
+  # Measured, not guessed. Serving settles at 54–62 MB RSS; the heaviest batch
+  # work completes with DuckDB capped at 244 MiB. Two vCPUs stay because the
+  # promotion burns 27s of CPU in 16s of wall time and every listing scans the
+  # QC union.
+  size = "shared-cpu-2x"
+  memory = "1gb"
+  swap_size_mb = 1024

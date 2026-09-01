@@ -33,7 +33,22 @@ export BEELINE_DB
 # file. The sentinel makes the re-exec unrepeatable: without it, a setpriv
 # that somehow failed to change uid would loop forever.
 if [ "$(id -u)" = "0" ] && [ -z "$BEELINE_DROPPED_PRIVS" ]; then
-  chown -R node:node /app/data 2>/dev/null || echo "warning: could not chown /app/data" >&2
+  # Not `|| true`: an app that cannot write its store is not a degraded app,
+  # it is a confusing one — DuckDB fails later with an access error nowhere
+  # near the cause. Fail here, with the real chown error still on stderr.
+  #
+  # Except in maintenance mode, which must still boot: it is how somebody gets
+  # a shell to fix exactly this, and a machine that refuses to start at all
+  # cannot be reached (`fly ssh console` needs a running machine).
+  if ! chown -R node:node /app/data; then
+    if [ -n "$BEELINE_MAINTENANCE" ]; then
+      echo "warning: could not chown /app/data; continuing, BEELINE_MAINTENANCE is set" >&2
+    else
+      echo "fatal: could not chown /app/data — the app runs as 'node' and could not write the store." >&2
+      echo "Boot with BEELINE_MAINTENANCE=1 for a shell to investigate." >&2
+      exit 1
+    fi
+  fi
   BEELINE_DROPPED_PRIVS=1
   export BEELINE_DROPPED_PRIVS
   exec setpriv --reuid=node --regid=node --init-groups "$0" "$@"

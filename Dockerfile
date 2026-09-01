@@ -41,24 +41,24 @@ FROM base AS runtime
 #   migrations/ applied by the entrypoint before the app starts
 #   ingest/     the git-curated person overlay, read on every boot
 #   dist/app    the built islands, located through Vite's manifest
-COPY --from=prod-deps /app/node_modules ./node_modules
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
+COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # tsconfig.json is not a build-time file here: the server runs from source, so
 # tsx reads `jsx: react-jsx` / `jsxImportSource: hono/jsx` from it at runtime.
 # Without it esbuild falls back to the classic transform and every SSR route
 # dies with "React is not defined" while static files carry on serving.
-COPY tsconfig.json ./
+COPY --chown=node:node tsconfig.json ./
 # Bake pnpm into the image. `corepack enable` installs shims only — the first
 # `pnpm` in a container without this downloads it from registry.npmjs.org.
 # The entrypoint deliberately never invokes pnpm, so this is not on the boot
 # path; it is so that the maintenance-mode CLI in docs/runbooks/deploy-fly.md
 # works on a machine with no route to npm.
 RUN corepack prepare --activate
-COPY src ./src
-COPY schema ./schema
-COPY migrations ./migrations
-COPY ingest ./ingest
-COPY --from=build /app/dist ./dist
+COPY --chown=node:node src ./src
+COPY --chown=node:node schema ./schema
+COPY --chown=node:node migrations ./migrations
+COPY --chown=node:node ingest ./ingest
+COPY --from=build --chown=node:node /app/dist ./dist
 # Bake DuckDB's httpfs extension into the image. The private store is
 # encrypted (ADR 0003), and DuckDB's ENCRYPTION_KEY path needs the crypto
 # module that ships inside httpfs — without it, ATTACH fails outright with
@@ -71,12 +71,14 @@ COPY --from=build /app/dist ./dist
 # NOTE: the extension is per-platform, so this must be built for the machine
 # it runs on. `fly deploy` builds on Fly's amd64 builders; building locally on
 # an arm64 Mac to push needs --platform linux/amd64.
+USER node
 RUN node --input-type=module -e "\
 import { DuckDBInstance } from '@duckdb/node-api'; \
 const i = await DuckDBInstance.create(':memory:'); \
 const c = await i.connect(); \
 await c.run('INSTALL httpfs'); \
 c.closeSync();"
+USER root
 
 COPY infra/fly/entrypoint.sh /usr/local/bin/beeline-entrypoint
 RUN chmod +x /usr/local/bin/beeline-entrypoint
@@ -84,8 +86,20 @@ RUN chmod +x /usr/local/bin/beeline-entrypoint
 # The Fly volume mounts here. Named explicitly so that a container run without
 # one still has the directory the app's relative paths (data/secrets/,
 # data/dem/, the change logs) resolve against.
-RUN mkdir -p /app/data
+#
+# The image's default user stays root, deliberately: a Fly volume mounts
+# root-owned, so something privileged has to take ownership of it before the
+# app can write. The entrypoint does that and then drops to `node` for the
+# rest of boot and for the app itself, so nothing that serves a request or
+# opens the store runs privileged.
+RUN mkdir -p /app/data && chown -R node:node /app
 
+# DuckDB finds its extensions under $HOME, and the entrypoint drops to `node`
+# with setpriv, which changes the uid but NOT the environment — so without
+# this, a non-root boot looks in /root/.duckdb, finds nothing, and dies with
+# "read-only crypto module loaded" the moment it attaches the encrypted
+# private store. Set beside the install above, because it is the same decision.
+ENV HOME=/home/node
 ENV NODE_ENV=production
 ENV PORT=3054
 EXPOSE 3054

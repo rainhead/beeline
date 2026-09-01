@@ -19,6 +19,26 @@ set -e
 : "${BEELINE_DB:=/app/data/beeline.duckdb}"
 export BEELINE_DB
 
+# Drop to an unprivileged user before anything opens the store or serves a
+# request. This cannot be a `USER` line in the Dockerfile: a Fly volume mounts
+# root-owned, so something privileged has to take ownership of it first — and
+# it must be recursive and on every boot, because `fly ssh console` is root,
+# so any file a maintenance-mode CLI writes (a reseeded store, a fetched DEM
+# tile, an uploaded CSV) lands root-owned and would be unwritable by the app.
+# chown of a volume is metadata only; the DEM directory's 213 files cost
+# nothing.
+#
+# setpriv execs, and so does everything after it, so node still ends up as
+# PID 1 and still receives SIGTERM directly — see the exec at the foot of this
+# file. The sentinel makes the re-exec unrepeatable: without it, a setpriv
+# that somehow failed to change uid would loop forever.
+if [ "$(id -u)" = "0" ] && [ -z "$BEELINE_DROPPED_PRIVS" ]; then
+  chown -R node:node /app/data 2>/dev/null || echo "warning: could not chown /app/data" >&2
+  BEELINE_DROPPED_PRIVS=1
+  export BEELINE_DROPPED_PRIVS
+  exec setpriv --reuid=node --regid=node --init-groups "$0" "$@"
+fi
+
 node_run() { node --import tsx "$@"; }
 
 # Maintenance mode. The store is reachable only from inside this machine, and
@@ -29,8 +49,11 @@ node_run() { node --import tsx "$@"; }
 #   fly ssh console --app <app>                           # pnpm db:reseed, etc.
 #   fly machine update --env BEELINE_MAINTENANCE= <id>    # back to serving
 #
-# Deliberately the first thing after the shell setup: it is also how you get a
-# machine to boot at all when something below is broken.
+# Everything below this point can be skipped by it, which is also how you get a
+# machine to boot at all when the migration or the store check is broken. Only
+# the privilege drop above runs first, and it has to: the first-fill case is
+# maintenance mode on an empty volume, which is exactly when the chown is
+# needed.
 if [ -n "$BEELINE_MAINTENANCE" ]; then
   echo "maintenance mode: app not started; $BEELINE_DB is free for CLI use"
   exec sleep infinity

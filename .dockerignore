@@ -5,7 +5,7 @@
 data/
 *.duckdb
 *.duckdb.wal
-*.duckdb.pre-migrate
+*.duckdb.pre-migrate*
 
 node_modules/
 dist/

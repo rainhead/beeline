@@ -10,8 +10,10 @@ FROM node:26-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 # Node 26 no longer ships corepack. Install it rather than pinning pnpm here,
-# so package.json's `packageManager` stays the one place the version is named.
-RUN npm install -g corepack@latest && corepack enable
+# so package.json's `packageManager` stays the one place the pnpm version is
+# named. corepack itself is pinned: `@latest` would float image builds on
+# someone else's release schedule.
+RUN npm install -g corepack@0.36.0 && corepack enable
 WORKDIR /app
 
 # Full dependency tree, including vite — the islands are built below.
@@ -46,11 +48,36 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # Without it esbuild falls back to the classic transform and every SSR route
 # dies with "React is not defined" while static files carry on serving.
 COPY tsconfig.json ./
+# Bake pnpm into the image. `corepack enable` installs shims only — the first
+# `pnpm` in a container without this downloads it from registry.npmjs.org.
+# The entrypoint deliberately never invokes pnpm, so this is not on the boot
+# path; it is so that the maintenance-mode CLI in docs/runbooks/deploy-fly.md
+# works on a machine with no route to npm.
+RUN corepack prepare --activate
 COPY src ./src
 COPY schema ./schema
 COPY migrations ./migrations
 COPY ingest ./ingest
 COPY --from=build /app/dist ./dist
+# Bake DuckDB's httpfs extension into the image. The private store is
+# encrypted (ADR 0003), and DuckDB's ENCRYPTION_KEY path needs the crypto
+# module that ships inside httpfs — without it, ATTACH fails outright with
+# "DuckDB currently has a read-only crypto module loaded". Left to itself
+# DuckDB downloads ~20 MB into ~/.duckdb at first boot, which is the container
+# layer: every deploy would re-fetch it, and every boot would depend on
+# DuckDB's extension repository being reachable. Baked here, boot needs no
+# network at all.
+#
+# NOTE: the extension is per-platform, so this must be built for the machine
+# it runs on. `fly deploy` builds on Fly's amd64 builders; building locally on
+# an arm64 Mac to push needs --platform linux/amd64.
+RUN node --input-type=module -e "\
+import { DuckDBInstance } from '@duckdb/node-api'; \
+const i = await DuckDBInstance.create(':memory:'); \
+const c = await i.connect(); \
+await c.run('INSTALL httpfs'); \
+c.closeSync();"
+
 COPY infra/fly/entrypoint.sh /usr/local/bin/beeline-entrypoint
 RUN chmod +x /usr/local/bin/beeline-entrypoint
 

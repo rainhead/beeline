@@ -1,7 +1,7 @@
 # The build context must not carry the store or its inputs: data/ alone is
 # ~4.9 GB (4.6 GB of DEM tiles) and beeline.duckdb is 266 MB. Everything the
 # app needs at runtime that lives in data/ arrives on the Fly volume instead,
-# mounted at /app/data (infra/fly/fly.toml).
+# mounted at /app/data (fly.toml, at the repo root).
 data/
 *.duckdb
 *.duckdb.wal

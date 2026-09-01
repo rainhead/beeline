@@ -37,7 +37,17 @@ export function duckDbConfig(env: NodeJS.ProcessEnv = process.env): Record<strin
   return config;
 }
 
-/** Every store this project opens goes through here, so the budgets above apply everywhere. */
+/**
+ * Every DuckDB this project opens goes through here or through
+ * {@link openMemoryDuckDb}, so the budgets above apply everywhere — and
+ * `test/duckdb-openers.test.ts` holds that true, because the first attempt at
+ * this refactor missed two call sites to a `grep | head` and nothing noticed.
+ */
 export function openDuckDb(path: string): Promise<DuckDBInstance> {
   return DuckDBInstance.create(path, duckDbConfig());
+}
+
+/** The in-memory case (tests, the migration tool's drift check). */
+export function openMemoryDuckDb(): Promise<DuckDBInstance> {
+  return DuckDBInstance.create(":memory:", duckDbConfig());
 }

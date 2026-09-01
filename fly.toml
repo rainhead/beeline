@@ -12,6 +12,27 @@
 app = "beeline"
 primary_region = "sea"        # Seattle: the atlases and their volunteers are PNW
 
+# These two are top-level keys and MUST stay above the first [table] header:
+# in TOML a bare key belongs to whichever table most recently opened, so
+# writing them at the foot of the file silently buries them inside
+# [[http_service.checks]], where Fly never reads them and the default 5s
+# applies. Verified by parsing fly.toml, not by reading it.
+#
+# DuckDB must checkpoint and close cleanly: <= 1.5.5 can leave the file
+# unopenable when DDL reaches the WAL uncheckpointed (beeline-c1b,
+# duckdb/duckdb#18259). Five seconds is not enough, and host maintenance
+# restarts machines without much warning, so this fires eventually.
+# main.ts handles both SIGINT and SIGTERM.
+kill_signal = "SIGTERM"
+kill_timeout = "120s"
+
+# Also top-level, and for the same reason: `swap_size_mb` is not a [[vm]] key.
+# Written there it is dropped silently — `fly config show` rendered a machine
+# with no swap at all while validate reported the file valid. DuckDB's
+# memory_limit governs only DuckDB; the Node heap (GeoTIFF tiles in
+# elevation:derive, a large CSV export) is what swap is actually for.
+swap_size_mb = 1024
+
 [build]
 
 [env]
@@ -73,14 +94,6 @@ primary_region = "sea"        # Seattle: the atlases and their volunteers are PN
     # change logs before it listens.
     grace_period = "60s"
 
-# DuckDB must checkpoint and close cleanly: <= 1.5.5 can leave the file
-# unopenable when DDL reaches the WAL uncheckpointed (beeline-c1b,
-# duckdb/duckdb#18259). Five seconds — the default — is not enough, and host
-# maintenance restarts machines without much warning, so this fires eventually.
-# main.ts handles both SIGINT and SIGTERM.
-kill_signal = "SIGTERM"
-kill_timeout = "120s"
-
 [[vm]]
   # Measured, not guessed. Serving settles at 54–62 MB RSS; the heaviest batch
   # work completes with DuckDB capped at 244 MiB. Two vCPUs stay because the
@@ -88,4 +101,3 @@ kill_timeout = "120s"
   # QC union.
   size = "shared-cpu-2x"
   memory = "1gb"
-  swap_size_mb = 1024

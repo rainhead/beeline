@@ -1,5 +1,5 @@
-import { DuckDBInstance } from "@duckdb/node-api";
 import { createWriteStream } from "node:fs";
+import { openDuckDb } from "./db.js";
 import { mkdir, rm, rename } from "node:fs/promises";
 import { Readable } from "node:stream";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
@@ -73,7 +73,7 @@ export function glo30Url(key: string): string {
 }
 
 export async function neededTiles(dbPath: string): Promise<string[]> {
-  const instance = await DuckDBInstance.create(dbPath);
+  const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
   const rows = (await (
     await conn.run(
@@ -129,7 +129,9 @@ async function fetchTile(
 
 // CLI: pnpm elevation:fetch [db] [demDir]
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const dbPath = process.argv[2] ?? "beeline.duckdb";
+  // BEELINE_DB before the bare default (see db:migrate): with the store on a
+  // mounted volume, a bare run would otherwise open an empty one beside the app.
+  const dbPath = process.argv[2] ?? process.env.BEELINE_DB ?? "beeline.duckdb";
   const demDir = process.argv[3] ?? "data/dem";
   await mkdir(demDir, { recursive: true });
   const needed = await neededTiles(dbPath);

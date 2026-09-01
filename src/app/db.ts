@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Kysely } from "kysely";
-import { createKysely } from "../db.js";
+import { createKysely, openDuckDb } from "../db.js";
 import type { Database } from "../model.js";
 import type { AppConfig } from "./config.js";
 
@@ -158,7 +158,7 @@ export interface AppDb {
  * config only permits that in development.
  */
 export async function openAppDb(config: Pick<AppConfig, "dbPath" | "privateDbPath" | "privateDbKey">): Promise<AppDb> {
-  const instance = await DuckDBInstance.create(config.dbPath);
+  const instance = await openDuckDb(config.dbPath);
   await attachPrivateStore(instance, { path: config.privateDbPath, key: config.privateDbKey });
   const db = createKysely(instance);
   return {

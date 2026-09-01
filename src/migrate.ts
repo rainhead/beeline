@@ -1,4 +1,5 @@
-import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { DuckDBConnection } from "@duckdb/node-api";
+import { openDuckDb } from "./db.js";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -164,7 +165,13 @@ export async function schemaDrift(conn: DuckDBConnection): Promise<string[]> {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const args = process.argv.slice(2);
   const flags = new Set(args.filter((a) => a.startsWith("--")));
-  const target = args.find((a) => !a.startsWith("--")) ?? "beeline.duckdb";
+  // BEELINE_DB before the bare default, as promotion already reads it. A
+  // deployment that names its store somewhere other than the working
+  // directory — the Fly machine keeps it on the mounted volume — would
+  // otherwise have `pnpm db:migrate` silently CREATE an empty database beside
+  // the app and migrate that one, reporting success while the real store
+  // stayed untouched. An explicit argument still wins over both.
+  const target = args.find((a) => !a.startsWith("--")) ?? process.env.BEELINE_DB ?? "beeline.duckdb";
   const unknown = [...flags].filter((f) => !["--status", "--baseline", "--check"].includes(f));
   if (unknown.length > 0) {
     console.error(`unknown flag(s): ${unknown.join(", ")}`);
@@ -172,7 +179,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   }
 
   // Nothing else may hold the database open (ADR 0005): stop the app first.
-  const instance = await DuckDBInstance.create(target);
+  const instance = await openDuckDb(target);
   const conn = await instance.connect();
   try {
     if (flags.has("--status")) {

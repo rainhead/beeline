@@ -1,4 +1,5 @@
-import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { DuckDBConnection } from "@duckdb/node-api";
+import { openDuckDb } from "./db.js";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
@@ -44,7 +45,7 @@ export async function loadLegacyStaging(conn: DuckDBConnection, jsonlPath: strin
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const dbPath = process.argv[2] ?? "beeline.duckdb";
   const jsonlPath = process.argv[3] ?? "data/legacy/occurrences.jsonl.gz";
-  const instance = await DuckDBInstance.create(dbPath);
+  const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
   const staged = await loadLegacyStaging(conn, jsonlPath);
   conn.closeSync();

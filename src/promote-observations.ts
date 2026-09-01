@@ -1,4 +1,5 @@
-import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { DuckDBConnection } from "@duckdb/node-api";
+import { openDuckDb } from "./db.js";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
@@ -114,7 +115,7 @@ export async function promoteObservations(
 // CLI: pnpm inat:promote [db]
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const dbPath = process.argv[2] ?? DEFAULT_DB;
-  const instance = await DuckDBInstance.create(dbPath);
+  const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
   const counts = await promoteObservations(conn);
   // A login iNaturalist has renamed is a change to a person; the nightly job

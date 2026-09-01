@@ -1,4 +1,4 @@
-import { DuckDBInstance } from "@duckdb/node-api";
+import { openDuckDb } from "./db.js";
 import { pathToFileURL } from "node:url";
 
 /**
@@ -41,7 +41,7 @@ const EXCLUSIONS = [
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const dbPath = process.argv[2] ?? "beeline.duckdb";
-  const instance = await DuckDBInstance.create(dbPath);
+  const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
   const q = async (sql: string) => (await (await conn.run(sql)).getRows()) as unknown[][];
 

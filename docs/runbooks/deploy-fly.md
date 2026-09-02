@@ -46,10 +46,20 @@ with the limit at 244 MiB, 16% slower than uncapped.
 
 ## One-time setup
 
-Off-host first: DNS for `beeline.beeatlas.net` is CDK-managed in the
+Off-host first: the iNat OAuth app. There is one, called **Beeline**, and it
+holds exactly **one** redirect URI — iNaturalist does not take a list, despite
+Doorkeeper supporting them elsewhere. It currently reads
+`https://beeline.fly.dev/auth/inat/callback`, which is why `BEELINE_ORIGIN` in
+`fly.toml` is the `.fly.dev` hostname and not the eventual one. The two move
+together or not at all: `BEELINE_ORIGIN` is concatenated into the
+`redirect_uri` (`src/app/auth.tsx`), and iNat matches it exactly, on the token
+exchange as well as the authorize redirect — so a mismatch fails *after* the
+person has signed in and shows only the generic sign-in failure page.
+`configFromEnv` refuses a non-bare origin at boot for the same reason.
+
+DNS comes later, at cutover: `beeline.beeatlas.net` is CDK-managed in the
 **beeatlas** repo — add records there and `cdk deploy`, never hand-edit Route
-53. Register the instance's own iNat OAuth app with callback
-`https://beeline.beeatlas.net/auth/inat/callback`.
+53 — and the OAuth app's redirect URI changes to match in the same sitting.
 
 ```sh
 fly apps create beeline --org osu-mm          # done

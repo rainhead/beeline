@@ -37,7 +37,14 @@ swap_size_mb = 1024
 
 [env]
   BEELINE_ENV = "sandbox"
-  BEELINE_ORIGIN = "https://beeline.beeatlas.net"
+  # The iNat OAuth app ("Beeline") holds exactly ONE redirect URI — iNat does
+  # not take a list — and it currently reads
+  # https://beeline.fly.dev/auth/inat/callback. So this is the live origin,
+  # not the eventual one: it builds the redirect_uri (src/app/auth.tsx), and a
+  # value that disagrees with the registration fails at the token exchange,
+  # after the person has already signed in at iNaturalist. At cutover this and
+  # the app's redirect URI move to the real hostname together, or neither.
+  BEELINE_ORIGIN = "https://beeline.fly.dev"
   PORT = "3054"
 
   # Everything else the app reads from data/ is relative to the working

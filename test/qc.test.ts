@@ -259,12 +259,71 @@ describe("QC findings and printability", () => {
     }
   });
 
-  test("coordinate uncertainty over 250 m blocks printing", async () => {
+  test("coordinate uncertainty over the limit blocks printing", async () => {
+    // The fixture collects on 2026-07-14, before the rule changed, so this is
+    // held to the grandfathered 250 m and the flag says so.
     const id = await insertCleanSample(conn, {}, { coordinate_uncertainty_m: "500" });
     expect(await findings(id)).toEqual([
       { rule: "coordinate_uncertainty", details: "500 m > 250 m" },
     ]);
     expect(await isPrintable(id)).toBe(false);
+  });
+
+  // 100 m is the rule and always was — three decimal places of latitude, which
+  // is what a GPS reports (#22). It could not be applied backwards: for older
+  // records the specimens have often left the collector's hands, so the pin
+  // can no longer be corrected and a flag would demand the impossible. So the
+  // limit is a function of when the sample was collected, and both halves of
+  // that need holding down.
+  describe("the coordinate limit depends on when the sample was collected", () => {
+    const dayBefore = "DATE '2026-09-01'";
+    const dayOf = "DATE '2026-09-02'"; // coordinate_precision_rule.effective_from
+
+    test("160 m is fine on a record collected before the change", async () => {
+      const id = await insertCleanSample(
+        conn,
+        { date_start: dayBefore, date_end: dayBefore },
+        { coordinate_uncertainty_m: "160" },
+      );
+      expect(await findings(id)).toEqual([]);
+      expect(await isPrintable(id)).toBe(true);
+    });
+
+    test("the same 160 m blocks a record collected on the day it changed", async () => {
+      const id = await insertCleanSample(
+        conn,
+        { date_start: dayOf, date_end: dayOf },
+        { coordinate_uncertainty_m: "160" },
+      );
+      expect(await findings(id)).toEqual([
+        { rule: "coordinate_uncertainty", details: "160 m > 100 m" },
+      ]);
+      expect(await isPrintable(id)).toBe(false);
+    });
+
+    test("90 m is fine under either limit", async () => {
+      for (const day of [dayBefore, dayOf]) {
+        const id = await insertCleanSample(
+          conn,
+          { date_start: day, date_end: day },
+          { coordinate_uncertainty_m: "90" },
+        );
+        expect(await findings(id), day).toEqual([]);
+      }
+    });
+
+    // Judged on date_end for the reason settled_sample is (schema/160): a trap
+    // line that ran across the boundary belongs to the day it was emptied.
+    test("a trap line spanning the change is judged by when it was emptied", async () => {
+      const id = await insertCleanSample(
+        conn,
+        { kind: "'trap'", date_start: dayBefore, date_end: dayOf },
+        { coordinate_uncertainty_m: "160" },
+      );
+      expect(await findings(id)).toEqual([
+        { rule: "coordinate_uncertainty", details: "160 m > 100 m" },
+      ]);
+    });
   });
 
   test("a coordinate outside North America blocks, on a record that claims to be in it", async () => {

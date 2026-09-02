@@ -164,13 +164,51 @@ LEFT JOIN atlas_region reg ON reg.state_province = s.state_province
 WHERE s.state_province IS NOT NULL
   AND (reg.state_province IS NULL OR (s.country IS NOT NULL AND s.country <> reg.country));
 
+-- How precise a coordinate has to be before a label may carry it, and from
+-- when. Two numbers, because the rule changed and could not change
+-- retroactively (#22).
+--
+-- 100 m is the answer and always was: it is the resolution of three decimal
+-- places of latitude, which is what a GPS reports (Andony, 2026-08-31). The
+-- 250 m that had been in force was a transcription error, not a decision.
+--
+-- It cannot be applied backwards. A volunteer can tighten the pin on their
+-- own iNaturalist observation and the next sync picks it up — but only while
+-- they still have the specimens, and for older records the bees have often
+-- long since left their possession. Blocking those would demand a correction
+-- nobody is able to make. So a sample is judged by the limit in force when it
+-- was collected, and records predating the change keep 250 m for good.
+--
+-- Judged on date_end, for the reason settled_sample is (schema/160): a trap
+-- line that ran across the boundary belongs to the season it was emptied in.
+CREATE VIEW coordinate_precision_rule AS
+SELECT 100 AS uncertainty_m,
+       250 AS grandfathered_uncertainty_m,
+       DATE '2026-09-02' AS effective_from;
+COMMENT ON VIEW coordinate_precision_rule IS 'One row: the coordinate uncertainty a label may carry, the looser limit records predating the change keep, and the date dividing them (#22).';
+
+-- The limit that applies to one sample, named once so the rule below and
+-- anything else that has to explain itself to a volunteer agree about it.
+CREATE VIEW sample_coordinate_limit AS
+SELECT s.entity_id AS sample_id,
+       CASE WHEN s.date_end >= r.effective_from
+            THEN r.uncertainty_m
+            ELSE r.grandfathered_uncertainty_m END AS uncertainty_m
+FROM sample s
+CROSS JOIN coordinate_precision_rule r;
+COMMENT ON VIEW sample_coordinate_limit IS 'Per sample: the coordinate uncertainty above which it cannot be printed, which depends on when it was collected.';
+
 CREATE VIEW qc_rule_coordinate_uncertainty AS
 SELECT loc.sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'coordinate_uncertainty' AS rule_name,
-       concat(loc.coordinate_uncertainty_m, ' m > 250 m') AS details
+       -- Names the limit that applied, not a constant: two are in force, and
+       -- a volunteer reading the flag needs to know which one their record
+       -- was held to.
+       concat(loc.coordinate_uncertainty_m, ' m > ', lim.uncertainty_m, ' m') AS details
 FROM sample_location loc
-WHERE loc.coordinate_uncertainty_m > 250;
+JOIN sample_coordinate_limit lim ON lim.sample_id = loc.sample_id
+WHERE loc.coordinate_uncertainty_m > lim.uncertainty_m;
 
 -- A coordinate that cannot be where the record says it is: outside North
 -- America and its waters, on a record whose own country is a North American

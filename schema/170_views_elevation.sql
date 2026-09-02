@@ -44,10 +44,21 @@ WHERE elevation_m IS NOT NULL
 -- 100 m (Peter, 2026-08-27). Below it the vertical error a horizontal slop
 -- can hide is smaller than a label needs; well above it the DEM still returns
 -- a confident integer that constrains nothing — the worst in the corpus is a
--- 2,979 km uncertainty carrying a 260 m elevation (beeline-6vc). Note this is
--- *tighter* than the 250 m at which qc_rule_coordinate_uncertainty blocks
--- printing: an elevation is a stricter claim than a locality string, so a
--- record can be precise enough to print and too vague to be given a height.
+-- 2,979 km uncertainty carrying a 260 m elevation (beeline-6vc).
+--
+-- This used to be *tighter* than printing's 250 m, and the note here said so:
+-- an elevation being a stricter claim than a locality string, a record could
+-- be precise enough to print and too vague to be given a height. That gap has
+-- closed from the other side. Printing now demands 100 m too (#22, and it was
+-- always meant to), so for anything collected from that rule's effective date
+-- the two coincide and no such record exists. It survives only among the
+-- grandfathered ones, which keep 250 m for printing and are still refused an
+-- elevation between 100 m and 250 m.
+--
+-- The numbers agreeing is a coincidence of two arguments reaching the same
+-- place, not one threshold read twice: this one is about vertical relief, the
+-- other about the resolution of a GPS reading. They are kept apart
+-- deliberately, so that moving one does not silently move the other.
 CREATE VIEW elevation_derivation_limit AS
 SELECT 100 AS coordinate_uncertainty_m;
 

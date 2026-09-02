@@ -222,6 +222,19 @@ export interface SampleElevationStaleView {
 }
 
 /** schema/170: how vague a coordinate may be and still deserve an elevation. */
+/** schema/120: the coordinate precision a label may carry, and from when (#22). */
+export interface CoordinatePrecisionRuleView {
+  uncertainty_m: number;
+  grandfathered_uncertainty_m: number;
+  effective_from: Date;
+}
+
+/** schema/120: the limit that applies to one sample, which depends on when it was collected. */
+export interface SampleCoordinateLimitView {
+  sample_id: number;
+  uncertainty_m: number;
+}
+
 export interface ElevationDerivationLimitView {
   coordinate_uncertainty_m: number;
 }
@@ -624,6 +637,8 @@ export interface Database {
   sample_primary_collector_invalid: SamplePrimaryCollectorInvalidView;
   sample_atlas: SampleAtlasTable;
   elevation_derivation_limit: ElevationDerivationLimitView;
+  coordinate_precision_rule: CoordinatePrecisionRuleView;
+  sample_coordinate_limit: SampleCoordinateLimitView;
   observation_locality: ObservationLocalityView;
   observation_sample_candidate: ObservationSampleCandidateView;
   observation_sample_unusable: ObservationSampleUnusableView;

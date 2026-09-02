@@ -114,6 +114,21 @@ boot; sessions and volunteer tokens are acceptable losses pre-cutover.
 `fly deploy`. The machine is replaced in place: migrations run, then the app
 starts. Downtime is one boot.
 
+Two things about the **first** deploy that look like failures and are not, or
+are not yours:
+
+**Deploying into maintenance mode always "fails".** `fly deploy --env
+BEELINE_MAINTENANCE=1` ends with `timeout reached waiting for health checks to
+pass`, because the app deliberately is not listening. The machine and the
+volume are created correctly regardless — check with `fly machine list` and
+`fly logs` rather than believing the exit code.
+
+**IP allocation can fail on a first deploy.** Ours did, with an internal error
+(`org_slug is only supported with private_v6 type`), leaving the app with no
+addresses and `beeline.fly.dev` unresolvable. `fly ips allocate-v6` and
+`fly ips allocate-v4 --shared` fixed it in one go. Check `fly ips list` if the
+hostname does not resolve.
+
 ## Running a CLI against the store
 
 The store is reachable only from inside the single machine that also runs the
@@ -161,9 +176,80 @@ and `data/sample-state.csv`: they sit outside the blow-away path precisely
 because a rebuild must not lose them, and
 [ADR 0007](../adr/0007-authored-changes-are-events.md)'s whole argument is
 that a history a rebuild erases answers "who changed this" with "nobody, we
-rebuilt it". A volume failure would answer it the same way. They total about
-250 KB, so an off-host copy costs nothing — and it is a prerequisite for
-trusting this hosting, not a phase-7 item.
+rebuilt it". A volume failure would answer it the same way.
+
+So those five are copied off the volume by
+[`scripts/backup-authored-files.sh`](../../scripts/backup-authored-files.sh),
+which pulls them over `fly ssh sftp`, checks each against a `sha256sum` taken
+on the machine, and writes one gzipped tarball per run (~1.7 MB). A file that
+does not transfer intact fails the whole run and writes nothing, because a
+truncated backup is worse than a missing one — it looks like a backup.
+`beeline.duckdb` is deliberately not included: at 211 MB it would turn a cheap
+frequent job into an expensive occasional one, and unlike these it can be
+re-derived by re-ingestion.
+
+It **pulls** rather than pushes, so the Fly machine holds no credential and
+cannot reach the backup host — a compromised app cannot touch the history.
+The credential lives on the host that runs the job, and
+`fly tokens create ssh --app beeline` scopes it to SSH on that one app:
+
+**Give the token an expiry.** flyctl's default is `175200h` — twenty years —
+which is not a credential anyone should leave on a cron host. The script
+refuses to run without `FLY_API_TOKEN` rather than falling back to whatever
+`fly auth login` left behind, because that fallback is very likely a personal
+credential with rights over every app in the org, and an unattended job would
+use it without anyone noticing. (`BEELINE_BACKUP_AMBIENT_AUTH=1` overrides
+that for an interactive run.) The token is passed in the environment and never
+as `--access-token`, which would put it in `ps` for every user on the host.
+
+```sh
+fly tokens create ssh --app beeline --expiry 2160h   # 90 days
+```
+
+Store it mode 600, and **`export` it** — cron sources the file and then runs
+the script as a child, so a bare assignment would not reach it and the token
+check would fail every night:
+
+```sh
+# ~/.config/beeline/backup-env   (chmod 600)
+export FLY_API_TOKEN='FlyV1 fm2_...'
+```
+
+Then, on maderas, a little after the 02:00 nightly so each day's writes are
+captured, and clear of the 03:00 beeatlas job:
+
+```cron
+MAILTO=you@example.com
+30 2 * * *  mkdir -p $HOME/.local/state && . $HOME/.config/beeline/backup-env && $HOME/dev/beeline/scripts/backup-authored-files.sh >> $HOME/.local/state/beeline-backup.log
+```
+
+The `mkdir` is not decoration. The shell opens the redirect *before* it runs
+the script, so a missing `~/.local/state` — hardly guaranteed on an older
+account — means the backup never runs at all, every night, and what arrives is
+a redirection error rather than anything about backups.
+
+The redirect is what makes the mail worth reading: cron mails **captured
+output**, not failing exit codes, and this script prints the archive path on
+every successful run. Left alone it would mail nightly, which is how a person
+learns to filter it, which is how the one night it mattered goes unread.
+Sending stdout to a log leaves only stderr, and stderr means something went
+wrong.
+
+That still depends on the host having a working mail transport and a `MAILTO`
+that reaches somebody — neither is a given. So the check that does not depend
+on any of it is the age of the newest archive:
+
+```sh
+find ~/beeline-backups -name 'beeline-authored-*.tar.gz' -mtime -2 | head -1   # silence = stale
+```
+
+Diarised: the token expires after 90 days and the job starts failing when it
+does, which is the shape to want — a credential that silently outlived its
+purpose would be worse.
+
+Restoring is `tar -xzf` and putting the files back under `/app/data` in
+maintenance mode. Verify a backup by extracting it, not by trusting the run
+that made it.
 
 ## What stays on maderas
 

@@ -220,8 +220,13 @@ captured, and clear of the 03:00 beeatlas job:
 
 ```cron
 MAILTO=you@example.com
-30 2 * * *  . $HOME/.config/beeline/backup-env && $HOME/dev/beeline/scripts/backup-authored-files.sh >> $HOME/.local/state/beeline-backup.log
+30 2 * * *  mkdir -p $HOME/.local/state && . $HOME/.config/beeline/backup-env && $HOME/dev/beeline/scripts/backup-authored-files.sh >> $HOME/.local/state/beeline-backup.log
 ```
+
+The `mkdir` is not decoration. The shell opens the redirect *before* it runs
+the script, so a missing `~/.local/state` — hardly guaranteed on an older
+account — means the backup never runs at all, every night, and what arrives is
+a redirection error rather than anything about backups.
 
 The redirect is what makes the mail worth reading: cron mails **captured
 output**, not failing exit codes, and this script prints the archive path on

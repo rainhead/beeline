@@ -114,6 +114,21 @@ boot; sessions and volunteer tokens are acceptable losses pre-cutover.
 `fly deploy`. The machine is replaced in place: migrations run, then the app
 starts. Downtime is one boot.
 
+Two things about the **first** deploy that look like failures and are not, or
+are not yours:
+
+**Deploying into maintenance mode always "fails".** `fly deploy --env
+BEELINE_MAINTENANCE=1` ends with `timeout reached waiting for health checks to
+pass`, because the app deliberately is not listening. The machine and the
+volume are created correctly regardless — check with `fly machine list` and
+`fly logs` rather than believing the exit code.
+
+**IP allocation can fail on a first deploy.** Ours did, with an internal error
+(`org_slug is only supported with private_v6 type`), leaving the app with no
+addresses and `beeline.fly.dev` unresolvable. `fly ips allocate-v6` and
+`fly ips allocate-v4 --shared` fixed it in one go. Check `fly ips list` if the
+hostname does not resolve.
+
 ## Running a CLI against the store
 
 The store is reachable only from inside the single machine that also runs the
@@ -161,9 +176,31 @@ and `data/sample-state.csv`: they sit outside the blow-away path precisely
 because a rebuild must not lose them, and
 [ADR 0007](../adr/0007-authored-changes-are-events.md)'s whole argument is
 that a history a rebuild erases answers "who changed this" with "nobody, we
-rebuilt it". A volume failure would answer it the same way. They total about
-250 KB, so an off-host copy costs nothing — and it is a prerequisite for
-trusting this hosting, not a phase-7 item.
+rebuilt it". A volume failure would answer it the same way.
+
+So those five are copied off the volume by
+[`scripts/backup-authored-files.sh`](../../scripts/backup-authored-files.sh),
+which pulls them over `fly ssh sftp`, checks each against a `sha256sum` taken
+on the machine, and writes one gzipped tarball per run (~1.7 MB). A file that
+does not transfer intact fails the whole run and writes nothing, because a
+truncated backup is worse than a missing one — it looks like a backup.
+`beeline.duckdb` is deliberately not included: at 211 MB it would turn a cheap
+frequent job into an expensive occasional one, and unlike these it can be
+re-derived by re-ingestion.
+
+It **pulls** rather than pushes, so the Fly machine holds no credential and
+cannot reach the backup host — a compromised app cannot touch the history.
+The credential lives on the host that runs the job, and
+`fly tokens create ssh --app beeline` scopes it to SSH on that one app:
+
+```sh
+fly tokens create ssh --app beeline          # -> FLY_API_TOKEN on the backup host
+scripts/backup-authored-files.sh ~/beeline-backups
+```
+
+Restoring is `tar -xzf` and putting the files back under `/app/data` in
+maintenance mode. Verify a backup by extracting it, not by trusting the run
+that made it.
 
 ## What stays on maderas
 

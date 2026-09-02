@@ -22,6 +22,25 @@
 #         BEELINE_FLY_APP=beeline  FLY_API_TOKEN=...  BEELINE_BACKUP_KEEP=30
 set -eu
 
+# Before anything is created. These files are people: names, account bindings,
+# who changed what. Inheriting a caller's 022 would leave the archive readable
+# by every other local user on the host that runs this.
+umask 077
+
+# The scoped token, insisted on rather than hoped for. flyctl would otherwise
+# fall back to whatever `fly auth login` left in ~/.fly — quite possibly a
+# personal credential with rights over every app in the org — and an
+# unattended job would use it without anyone noticing. Deliberately NOT passed
+# as --access-token: a global flag is visible in `ps` to every user on the
+# host, and flyctl already reads this variable ahead of its own config.
+if [ -z "${FLY_API_TOKEN:-}" ] && [ "${BEELINE_BACKUP_AMBIENT_AUTH:-}" != "1" ]; then
+  echo "error: FLY_API_TOKEN is not set." >&2
+  echo "  Mint one scoped to SSH on this app, and give it an expiry — the default is 20 years:" >&2
+  echo "    fly tokens create ssh --app beeline --expiry 2160h" >&2
+  echo "  To use your own logged-in credentials instead, set BEELINE_BACKUP_AMBIENT_AUTH=1." >&2
+  exit 2
+fi
+
 APP="${BEELINE_FLY_APP:-beeline}"
 DEST="${1:-${BEELINE_BACKUP_DIR:-$HOME/beeline-backups}}"
 KEEP="${BEELINE_BACKUP_KEEP:-30}"
@@ -30,8 +49,12 @@ REMOTE_DIR=/app/data
 FILES="corrections.csv person-overlay.csv person-change.csv sample-change.csv sample-state.csv"
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
-work="$DEST/.incoming-$stamp"
-mkdir -p "$work"
+mkdir -p "$DEST"
+# mktemp, not the timestamp: it has one-second precision, so two runs starting
+# together would share a working directory and each one's cleanup trap would
+# delete the other's files mid-transfer. The archive carries the pid for the
+# same reason.
+work=$(mktemp -d "$DEST/.incoming-XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 # One remote call for every checksum rather than one per file: each `fly ssh`
@@ -66,7 +89,7 @@ if [ -n "$failed" ]; then
   exit 1
 fi
 
-archive="$DEST/beeline-authored-$stamp.tar.gz"
+archive="$DEST/beeline-authored-$stamp-$$.tar.gz"
 tar -czf "$archive" -C "$work" $FILES
 echo "$(du -h "$archive" | cut -f1)	$archive"
 

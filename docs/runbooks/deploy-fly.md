@@ -193,10 +193,29 @@ cannot reach the backup host — a compromised app cannot touch the history.
 The credential lives on the host that runs the job, and
 `fly tokens create ssh --app beeline` scopes it to SSH on that one app:
 
+**Give the token an expiry.** flyctl's default is `175200h` — twenty years —
+which is not a credential anyone should leave on a cron host. The script
+refuses to run without `FLY_API_TOKEN` rather than falling back to whatever
+`fly auth login` left behind, because that fallback is very likely a personal
+credential with rights over every app in the org, and an unattended job would
+use it without anyone noticing. (`BEELINE_BACKUP_AMBIENT_AUTH=1` overrides
+that for an interactive run.) The token is passed in the environment and never
+as `--access-token`, which would put it in `ps` for every user on the host.
+
 ```sh
-fly tokens create ssh --app beeline          # -> FLY_API_TOKEN on the backup host
-scripts/backup-authored-files.sh ~/beeline-backups
+fly tokens create ssh --app beeline --expiry 2160h   # 90 days
 ```
+
+Store it mode 600 and have cron read it — on maderas, a little after the 02:00
+nightly so each day's writes are captured, and clear of the 03:00 beeatlas job:
+
+```cron
+30 2 * * *  . $HOME/.config/beeline/backup-env && $HOME/dev/beeline/scripts/backup-authored-files.sh
+```
+
+The run exits non-zero if any file fails to arrive intact, so cron mails you.
+Diarised: the token expires and the job starts failing when it does, which is
+the intended shape — a silent expiry would be worse.
 
 Restoring is `tar -xzf` and putting the files back under `/app/data` in
 maintenance mode. Verify a backup by extracting it, not by trusting the run

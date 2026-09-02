@@ -162,6 +162,32 @@ To restore one, boot into maintenance mode and move it back over
 `beeline.duckdb` — **and delete any `beeline.duckdb.wal` beside it first**, or
 DuckDB replays the newer WAL onto the older file.
 
+## Knowing the nightly is running
+
+`/healthz` proves the store is readable, and Fly restarts the machine when it
+fails — which is why job staleness is **not** on it. Restarting is the wrong
+answer to a job that failed, and on a bad night it would loop.
+
+`/healthz/jobs` is the one to poll: `ok` when every registered job is healthy,
+503 with a line per problem otherwise. It distinguishes `failing` (the last run
+happened and did not work — no waiting period, this is true now), `overdue`
+(nothing has succeeded in two full periods, so the scheduler or the machine is
+the suspect) and `never-run` (registered but never scheduled, which is a
+half-finished deployment rather than a breakage). Unauthenticated: job names
+are already public in this repo and no record data passes through it.
+
+Polled from maderas beside the backup, so a silent stall reaches somebody:
+
+```cron
+*/20 * * * * curl -fsS https://beeline.fly.dev/healthz/jobs >/dev/null
+```
+
+`curl -f` exits non-zero and prints the body on 503, which is what cron mails.
+
+This exists because the nightly failed on every run for about half a day and
+nothing said so (beeline-6td): `job_run` recorded it and `/jobs` displayed it,
+to an admin who went looking. It was found by accident.
+
 ## Backups
 
 Fly's own advice is that an app should have two volumes and that snapshots are

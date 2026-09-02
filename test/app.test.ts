@@ -34,6 +34,71 @@ describe("app scaffold", () => {
     expect(res.status).toBe(200);
   });
 
+  // beeline-2c3.17. Fly restarts a machine whose health check fails, so this
+  // has to fail exactly when a restart is the right answer — and a process
+  // listening happily over a store it cannot read is that case. It used to
+  // answer `ok` from a bare handler, which could not tell the two apart.
+  it("the health check reads the store, and says so when it cannot", async () => {
+    const { instance, conn } = await createMemoryDb();
+    const db = createKysely(instance);
+    const app = createApp({
+      db,
+      config: { environment: "development" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: noSession,
+    });
+    expect((await app.request("/healthz")).status).toBe(200);
+
+    // Close the store under the running app — the shape of the real failure:
+    // the process is up and listening, and the database is not there for it.
+    conn.closeSync();
+    instance.closeSync();
+    const res = await app.request("/healthz");
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain("store unreadable");
+  });
+
+  // beeline-6td: deliberately a separate endpoint from /healthz. A stale job
+  // must never restart the machine — that loses the running process to fix
+  // something a restart cannot fix.
+  it("job staleness is reported apart from liveness, and never fails /healthz", async () => {
+    const { instance, conn } = await createMemoryDb();
+    const db = createKysely(instance);
+    const jobs = [{
+      name: "nightly-pipeline",
+      schedule: { kind: "dailyLA" as const, hour: 2 },
+      window: "night" as const,
+      run: async () => {},
+    }];
+    const app = createApp({
+      db,
+      config: { environment: "development" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: noSession,
+      jobs: { list: jobs, runNow: async () => false },
+    });
+
+    // Never run: a registered job with no history at all.
+    let res = await app.request("/healthz/jobs");
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain("nightly-pipeline: never-run");
+
+    await conn.run(`INSERT INTO job_run (job_name, started_at, completed_at, outcome, detail)
+                    VALUES ('nightly-pipeline', now() - INTERVAL 2 HOUR, now(), 'succeeded', '48 fetched')`);
+    expect((await app.request("/healthz/jobs")).status).toBe(200);
+
+    await conn.run(`INSERT INTO job_run (job_name, started_at, completed_at, outcome, detail)
+                    VALUES ('nightly-pipeline', now(), now(), 'failed', 'Out of Memory Error: 8.0 MiB')`);
+    res = await app.request("/healthz/jobs");
+    expect(res.status).toBe(503);
+    const body = await res.text();
+    expect(body).toContain("nightly-pipeline: failing");
+    expect(body).toContain("Out of Memory");
+
+    // The whole point: liveness is untouched by any of that.
+    expect((await app.request("/healthz")).status).toBe(200);
+  });
+
   it("tokens stylesheet is public and carries MD3 color roles", async () => {
     const app = await appOnMemoryDb(null);
     const res = await app.request("/tokens.css");

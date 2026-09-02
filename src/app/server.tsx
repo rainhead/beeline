@@ -13,7 +13,7 @@ import { deleteSession, endSessionsFor, SESSION_COOKIE, type AppEnv, type Sessio
 import { resolveActing, startActing, stopActing } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
-import type { Job } from "./jobs/framework.js";
+import { jobHealth, type Job, type LastOutcome } from "./jobs/framework.js";
 import { Glossary } from "./views/glossary.js";
 import { Jobs } from "./views/jobs.js";
 import { PersonPage, Roster } from "./views/roster.js";
@@ -171,7 +171,61 @@ export function createApp({
   });
 
   // --- Public surface: assets, liveness, and the way in. ---
-  app.get("/healthz", (c) => c.text("ok"));
+  // Liveness, and it has to mean something: Fly restarts a machine whose
+  // health check fails, so this must fail exactly when a restart is the right
+  // answer. A process that is listening but cannot read its own store is
+  // precisely that case, and `ok` from a bare handler was not it
+  // (beeline-2c3.17) — the store could be missing, locked by a second writer,
+  // or a file the app never opened, and this would have said ok throughout.
+  app.get("/healthz", async (c) => {
+    try {
+      await db.selectFrom("qc_rule").select("name").limit(1).execute();
+      return c.text("ok");
+    } catch (err) {
+      // Named, not swallowed: this is the one page that exists to say why.
+      return c.text(`store unreadable: ${(err as Error).message}`, 503);
+    }
+  });
+
+  // Job staleness, deliberately NOT part of /healthz (beeline-6td). Fly acts
+  // on that endpoint by restarting the machine, and restarting is the wrong
+  // response to a job that failed — it would lose the running process to fix
+  // something a restart cannot fix, and on a bad night would loop. So this is
+  // its own endpoint, which nothing on Fly polls and an external checker does.
+  //
+  // Unauthenticated because job names are already public in this repo and no
+  // record data passes through here; what it exposes is whether ingestion is
+  // running, which is the thing somebody outside needs to be able to ask.
+  app.get("/healthz/jobs", async (c) => {
+    const rows = await db
+      .selectFrom("job_run")
+      .select(["job_name", "started_at", "completed_at", "outcome", "detail"])
+      .orderBy("started_at", "desc")
+      .execute();
+    const last = new Map<string, LastOutcome>();
+    for (const r of rows) {
+      const seen = last.get(r.job_name);
+      if (seen === undefined) {
+        last.set(r.job_name, {
+          started: r.started_at,
+          succeeded: r.outcome === "succeeded" ? r.started_at : null,
+          outcome: r.outcome as LastOutcome["outcome"],
+          detail: r.detail,
+        });
+      } else if (seen.succeeded === null && r.outcome === "succeeded") {
+        seen.succeeded = r.started_at;
+      }
+    }
+    const health = jobHealth(jobsDep.list, last, new Date());
+    const wrong = health.filter((h) => h.problem !== null);
+    if (wrong.length === 0) return c.text("ok");
+    // One line per problem, the job named first: this is read by a cron job
+    // and by whoever it mails, so it has to survive being quoted in an email.
+    const body = wrong
+      .map((h) => `${h.name}: ${h.problem}${h.detail === null ? "" : ` — ${h.detail.split("\n")[0]}`}`)
+      .join("\n");
+    return c.text(body, 503);
+  });
   // The default seed is computed once; `?seed=` regenerates on demand so
   // per-atlas colorways can be proofed at /design/identity (beeline-2c3.12).
   app.get("/tokens.css", (c) => {

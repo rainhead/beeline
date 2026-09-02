@@ -27,6 +27,22 @@ describe("configFromEnv deploy safety", () => {
     expect(config.origin).toBe("https://beeline.example");
   });
 
+  // The origin is concatenated into the OAuth redirect_uri, which iNaturalist
+  // matches against its one registered URI exactly — and it is checked on the
+  // token exchange as well as the authorize redirect, so a bad one fails
+  // AFTER the person has signed in, showing only the generic failure page.
+  // Refused at boot instead.
+  it("refuses an origin that is not bare", () => {
+    const base = { BEELINE_ENV: "sandbox", BEELINE_PRIVATE_DB_KEY: "k" };
+    const origin = (o: string) => () => configFromEnv({ ...base, BEELINE_ORIGIN: o });
+    expect(origin("https://beeline.fly.dev/")).toThrow(/bare origin/); // -> //auth/inat/callback
+    expect(origin("https://beeline.fly.dev/app")).toThrow(/bare origin/);
+    expect(origin("beeline.fly.dev")).toThrow(/absolute URL/);
+    expect(origin("ftp://beeline.fly.dev")).toThrow(/http or https/);
+    expect(origin("https://beeline.fly.dev")().origin).toBe("https://beeline.fly.dev");
+    expect(origin("http://localhost:3054")().origin).toBe("http://localhost:3054");
+  });
+
   // Pinned exactly, not loosely: this is a permission list, and a name
   // arriving in it should have to arrive in a diff too.
   it("the admin roster is checked in; the env var overrides it when set", () => {

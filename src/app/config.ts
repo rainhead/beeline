@@ -96,7 +96,32 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   // localhost defaults (beeline-4cb).
   const origin = env.BEELINE_ORIGIN ?? null;
   if (origin === null && environment !== "development") {
-    throw new Error(`BEELINE_ORIGIN is required outside development, e.g. https://beeline.beeatlas.net`);
+    throw new Error(`BEELINE_ORIGIN is required outside development, e.g. https://beeline.fly.dev`);
+  }
+  // A bare origin, checked here rather than discovered at sign-in. This value
+  // becomes the OAuth `redirect_uri` by concatenation
+  // (`${origin}/auth/inat/callback`, src/app/auth.tsx), iNaturalist matches it
+  // against the one registered URI exactly, and it is sent twice — once on the
+  // authorize redirect and again on the token exchange. So a trailing slash
+  // yields `//auth/inat/callback` and fails on the SECOND leg, after the
+  // person has already signed in at iNaturalist and been sent back: the
+  // symptom is the generic sign-in failure page, which points nowhere near
+  // the cause.
+  if (origin !== null) {
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      throw new Error(`BEELINE_ORIGIN must be an absolute URL, got '${origin}'`);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(`BEELINE_ORIGIN must be http or https, got '${origin}'`);
+    }
+    if (origin !== parsed.origin) {
+      throw new Error(
+        `BEELINE_ORIGIN must be a bare origin — no path, no trailing slash. Got '${origin}', meaning '${parsed.origin}'`,
+      );
+    }
   }
   // Sync settings fail here, at boot, not at 2am when the nightly first
   // reads them (beeline-vni).

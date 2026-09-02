@@ -206,16 +206,41 @@ as `--access-token`, which would put it in `ps` for every user on the host.
 fly tokens create ssh --app beeline --expiry 2160h   # 90 days
 ```
 
-Store it mode 600 and have cron read it — on maderas, a little after the 02:00
-nightly so each day's writes are captured, and clear of the 03:00 beeatlas job:
+Store it mode 600, and **`export` it** — cron sources the file and then runs
+the script as a child, so a bare assignment would not reach it and the token
+check would fail every night:
 
-```cron
-30 2 * * *  . $HOME/.config/beeline/backup-env && $HOME/dev/beeline/scripts/backup-authored-files.sh
+```sh
+# ~/.config/beeline/backup-env   (chmod 600)
+export FLY_API_TOKEN='FlyV1 fm2_...'
 ```
 
-The run exits non-zero if any file fails to arrive intact, so cron mails you.
-Diarised: the token expires and the job starts failing when it does, which is
-the intended shape — a silent expiry would be worse.
+Then, on maderas, a little after the 02:00 nightly so each day's writes are
+captured, and clear of the 03:00 beeatlas job:
+
+```cron
+MAILTO=you@example.com
+30 2 * * *  . $HOME/.config/beeline/backup-env && $HOME/dev/beeline/scripts/backup-authored-files.sh >> $HOME/.local/state/beeline-backup.log
+```
+
+The redirect is what makes the mail worth reading: cron mails **captured
+output**, not failing exit codes, and this script prints the archive path on
+every successful run. Left alone it would mail nightly, which is how a person
+learns to filter it, which is how the one night it mattered goes unread.
+Sending stdout to a log leaves only stderr, and stderr means something went
+wrong.
+
+That still depends on the host having a working mail transport and a `MAILTO`
+that reaches somebody — neither is a given. So the check that does not depend
+on any of it is the age of the newest archive:
+
+```sh
+find ~/beeline-backups -name 'beeline-authored-*.tar.gz' -mtime -2 | head -1   # silence = stale
+```
+
+Diarised: the token expires after 90 days and the job starts failing when it
+does, which is the shape to want — a credential that silently outlived its
+purpose would be worse.
 
 Restoring is `tar -xzf` and putting the files back under `/app/data` in
 maintenance mode. Verify a backup by extracting it, not by trusting the run

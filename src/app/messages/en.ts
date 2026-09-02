@@ -764,7 +764,7 @@ export const en = {
     place_unrecognised:
       "The state or province on this record is not one Beeline recognises, or does not agree with the country beside it. Use the two-letter US state or Canadian province code (UT, BC), and a country that matches it. Records from outside the US and Canada are expected here and are not a mistake — staff can confirm them.",
     coordinate_uncertainty:
-      "The location accuracy is worse than 250 m. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.",
+      "The location accuracy is worse than this record allows — the flag says by how much, and which limit applied. Records from 2 September 2026 onwards must be within 100 m, the resolution of a GPS reading; for a trap, the day it was emptied is the one that counts. Earlier records keep the 250 m that was in force when they were collected. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.",
     coordinate_out_of_region:
       "The coordinates on this record are not in North America, but the record says they should be. Usually the pin was moved on the observation after its location text was written, or a longitude lost its minus sign. Check the pin on the iNaturalist observation — if the record really was collected outside North America, set its country to match and ask staff to confirm it.",
     non_tracheophyte_host:
@@ -846,7 +846,7 @@ export const en = {
       "coordinate-uncertainty": {
         term: "Coordinate uncertainty",
         definition:
-          "How far from the pin the true location might be, as recorded by iNaturalist. Beyond 250 m the location is too vague to print, usually because the phone had a poor fix.",
+          "How far from the pin the true location might be, as recorded by iNaturalist. Beyond 100 m the location is too vague to print — usually because the phone had a poor fix. Records collected before 2 September 2026, or trapped and emptied before then, are held to the older 250 m limit: their specimens have often left the collector's hands, so the pin can no longer be corrected.",
       },
       determination: {
         term: "Determination",

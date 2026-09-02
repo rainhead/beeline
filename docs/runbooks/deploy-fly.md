@@ -1,6 +1,6 @@
 # Deploy to Fly
 
-Beeline runs on Fly as one app, one machine, one volume, in `sea`. Tracked
+Beeline runs on Fly as one app, one machine, one volume, in `sjc`. Tracked
 config: [`fly.toml`](../../fly.toml), [`Dockerfile`](../../Dockerfile),
 [`infra/fly/entrypoint.sh`](../../infra/fly/entrypoint.sh). **Temporary hosting** in
 the same sense maderas was: the decision is re-made with Andony at cutover.
@@ -63,7 +63,7 @@ DNS comes later, at cutover: `beeline.beeatlas.net` is CDK-managed in the
 
 ```sh
 fly apps create beeline --org osu-mm          # done
-fly volumes create beeline_data --size 10 --region sea --app beeline
+fly volumes create beeline_data --size 10 --region sjc --app beeline
 fly secrets set --app beeline \
   BEELINE_PRIVATE_DB_KEY="$(openssl rand -hex 32)" \
   INAT_CLIENT_ID=... INAT_CLIENT_SECRET=...

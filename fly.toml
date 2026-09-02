@@ -10,7 +10,11 @@
 # and no rolling deploy: see docs/runbooks/deploy-fly.md on backups.
 
 app = "beeline"
-primary_region = "sea"        # Seattle: the atlases and their volunteers are PNW
+# sjc, not sea: Seattle would be the obvious home for a PNW project, but Fly
+# has deprecated that region and refuses to provision new resources in it
+# ("Region sea is deprecated"). San Jose and Los Angeles are what remain on
+# this coast, and sjc is the nearer of the two.
+primary_region = "sjc"
 
 # These two are top-level keys and MUST stay above the first [table] header:
 # in TOML a bare key belongs to whichever table most recently opened, so

@@ -50,8 +50,8 @@ WHERE elevation_m IS NOT NULL
 -- an elevation being a stricter claim than a locality string, a record could
 -- be precise enough to print and too vague to be given a height. That gap has
 -- closed from the other side. Printing now demands 100 m too (#22, and it was
--- always meant to), so for anything collected from that rule's effective date
--- the two coincide and no such record exists. It survives only among the
+-- always meant to), so for any sample whose date_end reaches that rule's
+-- effective date the two coincide and no such record exists. It survives only among the
 -- grandfathered ones, which keep 250 m for printing and are still refused an
 -- elevation between 100 m and 250 m.
 --

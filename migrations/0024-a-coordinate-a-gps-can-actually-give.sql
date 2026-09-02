@@ -26,7 +26,7 @@
 -- union's arm can be replaced, exactly as in 0018, 0022 and 0023.
 
 UPDATE qc_rule
-   SET instructions = 'The location accuracy is worse than this record allows — the flag says by how much, and which limit applied. Records collected from 2 September 2026 must be within 100 m, the resolution of a GPS reading; earlier ones keep the 250 m that was in force when they were collected. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.'
+   SET instructions = 'The location accuracy is worse than this record allows — the flag says by how much, and which limit applied. Records from 2 September 2026 onwards must be within 100 m, the resolution of a GPS reading; for a trap, the day it was emptied is the one that counts. Earlier records keep the 250 m that was in force when they were collected. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.'
  WHERE name = 'coordinate_uncertainty';
 
 DROP VIEW pending_print_sample;

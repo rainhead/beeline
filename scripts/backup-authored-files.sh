@@ -89,8 +89,15 @@ if [ -n "$failed" ]; then
   exit 1
 fi
 
+# Built inside the working directory and moved into place, never written to
+# the final path. A tar that dies half-way — a full disk, an interrupt — would
+# otherwise leave a truncated beeline-authored-*.tar.gz that reads as a
+# finished backup, which is the same failure the checksum step above exists to
+# prevent, one stage later. $work is inside $DEST, so the move is a rename on
+# one filesystem and cannot be seen half-done.
 archive="$DEST/beeline-authored-$stamp-$$.tar.gz"
-tar -czf "$archive" -C "$work" $FILES
+tar -czf "$work/.archive.tar.gz" -C "$work" $FILES
+mv "$work/.archive.tar.gz" "$archive"
 echo "$(du -h "$archive" | cut -f1)	$archive"
 
 # Retention. Only ever removes files this script names, so a stray file in the

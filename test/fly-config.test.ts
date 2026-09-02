@@ -99,6 +99,29 @@ describe("fly.toml", () => {
     expect(entries.get("http_service:min_machines_running")!.value).toBe("1");
   });
 
+  it("leaves DuckDB room to work, and room around it", async () => {
+    const entries = await read();
+    // A size as fly.toml writes it: "1024MB", "2gb". Refused rather than
+    // coerced, so a typo is a failing test and not a silently tiny budget.
+    const mb = (v: string): number => {
+      const m = /^(\d+)\s*(mb|gb)$/i.exec(v.trim());
+      expect(m, `not a size fly.toml understands: '${v}'`).not.toBeNull();
+      const [, digits, unit] = m as RegExpExecArray & [string, string, string];
+      return Number(digits) * (unit.toLowerCase() === "gb" ? 1024 : 1);
+    };
+    const duckdb = mb(entries.get("env:BEELINE_DUCKDB_MEMORY_LIMIT")!.value);
+    const machine = mb(entries.get("vm:memory")!.value);
+    // The nightly, not the browsing, is what this sizes for: 384 MB was set
+    // from a measurement of the legacy import and the observation path failed
+    // outright on it — every 15 minutes, invisibly. 512 MB was the measured
+    // floor against the deployed store's corpus, which grows nightly.
+    expect(duckdb).toBeGreaterThanOrEqual(384*2);
+    // And DuckDB must not be promised more than the machine has, or its limit
+    // stops being a limit and the kernel decides instead. The process needs
+    // roughly 250 MB beyond DuckDB's own budget.
+    expect(machine - duckdb).toBeGreaterThanOrEqual(512);
+  });
+
   it("serves on the port the app is told to listen on", async () => {
     const entries = await read();
     expect(entries.get("http_service:internal_port")!.value).toBe(entries.get("env:PORT")!.value);

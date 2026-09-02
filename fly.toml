@@ -59,10 +59,17 @@ swap_size_mb = 1024
 
   # Stated rather than detected — see the comment on duckDbConfig in
   # src/db.ts. Left unset, DuckDB would size itself from a cgroup reading and
-  # can plan against memory this machine will not give it; stated, an
-  # over-large query spills to disk instead of being OOM-killed. Measured: a
-  # full legacy promotion completes at 244 MiB, 16% slower than uncapped.
-  BEELINE_DUCKDB_MEMORY_LIMIT = "384MB"
+  # can plan against memory this machine will not give it.
+  #
+  # 1 GB, and the number is the nightly's, not the legacy import's. 384 MB was
+  # set from a measurement of `promoteLegacy` completing at 244 MiB — the
+  # wrong workload. The nightly's observation path (shredding 63k JSON
+  # projections, then promoting) needs more, and at 384 MB it did not degrade:
+  # it failed outright, every 15 minutes, with "failed to allocate data of size
+  # 8.0 MiB". Measured against a copy of the deployed store: 384 MB fails,
+  # 512 MB completes in 1.3s. This is set well clear of that line because the
+  # corpus grows nightly and the failure is invisible until somebody looks.
+  BEELINE_DUCKDB_MEMORY_LIMIT = "1024MB"
   BEELINE_DUCKDB_THREADS = "2"
 
   BEELINE_SYNC_PROJECTS = "18521,166376,99706"
@@ -111,4 +118,7 @@ swap_size_mb = 1024
   # promotion burns 27s of CPU in 16s of wall time and every listing scans the
   # QC union.
   size = "shared-cpu-2x"
-  memory = "1gb"
+  # 2 GB: DuckDB's 1 GB plus the process around it, which measured ~250 MB
+  # beyond DuckDB's own limit during a promotion. Serving needs a fraction of
+  # this — 54-62 MB RSS — so the nightly is what the machine is sized for.
+  memory = "2gb"

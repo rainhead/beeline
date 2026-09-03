@@ -98,6 +98,98 @@ export function isDue(schedule: Schedule, window: JobWindow, now: Date, last: La
   }
 }
 
+/**
+ * Calendar days between two instants, counted in the night-window's timezone.
+ *
+ * Not elapsed milliseconds divided by 86,400,000, because the LA schedules run
+ * on LA calendar boundaries and two days a year are not 24 hours long. At the
+ * autumn change two scheduled runs sit 49 hours apart, so a fixed 48-hour
+ * tolerance calls a job overdue having missed only one — a spurious alarm, and
+ * a spurious alarm is how somebody learns to ignore the alarm this whole thing
+ * exists to raise. At the spring change the same arithmetic delays a real one.
+ */
+function laDaysBetween(from: Date, to: Date): number {
+  const midnight = (at: Date) => Date.parse(`${laParts(at).date}T00:00:00Z`);
+  return Math.round((midnight(to) - midnight(from)) / 86_400_000);
+}
+
+/**
+ * Has this job been silent for longer than its schedule can explain?
+ *
+ * Two missed runs, so one skipped window — a deploy landing at 02:00, a single
+ * failed attempt that will retry — is not an alarm. Counted the way each
+ * schedule itself counts: elapsed minutes for an interval job, LA calendar
+ * days for the ones that run on LA calendar boundaries.
+ */
+export function isOverdue(schedule: Schedule, lastSucceeded: Date, now: Date): boolean {
+  switch (schedule.kind) {
+    case "everyMinutes":
+      return now.getTime() - lastSucceeded.getTime() > 2 * schedule.minutes * 60_000;
+    case "dailyLA":
+      return laDaysBetween(lastSucceeded, now) >= 2;
+    case "weeklyLA":
+      return laDaysBetween(lastSucceeded, now) >= 14;
+  }
+}
+
+/** What is wrong with a job, if anything. */
+export type JobProblem =
+  /** Its most recent run ended in failure. Immediate: no waiting period. */
+  | "failing"
+  /** It has not succeeded in long enough that two runs must have been missed. */
+  | "overdue"
+  /** It has never run at all — a job registered but never scheduled, or a store with no history. */
+  | "never-run";
+
+export interface JobHealth {
+  name: string;
+  problem: JobProblem | null;
+  lastSucceeded: Date | null;
+  /** job_run.detail of the most recent run: the error text when it failed. */
+  detail: string | null;
+}
+
+/** The most recent run of a job, as the health check reads it. */
+export interface LastOutcome extends LastRuns {
+  outcome: "succeeded" | "failed" | null;
+  detail: string | null;
+}
+
+/**
+ * Judge every registered job. Two problems rather than one, because they are
+ * different failures and the interesting one is invisible to the other
+ * (beeline-6td).
+ *
+ * `failing` is the run that happened and did not work — the nightly OOMing at
+ * a memory limit set too low, which is how this was found. It needs no
+ * tolerance: the store says the last attempt failed, and that is true now.
+ *
+ * `overdue` is the run that did not happen at all: a dead scheduler, a machine
+ * that never came up, a job whose retries were exhausted long enough ago that
+ * the failure has scrolled out of the history. Tolerance is two full periods,
+ * so a single missed window — a deploy landing at 02:00, one failed attempt
+ * that will retry — is not an alarm. It fires when something has been wrong
+ * for longer than the schedule can explain.
+ *
+ * `never-run` is kept separate from `overdue` deliberately: a job that has
+ * never succeeded looks identical to one that stopped succeeding if you only
+ * measure elapsed time, and they call for opposite responses — one is a
+ * deployment that was never finished, the other a thing that broke.
+ */
+export function jobHealth(jobs: Job[], last: Map<string, LastOutcome>, now: Date): JobHealth[] {
+  return jobs.map((job) => {
+    const seen = last.get(job.name);
+    const lastSucceeded = seen?.succeeded ?? null;
+    const detail = seen?.detail ?? null;
+    let problem: JobProblem | null = null;
+    if (seen === undefined || seen.started === null) problem = "never-run";
+    else if (seen.outcome === "failed") problem = "failing";
+    else if (lastSucceeded === null) problem = "never-run";
+    else if (isOverdue(job.schedule, lastSucceeded, now)) problem = "overdue";
+    return { name: job.name, problem, lastSucceeded, detail };
+  });
+}
+
 export interface SchedulerDeps {
   db: Kysely<Database>;
   conn: DuckDBConnection;

@@ -162,6 +162,47 @@ To restore one, boot into maintenance mode and move it back over
 `beeline.duckdb` — **and delete any `beeline.duckdb.wal` beside it first**, or
 DuckDB replays the newer WAL onto the older file.
 
+## Knowing the nightly is running
+
+`/healthz` proves the store is readable, and Fly restarts the machine when it
+fails — which is why job staleness is **not** on it. Restarting is the wrong
+answer to a job that failed, and on a bad night it would loop.
+
+`/healthz/jobs` is the one to poll: `ok` when every registered job is healthy,
+503 with a line per problem otherwise. It distinguishes `failing` (the last run
+happened and did not work — no waiting period, this is true now), `overdue`
+(nothing has succeeded in two full periods, so the scheduler or the machine is
+the suspect) and `never-run` (registered but never scheduled, which is a
+half-finished deployment rather than a breakage). Unauthenticated: job names
+are already public in this repo and no record data passes through it.
+
+Polled from maderas beside the backup, so a silent stall reaches somebody:
+
+```cron
+*/20 * * * * curl -sS --fail-with-body --connect-timeout 10 --max-time 30 https://beeline.fly.dev/healthz/jobs
+```
+
+Three flags, each earning its place. `--fail-with-body` rather than `-f`,
+because plain `-f` throws the body away and the body is the whole message —
+you would be mailed that something failed and not which job. The timeouts
+bound the poll: without them a stalled connection leaves `curl` running until
+something else kills it, and at one run every twenty minutes those accumulate.
+
+Nothing is redirected to `/dev/null`: on success the endpoint prints `ok`,
+which cron would mail every twenty minutes, so success prints nothing at all
+and any output means something is wrong.
+
+The response says which job and what kind of wrong — `failing`, `overdue`,
+`never-run` — and deliberately not why. `job_run.detail` holds whatever a
+caught error said, and those come from DuckDB, the filesystem and the iNat
+API; a constraint violation quotes the offending value, so a failure in person
+promotion would put a volunteer's name on an endpoint anybody can read. The
+reason is on `/jobs`, behind the admin gate, which is where this sends you.
+
+This exists because the nightly failed on every run for about half a day and
+nothing said so (beeline-6td): `job_run` recorded it and `/jobs` displayed it,
+to an admin who went looking. It was found by accident.
+
 ## Backups
 
 Fly's own advice is that an app should have two volumes and that snapshots are

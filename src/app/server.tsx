@@ -193,9 +193,14 @@ export function createApp({
   // something a restart cannot fix, and on a bad night would loop. So this is
   // its own endpoint, which nothing on Fly polls and an external checker does.
   //
-  // Unauthenticated because job names are already public in this repo and no
-  // record data passes through here; what it exposes is whether ingestion is
-  // running, which is the thing somebody outside needs to be able to ask.
+  // Unauthenticated, and therefore it says only WHICH job and WHAT KIND of
+  // wrong — never job_run.detail. That column holds whatever a caught Error
+  // said, and the errors reaching it come from DuckDB, the filesystem and the
+  // iNat API: a constraint violation quotes the offending value, so a failure
+  // in person promotion would put a volunteer's name on a public endpoint.
+  // The reason lives on /jobs, behind the admin gate, which is where somebody
+  // goes once this has told them to look. The alarm and the diagnosis are
+  // different jobs and only one of them can be public.
   app.get("/healthz/jobs", async (c) => {
     const rows = await db
       .selectFrom("job_run")
@@ -221,9 +226,7 @@ export function createApp({
     if (wrong.length === 0) return c.text("ok");
     // One line per problem, the job named first: this is read by a cron job
     // and by whoever it mails, so it has to survive being quoted in an email.
-    const body = wrong
-      .map((h) => `${h.name}: ${h.problem}${h.detail === null ? "" : ` — ${h.detail.split("\n")[0]}`}`)
-      .join("\n");
+    const body = `${wrong.map((h) => `${h.name}: ${h.problem}`).join("\n")}\nSee /jobs for the reason.`;
     return c.text(body, 503);
   });
   // The default seed is computed once; `?seed=` regenerates on demand so

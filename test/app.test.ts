@@ -93,7 +93,13 @@ describe("app scaffold", () => {
     expect(res.status).toBe(503);
     const body = await res.text();
     expect(body).toContain("nightly-pipeline: failing");
-    expect(body).toContain("Out of Memory");
+    // And NOT the reason. job_run.detail is whatever a caught Error said, and
+    // those come from DuckDB, the filesystem and the iNat API — a constraint
+    // violation quotes the offending value, so a failure in person promotion
+    // would put a volunteer's name on an endpoint anyone can read. The alarm
+    // is public; the diagnosis is behind /jobs.
+    expect(body).not.toContain("Out of Memory");
+    expect(body).toContain("See /jobs");
 
     // The whole point: liveness is untouched by any of that.
     expect((await app.request("/healthz")).status).toBe(200);

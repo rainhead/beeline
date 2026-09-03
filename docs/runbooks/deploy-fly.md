@@ -179,10 +179,25 @@ are already public in this repo and no record data passes through it.
 Polled from maderas beside the backup, so a silent stall reaches somebody:
 
 ```cron
-*/20 * * * * curl -fsS https://beeline.fly.dev/healthz/jobs >/dev/null
+*/20 * * * * curl -sS --fail-with-body --connect-timeout 10 --max-time 30 https://beeline.fly.dev/healthz/jobs
 ```
 
-`curl -f` exits non-zero and prints the body on 503, which is what cron mails.
+Three flags, each earning its place. `--fail-with-body` rather than `-f`,
+because plain `-f` throws the body away and the body is the whole message —
+you would be mailed that something failed and not which job. The timeouts
+bound the poll: without them a stalled connection leaves `curl` running until
+something else kills it, and at one run every twenty minutes those accumulate.
+
+Nothing is redirected to `/dev/null`: on success the endpoint prints `ok`,
+which cron would mail every twenty minutes, so success prints nothing at all
+and any output means something is wrong.
+
+The response says which job and what kind of wrong — `failing`, `overdue`,
+`never-run` — and deliberately not why. `job_run.detail` holds whatever a
+caught error said, and those come from DuckDB, the filesystem and the iNat
+API; a constraint violation quotes the offending value, so a failure in person
+promotion would put a volunteer's name on an endpoint anybody can read. The
+reason is on `/jobs`, behind the admin gate, which is where this sends you.
 
 This exists because the nightly failed on every run for about half a day and
 nothing said so (beeline-6td): `job_run` recorded it and `/jobs` displayed it,

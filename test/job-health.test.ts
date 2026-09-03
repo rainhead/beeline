@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { expectedPeriodMs, jobHealth, type Job, type LastOutcome } from "../src/app/jobs/framework.js";
+import { isOverdue, jobHealth, type Job, type LastOutcome } from "../src/app/jobs/framework.js";
 
 /**
  * beeline-6td: the nightly pipeline failed on every run for about half a day
@@ -20,6 +20,13 @@ const ago = (ms: number) => new Date(now.getTime() - ms);
 const HOUR = 60 * 60_000;
 
 const only = (jobs: Job[], last: Map<string, LastOutcome>) => jobHealth(jobs, last, now);
+
+/** The same calendar-day count the framework uses, restated so a test can name it. */
+const laDaysBetweenForTest = (from: Date, to: Date) => {
+  const day = (at: Date) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  return Math.round((Date.parse(`${day(to)}T00:00:00Z`) - Date.parse(`${day(from)}T00:00:00Z`)) / 86_400_000);
+};
 
 describe("jobHealth", () => {
   test("a run that failed is a problem immediately, with no waiting period", () => {
@@ -71,9 +78,6 @@ describe("jobHealth", () => {
   });
 
   test("tolerance follows the schedule, not a constant", () => {
-    expect(expectedPeriodMs({ kind: "everyMinutes", minutes: 60 })).toBe(HOUR);
-    expect(expectedPeriodMs({ kind: "dailyLA", hour: 2 })).toBe(24 * HOUR);
-    expect(expectedPeriodMs({ kind: "weeklyLA", weekday: 0, hour: 3 })).toBe(7 * 24 * HOUR);
     // An hourly job silent for three hours is overdue; a daily one is not.
     const stale = (j: Job) => only([j], new Map([[j.name, {
       started: ago(3 * HOUR), succeeded: ago(3 * HOUR), outcome: "succeeded" as const, detail: null,
@@ -81,4 +85,46 @@ describe("jobHealth", () => {
     expect(stale(PURGE)).toBe("overdue");
     expect(stale(NIGHTLY)).toBeNull();
   });
+
+  // The LA schedules run on LA calendar boundaries, and two days a year are
+  // not 24 hours long. Counting elapsed milliseconds gets both wrong, in
+  // opposite directions.
+  describe("across a daylight-saving change", () => {
+    const daily = { kind: "dailyLA" as const, hour: 2 };
+
+    // 2026-11-01 is the fall-back: that LA day is 25 hours long.
+    test("autumn: one missed run is not an alarm, though the day is 25 hours", () => {
+      // Succeeded 31 Oct 02:00 PDT; now 03:00 PST on 1 November.
+      const succeeded = new Date("2026-10-31T09:00:00Z");
+      const now = new Date("2026-11-01T11:00:00Z");
+      expect(laDaysBetweenForTest(succeeded, now)).toBe(1);
+      expect(isOverdue(daily, succeeded, now)).toBe(false);
+    });
+
+    test("autumn: two missed runs alarm, and the extra hour does not stop them", () => {
+      // 31 Oct 02:00 PDT to 2 Nov 02:00 PST is 49 hours, not 48 — the reason
+      // a fixed two-day tolerance in milliseconds drifts here.
+      const succeeded = new Date("2026-10-31T09:00:00Z");
+      const now = new Date("2026-11-02T10:00:00Z");
+      expect(now.getTime() - succeeded.getTime()).toBe(49 * HOUR);
+      expect(isOverdue(daily, succeeded, now)).toBe(true);
+    });
+
+    test("spring: a 23-hour day does not delay a real alarm", () => {
+      // 2026-03-08 is the spring-forward. Succeeded 7 March at 02:00 PST; it
+      // is now 02:00 PDT on 9 March — 47 elapsed hours, and two missed runs.
+      const succeeded = new Date("2026-03-07T10:00:00Z");
+      const now = new Date("2026-03-09T09:00:00Z");
+      expect(now.getTime() - succeeded.getTime()).toBeLessThan(48 * HOUR); // elapsed time would wait
+      expect(isOverdue(daily, succeeded, now)).toBe(true);
+    });
+
+    test("an interval job is still judged on elapsed time, which is right for it", () => {
+      const hourly = { kind: "everyMinutes" as const, minutes: 60 };
+      const at = new Date("2026-11-01T09:00:00Z");
+      expect(isOverdue(hourly, new Date(at.getTime() - 90 * 60_000), at)).toBe(false);
+      expect(isOverdue(hourly, new Date(at.getTime() - 150 * 60_000), at)).toBe(true);
+    });
+  });
+
 });

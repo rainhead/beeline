@@ -99,17 +99,36 @@ export function isDue(schedule: Schedule, window: JobWindow, now: Date, last: La
 }
 
 /**
- * How often a schedule expects to succeed. Used only to judge staleness, never
- * to decide a run — isDue above is the authority on that.
+ * Calendar days between two instants, counted in the night-window's timezone.
+ *
+ * Not elapsed milliseconds divided by 86,400,000, because the LA schedules run
+ * on LA calendar boundaries and two days a year are not 24 hours long. At the
+ * autumn change two scheduled runs sit 49 hours apart, so a fixed 48-hour
+ * tolerance calls a job overdue having missed only one — a spurious alarm, and
+ * a spurious alarm is how somebody learns to ignore the alarm this whole thing
+ * exists to raise. At the spring change the same arithmetic delays a real one.
  */
-export function expectedPeriodMs(schedule: Schedule): number {
+function laDaysBetween(from: Date, to: Date): number {
+  const midnight = (at: Date) => Date.parse(`${laParts(at).date}T00:00:00Z`);
+  return Math.round((midnight(to) - midnight(from)) / 86_400_000);
+}
+
+/**
+ * Has this job been silent for longer than its schedule can explain?
+ *
+ * Two missed runs, so one skipped window — a deploy landing at 02:00, a single
+ * failed attempt that will retry — is not an alarm. Counted the way each
+ * schedule itself counts: elapsed minutes for an interval job, LA calendar
+ * days for the ones that run on LA calendar boundaries.
+ */
+export function isOverdue(schedule: Schedule, lastSucceeded: Date, now: Date): boolean {
   switch (schedule.kind) {
     case "everyMinutes":
-      return schedule.minutes * 60_000;
+      return now.getTime() - lastSucceeded.getTime() > 2 * schedule.minutes * 60_000;
     case "dailyLA":
-      return 24 * 60 * 60_000;
+      return laDaysBetween(lastSucceeded, now) >= 2;
     case "weeklyLA":
-      return 7 * 24 * 60 * 60_000;
+      return laDaysBetween(lastSucceeded, now) >= 14;
   }
 }
 
@@ -166,7 +185,7 @@ export function jobHealth(jobs: Job[], last: Map<string, LastOutcome>, now: Date
     if (seen === undefined || seen.started === null) problem = "never-run";
     else if (seen.outcome === "failed") problem = "failing";
     else if (lastSucceeded === null) problem = "never-run";
-    else if (now.getTime() - lastSucceeded.getTime() > 2 * expectedPeriodMs(job.schedule)) problem = "overdue";
+    else if (isOverdue(job.schedule, lastSucceeded, now)) problem = "overdue";
     return { name: job.name, problem, lastSucceeded, detail };
   });
 }

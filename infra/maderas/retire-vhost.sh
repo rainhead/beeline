@@ -78,9 +78,22 @@ fi
 systemctl reload apache2
 echo "reloaded apache"
 
-# Prove it, rather than assume it. -I so we see the status and Location and
-# do not follow off to Fly.
-echo "--- https://beeline.beeatlas.net/ ---"
+# Prove it, rather than assume it, and prove BOTH schemes. An earlier draft of
+# this retirement disabled the TLS site and installed a :80 vhost only, which
+# would have left https with no vhost at all — not a redirect that failed, a
+# hostname that stopped answering on the scheme every bookmark uses. Checking
+# only http would not have noticed.
+#
+# -I to see status and Location; no -L, so we watch the hop rather than follow
+# it off to Fly.
+echo "--- http://beeline.beeatlas.net/  (certbot's redirect to https, unchanged) ---"
+curl -sI http://beeline.beeatlas.net/ | sed -n '1p;/^[Ll]ocation:/p'
+echo "--- https://beeline.beeatlas.net/  (the retirement redirect) ---"
 curl -sI https://beeline.beeatlas.net/ | sed -n '1p;/^[Ll]ocation:/p'
+echo "--- the whole hop, followed ---"
+curl -sIL http://beeline.beeatlas.net/ | sed -n '1p;/^[Ll]ocation:/p' | tail -3
+echo "--- and the certificate still has time on it ---"
+openssl s_client -connect beeline.beeatlas.net:443 -servername beeline.beeatlas.net </dev/null 2>/dev/null \
+  | openssl x509 -noout -enddate 2>/dev/null || echo "  (could not read the certificate)"
 echo "--- the other vhosts on this host still answer ---"
 curl -sI https://beeatlas.net/ | sed -n '1p'

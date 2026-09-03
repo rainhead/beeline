@@ -1,4 +1,37 @@
-# Deploy the sandbox to maderas (temporary hosting)
+# Deploy the sandbox to maderas (RETIRED — kept for the history)
+
+> **This hosting is retired.** The app runs on Fly —
+> [deploy-fly.md](deploy-fly.md) — and the systemd unit here is stopped and
+> disabled as of 2 September 2026. What follows describes a deployment that no
+> longer serves anything, and is kept because the reasoning in it is still the
+> reasoning, and because the re-derivation procedure below is still the
+> procedure.
+>
+> **maderas is not decommissioned, only Beeline's web instance on it.** Three
+> things still live here and none of them should be removed:
+>
+> - the **backup cron** at 02:30, which pulls the authored history off the Fly
+>   volume (deploy-fly.md, "Backups") and runs from this checkout
+> - `pnpm legacy:fetch`, which needs the SSH key to production Mongo that a
+>   Fly machine does not have and should not be given
+> - **`~/dev/beeline/beeline.duckdb`** — the last full copy of the store taken
+>   before the move, 2 September 2026. The scheduled backup covers the
+>   irreplaceable CSVs and deliberately not the 211 MB store, so until the Fly
+>   volume has a second copy this file is the only one that is not on Fly. It
+>   goes stale from here; it is a shortcut past a full re-ingestion, not a
+>   current backup.
+>
+> The vhost is the one thing not yet changed, because it needs sudo. Until it
+> is, `beeline.beeatlas.net` answers with a proxy error: Apache still points at
+> port 3054 and nothing is listening there.
+> [`retire-vhost.sh`](../../infra/maderas/retire-vhost.sh) does it — copied to
+> `~/retire-beeline-vhost.sh` on maderas, run it with
+> `sudo sh ~/retire-beeline-vhost.sh`. It backs both files up, edits only the
+> `:443` vhost, refuses to proceed if the proxy directives survive its own
+> edit, restores and changes nothing if `configtest` fails, and curls the
+> result afterwards.
+
+## The original runbook
 
 Beeline's sandbox runs on maderas at **https://beeline.beeatlas.net** as a
 user systemd service behind an Apache `ProxyPass` vhost with certbot TLS —

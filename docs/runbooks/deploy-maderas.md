@@ -21,10 +21,15 @@
 >   goes stale from here; it is a shortcut past a full re-ingestion, not a
 >   current backup.
 >
-> The vhost is the one thing not yet changed, because it needs sudo:
-> [`beeline.beeatlas.net-retired.conf`](../../infra/maderas/beeline.beeatlas.net-retired.conf)
-> redirects the old hostname to the new one instead of leaving a proxy error
-> behind port 3054.
+> The vhost is the one thing not yet changed, because it needs sudo. Until it
+> is, `beeline.beeatlas.net` answers with a proxy error: Apache still points at
+> port 3054 and nothing is listening there.
+> [`retire-vhost.sh`](../../infra/maderas/retire-vhost.sh) does it — copied to
+> `~/retire-beeline-vhost.sh` on maderas, run it with
+> `sudo sh ~/retire-beeline-vhost.sh`. It backs both files up, edits only the
+> `:443` vhost, refuses to proceed if the proxy directives survive its own
+> edit, restores and changes nothing if `configtest` fails, and curls the
+> result afterwards.
 
 ## The original runbook
 

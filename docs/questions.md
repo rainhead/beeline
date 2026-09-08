@@ -44,14 +44,13 @@ Raised 2026-08-24 by looking at `/people` (beeline-eyk, beeline-oyl). One iNatur
 
 ## Printing and mailing (for the walkthrough with Arthur/Andony)
 
-1. Observe the "printing moment" end to end: what does Arthur actually inspect when proofing, and what causes him to pull a record out of a run?
-2. Label stock: what sheets/stock are used, and are the 250-per-page geometry and 3–5pt fonts constraints of the stock, the printer, or convention?
 3. How do other atlases plan to print and mail — equipment, label stock, postage/bulk-mail access?
+ASK OTHER ATLASES THIS 
 4. What does the `E` prefix on 2020–2022 Oregon field numbers (`E2000000`–`E2332481`, 1,400 records) denote? And the 2018 name-based identifiers (`First_Last:18.sss.nnn`) — are those printed verbatim on physical labels?
 5. Where did the historical cross-project duplicate field numbers live — this database, Ecdysis, or between them — and were they renumbered or do the physical labels still collide?
-6. **Label lifecycle**: when bad data is found on a printed label, is the remedy always a reprint under the *same* field number, with the old label removed and destroyed by whoever holds the pin? Is that swap ever confirmed, or taken on faith?
-7. **Attribution for records belonging to no member atlas.** ~2,660 specimens were collected where none of the six atlases reaches, by people who are either atlas members travelling or Master Melittologists with no atlas at all (see Membership in [CONTEXT.md](../CONTEXT.md), beeline-lcl). Whose name goes on their labels, and on their Ecdysis/GBIF records — the program, or the atlas that happens to process them? Today the store can say "no atlas" honestly; it has no answer for what to *print*. Related: does processing a sample through an atlas (the Arizona-through-Washington arrangement) make that atlas the attribution, or only the handler?
-8. **Field-number lifecycle**: has a number ever been permanently scrapped/voided — specimen destroyed, label printed but never pinned, duplicate collision? If a number were retired after publication, how would Ecdysis/GBIF learn of it?
+7. **Attribution for records belonging to no member atlas.** ~2,660 specimens were collected where none of the six atlases reaches, by people who are either atlas members travelling or Master Melittologists with no atlas at all (see Membership in [CONTEXT.md](../CONTEXT.md), beeline-lcl). Whose name goes on their labels, and on their Ecdysis/GBIF records — the program, or the atlas that happens to process them? Today the store can say "no atlas" honestly; it has no answer for what to *print*. Related: does processing a sample through an atlas (the Arizona-through-Washington arrangement) make that atlas the attribution, or only the handler? 
+8. **Field-number lifecycle**: If a number were retired after publication, how would Ecdysis/GBIF learn of it?
+
 
 ## Taxonomy across the atlases
 

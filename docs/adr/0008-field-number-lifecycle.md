@@ -138,6 +138,23 @@ is the one who prints and because the two may be describing different cases.
    numbers that collide with an imported one, asserted empty by test, the same
    shape as `sample_elevation_stale` and `sample_primary_collector_invalid`.
 
+   **The registry is authored data and must outlive a rebuild.** This is not a
+   new rule; it is the one *Data handling* in [CONTEXT.md](../../CONTEXT.md)
+   already states, with field numbers as its own first example: what Beeline
+   mints exists nowhere else, and a rebuild must not recompute it. A registry
+   living only inside the store would break the burn guarantee above in a way
+   nothing would notice — a number minted for a print run that was then
+   cancelled sits in the registry and on no specimen, so it is in neither the
+   registry nor the corpus after a `db:reseed`, and the next mint issues it
+   again. The specimen it was burned for may by then be on somebody's bench.
+   So `minted_field_number` survives the blow-away, by the route the store
+   already has for facts promotion cannot recompute (`CARRIED_TABLES` in
+   `src/reseed-store.ts`, where `inat_place` sits for the same reason) or by
+   the route corrections and the change logs take, outside the store
+   altogether ([ADR 0004](0004-correction-overlay.md),
+   [ADR 0007](0007-authored-changes-are-events.md)). Which of the two is an
+   implementation question for phase 5; that it is one of them is not.
+
 6. **A field number is opaque.** No code parses a season, a year, an atlas or
    a project out of one. The two-digit prefix is the year the printer ran and
    disagrees with the collecting season on 38,842 records; the `E` prefix is

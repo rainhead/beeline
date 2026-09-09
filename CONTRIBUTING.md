@@ -8,7 +8,7 @@ For people with write access to this repository. Agents have their own instructi
 
 That something is [CodeRabbit](https://coderabbit.ai/), which reviews every PR automatically. It earns the branch: on one change it caught a real defect that four rounds of careful human review had missed. Triage what it says — fix what is real, and reply on the PR with your reasoning when you disagree. It is often wrong, and saying so is a normal outcome.
 
-```
+```bash
 git checkout -b my-change
 # edit, commit
 git push -u origin my-change

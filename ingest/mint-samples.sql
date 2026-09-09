@@ -57,12 +57,12 @@ FROM sample_mint_pending p;
 -- trap range is a fact iNaturalist does not carry.
 INSERT INTO sample (entity_id, kind, sample_number,
                     date_start, date_end, specimen_count, inat_observation_id,
-                    host_inat_taxon_id, host_name_as_observed,
+                    host_inat_taxon_id, host_name_as_observed, host_rank,
                     country, state_province, county, locality, protocol)
 SELECT m.sample_id, 'net',
        m.sample_number, m.observed_on, m.observed_on, m.specimen_count,
        m.lead_inat_id,
-       f.host_taxon_id, f.host_taxon_name,
+       f.host_taxon_id, f.host_taxon_name, f.host_taxon_rank,
        pl.country_code, pl.state_province, pl.county_name, loc.locality,
        'aerial net'
 FROM minted_sample m
@@ -131,6 +131,17 @@ LEFT JOIN observation_locality loc ON loc.inat_id = pl.inat_id
 WHERE sample.inat_observation_id = pl.inat_id
   AND (sample.country IS NULL OR sample.state_province IS NULL
     OR sample.county IS NULL OR sample.locality IS NULL);
+
+-- The host's rank, on the same fill-only terms and for the same reason: the
+-- 57,270 iNat-backed samples that already carried a host name were minted or
+-- imported before anything read taxon.rank, so without this they would print
+-- upright forever while every newly minted one printed correctly. A migration
+-- fills them once; this is what keeps them filled.
+UPDATE sample SET host_rank = f.host_taxon_rank
+FROM observation_field f
+WHERE sample.inat_observation_id = f.inat_id
+  AND sample.host_rank IS NULL
+  AND f.host_taxon_rank IS NOT NULL;
 
 -- The atlas joins the refresh now (beeline-6e9). It could not while it was a
 -- column on sample: DuckDB will not update an INDEXED column on a row an

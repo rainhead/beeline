@@ -31,7 +31,7 @@ The reference implementation numbers a record by scanning for the highest field 
 
 Each block in the corpus does begin at the bottom of its prefix rather than continuing the previous one's count, but only one of them is that default's output. These are the observed minima:
 
-| prefix | block starts at | what today's default would give |
+| prefix | block starts at | `YY` + `000001` for that prefix |
 |---|---|---|
 | `18` | `1800001` | `18000001` |
 | `19` | `1900001` | `19000001` |
@@ -43,7 +43,7 @@ Each block in the corpus does begin at the bottom of its prefix rather than cont
 | `25` | `25000001` | `25000001` |
 | `26` | `26000000` | `26000001` |
 
-Only `25000001` matches. The 7-digit blocks are a digit shorter than the default can produce, and four of them plus `26000000` start on `…0000`, which an increment from `…000001` never reaches. So the seeds were not written by this code: the current default accounts for the 2025 block and nothing else, which places the code we can read at the 7→8 digit transition and leaves everything before it seeded by hand or by a version nobody has. The mechanism above still explains the *prefixes*; it does not explain the *seeds*, and no reading of the generator should claim it does.
+The third column is what the default would emit *for that prefix*, not what it would emit today. Only `25000001` matches. The 7-digit blocks are a digit shorter than the default can produce, and four of them plus `26000000` start on `…0000`, which an increment from `…000001` never reaches. So the seeds were not written by this code: the current default accounts for the 2025 block and nothing else, which places the code we can read at the 7→8 digit transition and leaves everything before it seeded by hand or by a version nobody has. The mechanism above still explains the *prefixes*; it does not explain the *seeds*, and no reading of the generator should claim it does.
 
 ## Five identifier eras, not four
 

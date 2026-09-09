@@ -103,14 +103,29 @@ is the one who prints and because the two may be describing different cases.
    registry** and governed absolutely. A number's provenance is then a fact
    about which table it appears in, rather than a flag anyone has to set.
 
-   Two consequences follow and are decisions, not details. A sequence alone
-   would not be enough — it does not stop a write path colliding with an
-   imported value — so **the insert is the mint**: no code assigns a field
-   number except by inserting that row, and a number that is not in the
-   registry was not minted by Beeline. And a print run that is cancelled after
-   minting leaves its numbers **burned**: gaps are harmless and reuse never is
-   ([field-number-history.md](../field-number-history.md) counts ~86,000
-   already).
+   Two consequences follow and are decisions, not details. **The insert is the
+   mint**: no code assigns a field number except by inserting that row, and a
+   number absent from the registry was not minted by Beeline. And a print run
+   cancelled after minting leaves its numbers **burned**: gaps are harmless
+   and reuse never is ([field-number-history.md](../field-number-history.md)
+   counts ~86,000 already).
+
+   **What the registry does not guarantee, and what does.** Its PRIMARY KEY
+   compares registry rows to each other, so it stops two *minted* numbers
+   colliding and nothing else. It cannot see `specimen.field_number`, where
+   383,031 imported numbers live — so on its own it would happily mint
+   `1900001` onto a second bee while the first wears that number on a pin in a
+   drawer. No engine-level constraint closes that: a cross-table exclusion is
+   not portable, and the partial index is forbidden above. So the rule is
+   stated rather than enforced — **minting starts above the whole imported
+   corpus** (its ceiling is `26072091`) and never re-enters a used prefix,
+   which also means the year-default that seeded each historical block must
+   not survive into Beeline; a mint has one source, the registry's own
+   maximum. And because a stated rule is a rule somebody breaks, it is checked
+   the way this project checks everything the engine cannot hold: a view of
+   minted numbers that collide with an imported one, asserted empty by test,
+   the same shape as `sample_elevation_stale` and
+   `sample_primary_collector_invalid`.
 
 6. **A field number is opaque.** No code parses a season, a year, an atlas or
    a project out of one. The two-digit prefix is the year the printer ran and

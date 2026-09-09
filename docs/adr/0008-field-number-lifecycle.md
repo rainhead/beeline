@@ -83,18 +83,35 @@ is the one who prints and because the two may be describing different cases.
    ([ADR 0007](0007-authored-changes-are-events.md)) naming both numbers,
    because it is the one case where a catalog number already published for
    that specimen goes stale and downstream has to be told.
-5. **Uniqueness is enforced by the database for every number Beeline mints** —
-   a sequence and a constraint, never an advisory max-scan. This is
-   requirement 2, field-number uniqueness, in
+5. **Uniqueness is enforced by the database for every number Beeline mints**,
+   and the mechanism is the one the project has already chosen: numbers are
+   minted by inserting into `minted_field_number`, whose `field_number`
+   PRIMARY KEY *is* the guarantee, keyed 1:1 to the specimen
+   ([schema-sketch.md](../schema-sketch.md), phase 5). This is requirement 2,
+   field-number uniqueness, in
    [reference-implementation.md](../reference-implementation.md); it was
    worded as *catalog-number* uniqueness until 2026-09-09, a leftover from
-   before the vocabulary was settled, and the requirement was always about
-   `fieldNumber`. Historical numbers are exempt:
-   across five identifier eras they are not unique, `25051768` is on two
-   rows, and they cannot be made unique after the fact. So the guarantee is
-   scoped to what Beeline issues, and a bare unique index over the whole
-   column is not the implementation — it could not be created over the
-   imported corpus.
+   before the vocabulary was settled, and was always about `fieldNumber`.
+
+   The two-table shape is not decoration. A `UNIQUE` on
+   `specimen.field_number` cannot exist — `25051768` is on two imported rows —
+   and the obvious repair, a partial unique index over minted rows only, is
+   forbidden by [ADR 0001](0001-duckdb-first-with-portable-sql.md): PostgreSQL
+   has them and DuckDB does not, and that ADR names `minted_field_number` as
+   the dialect-neutral answer. So legacy numbers are **attributes** carried on
+   the specimen and governed by nothing, while minted numbers are **rows in a
+   registry** and governed absolutely. A number's provenance is then a fact
+   about which table it appears in, rather than a flag anyone has to set.
+
+   Two consequences follow and are decisions, not details. A sequence alone
+   would not be enough — it does not stop a write path colliding with an
+   imported value — so **the insert is the mint**: no code assigns a field
+   number except by inserting that row, and a number that is not in the
+   registry was not minted by Beeline. And a print run that is cancelled after
+   minting leaves its numbers **burned**: gaps are harmless and reuse never is
+   ([field-number-history.md](../field-number-history.md) counts ~86,000
+   already).
+
 6. **A field number is opaque.** No code parses a season, a year, an atlas or
    a project out of one. The two-digit prefix is the year the printer ran and
    disagrees with the collecting season on 38,842 records; the `E` prefix is

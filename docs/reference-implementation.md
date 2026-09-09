@@ -52,6 +52,15 @@ Then it's all undone at the API layer: `GET /api/occurrences?userLogin=X` is una
 - **A label carries no taxon.** `LabelsSubtaskHandler.js:59-113` builds exactly six fields — location, coordinates (+elevation), date, collector, method, field number — and never reads `scientificName`, `genus`, `specificEpithet` or `identifiedBy`. The determinations subtask merges determination data into the database and produces no label of its own. So a label is a *collecting-event* label: printing happens before determination and is not gated on one (`errorFlags` names no taxon field either). The determination reaches the museum through Ecdysis, not through the pin.
 - Print state is a single mutable `dateLabelPrint` string per record. Reprints (via an ignore flag) overwrite it. **No print history, no sheet/batch record, no way to identify which physical labels a later data correction invalidates.**
 
+## The printing moment, as the operator runs it
+
+The rest of this document is read off the code. This section is read off Arthur, who does the printing (2026-09-08); it is the operating practice the code does not record anywhere.
+
+- **Proofing is a sample, not a sweep.** Two labels per sheet, chosen from different volunteers where the sheet carries more than one and from the same volunteer where it does not. For each, the field number is copied off the label into the dashboard's search and the record behind it compared on four fields: `recordedBy`, `sampleId`, `specimenId`, `verbatimEventDate`. The bar is exact agreement — every label should match the occurrence its field number names, as of the moment it was printed — and no proof has ever found a disagreement.
+- **The escalation path names a subtask.** If one ever did, the first move is to check that Andony's R script for continuity between data pulls is working; if it is, the fault is the labels subtask rather than the observations subtask. That triage only works because the two are separate stages writing the same rows — see the scratch-flag mechanics above.
+- **Stock is US Letter, 163 g/m² cardstock.** So 250 labels per sheet is neither a stock nor a printer limit: it is the layout, and the sheet has room for another row or two at the same label and font sizes. Arthur's recommendation is that the replacement match the existing sheet geometry rather than reclaim that room, the extra rows not being worth a change collectors would have to absorb.
+- **A data error is fixed by renumbering, not by reissuing.** When a printed label disagrees with the record, the label — not the record — is replaced, under a **new** field number. That is the reverse of this project's provisional stance (beeline-1kb.5), which assumed the number was the specimen's permanent identity and a reprint would carry it; it means a specimen can wear several field numbers over its life, one at a time, and that the museum's catalog number derived from an earlier one is stale rather than wrong. The legacy data neither confirms nor refutes it: 545 specimen identities — same collector, sample, specimen and date, at coordinates agreeing to three decimal places — carry more than one field number, 116 of them printed on different days, but a further 1,778 identities differing in coordinates are same-day duplicate sample numbers wearing the same signature, so the count is an upper bound and not a measurement.
+
 ## The task system
 
 - A task = ordered subtask array (13 types: pull observations, refresh occurrences, labels, determinations merge, emails, addresses, pivots, plant list, stewardship R report, overwrite, upload, download, CSV sync). Admin-built pipelines; outputs chain by filename convention into `shared/data/`.
@@ -76,6 +85,7 @@ Read-only survey of the production MongoDB (383,032 occurrence records, 2017–2
 3. Ingestion must be scheduled, authenticated-or-abort (never silently anonymous), and must detect edits, deletions, and count changes — with partial fetches failing loudly rather than reporting empty success.
 4. Private/obscured coordinate handling must extend to the read path: real authentication, per-user authorization, no anonymous coordinate reads.
 5. Print events need durable history (what was printed, when, on which sheet, from which data), so later corrections can name the physical labels they invalidate.
-6. Atlases, collectors, and the curated taxonomy must be first-class, versioned entities, not flat files or per-task parameters.
-7. QC flags must be queryable data (typed, per-rule), surfaced to the responsible user in-app, with resolution trackable in one session.
-8. Concurrency safety must come from the data model (transactions, ownership), not from having exactly one careful operator.
+6. Proofing needs a field-number lookup that shows collector, sample number, specimen number and event date together, since that is the comparison the operator actually performs against a label in hand.
+7. Atlases, collectors, and the curated taxonomy must be first-class, versioned entities, not flat files or per-task parameters.
+8. QC flags must be queryable data (typed, per-rule), surfaced to the responsible user in-app, with resolution trackable in one session.
+9. Concurrency safety must come from the data model (transactions, ownership), not from having exactly one careful operator.

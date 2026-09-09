@@ -67,17 +67,19 @@ else's specimen.
 One record from the production dump: field number `25055898`, occurrence
 URI `https://osac.oregonstate.edu/OBS/OBA_25048415`. The number in the URI
 is a different record's field number, and the seventeen records after it
-carry the same offset of 7,483 — a block of 2025 records whose numbers moved
-while their URIs stayed. Measured over the 383,032 records (2026-09-09): 592
+carry the same offset of 7,483. That is one block of eighteen; the largest is
+214 consecutive numbers (`25056482`–`25056695`) all offset by 6,899, and every
+block falls inside `25055898`–`25057412`. Measured over the 383,032 records (2026-09-09): 592
 carry an OSAC URI whose embedded number is not their own field number, and in
 **every one** of the 592 that number is some other record's; they come in
 consecutive blocks with a constant offset, all from 2025. Separately, 216
-`occurrenceID` values sit on more than one record, 598 records in all — 210
-of them OSAC URIs on 462 records, the widest (`…/OBA_25016980`) on 29, the
-rest bare numbers of unestablished origin on 139 records across three states,
-the widest of those on 51. The two populations overlap on 251 records and are
-one phenomenon: a URI copied, or left behind, on records it does not belong
-to. The cause is not established, but the shape argues for one
+`occurrenceID` values sit on more than one record, 598 records in all: 210
+OSAC URIs on 462 records, the widest (`…/OBA_25016980`) on 29, and 6 bare
+numbers of unestablished origin on 136 records across three states, the widest
+of those on 51. Whether the misembedded URIs and the duplicated ones share a
+cause is **not** established — they overlap on 251 records, which is
+suggestive and not proof, and the bare-number population looks different in
+kind from either. The cause is not established, but the shape argues for one
 hypothesis and against the obvious one. Constant offsets over contiguous runs
 of field numbers are the fingerprint of a **misaligned assignment pass** — two
 ordered sequences zipped together from different starting points, which
@@ -85,7 +87,7 @@ ordered sequences zipped together from different starting points, which
 differently sized set than the one it wrote URIs for. The reference
 implementation's sha256-over-mutable-business-data primary key, the first
 suspect, would insert *duplicate rows* when a hashed field is edited; it would
-not shift a whole block of URIs by exactly 6,899. Oregon
+not shift a whole block of URIs by a constant. Oregon
 publishes to GBIF by hand and only after the embargo, so this is very likely
 caught *before* publication; whether any of the 598 has already gone out is
 an open question below. Filed as beeline-1kb.14.
@@ -130,6 +132,25 @@ replaceable at a known cost.** Beeline proceeds on Andony's account (Peter,
 that is now the simpler of two survivable options rather than the avoidance
 of a catastrophe.
 
+**One word does two jobs, so this ADR pins the mapping.** In this project's
+own vocabulary, *catalog number* means the **museum's** identifier and ours is
+the field number — that is the distinction beeline-nfo settled and it does not
+change. `dwc:catalogNumber` is a different thing: a Darwin Core *field*, whose
+role is "the collection's number for this specimen", and the field number is
+what fills it in exports Beeline publishes. Both statements are true and they
+are about different objects, a name and a slot.
+
+| the thing | what it is | who mints it | may it change |
+|---|---|---|---|
+| `specimen.field_number` | Beeline's label identifier | Beeline | yes, at a known cost (4) |
+| Beeline's `dwc:occurrenceID` | the record's permanent identity | Beeline, once | **no** |
+| `dwc:catalogNumber` in Beeline's own exports | a slot, filled by the field number | — | follows the field number |
+| Ecdysis `WSDA_…`, OSAC's URI | the **museum's** identifier, CONTEXT.md's *catalog number* | the museum | the museum's business |
+
+Whether Ecdysis keeps deriving `WSDA_<field number>`, and whether it will
+accept an `occurrenceID` Beeline supplies rather than minting its own UUID, is
+open below — it is the museum's decision and not ours to make here.
+
 1. **An `occurrenceID` is minted once per specimen, opaque, and independent
    of the field number.** It is issued at the same moment as the field
    number — print-run freeze, when the run creates the specimen records
@@ -165,12 +186,26 @@ of a catastrophe.
 5. **Uniqueness is enforced by the database for every number Beeline mints**,
    and the mechanism is the one the project has already chosen: numbers are
    minted by inserting into `minted_field_number`, whose `field_number`
-   PRIMARY KEY *is* the guarantee, keyed 1:1 to the specimen
+   PRIMARY KEY *is* the guarantee
    ([schema-sketch.md](../schema-sketch.md), phase 5). This is requirement 2,
    field-number uniqueness, in
    [reference-implementation.md](../reference-implementation.md); it was
    worded as *catalog-number* uniqueness until 2026-09-09, a leftover from
    before the vocabulary was settled, and was always about `fieldNumber`.
+
+   One correction to that sketch, forced by (4). It keys the registry 1:1 to
+   the specimen (`specimen_id NOT NULL UNIQUE`), which cannot survive a
+   duplicate repair: minting the replacement number for a specimen that
+   already holds a row either violates the UNIQUE or overwrites the row and
+   loses the number that was burned. So the registry is **one row per minted
+   number**, not per specimen — `field_number` stays the PRIMARY KEY and the
+   guarantee, `specimen_id` is a plain reference, and which number a specimen
+   currently carries is *derived*, the latest row for it, exactly as
+   `determination_of_record` is derived from append-only determinations
+   (`schema/040`). That makes the registry append-only like every other
+   authored history here, and it makes `otherCatalogNumbers` fall out for
+   free: a specimen's superseded numbers are its non-current rows, which is
+   the value Ecdysis and GBIF want published beside the current one.
 
    The two-table shape is not decoration. A `UNIQUE` on
    `specimen.field_number` cannot exist — `25051768` is on two imported rows —

@@ -117,15 +117,26 @@ is the one who prints and because the two may be describing different cases.
    `1900001` onto a second bee while the first wears that number on a pin in a
    drawer. No engine-level constraint closes that: a cross-table exclusion is
    not portable, and the partial index is forbidden above. So the rule is
-   stated rather than enforced — **minting starts above the whole imported
-   corpus** (its ceiling is `26072091`) and never re-enters a used prefix,
-   which also means the year-default that seeded each historical block must
-   not survive into Beeline; a mint has one source, the registry's own
-   maximum. And because a stated rule is a rule somebody breaks, it is checked
-   the way this project checks everything the engine cannot hold: a view of
-   minted numbers that collide with an imported one, asserted empty by test,
-   the same shape as `sample_elevation_stale` and
-   `sample_primary_collector_invalid`.
+   stated rather than enforced: **a mint never lands on a number the imported
+   corpus already uses**, whose ceiling is `26072091`.
+
+   This decides nothing about the *shape* of new numbers, and deliberately so
+   — that is a printing question, per (6). Continuing to seed each season from
+   the year is safe and stays available: `27000001` clears the imported
+   ceiling by 927,910, and the busiest year on record printed 76,409 labels,
+   so a year's block has an order of magnitude of headroom. What the rule
+   forbids is narrower and is a live hazard in the blow-away era rather than a
+   hypothetical: the reference implementation falls back to the year *when the
+   scan finds nothing to increment from*, and a rebuilt or reseeded store has
+   an empty registry beside a full corpus. Seeding from the year alone would
+   then have picked `26000001` during 2026 — squarely inside the imported `26`
+   block. So the seed is taken from the imported corpus as well as the
+   registry, never from the registry alone.
+
+   And because a stated rule is a rule somebody breaks, it is checked the way
+   this project checks everything the engine cannot hold: a view of minted
+   numbers that collide with an imported one, asserted empty by test, the same
+   shape as `sample_elevation_stale` and `sample_primary_collector_invalid`.
 
 6. **A field number is opaque.** No code parses a season, a year, an atlas or
    a project out of one. The two-digit prefix is the year the printer ran and

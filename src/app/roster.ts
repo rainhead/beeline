@@ -343,7 +343,7 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
     SELECT p.entity_id AS person_id, p.display_name, p.given_name, p.family_name, p.label_name,
            a.login, a.inat_user_id,
            (SELECT count(*) FROM sample_collector sc WHERE sc.person_id = p.entity_id) AS samples,
-           (SELECT count(*) FROM sample s WHERE s.collector_id = p.entity_id) AS primary_samples,
+           (SELECT count(*) FROM sample_primary_collector pc WHERE pc.person_id = p.entity_id) AS primary_samples,
            pm.kind AS membership,
            atl.code AS atlas_code,
            (adm.person_id IS NOT NULL) AS is_admin,

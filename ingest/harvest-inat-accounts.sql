@@ -16,13 +16,14 @@
 -- account per collector across their linked samples, one collector per
 -- account, and neither side already claimed. Conflicts stay for staff.
 CREATE OR REPLACE TEMP TABLE observer_collector_pair AS
-SELECT s.collector_id                    AS person_id,
+SELECT pc.person_id,
        f.user_id,
        arg_max(f.user_login, f.inat_id)  AS login
 FROM sample s
+JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
 JOIN observation_field f ON f.inat_id = s.inat_observation_id
 WHERE f.user_id IS NOT NULL AND f.user_login IS NOT NULL
-GROUP BY s.collector_id, f.user_id;
+GROUP BY pc.person_id, f.user_id;
 
 -- Logins change; user id is the stable key. Refresh the cache.
 UPDATE inat_account SET login = p.login

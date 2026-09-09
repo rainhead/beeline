@@ -113,10 +113,10 @@ FROM (
 -- sample (see promote-legacy.sql), so the legacy number is no longer a key
 -- into `specimen` once two legacy series merge into one sample.
 CREATE OR REPLACE VIEW legacy_specimen_map AS
-SELECT n._id, sp.entity_id AS specimen_id, s.collector_id
+SELECT n._id, sp.entity_id AS specimen_id, pc.person_id AS collector_id
 FROM legacy_specimen_number n
 JOIN specimen sp ON sp.sample_id = n.sample_id AND sp.specimen_number = n.specimen_number
-JOIN sample s ON s.entity_id = n.sample_id;
+JOIN sample_primary_collector pc ON pc.sample_id = n.sample_id;
 
 -- The verbatim name rides along with the node it resolved to: staging is
 -- re-pullable today and frozen at cutover, after which this is the only

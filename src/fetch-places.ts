@@ -1,4 +1,5 @@
-import { DuckDBConnection, DuckDBInstance, listValue } from "@duckdb/node-api";
+import { DuckDBConnection, listValue } from "@duckdb/node-api";
+import { openDuckDb } from "./db.js";
 import { pathToFileURL } from "node:url";
 import { DEFAULT_DB } from "./person-change.js";
 
@@ -134,7 +135,7 @@ export async function fetchPlaces(
 // CLI: pnpm inat:fetch-places [db]
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const dbPath = process.argv[2] ?? DEFAULT_DB;
-  const instance = await DuckDBInstance.create(dbPath);
+  const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
   const result = await fetchPlaces(conn);
   conn.closeSync();

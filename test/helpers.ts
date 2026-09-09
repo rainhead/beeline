@@ -85,9 +85,16 @@ export async function insertCleanSample(
   overrides: Record<string, string> = {},
   location: Record<string, string> | null = {},
 ): Promise<number> {
+  // collector_id and atlas_id stay override KEYS for the fixture's callers,
+  // but land in sample_collector and sample_atlas — the columns left sample
+  // with beeline-6e9.
+  const {
+    collector_id = "(SELECT min(entity_id) FROM person)",
+    atlas_id = "NULL",
+    ...sampleOverrides
+  } = overrides;
   const cols: Record<string, string> = {
     kind: "'net'",
-    collector_id: "(SELECT min(entity_id) FROM person)",
     sample_number: "'1'",
     date_start: "DATE '2026-07-14'",
     date_end: "DATE '2026-07-14'",
@@ -97,19 +104,22 @@ export async function insertCleanSample(
     county: "'BentonCo'",
     locality: "'Corvallis'",
     protocol: "'net'",
-    ...overrides,
+    ...sampleOverrides,
   };
   const keys = Object.keys(cols);
   const result = await conn.run(
     `INSERT INTO sample (${keys.join(", ")}) VALUES (${keys.map((k) => cols[k]).join(", ")}) RETURNING entity_id`,
   );
   const [[id]] = (await result.getRows()) as [[number]];
-  // Position 1 is the sample's own collector — the invariant every "my
-  // samples" query reads (beeline-77j).
+  // Position 1 is the primary collector — the head every "my samples" query
+  // and attribution read (beeline-77j, beeline-6e9).
   await conn.run(
     `INSERT INTO sample_collector (sample_id, person_id, position)
-     SELECT ${id}, collector_id, 1 FROM sample WHERE entity_id = ${id}`,
+     VALUES (${id}, ${collector_id}, 1)`,
   );
+  if (atlas_id !== "NULL") {
+    await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) VALUES (${id}, ${atlas_id})`);
+  }
 
   if (location !== null) {
     const loc: Record<string, string> = {

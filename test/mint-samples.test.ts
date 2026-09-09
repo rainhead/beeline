@@ -92,10 +92,10 @@ describe("minting a sample from an observation", () => {
     expect(counts).toMatchObject({ samplesMinted: 1, freeLinks: 0, unresolvedObservers: 0 });
 
     expect(
-      await one(`SELECT kind, collector_id, sample_number, CAST(date_start AS VARCHAR), CAST(date_end AS VARCHAR), specimen_count,
-                        inat_observation_id, protocol, country, state_province, county, locality,
-                        host_inat_taxon_id, host_name_as_observed
-                 FROM sample`),
+      await one(`SELECT s.kind, pc.person_id, s.sample_number, CAST(s.date_start AS VARCHAR), CAST(s.date_end AS VARCHAR), s.specimen_count,
+                        s.inat_observation_id, s.protocol, s.country, s.state_province, s.county, s.locality,
+                        s.host_inat_taxon_id, s.host_name_as_observed
+                 FROM sample s JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id`),
     ).toEqual([
       "net",
       ada,
@@ -121,7 +121,7 @@ describe("minting a sample from an observation", () => {
     await stage(obs(7));
     await promoteObservations(conn);
     expect(await one("SELECT person_id, position FROM sample_collector")).toEqual([ada, 1]);
-    expect(await count("SELECT count(*) FROM sample_primary_collector_mismatch")).toBe(0);
+    expect(await count("SELECT count(*) FROM sample_primary_collector_invalid")).toBe(0);
   });
 
   test("the location and geoprivacy statements reach a sample minted on the same pass", async () => {
@@ -152,14 +152,17 @@ describe("minting a sample from an observation", () => {
     // Bo holds no inat_account; the harvest can only learn one from a sample
     // that already cites an observation of theirs.
     await insertCleanSample(conn, { collector_id: String(bo), inat_observation_id: "8", sample_number: "'1'" });
-    await conn.run(`UPDATE sample_collector SET person_id = ${bo} WHERE sample_id = (SELECT max(entity_id) FROM sample)`);
     await stage(obs(8, { user: { id: 200, login: "bonew" }, ofvs: ofvs("1", "3") }));
     await stage(obs(9, { user: { id: 200, login: "bonew" }, observed_on: "2026-07-20", ofvs: ofvs("2", "5") }));
 
     const counts = await promoteObservations(conn);
     expect(counts.accountsLinked).toBe(1);
     expect(counts.samplesMinted).toBe(1);
-    expect(await one("SELECT sample_number, collector_id FROM sample WHERE inat_observation_id = 9")).toEqual(["2", bo]);
+    expect(
+      await one(`SELECT s.sample_number, pc.person_id FROM sample s
+                 JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+                 WHERE s.inat_observation_id = 9`),
+    ).toEqual(["2", bo]);
   });
 });
 
@@ -365,13 +368,34 @@ describe("descriptive fields are a fill-only refresh", () => {
   });
 
   test("an atlas a human assigned is not moved by the lookup", async () => {
+    // A row with a NULL atlas and assigned_by set is a person stating
+    // "belongs to none" — the one state the CHECK admits a NULL atlas for —
+    // and the refresh reads a worklist that excludes every human assignment.
     const sampleId = await insertCleanSample(conn, {
-      inat_observation_id: "7", sample_number: "'7'", atlas_id: "NULL",
-      atlas_assigned_by: `(SELECT min(entity_id) FROM person)`,
+      inat_observation_id: "7", sample_number: "'7'",
     });
+    await conn.run(
+      `INSERT INTO sample_atlas (sample_id, atlas_id, assigned_by)
+       VALUES (${sampleId}, NULL, (SELECT min(entity_id) FROM person))`,
+    );
     await stage(obs(7));
     await promoteObservations(conn);
-    expect(await one(`SELECT atlas_id FROM sample WHERE entity_id = ${sampleId}`)).toEqual([null]);
+    expect(await one(`SELECT atlas_id FROM sample_atlas WHERE sample_id = ${sampleId}`)).toEqual([null]);
+  });
+
+  test("a sample minted before its geography was cached gets its atlas on the next pass", async () => {
+    // The gap the column version made permanent (beeline-6e9): the atlas was
+    // set at INSERT or never, so the reseed recipe's fetch-places-first
+    // ordering was load-bearing. Now the refresh drains sample_atlas_unfilled.
+    const sampleId = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'",
+    });
+    expect(await count("SELECT count(*) FROM sample_atlas_unfilled")).toBe(1);
+    await stage(obs(7));
+    await promoteObservations(conn);
+    expect(await one(`SELECT a.code FROM sample_atlas sa JOIN atlas a ON a.entity_id = sa.atlas_id
+                      WHERE sa.sample_id = ${sampleId}`)).toEqual(["OBA"]);
+    expect(await count("SELECT count(*) FROM sample_atlas_unfilled")).toBe(0);
   });
 });
 
@@ -422,17 +446,45 @@ describe("the locality a minted sample carries", () => {
     expect(await one("SELECT locality FROM sample")).toEqual(["Bald Hill"]);
   });
 
-  test("the street-suffix list has one home, and both readers use it", async () => {
+  test("the street-suffix predicate has one home, and both readers use it", async () => {
     // qc_rule_locality_format judges a locality a sample carries;
-    // observation_locality picks one that does not exist yet. beeline-4dt is
-    // a pending edit to that list ('st' is Street, so "St Helens" reads as a
-    // street address) and it has to land once and reach both.
-    const [[pattern]] = (await rows(conn, "SELECT pattern FROM locality_street_suffix_pattern")) as [[string]];
+    // observation_locality picks one that does not exist yet. beeline-4dt
+    // landed in the one place and reached both: 'st' is Saint here, so the
+    // component is a place name and the sample gets a locality it used to be
+    // refused — and qc_rule_locality_format agrees, which is the half that
+    // used to disagree.
+    const [[pattern]] = (await rows(conn, "SELECT locality_street_suffix_pattern()")) as [[string]];
     expect(pattern).toContain("boulevard");
-    // The inherited defect, pinned so that fixing it fails this test and
-    // whoever fixes it sees both readers change together.
-    await stage(obs(7, { place_guess: "St Helens, OR, US" }));
+    await stage(obs(7, { place_guess: "St Helens, OR, US", ofvs: ofvs("7", "1") }));
     await promoteObservations(conn);
-    expect(await one("SELECT locality FROM sample")).toEqual([null]);
+    expect(await one("SELECT locality FROM sample")).toEqual(["St Helens"]);
+    expect(await count("SELECT count(*) FROM qc_finding WHERE rule_name = 'locality_format'")).toBe(0);
+  });
+
+  // The county is its own label field, so a locality restating it prints
+  // nothing — and since the rule takes the FIRST usable component, and these
+  // guesses put the county first, it beat the town sitting right behind it.
+  // Only the long spelling was ever refused, and only by the accident of
+  // `lane` and `county` being street suffixes; beeline-4dt's anchor takes
+  // the accident away, so the administrative clause states it (beeline-bev).
+  test.each([
+    ["Benton Co., Bald Hill, OR, US", "Bald Hill"],
+    ["Benton Co, Bald Hill, OR, US", "Bald Hill"],
+    ["Benton County, Bald Hill, OR, US", "Bald Hill"],
+    // A bare county and nothing else is a guess too coarse to use, which is
+    // the volunteer's to fix upstream on iNaturalist.
+    ["Benton Co., OR, US", null],
+    // But NEVER the bare name: a county is routinely named after its own
+    // seat and iNaturalist writes plain 'City, State, Country', so this is
+    // the city of Benton and not Benton County. Matching bare would take
+    // the locality off 1,304 observations in the corpus — Hood River,
+    // Yakima, Nanaimo, Walla Walla, Spokane — to catch the ~200 that are
+    // genuinely coarse. The state clause beside it can afford an exact
+    // match because a state's name is not a town in that same state.
+    ["Benton, OR, US", "Benton"],
+  ])("the observation's own county is not a locality: %s -> %s", async (guess, expected) => {
+    await stage(obs(7, { place_guess: guess }));
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual([expected]);
   });
 });

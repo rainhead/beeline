@@ -10,6 +10,7 @@ import type {
 } from "../model.js";
 import { labelName } from "../person-name.js";
 import type { ListedCollector } from "./listings.js";
+import { readSampleChanges, sampleHistory, SAMPLE_STATE_SQL, type SampleChange } from "../sample-change.js";
 
 /**
  * One record: the query layer behind /samples/:id and /specimens/:id.
@@ -200,7 +201,8 @@ const sampleColumns = (personId: number) => sql`
 
 const SAMPLE_JOINS = sql`
   FROM sample s
-  LEFT JOIN atlas a ON a.entity_id = s.atlas_id
+  LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
+  LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
   LEFT JOIN elevation_source es ON es.entity_id = loc.elevation_source_id
   LEFT JOIN observation_field f ON f.inat_id = s.inat_observation_id`;
@@ -400,3 +402,49 @@ export function parsePage(raw: string | undefined): number {
 export const sampleHref = (sampleId: number, page = 1) =>
   page > 1 ? `/samples/${sampleId}?page=${page}` : `/samples/${sampleId}`;
 export const specimenHref = (specimenId: number) => `/specimens/${specimenId}`;
+
+/**
+ * What happened to this sample, newest first (beeline-ewl). Addressed by the
+ * reference the STORE derives — collector as the overlay names them, number,
+ * start date — which the log's fold has followed every recorded move to. A
+ * sample whose collector no reference names has no history to ask for, and
+ * an unreadable log answers empty rather than taking the page down: the log
+ * records the store, it does not gate it.
+ */
+export async function sampleChangeHistory(
+  db: Kysely<Database>,
+  changesPath: string,
+  sampleId: number,
+): Promise<SampleChange[]> {
+  try {
+    const found = await sql<{ collector: string | null; sample_number: string; date_start: string }>`
+      ${sql.raw(SAMPLE_STATE_SQL)}
+      WHERE s.entity_id = ${sql.lit(Math.trunc(sampleId))}`.execute(db);
+    const row = found.rows[0];
+    if (row === undefined || row.collector === null) return [];
+    // During a live duplicate_sample_number two samples derive this same
+    // triple, and the recorder correctly refuses to write for either — but a
+    // reader that answers anyway shows both pages the same carried history,
+    // one of them somebody else's provenance. The history is nobody's to
+    // show until the duplicate is resolved.
+    const siblings = await sql<{ n: number }>`
+      SELECT count(*) AS n
+      FROM sample s
+      JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+      JOIN sample other ON other.sample_number = s.sample_number
+                       AND other.date_start = s.date_start
+      JOIN sample_primary_collector opc ON opc.sample_id = other.entity_id
+                                        AND opc.person_id = pc.person_id
+      WHERE s.entity_id = ${sql.lit(Math.trunc(sampleId))}`.execute(db);
+    if (Number(siblings.rows[0]?.n ?? 1) > 1) return [];
+    const changes = await readSampleChanges(changesPath);
+    return sampleHistory(changes, {
+      collector: row.collector,
+      sample_number: row.sample_number,
+      date_start: String(row.date_start),
+    });
+  } catch (err) {
+    console.warn(`could not read the sample change log: ${(err as Error).message}`);
+    return [];
+  }
+}

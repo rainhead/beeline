@@ -377,8 +377,8 @@ describe("sample listing", () => {
     const { app, conn, alice } = await listingApp();
     for (const n of ["3", "12", "9"]) {
       await conn.run(
-        `INSERT INTO sample (kind, collector_id, sample_number, date_start, date_end, specimen_count, country, state_province, county, locality, protocol)
-         VALUES ('net', ${alice}, '${n}', DATE '2026-08-01', DATE '2026-08-01', 1, 'USA', 'OR', 'Benton', 'Corvallis', 'net')`,
+        `INSERT INTO sample (kind, sample_number, date_start, date_end, specimen_count, country, state_province, county, locality, protocol)
+         VALUES ('net', '${n}', DATE '2026-08-01', DATE '2026-08-01', 1, 'USA', 'OR', 'Benton', 'Corvallis', 'net')`,
       );
       await conn.run(
         `INSERT INTO sample_collector (sample_id, person_id, position)

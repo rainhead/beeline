@@ -317,12 +317,16 @@ async function applyField(
 // for a deployed store, where a bulk decision (a roster import, a curated file
 // graduated into git) has to land without one.
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const { DuckDBInstance } = await import("@duckdb/node-api");
+  const { openDuckDb } = await import("./db.js");
   const { mergeOverlays, readOverlay } = await import("./person-overlay.js");
-  const dbPath = process.argv[2] ?? "beeline.duckdb";
+  // BEELINE_DB before the bare default, as db:migrate and promotion do: run
+  // with no argument on a deployment whose store is not in the working
+  // directory, this would otherwise CREATE an empty one beside the app and
+  // apply the overlay to that.
+  const dbPath = process.argv[2] ?? process.env.BEELINE_DB ?? "beeline.duckdb";
   const curated = process.argv[3] ?? "ingest/person-overlay.csv";
   const app = process.argv[4] ?? "data/person-overlay.csv";
-  const instance = await DuckDBInstance.create(dbPath);
+  const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
   const result = await applyPersonOverlay(conn, mergeOverlays(await readOverlay(curated), await readOverlay(app)));
   await conn.run("CHECKPOINT");

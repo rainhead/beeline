@@ -139,7 +139,9 @@ describe("self-service QC home", () => {
     const { app, conn, alice } = await qcApp();
     const [[id]] = (await rows(
       conn,
-      `SELECT entity_id FROM sample WHERE collector_id = ${alice} AND sample_number = 'A-8'`,
+      `SELECT s.entity_id FROM sample s
+       JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+       WHERE pc.person_id = ${alice} AND s.sample_number = 'A-8'`,
     )) as [[number]];
     await conn.run(
       `INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1), (${id}, 2), (${id}, 3), (${id}, 4)`,
@@ -166,8 +168,9 @@ describe("self-service QC home", () => {
     // Repair Alice's sample; Bob's stays broken and must not spoil her all-clear.
     await conn.run(`UPDATE sample SET locality = 'Corvallis', county = 'BentonCo'
                     WHERE entity_id IN (SELECT sample_id FROM sample_collector WHERE person_id = ${alice})`);
-    expect(await rows(conn, `SELECT * FROM qc_finding f JOIN sample s ON s.entity_id = f.sample_id
-                             WHERE s.collector_id = ${alice}`)).toHaveLength(0);
+    expect(await rows(conn, `SELECT * FROM qc_finding f
+                             JOIN sample_primary_collector pc ON pc.sample_id = f.sample_id
+                             WHERE pc.person_id = ${alice}`)).toHaveLength(0);
     void bob;
     const body = await (await app.request("/")).text();
     expect(body).toContain("All clear");

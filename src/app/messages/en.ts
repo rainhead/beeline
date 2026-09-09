@@ -326,6 +326,52 @@ export const en = {
    * page links it rather than re-explaining it (/design/voice).
    */
   record: {
+    /**
+     * The sample's own change history (beeline-ewl): what the change log
+     * recorded, newest first, in the words of this page. The log's fields
+     * are the sample's state, so most values render as themselves.
+     */
+    history: {
+      heading: "History",
+      hint: "Every change recorded for this sample, newest first — an edit made here, an iNaturalist sync moving something, or a rebuild.",
+      empty: "No changes recorded — this sample has not changed since Beeline began keeping history. Changes from here on appear in this list.",
+      colWhen: "When",
+      colWhat: "What",
+      colChange: "Change",
+      colWho: "Who",
+      set: "set to",
+      cleared: "cleared — was",
+      blank: "nothing",
+      field: {
+        kind: "Kind",
+        date_end: "End date",
+        specimen_count: "Specimen count",
+        observation: "iNaturalist observation",
+        location: "Coordinates",
+        location_source: "Coordinate source",
+        geoprivacy: "Geoprivacy",
+        taxon_geoprivacy: "Taxon geoprivacy",
+        country: "Country",
+        state_province: "State/Province",
+        county: "County",
+        locality: "Locality",
+        protocol: "Protocol",
+        sampling_effort: "Sampling effort",
+        host: "Floral host",
+        atlas: "Atlas",
+        atlas_assigned_by: "Atlas assigned by",
+        co_collectors: "Co-collectors",
+        collector: "Collector",
+        sample_number: "Sample number",
+        date_start: "Start date",
+      },
+      source: {
+        app: "staff",
+        legacy_promotion: "a rebuild",
+        observation_promotion: "an iNaturalist sync",
+        reconcile: "found at startup",
+      },
+    },
     /** Unreachable and non-existent are one answer, so this covers both. */
     notFound: "No such record, or not one you can see.",
     staffNote: "Staff view: this is not one of your own records.",
@@ -750,7 +796,9 @@ export const en = {
     place_unrecognised:
       "The state or province on this record is not one Beeline recognises, or does not agree with the country beside it. Use the two-letter US state or Canadian province code (UT, BC), and a country that matches it. Records from outside the US and Canada are expected here and are not a mistake — staff can confirm them.",
     coordinate_uncertainty:
-      "The location accuracy is worse than 250 m. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.",
+      "The location accuracy is worse than this record allows — the flag says by how much, and which limit applied. Records from 2 September 2026 onwards must be within 100 m, the resolution of a GPS reading; for a trap, the day it was emptied is the one that counts. Earlier records keep the 250 m that was in force when they were collected. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.",
+    coordinate_out_of_region:
+      "The coordinates on this record are not in North America, but the record says they should be. Usually the pin was moved on the observation after its location text was written, or a longitude lost its minus sign. Check the pin on the iNaturalist observation — if the record really was collected outside North America, set its country to match and ask staff to confirm it.",
     non_tracheophyte_host:
       "The iNaturalist observation should be identified as the floral host — a vascular plant. Its current identification is something else (a moss, alga, fungus, or the bee itself). Correct the observation's identification to the plant the bee was collected from and it will clear on the next sync.",
     duplicate_sample_number:
@@ -830,7 +878,7 @@ export const en = {
       "coordinate-uncertainty": {
         term: "Coordinate uncertainty",
         definition:
-          "How far from the pin the true location might be, as recorded by iNaturalist. Beyond 250 m the location is too vague to print, usually because the phone had a poor fix.",
+          "How far from the pin the true location might be, as recorded by iNaturalist. Beyond 100 m the location is too vague to print — usually because the phone had a poor fix. Records collected before 2 September 2026, or trapped and emptied before then, are held to the older 250 m limit: their specimens have often left the collector's hands, so the pin can no longer be corrected.",
       },
       determination: {
         term: "Determination",

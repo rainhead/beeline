@@ -432,7 +432,8 @@ export async function listSamples(
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   let base = db
     .selectFrom("sample as s")
-    .leftJoin("atlas as a", "a.entity_id", "s.atlas_id")
+    .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
+    .leftJoin("atlas as a", "a.entity_id", "sa.atlas_id")
     // One row per sample (it is the PK), so this cannot fan the listing out.
     .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
     .leftJoin(
@@ -457,7 +458,9 @@ export async function listSamples(
       ),
     );
   } else if (query.scope === OUTSIDE) {
-    base = base.where("s.atlas_id", "is", null);
+    // Outside = no atlas, whether geography said so (no sample_atlas row —
+    // the LEFT JOIN gives a NULL) or a human did (a row with a NULL atlas).
+    base = base.where("sa.atlas_id", "is", null);
   } else if (query.scope !== ALL) {
     base = base.where("a.code", "=", query.scope);
   }
@@ -587,7 +590,8 @@ export async function listSpecimens(
   let base = db
     .selectFrom("specimen as sp")
     .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
-    .leftJoin("atlas as a", "a.entity_id", "s.atlas_id")
+    .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
+    .leftJoin("atlas as a", "a.entity_id", "sa.atlas_id")
     .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
     .leftJoin(
       (eb) =>
@@ -614,7 +618,9 @@ export async function listSpecimens(
       ),
     );
   } else if (query.scope === OUTSIDE) {
-    base = base.where("s.atlas_id", "is", null);
+    // Outside = no atlas, whether geography said so (no sample_atlas row —
+    // the LEFT JOIN gives a NULL) or a human did (a row with a NULL atlas).
+    base = base.where("sa.atlas_id", "is", null);
   } else if (query.scope !== ALL) {
     base = base.where("a.code", "=", query.scope);
   }

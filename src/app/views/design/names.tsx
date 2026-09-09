@@ -245,7 +245,8 @@ export function DesignNames() {
         <p>
           What a label prints for a sample with <em>several</em> collectors is undecided. The legacy data has 25,949
           specimens whose collector is a pipe-separated list — “Michael O’Loughlin | Dan O’Loughlin”, active through
-          2025 — and <code>sample.collector_id</code> is a single reference.
+          2025 — and a sample has a single primary collector, at position 1 of
+          its list.
         </p>
       </OpenQuestion>
 

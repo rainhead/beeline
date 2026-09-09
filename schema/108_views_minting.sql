@@ -17,25 +17,63 @@
 -- had to fire" stays checkable rather than assumed.
 
 -- ── The street-suffix predicate, stated once ─────────────────────────────
--- The same seventeen words in two places now: qc_rule_locality_format
+-- The same seventeen words in two places: qc_rule_locality_format
 -- (schema/120) judges a locality a sample already carries, and
 -- observation_locality below picks one that does not exist yet. A word list
 -- duplicated across two files is a word list that will one day be two word
--- lists — and there is a live edit pending against it (beeline-4dt: `st` is
--- the abbreviation for Street, so "St Helens" reads as a street address),
--- which must land in one place and take both readers with it.
+-- lists, so it lives here and both read it.
 --
--- A one-row view rather than a macro for the reason elevation_derivation_limit
--- gives (schema/170): ADR 0001 keeps schema SQL portable and a DuckDB macro
--- is not.
+-- A MACRO rather than the one-row view elevation_derivation_limit uses
+-- (schema/170), and the difference is that this constant is a REGEX. DuckDB
+-- compiles a regex once when the pattern is a literal and once PER ROW when
+-- it is anything else, and a scalar subquery over a one-row view is anything
+-- else: reading the pattern that way cost 1.1 s over the dev store's 67,304
+-- localities against 17 ms for the same predicate spelled inline — 60x, on
+-- the query ADR 0001 already calls the dominant cost of every QC read in the
+-- app. A threshold does not care (nothing is compiled), which is why the
+-- view is right there and wrong here. So this is ADR 0001's third named
+-- exception, on the same predicate as the second and measured the same way
+-- (beeline-5bm); the Postgres port is one IMMUTABLE SQL function, written
+-- beside the regexp_matches rewrite that predicate already needs.
+--
+-- COMMENT ON does not reach a macro, so the documentation is this block.
+--
+-- WHERE the word sits is half the predicate (beeline-4dt). Standing alone
+-- between spaces is not enough: `st` is also Saint and the abbreviation for
+-- State, so the inherited rule told 168 samples that "St Helens" — a town in
+-- Columbia County — looked like a street address, and told another ~70 the
+-- same about "Cottonwood Canyon St Prk". That is the one kind of QC finding
+-- that actively damages data: the only way to satisfy it is to write the
+-- locality wrongly. `lane` and `county` collide the same way ("Lane Creek",
+-- "Mike Miller County Park").
+--
+-- A Saint or a State precedes the rest of the name; a Street ENDS it. So the
+-- word must be the last one in its comma-separated phrase, give or take a
+-- trailing directional ("Vista Ave SE") or road number ("BLM Rd 39-6-36") —
+-- which is a fact about English addresses rather than a word list, and so
+-- cannot rot the way a list of exemptions would. Measured over all 67,304
+-- localities in the dev store: 310 samples lose the street flag, 283 of them
+-- correctly (Saint 198, State ~70, Lane/County the rest) and 27 wrongly, all
+-- of them backcountry road references with the number in the middle
+-- ("Summit Rd NF 2630") rather than a residential address; 210 samples go
+-- entirely clean, of which 12 are those road references. Every one of those
+-- counts is in the settled seasons — the open season has 6 locality findings
+-- and no street ones at all, so this is residue rather than live practice.
+--
+-- This is a deliberate divergence from the reference implementation, which
+-- has the same false positive and has had it for years
+-- (docs/reference-implementation.md).
 --
 -- The pattern requires each word to stand alone between spaces, and its
 -- reader is expected to have normalised the text the way qc_rule_locality_format
--- does — lowercased, commas and periods to spaces, wrapped in spaces.
+-- does — lowercased, periods to spaces, commas isolated as their own token,
+-- wrapped in spaces. The comma is kept because it ends a phrase the way the
+-- end of the string does: "NW Harrison Blvd, Corvallis" is an address, and
+-- the reference's own unit test says so.
 -- regexp_matches is one of ADR 0001's two named dialect exceptions.
-CREATE VIEW locality_street_suffix_pattern AS
-SELECT ' (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county) ' AS pattern;
-COMMENT ON VIEW locality_street_suffix_pattern IS 'The street-suffix word list, in one place, read by qc_rule_locality_format (schema/120) and observation_locality. A one-row view rather than a macro because ADR 0001 keeps schema SQL portable.';
+CREATE MACRO locality_street_suffix_pattern() AS
+  concat(' (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county)',
+         '( +((ne|nw|se|sw|n|s|e|w)|[^ ]*[0-9][^ ]*))* *(,|$)');
 
 -- ── The locality a minted sample carries ─────────────────────────────────
 -- place_guess is not raw geocoder output to be discarded: shaping it is part
@@ -68,18 +106,51 @@ COMMENT ON VIEW locality_street_suffix_pattern IS 'The street-suffix word list, 
 --                      only in the past: 166 settled samples against 0 in the
 --                      open season, so current practice does not write that
 --                      shape at all.
---   no street suffix   the shared pattern above. Also what refuses
---                      county-only guesses, `county` being one of the words.
+--   no street suffix   the shared pattern above, applied to the component
+--                      rather than to the whole guess — which is what the
+--                      pattern's comma anchor already means, so the two
+--                      readers ask the same question at their own grain.
 --   no postcode        a run of five digits.
 --   no house number    a component starting with a digit: '3334 NW Covey
 --                      Run' carries no listed suffix and would otherwise
 --                      pass at 17 characters.
---   not administrative a component naming a state or a country is not a
---                      locality. Data-driven off atlas_region plus the
---                      country spellings place_guess actually writes, and
---                      off the observation's OWN country and state names —
---                      which is what lets 'Oregon' be a locality in
---                      Wisconsin and not in Oregon.
+--   not administrative a component naming a state, a country or the county
+--                      it sits in is not a locality. Data-driven off
+--                      atlas_region plus the country spellings place_guess
+--                      actually writes, and off the observation's OWN
+--                      country, state and county names — which is what lets
+--                      'Oregon' be a locality in Wisconsin and not in
+--                      Oregon. The county half is stated here rather than
+--                      left to `county` in the word list, which only ever
+--                      caught the long spelling (beeline-bev): 'Deschutes
+--                      Co.' walked straight through, and since the rule
+--                      takes the FIRST usable component it beat the town
+--                      sitting right behind it — 583 observations read
+--                      'Deschutes Co.' where the guess also said 'Bend'.
+--                      116 more carry a bare county and nothing else and so
+--                      now get no locality at all, which is the documented
+--                      outcome for a guess too coarse to use. The immediate
+--                      cause was beeline-4dt: 'Lane Co.' had been refused by
+--                      the accident of `lane` being a street suffix, and the
+--                      anchor takes that accident away.
+--
+--                      The county is matched ONLY with 'County', 'Co' or
+--                      'Co.' after it, and never bare — which is the one
+--                      place this clause is deliberately weaker than the
+--                      state and country clauses beside it. A county is
+--                      routinely named after its own seat, and iNaturalist
+--                      writes plain 'City, State, Country', so a bare
+--                      component equal to the county name is nearly always
+--                      the CITY: over the corpus 1,304 observations have
+--                      one, and they are Hood River (258), Yakima (249),
+--                      Nanaimo (128), Walla Walla (53), Spokane (41),
+--                      Tillamook, Boise, Union, Toronto, Los Angeles. About
+--                      200 are genuinely coarse — the BC regional districts
+--                      ('Cariboo', 'Capital'), which is all their guess
+--                      offers anyway. Matching bare would take the locality
+--                      off all 1,304 to reach those 200. A state's name is
+--                      not a town in that same state, which is why the
+--                      clause above it can afford the exact match.
 --
 -- The administrative clause is why this is not a pure string function: 1,620
 -- of the 1,624 two- and three-letter components in the corpus are state or
@@ -90,15 +161,23 @@ COMMENT ON VIEW locality_street_suffix_pattern IS 'The street-suffix word list, 
 -- What it refuses is genuinely coarse and belongs to the volunteer, who fixes
 -- it upstream on iNaturalist where the next sync collects it: over the 2026
 -- mint set the refusals are state-only ('Oregon, US', 25), county-only
--- ('Linn County, US-OR, US', 8) and country-only ('United States', 2) —
--- with one exception, 'St Helens, OR, US', which is beeline-4dt's inherited
--- defect and not this rule's. Six of the 1,421 minted samples are refused a
--- locality for that reason alone — and unlike everything else here that count
--- does NOT fall away with the wild west: 4 of the 6 are open-season records
--- against 2 settled, so it is live work rather than residue. Fixing the word
--- list above fills them in on the next promotion, because the descriptive
--- fields are a fill-only refresh (ingest/mint-samples.sql) rather than
--- written once.
+-- ('Linn County, US-OR, US', 8) and country-only ('United States', 2). It
+-- used to refuse 'St Helens, OR, US' as well — beeline-4dt's inherited
+-- defect and never this rule's — which cost six of the 1,421 minted samples
+-- a locality they should have had. The anchored pattern gives it back, and
+-- to 114 observations in all; the descriptive fields are a fill-only refresh
+-- (ingest/mint-samples.sql) rather than written once, so a sample that has
+-- been sitting there with no locality gets one on the next promotion without
+-- a backfill.
+--
+-- The same anchor lets eight observations through that the old predicate
+-- refused, and they were counted rather than waved past: five are road or
+-- highway references where the guess offered nothing else ('NF Road - 16',
+-- 'Sparta Road Vista', 'County Hwy 5-13B'), which in that country is the
+-- only place name there is; two trade a town for a road-derived place name
+-- ('Bend' for 'Haul Road Trail', 'Salem' for 'Center Street Brg'); and one,
+-- 'Smith Ln Corvallis', is a residential street the old rule caught by luck.
+-- That is the trade, and it runs the right way: 114 against 8.
 CREATE VIEW observation_locality AS
 WITH guess AS (
   -- Private first, exactly as observation_place and the coordinate rule do.
@@ -119,8 +198,8 @@ usable AS (
   FROM component c
   WHERE length(c.part) BETWEEN 2 AND 18
     AND NOT regexp_matches(
-          concat(' ', replace(replace(lower(c.part), ',', ' '), '.', ' '), ' '),
-          (SELECT pattern FROM locality_street_suffix_pattern))
+          concat(' ', replace(replace(lower(c.part), '.', ' '), ',', ' , '), ' '),
+          locality_street_suffix_pattern())
     AND NOT regexp_matches(c.part, '[0-9]{5}')
     AND NOT regexp_matches(c.part, '^[0-9]')
     AND upper(c.part) NOT IN (SELECT state_province FROM atlas_region)
@@ -130,7 +209,10 @@ usable AS (
     AND NOT EXISTS (SELECT 1 FROM observation_place p
                     WHERE p.inat_id = c.inat_id
                       AND (upper(c.part) = upper(p.country_name)
-                        OR upper(c.part) = upper(p.state_name)))
+                        OR upper(c.part) = upper(p.state_name)
+                        OR upper(c.part) IN (concat(upper(p.county_name), ' COUNTY'),
+                                             concat(upper(p.county_name), ' CO'),
+                                             concat(upper(p.county_name), ' CO.'))))
 )
 SELECT inat_id, part AS locality, position AS component
 FROM (SELECT u.*, row_number() OVER (PARTITION BY u.inat_id ORDER BY u.position) AS rn FROM usable u) ranked
@@ -192,7 +274,7 @@ WHERE nullif(trim(f.sample_number_raw), '') IS NOT NULL
 COMMENT ON VIEW observation_sample_unusable IS 'An observation that names a sample number and cannot become a sample: no specimen count, an unparseable one, a count of zero (nothing was collected), or no date.';
 
 -- A collection record whose observer the store cannot resolve to a person.
--- These are NOT minted: sample.collector_id is NOT NULL, and a placeholder
+-- These are NOT minted: every sample has a primary collector, and a placeholder
 -- person would be a person the roster then has to explain. They are staged
 -- here instead, which is what beeline-e85's per-atlas unclaimed screen reads.
 CREATE VIEW observation_sample_unresolved AS
@@ -200,7 +282,7 @@ SELECT c.*
 FROM observation_sample_candidate c
 WHERE NOT EXISTS (SELECT 1 FROM inat_account a WHERE a.inat_user_id = c.user_id)
   AND NOT EXISTS (SELECT 1 FROM sample s WHERE s.inat_observation_id = c.inat_id);
-COMMENT ON VIEW observation_sample_unresolved IS 'A collection record from an iNaturalist user the store holds no account for: nothing mints it, because sample.collector_id is NOT NULL and a placeholder person is worse than a queue. The unclaimed-samples screen (beeline-e85) reads this.';
+COMMENT ON VIEW observation_sample_unresolved IS 'A collection record from an iNaturalist user the store holds no account for: nothing mints it, because every sample has a primary collector and a placeholder person is worse than a queue. The unclaimed-samples screen (beeline-e85) reads this.';
 
 -- ── The reconcile ────────────────────────────────────────────────────────
 -- Every unlinked candidate whose observer resolves, grouped into the sample
@@ -242,7 +324,8 @@ SELECT g.person_id, g.sample_number, g.observed_on, g.lead_inat_id,
        s.entity_id AS sample_id,
        s.inat_observation_id
 FROM sample_mint_group g
-JOIN sample s ON s.collector_id = g.person_id
+JOIN sample_primary_collector pc ON pc.person_id = g.person_id
+JOIN sample s ON s.entity_id = pc.sample_id
              AND s.sample_number = g.sample_number
              AND g.observed_on BETWEEN s.date_start AND s.date_end;
 COMMENT ON VIEW sample_mint_match IS 'A group of unlinked observations against the existing sample it is already recorded as, keyed on the collector, the sample number, and the observed date falling inside the sample''s date range.';
@@ -323,21 +406,24 @@ COMMENT ON VIEW sample_mint_pending IS 'The samples ingest/mint-samples.sql will
 -- A sample whose state names an atlas and which carries none, with no human
 -- having placed it deliberately.
 --
--- This exists because nothing can repair it. DuckDB will not update an
--- indexed column on a row an incoming foreign key references, and
--- sample.atlas_id is a foreign key with a sample_collector row pointing at
--- every sample — so the atlas is set at INSERT and never afterwards
--- (ingest/mint-samples.sql). A sample minted before pnpm inat:fetch-places
--- had run would land here permanently, which is why the reseed recipe fetches
--- places first. Empty on the dev store, and a test says so.
+-- This used to name permanent damage: with the atlas a column on sample, the
+-- engine limitation beeline-6e9 measured meant it was set at INSERT or never,
+-- and a sample minted before pnpm inat:fetch-places had run kept a null
+-- atlas nothing could repair. The atlas now lives in sample_atlas, a
+-- satellite nothing references, so this view is the WORKLIST the fill-only
+-- refresh in ingest/mint-samples.sql reads and drains on every promotion —
+-- fetching places before promoting is still the tidy order, but no longer
+-- load-bearing. A row a human placed (assigned_by set) is excluded even when
+-- its atlas is NULL: that is somebody stating "belongs to none", and the
+-- refresh must not argue.
 CREATE VIEW sample_atlas_unfilled AS
 SELECT s.entity_id AS sample_id, s.state_province, reg.atlas_id AS should_be
 FROM sample s
 JOIN atlas_region reg ON reg.state_province = s.state_province
-WHERE s.atlas_id IS NULL
-  AND s.atlas_assigned_by IS NULL
+LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
+WHERE sa.sample_id IS NULL
   AND reg.atlas_id IS NOT NULL;
-COMMENT ON VIEW sample_atlas_unfilled IS 'A sample in a member atlas''s region carrying no atlas, which no UPDATE can fix: DuckDB will not write an indexed column on a row an incoming foreign key references, so sample.atlas_id is set when the row is inserted or never. Empty, and meant to stay that way.';
+COMMENT ON VIEW sample_atlas_unfilled IS 'A sample in a member atlas''s region with no sample_atlas row: the worklist the fill-only atlas refresh (ingest/mint-samples.sql) drains on every promotion. A human assignment — any sample_atlas row with assigned_by set, atlas or none — never reappears here.';
 
 -- ── What the scalar link cannot say ──────────────────────────────────────
 -- sample.inat_observation_id stays scalar (no sample_observation list), which
@@ -358,7 +444,8 @@ SELECT s.entity_id AS sample_id, s.inat_observation_id AS cited_inat_id,
        CAST(count(*) AS INTEGER) AS other_observations,
        CAST(sum(c.specimen_count) AS INTEGER) AS other_specimen_count
 FROM sample s
-JOIN inat_account a ON a.person_id = s.collector_id
+JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+JOIN inat_account a ON a.person_id = pc.person_id
 JOIN observation_sample_candidate c ON c.user_id = a.inat_user_id
                                    AND c.sample_number = s.sample_number
                                    AND c.observed_on BETWEEN s.date_start AND s.date_end

@@ -1,4 +1,4 @@
-import { DuckDBInstance } from "@duckdb/node-api";
+import { openDuckDb } from "./db.js";
 import { rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { applySchema } from "./schema.js";
@@ -11,7 +11,7 @@ export { applySchema, createMemoryDb, SCHEMA_DIR } from "./schema.js";
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const target = process.argv[2] ?? "beeline.duckdb";
   await rm(target, { force: true });
-  const instance = await DuckDBInstance.create(target);
+  const instance = await openDuckDb(target);
   const conn = await instance.connect();
   await applySchema(conn);
   // A database built from the schema is current by construction (ADR 0006):

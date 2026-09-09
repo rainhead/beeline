@@ -1,4 +1,5 @@
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { openMemoryDuckDb } from "./db.js";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +28,7 @@ export async function applySchema(conn: DuckDBConnection): Promise<void> {
 
 /** Fresh in-memory database with the schema applied (tests, scratch work). */
 export async function createMemoryDb(): Promise<{ instance: DuckDBInstance; conn: DuckDBConnection }> {
-  const instance = await DuckDBInstance.create(":memory:");
+  const instance = await openMemoryDuckDb();
   const conn = await instance.connect();
   await applySchema(conn);
   return { instance, conn };

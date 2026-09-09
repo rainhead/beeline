@@ -1,4 +1,37 @@
-# Deploy the sandbox to maderas (temporary hosting)
+# Deploy the sandbox to maderas (RETIRED — kept for the history)
+
+> **This hosting is retired.** The app runs on Fly —
+> [deploy-fly.md](deploy-fly.md) — and the systemd unit here is stopped and
+> disabled as of 2 September 2026. What follows describes a deployment that no
+> longer serves anything, and is kept because the reasoning in it is still the
+> reasoning, and because the re-derivation procedure below is still the
+> procedure.
+>
+> **maderas is not decommissioned, only Beeline's web instance on it.** Three
+> things still live here and none of them should be removed:
+>
+> - the **backup cron** at 02:30, which pulls the authored history off the Fly
+>   volume (deploy-fly.md, "Backups") and runs from this checkout
+> - `pnpm legacy:fetch`, which needs the SSH key to production Mongo that a
+>   Fly machine does not have and should not be given
+> - **`~/dev/beeline/beeline.duckdb`** — the last full copy of the store taken
+>   before the move, 2 September 2026. The scheduled backup covers the
+>   irreplaceable CSVs and deliberately not the 211 MB store, so until the Fly
+>   volume has a second copy this file is the only one that is not on Fly. It
+>   goes stale from here; it is a shortcut past a full re-ingestion, not a
+>   current backup.
+>
+> The vhost is the one thing not yet changed, because it needs sudo. Until it
+> is, `beeline.beeatlas.net` answers with a proxy error: Apache still points at
+> port 3054 and nothing is listening there.
+> [`retire-vhost.sh`](../../infra/maderas/retire-vhost.sh) does it — copied to
+> `~/retire-beeline-vhost.sh` on maderas, run it with
+> `sudo sh ~/retire-beeline-vhost.sh`. It backs both files up, edits only the
+> `:443` vhost, refuses to proceed if the proxy directives survive its own
+> edit, restores and changes nothing if `configtest` fails, and curls the
+> result afterwards.
+
+## The original runbook
 
 Beeline's sandbox runs on maderas at **https://beeline.beeatlas.net** as a
 user systemd service behind an Apache `ProxyPass` vhost with certbot TLS —
@@ -171,14 +204,16 @@ ssh maderas 'cd ~/dev/beeline && mv -f beeline.duckdb beeline-prev.duckdb \
   && mv -f beeline-new.duckdb beeline.duckdb && systemctl --user start beeline'
 ```
 
-`inat:fetch-places` goes **before** `inat:promote`, not after, and it is not
-optional. Minting reads `observation_place` for a sample's country, state and
-county, and sets its `atlas_id` in the INSERT — where it stays, because DuckDB
-will not update an indexed column on a row an incoming foreign key references
-(beeline-6e9). A sample minted while a place it names is uncached therefore
-keeps a null atlas that no later fetch can repair. `inat_place` is carried
-across by `db:reseed`, so the cache is not empty; the fetch is for the places
-observations synced since the last one have started naming.
+`inat:fetch-places` goes **before** `inat:promote` — tidy order, no longer
+load-bearing. It used to be mandatory: the atlas was a column on `sample`
+that DuckDB would never let an UPDATE touch (beeline-6e9), so a sample minted
+while a place it names was uncached kept a null atlas nothing could repair.
+The atlas now lives in the writable `sample_atlas` satellite and the
+fill-only refresh drains `sample_atlas_unfilled` on every promotion, so a
+sample minted too early gets its atlas on the pass after the fetch instead
+of never. `inat_place` is carried across by `db:reseed`, so the cache is not
+empty; the fetch is for the places observations synced since the last one
+have started naming.
 
 The service must be stopped throughout: one process owns the store (ADR
 0005), and `db:reseed` reads it while promotion writes the new one. Downtime
@@ -246,6 +281,39 @@ ssh maderas 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; cd ~/dev/beeline 
 is idempotent, so a row that has already landed is a no-op and the same file
 replays on the next rebuild. A later `db:reseed` reconstructs this person from
 the same rows, which a hand-written `INSERT` would not survive.
+
+## DEM tiles
+
+`pnpm elevation:derive` reads tiles from `data/dem/` and names the ones it
+lacks; `pnpm elevation:fetch` ([`src/fetch-dem.ts`](../../src/fetch-dem.ts))
+puts them there, over plain HTTPS from two public datasets — SRTM
+1-arc-second, then Copernicus GLO-30 beyond the 60°N–56°S band the shuttle
+flew. **Neither wants a credential**, so this runs on any host:
+
+```sh
+ssh maderas
+cd dev/beeline && systemctl --user stop beeline   # single writer (ADR 0005)
+pnpm elevation:fetch && pnpm elevation:derive
+systemctl --user start beeline
+```
+
+The stop is the only requirement, and it is the usual one: `elevation:fetch`
+scopes itself by reading the store's current gaps, so it opens the database.
+
+The tiles used to be rsynced from the legacy server's own archive, which meant
+an ssh key or a forwarded agent on every host that fetched one — something the
+nightly, running unattended, cannot hold — and an unreachable archive failed
+the run outright rather than falling through to GLO-30 (beeline-oxi). That
+archive was a mirror of a public dataset; the fetch now reads the public
+dataset. `beeline` in `~/.ssh/config` is still needed for
+[`pnpm legacy:fetch`](../../scripts/fetch-legacy.sh), which pulls the Mongo
+export, the taxonomy CSV and the usernames register from production — but no
+longer for elevations.
+
+The nightly pipeline still only *derives*, so a tile it lacks is reported and
+waits for someone to run the fetch. Nothing is blocked meanwhile: an unfetched
+tile is a NULL elevation, which is never a QC finding and never stops a label
+printing.
 
 ## Operational notes
 

@@ -27,7 +27,13 @@ describe("message catalog", () => {
 
   it("describes exactly the jobs the registry builds", async () => {
     const { buildJobs } = await import("../src/app/jobs/registry.js");
-    const names = buildJobs({ syncProjects: [], sweepDays: 365, personChangesPath: "unused.csv" })
+    const names = buildJobs({
+      syncProjects: [],
+      sweepDays: 365,
+      personChangesPath: "unused.csv",
+      sampleChangesPath: "unused.csv",
+      sampleStatePath: "unused.csv",
+    })
       .map((j) => j.name)
       .sort();
     expect(Object.keys(en.jobs.descriptions).sort()).toEqual(names);

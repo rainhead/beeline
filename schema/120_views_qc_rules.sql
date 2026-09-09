@@ -63,13 +63,18 @@ WHERE (s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL)
   AND loc.sample_id IS NULL;
 
 -- Locality must fit a 3-5pt label cell: short place name, no punctuation, no
--- street addresses. Semantics match the reference implementation exactly
+-- street addresses. Semantics follow the reference implementation
 -- (OccurrenceService.updateErrorFlags + includesIllegalSuffix): length > 18,
 -- comma or double quote (single quotes are fine — O''Brien Rd is a name),
--- or a word-bounded street/county suffix. norm pads the locality with spaces
--- and turns commas/periods into spaces, which is what supplies the word
--- boundaries the reference got from lookarounds — so no lookbehind is needed
--- and a plain alternation is a faithful translation.
+-- or a word-bounded street/county suffix. norm pads the locality with
+-- spaces, turns periods into spaces and isolates commas, which is what
+-- supplies the word boundaries the reference got from lookarounds — so no
+-- lookbehind is needed and a plain alternation is a faithful translation.
+--
+-- The one place it deliberately parts from the reference is WHERE the
+-- suffix may sit: it has to end its phrase, or 'St Helens' is a street
+-- address. locality_street_suffix_pattern (schema/108) carries that
+-- argument and the measurements behind it (beeline-4dt).
 --
 -- The second accepted DuckDB-flavoured seam, after the JSON shredding in
 -- schema/105, and a deliberate one (Peter, 2026-08-28; beeline-2c3.37).
@@ -101,16 +106,20 @@ FROM (
          position(',' IN norm.locality) > 0 AS has_comma,
          position('"' IN norm.locality) > 0 AS has_quote,
          -- The same seventeen words the reference checks, each still
-         -- required to stand alone between spaces. The list itself lives in
-         -- locality_street_suffix_pattern (schema/108), because
-         -- observation_locality applies it too — to pick a locality that does
-         -- not exist yet, where this judges one that does — and a word list
-         -- kept in two files is a word list that will one day be two lists.
-         regexp_matches(norm.norm, (SELECT pattern FROM locality_street_suffix_pattern)
-         ) AS is_street
+         -- required to stand alone between spaces — and, since beeline-4dt,
+         -- to END its phrase, because `st` is Saint and State as well as
+         -- Street. The predicate lives in locality_street_suffix_pattern
+         -- (schema/108), which says why — and as a macro, because a regex
+         -- read from a subquery is recompiled per row — because
+         -- observation_locality applies it too, to pick a locality that does
+         -- not exist yet where this judges one that does.
+         regexp_matches(norm.norm, locality_street_suffix_pattern()) AS is_street
   FROM (
+    -- A comma ends a phrase, so it survives normalisation as its own token
+    -- rather than becoming a space: 'NW Harrison Blvd, Corvallis' is an
+    -- address and the anchor has to be able to see that.
     SELECT s.entity_id AS sample_id, s.locality,
-           concat(' ', replace(replace(lower(s.locality), ',', ' '), '.', ' '), ' ') AS norm
+           concat(' ', replace(replace(lower(s.locality), '.', ' '), ',', ' , '), ' ') AS norm
     FROM sample s
     WHERE s.locality IS NOT NULL
   ) norm
@@ -155,13 +164,91 @@ LEFT JOIN atlas_region reg ON reg.state_province = s.state_province
 WHERE s.state_province IS NOT NULL
   AND (reg.state_province IS NULL OR (s.country IS NOT NULL AND s.country <> reg.country));
 
+-- How precise a coordinate has to be before a label may carry it, and from
+-- when. Two numbers, because the rule changed and could not change
+-- retroactively (#22).
+--
+-- 100 m is the answer and always was: it is the resolution of three decimal
+-- places of latitude, which is what a GPS reports (Andony, 2026-08-31). The
+-- 250 m that had been in force was a transcription error, not a decision.
+--
+-- It cannot be applied backwards. A volunteer can tighten the pin on their
+-- own iNaturalist observation and the next sync picks it up — but only while
+-- they still have the specimens, and for older records the bees have often
+-- long since left their possession. Blocking those would demand a correction
+-- nobody is able to make. So a sample is judged by the limit in force when it
+-- was collected, and records predating the change keep 250 m for good.
+--
+-- Judged on date_end, for the reason settled_sample is (schema/160): a trap
+-- line that ran across the boundary belongs to the season it was emptied in.
+CREATE VIEW coordinate_precision_rule AS
+SELECT 100 AS uncertainty_m,
+       250 AS grandfathered_uncertainty_m,
+       DATE '2026-09-02' AS effective_from;
+COMMENT ON VIEW coordinate_precision_rule IS 'One row: the coordinate uncertainty a label may carry, the looser limit records predating the change keep, and the date dividing them (#22).';
+
+-- The limit that applies to one sample, named once so the rule below and
+-- anything else that has to explain itself to a volunteer agree about it.
+CREATE VIEW sample_coordinate_limit AS
+SELECT s.entity_id AS sample_id,
+       CASE WHEN s.date_end >= r.effective_from
+            THEN r.uncertainty_m
+            ELSE r.grandfathered_uncertainty_m END AS uncertainty_m
+FROM sample s
+CROSS JOIN coordinate_precision_rule r;
+COMMENT ON VIEW sample_coordinate_limit IS 'Per sample: the coordinate uncertainty above which it cannot be printed, which depends on when it was collected.';
+
 CREATE VIEW qc_rule_coordinate_uncertainty AS
 SELECT loc.sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'coordinate_uncertainty' AS rule_name,
-       concat(loc.coordinate_uncertainty_m, ' m > 250 m') AS details
+       -- Names the limit that applied, not a constant: two are in force, and
+       -- a volunteer reading the flag needs to know which one their record
+       -- was held to.
+       concat(loc.coordinate_uncertainty_m, ' m > ', lim.uncertainty_m, ' m') AS details
 FROM sample_location loc
-WHERE loc.coordinate_uncertainty_m > 250;
+JOIN sample_coordinate_limit lim ON lim.sample_id = loc.sample_id
+WHERE loc.coordinate_uncertainty_m > lim.uncertainty_m;
+
+-- A coordinate that cannot be where the record says it is: outside North
+-- America and its waters, on a record whose own country is a North American
+-- one or is absent (beeline-iwf).
+--
+-- The signature is a pin that moved after its place_guess was written.
+-- iNaturalist recomputes place_ids and leaves place_guess alone, so such an
+-- observation carries an Oregon locality string and an EMPTY place list —
+-- an open-ocean point is inside no place. Nothing else in the store notices:
+-- the atlas comes from state_province rather than from the point, so the
+-- record looks well placed everywhere except the point itself.
+--
+-- coordinate_uncertainty catches one of these today, and only by luck — the
+-- observation behind sample 122269 carries an accuracy circle of 1,196 km.
+-- The others do not: two of the four are a longitude with its sign flipped
+-- (44.1360, +120.7010 and 44.6807, +121.1523 — central Oregon written as
+-- central Asia), which is as precise as any other pin.
+--
+-- The box is deliberately generous: 14..84 N, 172..50 W is Mexico through
+-- Alaska and Greenland, plus coastal water. A member collecting in Baja or
+-- the Yukon is not a defect, and the atlases' own footprint would be the
+-- wrong bound — 144 open-season locations sit outside the western states,
+-- which is members travelling.
+--
+-- The country clause is what stops this being the kind of finding that
+-- damages data (beeline-4dt): a record that says NZL and sits in New Zealand
+-- is honest, there is no way to satisfy a flag on it, and findings have no
+-- accepted state. Four rows fire on the dev store, all settled, all of them
+-- errors; the fifth row outside the box is that New Zealand record.
+CREATE VIEW qc_rule_coordinate_out_of_region AS
+SELECT loc.sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'coordinate_out_of_region' AS rule_name,
+       concat(round(loc.latitude, 4), ', ', round(loc.longitude, 4),
+              ' is not in North America, but this record says ',
+              coalesce(s.country, 'no country at all')) AS details
+FROM sample_location loc
+JOIN sample s ON s.entity_id = loc.sample_id
+WHERE NOT (loc.latitude BETWEEN 14 AND 84 AND loc.longitude BETWEEN -172 AND -50)
+  AND (s.country IS NULL OR s.country IN ('USA', 'CAN', 'MEX'));
 
 -- Same collector, same day, same sample number, more than one sample: an
 -- identity collision the reference implementation silently merged.
@@ -171,12 +258,16 @@ SELECT s.entity_id AS sample_id,
        'duplicate_sample_number' AS rule_name,
        concat('sample number ', s.sample_number, ' used ', dup.n, ' times on ', s.date_start) AS details
 FROM sample s
+JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
 JOIN (
-  SELECT collector_id, date_start, sample_number, count(*) AS n
-  FROM sample
-  GROUP BY collector_id, date_start, sample_number
+  SELECT pc.person_id, s.date_start, s.sample_number, count(*) AS n
+  FROM sample s
+  JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+  GROUP BY pc.person_id, s.date_start, s.sample_number
   HAVING count(*) > 1
-) dup USING (collector_id, date_start, sample_number);
+) dup ON dup.person_id = pc.person_id
+     AND dup.date_start = s.date_start
+     AND dup.sample_number = s.sample_number;
 
 -- The evidencing observation's taxon is the floral host in this protocol,
 -- and a host must be a vascular plant: anything else — a moss, a fungus, or

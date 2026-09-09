@@ -1,4 +1,5 @@
-import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { DuckDBConnection } from "@duckdb/node-api";
+import { openDuckDb } from "./db.js";
 import { createHash } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -214,7 +215,7 @@ async function findOrCreateSource(
 // CLI: pnpm elevation:derive [db] [demDir]
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const dbPath = process.argv[2] ?? "beeline.duckdb";
-  const instance = await DuckDBInstance.create(dbPath);
+  const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
   const result = await deriveElevations(conn, process.argv[3] ?? "data/dem");
   conn.closeSync();

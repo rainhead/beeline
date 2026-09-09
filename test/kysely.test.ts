@@ -30,7 +30,6 @@ test("insert returning generated ids", async () => {
     .insertInto("sample")
     .values({
       kind: "net",
-      collector_id: person.entity_id,
       sample_number: "1",
       date_start: "2026-07-14",
       date_end: "2026-07-14",
@@ -45,6 +44,12 @@ test("insert returning generated ids", async () => {
     .executeTakeFirstOrThrow();
   expect(sample.entity_id).toBeGreaterThan(person.entity_id); // one global entity sequence
   sampleId = sample.entity_id;
+
+  // The primary collector is the head of the list, not a column (beeline-6e9).
+  await db
+    .insertInto("sample_collector")
+    .values({ sample_id: sample.entity_id, person_id: person.entity_id, position: 1 })
+    .execute();
 
   const dem = await db
     .insertInto("elevation_source")
@@ -71,7 +76,8 @@ test("insert returning generated ids", async () => {
 test("typed joins over tables", async () => {
   const row = await db
     .selectFrom("sample")
-    .innerJoin("person", "person.entity_id", "sample.collector_id")
+    .innerJoin("sample_primary_collector as pc", "pc.sample_id", "sample.entity_id")
+    .innerJoin("person", "person.entity_id", "pc.person_id")
     .select(["sample.sample_number", "person.display_name", "sample.locality"])
     .executeTakeFirstOrThrow();
   expect(row).toEqual({ sample_number: "1", display_name: "Ada Collector", locality: "Corvallis" });

@@ -13,7 +13,7 @@ import { deleteSession, endSessionsFor, SESSION_COOKIE, type AppEnv, type Sessio
 import { resolveActing, startActing, stopActing } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
-import type { Job } from "./jobs/framework.js";
+import { jobHealth, type Job, type LastOutcome } from "./jobs/framework.js";
 import { Glossary } from "./views/glossary.js";
 import { Jobs } from "./views/jobs.js";
 import { PersonPage, Roster } from "./views/roster.js";
@@ -58,6 +58,7 @@ import { DesignImagery } from "./views/design/imagery.js";
 import { MessagesProof } from "./views/design/messages-proof.js";
 import { QcProof } from "./views/design/qc-proof.js";
 import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
+import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
 import { SampleEditForm } from "./views/sample-edit.js";
 import {
   atlasOptions,
@@ -77,6 +78,7 @@ import {
   loadSpecimen,
   parsePage,
   recordFindings,
+  sampleChangeHistory,
 } from "./record.js";
 import { SamplePage, SpecimenPage } from "./views/record.js";
 
@@ -99,6 +101,9 @@ export interface AppDeps {
   personOverlayPath?: string;
   /** Append-only log of what happened to a person, and when (beeline-o22). */
   personChangesPath?: string;
+  /** Sample history: the append-only log and its snapshot baseline (beeline-ewl). */
+  sampleChangesPath?: string;
+  sampleStatePath?: string;
   /**
    * A raw connection, for the overlay applier. Kysely cannot run the applier's
    * statements as one unit, and the app already keeps a spare connection for
@@ -122,12 +127,18 @@ export function createApp({
   correctionsPath,
   personOverlayPath,
   personChangesPath,
+  sampleChangesPath,
+  sampleStatePath,
   conn,
 }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], runNow: async () => false };
   const corrections = correctionsPath ?? "data/corrections.csv";
   const overlayPath = personOverlayPath ?? "data/person-overlay.csv";
   const changesPath = personChangesPath ?? CHANGE_LOG;
+  const samplePaths = {
+    log: sampleChangesPath ?? SAMPLE_CHANGE_LOG,
+    state: sampleStatePath ?? SAMPLE_STATE_SNAPSHOT,
+  };
   // One person's state, as the change log describes it. The same query both
   // producers use, so what the screen records and what a rebuild records are
   // comparable (src/person-change.ts).
@@ -160,7 +171,64 @@ export function createApp({
   });
 
   // --- Public surface: assets, liveness, and the way in. ---
-  app.get("/healthz", (c) => c.text("ok"));
+  // Liveness, and it has to mean something: Fly restarts a machine whose
+  // health check fails, so this must fail exactly when a restart is the right
+  // answer. A process that is listening but cannot read its own store is
+  // precisely that case, and `ok` from a bare handler was not it
+  // (beeline-2c3.17) — the store could be missing, locked by a second writer,
+  // or a file the app never opened, and this would have said ok throughout.
+  app.get("/healthz", async (c) => {
+    try {
+      await db.selectFrom("qc_rule").select("name").limit(1).execute();
+      return c.text("ok");
+    } catch (err) {
+      // Named, not swallowed: this is the one page that exists to say why.
+      return c.text(`store unreadable: ${(err as Error).message}`, 503);
+    }
+  });
+
+  // Job staleness, deliberately NOT part of /healthz (beeline-6td). Fly acts
+  // on that endpoint by restarting the machine, and restarting is the wrong
+  // response to a job that failed — it would lose the running process to fix
+  // something a restart cannot fix, and on a bad night would loop. So this is
+  // its own endpoint, which nothing on Fly polls and an external checker does.
+  //
+  // Unauthenticated, and therefore it says only WHICH job and WHAT KIND of
+  // wrong — never job_run.detail. That column holds whatever a caught Error
+  // said, and the errors reaching it come from DuckDB, the filesystem and the
+  // iNat API: a constraint violation quotes the offending value, so a failure
+  // in person promotion would put a volunteer's name on a public endpoint.
+  // The reason lives on /jobs, behind the admin gate, which is where somebody
+  // goes once this has told them to look. The alarm and the diagnosis are
+  // different jobs and only one of them can be public.
+  app.get("/healthz/jobs", async (c) => {
+    const rows = await db
+      .selectFrom("job_run")
+      .select(["job_name", "started_at", "completed_at", "outcome", "detail"])
+      .orderBy("started_at", "desc")
+      .execute();
+    const last = new Map<string, LastOutcome>();
+    for (const r of rows) {
+      const seen = last.get(r.job_name);
+      if (seen === undefined) {
+        last.set(r.job_name, {
+          started: r.started_at,
+          succeeded: r.outcome === "succeeded" ? r.started_at : null,
+          outcome: r.outcome as LastOutcome["outcome"],
+          detail: r.detail,
+        });
+      } else if (seen.succeeded === null && r.outcome === "succeeded") {
+        seen.succeeded = r.started_at;
+      }
+    }
+    const health = jobHealth(jobsDep.list, last, new Date());
+    const wrong = health.filter((h) => h.problem !== null);
+    if (wrong.length === 0) return c.text("ok");
+    // One line per problem, the job named first: this is read by a cron job
+    // and by whoever it mails, so it has to survive being quoted in an email.
+    const body = `${wrong.map((h) => `${h.name}: ${h.problem}`).join("\n")}\nSee /jobs for the reason.`;
+    return c.text(body, 503);
+  });
   // The default seed is computed once; `?seed=` regenerates on demand so
   // per-atlas colorways can be proofed at /design/identity (beeline-2c3.12).
   app.get("/tokens.css", (c) => {
@@ -478,15 +546,16 @@ export function createApp({
     const m = c.get("m");
     const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, c.get("admin"));
     if (sample === null) return c.text(m.record.notFound, 404);
-    const [findings, specimens] = await Promise.all([
+    const [findings, specimens, history] = await Promise.all([
       recordFindings(db, sample.sample_id),
       listSampleSpecimens(db, sample.sample_id, parsePage(c.req.query("page"))),
+      sampleChangeHistory(db, samplePaths.log, sample.sample_id),
     ]);
     return c.html(
       await page(
         c,
         m.record.sample.title(sample.sample_number),
-        <SamplePage m={m} sample={sample} findings={findings} specimens={specimens} />,
+        <SamplePage m={m} sample={sample} findings={findings} specimens={specimens} history={history} />,
       ),
     );
   });
@@ -540,6 +609,40 @@ export function createApp({
       author: session.login,
     });
     if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
+    // Record what just changed, credited to whoever typed it — the fact a
+    // later pass over the store could never recover (ADR 0007). Narrowed to
+    // this sample, so the author is charged with this sample's pending
+    // differences and no other sample's; in the rare case another writer
+    // changed THIS sample and failed to record, that change rides along
+    // under this author's name — the cost of recording state rather than
+    // intent, and bounded to one sample by the narrowing. A failure here is
+    // reported and left for the next pass, which attributes the edit to
+    // itself — the author and reason are not lost with it, because
+    // applySampleEdit durably wrote them to the corrections overlay before
+    // the store was touched. The log records; it never gates the edit.
+    if (result.outcome === "saved") {
+      try {
+        const recorded = await recordSampleChanges(kyselyReader(db), samplePaths, {
+          source: "app",
+          author: session.login,
+          reason: field("note")?.trim() || undefined,
+          where: `s.entity_id = ${sample.entity_id}`,
+        });
+        // A missing snapshot turns this pass into the baseline, which
+        // records the edit as part of "the corpus as it stands" — no entry,
+        // no author. Say so: silence here would hide that the one fact no
+        // later pass can recover went unrecorded (the corrections overlay
+        // still holds it, durably, from applySampleEdit).
+        if (recorded.baselined) {
+          console.warn(
+            `sample edit by ${session.login} fell on a missing snapshot and was baselined, not recorded; ` +
+              `the corrections overlay carries the attribution`,
+          );
+        }
+      } catch (err) {
+        console.warn(`could not record the sample edit: ${(err as Error).message}`);
+      }
+    }
     return c.redirect("/");
   });
 

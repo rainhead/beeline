@@ -163,10 +163,15 @@ WHERE atlas_region.state_province = v.state_province;
 
 -- atlas.inat_place_id is deliberately untouched (schema/010 says why):
 -- nothing reads it, atlas_region's is what observation_place joins on, and
--- DuckDB will not UPDATE a row that an incoming foreign key references —
--- atlas_region.atlas_id does, so this migration cannot write it even if it
--- wanted to. Washington's 46 stays the one documented value, and is what the
--- derivation above was checked against.
+-- DuckDB will not write an INDEXED column of a row that an incoming foreign
+-- key references — inat_place_id is UNIQUE and atlas_region.atlas_id points
+-- at every atlas row — so this migration could not write it even if it wanted
+-- to. (This comment first said "will not UPDATE a row that an incoming
+-- foreign key references", which is too broad: UPDATE atlas SET name succeeds
+-- on that row. Corrected by beeline-6e9 and left here rather than rewritten
+-- silently, because an applied migration is a record of what ran.)
+-- Washington's 46 stays the one documented value, and is what the derivation
+-- above was checked against.
 
 CREATE VIEW observation_place AS
 WITH resolved AS (

@@ -4,6 +4,7 @@ import { configFromEnv } from "./config.js";
 import { openAppDb, seedAdmins } from "./db.js";
 import { CURATED_OVERLAY, mergeOverlays, readOverlay } from "../person-overlay.js";
 import { kyselyReader, recordPersonChanges } from "../person-change.js";
+import { recordSampleChanges } from "../sample-change.js";
 import { startScheduler } from "./jobs/framework.js";
 import { buildJobs } from "./jobs/registry.js";
 import { createApp } from "./server.js";
@@ -55,6 +56,37 @@ try {
   console.warn(`could not reconcile the person change log: ${(err as Error).message}`);
 }
 
+// And the samples (beeline-ewl): the same coverage argument, over the log's
+// second instance. The first boot against a store writes the snapshot — the
+// whole corpus as it stands, recorded as zero events — and every later one
+// records only what changed while nothing else was recording.
+try {
+  const samples = await recordSampleChanges(
+    kyselyReader(db),
+    { log: config.sampleChangesPath, state: config.sampleStatePath },
+    { source: "reconcile" },
+  );
+  if (samples.baselined) {
+    console.log(`sample change log baselined: snapshot written to ${config.sampleStatePath}`);
+  } else if (samples.appended > 0) {
+    console.log(`recorded ${samples.appended} sample change(s) made while the app was down`);
+  }
+  if (samples.contested > 0) {
+    console.warn(
+      `${samples.contested} samples could not be told apart from a history the log already holds — ` +
+        `nothing was recorded for them (see matchSamples in src/sample-change.ts)`,
+    );
+  }
+  if (samples.unreferenceable > 0) {
+    console.warn(
+      `${samples.unreferenceable} samples have a collector no reference names — ` +
+        `their changes cannot be recorded until the person is fixed`,
+    );
+  }
+} catch (err) {
+  console.warn(`could not reconcile the sample change log: ${(err as Error).message}`);
+}
+
 if (config.privateDbKey === null) {
   console.warn("BEELINE_PRIVATE_DB_KEY unset: private store is UNENCRYPTED (development only)");
 }
@@ -88,6 +120,8 @@ const app = createApp({
   correctionsPath: config.correctionsPath,
   personOverlayPath: config.personOverlayPath,
   personChangesPath: config.personChangesPath,
+  sampleChangesPath: config.sampleChangesPath,
+  sampleStatePath: config.sampleStatePath,
   conn: jobConn,
 });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

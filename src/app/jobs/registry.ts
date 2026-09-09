@@ -3,6 +3,7 @@ import type { Kysely } from "kysely";
 import { deriveElevations } from "../../derive-elevation.js";
 import type { Database } from "../../model.js";
 import { duckdbReader, recordPersonChanges } from "../../person-change.js";
+import { recordSampleChanges, type SampleLogPaths } from "../../sample-change.js";
 import { promoteObservations } from "../../promote-observations.js";
 import { syncINat } from "../../sync-inat.js";
 import type { AppConfig } from "../config.js";
@@ -52,7 +53,12 @@ const UPDATED_SINCE_MARGIN_MS = 60 * 60 * 1000;
 const sweepStart = (sweepDays: number) => new Date(Date.now() - sweepDays * 86_400_000).toISOString().slice(0, 10);
 
 /** Promote and elevation, shared by both sync jobs. */
-async function pipelineTail(ctx: JobContext, parts: string[], personChanges: string): Promise<string> {
+async function pipelineTail(
+  ctx: JobContext,
+  parts: string[],
+  personChanges: string,
+  samplePaths: SampleLogPaths,
+): Promise<string> {
   const promoted = await ctx.step("promote observations", () => promoteObservations(ctx.conn));
   parts.push(`${promoted.linkedSamples} samples linked`);
   // iNaturalist renames an account and promotion rewrites the cached login,
@@ -63,6 +69,16 @@ async function pipelineTail(ctx: JobContext, parts: string[], personChanges: str
     recordPersonChanges(duckdbReader(ctx.conn), personChanges, { source: "observation_promotion" }),
   );
   if (recorded.appended > 0) parts.push(`${recorded.appended} person changes recorded`);
+  // And the samples — the nightly IS the change log's headline writer: the
+  // coordinate rewrites, the minting, the free-links. This was wired into the
+  // CLI promotion and not here, so a deployed app that never restarted would
+  // never have recorded any of it; the adversarial review of PR #32 caught it
+  // before the first nightly ran.
+  const samples = await ctx.step("record sample changes", () =>
+    recordSampleChanges(duckdbReader(ctx.conn), samplePaths, { source: "observation_promotion" }),
+  );
+  if (samples.baselined) parts.push("sample change log baselined");
+  else if (samples.appended > 0) parts.push(`${samples.appended} sample changes recorded`);
   const elevation = await ctx.step("derive elevations", () => deriveElevations(ctx.conn));
   parts.push(
     `elevation ${elevation.filled}/${elevation.gaps} filled` +
@@ -72,7 +88,10 @@ async function pipelineTail(ctx: JobContext, parts: string[], personChanges: str
   return parts.join("; ");
 }
 
-export function buildJobs(config: Pick<AppConfig, "syncProjects" | "sweepDays" | "personChangesPath">): Job[] {
+export function buildJobs(
+  config: Pick<AppConfig, "syncProjects" | "sweepDays" | "personChangesPath" | "sampleChangesPath" | "sampleStatePath">,
+): Job[] {
+  const samplePaths: SampleLogPaths = { log: config.sampleChangesPath, state: config.sampleStatePath };
   return [
     {
       name: "session-purge",
@@ -107,7 +126,7 @@ export function buildJobs(config: Pick<AppConfig, "syncProjects" | "sweepDays" |
             parts.push(`project ${projectId} (updated since ${updatedSince.slice(0, 16)}Z): ${r.fetched} fetched, ${r.newLoads} new`);
           }
         }
-        return pipelineTail(ctx, parts, config.personChangesPath);
+        return pipelineTail(ctx, parts, config.personChangesPath, samplePaths);
       },
     },
     {
@@ -128,7 +147,7 @@ export function buildJobs(config: Pick<AppConfig, "syncProjects" | "sweepDays" |
           const r = await ctx.step(`sweep ${projectId}`, () => syncINat(ctx.conn, { projectId, d1, token }));
           parts.push(`project ${projectId} (full sweep since ${d1}): ${r.fetched} fetched, ${r.newLoads} new`);
         }
-        return pipelineTail(ctx, parts, config.personChangesPath);
+        return pipelineTail(ctx, parts, config.personChangesPath, samplePaths);
       },
     },
   ];

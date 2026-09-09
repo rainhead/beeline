@@ -1,4 +1,5 @@
-import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { DuckDBConnection } from "@duckdb/node-api";
+import { openDuckDb } from "./db.js";
 import { rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { applySchema } from "./schema.js";
@@ -189,7 +190,7 @@ export async function reseedStore(sourcePath: string, targetPath: string): Promi
     throw new Error("reseed writes a new store beside the old one — give it a different target path");
   }
   await rm(targetPath, { force: true });
-  const instance = await DuckDBInstance.create(targetPath);
+  const instance = await openDuckDb(targetPath);
   const conn = await instance.connect();
   try {
     await applySchema(conn);

@@ -51,7 +51,10 @@ between the two is what beeline-nfo ended. The first version of this ADR
 nonetheless treated it as the specimen's *identity*, the thing every
 downstream citation hangs from, and argued about whether it may ever move as
 if the answer decided whether published records stay true. That is the
-`occurrenceID`'s job, and Beeline has no `occurrenceID` of its own.
+`occurrenceID`'s job, and Beeline has no `occurrenceID` of its own — **today,
+and this ADR is the decision that changes it**. Everything in this Context
+section describes the shape before that decision; what Beeline will do is the
+Decision below.
 
 ### The reference implementation derives the permanent one from the mutable one
 
@@ -145,7 +148,8 @@ are about different objects, a name and a slot.
 | `specimen.field_number` | Beeline's label identifier | Beeline | yes, at a known cost (4) |
 | Beeline's `dwc:occurrenceID` | the record's permanent identity | Beeline, once | **no** |
 | `dwc:catalogNumber` in Beeline's own exports | a slot, filled by the field number | — | follows the field number |
-| Ecdysis `WSDA_…`, OSAC's URI | the **museum's** identifier, CONTEXT.md's *catalog number* | the museum | the museum's business |
+| Ecdysis `WSDA_…` | Washington's **museum** identifier — CONTEXT.md's *catalog number*, and Ecdysis's own `dwc:catalogNumber` | WSUC | the museum's business |
+| OSAC's `…/OBS/OBA_<n>` URI | Oregon's `dwc:occurrenceID` today, and derived from the field number, which is the defect above | the reference implementation | it must not, and cannot help it |
 
 Whether Ecdysis keeps deriving `WSDA_<field number>`, and whether it will
 accept an `occurrenceID` Beeline supplies rather than minting its own UUID, is
@@ -200,9 +204,21 @@ open below — it is the museum's decision and not ours to make here.
    loses the number that was burned. So the registry is **one row per minted
    number**, not per specimen — `field_number` stays the PRIMARY KEY and the
    guarantee, `specimen_id` is a plain reference, and which number a specimen
-   currently carries is *derived*, the latest row for it, exactly as
-   `determination_of_record` is derived from append-only determinations
-   (`schema/040`). That makes the registry append-only like every other
+   currently carries is *derived*, exactly as `determination_of_record` is
+   derived from append-only determinations (`schema/040`).
+
+   "The latest row" needs something to order by, and the field number cannot
+   supply it — (6) makes it opaque, and after a repair the replacement is not
+   reliably the larger number. So the registry carries what
+   `determination_of_record` carries: a `minted_at` timestamp **and** a draw
+   from `entity_id_seq`, ranked `ORDER BY minted_at DESC, entity_id DESC`
+   ([`schema/110`](../../schema/110_view_determination_of_record.sql) does the
+   same, for the same reason — two determinations can share a second). The
+   sequence is the tie-breaker that makes the answer deterministic rather than
+   whichever row the engine happened to return, and it is monotonic across the
+   whole store by [ADR 0002](0002-entities.md). It also has to survive the
+   rebuild along with the rest of the registry, since an ordering rebuilt from
+   scratch would renumber the history it is meant to order. That makes the registry append-only like every other
    authored history here, and it makes `otherCatalogNumbers` fall out for
    free: a specimen's superseded numbers are its non-current rows, which is
    the value Ecdysis and GBIF want published beside the current one.

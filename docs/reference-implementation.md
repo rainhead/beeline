@@ -81,7 +81,7 @@ Read-only survey of the production MongoDB (383,032 occurrence records, 2017–2
 ## Requirements the replacement inherits from these findings
 
 1. Specimen identity must be stable and independent of correctable fields (dates, sample numbers, upstream URLs).
-2. Catalog-number uniqueness must be a hard guarantee (database constraint / sequence), not a scan-and-increment convention.
+2. **Field-number** uniqueness must be a hard guarantee (database constraint / sequence), not a scan-and-increment convention. Stated as "catalog number" until 2026-09-09, which was this project's own confusion rather than a claim about the museum's identifier — the two are different things (beeline-nfo, and *Catalog number* in [CONTEXT.md](../CONTEXT.md)); the finding above it is about `fieldNumber` and always was.
 3. Ingestion must be scheduled, authenticated-or-abort (never silently anonymous), and must detect edits, deletions, and count changes — with partial fetches failing loudly rather than reporting empty success.
 4. Private/obscured coordinate handling must extend to the read path: real authentication, per-user authorization, no anonymous coordinate reads.
 5. Print events need durable history (what was printed, when, on which sheet, from which data), so later corrections can name the physical labels they invalidate.

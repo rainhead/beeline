@@ -83,18 +83,78 @@ is the one who prints and because the two may be describing different cases.
    ([ADR 0007](0007-authored-changes-are-events.md)) naming both numbers,
    because it is the one case where a catalog number already published for
    that specimen goes stale and downstream has to be told.
-5. **Uniqueness is enforced by the database for every number Beeline mints** —
-   a sequence and a constraint, never an advisory max-scan. This is
-   requirement 2, field-number uniqueness, in
+5. **Uniqueness is enforced by the database for every number Beeline mints**,
+   and the mechanism is the one the project has already chosen: numbers are
+   minted by inserting into `minted_field_number`, whose `field_number`
+   PRIMARY KEY *is* the guarantee, keyed 1:1 to the specimen
+   ([schema-sketch.md](../schema-sketch.md), phase 5). This is requirement 2,
+   field-number uniqueness, in
    [reference-implementation.md](../reference-implementation.md); it was
    worded as *catalog-number* uniqueness until 2026-09-09, a leftover from
-   before the vocabulary was settled, and the requirement was always about
-   `fieldNumber`. Historical numbers are exempt:
-   across five identifier eras they are not unique, `25051768` is on two
-   rows, and they cannot be made unique after the fact. So the guarantee is
-   scoped to what Beeline issues, and a bare unique index over the whole
-   column is not the implementation — it could not be created over the
-   imported corpus.
+   before the vocabulary was settled, and was always about `fieldNumber`.
+
+   The two-table shape is not decoration. A `UNIQUE` on
+   `specimen.field_number` cannot exist — `25051768` is on two imported rows —
+   and the obvious repair, a partial unique index over minted rows only, is
+   forbidden by [ADR 0001](0001-duckdb-first-with-portable-sql.md): PostgreSQL
+   has them and DuckDB does not, and that ADR names `minted_field_number` as
+   the dialect-neutral answer. So legacy numbers are **attributes** carried on
+   the specimen and governed by nothing, while minted numbers are **rows in a
+   registry** and governed absolutely. A number's provenance is then a fact
+   about which table it appears in, rather than a flag anyone has to set.
+
+   Two consequences follow and are decisions, not details. **The insert is the
+   mint**: no code assigns a field number except by inserting that row, and a
+   number absent from the registry was not minted by Beeline. And a print run
+   cancelled after minting leaves its numbers **burned**: gaps are harmless
+   and reuse never is ([field-number-history.md](../field-number-history.md)
+   counts ~86,000 already).
+
+   **What the registry does not guarantee, and what does.** Its PRIMARY KEY
+   compares registry rows to each other, so it stops two *minted* numbers
+   colliding and nothing else. It cannot see `specimen.field_number`, where
+   383,031 imported numbers live — so on its own it would happily mint
+   `1900001` onto a second bee while the first wears that number on a pin in a
+   drawer. No engine-level constraint closes that: a cross-table exclusion is
+   not portable, and the partial index is forbidden above. So the rule is
+   stated rather than enforced: **a mint never lands on a number the imported
+   corpus already uses**, whose ceiling is `26072091`.
+
+   This decides nothing about the *shape* of new numbers, and deliberately so
+   — that is a printing question, per (6). Continuing to seed each season from
+   the year is safe and stays available: `27000001` clears the imported
+   ceiling by 927,910, and the busiest year on record printed 76,409 labels,
+   so a year's block has an order of magnitude of headroom. What the rule
+   forbids is narrower and is a live hazard in the blow-away era rather than a
+   hypothetical: the reference implementation falls back to the year *when the
+   scan finds nothing to increment from*, and a rebuilt or reseeded store has
+   an empty registry beside a full corpus. Seeding from the year alone would
+   then have picked `26000001` during 2026 — squarely inside the imported `26`
+   block. So the seed is taken from the imported corpus as well as the
+   registry, never from the registry alone.
+
+   And because a stated rule is a rule somebody breaks, it is checked the way
+   this project checks everything the engine cannot hold: a view of minted
+   numbers that collide with an imported one, asserted empty by test, the same
+   shape as `sample_elevation_stale` and `sample_primary_collector_invalid`.
+
+   **The registry is authored data and must outlive a rebuild.** This is not a
+   new rule; it is the one *Data handling* in [CONTEXT.md](../../CONTEXT.md)
+   already states, with field numbers as its own first example: what Beeline
+   mints exists nowhere else, and a rebuild must not recompute it. A registry
+   living only inside the store would break the burn guarantee above in a way
+   nothing would notice — a number minted for a print run that was then
+   cancelled sits in the registry and on no specimen, so it is in neither the
+   registry nor the corpus after a `db:reseed`, and the next mint issues it
+   again. The specimen it was burned for may by then be on somebody's bench.
+   So `minted_field_number` survives the blow-away, by the route the store
+   already has for facts promotion cannot recompute (`CARRIED_TABLES` in
+   `src/reseed-store.ts`, where `inat_place` sits for the same reason) or by
+   the route corrections and the change logs take, outside the store
+   altogether ([ADR 0004](0004-correction-overlay.md),
+   [ADR 0007](0007-authored-changes-are-events.md)). Which of the two is an
+   implementation question for phase 5; that it is one of them is not.
+
 6. **A field number is opaque.** No code parses a season, a year, an atlas or
    a project out of one. The two-digit prefix is the year the printer ran and
    disagrees with the collecting season on 38,842 records; the `E` prefix is

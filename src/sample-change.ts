@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, stat, writeFile, appendFile, open } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { parseCsv } from "./corrections.js";
-import type { StateReader, ChangeSource } from "./person-change.js";
+import type { StateReader } from "./person-change.js";
 import { DEFAULT_DB } from "./person-change.js";
 
 /**
@@ -98,9 +98,19 @@ export interface SampleChange {
   new_value: string;
   /** iNat login of whoever decided, or empty where nobody did. */
   author: string;
-  source: ChangeSource;
+  source: SampleChangeSource;
   reason: string;
 }
+
+/**
+ * Who noticed, for a sample. The person log's list (CHANGE_SOURCES) minus
+ * the writers that never touch a sample — the account backfill binds people
+ * and nothing else — so the record page's label map is pinned to exactly the
+ * sources that can appear here, and a person-only source cannot be recorded
+ * against a sample by a typo.
+ */
+export const SAMPLE_CHANGE_SOURCES = ["app", "legacy_promotion", "observation_promotion", "reconcile"] as const;
+export type SampleChangeSource = (typeof SAMPLE_CHANGE_SOURCES)[number];
 
 const LOG_COLUMNS = [
   "at",
@@ -597,7 +607,7 @@ export function matchSamples(
 // ── Recording ────────────────────────────────────────────────────────────
 
 export interface SampleRecordOptions {
-  source: ChangeSource;
+  source: SampleChangeSource;
   author?: string;
   reason?: string;
   /** The instant recorded on every entry; defaulted so tests can pin it. */

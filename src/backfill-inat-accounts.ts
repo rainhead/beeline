@@ -1,6 +1,7 @@
 import { DuckDBConnection } from "@duckdb/node-api";
 import { openDuckDb } from "./db.js";
 import { pathToFileURL } from "node:url";
+import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
 
 /**
  * Fill inat_account for people whose legacy records carry a login but no
@@ -9,6 +10,14 @@ import { pathToFileURL } from "node:url";
  * pairs are written: one person per login, one login per person, neither
  * side already claimed. Everything else is reported, never guessed
  * (beeline-gju). Idempotent: filled people drop out of the candidate set.
+ *
+ * A binding is a change to a person, so the CLI records what it did in the
+ * person change log under its own name (ADR 0007, beeline-aa7). It used to
+ * record nothing: the app's next boot reconciled and caught every binding,
+ * which is the safety net working, but the entries then read "found at
+ * startup" about work a named job had done and could have said so. The
+ * function itself stays a pure store operation, as promotion's does, and the
+ * recording is the CLI's — tests run the function without a log.
  */
 
 export interface BackfillResult {
@@ -111,12 +120,53 @@ export async function backfillInatAccounts(
   return result;
 }
 
+export interface BackfillRunResult extends BackfillResult {
+  /** Entries appended to the person change log, or null where none is kept
+   *  for this database or the write failed (warned, never thrown). */
+  personChangesRecorded: number | null;
+}
+
+/**
+ * What the CLI does: backfill, then record. Exported so the recording path
+ * is tested as the CLI runs it — the gate, the source, and the guard —
+ * rather than only the function it calls (CodeRabbit on PR #55).
+ */
+export async function backfillAndRecord(
+  conn: DuckDBConnection,
+  dbPath: string,
+  env: Record<string, string | undefined>,
+  opts: BackfillOptions = {},
+  warn: (message: string) => void = console.warn,
+): Promise<BackfillRunResult> {
+  const result = await backfillInatAccounts(conn, opts);
+  // The log belongs to the database this was pointed at — backfilling a
+  // scratch copy must not diff its people against the deployed store's
+  // history (the same gate promotion applies).
+  const log = changeLogFor(dbPath, env);
+  if (log === null) {
+    warn(
+      `not recording person history: ${dbPath} is not the database this environment keeps a change log for ` +
+        `(${env.BEELINE_DB ?? DEFAULT_DB})`,
+    );
+    return { ...result, personChangesRecorded: null };
+  }
+  // Guarded like promotion's passes: the bindings committed above, and a
+  // history-write failure must not make the run look as if they did not.
+  try {
+    const recorded = await recordPersonChanges(duckdbReader(conn), log, { source: "inat_backfill" });
+    return { ...result, personChangesRecorded: recorded.appended };
+  } catch (err) {
+    warn(`could not record person history: ${(err as Error).message}`);
+    return { ...result, personChangesRecorded: null };
+  }
+}
+
 // CLI: pnpm inat:backfill-accounts [db]
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const dbPath = process.argv[2] ?? "beeline.duckdb";
+  const dbPath = process.argv[2] ?? DEFAULT_DB;
   const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
-  const result = await backfillInatAccounts(conn);
+  const result = await backfillAndRecord(conn, dbPath, process.env);
   conn.closeSync();
   console.log(JSON.stringify(result, null, 2));
 }

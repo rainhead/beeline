@@ -752,7 +752,7 @@ export const en = {
         acts_for: "May act for",
       },
       /**
-       * Who, where nobody can be named. Three of these are passes over the
+       * Who, where nobody can be named. Four of these are passes over the
        * store that found a difference, which is a weaker claim than a staff
        * member's login and is written to read like one.
        */
@@ -760,6 +760,7 @@ export const en = {
         app: "staff",
         legacy_promotion: "a rebuild",
         observation_promotion: "an iNaturalist sync",
+        inat_backfill: "an iNaturalist login lookup",
         reconcile: "found at startup",
       },
       /** An empty value, in a cell that has to show something. */

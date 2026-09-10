@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createMemoryDb, rows } from "./helpers.js";
-import { backfillInatAccounts } from "../src/backfill-inat-accounts.js";
+import { backfillAndRecord, backfillInatAccounts } from "../src/backfill-inat-accounts.js";
+import { duckdbReader, readChanges, recordPersonChanges } from "../src/person-change.js";
 
 let conn: DuckDBConnection;
 
@@ -79,6 +83,67 @@ describe("inat account backfill", () => {
     // Idempotent: filled people leave the candidate set.
     const again = await backfillInatAccounts(conn, { delayMs: 0, fetchImpl: fakeUsersApi({}) });
     expect(again.filled).toHaveLength(0);
+  });
+
+  test("a binding is recorded under the backfill's own name, not found at startup (beeline-aa7)", async () => {
+    // Through the CLI's own path, so the test fails if the CLI stops
+    // recording, bypasses the gate, or swallows the source. A roster history
+    // reads "an iNaturalist login lookup" where it used to read "found at
+    // startup" about the same rows.
+    await stageLegacy([{ fn: "Trinity", ln: "Harvey", login: "trinityharvey" }]);
+    const path = join(await mkdtemp(join(tmpdir(), "backfill-")), "person-change.csv");
+    await recordPersonChanges(duckdbReader(conn), path, { source: "legacy_promotion" });
+    const env = { BEELINE_DB: "beeline.duckdb", BEELINE_PERSON_CHANGES: path };
+    const warnings: string[] = [];
+    const result = await backfillAndRecord(
+      conn,
+      "./beeline.duckdb",
+      env,
+      { delayMs: 0, fetchImpl: fakeUsersApi({ trinityharvey: { id: 8386998, login: "trinityharvey" } }) },
+      (m) => warnings.push(m),
+    );
+    expect(result.filled).toHaveLength(1);
+    expect(result.personChangesRecorded).toBe(2);
+    expect(warnings).toEqual([]);
+    const entries = (await readChanges(path)).filter((c) => c.source === "inat_backfill");
+    expect(entries.map((c) => [c.field, c.new_value, c.author])).toEqual([
+      ["inat_user_id", "8386998", ""],
+      ["login", "trinityharvey", ""],
+    ]);
+  });
+
+  test("a scratch copy is backfilled but not recorded against the deployed store's history", async () => {
+    await stageLegacy([{ fn: "Trinity", ln: "Harvey", login: "trinityharvey" }]);
+    const path = join(await mkdtemp(join(tmpdir(), "backfill-")), "person-change.csv");
+    const warnings: string[] = [];
+    const result = await backfillAndRecord(
+      conn,
+      "scratch.duckdb",
+      { BEELINE_DB: "beeline.duckdb", BEELINE_PERSON_CHANGES: path },
+      { delayMs: 0, fetchImpl: fakeUsersApi({ trinityharvey: { id: 8386998, login: "trinityharvey" } }) },
+      (m) => warnings.push(m),
+    );
+    expect(result.filled).toHaveLength(1);
+    expect(result.personChangesRecorded).toBeNull();
+    expect(warnings).toEqual([expect.stringMatching(/not recording person history: scratch\.duckdb/)]);
+  });
+
+  test("a history-write failure is warned about, and the bindings it could not record still stand", async () => {
+    await stageLegacy([{ fn: "Trinity", ln: "Harvey", login: "trinityharvey" }]);
+    // A directory where the log file should be: every write to it fails.
+    const path = await mkdtemp(join(tmpdir(), "backfill-"));
+    const warnings: string[] = [];
+    const result = await backfillAndRecord(
+      conn,
+      "beeline.duckdb",
+      { BEELINE_DB: "beeline.duckdb", BEELINE_PERSON_CHANGES: path },
+      { delayMs: 0, fetchImpl: fakeUsersApi({ trinityharvey: { id: 8386998, login: "trinityharvey" } }) },
+      (m) => warnings.push(m),
+    );
+    expect(result.filled).toHaveLength(1);
+    expect(result.personChangesRecorded).toBeNull();
+    expect(warnings).toEqual([expect.stringMatching(/could not record person history/)]);
+    expect(await rows(conn, "SELECT login FROM inat_account")).toEqual([["trinityharvey"]]);
   });
 
   test("a login whose profile names a different known person is misattributed, not linked", async () => {

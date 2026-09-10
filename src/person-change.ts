@@ -110,8 +110,20 @@ const ABSENT: Record<ChangeField, string> = {
  * nobody to name. The distinction is the honest one: `app` means a staffer
  * did this and said why, and everything else means a pass over the store
  * found a difference and cannot say who made it.
+ *
+ * Each named pass is a writer that records its own work; `reconcile` is the
+ * boot pass catching whatever the others did not. A writer left off this
+ * list is still covered — the next reconcile notices — but its entries then
+ * say "found at startup" about something a named job did and could have said
+ * so, which is what `inat_backfill` was until beeline-aa7.
  */
-export const CHANGE_SOURCES = ["app", "legacy_promotion", "observation_promotion", "reconcile"] as const;
+export const CHANGE_SOURCES = [
+  "app",
+  "legacy_promotion",
+  "observation_promotion",
+  "inat_backfill",
+  "reconcile",
+] as const;
 export type ChangeSource = (typeof CHANGE_SOURCES)[number];
 
 export interface PersonChange {

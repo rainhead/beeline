@@ -42,19 +42,25 @@ behave differently:
   Symbiota mints its own UUID for it and advises that the value be kept with
   the canonical record wherever that record is managed outside Symbiota.
 
-Beeline had conflated the two. A field number is the per-specimen number
+**Beeline has neither of them yet, and that is the starting point.** The store
+has no `occurrenceID` at all — nothing in `schema/*.sql` or `src/model.ts`
+outside the legacy staging — so nothing in it is conflated; the identifier is
+simply absent, and this ADR is the decision that supplies it. What conflated
+the two are the reference implementation, which derives Oregon's
+`occurrenceID` from the field number (below), and the first version of this
+ADR, which reasoned as though the field number carried downstream identity.
+
+A field number is the per-specimen number
 printed on a label (*Field number* in [CONTEXT.md](../../CONTEXT.md)): it goes
 onto a pin in a museum drawer, becomes the stem of the museum's catalog number
 in Ecdysis (`WSDA_2303966`), and travels to GBIF. It is **not** the catalog
 number — that name belongs to the museum's identifier, and the confusion
-between the two is what beeline-nfo ended. The first version of this ADR
-nonetheless treated it as the specimen's *identity*, the thing every
-downstream citation hangs from, and argued about whether it may ever move as
-if the answer decided whether published records stay true. That is the
-`occurrenceID`'s job, and Beeline has no `occurrenceID` of its own — **today,
-and this ADR is the decision that changes it**. Everything in this Context
-section describes the shape before that decision; what Beeline will do is the
-Decision below.
+between the two is what beeline-nfo ended. But being a label identifier is
+the whole of its job: it is not the thing a downstream citation hangs from,
+and arguing about whether it may move as though the answer decided whether
+published records stay true was arguing about the wrong identifier. That is
+the `occurrenceID`'s job. Everything in this Context section describes the
+shape before this ADR; what Beeline will do is the Decision below.
 
 ### The reference implementation derives the permanent one from the mutable one
 

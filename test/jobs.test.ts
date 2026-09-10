@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { isDue, runJob, startScheduler, type Job, type JobContext } from "../src/app/jobs/framework.js";
-import { lastSyncStart } from "../src/app/jobs/registry.js";
+import { lastSyncStart, refreshPlaces } from "../src/app/jobs/registry.js";
 import { createApp } from "../src/app/server.js";
 import { createMemoryDb } from "./helpers.js";
 
@@ -289,6 +289,31 @@ describe("boot reconciliation", () => {
     } finally {
       scheduler.stop();
     }
+  });
+});
+
+describe("the nightly's places step (beeline-0oj)", () => {
+  const failing = (async () => {
+    throw new Error("getaddrinfo ENOTFOUND api.inaturalist.org");
+  }) as unknown as typeof fetch;
+
+  it("an unreachable places endpoint is reported, and the run goes on to promote", async () => {
+    const { conn } = await jobDeps();
+    // One observation naming a place the cache has never seen, so there is
+    // something to ask for and the request actually fails.
+    await conn.run("INSERT INTO sync_run (source, authenticated, completed_at) VALUES ('test', true, now())");
+    await conn.run(
+      `INSERT INTO observation_load (inat_id, sync_run_id, content, content_hash)
+       VALUES (1, (SELECT max(entity_id) FROM sync_run), '{"id":1,"place_ids":[10]}', 'h1')`,
+    );
+    const summary = await refreshPlaces(conn, { requestDelayMs: 0, fetchImpl: failing });
+    expect(summary).toMatch(/places fetch failed \(getaddrinfo ENOTFOUND/);
+    expect(summary).toMatch(/promoting with the cache as it stands/);
+  });
+
+  it("says when there was nothing to ask, so the detail distinguishes quiet from broken", async () => {
+    const { conn } = await jobDeps();
+    expect(await refreshPlaces(conn, { requestDelayMs: 0, fetchImpl: failing })).toBe("places cache complete");
   });
 });
 

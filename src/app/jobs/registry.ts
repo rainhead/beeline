@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { Kysely } from "kysely";
 import { deriveElevations } from "../../derive-elevation.js";
+import { fetchPlaces, type FetchPlacesOptions } from "../../fetch-places.js";
 import type { Database } from "../../model.js";
 import { duckdbReader, recordPersonChanges } from "../../person-change.js";
 import { recordSampleChanges, type SampleLogPaths } from "../../sample-change.js";
@@ -52,13 +53,47 @@ const UPDATED_SINCE_MARGIN_MS = 60 * 60 * 1000;
 
 const sweepStart = (sweepDays: number) => new Date(Date.now() - sweepDays * 86_400_000).toISOString().slice(0, 10);
 
-/** Promote and elevation, shared by both sync jobs. */
+/**
+ * The places cache, brought up to date between sync and promote
+ * (beeline-0oj). observation_place is the only route from an observation to
+ * a state and so to an atlas, and a sync can bring in observations naming
+ * places the cache has never seen; minting one of those before the fetch
+ * gives the sample no state, no atlas and a place_unrecognised finding for
+ * no reason except that a fetch had not run. Steady state is one request or
+ * none — the view only refills when a sync introduces a new place.
+ *
+ * NEVER FAILS THE RUN. This is the only outbound dependency in the pipeline
+ * other than the sync itself, and an unreachable places endpoint is not a
+ * reason to skip promotion: a store with a slightly stale cache is fine, a
+ * store that skipped promotion is not. So the failure is reported in the
+ * run's detail, the way the elevation step reports missing tiles, and the
+ * fill-only atlas refresh repairs the affected samples on the pass after the
+ * fetch succeeds (sample_atlas_unfilled is its worklist).
+ */
+export async function refreshPlaces(
+  conn: JobContext["conn"],
+  opts: FetchPlacesOptions = {},
+): Promise<string> {
+  try {
+    const r = await fetchPlaces(conn, opts);
+    if (r.missing === 0) return "places cache complete";
+    return (
+      `${r.cached} places cached` +
+      (r.unresolved.length > 0 ? `, ${r.unresolved.length} gone upstream (${r.unresolved.join(", ")})` : "")
+    );
+  } catch (err) {
+    return `places fetch failed (${(err as Error).message}); promoting with the cache as it stands`;
+  }
+}
+
+/** Fetch places, promote, and elevation, shared by both sync jobs. */
 async function pipelineTail(
   ctx: JobContext,
   parts: string[],
   personChanges: string,
   samplePaths: SampleLogPaths,
 ): Promise<string> {
+  parts.push(await ctx.step("fetch places", () => refreshPlaces(ctx.conn, { signal: ctx.signal })));
   const promoted = await ctx.step("promote observations", () => promoteObservations(ctx.conn));
   parts.push(`${promoted.linkedSamples} samples linked`);
   // iNaturalist renames an account and promotion rewrites the cached login,

@@ -187,20 +187,60 @@ describe("inat_place_uncached", () => {
     expect(await count("SELECT count(*) FROM inat_place_uncached")).toBe(0);
   });
 
-  test("an id iNat will not return is reported, never cached as a guess", async () => {
+  test("an id iNat will not return is recorded as gone, never cached as a guess (beeline-0oj)", async () => {
     // Places get merged and deleted upstream while an observation keeps
-    // naming the old id. Caching a placeholder would make observation_place
-    // answer confidently about a place that is gone.
+    // naming the old id, and iNat answers with 200 and the id simply missing
+    // from results. Caching a placeholder would make observation_place
+    // answer confidently about a place that is gone; not recording it at all
+    // meant the view could never be empty and every run re-asked.
     await stageLoad({ id: 1, place_ids: [10, 999999] });
+    const asked: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      asked.push(String(url));
+      return { ok: true, json: async () => ({ results: [{ id: 10, ...PLACES[10] }] }) };
+    }) as unknown as typeof fetch;
+
+    const first = await fetchPlaces(conn, { requestDelayMs: 0, fetchImpl });
+    expect(first.unresolved).toEqual([999999]);
+    expect(await count("SELECT count(*) FROM inat_place WHERE inat_place_id = 999999")).toBe(0);
+    expect(await rows(conn, "SELECT inat_place_id FROM inat_place_absent")).toEqual([[999999n]]);
+    // "Uncached" now means "not yet tried": the verdict empties the view…
+    expect(await count("SELECT count(*) FROM inat_place_uncached")).toBe(0);
+    // …so the next run asks for nothing and reports nothing.
+    const second = await fetchPlaces(conn, { requestDelayMs: 0, fetchImpl });
+    expect(second).toMatchObject({ missing: 0, requested: 0, cached: 0, unresolved: [] });
+    expect(asked).toHaveLength(1);
+    // The observation still resolves through the place ids it does have.
+    await refreshObservationFields(conn);
+    expect(await rows(conn, "SELECT state_province FROM observation_place WHERE inat_id = 1")).toEqual([["OR"]]);
+  });
+
+  test("deleting the verdict is how to ask again", async () => {
+    await stageLoad({ id: 1, place_ids: [999999] });
+    await conn.run("INSERT INTO inat_place_absent (inat_place_id) VALUES (999999)");
+    expect(await count("SELECT count(*) FROM inat_place_uncached")).toBe(0);
+    await conn.run("DELETE FROM inat_place_absent WHERE inat_place_id = 999999");
+    expect(await rows(conn, "SELECT inat_place_id FROM inat_place_uncached")).toEqual([[999999n]]);
+  });
+
+  test("a shutdown stops the fetch at a batch boundary (beeline-fth)", async () => {
+    // 31 ids is two batches; the signal aborted before the loop means neither
+    // is asked for, and the run reports what it did rather than throwing.
+    await stageLoad({ id: 1, place_ids: Array.from({ length: 31 }, (_, i) => 100_000 + i) });
+    const controller = new AbortController();
+    controller.abort();
+    const asked: string[] = [];
     const result = await fetchPlaces(conn, {
       requestDelayMs: 0,
-      fetchImpl: (async () => ({
-        ok: true,
-        json: async () => ({ results: [{ id: 10, ...PLACES[10] }] }),
-      })) as unknown as typeof fetch,
+      signal: controller.signal,
+      fetchImpl: (async (url: string) => {
+        asked.push(String(url));
+        return { ok: true, json: async () => ({ results: [] }) };
+      }) as unknown as typeof fetch,
     });
-    expect(result.unresolved).toEqual([999999]);
-    expect(await count("SELECT count(*) FROM inat_place WHERE inat_place_id = 999999")).toBe(0);
+    expect(asked).toEqual([]);
+    expect(result).toMatchObject({ missing: 31, requested: 2, cached: 0, unresolved: [] });
+    expect(await count("SELECT count(*) FROM inat_place_absent")).toBe(0);
   });
 
   test("a malformed page fails loudly rather than caching nothing quietly", async () => {

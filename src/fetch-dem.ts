@@ -1,4 +1,5 @@
 import { createWriteStream } from "node:fs";
+import type { DuckDBConnection } from "@duckdb/node-api";
 import { openDuckDb } from "./db.js";
 import { mkdir, rm, rename } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -72,16 +73,35 @@ export function glo30Url(key: string): string {
   return `${GLO30_BUCKET}/${id}/${id}.tif`;
 }
 
+/**
+ * The tiles derivation will actually read: exactly the coordinates of
+ * sample_elevation_pending (schema/170), which is what deriveElevations
+ * selects. Not "every row with no elevation" — the pending view drops a
+ * coordinate too vague to place (the 100 m elevation_derivation_limit,
+ * beeline-6vc), and the two had drifted (beeline-67x): the fetch downloaded
+ * tiles for rows nothing would ever derive. Caught on the dev store, where
+ * the one tile of eleven that neither SRTM nor GLO-30 could supply was
+ * s08_w122, open Pacific 2,000 km west of Peru, wanted by a single sample
+ * whose obscured coordinate carries 1,196 km of uncertainty. That matters
+ * beyond the wasted request: the unavailable list is how someone judges
+ * whether a fetch went well, and that tile was the one entry on it that was
+ * not a real gap.
+ */
+export async function neededTileKeys(conn: DuckDBConnection): Promise<string[]> {
+  const rows = (await (
+    await conn.run(`SELECT DISTINCT latitude, longitude FROM sample_elevation_pending`)
+  ).getRows()) as Array<[number, number]>;
+  return [...new Set(rows.map(([lat, lon]) => tileKeyFor(lat, lon)))].sort();
+}
+
 export async function neededTiles(dbPath: string): Promise<string[]> {
   const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
-  const rows = (await (
-    await conn.run(
-      `SELECT DISTINCT latitude, longitude FROM sample_location WHERE elevation_m IS NULL`,
-    )
-  ).getRows()) as Array<[number, number]>;
-  conn.closeSync();
-  return [...new Set(rows.map(([lat, lon]) => tileKeyFor(lat, lon)))].sort();
+  try {
+    return await neededTileKeys(conn);
+  } finally {
+    conn.closeSync();
+  }
 }
 
 /** Tile keys no dataset in demDir covers yet. */

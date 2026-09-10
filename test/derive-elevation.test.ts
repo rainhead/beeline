@@ -7,7 +7,7 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import { readFile } from "node:fs/promises";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 import { deriveElevations, tileKeyFor } from "../src/derive-elevation.js";
-import { glo30Url, srtmUrl } from "../src/fetch-dem.js";
+import { glo30Url, neededTileKeys, srtmUrl } from "../src/fetch-dem.js";
 
 /** Minimal single-strip little-endian TIFF — geotiff's own writer mangles
  * anything wider than 8 bits, so we emit the ~200 bytes by hand. SRTM tiles
@@ -308,5 +308,27 @@ describe("elevation derivation", () => {
          WHERE loc.sample_id = ${both}`,
       ),
     ).toEqual([[111, "n45_w124_1arc_v3.tif"]]);
+  });
+});
+
+describe("neededTileKeys (beeline-67x)", () => {
+  test("the fetch set is exactly what derivation will read: a coordinate too vague to place wants no tile", async () => {
+    const { conn } = await createMemoryDb();
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    // A real gap, and beside it the dev store's ocean tile: one sample whose
+    // obscured coordinate carries 1,196 km of uncertainty. Derivation refuses
+    // it (elevation_derivation_limit), so fetching s08_w122 for it was a
+    // download nothing would read and an entry on the unavailable list that
+    // was not a real gap.
+    await insertCleanSample(conn, {}, { latitude: "44.55", longitude: "-123.85", elevation_m: "NULL" });
+    await insertCleanSample(conn, { sample_number: "'2'" }, {
+      latitude: "-7.5",
+      longitude: "-121.5",
+      elevation_m: "NULL",
+      coordinate_uncertainty_m: "1196000",
+    });
+    // And a sample already derived, which wants nothing either.
+    await insertCleanSample(conn, { sample_number: "'3'" }, { latitude: "29.5", longitude: "-95.5" });
+    expect(await neededTileKeys(conn)).toEqual(["n44_w124"]);
   });
 });

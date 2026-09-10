@@ -58,10 +58,12 @@ if [ -n "$EXPIRES" ]; then
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
     *) echo "error: BEELINE_FLY_TOKEN_EXPIRES must be YYYY-MM-DD, got '$EXPIRES'" >&2; exit 2 ;;
   esac
-  # ISO dates order lexically, so no date arithmetic beyond "two weeks from
-  # now" — GNU date first, BSD date as the fallback.
+  # An ISO date with the dashes removed is a number that orders like the
+  # date, and integer comparison is the one POSIX test guarantees — the
+  # string form is not (shellcheck SC3012). No date arithmetic beyond "two
+  # weeks from now": GNU date first, BSD date as the fallback.
   soon=$(date -u -d '+14 days' +%F 2>/dev/null || date -u -v+14d +%F)
-  if [ "$EXPIRES" \< "$soon" ]; then
+  if [ "$(printf '%s' "$EXPIRES" | tr -d -)" -le "$(printf '%s' "$soon" | tr -d -)" ]; then
     echo "warning: FLY_API_TOKEN expires $EXPIRES (recorded in BEELINE_FLY_TOKEN_EXPIRES) — rotate it:" >&2
     echo "  fly tokens create ssh --app $APP --expiry <hours>h   # and pick an expiry clear of cutover" >&2
   fi

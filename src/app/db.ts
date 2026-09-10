@@ -172,20 +172,32 @@ export async function openAppDb(config: Pick<AppConfig, "dbPath" | "privateDbPat
       // unopenable (beeline-c1b), which is the one outcome a shutdown exists
       // to avoid. A failure here does not stop the close — a checkpoint the
       // close manages is still a checkpoint.
-      const conn = await instance.connect();
+      //
+      // Every step runs whatever the one before it did: the instance close is
+      // the last chance at a checkpoint, and a connection that could not be
+      // opened, or a Kysely pool that would not drain, must not stand between
+      // the process and it.
       try {
-        for (const catalog of ["", " private"]) {
-          try {
-            await conn.run(`CHECKPOINT${catalog}`);
-          } catch (err) {
-            console.error(`checkpoint${catalog || " (main)"} failed: ${(err as Error).message}`);
+        const conn = await instance.connect();
+        try {
+          for (const catalog of ["", " private"]) {
+            try {
+              await conn.run(`CHECKPOINT${catalog}`);
+            } catch (err) {
+              console.error(`checkpoint${catalog || " (main)"} failed: ${(err as Error).message}`);
+            }
           }
+        } finally {
+          conn.closeSync();
         }
-      } finally {
-        conn.closeSync();
+      } catch (err) {
+        console.error(`could not open a connection to checkpoint: ${(err as Error).message}`);
       }
-      await db.destroy();
-      instance.closeSync();
+      try {
+        await db.destroy();
+      } finally {
+        instance.closeSync();
+      }
     },
   };
 }

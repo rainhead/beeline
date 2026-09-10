@@ -378,6 +378,9 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
       busy = job.name;
       try {
         await reconciled; // never insert a live run the orphan sweep could catch
+        // stop() may have resolved during that wait, with nothing in flight
+        // for it to await; a job started now would outlive the scheduler.
+        if (stopping) return false;
         await track(job);
       } finally {
         busy = null;

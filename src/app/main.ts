@@ -142,11 +142,16 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
 // replay (beeline-c1b).
 //
 // The job gets a minute to finish on its own before it is interrupted, which
-// leaves the other minute for its rollback, the drain and the checkpoint. A
+// leaves the other minute for its rollback, the drain and the checkpoint. The
+// drain has its own, shorter budget: `server.close()` waits for every request
+// still open, and one that outlives the job's whole minute would otherwise
+// carry the shutdown past the hard limit — and the limit exits without the
+// checkpoint, which is the one thing this sequence exists to reach. A
 // second signal is not handled at all: `once` restores Node's default, which
 // is to die on the spot — the escape hatch, and exactly the unclean exit the
 // first signal is trying to avoid.
 const SHUTDOWN_GRACE_MS = 60_000;
+const SHUTDOWN_DRAIN_MS = 10_000;
 const SHUTDOWN_LIMIT_MS = 110_000;
 async function shutdown(signal: string): Promise<never> {
   console.log(`${signal}: shutting down`);
@@ -166,10 +171,10 @@ async function shutdown(signal: string): Promise<never> {
   const running = scheduler.running();
   if (running !== null) console.log(`waiting for job '${running}' (up to ${SHUTDOWN_GRACE_MS}ms before interrupting it)`);
   await scheduler.stop({ graceMs: SHUTDOWN_GRACE_MS }).catch((err: unknown) => failed("stopping the scheduler", err));
-  // A request that is still open past the grace is not worth the store.
+  // A request that is still open past this is not worth the store.
   const drainLimit = setTimeout(() => {
     if ("closeAllConnections" in server) server.closeAllConnections();
-  }, SHUTDOWN_GRACE_MS).unref();
+  }, SHUTDOWN_DRAIN_MS).unref();
   await drained;
   clearTimeout(drainLimit);
 

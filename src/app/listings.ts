@@ -182,8 +182,20 @@ export function parseListingQuery(
 export function listingHref(path: string, query: ListingQuery, overrides: Partial<ListingQuery> = {}): string {
   const merged = { ...query, ...overrides };
   const params = new URLSearchParams();
-  // Defaults stay out of the URL, so the plain path is the plain listing.
-  if (merged.scope !== MINE) params.set("scope", merged.scope);
+  // Defaults stay out of the URL, so the plain path is the plain listing —
+  // with one exception, because scope has no single default. MINE is the
+  // default for a volunteer, who cannot reach anything else; for staff,
+  // parseListingQuery falls back to the remembered scope cookie, so a link
+  // that omits scope resolves to whatever that person last browsed. Dropping
+  // an explicitly requested MINE therefore turned the QC home's "1 older
+  // sample of yours still carries a flag / Show them" into a link to
+  // everybody's, the count and the destination disagreeing about whose
+  // samples they were (beeline-3kl).
+  //
+  // So naming scope in `overrides` is a statement, and it is honoured even
+  // when the value is the default. A caller that passes no scope keeps the
+  // old rule and stays out of the URL.
+  if (overrides.scope !== undefined || merged.scope !== MINE) params.set("scope", merged.scope);
   if (merged.q !== "") params.set("q", merged.q);
   if (merged.from !== null) params.set("from", merged.from);
   if (merged.to !== null) params.set("to", merged.to);

@@ -166,7 +166,8 @@ real but weaker. A specimen already pinned under a label saying `25051768`,
 reprinted under `26000412`, is a pin that may wear two labels with two
 numbers and nothing on it to say which is current; under reuse the two agree
 and the stale one is redundant rather than ambiguous. Whether the old label
-ever comes off is question 2 in [questions.md](../questions.md), and nobody
+ever comes off is *Does anyone want the label swap confirmed?* in
+[questions.md](../questions.md), and nobody
 has said it does.
 
 So the gh-17 question is real, and it is considerably less consequential
@@ -354,9 +355,10 @@ Ecdysis's `catalogNumber` and Oregon's occurrence URI are no longer *derived*
 from the field number in the sense of being recomputable from it: the
 museum's number may still be shaped `WSDA_<field number>` because that is
 what WSUC expects, but the record it belongs to is found by `occurrenceID`.
-Question 5 in [questions.md](../questions.md) — how Ecdysis and GBIF learn of
-a retired number — dissolves in the ordinary case, and in the duplicate
-repair of (4) it is answered by the vocabulary itself rather than by an
+*If a number is retired after publication, how do Ecdysis and GBIF learn of
+it?* in [questions.md](../questions.md) dissolves in the ordinary case, and
+in the duplicate repair of (4) it is answered by the vocabulary itself rather
+than by an
 obligation this project has to design.
 
 **The Oregon URI form has to be decided with OSAC, not inherited.** Beeline
@@ -372,7 +374,7 @@ requirement on the print-run model rather than a side effect, which is why
 (10) is in the decision and not in the roadmap.
 
 **A stale label on a pin is benign.** Nothing says a superseded label comes
-off, and whether the swap is ever confirmed is question 2 in
+off, and whether the swap is ever confirmed is its own question in
 [questions.md](../questions.md), which this ADR does not close. Under this
 rule a stale label and its replacement say the same number, so the specimen
 stays identifiable either way.
@@ -404,8 +406,9 @@ beeline-1kb.5 reopens on that narrower question. That is the whole cost.
 Nothing about (1), (3) or (5)–(10) moves: a superseded number is a
 non-current registry row, as it already is after a repair, not a voided one.
 This is why the status is proposed, why the confirmation has to come from
-both of them in the same conversation (question 1 in
-[questions.md](../questions.md)), and why the reprint path in phase 5 should
+both of them in the same conversation (*Which account of the bad-data
+reprint is right?* in [questions.md](../questions.md)), and why the reprint
+path in phase 5 should
 not be built until it lands — but it is also why the rest of phase 5 need not
 wait.
 
@@ -429,8 +432,8 @@ which this project can answer alone:
    for a record whose canonical home is Beeline. Whether the Washington
    import accepts a supplied `occurrenceID`, and whether anyone at WSUC minds
    the catalog number continuing to be shaped from the field number, is a
-   question for whoever runs the Ecdysis side (question 8 in
-   [questions.md](../questions.md)).
+   question for whoever runs the Ecdysis side (*Will Ecdysis accept an
+   `occurrenceID` we supply?* in [questions.md](../questions.md)).
 3. **Have any of the 598 records already been published?** Oregon publishes
    to GBIF by hand and after the embargo, so probably not — but it is a
    probability rather than a fact, and the repair for a duplicate that has

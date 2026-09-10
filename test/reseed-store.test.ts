@@ -57,6 +57,12 @@ beforeAll(async () => {
     `INSERT INTO inat_place (inat_place_id, name, admin_level, ancestor_place_ids, fetched_at)
      VALUES (10, 'Oregon', 10, [97394, 1, 10], TIMESTAMPTZ '2026-08-01 12:00:00+00')`,
   );
+  // And the verdicts on ids iNat does not have (beeline-0oj): same argument,
+  // and the same instant, for the same reason.
+  await seed.run(
+    `INSERT INTO inat_place_absent (inat_place_id, asked_at)
+     VALUES (117476, TIMESTAMPTZ '2026-08-01 12:00:00+00')`,
+  );
   // Model rows, of the kind promotion derives and this tool must not carry.
   await seed.run(`INSERT INTO person (entity_id, display_name) VALUES (nextval('entity_id_seq'), 'Stale Person')`);
   // And a sequence left where a promoted store leaves it: far ahead. Both
@@ -96,6 +102,7 @@ describe("reseeding a store that cannot be blown away", () => {
       observation_seen: 1,
       job_run: 1,
       inat_place: 1,
+      inat_place_absent: 1,
     });
     // The place cache comes across whole, keeping the instant iNat was
     // actually asked: now() would claim a freshness the reseed did not earn.
@@ -105,6 +112,9 @@ describe("reseeding a store that cannot be blown away", () => {
                                fetched_at = TIMESTAMPTZ '2026-08-01 12:00:00+00'
                         FROM inat_place`),
     ).toEqual([[10n, "Oregon", 10, "97394,1,10", true]]);
+    expect(
+      await rows(conn, `SELECT inat_place_id, asked_at = TIMESTAMPTZ '2026-08-01 12:00:00+00' FROM inat_place_absent`),
+    ).toEqual([[117476n, true]]);
 
     // The whole point: the model is empty, so promotion may run against it.
     expect(await rows(conn, `SELECT count(*) FROM person`)).toEqual([[0n]]);
@@ -170,6 +180,7 @@ describe("reseeding a store that cannot be blown away", () => {
       observation_seen: 0,
       job_run: 0,
       inat_place: 0,
+      inat_place_absent: 0,
     });
     const bareInstance = await DuckDBInstance.create(out);
     const bareConn = await bareInstance.connect();

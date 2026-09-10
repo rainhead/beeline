@@ -88,6 +88,14 @@ export interface InatPlaceTable {
   fetched_at: Generated<Date>;
 }
 
+/** Place ids iNat was asked for and did not return: merged or deleted
+ *  upstream while an observation still names them. Subtracted from
+ *  inat_place_uncached so the fetcher stops re-asking (beeline-0oj). */
+export interface InatPlaceAbsentTable {
+  inat_place_id: BigIntCol;
+  asked_at: Generated<Date>;
+}
+
 // schema/private/010_auth.sql — the attached private store (ADR 0003)
 
 export interface InatOauthTokenTable {
@@ -536,7 +544,8 @@ export interface SampleObservationNumberMismatchView {
   details: string;
 }
 
-/** Places an observation names that the cache has never been told about. */
+/** Places an observation names that the cache has never been asked about —
+ *  neither cached nor recorded as gone. */
 export interface InatPlaceUncachedView {
   inat_place_id: BigIntCol;
 }
@@ -663,6 +672,7 @@ export interface Database {
   observation_field_stale: ObservationFieldStaleView;
   observation_sample_number_conflict: ObservationSampleNumberConflictView;
   inat_place: InatPlaceTable;
+  inat_place_absent: InatPlaceAbsentTable;
   observation_place: ObservationPlaceView;
   observation_place_ambiguous: ObservationPlaceAmbiguousView;
   inat_place_uncached: InatPlaceUncachedView;

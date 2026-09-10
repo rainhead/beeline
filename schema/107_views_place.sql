@@ -125,15 +125,22 @@ WHERE p.admin_level IN (0, 10, 20)
 GROUP BY e.inat_id, p.admin_level
 HAVING count(*) > 1;
 
--- Places an observation names that the cache has never been told about.
+-- Places an observation names that the cache has never been asked about.
 --
--- The cache is filled by an outbound fetch (pnpm inat:fetch-places) and a
--- sync can bring in observations naming places it has never seen, so the two
--- go out of step in one direction only: this names the gap. It is also what
--- the fetcher selects, so the definition of "missing" is stated once.
+-- The cache is filled by an outbound fetch (the nightly pipeline's fetch-
+-- places step, or pnpm inat:fetch-places by hand) and a sync can bring in
+-- observations naming places it has never seen, so the two go out of step in
+-- one direction only: this names the gap. It is also what the fetcher
+-- selects, so the definition of "missing" is stated once.
+--
+-- An id iNat was asked for and did not return (inat_place_absent, schema/065)
+-- is not missing, it is gone: subtracting it is what lets this view be empty
+-- at all, and so be asserted empty after a fetch (beeline-0oj).
 CREATE VIEW inat_place_uncached AS
 SELECT DISTINCT unnest(CAST(coalesce(json_extract(o.content, '$.private_place_ids'),
                                      json_extract(o.content, '$.place_ids')) AS BIGINT[])) AS inat_place_id
 FROM observation_current o
 EXCEPT
-SELECT inat_place_id FROM inat_place;
+SELECT inat_place_id FROM inat_place
+EXCEPT
+SELECT inat_place_id FROM inat_place_absent;

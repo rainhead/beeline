@@ -53,6 +53,11 @@ import { applySchema } from "./schema.js";
  * store (src/fetch-places.ts, beeline-2yt). Leaving it out would be silent —
  * a reseeded store would resolve no observation to a state, and so give
  * nothing an atlas, until somebody noticed and ran the fetch again.
+ * inat_place_absent comes with it for the same reason: it records which ids
+ * iNat has already said it does not have, and losing it only costs the next
+ * fetch one request per dead id (beeline-0oj) — but a carried verdict is
+ * still a verdict, and asking again is not free of consequence, since it is
+ * what makes inat_place_uncached non-empty until the answer comes back.
  *
  * This list is DECLARATIVE — carryStaging copies each table by hand, because
  * three of them need their ids or their sync_run reference rewritten and no
@@ -69,6 +74,7 @@ export const CARRIED_TABLES = [
   "observation_seen",
   "job_run",
   "inat_place",
+  "inat_place_absent",
 ] as const;
 
 export interface ReseedCounts {
@@ -164,6 +170,12 @@ export async function carryStaging(
     if (await has("inat_place")) {
       await conn.run(`INSERT INTO inat_place BY NAME SELECT * FROM old.inat_place`);
       await count("inat_place");
+    }
+    // Same terms: keyed by iNat's id, and asked_at is when iNat actually
+    // answered, which the reseed did not do.
+    if (await has("inat_place_absent")) {
+      await conn.run(`INSERT INTO inat_place_absent BY NAME SELECT * FROM old.inat_place_absent`);
+      await count("inat_place_absent");
     }
 
     // Scoped to the target: both catalogs are attached and both have a

@@ -21,7 +21,13 @@ import { DEFAULT_DB } from "./person-change.js";
  * Incremental by construction: `inat_place_uncached` (schema/107) is the
  * definition of what is missing, and it is a view so the fetcher and anything
  * asking "is the cache complete" read the same one. A cold corpus is ~2,556
- * ids, about 86 requests.
+ * ids, about 86 requests; in steady state, one request or none.
+ *
+ * Runs as a step of the nightly pipeline between sync and promote
+ * (src/app/jobs/registry.ts, beeline-0oj), so a place a sync introduces is
+ * cached before the observation naming it is minted. An id iNat will not
+ * return is recorded in `inat_place_absent` rather than asked for again on
+ * every run — the view subtracts it, which is what lets the view be empty.
  */
 
 /** iNat's own cap on a comma-separated id path is 30 (the API skill's note). */
@@ -35,13 +41,18 @@ export interface FetchPlacesOptions {
   requestTimeoutMs?: number;
   /** Cap the work in one run — the nightly job's SLA, not a correctness knob. */
   maxRequests?: number;
+  /** Checked before every request, the way the sync's paging loop does: a
+   *  shutdown stops the fetch at a batch boundary (beeline-fth). */
+  signal?: AbortSignal;
 }
 
 export interface FetchPlacesResult {
   missing: number;
   requested: number;
   cached: number;
-  /** Ids asked for that iNat did not return — merged or deleted upstream. */
+  /** Ids asked for on THIS run that iNat did not return — merged or deleted
+   *  upstream. Recorded in inat_place_absent, so a later run does not ask
+   *  again and does not report them again. */
   unresolved: number[];
 }
 
@@ -75,6 +86,9 @@ export async function fetchPlaces(
   const unresolved: number[] = [];
   for (const [n, batch] of planned.entries()) {
     if (n > 0 && delay > 0) await new Promise((r) => setTimeout(r, delay));
+    // After the delay, not before it: a shutdown that lands during the pause
+    // must not start one more request.
+    if (opts.signal?.aborted) break;
     const url = `${apiBase}/places/${batch.join(",")}`;
     const response = await fetchImpl(url, {
       headers: { Accept: "application/json" },
@@ -91,14 +105,19 @@ export async function fetchPlaces(
       throw new Error(`iNat API returned no results array on /places starting ${batch[0]}`);
     }
     const places = body.results as InatPlace[];
+    // What iNat RETURNED, as distinct from what could be cached: a result
+    // with an id and no usable name is answered, not absent. Recording it as
+    // gone would hide it from the view until somebody deleted the verdict,
+    // and if it was the observation's only usable place id, the state and
+    // the atlas with it (CodeRabbit on PR #54).
     const returned = new Set<number>();
+    for (const place of places) if (typeof place.id === "number") returned.add(place.id);
     // One transaction per batch: a run interrupted halfway has cached what it
     // fetched, and the next run asks for the rest — the view is the ledger.
     await conn.run("BEGIN TRANSACTION");
     try {
       for (const place of places) {
         if (typeof place.id !== "number" || typeof place.name !== "string") continue;
-        returned.add(place.id);
         await conn.run(
           `INSERT INTO inat_place (inat_place_id, name, admin_level, ancestor_place_ids)
            VALUES ($1, $2, $3, $4)
@@ -117,16 +136,27 @@ export async function fetchPlaces(
         );
         cached += 1;
       }
+      // An id iNat will not resolve is recorded rather than retried forever:
+      // places get merged and deleted upstream, and an observation keeps
+      // naming the old id — iNat answers with 200 and the id simply missing
+      // from results. Recorded as absent, never cached as a place: a
+      // placeholder in inat_place would let observation_place answer
+      // confidently about a place that is gone. In the same transaction as
+      // the batch, so a run interrupted here leaves the verdicts it earned.
+      for (const id of batch) {
+        if (returned.has(id)) continue;
+        await conn.run(
+          `INSERT INTO inat_place_absent (inat_place_id) VALUES ($1)
+           ON CONFLICT (inat_place_id) DO UPDATE SET asked_at = now()`,
+          [id],
+        );
+        unresolved.push(id);
+      }
       await conn.run("COMMIT");
     } catch (err) {
       await conn.run("ROLLBACK");
       throw err;
     }
-    // An id iNat will not resolve is recorded rather than retried forever:
-    // places get merged and deleted upstream, and an observation keeps naming
-    // the old id. Reported, not cached — caching a placeholder would make
-    // observation_place answer confidently about a place that is gone.
-    for (const id of batch) if (!returned.has(id)) unresolved.push(id);
   }
 
   return { missing: missing.length, requested: planned.length, cached, unresolved };
@@ -142,7 +172,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   console.log(JSON.stringify(result, null, 2));
   if (result.unresolved.length > 0) {
     console.warn(
-      `${result.unresolved.length} place ids iNaturalist did not return (merged or deleted upstream): ` +
+      `${result.unresolved.length} place ids iNaturalist did not return (merged or deleted upstream), recorded in inat_place_absent: ` +
         result.unresolved.slice(0, 20).join(", ") +
         (result.unresolved.length > 20 ? ", …" : ""),
     );

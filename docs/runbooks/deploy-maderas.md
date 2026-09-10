@@ -211,9 +211,12 @@ while a place it names was uncached kept a null atlas nothing could repair.
 The atlas now lives in the writable `sample_atlas` satellite and the
 fill-only refresh drains `sample_atlas_unfilled` on every promotion, so a
 sample minted too early gets its atlas on the pass after the fetch instead
-of never. `inat_place` is carried across by `db:reseed`, so the cache is not
-empty; the fetch is for the places observations synced since the last one
-have started naming.
+of never. `inat_place` is carried across by `db:reseed` (and with it
+`inat_place_absent`, the ids iNat has already said it does not have), so the
+cache is not empty; the fetch is for the places observations synced since
+the last one have started naming. The nightly runs the same fetch between
+sync and promote (beeline-0oj), so from the first night on the cache keeps
+itself current.
 
 The service must be stopped throughout: one process owns the store (ADR
 0005), and `db:reseed` reads it while promotion writes the new one. Downtime

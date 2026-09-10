@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createMemoryDb, rows } from "./helpers.js";
 import { backfillInatAccounts } from "../src/backfill-inat-accounts.js";
+import { duckdbReader, readChanges, recordPersonChanges } from "../src/person-change.js";
 
 let conn: DuckDBConnection;
 
@@ -79,6 +83,27 @@ describe("inat account backfill", () => {
     // Idempotent: filled people leave the candidate set.
     const again = await backfillInatAccounts(conn, { delayMs: 0, fetchImpl: fakeUsersApi({}) });
     expect(again.filled).toHaveLength(0);
+  });
+
+  test("a binding is recorded under the backfill's own name, not found at startup (beeline-aa7)", async () => {
+    // The CLI records after the function returns, exactly this call; the
+    // point of the test is that the source exists and the entries carry it,
+    // so a roster history reads "an iNaturalist login lookup" where it used
+    // to read "found at startup" about the same rows.
+    await stageLegacy([{ fn: "Trinity", ln: "Harvey", login: "trinityharvey" }]);
+    const path = join(await mkdtemp(join(tmpdir(), "backfill-")), "person-change.csv");
+    await recordPersonChanges(duckdbReader(conn), path, { source: "legacy_promotion" });
+    await backfillInatAccounts(conn, {
+      delayMs: 0,
+      fetchImpl: fakeUsersApi({ trinityharvey: { id: 8386998, login: "trinityharvey" } }),
+    });
+    const recorded = await recordPersonChanges(duckdbReader(conn), path, { source: "inat_backfill" });
+    expect(recorded.appended).toBe(2);
+    const entries = (await readChanges(path)).filter((c) => c.source === "inat_backfill");
+    expect(entries.map((c) => [c.field, c.new_value, c.author])).toEqual([
+      ["inat_user_id", "8386998", ""],
+      ["login", "trinityharvey", ""],
+    ]);
   });
 
   test("a login whose profile names a different known person is misattributed, not linked", async () => {

@@ -1,6 +1,7 @@
 import { DuckDBConnection } from "@duckdb/node-api";
 import { openDuckDb } from "./db.js";
 import { pathToFileURL } from "node:url";
+import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
 
 /**
  * Fill inat_account for people whose legacy records carry a login but no
@@ -9,6 +10,14 @@ import { pathToFileURL } from "node:url";
  * pairs are written: one person per login, one login per person, neither
  * side already claimed. Everything else is reported, never guessed
  * (beeline-gju). Idempotent: filled people drop out of the candidate set.
+ *
+ * A binding is a change to a person, so the CLI records what it did in the
+ * person change log under its own name (ADR 0007, beeline-aa7). It used to
+ * record nothing: the app's next boot reconciled and caught every binding,
+ * which is the safety net working, but the entries then read "found at
+ * startup" about work a named job had done and could have said so. The
+ * function itself stays a pure store operation, as promotion's does, and the
+ * recording is the CLI's — tests run the function without a log.
  */
 
 export interface BackfillResult {
@@ -117,6 +126,24 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
   const result = await backfillInatAccounts(conn);
+  // The log belongs to the database this was pointed at — backfilling a
+  // scratch copy must not diff its people against the deployed store's
+  // history (the same gate promotion applies).
+  const log = changeLogFor(dbPath, process.env);
+  if (log === null) {
+    console.warn(
+      `not recording person history: ${dbPath} is not the database this environment keeps a change log for ` +
+        `(${process.env.BEELINE_DB ?? DEFAULT_DB})`,
+    );
+  }
+  // Guarded like promotion's passes: the bindings committed above, and a
+  // history-write failure must not make the run look as if they did not.
+  let recorded = null;
+  try {
+    recorded = log === null ? null : await recordPersonChanges(duckdbReader(conn), log, { source: "inat_backfill" });
+  } catch (err) {
+    console.warn(`could not record person history: ${(err as Error).message}`);
+  }
   conn.closeSync();
-  console.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify({ ...result, personChangesRecorded: recorded?.appended ?? null }, null, 2));
 }

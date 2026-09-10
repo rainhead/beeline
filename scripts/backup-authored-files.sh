@@ -20,6 +20,7 @@
 #
 # Usage:  scripts/backup-authored-files.sh [dest-dir]
 #         BEELINE_FLY_APP=beeline  FLY_API_TOKEN=...  BEELINE_BACKUP_KEEP=30
+#         BEELINE_FLY_TOKEN_EXPIRES=YYYY-MM-DD  (the date the token was minted to expire)
 set -eu
 
 # Before anything is created. These files are people: names, account bindings,
@@ -35,13 +36,37 @@ umask 077
 # host, and flyctl already reads this variable ahead of its own config.
 if [ -z "${FLY_API_TOKEN:-}" ] && [ "${BEELINE_BACKUP_AMBIENT_AUTH:-}" != "1" ]; then
   echo "error: FLY_API_TOKEN is not set." >&2
-  echo "  Mint one scoped to SSH on this app, and give it an expiry — the default is 20 years:" >&2
-  echo "    fly tokens create ssh --app beeline --expiry 2160h" >&2
+  echo "  Mint one scoped to SSH on this app, with an expiry that lands in a quiet month (the default is 20 years):" >&2
+  echo "    fly tokens create ssh --app beeline --expiry 4320h" >&2
   echo "  To use your own logged-in credentials instead, set BEELINE_BACKUP_AMBIENT_AUTH=1." >&2
   exit 2
 fi
 
 APP="${BEELINE_FLY_APP:-beeline}"
+
+# The token's expiry, as written down by whoever minted it (beeline-vl4). Fly
+# does not tell a scoped token when it ends, and the night it does this job
+# fails with an authentication error that says nothing about why — the one
+# quiet failure a backup cannot afford, and one that landed in cutover month
+# the first time round. So the date is recorded beside the token and the
+# warning starts two weeks out, to stderr, which is what cron mails. Not an
+# error: a misremembered date must not refuse a token that still works, and
+# flyctl is the authority on whether it does.
+EXPIRES="${BEELINE_FLY_TOKEN_EXPIRES:-}"
+if [ -n "$EXPIRES" ]; then
+  case "$EXPIRES" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) echo "error: BEELINE_FLY_TOKEN_EXPIRES must be YYYY-MM-DD, got '$EXPIRES'" >&2; exit 2 ;;
+  esac
+  # ISO dates order lexically, so no date arithmetic beyond "two weeks from
+  # now" — GNU date first, BSD date as the fallback.
+  soon=$(date -u -d '+14 days' +%F 2>/dev/null || date -u -v+14d +%F)
+  if [ "$EXPIRES" \< "$soon" ]; then
+    echo "warning: FLY_API_TOKEN expires $EXPIRES (recorded in BEELINE_FLY_TOKEN_EXPIRES) — rotate it:" >&2
+    echo "  fly tokens create ssh --app $APP --expiry <hours>h   # and pick an expiry clear of cutover" >&2
+  fi
+fi
+
 DEST="${1:-${BEELINE_BACKUP_DIR:-$HOME/beeline-backups}}"
 KEEP="${BEELINE_BACKUP_KEEP:-30}"
 REMOTE_DIR=/app/data
@@ -60,8 +85,18 @@ trap 'rm -rf "$work"' EXIT
 # One remote call for every checksum rather than one per file: each `fly ssh`
 # is a fresh connection through the proxy, and five of them is most of the
 # runtime.
+# flyctl's stderr is kept, not discarded: when the token has expired this is
+# the call that fails, and "every file is missing from the volume" was what
+# the run used to say about it.
 remote_sums=$(flyctl ssh console --app "$APP" \
-  -C "sh -c 'cd $REMOTE_DIR && sha256sum $FILES 2>/dev/null'" 2>/dev/null | tr -d '\r')
+  -C "sh -c 'cd $REMOTE_DIR && sha256sum $FILES 2>/dev/null'" 2>"$work/.flyctl-err" | tr -d '\r')
+if [ -z "$remote_sums" ]; then
+  echo "error: could not read checksums from $APP — flyctl said:" >&2
+  sed 's/^/  /' "$work/.flyctl-err" >&2
+  [ -n "$EXPIRES" ] && echo "  (the token was minted to expire $EXPIRES)" >&2
+  echo "backup INCOMPLETE, keeping nothing" >&2
+  exit 1
+fi
 
 failed=""
 for f in $FILES; do

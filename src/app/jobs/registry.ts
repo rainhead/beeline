@@ -118,11 +118,11 @@ export function buildJobs(
           const last = await lastSyncStart(ctx.db, String(projectId));
           if (last === null) {
             const d1 = sweepStart(config.sweepDays);
-            const r = await ctx.step(`first full sweep ${projectId}`, () => syncINat(ctx.conn, { projectId, d1, token }));
+            const r = await ctx.step(`first full sweep ${projectId}`, () => syncINat(ctx.conn, { projectId, d1, token, signal: ctx.signal }));
             parts.push(`project ${projectId} (first sweep since ${d1}): ${r.fetched} fetched, ${r.newLoads} new`);
           } else {
             const updatedSince = new Date(last.getTime() - UPDATED_SINCE_MARGIN_MS).toISOString();
-            const r = await ctx.step(`incremental ${projectId}`, () => syncINat(ctx.conn, { projectId, updatedSince, token }));
+            const r = await ctx.step(`incremental ${projectId}`, () => syncINat(ctx.conn, { projectId, updatedSince, token, signal: ctx.signal }));
             parts.push(`project ${projectId} (updated since ${updatedSince.slice(0, 16)}Z): ${r.fetched} fetched, ${r.newLoads} new`);
           }
         }
@@ -144,7 +144,7 @@ export function buildJobs(
         const d1 = sweepStart(config.sweepDays);
         const parts: string[] = [];
         for (const projectId of config.syncProjects) {
-          const r = await ctx.step(`sweep ${projectId}`, () => syncINat(ctx.conn, { projectId, d1, token }));
+          const r = await ctx.step(`sweep ${projectId}`, () => syncINat(ctx.conn, { projectId, d1, token, signal: ctx.signal }));
           parts.push(`project ${projectId} (full sweep since ${d1}): ${r.fetched} fetched, ${r.newLoads} new`);
         }
         return pipelineTail(ctx, parts, config.personChangesPath, samplePaths);

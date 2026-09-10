@@ -165,6 +165,25 @@ export async function openAppDb(config: Pick<AppConfig, "dbPath" | "privateDbPat
     instance,
     db,
     async close() {
+      // Checkpoint both stores explicitly before closing, and say so if it
+      // fails. Closing the instance checkpoints too, but that path is the
+      // last thing to run before exit and its failure is silent; DuckDB
+      // <= 1.5.5 can fail to replay an uncheckpointed WAL and leave the file
+      // unopenable (beeline-c1b), which is the one outcome a shutdown exists
+      // to avoid. A failure here does not stop the close — a checkpoint the
+      // close manages is still a checkpoint.
+      const conn = await instance.connect();
+      try {
+        for (const catalog of ["", " private"]) {
+          try {
+            await conn.run(`CHECKPOINT${catalog}`);
+          } catch (err) {
+            console.error(`checkpoint${catalog || " (main)"} failed: ${(err as Error).message}`);
+          }
+        }
+      } finally {
+        conn.closeSync();
+      }
       await db.destroy();
       instance.closeSync();
     },

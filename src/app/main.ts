@@ -130,13 +130,66 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
 
 // The process owns the database (ADR 0005): close it before exiting so the
 // WAL flushes; the supervisor restarting us is the normal deploy.
+//
+// The budget is Fly's `kill_timeout` (fly.toml: 120s, and the nightly runs
+// inside the window host maintenance can land in). It is spent in this order,
+// and the order is the point (beeline-fth): stop taking requests, settle the
+// running job, then checkpoint and close. The job comes before the close
+// because a connection closed under a transaction is what this used to do —
+// and the close is reached whatever happens before it, because the version
+// that put it in an async callback lost the checkpoint to an unhandled
+// rejection, which is the uncheckpointed WAL DuckDB <= 1.5.5 can fail to
+// replay (beeline-c1b).
+//
+// The job gets a minute to finish on its own before it is interrupted, which
+// leaves the other minute for its rollback, the drain and the checkpoint. A
+// second signal is not handled at all: `once` restores Node's default, which
+// is to die on the spot — the escape hatch, and exactly the unclean exit the
+// first signal is trying to avoid.
+const SHUTDOWN_GRACE_MS = 60_000;
+const SHUTDOWN_LIMIT_MS = 110_000;
+async function shutdown(signal: string): Promise<never> {
+  console.log(`${signal}: shutting down`);
+  setTimeout(() => {
+    console.error(`shutdown exceeded ${SHUTDOWN_LIMIT_MS}ms; exiting without a clean close`);
+    process.exit(1);
+  }, SHUTDOWN_LIMIT_MS).unref();
+
+  let code = 0;
+  const failed = (what: string, err: unknown) => {
+    console.error(`shutdown: ${what} failed:`, err);
+    code = 1;
+  };
+
+  // Stop listening; requests in flight complete and idle keep-alives close.
+  const drained = new Promise<void>((resolve) => server.close(() => resolve()));
+  const running = scheduler.running();
+  if (running !== null) console.log(`waiting for job '${running}' (up to ${SHUTDOWN_GRACE_MS}ms before interrupting it)`);
+  await scheduler.stop({ graceMs: SHUTDOWN_GRACE_MS }).catch((err: unknown) => failed("stopping the scheduler", err));
+  // A request that is still open past the grace is not worth the store.
+  const drainLimit = setTimeout(() => {
+    if ("closeAllConnections" in server) server.closeAllConnections();
+  }, SHUTDOWN_GRACE_MS).unref();
+  await drained;
+  clearTimeout(drainLimit);
+
+  try {
+    jobConn.closeSync();
+  } catch (err) {
+    failed("closing the job connection", err);
+  }
+  try {
+    await close();
+  } catch (err) {
+    failed("closing the store", err);
+  }
+  process.exit(code);
+}
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
-    scheduler.stop();
-    server.close(async () => {
-      jobConn.closeSync();
-      await close();
-      process.exit(0);
+    shutdown(signal).catch((err: unknown) => {
+      console.error("shutdown failed:", err);
+      process.exit(1);
     });
   });
 }

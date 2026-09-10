@@ -85,8 +85,10 @@ export async function fetchPlaces(
   let cached = 0;
   const unresolved: number[] = [];
   for (const [n, batch] of planned.entries()) {
-    if (opts.signal?.aborted) break;
     if (n > 0 && delay > 0) await new Promise((r) => setTimeout(r, delay));
+    // After the delay, not before it: a shutdown that lands during the pause
+    // must not start one more request.
+    if (opts.signal?.aborted) break;
     const url = `${apiBase}/places/${batch.join(",")}`;
     const response = await fetchImpl(url, {
       headers: { Accept: "application/json" },
@@ -103,14 +105,19 @@ export async function fetchPlaces(
       throw new Error(`iNat API returned no results array on /places starting ${batch[0]}`);
     }
     const places = body.results as InatPlace[];
+    // What iNat RETURNED, as distinct from what could be cached: a result
+    // with an id and no usable name is answered, not absent. Recording it as
+    // gone would hide it from the view until somebody deleted the verdict,
+    // and if it was the observation's only usable place id, the state and
+    // the atlas with it (CodeRabbit on PR #54).
     const returned = new Set<number>();
+    for (const place of places) if (typeof place.id === "number") returned.add(place.id);
     // One transaction per batch: a run interrupted halfway has cached what it
     // fetched, and the next run asks for the rest — the view is the ledger.
     await conn.run("BEGIN TRANSACTION");
     try {
       for (const place of places) {
         if (typeof place.id !== "number" || typeof place.name !== "string") continue;
-        returned.add(place.id);
         await conn.run(
           `INSERT INTO inat_place (inat_place_id, name, admin_level, ancestor_place_ids)
            VALUES ($1, $2, $3, $4)

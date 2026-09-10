@@ -223,24 +223,41 @@ describe("inat_place_uncached", () => {
     expect(await rows(conn, "SELECT inat_place_id FROM inat_place_uncached")).toEqual([[999999n]]);
   });
 
-  test("a shutdown stops the fetch at a batch boundary (beeline-fth)", async () => {
-    // 31 ids is two batches; the signal aborted before the loop means neither
-    // is asked for, and the run reports what it did rather than throwing.
-    await stageLoad({ id: 1, place_ids: Array.from({ length: 31 }, (_, i) => 100_000 + i) });
-    const controller = new AbortController();
-    controller.abort();
-    const asked: string[] = [];
+  test("a place returned without a usable name is neither cached nor recorded as gone", async () => {
+    // iNat answered, so the id is not absent; the record is unusable, so it
+    // is not cached either. It stays uncached, to be asked for again — which
+    // is the only state from which a later, whole answer can still land.
+    await stageLoad({ id: 1, place_ids: [10] });
     const result = await fetchPlaces(conn, {
       requestDelayMs: 0,
+      fetchImpl: (async () => ({ ok: true, json: async () => ({ results: [{ id: 10 }] }) })) as unknown as typeof fetch,
+    });
+    expect(result).toMatchObject({ cached: 0, unresolved: [] });
+    expect(await count("SELECT count(*) FROM inat_place WHERE inat_place_id = 10")).toBe(0);
+    expect(await count("SELECT count(*) FROM inat_place_absent")).toBe(0);
+    expect(await rows(conn, "SELECT inat_place_id FROM inat_place_uncached")).toEqual([[10n]]);
+  });
+
+  test("a shutdown stops the fetch at a batch boundary, including one that lands during the pause (beeline-fth)", async () => {
+    // 31 ids is two batches. The signal fires while the fetcher is waiting
+    // out the delay before the second, so the second is never asked for, and
+    // the run reports what it did rather than throwing.
+    await stageLoad({ id: 1, place_ids: Array.from({ length: 31 }, (_, i) => 100_000 + i) });
+    const controller = new AbortController();
+    const asked: string[] = [];
+    const result = await fetchPlaces(conn, {
+      requestDelayMs: 50,
       signal: controller.signal,
       fetchImpl: (async (url: string) => {
         asked.push(String(url));
-        return { ok: true, json: async () => ({ results: [] }) };
+        setTimeout(() => controller.abort(), 10);
+        const ids = String(url).split("/places/")[1]!.split(",").map(Number);
+        return { ok: true, json: async () => ({ results: ids.map((id) => ({ id, name: `Place ${id}` })) }) };
       }) as unknown as typeof fetch,
     });
-    expect(asked).toEqual([]);
-    expect(result).toMatchObject({ missing: 31, requested: 2, cached: 0, unresolved: [] });
-    expect(await count("SELECT count(*) FROM inat_place_absent")).toBe(0);
+    expect(asked).toHaveLength(1);
+    expect(result).toMatchObject({ missing: 31, requested: 2, cached: 30, unresolved: [] });
+    expect(await count("SELECT count(*) FROM inat_place_uncached")).toBe(1);
   });
 
   test("a malformed page fails loudly rather than caching nothing quietly", async () => {

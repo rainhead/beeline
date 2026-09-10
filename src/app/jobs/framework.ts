@@ -25,6 +25,14 @@ export interface JobContext {
   log(message: string): void;
   /** Run one chunk of work; timed against the SLA budget for interactive jobs. */
   step<T>(label: string, fn: () => Promise<T>): Promise<T>;
+  /**
+   * Aborted when the process has been asked to shut down and has run out of
+   * patience (beeline-fth). `step()` refuses to start once it is, so a job
+   * made of steps winds down at its next boundary without knowing about it;
+   * a step that can run long on its own — the sync's paging loop — passes it
+   * to whatever it waits on.
+   */
+  signal: AbortSignal;
 }
 
 export interface Job {
@@ -200,8 +208,20 @@ export interface SchedulerDeps {
   now?: () => Date;
 }
 
+/** What a step throws when shutdown reaches it first; job_run.detail says which step. */
+export class JobInterrupted extends Error {
+  constructor(label: string) {
+    super(`interrupted by shutdown before step '${label}'`);
+    this.name = "JobInterrupted";
+  }
+}
+
 /** Run one job to completion, recording the run. Never throws: failures land in job_run. */
-export async function runJob(deps: Pick<SchedulerDeps, "db" | "conn" | "budgetMs">, job: Job): Promise<void> {
+export async function runJob(
+  deps: Pick<SchedulerDeps, "db" | "conn" | "budgetMs">,
+  job: Job,
+  signal: AbortSignal = new AbortController().signal,
+): Promise<void> {
   const budget = deps.budgetMs ?? 1000;
   const { db, conn } = deps;
   const run = await db.insertInto("job_run").values({ job_name: job.name }).returning("entity_id").executeTakeFirstOrThrow();
@@ -210,7 +230,12 @@ export async function runJob(deps: Pick<SchedulerDeps, "db" | "conn" | "budgetMs
     db,
     conn,
     log: (message) => console.log(`[job ${job.name}] ${message}`),
+    signal,
     async step(label, fn) {
+      // Checked at the boundary and nowhere else: a step that has started is
+      // the unit of work worth finishing, and a step that has not is the
+      // cheapest place to stop.
+      if (signal.aborted) throw new JobInterrupted(label);
       const t0 = performance.now();
       try {
         return await fn();
@@ -241,8 +266,23 @@ export async function runJob(deps: Pick<SchedulerDeps, "db" | "conn" | "budgetMs
 }
 
 export interface Scheduler {
-  stop(): void;
-  /** Run a job immediately regardless of schedule. False if unknown or something is already running. */
+  /**
+   * Stop scheduling and settle whatever is running (beeline-fth).
+   *
+   * Resolves only once no job is running, so the caller can close the
+   * connection the job was using. Two phases: for `graceMs` the running job
+   * is left alone, because the common case is a nightly with seconds left and
+   * a run that finishes is one that need not be retried. Past that the job is
+   * asked to stop — its context's signal aborts, so the next `step()` refuses
+   * and the sync's paging loop stops at its next request — and the running
+   * DuckDB query, if any, is interrupted so its transaction rolls back rather
+   * than holding the connection. The job's failure is recorded like any
+   * other, and the daily schedule retries it after its usual pause. Never
+   * rejects: nothing about a job's failure should stand between the caller
+   * and closing the store.
+   */
+  stop(opts?: { graceMs?: number }): Promise<void>;
+  /** Run a job immediately regardless of schedule. False if unknown, stopping, or something is already running. */
   runNow(name: string): Promise<boolean>;
   running(): string | null;
 }
@@ -250,6 +290,10 @@ export interface Scheduler {
 export function startScheduler(deps: SchedulerDeps): Scheduler {
   const now = deps.now ?? (() => new Date());
   let busy: string | null = null;
+  /** The run in flight, so stop() has something to await; null when idle. */
+  let inFlight: Promise<void> | null = null;
+  let stopping = false;
+  const shutdown = new AbortController();
 
   // A run left without completed_at means the process died mid-job: mark it
   // failed so it stops occupying the day's schedule slot (beeline-40m). Runs
@@ -275,16 +319,27 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
 
   const NEVER: LastRuns = { started: null, succeeded: null };
 
+  /** Run one job, tracked so a shutdown can wait for it. */
+  const track = async (job: Job) => {
+    busy = job.name;
+    inFlight = runJob(deps, job, shutdown.signal);
+    try {
+      await inFlight;
+    } finally {
+      inFlight = null;
+    }
+  };
+
   const tick = async () => {
-    if (busy !== null) return;
+    if (busy !== null || stopping) return;
     busy = "(scheduling)";
     try {
       await reconciled;
       const last = await lastRuns();
       for (const job of deps.jobs) {
+        if (stopping) break;
         if (isDue(job.schedule, job.window, now(), last.get(job.name) ?? NEVER)) {
-          busy = job.name;
-          await runJob(deps, job);
+          await track(job);
         }
       }
     } finally {
@@ -297,15 +352,36 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
   }, deps.tickMs ?? 60_000);
   interval.unref();
 
+  const settle = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref());
+
   return {
-    stop: () => clearInterval(interval),
+    async stop(opts = {}) {
+      stopping = true;
+      clearInterval(interval);
+      const running = inFlight;
+      if (running === null) return;
+      const grace = opts.graceMs ?? 0;
+      if (grace > 0) await Promise.race([running, settle(grace)]);
+      if (inFlight !== null) {
+        console.warn(`[scheduler] job '${busy}' still running after ${grace}ms grace: interrupting it`);
+        shutdown.abort();
+        // A query in flight is cancelled; an idle connection is untouched, and
+        // the abort above is what reaches a job that is waiting on the network.
+        deps.conn.interrupt();
+      }
+      // runJob never throws, so this is the run finishing, one way or the other.
+      await running;
+    },
     async runNow(name) {
       const job = deps.jobs.find((j) => j.name === name);
-      if (job === undefined || busy !== null) return false;
+      if (job === undefined || busy !== null || stopping) return false;
       busy = job.name;
       try {
         await reconciled; // never insert a live run the orphan sweep could catch
-        await runJob(deps, job);
+        // stop() may have resolved during that wait, with nothing in flight
+        // for it to await; a job started now would outlive the scheduler.
+        if (stopping) return false;
+        await track(job);
       } finally {
         busy = null;
       }

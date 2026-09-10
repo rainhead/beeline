@@ -63,6 +63,21 @@ describe("iNat sync", () => {
     expect([completed, authenticated]).toEqual([true, true]);
   });
 
+  test("an aborted signal stops the sweep before the next page and rolls it back (beeline-fth)", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const api: typeof fetch = (async () => {
+      calls += 1;
+      controller.abort(); // the shutdown arrives while page one is being served
+      return new Response(JSON.stringify({ results: [obs(1), obs(2)], total_results: 4 }), { status: 200 });
+    }) as typeof fetch;
+    await expect(syncINat(conn, { ...base, fetchImpl: api, signal: controller.signal })).rejects.toThrow(/abort/i);
+    expect(calls).toBe(1);
+    // The transaction went with it: no run, no loads.
+    const [[runs, loads]] = (await rows(conn, "SELECT count(*), (SELECT count(*) FROM observation_load) FROM sync_run")) as [[bigint, bigint]];
+    expect([Number(runs), Number(loads)]).toEqual([0, 0]);
+  });
+
   test("re-syncing unchanged data appends nothing; an edit appends one load", async () => {
     await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(1)]]) });
     const again = await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(1)]]) });

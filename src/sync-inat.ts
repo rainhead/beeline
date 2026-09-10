@@ -48,6 +48,13 @@ export interface SyncOptions {
   pageDelayMs?: number;
   /** Per-request abort; a stalled response must not hold the write transaction open. */
   requestTimeoutMs?: number;
+  /**
+   * The caller's abort — the scheduler's, when the process is shutting down
+   * (beeline-fth). Checked before every page: the whole sweep is one
+   * transaction, and a sweep of a year is many pages, so this is the only
+   * place a shutdown can reach it. Aborting rolls the transaction back.
+   */
+  signal?: AbortSignal;
   apiBase?: string;
 }
 
@@ -109,6 +116,7 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
     let fetched = 0, newLoads = 0, unchanged = 0, idAbove = 0;
     let expectedTotal: number | undefined;
     for (;;) {
+      opts.signal?.throwIfAborted();
       const url = new URL(`${apiBase}/observations`);
       url.searchParams.set("project_id", String(opts.projectId));
       url.searchParams.set("order_by", "id");
@@ -122,7 +130,10 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
 
       const response = await fetchImpl(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
-        signal: AbortSignal.timeout(opts.requestTimeoutMs ?? 60_000),
+        signal: AbortSignal.any([
+          AbortSignal.timeout(opts.requestTimeoutMs ?? 60_000),
+          ...(opts.signal ? [opts.signal] : []),
+        ]),
       });
       if (!response.ok) {
         throw new Error(`iNat API ${response.status} on ${url.pathname}?id_above=${idAbove}`);

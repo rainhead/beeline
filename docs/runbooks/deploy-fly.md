@@ -36,6 +36,22 @@ DuckDB ≤ 1.5.5 can fail to replay, leaving the file unopenable (beeline-c1b).
 `kill_timeout` cannot help, because nothing is waiting. Hence
 `exec node --import tsx src/app/main.ts`.
 
+**Shutdown settles the running job before it closes the store** (beeline-fth).
+On `SIGTERM` the app stops listening, gives whatever job is running a minute to
+finish on its own, and past that interrupts it: the job's next step refuses,
+the sync's paging loop stops at its next request, and a DuckDB query in flight
+is cancelled so its transaction rolls back. The failure is recorded in
+`job_run` like any other and the daily schedule retries it after its usual
+pause. Only then is the store checkpointed — both catalogs, explicitly, with a
+failure said out loud — and closed, and the close is reached whatever happened
+before it. The whole thing fits inside the 120s `kill_timeout` with room to
+spare, which is the point: host maintenance restarts a machine with little
+warning and can land inside the 2am window, and the version that closed a busy
+connection from an async callback could lose the checkpoint to an unhandled
+rejection. A second signal is not handled: Node's default takes over and the
+process dies on the spot, which is the escape hatch and exactly the unclean
+exit the first signal avoids.
+
 **DuckDB's budgets are stated, not detected.** `BEELINE_DUCKDB_MEMORY_LIMIT`
 and `BEELINE_DUCKDB_THREADS` are set in `fly.toml` and read by `duckDbConfig`
 ([`src/db.ts`](../../src/db.ts)). Unset, DuckDB sizes itself from a cgroup
@@ -179,8 +195,14 @@ are already public in this repo and no record data passes through it.
 Polled from maderas beside the backup, so a silent stall reaches somebody:
 
 ```cron
-*/20 * * * * out=$(curl -sS --fail-with-body --connect-timeout 10 --max-time 30 https://beeline.fly.dev/healthz/jobs) || printf "%s\n" "$out"
+*/20 * * * * out=$(curl -sS --fail-with-body --connect-timeout 10 --max-time 30 https://beeline.fly.dev/healthz/jobs) || echo "$out"
 ```
+
+`echo`, not `printf "%s\n"`: in a crontab a `%` is a newline and what follows it
+is stdin, so the `printf` version ran as an unterminated string and never
+polled anything. It mailed a shell syntax error to a local mailbox every
+twenty minutes for a week — 1,400 of them — which is a second way for the
+one alarm that mattered to go unread (beeline-vl4).
 
 `--fail-with-body` rather than `-f`, because plain `-f` throws the body away
 and the body is the whole message — you would be mailed that something failed
@@ -249,16 +271,27 @@ that for an interactive run.) The token is passed in the environment and never
 as `--access-token`, which would put it in `ps` for every user on the host.
 
 ```sh
-fly tokens create ssh --app beeline --expiry 2160h   # 90 days
+fly tokens create ssh --app beeline --expiry 4320h   # 180 days
 ```
 
-Store it mode 600, and **`export` it** — cron sources the file and then runs
-the script as a child, so a bare assignment would not reach it and the token
-check would fail every night:
+**Pick the expiry by where it lands, not by how long it is.** The first token
+was minted for 90 days on 2 September 2026 and so expired on 1 December —
+cutover month, the weeks the backup first genuinely matters and everyone is
+looking elsewhere (beeline-vl4). A rotation is routine only when it falls in a
+quiet month; check the [roadmap](../roadmap.md) before choosing.
+
+Store it mode 600, **`export` it** — cron sources the file and then runs the
+script as a child, so a bare assignment would not reach it and the token check
+would fail every night — and **write the expiry down beside it**. Fly does not
+tell a scoped token when it ends, and the night it does the run fails with an
+authentication error that says nothing about why; with the date recorded the
+script warns to stderr from two weeks out, which cron mails, and names the
+date when the run does fail:
 
 ```sh
 # ~/.config/beeline/backup-env   (chmod 600)
 export FLY_API_TOKEN='FlyV1 fm2_...'
+export BEELINE_FLY_TOKEN_EXPIRES=2027-03-09   # from `fly tokens create --expiry`
 ```
 
 Then, on maderas, a little after the 02:00 nightly so each day's writes are
@@ -281,17 +314,29 @@ learns to filter it, which is how the one night it mattered goes unread.
 Sending stdout to a log leaves only stderr, and stderr means something went
 wrong.
 
-That still depends on the host having a working mail transport and a `MAILTO`
-that reaches somebody — neither is a given. So the check that does not depend
-on any of it is the age of the newest archive:
+The backup cannot report that it did not run, and an expired token, a missing
+`flyctl`, a full disk and a host that was down at 02:30 all look the same from
+outside: the archive that should be there is not. So a second cron line asks
+the question the runbook used to leave to a person —
+[`scripts/check-backup-age.sh`](../../scripts/check-backup-age.sh) prints
+nothing while the newest archive is under two days old, reads as an archive,
+and holds all five files, and speaks only when one of those is false. Two
+days, so a single missed night is not an alarm and two in a row is:
+
+```cron
+0 9 * * *  $HOME/dev/beeline/scripts/check-backup-age.sh
+```
+
+All three lines — the backup, the `/healthz/jobs` poll and this — reach a
+person only through cron's mail, so they depend on the host having a working
+transport and a `MAILTO` that goes somewhere. maderas runs exim4 and delivers
+off-host; the `MAILTO` is the part to check, since without it everything lands
+in a local mailbox nobody opens. When any of this has to be done by hand, the
+check is still the same one the script runs:
 
 ```sh
 find ~/beeline-backups -name 'beeline-authored-*.tar.gz' -mtime -2 | head -1   # silence = stale
 ```
-
-Diarised: the token expires after 90 days and the job starts failing when it
-does, which is the shape to want — a credential that silently outlived its
-purpose would be worse.
 
 Restoring is `tar -xzf` and putting the files back under `/app/data` in
 maintenance mode. Verify a backup by extracting it, not by trusting the run

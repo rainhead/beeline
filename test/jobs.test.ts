@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
-import { isDue, runJob, startScheduler, type Job } from "../src/app/jobs/framework.js";
+import { isDue, runJob, startScheduler, type Job, type JobContext } from "../src/app/jobs/framework.js";
 import { lastSyncStart } from "../src/app/jobs/registry.js";
 import { createApp } from "../src/app/server.js";
 import { createMemoryDb } from "./helpers.js";
@@ -166,6 +166,112 @@ describe("scheduler", () => {
     } finally {
       scheduler.stop();
     }
+  });
+});
+
+describe("shutdown (beeline-fth)", () => {
+  /** A promise the test resolves by hand, so a job can be held mid-step. */
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => (resolve = r));
+    return { promise, resolve };
+  }
+  const daily = { schedule: { kind: "dailyLA", hour: 2 }, window: "night" } as const;
+
+  it("stop() waits for the running job, which finishes and is recorded as a success", async () => {
+    const deps = await jobDeps();
+    const hold = deferred();
+    const scheduler = startScheduler({
+      ...deps,
+      jobs: [{ name: "slow", ...daily, run: (ctx) => ctx.step("only", () => hold.promise.then(() => "done")) }],
+      tickMs: 3_600_000,
+    });
+    const started = scheduler.runNow("slow");
+    await sleep(10);
+    expect(scheduler.running()).toBe("slow");
+    let stopped = false;
+    const stopping = scheduler.stop({ graceMs: 5_000 }).then(() => (stopped = true));
+    await sleep(30);
+    expect(stopped).toBe(false); // still waiting: the job is inside its grace
+    hold.resolve();
+    await stopping;
+    expect(await started).toBe(true);
+    const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+    expect(run.outcome).toBe("succeeded");
+    expect(run.detail).toBe("done");
+  });
+
+  it("past the grace the job is interrupted: its next step refuses and the failure names it", async () => {
+    const deps = await jobDeps();
+    const hold = deferred();
+    let second = false;
+    const scheduler = startScheduler({
+      ...deps,
+      jobs: [
+        {
+          name: "two-step",
+          ...daily,
+          run: async (ctx) => {
+            await ctx.step("first", () => hold.promise);
+            await ctx.step("second", async () => void (second = true));
+          },
+        },
+      ],
+      tickMs: 3_600_000,
+    });
+    void scheduler.runNow("two-step");
+    await sleep(10);
+    const stopping = scheduler.stop({ graceMs: 20 });
+    await sleep(60); // grace expires while the first step is still held
+    hold.resolve();
+    await stopping;
+    expect(second).toBe(false);
+    const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+    expect(run.outcome).toBe("failed");
+    expect(run.detail).toBe("interrupted by shutdown before step 'second'");
+  });
+
+  it("the context's signal reaches a step that is waiting on something else", async () => {
+    const deps = await jobDeps();
+    const waitForAbort = (ctx: JobContext) =>
+      new Promise<string>((_, reject) => ctx.signal.addEventListener("abort", () => reject(new Error("aborted"))));
+    const scheduler = startScheduler({
+      ...deps,
+      jobs: [{ name: "waiting", ...daily, run: (ctx) => ctx.step("wait", () => waitForAbort(ctx)) }],
+      tickMs: 3_600_000,
+    });
+    void scheduler.runNow("waiting");
+    await sleep(10);
+    await scheduler.stop({ graceMs: 20 });
+    const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+    expect(run.outcome).toBe("failed");
+    expect(run.detail).toBe("aborted");
+  });
+
+  it("nothing starts once stop() has been called", async () => {
+    const deps = await jobDeps();
+    let ran = 0;
+    const scheduler = startScheduler({
+      ...deps,
+      jobs: [{ name: "late", schedule: { kind: "everyMinutes", minutes: 1 }, window: "interactive", run: async () => void (ran += 1) }],
+      tickMs: 10,
+    });
+    await scheduler.stop();
+    expect(await scheduler.runNow("late")).toBe(false);
+    await sleep(50);
+    expect(ran).toBe(0);
+  });
+
+  it("runJob without a scheduler has a signal that never fires", async () => {
+    const deps = await jobDeps();
+    const job: Job = {
+      name: "plain",
+      ...daily,
+      run: async (ctx) => (ctx.signal.aborted ? "aborted" : "fine"),
+    };
+    await runJob(deps, job);
+    const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+    expect(run.detail).toBe("fine");
   });
 });
 

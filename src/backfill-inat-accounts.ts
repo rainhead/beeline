@@ -120,30 +120,53 @@ export async function backfillInatAccounts(
   return result;
 }
 
-// CLI: pnpm inat:backfill-accounts [db]
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const dbPath = process.argv[2] ?? "beeline.duckdb";
-  const instance = await openDuckDb(dbPath);
-  const conn = await instance.connect();
-  const result = await backfillInatAccounts(conn);
+export interface BackfillRunResult extends BackfillResult {
+  /** Entries appended to the person change log, or null where none is kept
+   *  for this database or the write failed (warned, never thrown). */
+  personChangesRecorded: number | null;
+}
+
+/**
+ * What the CLI does: backfill, then record. Exported so the recording path
+ * is tested as the CLI runs it — the gate, the source, and the guard —
+ * rather than only the function it calls (CodeRabbit on PR #55).
+ */
+export async function backfillAndRecord(
+  conn: DuckDBConnection,
+  dbPath: string,
+  env: Record<string, string | undefined>,
+  opts: BackfillOptions = {},
+  warn: (message: string) => void = console.warn,
+): Promise<BackfillRunResult> {
+  const result = await backfillInatAccounts(conn, opts);
   // The log belongs to the database this was pointed at — backfilling a
   // scratch copy must not diff its people against the deployed store's
   // history (the same gate promotion applies).
-  const log = changeLogFor(dbPath, process.env);
+  const log = changeLogFor(dbPath, env);
   if (log === null) {
-    console.warn(
+    warn(
       `not recording person history: ${dbPath} is not the database this environment keeps a change log for ` +
-        `(${process.env.BEELINE_DB ?? DEFAULT_DB})`,
+        `(${env.BEELINE_DB ?? DEFAULT_DB})`,
     );
+    return { ...result, personChangesRecorded: null };
   }
   // Guarded like promotion's passes: the bindings committed above, and a
   // history-write failure must not make the run look as if they did not.
-  let recorded = null;
   try {
-    recorded = log === null ? null : await recordPersonChanges(duckdbReader(conn), log, { source: "inat_backfill" });
+    const recorded = await recordPersonChanges(duckdbReader(conn), log, { source: "inat_backfill" });
+    return { ...result, personChangesRecorded: recorded.appended };
   } catch (err) {
-    console.warn(`could not record person history: ${(err as Error).message}`);
+    warn(`could not record person history: ${(err as Error).message}`);
+    return { ...result, personChangesRecorded: null };
   }
+}
+
+// CLI: pnpm inat:backfill-accounts [db]
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  const dbPath = process.argv[2] ?? DEFAULT_DB;
+  const instance = await openDuckDb(dbPath);
+  const conn = await instance.connect();
+  const result = await backfillAndRecord(conn, dbPath, process.env);
   conn.closeSync();
-  console.log(JSON.stringify({ ...result, personChangesRecorded: recorded?.appended ?? null }, null, 2));
+  console.log(JSON.stringify(result, null, 2));
 }

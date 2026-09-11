@@ -11,11 +11,17 @@ them: `pnpm db:build` stamps every migration as applied, because a fresh
 build already has the change.
 
 ```sh
-pnpm db:migrate [db]            # apply what's pending, then CHECKPOINT
-pnpm db:migrate --status [db]   # what's applied, what's pending
-pnpm db:migrate --check [db]    # diff the store against schema/*.sql
+pnpm db:migrate [db]            # apply what's pending, then CHECKPOINT, then report drift
+pnpm db:migrate --status [db]   # read-only: what's applied, what's pending
+pnpm db:migrate --check [db]    # read-only: --status, then diff the store against schema/*.sql
 pnpm db:migrate --baseline [db] # record as applied without running
 ```
+
+`--status` and `--check` never write: no migration runs, no ledger is
+created, nothing is checkpointed. So `--check` is safe to run to *decide*
+whether to migrate. It was not always: it used to migrate first and diff
+after, and on a store that already carried a later change by another route
+it applied two migrations and stopped at the third (beeline-736).
 
 Nothing else may hold the database open (ADR 0005), so stop the app first —
 `scripts/deploy-maderas.sh` does that around the migrate step.

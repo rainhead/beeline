@@ -10,7 +10,7 @@ import { registerAuthRoutes, signInHref, type InatClient } from "./auth.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, SESSION_COOKIE, type AppEnv, type Session, type SessionResolver } from "./session.js";
-import { resolveActing, startActing, stopActing } from "./acting.js";
+import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
 import { jobHealth, type Job, type LastOutcome } from "./jobs/framework.js";
@@ -285,10 +285,18 @@ export function createApp({
       );
     }
     c.set("session", session);
-    c.set("admin", await isAdmin(session));
+    const admin = await isAdmin(session);
     // Whose records `mine` means. Re-checked against person_delegate every
     // request, so a revoked grant stops working at once (beeline-oyl).
-    c.set("acting", await resolveActing(db, session, c));
+    const acting = await resolveActing(db, session, c, admin);
+    c.set("acting", acting);
+    // Impersonation takes the admin surfaces away for the duration
+    // (beeline-jjt): every admin gate below — /people, /jobs, the scope
+    // picker, staff reach on record pages — then answers as it would for the
+    // volunteer, which is the point of looking. The real flag was consulted
+    // once, to resolve the cookie at all, and is not needed again: stopping
+    // is not gated, and nothing else an admin does is meant to work meanwhile.
+    c.set("admin", admin && !acting.impersonating);
     await next();
   });
 
@@ -302,6 +310,7 @@ export function createApp({
     // signs in next — but on a household's shared browser it would outlive
     // the person who turned it on, which is its own kind of wrong.
     stopActing(c);
+    stopImpersonating(c);
     return c.redirect("/");
   });
 
@@ -327,6 +336,14 @@ export function createApp({
   app.post("/acting/stop", async (c) => {
     stopActing(c);
     return c.redirect("/");
+  });
+
+  // Ending an impersonation is not admin-gated: the admin flag is off for the
+  // duration, and the one thing that must work under it is getting out. Back
+  // to the roster, which is where the switch is turned on.
+  app.post("/impersonation/stop", async (c) => {
+    stopImpersonating(c);
+    return c.redirect("/people");
   });
 
   const page = async (
@@ -588,6 +605,10 @@ export function createApp({
 
   app.post("/samples/:id/edit", async (c) => {
     const m = c.get("m");
+    // Impersonation is a way of looking, not of acting (beeline-jjt): the
+    // form renders, since the volunteer would see it, but a save is refused.
+    // Delegation is the mechanism for editing on somebody's behalf.
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
     // The collector gate follows the switch, but the AUTHOR of the correction
     // is whoever actually made it — acting for Robert does not make Robert
     // the one who typed it (beeline-oyl: reach, never credit).
@@ -763,6 +784,33 @@ export function createApp({
   app.get("/people/:id", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     return showPerson(c);
+  });
+
+  // View Beeline as this person (beeline-jjt). A POST because it changes
+  // what every later GET means, like the delegation switch; home is where
+  // it lands because home is the surface that changes most. The trace is
+  // written before the cookie, and a store opened without the private
+  // catalog (tests, a read-only inspection) cannot hold it: that is reported
+  // and does not block the switch, since the switch is what the admin is
+  // there for and the row is a courtesy to the volunteer, not a gate.
+  app.post("/people/:id/impersonate", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    const person = await personFromUrl(c);
+    if (person === null) return c.text(m.people.notFound, 404);
+    try {
+      await db
+        .insertInto("private.impersonation")
+        .values({ admin_login: c.get("session").login, person_name: person.display_name })
+        .execute();
+    } catch (err) {
+      console.warn(`could not record the impersonation: ${(err as Error).message}`);
+    }
+    // By name, as the delegation cookie is (acting.ts): a name that stops
+    // matching, or matches twice, resolves to nobody rather than to the
+    // wrong person.
+    startImpersonating(c, person.display_name, config.origin);
+    return c.redirect("/");
   });
 
   /**

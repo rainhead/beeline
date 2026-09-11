@@ -86,6 +86,16 @@ export const en = {
       start: "Act for someone",
       startFor: (name: string) => `Act for ${name}`,
     },
+    /**
+     * Viewing Beeline as somebody else (beeline-jjt): staff seeing exactly
+     * what one volunteer sees. Same shape as the acting banner, and as
+     * constant, because it is the only thing on the page that is not theirs.
+     */
+    impersonating: {
+      banner: (name: string) =>
+        `You are viewing Beeline as ${name}. This is what they see, and nothing can be changed from here.`,
+      stop: "Stop viewing as them",
+    },
     signOut: "Sign out",
     /** BEELINE_DEV_LOGIN sessions ignore cookies, so there is nothing to sign out of. */
     devSession: "Signed in by BEELINE_DEV_LOGIN — stop the dev server to change who you are.",
@@ -547,6 +557,8 @@ export const en = {
     crossOrigin: "cross-origin request refused",
     /** Asking to act for somebody nobody granted you (beeline-oyl). */
     forbidden: "you have not been granted that",
+    /** A save attempted while viewing as somebody else (beeline-jjt). */
+    readOnlyImpersonating: "nothing can be changed while viewing Beeline as somebody else",
   },
 
   jobs: {
@@ -596,6 +608,11 @@ export const en = {
       "One reference per person, separated by semicolons: name:Robert Pederson;inat:429964. This replaces the whole list — leave it empty to revoke every grant.",
     saveDelegation: "Save",
     actsForNobody: "Acts for nobody",
+    /** Impersonation (beeline-jjt). Staff-facing, English-only. */
+    viewAs: "View Beeline as them",
+    viewAsHint:
+      "See exactly what this person sees when they sign in — their flagged samples, their listings, their record pages — to help them over the phone or to check what they are being told. Read-only, and the staff pages go away until you stop. Each time is recorded.",
+    viewAsButton: (name: string) => `View as ${name}`,
     title: "People",
     heading: "People",
     /**

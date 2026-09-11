@@ -41,11 +41,30 @@ import type { Session } from "./session.js";
  */
 export const ACTING_COOKIE = "beeline_acting";
 
+/**
+ * Impersonation (beeline-jjt) is the same switch for staff, without a grant:
+ * an admin looks at Beeline exactly as one volunteer sees it, to help them
+ * over the phone or to check what a volunteer is being told. It reuses
+ * everything above — `mine` means that person on every surface, the person
+ * is named by display name and re-resolved every request — and differs in
+ * three ways the routes enforce rather than this module: it is read-only,
+ * it takes the admin surfaces away for the duration so the view is faithful,
+ * and turning it on leaves a trace (private.impersonation). Its own cookie,
+ * not a mode on the delegation one, so the delegation cookie keeps the
+ * property that a forged value resolves to nothing for everyone.
+ */
+export const IMPERSONATING_COOKIE = "beeline_impersonating";
+
 export interface Acting {
   /** Whose records "mine" means: the acted-for person, or the signed-in one. */
   personId: number;
   /** The acted-for person, or null when the switch is off. */
   actingFor: { personId: number; name: string } | null;
+  /**
+   * True when actingFor was reached by impersonation rather than by a grant.
+   * The chrome says which, and the write paths refuse under it.
+   */
+  impersonating: boolean;
   /**
    * Everyone this session may act for — empty for almost everybody, since a
    * grant is a staff decision about a household. Resolved here rather than
@@ -80,9 +99,20 @@ export async function resolveActing(
   db: Kysely<Database>,
   session: Session,
   c: Context,
+  /** Whether the signed-in person is an admin — the only people impersonation resolves for. */
+  admin = false,
 ): Promise<Acting> {
+  // Impersonation wins over delegation: an admin who turned it on chose it
+  // deliberately, and the picker that would set the other cookie is hidden
+  // for the duration. The delegation grants are deliberately NOT carried
+  // across — they are the signed-in person's, and the view is meant to be
+  // the volunteer's.
+  const impersonated = admin ? await resolveImpersonation(db, c) : null;
+  if (impersonated !== null) {
+    return { personId: impersonated.personId, actingFor: impersonated, impersonating: true, canActFor: [] };
+  }
   const canActFor = await delegations(db, session.personId);
-  const self: Acting = { personId: session.personId, actingFor: null, canActFor };
+  const self: Acting = { personId: session.personId, actingFor: null, impersonating: false, canActFor };
   const raw = getCookie(c, ACTING_COOKIE);
   if (raw === undefined || raw === "") return self;
   // Exactly one, or nobody: two grants sharing a display name is a household
@@ -91,7 +121,31 @@ export async function resolveActing(
   const matches = canActFor.filter((d) => d.name === raw);
   const granted = matches.length === 1 ? matches[0] : undefined;
   if (granted === undefined) return self;
-  return { personId: granted.personId, actingFor: granted, canActFor };
+  return { personId: granted.personId, actingFor: granted, impersonating: false, canActFor };
+}
+
+/**
+ * The person an impersonation cookie names, or null when there is no cookie
+ * or it names nobody or more than one somebody. Two people sharing a display
+ * name cannot be told apart by Beeline at all (CONTEXT.md, Person identity),
+ * so falling back to self is the same rule the delegation switch follows.
+ * Only ever consulted for an admin; a volunteer's cookie is never read.
+ */
+async function resolveImpersonation(
+  db: Kysely<Database>,
+  c: Context,
+): Promise<{ personId: number; name: string } | null> {
+  const raw = getCookie(c, IMPERSONATING_COOKIE);
+  if (raw === undefined || raw === "") return null;
+  const rows = await db
+    .selectFrom("person")
+    .select(["entity_id as personId", "display_name as name"])
+    .where("display_name", "=", raw)
+    .limit(2)
+    .execute();
+  const [only] = rows;
+  if (rows.length !== 1 || only === undefined) return null;
+  return { personId: Number(only.personId), name: only.name };
 }
 
 /**
@@ -109,3 +163,14 @@ export const startActing = (c: Context, name: string, origin: string) =>
   });
 
 export const stopActing = (c: Context) => deleteCookie(c, ACTING_COOKIE, { path: "/" });
+
+/** Same cookie attributes as the delegation switch, for the same reason. */
+export const startImpersonating = (c: Context, name: string, origin: string) =>
+  setCookie(c, IMPERSONATING_COOKIE, name, {
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: origin.startsWith("https:"),
+  });
+
+export const stopImpersonating = (c: Context) => deleteCookie(c, IMPERSONATING_COOKIE, { path: "/" });

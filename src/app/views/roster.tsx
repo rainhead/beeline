@@ -481,6 +481,19 @@ export function PersonPage({
         </form>
       </Card>
 
+      {/* Impersonation (beeline-jjt): looking, never acting — delegation is
+          the card above for that. One button; the banner on the next page
+          carries the way back. */}
+      <Card>
+        <h2>{p.viewAs}</h2>
+        <Meta block>{p.viewAsHint}</Meta>
+        <form method="post" action={`${action}/impersonate`}>
+          <p class="row">
+            <Button variant="tonal">{p.viewAsButton(person.display_name)}</Button>
+          </p>
+        </form>
+      </Card>
+
       {/* Its own card, not a subsection of membership: which atlas someone
           belongs to and whether they may run ingestion are unrelated
           questions, and nesting the second under the first said otherwise. */}

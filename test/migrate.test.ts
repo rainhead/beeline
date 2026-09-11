@@ -128,6 +128,14 @@ describe("the CLI's flags (beeline-736)", () => {
     expect(await pendingMigrations(conn, dir)).toEqual(["0001-restore-view.sql"]);
   });
 
+  test("--status beside --check does not take the drift report away", async () => {
+    await conn.run("DROP VIEW settled_sample");
+    const { out, err, io: t } = io();
+    expect(await runCli(conn, new Set(["--status", "--check"]), "x.duckdb", t, dir)).toBe(0);
+    expect(out).toEqual([]);
+    expect(err.join("\n")).toMatch(/missing: settled_sample/);
+  });
+
   test("migrating applies, then reports; --check afterwards is clean", async () => {
     await conn.run("DROP VIEW settled_sample");
     await write("0001-restore-view.sql", "CREATE VIEW settled_sample AS SELECT 1 AS sample_id;");

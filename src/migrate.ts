@@ -213,7 +213,9 @@ export async function runCli(
     for (const name of done) io.log(`${verb} ${name}`);
   }
 
-  if (!flags.has("--status")) {
+  // Only a bare --status stops short of the drift report: --check asked for
+  // it, and --status beside it must not take it away (CodeRabbit on PR #56).
+  if (flags.has("--check") || !flags.has("--status")) {
     const drift = await schemaDrift(conn);
     if (drift.length > 0) {
       // Not always a missing migration: DuckDB cannot DROP COLUMN on a

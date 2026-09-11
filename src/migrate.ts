@@ -161,6 +161,75 @@ export async function schemaDrift(conn: DuckDBConnection): Promise<string[]> {
   }
 }
 
+export interface CliIo {
+  log: (line: string) => void;
+  warn: (line: string) => void;
+}
+
+/**
+ * What the CLI does once it has a connection, so it can be tested as the
+ * CLI runs it. Returns the process exit code.
+ *
+ * Two of the three flags are READ-ONLY and stay that way: `--status` says
+ * what is applied and what is pending, and `--check` says that and then
+ * where the store's shape differs from `schema/*.sql`. Neither applies a
+ * migration, creates the ledger, or checkpoints. It was not always so:
+ * `--check` used to migrate first and diff after, which read as a diff and
+ * wrote like a deploy — run on the local dev store to decide whether
+ * migrating was safe, it applied two migrations and stopped at a third
+ * (beeline-736). A flag that answers a question must not change the answer.
+ *
+ * Migrating (no flag, or `--baseline`) still reports drift afterwards,
+ * because that is the moment the answer to "did I forget a migration" is
+ * worth having.
+ */
+export async function runCli(
+  conn: DuckDBConnection,
+  flags: ReadonlySet<string>,
+  target: string,
+  io: CliIo,
+  dir = MIGRATIONS_DIR,
+): Promise<number> {
+  const unknown = [...flags].filter((f) => !["--status", "--baseline", "--check"].includes(f));
+  if (unknown.length > 0) {
+    io.warn(`unknown flag(s): ${unknown.join(", ")}`);
+    return 2;
+  }
+  const readOnly = flags.has("--status") || flags.has("--check");
+  if (readOnly && flags.has("--baseline")) {
+    io.warn("--baseline writes the ledger; it cannot be combined with --status or --check");
+    return 2;
+  }
+
+  if (readOnly) {
+    const applied = await appliedMigrations(conn);
+    for (const name of await migrationFiles(dir)) {
+      io.log(`${applied.has(name) ? "applied" : "PENDING"}  ${name}`);
+    }
+  } else {
+    const done = await migrate(conn, { dir, baseline: flags.has("--baseline") });
+    const verb = flags.has("--baseline") ? "stamped" : "applied";
+    if (done.length === 0) io.log(`${target} is up to date`);
+    for (const name of done) io.log(`${verb} ${name}`);
+  }
+
+  // Only a bare --status stops short of the drift report: --check asked for
+  // it, and --status beside it must not take it away (CodeRabbit on PR #56).
+  if (flags.has("--check") || !flags.has("--status")) {
+    const drift = await schemaDrift(conn);
+    if (drift.length > 0) {
+      // Not always a missing migration: DuckDB cannot DROP COLUMN on a
+      // table anything depends on (ADR 0001, "Evidence since"), so a column
+      // the schema has dropped leaves a deployed store only at a reseed.
+      io.warn(`\n${target} differs from schema/*.sql — a migration or a reseed may be needed:`);
+      for (const line of drift) io.warn(`  ${line}`);
+    } else if (flags.has("--check")) {
+      io.log(`${target} matches schema/*.sql`);
+    }
+  }
+  return 0;
+}
+
 // CLI: pnpm db:migrate [--status|--baseline|--check] [target.duckdb]
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const args = process.argv.slice(2);
@@ -172,40 +241,12 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   // the app and migrate that one, reporting success while the real store
   // stayed untouched. An explicit argument still wins over both.
   const target = args.find((a) => !a.startsWith("--")) ?? process.env.BEELINE_DB ?? "beeline.duckdb";
-  const unknown = [...flags].filter((f) => !["--status", "--baseline", "--check"].includes(f));
-  if (unknown.length > 0) {
-    console.error(`unknown flag(s): ${unknown.join(", ")}`);
-    process.exit(2);
-  }
 
   // Nothing else may hold the database open (ADR 0005): stop the app first.
   const instance = await openDuckDb(target);
   const conn = await instance.connect();
   try {
-    if (flags.has("--status")) {
-      const applied = await appliedMigrations(conn);
-      for (const name of await migrationFiles()) {
-        console.log(`${applied.has(name) ? "applied" : "PENDING"}  ${name}`);
-      }
-    } else {
-      const done = await migrate(conn, { baseline: flags.has("--baseline") });
-      const verb = flags.has("--baseline") ? "stamped" : "applied";
-      if (done.length === 0) console.log(`${target} is up to date`);
-      for (const name of done) console.log(`${verb} ${name}`);
-    }
-
-    if (!flags.has("--status") || flags.has("--check")) {
-      const drift = await schemaDrift(conn);
-      if (drift.length > 0) {
-        // Not always a missing migration: DuckDB cannot DROP COLUMN on a
-        // table anything depends on (ADR 0001, "Evidence since"), so a column
-        // the schema has dropped leaves a deployed store only at a reseed.
-        console.warn(`\n${target} differs from schema/*.sql — a migration or a reseed may be needed:`);
-        for (const line of drift) console.warn(`  ${line}`);
-      } else if (flags.has("--check")) {
-        console.log(`${target} matches schema/*.sql`);
-      }
-    }
+    process.exitCode = await runCli(conn, flags, target, { log: console.log, warn: console.warn });
   } finally {
     conn.closeSync();
     instance.closeSync();

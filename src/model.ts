@@ -126,6 +126,16 @@ export interface PersonActivityTable {
   last_seen_at: Generated<Date>;
 }
 
+/**
+ * schema/private/040: each time a staff member viewed Beeline as somebody
+ * else (beeline-jjt). Append-only; an audit line, never a credential.
+ */
+export interface ImpersonationTable {
+  admin_login: string;
+  person_name: string;
+  started_at: Generated<Date>;
+}
+
 // schema/020_animal.sql
 
 /** schema/020: the ranks animal.rank may take, in order. */
@@ -680,4 +690,5 @@ export interface Database {
   "private.inat_oauth_token": InatOauthTokenTable;
   "private.session": SessionTable;
   "private.person_activity": PersonActivityTable;
+  "private.impersonation": ImpersonationTable;
 }

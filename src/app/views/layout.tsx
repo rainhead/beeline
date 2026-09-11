@@ -114,7 +114,17 @@ export function Layout(props: {
         {/* Acting for someone changes what every "my samples" surface means,
             so it is stated at the top of every page rather than tucked into
             the menu that switched it on (beeline-oyl). */}
-        {env.acting.actingFor !== null && (
+        {env.acting.actingFor !== null && env.acting.impersonating && (
+          // Impersonation (beeline-jjt): the one thing on the page that is not
+          // what the volunteer sees, so it says so, and says it is read-only.
+          <div class="acting-banner impersonating">
+            <span>{m.layout.impersonating.banner(env.acting.actingFor.name)}</span>
+            <form method="post" action="/impersonation/stop">
+              <button>{m.layout.impersonating.stop}</button>
+            </form>
+          </div>
+        )}
+        {env.acting.actingFor !== null && !env.acting.impersonating && (
           <div class="acting-banner">
             <span>{m.layout.acting.banner(env.acting.actingFor.name)}</span>
             <form method="post" action="/acting/stop">

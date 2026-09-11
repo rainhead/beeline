@@ -149,6 +149,15 @@ main > * {
   padding: var(--space-1) var(--space-4);
 }
 .acting-banner form { display: contents; }
+/* Impersonation reads differently from delegation on purpose: delegation is
+   a volunteer's own reach and warns in the error tone because it gates writes;
+   impersonation is staff looking, cannot write, and so takes the secondary
+   tone — noticeable on every page, not alarming, and not the environment
+   banner's tertiary, which it sits directly beneath on the sandbox. */
+.acting-banner.impersonating {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
 
 /* A labelled group inside a menu panel — the account menu's list of people
    this session may act for. */

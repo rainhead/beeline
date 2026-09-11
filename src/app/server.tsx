@@ -788,16 +788,20 @@ export function createApp({
 
   // View Beeline as this person (beeline-jjt). A POST because it changes
   // what every later GET means, like the delegation switch; home is where
-  // it lands because home is the surface that changes most. The trace is
-  // written before the cookie, and a store opened without the private
-  // catalog (tests, a read-only inspection) cannot hold it: that is reported
-  // and does not block the switch, since the switch is what the admin is
-  // there for and the row is a courtesy to the volunteer, not a gate.
+  // it lands because home is the surface that changes most. Two refusals
+  // come before anything is written: a name two people share cannot be put
+  // in the cookie (the resolver would answer nobody, and a trace would say
+  // the switch was on when it never was), and the trace itself is a gate
+  // rather than a courtesy — the card promises "each time is recorded", so
+  // a store that cannot record it does not start the switch either.
   app.post("/people/:id/impersonate", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
     const person = await personFromUrl(c);
     if (person === null) return c.text(m.people.notFound, 404);
+    if (!(await nameIsUnique(db, person.display_name))) {
+      return showPerson(c, undefined, m.people.viewAsNameShared);
+    }
     try {
       await db
         .insertInto("private.impersonation")
@@ -805,10 +809,10 @@ export function createApp({
         .execute();
     } catch (err) {
       console.warn(`could not record the impersonation: ${(err as Error).message}`);
+      return c.text(m.errors.impersonationNotRecorded, 503);
     }
     // By name, as the delegation cookie is (acting.ts): a name that stops
-    // matching, or matches twice, resolves to nobody rather than to the
-    // wrong person.
+    // matching resolves to nobody rather than to the wrong person.
     startImpersonating(c, person.display_name, config.origin);
     return c.redirect("/");
   });

@@ -559,6 +559,8 @@ export const en = {
     forbidden: "you have not been granted that",
     /** A save attempted while viewing as somebody else (beeline-jjt). */
     readOnlyImpersonating: "nothing can be changed while viewing Beeline as somebody else",
+    /** The trace could not be written, so the switch was not turned on (beeline-jjt). */
+    impersonationNotRecorded: "could not record that you are viewing as somebody else, so it was not started",
   },
 
   jobs: {
@@ -613,6 +615,9 @@ export const en = {
     viewAsHint:
       "See exactly what this person sees when they sign in — their flagged samples, their listings, their record pages — to help them over the phone or to check what they are being told. Read-only, and the staff pages go away until you stop. Each time is recorded.",
     viewAsButton: (name: string) => `View as ${name}`,
+    /** Two people share this display name, so neither can be named by it (CONTEXT.md, Person identity). */
+    viewAsNameShared:
+      "two people share this name, and the view cannot tell them apart — give one of them a distinguishing name first",
     title: "People",
     heading: "People",
     /**

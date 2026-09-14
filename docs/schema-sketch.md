@@ -86,7 +86,7 @@ CREATE TABLE taxon (
 );
 ```
 
-Bees to species; non-bee scaffold deep enough for wasps at species rank (seeded on demand, GBIF backbone the candidate source). *Open: versioning mechanics — likely git-versioned seed data plus an append-only `taxon_change` log; decide when the curation workflow (Lincoln et al.) is designed.* Floral hosts do **not** live here — they are iNat taxon references on the sample.
+Bees to species; non-bee scaffold deep enough for wasps at species rank (seeded on demand from ITIS, the program's basis for bees and bycatch alike — beeline-45v). *Open: versioning mechanics — likely git-versioned seed data plus an append-only `taxon_change` log; decide when the curation workflow (Lincoln et al.) is designed.* Floral hosts do **not** live here — they are iNat taxon references on the sample.
 
 ## Ingestion (observation history)
 

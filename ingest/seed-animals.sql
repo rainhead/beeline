@@ -3,8 +3,9 @@
 -- taxon verbatim determinations assert that the list doesn't cover — those
 -- extras are queryable for curator review (legacy_taxon_uncurated).
 --
--- Verbatim names are already taken apart by ingest/parse-names.sql, which
--- runs first; this file reads legacy_det_taxa and mints nodes from it.
+-- Names are already taken apart by ingest/parse-names.sql, which runs first;
+-- this file reads legacy_det_taxa and legacy_vol_det_taxa and mints nodes from
+-- them, never from the raw columns.
 --
 -- Ranks derive from the data, not the legacy taxonRank column: subgenus
 -- determinations sometimes arrive as 'Lasioglossum (Dialictus)' in the genus
@@ -14,11 +15,15 @@
 -- stored as 'Genus (Subgenus)'.
 
 -- Blank cells become NULL here so a half-filled row can contribute what it
--- has (family for a genus) without minting nameless or 'Genus ' animals.
+-- has (family for a genus) without minting nameless or 'Genus ' animals. The
+-- list writes 'Xenoglossa (Peponapis)' in its genus column too, so the genus
+-- and species cells go through parse-names.sql's rules. Not through the
+-- aliases: the list is what they point at.
 CREATE TABLE legacy_taxonomy_csv AS
 SELECT nullif(trim(family), '') AS family,
-       nullif(trim(genus), '') AS genus,
-       nullif(trim(species), '') AS species
+       name_genus(genus)        AS genus,
+       name_bracketed(genus)    AS subgenus,
+       name_epithet(species)    AS species
 FROM read_csv('{{TAXONOMY_CSV}}', header = true);
 
 -- ── Spine ───────────────────────────────────────────────────────────────
@@ -76,8 +81,7 @@ SELECT g.base_genus,
 FROM (
   SELECT DISTINCT base_genus FROM legacy_det_taxa WHERE base_genus IS NOT NULL
   UNION SELECT DISTINCT genus FROM legacy_taxonomy_csv WHERE genus IS NOT NULL
-  UNION SELECT DISTINCT nullif(trim(genusVolDet), '') FROM legacy_promotable
-          WHERE nullif(trim(genusVolDet), '') IS NOT NULL
+  UNION SELECT DISTINCT base_genus FROM legacy_vol_det_taxa WHERE base_genus IS NOT NULL
 ) g;
 
 INSERT INTO animal (rank, scientific_name, parent_id)
@@ -92,8 +96,9 @@ LEFT JOIN animal ord ON ord.rank = 'order' AND ord.scientific_name = g.ord;
 INSERT INTO animal (rank, scientific_name, parent_id)
 SELECT 'subgenus', concat(s.base_genus, ' (', s.sub, ')'), gen.entity_id
 FROM (
-  SELECT DISTINCT base_genus, sub FROM legacy_det_taxa
-  WHERE base_genus IS NOT NULL AND sub IS NOT NULL
+  SELECT base_genus, sub FROM legacy_det_taxa WHERE base_genus IS NOT NULL AND sub IS NOT NULL
+  UNION SELECT base_genus, sub FROM legacy_vol_det_taxa WHERE base_genus IS NOT NULL AND sub IS NOT NULL
+  UNION SELECT genus, subgenus FROM legacy_taxonomy_csv WHERE genus IS NOT NULL AND subgenus IS NOT NULL
 ) s
 JOIN animal gen ON gen.rank = 'genus' AND gen.scientific_name = s.base_genus;
 
@@ -111,9 +116,8 @@ FROM (
     SELECT genus, species, NULL FROM legacy_taxonomy_csv
     WHERE genus IS NOT NULL AND species IS NOT NULL
     UNION ALL
-    SELECT nullif(trim(genusVolDet), ''), nullif(trim(speciesVolDet), ''), NULL
-    FROM legacy_promotable
-    WHERE nullif(trim(genusVolDet), '') IS NOT NULL AND nullif(trim(speciesVolDet), '') IS NOT NULL
+    SELECT base_genus, epithet, NULL FROM legacy_vol_det_taxa
+    WHERE base_genus IS NOT NULL AND epithet IS NOT NULL
   ) GROUP BY genus, epithet
 ) sp
 JOIN animal gen ON gen.rank = 'genus' AND gen.scientific_name = sp.genus;

@@ -94,7 +94,8 @@ beforeAll(async () => {
     _id TEXT, "order" TEXT, family TEXT, genus TEXT, subgenus TEXT,
     specificEpithet TEXT, scientificName TEXT, taxonRank TEXT,
     recordedBy TEXT, month TEXT, url TEXT,
-    identifiedBy TEXT, verbatimEventDate TEXT)`);
+    identifiedBy TEXT, verbatimEventDate TEXT,
+    familyVolDet TEXT, genusVolDet TEXT, speciesVolDet TEXT)`);
   // legacy_verbatim_shape also sizes the two fields that answer through a
   // worklist rather than a rule; the findings view is promote-legacy's.
   await conn.run(`CREATE VIEW legacy_promotion_finding AS SELECT '' AS _id, '' AS rule WHERE false`);
@@ -110,7 +111,10 @@ beforeAll(async () => {
       ] as never,
     );
   }
-  await conn.run(await readFile("ingest/parse-names.sql", "utf8"));
+  await conn.run(
+    (await readFile("ingest/parse-names.sql", "utf8"))
+      .replaceAll("{{TAXON_ALIASES}}", "test/fixtures/no-taxon-aliases.csv"),
+  );
 });
 
 const parse = (sci: string) =>

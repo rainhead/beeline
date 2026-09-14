@@ -226,13 +226,37 @@ describe("schema application", () => {
                     VALUES ('net', 'q1', DATE '2026-07-01', DATE '2026-07-01')`);
     await conn.run(`INSERT INTO specimen (sample_id, specimen_number)
                     SELECT max(entity_id), 1 FROM sample`);
-    await conn.run(`INSERT INTO determination (specimen_id, animal_id, qualifier, is_expert, channel)
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, qualifier, is_expert, channel,
+                                               verbatim_identification)
                     SELECT (SELECT max(entity_id) FROM specimen),
                            (SELECT entity_id FROM animal WHERE rank = 'genus' AND scientific_name = 'Bombus'),
-                           'cf.', true, 'in_app'`);
+                           'cf.', true, 'in_app', 'Bombus cf.'`);
     expect(
       await rows(conn, "SELECT rank, scientific_name, qualifier FROM determination_misplaced_qualifier"),
     ).toEqual([["genus", "Bombus", "cf."]]);
+  });
+
+  test("a determination keeps the name as written, on every channel but legacy import", async () => {
+    // Not every name will resolve to an ITIS taxon, so the words are the one
+    // record of what was said (beeline-45v). Legacy import is exempt: most of
+    // it arrives as parted columns with no whole name to keep, and promotion
+    // invents none.
+    await conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end)
+                    VALUES ('net', 'v1', DATE '2026-07-01', DATE '2026-07-01')`);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number)
+                    SELECT max(entity_id), 1 FROM sample`);
+    const determine = (channel: string, verbatim: string | null) =>
+      conn.run(
+        `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, verbatim_identification)
+         SELECT (SELECT max(entity_id) FROM specimen),
+                (SELECT entity_id FROM animal WHERE rank = 'genus' AND scientific_name = 'Bombus'),
+                true, $1, $2`,
+        [channel, verbatim] as never,
+      );
+    await expect(determine("in_app", null)).rejects.toThrow(/CHECK/i);
+    await expect(determine("ecdysis_import", null)).rejects.toThrow(/CHECK/i);
+    await determine("in_app", "Bombus");
+    await determine("legacy_import", null);
   });
 
   test("verbatim catalog numbers admit historical duplicates", async () => {

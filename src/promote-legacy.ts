@@ -39,6 +39,8 @@ export interface PromotionCounts {
   unresolvedDeterminerNames: number;
   /** Alias lines naming a spelling no staged row carries — a CSV typo. */
   unusedCollectorAliases: number;
+  /** Taxon alias lines naming a spelling no staged row carries (beeline-45v.2). */
+  unusedTaxonAliases: number;
   /** Logins two person records file under: one human twice, or a shared account. */
   collectorDuplicateLogins: number;
   correctionsApplied: number;
@@ -86,6 +88,8 @@ export interface PromotionInputs {
   /** Overlay rows the app wrote, merged over the curated ones. */
   appOverlay: string;
   collectorAliases: string;
+  /** Misspelt taxon names and the name each writer meant (beeline-45v.2). */
+  taxonAliases: string;
   /** The legacy name register (beeline-8t8); absent reads as empty. */
   usernameRegister: string;
 }
@@ -104,6 +108,7 @@ export const LIVE_INPUTS: PromotionInputs = {
   curatedOverlay: CURATED_OVERLAY,
   appOverlay: "data/person-overlay.csv",
   collectorAliases: "ingest/collector-aliases.csv",
+  taxonAliases: "ingest/taxon-aliases.csv",
   usernameRegister: "data/legacy/usernames.csv",
 };
 
@@ -114,7 +119,7 @@ export async function promoteLegacy(
 ): Promise<PromotionCounts> {
   const {
     taxonomyCsv, determinerAliases, determinerRegister, legacyCorrections,
-    appCorrections, curatedOverlay, appOverlay, collectorAliases, usernameRegister,
+    appCorrections, curatedOverlay, appOverlay, collectorAliases, taxonAliases, usernameRegister,
   } = inputs;
   const scalar = async (sql: string): Promise<number> => {
     const [[v]] = (await (await conn.run(sql)).getRows()) as [[bigint]];
@@ -132,7 +137,10 @@ export async function promoteLegacy(
       .replaceAll("{{COLLECTOR_ALIASES}}", collectorAliases.replaceAll("'", "''")),
   );
   // Names come apart before anything reads them apart (beeline-qcd).
-  await conn.run(await readFile(`${INGEST_DIR}parse-names.sql`, "utf8"));
+  await conn.run(
+    (await readFile(`${INGEST_DIR}parse-names.sql`, "utf8"))
+      .replaceAll("{{TAXON_ALIASES}}", taxonAliases.replaceAll("'", "''")),
+  );
   const seedSql = await readFile(`${INGEST_DIR}seed-animals.sql`, "utf8");
   await conn.run(seedSql.replaceAll("{{TAXONOMY_CSV}}", taxonomyCsv.replaceAll("'", "''")));
   const detSql = await readFile(`${INGEST_DIR}promote-determinations.sql`, "utf8");
@@ -167,6 +175,7 @@ export async function promoteLegacy(
     unresolvedDeterminations: await scalar("SELECT count(*) FROM legacy_unresolved_determination"),
     unresolvedDeterminerNames: await scalar("SELECT count(*) FROM legacy_determiner_unresolved"),
     unusedCollectorAliases: await scalar("SELECT count(*) FROM legacy_collector_alias_unused"),
+    unusedTaxonAliases: await scalar("SELECT count(*) FROM legacy_taxon_alias_unused"),
     collectorDuplicateLogins: await scalar(
       "SELECT count(DISTINCT login) FROM legacy_collector_duplicate_candidate",
     ),

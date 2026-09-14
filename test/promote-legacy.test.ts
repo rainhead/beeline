@@ -31,6 +31,7 @@ describe("legacy promotion", () => {
       unresolvedDeterminations: 0,
       unresolvedDeterminerNames: 0,
       unusedCollectorAliases: 0,
+      unusedTaxonAliases: 0,
       collectorDuplicateLogins: 0,
       correctionsApplied: 0,
       correctionsRetired: 0,

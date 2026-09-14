@@ -20,6 +20,56 @@
 -- how the pipeline layer already shares SQL (legacy_month, legacy_date).
 CREATE OR REPLACE MACRO binomial_prefix() AS '^[A-Za-z]+( \([A-Za-z]+\))? [a-z-]+';
 
+-- ── Parts of a name, from whichever column wrote them ───────────────────
+-- Three sources write names in columns rather than as one string: the expert
+-- columns (genus, subgenus, specificEpithet), the volunteer ones
+-- (familyVolDet, genusVolDet, speciesVolDet) and the staff taxonomy list
+-- (family, genus, species). Each has put a subgenus in brackets somewhere the
+-- parser did not look — the subgenus column says 'Andrena (Andrena)' on 2,888
+-- rows, which seeding minted as 'Andrena (Andrena (Andrena))';
+-- specificEpithet says '(Lasioglossum)'; genusVolDet and the staff list say
+-- 'Xenoglossa (Peponapis)' — and a genus has arrived lowercase ('andrena') and
+-- an epithet capitalised ('Mesillae'), each minting a taxon of its own
+-- (beeline-45v.2). These are rules rather than a list because they are facts
+-- about zoological names: a genus or subgenus is capitalised and an epithet
+-- never is, and a bracketed name is a subgenus wherever it was written.
+CREATE OR REPLACE MACRO name_capitalised(s) AS
+  nullif(concat(upper(left(s, 1)), lower(substr(s, 2))), '');
+CREATE OR REPLACE MACRO name_genus(s) AS
+  name_capitalised(nullif(regexp_extract(trim(s), '^([A-Za-z]+)', 1), ''));
+CREATE OR REPLACE MACRO name_bracketed(s) AS
+  name_capitalised(nullif(regexp_extract(trim(s), '\(([A-Za-z]+)\)', 1), ''));
+-- A subgenus column holds the bare name or the whole 'Genus (Subgenus)'.
+CREATE OR REPLACE MACRO name_subgenus(s) AS
+  coalesce(name_bracketed(s),
+           name_capitalised(nullif(regexp_extract(trim(s), '^([A-Za-z]+)$', 1), '')));
+CREATE OR REPLACE MACRO name_epithet(s) AS
+  CASE WHEN regexp_matches(trim(s), '^\([A-Za-z]+\)$') THEN NULL
+       ELSE nullif(lower(trim(s)), '') END;
+
+-- What the rules cannot recognise is misspelling: 'Agopostemon',
+-- 'Lassioglossum'. ingest/taxon-aliases.csv maps each to the name its writer
+-- meant. A genus alias matches a genus column as written; a species alias
+-- matches the genus and epithet as written, once case and brackets are
+-- settled, and replaces both. `basis` says what a mapping rests on, as in
+-- collector-aliases.csv. Spelling only: a gender ending or a name ITIS lacks
+-- is a taxonomic choice, which belongs to beeline-45v.1 and not to this file.
+-- One row per (rank, alias), because two lines claiming one spelling are a
+-- mistake in the file, not a choice to make here.
+CREATE TABLE legacy_taxon_alias AS
+SELECT rank, alias, name, basis FROM (
+  SELECT trim(rank) AS rank, trim(alias) AS alias, trim(name) AS name, trim(basis) AS basis,
+         row_number() OVER (PARTITION BY trim(rank), trim(alias) ORDER BY trim(name)) AS rn
+  FROM read_csv('{{TAXON_ALIASES}}', header = true,
+                columns = {'rank': 'VARCHAR', 'alias': 'VARCHAR', 'name': 'VARCHAR', 'basis': 'VARCHAR'})
+) deduped
+WHERE rn = 1;
+
+CREATE OR REPLACE MACRO legacy_genus_alias(s) AS
+  coalesce((SELECT a.name FROM legacy_taxon_alias a WHERE a.rank = 'genus' AND a.alias = trim(s)), s);
+CREATE OR REPLACE MACRO legacy_species_alias(g, e) AS
+  (SELECT a.name FROM legacy_taxon_alias a WHERE a.rank = 'species' AND a.alias = concat_ws(' ', g, e));
+
 -- ── Normalized determination taxonomy from staging ──────────────────────
 -- Two rules here were wrong until the survey ran them over every distinct
 -- scientificName value in production staging:
@@ -70,23 +120,75 @@ FROM (
     CASE WHEN base_genus IS NOT NULL AND starts_with(sci, concat(base_genus, ' '))
          THEN substr(sci, length(base_genus) + 2) END AS qual_tail
   FROM (
+    -- A species alias replaces the genus and the epithet together.
+    SELECT _id, ord, family,
+      coalesce(split_part(species_alias, ' ', 1), base_genus) AS base_genus,
+      sub,
+      coalesce(split_part(species_alias, ' ', 2), epithet)    AS epithet,
+      sci, legacy_rank, remainder
+    FROM (
+      SELECT *, legacy_species_alias(written_genus, epithet) AS species_alias
+      FROM (
+        SELECT _id,
+          nullif(trim("order"), '')                                    AS ord,
+          nullif(trim(family), '')                                     AS family,
+          name_genus(genus)                                            AS written_genus,
+          name_genus(legacy_genus_alias(genus))                        AS base_genus,
+          -- The subgenus column first, then a bracket in the genus column, then
+          -- one in the epithet column ('(Lasioglossum)', 72 records).
+          coalesce(name_subgenus(subgenus),
+                   name_bracketed(legacy_genus_alias(genus)),
+                   name_bracketed(specificEpithet))                    AS sub,
+          name_epithet(specificEpithet)                                AS epithet,
+          nullif(trim(scientificName), '')                             AS sci,
+          taxonRank                                                    AS legacy_rank,
+          -- What is left after a binomial, and only where there was one: with no
+          -- epithet to consume, regexp_replace returns the string unchanged, and
+          -- 'Andrenidae' would go on to look exactly like an authorship.
+          CASE WHEN regexp_matches(trim(scientificName), binomial_prefix())
+               THEN nullif(trim(regexp_replace(trim(scientificName),
+                                binomial_prefix(), '')), '') END AS remainder
+        FROM legacy_promotable
+      )
+    )
+  )
+);
+
+-- ── The volunteer columns, by the same rules ────────────────────────────
+-- Volunteer determinations arrive parted (familyVolDet, genusVolDet,
+-- speciesVolDet), and each place that used them used to read them raw, so
+-- none of the rules above reached them. They carry no whole name, so there is
+-- no verbatim string to keep beside them (promote-determinations.sql).
+CREATE OR REPLACE VIEW legacy_vol_det_taxa AS
+SELECT _id, family,
+  coalesce(split_part(species_alias, ' ', 1), base_genus) AS base_genus,
+  sub,
+  coalesce(split_part(species_alias, ' ', 2), epithet)    AS epithet
+FROM (
+  SELECT *, legacy_species_alias(written_genus, epithet) AS species_alias
+  FROM (
     SELECT _id,
-      nullif(trim("order"), '')                                    AS ord,
-      nullif(trim(family), '')                                     AS family,
-      nullif(regexp_extract(trim(genus), '^([A-Za-z]+)', 1), '')   AS base_genus,
-      coalesce(nullif(trim(subgenus), ''),
-               nullif(regexp_extract(trim(genus), '\(([A-Za-z]+)\)', 1), '')) AS sub,
-      nullif(trim(specificEpithet), '')                            AS epithet,
-      nullif(trim(scientificName), '')                             AS sci,
-      taxonRank                                                    AS legacy_rank,
-      -- What is left after a binomial, and only where there was one: with no
-      -- epithet to consume, regexp_replace returns the string unchanged, and
-      -- 'Andrenidae' would go on to look exactly like an authorship.
-      CASE WHEN regexp_matches(trim(scientificName), binomial_prefix())
-           THEN nullif(trim(regexp_replace(trim(scientificName),
-                            binomial_prefix(), '')), '') END AS remainder
+      nullif(trim(familyVolDet), '')                  AS family,
+      name_genus(genusVolDet)                         AS written_genus,
+      name_genus(legacy_genus_alias(genusVolDet))     AS base_genus,
+      name_bracketed(legacy_genus_alias(genusVolDet)) AS sub,
+      name_epithet(speciesVolDet)                     AS epithet
     FROM legacy_promotable
   )
+);
+
+-- An alias line no staged row carries: a typo in the alias file itself, or a
+-- spelling the source has since corrected. The same check
+-- legacy_collector_alias_unused makes.
+CREATE OR REPLACE VIEW legacy_taxon_alias_unused AS
+SELECT a.rank, a.alias, a.name, a.basis
+FROM legacy_taxon_alias a
+WHERE NOT EXISTS (
+  SELECT 1 FROM legacy_promotable p
+  WHERE (a.rank = 'genus' AND a.alias IN (trim(p.genus), trim(p.genusVolDet)))
+     OR (a.rank = 'species' AND a.alias IN (
+          concat_ws(' ', name_genus(p.genus), name_epithet(p.specificEpithet)),
+          concat_ws(' ', name_genus(p.genusVolDet), name_epithet(p.speciesVolDet))))
 );
 
 -- ── Parse survey: what the name rules do to every verbatim string ───────

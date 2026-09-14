@@ -88,25 +88,24 @@ SELECT _id, sci AS verbatim, qualifier,
   END AS name
 FROM legacy_det_taxa;
 
+-- The volunteer columns come apart in parse-names.sql by the expert rules, so
+-- a bracketed genus column ('Epimelissodes (Svastra)') is a subgenus
+-- determination here just as it is for an expert.
 CREATE OR REPLACE VIEW legacy_volunteer_target AS
 SELECT _id,
   CASE
-    WHEN sp IS NOT NULL AND g IS NOT NULL THEN 'species'
-    WHEN g IS NOT NULL THEN 'genus'
-    WHEN f IS NOT NULL THEN 'family'
+    WHEN epithet IS NOT NULL AND base_genus IS NOT NULL THEN 'species'
+    WHEN sub IS NOT NULL AND base_genus IS NOT NULL THEN 'subgenus'
+    WHEN base_genus IS NOT NULL THEN 'genus'
+    WHEN family IS NOT NULL THEN 'family'
   END AS rank,
   CASE
-    WHEN sp IS NOT NULL AND g IS NOT NULL THEN concat(g, ' ', sp)
-    WHEN g IS NOT NULL THEN g
-    WHEN f IS NOT NULL THEN f
+    WHEN epithet IS NOT NULL AND base_genus IS NOT NULL THEN concat(base_genus, ' ', epithet)
+    WHEN sub IS NOT NULL AND base_genus IS NOT NULL THEN concat(base_genus, ' (', sub, ')')
+    WHEN base_genus IS NOT NULL THEN base_genus
+    WHEN family IS NOT NULL THEN family
   END AS name
-FROM (
-  SELECT _id,
-    nullif(trim(familyVolDet), '')  AS f,
-    nullif(trim(genusVolDet), '')   AS g,
-    nullif(trim(speciesVolDet), '') AS sp
-  FROM legacy_promotable
-);
+FROM legacy_vol_det_taxa;
 
 -- Promoted rows joined back to their specimen entity. The link is the staged
 -- row's _id, not its legacy specimen number: promotion assigns numbers per

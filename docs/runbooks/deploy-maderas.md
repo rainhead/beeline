@@ -193,7 +193,6 @@ scp data/legacy/taxonomy.csv maderas:dev/beeline/data/legacy/   # an input, not 
 ssh maderas 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; cd ~/dev/beeline && nvm use >/dev/null \
   && systemctl --user stop beeline \
   && pnpm db:reseed beeline.duckdb beeline-new.duckdb \
-  && export BEELINE_DB=beeline-new.duckdb \
   && pnpm legacy:promote beeline-new.duckdb \
   && pnpm inat:fetch-places beeline-new.duckdb \
   && pnpm inat:promote beeline-new.duckdb \
@@ -236,16 +235,27 @@ signs everyone out exactly once.
 `data/person-overlay.csv` survives too; the curated `ingest/person-overlay.csv`
 replays over the rebuilt store, which is what the overlay is for.
 
-`data/person-change.csv` survives as well, and the exported `BEELINE_DB` above
-is what makes both promotion steps record into it — each of them records, so
-it has to be set for the pair ([ADR
-0007](../adr/0007-authored-changes-are-events.md)). A change log belongs to
-exactly one database, so a run pointed at a file that is not the one this
-environment keeps a log for records nothing and says so — which is what should
-happen when somebody promotes a scratch copy, and would otherwise diff its
-people against the deployed store's history. Without the prefix nothing is
-lost: the app records the same differences at its next boot, attributed to
-that pass rather than to the promotion.
+`data/person-change.csv`, `data/sample-change.csv` and the sample log's
+baseline `data/sample-state.csv` survive as well, and the procedure above
+leaves them alone on purpose: **do not point `BEELINE_DB` at the new store
+while it is being derived.** A change log belongs to exactly one database, and
+each promotion step runs a change pass when its target is that database
+([ADR 0007](../adr/0007-authored-changes-are-events.md)). Between legacy
+promotion and observation promotion the new store is only half derived —
+observation-derived locations are gone, minted samples do not exist yet, some
+accounts are unbound — so passes run step by step record all of that going
+away and then coming back. The procedure used to export `BEELINE_DB` for
+exactly that reason, and on 2026-09-15 it appended 70,380 sample entries and 14
+person entries that described nothing anybody did; they had to be restored away
+from a copy (beeline-6cr).
+
+Left alone, each step says it is not recording and why, and the app's first
+boot on the swapped-in store records the net difference once, attributed to
+that pass — the same rebuild recorded 39 sample changes and no person changes
+that way. Read the boot log for `recorded N sample change(s) made while the
+app was down`. A large N is worth reading before trusting: it is either a
+promotion change that moves a field the log tracks, which is the point of the
+rebuild, or a derivation that went wrong.
 
 Rehearse on a copy first — `scp` the store down and run the same sequence
 locally. Comparing the two side by side is how the 1,019

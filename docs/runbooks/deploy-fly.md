@@ -163,7 +163,10 @@ This is where `pnpm db:reseed`, `pnpm person:apply` and
 `pnpm elevation:fetch` run. The re-derivation procedure itself — what to run
 after a change under `ingest/`, and why re-fetching is not the fix — is
 unchanged from [deploy-maderas.md](deploy-maderas.md#re-deriving-the-model-after-a-promotion-change);
-only the way you get a shell has changed.
+only the way you get a shell has changed. The machine already sets
+`BEELINE_DB` to the live store, which is what keeps the promotions from
+recording into the change logs while the new store is half built — leave it
+set as it is, and let the next boot record the difference (beeline-6cr).
 
 ## The pre-migrate copy
 

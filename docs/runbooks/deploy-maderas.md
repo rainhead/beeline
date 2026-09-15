@@ -251,8 +251,8 @@ from a copy (beeline-6cr).
 
 Left alone, each step says it is not recording and why, and the app's first
 boot on the swapped-in store records the net difference once, attributed to
-that pass — the same rebuild recorded 39 sample changes and no person changes
-that way. Read the boot log for `recorded N sample change(s) made while the
+the boot-time reconciliation (source `reconcile`) — the same rebuild recorded
+39 sample changes and no person changes that way. Read the boot log for `recorded N sample change(s) made while the
 app was down`. A large N is worth reading before trusting: it is either a
 promotion change that moves a field the log tracks, which is the point of the
 rebuild, or a derivation that went wrong.

@@ -102,6 +102,31 @@ WHERE reg.atlas_id IS NOT NULL;
 INSERT INTO sample_collector (sample_id, person_id, position)
 SELECT m.sample_id, m.person_id, 1 FROM minted_sample m;
 
+-- ── A locality follows its observation until the labels print ───────────
+-- The one descriptive field rewritten rather than filled, and only on a
+-- sample with no specimen rows — which is what unprinted means here, since a
+-- print run is what individuates specimens and every legacy sample already
+-- has them. Until its labels print, a sample's locality is the volunteer's
+-- to fix on iNaturalist (CONTEXT.md, Upstream). A place name too long for a
+-- label is minted as written and flagged (schema/108), and nobody can edit an
+-- iNat-linked sample in the app, so a fill-only locality would leave that
+-- flag with no one able to clear it (beeline-kza). Nothing a person types is
+-- at risk: the in-app editor refuses iNat-linked samples, so on these rows
+-- the observation is the only writer. Once a specimen row exists the locality
+-- stays what the label says; the fill-only refresh below still fills a gap
+-- on a printed sample, and whether it should is beeline-1kb.17's question.
+-- A sample whose observation is gone from observation_field keeps what it has.
+UPDATE sample SET locality = followed.locality
+FROM (
+  SELECT s.entity_id AS sample_id, loc.locality
+  FROM sample s
+  JOIN observation_field f ON f.inat_id = s.inat_observation_id
+  LEFT JOIN observation_locality loc ON loc.inat_id = f.inat_id
+  WHERE NOT EXISTS (SELECT 1 FROM specimen sp WHERE sp.sample_id = s.entity_id)
+) followed
+WHERE sample.entity_id = followed.sample_id
+  AND sample.locality IS DISTINCT FROM followed.locality;
+
 -- ── Descriptive fields: a fill-only refresh ──────────────────────────────
 -- Write-once is right for number, date and count and WRONG for everything
 -- descriptive. inat_place is network-fetched, so a reseeded store promotes
@@ -119,7 +144,8 @@ SELECT m.sample_id, m.person_id, 1 FROM minted_sample m;
 -- writes only where the store currently says nothing — so it needs no way to
 -- tell a minted sample from an imported one, which is just as well, since by
 -- design there is none. What it does not do is propagate an upstream
--- CORRECTION to a field already filled; sample_observation_number_mismatch
+-- CORRECTION to a field already filled — except an unprinted sample's
+-- locality, which follows instead (above); sample_observation_number_mismatch
 -- and the QC rules are how that stays visible.
 UPDATE sample SET
   country        = coalesce(sample.country,        pl.country_code),

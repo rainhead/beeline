@@ -255,6 +255,12 @@ describe("schema application", () => {
       );
     await expect(determine("in_app", null)).rejects.toThrow(/CHECK/i);
     await expect(determine("ecdysis_import", null)).rejects.toThrow(/CHECK/i);
+    // A blank is a name lost as surely as a NULL, and a CHECK that only asked
+    // IS NOT NULL let it through (CodeRabbit on PR #59). Legacy import may
+    // omit the name but has no reason to write an empty one.
+    await expect(determine("in_app", "")).rejects.toThrow(/CHECK/i);
+    await expect(determine("ecdysis_import", "   ")).rejects.toThrow(/CHECK/i);
+    await expect(determine("legacy_import", "")).rejects.toThrow(/CHECK/i);
     await determine("in_app", "Bombus");
     await determine("legacy_import", null);
   });

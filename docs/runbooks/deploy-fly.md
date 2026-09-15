@@ -168,6 +168,30 @@ and only the way you get a shell differs here. The machine already sets
 recording into the change logs while the new store is half built — leave it
 set as it is, and let the next boot record the difference (beeline-6cr).
 
+## ITIS
+
+The curated taxonomy is matched against ITIS (beeline-45v): `itis_taxon` and
+`itis_synonym` hold every insect from one ITIS release, and `animal.itis_tsn`
+is read against them. The download is 224 MB zipped and 925 MB unpacked, so it
+is fetched and extracted on maderas, and only the extract — two CSVs, about
+27 MB — goes to the machine:
+
+```sh
+pnpm itis:fetch                                        # on maderas → data/itis/
+fly ssh console --app beeline -C "mkdir -p /app/data/itis"
+fly ssh sftp put --app beeline data/itis/itis-taxon.csv /app/data/itis/itis-taxon.csv
+fly ssh sftp put --app beeline data/itis/itis-synonym.csv /app/data/itis/itis-synonym.csv
+fly machine update --env BEELINE_MAINTENANCE=1 <id>    # the load writes the store
+fly ssh console --app beeline -C "sh -c 'cd /app && pnpm itis:load'"
+fly machine update --env BEELINE_MAINTENANCE= <id>
+```
+
+`itis:load` reads the machine's `BEELINE_DB`, replaces both tables and
+re-matches every node in one transaction, and refuses an empty extract. It
+takes seconds. A reseed carries both tables and legacy promotion re-matches the
+tree it rebuilds, so this is once per ITIS release rather than once per
+rebuild. Until it has run, `animal_itis` answers `not loaded` for every node.
+
 ## The pre-migrate copy
 
 When a boot finds pending migrations it copies the store to

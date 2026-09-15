@@ -43,9 +43,11 @@ CREATE TABLE animal (
   rank            TEXT NOT NULL REFERENCES animal_rank(rank),
   scientific_name TEXT NOT NULL,
   authorship      TEXT,
+  itis_tsn        BIGINT,
   UNIQUE (rank, scientific_name)
 );
-COMMENT ON TABLE animal IS 'The curated taxonomy — named for its role: every specimen determination (bees and bycatch alike) points here, while floral hosts are iNat taxon references on the sample. Bees to species; non-bee scaffold deep enough for wasps at species rank. Versioning mechanics are an open design point (docs/schema-sketch.md).';
+COMMENT ON TABLE animal IS 'The curated taxonomy — named for its role: every specimen determination (bees and bycatch alike) points here, while floral hosts are iNat taxon references on the sample. Based on ITIS, which volunteers already determine against (beeline-45v): a node carries the TSN of the ITIS name it matches, and a node ITIS does not have is a name the program keeps beyond ITIS. Bees to species; non-bee scaffold deep enough for wasps at species rank. Versioning mechanics and the curation layer over ITIS are open (docs/schema-sketch.md, beeline-45v.1).';
+COMMENT ON COLUMN animal.itis_tsn IS 'The ITIS taxonomic serial number of the name this node matches: the one ITIS insect name at the same rank and spelling, a current name preferred over an outdated one. NULL when ITIS has no such name, has two current ones (a homonym), or has not been loaded — animal_itis (schema/118) says which. Derived, not authored: restated by ingest/match-itis.sql whenever ITIS is loaded and after legacy promotion. An outdated name keeps its own TSN rather than moving to the current name, because whether the program follows an ITIS rename is beeline-45v.1''s decision.';
 COMMENT ON COLUMN animal.rank IS 'A rank animal_rank admits — which is why that table carries suborder and superfamily, where coarse bycatch determinations land (Symphyta, Ichneumonoidea), though nothing sits at either yet.';
 COMMENT ON COLUMN animal.scientific_name IS 'Scientific name, disambiguated from vernacular names, which this table does not carry.';
 -- (rank, scientific_name) is unique because it is the key seeding and both

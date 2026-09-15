@@ -32,6 +32,7 @@ describe("legacy promotion", () => {
       unresolvedDeterminerNames: 0,
       unusedCollectorAliases: 0,
       unusedTaxonAliases: 0,
+      animalsMatchedToItis: 0, // no ITIS loaded into this store
       collectorDuplicateLogins: 0,
       correctionsApplied: 0,
       correctionsRetired: 0,

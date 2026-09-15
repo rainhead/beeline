@@ -146,6 +146,15 @@ describe("the taxonomy pages", () => {
       expect(menu).toContain(`href="${path}"`);
       expect(account).not.toContain(`href="${path}"`);
     }
+    // Alphabetical, by the labels a person reads.
+    const group = between(menu, `aria-label="${en.layout.more}"`, "</nav>");
+    expect([...group.matchAll(/href="([^"]+)"/g)].map((match) => match[1])).toEqual([
+      "/design",
+      "/glossary",
+      "/jobs",
+      "/people",
+      "/taxonomy",
+    ]);
   });
 
   it("starts browsing where the tree first branches, counting specimens by determination of record", async () => {

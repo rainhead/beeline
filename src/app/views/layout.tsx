@@ -55,14 +55,23 @@ function NavLinks({ m }: { m: Messages }) {
 function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
   return (
     <nav class="menu-section" aria-label={m.layout.more}>
-      <a href="/glossary">{m.layout.nav.glossary}</a>
-      <a href="/taxonomy">{m.layout.nav.taxonomy}</a>
-      {admin && <a href="/people">{m.layout.nav.people}</a>}
-      {admin && <a href="/jobs">{m.layout.nav.jobs}</a>}
-      {/* /people and /jobs are gated; /design is only unlisted — it reads no
-          records, so keeping a volunteer out of it protects nothing, and the
-          reason not to offer it to them is that it is not their tool. */}
-      {admin && <a href="/design">{m.layout.nav.design}</a>}
+      {[
+        { href: "/glossary", label: m.layout.nav.glossary, shown: true },
+        { href: "/taxonomy", label: m.layout.nav.taxonomy, shown: true },
+        // /people and /jobs are gated; /design is only unlisted — it reads no
+        // records, so keeping a volunteer out of it protects nothing, and the
+        // reason not to offer it to them is that it is not their tool.
+        { href: "/people", label: m.layout.nav.people, shown: admin },
+        { href: "/jobs", label: m.layout.nav.jobs, shown: admin },
+        { href: "/design", label: m.layout.nav.design, shown: admin },
+      ]
+        .filter((link) => link.shown)
+        // Alphabetical by the words on screen, so a renamed or translated
+        // label keeps its place rather than the order this list is typed in.
+        .sort((a, b) => a.label.localeCompare(b.label, m.locale))
+        .map((link) => (
+          <a href={link.href}>{link.label}</a>
+        ))}
     </nav>
   );
 }

@@ -25,6 +25,26 @@
 .page-header { margin-bottom: var(--space-6); }
 .page-header > :last-child { margin-bottom: 0; }
 
+/* Breadcrumbs: where a page sits in a hierarchy, above its header. The
+   separator is drawn here rather than typed, with empty alternative text, so
+   a screen reader reads the path and not the punctuation. */
+.breadcrumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-2);
+  font: var(--md-sys-typescale-label);
+}
+.breadcrumbs li + li::before {
+  content: "›";
+  content: "›" / "";
+  margin-right: var(--space-2);
+  color: var(--md-sys-color-on-surface-variant);
+}
+.breadcrumbs a { text-decoration: none; }
+
 /* Meta: secondary text that annotates something else — a place and count
    under a sample title, a job description under its name, the last sync
    time. The most-repeated treatment in the app before it had a name. */

@@ -33,20 +33,36 @@ const STYLESHEETS = ["/tokens.css", "/static/elements.css", "/static/layout.css"
 /** Stylesheet URL with the cache-busting stamp attached. */
 const versioned = (href: string, version: string) => `${href}${href.includes("?") ? "&" : "?"}v=${version}`;
 
-/** The nav destinations, rendered twice: inline on wide screens, in the hamburger menu on narrow ones. */
-function NavLinks({ m, admin }: { m: Messages; admin: boolean }) {
+/**
+ * The header nav: the records people work through, and nothing else.
+ * Rendered twice — inline on wide screens, in the hamburger menu on narrow ones.
+ */
+function NavLinks({ m }: { m: Messages }) {
   return (
     <>
       <a href="/samples">{m.layout.nav.samples}</a>
       <a href="/specimens">{m.layout.nav.specimens}</a>
+    </>
+  );
+}
+
+/**
+ * Everything else a person can open — reference pages and staff tools — in
+ * the account menu, grouped by what it is for rather than by who may use it
+ * (beeline-45v.5). Each item is still shown only to whoever may open it.
+ */
+function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
+  return (
+    <nav class="menu-section" aria-label={m.layout.more}>
       <a href="/glossary">{m.layout.nav.glossary}</a>
+      <a href="/taxonomy">{m.layout.nav.taxonomy}</a>
       {admin && <a href="/people">{m.layout.nav.people}</a>}
+      {admin && <a href="/jobs">{m.layout.nav.jobs}</a>}
       {/* /people and /jobs are gated; /design is only unlisted — it reads no
           records, so keeping a volunteer out of it protects nothing, and the
-          reason to leave it off their nav is that it is not their tool. */}
+          reason not to offer it to them is that it is not their tool. */}
       {admin && <a href="/design">{m.layout.nav.design}</a>}
-      {admin && <a href="/jobs">{m.layout.nav.jobs}</a>}
-    </>
+    </nav>
   );
 }
 
@@ -140,14 +156,14 @@ export function Layout(props: {
               <MenuIcon />
             </summary>
             <nav class="menu-panel">
-              <NavLinks m={m} admin={env.admin} />
+              <NavLinks m={m} />
             </nav>
           </details>
           <a href="/" class="brand">
             {m.brand}
           </a>
           <nav class="nav-inline">
-            <NavLinks m={m} admin={env.admin} />
+            <NavLinks m={m} />
           </nav>
           <details class="menu account-menu">
             <summary aria-label={m.layout.account(session.login)} title={m.layout.account(session.login)}>
@@ -166,6 +182,7 @@ export function Layout(props: {
                   ))}
                 </div>
               )}
+              <MoreLinks m={m} admin={env.admin} />
               {session.stub === true ? (
                 // A dev-login session has no cookie behind it to end.
                 <div class="menu-identity">{m.layout.devSession}</div>

@@ -67,7 +67,14 @@ export const en = {
       people: "People",
       design: "Design",
       jobs: "Jobs",
+      taxonomy: "Taxonomy",
     },
+    /**
+     * The account menu's destinations beyond the records — reference pages
+     * and staff tools, grouped by purpose (beeline-45v.5). Read aloud as the
+     * name of that group, never shown.
+     */
+    more: "Reference and tools",
     /** The hamburger button that holds the nav on narrow screens. */
     menu: "Menu",
     /** The avatar button that opens the account menu. */
@@ -563,6 +570,82 @@ export const en = {
     impersonationNotRecorded: "could not record that you are viewing as somebody else, so it was not started",
   },
 
+  /**
+   * The taxonomy (/taxonomy, beeline-45v.5): the names specimens are
+   * determined to, and how each stands against ITIS. Read by everyone, like
+   * the glossary, so written for a volunteer who has never heard of ITIS.
+   * Curation will land on these same pages.
+   */
+  taxonomy: {
+    title: "Taxonomy",
+    intro:
+      "The names specimens are determined to, filed the way the program files them, and how each one stands against ITIS, the published list of names determinations here are made against.",
+    aboutItis: "More about ITIS.",
+    release: (asOf: Date | string) => `Checked against the ITIS release of ${date(asOf)}.`,
+    notLoaded: "ITIS has not been loaded here, so nothing on these pages says how a name stands against it.",
+    /** The counts above the filter, each linking to the list it counts. */
+    summary: {
+      valid: (count: number) => `${n(count)} current in ITIS`,
+      synonym: (count: number) => `${n(count)} outdated`,
+      homonym: (count: number) => `${n(count)} ambiguous`,
+      absent: (count: number) => `${n(count)} not in ITIS`,
+    },
+    search: "Name",
+    searchHint: "Any part of a scientific name.",
+    standingLabel: "In ITIS",
+    standingOptions: {
+      any: "Any",
+      valid: "Current",
+      synonym: "Outdated",
+      homonym: "Ambiguous",
+      absent: "Not in ITIS",
+    },
+    apply: "Apply",
+    clear: "Clear",
+    found: (total: number) => `${n(total)} ${total === 1 ? "name" : "names"}`,
+    nothingFound: "No name matches. Try fewer letters, or a different standing.",
+    pageOf: (page: number, pages: number) => `Page ${n(page)} of ${n(pages)}`,
+    previous: "← Previous",
+    next: "Next →",
+    browse: "Browse",
+    empty: "The taxonomy is empty: nothing has been determined here yet.",
+    /** The breadcrumb trail, as a screen reader names it. */
+    filedUnder: "Filed under",
+    colName: "Name",
+    colRank: "Rank",
+    colFiledUnder: "Filed under",
+    colItis: "ITIS",
+    colSpecimens: "Specimens",
+    /** A row speaks about ITIS only when the name is not simply current there. */
+    chip: {
+      synonym: "Outdated",
+      homonym: "Ambiguous",
+      absent: "Not in ITIS",
+    },
+    nowCalled: "ITIS now:",
+    specimens: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"}`,
+    /** Under a name's count, when nothing below it was counted. */
+    counted: "Counted by determination of record.",
+    /** Under a name's count, which includes everything filed below it. */
+    determinedHere: (count: number, rank: string) =>
+      `Counted by determination of record, including everything filed below. ${n(count)} ${count === 1 ? "is" : "are"} determined to this ${rank} and no finer.`,
+    seeSpecimens: "See these specimens",
+    seeYourSpecimens: "See your specimens",
+    below: "Filed below",
+    nothingBelow: "Nothing is filed below this name.",
+    /** One name's standing, said in full on its own page. */
+    standing: {
+      valid: "A current name in ITIS.",
+      synonym: "ITIS lists this name as outdated. The name it uses now:",
+      homonym:
+        "ITIS has more than one current name spelled this way, from different authors, and nothing recorded here says which one this is:",
+      absent: (rank: string) =>
+        `ITIS has no ${rank} spelled this way. A name newer than ITIS, a subgenus ITIS does not carry, and a misspelling all look like this.`,
+      report: (tsn: string) => `ITIS record ${tsn}`,
+    },
+    notFound: "There is no such name in the taxonomy.",
+  },
+
   jobs: {
     title: "Jobs",
     heading: "Scheduled jobs",
@@ -927,6 +1010,11 @@ export const en = {
         term: "Heads-up",
         definition:
           "A flag worth fixing that does not stop labels being printed. Improving it makes the record better; leaving it does not hold anything up.",
+      },
+      itis: {
+        term: "ITIS",
+        definition:
+          "The Integrated Taxonomic Information System: a published list of scientific names, kept by a partnership of North American government agencies, that determinations here are made against. It lags behind bee taxonomy in places, so a few names the program uses are newer than ITIS, and a few ITIS still calls current have since been revised.",
       },
       label: {
         term: "Label",

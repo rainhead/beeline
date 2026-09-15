@@ -159,9 +159,17 @@ main > * {
   color: var(--md-sys-color-on-secondary-container);
 }
 
-/* A labelled group inside a menu panel — the account menu's list of people
-   this session may act for. */
-.menu-section { padding-bottom: var(--space-1); }
+/* A group inside a menu panel — the people this session may act for, the
+   destinations beyond the records. Ruled off from what follows, as the
+   identity line is, so sign-out never reads as one more destination. */
+.menu-section {
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  margin-bottom: var(--space-1);
+}
+/* A rule separates a group from what follows; the last thing in a panel has
+   nothing following it. */
+.menu-panel > :last-child { border-bottom: none; margin-bottom: 0; }
 
 /* A heading inside a menu panel. Distinct from .menu-identity, which says
    who you are: this labels a group of choices. */

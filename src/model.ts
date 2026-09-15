@@ -181,6 +181,27 @@ export interface AnimalTable {
   rank: string;
   scientific_name: string;
   authorship: string | null;
+  /** The ITIS TSN of the name this node matches, or null (animal_itis says why). Derived by ingest/match-itis.sql. */
+  itis_tsn: BigIntCol | null;
+}
+
+// schema/025_itis.sql
+
+/** ITIS insects at the ranks animal_rank admits, from one release (beeline-45v.4). */
+export interface ItisTaxonTable {
+  tsn: BigIntCol;
+  rank: string;
+  name: string;
+  /** valid is a current ITIS name; invalid an outdated one, with its current names in itis_synonym. */
+  usage: "valid" | "invalid";
+  author: string | null;
+  parent_tsn: BigIntCol | null;
+  itis_as_of: ColumnType<Date, Date | string, Date | string>;
+}
+
+export interface ItisSynonymTable {
+  tsn: BigIntCol;
+  accepted_tsn: BigIntCol;
 }
 
 // schema/030_samples_specimens.sql
@@ -626,6 +647,35 @@ export interface PendingPrintSampleView {
   pending_count: number;
 }
 
+// schema/118_views_animal_itis.sql
+
+export type AnimalItisStanding = "valid" | "synonym" | "homonym" | "absent" | "not loaded";
+
+export interface AnimalItisMatchView {
+  entity_id: number;
+  usage: "valid" | "invalid";
+  candidates: bigint;
+  tsn: bigint | null;
+}
+
+export interface AnimalItisView {
+  entity_id: number;
+  rank: string;
+  scientific_name: string;
+  itis_tsn: bigint | null;
+  standing: AnimalItisStanding;
+  /** What ITIS calls a synonym now; '; '-separated where it names more than one. */
+  current_name: string | null;
+}
+
+export interface AnimalItisStaleView {
+  entity_id: number;
+  rank: string;
+  scientific_name: string;
+  itis_tsn: bigint | null;
+  matched_tsn: bigint | null;
+}
+
 export interface Database {
   schema_migration: SchemaMigrationTable;
   person: PersonTable;
@@ -637,6 +687,8 @@ export interface Database {
   atlas: AtlasTable;
   atlas_region: AtlasRegionTable;
   animal: AnimalTable;
+  itis_taxon: ItisTaxonTable;
+  itis_synonym: ItisSynonymTable;
   sample: SampleTable;
   elevation_source: ElevationSourceTable;
   sample_location: SampleLocationTable;
@@ -686,6 +738,9 @@ export interface Database {
   observation_place: ObservationPlaceView;
   observation_place_ambiguous: ObservationPlaceAmbiguousView;
   inat_place_uncached: InatPlaceUncachedView;
+  animal_itis: AnimalItisView;
+  animal_itis_match: AnimalItisMatchView;
+  animal_itis_stale: AnimalItisStaleView;
   // Attached private store (ADR 0003), catalog-qualified:
   "private.inat_oauth_token": InatOauthTokenTable;
   "private.session": SessionTable;

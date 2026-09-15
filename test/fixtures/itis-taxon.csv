@@ -1,0 +1,20 @@
+tsn,rank,name,usage,author,parent_tsn,itis_as_of
+202423,kingdom,Animalia,valid,,,2026-08-26
+82696,phylum,Arthropoda,valid,,914158,2026-08-26
+99208,class,Insecta,valid,,563886,2026-08-26
+152741,order,Hymenoptera,valid,,914213,2026-08-26
+154394,family,Apidae,valid,,154344,2026-08-26
+154348,family,Halictidae,valid,,154344,2026-08-26
+154397,genus,Bombus,valid,"Latreille, 1802",633933,2026-08-26
+154376,genus,Hoplitis,valid,"Klug, 1807",633963,2026-08-26
+154357,genus,Lasioglossum,valid,"Curtis, 1833",1246038,2026-08-26
+634381,genus,Xeromelecta,valid,"Linsley, 1939",633942,2026-08-26
+714792,species,Bombus caliginosus,valid,"(Frison, 1927)",154397,2026-08-26
+714848,species,Bombus vosnesenskii,valid,"Radoszkowski, 1862",154397,2026-08-26
+715497,species,Hoplitis truncata,valid,"(Cresson, 1878)",154376,2026-08-26
+756786,species,Hoplitis truncata,valid,"Wu, 1992",154376,2026-08-26
+759441,species,Lasioglossum tenax,valid,"(Sandhouse, 1924)",154357,2026-08-26
+759465,species,Lasioglossum titusi,valid,"(Crawford, 1902)",154357,2026-08-26
+759593,species,Lasioglossum zonulum,invalid,"(Smith, 1848)",,2026-08-26
+1252729,species,Lasioglossum zonulus,valid,"(Smith, 1848)",154357,2026-08-26
+699561,species,Xeromelecta californica,valid,"(Cresson, 1879)",634381,2026-08-26

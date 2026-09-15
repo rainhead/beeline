@@ -8,6 +8,7 @@ import { applyPersonOverlay, type Unresolved } from "./apply-person-overlay.js";
 import { mergeOverlays, readOverlay, CURATED_OVERLAY } from "./person-overlay.js";
 import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
 import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
+import { matchAnimalsToItis } from "./load-itis.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -41,6 +42,8 @@ export interface PromotionCounts {
   unusedCollectorAliases: number;
   /** Taxon alias lines naming a spelling no staged row carries (beeline-45v.2). */
   unusedTaxonAliases: number;
+  /** Animal nodes carrying an ITIS TSN — zero until ITIS has been loaded (beeline-45v.4). */
+  animalsMatchedToItis: number;
   /** Logins two person records file under: one human twice, or a shared account. */
   collectorDuplicateLogins: number;
   correctionsApplied: number;
@@ -143,6 +146,10 @@ export async function promoteLegacy(
   );
   const seedSql = await readFile(`${INGEST_DIR}seed-animals.sql`, "utf8");
   await conn.run(seedSql.replaceAll("{{TAXONOMY_CSV}}", taxonomyCsv.replaceAll("'", "''")));
+  // Against whatever ITIS the store carries (beeline-45v.4): itis_taxon is
+  // loaded on its own schedule and survives a reseed, so a rebuilt tree is
+  // matched here rather than waiting for the next ITIS load.
+  await matchAnimalsToItis(conn);
   const detSql = await readFile(`${INGEST_DIR}promote-determinations.sql`, "utf8");
   await conn.run(
     detSql
@@ -176,6 +183,7 @@ export async function promoteLegacy(
     unresolvedDeterminerNames: await scalar("SELECT count(*) FROM legacy_determiner_unresolved"),
     unusedCollectorAliases: await scalar("SELECT count(*) FROM legacy_collector_alias_unused"),
     unusedTaxonAliases: await scalar("SELECT count(*) FROM legacy_taxon_alias_unused"),
+    animalsMatchedToItis: await scalar("SELECT count(itis_tsn) FROM animal"),
     collectorDuplicateLogins: await scalar(
       "SELECT count(DISTINCT login) FROM legacy_collector_duplicate_candidate",
     ),

@@ -63,6 +63,14 @@ beforeAll(async () => {
     `INSERT INTO inat_place_absent (inat_place_id, asked_at)
      VALUES (117476, TIMESTAMPTZ '2026-08-01 12:00:00+00')`,
   );
+  // ITIS, on inat_place's terms: filled from outside the store, keyed by
+  // ITIS's own id, and not something promotion can recompute (beeline-45v.4).
+  await seed.run(
+    `INSERT INTO itis_taxon (tsn, rank, name, usage, author, parent_tsn, itis_as_of) VALUES
+       (1252729, 'species', 'Lasioglossum zonulus', 'valid', '(Smith, 1848)', 154357, DATE '2026-08-26'),
+       (759593, 'species', 'Lasioglossum zonulum', 'invalid', '(Smith, 1848)', NULL, DATE '2026-08-26')`,
+  );
+  await seed.run(`INSERT INTO itis_synonym (tsn, accepted_tsn) VALUES (759593, 1252729)`);
   // Model rows, of the kind promotion derives and this tool must not carry.
   await seed.run(`INSERT INTO person (entity_id, display_name) VALUES (nextval('entity_id_seq'), 'Stale Person')`);
   // And a sequence left where a promoted store leaves it: far ahead. Both
@@ -103,6 +111,8 @@ describe("reseeding a store that cannot be blown away", () => {
       job_run: 1,
       inat_place: 1,
       inat_place_absent: 1,
+      itis_taxon: 2,
+      itis_synonym: 1,
     });
     // The place cache comes across whole, keeping the instant iNat was
     // actually asked: now() would claim a freshness the reseed did not earn.
@@ -181,6 +191,8 @@ describe("reseeding a store that cannot be blown away", () => {
       job_run: 0,
       inat_place: 0,
       inat_place_absent: 0,
+      itis_taxon: 0,
+      itis_synonym: 0,
     });
     const bareInstance = await DuckDBInstance.create(out);
     const bareConn = await bareInstance.connect();

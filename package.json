@@ -23,6 +23,8 @@
     "inat:login": "tsx src/inat-login.ts",
     "elevation:fetch": "tsx src/fetch-dem.ts",
     "elevation:derive": "tsx src/derive-elevation.ts",
+    "itis:fetch": "scripts/fetch-itis.sh",
+    "itis:load": "tsx src/load-itis.ts",
     "person:apply": "tsx src/apply-person-overlay.ts"
   },
   "devDependencies": {

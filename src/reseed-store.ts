@@ -59,6 +59,12 @@ import { applySchema } from "./schema.js";
  * still a verdict, and asking again is not free of consequence, since it is
  * what makes inat_place_uncached non-empty until the answer comes back.
  *
+ * itis_taxon and itis_synonym come across on the same terms as inat_place:
+ * ITIS is loaded from an extract of a network download (src/load-itis.ts,
+ * beeline-45v.4), keyed by ITIS's own TSN, and nothing in the store could
+ * rebuild it — a reseed that dropped them would leave every animal node
+ * reading "not loaded" until somebody fetched and loaded ITIS again.
+ *
  * This list is DECLARATIVE — carryStaging copies each table by hand, because
  * three of them need their ids or their sync_run reference rewritten and no
  * loop expresses that. So the list can say a table is carried while nothing
@@ -75,6 +81,8 @@ export const CARRIED_TABLES = [
   "job_run",
   "inat_place",
   "inat_place_absent",
+  "itis_taxon",
+  "itis_synonym",
 ] as const;
 
 export interface ReseedCounts {
@@ -176,6 +184,17 @@ export async function carryStaging(
     if (await has("inat_place_absent")) {
       await conn.run(`INSERT INTO inat_place_absent BY NAME SELECT * FROM old.inat_place_absent`);
       await count("inat_place_absent");
+    }
+    // ITIS, whole and on inat_place's terms: keyed by ITIS's TSN, loaded from
+    // outside the store, and not something promotion can recompute. Legacy
+    // promotion then matches the rebuilt tree against it (beeline-45v.4).
+    if (await has("itis_taxon")) {
+      await conn.run(`INSERT INTO itis_taxon BY NAME SELECT * FROM old.itis_taxon`);
+      await count("itis_taxon");
+    }
+    if (await has("itis_synonym")) {
+      await conn.run(`INSERT INTO itis_synonym BY NAME SELECT * FROM old.itis_synonym`);
+      await count("itis_synonym");
     }
 
     // Scoped to the target: both catalogs are attached and both have a

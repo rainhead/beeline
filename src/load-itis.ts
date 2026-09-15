@@ -79,6 +79,20 @@ export async function loadItis(conn: DuckDBConnection, files: ItisFiles = LIVE_I
        FROM read_csv(${literal(files.synonymCsv)}, header = true,
          columns = {'tsn': 'BIGINT', 'accepted_tsn': 'BIGINT'})`,
     );
+    // A link runs from an outdated name to a current one, and both ends are
+    // names this extract holds. animal_itis.current_name reads straight
+    // through these, so a malformed extract would load cleanly and print a
+    // wrong current name. Every link in the 2026-08-26 release passes.
+    const badLinks = Number(
+      await scalar(`SELECT count(*) FROM itis_synonym s
+                    LEFT JOIN itis_taxon outdated ON outdated.tsn = s.tsn
+                    LEFT JOIN itis_taxon current ON current.tsn = s.accepted_tsn
+                    WHERE outdated.tsn IS NULL OR current.tsn IS NULL
+                       OR outdated.usage <> 'invalid' OR current.usage <> 'valid'`),
+    );
+    if (badLinks > 0) {
+      throw new Error(`${files.synonymCsv} has ${badLinks} synonym link(s) that do not run from an outdated ITIS name to a current one — refusing to load it`);
+    }
     await matchAnimalsToItis(conn);
     await conn.run("COMMIT");
   } catch (err) {

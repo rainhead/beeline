@@ -100,6 +100,22 @@ describe("animal nodes against ITIS", () => {
     }
   });
 
+  test("a synonym link that does not run from an outdated name to a current one is refused", async () => {
+    // Synthetic wiring of real names: Lasioglossum tenax is current in ITIS,
+    // so a link from it is not a synonym link at all, and reading through it
+    // would give a current name a 'current name' (CodeRabbit on PR #62).
+    await loadItis(conn, FILES);
+    const dir = await mkdtemp(join(tmpdir(), "beeline-itis-"));
+    try {
+      await writeFile(join(dir, "itis-synonym.csv"), "tsn,accepted_tsn\n759441,1252729\n");
+      await expect(loadItis(conn, { taxonCsv: TAXA, synonymCsv: join(dir, "itis-synonym.csv") }))
+        .rejects.toThrow(/synonym link/);
+      expect(await rows(conn, "SELECT tsn, accepted_tsn FROM itis_synonym")).toEqual([[759593n, 1252729n]]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("ITIS numbers its ranks the way animal_rank does", async () => {
     // The extract maps ITIS rank ids to rank names with its own table, since
     // it runs with no store to read animal_rank from. This is what keeps the

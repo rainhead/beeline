@@ -429,6 +429,9 @@ describe("the locality a minted sample carries", () => {
     // A plus code is not a place name, however short (beeline-kza).
     ["MGF8+RH, Minidoka, ID 83350, USA", "Minidoka"],
     ["QXV6+PF6, Suthep, Mueang Chiang Mai District, Chiang Mai 50200, Thailand", "Suthep"],
+    // Synthetic: a plus code shortened to two characters before the '+', the
+    // form that starts with a letter and so escapes the house-number clause.
+    ["CF+6X, Minidoka, ID 83350, USA", "Minidoka"],
     // Coarse: the volunteer's to fix upstream on iNaturalist, which is SOP.
     ["Oregon, US", null],
     ["Wheeler County, US-OR, US", null],

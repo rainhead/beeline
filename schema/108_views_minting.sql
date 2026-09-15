@@ -213,7 +213,7 @@ usable AS (
     -- name no place a person can read, and neither has five digits in a row
     -- for the ZIP clause above to catch (beeline-kza).
     AND NOT regexp_matches(upper(c.part), '\b[A-Z][0-9][A-Z] ?[0-9][A-Z][0-9]\b')
-    AND NOT regexp_matches(upper(c.part), '[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}')
+    AND NOT regexp_matches(upper(c.part), '[23456789CFGHJMPQRVWX]{2,8}\+[23456789CFGHJMPQRVWX]{2,3}')
     AND NOT regexp_matches(c.part, '^[0-9]')
     AND upper(c.part) NOT IN (SELECT state_province FROM atlas_region)
     AND upper(c.part) NOT IN (SELECT country FROM atlas_region)

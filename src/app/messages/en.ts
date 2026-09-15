@@ -70,12 +70,14 @@ export const en = {
       taxonomy: "Taxonomy",
     },
     /**
-     * The account menu's destinations beyond the records — reference pages
-     * and staff tools, grouped by purpose (beeline-45v.5). Read aloud as the
-     * name of that group, never shown.
+     * The menu's destinations beyond the records — reference pages and staff
+     * tools, grouped by purpose (beeline-45v.5). Read aloud as the name of
+     * that group, never shown.
      */
     more: "Reference and tools",
-    /** The hamburger button that holds the nav on narrow screens. */
+    /** The records nav as it appears inside the menu on a narrow screen. Read aloud, never shown. */
+    records: "Records",
+    /** The hamburger button left of the brand: reference pages and staff tools, and the nav on narrow screens. */
     menu: "Menu",
     /** The avatar button that opens the account menu. */
     account: (login: string) => `Account: ${login}`,

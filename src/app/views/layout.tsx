@@ -48,8 +48,9 @@ function NavLinks({ m }: { m: Messages }) {
 
 /**
  * Everything else a person can open — reference pages and staff tools — in
- * the account menu, grouped by what it is for rather than by who may use it
- * (beeline-45v.5). Each item is still shown only to whoever may open it.
+ * the menu left of the brand, grouped by what it is for rather than by who
+ * may use it (beeline-45v.5). Each item is still shown only to whoever may
+ * open it. Never the account menu: that one is about the person signed in.
  */
 function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
   return (
@@ -155,9 +156,14 @@ export function Layout(props: {
             <summary aria-label={m.layout.menu} title={m.layout.menu}>
               <MenuIcon />
             </summary>
-            <nav class="menu-panel">
-              <NavLinks m={m} />
-            </nav>
+            <div class="menu-panel">
+              {/* The inline nav is hidden on a narrow screen, so the records
+                  come along here; on a wide one they stay in the header. */}
+              <nav class="menu-section nav-records" aria-label={m.layout.records}>
+                <NavLinks m={m} />
+              </nav>
+              <MoreLinks m={m} admin={env.admin} />
+            </div>
           </details>
           <a href="/" class="brand">
             {m.brand}
@@ -165,6 +171,8 @@ export function Layout(props: {
           <nav class="nav-inline">
             <NavLinks m={m} />
           </nav>
+          {/* The account menu is about the person signed in — who they are,
+              who they act for, signing out — and never a place to find pages. */}
           <details class="menu account-menu">
             <summary aria-label={m.layout.account(session.login)} title={m.layout.account(session.login)}>
               {session.iconUrl !== null ? <img class="avatar" src={session.iconUrl} alt="" /> : <PersonIcon />}
@@ -182,7 +190,6 @@ export function Layout(props: {
                   ))}
                 </div>
               )}
-              <MoreLinks m={m} admin={env.admin} />
               {session.stub === true ? (
                 // A dev-login session has no cookie behind it to end.
                 <div class="menu-identity">{m.layout.devSession}</div>

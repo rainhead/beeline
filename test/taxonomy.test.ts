@@ -116,27 +116,35 @@ const between = (body: string, start: string, end: string) => {
 const html = (url: string) => url.replaceAll("&", "&amp;");
 
 describe("the taxonomy pages", () => {
-  it("anyone signed in reads them, and finds them in the account menu with the glossary", async () => {
+  it("anyone signed in reads them, and finds them in the menu beside the brand with the glossary", async () => {
     const app = await taxonomyApp();
     const body = await page(app, "/taxonomy");
+    const menu = between(body, 'class="menu nav-menu"', "</details>");
     const account = between(body, 'class="menu account-menu"', "</details>");
     const header = between(body, 'class="nav-inline"', "</nav>");
-    expect(account).toContain(`href="/taxonomy"`);
-    expect(account).toContain(`href="/glossary"`);
+    expect(menu).toContain(`href="/taxonomy"`);
+    expect(menu).toContain(`href="/glossary"`);
     // Grouped by purpose, shown by access: the staff tools are not offered.
-    for (const staff of ["/people", "/jobs", "/design"]) expect(account).not.toContain(`href="${staff}"`);
-    // The header keeps the records people work through, and only those.
+    for (const staff of ["/people", "/jobs", "/design"]) expect(menu).not.toContain(`href="${staff}"`);
+    // The account menu is about the person signed in, not a place to find pages.
+    for (const path of ["/glossary", "/taxonomy"]) expect(account).not.toContain(`href="${path}"`);
+    // The header keeps the records people work through, and only those; the
+    // menu carries them too, for a phone, where the header nav is hidden.
     expect(header).toContain(`href="/samples"`);
     expect(header).toContain(`href="/specimens"`);
     expect(header).not.toContain(`href="/glossary"`);
     expect(header).not.toContain(`href="/taxonomy"`);
+    expect(menu).toContain(`href="/samples"`);
   });
 
-  it("offers an admin the staff tools in the same menu", async () => {
+  it("offers an admin the staff tools in the same menu, and keeps them out of the account menu", async () => {
     const app = await taxonomyApp({ admin: true });
-    const account = between(await page(app, "/taxonomy"), 'class="menu account-menu"', "</details>");
+    const body = await page(app, "/taxonomy");
+    const menu = between(body, 'class="menu nav-menu"', "</details>");
+    const account = between(body, 'class="menu account-menu"', "</details>");
     for (const path of ["/glossary", "/taxonomy", "/people", "/jobs", "/design"]) {
-      expect(account).toContain(`href="${path}"`);
+      expect(menu).toContain(`href="${path}"`);
+      expect(account).not.toContain(`href="${path}"`);
     }
   });
 

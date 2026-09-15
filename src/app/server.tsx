@@ -703,7 +703,7 @@ export function createApp({
   // prose. Not gated, unlike /jobs and /people — it reads no records and
   // decides nothing, so the only reason to keep a curious volunteer out was
   // that it sits next to two surfaces that do. It is offered only to admins
-  // instead (the account menu, views/layout.tsx), which is what "staff
+  // instead (the menu beside the brand, views/layout.tsx), which is what "staff
   // tooling" here actually means. Every section is listed in DESIGN_SECTIONS,
   // and a test walks that list. ---
   const designPages: ReadonlyArray<[string, string, (m: Messages) => Child]> = [

@@ -108,9 +108,10 @@ async function recordApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
   // Newest, and deliberately not the record: an expert stands until another
   // expert revises. This is the pair the specimen listing cannot show.
   await conn.run(
-    `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name, recorded_at)
+    `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name,
+                                verbatim_identification, recorded_at)
      VALUES (${specimen}, ${animal("Andrena")}, false, 'in_app', 'A Volunteer',
-             TIMESTAMPTZ '2026-08-01 09:00:00Z')`,
+             'Andrena', TIMESTAMPTZ '2026-08-01 09:00:00Z')`,
   );
 
   const people = { alice, bob, staffer };

@@ -1,0 +1,13 @@
+-- Migration for schema/040_determinations.sql (beeline-45v.3): a
+-- determination on any channel but legacy import must carry the name as it
+-- was written, and no channel may write it blank, because not every name will resolve to an ITIS taxon.
+--
+-- The CHECK itself cannot arrive here — DuckDB has no ALTER TABLE … ADD
+-- CONSTRAINT (ADR 0006) — so a deployed store gets it at its next rebuild or
+-- db:reseed. No view stands in for it meanwhile, because nothing in a
+-- deployed store can break it: the only writer of determinations there is
+-- legacy promotion, which the CHECK exempts. The writers it guards are the
+-- in-app determination screen (roadmap phase 6) and Ecdysis import (phase 7),
+-- and neither exists. If either reaches a store that predates its rebuild,
+-- this is the note that is now wrong.
+COMMENT ON COLUMN determination.verbatim_identification IS 'The name as the determiner wrote it, kept beside the node it resolved to — and required — never blank — on every channel but legacy_import, because not every name will resolve to an ITIS taxon and this is then the only record of what was said (beeline-45v). Legacy import may omit it, never blank it: most of its determinations arrive as parted columns with no whole name to keep, and promotion invents none. Ecdysis import (phase 7) brings names from a system that records both.';

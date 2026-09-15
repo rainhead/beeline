@@ -486,18 +486,18 @@ describe("determination of record", () => {
     const record = async () =>
       (await rows(conn, `SELECT animal_id, is_expert FROM determination_of_record`))[0];
 
-    await conn.run(`INSERT INTO determination (specimen_id, animal_id, is_expert, channel, recorded_at)
-                    VALUES (${specimenId}, ${genus}, false, 'in_app', TIMESTAMPTZ '2026-01-01 00:00:00Z')`);
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, is_expert, channel, verbatim_identification, recorded_at)
+                    VALUES (${specimenId}, ${genus}, false, 'in_app', 'Bombus', TIMESTAMPTZ '2026-01-01 00:00:00Z')`);
     expect(await record()).toEqual([genus, false]);
 
     // A later volunteer determination supersedes the earlier one.
-    await conn.run(`INSERT INTO determination (specimen_id, animal_id, is_expert, channel, recorded_at)
-                    VALUES (${specimenId}, ${vosnesenskii}, false, 'in_app', TIMESTAMPTZ '2026-02-01 00:00:00Z')`);
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, is_expert, channel, verbatim_identification, recorded_at)
+                    VALUES (${specimenId}, ${vosnesenskii}, false, 'in_app', 'Bombus vosnesenskii', TIMESTAMPTZ '2026-02-01 00:00:00Z')`);
     expect(await record()).toEqual([vosnesenskii, false]);
 
     // An expert determination wins even though it was recorded earlier.
-    await conn.run(`INSERT INTO determination (specimen_id, animal_id, is_expert, channel, recorded_at)
-                    VALUES (${specimenId}, ${caliginosus}, true, 'ecdysis_import', TIMESTAMPTZ '2026-01-15 00:00:00Z')`);
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, is_expert, channel, verbatim_identification, recorded_at)
+                    VALUES (${specimenId}, ${caliginosus}, true, 'ecdysis_import', 'Bombus caliginosus', TIMESTAMPTZ '2026-01-15 00:00:00Z')`);
     expect(await record()).toEqual([caliginosus, true]);
   });
 });

@@ -96,21 +96,29 @@ CREATE MACRO locality_street_suffix_pattern() AS
 -- So: the FIRST comma-separated component that reads like a place name.
 -- Each clause was measured against the corpus rather than supposed —
 --
---   2..18 characters   the length qc_rule_locality_format already enforces,
---                      so a longer component would be written only to be
---                      flagged on the same promotion run. It costs the
---                      single-component garden names ('Leach Botanical
---                      Garden', 22 chars), which arrive as
---                      missing_required_field instead and are the
---                      volunteer's to shorten upstream — and it costs them
---                      only in the past: 166 settled samples against 0 in the
---                      open season, so current practice does not write that
---                      shape at all.
+--   2+ characters      and no upper bound, which there used to be (18, the
+--                      label's). A place name too long for a label
+--                      ('Deception Creek Trail', 21) is now minted as written
+--                      and flagged by qc_rule_locality_format, where the cap
+--                      made the rule skip to whatever came next: for 113
+--                      observations that was a postal town, 12.3 km from the
+--                      trail in the Deception Creek case and outside the
+--                      national forest or park in others (beeline-kza). The
+--                      flag is clearable only because an unprinted sample's
+--                      locality follows its observation (ingest/mint-samples.
+--                      sql): the volunteer shortens the name on iNaturalist
+--                      and the next promotion carries it. The cost is the
+--                      urban cases, where the substitute town was right —
+--                      9 of the 10 minted samples that had one ('Linn Haven
+--                      Apartments' became Sweet Home) — which now ask the
+--                      volunteer too.
 --   no street suffix   the shared pattern above, applied to the component
 --                      rather than to the whole guess — which is what the
 --                      pattern's comma anchor already means, so the two
 --                      readers ask the same question at their own grain.
---   no postcode        a run of five digits.
+--   no postcode        a run of five digits, a Canadian postcode
+--                      ('BC V0H 1T5') or a Google plus code ('MGF8+RH'), none
+--                      of which names a place a person can read.
 --   no house number    a component starting with a digit: '3334 NW Covey
 --                      Run' carries no listed suffix and would otherwise
 --                      pass at 17 characters.
@@ -196,11 +204,16 @@ component AS (
 usable AS (
   SELECT c.inat_id, c.position, c.part
   FROM component c
-  WHERE length(c.part) BETWEEN 2 AND 18
+  WHERE length(c.part) >= 2
     AND NOT regexp_matches(
           concat(' ', replace(replace(lower(c.part), '.', ' '), ',', ' , '), ' '),
           locality_street_suffix_pattern())
     AND NOT regexp_matches(c.part, '[0-9]{5}')
+    -- A Canadian postcode ('BC V0H 1T5') and a Google plus code ('MGF8+RH')
+    -- name no place a person can read, and neither has five digits in a row
+    -- for the ZIP clause above to catch (beeline-kza).
+    AND NOT regexp_matches(upper(c.part), '\b[A-Z][0-9][A-Z] ?[0-9][A-Z][0-9]\b')
+    AND NOT regexp_matches(upper(c.part), '[23456789CFGHJMPQRVWX]{2,8}\+[23456789CFGHJMPQRVWX]{2,3}')
     AND NOT regexp_matches(c.part, '^[0-9]')
     AND upper(c.part) NOT IN (SELECT state_province FROM atlas_region)
     AND upper(c.part) NOT IN (SELECT country FROM atlas_region)
@@ -217,7 +230,7 @@ usable AS (
 SELECT inat_id, part AS locality, position AS component
 FROM (SELECT u.*, row_number() OVER (PARTITION BY u.inat_id ORDER BY u.position) AS rn FROM usable u) ranked
 WHERE rn = 1;
-COMMENT ON VIEW observation_locality IS 'The locality a sample minted from an observation carries: the first comma-separated component of its (private-preferred) place_guess that reads like a place name. An observation with no such component is absent here, and the sample it mints blocks honestly as missing_required_field — which the volunteer fixes upstream on iNaturalist, as SOP.';
+COMMENT ON VIEW observation_locality IS 'The locality a sample minted from an observation carries: the first comma-separated component of its (private-preferred) place_guess that reads like a place name, however long. A component too long for a label is taken as written and flagged by qc_rule_locality_format; an observation with no usable component is absent here, and the sample it mints blocks as missing_required_field. Either is the volunteer''s to fix upstream on iNaturalist, as SOP, and an unprinted sample follows its observation, so the fix arrives on the next promotion (beeline-kza).';
 
 -- ── Which observations are samples ───────────────────────────────────────
 -- A sample number and a positive specimen count and a date. Count zero is

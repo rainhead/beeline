@@ -352,17 +352,33 @@ describe("descriptive fields are a fill-only refresh", () => {
     ]);
   });
 
-  test("a value the store already holds is never overwritten", async () => {
+  test("a value a printed sample already holds is never overwritten", async () => {
     // Verified on the real corpus too: across 66,293 existing samples the
     // refresh changed 26 localities and 2 counties, all of them from NULL,
-    // and overwrote nothing on any field.
+    // and overwrote nothing on any field. Printed, because an unprinted
+    // sample's locality follows its observation instead (next test).
+    const sampleId = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'", locality: "'Bald Hill'", county: "'Linn'",
+    });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sampleId}, 1)`);
+    await stage(obs(7));
+    await promoteObservations(conn);
+    expect(await one(`SELECT locality, county FROM sample WHERE entity_id = ${sampleId}`)).toEqual([
+      "Bald Hill",
+      "Linn",
+    ]);
+  });
+
+  test("an unprinted sample's locality follows the observation, and nothing else does", async () => {
+    // Only the locality is the volunteer's to correct upstream before print
+    // (beeline-kza); the county keeps the fill-only terms.
     const sampleId = await insertCleanSample(conn, {
       inat_observation_id: "7", sample_number: "'7'", locality: "'Bald Hill'", county: "'Linn'",
     });
     await stage(obs(7));
     await promoteObservations(conn);
     expect(await one(`SELECT locality, county FROM sample WHERE entity_id = ${sampleId}`)).toEqual([
-      "Bald Hill",
+      "Corvallis",
       "Linn",
     ]);
   });
@@ -410,34 +426,57 @@ describe("the locality a minted sample carries", () => {
     ["USA, OR, SilverLake, NF road 2916", "SilverLake"],
     // A street number carries no listed suffix and fits in 18 characters.
     ["3334 NW Covey Run, Corvallis, OR 97330, USA", "Corvallis"],
+    // A plus code is not a place name, however short (beeline-kza).
+    ["MGF8+RH, Minidoka, ID 83350, USA", "Minidoka"],
+    ["QXV6+PF6, Suthep, Mueang Chiang Mai District, Chiang Mai 50200, Thailand", "Suthep"],
+    // Synthetic: a plus code shortened to two characters before the '+', the
+    // form that starts with a letter and so escapes the house-number clause.
+    ["CF+6X, Minidoka, ID 83350, USA", "Minidoka"],
     // Coarse: the volunteer's to fix upstream on iNaturalist, which is SOP.
     ["Oregon, US", null],
     ["Wheeler County, US-OR, US", null],
     ["United States", null],
-    // Longer than qc_rule_locality_format allows, so writing it would only
-    // manufacture a finding on the same promotion run.
-    ["Leach Botanical Garden", null],
+    // Too long for a label, and taken as written anyway: the locality rule
+    // flags it and the volunteer shortens it upstream (beeline-kza).
+    ["Leach Botanical Garden", "Leach Botanical Garden"],
+    // Used to skip to Skykomish, 12.3 km from the trail.
+    ["Deception Creek Trail, Skykomish, WA, US", "Deception Creek Trail"],
+    // Used to take the postcode.
+    ["Okanagan-Similkameen, BC V0H 1T5, Canada", "Okanagan-Similkameen"],
   ])("%s -> %s", async (guess, expected) => {
     await stage(obs(7, { place_guess: guess, place_ids: [1, 10, 484] }));
     await promoteObservations(conn);
     expect(await one("SELECT locality FROM sample")).toEqual([expected]);
   });
 
-  test("minting never manufactures a locality_format finding", async () => {
-    // True on the corpus as well: the store's 4,100 locality_format findings
-    // are unchanged by minting 1,421 samples.
-    for (const [i, guess] of [
-      "Corvallis, OR, US",
-      "Steigerwald NWR",
-      "Peckham Rd, Wilder, ID, US",
-      "3334 NW Covey Run, Corvallis, OR 97330, USA",
-      "Leach Botanical Garden",
-      "Oregon, US",
-    ].entries()) {
-      await stage(obs(100 + i, { place_guess: guess, ofvs: ofvs(String(100 + i), "1") }));
-    }
+  test("a place name too long for a label is flagged, and shortening it upstream clears the flag", async () => {
+    // Minting used to skip such a name for the town behind it and raise no
+    // finding at all — Skykomish, 12.3 km from this trail (beeline-kza). Now
+    // the name is kept and flagged, and the flag has to be clearable: nobody
+    // can edit an iNat-linked sample in the app, so the fix is the
+    // volunteer's on iNaturalist and an unprinted sample follows it. The
+    // first guess is real; the shortened one is synthetic, the fix a
+    // volunteer would make.
+    await stage(obs(7, { place_guess: "Deception Creek Trail, Skykomish, WA, US" }));
     await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Deception Creek Trail"]);
+    expect(await count("SELECT count(*) FROM qc_finding WHERE rule_name = 'locality_format'")).toBe(1);
+
+    await stage(obs(7, { place_guess: "Deception Creek Tr, Skykomish, WA, US" }));
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Deception Creek Tr"]);
     expect(await count("SELECT count(*) FROM qc_finding WHERE rule_name = 'locality_format'")).toBe(0);
+  });
+
+  test("once its labels print, a sample's locality stops following the observation", async () => {
+    // A specimen row is what printing leaves behind, and after it the
+    // locality is what the label says (CONTEXT.md, Upstream).
+    await stage(obs(7, { place_guess: "Corvallis, OR, US" }));
+    await promoteObservations(conn);
+    await conn.run("INSERT INTO specimen (sample_id, specimen_number) SELECT entity_id, 1 FROM sample");
+    await stage(obs(7, { place_guess: "Philomath, OR, US" }));
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Corvallis"]);
   });
 
   test("the private place guess wins, as the private coordinates and place ids do", async () => {

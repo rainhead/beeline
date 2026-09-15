@@ -130,7 +130,7 @@ describe("app scaffold", () => {
 
   it("no session means no page — every data route is gated", async () => {
     const app = await appOnMemoryDb(null);
-    for (const path of ["/", "/design", "/glossary", "/anything-not-registered"]) {
+    for (const path of ["/", "/design", "/glossary", "/taxonomy", "/anything-not-registered"]) {
       const res = await app.request(path);
       expect(res.status, path).toBe(401);
       const body = await res.text();

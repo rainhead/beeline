@@ -1,6 +1,7 @@
 import type { Messages } from "../../messages/index.js";
 import {
   BUTTON_VARIANTS,
+  Breadcrumbs,
   Button,
   Callout,
   Card,
@@ -219,6 +220,24 @@ export function DesignComponents({ m }: { m: Messages }) {
           nextHref="/design/components"
           previousLabel="← Previous"
           nextLabel="Next →"
+        />
+      </Specimen>
+
+      <h2>Breadcrumbs</h2>
+      <p>
+        Where a page sits in a hierarchy — today, where a name is filed in the taxonomy. The trail is the ancestors
+        only, because the page title already says where you are; the separators are drawn by the stylesheet, so a
+        screen reader reads the path rather than the punctuation.
+      </p>
+      <Specimen>
+        <Breadcrumbs
+          label="Filed under"
+          trail={[
+            { href: "/taxonomy", label: "Taxonomy" },
+            { href: "/taxonomy/class/Insecta", label: <TaxonName rank="class" scientificName="Insecta" /> },
+            { href: "/taxonomy/family/Halictidae", label: <TaxonName rank="family" scientificName="Halictidae" /> },
+            { href: "/taxonomy/genus/Lasioglossum", label: <TaxonName rank="genus" scientificName="Lasioglossum" /> },
+          ]}
         />
       </Specimen>
 

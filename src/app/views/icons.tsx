@@ -50,6 +50,6 @@ export function PersonIcon() {
 
 /** Every icon in the set, for the proofing page. */
 export const ICON_SET = [
-  { name: "MenuIcon", use: "Opens the nav drawer on narrow screens", render: MenuIcon },
+  { name: "MenuIcon", use: "Opens the menu left of the brand: reference pages and staff tools, and the nav on narrow screens", render: MenuIcon },
   { name: "PersonIcon", use: "Account menu, when the volunteer has no iNaturalist avatar", render: PersonIcon },
 ] as const;

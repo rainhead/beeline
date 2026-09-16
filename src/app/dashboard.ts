@@ -18,6 +18,12 @@ export interface Dashboard {
   withOthers: CoCollectors;
   /** This person's flagged samples from settled seasons, kept off the table and counted (beeline-2c3.24). */
   settledFlagged: number;
+  /**
+   * The last day of the settled seasons, ISO — what the listing's "collected
+   * to" filter is set to for the link to them, since the listing has no
+   * season control of its own (Peter, 2026-09-16).
+   */
+  settledThrough: string;
   everSynced: boolean;
 }
 
@@ -49,7 +55,7 @@ type RawPlaceholderRow = Omit<RawSampleRow, "sample_id" | "specimen_count" | "pe
 export async function loadDashboard(db: Kysely<Database>, personId: number): Promise<Dashboard> {
   const rules = [...DASHBOARD_RULES.keys()];
   const ruleList = sql.join(rules.map((r) => sql`${r}`));
-  const [samples, findings, placeholders, partners, sync] = await Promise.all([
+  const [samples, findings, placeholders, partners, sync, season] = await Promise.all([
     // A sample is on the page when a rule the page shows fires on it, or
     // when labels are waiting for it. The roll-up (sample_qc_finding), not
     // qc_finding: a finding on one of a sample's specimens is something to
@@ -130,6 +136,8 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       .selectFrom("sync_run")
       .select(({ fn }) => fn.max("completed_at").as("at"))
       .executeTakeFirst(),
+    // Date minus an integer is a date in both engines (ADR 0001).
+    sql<{ through: string }>`SELECT CAST(started_on - 1 AS TEXT) AS through FROM season`.execute(db),
   ]);
 
   const findingsBySample = new Map<number, Finding[]>();
@@ -205,5 +213,11 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
     withOthers.set(Number(row.sample_id), names);
   }
 
-  return { rows, withOthers, settledFlagged, everSynced: (sync?.at ?? null) !== null };
+  return {
+    rows,
+    withOthers,
+    settledFlagged,
+    settledThrough: season.rows[0]?.through ?? "",
+    everSynced: (sync?.at ?? null) !== null,
+  };
 }

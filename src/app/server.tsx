@@ -392,6 +392,7 @@ export function createApp({
           withOthers={dashboard.withOthers}
           everSynced={dashboard.everSynced}
           settledFlagged={dashboard.settledFlagged}
+          settledThrough={dashboard.settledThrough}
         />,
       ),
     );
@@ -425,7 +426,18 @@ export function createApp({
     if (admin && c.req.query("scope") !== undefined) {
       setCookie(c, SCOPE_COOKIE, query.scope, { path: "/", sameSite: "Lax", httpOnly: true });
     }
-    return { personId, admin, atlases, query };
+    // The atlas this person belongs to, for the scope toggle's middle
+    // position: mine, my atlas, everything. Nobody's for a program member
+    // or somebody nobody has asked about, and the toggle is then two-way.
+    const home = admin
+      ? await db
+          .selectFrom("person_membership as pm")
+          .innerJoin("atlas as a", "a.entity_id", "pm.atlas_id")
+          .where("pm.person_id", "=", personId)
+          .select(["a.code", "a.name"])
+          .executeTakeFirst()
+      : undefined;
+    return { personId, admin, atlases, query, homeAtlas: home ?? null };
   };
 
   const csv = (c: Context<AppEnv>, body: string, filename: string) =>
@@ -436,13 +448,13 @@ export function createApp({
 
   app.get("/samples", async (c) => {
     const m = c.get("m");
-    const { personId, admin, atlases, query } = await listingRequest(c);
+    const { personId, admin, atlases, query, homeAtlas } = await listingRequest(c);
     const results = await listSamples(db, query, personId);
     return c.html(
       await page(
         c,
         m.listings.samples.title,
-        <SampleListing m={m} query={query} page={results} atlases={atlases} admin={admin} />,
+        <SampleListing m={m} query={query} page={results} atlases={atlases} admin={admin} homeAtlas={homeAtlas} />,
       ),
     );
   });
@@ -455,13 +467,13 @@ export function createApp({
 
   app.get("/specimens", async (c) => {
     const m = c.get("m");
-    const { personId, admin, atlases, query } = await listingRequest(c);
+    const { personId, admin, atlases, query, homeAtlas } = await listingRequest(c);
     const results = await listSpecimens(db, query, personId);
     return c.html(
       await page(
         c,
         m.listings.specimens.title,
-        <SpecimenListing m={m} query={query} page={results} atlases={atlases} admin={admin} />,
+        <SpecimenListing m={m} query={query} page={results} atlases={atlases} admin={admin} homeAtlas={homeAtlas} />,
       ),
     );
   });

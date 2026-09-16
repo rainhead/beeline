@@ -119,7 +119,7 @@ describe("the front page", () => {
   });
 
   it("stops asking about seasons that have settled, but says they are there", async () => {
-    const { app } = await qcApp();
+    const { app, conn } = await qcApp();
     const body = await (await app.request("/")).text();
     // A-2 is Alice's, flagged, and from 2024: settled (beeline-2c3.24).
     expect(body).not.toContain("Sample A-2");
@@ -132,7 +132,10 @@ describe("the front page", () => {
     // remembered scope cookie, so leaving it out sent this link to everyone's
     // flagged samples while the sentence above it said "of yours"
     // (beeline-3kl).
-    expect(body).toContain(`href="/samples?scope=mine&amp;season=settled&amp;qc=flagged"`);
+    // A date rather than a season, since the listing has no season control
+    // (Peter, 2026-09-16): the last day before this season started.
+    const [[through]] = (await rows(conn, "SELECT CAST(started_on - 1 AS TEXT) FROM season")) as [[string]];
+    expect(body).toContain(`href="/samples?scope=mine&amp;to=${through}&amp;qc=flagged"`);
     // And the current season is untouched.
     expect(body).toContain("Sample A-7");
   });

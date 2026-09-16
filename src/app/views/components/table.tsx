@@ -11,21 +11,20 @@ import type { Child } from "hono/jsx";
 export function DataTable({
   columns,
   children,
+  rawHeader = false,
 }: {
   /** Header cells. A column with no heading (an actions column) passes "". */
   columns: ReadonlyArray<Child>;
   /** The `<tr>` rows. */
   children: Child;
+  /** The columns are already `<th>` elements — a listing whose headings carry menus. */
+  rawHeader?: boolean;
 }) {
   return (
     <div class="table-scroll">
       <table>
         <thead>
-          <tr>
-            {columns.map((c) => (
-              <th>{c}</th>
-            ))}
-          </tr>
+          <tr>{rawHeader ? columns : columns.map((c) => <th>{c}</th>)}</tr>
         </thead>
         <tbody>{children}</tbody>
       </table>

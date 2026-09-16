@@ -62,9 +62,16 @@ JOIN animal o ON o.rank = 'order'
   AND o.scientific_name = coalesce(fo.ord, 'Hymenoptera');
 
 -- ── Genera ──────────────────────────────────────────────────────────────
--- Family via the curated CSV first, then staging co-occurrence; a genus
--- with no known family attaches to its order (or Insecta) and shows up in
--- legacy_taxon_uncurated.
+-- Family via the curated CSV first, then staging co-occurrence: the expert
+-- columns, and then the volunteer ones. Both, because the genus list below is
+-- drawn from both — a genus nobody but a volunteer determined was minted with
+-- no family to find, fell through to its order, and with the order unstated
+-- too landed under Insecta: 11 of the 12 genera sitting there carried a family
+-- in the volunteer columns all along (Centris, Melitta, Peponapis, Protoxaea,
+-- and seven more, every placement correct). The order is the authority order,
+-- so an expert's family still wins wherever there is one. A genus with no
+-- family anywhere — Protohalonia, the twelfth — still attaches to its order
+-- (or Insecta) and shows up in legacy_taxon_uncurated.
 CREATE TABLE legacy_genus_family AS
 SELECT g.base_genus,
   coalesce(
@@ -72,6 +79,10 @@ SELECT g.base_genus,
     (SELECT arg_max(t.family, cnt) FROM (
        SELECT family, count(*) AS cnt FROM legacy_det_taxa d
        WHERE d.base_genus = g.base_genus AND d.family IS NOT NULL GROUP BY 1
+     ) t),
+    (SELECT arg_max(t.family, cnt) FROM (
+       SELECT family, count(*) AS cnt FROM legacy_vol_det_taxa v
+       WHERE v.base_genus = g.base_genus AND v.family IS NOT NULL GROUP BY 1
      ) t)
   ) AS family,
   (SELECT arg_max(t.ord, cnt) FROM (

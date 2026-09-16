@@ -234,7 +234,7 @@ export function SampleFlags({ m, findings }: { m: Messages; findings: readonly R
               </li>
             ))}
           </ul>
-          <Meta block>{m.qc.clearsNote}</Meta>
+          <Meta block>{m.qc.refreshNote}</Meta>
         </>
       )}
     </>

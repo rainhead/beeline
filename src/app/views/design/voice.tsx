@@ -36,7 +36,7 @@ export function DesignVoice({ m }: { m: Messages }) {
           ],
           [
             "Say what to do, and where",
-            <>“{m.qc.clearsNote}”</>,
+            <>“{m.qc.refreshNote}”</>,
           ],
           [
             "Say why the rule exists",
@@ -55,7 +55,7 @@ export function DesignVoice({ m }: { m: Messages }) {
           ],
           [
             "Absences are results",
-            <>“{m.qc.allClearHeading}” gets a heading and a thank-you, not an empty page.</>,
+            <>“{m.qc.allClear}” — an empty table gets a thank-you, not an empty page.</>,
           ],
           [
             "No dead ends",

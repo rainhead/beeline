@@ -77,16 +77,44 @@ async function qcApp() {
   return { app, conn, alice, bob };
 }
 
-describe("self-service QC home", () => {
-  it("shows the signed-in collector's samples with findings, blocking first", async () => {
+describe("the front page", () => {
+  it("opens with the brand and what the site is, not a worklist title", async () => {
+    const { app } = await qcApp();
+    const body = await (await app.request("/")).text();
+    expect(body).toContain("<h1>Beeline</h1>");
+    expect(body).toContain("Beeline follows the bees you collect");
+    expect(body).not.toContain("Samples needing attention");
+  });
+
+  it("lists the signed-in collector's flagged samples in one table, blocking first", async () => {
     const { app } = await qcApp();
     const body = await (await app.request("/")).text();
     expect(body).toContain("Sample A-7");
-    expect(body).toContain("2 samples need attention");
+    expect(body).toContain("2 samples need attention (2 cannot print until fixed)");
     expect(body).toContain("blocks printing");
     expect(body).toContain("A field the label needs is empty");
-    // Blocking finding renders before the warning within the card.
-    expect(body.indexOf("blocks printing")).toBeLessThan(body.indexOf("heads-up"));
+    // The flag is a full-width line under its row, and the missing locality
+    // marks the place cell.
+    expect(body).toContain('<tr class="flag"><td colspan="5">');
+    expect(body).toContain('<td class="flagged blocking">BentonCo, OR</td>');
+  });
+
+  it("marks the cell a flag is about", async () => {
+    const { app, conn, alice } = await qcApp();
+    // A-8 is clean; give it a locality the label cannot carry.
+    await conn.run(`UPDATE sample SET locality = '5th St, Corvallis' WHERE sample_number = 'A-8'`);
+    void alice;
+    const body = await (await app.request("/")).text();
+    expect(body).toContain('<td class="flagged blocking">5th St, Corvallis, BentonCo, OR</td>');
+    expect(body).toContain("The locality must be a short place name");
+  });
+
+  it("never says sync, and states the schedule instead of a timestamp", async () => {
+    const { app } = await qcApp();
+    const body = await (await app.request("/")).text();
+    expect(body).toContain("every morning at 2am Pacific");
+    expect(body).not.toContain("Data last synced");
+    expect(body).not.toMatch(/\bsync\b/i);
   });
 
   it("stops asking about seasons that have settled, but says they are there", async () => {
@@ -121,26 +149,18 @@ describe("self-service QC home", () => {
     expect(body).toContain("Fix on iNaturalist");
   });
 
-  it("states when data was last synced and that fixes clear on the next sync", async () => {
+  it("lists the collector's clean samples as waiting on labels, in the same table", async () => {
     const { app } = await qcApp();
     const body = await (await app.request("/")).text();
-    expect(body).toContain("Data last synced from iNaturalist");
-    expect(body).toContain("clears on the next sync");
-  });
-
-  it("lists the collector's clean samples as waiting on labels", async () => {
-    const { app } = await qcApp();
-    const body = await (await app.request("/")).text();
-    expect(body).toContain("Waiting on labels");
     expect(body).toContain("Sample A-8");
     expect(body).toContain("Finley NWR");
+    expect(body).toContain("4 labels to print");
     // A-7 is blocked (no locality); B-10 is Bob's.
     expect(body).not.toContain("B-10");
-    // 4 labels on A-8; A-7 contributes none because it cannot print.
-    expect(body).toContain("2 samples are clean and waiting — 6 labels still to print");
+    expect(body).toContain("2 are waiting on labels");
   });
 
-  it("counts a printed sample out of the waiting list", async () => {
+  it("counts a printed sample out of the table", async () => {
     const { app, conn, alice } = await qcApp();
     const [[id]] = (await rows(
       conn,
@@ -152,6 +172,22 @@ describe("self-service QC home", () => {
       `INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1), (${id}, 2), (${id}, 3), (${id}, 4)`,
     );
     const body = await (await app.request("/")).text();
+    expect(body).not.toContain("Sample A-8");
+  });
+
+  it("keeps a count that fell below the printed labels off the page", async () => {
+    const { app, conn, alice } = await qcApp();
+    const [[id]] = (await rows(
+      conn,
+      `SELECT s.entity_id FROM sample s
+       JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+       WHERE pc.person_id = ${alice} AND s.sample_number = 'A-8'`,
+    )) as [[number]];
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${id}, 1), (${id}, 2), (${id}, 3), (${id}, 4)`);
+    await conn.run(`UPDATE sample SET specimen_count = 2 WHERE entity_id = ${id}`);
+    expect(await rows(conn, `SELECT 1 FROM qc_finding WHERE sample_id = ${id} AND rule_name = 'count_below_printed'`)).toHaveLength(1);
+    const body = await (await app.request("/")).text();
+    // The volunteer gets two labels to discard, which is not a job (Peter, 2026-09-16).
     expect(body).not.toContain("Sample A-8");
   });
 
@@ -168,7 +204,45 @@ describe("self-service QC home", () => {
     expect(body).not.toContain("B-10");
   });
 
-  it("congratulates a clean record", async () => {
+  it("shows an observation numbered and left at zero as a placeholder", async () => {
+    const { app, conn, alice } = await qcApp();
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${alice}, 501, 'alice')`);
+    // Alice's, this season, numbered, still 0 — not a sample, and on the page for that reason.
+    await conn.run(
+      `INSERT INTO observation_field (inat_id, observed_on, latitude, longitude, positional_accuracy, user_id, user_login,
+                                      place_guess, sample_number_raw, specimen_count_raw)
+       VALUES (777001, DATE '2026-08-30', 44.5646, -123.262, 8, 501, 'alice', 'Finley NWR, Benton County, OR', '12', '0')`,
+    );
+    // Somebody else's zero stays theirs.
+    await conn.run(
+      `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, sample_number_raw, specimen_count_raw)
+       VALUES (777002, DATE '2026-08-30', 502, 'bob', '99', '0')`,
+    );
+    // Last season's zero has settled.
+    await conn.run(
+      `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, sample_number_raw, specimen_count_raw)
+       VALUES (777003, DATE '2024-08-30', 501, 'alice', '4', '0')`,
+    );
+    const body = await (await app.request("/")).text();
+    expect(body).toContain("Sample 12");
+    expect(body).toContain("https://www.inaturalist.org/observations/777001");
+    expect(body).toContain("still says 0 specimens");
+    expect(body).toContain("1 observation still says 0 specimens");
+    expect(body).toContain('<td class="flagged warning">0</td>');
+    // Its coordinates are true (nothing obscures them), so they show.
+    expect(body).toContain("44.5646, -123.2620");
+    expect(body).not.toContain("Sample 99");
+    expect(body).not.toContain("Sample 4 ");
+  });
+
+  it("links to all of the collector's samples", async () => {
+    const { app } = await qcApp();
+    const body = await (await app.request("/")).text();
+    expect(body).toContain(`href="/samples?scope=mine"`);
+    expect(body).toContain("All of your samples");
+  });
+
+  it("thanks a clean record and still links onward", async () => {
     const { app, conn, alice, bob } = await qcApp();
     // Repair Alice's sample; Bob's stays broken and must not spoil her all-clear.
     await conn.run(`UPDATE sample SET locality = 'Corvallis', county = 'BentonCo'
@@ -178,10 +252,15 @@ describe("self-service QC home", () => {
                              WHERE pc.person_id = ${alice}`)).toHaveLength(0);
     void bob;
     const body = await (await app.request("/")).text();
-    expect(body).toContain("All clear");
-    expect(body).toContain("every one of your samples is clean");
-    // All clear is not the end of the page: the repaired sample is now waiting.
-    expect(body).toContain("Waiting on labels");
+    // Nothing flagged — but the repaired sample is now waiting, so the table stays.
     expect(body).toContain("Sample A-7");
+    expect(body).toContain("waiting on labels");
+    // Print everything and the table goes, with thanks.
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number)
+                    SELECT s.entity_id, 1 FROM sample s JOIN sample_collector c ON c.sample_id = s.entity_id WHERE c.person_id = ${alice}`);
+    await conn.run(`UPDATE sample SET specimen_count = 1 WHERE entity_id IN (SELECT sample_id FROM sample_collector WHERE person_id = ${alice})`);
+    const clean = await (await app.request("/")).text();
+    expect(clean).toContain("Nothing needs your attention this season");
+    expect(clean).not.toContain("<table>");
   });
 });

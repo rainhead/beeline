@@ -154,6 +154,41 @@ th, td {
 }
 tbody tr:hover { background: var(--md-sys-color-surface-variant); }
 
+/* The dashboard's table marks the cell a flag is about — place, coordinates,
+   host plant, specimens, or the sample itself — and states the flag on a
+   full-width line under the row. Fill and a left rule, like chips and for
+   the same reason: the honey palette's warm containers barely differ. */
+td.flagged {
+  box-shadow: inset 3px 0 var(--md-sys-color-outline);
+  background: var(--md-sys-color-surface-variant);
+}
+td.flagged.blocking {
+  box-shadow: inset 3px 0 var(--md-sys-color-error);
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+td.flagged.warning {
+  box-shadow: inset 3px 0 var(--md-sys-color-warning);
+  background: var(--md-sys-color-warning-container);
+  color: var(--md-sys-color-on-warning-container);
+}
+/* The flag line belongs to the row above it: no rule between them, and
+   the row's hover does not reach it. */
+tr.flag td {
+  padding-top: var(--space-2);
+  padding-left: var(--space-8);
+}
+tbody tr:has(+ tr.flag) td { border-bottom: none; }
+tbody tr.flag:hover { background: inherit; }
+/* On a phone the table scrolls sideways, and a flag's words are the one
+   thing on the page that must not scroll out of view: the line sticks to
+   the visible edge and wraps to the viewport instead of the table. */
+.flag-body {
+  position: sticky;
+  left: var(--space-4);
+  max-width: min(100%, calc(100vw - 2 * var(--space-6) - var(--space-8)));
+}
+
 /* A single column of fields — the shape of every edit form here. Narrower
    than the content column, because a long text input is harder to read, not
    easier. */

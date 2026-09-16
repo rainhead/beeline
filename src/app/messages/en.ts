@@ -129,22 +129,77 @@ export const en = {
 
   qc: {
     title: "Your samples",
-    heading: "Samples needing attention",
-    summary: (samples: number, blocking: number) =>
-      `${n(samples)} ${samples === 1 ? "sample needs" : "samples need"} attention` +
-      (blocking > 0 ? ` — ${n(blocking)} ${blocking === 1 ? "flag blocks" : "flags block"} label printing.` : "."),
-    allClearHeading: "All clear",
-    allClear: "Nothing needs your attention — every one of your samples is clean. Thank you!",
-    lastSynced: (when: Date | string) => `Data last synced from iNaturalist ${dateTime(when)}.`,
-    neverSynced: "This instance has not synced from iNaturalist yet.",
-    clearsNote: "Fix things on the iNaturalist observation and the flag clears on the next sync.",
+    /**
+     * The front page is titled with the brand and opens with what the site
+     * is, for a volunteer who has just been let in (Peter, 2026-09-16). It
+     * is not "Samples needing attention": the table below says that.
+     */
+    heading: "Beeline",
+    lede:
+      "Beeline follows the bees you collect for your atlas. Each iNaturalist observation you make becomes a sample here, " +
+      "its specimens get labels, and what the experts determine them to be comes back to it. " +
+      "This page is your samples from this season that need something from you, or are waiting on labels.",
+    /** Positional so the proofing page can call it with placeholders (messages-proof.tsx). */
+    summary: (flagged: number, blocking: number, waiting: number, placeholders: number) => {
+      const parts: string[] = [];
+      if (flagged > 0) {
+        parts.push(
+          `${n(flagged)} ${flagged === 1 ? "sample needs" : "samples need"} attention` +
+            (blocking > 0 ? ` (${n(blocking)} cannot print until fixed)` : ""),
+        );
+      }
+      if (waiting > 0) parts.push(`${n(waiting)} ${waiting === 1 ? "is" : "are"} waiting on labels`);
+      if (placeholders > 0) {
+        parts.push(
+          `${n(placeholders)} ${placeholders === 1 ? "observation still says" : "observations still say"} 0 specimens`,
+        );
+      }
+      return parts.join(" · ") + ".";
+    },
+    col: {
+      sample: "Sample",
+      place: "Place",
+      coordinates: "Coordinates",
+      host: "Host plant",
+      specimens: "Specimens",
+    },
+    allClear: "Nothing needs your attention this season, and nothing is waiting on labels. Thank you!",
+    allMine: "All of your samples",
+    /**
+     * The schedule, in words a volunteer has: never "sync", and never the
+     * timestamp of the last run — which the sandbox printed in UTC as 9am
+     * and which is /jobs's business anyway (Peter, 2026-09-16).
+     */
+    refreshNote:
+      "Beeline reads your observations from iNaturalist every morning at 2am Pacific. " +
+      "A fix you make on iNaturalist shows up here the next day.",
+    neverSynced: "This instance has not read anything from iNaturalist yet.",
     sampleTitle: (sampleNumber: string, when: Date | string) => `Sample ${sampleNumber} · ${date(when)}`,
     specimens: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"}`,
+    labelsWaiting: (count: number) => `${n(count)} ${count === 1 ? "label" : "labels"} to print`,
+    /** Already formatted to four places by the view: a coordinate's precision is a fact about the reading, not the locale. */
+    coordinates: (latitude: string, longitude: string) => `${latitude}, ${longitude}`,
+    accuracy: (metres: number) => `within ${n(metres)} m`,
+    /** No believed-true pair, and the observation says why: geoprivacy. */
+    coordinatesObscured: "obscured",
+    coordinatesNone: "none",
+    hostNone: "none",
     fixOnInat: "Fix on iNaturalist",
-    notInatBacked: "Not backed by an iNaturalist observation — edit it here and the flags update immediately.",
     editSample: "Edit this sample",
     blocksPrinting: "blocks printing",
     headsUp: "heads-up",
+    /**
+     * An observation numbered as a sample and left at 0 specimens: the
+     * placeholder a volunteer makes in the field and fills in once the catch
+     * is counted — or forgets to (Peter, 2026-09-16). Not a sample yet, so
+     * not a finding; it is on this page so it is not forgotten.
+     */
+    placeholder: {
+      chip: "still 0",
+      note:
+        "This observation still says 0 specimens, so it is not a sample yet and has nothing to print. " +
+        "Once you have checked the place, the pin and the count, enter how many you collected.",
+    },
     /**
      * Whose sample you are looking at when it isn't only yours: the sample
      * number belongs to the first collector's series, so a shared sample has
@@ -163,21 +218,6 @@ export const en = {
         `Seasons settle on 1 March, so earlier ones no longer wait for you here — fixing them is welcome, not expected.`,
       link: "Show them",
     },
-  },
-
-  /**
-   * The passive counterpart to the flagged list: samples that are clean and
-   * waiting on labels. No promises about when — printing is staff work whose
-   * shape is still being worked out (beeline-1kb.1).
-   */
-  pendingPrint: {
-    heading: "Waiting on labels",
-    summary: (samples: number, labels: number) =>
-      `${n(samples)} ${samples === 1 ? "sample is" : "samples are"} clean and waiting — ` +
-      `${n(labels)} ${labels === 1 ? "label" : "labels"} still to print. Nothing more for you to do with these.`,
-    colSample: "Sample",
-    colPlace: "Place",
-    colLabels: "Labels",
   },
 
   /**
@@ -892,7 +932,7 @@ export const en = {
    */
   qcInstructions: {
     missing_required_field:
-      "A field the label needs is empty. Fill it in on the iNaturalist observation (or here for trap samples) and it will clear on the next sync.",
+      "A field the label needs is empty. Fill it in on the iNaturalist observation (or here for trap samples).",
     missing_recommended_field:
       "A field the record should carry is empty. Filling it in improves the record but does not block printing.",
     obscured_no_true_coordinates:
@@ -908,13 +948,13 @@ export const en = {
     coordinate_out_of_region:
       "The coordinates on this record are not in North America, but the record says they should be. Usually the pin was moved on the observation after its location text was written, or a longitude lost its minus sign. Check the pin on the iNaturalist observation — if the record really was collected outside North America, set its country to match and ask staff to confirm it.",
     non_tracheophyte_host:
-      "The iNaturalist observation should be identified as the floral host — a vascular plant. Its current identification is something else (a moss, alga, fungus, or the bee itself). Correct the observation's identification to the plant the bee was collected from and it will clear on the next sync.",
+      "The iNaturalist observation should be identified as the floral host — a vascular plant. Its current identification is something else (a moss, alga, fungus, or the bee itself). Correct the observation's identification to the plant the bee was collected from.",
     duplicate_sample_number:
       "Two of your samples on the same day share a sample number. Renumber one of the observations so each sample that day is distinct.",
     count_mismatch:
-      "Your iNaturalist observation and this sample disagree about how many specimens were collected. Update whichever side is wrong.",
+      "The specimen count on your iNaturalist observation has changed since this sample was made from it. Until labels print, the observation is the record; staff carry the new count across.",
     count_below_printed:
-      "The specimen count is now lower than the number of labels already printed for this sample. Nothing to fix in the data — but some printed labels may never be attached to a specimen.",
+      "The specimen count is now lower than the number of labels already printed for this sample. Nothing to fix — you will have a few labels left over to discard.",
     within_sample_disagreement:
       "The legacy records merged into this sample disagreed about a field; the earliest record's value was kept. Review the alternatives listed and correct the sample if the kept value is wrong.",
     observation_missing_upstream:
@@ -1088,7 +1128,7 @@ export const en = {
       sync: {
         term: "Sync",
         definition:
-          "This site pulling your observations from iNaturalist. Changes you make on iNaturalist show up here after the next sync, not the moment you make them.",
+          "Staff's word for Beeline reading your observations from iNaturalist, which it does every morning at 2am Pacific. A change you make on iNaturalist shows up here the next day, not the moment you make it.",
       },
       "trap-sample": {
         term: "Trap sample",

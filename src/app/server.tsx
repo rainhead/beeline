@@ -45,7 +45,8 @@ import {
 } from "../person-change.js";
 import { applyPersonOverlay } from "../apply-person-overlay.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { QcHome, type FindingRow, type PendingRow } from "./views/qc.js";
+import { QcHome } from "./views/qc.js";
+import { loadDashboard } from "./dashboard.js";
 import { DESIGN_STYLESHEETS } from "./views/design/shell.js";
 import { DesignIndex } from "./views/design/index-page.js";
 import { DesignColor } from "./views/design/color.js";
@@ -372,107 +373,25 @@ export function createApp({
       </Layout>
     )}`;
 
-  // The flagship is the front page: your samples needing attention.
+  // The front page: your samples that want something this season, as one
+  // table (src/app/dashboard.ts).
   app.get("/", async (c) => {
     const m = c.get("m");
     // The dashboard is the "mine" surface, so it follows the switch: while
-    // acting for Robert it is Robert's flagged samples that need attention,
-    // and the chrome says whose they are.
+    // acting for Robert it is Robert's samples that need attention, and the
+    // chrome says whose they are.
     const { personId } = c.get("acting");
-    const [flagged, pending, partners, sync] = await Promise.all([
-      db
-        // The roll-up, not qc_finding: a finding on one of a sample's
-        // specimens is something to fix about that sample, and the dashboard
-        // has to say so or it disagrees with printability (beeline-2c3.29).
-        .selectFrom("sample_qc_finding as f")
-        .innerJoin("sample as s", "s.entity_id", "f.sample_id")
-        .innerJoin("qc_rule as r", "r.name", "f.rule_name")
-        // Any sample you collected, not only the ones numbered under your
-        // name: a second collector is not a spectator (beeline-77j).
-        .innerJoin("sample_collector as mine", (join) =>
-          join.onRef("mine.sample_id", "=", "s.entity_id").on("mine.person_id", "=", personId),
-        )
-        .select([
-          "s.entity_id as sample_id",
-          "f.rule_name",
-          "f.details",
-          "r.severity",
-          "s.sample_number",
-          "s.date_start",
-          "s.locality",
-          "s.county",
-          "s.state_province",
-          "s.specimen_count",
-          "s.inat_observation_id",
-          // Settled seasons stay in this one read and are split out below:
-          // asking twice would mean computing the whole flag set twice, and
-          // that view is what the page costs (beeline-2c3.24).
-          sql<boolean>`EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id)`.as("settled"),
-        ])
-        .orderBy("s.date_start", "desc")
-        .orderBy(BY_SAMPLE_NUMBER)
-        .orderBy("s.entity_id")
-        .execute(),
-      // The passive half of the dashboard: clean samples waiting on labels.
-      // Warnings don't block printing, so a sample can honestly appear in
-      // both lists.
-      db
-        .selectFrom("pending_print_sample as p")
-        .innerJoin("sample as s", "s.entity_id", "p.sample_id")
-        .innerJoin("sample_collector as mine", (join) =>
-          join.onRef("mine.sample_id", "=", "s.entity_id").on("mine.person_id", "=", personId),
-        )
-        .select([
-          "s.entity_id as sample_id",
-          "s.sample_number",
-          "s.date_start",
-          "s.locality",
-          "s.county",
-          "s.state_province",
-          "p.pending_count",
-        ])
-        .orderBy("s.date_start", "desc")
-        .orderBy(BY_SAMPLE_NUMBER)
-        .orderBy("s.entity_id")
-        .execute(),
-      // Who else collected those samples, so a card can say whose numbering
-      // it is you are looking at.
-      db
-        .selectFrom("sample_collector as mine")
-        .innerJoin("sample_collector as theirs", "theirs.sample_id", "mine.sample_id")
-        .innerJoin("person", "person.entity_id", "theirs.person_id")
-        .where("mine.person_id", "=", personId)
-        .where("theirs.person_id", "!=", personId)
-        .select(["mine.sample_id as sample_id", "person.display_name as display_name"])
-        .orderBy("theirs.position")
-        .execute(),
-      db
-        .selectFrom("sync_run")
-        .select(({ fn }) => fn.max("completed_at").as("at"))
-        .executeTakeFirst(),
-    ]);
-    // This season asks; earlier ones only report their number.
-    const rows = flagged as Array<FindingRow & { settled: boolean }>;
-    const findings = rows.filter((row) => !row.settled);
-    const settledFlagged = new Set(rows.filter((row) => row.settled).map((row) => row.sample_id)).size;
-    // sample_id → the other collectors' names, in recordedBy order.
-    const withOthers = new Map<number, string[]>();
-    for (const row of partners as Array<{ sample_id: number; display_name: string }>) {
-      const names = withOthers.get(row.sample_id) ?? [];
-      names.push(row.display_name);
-      withOthers.set(row.sample_id, names);
-    }
+    const dashboard = await loadDashboard(db, personId);
     return c.html(
       await page(
         c,
         m.qc.title,
         <QcHome
           m={m}
-          findings={findings}
-          pending={pending as PendingRow[]}
-          withOthers={withOthers}
-          syncedAt={sync?.at ?? null}
-          settledFlagged={settledFlagged}
+          rows={dashboard.rows}
+          withOthers={dashboard.withOthers}
+          everSynced={dashboard.everSynced}
+          settledFlagged={dashboard.settledFlagged}
         />,
       ),
     );

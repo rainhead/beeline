@@ -15,6 +15,8 @@ import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
 import { jobHealth, type Job, type LastOutcome } from "./jobs/framework.js";
 import { Glossary } from "./views/glossary.js";
+import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
+import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomySummary } from "./taxonomy.js";
 import { Jobs } from "./views/jobs.js";
 import { PersonPage, Roster } from "./views/roster.js";
 import {
@@ -674,13 +676,36 @@ export function createApp({
     return c.html(await page(c, m.glossary.title, <Glossary m={m} />));
   });
 
+  // The taxonomy (beeline-45v.5). Read by everyone, like the glossary: it
+  // shows names and totals and nobody's records, and the one link into
+  // records it offers lands on a listing that applies its own scope. A name
+  // is addressed by rank and name, the tree's own key, because an entity_id
+  // is redrawn by every rebuild. Curation, when it comes, gets its own gate.
+  app.get("/taxonomy", async (c) => {
+    const m = c.get("m");
+    const query = parseTaxonomyQuery(new URL(c.req.url).searchParams);
+    const summary = await taxonomySummary(db);
+    const list = isFiltering(query) ? await searchTaxa(db, query) : null;
+    const start = list === null ? await browseStart(db) : null;
+    return c.html(
+      await page(c, m.taxonomy.title, <TaxonomyIndex m={m} query={query} summary={summary} list={list} start={start} />),
+    );
+  });
+
+  app.get("/taxonomy/:rank/:name", async (c) => {
+    const m = c.get("m");
+    const node = await loadTaxon(db, c.req.param("rank"), c.req.param("name"));
+    if (node === null) return c.text(m.taxonomy.notFound, 404);
+    return c.html(await page(c, node.scientific_name, <TaxonPage m={m} node={node} admin={c.get("admin")} />));
+  });
+
   // --- The design system. English-only by policy: these views carry literal
   // prose. Not gated, unlike /jobs and /people — it reads no records and
   // decides nothing, so the only reason to keep a curious volunteer out was
-  // that it sits next to two surfaces that do. It is dropped from the nav
-  // for non-admins instead (NavLinks), which is what "staff tooling" here
-  // actually means. Every section is listed in DESIGN_SECTIONS, and a test
-  // walks that list. ---
+  // that it sits next to two surfaces that do. It is offered only to admins
+  // instead (the menu beside the brand, views/layout.tsx), which is what "staff
+  // tooling" here actually means. Every section is listed in DESIGN_SECTIONS,
+  // and a test walks that list. ---
   const designPages: ReadonlyArray<[string, string, (m: Messages) => Child]> = [
     ["/design", "Design system", () => <DesignIndex />],
     ["/design/color", "Color", () => <DesignColor />],

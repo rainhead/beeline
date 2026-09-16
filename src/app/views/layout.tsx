@@ -33,20 +33,46 @@ const STYLESHEETS = ["/tokens.css", "/static/elements.css", "/static/layout.css"
 /** Stylesheet URL with the cache-busting stamp attached. */
 const versioned = (href: string, version: string) => `${href}${href.includes("?") ? "&" : "?"}v=${version}`;
 
-/** The nav destinations, rendered twice: inline on wide screens, in the hamburger menu on narrow ones. */
-function NavLinks({ m, admin }: { m: Messages; admin: boolean }) {
+/**
+ * The header nav: the records people work through, and nothing else.
+ * Rendered twice — inline on wide screens, in the hamburger menu on narrow ones.
+ */
+function NavLinks({ m }: { m: Messages }) {
   return (
     <>
       <a href="/samples">{m.layout.nav.samples}</a>
       <a href="/specimens">{m.layout.nav.specimens}</a>
-      <a href="/glossary">{m.layout.nav.glossary}</a>
-      {admin && <a href="/people">{m.layout.nav.people}</a>}
-      {/* /people and /jobs are gated; /design is only unlisted — it reads no
-          records, so keeping a volunteer out of it protects nothing, and the
-          reason to leave it off their nav is that it is not their tool. */}
-      {admin && <a href="/design">{m.layout.nav.design}</a>}
-      {admin && <a href="/jobs">{m.layout.nav.jobs}</a>}
     </>
+  );
+}
+
+/**
+ * Everything else a person can open — reference pages and staff tools — in
+ * the menu left of the brand, grouped by what it is for rather than by who
+ * may use it (beeline-45v.5). Each item is still shown only to whoever may
+ * open it. Never the account menu: that one is about the person signed in.
+ */
+function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
+  return (
+    <nav class="menu-section" aria-label={m.layout.more}>
+      {[
+        { href: "/glossary", label: m.layout.nav.glossary, shown: true },
+        { href: "/taxonomy", label: m.layout.nav.taxonomy, shown: true },
+        // /people and /jobs are gated; /design is only unlisted — it reads no
+        // records, so keeping a volunteer out of it protects nothing, and the
+        // reason not to offer it to them is that it is not their tool.
+        { href: "/people", label: m.layout.nav.people, shown: admin },
+        { href: "/jobs", label: m.layout.nav.jobs, shown: admin },
+        { href: "/design", label: m.layout.nav.design, shown: admin },
+      ]
+        .filter((link) => link.shown)
+        // Alphabetical by the words on screen, so a renamed or translated
+        // label keeps its place rather than the order this list is typed in.
+        .sort((a, b) => a.label.localeCompare(b.label, m.locale))
+        .map((link) => (
+          <a href={link.href}>{link.label}</a>
+        ))}
+    </nav>
   );
 }
 
@@ -139,16 +165,23 @@ export function Layout(props: {
             <summary aria-label={m.layout.menu} title={m.layout.menu}>
               <MenuIcon />
             </summary>
-            <nav class="menu-panel">
-              <NavLinks m={m} admin={env.admin} />
-            </nav>
+            <div class="menu-panel">
+              {/* The inline nav is hidden on a narrow screen, so the records
+                  come along here; on a wide one they stay in the header. */}
+              <nav class="menu-section nav-records" aria-label={m.layout.records}>
+                <NavLinks m={m} />
+              </nav>
+              <MoreLinks m={m} admin={env.admin} />
+            </div>
           </details>
           <a href="/" class="brand">
             {m.brand}
           </a>
           <nav class="nav-inline">
-            <NavLinks m={m} admin={env.admin} />
+            <NavLinks m={m} />
           </nav>
+          {/* The account menu is about the person signed in — who they are,
+              who they act for, signing out — and never a place to find pages. */}
           <details class="menu account-menu">
             <summary aria-label={m.layout.account(session.login)} title={m.layout.account(session.login)}>
               {session.iconUrl !== null ? <img class="avatar" src={session.iconUrl} alt="" /> : <PersonIcon />}

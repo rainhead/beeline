@@ -154,7 +154,7 @@ export const en = {
           `${n(placeholders)} ${placeholders === 1 ? "observation still says" : "observations still say"} 0 specimens`,
         );
       }
-      return parts.join(" · ") + ".";
+      return parts.join(" · ");
     },
     col: {
       sample: "Sample",
@@ -164,7 +164,6 @@ export const en = {
       specimens: "Specimens",
     },
     allClear: "Nothing needs your attention this season, and nothing is waiting on labels. Thank you!",
-    allMine: "All of your samples",
     /**
      * The schedule, in words a volunteer has: never "sync", and never the
      * timestamp of the last run — which the sandbox printed in UTC as 9am

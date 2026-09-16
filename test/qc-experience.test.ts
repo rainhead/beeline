@@ -90,7 +90,8 @@ describe("the front page", () => {
     const { app } = await qcApp();
     const body = await (await app.request("/")).text();
     expect(body).toContain("Sample A-7");
-    expect(body).toContain("2 samples need attention (2 cannot print until fixed)");
+    // The summary is a heading: it is what the volunteer came for.
+    expect(body).toContain("<h2>2 samples need attention (2 cannot print until fixed)");
     expect(body).toContain("blocks printing");
     expect(body).toContain("A field the label needs is empty");
     // The flag is a full-width line under its row, and the missing locality
@@ -233,13 +234,6 @@ describe("the front page", () => {
     expect(body).toContain("44.5646, -123.2620");
     expect(body).not.toContain("Sample 99");
     expect(body).not.toContain("Sample 4 ");
-  });
-
-  it("links to all of the collector's samples", async () => {
-    const { app } = await qcApp();
-    const body = await (await app.request("/")).text();
-    expect(body).toContain(`href="/samples?scope=mine"`);
-    expect(body).toContain("All of your samples");
   });
 
   it("thanks a clean record and still links onward", async () => {

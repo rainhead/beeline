@@ -2,7 +2,7 @@ import { EMPTY_QUERY, listingHref, MINE } from "../listings.js";
 import { sampleHref } from "../record.js";
 import type { Geoprivacy, QcSeverity } from "../../model.js";
 import type { Messages } from "../messages/index.js";
-import { Callout, Chip, DataTable, EmptyState, LinkButton, Meta, PageHeader, TaxonName } from "./components/index.js";
+import { Callout, Chip, DataTable, EmptyState, Meta, PageHeader, TaxonName } from "./components/index.js";
 
 /**
  * The front page: one table of this season's samples that want something —
@@ -252,14 +252,14 @@ export function QcHome(props: {
   const waiting = rows.filter((r) => r.pending_count > 0).length;
   const placeholders = rows.filter(isPlaceholder).length;
   const settledFlagged = props.settledFlagged ?? 0;
-  const mineHref = listingHref("/samples", EMPTY_QUERY, { scope: MINE });
 
+  // The summary is the page's second heading, not a meta line: "2 samples
+  // need attention" is the thing a volunteer came for, and it was carrying
+  // less weight than the note about when the data is read (Peter on #66).
+  // That note now sits under the table, where the flags it explains are.
   return (
     <>
       <PageHeader title={m.qc.heading} lede={m.qc.lede} />
-      <Callout>
-        <Meta block>{props.everSynced ? m.qc.refreshNote : m.qc.neverSynced}</Meta>
-      </Callout>
       {settledFlagged > 0 && (
         <Callout>
           <Meta block>
@@ -278,7 +278,7 @@ export function QcHome(props: {
         <EmptyState>{m.qc.allClear}</EmptyState>
       ) : (
         <>
-          <Meta block>{m.qc.summary(flagged, blocking, waiting, placeholders)}</Meta>
+          <h2>{m.qc.summary(flagged, blocking, waiting, placeholders)}</h2>
           <DataTable columns={[m.qc.col.sample, m.qc.col.place, m.qc.col.coordinates, m.qc.col.host, m.qc.col.specimens]}>
             {rows.map((row) => (
               <Row m={m} row={row} others={row.sample_id === null ? [] : (withOthers.get(row.sample_id) ?? [])} />
@@ -286,9 +286,7 @@ export function QcHome(props: {
           </DataTable>
         </>
       )}
-      <p>
-        <LinkButton href={mineHref}>{m.qc.allMine}</LinkButton>
-      </p>
+      <Meta block>{props.everSynced ? m.qc.refreshNote : m.qc.neverSynced}</Meta>
     </>
   );
 }

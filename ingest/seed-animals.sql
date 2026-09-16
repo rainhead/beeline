@@ -72,6 +72,19 @@ JOIN animal o ON o.rank = 'order'
 -- so an expert's family still wins wherever there is one. A genus with no
 -- family anywhere — Protohalonia, the twelfth — still attaches to its order
 -- (or Insecta) and shows up in legacy_taxon_uncurated.
+--
+-- A volunteer's family counts only where the program already holds that
+-- family, because family nodes are minted just above from the curated list and
+-- the expert columns: a family named nowhere else would be selected here and
+-- then resolve to nothing, sending the genus to the fallback anyway — the fix
+-- silently doing nothing (CodeRabbit, PR #64). Minting the missing family
+-- instead is the wrong repair: that insert defaults a family whose order
+-- nobody stated to Hymenoptera, which is true of the curated bee list and
+-- would be a false claim about, say, a fly family a volunteer named. So an
+-- unrecognised one keeps the honest outcome — the genus stays under its order
+-- or Insecta, and is listed for curation. As it stands the volunteer columns
+-- name six families (Apidae, Halictidae, Megachilidae, Andrenidae, Colletidae,
+-- Melittidae) and the program holds all six.
 CREATE TABLE legacy_genus_family AS
 SELECT g.base_genus,
   coalesce(
@@ -81,8 +94,11 @@ SELECT g.base_genus,
        WHERE d.base_genus = g.base_genus AND d.family IS NOT NULL GROUP BY 1
      ) t),
     (SELECT arg_max(t.family, cnt) FROM (
-       SELECT family, count(*) AS cnt FROM legacy_vol_det_taxa v
-       WHERE v.base_genus = g.base_genus AND v.family IS NOT NULL GROUP BY 1
+       SELECT v.family, count(*) AS cnt FROM legacy_vol_det_taxa v
+       WHERE v.base_genus = g.base_genus AND v.family IS NOT NULL
+         AND EXISTS (SELECT 1 FROM animal a
+                     WHERE a.rank = 'family' AND a.scientific_name = v.family)
+       GROUP BY 1
      ) t)
   ) AS family,
   (SELECT arg_max(t.ord, cnt) FROM (

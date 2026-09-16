@@ -120,11 +120,16 @@ FROM (
     CASE WHEN base_genus IS NOT NULL AND starts_with(sci, concat(base_genus, ' '))
          THEN substr(sci, length(base_genus) + 2) END AS qual_tail
   FROM (
-    -- A species alias replaces the genus and the epithet together.
+    -- A species alias replaces the genus and the epithet together. The
+    -- spelling the source used survives beside the result: where a curated
+    -- decision overrules a name, that spelling is the only record of what was
+    -- written, since most legacy rows carry no whole scientificName to keep
+    -- (beeline-bph, promote-determinations.sql).
     SELECT _id, ord, family,
       coalesce(split_part(species_alias, ' ', 1), base_genus) AS base_genus,
       sub,
       coalesce(split_part(species_alias, ' ', 2), epithet)    AS epithet,
+      written_genus, epithet AS written_epithet,
       sci, legacy_rank, remainder
     FROM (
       SELECT *, legacy_species_alias(written_genus, epithet) AS species_alias
@@ -163,7 +168,8 @@ CREATE OR REPLACE VIEW legacy_vol_det_taxa AS
 SELECT _id, family,
   coalesce(split_part(species_alias, ' ', 1), base_genus) AS base_genus,
   sub,
-  coalesce(split_part(species_alias, ' ', 2), epithet)    AS epithet
+  coalesce(split_part(species_alias, ' ', 2), epithet)    AS epithet,
+  written_genus, epithet AS written_epithet
 FROM (
   SELECT *, legacy_species_alias(written_genus, epithet) AS species_alias
   FROM (

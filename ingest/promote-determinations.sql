@@ -65,8 +65,25 @@ WHERE trim(identifiedBy) <> ''
   AND trim(identifiedBy) NOT IN (SELECT alias FROM legacy_determiner_alias)
 GROUP BY 1;
 
+-- `written` is the name as the source spelled it, which differs from `name`
+-- only where a curated decision moved the determination to another node — a
+-- spelling alias today, an adopted ITIS name next (beeline-bph). Genus and
+-- species are the ranks such a decision can reach, so nothing else is built
+-- here; a row whose parts are absent has nothing that was written.
+--
+-- A subgenus row is left alone deliberately: its spelling lives across two
+-- columns, so the genus alone would say the determiner wrote 'Lasioglossum'
+-- when they wrote 'Lasioglossum (Lasioglossum)'. A missing record is better
+-- than a false one, and a subgenus overruled by a curated decision (the
+-- '(Peponapis)' shape) therefore keeps nothing — a known gap, not an oversight.
 CREATE OR REPLACE VIEW legacy_expert_target AS
 SELECT _id, sci AS verbatim, qualifier,
+  CASE
+    WHEN sub IS NOT NULL THEN NULL
+    WHEN written_genus IS NOT NULL AND written_epithet IS NOT NULL
+      THEN concat(written_genus, ' ', written_epithet)
+    WHEN written_genus IS NOT NULL THEN written_genus
+  END AS written,
   CASE
     WHEN trinomial IS NOT NULL THEN 'subspecies'
     WHEN qualified_epithet IS NOT NULL AND base_genus IS NOT NULL THEN 'species'
@@ -93,6 +110,12 @@ FROM legacy_det_taxa;
 -- determination here just as it is for an expert.
 CREATE OR REPLACE VIEW legacy_volunteer_target AS
 SELECT _id,
+  CASE
+    WHEN sub IS NOT NULL THEN NULL
+    WHEN written_genus IS NOT NULL AND written_epithet IS NOT NULL
+      THEN concat(written_genus, ' ', written_epithet)
+    WHEN written_genus IS NOT NULL THEN written_genus
+  END AS written,
   CASE
     WHEN epithet IS NOT NULL AND base_genus IS NOT NULL THEN 'species'
     WHEN sub IS NOT NULL AND base_genus IS NOT NULL THEN 'subgenus'
@@ -123,7 +146,10 @@ JOIN sample_primary_collector pc ON pc.sample_id = n.sample_id;
 INSERT INTO determination (specimen_id, animal_id, qualifier,
                            verbatim_identification, sex, caste,
                            determiner_id, determiner_name, is_expert, channel)
-SELECT s.specimen_id, an.entity_id, t.qualifier, t.verbatim,
+SELECT s.specimen_id, an.entity_id, t.qualifier,
+       -- The whole name where the source wrote one; failing that, the spelling
+       -- it used, but only where a curated decision overruled it (beeline-bph).
+       coalesce(t.verbatim, CASE WHEN t.written IS DISTINCT FROM t.name THEN t.written END),
        nullif(lower(trim(r.sex)), ''), nullif(lower(trim(r.caste)), ''),
        dp.person_id, nullif(trim(r.identifiedBy), ''), true, 'legacy_import'
 FROM legacy_promotable r
@@ -133,10 +159,14 @@ JOIN legacy_specimen_map s ON s._id = r._id
 LEFT JOIN legacy_determiner_person dp ON dp.alias = trim(r.identifiedBy);
 
 -- Volunteer determinations arrive already parted (familyVolDet/genusVolDet/
--- speciesVolDet), so there is no verbatim string to keep and none is invented.
-INSERT INTO determination (specimen_id, animal_id, sex, caste,
+-- speciesVolDet), so there is no whole name to keep and none is invented. The
+-- one exception is a name a curated decision overruled: the spelling the
+-- volunteer used is then kept, because otherwise nothing would say what they
+-- wrote (beeline-bph).
+INSERT INTO determination (specimen_id, animal_id, verbatim_identification, sex, caste,
                            determiner_id, is_expert, channel)
 SELECT s.specimen_id, an.entity_id,
+       CASE WHEN t.written IS DISTINCT FROM t.name THEN t.written END,
        nullif(lower(trim(r.sexVolDet)), ''), nullif(lower(trim(r.casteVolDet)), ''),
        s.collector_id, false, 'legacy_import'
 FROM legacy_promotable r

@@ -67,6 +67,30 @@ describe("a name written another way resolves to the node it means", () => {
     ]);
   });
 
+  test("a name the program overruled keeps the spelling the source used", async () => {
+    // Most legacy determinations carry no whole scientificName, so where a
+    // curated decision sends one to a different node this is the only record
+    // of what was written (beeline-bph). Volunteer rows only: they can carry
+    // no verbatim of their own, so anything here came from that rule.
+    //
+    // Normalising case is not overruling a name — 'andrena' means the Andrena
+    // it lands on — so those rows keep nothing. Nor does the '(Peponapis)'
+    // row, whose spelling spans two columns: half of it would be a false
+    // record of what the volunteer wrote.
+    expect(
+      await rows(
+        conn,
+        `SELECT a.scientific_name, d.verbatim_identification
+         FROM determination d JOIN animal a ON a.entity_id = d.animal_id
+         WHERE d.is_expert = false AND d.verbatim_identification IS NOT NULL
+         ORDER BY a.scientific_name`,
+      ),
+    ).toEqual([
+      ["Agapostemon", "Agopostemon"],
+      ["Protoxaea gloriosa", "Protoxaea glorioso"],
+    ]);
+  });
+
   test("no node is named the way only a parsing accident would name it", async () => {
     expect(
       await rows(

@@ -148,7 +148,15 @@ export const en = {
             (blocking > 0 ? ` (${n(blocking)} cannot print until fixed)` : ""),
         );
       }
-      if (waiting > 0) parts.push(`${n(waiting)} ${waiting === 1 ? "is" : "are"} waiting on labels`);
+      // The first clause names its subject; a later one borrows it. With
+      // nothing flagged this is the first, and "3 are waiting" has none.
+      if (waiting > 0) {
+        parts.push(
+          parts.length === 0
+            ? `${n(waiting)} ${waiting === 1 ? "sample is" : "samples are"} waiting on labels`
+            : `${n(waiting)} ${waiting === 1 ? "is" : "are"} waiting on labels`,
+        );
+      }
       if (placeholders > 0) {
         parts.push(
           `${n(placeholders)} ${placeholders === 1 ? "observation still says" : "observations still say"} 0 specimens`,

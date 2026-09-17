@@ -130,6 +130,35 @@ boot; sessions and volunteer tokens are acceptable losses pre-cutover.
 `fly deploy`. The machine is replaced in place: migrations run, then the app
 starts. Downtime is one boot.
 
+**A change to the curated person overlay is not live after a deploy.** The
+app reads `ingest/person-overlay.csv` at boot only to guard the admin seed; it
+applies nothing from it. Only a legacy promotion, `pnpm person:apply`, and the
+People screen's own saves do. So a merged overlay row — a person created, an
+account bound, an admin granted — changes nothing on a deployed store until it
+is applied there, and a person who exists only in that file still cannot sign
+in. After the deploy is healthy:
+
+```sh
+fly machine update --env BEELINE_MAINTENANCE=1 <id> --yes   # see the note below
+fly ssh console --app beeline -C "sh -c 'cd /app && pnpm person:apply'"
+fly machine update --env BEELINE_MAINTENANCE= <id> --yes
+```
+
+`person:apply` prints how many rows it applied and lists any it could not
+resolve — a row naming a person the store does not hold, say. An unresolved
+row is reported and skipped, not an error: it changes nothing, and since
+applying is idempotent the fix is to correct the row and run it again. The
+next boot then logs `recorded N person change(s) made while the app was
+down`, which is the applied rows reaching the change log, attributed to the
+pass rather than to a person. `N` counts what *changed*, not what was applied:
+replaying a row the store already agrees with changes nothing, so on
+2026-09-17 the whole overlay went on as 417 rows and the boot recorded 7, all
+of them one new person. Going *into* maintenance mode, `fly machine update`
+sits for about five minutes waiting on a health check that mode deliberately
+never passes, and then exits 0. The machine is ready long before: look for
+`maintenance mode: app not started` in `fly logs` and carry on in another
+shell rather than waiting for it.
+
 Two things about the **first** deploy that look like failures and are not, or
 are not yours:
 

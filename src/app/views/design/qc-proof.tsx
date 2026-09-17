@@ -1,51 +1,46 @@
 import type { Messages } from "../../messages/index.js";
-import { QcHome, type CoCollectors, type FindingRow, type PendingRow } from "../qc.js";
+import { QcHome, type CoCollectors, type DashboardRow } from "../qc.js";
 import { DesignPage, Specimen } from "./shell.js";
 
 /**
  * QC-state proofing: QcHome rendered from fixture data, one panel per state
- * — the component is a pure function of (messages, findings, syncedAt), so
+ * — the component is a pure function of (messages, rows, everSynced), so
  * every state is reachable without data gymnastics. This is also the
  * regression check for any change to the component library: the real page at
  * / runs through exactly this code path.
  */
 
-const row = (over: Partial<FindingRow>): FindingRow => ({
+const row = (over: Partial<DashboardRow>): DashboardRow => ({
   sample_id: 1,
-  rule_name: "missing_required_field",
-  details: "locality",
-  severity: "blocking",
-  sample_number: "3",
-  date_start: new Date("2026-07-14T12:00:00"),
-  locality: "Corvallis",
-  county: "BentonCo",
-  state_province: "OR",
-  specimen_count: 3,
   inat_observation_id: 123456789n,
-  ...over,
-});
-
-const SYNCED = new Date("2026-08-21T02:50:00");
-
-const pendingRow = (over: Partial<PendingRow>): PendingRow => ({
-  sample_id: 1,
   sample_number: "3",
   date_start: new Date("2026-07-14T12:00:00"),
   locality: "Corvallis",
   county: "BentonCo",
   state_province: "OR",
-  pending_count: 3,
+  latitude: 44.5646,
+  longitude: -123.262,
+  coordinate_uncertainty_m: 8,
+  geoprivacy: null,
+  taxon_geoprivacy: null,
+  host_name: "Phacelia",
+  host_rank: "genus",
+  specimen_count: 3,
+  pending_count: 0,
+  findings: [],
   ...over,
 });
 
-const WAITING: PendingRow[] = [
-  pendingRow({}),
-  pendingRow({ sample_id: 7, sample_number: "4", pending_count: 1 }),
-  pendingRow({
+const WAITING: DashboardRow[] = [
+  row({ pending_count: 3 }),
+  row({ sample_id: 7, sample_number: "4", pending_count: 1, host_name: null, host_rank: null }),
+  row({
     sample_id: 8,
     sample_number: "OBAS-00657",
     date_start: new Date("2026-06-02T12:00:00"),
     locality: "Finley NWR",
+    inat_observation_id: null,
+    specimen_count: 2140,
     pending_count: 2140,
   }),
 ];
@@ -58,84 +53,115 @@ const SHARED: CoCollectors = new Map([
 
 const FIXTURES: Array<{
   label: string;
-  findings: FindingRow[];
-  pending: PendingRow[];
+  rows: DashboardRow[];
   withOthers?: CoCollectors;
-  syncedAt: Date | null;
+  everSynced: boolean;
 }> = [
-  { label: "All clear, nothing waiting", findings: [], pending: [], syncedAt: SYNCED },
-  { label: "All clear, samples waiting on labels", findings: [], pending: WAITING, syncedAt: SYNCED },
+  { label: "All clear, nothing waiting", rows: [], everSynced: true },
+  { label: "All clear, samples waiting on labels", rows: WAITING, everSynced: true },
   {
     label: "A shared trap line: samples numbered under the other collector",
-    findings: [],
-    pending: [pendingRow({ sample_id: 7, sample_number: "OBAS-00658", pending_count: 96 })],
+    rows: [row({ sample_id: 7, sample_number: "OBAS-00658", inat_observation_id: null, specimen_count: 96, pending_count: 96 })],
     withOthers: SHARED,
-    syncedAt: SYNCED,
+    everSynced: true,
   },
-  { label: "All clear, never synced", findings: [], pending: [], syncedAt: null },
+  { label: "All clear, never synced", rows: [], everSynced: false },
   {
-    label: "One sample: blocking + warning, iNat-backed",
-    findings: [
-      row({ details: "locality, protocol" }),
-      row({ rule_name: "missing_recommended_field", details: "county", severity: "warning", county: null }),
+    label: "One sample: a required field missing, iNat-backed",
+    rows: [
+      row({
+        locality: null,
+        findings: [{ rule_name: "missing_required_field", details: "locality", severity: "blocking" }],
+      }),
     ],
-    pending: [],
-    syncedAt: SYNCED,
+    everSynced: true,
   },
   {
     label: "Trap sample: no observation to fix",
-    findings: [
+    rows: [
       row({
         sample_id: 2,
-        rule_name: "within_sample_disagreement",
-        details: "protocol: vane trap | 6 Vane Traps",
-        severity: "warning",
         sample_number: "OBAS-00657",
         inat_observation_id: null,
         specimen_count: 2140,
+        coordinate_uncertainty_m: 3200,
+        findings: [{ rule_name: "coordinate_uncertainty", details: "3200 m > 250 m", severity: "blocking" }],
       }),
     ],
-    pending: [],
-    syncedAt: SYNCED,
+    everSynced: true,
   },
   {
-    label: "A busy season: several samples, mixed severities",
-    findings: [
-      row({ sample_id: 3, sample_number: "7", details: "locality" }),
+    label: "A placeholder: numbered, still at 0 specimens",
+    rows: [
+      row({
+        sample_id: null,
+        sample_number: "12",
+        date_start: new Date("2026-08-30T12:00:00"),
+        specimen_count: 0,
+        host_name: null,
+        host_rank: null,
+      }),
+    ],
+    everSynced: true,
+  },
+  {
+    label: "A busy season: every column flagged somewhere",
+    rows: [
       row({
         sample_id: 3,
         sample_number: "7",
-        rule_name: "coordinate_uncertainty",
-        details: "3200 m > 250 m",
+        findings: [
+          { rule_name: "duplicate_sample_number", details: "also sample 7 on 14 Jul 2026", severity: "blocking" },
+          { rule_name: "coordinate_uncertainty", details: "3200 m > 250 m", severity: "blocking" },
+        ],
+        coordinate_uncertainty_m: 3200,
       }),
       row({
         sample_id: 4,
         sample_number: "8",
-        rule_name: "locality_format",
-        details: "longer than 18 chars; contains comma",
         locality: "5th St, Corvallis Oregon near the old mill by the river",
+        findings: [
+          { rule_name: "locality_format", details: "contains comma; street address", severity: "blocking" },
+        ],
       }),
       row({
         sample_id: 5,
         sample_number: "9",
         date_start: new Date("2026-06-02T12:00:00"),
-        rule_name: "non_tracheophyte_host",
-        details: "Umbrella Liverworts (genus Marchantia)",
+        host_name: "Marchantia",
+        findings: [
+          { rule_name: "non_tracheophyte_host", details: "Umbrella Liverworts (genus Marchantia)", severity: "blocking" },
+        ],
       }),
       row({
         sample_id: 6,
         sample_number: "10",
         date_start: new Date("2026-06-02T12:00:00"),
-        rule_name: "count_mismatch",
-        details: "observation says 4, sample says 6",
-        severity: "warning",
+        latitude: null,
+        longitude: null,
+        coordinate_uncertainty_m: null,
+        geoprivacy: "obscured",
+        findings: [{ rule_name: "obscured_no_true_coordinates", details: null, severity: "blocking" }],
+      }),
+      row({
+        sample_id: 9,
+        sample_number: "11",
+        date_start: new Date("2026-06-02T12:00:00"),
+        state_province: "Oregon",
+        pending_count: 3,
+        findings: [{ rule_name: "place_unrecognised", details: "Oregon", severity: "warning" }],
+      }),
+      row({
+        sample_id: null,
+        sample_number: "13",
+        date_start: new Date("2026-06-01T12:00:00"),
+        specimen_count: 0,
+        host_name: null,
+        host_rank: null,
       }),
     ],
-    // Sample 10's finding is a warning, which doesn't block printing — so it
-    // is honestly in both lists at once.
-    pending: [pendingRow({ sample_id: 6, sample_number: "10", date_start: new Date("2026-06-02T12:00:00") })],
     withOthers: SHARED,
-    syncedAt: SYNCED,
+    everSynced: true,
   },
 ];
 
@@ -144,19 +170,13 @@ export function QcProof({ m }: { m: Messages }) {
     <DesignPage
       current="/design/qc"
       title="QC states"
-      lede="The dashboard rendered from fixture data, one panel per state it can be in — findings above, samples waiting on labels below. Proof layout and copy here; the real page at / shows only your own samples."
+      lede="The dashboard rendered from fixture data, one panel per state it can be in. A flag marks the column it is about and states itself on the line under the row. Proof layout and copy here; the real page at / shows only your own samples."
     >
       {FIXTURES.map((state) => (
         <>
           <h2>{state.label}</h2>
           <Specimen>
-            <QcHome
-              m={m}
-              findings={state.findings}
-              pending={state.pending}
-              withOthers={state.withOthers}
-              syncedAt={state.syncedAt}
-            />
+            <QcHome m={m} rows={state.rows} withOthers={state.withOthers} everSynced={state.everSynced} />
           </Specimen>
         </>
       ))}

@@ -1,4 +1,5 @@
 import type { Child } from "hono/jsx";
+import { SearchIcon } from "../icons.js";
 
 /**
  * The furniture a long list needs: the filter bar above it, the column
@@ -19,6 +20,97 @@ export function FilterBar({ action, children, actions }: { action: string; child
       {children}
       <div class="filter-actions">{actions}</div>
     </form>
+  );
+}
+
+/**
+ * A query as hidden inputs, minus the parameters a form is about to set, so
+ * submitting the form keeps every other filter. Page is always dropped: a
+ * changed filter starts from the first page.
+ */
+export function HiddenParams({ params, except }: { params: URLSearchParams; except: ReadonlyArray<string> }) {
+  const skip = new Set<string>([...except, "page"]);
+  return (
+    <>
+      {[...params.entries()]
+        .filter(([name]) => !skip.has(name))
+        .map(([name, value]) => (
+          <input type="hidden" name={name} value={value} />
+        ))}
+    </>
+  );
+}
+
+/** The search box: the one filter that is not about a column. */
+export function SearchForm({
+  action,
+  params,
+  value,
+  label,
+  placeholder,
+}: {
+  action: string;
+  /** The rest of the query, carried through. */
+  params: URLSearchParams;
+  value: string;
+  label: string;
+  placeholder: string;
+}) {
+  return (
+    <form class="search" role="search" method="get" action={action}>
+      <HiddenParams params={params} except={["q"]} />
+      <input type="search" name="q" value={value} placeholder={placeholder} aria-label={label} />
+      <button type="submit" aria-label={label}>
+        <SearchIcon />
+      </button>
+    </form>
+  );
+}
+
+/** One filter in force: what to call it, what it says, and the listing without it. */
+export interface FilterPill {
+  label: string;
+  value: string;
+  clearHref: string;
+}
+
+/** The filters in force, each dismissable, and one link that clears them all. */
+export function FilterPills({
+  filters,
+  clearAllHref,
+  clearAllLabel,
+  groupLabel,
+  removeLabel,
+}: {
+  filters: readonly FilterPill[];
+  /** Null when there is nothing to clear beyond the pills themselves. */
+  clearAllHref: string | null;
+  clearAllLabel: string;
+  groupLabel: string;
+  removeLabel: (filter: string) => string;
+}) {
+  if (filters.length === 0) return null;
+  return (
+    <div class="active-filters" role="group" aria-label={groupLabel}>
+      {filters.map((filter) => (
+        <span class="chip">
+          {filter.label}: {filter.value}{" "}
+          <a href={filter.clearHref} aria-label={removeLabel(filter.label)} class="chip-remove">
+            ×
+          </a>
+        </span>
+      ))}
+      {clearAllHref !== null && <a href={clearAllHref}>{clearAllLabel}</a>}
+    </div>
+  );
+}
+
+/** A record's number as a pill: a click target a finger can hit (Peter, 2026-09-16). */
+export function Pill({ href, mono, children }: { href: string; mono?: boolean; children: Child }) {
+  return (
+    <a href={href} class={mono ? "pill mono" : "pill"}>
+      {children}
+    </a>
   );
 }
 

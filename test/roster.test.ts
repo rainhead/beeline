@@ -90,9 +90,94 @@ describe("the roster screen", () => {
     const body = await (await ctx.app.request("/people")).text();
     expect(body).not.toContain("Evidence");
     expect(body).not.toContain("binding");
-    for (const column of ["Person", "iNaturalist account", "Samples", "Belongs to", "Admin"]) {
-      expect(body).toContain(`<th>${column}</th>`);
+    // Each heading's menu is named for what it holds and no more: a column
+    // that only sorts does not promise a screen-reader user a filter.
+    for (const label of [
+      "Person: sort",
+      "iNaturalist account: sort",
+      "Samples: sort",
+      "Last sample: sort and filter",
+      "Last seen: sort",
+      "Belongs to: sort and filter",
+      "Admin: filter",
+    ]) {
+      expect(body).toContain(`aria-label="${label}"`);
     }
+  });
+
+  it("prints the login and not the user id, which made every row taller", async () => {
+    const body = await (await ctx.app.request("/people?q=Ada")).text();
+    expect(body).toContain("<code>adacollects</code>");
+    expect(body).not.toContain("111</");
+  });
+
+  it("is a listing like the others: a search box, pills, a count, a download", async () => {
+    const body = await (await ctx.app.request("/people?q=Ada")).text();
+    expect(body).toContain(`<input type="search" name="q" value="Ada"`);
+    expect(body).toContain("Search: Ada");
+    expect(body).toContain(`<span class="results-count">1 person</span>`);
+    expect(body).toContain(`href="/people.csv?q=Ada"`);
+    const csv = await ctx.app.request("/people.csv?q=Ada");
+    expect(csv.status).toBe(200);
+    const [header, row] = (await csv.text()).split("\r\n");
+    expect(header).toBe("display_name,login,inat_user_id,samples,last_sample,last_visit,last_login,membership,atlas,admin");
+    expect(row).toContain("Ada Collector,adacollects,111,");
+  });
+
+  it("sorts by a column, either way", async () => {
+    const asc = await (await ctx.app.request("/people?sort=name")).text();
+    expect(asc.indexOf("Ada Collector")).toBeLessThan(asc.indexOf("Bo Netter"));
+    const desc = await (await ctx.app.request("/people?sort=name&dir=desc")).text();
+    expect(desc.indexOf("Staff Person")).toBeLessThan(desc.indexOf("Ada Collector"));
+  });
+
+  describe("active in the last 12 months (beeline-caa)", () => {
+    it("counts a recent sample, and its absence", async () => {
+      await insertCleanSample(ctx.conn, { collector_id: "1", date_start: "current_date - 30", date_end: "current_date - 30" });
+      await insertCleanSample(ctx.conn, { collector_id: "2", date_start: "DATE '2019-06-01'", date_end: "DATE '2019-06-01'" });
+      const active = await (await ctx.app.request("/people?active=active")).text();
+      expect(active).toContain("Ada Collector");
+      expect(active).not.toContain("Bo Netter");
+      expect(active).toContain("Active: Active in the last 12 months");
+      const inactive = await (await ctx.app.request("/people?active=inactive")).text();
+      expect(inactive).not.toContain(">Ada Collector<");
+      expect(inactive).toContain("Bo Netter");
+      // Never collected and never here: not active.
+      expect(inactive).toContain("Staff Person");
+    });
+
+    it("means twelve calendar months, not 360 days", async () => {
+      // 362 days ago is inside the last year and outside twelve thirties.
+      await insertCleanSample(ctx.conn, { collector_id: "2", date_start: "current_date - 362", date_end: "current_date - 362" });
+      const active = await (await ctx.app.request("/people?active=active")).text();
+      expect(active).toContain("Bo Netter");
+    });
+
+    it("counts a visit as well as a sample", async () => {
+      const ctx = await rosterApp({ personId: 3, admin: true, privateStore: true });
+      await ctx.conn.run(`INSERT INTO private.person_activity (inat_user_id, last_seen_at) VALUES (111, now())`);
+      const active = await (await ctx.app.request("/people?active=active")).text();
+      expect(active).toContain("Ada Collector");
+      expect(active).not.toContain("Bo Netter");
+    });
+  });
+
+  it("filters by where they belong, and to the admins", async () => {
+    await ctx.conn.run(`INSERT INTO person_membership (person_id, kind, atlas_id)
+                        VALUES (1, 'atlas', (SELECT entity_id FROM atlas WHERE code = 'OBA')), (2, 'program', NULL)`);
+    const oba = await (await ctx.app.request("/people?member=OBA")).text();
+    expect(oba).toContain("Ada Collector");
+    expect(oba).not.toContain("Bo Netter");
+    expect(oba).toContain("Belongs to: Oregon Bee Atlas");
+    const program = await (await ctx.app.request("/people?member=program")).text();
+    expect(program).toContain("Bo Netter");
+    expect(program).not.toContain(">Ada Collector<");
+    const unrecorded = await (await ctx.app.request("/people?member=unrecorded")).text();
+    expect(unrecorded).toContain("Staff Person");
+    expect(unrecorded).not.toContain(">Ada Collector<");
+    const admins = await (await ctx.app.request("/people?admin=1")).text();
+    expect(admins).toContain("Staff Person");
+    expect(admins).not.toContain(">Ada Collector<");
   });
 
   it("drops the checking apparatus entirely when there is nothing to check against", async () => {
@@ -190,8 +275,8 @@ describe("the roster screen", () => {
       date_end: "DATE '2025-08-12'",
     });
     const body = await (await ctx.app.request("/people?q=Ada")).text();
-    expect(body).toContain("<th>Last sample</th>");
-    expect(body).toContain("<th>Last seen</th>");
+    expect(body).toContain(`aria-label="Last sample: sort and filter"`);
+    expect(body).toContain(`aria-label="Last seen: sort"`);
     expect(body).toContain("Aug 12, 2025");
   });
 
@@ -247,7 +332,7 @@ describe("the roster screen", () => {
       const ctx = await rosterApp({ personId: 3, admin: true, privateStore: true });
       const body = await (await ctx.app.request("/people?q=Ada")).text();
       expect(body).not.toContain("sign-in only");
-      expect(body).toContain("<th>Last seen</th>");
+      expect(body).toContain(`aria-label="Last seen: sort"`);
     });
   });
 
@@ -255,7 +340,7 @@ describe("the roster screen", () => {
     // createMemoryDb attaches no private store, which is also a CLI run or a
     // restore. An em dash, not a crash and not today's date.
     const body = await (await ctx.app.request("/people?q=Bo")).text();
-    expect(body).toContain("<th>Last seen</th>");
+    expect(body).toContain(`aria-label="Last seen: sort"`);
     expect((await ctx.app.request("/people")).status).toBe(200);
   });
 

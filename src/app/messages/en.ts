@@ -355,8 +355,16 @@ export const en = {
       numberAsc: "Lowest first",
       numberDesc: "Highest first",
     },
-    /** The accessible name of a column heading's menu. */
-    columnMenu: (column: string) => `${column}: sort and filter`,
+    /**
+     * The accessible name of a column heading's menu. It says what the menu
+     * holds and no more: a column that only sorts must not tell a
+     * screen-reader user there is a filter to find (CodeRabbit on #67).
+     */
+    columnMenu: {
+      both: (column: string) => `${column}: sort and filter`,
+      sort: (column: string) => `${column}: sort`,
+      filter: (column: string) => `${column}: filter`,
+    },
 
 
     /** Chips on a row, and the same three words the QC filter offers. */
@@ -781,11 +789,23 @@ export const en = {
      */
     intro:
       "Everyone in the store, and the iNaturalist account each one signs in with. Someone with no account cannot sign in until staff connect one.",
-    search: "Name or login",
-    searchHint: "Matches the display name or the account login.",
+    search: "Search",
+    searchHint: "Name or iNaturalist login",
     onlySuspect: "Only accounts that look wrong",
-    apply: "Search",
-    clear: "Clear",
+    apply: "Apply",
+    clear: "Clear all",
+    inForce: "Filters in force",
+    remove: (filter: string) => `Remove the ${filter} filter`,
+    /** Still active, or gone quiet: a sample or a visit within twelve months (beeline-caa). */
+    activity: "Active",
+    activityHint: "A sample collected, or a visit here, in the last 12 months",
+    activityAny: "Anyone",
+    activityActive: "Active in the last 12 months",
+    activityInactive: "Not active in the last 12 months",
+    memberAny: "Anywhere",
+    memberUnrecorded: "Not recorded",
+    onlyAdmins: "Only admins",
+    csv: "Download CSV",
     colPerson: "Person",
     colAccount: "iNaturalist account",
     colSamples: "Samples",

@@ -23,7 +23,6 @@ import {
 } from "../listings.js";
 import { sampleHref, specimenHref } from "../record.js";
 import type { Messages } from "../messages/index.js";
-import { SearchIcon } from "./icons.js";
 import {
   Button,
   Chip,
@@ -31,12 +30,17 @@ import {
   DataTable,
   EmptyState,
   Field,
+  FilterPills,
+  HiddenParams,
   Meta,
   PageHeader,
   Pager,
+  Pill,
+  SearchForm,
   SelectField,
   TaxonName,
   TextField,
+  type FilterPill,
 } from "./components/index.js";
 
 /**
@@ -67,22 +71,9 @@ function lede(
   return copy.ledeAtlas(atlases.find((a) => a.code === query.scope)?.name ?? query.scope);
 }
 
-/**
- * The query as hidden inputs, minus the fields a form is about to set, so
- * submitting the form keeps every other filter. Page is always dropped: a
- * changed filter starts from the first page.
- */
+/** The query as hidden inputs, minus the fields a form is about to set. */
 function HiddenQuery({ query, except }: { query: ListingQuery; except: ReadonlyArray<keyof ListingQuery> }) {
-  const skip = new Set<string>([...except, "page"]);
-  return (
-    <>
-      {[...listingParams(query).entries()]
-        .filter(([name]) => !skip.has(name))
-        .map(([name, value]) => (
-          <input type="hidden" name={name} value={value} />
-        ))}
-    </>
-  );
+  return <HiddenParams params={listingParams(query)} except={except} />;
 }
 
 /**
@@ -121,20 +112,6 @@ function ScopeToggle({
   );
 }
 
-/** The search box: the one filter that is not about a column. */
-function SearchForm({ m, path, query }: { m: Messages; path: string; query: ListingQuery }) {
-  const f = m.listings.filters;
-  return (
-    <form class="search" role="search" method="get" action={path}>
-      <HiddenQuery query={query} except={["q"]} />
-      <input type="search" name="q" value={query.q} placeholder={f.searchHint} aria-label={f.search} />
-      <button type="submit" aria-label={f.search}>
-        <SearchIcon />
-      </button>
-    </form>
-  );
-}
-
 /** The staff note: this page is showing more than your own collecting. */
 function ScopeNote({ m, query, atlases }: { m: Messages; query: ListingQuery; atlases: readonly AtlasOption[] }) {
   if (query.scope === MINE) return null;
@@ -169,22 +146,15 @@ const emptyFilters: Omit<ListingQuery, "scope" | "page" | "sort" | "dir"> = {
   qc: "any",
 };
 
-/** One filter in force: what to call it, what it says, and the listing without it. */
-interface ActiveFilter {
-  label: string;
-  value: string;
-  clearHref: string;
-}
-
 function activeFilters(
   m: Messages,
   path: string,
   query: ListingQuery,
   atlases: readonly AtlasOption[],
   homeAtlas: AtlasOption | null,
-): ActiveFilter[] {
+): FilterPill[] {
   const f = m.listings.filters;
-  const out: ActiveFilter[] = [];
+  const out: FilterPill[] = [];
   const clear = (override: Partial<ListingQuery>) => listingHref(path, query, { ...override, page: 1 });
   const atlasName = (code: string) => atlases.find((a) => a.code === code)?.name ?? code;
   // A scope the toggle has no position for reads as a pill, and clearing it
@@ -227,25 +197,6 @@ function activeFilters(
     out.push({ label: f.qc, value, clearHref: clear({ qc: "any" }) });
   }
   return out;
-}
-
-/** The filters in force, each dismissable, and one link that clears them all. */
-function ActiveFilters({ m, path, query, filters }: { m: Messages; path: string; query: ListingQuery; filters: ActiveFilter[] }) {
-  if (filters.length === 0) return null;
-  const f = m.listings.filters;
-  return (
-    <div class="active-filters" aria-label={f.inForce}>
-      {filters.map((filter) => (
-        <span class="chip">
-          {filter.label}: {filter.value}{" "}
-          <a href={filter.clearHref} aria-label={f.remove(filter.label)} class="chip-remove">
-            ×
-          </a>
-        </span>
-      ))}
-      {isFiltered(query) && <a href={listingHref(path, query, { ...emptyFilters, page: 1 })}>{f.clear}</a>}
-    </div>
-  );
 }
 
 /**
@@ -300,7 +251,7 @@ function Column({
   const sortHref = (dir: SortDirection) => listingHref(path, query, { sort: sort ?? DEFAULT_SORT, dir, page: 1 });
   return (
     <th>
-      <ColumnMenu label={label} menuLabel={m.listings.columnMenu(label)} sorted={current}>
+      <ColumnMenu label={label} menuLabel={(sort === null ? m.listings.columnMenu.filter : fields.length === 0 ? m.listings.columnMenu.sort : m.listings.columnMenu.both)(label)} sorted={current}>
         {sort !== null && (
           <div class="menu-section">
             {(["asc", "desc"] as const).map((dir) =>
@@ -374,15 +325,6 @@ function ListingPager({ m, path, query, total }: { m: Messages; path: string; qu
   );
 }
 
-/** A record's number as a pill: a click target a finger can hit (Peter, 2026-09-16). */
-function Pill({ href, mono, children }: { href: string; mono?: boolean; children: Child }) {
-  return (
-    <a href={href} class={mono ? "pill mono" : "pill"}>
-      {children}
-    </a>
-  );
-}
-
 export interface ListingProps<Row> {
   m: Messages;
   query: ListingQuery;
@@ -412,9 +354,21 @@ function Toolbar<Row>({
       <ScopeNote m={m} query={query} atlases={atlases} />
       <div class="listing-toolbar">
         {admin && <ScopeToggle m={m} path={path} query={query} homeAtlas={homeAtlas} />}
-        <SearchForm m={m} path={path} query={query} />
+        <SearchForm
+          action={path}
+          params={listingParams(query)}
+          value={query.q}
+          label={m.listings.filters.search}
+          placeholder={m.listings.filters.searchHint}
+        />
       </div>
-      <ActiveFilters m={m} path={path} query={query} filters={filters} />
+      <FilterPills
+        filters={filters}
+        clearAllHref={isFiltered(query) ? listingHref(path, query, { ...emptyFilters, page: 1 }) : null}
+        clearAllLabel={m.listings.filters.clear}
+        groupLabel={m.listings.filters.inForce}
+        removeLabel={m.listings.filters.remove}
+      />
       {props.page.rows.length > 0 && (
         <ResultsHeader m={m} path={path} query={query} total={props.page.total} count={copy.count} />
       )}

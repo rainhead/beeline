@@ -549,10 +549,22 @@ describe("the toolbar", () => {
     const body = await get(app, "/samples?scope=all&place=Fallon&qc=clean");
     expect(body).toContain("Place: Fallon");
     expect(body).toContain("Flags: Clean");
+    // A named group, so assistive technology announces what the pills are.
+    expect(body).toContain(`<div class="active-filters" role="group" aria-label="Filters in force">`);
     // Dismissing one keeps the other.
     const remove = /href="([^"]*)"[^>]*aria-label="Remove the Place filter"/.exec(body)?.[1] ?? "";
     expect(remove).toContain("qc=clean");
     expect(remove).not.toContain("place=");
+  });
+
+  it("names each column's menu for what it holds", async () => {
+    const { app } = await listingApp("staffer");
+    const samples = await get(app, "/samples?scope=all");
+    expect(samples).toContain(`aria-label="Sample: sort"`);
+    expect(samples).toContain(`aria-label="Date: sort and filter"`);
+    const specimens = await get(app, "/specimens?scope=all");
+    expect(specimens).toContain(`aria-label="Determined by: sort"`);
+    expect(specimens).not.toContain(`aria-label="Determined by: sort and filter"`);
   });
 
   it("carries the rest of the query through a column's filter form", async () => {

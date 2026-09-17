@@ -26,11 +26,9 @@ import {
   Card,
   CheckboxField,
   Chip,
-  ColumnMenu,
   DataTable,
   EmptyState,
   FilterPills,
-  HiddenParams,
   Meta,
   PageHeader,
   Pager,
@@ -38,7 +36,9 @@ import {
   SelectField,
   TextField,
   type FilterPill,
+  type TableColumn,
 } from "./components/index.js";
+import { columnCopy, type SortKind } from "./listings.js";
 
 /**
  * The roster. Two screens: everyone, and one person.
@@ -212,63 +212,51 @@ function RecentChanges({ m, changes }: { m: Messages; changes: readonly LinkedCh
 }
 
 /**
- * A column heading with its menu: the column's two orders, and the filter
- * that narrows on it, the form carrying the rest of the query as hidden
- * inputs. The same shape as the record listings' (views/listings.tsx),
- * which is the point — this page used to be unlike them (Peter, 2026-09-16).
+ * What the roster says about one of its columns; the table draws it. The
+ * same shape as the record listings' columns (views/listings.tsx), through
+ * the same library component, which is the point — this page used to be
+ * unlike them (Peter, 2026-09-16).
  */
-function Column({
+function column({
   m,
   query,
   label,
   sort,
   kind = "text",
   fields = [],
-  children,
+  controls,
 }: {
   m: Messages;
   query: RosterQuery;
   label: string;
   sort: RosterSort | null;
-  kind?: "text" | "date" | "number";
+  kind?: SortKind;
   fields?: ReadonlyArray<keyof RosterQuery>;
-  children?: Child;
-}) {
-  if (sort === null && fields.length === 0) return <th>{label}</th>;
-  const names = m.listings.sort;
-  const order: Record<"text" | "date" | "number", [string, string]> = {
-    text: [names.textAsc, names.textDesc],
-    date: [names.dateAsc, names.dateDesc],
-    number: [names.numberAsc, names.numberDesc],
-  };
-  const current: SortDirection | null = sort !== null && query.sort === sort ? query.dir : null;
+  controls?: Child;
+}): TableColumn {
+  if (sort === null && fields.length === 0) return { label };
+  const copy = columnCopy(m, label, kind, sort !== null, fields.length > 0);
   const sortHref = (dir: SortDirection) => rosterHref(query, { sort: sort ?? DEFAULT_ROSTER_SORT, dir, page: 1 });
-  return (
-    <th>
-      <ColumnMenu label={label} menuLabel={(sort === null ? m.listings.columnMenu.filter : fields.length === 0 ? m.listings.columnMenu.sort : m.listings.columnMenu.both)(label)} sorted={current}>
-        {sort !== null && (
-          <div class="menu-section">
-            {(["asc", "desc"] as const).map((dir) =>
-              current === dir ? (
-                <a href={sortHref(dir)} aria-current="true">
-                  {order[kind][dir === "asc" ? 0 : 1]}
-                </a>
-              ) : (
-                <a href={sortHref(dir)}>{order[kind][dir === "asc" ? 0 : 1]}</a>
-              ),
-            )}
-          </div>
-        )}
-        {fields.length > 0 && (
-          <form method="get" action="/people" class="col-filter">
-            <HiddenParams params={rosterParams(query)} except={fields} />
-            {children}
-            <Button variant="tonal">{m.people.apply}</Button>
-          </form>
-        )}
-      </ColumnMenu>
-    </th>
-  );
+  return {
+    label,
+    menu: {
+      menuLabel: copy.menuLabel,
+      sort:
+        sort === null
+          ? undefined
+          : {
+              current: query.sort === sort ? query.dir : null,
+              ascHref: sortHref("asc"),
+              descHref: sortHref("desc"),
+              ascLabel: copy.ascLabel,
+              descLabel: copy.descLabel,
+            },
+      filter:
+        fields.length === 0
+          ? undefined
+          : { action: "/people", params: rosterParams(query), fields, applyLabel: m.people.apply, controls },
+    },
+  };
 }
 
 /** The filters in force, as pills; scope and sort are not filters. */
@@ -360,47 +348,70 @@ export function Roster({
         <EmptyState>{p.noPeople}</EmptyState>
       ) : (
         <DataTable
-          rawHeader
           columns={[
-            <Column {...col} label={p.colPerson} sort="name" />,
+            column({ ...col, label: p.colPerson, sort: "name" }),
             // The account's filter is the one check this page still makes,
             // and only while there is anything to check against.
-            <Column {...col} label={p.colAccount} sort="login" fields={checking ? ["suspect"] : []}>
-              {checking && <CheckboxField id="suspect" name="suspect" label={p.onlySuspect} checked={query.suspect} />}
-            </Column>,
-            <Column {...col} label={p.colSamples} sort="samples" kind="number" />,
-            <Column {...col} label={p.colLastSample} sort="lastSample" kind="date" fields={["active"]}>
-              <SelectField
-                id="active"
-                name="active"
-                label={p.activity}
-                hint={p.activityHint}
-                value={query.active}
-                options={[
-                  ["any", p.activityAny],
-                  ["active", p.activityActive],
-                  ["inactive", p.activityInactive],
-                ]}
-              />
-            </Column>,
-            <Column {...col} label={p.colLastSeen} sort="lastSeen" kind="date" />,
-            <Column {...col} label={p.colMembership} sort="membership" fields={["member"]}>
-              <SelectField
-                id="member"
-                name="member"
-                label={p.colMembership}
-                value={query.member}
-                options={[
-                  [MEMBER_ANY, p.memberAny] as const,
-                  ...atlases.map((a) => [a.code, a.name] as const),
-                  [PROGRAM_MEMBERSHIP, p.membershipProgram] as const,
-                  [MEMBER_UNRECORDED, p.memberUnrecorded] as const,
-                ]}
-              />
-            </Column>,
-            <Column {...col} label={p.colAdmin} sort={null} fields={["admin"]}>
-              <CheckboxField id="admin" name="admin" label={p.onlyAdmins} checked={query.admin} />
-            </Column>,
+            column({
+              ...col,
+              label: p.colAccount,
+              sort: "login",
+              fields: checking ? ["suspect"] : [],
+              controls: checking && (
+                <CheckboxField id="suspect" name="suspect" label={p.onlySuspect} checked={query.suspect} />
+              ),
+            }),
+            column({ ...col, label: p.colSamples, sort: "samples", kind: "number" }),
+            column({
+              ...col,
+              label: p.colLastSample,
+              sort: "lastSample",
+              kind: "date",
+              fields: ["active"],
+              controls: (
+                <SelectField
+                  id="active"
+                  name="active"
+                  label={p.activity}
+                  hint={p.activityHint}
+                  value={query.active}
+                  options={[
+                    ["any", p.activityAny],
+                    ["active", p.activityActive],
+                    ["inactive", p.activityInactive],
+                  ]}
+                />
+              ),
+            }),
+            column({ ...col, label: p.colLastSeen, sort: "lastSeen", kind: "date" }),
+            column({
+              ...col,
+              label: p.colMembership,
+              sort: "membership",
+              fields: ["member"],
+              controls: (
+                <SelectField
+                  id="member"
+                  name="member"
+                  label={p.colMembership}
+                  value={query.member}
+                  options={[
+                    [MEMBER_ANY, p.memberAny] as const,
+                    ...atlases.map((a) => [a.code, a.name] as const),
+                    [PROGRAM_MEMBERSHIP, p.membershipProgram] as const,
+                    [MEMBER_UNRECORDED, p.memberUnrecorded] as const,
+                  ]}
+                />
+              ),
+            }),
+            // A yes/no has no "A to Z": this one filters and does not sort.
+            column({
+              ...col,
+              label: p.colAdmin,
+              sort: null,
+              fields: ["admin"],
+              controls: <CheckboxField id="admin" name="admin" label={p.onlyAdmins} checked={query.admin} />,
+            }),
           ]}
         >
           {page.rows.map((row) => (

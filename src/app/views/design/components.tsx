@@ -267,6 +267,68 @@ export function DesignComponents({ m }: { m: Messages }) {
         </DataTable>
       </Specimen>
 
+      <h3>Columns that sort and filter</h3>
+      <p>
+        A listing describes its columns and the table draws them: a column with a <code>menu</code> gets a heading
+        that opens one, holding that column's two orders and its own filter. Every such heading wears the same
+        chevron, at a size that reads; the order in force is a separate arrow beside the label, and the heading cell
+        carries <code>aria-sort</code>. The filter's Apply is a real button — it submits a form, where everything
+        else in a menu is a row. A heading that is read aloud and never drawn, for a column of links out, is{" "}
+        <code>hidden</code>.
+      </p>
+      <Specimen>
+        <DataTable
+          columns={[
+            {
+              label: "Sample",
+              menu: {
+                menuLabel: "Sample: sort",
+                sort: { current: null, ascHref: "#", descHref: "#", ascLabel: "Lowest first", descLabel: "Highest first" },
+              },
+            },
+            {
+              label: "Date",
+              menu: {
+                menuLabel: "Date: sort and filter",
+                sort: { current: "desc", ascHref: "#", descHref: "#", ascLabel: "Oldest first", descLabel: "Newest first" },
+                filter: {
+                  action: "#",
+                  params: new URLSearchParams(),
+                  fields: ["from"],
+                  applyLabel: "Apply",
+                  controls: <TextField id="proof-from" name="from" label="Collected from" value="" />,
+                },
+              },
+            },
+            {
+              label: "Admin",
+              menu: {
+                menuLabel: "Admin: filter",
+                filter: {
+                  action: "#",
+                  params: new URLSearchParams(),
+                  fields: ["admin"],
+                  applyLabel: "Apply",
+                  controls: <CheckboxField id="proof-admin" name="admin" label="Only admins" checked={false} />,
+                },
+              },
+            },
+            "Locality",
+            { label: "Links", hidden: true },
+          ]}
+        >
+          <tr>
+            <td>3</td>
+            <td>Jul 14, 2026</td>
+            <td>—</td>
+            <td>Corvallis</td>
+            <td>
+              <a href="#">Edit</a>
+            </td>
+          </tr>
+        </DataTable>
+      </Specimen>
+
       <h2>Taxon names</h2>
       <p>
         Set by construction from rank and ancestry. The rules and the full worked set are at{" "}

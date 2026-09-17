@@ -13,8 +13,20 @@ export { Chip, TONES, type Tone } from "./chip.js";
 export { Callout, EmptyState } from "./feedback.js";
 export { DetailList, type Detail } from "./details.js";
 export { CheckboxField, Field, SelectField, TextField } from "./field.js";
-export { ColumnMenu, FilterBar, FilterPills, HiddenParams, Pager, Pill, SearchForm, type FilterPill } from "./listing.js";
-export { DataTable } from "./table.js";
+export {
+  ColumnMenu,
+  FilterBar,
+  FilterPills,
+  HiddenParams,
+  Pager,
+  Pill,
+  SearchForm,
+  type ColumnFilter,
+  type ColumnMenuSpec,
+  type ColumnSort,
+  type FilterPill,
+} from "./listing.js";
+export { DataTable, type TableColumn } from "./table.js";
 export {
   TaxonName,
   isItalicRank,

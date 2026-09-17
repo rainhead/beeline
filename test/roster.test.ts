@@ -105,6 +105,16 @@ describe("the roster screen", () => {
     }
   });
 
+  it("draws its column menus through the same component as the record listings", async () => {
+    const body = await (await ctx.app.request("/people")).text();
+    const menus = body.match(/<details class="menu col-menu">/g) ?? [];
+    expect(menus).toHaveLength(7);
+    expect(body.match(/d="m19\.5 8\.25-7\.5 7\.5-7\.5-7\.5"/g)).toHaveLength(7);
+    // Ordered by samples, highest first, by default — and says so.
+    expect(body).toContain(`<th aria-sort="descending">`);
+    expect(body).toMatch(/class="col-filter">.*?<button type="submit">Apply<\/button>/s);
+  });
+
   it("prints the login and not the user id, which made every row taller", async () => {
     const body = await (await ctx.app.request("/people?q=Ada")).text();
     expect(body).toContain("<code>adacollects</code>");

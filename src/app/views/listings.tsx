@@ -24,14 +24,11 @@ import {
 import { sampleHref, specimenHref } from "../record.js";
 import type { Messages } from "../messages/index.js";
 import {
-  Button,
   Chip,
-  ColumnMenu,
   DataTable,
   EmptyState,
   Field,
   FilterPills,
-  HiddenParams,
   Meta,
   PageHeader,
   Pager,
@@ -41,6 +38,7 @@ import {
   TaxonName,
   TextField,
   type FilterPill,
+  type TableColumn,
 } from "./components/index.js";
 
 /**
@@ -69,11 +67,6 @@ function lede(
   if (query.scope === ALL) return copy.ledeAll;
   if (query.scope === OUTSIDE) return copy.ledeOutside;
   return copy.ledeAtlas(atlases.find((a) => a.code === query.scope)?.name ?? query.scope);
-}
-
-/** The query as hidden inputs, minus the fields a form is about to set. */
-function HiddenQuery({ query, except }: { query: ListingQuery; except: ReadonlyArray<keyof ListingQuery> }) {
-  return <HiddenParams params={listingParams(query)} except={except} />;
 }
 
 /**
@@ -213,69 +206,75 @@ function DateField({ id, name, label, value }: { id: string; name: string; label
 }
 
 /** What a column's values are, which decides how its two sort orders are named. */
-type SortKind = "text" | "date" | "number";
+export type SortKind = "text" | "date" | "number";
 
 /**
- * A column heading with its menu. `sort` names the key this column orders
- * by (null for a column with no order), and `fields` the query fields its
- * filter sets — the form carries every other part of the query as hidden
- * inputs, so applying one column's filter keeps the rest.
+ * The words a column's menu needs, from the catalog: its two orders named for
+ * what the values are, and an accessible name that says what the menu holds
+ * and no more. Shared with the People page, whose columns are the same shape.
  */
-function Column({
-  m,
-  path,
-  query,
-  label,
-  sort,
-  kind = "text",
-  fields = [],
-  children,
-}: {
-  m: Messages;
-  path: string;
-  query: ListingQuery;
-  label: string;
-  sort: SortKey | null;
-  kind?: SortKind;
-  fields?: ReadonlyArray<keyof ListingQuery>;
-  children?: Child;
-}) {
-  if (sort === null && fields.length === 0) return <th>{label}</th>;
+export function columnCopy(m: Messages, label: string, kind: SortKind, hasSort: boolean, hasFilter: boolean) {
   const s = m.listings.sort;
   const names: Record<SortKind, [string, string]> = {
     text: [s.textAsc, s.textDesc],
     date: [s.dateAsc, s.dateDesc],
     number: [s.numberAsc, s.numberDesc],
   };
-  const current: SortDirection | null = sort !== null && query.sort === sort ? query.dir : null;
-  const sortHref = (dir: SortDirection) => listingHref(path, query, { sort: sort ?? DEFAULT_SORT, dir, page: 1 });
-  return (
-    <th>
-      <ColumnMenu label={label} menuLabel={(sort === null ? m.listings.columnMenu.filter : fields.length === 0 ? m.listings.columnMenu.sort : m.listings.columnMenu.both)(label)} sorted={current}>
-        {sort !== null && (
-          <div class="menu-section">
-            {(["asc", "desc"] as const).map((dir) =>
-              current === dir ? (
-                <a href={sortHref(dir)} aria-current="true">
-                  {names[kind][dir === "asc" ? 0 : 1]}
-                </a>
-              ) : (
-                <a href={sortHref(dir)}>{names[kind][dir === "asc" ? 0 : 1]}</a>
-              ),
-            )}
-          </div>
-        )}
-        {fields.length > 0 && (
-          <form method="get" action={path} class="col-filter">
-            <HiddenQuery query={query} except={fields} />
-            {children}
-            <Button variant="tonal">{m.listings.filters.apply}</Button>
-          </form>
-        )}
-      </ColumnMenu>
-    </th>
-  );
+  const c = m.listings.columnMenu;
+  return {
+    ascLabel: names[kind][0],
+    descLabel: names[kind][1],
+    menuLabel: (!hasSort ? c.filter : !hasFilter ? c.sort : c.both)(label),
+  };
 }
+
+/** What a listing says about one of its columns; the table draws it. */
+interface ColumnOptions {
+  m: Messages;
+  path: string;
+  query: ListingQuery;
+  label: string;
+  /** The key this column orders by; null for a column with no order. */
+  sort: SortKey | null;
+  kind?: SortKind;
+  /** The query fields this column's filter sets; the form keeps the rest. */
+  fields?: ReadonlyArray<keyof ListingQuery>;
+  /** The filter's controls. */
+  controls?: Child;
+}
+
+function column({ m, path, query, label, sort, kind = "text", fields = [], controls }: ColumnOptions): TableColumn {
+  if (sort === null && fields.length === 0) return { label };
+  const copy = columnCopy(m, label, kind, sort !== null, fields.length > 0);
+  const sortHref = (dir: SortDirection) => listingHref(path, query, { sort: sort ?? DEFAULT_SORT, dir, page: 1 });
+  return {
+    label,
+    menu: {
+      menuLabel: copy.menuLabel,
+      sort:
+        sort === null
+          ? undefined
+          : {
+              current: query.sort === sort ? query.dir : null,
+              ascHref: sortHref("asc"),
+              descHref: sortHref("desc"),
+              ascLabel: copy.ascLabel,
+              descLabel: copy.descLabel,
+            },
+      filter:
+        fields.length === 0
+          ? undefined
+          : {
+              action: path,
+              params: listingParams(query),
+              fields,
+              applyLabel: m.listings.filters.apply,
+              controls,
+            },
+    },
+  };
+}
+
 
 /** The QC chip a row carries — the same three buckets the filter offers. */
 function StatusChip({ m, blocking, warning }: { m: Messages; blocking: number; warning: number }) {
@@ -377,82 +376,86 @@ function Toolbar<Row>({
 }
 
 /** The column menus both listings share: date, collectors, place, atlas. */
-function DateColumn({ m, path, query, label }: { m: Messages; path: string; query: ListingQuery; label: string }) {
+type Shared = { m: Messages; path: string; query: ListingQuery; label: string };
+
+function dateColumn({ m, path, query, label }: Shared): TableColumn {
   const f = m.listings.filters;
-  return (
-    <Column m={m} path={path} query={query} label={label} sort="date" kind="date" fields={["from", "to"]}>
-      <DateField id="from" name="from" label={f.from} value={query.from} />
-      <DateField id="to" name="to" label={f.to} value={query.to} />
-    </Column>
-  );
+  return column({
+    m,
+    path,
+    query,
+    label,
+    sort: "date",
+    kind: "date",
+    fields: ["from", "to"],
+    controls: (
+      <>
+        <DateField id="from" name="from" label={f.from} value={query.from} />
+        <DateField id="to" name="to" label={f.to} value={query.to} />
+      </>
+    ),
+  });
 }
 
-function CollectorsColumn({
-  m,
-  path,
-  query,
-  label,
-  atlases,
-  admin,
-}: {
-  m: Messages;
-  path: string;
-  query: ListingQuery;
-  label: string;
-  atlases: readonly AtlasOption[];
-  admin: boolean;
-}) {
+type Staffed = Shared & { atlases: readonly AtlasOption[]; admin: boolean };
+
+function collectorsColumn({ m, path, query, label, atlases, admin }: Staffed): TableColumn {
   const f = m.listings.filters;
   // Staff only: a volunteer's listing is already one collector's, so their
   // column sorts and does not filter.
-  return (
-    <Column
-      m={m}
-      path={path}
-      query={query}
-      label={label}
-      sort="collector"
-      fields={admin ? ["collector", "member"] : []}
-    >
-      {admin && (
-        <>
-          <TextField id="collector" name="collector" label={f.collector} value={query.collector} hint={f.collectorHint} />
-          {/* The axis scope cannot answer: whose records, not whose ground. */}
-          <SelectField
-            id="member"
-            name="member"
-            label={f.member}
-            hint={f.memberHint}
-            value={query.member}
-            options={[
-              [MEMBER_ANY, f.memberAny] as const,
-              ...atlases.map((a) => [a.code, a.name] as const),
-              [PROGRAM_MEMBERSHIP, f.memberProgram] as const,
-              [MEMBER_UNRECORDED, f.memberUnrecorded] as const,
-            ]}
-          />
-        </>
-      )}
-    </Column>
-  );
+  return column({
+    m,
+    path,
+    query,
+    label,
+    sort: "collector",
+    fields: admin ? ["collector", "member"] : [],
+    controls: admin && (
+      <>
+        <TextField id="collector" name="collector" label={f.collector} value={query.collector} hint={f.collectorHint} />
+        {/* The axis scope cannot answer: whose records, not whose ground. */}
+        <SelectField
+          id="member"
+          name="member"
+          label={f.member}
+          hint={f.memberHint}
+          value={query.member}
+          options={[
+            [MEMBER_ANY, f.memberAny] as const,
+            ...atlases.map((a) => [a.code, a.name] as const),
+            [PROGRAM_MEMBERSHIP, f.memberProgram] as const,
+            [MEMBER_UNRECORDED, f.memberUnrecorded] as const,
+          ]}
+        />
+      </>
+    ),
+  });
 }
 
-function PlaceColumn({ m, path, query, label }: { m: Messages; path: string; query: ListingQuery; label: string }) {
+function placeColumn({ m, path, query, label }: Shared): TableColumn {
   const f = m.listings.filters;
-  return (
-    <Column m={m} path={path} query={query} label={label} sort="place" fields={["place"]}>
-      <TextField id="place" name="place" label={f.place} value={query.place} hint={f.placeHint} />
-    </Column>
-  );
+  return column({
+    m,
+    path,
+    query,
+    label,
+    sort: "place",
+    fields: ["place"],
+    controls: <TextField id="place" name="place" label={f.place} value={query.place} hint={f.placeHint} />,
+  });
 }
 
-function HostColumn({ m, path, query, label }: { m: Messages; path: string; query: ListingQuery; label: string }) {
+function hostColumn({ m, path, query, label }: Shared): TableColumn {
   const f = m.listings.filters;
-  return (
-    <Column m={m} path={path} query={query} label={label} sort="host" fields={["host"]}>
-      <TextField id="host" name="host" label={f.host} value={query.host} hint={f.hostHint} />
-    </Column>
-  );
+  return column({
+    m,
+    path,
+    query,
+    label,
+    sort: "host",
+    fields: ["host"],
+    controls: <TextField id="host" name="host" label={f.host} value={query.host} hint={f.hostHint} />,
+  });
 }
 
 /**
@@ -460,39 +463,29 @@ function HostColumn({ m, path, query, label }: { m: Messages; path: string; quer
  * outside every one — which is why it is staff-only as a filter: scope is
  * the gate, and a volunteer's is fixed.
  */
-function AtlasColumn({
-  m,
-  path,
-  query,
-  label,
-  atlases,
-  admin,
-}: {
-  m: Messages;
-  path: string;
-  query: ListingQuery;
-  label: string;
-  atlases: readonly AtlasOption[];
-  admin: boolean;
-}) {
-  return (
-    <Column m={m} path={path} query={query} label={label} sort="atlas" fields={admin ? ["scope"] : []}>
-      {admin && (
-        <SelectField
-          id="scope"
-          name="scope"
-          label={m.listings.scope.label}
-          value={query.scope}
-          options={[
-            [ALL, m.listings.scope.all],
-            ...atlases.map((a) => [a.code, a.name] as const),
-            [OUTSIDE, m.listings.scope.outside],
-            [MINE, m.listings.scope.mine],
-          ]}
-        />
-      )}
-    </Column>
-  );
+function atlasColumn({ m, path, query, label, atlases, admin }: Staffed): TableColumn {
+  return column({
+    m,
+    path,
+    query,
+    label,
+    sort: "atlas",
+    fields: admin ? ["scope"] : [],
+    controls: admin && (
+      <SelectField
+        id="scope"
+        name="scope"
+        label={m.listings.scope.label}
+        value={query.scope}
+        options={[
+          [ALL, m.listings.scope.all],
+          ...atlases.map((a) => [a.code, a.name] as const),
+          [OUTSIDE, m.listings.scope.outside],
+          [MINE, m.listings.scope.mine],
+        ]}
+      />
+    ),
+  });
 }
 
 function DetSelect({ m, query }: { m: Messages; query: ListingQuery }) {
@@ -528,37 +521,53 @@ export function SampleListing(props: ListingProps<SampleRow>) {
         <>
           <DataTable
             columns={[
-              <Column {...col} label={copy.colSample} sort="number" kind="number" />,
-              <DateColumn {...col} label={copy.colDate} />,
-              <CollectorsColumn {...col} label={copy.colCollectors} atlases={atlases} admin={admin} />,
-              <PlaceColumn {...col} label={copy.colPlace} />,
-              <HostColumn {...col} label={copy.colHost} />,
+              column({ ...col, label: copy.colSample, sort: "number", kind: "number" }),
+              dateColumn({ ...col, label: copy.colDate }),
+              collectorsColumn({ ...col, label: copy.colCollectors, atlases, admin }),
+              placeColumn({ ...col, label: copy.colPlace }),
+              hostColumn({ ...col, label: copy.colHost }),
               // A taxon name only ever matches something already determined,
               // so the gap needs its own control rather than a magic word in
               // the box. On samples both are about the sample's specimens.
-              <Column {...col} label={copy.colSpecimens} sort="specimens" kind="number" fields={["taxon", "det"]}>
-                <TextField id="taxon" name="taxon" label={f.taxon} value={query.taxon} hint={f.taxonHint} />
-                <DetSelect m={m} query={query} />
-              </Column>,
-              <Column {...col} label={copy.colStatus} sort="flags" kind="number" fields={["qc"]}>
-                <SelectField
-                  id="qc"
-                  name="qc"
-                  label={f.qc}
-                  value={query.qc}
-                  options={[
-                    ["any", f.qcAny],
-                    ["flagged", f.qcFlagged],
-                    ["blocking", f.qcBlocking],
-                    ["warning", f.qcWarning],
-                    ["clean", f.qcClean],
-                  ]}
-                />
-              </Column>,
-              <AtlasColumn {...col} label={copy.colAtlas} atlases={atlases} admin={admin} />,
-              <th aria-label={copy.colLinks} />,
+              column({
+                ...col,
+                label: copy.colSpecimens,
+                sort: "specimens",
+                kind: "number",
+                fields: ["taxon", "det"],
+                controls: (
+                  <>
+                    <TextField id="taxon" name="taxon" label={f.taxon} value={query.taxon} hint={f.taxonHint} />
+                    <DetSelect m={m} query={query} />
+                  </>
+                ),
+              }),
+              column({
+                ...col,
+                label: copy.colStatus,
+                sort: "flags",
+                kind: "number",
+                fields: ["qc"],
+                controls: (
+                  <SelectField
+                    id="qc"
+                    name="qc"
+                    label={f.qc}
+                    value={query.qc}
+                    options={[
+                      ["any", f.qcAny],
+                      ["flagged", f.qcFlagged],
+                      ["blocking", f.qcBlocking],
+                      ["warning", f.qcWarning],
+                      ["clean", f.qcClean],
+                    ]}
+                  />
+                ),
+              }),
+              atlasColumn({ ...col, label: copy.colAtlas, atlases, admin }),
+              // Read aloud, never drawn: the column of links out.
+              { label: copy.colLinks, hidden: true },
             ]}
-            rawHeader
           >
             {page.rows.map((row) => (
               <tr>
@@ -622,21 +631,28 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
         <>
           <DataTable
             columns={[
-              <Column {...col} label={copy.colFieldNumber} sort="field" kind="number" />,
-              <Column {...col} label={copy.colSample} sort="number" kind="number" />,
-              <DateColumn {...col} label={copy.colDate} />,
-              <CollectorsColumn {...col} label={copy.colCollectors} atlases={atlases} admin={admin} />,
-              <PlaceColumn {...col} label={copy.colPlace} />,
+              column({ ...col, label: copy.colFieldNumber, sort: "field", kind: "number" }),
+              column({ ...col, label: copy.colSample, sort: "number", kind: "number" }),
+              dateColumn({ ...col, label: copy.colDate }),
+              collectorsColumn({ ...col, label: copy.colCollectors, atlases, admin }),
+              placeColumn({ ...col, label: copy.colPlace }),
               // On a specimen listing the taxon filter is about *this*
               // specimen's determination, not its sample's.
-              <Column {...col} label={copy.colDetermination} sort="determination" fields={["taxon", "det"]}>
-                <TextField id="taxon" name="taxon" label={f.taxon} value={query.taxon} hint={f.taxonHint} />
-                <DetSelect m={m} query={query} />
-              </Column>,
-              <Column {...col} label={copy.colDeterminer} sort="determiner" />,
-              <AtlasColumn {...col} label={copy.colAtlas} atlases={atlases} admin={admin} />,
+              column({
+                ...col,
+                label: copy.colDetermination,
+                sort: "determination",
+                fields: ["taxon", "det"],
+                controls: (
+                  <>
+                    <TextField id="taxon" name="taxon" label={f.taxon} value={query.taxon} hint={f.taxonHint} />
+                    <DetSelect m={m} query={query} />
+                  </>
+                ),
+              }),
+              column({ ...col, label: copy.colDeterminer, sort: "determiner" }),
+              atlasColumn({ ...col, label: copy.colAtlas, atlases, admin }),
             ]}
-            rawHeader
           >
             {page.rows.map((row) => (
               <tr>

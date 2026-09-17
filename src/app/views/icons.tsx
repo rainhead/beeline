@@ -11,16 +11,23 @@ import type { Child } from "hono/jsx";
  * name.
  */
 
-function Icon({ children }: { children: Child }) {
+/**
+ * `small` is the size an icon takes beside a line of label text — a column
+ * heading, a sort direction. Heroicons' outline set is drawn for 24px at a
+ * 1.5 stroke; shrunk to 16px that stroke thins to a hairline, so the small
+ * size carries a heavier one to stay legible.
+ */
+function Icon({ children, small = false }: { children: Child; small?: boolean }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      stroke-width="1.5"
-      width="24"
-      height="24"
+      stroke-width={small ? "2.25" : "1.5"}
+      width={small ? "16" : "24"}
+      height={small ? "16" : "24"}
+      class={small ? "icon icon-small" : "icon"}
       aria-hidden="true"
     >
       {children}
@@ -60,9 +67,39 @@ export function SearchIcon() {
   );
 }
 
+/** "There is a menu here": the one affordance every column heading's menu wears. */
+export function ChevronDownIcon() {
+  return (
+    <Icon small>
+      <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+    </Icon>
+  );
+}
+
+/** The table is ordered by this column, lowest first. */
+export function ArrowUpIcon() {
+  return (
+    <Icon small>
+      <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" />
+    </Icon>
+  );
+}
+
+/** The table is ordered by this column, highest first. */
+export function ArrowDownIcon() {
+  return (
+    <Icon small>
+      <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" />
+    </Icon>
+  );
+}
+
 /** Every icon in the set, for the proofing page. */
 export const ICON_SET = [
   { name: "MenuIcon", use: "Opens the menu left of the brand: reference pages and staff tools, and the nav on narrow screens", render: MenuIcon },
   { name: "PersonIcon", use: "Account menu, when the volunteer has no iNaturalist avatar", render: PersonIcon },
   { name: "SearchIcon", use: "The search button on a listing", render: SearchIcon },
+  { name: "ChevronDownIcon", use: "A column heading that opens a menu — the same mark on every one", render: ChevronDownIcon },
+  { name: "ArrowUpIcon", use: "The table is ordered by this column, lowest first", render: ArrowUpIcon },
+  { name: "ArrowDownIcon", use: "The table is ordered by this column, highest first", render: ArrowDownIcon },
 ] as const;

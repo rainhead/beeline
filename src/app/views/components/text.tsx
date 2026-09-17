@@ -45,7 +45,7 @@ export function PageHeader({ title, lede, meta }: { title: Child; lede?: Child; 
  *   (`spelled`): "not determined" on a specimen, "obscured" for coordinates,
  *   "No account" on a person. **An em dash where the same absence repeats
  *   down a dense column** and the words would be noise: a job that breached
- *   nothing, a person nobody has asked about.
+ *   nothing, a person with no membership recorded.
  * - **Secondary text either way**, so an absence never reads as a value.
  *
  * What is *not* an absence stays a value: a count of 0 is a number, and a

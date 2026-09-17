@@ -77,7 +77,7 @@ export function DesignComponents({ m }: { m: Messages }) {
         </li>
         <li>
           <strong>An em dash where the same absence repeats down a dense column</strong> and the words would be
-          noise: a job that breached nothing, a person nobody has asked about.
+          noise: a job that breached nothing, a person with no membership recorded.
         </li>
         <li>
           <strong>Secondary text either way</strong>, so an absence never reads as a value. A count of 0 is a number,

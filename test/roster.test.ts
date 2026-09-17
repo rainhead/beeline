@@ -120,7 +120,7 @@ describe("the roster screen", () => {
     expect(body).not.toMatch(/<td><\/td>|<td class="nowrap"><\/td>/);
     // A bare em dash said nothing; each one now carries its meaning.
     expect(body).toContain(`<span class="visually-hidden">never</span>`);
-    expect(body).toContain(`<span class="visually-hidden">nobody has asked</span>`);
+    expect(body).toContain(`<span class="visually-hidden">Not recorded</span>`);
     expect(body).toContain(`<span class="visually-hidden">No admin rights</span>`);
     // No account is the exception, and what a reader acts on: written out.
     expect(body).toContain(`<span class="meta absent">No account</span>`);

@@ -65,9 +65,9 @@ import { columnCopy, type SortKind } from "./listings.js";
  */
 const membershipCell = (m: Messages, row: { membership: string | null; atlas_code: string | null }) =>
   row.membership === null ? (
-    // Most of the column, so a dash — but it is an answer nobody has given,
-    // not an empty one, and the dash says so aloud.
-    <Absent label={m.people.membershipUnasked} />
+    // Most of the column, so a dash; read aloud in the words the filter
+    // already uses for the same state.
+    <Absent label={m.people.memberUnrecorded} />
   ) : row.membership === PROGRAM_MEMBERSHIP ? (
     <>{m.people.membershipProgramShort}</>
   ) : (

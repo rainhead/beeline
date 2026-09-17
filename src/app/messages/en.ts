@@ -835,7 +835,6 @@ export const en = {
      */
     lastSeenSignInOnly: "sign-in only",
     never: "never",
-    membershipUnasked: "nobody has asked",
     /** Not "Atlas": the column's answer is sometimes the program itself. */
     colMembership: "Belongs to",
     colAdmin: "Admin",

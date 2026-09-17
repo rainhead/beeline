@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import { PROGRAM_MEMBERSHIP, type Database, type MembershipKind } from "../model.js";
 import type { PersonChange } from "../person-change.js";
+import { toCsv } from "./listings.js";
 
 /**
  * The people roster: who is in the store, and which iNaturalist account each
@@ -94,8 +95,8 @@ export const ACTIVE_WITHIN_MONTHS = 12;
 export const MEMBER_ANY = "";
 export const MEMBER_UNRECORDED = "unrecorded";
 
-export type RosterSort = "name" | "login" | "samples" | "lastSample" | "lastSeen" | "membership" | "admin";
-export const ROSTER_SORTS = ["name", "login", "samples", "lastSample", "lastSeen", "membership", "admin"] as const;
+export type RosterSort = "name" | "login" | "samples" | "lastSample" | "lastSeen" | "membership";
+export const ROSTER_SORTS = ["name", "login", "samples", "lastSample", "lastSeen", "membership"] as const;
 export type SortDirection = "asc" | "desc";
 /** Ordered as a roster: the people who collect most, first, and then by name. */
 export const DEFAULT_ROSTER_SORT: RosterSort = "samples";
@@ -341,9 +342,11 @@ export async function listRoster(
     )
     SELECT * FROM judged`;
 
-  // Active: either date within the window. Date minus integer is a date in
-  // both engines (ADR 0001); a timestamp compares against the same cutoff.
-  const cutoff = sql`(current_date - ${ACTIVE_WITHIN_MONTHS * 30})`;
+  // Active: either date within the window, counted in calendar months —
+  // twelve thirties is 360 days, which called somebody last seen 362 days ago
+  // inactive (CodeRabbit on #68). The interval is a constant of ours, never
+  // input, and the quoted form is the one both engines read (ADR 0001).
+  const cutoff = sql`CAST(current_date - ${sql.raw(`INTERVAL '${ACTIVE_WITHIN_MONTHS} months'`)} AS DATE)`;
   const isActive = sql`(last_sample >= ${cutoff}
                         OR CAST(last_visit AS DATE) >= ${cutoff}
                         OR CAST(last_login AS DATE) >= ${cutoff})`;
@@ -417,8 +420,6 @@ function rosterOrder(query: RosterQuery) {
       return sql`greatest(last_visit, last_login) ${dir} ${nulls}`;
     case "membership":
       return sql`coalesce(atlas_code, membership) ${dir} ${nulls}`;
-    case "admin":
-      return sql`is_admin ${dir}`;
     default:
       return sql`samples ${dir}`;
   }
@@ -431,44 +432,23 @@ function rosterOrder(query: RosterQuery) {
  */
 export function rosterCsv(page: RosterPage): string {
   const iso = (d: Date | string | null) => (d === null ? "" : d instanceof Date ? d.toISOString().slice(0, 10) : String(d));
-  const cell = (value: unknown): string => {
-    if (value === null || value === undefined) return "";
-    let out = String(value);
-    if (/^[=+\-@]/.test(out)) out = `'${out}`;
-    return /[",\n\r]/.test(out) ? `"${out.replaceAll('"', '""')}"` : out;
-  };
-  const header = [
-    "display_name",
-    "login",
-    "inat_user_id",
-    "samples",
-    "last_sample",
-    "last_visit",
-    "last_login",
-    "membership",
-    "atlas",
-    "admin",
-  ];
-  const lines = [
-    header.join(","),
-    ...page.rows.map((r) =>
-      [
-        r.display_name,
-        r.login,
-        r.inat_user_id,
-        r.samples,
-        iso(r.last_sample),
-        iso(r.last_visit),
-        iso(r.last_login),
-        r.membership,
-        r.atlas_code,
-        r.is_admin ? "yes" : "no",
-      ]
-        .map(cell)
-        .join(","),
-    ),
-  ];
-  return lines.join("\r\n");
+  // The listings' writer, so quoting, the formula guard and the line that
+  // says a file stopped short are one implementation rather than two.
+  return toCsv(
+    ["display_name", "login", "inat_user_id", "samples", "last_sample", "last_visit", "last_login", "membership", "atlas", "admin"],
+    page.rows.map((r) => [
+      r.display_name,
+      r.login,
+      r.inat_user_id,
+      r.samples,
+      iso(r.last_sample),
+      iso(r.last_visit),
+      iso(r.last_login),
+      r.membership,
+      r.atlas_code,
+      r.is_admin ? "yes" : "no",
+    ]),
+  );
 }
 
 export interface LoginWeight {

@@ -146,6 +146,13 @@ describe("the roster screen", () => {
       expect(inactive).toContain("Staff Person");
     });
 
+    it("means twelve calendar months, not 360 days", async () => {
+      // 362 days ago is inside the last year and outside twelve thirties.
+      await insertCleanSample(ctx.conn, { collector_id: "2", date_start: "current_date - 362", date_end: "current_date - 362" });
+      const active = await (await ctx.app.request("/people?active=active")).text();
+      expect(active).toContain("Bo Netter");
+    });
+
     it("counts a visit as well as a sample", async () => {
       const ctx = await rosterApp({ personId: 3, admin: true, privateStore: true });
       await ctx.conn.run(`INSERT INTO private.person_activity (inat_user_id, last_seen_at) VALUES (111, now())`);

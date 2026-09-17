@@ -91,7 +91,7 @@ export function FilterPills({
 }) {
   if (filters.length === 0) return null;
   return (
-    <div class="active-filters" aria-label={groupLabel}>
+    <div class="active-filters" role="group" aria-label={groupLabel}>
       {filters.map((filter) => (
         <span class="chip">
           {filter.label}: {filter.value}{" "}

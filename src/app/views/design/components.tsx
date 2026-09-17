@@ -328,7 +328,9 @@ export function DesignComponents({ m }: { m: Messages }) {
             <td>Jul 14, 2026</td>
             <td>Corvallis</td>
             <td>3</td>
-            <td>—</td>
+            <td>
+              <Absent label={m.absence.none} />
+            </td>
           </tr>
           <tr>
             <td>4</td>
@@ -395,7 +397,9 @@ export function DesignComponents({ m }: { m: Messages }) {
           <tr>
             <td>3</td>
             <td>Jul 14, 2026</td>
-            <td>—</td>
+            <td>
+              <Absent label={m.people.notAdmin} />
+            </td>
             <td>Corvallis</td>
             <td>
               <a href="#">Edit</a>

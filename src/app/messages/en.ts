@@ -236,10 +236,10 @@ export const en = {
     samples: {
       title: "Samples",
       heading: "Samples",
-      ledeMine: "Every sample you collected, most recent first.",
-      ledeAtlas: (atlas: string) => `Every sample in the ${atlas}, most recent first.`,
-      ledeAll: "Every sample in every atlas, most recent first.",
-      ledeOutside: "Every sample collected where no member atlas reaches, most recent first.",
+      ledeMine: "Every sample you collected.",
+      ledeAtlas: (atlas: string) => `Every sample in the ${atlas}.`,
+      ledeAll: "Every sample in every atlas.",
+      ledeOutside: "Every sample collected where no member atlas reaches.",
       count: (total: number) => `${n(total)} ${total === 1 ? "sample" : "samples"}`,
       emptyHeading: "Nothing here yet",
       emptyMine: "None of your collecting has reached Beeline yet. Samples arrive from iNaturalist as they sync.",
@@ -248,21 +248,23 @@ export const en = {
       colDate: "Date",
       colCollectors: "Collectors",
       colPlace: "Place",
+      colHost: "Host plant",
       colSpecimens: "Specimens",
       colStatus: "Flags",
       colAtlas: "Atlas",
-      colLinks: "",
-      viewOnInat: "iNaturalist",
+      /** Read aloud, never shown: the column of links out. */
+      colLinks: "Links",
+      viewOnInat: "View on iNaturalist",
       edit: "Edit",
     },
 
     specimens: {
       title: "Specimens",
       heading: "Specimens",
-      ledeMine: "Every specimen from your samples, most recent collecting first.",
-      ledeAtlas: (atlas: string) => `Every specimen in the ${atlas}, most recent collecting first.`,
-      ledeAll: "Every specimen in every atlas, most recent collecting first.",
-      ledeOutside: "Every specimen collected where no member atlas reaches, most recent collecting first.",
+      ledeMine: "Every specimen from your samples.",
+      ledeAtlas: (atlas: string) => `Every specimen in the ${atlas}.`,
+      ledeAll: "Every specimen in every atlas.",
+      ledeOutside: "Every specimen collected where no member atlas reaches.",
       count: (total: number) => `${n(total)} ${total === 1 ? "specimen" : "specimens"}`,
       emptyHeading: "Nothing here yet",
       emptyMine:
@@ -282,11 +284,16 @@ export const en = {
       expert: "expert",
     },
 
-    /** Whose records a listing shows. Staff see the control; nobody else does. */
+    /**
+     * Whose records a listing shows: a three-way toggle for staff — mine, my
+     * atlas, everything (Peter, 2026-09-16) — and nothing for a volunteer,
+     * whose listing is their own.
+     */
     scope: {
       label: "Show",
       mine: "My records",
-      all: "All atlases",
+      atlasRecords: (atlas: string) => `${atlas} records`,
+      all: "All records",
       /** Says plainly that this is more than the viewer's own collecting. */
       staffNote: (what: string) => `Staff view: ${what}. Volunteers only ever see their own records here.`,
       /**
@@ -320,14 +327,12 @@ export const en = {
       memberUnrecorded: "Not recorded",
       taxon: "Taxon",
       taxonHint: "A family, genus, or species — anything below it matches too",
+      host: "Host plant",
+      hostHint: "The plant the bee was collected from, as the observation names it",
       det: "Determination",
       detAny: "Any",
       detDetermined: "Determined",
       detUndetermined: "Not determined",
-      season: "Season",
-      seasonAny: "Any",
-      seasonOpen: "This season",
-      seasonSettled: "Earlier seasons",
       qc: "Flags",
       qcAny: "Any",
       qcFlagged: "Any flag",
@@ -335,8 +340,24 @@ export const en = {
       qcWarning: "Heads-up only",
       qcClean: "Clean",
       apply: "Apply",
-      clear: "Clear",
+      clear: "Clear all",
+      /** Read aloud over the row of pills: the filters in force. */
+      inForce: "Filters in force",
+      remove: (filter: string) => `Remove the ${filter} filter`,
     },
+
+    /** The two orders a column offers, named by what its values are. */
+    sort: {
+      textAsc: "A to Z",
+      textDesc: "Z to A",
+      dateAsc: "Oldest first",
+      dateDesc: "Newest first",
+      numberAsc: "Lowest first",
+      numberDesc: "Highest first",
+    },
+    /** The accessible name of a column heading's menu. */
+    columnMenu: (column: string) => `${column}: sort and filter`,
+
 
     /** Chips on a row, and the same three words the QC filter offers. */
     status: {

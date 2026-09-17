@@ -261,7 +261,7 @@ describe("sample listing", () => {
     // spread over the query and the key was simply missing (CodeRabbit).
     const { app } = await listingApp("staffer");
     const body = await get(app, "/samples?scope=all&member=program&place=Fallon");
-    const clear = /href="([^"]*)"[^>]*>Clear</.exec(body)?.[1] ?? "";
+    const clear = /href="([^"]*)"[^>]*>Clear all</.exec(body)?.[1] ?? "";
     expect(clear).not.toContain("member=");
     expect(clear).not.toContain("place=");
     // Scope survives: clearing is not signing out of an atlas.
@@ -468,26 +468,101 @@ describe("what is still waiting for a name", () => {
 });
 
 describe("seasons", () => {
-  it("filters to earlier seasons, or to the open one", async () => {
-    const { app } = await listingApp("staffer");
-    // A-2 is dated 2025; everything else is this season (beeline-2c3.24).
-    const settled = await get(app, "/samples?scope=all&season=settled");
-    expect(settled).toContain("A-2");
-    expect(settled).not.toContain("A-1");
-    expect(settled).toContain("1 sample");
-
-    const open = await get(app, "/samples?scope=all&season=open");
-    expect(open).toContain("A-1");
-    expect(open).not.toContain("A-2");
-  });
-
-  it("is where the dashboard's settled link lands", async () => {
+  it("is where the dashboard's settled link lands: a date, since there is no season control", async () => {
     // The dashboard promises "older samples of yours that still carry flags";
-    // this is that set, and nothing wider.
-    const { app } = await listingApp();
-    const body = await get(app, "/samples?qc=flagged&season=settled");
+    // this is that set, and nothing wider. The listing has no season filter
+    // (Peter, 2026-09-16), so the link names the last day of the settled
+    // seasons — the day before this one started.
+    const { app, conn } = await listingApp();
+    const [[through]] = (await rows(conn, "SELECT CAST(started_on - 1 AS TEXT) FROM season")) as [[string]];
+    const body = await get(app, `/samples?qc=flagged&to=${through}`);
     expect(body).toContain("A-2");
     expect(body).toContain("1 sample");
+  });
+});
+
+describe("sorting", () => {
+  it("orders by a column in either direction, and says so in the heading", async () => {
+    const { app } = await listingApp("staffer");
+    const asc = await get(app, "/samples?scope=all&sort=place");
+    // Anacortes, Bellingham, Corvallis, Fallon, Gerlach, then the one with no place.
+    expect(asc.indexOf("Anacortes")).toBeLessThan(asc.indexOf("Corvallis"));
+    expect(asc.indexOf("Gerlach")).toBeLessThan(asc.indexOf("A-2"));
+    const desc = await get(app, "/samples?scope=all&sort=place&dir=desc");
+    expect(desc.indexOf("Gerlach")).toBeLessThan(desc.indexOf("Anacortes"));
+    // The heading shows the direction.
+    expect(desc).toContain("Place<span class=\"col-sort\" aria-hidden=\"true\">▼</span>");
+  });
+
+  it("orders specimens by determination", async () => {
+    const { app } = await listingApp("staffer");
+    const body = await get(app, "/specimens?scope=all&sort=determination");
+    expect(body.indexOf("Andrena")).toBeLessThan(body.indexOf("Bombus"));
+    expect(body.indexOf("Bombus")).toBeLessThan(body.indexOf("not determined"));
+  });
+
+  it("keeps the sort while a filter is applied, and leaves the default out of the URL", () => {
+    const query: ListingQuery = { ...EMPTY_QUERY, sort: "place", dir: "desc" };
+    expect(listingHref("/samples", query, { place: "Corvallis" })).toBe("/samples?place=Corvallis&sort=place&dir=desc");
+    // A column's own default direction stays implicit.
+    expect(listingHref("/samples", { ...EMPTY_QUERY, sort: "place", dir: "asc" })).toBe("/samples?sort=place");
+    expect(listingHref("/samples", { ...EMPTY_QUERY, dir: "asc" })).toBe("/samples?dir=asc");
+  });
+});
+
+describe("the host plant column", () => {
+  it("shows the floral host and filters on it", async () => {
+    const { app, conn } = await listingApp("staffer");
+    await conn.run(`UPDATE sample SET host_name_as_observed = 'Phacelia', host_rank = 'genus' WHERE sample_number = 'A-1'`);
+    const body = await get(app, "/samples?scope=all&host=phac");
+    expect(body).toContain("<i>Phacelia</i>");
+    expect(body).toContain("1 sample");
+    expect(body).toContain("Host plant: phac");
+  });
+});
+
+describe("the toolbar", () => {
+  it("gives staff a three-way toggle: mine, my atlas, everything", async () => {
+    const { app, conn, staffer } = await listingApp("staffer");
+    await conn.run(
+      `INSERT INTO person_membership (person_id, kind, atlas_id)
+       VALUES (${staffer}, 'atlas', (SELECT entity_id FROM atlas WHERE code = 'WaBA'))`,
+    );
+    const body = await get(app, "/samples?scope=WaBA");
+    expect(body).toContain(">My records</a>");
+    expect(body).toContain(`aria-current="page">Washington Bee Atlas records</a>`);
+    expect(body).toContain(">All records</a>");
+  });
+
+  it("is two-way for a staff member with no atlas, and absent for a volunteer", async () => {
+    const staff = await listingApp("staffer");
+    const body = await get(staff.app, "/samples?scope=all");
+    const toggle = /<nav class="segmented"[^>]*>(.*?)<\/nav>/s.exec(body)?.[1] ?? "";
+    expect(toggle).toContain(">My records</a>");
+    expect(toggle.match(/<a /g)).toHaveLength(2);
+    const volunteer = await listingApp();
+    expect(await get(volunteer.app, "/samples")).not.toContain("My records");
+  });
+
+  it("shows the filters in force as pills, each dismissable", async () => {
+    const { app } = await listingApp("staffer");
+    const body = await get(app, "/samples?scope=all&place=Fallon&qc=clean");
+    expect(body).toContain("Place: Fallon");
+    expect(body).toContain("Flags: Clean");
+    // Dismissing one keeps the other.
+    const remove = /href="([^"]*)"[^>]*aria-label="Remove the Place filter"/.exec(body)?.[1] ?? "";
+    expect(remove).toContain("qc=clean");
+    expect(remove).not.toContain("place=");
+  });
+
+  it("carries the rest of the query through a column's filter form", async () => {
+    const { app } = await listingApp("staffer");
+    const body = await get(app, "/samples?scope=all&place=Fallon&sort=place&dir=desc");
+    // The date column's form keeps place, sort and direction as hidden inputs...
+    expect(body).toContain(`<input type="hidden" name="place" value="Fallon"/>`);
+    expect(body).toContain(`<input type="hidden" name="sort" value="place"/>`);
+    // ...and the search form keeps everything but the search itself.
+    expect(body).toContain(`<input type="search" name="q" value=""`);
   });
 });
 
@@ -579,12 +654,12 @@ describe("listing queries", () => {
     // out resolves to whatever that person last browsed. The QC home's "1
     // older sample of yours ... Show them" therefore went to everybody's
     // (beeline-3kl).
-    expect(listingHref("/samples", EMPTY_QUERY, { scope: MINE, qc: "flagged", season: "settled" })).toBe(
-      "/samples?scope=mine&season=settled&qc=flagged",
+    expect(listingHref("/samples", EMPTY_QUERY, { scope: MINE, qc: "flagged", to: "2026-02-28" })).toBe(
+      "/samples?scope=mine&to=2026-02-28&qc=flagged",
     );
     // The round trip is the property that actually matters: what the link
     // says has to survive a staff member whose cookie says otherwise.
-    const preferred = parseListingQuery(new URLSearchParams("scope=mine&season=settled&qc=flagged"), {
+    const preferred = parseListingQuery(new URLSearchParams("scope=mine&to=2026-02-28&qc=flagged"), {
       admin: true,
       atlasCodes: ["OBA", "WaBA"],
       preferred: "all",
@@ -593,7 +668,7 @@ describe("listing queries", () => {
     // Without the scope named, the same cookie wins — which is correct for a
     // bare listing and is exactly why the link has to name it.
     expect(
-      parseListingQuery(new URLSearchParams("season=settled&qc=flagged"), {
+      parseListingQuery(new URLSearchParams("to=2026-02-28&qc=flagged"), {
         admin: true,
         atlasCodes: ["OBA", "WaBA"],
         preferred: "all",

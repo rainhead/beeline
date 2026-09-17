@@ -136,6 +136,21 @@ main > .table-scroll {
   grid-column: full;
   padding-inline: var(--space-6);
 }
+/* The heading row stays put as you scroll a long listing (Peter,
+   2026-09-16). Sticky positions against the nearest scroll container, and
+   the wrapper's overflow-x makes it one — so where the table takes the full
+   window and has room, the wrapper stops scrolling and the page does the
+   work; on a narrow screen the wrapper keeps its sideways scroll and the
+   heading goes with it. */
+@media (min-width: 64rem) {
+  main > .table-scroll { overflow: visible; }
+  main > .table-scroll thead th {
+    position: sticky;
+    top: 0;
+    background: var(--md-sys-color-surface);
+    z-index: 2;
+  }
+}
 
 table {
   border-collapse: collapse;
@@ -228,16 +243,135 @@ tbody tr.flag:hover { background: inherit; }
    are, and how to take them away with you. */
 .results-header { gap: var(--space-4); }
 
-/* Where you are in a long list. Three slots, so the summary stays centred
-   whether or not both directions exist. */
+/* Where you are in a long list: the three together in the middle, the
+   summary set like the links, and a dead direction keeping its place so
+   nothing jumps at either end (Peter, 2026-09-16). */
 .pager {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
+  justify-content: center;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-6);
   margin-top: var(--space-5);
+  font: var(--md-sys-typescale-label);
 }
-.pager > :last-child { text-align: right; }
+.pager-end { color: var(--md-sys-color-outline); }
+
+/* The listing's toolbar: whose records, and the search box. */
+.listing-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-6);
+  margin-bottom: var(--space-4);
+}
+/* A segmented control: one choice among a few, all visible. Links, since
+   each is a listing of its own. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+.segmented a {
+  font: var(--md-sys-typescale-label);
+  padding: var(--space-2) var(--space-4);
+  text-decoration: none;
+  color: var(--md-sys-color-on-surface);
+  border-left: 1px solid var(--md-sys-color-outline);
+}
+.segmented a:first-child { border-left: none; }
+.segmented a:visited { color: var(--md-sys-color-on-surface); }
+.segmented a:hover { background: var(--md-sys-color-surface-variant); }
+.segmented a[aria-current] {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+/* The search box: an input and its button as one control. */
+.search {
+  display: flex;
+  flex: 1 1 16rem;
+  max-width: 28rem;
+  margin: 0;
+}
+.search input {
+  flex: 1;
+  max-width: none;
+  border-radius: var(--radius-full) 0 0 var(--radius-full);
+  border-right: none;
+}
+.search button {
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+  padding: 0 var(--space-3);
+  display: inline-flex;
+  align-items: center;
+}
+.search button svg { width: 1.25rem; height: 1.25rem; }
+/* The filters in force, each dismissable. */
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.chip-remove {
+  text-decoration: none;
+  font-weight: 700;
+  padding-left: var(--space-1);
+}
+/* A record's number as a click target: tonal, rounded, tall enough for a
+   finger. */
+.pill, a.pill:visited {
+  display: inline-block;
+  font: var(--md-sys-typescale-label);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  border-radius: var(--radius-full);
+  padding: var(--space-1) var(--space-3);
+  min-height: 1.75rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.pill:hover { filter: brightness(1.05); text-decoration: underline; }
+.inat-link img { vertical-align: middle; }
+/* The count above a table is the answer to the question the filters asked,
+   so it is set like a title rather than as an aside. */
+.results-count { font: var(--md-sys-typescale-title); }
+.results-header { margin-bottom: var(--space-2); }
+.results-header p { margin: 0; }
+
+/* Column menus. The heading is the summary; the panel is fixed so the
+   table's own horizontal scroll cannot clip it (and it closes on any click
+   elsewhere, so a page scroll with it open is a short-lived oddity). */
+th details.col-menu > summary {
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  gap: var(--space-1);
+  font: var(--md-sys-typescale-label);
+  color: var(--md-sys-color-on-surface-variant);
+  white-space: nowrap;
+}
+th details.col-menu > summary:hover, th details.col-menu[open] > summary { background: none; color: var(--md-sys-color-on-surface); }
+.col-sort { font-size: 0.7em; }
+th details.col-menu > .menu-panel {
+  position: fixed;
+  top: auto;
+  left: auto;
+  margin-top: var(--space-1);
+  min-width: 14rem;
+  z-index: 3;
+}
+.col-filter {
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  margin: 0;
+}
+.col-filter .field { margin-bottom: var(--space-2); }
+.col-filter input, .col-filter select { width: 100%; max-width: none; }
+.nowrap { white-space: nowrap; }
+/* The order in force, inside the menu that set it. */
+.menu-panel a[aria-current] { font-weight: 700; }
 
 /* Callouts are asides: a status line, a note about why this screen behaves
    the way it does. Outlined with a left rule, like chips — same reason. */

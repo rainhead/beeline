@@ -3,28 +3,34 @@ import { PROGRAM_MEMBERSHIP } from "../../model.js";
 import {
   ALL,
   CSV_ROW_LIMIT,
+  DEFAULT_SORT,
   MEMBER_ANY,
   MEMBER_UNRECORDED,
   MINE,
   OUTSIDE,
   PAGE_SIZE,
+  defaultDirection,
   isFiltered,
   listingHref,
+  listingParams,
   type AtlasOption,
   type ListingQuery,
   type Page,
   type SampleRow,
+  type SortDirection,
+  type SortKey,
   type SpecimenRow,
 } from "../listings.js";
 import { sampleHref, specimenHref } from "../record.js";
 import type { Messages } from "../messages/index.js";
+import { SearchIcon } from "./icons.js";
 import {
   Button,
   Chip,
+  ColumnMenu,
   DataTable,
   EmptyState,
   Field,
-  FilterBar,
   Meta,
   PageHeader,
   Pager,
@@ -36,9 +42,17 @@ import {
 /**
  * Browsing the collection: the sample and specimen listings.
  *
- * Both screens are the same shape — header, filters, table, pager — because
- * they answer the same question at two grains. What differs is the columns,
- * so that is all these two components hold; everything else is shared here.
+ * Both screens are the same shape — header, a toolbar (whose records, and a
+ * search box), the filters in force as pills, the table with a menu in each
+ * column heading, a pager — because they answer the same question at two
+ * grains. What differs is the columns, so that is all these two components
+ * hold; everything else is shared here.
+ *
+ * Reshaped with Peter and Nora on the sandbox (2026-09-16): the filter bar
+ * was ten boxes above the table and a person filtering a table looks at the
+ * column, so each column's heading now opens a menu with its own sort and
+ * its own filter, and what is in force is read off the pills rather than
+ * off ten controls' states.
  */
 
 /** How a listing describes itself, given who is looking and at what. */
@@ -51,6 +65,74 @@ function lede(
   if (query.scope === ALL) return copy.ledeAll;
   if (query.scope === OUTSIDE) return copy.ledeOutside;
   return copy.ledeAtlas(atlases.find((a) => a.code === query.scope)?.name ?? query.scope);
+}
+
+/**
+ * The query as hidden inputs, minus the fields a form is about to set, so
+ * submitting the form keeps every other filter. Page is always dropped: a
+ * changed filter starts from the first page.
+ */
+function HiddenQuery({ query, except }: { query: ListingQuery; except: ReadonlyArray<keyof ListingQuery> }) {
+  const skip = new Set<string>([...except, "page"]);
+  return (
+    <>
+      {[...listingParams(query).entries()]
+        .filter(([name]) => !skip.has(name))
+        .map(([name, value]) => (
+          <input type="hidden" name={name} value={value} />
+        ))}
+    </>
+  );
+}
+
+/**
+ * Whose records: mine, my atlas's, everybody's. Staff only — a volunteer's
+ * listing is their own and offers no way out of it — and two-way for a
+ * staff member who belongs to no atlas. Other atlases, and the ground
+ * outside all of them, are reached through the Atlas column's menu; a scope
+ * chosen that way shows as a pill instead of a position here.
+ */
+function ScopeToggle({
+  m,
+  path,
+  query,
+  homeAtlas,
+}: {
+  m: Messages;
+  path: string;
+  query: ListingQuery;
+  homeAtlas: AtlasOption | null;
+}) {
+  const options: Array<[string, string]> = [[MINE, m.listings.scope.mine]];
+  if (homeAtlas !== null) options.push([homeAtlas.code, m.listings.scope.atlasRecords(homeAtlas.name)]);
+  options.push([ALL, m.listings.scope.all]);
+  return (
+    <nav class="segmented" aria-label={m.listings.scope.label}>
+      {options.map(([scope, label]) =>
+        query.scope === scope ? (
+          <a href={listingHref(path, query, { scope, page: 1 })} aria-current="page">
+            {label}
+          </a>
+        ) : (
+          <a href={listingHref(path, query, { scope, page: 1 })}>{label}</a>
+        ),
+      )}
+    </nav>
+  );
+}
+
+/** The search box: the one filter that is not about a column. */
+function SearchForm({ m, path, query }: { m: Messages; path: string; query: ListingQuery }) {
+  const f = m.listings.filters;
+  return (
+    <form class="search" role="search" method="get" action={path}>
+      <HiddenQuery query={query} except={["q"]} />
+      <input type="search" name="q" value={query.q} placeholder={f.searchHint} aria-label={f.search} />
+      <button type="submit" aria-label={f.search}>
+        <SearchIcon />
+      </button>
+    </form>
+  );
 }
 
 /** The staff note: this page is showing more than your own collecting. */
@@ -66,126 +148,15 @@ function ScopeNote({ m, query, atlases }: { m: Messages; query: ListingQuery; at
 }
 
 /**
- * The filter form. A GET form, so its fields become the query string and
- * every filtered listing is a shareable URL — which is the whole point of a
- * staff member helping someone by sending them a link.
- */
-function Filters({
-  m,
-  path,
-  query,
-  atlases,
-  admin,
-}: {
-  m: Messages;
-  path: string;
-  query: ListingQuery;
-  atlases: readonly AtlasOption[];
-  admin: boolean;
-}) {
-  const f = m.listings.filters;
-  return (
-    <FilterBar
-      action={path}
-      actions={
-        <>
-          <Button>{f.apply}</Button>
-          {isFiltered(query) && <a href={listingHref(path, query, { ...emptyFilters, page: 1 })}>{f.clear}</a>}
-        </>
-      }
-    >
-      {/* Scope is a filter like any other, and only staff have more than one
-          value for it — a volunteer's listing has no control to ignore. */}
-      {admin && (
-        <SelectField
-          id="scope"
-          name="scope"
-          label={m.listings.scope.label}
-          value={query.scope}
-          options={[
-            [MINE, m.listings.scope.mine],
-            ...atlases.map((a) => [a.code, a.name] as const),
-            [OUTSIDE, m.listings.scope.outside],
-            [ALL, m.listings.scope.all],
-          ]}
-        />
-      )}
-      <TextField id="q" name="q" label={f.search} value={query.q} hint={f.searchHint} />
-      <DateField id="from" name="from" label={f.from} value={query.from} />
-      <DateField id="to" name="to" label={f.to} value={query.to} />
-      <TextField id="place" name="place" label={f.place} value={query.place} hint={f.placeHint} />
-      {/* Staff only: a volunteer's listing is already one collector's. */}
-      {admin && (
-        <TextField id="collector" name="collector" label={f.collector} value={query.collector} hint={f.collectorHint} />
-      )}
-      {/* The axis scope cannot answer: whose records, not whose ground. */}
-      {admin && (
-        <SelectField
-          id="member"
-          name="member"
-          label={f.member}
-          hint={f.memberHint}
-          value={query.member}
-          options={[
-            [MEMBER_ANY, f.memberAny] as const,
-            ...atlases.map((a) => [a.code, a.name] as const),
-            [PROGRAM_MEMBERSHIP, f.memberProgram] as const,
-            [MEMBER_UNRECORDED, f.memberUnrecorded] as const,
-          ]}
-        />
-      )}
-      <TextField id="taxon" name="taxon" label={f.taxon} value={query.taxon} hint={f.taxonHint} />
-      {/* A taxon name only ever matches something already determined, so the
-          gap needs its own control rather than a magic word in the box. */}
-      <SelectField
-        id="det"
-        name="det"
-        label={f.det}
-        value={query.det}
-        options={[
-          ["any", f.detAny],
-          ["determined", f.detDetermined],
-          ["undetermined", f.detUndetermined],
-        ]}
-      />
-      <SelectField
-        id="season"
-        name="season"
-        label={f.season}
-        value={query.season}
-        options={[
-          ["any", f.seasonAny],
-          ["open", f.seasonOpen],
-          ["settled", f.seasonSettled],
-        ]}
-      />
-      <SelectField
-        id="qc"
-        name="qc"
-        label={f.qc}
-        value={query.qc}
-        options={[
-          ["any", f.qcAny],
-          ["flagged", f.qcFlagged],
-          ["blocking", f.qcBlocking],
-          ["warning", f.qcWarning],
-          ["clean", f.qcClean],
-        ]}
-      />
-    </FilterBar>
-  );
-}
-
-/**
- * Every filter cleared, scope left alone: clearing is not signing out of an
- * atlas.
+ * Every filter cleared, scope and sort left alone: clearing is not signing
+ * out of an atlas, and not un-sorting.
  *
- * Typed as the whole query minus the two parts Clear deliberately keeps, so
- * a filter added to ListingQuery and forgotten here fails to compile. It was
+ * Typed as the whole query minus the parts Clear deliberately keeps, so a
+ * filter added to ListingQuery and forgotten here fails to compile. It was
  * spread into a Partial before, which let `member` be missing silently — and
  * a Clear link that clears everything but one box is worse than none.
  */
-const emptyFilters: Omit<ListingQuery, "scope" | "page"> = {
+const emptyFilters: Omit<ListingQuery, "scope" | "page" | "sort" | "dir"> = {
   q: "",
   from: null,
   to: null,
@@ -193,10 +164,89 @@ const emptyFilters: Omit<ListingQuery, "scope" | "page"> = {
   collector: "",
   member: MEMBER_ANY,
   taxon: "",
+  host: "",
   det: "any",
-  season: "any",
   qc: "any",
 };
+
+/** One filter in force: what to call it, what it says, and the listing without it. */
+interface ActiveFilter {
+  label: string;
+  value: string;
+  clearHref: string;
+}
+
+function activeFilters(
+  m: Messages,
+  path: string,
+  query: ListingQuery,
+  atlases: readonly AtlasOption[],
+  homeAtlas: AtlasOption | null,
+): ActiveFilter[] {
+  const f = m.listings.filters;
+  const out: ActiveFilter[] = [];
+  const clear = (override: Partial<ListingQuery>) => listingHref(path, query, { ...override, page: 1 });
+  const atlasName = (code: string) => atlases.find((a) => a.code === code)?.name ?? code;
+  // A scope the toggle has no position for reads as a pill, and clearing it
+  // goes back to everything rather than to mine: it was reached from there.
+  const toggled = new Set([MINE, ALL, homeAtlas?.code]);
+  if (!toggled.has(query.scope)) {
+    out.push({
+      label: m.listings.samples.colAtlas,
+      value: query.scope === OUTSIDE ? m.listings.scope.outside : atlasName(query.scope),
+      clearHref: clear({ scope: ALL }),
+    });
+  }
+  if (query.q !== "") out.push({ label: f.search, value: query.q, clearHref: clear({ q: "" }) });
+  if (query.from !== null) out.push({ label: f.from, value: m.format.date(query.from), clearHref: clear({ from: null }) });
+  if (query.to !== null) out.push({ label: f.to, value: m.format.date(query.to), clearHref: clear({ to: null }) });
+  if (query.place !== "") out.push({ label: f.place, value: query.place, clearHref: clear({ place: "" }) });
+  if (query.collector !== "") {
+    out.push({ label: f.collector, value: query.collector, clearHref: clear({ collector: "" }) });
+  }
+  if (query.member !== MEMBER_ANY) {
+    const value =
+      query.member === PROGRAM_MEMBERSHIP
+        ? f.memberProgram
+        : query.member === MEMBER_UNRECORDED
+          ? f.memberUnrecorded
+          : atlasName(query.member);
+    out.push({ label: f.member, value, clearHref: clear({ member: MEMBER_ANY }) });
+  }
+  if (query.taxon !== "") out.push({ label: f.taxon, value: query.taxon, clearHref: clear({ taxon: "" }) });
+  if (query.host !== "") out.push({ label: f.host, value: query.host, clearHref: clear({ host: "" }) });
+  if (query.det !== "any") {
+    out.push({
+      label: f.det,
+      value: query.det === "determined" ? f.detDetermined : f.detUndetermined,
+      clearHref: clear({ det: "any" }),
+    });
+  }
+  if (query.qc !== "any") {
+    const value = { flagged: f.qcFlagged, blocking: f.qcBlocking, warning: f.qcWarning, clean: f.qcClean }[query.qc];
+    out.push({ label: f.qc, value, clearHref: clear({ qc: "any" }) });
+  }
+  return out;
+}
+
+/** The filters in force, each dismissable, and one link that clears them all. */
+function ActiveFilters({ m, path, query, filters }: { m: Messages; path: string; query: ListingQuery; filters: ActiveFilter[] }) {
+  if (filters.length === 0) return null;
+  const f = m.listings.filters;
+  return (
+    <div class="active-filters" aria-label={f.inForce}>
+      {filters.map((filter) => (
+        <span class="chip">
+          {filter.label}: {filter.value}{" "}
+          <a href={filter.clearHref} aria-label={f.remove(filter.label)} class="chip-remove">
+            ×
+          </a>
+        </span>
+      ))}
+      {isFiltered(query) && <a href={listingHref(path, query, { ...emptyFilters, page: 1 })}>{f.clear}</a>}
+    </div>
+  );
+}
 
 /**
  * A date input. Not a TextField with type=date bolted on: the value format
@@ -208,6 +258,71 @@ function DateField({ id, name, label, value }: { id: string; name: string; label
     <Field id={id} label={label}>
       <input id={id} name={name} type="date" value={value ?? ""} />
     </Field>
+  );
+}
+
+/** What a column's values are, which decides how its two sort orders are named. */
+type SortKind = "text" | "date" | "number";
+
+/**
+ * A column heading with its menu. `sort` names the key this column orders
+ * by (null for a column with no order), and `fields` the query fields its
+ * filter sets — the form carries every other part of the query as hidden
+ * inputs, so applying one column's filter keeps the rest.
+ */
+function Column({
+  m,
+  path,
+  query,
+  label,
+  sort,
+  kind = "text",
+  fields = [],
+  children,
+}: {
+  m: Messages;
+  path: string;
+  query: ListingQuery;
+  label: string;
+  sort: SortKey | null;
+  kind?: SortKind;
+  fields?: ReadonlyArray<keyof ListingQuery>;
+  children?: Child;
+}) {
+  if (sort === null && fields.length === 0) return <th>{label}</th>;
+  const s = m.listings.sort;
+  const names: Record<SortKind, [string, string]> = {
+    text: [s.textAsc, s.textDesc],
+    date: [s.dateAsc, s.dateDesc],
+    number: [s.numberAsc, s.numberDesc],
+  };
+  const current: SortDirection | null = sort !== null && query.sort === sort ? query.dir : null;
+  const sortHref = (dir: SortDirection) => listingHref(path, query, { sort: sort ?? DEFAULT_SORT, dir, page: 1 });
+  return (
+    <th>
+      <ColumnMenu label={label} menuLabel={m.listings.columnMenu(label)} sorted={current}>
+        {sort !== null && (
+          <div class="menu-section">
+            {(["asc", "desc"] as const).map((dir) =>
+              current === dir ? (
+                <a href={sortHref(dir)} aria-current="true">
+                  {names[kind][dir === "asc" ? 0 : 1]}
+                </a>
+              ) : (
+                <a href={sortHref(dir)}>{names[kind][dir === "asc" ? 0 : 1]}</a>
+              ),
+            )}
+          </div>
+        )}
+        {fields.length > 0 && (
+          <form method="get" action={path} class="col-filter">
+            <HiddenQuery query={query} except={fields} />
+            {children}
+            <Button variant="tonal">{m.listings.filters.apply}</Button>
+          </form>
+        )}
+      </ColumnMenu>
+    </th>
   );
 }
 
@@ -232,15 +347,17 @@ function ResultsHeader({
   count: (total: number) => string;
 }) {
   return (
-    <p class="row baseline results-header">
-      <Meta>{count(total)}</Meta>
-      {total > 0 && <a href={listingHref(`${path}.csv`, query, { page: 1 })}>{m.listings.csv.download}</a>}
-      <Meta>
+    <div class="results-header">
+      <p class="row baseline">
+        <span class="results-count">{count(total)}</span>
+        {total > 0 && <a href={listingHref(`${path}.csv`, query, { page: 1 })}>{m.listings.csv.download}</a>}
+      </p>
+      <Meta block>
         {m.listings.csv.note}
         {/* An export that silently stops short is worse than a small one. */}
         {total > CSV_ROW_LIMIT && <> {m.listings.csv.truncated(CSV_ROW_LIMIT)}</>}
       </Meta>
-    </p>
+    </div>
   );
 }
 
@@ -257,6 +374,15 @@ function ListingPager({ m, path, query, total }: { m: Messages; path: string; qu
   );
 }
 
+/** A record's number as a pill: a click target a finger can hit (Peter, 2026-09-16). */
+function Pill({ href, mono, children }: { href: string; mono?: boolean; children: Child }) {
+  return (
+    <a href={href} class={mono ? "pill mono" : "pill"}>
+      {children}
+    </a>
+  );
+}
+
 export interface ListingProps<Row> {
   m: Messages;
   query: ListingQuery;
@@ -264,43 +390,237 @@ export interface ListingProps<Row> {
   atlases: readonly AtlasOption[];
   /** Whether this session may change scope (config.adminLogins, beeline-6va). */
   admin: boolean;
+  /** The atlas the viewer belongs to, for the scope toggle; null when none is recorded. */
+  homeAtlas?: AtlasOption | null;
 }
 
-export function SampleListing({ m, query, page, atlases, admin }: ListingProps<SampleRow>) {
+/** The part above the table that both listings share. */
+function Toolbar<Row>({
+  copy,
+  path,
+  props,
+}: {
+  copy: { count: (total: number) => string };
+  path: string;
+  props: ListingProps<Row>;
+}) {
+  const { m, query, atlases, admin } = props;
+  const homeAtlas = props.homeAtlas ?? null;
+  const filters = activeFilters(m, path, query, atlases, admin ? homeAtlas : null);
+  return (
+    <>
+      <ScopeNote m={m} query={query} atlases={atlases} />
+      <div class="listing-toolbar">
+        {admin && <ScopeToggle m={m} path={path} query={query} homeAtlas={homeAtlas} />}
+        <SearchForm m={m} path={path} query={query} />
+      </div>
+      <ActiveFilters m={m} path={path} query={query} filters={filters} />
+      {props.page.rows.length > 0 && (
+        <ResultsHeader m={m} path={path} query={query} total={props.page.total} count={copy.count} />
+      )}
+    </>
+  );
+}
+
+/** The column menus both listings share: date, collectors, place, atlas. */
+function DateColumn({ m, path, query, label }: { m: Messages; path: string; query: ListingQuery; label: string }) {
+  const f = m.listings.filters;
+  return (
+    <Column m={m} path={path} query={query} label={label} sort="date" kind="date" fields={["from", "to"]}>
+      <DateField id="from" name="from" label={f.from} value={query.from} />
+      <DateField id="to" name="to" label={f.to} value={query.to} />
+    </Column>
+  );
+}
+
+function CollectorsColumn({
+  m,
+  path,
+  query,
+  label,
+  atlases,
+  admin,
+}: {
+  m: Messages;
+  path: string;
+  query: ListingQuery;
+  label: string;
+  atlases: readonly AtlasOption[];
+  admin: boolean;
+}) {
+  const f = m.listings.filters;
+  // Staff only: a volunteer's listing is already one collector's, so their
+  // column sorts and does not filter.
+  return (
+    <Column
+      m={m}
+      path={path}
+      query={query}
+      label={label}
+      sort="collector"
+      fields={admin ? ["collector", "member"] : []}
+    >
+      {admin && (
+        <>
+          <TextField id="collector" name="collector" label={f.collector} value={query.collector} hint={f.collectorHint} />
+          {/* The axis scope cannot answer: whose records, not whose ground. */}
+          <SelectField
+            id="member"
+            name="member"
+            label={f.member}
+            hint={f.memberHint}
+            value={query.member}
+            options={[
+              [MEMBER_ANY, f.memberAny] as const,
+              ...atlases.map((a) => [a.code, a.name] as const),
+              [PROGRAM_MEMBERSHIP, f.memberProgram] as const,
+              [MEMBER_UNRECORDED, f.memberUnrecorded] as const,
+            ]}
+          />
+        </>
+      )}
+    </Column>
+  );
+}
+
+function PlaceColumn({ m, path, query, label }: { m: Messages; path: string; query: ListingQuery; label: string }) {
+  const f = m.listings.filters;
+  return (
+    <Column m={m} path={path} query={query} label={label} sort="place" fields={["place"]}>
+      <TextField id="place" name="place" label={f.place} value={query.place} hint={f.placeHint} />
+    </Column>
+  );
+}
+
+function HostColumn({ m, path, query, label }: { m: Messages; path: string; query: ListingQuery; label: string }) {
+  const f = m.listings.filters;
+  return (
+    <Column m={m} path={path} query={query} label={label} sort="host" fields={["host"]}>
+      <TextField id="host" name="host" label={f.host} value={query.host} hint={f.hostHint} />
+    </Column>
+  );
+}
+
+/**
+ * The atlas column narrows by setting scope — an atlas, or the ground
+ * outside every one — which is why it is staff-only as a filter: scope is
+ * the gate, and a volunteer's is fixed.
+ */
+function AtlasColumn({
+  m,
+  path,
+  query,
+  label,
+  atlases,
+  admin,
+}: {
+  m: Messages;
+  path: string;
+  query: ListingQuery;
+  label: string;
+  atlases: readonly AtlasOption[];
+  admin: boolean;
+}) {
+  return (
+    <Column m={m} path={path} query={query} label={label} sort="atlas" fields={admin ? ["scope"] : []}>
+      {admin && (
+        <SelectField
+          id="scope"
+          name="scope"
+          label={m.listings.scope.label}
+          value={query.scope}
+          options={[
+            [ALL, m.listings.scope.all],
+            ...atlases.map((a) => [a.code, a.name] as const),
+            [OUTSIDE, m.listings.scope.outside],
+            [MINE, m.listings.scope.mine],
+          ]}
+        />
+      )}
+    </Column>
+  );
+}
+
+function DetSelect({ m, query }: { m: Messages; query: ListingQuery }) {
+  const f = m.listings.filters;
+  return (
+    <SelectField
+      id="det"
+      name="det"
+      label={f.det}
+      value={query.det}
+      options={[
+        ["any", f.detAny],
+        ["determined", f.detDetermined],
+        ["undetermined", f.detUndetermined],
+      ]}
+    />
+  );
+}
+
+export function SampleListing(props: ListingProps<SampleRow>) {
+  const { m, query, page, atlases, admin } = props;
   const copy = m.listings.samples;
+  const f = m.listings.filters;
   const path = "/samples";
+  const col = { m, path, query };
   return (
     <>
       <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
-      <ScopeNote m={m} query={query} atlases={atlases} />
-      <Filters m={m} path={path} query={query} atlases={atlases} admin={admin} />
+      <Toolbar copy={copy} path={path} props={props} />
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
       ) : (
         <>
-          <ResultsHeader m={m} path={path} query={query} total={page.total} count={copy.count} />
           <DataTable
             columns={[
-              copy.colSample,
-              copy.colDate,
-              copy.colCollectors,
-              copy.colPlace,
-              copy.colSpecimens,
-              copy.colStatus,
-              copy.colAtlas,
-              copy.colLinks,
+              <Column {...col} label={copy.colSample} sort="number" kind="number" />,
+              <DateColumn {...col} label={copy.colDate} />,
+              <CollectorsColumn {...col} label={copy.colCollectors} atlases={atlases} admin={admin} />,
+              <PlaceColumn {...col} label={copy.colPlace} />,
+              <HostColumn {...col} label={copy.colHost} />,
+              // A taxon name only ever matches something already determined,
+              // so the gap needs its own control rather than a magic word in
+              // the box. On samples both are about the sample's specimens.
+              <Column {...col} label={copy.colSpecimens} sort="specimens" kind="number" fields={["taxon", "det"]}>
+                <TextField id="taxon" name="taxon" label={f.taxon} value={query.taxon} hint={f.taxonHint} />
+                <DetSelect m={m} query={query} />
+              </Column>,
+              <Column {...col} label={copy.colStatus} sort="flags" kind="number" fields={["qc"]}>
+                <SelectField
+                  id="qc"
+                  name="qc"
+                  label={f.qc}
+                  value={query.qc}
+                  options={[
+                    ["any", f.qcAny],
+                    ["flagged", f.qcFlagged],
+                    ["blocking", f.qcBlocking],
+                    ["warning", f.qcWarning],
+                    ["clean", f.qcClean],
+                  ]}
+                />
+              </Column>,
+              <AtlasColumn {...col} label={copy.colAtlas} atlases={atlases} admin={admin} />,
+              <th aria-label={copy.colLinks} />,
             ]}
+            rawHeader
           >
             {page.rows.map((row) => (
               <tr>
                 <td>
-                  <a href={sampleHref(row.sample_id)}>{row.sample_number}</a>
+                  <Pill href={sampleHref(row.sample_id)}>{row.sample_number}</Pill>
                 </td>
-                <td>{m.format.dateRange(row.date_start, row.date_end)}</td>
+                <td class="nowrap">{m.format.dateRange(row.date_start, row.date_end)}</td>
                 {/* The label form: on a listing, the question about a
                     collector is whose name will be printed (/design/names). */}
                 <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
                 <td>{m.format.place([row.locality, row.county, row.state_province])}</td>
+                <td>
+                  {row.host_name !== null && (
+                    <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} />
+                  )}
+                </td>
                 <td>{m.format.number(row.specimen_count)}</td>
                 <td>
                   <StatusChip m={m} blocking={row.blocking} warning={row.warning} />
@@ -308,8 +628,12 @@ export function SampleListing({ m, query, page, atlases, admin }: ListingProps<S
                 <td>{row.atlas_code}</td>
                 <td>
                   {row.inat_observation_id !== null ? (
-                    <a href={`https://www.inaturalist.org/observations/${row.inat_observation_id}`}>
-                      {copy.viewOnInat}
+                    <a
+                      class="inat-link"
+                      href={`https://www.inaturalist.org/observations/${row.inat_observation_id}`}
+                      title={copy.viewOnInat}
+                    >
+                      <img src="/static/inat-logo.png" alt={copy.viewOnInat} width="66" height="12" />
                     </a>
                   ) : (
                     // No observation to fix upstream: editing happens here,
@@ -328,46 +652,49 @@ export function SampleListing({ m, query, page, atlases, admin }: ListingProps<S
   );
 }
 
-export function SpecimenListing({ m, query, page, atlases, admin }: ListingProps<SpecimenRow>) {
+export function SpecimenListing(props: ListingProps<SpecimenRow>) {
+  const { m, query, page, atlases, admin } = props;
   const copy = m.listings.specimens;
+  const f = m.listings.filters;
   const path = "/specimens";
+  const col = { m, path, query };
   return (
     <>
       <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
-      <ScopeNote m={m} query={query} atlases={atlases} />
-      <Filters m={m} path={path} query={query} atlases={atlases} admin={admin} />
+      <Toolbar copy={copy} path={path} props={props} />
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
       ) : (
         <>
-          <ResultsHeader m={m} path={path} query={query} total={page.total} count={copy.count} />
           <DataTable
             columns={[
-              copy.colFieldNumber,
-              copy.colSample,
-              copy.colDate,
-              copy.colCollectors,
-              copy.colPlace,
-              copy.colDetermination,
-              copy.colDeterminer,
-              copy.colAtlas,
+              <Column {...col} label={copy.colFieldNumber} sort="field" kind="number" />,
+              <Column {...col} label={copy.colSample} sort="number" kind="number" />,
+              <DateColumn {...col} label={copy.colDate} />,
+              <CollectorsColumn {...col} label={copy.colCollectors} atlases={atlases} admin={admin} />,
+              <PlaceColumn {...col} label={copy.colPlace} />,
+              // On a specimen listing the taxon filter is about *this*
+              // specimen's determination, not its sample's.
+              <Column {...col} label={copy.colDetermination} sort="determination" fields={["taxon", "det"]}>
+                <TextField id="taxon" name="taxon" label={f.taxon} value={query.taxon} hint={f.taxonHint} />
+                <DetSelect m={m} query={query} />
+              </Column>,
+              <Column {...col} label={copy.colDeterminer} sort="determiner" />,
+              <AtlasColumn {...col} label={copy.colAtlas} atlases={atlases} admin={admin} />,
             ]}
+            rawHeader
           >
             {page.rows.map((row) => (
               <tr>
                 <td>
-                  <a href={specimenHref(row.specimen_id)}>
-                    {row.field_number === null ? (
-                      <Meta>{copy.noFieldNumber}</Meta>
-                    ) : (
-                      <span class="mono">{row.field_number}</span>
-                    )}
-                  </a>
+                  <Pill href={specimenHref(row.specimen_id)} mono={row.field_number !== null}>
+                    {row.field_number === null ? copy.noFieldNumber : row.field_number}
+                  </Pill>
                 </td>
                 <td>
-                  <a href={sampleHref(row.sample_id)}>{row.sample_number}</a>
+                  <Pill href={sampleHref(row.sample_id)}>{row.sample_number}</Pill>
                 </td>
-                <td>{m.format.date(row.date_start)}</td>
+                <td class="nowrap">{m.format.date(row.date_start)}</td>
                 <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
                 <td>{m.format.place([row.locality, row.county, row.state_province])}</td>
                 <td>

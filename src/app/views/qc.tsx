@@ -244,6 +244,8 @@ export function QcHome(props: {
    * letting them vanish (beeline-2c3.24).
    */
   settledFlagged?: number;
+  /** The last day of the settled seasons, ISO: where the link to them points the listing's date filter. */
+  settledThrough?: string;
 }) {
   const { m, rows } = props;
   const withOthers: CoCollectors = props.withOthers ?? new Map();
@@ -268,7 +270,7 @@ export function QcHome(props: {
                 person's own, flagged. Built through listingHref so the URL cannot
                 drift from what the listing parses — and with the scope named, so
                 a staff member's remembered scope does not answer instead. */}
-            <a href={listingHref("/samples", EMPTY_QUERY, { scope: MINE, qc: "flagged", season: "settled" })}>
+            <a href={listingHref("/samples", EMPTY_QUERY, { scope: MINE, qc: "flagged", to: props.settledThrough ?? null })}>
               {m.qc.settled.link}
             </a>
           </Meta>

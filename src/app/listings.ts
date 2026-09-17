@@ -70,12 +70,40 @@ export type DeterminationState = "any" | "determined" | "undetermined";
 export const DETERMINATION_STATES = ["any", "determined", "undetermined"] as const;
 
 /**
- * Which seasons to show. The dashboard settles earlier ones (beeline-2c3.24)
- * and then has to be able to point at exactly what it settled, so "earlier
- * seasons" is a filter here rather than a set only the dashboard can name.
+ * What a listing is ordered by. Every column that can be sorted names its
+ * key here, and a key means the same thing on both listings where both have
+ * the column. The default — newest first, then the collector's own numbering
+ * — is `date` descending, and stays out of the URL.
  */
-export type SeasonState = "any" | "open" | "settled";
-export const SEASON_STATES = ["any", "open", "settled"] as const;
+export type SortKey =
+  | "date"
+  | "number"
+  | "field"
+  | "collector"
+  | "place"
+  | "host"
+  | "specimens"
+  | "flags"
+  | "atlas"
+  | "determination"
+  | "determiner";
+export const SORT_KEYS = [
+  "date",
+  "number",
+  "field",
+  "collector",
+  "place",
+  "host",
+  "specimens",
+  "flags",
+  "atlas",
+  "determination",
+  "determiner",
+] as const;
+export type SortDirection = "asc" | "desc";
+export const DEFAULT_SORT: SortKey = "date";
+/** Newest first is the default for dates; everything else reads A–Z or smallest first. */
+export const defaultDirection = (key: SortKey): SortDirection => (key === "date" ? "desc" : "asc");
 
 export interface ListingQuery {
   /** MINE, ALL, or an atlas code. */
@@ -100,14 +128,17 @@ export interface ListingQuery {
   member: MemberFilter;
   /** A taxon name; anything below it in the taxonomy matches too. */
   taxon: string;
+  /** The floral host, as the observation named it. */
+  host: string;
   /**
    * On specimens, whether this specimen carries a determination of record. On
    * samples, whether every specimen does: "undetermined" is a sample with at
    * least one specimen still waiting for a name.
    */
   det: DeterminationState;
-  season: SeasonState;
   qc: QcStatus;
+  sort: SortKey;
+  dir: SortDirection;
   /** 1-based. */
   page: number;
 }
@@ -121,9 +152,11 @@ export const EMPTY_QUERY: ListingQuery = {
   collector: "",
   member: MEMBER_ANY,
   taxon: "",
+  host: "",
   det: "any",
-  season: "any",
   qc: "any",
+  sort: DEFAULT_SORT,
+  dir: defaultDirection(DEFAULT_SORT),
   page: 1,
 };
 
@@ -159,7 +192,9 @@ export function parseListingQuery(
   const to = params.get("to") ?? "";
   const qc = params.get("qc") ?? "";
   const det = params.get("det") ?? "";
-  const season = params.get("season") ?? "";
+  const sortParam = params.get("sort") ?? "";
+  const sort = (SORT_KEYS as readonly string[]).includes(sortParam) ? (sortParam as SortKey) : DEFAULT_SORT;
+  const dirParam = params.get("dir");
   const page = Number.parseInt(params.get("page") ?? "1", 10);
   return {
     scope: permitted ? requested : MINE,
@@ -171,15 +206,22 @@ export function parseListingQuery(
     collector: opts.admin ? text(params.get("collector")) : "",
     member: memberPermitted ? member : MEMBER_ANY,
     taxon: text(params.get("taxon")),
+    host: text(params.get("host")),
     det: (DETERMINATION_STATES as readonly string[]).includes(det) ? (det as DeterminationState) : "any",
-    season: (SEASON_STATES as readonly string[]).includes(season) ? (season as SeasonState) : "any",
+    sort,
+    dir: dirParam === "asc" || dirParam === "desc" ? dirParam : defaultDirection(sort),
     qc: (QC_STATUSES as readonly string[]).includes(qc) ? (qc as QcStatus) : "any",
     page: Number.isFinite(page) && page >= 1 ? Math.min(page, 10_000) : 1,
   };
 }
 
-/** The listing's own URL, with some parts changed — paging, scope, reset. */
-export function listingHref(path: string, query: ListingQuery, overrides: Partial<ListingQuery> = {}): string {
+/**
+ * The query as URL parameters, with some parts changed — paging, scope,
+ * reset. One function, because a column menu's form has to carry the rest
+ * of the query as hidden inputs and a link has to carry it in its href, and
+ * the two must agree about what a default looks like.
+ */
+export function listingParams(query: ListingQuery, overrides: Partial<ListingQuery> = {}): URLSearchParams {
   const merged = { ...query, ...overrides };
   const params = new URLSearchParams();
   // Defaults stay out of the URL, so the plain path is the plain listing —
@@ -203,11 +245,21 @@ export function listingHref(path: string, query: ListingQuery, overrides: Partia
   if (merged.collector !== "") params.set("collector", merged.collector);
   if (merged.member !== MEMBER_ANY) params.set("member", merged.member);
   if (merged.taxon !== "") params.set("taxon", merged.taxon);
+  if (merged.host !== "") params.set("host", merged.host);
   if (merged.det !== "any") params.set("det", merged.det);
-  if (merged.season !== "any") params.set("season", merged.season);
   if (merged.qc !== "any") params.set("qc", merged.qc);
+  // The sort is in the URL only when it is not the default, and the
+  // direction only when it is not the key's own default — so a link that
+  // sorts by date newest-first is the plain listing.
+  if (merged.sort !== DEFAULT_SORT) params.set("sort", merged.sort);
+  if (merged.dir !== defaultDirection(merged.sort)) params.set("dir", merged.dir);
   if (merged.page > 1) params.set("page", String(merged.page));
-  const search = params.toString();
+  return params;
+}
+
+/** The listing's own URL, with some parts changed — paging, scope, reset. */
+export function listingHref(path: string, query: ListingQuery, overrides: Partial<ListingQuery> = {}): string {
+  const search = listingParams(query, overrides).toString();
   return search === "" ? path : `${path}?${search}`;
 }
 
@@ -220,8 +272,8 @@ export const isFiltered = (q: ListingQuery) =>
   q.collector !== "" ||
   q.member !== MEMBER_ANY ||
   q.taxon !== "" ||
+  q.host !== "" ||
   q.det !== "any" ||
-  q.season !== "any" ||
   q.qc !== "any";
 
 export interface AtlasOption {
@@ -267,6 +319,8 @@ export interface SampleRow {
   specimen_count: number;
   inat_observation_id: bigint | null;
   atlas_code: string | null;
+  host_name: string | null;
+  host_rank: string | null;
   latitude: number | null;
   longitude: number | null;
   coordinate_uncertainty_m: number | null;
@@ -343,18 +397,78 @@ const asDate = (iso: string) => sql<Date>`CAST(${iso} AS DATE)`;
 export const BY_SAMPLE_NUMBER = sql`length(s.sample_number) DESC, s.sample_number DESC`;
 
 /**
+ * The same numbering rule in either direction: length first, then the
+ * string, so digit strings read in natural order whichever way they run.
+ */
+const sampleNumber = (dir: SortDirection) =>
+  dir === "desc" ? BY_SAMPLE_NUMBER : sql`length(s.sample_number) ASC, s.sample_number ASC`;
+
+/** The primary collector's name as it sorts: family name, then given — whose series the number is. */
+const PRIMARY_COLLECTOR_SORT = sql`(SELECT concat_ws(' ', p.family_name, p.given_name, p.display_name)
+  FROM sample_primary_collector pc JOIN person p ON p.entity_id = pc.person_id
+  WHERE pc.sample_id = s.entity_id)`;
+
+/**
+ * A column's ORDER BY. Every key ends in the default order so paging is
+ * stable across equal values, and a key a listing does not have falls back
+ * to the default rather than erroring — the URL is typed by hand sometimes.
+ */
+export function sampleOrder(query: ListingQuery) {
+  const dir = query.dir === "desc" ? sql`DESC` : sql`ASC`;
+  const nulls = sql`NULLS LAST`;
+  const byDate = sql`s.date_start ${dir}, ${sampleNumber(query.dir)}`;
+  switch (query.sort) {
+    case "number":
+      return sql`${sampleNumber(query.dir)}, s.date_start DESC`;
+    case "collector":
+      return sql`${PRIMARY_COLLECTOR_SORT} ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    case "place":
+      return sql`lower(s.locality) ${dir} ${nulls}, lower(s.county) ${dir} ${nulls}, s.state_province ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    case "host":
+      return sql`lower(s.host_name_as_observed) ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    case "specimens":
+      return sql`s.specimen_count ${dir}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    case "flags":
+      // Blocking outranks a warning outranks clean, whichever way it runs.
+      return sql`${blockingCount} ${dir}, ${warningCount} ${dir}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    case "atlas":
+      return sql`a.code ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    default:
+      return byDate;
+  }
+}
+
+export function specimenOrder(query: ListingQuery) {
+  const dir = query.dir === "desc" ? sql`DESC` : sql`ASC`;
+  const nulls = sql`NULLS LAST`;
+  const byDate = sql`s.date_start ${dir}, ${sampleNumber(query.dir)}`;
+  switch (query.sort) {
+    case "field":
+      return sql`length(sp.field_number) ${dir} ${nulls}, sp.field_number ${dir} ${nulls}`;
+    case "number":
+      return sql`${sampleNumber(query.dir)}, s.date_start DESC`;
+    case "collector":
+      return sql`${PRIMARY_COLLECTOR_SORT} ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    case "place":
+      return sql`lower(s.locality) ${dir} ${nulls}, lower(s.county) ${dir} ${nulls}, s.state_province ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    case "host":
+      return sql`lower(s.host_name_as_observed) ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    case "determination":
+      return sql`an.scientific_name ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    case "determiner":
+      return sql`lower(coalesce(det.display_name, d.determiner_name)) ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    case "atlas":
+      return sql`a.code ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    default:
+      return byDate;
+  }
+}
+
+/**
  * Whoever ran this sample, by display name or iNat login. Anyone on the
  * collector list counts: asking "show me Michael's samples" and getting only
  * the ones he numbered would be the same mistake the list exists to fix.
  */
-/** Settled seasons, or the open one — the same view the dashboard reads. */
-const inSeason = (state: SeasonState) =>
-  state === "any"
-    ? null
-    : sql<boolean>`${state === "settled" ? sql`` : sql`NOT `}EXISTS (
-        SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id
-      )`;
-
 const collectedBy = (term: string) => sql<boolean>`EXISTS (
   SELECT 1 FROM sample_collector c
   JOIN person p ON p.entity_id = c.person_id
@@ -542,8 +656,7 @@ export async function listSamples(
         exists(selectFrom("specimen as sp").select("sp.entity_id").whereRef("sp.sample_id", "=", "s.entity_id")),
       );
   }
-  const season = inSeason(query.season);
-  if (season !== null) base = base.where(season);
+  if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
 
@@ -564,6 +677,8 @@ export async function listSamples(
         "s.specimen_count",
         "s.inat_observation_id",
         "a.code as atlas_code",
+        "s.host_name_as_observed as host_name",
+        "s.host_rank",
         "loc.latitude",
         "loc.longitude",
         "loc.coordinate_uncertainty_m",
@@ -576,8 +691,7 @@ export async function listSamples(
         sql<boolean>`EXISTS (SELECT 1 FROM sample_collector mine
                              WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})`.as("mine"),
       ])
-      .orderBy("s.date_start", "desc")
-      .orderBy(BY_SAMPLE_NUMBER)
+      .orderBy(sampleOrder(query))
       .orderBy("s.entity_id")
       .limit(limit)
       .offset(offset)
@@ -659,8 +773,7 @@ export async function listSpecimens(
   if (animals !== null) base = base.where("d.animal_id", "in", animals.length === 0 ? [-1] : animals);
   if (query.det === "undetermined") base = base.where("d.specimen_id", "is", null);
   if (query.det === "determined") base = base.where("d.specimen_id", "is not", null);
-  const season = inSeason(query.season);
-  if (season !== null) base = base.where(season);
+  if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
 
@@ -695,8 +808,7 @@ export async function listSpecimens(
         "s.taxon_geoprivacy",
         sql<string | null>`coalesce(det.display_name, d.determiner_name)`.as("determiner"),
       ])
-      .orderBy("s.date_start", "desc")
-      .orderBy(BY_SAMPLE_NUMBER)
+      .orderBy(specimenOrder(query))
       .orderBy("sp.sample_id")
       .orderBy("sp.specimen_number")
       .limit(limit)
@@ -788,6 +900,8 @@ export function sampleCsv(page: Page<SampleRow>): string {
       "state_province",
       "country",
       "specimen_count",
+      "host",
+      "host_rank",
       "atlas",
       "latitude",
       "longitude",
@@ -810,6 +924,8 @@ export function sampleCsv(page: Page<SampleRow>): string {
       r.state_province,
       r.country,
       r.specimen_count,
+      r.host_name,
+      r.host_rank,
       r.atlas_code,
       r.latitude,
       r.longitude,

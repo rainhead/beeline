@@ -2,30 +2,42 @@ import { PROGRAM_MEMBERSHIP } from "../../model.js";
 import type { Messages } from "../messages/index.js";
 import type { AtlasOption } from "../listings.js";
 import {
+  DEFAULT_ROSTER_SORT,
+  MEMBER_ANY,
+  MEMBER_UNRECORDED,
+  isRosterFiltered,
+  personHandle,
+  rosterHref,
+  rosterParams,
   type BindingVerdict,
   type LinkedChange,
   type PersonDetail,
   type RosterPage,
   type RosterRow,
   type RosterQuery,
-  personHandle,
-  rosterHref,
+  type RosterSort,
+  type SortDirection,
 } from "../roster.js";
 import type { PersonChange } from "../../person-change.js";
+import type { Child } from "hono/jsx";
 import {
   Button,
   Callout,
   Card,
   CheckboxField,
   Chip,
+  ColumnMenu,
   DataTable,
   EmptyState,
-  FilterBar,
+  FilterPills,
+  HiddenParams,
   Meta,
   PageHeader,
   Pager,
+  SearchForm,
   SelectField,
   TextField,
+  type FilterPill,
 } from "./components/index.js";
 
 /**
@@ -199,44 +211,141 @@ function RecentChanges({ m, changes }: { m: Messages; changes: readonly LinkedCh
   );
 }
 
+/**
+ * A column heading with its menu: the column's two orders, and the filter
+ * that narrows on it, the form carrying the rest of the query as hidden
+ * inputs. The same shape as the record listings' (views/listings.tsx),
+ * which is the point — this page used to be unlike them (Peter, 2026-09-16).
+ */
+function Column({
+  m,
+  query,
+  label,
+  sort,
+  kind = "text",
+  fields = [],
+  children,
+}: {
+  m: Messages;
+  query: RosterQuery;
+  label: string;
+  sort: RosterSort | null;
+  kind?: "text" | "date" | "number";
+  fields?: ReadonlyArray<keyof RosterQuery>;
+  children?: Child;
+}) {
+  if (sort === null && fields.length === 0) return <th>{label}</th>;
+  const names = m.listings.sort;
+  const order: Record<"text" | "date" | "number", [string, string]> = {
+    text: [names.textAsc, names.textDesc],
+    date: [names.dateAsc, names.dateDesc],
+    number: [names.numberAsc, names.numberDesc],
+  };
+  const current: SortDirection | null = sort !== null && query.sort === sort ? query.dir : null;
+  const sortHref = (dir: SortDirection) => rosterHref(query, { sort: sort ?? DEFAULT_ROSTER_SORT, dir, page: 1 });
+  return (
+    <th>
+      <ColumnMenu label={label} menuLabel={m.listings.columnMenu(label)} sorted={current}>
+        {sort !== null && (
+          <div class="menu-section">
+            {(["asc", "desc"] as const).map((dir) =>
+              current === dir ? (
+                <a href={sortHref(dir)} aria-current="true">
+                  {order[kind][dir === "asc" ? 0 : 1]}
+                </a>
+              ) : (
+                <a href={sortHref(dir)}>{order[kind][dir === "asc" ? 0 : 1]}</a>
+              ),
+            )}
+          </div>
+        )}
+        {fields.length > 0 && (
+          <form method="get" action="/people" class="col-filter">
+            <HiddenParams params={rosterParams(query)} except={fields} />
+            {children}
+            <Button variant="tonal">{m.people.apply}</Button>
+          </form>
+        )}
+      </ColumnMenu>
+    </th>
+  );
+}
+
+/** The filters in force, as pills; scope and sort are not filters. */
+function pills(m: Messages, query: RosterQuery, atlases: readonly AtlasOption[]): FilterPill[] {
+  const p = m.people;
+  const clear = (override: Partial<RosterQuery>) => rosterHref(query, { ...override, page: 1 });
+  const out: FilterPill[] = [];
+  if (query.search !== "") out.push({ label: p.search, value: query.search, clearHref: clear({ search: "" }) });
+  if (query.suspect) out.push({ label: p.colAccount, value: p.onlySuspect, clearHref: clear({ suspect: false }) });
+  if (query.active !== "any") {
+    out.push({
+      label: p.activity,
+      value: query.active === "active" ? p.activityActive : p.activityInactive,
+      clearHref: clear({ active: "any" }),
+    });
+  }
+  if (query.member !== MEMBER_ANY) {
+    const value =
+      query.member === PROGRAM_MEMBERSHIP
+        ? p.membershipProgram
+        : query.member === MEMBER_UNRECORDED
+          ? p.memberUnrecorded
+          : (atlases.find((a) => a.code === query.member)?.name ?? query.member);
+    out.push({ label: p.colMembership, value, clearHref: clear({ member: MEMBER_ANY }) });
+  }
+  if (query.admin) out.push({ label: p.colAdmin, value: p.onlyAdmins, clearHref: clear({ admin: false }) });
+  return out;
+}
+
+const emptyRosterFilters: Omit<RosterQuery, "sort" | "dir" | "page"> = {
+  search: "",
+  suspect: false,
+  active: "any",
+  member: MEMBER_ANY,
+  admin: false,
+};
+
 export function Roster({
   m,
   page,
   query,
   recent,
+  atlases,
 }: {
   m: Messages;
   page: RosterPage;
   query: RosterQuery;
   recent: readonly LinkedChange[];
+  atlases: readonly AtlasOption[];
 }) {
   const p = m.people;
   // No staging to weigh an account against: the checking apparatus is not
   // dimmed or explained away, it is simply absent, and the page is a listing
   // of people. That is also what this screen becomes after cutover.
   const checking = page.evidence;
+  const col = { m, query };
   return (
     <>
       <PageHeader title={p.heading} lede={p.intro} />
 
-      <FilterBar
-        action="/people"
-        actions={
-          <>
-            <Button>{p.apply}</Button>
-            <a class="button outlined" href="/people">
-              {p.clear}
-            </a>
-          </>
-        }
-      >
-        <TextField id="q" name="q" label={p.search} value={query.search} hint={p.searchHint} />
-        {checking && (
-          <CheckboxField id="suspect" name="suspect" label={p.onlySuspect} checked={query.suspect} />
-        )}
-      </FilterBar>
+      <div class="listing-toolbar">
+        <SearchForm action="/people" params={rosterParams(query)} value={query.search} label={p.search} placeholder={p.searchHint} />
+      </div>
+      <FilterPills
+        filters={pills(m, query, atlases)}
+        clearAllHref={isRosterFiltered(query) ? rosterHref(query, { ...emptyRosterFilters, page: 1 }) : null}
+        clearAllLabel={p.clear}
+        groupLabel={p.inForce}
+        removeLabel={p.remove}
+      />
 
-      <Meta block>{p.found(page.total)}</Meta>
+      <div class="results-header">
+        <p class="row baseline">
+          <span class="results-count">{p.found(page.total)}</span>
+          {page.total > 0 && <a href={rosterHref(query, { page: 1 }, "/people.csv")}>{p.csv}</a>}
+        </p>
+      </div>
 
       {/* The listing no longer sorts the doubtful ones to the front, so this
           is how anyone learns there are some. Said once, above the table,
@@ -251,14 +360,47 @@ export function Roster({
         <EmptyState>{p.noPeople}</EmptyState>
       ) : (
         <DataTable
+          rawHeader
           columns={[
-            p.colPerson,
-            p.colAccount,
-            p.colSamples,
-            p.colLastSample,
-            p.colLastSeen,
-            p.colMembership,
-            p.colAdmin,
+            <Column {...col} label={p.colPerson} sort="name" />,
+            // The account's filter is the one check this page still makes,
+            // and only while there is anything to check against.
+            <Column {...col} label={p.colAccount} sort="login" fields={checking ? ["suspect"] : []}>
+              {checking && <CheckboxField id="suspect" name="suspect" label={p.onlySuspect} checked={query.suspect} />}
+            </Column>,
+            <Column {...col} label={p.colSamples} sort="samples" kind="number" />,
+            <Column {...col} label={p.colLastSample} sort="lastSample" kind="date" fields={["active"]}>
+              <SelectField
+                id="active"
+                name="active"
+                label={p.activity}
+                hint={p.activityHint}
+                value={query.active}
+                options={[
+                  ["any", p.activityAny],
+                  ["active", p.activityActive],
+                  ["inactive", p.activityInactive],
+                ]}
+              />
+            </Column>,
+            <Column {...col} label={p.colLastSeen} sort="lastSeen" kind="date" />,
+            <Column {...col} label={p.colMembership} sort="membership" fields={["member"]}>
+              <SelectField
+                id="member"
+                name="member"
+                label={p.colMembership}
+                value={query.member}
+                options={[
+                  [MEMBER_ANY, p.memberAny] as const,
+                  ...atlases.map((a) => [a.code, a.name] as const),
+                  [PROGRAM_MEMBERSHIP, p.membershipProgram] as const,
+                  [MEMBER_UNRECORDED, p.memberUnrecorded] as const,
+                ]}
+              />
+            </Column>,
+            <Column {...col} label={p.colAdmin} sort={null} fields={["admin"]}>
+              <CheckboxField id="admin" name="admin" label={p.onlyAdmins} checked={query.admin} />
+            </Column>,
           ]}
         >
           {page.rows.map((row) => (
@@ -275,16 +417,18 @@ export function Roster({
                     )}
                   </>
                 ) : (
+                  // The login only: the user id is what actually binds them,
+                  // but it means nothing to a reader and made every row
+                  // taller (Peter, 2026-09-16). It is on the person's page,
+                  // and in the CSV.
                   <>
-                    <code>{row.login}</code>
-                    <Meta block>{row.inat_user_id}</Meta>
-                    {checking && wrongChip(m, row.verdict)}
+                    <code>{row.login}</code> {checking && wrongChip(m, row.verdict)}
                   </>
                 )}
               </td>
               <td>{m.format.number(row.samples)}</td>
-              <td>{when(m, row.last_sample)}</td>
-              <td>{lastSeen(m, row)}</td>
+              <td class="nowrap">{when(m, row.last_sample)}</td>
+              <td class="nowrap">{lastSeen(m, row)}</td>
               <td>{membershipCell(m, row)}</td>
               <td>{row.is_admin ? <Chip tone="success">{p.colAdmin}</Chip> : "—"}</td>
             </tr>

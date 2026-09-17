@@ -25,6 +25,8 @@ import {
   nameIsUnique,
   parsePersonHandle,
   parseRosterQuery,
+  isRosterFiltered,
+  rosterCsv,
   personDetail,
   personRef,
   RECENT_CHANGES,
@@ -682,7 +684,8 @@ export function createApp({
   app.get("/people", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
-    const query = parseRosterQuery(new URL(c.req.url).searchParams);
+    const atlases = await atlasOptions(db);
+    const query = parseRosterQuery(new URL(c.req.url).searchParams, atlases.map((a) => a.code));
     const listed = await listRoster(db, query);
     // Only on the unfiltered roster. The panel is about the store as a whole,
     // and a search for one person that answers with somebody else's history
@@ -690,12 +693,11 @@ export function createApp({
     // is a read of every entry ever written; it stays cheap because there is
     // one entry per change rather than one per promotion, which is the whole
     // reason the ingest pass diffs at all.
-    const filtered = query.search !== "" || query.suspect;
-    const linked = filtered
+    const linked = isRosterFiltered(query)
       ? []
       : await linkChanges(db, recentChanges(await readChanges(changesPath), RECENT_CHANGES));
     return c.html(
-      await page(c, m.people.title, <Roster m={m} page={listed} query={query} recent={linked} />),
+      await page(c, m.people.title, <Roster m={m} page={listed} query={query} recent={linked} atlases={atlases} />),
     );
   });
 
@@ -736,6 +738,14 @@ export function createApp({
       ),
     );
   };
+
+  app.get("/people.csv", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const atlases = await atlasOptions(db);
+    const query = parseRosterQuery(new URL(c.req.url).searchParams, atlases.map((a) => a.code));
+    const listed = await listRoster(db, query, { limit: CSV_ROW_LIMIT, offset: 0 });
+    return csv(c, rosterCsv(listed), "beeline-people.csv");
+  });
 
   app.get("/people/:id", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);

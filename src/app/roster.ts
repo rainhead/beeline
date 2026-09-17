@@ -1,5 +1,5 @@
 import { sql, type Kysely } from "kysely";
-import type { Database, MembershipKind } from "../model.js";
+import { PROGRAM_MEMBERSHIP, type Database, type MembershipKind } from "../model.js";
 import type { PersonChange } from "../person-change.js";
 
 /**
@@ -79,33 +79,96 @@ export interface RosterRow {
   last_login: Date | string | null;
 }
 
+/**
+ * Still active, or gone quiet: collected a sample or been here within the
+ * last twelve months, or neither (beeline-caa). Either date counts, since
+ * somebody can collect for years without signing in and sign in without
+ * having collected since 2019; a store without its private half answers from
+ * the last sample alone.
+ */
+export type ActivityFilter = "any" | "active" | "inactive";
+export const ACTIVITY_FILTERS = ["any", "active", "inactive"] as const;
+export const ACTIVE_WITHIN_MONTHS = 12;
+
+/** Where the person belongs: an atlas code, the program, nobody has said, or the filter off. */
+export const MEMBER_ANY = "";
+export const MEMBER_UNRECORDED = "unrecorded";
+
+export type RosterSort = "name" | "login" | "samples" | "lastSample" | "lastSeen" | "membership" | "admin";
+export const ROSTER_SORTS = ["name", "login", "samples", "lastSample", "lastSeen", "membership", "admin"] as const;
+export type SortDirection = "asc" | "desc";
+/** Ordered as a roster: the people who collect most, first, and then by name. */
+export const DEFAULT_ROSTER_SORT: RosterSort = "samples";
+export const defaultRosterDirection = (key: RosterSort): SortDirection =>
+  key === "name" || key === "login" || key === "membership" ? "asc" : "desc";
+
 export interface RosterQuery {
   search: string;
   /** Only rows whose account does not match the records behind it. */
   suspect: boolean;
+  active: ActivityFilter;
+  member: string;
+  /** Only the admins. */
+  admin: boolean;
+  sort: RosterSort;
+  dir: SortDirection;
   page: number;
 }
 
-export const EMPTY_ROSTER_QUERY: RosterQuery = { search: "", suspect: false, page: 1 };
+export const EMPTY_ROSTER_QUERY: RosterQuery = {
+  search: "",
+  suspect: false,
+  active: "any",
+  member: MEMBER_ANY,
+  admin: false,
+  sort: DEFAULT_ROSTER_SORT,
+  dir: defaultRosterDirection(DEFAULT_ROSTER_SORT),
+  page: 1,
+};
 
-export function parseRosterQuery(params: URLSearchParams): RosterQuery {
+export function parseRosterQuery(params: URLSearchParams, atlasCodes: readonly string[] = []): RosterQuery {
   const page = Number(params.get("page") ?? "1");
+  const active = params.get("active") ?? "";
+  const member = params.get("member") ?? "";
+  const sortParam = params.get("sort") ?? "";
+  const sort = (ROSTER_SORTS as readonly string[]).includes(sortParam) ? (sortParam as RosterSort) : DEFAULT_ROSTER_SORT;
+  const dir = params.get("dir");
   return {
     search: (params.get("q") ?? "").trim(),
     suspect: params.get("suspect") === "1",
+    active: (ACTIVITY_FILTERS as readonly string[]).includes(active) ? (active as ActivityFilter) : "any",
+    member:
+      member === PROGRAM_MEMBERSHIP || member === MEMBER_UNRECORDED || atlasCodes.includes(member) ? member : MEMBER_ANY,
+    admin: params.get("admin") === "1",
+    sort,
+    dir: dir === "asc" || dir === "desc" ? dir : defaultRosterDirection(sort),
     page: Number.isInteger(page) && page >= 1 ? page : 1,
   };
 }
 
-export function rosterHref(query: RosterQuery, overrides: Partial<RosterQuery> = {}): string {
+/** The query as URL parameters: one place, so hidden inputs and hrefs agree about what a default looks like. */
+export function rosterParams(query: RosterQuery, overrides: Partial<RosterQuery> = {}): URLSearchParams {
   const q = { ...query, ...overrides };
   const params = new URLSearchParams();
   if (q.search !== "") params.set("q", q.search);
   if (q.suspect) params.set("suspect", "1");
+  if (q.active !== "any") params.set("active", q.active);
+  if (q.member !== MEMBER_ANY) params.set("member", q.member);
+  if (q.admin) params.set("admin", "1");
+  if (q.sort !== DEFAULT_ROSTER_SORT) params.set("sort", q.sort);
+  if (q.dir !== defaultRosterDirection(q.sort)) params.set("dir", q.dir);
   if (q.page > 1) params.set("page", String(q.page));
-  const s = params.toString();
-  return s === "" ? "/people" : `/people?${s}`;
+  return params;
 }
+
+export function rosterHref(query: RosterQuery, overrides: Partial<RosterQuery> = {}, path = "/people"): string {
+  const s = rosterParams(query, overrides).toString();
+  return s === "" ? path : `${path}?${s}`;
+}
+
+/** Whether anything but the sort is narrowing the roster. */
+export const isRosterFiltered = (q: RosterQuery) =>
+  q.search !== "" || q.suspect || q.active !== "any" || q.member !== MEMBER_ANY || q.admin;
 
 /**
  * Whether legacy staging is still attached. Without it there is nothing to
@@ -197,12 +260,17 @@ export interface RosterPage {
   lookWrong: number;
 }
 
-export async function listRoster(db: Kysely<Database>, query: RosterQuery): Promise<RosterPage> {
+export async function listRoster(
+  db: Kysely<Database>,
+  query: RosterQuery,
+  opts: { limit?: number; offset?: number } = {},
+): Promise<RosterPage> {
   const evidence = await hasLegacyEvidence(db);
   const sessions = await hasSessions(db);
   const lastVisit = sessions ? lastVisitSql : sql`NULL::TIMESTAMP`;
   const lastLogin = sessions ? lastLoginSql : sql`NULL::TIMESTAMP`;
-  const offset = (query.page - 1) * PAGE_SIZE;
+  const limit = opts.limit ?? PAGE_SIZE;
+  const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
   const term = `%${query.search.toLowerCase()}%`;
 
   // Without legacy staging every evidence column is null and the verdict
@@ -273,10 +341,33 @@ export async function listRoster(db: Kysely<Database>, query: RosterQuery): Prom
     )
     SELECT * FROM judged`;
 
+  // Active: either date within the window. Date minus integer is a date in
+  // both engines (ADR 0001); a timestamp compares against the same cutoff.
+  const cutoff = sql`(current_date - ${ACTIVE_WITHIN_MONTHS * 30})`;
+  const isActive = sql`(last_sample >= ${cutoff}
+                        OR CAST(last_visit AS DATE) >= ${cutoff}
+                        OR CAST(last_login AS DATE) >= ${cutoff})`;
+  const activity =
+    query.active === "active"
+      ? sql`${isActive}`
+      : query.active === "inactive"
+        ? sql`NOT coalesce(${isActive}, FALSE)`
+        : sql`TRUE`;
+  const member =
+    query.member === MEMBER_ANY
+      ? sql`TRUE`
+      : query.member === MEMBER_UNRECORDED
+        ? sql`membership IS NULL`
+        : query.member === PROGRAM_MEMBERSHIP
+          ? sql`membership = 'program'`
+          : sql`atlas_code = ${query.member}`;
   const base = sql`
     SELECT * FROM (${judged})
     WHERE (${query.search === ""} OR lower(display_name) LIKE ${term} OR lower(coalesce(login, '')) LIKE ${term})
-      AND (${!query.suspect} OR verdict IN ('outweighed', 'unattested'))`;
+      AND (${!query.suspect} OR verdict IN ('outweighed', 'unattested'))
+      AND ${activity}
+      AND ${member}
+      AND (${!query.admin} OR is_admin)`;
 
   const counted = await sql<{ n: number | bigint }>`SELECT count(*) AS n FROM (${base})`.execute(db);
   const total = Number(counted.rows[0]?.n ?? 0);
@@ -285,11 +376,12 @@ export async function listRoster(db: Kysely<Database>, query: RosterQuery): Prom
   const wrong = await sql<{ n: number | bigint }>`
     SELECT count(*) AS n FROM (${judged}) WHERE verdict IN ('outweighed', 'unattested')`.execute(db);
   // Ordered as a listing of people, not as a worklist. Sorting the doubtful
-  // ones to the front made the first page a queue wearing a roster's name.
+  // ones to the front made the first page a queue wearing a roster's name;
+  // a column's own order is a reader's choice and ends in the roster's.
   const listed = await sql<RosterRow>`
     ${base}
-    ORDER BY samples DESC, display_name
-    LIMIT ${PAGE_SIZE} OFFSET ${offset}`.execute(db);
+    ORDER BY ${rosterOrder(query)}, samples DESC, display_name
+    LIMIT ${limit} OFFSET ${offset}`.execute(db);
 
   return {
     rows: listed.rows.map((r) => ({
@@ -308,6 +400,75 @@ export async function listRoster(db: Kysely<Database>, query: RosterQuery): Prom
     evidence,
     lookWrong: Number(wrong.rows[0]?.n ?? 0),
   };
+}
+
+/** A column's ORDER BY, over the judged roster's own column names. */
+function rosterOrder(query: RosterQuery) {
+  const dir = query.dir === "desc" ? sql`DESC` : sql`ASC`;
+  const nulls = sql`NULLS LAST`;
+  switch (query.sort) {
+    case "name":
+      return sql`lower(display_name) ${dir}`;
+    case "login":
+      return sql`lower(login) ${dir} ${nulls}`;
+    case "lastSample":
+      return sql`last_sample ${dir} ${nulls}`;
+    case "lastSeen":
+      return sql`greatest(last_visit, last_login) ${dir} ${nulls}`;
+    case "membership":
+      return sql`coalesce(atlas_code, membership) ${dir} ${nulls}`;
+    case "admin":
+      return sql`is_admin ${dir}`;
+    default:
+      return sql`samples ${dir}`;
+  }
+}
+
+/**
+ * CSV export of the roster, the same rows the filters select. Headers are
+ * stable machine names, as the listings' are; the id is here where it is of
+ * use to a script, and off the screen where it only made rows taller.
+ */
+export function rosterCsv(page: RosterPage): string {
+  const iso = (d: Date | string | null) => (d === null ? "" : d instanceof Date ? d.toISOString().slice(0, 10) : String(d));
+  const cell = (value: unknown): string => {
+    if (value === null || value === undefined) return "";
+    let out = String(value);
+    if (/^[=+\-@]/.test(out)) out = `'${out}`;
+    return /[",\n\r]/.test(out) ? `"${out.replaceAll('"', '""')}"` : out;
+  };
+  const header = [
+    "display_name",
+    "login",
+    "inat_user_id",
+    "samples",
+    "last_sample",
+    "last_visit",
+    "last_login",
+    "membership",
+    "atlas",
+    "admin",
+  ];
+  const lines = [
+    header.join(","),
+    ...page.rows.map((r) =>
+      [
+        r.display_name,
+        r.login,
+        r.inat_user_id,
+        r.samples,
+        iso(r.last_sample),
+        iso(r.last_visit),
+        iso(r.last_login),
+        r.membership,
+        r.atlas_code,
+        r.is_admin ? "yes" : "no",
+      ]
+        .map(cell)
+        .join(","),
+    ),
+  ];
+  return lines.join("\r\n");
 }
 
 export interface LoginWeight {

@@ -23,6 +23,7 @@ import {
 } from "../listings.js";
 import { sampleHref, specimenHref } from "../record.js";
 import type { Messages } from "../messages/index.js";
+import { SearchIcon } from "./icons.js";
 import {
   Button,
   Chip,
@@ -322,6 +323,15 @@ function ListingPager({ m, path, query, total }: { m: Messages; path: string; qu
       previousLabel={m.listings.paging.previous}
       nextLabel={m.listings.paging.next}
     />
+  );
+}
+
+/** A record's number as a pill: a click target a finger can hit (Peter, 2026-09-16). */
+function Pill({ href, mono, children }: { href: string; mono?: boolean; children: Child }) {
+  return (
+    <a href={href} class={mono ? "pill mono" : "pill"}>
+      {children}
+    </a>
   );
 }
 

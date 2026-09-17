@@ -1,4 +1,4 @@
-# Olivia's BLM documents: what they add, confirm, and correct
+# Olivia's BLM documents: what they confirm, refine, and add
 
 Read 2026-09-17 against [CONTEXT.md](../../CONTEXT.md) (Programs and governance, Sample, Collecting event, Protocol, Identifiers), the BLM section of [questions.md](../questions.md), and [field-data-entry.md](field-data-entry.md). Page numbers are the PDFs' own; the protocol's printed folio is one less than its PDF page.
 
@@ -18,7 +18,9 @@ Read 2026-09-17 against [CONTEXT.md](../../CONTEXT.md) (Programs and governance,
 - A collector prints as first initial plus full last name, "O. Carril" (protocol p. 176) — `labelName()` already does this.
 - Program is stated per event, never derived: `ProjectID` sits on `CollectionEvent` (p. 93).
 
-## What they contradict or correct
+## What they refine
+
+The meeting gave the shape; these are the details the documents fill in, and where the glossary had been written coarser than the documents, the glossary now follows them (Peter, 2026-09-17: refinements, not contradictions).
 
 1. **A zero-bee sample is a record, and must exist.** "Events stand alone, and can exist in the absence of specimens" (protocol p. 92); the no-bee event gets accession "XXXX" (p. 175); "Collections in which no bees are observed are still valuable data and should be documented in the same manner" (p. 157). Beeline mints a sample only from a positive count (`observation_sample_candidate`), reading zero as "nothing was collected". For a BLM sample, zero is the finding.
 
@@ -72,7 +74,7 @@ Read 2026-09-17 against [CONTEXT.md](../../CONTEXT.md) (Programs and governance,
 6. **Rare plants** — not addressed.
 7. **BLM's access** — partly: view the online database at any time, and a Darwin Core upload to a central repository (narrative p. 29; protocol p. 92).
 8. **What Logan wants about volunteers** — not addressed; the `Collectors` table holds email, institution, phone (p. 93).
-9. **Floral host on each bee** — answered by correction 4: a targeted collection is one genus; a plot session ranges over several plants but the bees are vialled by plant, so Beeline's one-host sample survives if the sample is the vial.
+9. **Floral host on each bee** — answered by refinement 4: a targeted collection is one genus; a plot session ranges over several plants but the bees are vialled by plant, so Beeline's one-host sample survives if the sample is the vial.
 10. **Which plant list** — partly: free text in the field, down to `Asteraceae #1 – photo` or a voucher (pp. 153, 157), resolved to PLANTS in the database (p. 93); nothing says BLM needs symbols back.
 11. **The barcode** — partly: it is the accession number, on the printed label, issued by whoever generates labels — a field office or the project manager (pp. 96, 111, 177). Logan is not mentioned.
 12. **Photos** — partly: plot, plants and queens on the plot form, three target-plant photos on the Tier 1 form (pp. 161–163). iNaturalist appears only as an identification resource (p. 187); nothing suggests a BLM net sample is an observation.

@@ -28,3 +28,50 @@ export function PageHeader({ title, lede, meta }: { title: Child; lede?: Child; 
     </div>
   );
 }
+
+/**
+ * A value that is not there.
+ *
+ * The app drew absence three ways — words in one place, a bare em dash in
+ * another, an empty cell in a third — and an empty cell is the worst of
+ * them, because nobody can tell "there is none" from "it failed to load"
+ * (Nora, 2026-09-17). So absence is a component, with one rule:
+ *
+ * - **Never blank.** Every absence is drawn.
+ * - **Every absence means something, and says so.** `label` is that meaning,
+ *   in the catalog's words — "not determined", "never", "outside the
+ *   atlases" — and it is always there for a screen reader.
+ * - **Spelled out where it is the exception, or tells the reader something**
+ *   (`spelled`): "not determined" on a specimen, "obscured" for coordinates,
+ *   "No account" on a person. **An em dash where the same absence repeats
+ *   down a dense column** and the words would be noise: a job that breached
+ *   nothing, a person with no membership recorded.
+ * - **Secondary text either way**, so an absence never reads as a value.
+ *
+ * What is *not* an absence stays a value: a count of 0 is a number, and a
+ * floral host row left off a record page because the bee was taken off no
+ * flower is DetailList's call, not this component's.
+ */
+export function Absent({ label, spelled = false }: { label: string; spelled?: boolean }) {
+  return spelled ? (
+    <span class="meta absent">{label}</span>
+  ) : (
+    <span class="meta absent">
+      <span aria-hidden="true">—</span>
+      <span class="visually-hidden">{label}</span>
+    </span>
+  );
+}
+
+/** A value, or its absence: the common case of a nullable string in a cell. */
+export function OrAbsent({
+  value,
+  label,
+  spelled = false,
+}: {
+  value: Child | null | undefined;
+  label: string;
+  spelled?: boolean;
+}) {
+  return value === null || value === undefined || value === "" ? <Absent label={label} spelled={spelled} /> : <>{value}</>;
+}

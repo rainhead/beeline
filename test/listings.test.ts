@@ -490,8 +490,11 @@ describe("sorting", () => {
     expect(asc.indexOf("Gerlach")).toBeLessThan(asc.indexOf("A-2"));
     const desc = await get(app, "/samples?scope=all&sort=place&dir=desc");
     expect(desc.indexOf("Gerlach")).toBeLessThan(desc.indexOf("Anacortes"));
-    // The heading shows the direction.
-    expect(desc).toContain("Place<span class=\"col-sort\" aria-hidden=\"true\">▼</span>");
+    // The heading says the direction, to a screen reader and to the eye.
+    expect(desc).toContain(`<th aria-sort="descending">`);
+    expect(asc).toContain(`<th aria-sort="ascending">`);
+    // Exactly one column orders the table.
+    expect(desc.match(/<th aria-sort=/g)).toHaveLength(1);
   });
 
   it("orders specimens by determination", async () => {
@@ -518,6 +521,37 @@ describe("the host plant column", () => {
     expect(body).toContain("<i>Phacelia</i>");
     expect(body).toContain("1 sample");
     expect(body).toContain("Host plant: phac");
+  });
+});
+
+describe("missing values", () => {
+  // Absence was drawn three ways — words, a bare em dash, an empty cell — and
+  // an empty cell cannot be told from a value that failed to load (Nora,
+  // 2026-09-17). Every value cell now draws something, through one component.
+  const EMPTY_VALUE_CELL = /<td><\/td>|<td class="nowrap"><\/td>/;
+
+  it("never leaves a value cell empty, on either listing", async () => {
+    const { app, conn } = await listingApp("staffer");
+    // Gaps everywhere they can be: no place at all, no host, no atlas.
+    await conn.run(`UPDATE sample SET locality = NULL, county = NULL, state_province = NULL, country = NULL
+                    WHERE sample_number = 'C-1'`);
+    for (const path of ["/samples?scope=all", "/specimens?scope=all"]) {
+      const body = await get(app, path);
+      expect(body, path).not.toMatch(EMPTY_VALUE_CELL);
+    }
+  });
+
+  it("spells out an absence that tells the reader something, and dashes one that repeats", async () => {
+    const { app } = await listingApp("staffer");
+    const samples = await get(app, "/samples?scope=all");
+    // Outside every atlas is an answer, so it is written.
+    expect(samples).toContain(`<span class="meta absent">outside</span>`);
+    // No floral host repeats down the column: a dash, with its meaning read aloud.
+    expect(samples).toContain(
+      `<span class="meta absent"><span aria-hidden="true">—</span><span class="visually-hidden">none</span></span>`,
+    );
+    const specimens = await get(app, "/specimens?scope=all");
+    expect(specimens).toContain(`<span class="meta absent">not determined</span>`);
   });
 });
 
@@ -555,6 +589,32 @@ describe("the toolbar", () => {
     const remove = /href="([^"]*)"[^>]*aria-label="Remove the Place filter"/.exec(body)?.[1] ?? "";
     expect(remove).toContain("qc=clean");
     expect(remove).not.toContain("place=");
+  });
+
+  it("draws every column's menu the same way, through the one table component", async () => {
+    // The menus had drifted: three different glyphs depending on sort state,
+    // the commonest too small to read (Peter, 2026-09-17). Every menu now
+    // wears the same chevron, and an order in force is a separate arrow.
+    const CHEVRON = `d="m19.5 8.25-7.5 7.5-7.5-7.5"`;
+    const { app, conn, staffer } = await listingApp("staffer");
+    void conn;
+    void staffer;
+    for (const path of ["/samples?scope=all", "/specimens?scope=all", "/samples?scope=all&sort=place"]) {
+      const body = await get(app, path);
+      const menus = body.match(/<details class="menu col-menu">/g) ?? [];
+      expect(menus.length, path).toBeGreaterThan(5);
+      expect(body.match(new RegExp(CHEVRON.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")), path).toHaveLength(menus.length);
+      expect(body, path).not.toContain("▾");
+      expect(body, path).not.toContain("col-sort");
+    }
+  });
+
+  it("gives a column's filter a real Apply button, not a menu row", async () => {
+    const { app } = await listingApp("staffer");
+    const body = await get(app, "/samples?scope=all");
+    // Filled, the default variant: inside a form with the class the menu
+    // panel's row-flattening rule is scoped away from.
+    expect(body).toMatch(/<form method="get" action="\/samples" class="col-filter">.*?<button type="submit">Apply<\/button><\/form>/s);
   });
 
   it("names each column's menu for what it holds", async () => {

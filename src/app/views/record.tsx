@@ -11,6 +11,7 @@ import {
   type SpecimenDetail,
 } from "../record.js";
 import {
+  Absent,
   Card,
   Chip,
   DataTable,
@@ -37,7 +38,8 @@ import {
  */
 
 /** A value that is simply absent, said rather than left blank. */
-const Unknown = ({ m }: { m: Messages }) => <Meta>{m.record.sample.unknown}</Meta>;
+/** A record page has room for the words, so an absence here is always spelled (components/text.tsx). */
+const Unknown = ({ m }: { m: Messages }) => <Absent label={m.record.sample.unknown} spelled />;
 
 /** Text, or the "not recorded" line where there is none. */
 const orUnknown = (m: Messages, value: string | null): Child => (value === null || value === "" ? <Unknown m={m} /> : value);
@@ -80,7 +82,7 @@ export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }
       term: <Term m={m} slug="atlas">{s.atlas}</Term>,
       // No atlas is an answer, not a gap: collecting where none reaches is
       // ordinary Master Melittologist work (beeline-lcl).
-      value: sample.atlas_name ?? <Meta>{s.atlasOutside}</Meta>,
+      value: sample.atlas_name ?? <Absent label={s.atlasOutside} spelled />,
     },
     // A bee taken off no flower has no floral host, and that is complete —
     // so the row is absent rather than reading as something missing.
@@ -271,7 +273,7 @@ function RecordedName({
   row: { rank: string | null; scientific_name: string | null; qualifier: "cf." | "aff." | "nr." | null };
 }) {
   if (row.scientific_name === null || row.rank === null) {
-    return <Meta>{m.record.sample.specimens.undetermined}</Meta>;
+    return <Absent label={m.record.sample.specimens.undetermined} spelled />;
   }
   return <TaxonName rank={row.rank} scientificName={row.scientific_name} qualifier={row.qualifier ?? undefined} />;
 }
@@ -299,7 +301,7 @@ function SampleSpecimens({ m, sample, page }: { m: Messages; sample: SampleDetai
                 <td>
                   <a href={specimenHref(row.specimen_id)}>
                     {row.field_number === null ? (
-                      <Meta>{c.noFieldNumber}</Meta>
+                      <Absent label={c.noFieldNumber} spelled />
                     ) : (
                       <span class="mono">{row.field_number}</span>
                     )}

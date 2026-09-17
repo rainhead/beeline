@@ -354,7 +354,11 @@ th details.col-menu > summary {
   white-space: nowrap;
 }
 th details.col-menu > summary:hover, th details.col-menu[open] > summary { background: none; color: var(--md-sys-color-on-surface); }
-.col-sort { font-size: 0.7em; }
+/* The marks beside a heading: the chevron that says a menu is here, the
+   same on every column, and an arrow for the order in force. Sized as icons
+   rather than as shrunken text, which is what made the old one unreadable. */
+th details.col-menu > summary .icon { flex: none; }
+th[aria-sort] details.col-menu > summary { color: var(--md-sys-color-on-surface); }
 th details.col-menu > .menu-panel {
   position: fixed;
   top: auto;
@@ -368,8 +372,25 @@ th details.col-menu > .menu-panel {
   margin: 0;
 }
 .col-filter .field { margin-bottom: var(--space-2); }
+.col-filter button { margin-top: var(--space-2); }
 .col-filter input, .col-filter select { width: 100%; max-width: none; }
 .nowrap { white-space: nowrap; }
+/* A value that is not there (components/text.tsx). Positioned, so the
+   screen-reader text inside it is placed against the absence itself: left
+   to the page, a hidden element at the far end of a wide table widens the
+   whole document on a phone. */
+.absent { position: relative; }
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
 /* The order in force, inside the menu that set it. */
 .menu-panel a[aria-current] { font-weight: 700; }
 

@@ -1,5 +1,6 @@
 import type { Child } from "hono/jsx";
-import { SearchIcon } from "../icons.js";
+import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, SearchIcon } from "../icons.js";
+import { Button } from "./button.js";
 
 /**
  * The furniture a long list needs: the filter bar above it, the column
@@ -114,6 +115,36 @@ export function Pill({ href, mono, children }: { href: string; mono?: boolean; c
   );
 }
 
+/** The order a column offers, and which of the two is in force. */
+export interface ColumnSort {
+  /** The direction this column is ordering the table by now; null when it is not. */
+  current: "asc" | "desc" | null;
+  ascHref: string;
+  descHref: string;
+  /** Named for what the values are: "A to Z", "Oldest first", "Lowest first". */
+  ascLabel: string;
+  descLabel: string;
+}
+
+/** The filter a column offers: a GET form that keeps the rest of the query. */
+export interface ColumnFilter {
+  action: string;
+  /** The whole current query; the form carries it as hidden inputs. */
+  params: URLSearchParams;
+  /** The parameters this form sets itself, left out of the hidden ones. */
+  fields: ReadonlyArray<string>;
+  applyLabel: string;
+  /** The form's controls. */
+  controls: Child;
+}
+
+export interface ColumnMenuSpec {
+  /** The accessible name of the toggle: "Date: sort and filter". */
+  menuLabel: string;
+  sort?: ColumnSort;
+  filter?: ColumnFilter;
+}
+
 /**
  * A column heading that opens a menu: how to sort by this column, and the
  * filter that narrows on it (Peter, 2026-09-16: the filter area was a wall
@@ -122,30 +153,51 @@ export function Pill({ href, mono, children }: { href: string; mono?: boolean; c
  * dismissal and one-at-a-time for free; the panel is fixed-positioned so
  * the table's own horizontal scroll cannot clip it.
  *
- * `sorted` is the direction this column is currently ordering the table by,
- * shown in the heading so the order is visible without opening anything.
+ * One component, fed data, because it was written out twice — once for the
+ * record listings and once for People — and the two had already drifted
+ * (Peter, 2026-09-17). Every menu wears the same mark, a chevron at a size
+ * that reads; the order in force is a separate arrow beside the label, so
+ * "there is a menu here" and "the table is sorted by this" are never the
+ * same glyph doing two jobs. DataTable renders this from a column's spec
+ * and puts `aria-sort` on the heading cell.
  */
-export function ColumnMenu({
-  label,
-  menuLabel,
-  sorted,
-  children,
-}: {
-  label: Child;
-  /** The accessible name for the toggle: "Date options". */
-  menuLabel: string;
-  sorted?: "asc" | "desc" | null;
-  children: Child;
-}) {
+export function ColumnMenu({ label, spec }: { label: Child; spec: ColumnMenuSpec }) {
+  const { sort, filter } = spec;
   return (
     <details class="menu col-menu">
-      <summary aria-label={menuLabel}>
-        {label}
-        <span class="col-sort" aria-hidden="true">
-          {sorted === "asc" ? "▲" : sorted === "desc" ? "▼" : "▾"}
-        </span>
+      <summary aria-label={spec.menuLabel}>
+        <span>{label}</span>
+        {sort?.current === "asc" && <ArrowUpIcon />}
+        {sort?.current === "desc" && <ArrowDownIcon />}
+        <ChevronDownIcon />
       </summary>
-      <div class="menu-panel">{children}</div>
+      <div class="menu-panel">
+        {sort !== undefined && (
+          <div class="menu-section">
+            {sort.current === "asc" ? (
+              <a href={sort.ascHref} aria-current="true">
+                {sort.ascLabel}
+              </a>
+            ) : (
+              <a href={sort.ascHref}>{sort.ascLabel}</a>
+            )}
+            {sort.current === "desc" ? (
+              <a href={sort.descHref} aria-current="true">
+                {sort.descLabel}
+              </a>
+            ) : (
+              <a href={sort.descHref}>{sort.descLabel}</a>
+            )}
+          </div>
+        )}
+        {filter !== undefined && (
+          <form method="get" action={filter.action} class="col-filter">
+            <HiddenParams params={filter.params} except={filter.fields} />
+            {filter.controls}
+            <Button>{filter.applyLabel}</Button>
+          </form>
+        )}
+      </div>
     </details>
   );
 }

@@ -54,6 +54,16 @@ const place = (parts: ReadonlyArray<string | null> | string) =>
 export const en = {
   locale,
   brand: "Beeline",
+  /**
+   * What a missing value means, for the Absent component: read aloud always,
+   * and written out where the absence is the exception (Nora, 2026-09-17).
+   * A screen adds its own where it knows more — "not determined", "never".
+   */
+  absence: {
+    none: "none",
+    notRecorded: "not recorded",
+  },
+
   /** Locale-aware value formatters, for views composing values into markup. */
   format: { date, dateTime, dateRange, number: n, list, place },
 
@@ -252,6 +262,8 @@ export const en = {
       colSpecimens: "Specimens",
       colStatus: "Flags",
       colAtlas: "Atlas",
+      /** A sample collected where no member atlas reaches: ordinary, and said so rather than left blank. */
+      atlasOutside: "outside",
       /** Read aloud, never shown: the column of links out. */
       colLinks: "Links",
       viewOnInat: "View on iNaturalist",
@@ -757,6 +769,8 @@ export const en = {
     outcomeFailed: "failed",
     outcomeRunning: "running…",
     durationSeconds: (s: number) => `${n(s)}s`,
+    /** A run with no end yet: said, since a blank duration reads as one that failed to record. */
+    stillRunning: "still running",
     noRuns: "No runs yet.",
   },
 
@@ -820,7 +834,7 @@ export const en = {
      * quietly get wrong (beeline-dji).
      */
     lastSeenSignInOnly: "sign-in only",
-    never: "—",
+    never: "never",
     /** Not "Atlas": the column's answer is sometimes the program itself. */
     colMembership: "Belongs to",
     colAdmin: "Admin",

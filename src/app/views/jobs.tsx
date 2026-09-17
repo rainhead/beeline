@@ -1,7 +1,7 @@
 import type { JobOutcome } from "../../model.js";
 import type { Job, Schedule } from "../jobs/framework.js";
 import type { Messages } from "../messages/index.js";
-import { Button, Chip, DataTable, EmptyState, Meta, PageHeader } from "./components/index.js";
+import { Absent, Button, Chip, DataTable, EmptyState, Meta, OrAbsent, PageHeader } from "./components/index.js";
 
 export interface JobRunRow {
   job_name: string;
@@ -72,14 +72,17 @@ export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[] }) {
               <td>{m.format.dateTime(run.started_at)}</td>
               <td>
                 {run.completed_at === null
-                  ? "—"
+                  ? <Absent label={m.jobs.stillRunning} spelled />
                   : m.jobs.durationSeconds(Math.round((run.completed_at.getTime() - run.started_at.getTime()) / 1000))}
               </td>
               <td>
                 <Outcome m={m} run={run} />
               </td>
-              <td>{run.sla_breaches > 0 ? run.sla_breaches : "—"}</td>
-              <td>{run.detail}</td>
+              {/* Almost every run breaches nothing, so a dash rather than a column of noughts. */}
+              <td>{run.sla_breaches > 0 ? run.sla_breaches : <Absent label={m.absence.none} />}</td>
+              <td>
+                <OrAbsent value={run.detail} label={m.absence.none} />
+              </td>
             </tr>
           ))}
         </DataTable>

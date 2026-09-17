@@ -52,8 +52,11 @@ details.menu > .menu-panel {
 .nav-menu > .menu-panel { left: 0; }
 .account-menu > .menu-panel { right: 0; }
 /* Menu rows: links and actions get one identical plain treatment — never
-   pill buttons — so the sign-out <button> is unstyled back to a row. */
-.menu-panel a, .menu-panel button {
+   pill buttons — so the sign-out <button> is unstyled back to a row. A
+   column menu's filter form is the exception: its Apply submits a form
+   rather than being a row of the menu, and flattened it read as a stray
+   word under the fields (Peter, 2026-09-17). */
+.menu-panel a, .menu-panel button:not(.col-filter button) {
   font: var(--md-sys-typescale-label);
   display: block;
   width: 100%;
@@ -67,7 +70,7 @@ details.menu > .menu-panel {
   cursor: pointer;
 }
 .menu-panel a:visited { color: var(--md-sys-color-on-surface); }
-.menu-panel a:hover, .menu-panel button:hover { background: var(--md-sys-color-surface-variant); filter: none; }
+.menu-panel a:hover, .menu-panel button:not(.col-filter button):hover { background: var(--md-sys-color-surface-variant); filter: none; }
 .menu-panel form { margin: 0; }
 /* Who is signed in — a status line, not a row: no hover, no focus, no action. */
 .menu-identity {

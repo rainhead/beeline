@@ -11,6 +11,9 @@ describe("message catalog", () => {
 
   it("formats numbers per locale and pluralizes in interpolations", () => {
     expect(en.qc.summary(1200, 3, 0, 0)).toBe("1,200 samples need attention (3 cannot print until fixed)");
+    // Waiting only: the clause has to carry its own subject.
+    expect(en.qc.summary(0, 0, 3, 0)).toBe("3 samples are waiting on labels");
+    expect(en.qc.summary(0, 0, 1, 0)).toBe("1 sample is waiting on labels");
     expect(en.qc.summary(1, 0, 2, 1)).toBe(
       "1 sample needs attention · 2 are waiting on labels · 1 observation still says 0 specimens",
     );

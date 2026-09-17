@@ -21,6 +21,7 @@ import {
 import type { PersonChange } from "../../person-change.js";
 import type { Child } from "hono/jsx";
 import {
+  Absent,
   Button,
   Callout,
   Card,
@@ -30,6 +31,7 @@ import {
   EmptyState,
   FilterPills,
   Meta,
+  OrAbsent,
   PageHeader,
   Pager,
   SearchForm,
@@ -62,11 +64,15 @@ import { columnCopy, type SortKind } from "./listings.js";
  * word here and spelled out on the person's own page.
  */
 const membershipCell = (m: Messages, row: { membership: string | null; atlas_code: string | null }) =>
-  row.membership === null
-    ? "—"
-    : row.membership === PROGRAM_MEMBERSHIP
-      ? m.people.membershipProgramShort
-      : (row.atlas_code ?? "—");
+  row.membership === null ? (
+    // Most of the column, so a dash — but it is an answer nobody has given,
+    // not an empty one, and the dash says so aloud.
+    <Absent label={m.people.membershipUnasked} />
+  ) : row.membership === PROGRAM_MEMBERSHIP ? (
+    <>{m.people.membershipProgramShort}</>
+  ) : (
+    <OrAbsent value={row.atlas_code} label={m.absence.notRecorded} />
+  );
 
 type Judged = {
   verdict: BindingVerdict;
@@ -77,7 +83,8 @@ type Judged = {
 };
 
 /** A date, or the dash that means it never happened. */
-const when = (m: Messages, d: Date | string | null) => (d === null ? m.people.never : m.format.date(d));
+const when = (m: Messages, d: Date | string | null) =>
+  d === null ? <Absent label={m.people.never} /> : <>{m.format.date(d)}</>;
 
 /**
  * Last seen, printed as the kind of evidence it is. A visit is a request they
@@ -95,7 +102,7 @@ const lastSeen = (m: Messages, row: Pick<RosterRow, "last_visit" | "last_login">
       {m.format.date(row.last_login)} <Meta>{m.people.lastSeenSignInOnly}</Meta>
     </>
   ) : (
-    <>{m.people.never}</>
+    <Absent label={m.people.never} />
   );
 
 /**
@@ -422,7 +429,7 @@ export function Roster({
               <td>
                 {row.login === null ? (
                   <>
-                    <Meta>{p.noAccount}</Meta>
+                    <Absent label={p.noAccount} spelled />
                     {checking && row.top_login !== null && row.top_holder !== null && (
                       <Meta block>{p.accountHeldBy(row.top_login, row.top_holder)}</Meta>
                     )}
@@ -441,7 +448,7 @@ export function Roster({
               <td class="nowrap">{when(m, row.last_sample)}</td>
               <td class="nowrap">{lastSeen(m, row)}</td>
               <td>{membershipCell(m, row)}</td>
-              <td>{row.is_admin ? <Chip tone="success">{p.colAdmin}</Chip> : "—"}</td>
+              <td>{row.is_admin ? <Chip tone="success">{p.colAdmin}</Chip> : <Absent label={p.notAdmin} />}</td>
             </tr>
           ))}
         </DataTable>
@@ -550,7 +557,9 @@ export function PersonPage({
                   <td>
                     <code>{l.login}</code>
                   </td>
-                  <td>{l.uid ?? "—"}</td>
+                  <td>
+                    <OrAbsent value={l.uid} label={m.absence.notRecorded} />
+                  </td>
                   <td>{p.records(l.records)}</td>
                   <td>
                     {l.bound ? (

@@ -14,6 +14,7 @@ import {
   type TaxonomySummary,
 } from "../taxonomy.js";
 import {
+  Absent,
   Breadcrumbs,
   Button,
   Callout,
@@ -95,8 +96,16 @@ function StandingCell({ m, row }: { m: Messages; row: TaxonRow }) {
       return <Chip tone="warning">{t.chip.homonym}</Chip>;
     case "absent":
       return <Chip>{t.chip.absent}</Chip>;
+    case "valid":
+      // A row speaks about ITIS only when the name is not simply current
+      // there — which is most rows, so a dash rather than a column of
+      // "Current". Quiet to the eye is not blank: the dash still says what
+      // it means, where an empty cell could as well have failed to load.
+      return <Absent label={t.standingOptions.valid} />;
     default:
-      return null;
+      // A store without ITIS says so once, above the table; the cell says
+      // only that there is nothing here.
+      return <Absent label={m.absence.none} />;
   }
 }
 
@@ -113,7 +122,9 @@ function TaxonTable({ m, rows, filedUnder = false }: { m: Messages; rows: readon
             <LinkedName taxon={row} />
           </td>
           <td>{row.rank}</td>
-          {filedUnder && <td>{row.parent === null ? "—" : <LinkedName taxon={row.parent} />}</td>}
+          {filedUnder && (
+            <td>{row.parent === null ? <Absent label={m.absence.none} /> : <LinkedName taxon={row.parent} />}</td>
+          )}
           <td>
             <StandingCell m={m} row={row} />
           </td>

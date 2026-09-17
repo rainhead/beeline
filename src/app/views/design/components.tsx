@@ -1,5 +1,6 @@
 import type { Messages } from "../../messages/index.js";
 import {
+  Absent,
   BUTTON_VARIANTS,
   Breadcrumbs,
   Button,
@@ -55,6 +56,80 @@ export function DesignComponents({ m }: { m: Messages }) {
         </h3>
         <Meta block>Data last synced from iNaturalist Aug 21, 2026, 2:50 AM.</Meta>
       </Specimen>
+
+      <h2>Absence</h2>
+      <p>
+        A value that is not there is drawn by <code>Absent</code>, never left to the screen. The app used to do it three
+        ways — words in one place, a bare em dash in another, an empty cell in a third — and the empty cell is the
+        worst, because nobody can tell “there is none” from “it failed to load”.
+      </p>
+      <ul>
+        <li>
+          <strong>Never blank.</strong> Every absence is drawn.
+        </li>
+        <li>
+          <strong>Every absence means something.</strong> The <code>label</code> is that meaning, in the catalog’s
+          words, and a screen reader always hears it.
+        </li>
+        <li>
+          <strong>Spelled out where it is the exception, or tells the reader something</strong>: “not determined”,
+          “obscured”, “No account”, “outside”. A record page has the room, so it always spells.
+        </li>
+        <li>
+          <strong>An em dash where the same absence repeats down a dense column</strong> and the words would be
+          noise: a job that breached nothing, a person nobody has asked about.
+        </li>
+        <li>
+          <strong>Secondary text either way</strong>, so an absence never reads as a value. A count of 0 is a number,
+          not an absence.
+        </li>
+      </ul>
+      <Specimen>
+        <DataTable columns={["Specimen", "Determination", "Determined by", "Host plant", "Atlas"]}>
+          <tr>
+            <td>26100121</td>
+            <td>
+              <TaxonName rank="species" scientificName="Bombus vosnesenskii" />
+            </td>
+            <td>F. Fisher</td>
+            <td>
+              <TaxonName rank="genus" scientificName="Phacelia" />
+            </td>
+            <td>OBA</td>
+          </tr>
+          <tr>
+            <td>26100122</td>
+            <td>
+              <Absent label="not determined" spelled />
+            </td>
+            <td>
+              <Absent label="none" />
+            </td>
+            <td>
+              <Absent label="none" />
+            </td>
+            <td>
+              <Absent label="outside" spelled />
+            </td>
+          </tr>
+        </DataTable>
+      </Specimen>
+      <DoDont
+        dos={[
+          <>
+            <Absent label="never" /> for someone who has never signed in: a dash the eye skips, and “never” for a
+            screen reader.
+          </>,
+          <>
+            <Absent label="not determined" spelled /> on a specimen still waiting for a name, because that one tells
+            the reader something.
+          </>,
+        ]}
+        donts={[
+          <>An empty cell. Nobody can tell it from a value that failed to load.</>,
+          <>A bare “—” typed into a view. It says nothing about what is missing, and a screen reader says “dash”.</>,
+        ]}
+      />
 
       <h2>Chips</h2>
       <p>Status in one word. Tone names the meaning, not the colour.</p>

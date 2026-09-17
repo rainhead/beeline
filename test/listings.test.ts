@@ -524,6 +524,37 @@ describe("the host plant column", () => {
   });
 });
 
+describe("missing values", () => {
+  // Absence was drawn three ways — words, a bare em dash, an empty cell — and
+  // an empty cell cannot be told from a value that failed to load (Nora,
+  // 2026-09-17). Every value cell now draws something, through one component.
+  const EMPTY_VALUE_CELL = /<td><\/td>|<td class="nowrap"><\/td>/;
+
+  it("never leaves a value cell empty, on either listing", async () => {
+    const { app, conn } = await listingApp("staffer");
+    // Gaps everywhere they can be: no place at all, no host, no atlas.
+    await conn.run(`UPDATE sample SET locality = NULL, county = NULL, state_province = NULL, country = NULL
+                    WHERE sample_number = 'C-1'`);
+    for (const path of ["/samples?scope=all", "/specimens?scope=all"]) {
+      const body = await get(app, path);
+      expect(body, path).not.toMatch(EMPTY_VALUE_CELL);
+    }
+  });
+
+  it("spells out an absence that tells the reader something, and dashes one that repeats", async () => {
+    const { app } = await listingApp("staffer");
+    const samples = await get(app, "/samples?scope=all");
+    // Outside every atlas is an answer, so it is written.
+    expect(samples).toContain(`<span class="meta absent">outside</span>`);
+    // No floral host repeats down the column: a dash, with its meaning read aloud.
+    expect(samples).toContain(
+      `<span class="meta absent"><span aria-hidden="true">—</span><span class="visually-hidden">none</span></span>`,
+    );
+    const specimens = await get(app, "/specimens?scope=all");
+    expect(specimens).toContain(`<span class="meta absent">not determined</span>`);
+  });
+});
+
 describe("the toolbar", () => {
   it("gives staff a three-way toggle: mine, my atlas, everything", async () => {
     const { app, conn, staffer } = await listingApp("staffer");

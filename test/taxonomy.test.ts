@@ -167,8 +167,12 @@ describe("the taxonomy pages", () => {
     }
     expect(rowFor(body, "family", "Halictidae")).toContain("<td>2</td>");
     expect(rowFor(body, "family", "Apidae")).toContain("<td>1</td>");
-    // Current in ITIS says nothing; absent says so.
+    // Current in ITIS is quiet — no chip — but quiet is not blank: the cell
+    // draws a dash that says what it means, since an empty one could as
+    // well have failed to load (Nora, 2026-09-17). Absent says so outright.
     expect(rowFor(body, "family", "Halictidae")).not.toContain(`class="chip`);
+    expect(rowFor(body, "family", "Halictidae")).toContain(`<span class="visually-hidden">${en.taxonomy.standingOptions.valid}</span>`);
+    expect(body).not.toMatch(/<td><\/td>/);
     expect(rowFor(body, "family", "Megachilidae")).toContain(en.taxonomy.chip.absent);
     expect(body).toContain(en.taxonomy.summary.synonym(1));
   });

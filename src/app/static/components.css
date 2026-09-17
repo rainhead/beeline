@@ -375,6 +375,22 @@ th details.col-menu > .menu-panel {
 .col-filter button { margin-top: var(--space-2); }
 .col-filter input, .col-filter select { width: 100%; max-width: none; }
 .nowrap { white-space: nowrap; }
+/* A value that is not there (components/text.tsx). Positioned, so the
+   screen-reader text inside it is placed against the absence itself: left
+   to the page, a hidden element at the far end of a wide table widens the
+   whole document on a phone. */
+.absent { position: relative; }
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
 /* The order in force, inside the menu that set it. */
 .menu-panel a[aria-current] { font-weight: 700; }
 

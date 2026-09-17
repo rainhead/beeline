@@ -55,7 +55,11 @@ export function DesignVoice({ m }: { m: Messages }) {
           ],
           [
             "Absences are results",
-            <>“{m.qc.allClear}” — an empty table gets a thank-you, not an empty page.</>,
+            <>
+              “{m.qc.allClear}” — an empty table gets a thank-you, not an empty page. The same holds one cell at a
+              time: a missing value is drawn and says what it is, never left blank (
+              <a href="/design/components">Absence</a>).
+            </>,
           ],
           [
             "No dead ends",

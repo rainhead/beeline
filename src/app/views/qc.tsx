@@ -2,7 +2,7 @@ import { EMPTY_QUERY, listingHref, MINE } from "../listings.js";
 import { sampleHref } from "../record.js";
 import type { Geoprivacy, QcSeverity } from "../../model.js";
 import type { Messages } from "../messages/index.js";
-import { Callout, Chip, DataTable, EmptyState, Meta, PageHeader, TaxonName } from "./components/index.js";
+import { Absent, Callout, Chip, DataTable, EmptyState, Meta, OrAbsent, PageHeader, TaxonName } from "./components/index.js";
 
 /**
  * The front page: one table of this season's samples that want something —
@@ -147,7 +147,9 @@ function Coordinates({ m, row }: { m: Messages; row: DashboardRow }) {
   }
   // No believed-true pair. Say why, where the observation says why.
   const hidden = row.geoprivacy !== null || row.taxon_geoprivacy !== null;
-  return <Meta>{hidden ? m.qc.coordinatesObscured : m.qc.coordinatesNone}</Meta>;
+  // Obscured is the exception and tells the reader why, so it is spelled
+  // out; plain "none" is an em dash with its meaning read aloud.
+  return hidden ? <Absent label={m.qc.coordinatesObscured} spelled /> : <Absent label={m.qc.coordinatesNone} />;
 }
 
 function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: string[] }) {
@@ -171,13 +173,15 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
           )}
           {others.length > 0 && <Meta block>{m.qc.collectedWith(m.format.list(others))}</Meta>}
         </td>
-        <td class={cellClass(marks, "place")}>{m.format.place([row.locality, row.county, row.state_province])}</td>
+        <td class={cellClass(marks, "place")}>
+          <OrAbsent value={m.format.place([row.locality, row.county, row.state_province])} label={m.absence.notRecorded} />
+        </td>
         <td class={cellClass(marks, "coordinates")}>
           <Coordinates m={m} row={row} />
         </td>
         <td class={cellClass(marks, "host")}>
           {row.host_name === null ? (
-            <Meta>{m.qc.hostNone}</Meta>
+            <Absent label={m.qc.hostNone} />
           ) : (
             <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} />
           )}

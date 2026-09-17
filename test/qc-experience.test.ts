@@ -110,6 +110,14 @@ describe("the front page", () => {
     expect(body).toContain("The locality must be a short place name");
   });
 
+  it("never leaves a value cell empty", async () => {
+    const { app, conn } = await qcApp();
+    await conn.run(`UPDATE sample SET locality = NULL, county = NULL, state_province = NULL`);
+    const body = await (await app.request("/")).text();
+    expect(body).not.toMatch(/<td><\/td>|<td class="flagged [a-z]+"><\/td>/);
+    expect(body).toContain(`<span class="visually-hidden">not recorded</span>`);
+  });
+
   it("never says sync, and states the schedule instead of a timestamp", async () => {
     const { app } = await qcApp();
     const body = await (await app.request("/")).text();

@@ -115,6 +115,17 @@ describe("the roster screen", () => {
     expect(body).toMatch(/class="col-filter">.*?<button type="submit">Apply<\/button>/s);
   });
 
+  it("never leaves a value cell empty, and says what each absence is", async () => {
+    const body = await (await ctx.app.request("/people")).text();
+    expect(body).not.toMatch(/<td><\/td>|<td class="nowrap"><\/td>/);
+    // A bare em dash said nothing; each one now carries its meaning.
+    expect(body).toContain(`<span class="visually-hidden">never</span>`);
+    expect(body).toContain(`<span class="visually-hidden">nobody has asked</span>`);
+    expect(body).toContain(`<span class="visually-hidden">No admin rights</span>`);
+    // No account is the exception, and what a reader acts on: written out.
+    expect(body).toContain(`<span class="meta absent">No account</span>`);
+  });
+
   it("prints the login and not the user id, which made every row taller", async () => {
     const body = await (await ctx.app.request("/people?q=Ada")).text();
     expect(body).toContain("<code>adacollects</code>");

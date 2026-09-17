@@ -36,4 +36,4 @@ export {
   type TaxonQualifier,
 } from "./taxon.js";
 export { Term, type GlossarySlug } from "./term.js";
-export { Meta, PageHeader } from "./text.js";
+export { Absent, Meta, OrAbsent, PageHeader } from "./text.js";

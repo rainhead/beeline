@@ -24,12 +24,14 @@ import {
 import { sampleHref, specimenHref } from "../record.js";
 import type { Messages } from "../messages/index.js";
 import {
+  Absent,
   Chip,
   DataTable,
   EmptyState,
   Field,
   FilterPills,
   Meta,
+  OrAbsent,
   PageHeader,
   Pager,
   Pill,
@@ -578,9 +580,13 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                 {/* The label form: on a listing, the question about a
                     collector is whose name will be printed (/design/names). */}
                 <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
-                <td>{m.format.place([row.locality, row.county, row.state_province])}</td>
                 <td>
-                  {row.host_name !== null && (
+                  <OrAbsent value={m.format.place([row.locality, row.county, row.state_province])} label={m.absence.notRecorded} />
+                </td>
+                <td>
+                  {row.host_name === null ? (
+                    <Absent label={m.absence.none} />
+                  ) : (
                     <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} />
                   )}
                 </td>
@@ -588,8 +594,11 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                 <td>
                   <StatusChip m={m} blocking={row.blocking} warning={row.warning} />
                 </td>
-                <td>{row.atlas_code}</td>
                 <td>
+                  <OrAbsent value={row.atlas_code} label={copy.atlasOutside} spelled />
+                </td>
+                {/* Links out, not a value: empty when there is nothing to offer. */}
+                <td class="actions">
                   {row.inat_observation_id !== null ? (
                     <a
                       class="inat-link"
@@ -666,7 +675,9 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
                 </td>
                 <td class="nowrap">{m.format.date(row.date_start)}</td>
                 <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
-                <td>{m.format.place([row.locality, row.county, row.state_province])}</td>
+                <td>
+                  <OrAbsent value={m.format.place([row.locality, row.county, row.state_province])} label={m.absence.notRecorded} />
+                </td>
                 <td>
                   {row.scientific_name !== null && row.taxon_rank !== null ? (
                     <TaxonName
@@ -675,11 +686,11 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
                       qualifier={row.qualifier ?? undefined}
                     />
                   ) : (
-                    <Meta>{copy.undetermined}</Meta>
+                    <Absent label={copy.undetermined} spelled />
                   )}
                 </td>
                 <td>
-                  {row.determiner}
+                  <OrAbsent value={row.determiner} label={m.absence.none} />
                   {row.is_expert === true && (
                     <>
                       {" "}
@@ -687,7 +698,9 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
                     </>
                   )}
                 </td>
-                <td>{row.atlas_code}</td>
+                <td>
+                  <OrAbsent value={row.atlas_code} label={m.listings.samples.atlasOutside} spelled />
+                </td>
               </tr>
             ))}
           </DataTable>

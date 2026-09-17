@@ -245,7 +245,7 @@ function Column({
   const sortHref = (dir: SortDirection) => rosterHref(query, { sort: sort ?? DEFAULT_ROSTER_SORT, dir, page: 1 });
   return (
     <th>
-      <ColumnMenu label={label} menuLabel={m.listings.columnMenu(label)} sorted={current}>
+      <ColumnMenu label={label} menuLabel={(sort === null ? m.listings.columnMenu.filter : fields.length === 0 ? m.listings.columnMenu.sort : m.listings.columnMenu.both)(label)} sorted={current}>
         {sort !== null && (
           <div class="menu-section">
             {(["asc", "desc"] as const).map((dir) =>

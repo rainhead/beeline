@@ -555,6 +555,16 @@ describe("the toolbar", () => {
     expect(remove).not.toContain("place=");
   });
 
+  it("names each column's menu for what it holds", async () => {
+    const { app } = await listingApp("staffer");
+    const samples = await get(app, "/samples?scope=all");
+    expect(samples).toContain(`aria-label="Sample: sort"`);
+    expect(samples).toContain(`aria-label="Date: sort and filter"`);
+    const specimens = await get(app, "/specimens?scope=all");
+    expect(specimens).toContain(`aria-label="Determined by: sort"`);
+    expect(specimens).not.toContain(`aria-label="Determined by: sort and filter"`);
+  });
+
   it("carries the rest of the query through a column's filter form", async () => {
     const { app } = await listingApp("staffer");
     const body = await get(app, "/samples?scope=all&place=Fallon&sort=place&dir=desc");

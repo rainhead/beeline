@@ -90,8 +90,18 @@ describe("the roster screen", () => {
     const body = await (await ctx.app.request("/people")).text();
     expect(body).not.toContain("Evidence");
     expect(body).not.toContain("binding");
-    for (const column of ["Person", "iNaturalist account", "Samples", "Belongs to", "Admin"]) {
-      expect(body).toContain(`aria-label="${column}: sort and filter"`);
+    // Each heading's menu is named for what it holds and no more: a column
+    // that only sorts does not promise a screen-reader user a filter.
+    for (const label of [
+      "Person: sort",
+      "iNaturalist account: sort",
+      "Samples: sort",
+      "Last sample: sort and filter",
+      "Last seen: sort",
+      "Belongs to: sort and filter",
+      "Admin: filter",
+    ]) {
+      expect(body).toContain(`aria-label="${label}"`);
     }
   });
 
@@ -259,7 +269,7 @@ describe("the roster screen", () => {
     });
     const body = await (await ctx.app.request("/people?q=Ada")).text();
     expect(body).toContain(`aria-label="Last sample: sort and filter"`);
-    expect(body).toContain(`aria-label="Last seen: sort and filter"`);
+    expect(body).toContain(`aria-label="Last seen: sort"`);
     expect(body).toContain("Aug 12, 2025");
   });
 
@@ -315,7 +325,7 @@ describe("the roster screen", () => {
       const ctx = await rosterApp({ personId: 3, admin: true, privateStore: true });
       const body = await (await ctx.app.request("/people?q=Ada")).text();
       expect(body).not.toContain("sign-in only");
-      expect(body).toContain(`aria-label="Last seen: sort and filter"`);
+      expect(body).toContain(`aria-label="Last seen: sort"`);
     });
   });
 
@@ -323,7 +333,7 @@ describe("the roster screen", () => {
     // createMemoryDb attaches no private store, which is also a CLI run or a
     // restore. An em dash, not a crash and not today's date.
     const body = await (await ctx.app.request("/people?q=Bo")).text();
-    expect(body).toContain(`aria-label="Last seen: sort and filter"`);
+    expect(body).toContain(`aria-label="Last seen: sort"`);
     expect((await ctx.app.request("/people")).status).toBe(200);
   });
 

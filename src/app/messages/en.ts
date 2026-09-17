@@ -355,8 +355,16 @@ export const en = {
       numberAsc: "Lowest first",
       numberDesc: "Highest first",
     },
-    /** The accessible name of a column heading's menu. */
-    columnMenu: (column: string) => `${column}: sort and filter`,
+    /**
+     * The accessible name of a column heading's menu. It says what the menu
+     * holds and no more: a column that only sorts must not tell a
+     * screen-reader user there is a filter to find (CodeRabbit on #67).
+     */
+    columnMenu: {
+      both: (column: string) => `${column}: sort and filter`,
+      sort: (column: string) => `${column}: sort`,
+      filter: (column: string) => `${column}: filter`,
+    },
 
 
     /** Chips on a row, and the same three words the QC filter offers. */

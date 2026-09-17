@@ -2,9 +2,9 @@
 
 Questions we can't answer from code or data, queued for Peter's next meetings with Andony/Arthur/Lincoln/atlas staff. Each section says who to ask where that is settled — asking the wrong person is slower than not asking. Move answers into [CONTEXT.md](../CONTEXT.md) or the relevant doc, then delete the question.
 
-## Trap sampling (ask Lincoln Best, Olivia Messinger-Carrill, Karen Wright; mostly unknown territory — no reference implementation, spreadsheets unseen)
+## Trap sampling (ask Lincoln Best, Olivia Messinger Carril, Karen Wright; mostly unknown territory — no reference implementation, spreadsheets unseen)
 
-**Direct these to Lincoln Best, Olivia Messinger-Carrill and Karen Wright**
+**Direct these to Lincoln Best, Olivia Messinger Carril and Karen Wright**
 (Peter, 2026-08-28), not to Andony. Trap sampling is its own practice with its
 own practitioners, and this whole section had been queued behind meetings with
 people who do not do it. Three people rather than one is worth knowing about

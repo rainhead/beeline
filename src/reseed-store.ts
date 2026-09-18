@@ -87,6 +87,19 @@ export const CARRIED_TABLES = [
 
 export interface ReseedCounts {
   carried: Record<string, number>;
+  /**
+   * What the source held that a reseed cannot carry and does not try to: its
+   * print runs and the field numbers they minted (schema/035). Every one of
+   * those rows hangs off an entity_id a reseed redraws — a run off the person
+   * who prepared it, a minted specimen off a sample promotion re-mints — and
+   * remapping them is a job with no customer: the sandbox is the only store
+   * that reseeds, its runs are rehearsals, and a deployed store after cutover
+   * is migrated, never reseeded (ADR 0006). A reseeded store therefore mints
+   * again from the imported ceiling, which is fine before cutover and cannot
+   * happen after it. Reported rather than silent, because the numbers were
+   * burned in the source and are not in the target.
+   */
+  leftBehind: { print_run: number; minted_field_number: number };
   /** The next id promotion will draw — where the carried rows left off. */
   sequenceAt: number;
 }
@@ -197,6 +210,13 @@ export async function carryStaging(
       await count("itis_synonym");
     }
 
+    const leftBehind = {
+      print_run: (await has("print_run")) ? await scalar(conn, `SELECT count(*) FROM old.print_run`) : 0,
+      minted_field_number: (await has("minted_field_number"))
+        ? await scalar(conn, `SELECT count(*) FROM old.minted_field_number`)
+        : 0,
+    };
+
     // Scoped to the target: both catalogs are attached and both have a
     // sequence by this name, and reading the source's reported a number seven
     // hundred thousand too high while the store itself was fine.
@@ -206,7 +226,7 @@ export async function carryStaging(
         `SELECT coalesce(max(last_value), 0) FROM duckdb_sequences()
          WHERE database_name = '${target}' AND sequence_name = 'entity_id_seq'`,
       )) + 1;
-    return { carried, sequenceAt };
+    return { carried, leftBehind, sequenceAt };
   } finally {
     await conn.run(`DETACH old`);
   }
@@ -245,6 +265,12 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   }
   const counts = await reseedStore(source, target);
   console.log(JSON.stringify(counts, null, 2));
+  if (counts.leftBehind.print_run > 0) {
+    console.log(
+      `\nLeft behind: ${counts.leftBehind.print_run} print run(s) and ${counts.leftBehind.minted_field_number} ` +
+        `minted field number(s). A reseed carries neither; the target mints again from the imported ceiling.`,
+    );
+  }
   console.log(
     `\n${target} has the schema and ${source}'s staging, and no model.\n` +
       `Derive it: pnpm legacy:promote ${target} && pnpm inat:fetch-places ${target} && ` +

@@ -260,45 +260,12 @@ CREATE TABLE correction (
 
 ## Label governance
 
-```sql
-CREATE TABLE print_run (
-  id          INTEGER PRIMARY KEY,
-  atlas_id    INTEGER NOT NULL REFERENCES atlas(id),
-  printer_id  INTEGER NOT NULL REFERENCES person(id),
-  state       TEXT NOT NULL,             -- 'prepared' | 'approved' | 'printed' | 'mailed'
-  prepared_at TIMESTAMP NOT NULL,        -- the freeze moment: "I'm ready to print now"
-  approved_at TIMESTAMP,
-  printed_at  TIMESTAMP,
-  mailed_at   TIMESTAMP
-);
-
--- The snapshot: what physically went on paper, immune to later data changes.
-CREATE TABLE printed_label (
-  print_run_id INTEGER NOT NULL REFERENCES print_run(id),
-  specimen_id  INTEGER NOT NULL REFERENCES specimen(id),
-  content      JSON NOT NULL,            -- the six label fields exactly as rendered
-  findings     JSON NOT NULL,            -- QC findings evaluated at freeze time
-  PRIMARY KEY (print_run_id, specimen_id)
-);
-
-CREATE TABLE reprint_request (
-  id            INTEGER PRIMARY KEY,
-  specimen_id   INTEGER NOT NULL REFERENCES specimen(id),
-  requester_id  INTEGER NOT NULL REFERENCES person(id),
-  reason        TEXT NOT NULL,
-  created_at    TIMESTAMP NOT NULL,
-  fulfilled_by  INTEGER REFERENCES print_run(id)
-);
-```
-
-Proofing (between `prepared` and `approved`) can pull records from a run; what Arthur actually inspects there is [question P1](questions.md).
-
-*Open theme — artifact lifecycle.* The model is event-sourced about creation but has no vocabulary for destruction or retirement: nothing records that a physical label was scrapped (a reprint merely implies supersession), or that a field number was permanently voided. Provisional stance, to confirm with staff ([questions P6–P7](questions.md)): the field number is the specimen's permanent identity — fixing bad label data means a new print under the same number (the `printed_label` rows across runs already form that revision history; latest print = current intended label), with destruction of the old label a physical-workflow obligation the model may need to record rather than assume. Minting a *new* number is reserved for identity errors (two specimens sharing one number) and would be an explicit voiding event on `minted_field_number` — append-only, never an edit, with downstream (Ecdysis/GBIF) notification. Whether disposition needs first-class events (`label_scrapped`, `number_voided`) or stays derived-plus-convention awaits the staff answers.
+Built (beeline-1kb.2, 2026-09-17): [schema/035_print_runs.sql](../schema/035_print_runs.sql) holds `print_run`, `minted_field_number` and `printed_label`, and [schema/155_views_print_run.sql](../schema/155_views_print_run.sql) says what they mean. Two things the sketch had here were superseded before they were built, both by [ADR 0008](adr/0008-specimen-identity.md): the run's `state` column is derived from its timestamps instead, and the registry is one row per *number* rather than 1:1 with the specimen, so a duplicate repair can mint a second number without losing the first. `reprint_request` is still to come (beeline-1kb.5), and `printed_label`'s `(print_run_id, specimen_id)` key is the room left for it. Proofing pulls (beeline-1kb.3) and the artifact-lifecycle theme are open; the field-number half of that theme is decided by the ADR (nothing is voided; a superseded number is a non-current registry row).
 
 ## Deliberately absent, for now
 
 - **Trap sites / deployments / servicing** — sketched only as `sample.kind='trap'` + series numbers until the staff questions come back. The entities are coming; guessing their shape now would just be wrong.
-- **Roles/permissions** — high-trust environment; `atlas.prints_labels` plus a person↔atlas staff link when a need appears.
+- **Roles/permissions** — high-trust environment; `atlas_printing` (built, schema/010: a row means the atlas prints its own labels) plus a person↔atlas staff link when a need appears.
 - **Administration** — *who staffs* a person, as distinct from where they belong. `person_membership` records membership only (beeline-lcl); program-only volunteers are supported by OBA staff, and until a second administering body exists there is nothing for the model to tell apart. Arrives with the staff link above, not before.
 - **Notifications/feed** — derivable from `determination.recorded_at` and print-run events when that scope opens.
 - **Ecdysis/GBIF export tables** — exports consume the model; they shouldn't shape it. (Ecdysis is Washington's repository integration, not core.)

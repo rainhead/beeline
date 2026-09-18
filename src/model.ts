@@ -67,6 +67,11 @@ export interface AtlasTable {
   inat_place_id: BigIntCol | null;
 }
 
+/** Atlases that print their own labels; a row is the flag. Empty today. */
+export interface AtlasPrintingTable {
+  atlas_id: number;
+}
+
 /** Null atlas_id = a region no member atlas covers, which is an answer. */
 export interface AtlasRegionTable {
   state_province: string;
@@ -316,7 +321,64 @@ export interface SpecimenTable {
   sample_id: number;
   specimen_number: number;
   field_number: string | null;
+  /** dwc:occurrenceID, a UUID v7 minted once by a print run; null on imported specimens (ADR 0008). */
+  occurrence_id: string | null;
   created_at: Timestamped;
+}
+
+// schema/035_print_runs.sql
+
+export interface PrintRunTable {
+  entity_id: Generated<number>;
+  /** Null = every atlas not in atlas_printing, plus samples outside any atlas. */
+  atlas_id: number | null;
+  prepared_by: number;
+  prepared_at: Timestamped;
+  /** The *_by columns after prepared_by are person ids without a foreign key: see schema/035. */
+  approved_by: number | null;
+  approved_at: Date | null;
+  printed_by: number | null;
+  printed_at: Date | null;
+  mailed_by: number | null;
+  mailed_at: Date | null;
+  canceled_by: number | null;
+  canceled_at: Date | null;
+  pdf_sha256: string | null;
+  note: string | null;
+}
+
+/** One row per number Beeline has minted; the PRIMARY KEY is the guarantee. */
+export interface MintedFieldNumberTable {
+  field_number: string;
+  entity_id: Generated<number>;
+  print_run_id: number;
+  /** Null = burned: minted for a run that was then canceled. */
+  specimen_id: number | null;
+  minted_at: Timestamped;
+}
+
+/** What went on paper for one specimen in one run: the six rendered strings and the values behind them. */
+export interface PrintedLabelTable {
+  print_run_id: number;
+  specimen_id: number;
+  sheet: number;
+  cell: number;
+  location_text: string;
+  coordinates_text: string;
+  date_text: string;
+  collector_text: string;
+  method_text: string;
+  number_text: string;
+  latitude: number;
+  longitude: number;
+  elevation_m: number | null;
+  date_start: ColumnType<Date, Date | string, Date | string>;
+  date_end: ColumnType<Date, Date | string, Date | string>;
+  locality: string | null;
+  county: string | null;
+  state_province: string | null;
+  country: string | null;
+  warnings: string | null;
 }
 
 // schema/040_determinations.sql
@@ -647,6 +709,63 @@ export interface PendingPrintSampleView {
   pending_count: number;
 }
 
+// schema/155_views_print_run.sql
+
+export type PrintRunState = "prepared" | "approved" | "printed" | "mailed" | "canceled";
+
+export interface PrintRunStateView {
+  print_run_id: number;
+  state: PrintRunState;
+  label_count: number;
+  sheet_count: number;
+  sample_count: number;
+  collector_count: number;
+}
+
+/** The pending samples an unscoped run freezes. */
+export interface PrintScopeSampleView {
+  sample_id: number;
+  pending_count: number;
+}
+
+/** Samples with a label on paper: locked against upstream date, locality and coordinates. */
+export interface PrintedSampleView {
+  sample_id: number;
+}
+
+export interface SpecimenLabelView {
+  specimen_id: number;
+  print_run_id: number;
+  sheet: number;
+  cell: number;
+  number_text: string;
+  state: PrintRunState;
+  prepared_at: Date;
+  approved_at: Date | null;
+  printed_at: Date | null;
+  mailed_at: Date | null;
+  canceled_at: Date | null;
+}
+
+export interface SpecimenMintedFieldNumberView {
+  specimen_id: number;
+  field_number: string;
+  print_run_id: number;
+  minted_at: Date;
+}
+
+export interface SpecimenFieldNumberStaleView {
+  specimen_id: number;
+  carried: string | null;
+  minted: string;
+}
+
+export interface MintedFieldNumberCollisionView {
+  field_number: string;
+  minted_for: number | null;
+  also_on: number;
+}
+
 // schema/118_views_animal_itis.sql
 
 export type AnimalItisStanding = "valid" | "synonym" | "homonym" | "absent" | "not loaded";
@@ -685,6 +804,7 @@ export interface Database {
   person_admin: PersonAdminTable;
   person_delegate: PersonDelegateTable;
   atlas: AtlasTable;
+  atlas_printing: AtlasPrintingTable;
   atlas_region: AtlasRegionTable;
   animal: AnimalTable;
   itis_taxon: ItisTaxonTable;
@@ -731,6 +851,16 @@ export interface Database {
   sample_elevation_pending: SampleElevationPendingView;
   printable_sample: PrintableSampleView;
   pending_print_sample: PendingPrintSampleView;
+  print_run: PrintRunTable;
+  minted_field_number: MintedFieldNumberTable;
+  printed_label: PrintedLabelTable;
+  print_run_state: PrintRunStateView;
+  print_scope_sample: PrintScopeSampleView;
+  printed_sample: PrintedSampleView;
+  specimen_label: SpecimenLabelView;
+  specimen_minted_field_number: SpecimenMintedFieldNumberView;
+  specimen_field_number_stale: SpecimenFieldNumberStaleView;
+  minted_field_number_collision: MintedFieldNumberCollisionView;
   observation_field_stale: ObservationFieldStaleView;
   observation_sample_number_conflict: ObservationSampleNumberConflictView;
   inat_place: InatPlaceTable;

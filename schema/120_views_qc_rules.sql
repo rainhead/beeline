@@ -340,7 +340,9 @@ JOIN sync_run r
  AND (r.window_end IS NULL OR f.observed_on <= r.window_end)
 GROUP BY s.entity_id, s.inat_observation_id;
 
--- Post-print trouble: count fell below the number of specimens already frozen.
+-- Post-print trouble: count fell below the number of specimens already frozen
+-- — individuated ones (schema/117), so a canceled run's leftovers do not
+-- raise it; a prepared run's do, which is the proofer's signal.
 CREATE VIEW qc_rule_count_below_printed AS
 SELECT s.entity_id AS sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
@@ -348,6 +350,6 @@ SELECT s.entity_id AS sample_id,
        concat(printed.n, ' specimens printed but count is ', s.specimen_count) AS details
 FROM sample s
 JOIN (
-  SELECT sample_id, count(*) AS n FROM specimen GROUP BY sample_id
+  SELECT sample_id, count(*) AS n FROM individuated_specimen GROUP BY sample_id
 ) printed ON printed.sample_id = s.entity_id
 WHERE printed.n > s.specimen_count;

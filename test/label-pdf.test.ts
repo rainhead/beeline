@@ -65,6 +65,19 @@ describe("rendering labels", () => {
   });
 });
 
+describe("the font the sheets are set in", () => {
+  it("is copied into the runtime image, which names its directories one by one", async () => {
+    // The Dockerfile's runtime stage copies src, schema, migrations and
+    // ingest by name; assets/ is none of those, and a missing font fails the
+    // PDF route on Fly while everything here passes.
+    const dockerfile = await readFile(new URL("../Dockerfile", import.meta.url), "utf8");
+    expect(dockerfile).toMatch(/^COPY --chown=node:node assets \.\/assets$/m);
+    expect(FONT_PATH.pathname).toContain("/assets/fonts/");
+    const ignored = await readFile(new URL("../.dockerignore", import.meta.url), "utf8");
+    expect(ignored).not.toMatch(/^assets\/?$/m);
+  });
+});
+
 describe("shrinking a line to fit its box", () => {
   it("measures the lines drawText will actually draw, so four collectors stay inside the box", async () => {
     // The reference guessed the line count from the total width; greedy

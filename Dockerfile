@@ -58,6 +58,10 @@ COPY --chown=node:node src ./src
 COPY --chown=node:node schema ./schema
 COPY --chown=node:node migrations ./migrations
 COPY --chown=node:node ingest ./ingest
+# The label sheets' font (src/label-pdf.ts reads assets/fonts at render time).
+# Not under src/, so it has to be named here or the PDF route fails in the
+# image while every test passes — a test pins this line for that reason.
+COPY --chown=node:node assets ./assets
 COPY --from=build --chown=node:node /app/dist ./dist
 # Bake DuckDB's httpfs extension into the image. The private store is
 # encrypted (ADR 0003), and DuckDB's ENCRYPTION_KEY path needs the crypto

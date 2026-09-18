@@ -735,7 +735,8 @@ export function createApp({
     const id = printRunId(c);
     const run = await loadRun(db, id);
     if (run === null) return c.text(m.printRuns.run.notFound, 404);
-    const { bytes } = await runPdf(db, id, run.prepared_at, printRunsPath);
+    if (run.state === "canceled") return c.text(m.printRuns.run.canceledNoSheets, 409);
+    const { bytes } = await runPdf(db, id, run.prepared_at, run.pdf_sha256, printRunsPath);
     return c.body(bytes as Uint8Array<ArrayBuffer>, 200, {
       "content-type": "application/pdf",
       "content-disposition": `inline; filename="beeline-labels-run-${id}.pdf"`,

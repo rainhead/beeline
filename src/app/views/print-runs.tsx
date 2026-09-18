@@ -174,11 +174,13 @@ function NextAction({ m, run }: { m: Messages; run: RunDetail }) {
         <TextField id="note" name="note" label={r.note} hint={r.noteHint} value={run.note} />
         <Meta block>{next.hint}</Meta>
       </form>
-      {canCancel && <form id="cancel-form" method="post" action={`${action}/cancel`} />}
+      {/* One form, two destinations: the note belongs to whichever button is
+          pressed, so Cancel submits the same fields to its own action rather
+          than an empty form of its own, which lost the reason typed for it. */}
       <p class="row">
         <Button form="next-form">{next.label}</Button>
         {canCancel && (
-          <Button form="cancel-form" variant="outlined">
+          <Button form="next-form" formaction={`${action}/cancel`} variant="outlined">
             {r.cancel}
           </Button>
         )}
@@ -212,11 +214,16 @@ export function PrintRun({ m, run, labels }: { m: Messages; run: RunDetail; labe
       />
 
       <Card>
-        <p class="row">
-          <LinkButton href={`${printRunHref(run.print_run_id)}/labels.pdf`} variant="tonal">
-            {r.download}
-          </LinkButton>
-        </p>
+        {/* A canceled run's labels were never printed and never will be:
+            their numbers are burned and its samples are waiting again, so
+            there are no sheets to offer. The table below stays, as history. */}
+        {run.state !== "canceled" && (
+          <p class="row">
+            <LinkButton href={`${printRunHref(run.print_run_id)}/labels.pdf`} variant="tonal">
+              {r.download}
+            </LinkButton>
+          </p>
+        )}
         <NextAction m={m} run={run} />
       </Card>
 

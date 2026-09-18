@@ -382,6 +382,11 @@ export async function listSampleSpecimens(
       "sp.specimen_number",
       "sp.field_number",
       "lbl.state as label_state",
+      // The date the volunteer is told: mailed, else printed, else prepared.
+      // Deliberately not approved_at or canceled_at — approval is the
+      // printer's step and means nothing to someone waiting on an envelope,
+      // so a prepared or approved run both read "Printing — prepared <date>",
+      // and a canceled one carries no date at all (views/record.tsx).
       sql<Date | null>`coalesce(lbl.mailed_at, lbl.printed_at, lbl.prepared_at)`.as("label_at"),
       "an.rank",
       "an.scientific_name",

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -109,6 +109,14 @@ describe("the print-run screens", () => {
     expect(page).not.toMatch(/<td><\/td>/);
     expect(page).toContain("Approve</button>");
     expect(page).toContain("Cancel run</button>");
+    // One form, two destinations: the note typed goes with whichever button
+    // is pressed, so Cancel is not an empty form of its own.
+    expect(page).toContain(`formaction="${runPath}/cancel"`);
+    expect(page).not.toContain("cancel-form");
+
+    // A file already sitting where the cache goes is not this run's until the
+    // run vouches for it: a reseed restarts ids while the directory survives.
+    await writeFile(join(dir, `run-${runPath.split("/").pop()}.pdf`), "somebody else's labels");
 
     // The sheets: rendered once, kept, and hashed on the run.
     const pdf = await app.request(`${runPath}/labels.pdf`);
@@ -122,6 +130,11 @@ describe("the print-run screens", () => {
     expect(sha256(cached)).toBe(recorded);
     const again = new Uint8Array(await (await app.request(`${runPath}/labels.pdf`)).arrayBuffer());
     expect(sha256(again)).toBe(recorded);
+    // And a cached file that stops matching the recorded hash is re-rendered,
+    // not served.
+    await writeFile(join(dir, `run-${runPath.split("/").pop()}.pdf`), "tampered");
+    const repaired = new Uint8Array(await (await app.request(`${runPath}/labels.pdf`)).arrayBuffer());
+    expect(sha256(repaired)).toBe(recorded);
 
     // Out of order is refused with the state it is in.
     const early = await post(`${runPath}/printed`);
@@ -182,8 +195,13 @@ describe("the print-run screens", () => {
     const page = await (await app.request(runPath)).text();
     expect(page).toContain("Canceled</span>");
     expect(page).toContain("wrong week");
-    // The labels stay on the page as the record of what was prepared.
+    // The labels stay on the page as the record of what was prepared — but
+    // there are no sheets to print: the numbers are burned.
     expect(page).toContain("26000001");
+    expect(page).not.toContain("labels.pdf");
+    const sheets = await app.request(`${runPath}/labels.pdf`);
+    expect(sheets.status).toBe(409);
+    expect(await sheets.text()).toContain("canceled");
     // The volunteer's specimen rows say what happened rather than going blank.
     const sample = await (await app.request(`/samples/${ashSample}`)).text();
     expect(sample).toContain("run canceled; it will be numbered again in the next run");

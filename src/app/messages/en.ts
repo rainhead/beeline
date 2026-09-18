@@ -895,6 +895,8 @@ export const en = {
       /** The transition could not happen from the run's current state. */
       wrongState: (state: string) => `The run is ${state.toLowerCase()}, so that cannot be done now.`,
       notFound: "No such print run.",
+      /** The sheets of a canceled run are not served: its numbers are burned and must never reach paper. */
+      canceledNoSheets: "This run was canceled, so it has no sheets to print. Its samples are waiting for the next run.",
     },
   },
 

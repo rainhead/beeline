@@ -203,29 +203,44 @@ export const runPdfPath = (dir: string, printRunId: number) => join(dir, `run-${
 /**
  * The run's sheets, rendered once and kept: the first render is written
  * beside the other app-written data and its hash recorded on the run, and
- * every later request reads the file. A missing file re-renders from the
- * snapshot, which is byte-identical by construction (src/label-pdf.ts) —
- * and if it were not, the recorded hash is what would say so.
+ * later requests read the file — but only a file the run vouches for. The
+ * cached bytes are served when they hash to the run's recorded pdf_sha256
+ * and not otherwise: a file with no recorded hash is one whose write
+ * succeeded and whose UPDATE did not, and on the sandbox a reseed restarts
+ * the ids while data/print-runs survives, so `run-18.pdf` can be some other
+ * run 18's labels (CodeRabbit, #76). Anything unvouched is re-rendered from
+ * the snapshot, which is byte-identical by construction (src/label-pdf.ts).
+ * If a re-render ever disagrees with a hash already recorded, the renderer
+ * has changed under a run that may already be on paper: the fresh sheets
+ * are served, the recorded hash is left as the record of what was first
+ * rendered, and the disagreement is logged rather than hidden.
  */
 export async function runPdf(
   db: Kysely<Database>,
   printRunId: number,
   preparedAt: Date,
+  recorded: string | null,
   dir: string,
 ): Promise<{ bytes: Uint8Array; sha256: string; cached: boolean }> {
   const path = runPdfPath(dir, printRunId);
-  try {
-    const bytes = await readFile(path);
-    return { bytes, sha256: sha256(bytes), cached: true };
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  if (recorded !== null) {
+    try {
+      const bytes = await readFile(path);
+      if (sha256(bytes) === recorded) return { bytes, sha256: recorded, cached: true };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
   }
   const rows = await runLabels(db, printRunId);
   const bytes = await renderLabelsPdf(rows, { preparedAt });
   const digest = sha256(bytes);
+  if (recorded !== null && digest !== recorded) {
+    console.warn(`print run ${printRunId}: re-rendered sheets hash ${digest}, recorded ${recorded}`);
+  }
   await mkdir(dir, { recursive: true });
   await writeFile(path, bytes);
-  // Unindexed, so the UPDATE is allowed on a row the labels reference.
+  // Unindexed, so the UPDATE is allowed on a row the labels reference. Only
+  // ever set once: the hash is of the first render.
   await db
     .updateTable("print_run")
     .set({ pdf_sha256: digest })

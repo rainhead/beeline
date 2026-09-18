@@ -215,6 +215,10 @@ export const en = {
     sampleTitle: (sampleNumber: string, when: Date | string) => `Sample ${sampleNumber} · ${date(when)}`,
     specimens: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"}`,
     labelsWaiting: (count: number) => `${n(count)} ${count === 1 ? "label" : "labels"} to print`,
+    /** In a print run that is not on paper yet. Still on the page: waiting ends when the envelope goes. */
+    labelsPrinting: (count: number) => `${n(count)} ${count === 1 ? "label is" : "labels are"} being printed`,
+    labelsPrinted: (count: number, when: string) =>
+      `${n(count)} ${count === 1 ? "label" : "labels"} printed ${when}, not mailed yet`,
     /** Already formatted to four places by the view: a coordinate's precision is a fact about the reading, not the locale. */
     coordinates: (latitude: string, longitude: string) => `${latitude}, ${longitude}`,
     accuracy: (metres: number) => `within ${n(metres)} m`,

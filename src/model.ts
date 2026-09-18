@@ -733,6 +733,14 @@ export interface PrintedSampleView {
   sample_id: number;
 }
 
+/** Per sample with labels in a live, unmailed run: still printing, or printed and not yet mailed. */
+export interface SampleLabelInProgressView {
+  sample_id: number;
+  printing_count: number;
+  printed_count: number;
+  printed_at: Date | null;
+}
+
 export interface SpecimenLabelView {
   specimen_id: number;
   print_run_id: number;
@@ -858,6 +866,7 @@ export interface Database {
   print_scope_sample: PrintScopeSampleView;
   printed_sample: PrintedSampleView;
   specimen_label: SpecimenLabelView;
+  sample_label_in_progress: SampleLabelInProgressView;
   specimen_minted_field_number: SpecimenMintedFieldNumberView;
   specimen_field_number_stale: SpecimenFieldNumberStaleView;
   minted_field_number_collision: MintedFieldNumberCollisionView;

@@ -57,17 +57,21 @@ async function printApp(signedInAs: "ash" | "staffer" = "staffer") {
   const dir = await mkdtemp(join(tmpdir(), "beeline-print-runs-"));
   dirs.push(dir);
   const people = { ash, staffer };
-  const app = createApp({
-    db: createKysely(instance),
-    config: { environment: "sandbox" as const, origin: ORIGIN },
-    inat: unusedInat,
-    resolveSession: async () => ({ personId: people[signedInAs], login: signedInAs, iconUrl: null }),
-    printConn: conn,
-    printRunsDir: dir,
-  });
+  const db = createKysely(instance);
+  /** The same store, seen by somebody else. */
+  const appFor = (who: "ash" | "staffer") =>
+    createApp({
+      db,
+      config: { environment: "sandbox" as const, origin: ORIGIN },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId: people[who], login: who, iconUrl: null }),
+      printConn: conn,
+      printRunsDir: dir,
+    });
+  const app = appFor(signedInAs);
   const post = (path: string, body: Record<string, string> = {}) =>
     app.request(path, { method: "POST", headers: { origin: ORIGIN }, body: new URLSearchParams(body) });
-  return { app, conn, post, dir, ash, birch, ashSample, birchSample };
+  return { app, appFor, conn, post, dir, ash, birch, ashSample, birchSample };
 }
 
 describe("the print-run screens", () => {
@@ -209,6 +213,37 @@ describe("the print-run screens", () => {
     expect(sample).toContain("not numbered");
     expect(sample).not.toMatch(/<td><\/td>/);
     expect(await rows(conn, `SELECT count(*) FROM pending_print_sample`)).toEqual([[2n]]);
+  });
+
+  it("keeps a sample on its collector's front page until the labels are mailed", async () => {
+    // The freeze takes a sample out of pending at once, and the front page
+    // listed only what was pending — so a sample vanished from it when its run
+    // was prepared, days before an envelope went anywhere (seen in the first
+    // demonstration, 2026-09-18).
+    const { appFor, post } = await printApp();
+    const home = async () => (await appFor("ash").request("/")).text();
+    expect(await home()).toContain("3 labels to print");
+
+    const runPath = (await post("/print-runs", { atlas_id: "" })).headers.get("location")!;
+    let page = await home();
+    expect(page).toContain("3 labels are being printed");
+    expect(page).not.toContain("labels to print");
+    expect(page).toContain("1 sample is waiting on labels");
+
+    await post(`${runPath}/approve`);
+    expect(await home()).toContain("3 labels are being printed");
+
+    await post(`${runPath}/printed`);
+    page = await home();
+    expect(page).toMatch(/3 labels printed [A-Z][a-z]{2} \d{1,2}, \d{4}, not mailed yet/);
+    expect(page).toContain("1 sample is waiting on labels");
+
+    await post(`${runPath}/mailed`);
+    page = await home();
+    expect(page).not.toContain("labels printed");
+    // The lede and the all-clear both say the words; the summary must not.
+    expect(page).not.toContain("sample is waiting on labels");
+    expect(page).toContain("nothing is waiting on labels");
   });
 
   it("answers a refusal with its reason, not a bare failure", async () => {

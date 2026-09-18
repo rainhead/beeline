@@ -78,6 +78,10 @@ export interface DashboardRow {
   specimen_count: number;
   /** Labels still to print; 0 when nothing is waiting or nothing can print. */
   pending_count: number;
+  /** Labels frozen into a run that has not printed yet, and printed but not yet mailed (schema/155). */
+  printing_count: number;
+  printed_count: number;
+  printed_at: Date | null;
   findings: Finding[];
 }
 
@@ -189,6 +193,10 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
         <td class={cellClass(marks, "specimens")}>
           {m.format.number(row.specimen_count)}
           {row.pending_count > 0 && <Meta block>{m.qc.labelsWaiting(row.pending_count)}</Meta>}
+          {row.printing_count > 0 && <Meta block>{m.qc.labelsPrinting(row.printing_count)}</Meta>}
+          {row.printed_count > 0 && row.printed_at !== null && (
+            <Meta block>{m.qc.labelsPrinted(row.printed_count, m.format.day(row.printed_at))}</Meta>
+          )}
         </td>
       </tr>
       {placeholder && (
@@ -255,7 +263,8 @@ export function QcHome(props: {
   const withOthers: CoCollectors = props.withOthers ?? new Map();
   const flagged = rows.filter((r) => r.findings.length > 0).length;
   const blocking = rows.filter((r) => r.findings.some((f) => f.severity === "blocking")).length;
-  const waiting = rows.filter((r) => r.pending_count > 0).length;
+  // Waiting on labels lasts until they are mailed, not until a run is prepared.
+  const waiting = rows.filter((r) => r.pending_count + r.printing_count + r.printed_count > 0).length;
   const placeholders = rows.filter(isPlaceholder).length;
   const settledFlagged = props.settledFlagged ?? 0;
 

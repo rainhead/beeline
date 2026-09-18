@@ -1,5 +1,6 @@
 import { sql, type Kysely } from "kysely";
 import type {
+  PrintRunState,
   Database,
   DeterminationChannel,
   DeterminationQualifier,
@@ -148,6 +149,10 @@ export interface SampleSpecimenRow {
   specimen_id: number;
   specimen_number: number;
   field_number: string | null;
+  /** The state of the latest print run holding a label for it; null on an imported specimen. */
+  label_state: PrintRunState | null;
+  /** The date that state was reached: mailed, printed, or prepared. */
+  label_at: Date | null;
   rank: string | null;
   scientific_name: string | null;
   authorship: string | null;
@@ -363,10 +368,21 @@ export async function listSampleSpecimens(
     .leftJoin("animal as an", "an.entity_id", "d.animal_id")
     .leftJoin("person as det", "det.entity_id", "d.determiner_id")
     .where("sp.sample_id", "=", sampleId)
+    .leftJoin(
+      (eb) =>
+        eb
+          .selectFrom("specimen_label")
+          .select(["specimen_id", "state", "prepared_at", "printed_at", "mailed_at"])
+          .select(sql<number>`row_number() OVER (PARTITION BY specimen_id ORDER BY prepared_at DESC, print_run_id DESC)`.as("rn"))
+          .as("lbl"),
+      (join) => join.onRef("lbl.specimen_id", "=", "sp.entity_id").on("lbl.rn", "=", 1),
+    )
     .select([
       "sp.entity_id as specimen_id",
       "sp.specimen_number",
       "sp.field_number",
+      "lbl.state as label_state",
+      sql<Date | null>`coalesce(lbl.mailed_at, lbl.printed_at, lbl.prepared_at)`.as("label_at"),
       "an.rank",
       "an.scientific_name",
       "an.authorship",

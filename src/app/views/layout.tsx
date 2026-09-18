@@ -63,6 +63,7 @@ function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
         // reason not to offer it to them is that it is not their tool.
         { href: "/people", label: m.layout.nav.people, shown: admin },
         { href: "/jobs", label: m.layout.nav.jobs, shown: admin },
+        { href: "/print-runs", label: m.layout.nav.printRuns, shown: admin },
         { href: "/design", label: m.layout.nav.design, shown: admin },
       ]
         .filter((link) => link.shown)

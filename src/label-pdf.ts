@@ -4,14 +4,13 @@ import fontkit from "@pdf-lib/fontkit";
 import bwipjs from "bwip-js/node";
 import {
   breakTextIntoLines,
-  concatTransformationMatrix,
   degrees,
-  drawObject,
+  fill,
   PDFDocument,
-  PDFName,
-  PDFRawStream,
   popGraphicsState,
   pushGraphicsState,
+  rectangle,
+  setFillingGrayscaleColor,
   type PDFFont,
   type PDFPage,
 } from "pdf-lib";
@@ -33,9 +32,10 @@ import { LABELS_PER_SHEET } from "./label-text.js";
  * are the ones a new one is compared against.
  *
  * One departure in mechanism, not in appearance: the DataMatrix is drawn as
- * a 1-bit image built from bwip-js's module matrix rather than a PNG it
- * rasterises — 18 bytes per label instead of a decode, which is what makes a
- * 5,000-label run render in seconds.
+ * vector rectangles from bwip-js's module matrix rather than a PNG it
+ * rasterises — sharp at any zoom, and no image to decode, which with fits
+ * remembered per render is what makes a 5,000-label run render in a second
+ * or two.
  */
 
 export interface LabelRow {
@@ -110,24 +110,58 @@ export function fitText(
   const measure = (size: number) => {
     const lines = breakTextIntoLines(text, [" "], box.width, (t) => font.widthOfTextAtSize(t, size));
     const widest = Math.max(0, ...lines.map((l) => font.widthOfTextAtSize(l.trimEnd(), size)));
-    return { lines: lines.length, widest, lineHeight: font.heightAtSize(size, { descender: true }) };
+    return { size, lines: lines.length, widest, lineHeight: font.heightAtSize(size, { descender: true }) };
   };
-  let fontSize = box.fontSize;
-  let m = measure(fontSize);
-  // A line can still be too wide when one word is: no space to break at.
-  while ((m.widest > box.width || (m.lines > 1 && m.lines * m.lineHeight > box.height)) && fontSize > 1) {
-    fontSize -= 0.01;
-    m = measure(fontSize);
+  const fits = (m: ReturnType<typeof measure>) =>
+    m.widest <= box.width && (m.lines === 1 || m.lines * m.lineHeight <= box.height);
+  // Sizes are hundredths of a point, searched by bisection rather than
+  // stepped down 0.01 at a time: the largest size that fits, never below
+  // 1pt. A line can still be too wide when one word is — no space to break at.
+  let best = measure(box.fontSize);
+  if (!fits(best)) {
+    let low = 100;
+    let high = Math.round(box.fontSize * 100) - 1;
+    best = measure(1);
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const m = measure(mid / 100);
+      if (fits(m)) {
+        best = m;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
   }
-  return { fontSize, lines: m.lines, lineHeight: m.lineHeight };
+  return { fontSize: best.size, lines: best.lines, lineHeight: best.lineHeight };
 }
 
-function drawTextBox(page: PDFPage, font: PDFFont, text: string, originX: number, originY: number, box: TextBox): void {
+/**
+ * Fits are remembered for the length of one render: a sheet repeats the same
+ * location, coordinates and collector down a column of labels, and measuring
+ * each afresh was most of seven seconds on a 5,411-label run.
+ */
+type FitCache = Map<string, ReturnType<typeof fitText>>;
+
+function drawTextBox(
+  page: PDFPage,
+  font: PDFFont,
+  text: string,
+  originX: number,
+  originY: number,
+  box: TextBox,
+  fitCache: FitCache,
+): void {
   let fontSize = box.fontSize;
   let xOffset = box.offset.x;
   let yOffset = box.offset.y;
   if (box.fit && text.length > 0) {
-    const fitted = fitText(font, text, box);
+    const key = `${box.width}|${box.height}|${box.fontSize}|${text}`;
+    let fitted = fitCache.get(key);
+    if (fitted === undefined) {
+      fitted = fitText(font, text, box);
+      fitCache.set(key, fitted);
+    }
     if (fitted.fontSize !== box.fontSize) {
       fontSize = fitted.fontSize;
       const textHeight = fitted.lines * fitted.lineHeight;
@@ -176,42 +210,44 @@ export function dataMatrixModules(text: string): { width: number; height: number
   return { width: pixy, height: pixx, dark };
 }
 
-/** Packs the grid as a 1-bit DeviceGray image: 1 is white, rows padded to a byte. */
-function packBits(grid: { width: number; height: number; dark: boolean[][] }): Uint8Array {
-  const stride = Math.ceil(grid.width / 8);
-  const bytes = new Uint8Array(stride * grid.height).fill(0xff);
-  for (let y = 0; y < grid.height; y++) {
+/**
+ * The DataMatrix as filled rectangles, one per run of dark modules in a row,
+ * under a single fill. It was a 1-bit image first, 18 bytes a label, and it
+ * came out blurry: PDF viewers and print drivers smooth a tiny bitmap when
+ * they scale it up, whatever the image's Interpolate flag says (seen on the
+ * first sheets anyone looked at, 2026-09-18). Vector modules are sharp at
+ * any zoom and on any printer. Runs rather than single modules keep it to
+ * about forty rectangles a symbol, and the content stream is compressed, so
+ * a 5,000-label run stays small. Each rectangle is a hair larger than its
+ * modules so neighbouring rows leave no seam for an anti-aliaser to find.
+ */
+function drawDataMatrix(page: PDFPage, text: string, originX: number, originY: number): void {
+  const grid = dataMatrixModules(text);
+  const scale = Math.min(MATRIX_BOX.width / grid.width, MATRIX_BOX.height / grid.height);
+  const left = originX + MATRIX_BOX.x;
+  const bottom = originY + MATRIX_BOX.y;
+  const bleed = 0.01;
+  const ops = [pushGraphicsState(), setFillingGrayscaleColor(0)];
+  for (let row = 0; row < grid.height; row++) {
+    const cells = grid.dark[row]!;
     for (let x = 0; x < grid.width; x++) {
-      if (grid.dark[y]![x]) bytes[y * stride + (x >> 3)]! &= ~(0x80 >> (x & 7));
+      if (!cells[x]) continue;
+      let run = 1;
+      while (x + run < grid.width && cells[x + run]) run += 1;
+      // Rows run top to bottom in the grid and PDF's y runs upward.
+      ops.push(
+        rectangle(
+          left + x * scale - bleed,
+          bottom + (grid.height - 1 - row) * scale - bleed,
+          run * scale + 2 * bleed,
+          scale + 2 * bleed,
+        ),
+      );
+      x += run - 1;
     }
   }
-  return bytes;
-}
-
-function drawDataMatrix(doc: PDFDocument, page: PDFPage, text: string, originX: number, originY: number): void {
-  const grid = dataMatrixModules(text);
-  const dict = doc.context.obj({
-    Type: "XObject",
-    Subtype: "Image",
-    Width: grid.width,
-    Height: grid.height,
-    ColorSpace: "DeviceGray",
-    BitsPerComponent: 1,
-    Interpolate: false,
-  });
-  const ref = doc.context.register(PDFRawStream.of(dict, packBits(grid)));
-  const name = page.node.newXObject("DM", ref);
-  // Scale to fit the box, as the reference's image.scaleToFit did, and
-  // anchor at the box's lower-left corner.
-  const scale = Math.min(MATRIX_BOX.width / grid.width, MATRIX_BOX.height / grid.height);
-  const width = grid.width * scale;
-  const height = grid.height * scale;
-  page.pushOperators(
-    pushGraphicsState(),
-    concatTransformationMatrix(width, 0, 0, height, originX + MATRIX_BOX.x, originY + MATRIX_BOX.y),
-    drawObject(PDFName.of(name.asString().slice(1))),
-    popGraphicsState(),
-  );
+  ops.push(fill(), popGraphicsState());
+  page.pushOperators(...ops);
 }
 
 function cellOrigin(cell: number): { x: number; y: number } {
@@ -238,18 +274,19 @@ export async function renderLabelsPdf(rows: LabelRow[], opts: RenderOptions): Pr
   const pages: PDFPage[] = [];
   for (let i = 0; i < sheets; i++) pages.push(doc.addPage([PAGE.width, PAGE.height]));
 
+  const fitCache: FitCache = new Map();
   for (const row of rows) {
     if (row.cell < 0 || row.cell >= LABELS_PER_SHEET) throw new Error(`cell ${row.cell} is off the sheet`);
     const page = pages[row.sheet - 1];
     if (!page) throw new Error(`sheet ${row.sheet} has no page`);
     const { x, y } = cellOrigin(row.cell);
-    drawTextBox(page, font, row.location_text, x, y, LABEL_BOXES.location);
-    drawTextBox(page, font, row.coordinates_text, x, y, LABEL_BOXES.coordinates);
-    drawTextBox(page, font, row.date_text, x, y, LABEL_BOXES.date);
-    drawTextBox(page, font, row.collector_text, x, y, LABEL_BOXES.collector);
-    drawTextBox(page, font, row.method_text, x, y, LABEL_BOXES.method);
-    drawTextBox(page, font, row.number_text, x, y, LABEL_BOXES.number);
-    drawDataMatrix(doc, page, row.number_text, x, y);
+    drawTextBox(page, font, row.location_text, x, y, LABEL_BOXES.location, fitCache);
+    drawTextBox(page, font, row.coordinates_text, x, y, LABEL_BOXES.coordinates, fitCache);
+    drawTextBox(page, font, row.date_text, x, y, LABEL_BOXES.date, fitCache);
+    drawTextBox(page, font, row.collector_text, x, y, LABEL_BOXES.collector, fitCache);
+    drawTextBox(page, font, row.method_text, x, y, LABEL_BOXES.method, fitCache);
+    drawTextBox(page, font, row.number_text, x, y, LABEL_BOXES.number, fitCache);
+    drawDataMatrix(page, row.number_text, x, y);
   }
   return doc.save({ useObjectStreams: false, addDefaultPage: false });
 }

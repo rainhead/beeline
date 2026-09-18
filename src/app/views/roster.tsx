@@ -96,10 +96,10 @@ const when = (m: Messages, d: Date | string | null) =>
  */
 const lastSeen = (m: Messages, row: Pick<RosterRow, "last_visit" | "last_login">) =>
   row.last_visit !== null ? (
-    <>{m.format.date(row.last_visit)}</>
+    <>{m.format.day(row.last_visit)}</>
   ) : row.last_login !== null ? (
     <>
-      {m.format.date(row.last_login)} <Meta>{m.people.lastSeenSignInOnly}</Meta>
+      {m.format.day(row.last_login)} <Meta>{m.people.lastSeenSignInOnly}</Meta>
     </>
   ) : (
     <Absent label={m.people.never} />

@@ -98,7 +98,22 @@ SELECT o.inat_id,
        -- qc_rule_place_unrecognised exists to give.
        reg.state_province AS state_province,
        reg.country        AS country_code,
-       p.county_place_id, p.county_name
+       p.county_place_id,
+       -- iNaturalist names most counties bare ('Benton') and disambiguates a
+       -- handful by appending the country and state: 'Franklin County, US, WA',
+       -- 'Lincoln County, US, WA', 'Washington County, US, ID'. Taken verbatim
+       -- that filled sample.county, and a label printed
+       -- 'USA:WA:Franklin County, US, WACo Hanford Reach NM' — 172 of them in
+       -- the first run anyone prepared (Peter, 2026-09-18; beeline-gr7). So
+       -- the name is what stands before the first comma, and the ' County'
+       -- that only the disambiguated form carries comes off with the suffix. A
+       -- bare 'Strathcona County' is left alone: that is its name.
+       CASE WHEN p.county_name LIKE '%,%'
+            THEN CASE WHEN trim(split_part(p.county_name, ',', 1)) LIKE '% County'
+                      THEN left(trim(split_part(p.county_name, ',', 1)),
+                                length(trim(split_part(p.county_name, ',', 1))) - 7)
+                      ELSE trim(split_part(p.county_name, ',', 1)) END
+            ELSE p.county_name END AS county_name
 FROM observation_current o
 LEFT JOIN pivoted p ON p.inat_id = o.inat_id
 LEFT JOIN atlas_region reg ON reg.inat_place_id = p.state_place_id;

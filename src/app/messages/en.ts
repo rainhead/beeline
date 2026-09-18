@@ -35,10 +35,30 @@ const date = (d: Date | string) =>
 // page's «sample» placeholder survives a formatter that expects a list.
 const listFormat = new Intl.ListFormat(locale, { style: "long", type: "conjunction" });
 const list = (xs: readonly string[] | string) => (Array.isArray(xs) ? listFormat.format(xs) : String(xs));
+// An instant is said in Pacific time, by name, whatever clock the server
+// keeps: the sandbox runs in UTC and printed a 2pm edit as 9pm (Peter,
+// 2026-09-18), the same defect the front page's schedule note once had. The
+// program is run from Oregon; a per-person zone waits for somebody to need
+// one. `date` above stays zone-free on purpose: it formats DATE columns,
+// which arrive as UTC midnight and would slip a day in any western zone.
+const ZONE = "America/Los_Angeles";
 const dateTime = (d: Date | string) =>
   typeof d === "string"
     ? d
-    : d.toLocaleString(locale, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    : d.toLocaleString(locale, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: ZONE,
+        timeZoneName: "short",
+      });
+/** The calendar day an INSTANT fell on, in Pacific time — never for a DATE column, which is `date`. */
+const day = (d: Date | string) =>
+  typeof d === "string"
+    ? d
+    : d.toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric", timeZone: ZONE });
 // A collecting window: one day for a net sample, a range for a trap left out
 // across several. One formatter rather than one per screen, because it is a
 // value formatting rule and not something a screen decides.
@@ -65,7 +85,7 @@ export const en = {
   },
 
   /** Locale-aware value formatters, for views composing values into markup. */
-  format: { date, dateTime, dateRange, number: n, list, place },
+  format: { date, day, dateTime, dateRange, number: n, list, place },
 
   layout: {
     /** Any instance that is not production says so (beeline-2u8). */

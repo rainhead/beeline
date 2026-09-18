@@ -292,9 +292,9 @@ function LabelState({ m, state, at }: { m: Messages; state: PrintRunState | null
   const c = m.record.sample.specimens.label;
   if (state === null || at === null) return <Absent label={c.legacy} spelled />;
   if (state === "canceled") return <Absent label={c.canceled} spelled />;
-  if (state === "mailed") return <>{c.mailed(m.format.date(at))}</>;
-  if (state === "printed") return <>{c.printed(m.format.date(at))}</>;
-  return <>{c.printing(m.format.date(at))}</>;
+  if (state === "mailed") return <>{c.mailed(m.format.day(at))}</>;
+  if (state === "printed") return <>{c.printed(m.format.day(at))}</>;
+  return <>{c.printing(m.format.day(at))}</>;
 }
 
 function SampleSpecimens({ m, sample, page }: { m: Messages; sample: SampleDetail; page: SampleSpecimenPage }) {
@@ -518,7 +518,7 @@ export function Determinations({ m, events }: { m: Messages; events: readonly De
             </td>
             <td>{e.determined_on === null ? <Meta>{d.determinedUnknown}</Meta> : m.format.date(e.determined_on)}</td>
             <td>
-              {m.format.date(e.recorded_at)}
+              {m.format.day(e.recorded_at)}
               <Meta block>{d.channels[e.channel] ?? e.channel}</Meta>
             </td>
             <td>{e.of_record && <Chip tone="success">{d.ofRecord}</Chip>}</td>
@@ -543,7 +543,7 @@ export function Determinations({ m, events }: { m: Messages; events: readonly De
 function SpecimenLabels({ m, labels, admin }: { m: Messages; labels: readonly SpecimenLabelRow[]; admin: boolean }) {
   const c = m.record.specimen.labels;
   const state = m.printRuns.state;
-  const when = (at: Date | null) => (at === null ? <Absent label={c.notYet} /> : <>{m.format.date(at)}</>);
+  const when = (at: Date | null) => (at === null ? <Absent label={c.notYet} /> : <>{m.format.day(at)}</>);
   return (
     <>
       <h2>{c.heading}</h2>
@@ -566,7 +566,7 @@ function SpecimenLabels({ m, labels, admin }: { m: Messages; labels: readonly Sp
                 <td class="nowrap">
                   {m.format.number(l.sheet)} · {m.format.number(l.cell)}
                 </td>
-                <td>{m.format.date(l.prepared_at)}</td>
+                <td>{m.format.day(l.prepared_at)}</td>
                 <td>{when(l.printed_at)}</td>
                 <td>{when(l.mailed_at)}</td>
               </tr>

@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { PDFDocument } from "pdf-lib";
-import { dataMatrixModules, renderLabelsPdf, sha256, type LabelRow } from "../src/label-pdf.js";
+import { readFile } from "node:fs/promises";
+import fontkit from "@pdf-lib/fontkit";
+import { breakTextIntoLines, PDFDocument } from "pdf-lib";
+import {
+  dataMatrixModules,
+  fitText,
+  FONT_PATH,
+  LABEL_BOXES,
+  renderLabelsPdf,
+  sha256,
+  type LabelRow,
+} from "../src/label-pdf.js";
 import { layoutSheets } from "../src/label-text.js";
 
 const PREPARED = new Date("2026-09-21T16:00:00Z");
@@ -52,6 +62,26 @@ describe("rendering labels", () => {
   it("refuses a cell off the sheet", async () => {
     const [row] = twoSheets();
     await expect(renderLabelsPdf([{ ...row!, cell: 250 }], { preparedAt: PREPARED })).rejects.toThrow(/off the sheet/);
+  });
+});
+
+describe("shrinking a line to fit its box", () => {
+  it("measures the lines drawText will actually draw, so four collectors stay inside the box", async () => {
+    // The reference guessed the line count from the total width; greedy
+    // wrapping needs more lines than that, and this reachable collector line
+    // was modelled as two and drawn as three (CodeRabbit, #75).
+    const doc = await PDFDocument.create();
+    doc.registerFontkit(fontkit);
+    const font = await doc.embedFont(await readFile(FONT_PATH));
+    const text = "M. O'Loughlin & D. O'Loughlin & S. Sheehy & S. Malaby";
+    const box = LABEL_BOXES.collector;
+    const fitted = fitText(font, text, box);
+    const drawn = breakTextIntoLines(text, [" "], box.width, (t) => font.widthOfTextAtSize(t, fitted.fontSize));
+    expect(fitted.lines).toBe(drawn.length);
+    expect(drawn.length * fitted.lineHeight).toBeLessThanOrEqual(box.height);
+    expect(fitted.fontSize).toBeLessThan(box.fontSize);
+    // A line that already fits is left at the size the label was drawn for.
+    expect(fitText(font, "A. Ash", box).fontSize).toBe(box.fontSize);
   });
 });
 

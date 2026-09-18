@@ -181,13 +181,24 @@ describe("shutdown (beeline-fth)", () => {
   it("stop() waits for the running job, which finishes and is recorded as a success", async () => {
     const deps = await jobDeps();
     const hold = deferred();
+    const entered = deferred();
     const scheduler = startScheduler({
       ...deps,
-      jobs: [{ name: "slow", ...daily, run: (ctx) => ctx.step("only", () => hold.promise.then(() => "done")) }],
+      jobs: [
+        {
+          name: "slow",
+          ...daily,
+          run: (ctx) => ctx.step("only", () => (entered.resolve(), hold.promise.then(() => "done"))),
+        },
+      ],
       tickMs: 3_600_000,
     });
     const started = scheduler.runNow("slow");
-    await sleep(10);
+    // Wait for the job to be inside its step, not for a number of
+    // milliseconds: runNow marks the scheduler busy at once but the run is
+    // only in flight after the startup sweep, and on a loaded CI runner 10ms
+    // was not always enough — stop() then found nothing to wait for.
+    await entered.promise;
     expect(scheduler.running()).toBe("slow");
     let stopped = false;
     const stopping = scheduler.stop({ graceMs: 5_000 }).then(() => (stopped = true));
@@ -204,6 +215,7 @@ describe("shutdown (beeline-fth)", () => {
   it("past the grace the job is interrupted: its next step refuses and the failure names it", async () => {
     const deps = await jobDeps();
     const hold = deferred();
+    const entered = deferred();
     let second = false;
     const scheduler = startScheduler({
       ...deps,
@@ -212,7 +224,7 @@ describe("shutdown (beeline-fth)", () => {
           name: "two-step",
           ...daily,
           run: async (ctx) => {
-            await ctx.step("first", () => hold.promise);
+            await ctx.step("first", () => (entered.resolve(), hold.promise));
             await ctx.step("second", async () => void (second = true));
           },
         },
@@ -220,7 +232,7 @@ describe("shutdown (beeline-fth)", () => {
       tickMs: 3_600_000,
     });
     void scheduler.runNow("two-step");
-    await sleep(10);
+    await entered.promise;
     const stopping = scheduler.stop({ graceMs: 20 });
     await sleep(60); // grace expires while the first step is still held
     hold.resolve();
@@ -233,15 +245,19 @@ describe("shutdown (beeline-fth)", () => {
 
   it("the context's signal reaches a step that is waiting on something else", async () => {
     const deps = await jobDeps();
+    const entered = deferred();
     const waitForAbort = (ctx: JobContext) =>
-      new Promise<string>((_, reject) => ctx.signal.addEventListener("abort", () => reject(new Error("aborted"))));
+      new Promise<string>((_, reject) => {
+        ctx.signal.addEventListener("abort", () => reject(new Error("aborted")));
+        entered.resolve();
+      });
     const scheduler = startScheduler({
       ...deps,
       jobs: [{ name: "waiting", ...daily, run: (ctx) => ctx.step("wait", () => waitForAbort(ctx)) }],
       tickMs: 3_600_000,
     });
     void scheduler.runNow("waiting");
-    await sleep(10);
+    await entered.promise;
     await scheduler.stop({ graceMs: 20 });
     const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
     expect(run.outcome).toBe("failed");

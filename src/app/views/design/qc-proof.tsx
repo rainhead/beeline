@@ -27,12 +27,18 @@ const row = (over: Partial<DashboardRow>): DashboardRow => ({
   host_rank: "genus",
   specimen_count: 3,
   pending_count: 0,
+  printing_count: 0,
+  printed_count: 0,
+  printed_at: null,
   findings: [],
   ...over,
 });
 
 const WAITING: DashboardRow[] = [
   row({ pending_count: 3 }),
+  // Frozen into a run, and then on paper: still waiting on labels until mailed.
+  row({ sample_id: 5, sample_number: "5", printing_count: 3 }),
+  row({ sample_id: 6, sample_number: "6", printed_count: 3, printed_at: new Date("2026-07-20T18:00:00Z") }),
   row({ sample_id: 7, sample_number: "4", pending_count: 1, host_name: null, host_rank: null }),
   row({
     sample_id: 8,

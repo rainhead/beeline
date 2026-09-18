@@ -67,6 +67,28 @@ WHERE EXISTS (
         SELECT 1 FROM printed_label pl WHERE pl.specimen_id = sp.entity_id);
 COMMENT ON VIEW printed_sample IS 'Samples with at least one label on paper: printed by a Beeline print run, or imported (the legacy system printed every specimen it holds). These keep their date, locality and coordinates when iNaturalist changes them; a sample frozen into an unprinted run is not here, so a canceled run holds nothing back.';
 
+-- Labels on their way: per sample, how many are in a live print run that has
+-- not been mailed — still being printed (the run is prepared or approved),
+-- or on paper and not yet in the post. This exists because the freeze takes
+-- a sample out of pending_print_sample the moment it happens, and the
+-- collector's front page listed only what was pending: a sample vanished
+-- from it when its run was prepared, days before an envelope went anywhere,
+-- which read as the labels having been dealt with (Peter, demonstrating the
+-- first run, 2026-09-18). Waiting on labels ends when they are mailed, not
+-- when somebody presses Prepare. A canceled run counts for nothing here; its
+-- samples are pending again.
+CREATE VIEW sample_label_in_progress AS
+SELECT sp.sample_id,
+       CAST(count(*) FILTER (WHERE r.printed_at IS NULL)     AS INTEGER) AS printing_count,
+       CAST(count(*) FILTER (WHERE r.printed_at IS NOT NULL) AS INTEGER) AS printed_count,
+       max(r.printed_at) AS printed_at
+FROM printed_label pl
+JOIN print_run r ON r.entity_id = pl.print_run_id
+JOIN specimen sp ON sp.entity_id = pl.specimen_id
+WHERE r.canceled_at IS NULL AND r.mailed_at IS NULL
+GROUP BY sp.sample_id;
+COMMENT ON VIEW sample_label_in_progress IS 'Per sample with labels in a live, unmailed print run: how many are still being printed and how many are printed but not yet mailed. What keeps a sample on its collector''s front page between the freeze and the envelope.';
+
 -- A specimen's labels, with the state of the run each came from: what the
 -- specimen page shows and what the proofing lookup reads beside a number
 -- (reference-implementation.md, requirement 6). An imported specimen has no

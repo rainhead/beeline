@@ -46,11 +46,17 @@ interface RawSampleRow {
   host_rank: string | null;
   specimen_count: unknown;
   pending_count: unknown;
+  printing_count: unknown;
+  printed_count: unknown;
+  printed_at: Date | null;
   flagged: boolean;
   settled: boolean;
 }
 
-type RawPlaceholderRow = Omit<RawSampleRow, "sample_id" | "specimen_count" | "pending_count" | "flagged" | "settled">;
+type RawPlaceholderRow = Omit<
+  RawSampleRow,
+  "sample_id" | "specimen_count" | "pending_count" | "printing_count" | "printed_count" | "printed_at" | "flagged" | "settled"
+>;
 
 export async function loadDashboard(db: Kysely<Database>, personId: number): Promise<Dashboard> {
   const rules = [...DASHBOARD_RULES.keys()];
@@ -69,15 +75,21 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
              s.geoprivacy, s.taxon_geoprivacy,
              s.host_name_as_observed AS host_name, s.host_rank,
              s.specimen_count, coalesce(p.pending_count, 0) AS pending_count,
+             coalesce(lp.printing_count, 0) AS printing_count,
+             coalesce(lp.printed_count, 0) AS printed_count, lp.printed_at,
              EXISTS (SELECT 1 FROM sample_qc_finding f
                      WHERE f.sample_id = s.entity_id AND f.rule_name IN (${ruleList})) AS flagged,
              EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id) AS settled
       FROM sample s
       LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
       LEFT JOIN pending_print_sample p ON p.sample_id = s.entity_id
+      LEFT JOIN sample_label_in_progress lp ON lp.sample_id = s.entity_id
       WHERE EXISTS (SELECT 1 FROM sample_collector mine
                     WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})
         AND (p.sample_id IS NOT NULL
+             -- Frozen into a run is not the end of waiting: the labels are
+             -- still on their way until the run is mailed (schema/155).
+             OR lp.sample_id IS NOT NULL
              OR EXISTS (SELECT 1 FROM sample_qc_finding f
                         WHERE f.sample_id = s.entity_id AND f.rule_name IN (${ruleList})))
       ORDER BY s.date_start DESC, length(s.sample_number) DESC, s.sample_number DESC, s.entity_id`.execute(db),
@@ -152,11 +164,13 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
   for (const s of samples.rows) {
     const sampleId = Number(s.sample_id);
     const pending = Number(s.pending_count);
+    const printing = Number(s.printing_count);
+    const printed = Number(s.printed_count);
     // A settled sample asks nothing: its flags are counted, and it stays on
     // the page only if labels are waiting for it — that is not a question
     // to the volunteer, and a season's end does not cancel a print job.
     if (s.settled && s.flagged) settledFlagged += 1;
-    if (s.settled && pending === 0) continue;
+    if (s.settled && pending === 0 && printing === 0 && printed === 0) continue;
     rows.push({
       sample_id: sampleId,
       inat_observation_id: s.inat_observation_id,
@@ -174,6 +188,9 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       host_rank: s.host_rank,
       specimen_count: Number(s.specimen_count),
       pending_count: pending,
+      printing_count: printing,
+      printed_count: printed,
+      printed_at: s.printed_at === null ? null : new Date(s.printed_at),
       findings: s.settled ? [] : (findingsBySample.get(sampleId) ?? []),
     });
   }
@@ -195,6 +212,9 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       host_rank: p.host_rank,
       specimen_count: 0,
       pending_count: 0,
+      printing_count: 0,
+      printed_count: 0,
+      printed_at: null,
       findings: [],
     });
   }

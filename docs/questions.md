@@ -43,7 +43,7 @@ Her draft documents — the BLM narrative and the monitoring protocol, 2026-09-1
 16. **Bycatch is discarded at pinning** in her protocol, where the atlases keep and catalogue it. Is that BLM's preference or the pilot's practicality, and would a program that keeps it change anything for her?
 17. **A plot day arrives as one form per collector**, so two collectors on one plot submit the same day twice. Which submission is the record, and how are the two reconciled today?
 
-9. **The floral host is on each bee, not on the sample.** Her specimens each name their own plant; Beeline puts one floral host on the whole sample, because an atlas net sample is taken off one plant. Does a ten-minute collection range over several plants, so that the bee-by-bee record is the real one? If so it is a difference in kind and not a detail.
+9. *(Answered by her protocol: a ten-minute collection is off one plant, and a plot session ranges over several, the bees vialled one vial per plant with the plant on the specimen — so the bee-by-bee record is the real one, and Beeline's sample is her vial. Kept numbered so the notes' references hold.)*
 10. **Which plant list.** Her plants are USDA PLANTS symbols; Beeline's floral hosts are iNaturalist taxa. Does BLM need PLANTS symbols back?
 11. **The barcode.** Is it printed on the specimen's label, who issues it, and is it the identifier Logan will know the specimen by?
 12. **Photos.** Plot and plant photos belong to the day rather than to a sample. If net samples also become iNaturalist observations, as the atlases' are, the floral host photo lives there. Does she want both, and is a BLM survey's net sample an iNaturalist observation at all?

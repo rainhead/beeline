@@ -97,7 +97,7 @@ The meeting gave the shape; these are the details the documents fill in, and whe
 | collection event, event, sampling event | a timed session: one sample for Tier 1 and traps; for plot netting, several samples (one per vial) — no Beeline word |
 | vial, string (the row of pins from one vial), spreadsheet row | sample |
 | field label, header label, collection label | the pencil label in the vial; no equivalent |
-| accession number, barcode ID, Specimen ID | field number (the bar code being our DataMatrix) |
+| accession number, barcode ID, Specimen ID | nearest analogue: field number — but how the two relate is unresolved (question 2 above); her accession number is per specimen and printed as a bar code, and whether a BLM specimen also gets a Beeline field number is hers to say |
 | location (300 m area), `LocationID` | no equivalent — reusable place with coordinates, habitat, shorthand |
 | location descriptor, `LocationShorthand` | the site code as CONTEXT has it |
 | location description | locality |

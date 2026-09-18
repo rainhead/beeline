@@ -152,6 +152,20 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
         [opts.atlasId],
       );
     }
+    // The join below is on sample_primary_collector, which is "the row at
+    // position 1": a sample with none would be skipped and stay pending
+    // forever, and one with two would be frozen twice. The invariant is
+    // checked, not enforced (schema/116), so it is checked here first, the
+    // way the location row is checked after — an invariant broken somewhere
+    // else stops the run rather than being quietly worked around.
+    const [headless] = await rows<{ sample_id: number | null }>(
+      conn,
+      `SELECT min(i.sample_id) AS sample_id
+       FROM sample_primary_collector_invalid i JOIN freeze_scope fs ON fs.sample_id = i.sample_id`,
+    );
+    if (headless?.sample_id !== null && headless?.sample_id !== undefined) {
+      throw new Error(`sample ${headless.sample_id} is pending print but has no single primary collector`);
+    }
     const pending = await rows<PendingRow>(
       conn,
       `SELECT s.entity_id AS sample_id, s.kind, s.sample_number, s.date_start, s.date_end,

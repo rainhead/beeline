@@ -165,6 +165,16 @@ describe("preparing a run", () => {
     expect(await count("SELECT count(*) FROM pending_print_sample")).toBe(0);
   });
 
+  it("stops rather than skipping a pending sample whose collector list has no head", async () => {
+    const sample = await insertCleanSample(conn, { collector_id: String(ash), specimen_count: "1" });
+    await conn.run(`UPDATE sample_collector SET position = 2 WHERE sample_id = ${sample}`);
+    await expect(prepareRun(conn, { atlasId: null, personId: ash, now: NOW })).rejects.toThrow(
+      /no single primary collector/,
+    );
+    expect(await count("SELECT count(*) FROM print_run")).toBe(0);
+    expect(await count("SELECT count(*) FROM specimen")).toBe(0);
+  });
+
   it("lets one prepare through at a time: the second finds nothing", async () => {
     await insertCleanSample(conn, { collector_id: String(ash), specimen_count: "3" });
     const [a, b] = await Promise.all([

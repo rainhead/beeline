@@ -6,6 +6,7 @@ import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { createKysely } from "../src/db.js";
 import { sha256 } from "../src/label-pdf.js";
+import { withPrintRunLock } from "../src/print-run.js";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 /**
@@ -236,6 +237,25 @@ describe("the print-run screens", () => {
     expect(stopped.status).toBe(409);
     expect(await stopped.text()).toContain(`sample ${broken.ashSample} is waiting to print`);
     expect(await rows(broken.conn, `SELECT count(*) FROM print_run`)).toEqual([[0n]]);
+  });
+
+  it("never serves a canceled run's sheets when the cancel reached the lock first", async () => {
+    const { app, post } = await printApp();
+    const runPath = (await post("/print-runs", { atlas_id: "" })).headers.get("location")!;
+    // Hold the print-run lock, queue the cancel behind it, then the download
+    // behind that. The download reads the run's state inside the lock, so it
+    // sees the cancel that went first — before the lock covered the read, it
+    // checked the state early and served the burned numbers anyway.
+    let release!: () => void;
+    const held = withPrintRunLock(() => new Promise<void>((resolve) => (release = resolve)));
+    const canceling = post(`${runPath}/cancel`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const downloading = app.request(`${runPath}/labels.pdf`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    release();
+    await held;
+    expect((await canceling).status).toBe(302);
+    expect((await downloading).status).toBe(409);
   });
 
   it("shows an imported specimen's label as printed before Beeline, never blank", async () => {

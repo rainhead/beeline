@@ -28,6 +28,7 @@ import {
   prepareRun,
   PrintRunRefused,
   PrintRunTransitionError,
+  withPrintRunLock,
 } from "../print-run.js";
 import { PersonPage, Roster } from "./views/roster.js";
 import {
@@ -741,10 +742,20 @@ export function createApp({
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
     const id = printRunId(c);
-    const run = await loadRun(db, id);
-    if (run === null) return c.text(m.printRuns.run.notFound, 404);
-    if (run.state === "canceled") return c.text(m.printRuns.run.canceledNoSheets, 409);
-    const { bytes } = await runPdf(db, id, run.prepared_at, run.pdf_sha256, printRunsPath);
+    // Under the print-run lock, with the state read inside it: cancelRun
+    // holds the same lock, so a cancel cannot land between the check and the
+    // render and have burned numbers served anyway. Whichever gets the lock
+    // first wins, and a cancel that wins is a 409 here. (A file downloaded
+    // before a later cancel is beyond any lock; the run page says canceled.)
+    const sheets = await withPrintRunLock(async () => {
+      const run = await loadRun(db, id);
+      if (run === null) return "missing" as const;
+      if (run.state === "canceled") return "canceled" as const;
+      return runPdf(db, id, run.prepared_at, run.pdf_sha256, printRunsPath);
+    });
+    if (sheets === "missing") return c.text(m.printRuns.run.notFound, 404);
+    if (sheets === "canceled") return c.text(m.printRuns.run.canceledNoSheets, 409);
+    const { bytes } = sheets;
     return c.body(bytes as Uint8Array<ArrayBuffer>, 200, {
       "content-type": "application/pdf",
       "content-disposition": `inline; filename="beeline-labels-run-${id}.pdf"`,

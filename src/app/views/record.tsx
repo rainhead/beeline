@@ -18,6 +18,7 @@ import {
   Chip,
   DataTable,
   DetailList,
+  FindingDetail,
   EmptyState,
   LinkButton,
   Meta,
@@ -220,10 +221,15 @@ export function SampleFlags({ m, findings }: { m: Messages; findings: readonly R
                   {row.severity === "blocking" ? m.qc.blocksPrinting : m.qc.headsUp}
                 </Chip>{" "}
                 {m.qcInstructions[row.rule_name] ?? row.rule_name}
-                {row.details && (
+                {(row.details || row.detail_taxon_name) && (
                   <>
                     {" "}
-                    <code>{row.details}</code>
+                    <FindingDetail
+                      details={row.details}
+                      taxonName={row.detail_taxon_name}
+                      taxonRank={row.detail_taxon_rank}
+                      taxonLead={m.qc.identifiedAs}
+                    />
                   </>
                 )}
                 {/* A specimen-keyed finding names its specimen: "which of my

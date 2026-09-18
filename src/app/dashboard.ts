@@ -94,7 +94,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
                         WHERE f.sample_id = s.entity_id AND f.rule_name IN (${ruleList})))
       ORDER BY s.date_start DESC, length(s.sample_number) DESC, s.sample_number DESC, s.entity_id`.execute(db),
     sql<Finding & { sample_id: number }>`
-      SELECT f.sample_id, f.rule_name, f.details, r.severity
+      SELECT f.sample_id, f.rule_name, f.details, f.detail_taxon_name, f.detail_taxon_rank, r.severity
       FROM sample_qc_finding f
       JOIN qc_rule r ON r.name = f.rule_name
       WHERE f.rule_name IN (${ruleList})
@@ -155,7 +155,13 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
   const findingsBySample = new Map<number, Finding[]>();
   for (const f of findings.rows) {
     const list = findingsBySample.get(Number(f.sample_id)) ?? [];
-    list.push({ rule_name: f.rule_name, details: f.details, severity: f.severity as QcSeverity });
+    list.push({
+      rule_name: f.rule_name,
+      details: f.details,
+      detail_taxon_name: f.detail_taxon_name,
+      detail_taxon_rank: f.detail_taxon_rank,
+      severity: f.severity as QcSeverity,
+    });
     findingsBySample.set(Number(f.sample_id), list);
   }
 

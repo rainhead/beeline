@@ -1,5 +1,5 @@
 import type { Messages } from "../../messages/index.js";
-import { QcHome, type CoCollectors, type DashboardRow } from "../qc.js";
+import { QcHome, type CoCollectors, type DashboardRow, type Finding } from "../qc.js";
 import { DesignPage, Specimen } from "./shell.js";
 
 /**
@@ -9,6 +9,24 @@ import { DesignPage, Specimen } from "./shell.js";
  * regression check for any change to the component library: the real page at
  * / runs through exactly this code path.
  */
+
+/**
+ * A fixture finding. Prose by default; the one rule whose detail is a taxon
+ * passes `taxon` instead, and the difference is what the "a name, not a
+ * machine value" panel below proofs (beeline-dys).
+ */
+const finding = (
+  rule_name: string,
+  details: string | null,
+  severity: "blocking" | "warning",
+  taxon?: { name: string; rank: string },
+): Finding => ({
+  rule_name,
+  details,
+  detail_taxon_name: taxon?.name ?? null,
+  detail_taxon_rank: taxon?.rank ?? null,
+  severity,
+});
 
 const row = (over: Partial<DashboardRow>): DashboardRow => ({
   sample_id: 1,
@@ -77,7 +95,7 @@ const FIXTURES: Array<{
     rows: [
       row({
         locality: null,
-        findings: [{ rule_name: "missing_required_field", details: "locality", severity: "blocking" }],
+        findings: [finding("missing_required_field", "locality", "blocking")],
       }),
     ],
     everSynced: true,
@@ -91,7 +109,7 @@ const FIXTURES: Array<{
         inat_observation_id: null,
         specimen_count: 2140,
         coordinate_uncertainty_m: 3200,
-        findings: [{ rule_name: "coordinate_uncertainty", details: "3200 m > 250 m", severity: "blocking" }],
+        findings: [finding("coordinate_uncertainty", "3200 m > 250 m", "blocking")],
       }),
     ],
     everSynced: true,
@@ -117,8 +135,8 @@ const FIXTURES: Array<{
         sample_id: 3,
         sample_number: "7",
         findings: [
-          { rule_name: "duplicate_sample_number", details: "also sample 7 on 14 Jul 2026", severity: "blocking" },
-          { rule_name: "coordinate_uncertainty", details: "3200 m > 250 m", severity: "blocking" },
+          finding("duplicate_sample_number", "also sample 7 on 14 Jul 2026", "blocking"),
+          finding("coordinate_uncertainty", "3200 m > 250 m", "blocking"),
         ],
         coordinate_uncertainty_m: 3200,
       }),
@@ -127,7 +145,7 @@ const FIXTURES: Array<{
         sample_number: "8",
         locality: "5th St, Corvallis Oregon near the old mill by the river",
         findings: [
-          { rule_name: "locality_format", details: "contains comma; street address", severity: "blocking" },
+          finding("locality_format", "contains comma; street address", "blocking"),
         ],
       }),
       row({
@@ -136,7 +154,7 @@ const FIXTURES: Array<{
         date_start: new Date("2026-06-02T12:00:00"),
         host_name: "Marchantia",
         findings: [
-          { rule_name: "non_tracheophyte_host", details: "Umbrella Liverworts (genus Marchantia)", severity: "blocking" },
+          finding("non_tracheophyte_host", null, "blocking", { name: "Marchantia", rank: "genus" }),
         ],
       }),
       row({
@@ -147,7 +165,7 @@ const FIXTURES: Array<{
         longitude: null,
         coordinate_uncertainty_m: null,
         geoprivacy: "obscured",
-        findings: [{ rule_name: "obscured_no_true_coordinates", details: null, severity: "blocking" }],
+        findings: [finding("obscured_no_true_coordinates", null, "blocking")],
       }),
       row({
         sample_id: 9,
@@ -155,7 +173,7 @@ const FIXTURES: Array<{
         date_start: new Date("2026-06-02T12:00:00"),
         state_province: "Oregon",
         pending_count: 3,
-        findings: [{ rule_name: "place_unrecognised", details: "Oregon", severity: "warning" }],
+        findings: [finding("place_unrecognised", "Oregon", "warning")],
       }),
       row({
         sample_id: null,
@@ -167,6 +185,53 @@ const FIXTURES: Array<{
       }),
     ],
     withOthers: SHARED,
+    everSynced: true,
+  },
+  {
+    // A scientific name is set by rank, not by eye: Homo sapiens and Andrena
+    // take italics, Insecta and Life do not, and `stateofmatter` is a rank
+    // the store has never heard of and so renders upright — which is right.
+    // All four came out of the same <code> before beeline-dys.
+    label: "A host that is not a plant: the detail is a name, not a machine value",
+    rows: [
+      row({
+        sample_id: 20,
+        sample_number: "20",
+        host_name: "Homo sapiens",
+        host_rank: "species",
+        findings: [finding("non_tracheophyte_host", null, "blocking", { name: "Homo sapiens", rank: "species" })],
+      }),
+      row({
+        sample_id: 21,
+        sample_number: "21",
+        host_name: "Andrena",
+        host_rank: "genus",
+        findings: [finding("non_tracheophyte_host", null, "blocking", { name: "Andrena", rank: "genus" })],
+      }),
+      row({
+        sample_id: 22,
+        sample_number: "22",
+        host_name: "Insecta",
+        host_rank: "class",
+        findings: [finding("non_tracheophyte_host", null, "blocking", { name: "Insecta", rank: "class" })],
+      }),
+      row({
+        sample_id: 23,
+        sample_number: "23",
+        host_name: "Life",
+        host_rank: "stateofmatter",
+        findings: [finding("non_tracheophyte_host", null, "blocking", { name: "Life", rank: "stateofmatter" })],
+      }),
+      // iNaturalist gave an id and no name: the rule falls back to prose,
+      // which is still a machine value and still belongs in a <code>.
+      row({
+        sample_id: 24,
+        sample_number: "24",
+        host_name: null,
+        host_rank: null,
+        findings: [finding("non_tracheophyte_host", "observation taxon 47126 is not a vascular plant", "blocking")],
+      }),
+    ],
     everSynced: true,
   },
 ];

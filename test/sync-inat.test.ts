@@ -167,11 +167,14 @@ describe("iNat sync", () => {
         [obs(44, { taxon: { id: 51048, name: "Salvia officinalis", rank: "species" } })],
       ]),
     });
+    // The detail IS a scientific name, so the rule reports it as one — name
+    // and rank, for TaxonName to set — and leaves `details` for the case
+    // where the projection has an id and no name (beeline-dys).
     const flagged = await rows(
       conn,
-      "SELECT sample_id, details FROM qc_finding WHERE rule_name = 'non_tracheophyte_host'",
+      "SELECT sample_id, details, detail_taxon_name, detail_taxon_rank FROM qc_finding WHERE rule_name = 'non_tracheophyte_host'",
     );
-    expect(flagged).toEqual([[moss, "observation taxon Bryum argenteum is not a vascular plant"]]);
+    expect(flagged).toEqual([[moss, null, "Bryum argenteum", "species"]]);
     expect(await rows(conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${moss}`)).toHaveLength(0);
     expect(await rows(conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${sage}`)).toHaveLength(1);
     expect(await rows(conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${stale}`)).toHaveLength(1);

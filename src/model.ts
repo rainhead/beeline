@@ -670,6 +670,14 @@ export interface QcFindingView {
   specimen_id: number | null;
   rule_name: string;
   details: string | null;
+  /**
+   * Set only by the one rule whose detail is a scientific name rather than
+   * prose about one, so the view can render it through TaxonName instead of
+   * as a machine value (beeline-dys). Rank travels with it because that is
+   * what decides italics.
+   */
+  detail_taxon_name: string | null;
+  detail_taxon_rank: string | null;
 }
 
 /**
@@ -682,6 +690,8 @@ export interface SampleQcFindingView {
   specimen_id: number | null;
   rule_name: string;
   details: string | null;
+  detail_taxon_name: string | null;
+  detail_taxon_rank: string | null;
 }
 
 /** One row: when the current collecting season began (1 March). */

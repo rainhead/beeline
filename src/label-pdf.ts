@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import fontkit from "@pdf-lib/fontkit";
 import bwipjs from "bwip-js/node";
 import {
+  breakTextIntoLines,
   concatTransformationMatrix,
   degrees,
   drawObject,
@@ -80,7 +81,7 @@ interface TextBox {
 }
 
 /** The reference's six boxes, in inches converted to points. */
-const BOXES: Record<"location" | "coordinates" | "date" | "collector" | "method" | "number", TextBox> = {
+export const LABEL_BOXES: Record<"location" | "coordinates" | "date" | "collector" | "method" | "number", TextBox> = {
   location: { x: 0.005 * PT, y: 0.18525 * PT, width: 0.46 * PT, height: 0.12075 * PT, fontSize: 3, rotation: 0, offset: { x: 0, y: -2.3 }, fit: false },
   coordinates: { x: 0.005 * PT, y: 0.145 * PT, width: 0.46 * PT, height: 0.04025 * PT, fontSize: 3, rotation: 0, offset: { x: 0, y: -2.3 }, fit: true },
   date: { x: 0.005 * PT, y: 0.075 * PT, width: 0.46 * PT, height: 0.07 * PT, fontSize: 5, rotation: 0, offset: { x: 0, y: -0.056 * PT }, fit: true },
@@ -91,27 +92,46 @@ const BOXES: Record<"location" | "coordinates" | "date" | "collector" | "method"
 const MATRIX_BOX = { x: 0.476 * PT, y: 0.005 * PT, width: 0.11 * PT, height: LABEL.height - 0.01 * PT };
 
 /**
- * The reference's shrink-to-fit: a single line shrinks until it fits the
- * width, a wrapping one until it fits the height, never below 1pt, nudging
- * the offset so the text stays inside the box.
+ * The reference's shrink-to-fit, with one repair: a single line shrinks
+ * until it fits the width, a wrapping one until it fits the height, never
+ * below 1pt, nudging the offset so the text stays inside the box. The
+ * reference guessed the line count from the text's total width, which
+ * undercounts — greedy wrapping at spaces wastes the tail of each line, so
+ * four collectors' names modelled as two lines were drawn as three and ran
+ * out of the box (CodeRabbit, #75). The count here is pdf-lib's own
+ * breakTextIntoLines, the function drawText wraps with, so what is measured
+ * is what is drawn.
  */
+export function fitText(
+  font: PDFFont,
+  text: string,
+  box: Pick<TextBox, "width" | "height" | "fontSize">,
+): { fontSize: number; lines: number; lineHeight: number } {
+  const measure = (size: number) => {
+    const lines = breakTextIntoLines(text, [" "], box.width, (t) => font.widthOfTextAtSize(t, size));
+    const widest = Math.max(0, ...lines.map((l) => font.widthOfTextAtSize(l.trimEnd(), size)));
+    return { lines: lines.length, widest, lineHeight: font.heightAtSize(size, { descender: true }) };
+  };
+  let fontSize = box.fontSize;
+  let m = measure(fontSize);
+  // A line can still be too wide when one word is: no space to break at.
+  while ((m.widest > box.width || (m.lines > 1 && m.lines * m.lineHeight > box.height)) && fontSize > 1) {
+    fontSize -= 0.01;
+    m = measure(fontSize);
+  }
+  return { fontSize, lines: m.lines, lineHeight: m.lineHeight };
+}
+
 function drawTextBox(page: PDFPage, font: PDFFont, text: string, originX: number, originY: number, box: TextBox): void {
   let fontSize = box.fontSize;
   let xOffset = box.offset.x;
   let yOffset = box.offset.y;
   if (box.fit && text.length > 0) {
-    const spaces = text.match(/ /g)?.length ?? 0;
-    let lineWidth = font.widthOfTextAtSize(text, fontSize);
-    let lines = Math.min(spaces + 1, Math.ceil(lineWidth / box.width));
-    let lineHeight = font.heightAtSize(fontSize, { descender: true });
-    let textHeight = lines * lineHeight;
-    while (((lines === 1 && lineWidth > box.width) || (lines > 1 && textHeight > box.height)) && fontSize > 1) {
-      fontSize -= 0.01;
-      lineWidth = font.widthOfTextAtSize(text, fontSize);
-      lines = spaces > 0 ? Math.ceil(lineWidth / box.width) : 1;
-      lineHeight = font.heightAtSize(fontSize, { descender: true });
-      textHeight = lines * lineHeight;
-      if (box.rotation === 0) yOffset = (box.height - textHeight) * -0.5 - lineHeight * 0.8;
+    const fitted = fitText(font, text, box);
+    if (fitted.fontSize !== box.fontSize) {
+      fontSize = fitted.fontSize;
+      const textHeight = fitted.lines * fitted.lineHeight;
+      if (box.rotation === 0) yOffset = (box.height - textHeight) * -0.5 - fitted.lineHeight * 0.8;
       else xOffset = (box.height - textHeight) * -0.5;
     }
   }
@@ -223,12 +243,12 @@ export async function renderLabelsPdf(rows: LabelRow[], opts: RenderOptions): Pr
     const page = pages[row.sheet - 1];
     if (!page) throw new Error(`sheet ${row.sheet} has no page`);
     const { x, y } = cellOrigin(row.cell);
-    drawTextBox(page, font, row.location_text, x, y, BOXES.location);
-    drawTextBox(page, font, row.coordinates_text, x, y, BOXES.coordinates);
-    drawTextBox(page, font, row.date_text, x, y, BOXES.date);
-    drawTextBox(page, font, row.collector_text, x, y, BOXES.collector);
-    drawTextBox(page, font, row.method_text, x, y, BOXES.method);
-    drawTextBox(page, font, row.number_text, x, y, BOXES.number);
+    drawTextBox(page, font, row.location_text, x, y, LABEL_BOXES.location);
+    drawTextBox(page, font, row.coordinates_text, x, y, LABEL_BOXES.coordinates);
+    drawTextBox(page, font, row.date_text, x, y, LABEL_BOXES.date);
+    drawTextBox(page, font, row.collector_text, x, y, LABEL_BOXES.collector);
+    drawTextBox(page, font, row.method_text, x, y, LABEL_BOXES.method);
+    drawTextBox(page, font, row.number_text, x, y, LABEL_BOXES.number);
     drawDataMatrix(doc, page, row.number_text, x, y);
   }
   return doc.save({ useObjectStreams: false, addDefaultPage: false });

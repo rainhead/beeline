@@ -210,6 +210,29 @@ describe("the print-run screens", () => {
     expect(await rows(conn, `SELECT count(*) FROM pending_print_sample`)).toEqual([[2n]]);
   });
 
+  it("answers a refusal with its reason, not a bare failure", async () => {
+    const { app, conn, post } = await printApp();
+    const runPath = (await post("/print-runs", { atlas_id: "" })).headers.get("location")!;
+    // Somebody identifies a specimen before the run prints: cancel is refused.
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('genus', 'Bombus')`);
+    await conn.run(
+      `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, verbatim_identification)
+       SELECT min(sp.entity_id), (SELECT min(entity_id) FROM animal), false, 'in_app', 'Bombus' FROM specimen sp`,
+    );
+    const refused = await post(`${runPath}/cancel`, { note: "wrong week" });
+    expect(refused.status).toBe(409);
+    expect(await refused.text()).toContain("1 of its specimens has already been identified");
+    expect(await (await app.request(runPath)).text()).toContain("Prepared</span>");
+
+    // And a pending sample that is not fit to freeze stops Prepare, by name.
+    const broken = await printApp();
+    await broken.conn.run(`UPDATE sample_collector SET position = 2 WHERE sample_id = ${broken.ashSample}`);
+    const stopped = await broken.post("/print-runs", { atlas_id: "" });
+    expect(stopped.status).toBe(409);
+    expect(await stopped.text()).toContain(`sample ${broken.ashSample} is waiting to print`);
+    expect(await rows(broken.conn, `SELECT count(*) FROM print_run`)).toEqual([[0n]]);
+  });
+
   it("shows an imported specimen's label as printed before Beeline, never blank", async () => {
     const { app, conn, ashSample } = await printApp("ash");
     await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${ashSample}, 1, '25000001')`);

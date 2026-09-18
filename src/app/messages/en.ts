@@ -848,6 +848,21 @@ export const en = {
     colPrinted: "Printed",
     colMailed: "Mailed",
     none: "No print runs yet.",
+    /**
+     * The store declining a write, in words (src/print-run.ts,
+     * PrintRunRefused). Each names the record to go and look at.
+     */
+    refused: (
+      refusal:
+        | { code: "no_location"; sampleId: number }
+        | { code: "no_primary_collector"; sampleId: number }
+        | { code: "determined"; printRunId: number; specimens: number },
+    ) =>
+      refusal.code === "determined"
+        ? `This run cannot be canceled: ${n(refusal.specimens)} of its specimens ${refusal.specimens === 1 ? "has" : "have"} already been identified, and canceling would take their field numbers away. Nothing was changed.`
+        : refusal.code === "no_location"
+          ? `No run was prepared: sample ${refusal.sampleId} is waiting to print but has no coordinates on record, which should not be possible. Look at /samples/${refusal.sampleId} before trying again.`
+          : `No run was prepared: sample ${refusal.sampleId} is waiting to print but does not have exactly one primary collector. Look at /samples/${refusal.sampleId} before trying again.`,
     scopeProgram: "program",
     notYet: "not yet",
     run: {

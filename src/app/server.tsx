@@ -20,7 +20,15 @@ import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, ta
 import { Jobs } from "./views/jobs.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
 import { listRuns, loadRun, runLabels, runPdf, scopeCounts, specimenLabels } from "./print-runs.js";
-import { approveRun, cancelRun, markMailed, markPrinted, prepareRun, PrintRunTransitionError } from "../print-run.js";
+import {
+  approveRun,
+  cancelRun,
+  markMailed,
+  markPrinted,
+  prepareRun,
+  PrintRunRefused,
+  PrintRunTransitionError,
+} from "../print-run.js";
 import { PersonPage, Roster } from "./views/roster.js";
 import {
   linkChanges,
@@ -762,6 +770,9 @@ export function createApp({
       if (err instanceof PrintRunTransitionError) {
         return c.text(m.printRuns.run.wrongState(m.printRuns.state[err.from ?? ""] ?? String(err.from)), 409);
       }
+      // The store declined for a reason the printer can act on: say it,
+      // rather than a bare failure. Anything else is a fault and stays one.
+      if (err instanceof PrintRunRefused) return c.text(m.printRuns.refused(err.refusal), 409);
       throw err;
     }
   };

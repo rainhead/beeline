@@ -30,6 +30,32 @@ export function withPrintRunLock<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+/**
+ * The store declining to do what was asked, for a reason the person asking
+ * can act on: a pending sample that is not fit to freeze, a run that cannot
+ * be canceled because somebody has already determined one of its specimens.
+ * Typed and coded so a caller can answer with the reason rather than a bare
+ * failure (CodeRabbit, #76: the cancel refusal reached the printer as a 500),
+ * and so the words are the catalog's and not this module's. Anything else
+ * thrown here is a fault, not a refusal.
+ */
+export type PrintRunRefusal =
+  | { code: "no_location"; sampleId: number }
+  | { code: "no_primary_collector"; sampleId: number }
+  | { code: "determined"; printRunId: number; specimens: number };
+
+export class PrintRunRefused extends Error {
+  constructor(public readonly refusal: PrintRunRefusal) {
+    super(
+      refusal.code === "determined"
+        ? `print run ${refusal.printRunId} has ${refusal.specimens} determined specimen(s); cancel refused`
+        : refusal.code === "no_location"
+          ? `sample ${refusal.sampleId} is pending print but has no location row`
+          : `sample ${refusal.sampleId} is pending print but has no single primary collector`,
+    );
+  }
+}
+
 export interface PrepareOptions {
   /** Null = every atlas that does not print its own labels (atlas_printing), plus samples outside any atlas. */
   atlasId: number | null;
@@ -164,7 +190,7 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
        FROM sample_primary_collector_invalid i JOIN freeze_scope fs ON fs.sample_id = i.sample_id`,
     );
     if (headless?.sample_id !== null && headless?.sample_id !== undefined) {
-      throw new Error(`sample ${headless.sample_id} is pending print but has no single primary collector`);
+      throw new PrintRunRefused({ code: "no_primary_collector", sampleId: Number(headless.sample_id) });
     }
     const pending = await rows<PendingRow>(
       conn,
@@ -234,7 +260,7 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
     const toMint: Pending[] = [];
     for (const sample of pending) {
       if (sample.latitude === null || sample.longitude === null) {
-        throw new Error(`sample ${sample.sample_id} is pending print but has no location row`);
+        throw new PrintRunRefused({ code: "no_location", sampleId: Number(sample.sample_id) });
       }
       const people = collectorsOf.get(sample.sample_id) ?? [];
       const have = taken.get(Number(sample.sample_id)) ?? new Set<number>();
@@ -435,7 +461,7 @@ export const cancelRun = (conn: DuckDBConnection, id: number, opts: TransitionOp
       );
       const determined = Number(determinedRow?.determined ?? 0);
       if (determined > 0) {
-        throw new Error(`print run ${id} has ${determined} determined specimen(s); cancel refused`);
+        throw new PrintRunRefused({ code: "determined", printRunId: id, specimens: determined });
       }
       // field_number is unindexed, so this UPDATE is allowed on a row the
       // run's labels reference (duckdb/duckdb#20246); the registry rows are

@@ -768,7 +768,9 @@ export function createApp({
       return c.redirect(redirectTo ?? "/print-runs");
     } catch (err) {
       if (err instanceof PrintRunTransitionError) {
-        return c.text(m.printRuns.run.wrongState(m.printRuns.state[err.from ?? ""] ?? String(err.from)), 409);
+        // No state at all means no such run, which is a 404 and not "the run is null".
+        if (err.from === null) return c.text(m.printRuns.run.notFound, 404);
+        return c.text(m.printRuns.run.wrongState(m.printRuns.state[err.from] ?? err.from), 409);
       }
       // The store declined for a reason the printer can act on: say it,
       // rather than a bare failure. Anything else is a fault and stays one.

@@ -224,6 +224,11 @@ describe("the print-run screens", () => {
     expect(await refused.text()).toContain("1 of its specimens has already been identified");
     expect(await (await app.request(runPath)).text()).toContain("Prepared</span>");
 
+    // A run that is not there is a 404 in words, not "the run is null".
+    const missing = await post("/print-runs/999999/approve");
+    expect(missing.status).toBe(404);
+    expect(await missing.text()).toBe("No such print run.");
+
     // And a pending sample that is not fit to freeze stops Prepare, by name.
     const broken = await printApp();
     await broken.conn.run(`UPDATE sample_collector SET position = 2 WHERE sample_id = ${broken.ashSample}`);

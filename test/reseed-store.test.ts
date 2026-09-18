@@ -73,6 +73,13 @@ beforeAll(async () => {
   await seed.run(`INSERT INTO itis_synonym (tsn, accepted_tsn) VALUES (759593, 1252729)`);
   // Model rows, of the kind promotion derives and this tool must not carry.
   await seed.run(`INSERT INTO person (entity_id, display_name) VALUES (nextval('entity_id_seq'), 'Stale Person')`);
+  // A rehearsal print run and the number it minted: neither is carried, and
+  // the reseed says how many it left behind rather than dropping them silently.
+  await seed.run(
+    `INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person;
+     INSERT INTO minted_field_number (field_number, print_run_id)
+       SELECT '26000001', min(entity_id) FROM print_run`,
+  );
   // And a sequence left where a promoted store leaves it: far ahead. Both
   // catalogs are attached during the carry and both have a sequence by this
   // name, so reading the wrong one reports the source's floor as the target's.
@@ -129,6 +136,17 @@ describe("reseeding a store that cannot be blown away", () => {
     // The whole point: the model is empty, so promotion may run against it.
     expect(await rows(conn, `SELECT count(*) FROM person`)).toEqual([[0n]]);
     expect(await rows(conn, `SELECT count(*) FROM sample`)).toEqual([[0n]]);
+  });
+
+  test("print runs and minted numbers are left behind, and counted", async () => {
+    // Authored data the reseed cannot carry (schema/035): every row hangs off
+    // an entity_id promotion redraws. The sandbox is the only store that
+    // reseeds and its runs are rehearsals; a deployed store after cutover is
+    // migrated, never reseeded (ADR 0006). So the target mints again from the
+    // imported ceiling, and the report says what was dropped.
+    expect(counts.leftBehind).toEqual({ print_run: 1, minted_field_number: 1 });
+    expect(await rows(conn, `SELECT count(*) FROM print_run`)).toEqual([[0n]]);
+    expect(await rows(conn, `SELECT count(*) FROM minted_field_number`)).toEqual([[0n]]);
   });
 
   test("the presence rows deletion detection reads keep pointing at their run", async () => {

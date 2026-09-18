@@ -69,6 +69,27 @@ describe("observation promotion", () => {
     expect(geoprivacy).toBe("obscured");
   });
 
+  test("a printed sample keeps its coordinates when the observation moves; an unprinted one follows", async () => {
+    // Once labels are on paper the coordinates are what the label says
+    // (CONTEXT.md, Upstream; beeline-1kb.2). An imported specimen row with no
+    // print run is the legacy case, which locks too (Peter, 2026-09-14) — so
+    // the full-precision upgrade the second test below exercises stops for
+    // every legacy sample with printed specimens, deliberately.
+    const printed = await insertCleanSample(conn, { inat_observation_id: "7" }, { source: "'legacy_import'" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${printed}, 1, '25000001')`);
+    const unprinted = await insertCleanSample(
+      conn,
+      { inat_observation_id: "8", sample_number: "'2'" },
+      { source: "'legacy_import'" },
+    );
+    await stage(obs(7, { geojson: { coordinates: [-123.01, 44.01], type: "Point" }, positional_accuracy: 9 }));
+    await stage(obs(8, { geojson: { coordinates: [-123.01, 44.01], type: "Point" }, positional_accuracy: 9 }));
+    await promoteObservations(conn);
+    expect(await location(printed)).toEqual(["legacy_import", 44.5646, -123.262, 30, 72]);
+    expect(await location(unprinted)).toEqual(["inat_public", 44.01, -123.01, 9, null]);
+    expect(await rows(conn, "SELECT sample_id FROM printed_sample")).toEqual([[printed]]);
+  });
+
   test("coordinates within the legacy 4-decimal export precision keep their derived elevation", async () => {
     // Legacy holds the iNat coordinates rounded to 4 decimals (measured on
     // the full corpus); a delta ≤ 5e-5° is the same place, so the elevation

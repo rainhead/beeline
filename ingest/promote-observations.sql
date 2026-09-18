@@ -51,13 +51,27 @@ WHERE (f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL)
 -- obscured records, so it accompanies both sources. Coordinates move here
 -- and the elevation stays where it was — which is exactly what makes the row
 -- stale, and the next statement is what notices.
+--
+-- Not on a sample whose labels are on paper (printed_sample, schema/155):
+-- once printed, the coordinates are what the label says about where the
+-- bees were collected, and an iNaturalist edit to them is a divergence from
+-- the label to show a person (beeline-1kb.17), not a value to take (Andony,
+-- 2026-09-11; Peter, 2026-09-14). The uncertainty and source hold with them,
+-- since they describe the same point. That covers every legacy sample too,
+-- which is deliberate: 46 of the 55 coordinate edits measured on printed
+-- samples in a fortnight were iNaturalist's full-precision copy of the same
+-- point replacing the import's rounded one, none moving more than 58 m, and
+-- nothing is lost by keeping the rounded one that printed. The INSERT below
+-- for a sample with no location row at all is not guarded: a label that
+-- printed no coordinates is contradicted by none.
 UPDATE sample_location SET
   latitude = c.latitude,
   longitude = c.longitude,
   coordinate_uncertainty_m = c.coordinate_uncertainty_m,
   source = c.source
 FROM observation_location_candidate c
-WHERE sample_location.sample_id = c.sample_id;
+WHERE sample_location.sample_id = c.sample_id
+  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = c.sample_id);
 
 -- Drop every elevation the move left behind, so the row says "unknown"
 -- rather than something confident about a place it was not read at, and

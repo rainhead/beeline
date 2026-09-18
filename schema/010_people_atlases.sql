@@ -45,6 +45,20 @@ CREATE TABLE atlas (
 COMMENT ON TABLE atlas IS 'A member program of the Master Melittologist umbrella: OBA, WaBA, BC, ID, NM, OK. Samples are assigned to atlases by geography, never by pipeline or iNat project.';
 COMMENT ON COLUMN atlas.inat_place_id IS 'The atlas''s iNaturalist place (Washington = 46). iNat stamps observations with place ids, so geographic assignment is a lookup, never a computation.';
 
+-- Which atlases print their own labels: a row is the flag, the way a
+-- person_admin row is. None today — Oregon prints for the whole program, so
+-- a print run with no atlas covers every atlas absent from this table, plus
+-- samples outside any atlas (print_scope_sample, schema/155); add an atlas
+-- here and its samples wait for a run scoped to it. A satellite rather than
+-- a column on atlas because DuckDB cannot add a NOT NULL column to a table
+-- other tables reference (atlas_region does), so a migration could not have
+-- put the column there without leaving a nullable one that a fresh build
+-- would not have.
+CREATE TABLE atlas_printing (
+  atlas_id INTEGER PRIMARY KEY REFERENCES atlas(entity_id)
+);
+COMMENT ON TABLE atlas_printing IS 'Atlases that print their own labels; presence is the flag. Empty today: Oregon prints for every atlas. An unscoped print run freezes the samples of every atlas NOT here (print_scope_sample), and an atlas here gets labels only from a run scoped to it.';
+
 -- The six member atlases. Place ids are filled in as they are verified
 -- against iNat (only Washington's is documented so far).
 --

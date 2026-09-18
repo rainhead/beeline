@@ -104,25 +104,30 @@ SELECT m.sample_id, m.person_id, 1 FROM minted_sample m;
 
 -- ── A locality follows its observation until the labels print ───────────
 -- The one descriptive field rewritten rather than filled, and only on a
--- sample with no specimen rows — which is what unprinted means here, since a
--- print run is what individuates specimens and every legacy sample already
--- has them. Until its labels print, a sample's locality is the volunteer's
--- to fix on iNaturalist (CONTEXT.md, Upstream). A place name too long for a
--- label is minted as written and flagged (schema/108), and nobody can edit an
+-- sample not in printed_sample (schema/155): no label of its is on paper.
+-- Until its labels print, a sample's locality is the volunteer's to fix on
+-- iNaturalist (CONTEXT.md, Upstream). A place name too long for a label is
+-- minted as written and flagged (schema/108), and nobody can edit an
 -- iNat-linked sample in the app, so a fill-only locality would leave that
 -- flag with no one able to clear it (beeline-kza). Nothing a person types is
 -- at risk: the in-app editor refuses iNat-linked samples, so on these rows
--- the observation is the only writer. Once a specimen row exists the locality
--- stays what the label says; the fill-only refresh below still fills a gap
--- on a printed sample, and whether it should is beeline-1kb.17's question.
--- A sample whose observation is gone from observation_field keeps what it has.
+-- the observation is the only writer. Once a label is on paper the locality
+-- stays what the label says (beeline-1kb.2) — that is printed_sample's
+-- definition, and it holds for every legacy sample, whose labels the old
+-- system printed. A sample frozen into a run that has not printed yet still
+-- follows: the snapshot on printed_label is what will print, and this
+-- follows the record, so the two can disagree until the run is canceled or
+-- printed, which the run page shows the proofer (beeline-1kb.3). The
+-- fill-only refresh below still fills a gap on a printed sample, since a
+-- label that printed nothing there is contradicted by nothing. A sample
+-- whose observation is gone from observation_field keeps what it has.
 UPDATE sample SET locality = followed.locality
 FROM (
   SELECT s.entity_id AS sample_id, loc.locality
   FROM sample s
   JOIN observation_field f ON f.inat_id = s.inat_observation_id
   LEFT JOIN observation_locality loc ON loc.inat_id = f.inat_id
-  WHERE NOT EXISTS (SELECT 1 FROM specimen sp WHERE sp.sample_id = s.entity_id)
+  WHERE NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
 ) followed
 WHERE sample.entity_id = followed.sample_id
   AND sample.locality IS DISTINCT FROM followed.locality;

@@ -124,9 +124,15 @@ CREATE TABLE specimen (
   sample_id       INTEGER NOT NULL REFERENCES sample(entity_id),
   specimen_number INTEGER NOT NULL,
   field_number    TEXT,
+  occurrence_id   TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (sample_id, specimen_number)
 );
+-- A unique index rather than an inline UNIQUE, so the migration that adds the
+-- column can enforce the same thing: DuckDB cannot ADD COLUMN with a
+-- constraint. Never updated, so the index costs nothing on referenced rows.
+CREATE UNIQUE INDEX specimen_occurrence_id_idx ON specimen (occurrence_id);
 COMMENT ON TABLE specimen IS 'One physical insect. Specimens are individuated by printing: until a print run freezes, a sample has only specimen_count. Historical ingestion also lands here — production is 99.9997% printed.';
 COMMENT ON COLUMN specimen.specimen_number IS '1..N within the sample at freeze time.';
-COMMENT ON COLUMN specimen.field_number IS 'The number Beeline issues and prints on the label (CONTEXT.md, beeline-nfo) — never the museum''s catalog number, which arrives from Ecdysis with its institutional prefix and gets its own column when import lands. Opaque verbatim text: all four historical identifier eras land here, including the era of duplicates — so no UNIQUE. Uniqueness becomes a hard guarantee only for the numbers Beeline itself mints, returning with the printing phase.';
+COMMENT ON COLUMN specimen.field_number IS 'The number Beeline issues and prints on the label (CONTEXT.md, beeline-nfo) — never the museum''s catalog number, which arrives from Ecdysis with its institutional prefix and gets its own column when import lands. Opaque verbatim text: all four historical identifier eras land here, including the era of duplicates — so no UNIQUE. A number Beeline mints is written here AND as a row in minted_field_number (schema/035), whose PRIMARY KEY is the guarantee (ADR 0008); specimen_field_number_stale (schema/155) checks that the two agree. Not indexed, deliberately: an indexed column on a row a determination references could never be updated (duckdb/duckdb#20246), and a duplicate repair will one day update this one.';
+COMMENT ON COLUMN specimen.occurrence_id IS 'dwc:occurrenceID — the specimen''s permanent identity downstream, minted once by a print run (a UUID v7, generated in src/print-run.ts) and never changed (ADR 0008 §1). NULL on every imported specimen: the legacy corpus''s own occurrenceIDs are not unique (216 values on 598 records, beeline-1kb.14) and are kept in staging until the export phase decides what to publish for them. Nothing reads meaning out of it.';

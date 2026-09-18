@@ -323,6 +323,20 @@ answers which label is right.
    [ADR 0007](0007-authored-changes-are-events.md)). Which of the two is an
    implementation question for phase 5; that it is one of them is not.
 
+   *Implemented otherwise (2026-09-17, beeline-1kb.2), and this note says
+   how.* Neither route was taken: a reseed carries no print run and no minted
+   number, and reports how many it left behind. Every one of those rows
+   hangs off an `entity_id` a reseed redraws — the run off the person who
+   prepared it, the minted specimen off a sample promotion re-mints — and
+   remapping them is a job with no customer, because the sandbox is the only
+   store that will ever reseed and its runs are rehearsals. What actually
+   makes both identifiers outlive a rebuild is that after cutover there is no
+   rebuild: a deployed store is migrated, never reseeded
+   ([ADR 0006](0006-migrations-for-deployed-stores.md)), and backups are
+   mandatory from the first real run. Before cutover a reseeded store mints
+   again from the imported ceiling, which is what the seed rule in (7)
+   guarantees is safe.
+
 ### What reads them
 
 9. **A field number is opaque, and so is an `occurrenceID`.** No code parses

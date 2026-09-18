@@ -383,6 +383,30 @@ describe("descriptive fields are a fill-only refresh", () => {
     ]);
   });
 
+  test("a sample frozen into a run that has not printed still follows; one whose run printed does not", async () => {
+    // The lock is a fact about paper, not about the freeze (Peter,
+    // 2026-09-14): printed_sample is what promotion reads, and a prepared
+    // run's snapshot is what will print, so the record keeps following until
+    // the run is printed or canceled.
+    const { prepareRun, approveRun, markPrinted } = await import("../src/print-run.js");
+    const sampleId = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'", locality: "'Bald Hill'", county: "'Linn'",
+    });
+    const person = Number((await one(`SELECT min(entity_id) FROM person`))?.[0]);
+    const now = new Date("2026-09-21T16:00:00Z");
+    const run = (await prepareRun(conn, { atlasId: null, personId: person, now }))!;
+    await stage(obs(7));
+    await promoteObservations(conn);
+    expect(await one(`SELECT locality FROM sample WHERE entity_id = ${sampleId}`)).toEqual(["Corvallis"]);
+
+    await conn.run(`UPDATE sample SET locality = 'Bald Hill' WHERE entity_id = ${sampleId}`);
+    const later = new Date("2026-09-21T17:00:00Z");
+    await approveRun(conn, run.printRunId, { personId: person, now: later });
+    await markPrinted(conn, run.printRunId, { personId: person, now: later });
+    await promoteObservations(conn);
+    expect(await one(`SELECT locality FROM sample WHERE entity_id = ${sampleId}`)).toEqual(["Bald Hill"]);
+  });
+
   test("an atlas a human assigned is not moved by the lookup", async () => {
     // A row with a NULL atlas and assigned_by set is a person stating
     // "belongs to none" — the one state the CHECK admits a NULL atlas for —

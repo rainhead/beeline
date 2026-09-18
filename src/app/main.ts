@@ -109,6 +109,9 @@ if (config.devLogin) {
 const jobs = buildJobs(config);
 const jobConn = await instance.connect();
 const scheduler = startScheduler({ db, conn: jobConn, jobs });
+// The print runs' own connection: a freeze is one transaction and cannot
+// share a connection with the nightly's (src/print-run.ts).
+const printConn = await instance.connect();
 
 const inat = inatClient(await loadInatCredentials());
 const app = createApp({
@@ -123,6 +126,8 @@ const app = createApp({
   sampleChangesPath: config.sampleChangesPath,
   sampleStatePath: config.sampleStatePath,
   conn: jobConn,
+  printConn,
+  printRunsDir: config.printRunsDir,
 });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`beeline app (${config.environment}) listening on http://localhost:${info.port}`);
@@ -182,6 +187,11 @@ async function shutdown(signal: string): Promise<never> {
     jobConn.closeSync();
   } catch (err) {
     failed("closing the job connection", err);
+  }
+  try {
+    printConn.closeSync();
+  } catch (err) {
+    failed("closing the print connection", err);
   }
   try {
     await close();

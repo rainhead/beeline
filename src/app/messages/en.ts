@@ -78,6 +78,7 @@ export const en = {
       design: "Design",
       jobs: "Jobs",
       taxonomy: "Taxonomy",
+      printRuns: "Print runs",
     },
     /**
      * The menu's destinations beyond the records — reference pages and staff
@@ -598,6 +599,20 @@ export const en = {
         noFieldNumber: "not numbered",
         undetermined: "not determined",
         expert: "expert",
+        colLabel: "Label",
+        /**
+         * Where each specimen's label is: what a volunteer waiting on an
+         * envelope wants to know (beeline-1kb.2). "Printing" covers a run
+         * that is prepared or approved but not on paper yet.
+         */
+        label: {
+          printing: (prepared: string) => `Printing — prepared ${prepared}`,
+          printed: (when: string) => `Printed ${when}`,
+          mailed: (when: string) => `Mailed ${when}`,
+          canceled: "run canceled; it will be numbered again in the next run",
+          /** Every imported specimen: the old system printed it, and Beeline holds no run for it. */
+          legacy: "printed before Beeline",
+        },
       },
     },
 
@@ -611,6 +626,21 @@ export const en = {
       fieldNumberNone: "Not numbered — this specimen's label predates field numbering.",
       inSample: "Number in its sample",
       fromSample: "From sample",
+      /** Every time a label for this specimen went into a print run (schema/035). */
+      labels: {
+        heading: "Labels",
+        intro:
+          "Each time a label for this specimen was prepared for printing, and how far that run got. Two rows means it was printed twice; the later one is the label to trust.",
+        /** An imported specimen: printed, but by the old system, so there is no run to show. */
+        legacy: "Printed before Beeline — the previous system printed this label, so there is no print run to show.",
+        colRun: "Print run",
+        colState: "State",
+        colSheet: "Sheet · cell",
+        colPrepared: "Prepared",
+        colPrinted: "Printed",
+        colMailed: "Mailed",
+        notYet: "not yet",
+      },
     },
 
     determinations: {
@@ -772,6 +802,117 @@ export const en = {
     /** A run with no end yet: said, since a blank duration reads as one that failed to record. */
     stillRunning: "still running",
     noRuns: "No runs yet.",
+  },
+
+  /** Print runs (/print-runs, beeline-1kb.2). Staff-facing, English-only. */
+  printRuns: {
+    title: "Print runs",
+    heading: "Print runs",
+    intro:
+      "A run freezes the samples that are ready to print, gives every specimen its field number, and produces the sheets. Nothing added or changed after the freeze joins it; that waits for the next run.",
+    /** The state words, shared with the record pages. */
+    state: {
+      prepared: "Prepared",
+      approved: "Approved",
+      printed: "Printed",
+      mailed: "Mailed",
+      canceled: "Canceled",
+    } as Record<string, string>,
+    prepare: {
+      heading: "Prepare a run",
+      scopeLabel: "Whose labels",
+      /** The unscoped run: every atlas that does not print its own, plus samples outside any atlas. */
+      program: "Everyone Oregon prints for",
+      programCovers: (codes: readonly string[]) =>
+        codes.length === 0
+          ? "Covers samples outside every atlas; each atlas prints its own."
+          : `Covers ${list(codes)}, and samples outside every atlas.`,
+      own: "prints its own labels",
+      waiting: (labels: number, samples: number) =>
+        `${n(labels)} ${labels === 1 ? "label" : "labels"} for ${n(samples)} ${samples === 1 ? "sample" : "samples"} waiting`,
+      nothingWaiting: "nothing waiting",
+      button: "Prepare",
+      hint:
+        "Preparing freezes the set and assigns field numbers, in the order the labels will appear on the sheets. If that was wrong, cancel the run before it prints: the numbers stay used and the samples go back to waiting.",
+      /** The POST found nothing pending, so no run was made. */
+      nothingToPrepare: "Nothing was waiting to print in that scope, so no run was prepared.",
+    },
+    colRun: "Run",
+    colScope: "Scope",
+    colState: "State",
+    colPrepared: "Prepared",
+    colLabels: "Labels",
+    colSamples: "Samples",
+    colCollectors: "Collectors",
+    colSheets: "Sheets",
+    colPrinted: "Printed",
+    colMailed: "Mailed",
+    none: "No print runs yet.",
+    /**
+     * The store declining a write, in words (src/print-run.ts,
+     * PrintRunRefused). Each names the record to go and look at.
+     */
+    refused: (
+      refusal:
+        | { code: "no_location"; sampleId: number }
+        | { code: "no_primary_collector"; sampleId: number }
+        | { code: "determined"; printRunId: number; specimens: number },
+    ) =>
+      refusal.code === "determined"
+        ? `This run cannot be canceled: ${n(refusal.specimens)} of its specimens ${refusal.specimens === 1 ? "has" : "have"} already been identified, and canceling would take their field numbers away. Nothing was changed.`
+        : refusal.code === "no_location"
+          ? `No run was prepared: sample ${refusal.sampleId} is waiting to print but has no coordinates on record, which should not be possible. Look at /samples/${refusal.sampleId} before trying again.`
+          : `No run was prepared: sample ${refusal.sampleId} is waiting to print but does not have exactly one primary collector. Look at /samples/${refusal.sampleId} before trying again.`,
+    scopeProgram: "program",
+    notYet: "not yet",
+    run: {
+      title: (id: number) => `Print run ${n(id)}`,
+      back: "← Print runs",
+      preparedBy: (name: string, when: string) => `Prepared by ${name}, ${when}.`,
+      scopeProgram: "Everyone Oregon prints for.",
+      scopeAtlas: (name: string) => `${name} only.`,
+      counts: (labels: number, samples: number, collectors: number, sheets: number) =>
+        `${n(labels)} ${labels === 1 ? "label" : "labels"} for ${n(samples)} ${samples === 1 ? "sample" : "samples"} from ${n(collectors)} ${collectors === 1 ? "collector" : "collectors"}, on ${n(sheets)} ${sheets === 1 ? "sheet" : "sheets"}.`,
+      download: "Download the sheets (PDF)",
+      approve: "Approve",
+      approveHint: "The labels have been proofed and are good to print.",
+      markPrinted: "Mark printed",
+      markPrintedHint:
+        "The sheets are on paper. From here the samples in this run keep their date, place and coordinates even if the observation changes on iNaturalist.",
+      markMailed: "Mark mailed",
+      markMailedHint: "The envelopes have gone out.",
+      cancel: "Cancel run",
+      cancelHint:
+        "Only before printing. Its field numbers stay used and are never reissued; its samples go back to waiting and are numbered again in the next run.",
+      note: "Note",
+      noteHint: "Kept with the run: what was odd about it, or why it was canceled.",
+      done: "This run is finished.",
+      canceledAt: (when: string, note: string | null) =>
+        note === null ? `Canceled ${when}.` : `Canceled ${when}: ${note}`,
+      warnings: (count: number) => `${n(count)} ${count === 1 ? "label" : "labels"} to look at`,
+      warningsIntro:
+        "These lines were longer than the label was drawn for and have been shrunk to fit, or a county was missing. The run prints regardless.",
+      warningsNone: "Every label fits.",
+      splitSamples: (count: number) =>
+        `${n(count)} ${count === 1 ? "sample" : "samples"} in this run also ${count === 1 ? "has" : "have"} labels in another open run, so its labels will arrive in two envelopes.`,
+      labels: "Labels",
+      colSheet: "Sheet",
+      colCell: "Cell",
+      colLocation: "Location",
+      colCoordinates: "Coordinates",
+      colDate: "Date · sample.specimen",
+      colCollector: "Collector",
+      colMethod: "Method",
+      colNumber: "Field number",
+      colWarnings: "Look at",
+      colSample: "Sample",
+      noLabels: "This run holds no labels.",
+      /** The transition could not happen from the run's current state. */
+      wrongState: (state: string) => `The run is ${state.toLowerCase()}, so that cannot be done now.`,
+      notFound: "No such print run.",
+      /** The sheets of a canceled run are not served: its numbers are burned and must never reach paper. */
+      canceledNoSheets: "This run was canceled, so it has no sheets to print. Its samples are waiting for the next run.",
+    },
   },
 
   /** The people roster (/people). Staff-facing, like jobs. */
@@ -1098,7 +1239,7 @@ export const en = {
       "field-number": {
         term: "Field number",
         definition:
-          "The number printed on a specimen's label, issued here — 25000001. It is assigned only once the sample's data is clean, and once assigned it belongs to that specimen permanently. A museum may later add a catalog number of its own; the field number stays what it was.",
+          "The number printed on a specimen's label, issued here — 25000001. It is assigned when a print run is prepared, only once the sample's data is clean, and once assigned it belongs to that specimen permanently. A museum may later add a catalog number of its own; the field number stays what it was.",
       },
       flag: {
         term: "Flag",
@@ -1123,7 +1264,7 @@ export const en = {
       label: {
         term: "Label",
         definition:
-          "The printed slip pinned with a specimen, carrying where and when it was collected, by whom, and its field number. It is printed about 3pt tall, which is why the locality has to be a short place name rather than an address.",
+          "The printed slip pinned with a specimen, carrying where and when it was collected, by whom, and its field number. It is printed about 3pt tall, which is why the locality has to be a short place name rather than an address. Labels are printed in batches called print runs; each of your specimens says whether its label is being printed, printed, or mailed.",
       },
       "master-melittology": {
         term: "Master Melittology",

@@ -1,5 +1,7 @@
 import type { Child } from "hono/jsx";
 import type { Messages } from "../messages/index.js";
+import type { SpecimenLabelRow } from "../print-runs.js";
+import type { PrintRunState } from "../../model.js";
 import type { SampleChange } from "../../sample-change.js";
 import {
   sampleHref,
@@ -19,6 +21,7 @@ import {
   EmptyState,
   LinkButton,
   Meta,
+  OrAbsent,
   PageHeader,
   Pager,
   TaxonName,
@@ -279,6 +282,21 @@ function RecordedName({
 }
 
 /** The sample's specimens, paged: the largest trap sample holds 2,252. */
+/**
+ * Where a specimen's label is (beeline-1kb.2): in a run being prepared, on
+ * paper, in the post, or — every imported specimen — printed before Beeline
+ * existed, which is said rather than left blank. A specimen whose only run
+ * was canceled says so; the next run numbers it again.
+ */
+function LabelState({ m, state, at }: { m: Messages; state: PrintRunState | null; at: Date | null }) {
+  const c = m.record.sample.specimens.label;
+  if (state === null || at === null) return <Absent label={c.legacy} spelled />;
+  if (state === "canceled") return <Absent label={c.canceled} spelled />;
+  if (state === "mailed") return <>{c.mailed(m.format.date(at))}</>;
+  if (state === "printed") return <>{c.printed(m.format.date(at))}</>;
+  return <>{c.printing(m.format.date(at))}</>;
+}
+
 function SampleSpecimens({ m, sample, page }: { m: Messages; sample: SampleDetail; page: SampleSpecimenPage }) {
   const c = m.record.sample.specimens;
   return (
@@ -295,7 +313,7 @@ function SampleSpecimens({ m, sample, page }: { m: Messages; sample: SampleDetai
                 disagree and the page says so rather than picking one. */}
             {page.total !== sample.specimen_count && <> {c.counted(sample.specimen_count, page.total)}</>}
           </Meta>
-          <DataTable columns={[c.colFieldNumber, c.colNumber, c.colDetermination, c.colDeterminer]}>
+          <DataTable columns={[c.colFieldNumber, c.colNumber, c.colLabel, c.colDetermination, c.colDeterminer]}>
             {page.rows.map((row) => (
               <tr>
                 <td>
@@ -309,10 +327,15 @@ function SampleSpecimens({ m, sample, page }: { m: Messages; sample: SampleDetai
                 </td>
                 <td>{m.format.number(row.specimen_number)}</td>
                 <td>
+                  <LabelState m={m} state={row.label_state} at={row.label_at} />
+                </td>
+                <td>
                   <RecordedName m={m} row={row} />
                 </td>
                 <td>
-                  {row.determiner}
+                  {/* An undetermined specimen has nobody here; the dash, since
+                      the determination cell already spells it out. */}
+                  <OrAbsent value={row.determiner} label={m.absence.none} />
                   {row.is_expert === true && (
                     <>
                       {" "}
@@ -510,16 +533,65 @@ export function Determinations({ m, events }: { m: Messages; events: readonly De
   );
 }
 
+/**
+ * Every label a specimen has had, one row per print run — the proofing
+ * lookup's other half (reference-implementation.md, requirement 6): a
+ * number that matches twice shows each specimen's labels beside their runs.
+ * Only staff can open a run, so only they get the link; a volunteer reads
+ * the same rows without it.
+ */
+function SpecimenLabels({ m, labels, admin }: { m: Messages; labels: readonly SpecimenLabelRow[]; admin: boolean }) {
+  const c = m.record.specimen.labels;
+  const state = m.printRuns.state;
+  const when = (at: Date | null) => (at === null ? <Absent label={c.notYet} /> : <>{m.format.date(at)}</>);
+  return (
+    <>
+      <h2>{c.heading}</h2>
+      {labels.length === 0 ? (
+        <Meta block>{c.legacy}</Meta>
+      ) : (
+        <>
+          <Meta block>{c.intro}</Meta>
+          <DataTable columns={[c.colRun, c.colState, c.colSheet, c.colPrepared, c.colPrinted, c.colMailed]}>
+            {labels.map((l) => (
+              <tr>
+                <td>
+                  {admin ? (
+                    <a href={`/print-runs/${l.print_run_id}`}>{m.printRuns.run.title(l.print_run_id)}</a>
+                  ) : (
+                    m.printRuns.run.title(l.print_run_id)
+                  )}
+                </td>
+                <td>{state[l.state] ?? l.state}</td>
+                <td class="nowrap">
+                  {m.format.number(l.sheet)} · {m.format.number(l.cell)}
+                </td>
+                <td>{m.format.date(l.prepared_at)}</td>
+                <td>{when(l.printed_at)}</td>
+                <td>{when(l.mailed_at)}</td>
+              </tr>
+            ))}
+          </DataTable>
+        </>
+      )}
+    </>
+  );
+}
+
 export function SpecimenPage({
   m,
   specimen,
   events,
   findings,
+  labels,
+  admin,
 }: {
   m: Messages;
   specimen: SpecimenDetail;
   events: readonly DeterminationEvent[];
   findings: readonly RecordFinding[];
+  labels: readonly SpecimenLabelRow[];
+  admin: boolean;
 }) {
   const sample = specimen.sample;
   const c = m.record.specimen;
@@ -546,6 +618,9 @@ export function SpecimenPage({
       {/* The history first: it is why this page exists. */}
       <Card>
         <Determinations m={m} events={events} />
+      </Card>
+      <Card>
+        <SpecimenLabels m={m} labels={labels} admin={admin} />
       </Card>
 
       {/* And then the whole sample, not a stub of it: a determination read

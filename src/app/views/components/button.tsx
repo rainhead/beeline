@@ -17,6 +17,7 @@ export function Button({
   variant = "filled",
   type = "submit",
   form,
+  formaction,
   children,
 }: {
   variant?: ButtonVariant;
@@ -28,11 +29,17 @@ export function Button({
    * rather than as a choice. Plain HTML: no script involved.
    */
   form?: string;
+  /**
+   * Where this button sends its form, when that differs from the form's own
+   * action: two buttons that must submit the same fields to two places (a
+   * run's note goes with Approve and with Cancel alike). Native HTML.
+   */
+  formaction?: string;
   children: Child;
 }) {
   const cls = classes(variant, "");
   return (
-    <button type={type} form={form} class={cls === "" ? undefined : cls}>
+    <button type={type} form={form} formaction={formaction} class={cls === "" ? undefined : cls}>
       {children}
     </button>
   );

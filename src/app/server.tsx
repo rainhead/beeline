@@ -18,6 +18,18 @@ import { Glossary } from "./views/glossary.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomySummary } from "./taxonomy.js";
 import { Jobs } from "./views/jobs.js";
+import { PrintRun, PrintRuns } from "./views/print-runs.js";
+import { listRuns, loadRun, runLabels, runPdf, scopeCounts, specimenLabels } from "./print-runs.js";
+import {
+  approveRun,
+  cancelRun,
+  markMailed,
+  markPrinted,
+  prepareRun,
+  PrintRunRefused,
+  PrintRunTransitionError,
+  withPrintRunLock,
+} from "../print-run.js";
 import { PersonPage, Roster } from "./views/roster.js";
 import {
   linkChanges,
@@ -115,6 +127,15 @@ export interface AppDeps {
    * the scheduler (ADR 0005: one process, many connections, one writer).
    */
   conn?: DuckDBConnection;
+  /**
+   * The print runs' own connection (src/print-run.ts): the freeze is one
+   * transaction, and it cannot share a connection whose transactions are
+   * raw BEGIN/COMMIT with the scheduler or with other requests. Falls back
+   * to `conn` where a test passes one connection for everything.
+   */
+  printConn?: DuckDBConnection;
+  /** Where rendered label sheets are kept (config.printRunsDir). */
+  printRunsDir?: string;
 }
 
 /**
@@ -135,8 +156,12 @@ export function createApp({
   sampleChangesPath,
   sampleStatePath,
   conn,
+  printConn,
+  printRunsDir,
 }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], runNow: async () => false };
+  const printRunsPath = printRunsDir ?? "data/print-runs";
+  const printWriter = printConn ?? conn;
   const corrections = correctionsPath ?? "data/corrections.csv";
   const overlayPath = personOverlayPath ?? "data/person-overlay.csv";
   const changesPath = personChangesPath ?? CHANGE_LOG;
@@ -516,15 +541,22 @@ export function createApp({
     const m = c.get("m");
     const specimen = await loadSpecimen(db, Number(c.req.param("id")), c.get("acting").personId, c.get("admin"));
     if (specimen === null) return c.text(m.record.notFound, 404);
-    const [events, findings] = await Promise.all([
+    const [events, findings, labels] = await Promise.all([
       determinationHistory(db, specimen.specimen_id),
       recordFindings(db, specimen.sample.sample_id),
+      specimenLabels(db, specimen.specimen_id),
     ]);
     const title =
       specimen.field_number === null
         ? m.record.specimen.titleUnnumbered(specimen.specimen_number, specimen.sample.sample_number)
         : m.record.specimen.title(specimen.field_number);
-    return c.html(await page(c, title, <SpecimenPage m={m} specimen={specimen} events={events} findings={findings} />));
+    return c.html(
+      await page(
+        c,
+        title,
+        <SpecimenPage m={m} specimen={specimen} events={events} findings={findings} labels={labels} admin={c.get("admin")} />,
+      ),
+    );
   });
 
   // Non-iNat samples are fixed here, not upstream (beeline-2c3.8). The gate
@@ -676,6 +708,122 @@ export function createApp({
       .execute();
     return c.html(await page(c, m.jobs.title, <Jobs m={m} jobs={jobsDep.list} runs={runs} />));
   });
+
+  // --- Print runs (beeline-1kb.2, beeline-1kb.4). Admin-gated like /jobs;
+  // per-atlas print permission waits for a second printer to exist. Reads go
+  // through Kysely; the writes are src/print-run.ts on the print connection,
+  // behind its lock. Impersonation is a way of looking (beeline-jjt), so the
+  // POSTs refuse it exactly as the sample editor does. ---
+  app.get("/print-runs", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    const [runs, scope] = await Promise.all([listRuns(db), scopeCounts(db)]);
+    const nothing = c.req.query("prepared") === "nothing";
+    return c.html(
+      await page(c, m.printRuns.title, <PrintRuns m={m} runs={runs} scope={scope} nothingPrepared={nothing} />),
+    );
+  });
+
+  const printRunId = (c: Context<AppEnv>) => Number(c.req.param("id"));
+  const showRun = async (c: Context<AppEnv>, id: number) => {
+    const m = c.get("m");
+    const run = await loadRun(db, id);
+    if (run === null) return c.text(m.printRuns.run.notFound, 404);
+    const labels = await runLabels(db, id);
+    return c.html(await page(c, m.printRuns.run.title(id), <PrintRun m={m} run={run} labels={labels} />));
+  };
+
+  app.get("/print-runs/:id", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    return showRun(c, printRunId(c));
+  });
+
+  app.get("/print-runs/:id/labels.pdf", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    const id = printRunId(c);
+    // Under the print-run lock, with the state read inside it: cancelRun
+    // holds the same lock, so a cancel cannot land between the check and the
+    // render and have burned numbers served anyway. Whichever gets the lock
+    // first wins, and a cancel that wins is a 409 here. (A file downloaded
+    // before a later cancel is beyond any lock; the run page says canceled.)
+    const sheets = await withPrintRunLock(async () => {
+      const run = await loadRun(db, id);
+      if (run === null) return "missing" as const;
+      if (run.state === "canceled") return "canceled" as const;
+      return runPdf(db, id, run.prepared_at, run.pdf_sha256, printRunsPath);
+    });
+    if (sheets === "missing") return c.text(m.printRuns.run.notFound, 404);
+    if (sheets === "canceled") return c.text(m.printRuns.run.canceledNoSheets, 409);
+    const { bytes } = sheets;
+    return c.body(bytes as Uint8Array<ArrayBuffer>, 200, {
+      "content-type": "application/pdf",
+      "content-disposition": `inline; filename="beeline-labels-run-${id}.pdf"`,
+    });
+  });
+
+  // The writes. Each answers the way the store does: a run in the wrong
+  // state for the transition is a 409 saying which state it is in.
+  const printWrite = async (
+    c: Context<AppEnv>,
+    write: (personId: number, note: string | null) => Promise<string | null>,
+  ) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (printWriter === undefined) return c.text("print runs need a store connection", 500);
+    const form = await c.req.formData();
+    const note = String(form.get("note") ?? "").trim() || null;
+    try {
+      const redirectTo = await write(c.get("session").personId, note);
+      return c.redirect(redirectTo ?? "/print-runs");
+    } catch (err) {
+      if (err instanceof PrintRunTransitionError) {
+        // No state at all means no such run, which is a 404 and not "the run is null".
+        if (err.from === null) return c.text(m.printRuns.run.notFound, 404);
+        return c.text(m.printRuns.run.wrongState(m.printRuns.state[err.from] ?? err.from), 409);
+      }
+      // The store declined for a reason the printer can act on: say it,
+      // rather than a bare failure. Anything else is a fault and stays one.
+      if (err instanceof PrintRunRefused) return c.text(m.printRuns.refused(err.refusal), 409);
+      throw err;
+    }
+  };
+
+  app.post("/print-runs", (c) =>
+    printWrite(c, async (personId) => {
+      const form = await c.req.formData();
+      const raw = String(form.get("atlas_id") ?? "").trim();
+      const atlasId = raw === "" ? null : Number(raw);
+      if (atlasId !== null && !Number.isSafeInteger(atlasId)) return "/print-runs";
+      const result = await prepareRun(printWriter!, { atlasId, personId });
+      return result === null ? "/print-runs?prepared=nothing" : `/print-runs/${result.printRunId}`;
+    }),
+  );
+  app.post("/print-runs/:id/approve", (c) =>
+    printWrite(c, async (personId, note) => {
+      await approveRun(printWriter!, printRunId(c), { personId, note });
+      return `/print-runs/${printRunId(c)}`;
+    }),
+  );
+  app.post("/print-runs/:id/printed", (c) =>
+    printWrite(c, async (personId, note) => {
+      await markPrinted(printWriter!, printRunId(c), { personId, note });
+      return `/print-runs/${printRunId(c)}`;
+    }),
+  );
+  app.post("/print-runs/:id/mailed", (c) =>
+    printWrite(c, async (personId, note) => {
+      await markMailed(printWriter!, printRunId(c), { personId, note });
+      return `/print-runs/${printRunId(c)}`;
+    }),
+  );
+  app.post("/print-runs/:id/cancel", (c) =>
+    printWrite(c, async (personId, note) => {
+      await cancelRun(printWriter!, printRunId(c), { personId, note });
+      return `/print-runs/${printRunId(c)}`;
+    }),
+  );
 
   // --- People: the roster, its binding evidence, and the staff decisions
   // that change any of it. Admin-gated like /jobs. Every write goes to the

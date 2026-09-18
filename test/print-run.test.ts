@@ -7,6 +7,7 @@ import {
   markPrinted,
   nextFieldNumber,
   prepareRun,
+  PrintRunRefused,
   PrintRunTransitionError,
 } from "../src/print-run.js";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
@@ -168,9 +169,9 @@ describe("preparing a run", () => {
   it("stops rather than skipping a pending sample whose collector list has no head", async () => {
     const sample = await insertCleanSample(conn, { collector_id: String(ash), specimen_count: "1" });
     await conn.run(`UPDATE sample_collector SET position = 2 WHERE sample_id = ${sample}`);
-    await expect(prepareRun(conn, { atlasId: null, personId: ash, now: NOW })).rejects.toThrow(
-      /no single primary collector/,
-    );
+    const refused = await prepareRun(conn, { atlasId: null, personId: ash, now: NOW }).catch((err: unknown) => err);
+    expect(refused).toBeInstanceOf(PrintRunRefused);
+    expect((refused as PrintRunRefused).refusal).toEqual({ code: "no_primary_collector", sampleId: sample });
     expect(await count("SELECT count(*) FROM print_run")).toBe(0);
     expect(await count("SELECT count(*) FROM specimen")).toBe(0);
   });
@@ -281,7 +282,9 @@ describe("moving a run through its states", () => {
       `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, verbatim_identification)
        VALUES (${specimenId}, ${animal}, false, 'in_app', 'Bombus')`,
     );
-    await expect(cancelRun(conn, runId, { personId: ash })).rejects.toThrow(/determined/);
+    const refused = await cancelRun(conn, runId, { personId: ash }).catch((err: unknown) => err);
+    expect(refused).toBeInstanceOf(PrintRunRefused);
+    expect((refused as PrintRunRefused).refusal).toEqual({ code: "determined", printRunId: runId, specimens: 1 });
     expect(await state()).toEqual([["prepared"]]);
     expect(await count("SELECT count(*) FROM specimen")).toBe(2);
   });

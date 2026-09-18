@@ -45,7 +45,7 @@ function Scope({ m, run }: { m: Messages; run: Pick<RunListRow, "atlas_code"> })
 
 /** A date the run has not reached yet is said, never left blank. */
 function When({ m, at }: { m: Messages; at: Date | null }) {
-  return at === null ? <Absent label={m.printRuns.notYet} /> : <>{m.format.date(at)}</>;
+  return at === null ? <Absent label={m.printRuns.notYet} /> : <>{m.format.day(at)}</>;
 }
 
 export function PrintRuns({
@@ -127,7 +127,7 @@ export function PrintRuns({
                 <StateChip m={m} state={run.state} />
               </td>
               <td>
-                {m.format.date(run.prepared_at)}
+                {m.format.day(run.prepared_at)}
                 <Meta block>{run.prepared_by}</Meta>
               </td>
               <td>{m.format.number(run.label_count)}</td>
@@ -229,15 +229,17 @@ export function PrintRun({ m, run, labels }: { m: Messages; run: RunDetail; labe
 
       {run.split_samples > 0 && <Callout tone="warning">{r.splitSamples(run.split_samples)}</Callout>}
 
-      <Card>
-        <h2>{warned.length === 0 ? r.warningsNone : r.warnings(warned.length)}</h2>
-        {warned.length > 0 && (
-          <>
-            <Meta block>{r.warningsIntro}</Meta>
-            <LabelTable m={m} labels={warned} />
-          </>
-        )}
-      </Card>
+      {/* Not in a card: only a table that is a direct child of the page gets
+          the full-bleed width, and a card boxed this one in beside a
+          full-width table of the same columns just below it (Peter,
+          2026-09-18). */}
+      <h2>{warned.length === 0 ? r.warningsNone : r.warnings(warned.length)}</h2>
+      {warned.length > 0 && (
+        <>
+          <Meta block>{r.warningsIntro}</Meta>
+          <LabelTable m={m} labels={warned} />
+        </>
+      )}
 
       <h2>{r.labels}</h2>
       {labels.length === 0 ? <EmptyState>{r.noLabels}</EmptyState> : <LabelTable m={m} labels={labels} />}

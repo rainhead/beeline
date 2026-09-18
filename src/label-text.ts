@@ -9,11 +9,9 @@ import { labelName, type PersonNameParts } from "./person-name.js";
  *
  * The formats are the reference implementation's
  * (LabelsSubtaskHandler.js#createLabelFromOccurrence), matched deliberately so
- * that a Beeline label reads like every label already pinned in the drawers.
- * The one departure is the collector line, which is Beeline's own
- * `labelName()` form — `P. Abrahamsen` with the space the legacy labels lack
- * — and, for a pair, both names (Andony, gh-17); whether the space stays is
- * Arthur's to say (beeline-1kb.18).
+ * that a Beeline label reads like every label already pinned in the drawers,
+ * the collector line included: `P.Abrahamsen`, set tight (see collectorText).
+ * For a pair, both names (Andony, gh-17).
  */
 
 export interface LabelInput {
@@ -53,8 +51,9 @@ export const LABEL_LIMITS = { location: 38, collector: 22, method: 5 } as const;
 
 /**
  * How a county prints. British Columbia's regional districts by their usual
- * abbreviations; two entries repair a Google-geocoder artefact the legacy
- * data carries; everything else prints as it is. From the reference
+ * abbreviations; everything else prints as it is (the geocoder artefacts the
+ * reference's table also listed are handled by countyName, for every county
+ * rather than the two it knew about). From the reference
  * implementation's constants.ts, kept as a Map rather than a table because
  * it is a rendering convention and not a fact about places.
  */
@@ -89,17 +88,30 @@ const COUNTY_ABBREVIATIONS = new Map<string, string>([
   ["Sunshine Coast", "SCRD"],
   ["Thompson-Nicola", "TNRD"],
   ["Doña Ana", "Dona Ana"],
-  ["Lincoln , US, WA", "Lincoln"],
-  ["Franklin , US, WA", "Franklin"],
 ]);
 
 const ROMAN_MONTHS = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
+
+/**
+ * A county as a label says it: the name alone. iNaturalist disambiguates a
+ * few counties as 'Franklin County, US, WA', and the legacy geocoder as
+ * 'Franklin , US, WA'; the store is repaired at its source (schema/107,
+ * migration 0032, beeline-gr7), and this is the label refusing to print the
+ * suffix regardless, because a label is the one thing that cannot be fixed
+ * afterwards — 172 of them said 'Franklin County, US, WACo' before it did.
+ */
+export function countyName(county: string | null | undefined): string {
+  const raw = county?.trim() ?? "";
+  if (!raw.includes(",")) return raw;
+  const name = raw.split(",")[0]!.trim();
+  return name.endsWith(" County") ? name.slice(0, -" County".length) : name;
+}
 
 /** `USA:OR:BentonCo Corvallis` — the county carries `Co` only in the US. */
 export function locationText(input: Pick<LabelInput, "country" | "state_province" | "county" | "locality">): string {
   const country = input.country?.trim() ?? "";
   const state = input.state_province?.trim() ?? "";
-  const county = input.county?.trim() ?? "";
+  const county = countyName(input.county);
   const countyText = county
     ? `:${COUNTY_ABBREVIATIONS.get(county) ?? county}${country === "USA" ? "Co" : ""}`
     : "";
@@ -135,29 +147,36 @@ export function dateText(
 }
 
 /**
- * One collector prints as `labelName()` gives it. Two or more print both
- * (Andony, gh-17: paired trap collectors always both appear), joined with
- * ` & `, and a shared family name is said once — `M. & D. O'Loughlin` rather
- * than `M. O'Loughlin & D. O'Loughlin` — which only applies where every name
- * is the derived initial-plus-family form; an override or an unparted name
- * prints whole, so the collapse is skipped.
+ * The collector line is set tight, `A.Bulger`, with no space after the
+ * initial — decided in the room with the people who print and pin them
+ * (2026-09-18): it is how every label in the drawers reads, and on a label
+ * two thirds of an inch wide the space is width the name needs. Screens keep
+ * `labelName()`'s `A. Bulger`; only the label closes it up. A `label_name`
+ * override and a name with no parts print exactly as they are.
+ *
+ * Two or more collectors all print (Andony, gh-17: paired trap collectors
+ * always both appear), joined with `&` and as tight as the rest, and a
+ * shared family name is said once — `M.&D.O'Loughlin` rather than
+ * `M.O'Loughlin&D.O'Loughlin` — which only applies where every name is the
+ * derived initial-plus-family form.
  */
+function parts(c: PersonNameParts): { initial: string; family: string } | null {
+  const family = c.family_name?.trim() || null;
+  const given = c.given_name?.trim() || null;
+  const override = c.label_name?.trim() || null;
+  return override || !family || !given ? null : { initial: [...given][0]!.toUpperCase(), family };
+}
+
 export function collectorText(collectors: PersonNameParts[]): string {
   if (collectors.length === 0) return "";
-  const names = collectors.map(labelName);
+  const parted = collectors.map(parts);
+  const names = collectors.map((c, i) => (parted[i] ? `${parted[i]!.initial}.${parted[i]!.family}` : labelName(c)));
   if (collectors.length === 1) return names[0]!;
-
-  const parted = collectors.map((c) => {
-    const family = c.family_name?.trim() || null;
-    const given = c.given_name?.trim() || null;
-    const override = c.label_name?.trim() || null;
-    return override || !family || !given ? null : { initial: [...given][0]!.toUpperCase(), family };
-  });
   const family = parted[0]?.family;
   if (family && parted.every((p) => p !== null && p.family === family)) {
-    return `${parted.map((p) => `${p!.initial}.`).join(" & ")} ${family}`;
+    return `${parted.map((p) => `${p!.initial}.`).join("&")}${family}`;
   }
-  return names.join(" & ");
+  return names.join("&");
 }
 
 /** `net`, `trap`, or `nest` where the protocol says so — the reference's rule, minus its lowercasing of free text. */

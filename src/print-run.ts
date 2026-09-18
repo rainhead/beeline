@@ -99,6 +99,29 @@ const rows = async <T>(conn: DuckDBConnection, sql: string, params: unknown[] = 
 const asDate = (v: unknown): Date => (v instanceof Date ? v : new Date(String(v)));
 
 /**
+ * One multi-row INSERT per chunk of rows, every value a bound parameter.
+ * `casts` names a type per column where the engine cannot infer one from the
+ * parameter (a timestamp or date passed as text, a column that is NULL in
+ * the first row); "" leaves the parameter bare.
+ */
+async function insertMany(
+  conn: DuckDBConnection,
+  insertInto: string,
+  casts: readonly string[],
+  all: unknown[][],
+  chunk = 500,
+): Promise<void> {
+  for (let at = 0; at < all.length; at += chunk) {
+    const part = all.slice(at, at + chunk);
+    let p = 0;
+    const tuples = part.map(
+      (row) => `(${row.map((_, i) => (casts[i] ? `CAST($${++p} AS ${casts[i]})` : `$${++p}`)).join(", ")})`,
+    );
+    await conn.run(`${insertInto} VALUES ${tuples.join(", ")}`, part.flat() as never);
+  }
+}
+
+/**
  * The first number this run mints (ADR 0008 §7): one past the highest
  * eight-digit number anywhere — the imported corpus AND the registry, never
  * the registry alone, since a rebuilt store has an empty registry beside a
@@ -312,63 +335,91 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
 
     let number = await nextFieldNumber(conn, now);
     const laidOut = layoutSheets(toMint, (l) => l.collector);
+
+    // Written in bulk, not label by label: three statements per label was
+    // seven seconds for 5,411 labels on a workstation and minutes on the
+    // sandbox's two shared threads, all of it inside one transaction holding
+    // the print lock (found demonstrating it, 2026-09-18). New specimens get
+    // their ids drawn up front, so every row of all three tables is known
+    // before anything is inserted and each table takes a handful of
+    // multi-row statements.
+    const fresh = laidOut.filter((l) => l.label.specimen_id === null).length;
+    const drawn = (
+      await rows<{ id: number }>(conn, `SELECT nextval('entity_id_seq') AS id FROM range(${fresh})`)
+    ).map((r) => Number(r.id));
     let sheets = 0;
     const samples = new Set<number>();
+    const specimenRows: unknown[][] = [];
+    const adoptRows: unknown[][] = [];
+    const registryRows: unknown[][] = [];
+    const labelRows: unknown[][] = [];
     for (const { label, sheet, cell } of laidOut) {
       const fieldNumber = String(number++).padStart(8, "0");
       const text = composeLabel(label.input, fieldNumber);
       let specimenId: number;
       if (label.specimen_id === null) {
-        const [specimen] = await rows<{ entity_id: number }>(
-          conn,
-          `INSERT INTO specimen (sample_id, specimen_number, field_number, occurrence_id, created_at)
-           VALUES ($1, $2, $3, $4, CAST($5 AS TIMESTAMPTZ)) RETURNING entity_id`,
-          [label.sample.sample_id, label.specimen_number, fieldNumber, uuidv7(), nowSql],
-        );
-        specimenId = Number(specimen!.entity_id);
+        specimenId = drawn.shift()!;
+        specimenRows.push([specimenId, label.sample.sample_id, label.specimen_number, fieldNumber, uuidv7(), nowSql]);
       } else {
         specimenId = label.specimen_id;
-        await conn.run(`UPDATE specimen SET field_number = $1 WHERE entity_id = $2`, [fieldNumber, specimenId]);
+        adoptRows.push([specimenId, fieldNumber]);
       }
-      await conn.run(
-        `INSERT INTO minted_field_number (field_number, print_run_id, specimen_id, minted_at)
-         VALUES ($1, $2, $3, CAST($4 AS TIMESTAMPTZ))`,
-        [fieldNumber, printRunId, specimenId, nowSql],
-      );
-      await conn.run(
-        `INSERT INTO printed_label (
-           print_run_id, specimen_id, sheet, cell,
-           location_text, coordinates_text, date_text, collector_text, method_text, number_text,
-           latitude, longitude, elevation_m, date_start, date_end,
-           locality, county, state_province, country, warnings
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                   CAST($14 AS DATE), CAST($15 AS DATE), $16, $17, $18, $19, $20)`,
-        [
-          printRunId,
-          specimenId,
-          sheet,
-          cell,
-          text.location,
-          text.coordinates,
-          text.date,
-          text.collector,
-          text.method,
-          text.number,
-          label.input.latitude,
-          label.input.longitude,
-          label.input.elevation_m,
-          label.input.date_start.toISOString().slice(0, 10),
-          label.input.date_end.toISOString().slice(0, 10),
-          label.input.locality,
-          label.input.county,
-          label.input.state_province,
-          label.input.country,
-          text.warnings,
-        ],
-      );
+      registryRows.push([fieldNumber, printRunId, specimenId, nowSql]);
+      labelRows.push([
+        printRunId,
+        specimenId,
+        sheet,
+        cell,
+        text.location,
+        text.coordinates,
+        text.date,
+        text.collector,
+        text.method,
+        text.number,
+        label.input.latitude,
+        label.input.longitude,
+        label.input.elevation_m,
+        label.input.date_start.toISOString().slice(0, 10),
+        label.input.date_end.toISOString().slice(0, 10),
+        label.input.locality,
+        label.input.county,
+        label.input.state_province,
+        label.input.country,
+        text.warnings,
+      ]);
       sheets = Math.max(sheets, sheet);
       samples.add(label.sample.sample_id);
     }
+    await insertMany(
+      conn,
+      `INSERT INTO specimen (entity_id, sample_id, specimen_number, field_number, occurrence_id, created_at)`,
+      ["", "", "", "", "", "TIMESTAMPTZ"],
+      specimenRows,
+    );
+    if (adoptRows.length > 0) {
+      await conn.run(`CREATE OR REPLACE TEMP TABLE freeze_adopt (specimen_id INTEGER, field_number TEXT)`);
+      await insertMany(conn, `INSERT INTO freeze_adopt (specimen_id, field_number)`, ["", ""], adoptRows);
+      await conn.run(
+        `UPDATE specimen SET field_number = a.field_number FROM freeze_adopt a WHERE specimen.entity_id = a.specimen_id`,
+      );
+      await conn.run(`DROP TABLE freeze_adopt`);
+    }
+    await insertMany(
+      conn,
+      `INSERT INTO minted_field_number (field_number, print_run_id, specimen_id, minted_at)`,
+      ["", "", "", "TIMESTAMPTZ"],
+      registryRows,
+    );
+    await insertMany(
+      conn,
+      `INSERT INTO printed_label (
+         print_run_id, specimen_id, sheet, cell,
+         location_text, coordinates_text, date_text, collector_text, method_text, number_text,
+         latitude, longitude, elevation_m, date_start, date_end,
+         locality, county, state_province, country, warnings)`,
+      ["", "", "", "", "", "", "", "", "", "", "", "", "INTEGER", "DATE", "DATE", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT"],
+      labelRows,
+    );
     await conn.run(`DROP TABLE IF EXISTS freeze_scope`);
     await conn.run("COMMIT");
     return { printRunId, labels: laidOut.length, samples: samples.size, sheets };

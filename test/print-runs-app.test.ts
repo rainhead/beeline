@@ -101,9 +101,9 @@ describe("the print-run screens", () => {
     expect(page).toContain("USA:OR:BentonCo Corvallis");
     expect(page).toContain("14.VII2026-1.1");
     const table = page.slice(page.indexOf("Labels</h2>"));
-    expect(table).toContain("A. Ash");
-    expect(table).toContain("B. Birch");
-    expect(table.indexOf("A. Ash")).toBeLessThan(table.indexOf("B. Birch"));
+    expect(table).toContain("A.Ash");
+    expect(table).toContain("B.Birch");
+    expect(table.indexOf("A.Ash")).toBeLessThan(table.indexOf("B.Birch"));
     // Bo's sample has no county: one label to look at, said at the top.
     expect(page).toContain("1 label to look at");
     expect(page).toContain("county missing");

@@ -45,11 +45,14 @@ describe("rendering labels", () => {
     expect(doc.getPageCount()).toBe(2);
     expect(doc.getCreationDate()?.toISOString()).toBe(PREPARED.toISOString());
     expect(doc.getProducer()).toBe("Beeline");
-    // 254 labels, each its own DataMatrix image object.
+    // The DataMatrix is vector, never a bitmap: viewers and print drivers
+    // smooth a tiny image when they scale it, and the first sheets anyone
+    // looked at came out blurry for it.
     const images = doc.context
       .enumerateIndirectObjects()
       .filter(([, obj]) => obj.toString().includes("/Subtype /Image"));
-    expect(images).toHaveLength(254);
+    expect(images).toHaveLength(0);
+    expect(a.length).toBeLessThan(400_000);
   });
 
   it("puts the second collector's first label at the top left of sheet two", async () => {

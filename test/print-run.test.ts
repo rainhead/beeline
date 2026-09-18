@@ -57,11 +57,11 @@ describe("preparing a run", () => {
        WHERE pl.print_run_id = ${result!.printRunId} ORDER BY pl.cell`,
     );
     expect(labels).toEqual([
-      [ashSample, 1, "26000001", 1, 0, "A. Ash", "14.VII2026-1.1"],
-      [ashSample, 2, "26000002", 1, 1, "A. Ash", "14.VII2026-1.2"],
-      [ashSample, 3, "26000003", 1, 2, "A. Ash", "14.VII2026-1.3"],
+      [ashSample, 1, "26000001", 1, 0, "A.Ash", "14.VII2026-1.1"],
+      [ashSample, 2, "26000002", 1, 1, "A.Ash", "14.VII2026-1.2"],
+      [ashSample, 3, "26000003", 1, 2, "A.Ash", "14.VII2026-1.3"],
       // Cell 3 is the blank between collectors.
-      [birchSample, 1, "26000004", 1, 4, "B. Birch", "14.VII2026-2.1"],
+      [birchSample, 1, "26000004", 1, 4, "B.Birch", "14.VII2026-2.1"],
     ]);
     expect(await count("SELECT count(*) FROM pending_print_sample")).toBe(0);
     expect(await count("SELECT count(*) FROM minted_field_number")).toBe(4);
@@ -93,7 +93,7 @@ describe("preparing a run", () => {
       [2, 0, 4, 5n],
     ]);
     expect(await rows(conn, `SELECT collector_text FROM printed_label WHERE sheet = 2 AND cell = 0`)).toEqual([
-      ["B. Birch"],
+      ["B.Birch"],
     ]);
   });
 

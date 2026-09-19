@@ -394,9 +394,9 @@ describe("when somebody was last here", () => {
     const first = (await activity(db))[0]!.last_seen_at;
 
     // A second request inside the hour leaves the row where it is. The
-    // session's own last_seen_at still slides on every request — the 30-day
-    // expiry has to be measured from the real last one — which is why this is
-    // a separate table rather than a second column on it.
+    // session's own last_seen_at slides on a much shorter throttle — the
+    // 30-day expiry has to be measured from close to the real last request —
+    // which is one reason this is a separate table rather than a column on it.
     await app.request("/", { headers: { cookie } });
     expect((await activity(db))[0]!.last_seen_at).toEqual(first);
 
@@ -408,6 +408,37 @@ describe("when somebody was last here", () => {
     await app.request("/", { headers: { cookie } });
     expect((await activity(db))[0]!.last_seen_at).not.toEqual(first);
     expect((await activity(db))[0]!.last_seen_at.getTime()).toBeGreaterThan(Date.now() - 60_000);
+  });
+
+  const sessionSeen = async (db: Awaited<ReturnType<typeof testApp>>["db"]) =>
+    (await db.selectFrom("private.session").select("last_seen_at").executeTakeFirstOrThrow()).last_seen_at;
+
+  it("the session slides once it is due, and not on every request", async () => {
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
+    const cookie = cookieFrom(await signIn(app));
+    const signedIn = await sessionSeen(db);
+    await app.request("/", { headers: { cookie } });
+    expect(await sessionSeen(db)).toEqual(signedIn);
+
+    await db.updateTable("private.session").set({ last_seen_at: sql`now() - INTERVAL '10 minutes'` }).execute();
+    await app.request("/", { headers: { cookie } });
+    expect((await sessionSeen(db)).getTime()).toBeGreaterThan(Date.now() - 60_000);
+  });
+
+  it("requests sharing a session never fail each other", async () => {
+    // Two tabs, or a page and its CSV (beeline-cla). DuckDB has no row locks:
+    // the second of two overlapping updates to one row fails rather than
+    // waiting, and the slide used to take the whole request down with it.
+    // Both writes are made due, so every request in the burst wants them.
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
+    const cookie = cookieFrom(await signIn(app));
+    for (let round = 0; round < 5; round++) {
+      await db.updateTable("private.session").set({ last_seen_at: sql`now() - INTERVAL '10 minutes'` }).execute();
+      await db.updateTable("private.person_activity").set({ last_seen_at: sql`now() - INTERVAL '2 hours'` }).execute();
+      const burst = await Promise.all(Array.from({ length: 8 }, () => app.request("/", { headers: { cookie } })));
+      expect(burst.map((r) => r.status)).toEqual(Array(8).fill(200));
+    }
+    expect((await sessionSeen(db)).getTime()).toBeGreaterThan(Date.now() - 60_000);
   });
 });
 

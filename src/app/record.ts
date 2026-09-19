@@ -85,6 +85,12 @@ export interface SampleDetail {
   host_rank: string | null;
   /** place_guess as the observation carries it — private-preferred. */
   observation_place_guess: string | null;
+  /**
+   * The observer's free text on the observation, verbatim (beeline-hza).
+   * Rendered as text and never as markup — it can contain markdown and HTML,
+   * and hono/jsx escaping it is what keeps that a display detail.
+   */
+  observation_notes: string | null;
   geoprivacy: Geoprivacy | null;
   taxon_geoprivacy: Geoprivacy | null;
   atlas_code: string | null;
@@ -201,6 +207,12 @@ const sampleColumns = (personId: number) => sql`
   -- being too coarse, it is the string they have to go and fix. Private
   -- first, as everything that reads a place_guess does.
   coalesce(nullif(trim(f.private_place_guess), ''), nullif(trim(f.place_guess), '')) AS observation_place_guess,
+  -- The observer's own notes, where no observation field held what they had
+  -- to say. Read through the observation link rather than copied onto the
+  -- sample: they are not on a label, so the post-print lock has nothing to
+  -- say about them, and a column on sample would need a rule about whether
+  -- it follows upstream when nothing would ever want it not to.
+  f.notes AS observation_notes,
   EXISTS (SELECT 1 FROM sample_elevation_stale st WHERE st.sample_id = s.entity_id) AS elevation_stale,
   ${isMine(personId)} AS mine`;
 

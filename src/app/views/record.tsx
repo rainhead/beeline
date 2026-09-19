@@ -111,6 +111,16 @@ export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }
           </a>
         ),
     },
+    // What the collector wrote when no observation field held it: the plant's
+    // condition, the weather, who they were with, why a count is odd. Most
+    // observations carry none, so the row is absent rather than saying so —
+    // an absence is only worth words where it tells the reader something
+    // (components/text.tsx), and "this volunteer typed nothing" does not.
+    //
+    // Rendered as text. iNaturalist notes can contain markdown and HTML, and
+    // hono/jsx escapes an interpolated string, so what is shown is what was
+    // typed — including the markup, visibly, rather than interpreted.
+    sample.observation_notes === null ? null : { term: s.notes, value: sample.observation_notes },
   ];
   return <DetailList items={items} />;
 }

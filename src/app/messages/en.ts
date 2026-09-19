@@ -547,6 +547,14 @@ export const en = {
       observation: "iNaturalist observation",
       /** Trap samples usually have none, and that is not a gap. */
       observationNone: "None — this sample did not come from an observation, so it is corrected here rather than upstream.",
+      /**
+       * The observer's own free text on the observation (beeline-hza). "Notes"
+       * rather than "Description", which is iNaturalist's word for the field
+       * and not what anyone calls it. The row is absent where there are none,
+       * which is the usual case and not a gap: most observations carry no
+       * notes, and a volunteer who wrote nothing has said nothing.
+       */
+      notes: "Notes",
       viewOnInat: "View on iNaturalist",
       edit: "Edit this sample",
       /** Every value the record simply does not carry. */

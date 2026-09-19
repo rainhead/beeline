@@ -22,6 +22,13 @@ const FIELDS = [
   "geoprivacy", "taxon_geoprivacy", "obscured", "viewer_trusted_by_observer",
   "place_guess", "private_place_guess", "place_ids", "private_place_ids",
   "quality_grade", "user.id", "user.login", "user.name",
+  // The observer's own free text (beeline-hza). Public on iNaturalist unless
+  // the observation is, and not derivable from anything else here: it is
+  // where a collector writes the plant's condition, the weather, who they
+  // were with, or why a count is odd. Adding it here is what makes it exist
+  // at all — this list IS the projection, so no stored load carries notes
+  // until the observation is fetched again.
+  "description",
   "taxon.id", "taxon.name", "taxon.rank", "taxon.ancestor_ids",
   "ofvs.name", "ofvs.value", "ofvs.datatype",
 ].join(",");

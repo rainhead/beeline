@@ -69,6 +69,40 @@ describe("the stored projection", () => {
     ]);
   });
 
+  /**
+   * The observer's free text (beeline-hza). Kept verbatim, blank treated as
+   * absent, and last in the column order — which is the property the
+   * positional refresh and observation_field_stale both depend on.
+   */
+  test("carries the observer's notes verbatim, and treats a blank one as none", async () => {
+    await stageLoad(obs(21, { description: "  Two queens on the same head; second net pass.  " }));
+    await stageLoad(obs(22, { description: "   " }));
+    await stageLoad(obs(23));
+    await refreshObservationFields(conn);
+    expect(await count("SELECT count(*) FROM observation_field_stale")).toBe(0);
+    expect(await rows(conn, "SELECT inat_id, notes FROM observation_field ORDER BY inat_id")).toEqual([
+      [21n, "Two queens on the same head; second net pass."],
+      [22n, null],
+      [23n, null],
+    ]);
+  });
+
+  test("keeps markup as written, because what the collector typed is the record", async () => {
+    await stageLoad(obs(24, { description: "on <b>Salvia</b> — see [notes](http://x/) & co." }));
+    await refreshObservationFields(conn);
+    expect(await rows(conn, "SELECT notes FROM observation_field WHERE inat_id = 24")).toEqual([
+      ["on <b>Salvia</b> — see [notes](http://x/) & co."],
+    ]);
+  });
+
+  test("keeps notes last, so the positional refresh cannot swap it with a neighbour", async () => {
+    const columns = (await rows(
+      conn,
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'observation_field' ORDER BY ordinal_position",
+    )).map(([c]) => c);
+    expect(columns[columns.length - 1]).toBe("notes");
+  });
+
   test("a sync refreshes it in its own transaction, so loads and shred never disagree", async () => {
     const api = (async () =>
       new Response(JSON.stringify({ results: [obs(11)] }), { status: 200 })) as typeof fetch;

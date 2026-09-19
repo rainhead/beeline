@@ -50,6 +50,28 @@ describe("iNat sync", () => {
     ).rejects.toThrow(/anonymous/);
   });
 
+  /**
+   * The `fields` parameter IS the projection: a field not asked for is not in
+   * the stored load and no view can recover it later. Notes were missing from
+   * every one of the dev store's 64,227 loads for exactly that reason
+   * (beeline-hza), which is a failure no schema test could have caught.
+   */
+  test("asks iNaturalist for the whole projection, including the observer's notes", async () => {
+    const asked: string[] = [];
+    const recording = (async (input: string | URL | Request) => {
+      asked.push(new URL(String(input)).searchParams.get("fields") ?? "");
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }) as typeof fetch;
+    await syncINat(conn, { ...base, fetchImpl: recording });
+    const fields = (asked[0] ?? "").split(",");
+    expect(fields).toContain("description");
+    // The rest of it, so a field dropped by accident fails here rather than
+    // showing up as a column that is quietly always null.
+    for (const field of ["geojson", "private_geojson", "place_guess", "ofvs.value", "taxon.rank"]) {
+      expect(fields, field).toContain(field);
+    }
+  });
+
   test("keyset sweep loads every observation and completes the run", async () => {
     const result = await syncINat(conn, {
       ...base,

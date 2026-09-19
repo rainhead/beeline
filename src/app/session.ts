@@ -49,14 +49,50 @@ export const SESSION_COOKIE = "beeline_session";
 const idleCutoff = sql<Date>`current_timestamp - INTERVAL 30 DAY`;
 
 /**
+ * A session slides at most this often. The expiry it serves is thirty days,
+ * so five minutes of imprecision costs nothing, and it takes a write off
+ * nearly every page — which matters less for the write than for what two of
+ * them do to each other (see {@link bookkeeping}).
+ */
+const slideDue = sql<Date>`current_timestamp - INTERVAL 5 MINUTE`;
+
+/**
+ * Run one of the resolver's own writes, and let it lose.
+ *
+ * DuckDB has no row locks: when two transactions update one row, the second
+ * does not wait, it fails — `TransactionContext Error: Conflict on update!` —
+ * and two requests carrying one cookie are exactly that. Two tabs, a page and
+ * its CSV, a double click. The slide ran on every request, so the loser's
+ * page was a 500: 1 read in about 70 on the sandbox with four readers on one
+ * session (bench/contention.ts, beeline-cla).
+ *
+ * Losing is the right outcome and not merely a tolerable one. Whoever won
+ * just wrote the value this request was about to write, so the row already
+ * says what it would have said. The throttles make the collision rare; this
+ * is what makes it harmless, since the moment a throttle lapses is the moment
+ * two requests both find the write due. Two first-ever visits racing to
+ * insert one `person_activity` row lose the same way, as a duplicate key.
+ *
+ * Only that class of error. Anything else — a private store that will not
+ * take a write at all — is still the request's problem.
+ */
+async function bookkeeping(write: () => Promise<unknown>): Promise<void> {
+  try {
+    await write();
+  } catch (err) {
+    if (!/conflict|duplicate key/i.test((err as Error).message)) throw err;
+  }
+}
+
+/**
  * Record that this person was here, in the private store's `person_activity`
  * — outside the session, so that ending sessions cannot age it (beeline-dji).
  *
- * Throttled to an hour, and that is the whole reason this is not simply a
- * second column on `session`: the session row slides on every request because
- * a 30-day expiry has to be measured from the real last one, while the only
- * question asked of this table is whether a volunteer is still turning up.
- * An hour costs one write per person per hour instead of one per request.
+ * Throttled to an hour: the only question asked of this table is whether a
+ * volunteer is still turning up, and an hour costs one write per person per
+ * hour. The session row is throttled too, since beeline-cla, but to minutes —
+ * a 30-day expiry has to be measured from something close to the real last
+ * request — so the two still cannot share a clock.
  *
  * It cannot replace `session.last_seen_at` either, in the other direction:
  * the idle cutoff is per credential, so a person's activity on their phone
@@ -115,12 +151,15 @@ export function cookieSessionResolver(db: Kysely<Database>): SessionResolver {
       ])
       .executeTakeFirst();
     if (row === undefined) return null;
-    await db
-      .updateTable("private.session")
-      .set({ last_seen_at: sql`current_timestamp` })
-      .where("id", "=", id)
-      .execute();
-    await recordActivity(db, row.inat_user_id);
+    await bookkeeping(() =>
+      db
+        .updateTable("private.session")
+        .set({ last_seen_at: sql`current_timestamp` })
+        .where("id", "=", id)
+        .where("last_seen_at", "<", slideDue)
+        .execute(),
+    );
+    await bookkeeping(() => recordActivity(db, row.inat_user_id));
     return { personId: row.person_id, login: row.login, iconUrl: row.icon_url };
   };
 }

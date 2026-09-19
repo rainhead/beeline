@@ -1,0 +1,273 @@
+{
+  "env": {
+    "at": "2026-09-19T00:42:10.164Z",
+    "host": "fly:beeline:sjc",
+    "commit": "deployment-01M2V8G90FSR9C4XNBVX7JZ02E",
+    "dirty": null,
+    "node": "v26.9.0",
+    "duckdb": "v1.5.5",
+    "duckdbThreads": 2,
+    "duckdbMemoryLimit": "976.5 MiB",
+    "duckdbConfig": {
+      "memory_limit": "1024MB",
+      "threads": "2"
+    },
+    "cpu": "AMD EPYC x2",
+    "memoryMb": 1968,
+    "storeMb": 230,
+    "rows": {
+      "sample": 67848,
+      "specimen": 387695,
+      "determination": 256161,
+      "observation_field": 15047,
+      "person": 567,
+      "animal": 3547,
+      "printed_label": 7416
+    }
+  },
+  "seconds": 30,
+  "readers": 4,
+  "firstPromotionMs": 2872,
+  "phases": [
+    {
+      "phase": "reads",
+      "reads": {
+        "n": 72,
+        "p50": 1648.2,
+        "p95": 2658.1,
+        "max": 3189,
+        "mean": 1710
+      },
+      "readsPerSecond": 2.3,
+      "elapsedS": 31.2,
+      "edits": {
+        "n": 0,
+        "p50": 0,
+        "p95": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "nightly": {
+        "n": 0,
+        "p50": 0,
+        "p95": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "overlapWrites": 0,
+      "conflicts": {
+        "reads": 0,
+        "edits": 0,
+        "nightly": 0,
+        "overlapWriter": 0
+      },
+      "failedReads": 0,
+      "failedEdits": 0,
+      "loggedConflicts": 0,
+      "logged": [],
+      "otherFailures": 0,
+      "messages": []
+    },
+    {
+      "phase": "one session",
+      "reads": {
+        "n": 71,
+        "p50": 1595.4,
+        "p95": 2826.4,
+        "max": 2983.8,
+        "mean": 1704.3
+      },
+      "readsPerSecond": 2.3,
+      "elapsedS": 30.5,
+      "edits": {
+        "n": 0,
+        "p50": 0,
+        "p95": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "nightly": {
+        "n": 0,
+        "p50": 0,
+        "p95": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "overlapWrites": 0,
+      "conflicts": {
+        "reads": 0,
+        "edits": 0,
+        "nightly": 0,
+        "overlapWriter": 0
+      },
+      "failedReads": 1,
+      "failedEdits": 0,
+      "loggedConflicts": 1,
+      "logged": [
+        "TransactionContext Error: Conflict on update!"
+      ],
+      "otherFailures": 1,
+      "messages": [
+        "read: Internal Server Error"
+      ]
+    },
+    {
+      "phase": "+ edits",
+      "reads": {
+        "n": 53,
+        "p50": 2302.9,
+        "p95": 3466.7,
+        "max": 3873.9,
+        "mean": 2310.8
+      },
+      "readsPerSecond": 1.6,
+      "elapsedS": 33.3,
+      "edits": {
+        "n": 7,
+        "p50": 3452.9,
+        "p95": 9393.2,
+        "max": 9393.2,
+        "mean": 4659.5
+      },
+      "nightly": {
+        "n": 0,
+        "p50": 0,
+        "p95": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "overlapWrites": 0,
+      "conflicts": {
+        "reads": 0,
+        "edits": 0,
+        "nightly": 0,
+        "overlapWriter": 0
+      },
+      "failedReads": 0,
+      "failedEdits": 0,
+      "loggedConflicts": 0,
+      "logged": [],
+      "otherFailures": 0,
+      "messages": []
+    },
+    {
+      "phase": "+ nightly",
+      "reads": {
+        "n": 51,
+        "p50": 2351.5,
+        "p95": 4498.4,
+        "max": 5026.3,
+        "mean": 2527.9
+      },
+      "readsPerSecond": 1.6,
+      "elapsedS": 32.5,
+      "edits": {
+        "n": 0,
+        "p50": 0,
+        "p95": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "nightly": {
+        "n": 2,
+        "p50": 13808.9,
+        "p95": 17468.2,
+        "max": 17468.2,
+        "mean": 15638.5
+      },
+      "overlapWrites": 0,
+      "conflicts": {
+        "reads": 0,
+        "edits": 0,
+        "nightly": 0,
+        "overlapWriter": 0
+      },
+      "failedReads": 0,
+      "failedEdits": 0,
+      "loggedConflicts": 0,
+      "logged": [],
+      "otherFailures": 0,
+      "messages": []
+    },
+    {
+      "phase": "+ nightly + edits",
+      "reads": {
+        "n": 38,
+        "p50": 3128.7,
+        "p95": 5133.8,
+        "max": 5403.6,
+        "mean": 3340.3
+      },
+      "readsPerSecond": 1.2,
+      "elapsedS": 33,
+      "edits": {
+        "n": 5,
+        "p50": 8178.9,
+        "p95": 10219.9,
+        "max": 10219.9,
+        "mean": 6250.2
+      },
+      "nightly": {
+        "n": 2,
+        "p50": 14340.6,
+        "p95": 16419.7,
+        "max": 16419.7,
+        "mean": 15380.2
+      },
+      "overlapWrites": 0,
+      "conflicts": {
+        "reads": 0,
+        "edits": 0,
+        "nightly": 0,
+        "overlapWriter": 0
+      },
+      "failedReads": 0,
+      "failedEdits": 0,
+      "loggedConflicts": 0,
+      "logged": [],
+      "otherFailures": 0,
+      "messages": []
+    },
+    {
+      "phase": "+ overlap (synthetic)",
+      "reads": {
+        "n": 34,
+        "p50": 3035.5,
+        "p95": 9207,
+        "max": 9842.5,
+        "mean": 3601.3
+      },
+      "readsPerSecond": 1,
+      "elapsedS": 33.6,
+      "edits": {
+        "n": 5,
+        "p50": 3804.1,
+        "p95": 17188.4,
+        "max": 17188.4,
+        "mean": 6604.6
+      },
+      "nightly": {
+        "n": 0,
+        "p50": 0,
+        "p95": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "overlapWrites": 110,
+      "conflicts": {
+        "reads": 0,
+        "edits": 0,
+        "nightly": 4,
+        "overlapWriter": 0
+      },
+      "failedReads": 0,
+      "failedEdits": 0,
+      "loggedConflicts": 0,
+      "logged": [],
+      "otherFailures": 0,
+      "messages": [
+        "nightly: TransactionContext Error: Conflict on update!"
+      ]
+    }
+  ]
+}

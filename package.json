@@ -25,7 +25,9 @@
     "elevation:derive": "tsx src/derive-elevation.ts",
     "itis:fetch": "scripts/fetch-itis.sh",
     "itis:load": "tsx src/load-itis.ts",
-    "person:apply": "tsx src/apply-person-overlay.ts"
+    "person:apply": "tsx src/apply-person-overlay.ts",
+    "bench:pages": "tsx bench/pages.ts",
+    "bench:contention": "tsx bench/contention.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

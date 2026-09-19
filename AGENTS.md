@@ -13,6 +13,8 @@ pnpm db:migrate [--status|--check|--baseline] [db]  # bring a deployed store for
 pnpm db:reseed <old.duckdb> <new.duckdb>  # re-derive a deployed store: fresh schema + its staging, then re-promote
 pnpm app:dev                   # web app: tsx watch + vite build --watch (islands)
 pnpm app:build && pnpm app:start  # web app, production shape
+pnpm bench:pages [store]       # page latency against a copy of a store; --compare=<result.json> (bench/README.md)
+pnpm bench:contention [store]  # pages, edits and the nightly overlapping: latency, and conflicts counted apart
 ```
 
 Populating a fresh database end to end (production access = `beeline` in

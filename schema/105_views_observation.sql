@@ -127,7 +127,15 @@ SELECT o.inat_id,
   -- escapes it (src/app/views/record.tsx). Rewriting it here would make the
   -- store disagree with iNaturalist about what the collector said, which is
   -- the one thing this column exists to record.
-  nullif(trim(json_extract_string(o.content, '$.description')), '')      AS notes
+  -- Blank counts as absent, but the value stored is the ORIGINAL, not the
+  -- trimmed one: trim() is the blankness TEST and never the stored
+  -- expression. nullif(trim(x), '') would store x with its leading and
+  -- trailing whitespace removed, which is a small edit to what the collector
+  -- typed, and this column's whole claim is that it makes none (CodeRabbit,
+  -- #83).
+  CASE WHEN trim(coalesce(json_extract_string(o.content, '$.description'), '')) = ''
+       THEN NULL
+       ELSE json_extract_string(o.content, '$.description') END           AS notes
 FROM observation_current o;
 
 -- The two sample-number fields disagreeing on one observation.

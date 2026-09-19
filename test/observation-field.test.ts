@@ -75,15 +75,22 @@ describe("the stored projection", () => {
    * positional refresh and observation_field_stale both depend on.
    */
   test("carries the observer's notes verbatim, and treats a blank one as none", async () => {
+    // Whitespace and all. trim() decides whether there is anything there; it
+    // is never what gets stored, or the column would be making a small edit
+    // to what the collector typed while claiming to make none (CodeRabbit,
+    // #83). Indentation is the case that would actually cost something —
+    // iNaturalist renders markdown, where a leading space is not decoration.
     await stageLoad(obs(21, { description: "  Two queens on the same head; second net pass.  " }));
     await stageLoad(obs(22, { description: "   " }));
     await stageLoad(obs(23));
+    await stageLoad(obs(25, { description: "    indented, as markdown means it" }));
     await refreshObservationFields(conn);
     expect(await count("SELECT count(*) FROM observation_field_stale")).toBe(0);
     expect(await rows(conn, "SELECT inat_id, notes FROM observation_field ORDER BY inat_id")).toEqual([
-      [21n, "Two queens on the same head; second net pass."],
+      [21n, "  Two queens on the same head; second net pass.  "],
       [22n, null],
       [23n, null],
+      [25n, "    indented, as markdown means it"],
     ]);
   });
 

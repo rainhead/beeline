@@ -20,7 +20,7 @@
 -- its columns instead of SELECT *: this delta is pinned to its moment, and
 -- the view it reads keeps growing.
 ALTER TABLE observation_field ADD COLUMN notes TEXT;
-COMMENT ON COLUMN observation_field.notes IS 'The observer''s free text on the iNaturalist observation (its `description`), where a collector writes what no observation field holds — the plant''s condition, the weather, who they were with, why a count is odd. Verbatim and possibly containing markdown or HTML, which is the renderer''s problem: nothing here rewrites what the collector said. Blank is stored as NULL. Absent from every load synced before beeline-hza, because the sync''s field whitelist IS the projection and did not ask for it.';
+COMMENT ON COLUMN observation_field.notes IS 'The observer''s free text on the iNaturalist observation (its `description`), where a collector writes what no observation field holds — the plant''s condition, the weather, who they were with, why a count is odd. Verbatim and possibly containing markdown or HTML, which is the renderer''s problem: nothing here rewrites what the collector said. Whitespace included: blank or all-whitespace is stored as NULL, and anything else is stored exactly as it arrived — trim() tests for blankness here and is never the stored value. Absent from every load synced before beeline-hza, because the sync''s field whitelist IS the projection and did not ask for it.';
 
 CREATE OR REPLACE VIEW observation_current_fields AS
 SELECT o.inat_id,
@@ -64,7 +64,9 @@ SELECT o.inat_id,
    WHERE j.j ->> '$.name' = 'OBA Collection Method' LIMIT 1)             AS collection_method_raw,
   nullif(json_extract_string(o.content, '$.private_place_guess'), '')    AS private_place_guess,
   json_extract_string(o.content, '$.taxon.rank')                         AS host_taxon_rank,
-  nullif(trim(json_extract_string(o.content, '$.description')), '')      AS notes
+  CASE WHEN trim(coalesce(json_extract_string(o.content, '$.description'), '')) = ''
+       THEN NULL
+       ELSE json_extract_string(o.content, '$.description') END           AS notes
 FROM observation_current o;
 
 -- Fill the new column from the loads already in the store. It will be NULL

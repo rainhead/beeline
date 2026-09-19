@@ -2,7 +2,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { sql, type Kysely } from "kysely";
 import type { Database, PrintRunState } from "../model.js";
-import { renderLabelsPdf, sha256, type LabelRow } from "../label-pdf.js";
+import { sha256, type LabelRow } from "../label-pdf.js";
+import { renderLabelsPdfOffThread } from "../label-pdf-worker.js";
 
 /**
  * The print-run screens' reads (beeline-1kb.2, beeline-1kb.4). Writes —
@@ -215,7 +216,29 @@ export const runPdfPath = (dir: string, printRunId: number) => join(dir, `run-${
  * are served, the recorded hash is left as the record of what was first
  * rendered, and the disagreement is logged rather than hidden.
  */
-export async function runPdf(
+export function runPdf(
+  db: Kysely<Database>,
+  printRunId: number,
+  preparedAt: Date,
+  recorded: string | null,
+  dir: string,
+): Promise<{ bytes: Uint8Array; sha256: string; cached: boolean }> {
+  // Two people opening the same unrendered run at once would otherwise start
+  // two workers on identical input and write the file twice. The entry is
+  // dropped when the render settles, so this coalesces concurrent requests
+  // and caches nothing: the file and its recorded hash are the cache.
+  const inFlight = renderingRuns.get(printRunId);
+  if (inFlight !== undefined) return inFlight;
+  const render = runPdfUncoalesced(db, printRunId, preparedAt, recorded, dir).finally(() =>
+    renderingRuns.delete(printRunId),
+  );
+  renderingRuns.set(printRunId, render);
+  return render;
+}
+
+const renderingRuns = new Map<number, Promise<{ bytes: Uint8Array; sha256: string; cached: boolean }>>();
+
+async function runPdfUncoalesced(
   db: Kysely<Database>,
   printRunId: number,
   preparedAt: Date,
@@ -232,7 +255,7 @@ export async function runPdf(
     }
   }
   const rows = await runLabels(db, printRunId);
-  const bytes = await renderLabelsPdf(rows, { preparedAt });
+  const bytes = await renderLabelsPdfOffThread(rows, { preparedAt });
   const digest = sha256(bytes);
   if (recorded !== null && digest !== recorded) {
     console.warn(`print run ${printRunId}: re-rendered sheets hash ${digest}, recorded ${recorded}`);

@@ -11,6 +11,7 @@ import {
   sha256,
   type LabelRow,
 } from "../src/label-pdf.js";
+import { renderLabelsPdfOffThread } from "../src/label-pdf-worker.js";
 import { layoutSheets } from "../src/label-text.js";
 
 const PREPARED = new Date("2026-09-21T16:00:00Z");
@@ -66,6 +67,58 @@ describe("rendering labels", () => {
     const [row] = twoSheets();
     await expect(renderLabelsPdf([{ ...row!, cell: 250 }], { preparedAt: PREPARED })).rejects.toThrow(/off the sheet/);
   });
+});
+
+/**
+ * The render runs on a worker thread so a big run's sheets stop blocking
+ * every other request (beeline-1kb.19). What has to survive the move is the
+ * bytes — a run's sheets are hashed and the hash recorded — and the render's
+ * failures, which are how a caller learns a cell is off the sheet.
+ */
+describe("rendering off the main thread", () => {
+  it("produces the same bytes as rendering in process", async () => {
+    const rows = twoSheets();
+    const here = await renderLabelsPdf(rows, { preparedAt: PREPARED });
+    const there = await renderLabelsPdfOffThread(rows, { preparedAt: PREPARED });
+    expect(sha256(there)).toBe(sha256(here));
+  }, 30_000);
+
+  it("carries the render's own failure across, not the worker's exit code", async () => {
+    const [row] = twoSheets();
+    await expect(
+      renderLabelsPdfOffThread([{ ...row!, cell: 250 }], { preparedAt: PREPARED }),
+    ).rejects.toThrow(/off the sheet/);
+  }, 30_000);
+
+  it("leaves the thread free while it renders", async () => {
+    const rows = twoSheets();
+    // The longest a 10ms interval went unserved, which is what a request
+    // waiting behind the render actually experiences. A tick count alone
+    // does not discriminate: the in-process render awaits the font and the
+    // save, so some ticks get through either way — it is the one long
+    // synchronous stretch in the middle that drops a health check.
+    const longestStall = async (render: () => Promise<unknown>) => {
+      let last = performance.now();
+      let worst = 0;
+      const timer = setInterval(() => {
+        const now = performance.now();
+        worst = Math.max(worst, now - last);
+        last = now;
+      }, 10);
+      try {
+        await render();
+      } finally {
+        clearInterval(timer);
+      }
+      return worst;
+    };
+    const blocked = await longestStall(() => renderLabelsPdf(rows, { preparedAt: PREPARED }));
+    const free = await longestStall(() => renderLabelsPdfOffThread(rows, { preparedAt: PREPARED }));
+    // Asserted against each other rather than against a millisecond figure,
+    // so the test says "the worker is what keeps the loop turning" on a
+    // loaded CI runner as well as on a workstation.
+    expect(free).toBeLessThan(blocked / 2);
+  }, 30_000);
 });
 
 describe("the font the sheets are set in", () => {

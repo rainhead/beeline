@@ -6,6 +6,7 @@ import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { createKysely } from "../src/db.js";
 import { sha256 } from "../src/label-pdf.js";
+import { runPdf } from "../src/app/print-runs.js";
 import { withPrintRunLock } from "../src/print-run.js";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
@@ -71,7 +72,7 @@ async function printApp(signedInAs: "ash" | "staffer" = "staffer") {
   const app = appFor(signedInAs);
   const post = (path: string, body: Record<string, string> = {}) =>
     app.request(path, { method: "POST", headers: { origin: ORIGIN }, body: new URLSearchParams(body) });
-  return { app, appFor, conn, post, dir, ash, birch, ashSample, birchSample };
+  return { app, appFor, conn, db, post, dir, ash, birch, ashSample, birchSample };
 }
 
 describe("the print-run screens", () => {
@@ -291,6 +292,38 @@ describe("the print-run screens", () => {
     await held;
     expect((await canceling).status).toBe(302);
     expect((await downloading).status).toBe(409);
+  });
+
+  /**
+   * The render moved to a worker thread (beeline-1kb.19), which makes two
+   * people opening the same unrendered run at once a real possibility rather
+   * than a theoretical one: in process the second request queued behind the
+   * first on the one thread, and now it would start a second worker on
+   * identical input and write the file twice.
+   */
+  it("renders a run's sheets once when two people ask at the same time", async () => {
+    const { conn, db, dir, post } = await printApp();
+    expect((await post("/print-runs", { scope: "" })).status).toBe(302);
+    // Through epoch_ms because the raw driver hands back its own timestamp
+    // value, and pdf-lib stamps the document with a real Date.
+    const [[runId, ms]] = (await rows(conn, `SELECT entity_id, epoch_ms(prepared_at) FROM print_run`)) as [
+      [number, bigint],
+    ];
+    const preparedAt = new Date(Number(ms));
+
+    const first = runPdf(db, runId, preparedAt, null, dir);
+    const second = runPdf(db, runId, preparedAt, null, dir);
+    // The same promise, which is the whole of the claim: one render, not two.
+    expect(second).toBe(first);
+    const [a, b] = await Promise.all([first, second]);
+    expect(a.sha256).toBe(b.sha256);
+    expect(a.cached).toBe(false);
+
+    // And the coalescing is only for the render in flight: once it settles
+    // the entry goes, so the next request is a fresh call that finds the file.
+    const later = runPdf(db, runId, preparedAt, a.sha256, dir);
+    expect(later).not.toBe(first);
+    expect((await later).cached).toBe(true);
   });
 
   it("shows an imported specimen's label as printed before Beeline, never blank", async () => {

@@ -13,7 +13,7 @@ The benchmarks write, and exactly one process may hold a store ([ADR 0005](../do
 
 ## Results are only comparable within an environment
 
-A result file records the machine, DuckDB's thread and memory budgets, the store's size and the commit. Compare like with like: the workstation runs the same pages two to three times faster than the sandbox, and says nothing about it. Baselines live in [`results/`](results/).
+A result file records the kind of machine (never its hostname), DuckDB's thread and memory budgets, the store's size, the commit and the flags it was run with; under each summary it keeps every timing as taken and a count of what each request answered, so a later reader can compute the statistic nobody thought of. Error text is reduced to its class before it is written — DuckDB quotes the offending value in a constraint error, and the store is real people's records. The first sandbox baseline predates the raw timings and holds summaries only; the next run there replaces it. Compare like with like: the workstation runs the same pages two to three times faster than the sandbox, and says nothing about it. Baselines live in [`results/`](results/).
 
 ## Running on the sandbox
 

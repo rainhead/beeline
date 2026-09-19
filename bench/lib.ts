@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
-import { cpus, hostname, tmpdir, totalmem } from "node:os";
+import { cpus, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import type { Kysely } from "kysely";
@@ -192,6 +192,30 @@ export function summarize(ms: number[]): Summary {
   };
 }
 
+/**
+ * An error message fit to commit to a public repository: its first line, with
+ * everything quoted taken out. DuckDB quotes the offending value in a
+ * constraint error — `duplicate key "display_name: …"` — and the store under
+ * test is real people's records. What is left is the class of failure, which
+ * is what the result is for.
+ */
+export function publishable(message: string): string {
+  return (message.split("\n")[0] ?? "")
+    .replace(/"[^"]*"|'[^']*'|`[^`]*`/g, "<…>")
+    .replace(/\d{3,}/g, "<n>")
+    .slice(0, 160);
+}
+
+/** Timings as they were taken, to a tenth of a millisecond: a later reader can compute the statistic we did not. */
+export const samples = (ms: number[]) => ms.map((x) => Math.round(x * 10) / 10);
+
+/** How many requests answered with each status. */
+export function statusCounts(timings: Timing[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const t of timings) counts[t.status] = (counts[t.status] ?? 0) + 1;
+  return counts;
+}
+
 /** DuckDB says a write-write collision in several voices; all of them say "conflict". */
 export const isConflict = (message: string | undefined) => message !== undefined && /conflict/i.test(message);
 
@@ -211,8 +235,12 @@ export async function environment(bench: Bench, sourcePath: string) {
   }
   return {
     at: new Date().toISOString(),
-    // The machine's name says which environment; nobody's name is in it.
-    host: process.env.FLY_MACHINE_ID ? `fly:${process.env.FLY_APP_NAME}:${process.env.FLY_REGION}` : hostname(),
+    // Which KIND of machine, never its name: a hostname is usually somebody's
+    // (CodeRabbit on PR #84). BENCH_HOST names one where "workstation" is too vague.
+    host: process.env.FLY_MACHINE_ID
+      ? `fly:${process.env.FLY_APP_NAME}:${process.env.FLY_REGION}`
+      : (process.env.BENCH_HOST ?? "workstation"),
+    argv: process.argv.slice(2).map((a) => (a.startsWith("--") ? a : "<store>")),
     // The image has no .git; a Fly machine says which image it is running instead.
     commit: git("git rev-parse --short HEAD") ?? process.env.FLY_IMAGE_REF?.split(":").pop() ?? null,
     dirty: git("git status --porcelain") === null ? null : git("git status --porcelain") !== "",

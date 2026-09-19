@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { duckdbReader } from "../src/person-change.js";
 import { recordSampleChanges } from "../src/sample-change.js";
-import { args, environment, openBench, rows, sessionFor, summarize, table, timed, writeResult, type Bench, type Subject, type Summary } from "./lib.js";
+import { args, environment, openBench, rows, samples, sessionFor, statusCounts, summarize, table, timed, writeResult, type Bench, type Subject, type Summary } from "./lib.js";
 
 /**
  * How long each page takes, one request at a time, against a copy of a store.
@@ -92,6 +92,9 @@ interface CaseResult extends Case, Summary {
   kb: number;
   /** The first request, before anything is warm: what the first visitor after a deploy waits for. */
   coldMs: number;
+  /** Every warm timing as taken, and what every request (the cold one included) answered. */
+  ms: number[];
+  statuses: Record<string, number>;
 }
 
 const { positional, flags } = args(process.argv.slice(2));
@@ -118,6 +121,8 @@ try {
       status: bad?.status ?? 200,
       kb: Math.round(cold.bytes / 1024),
       coldMs: Math.round(cold.ms * 10) / 10,
+      ms: samples(runs.map((r) => r.ms)),
+      statuses: statusCounts([cold, ...runs]),
     });
   }
 
@@ -141,7 +146,7 @@ try {
       { source: "observation_promotion" },
     );
     const who =await sessionFor(bench, { personId: Number(ed.person_id), inatUserId: Number(ed.inat_user_id) });
-    const samples = await rows<{ id: number; locality: string | null }>(
+    const editable = await rows<{ id: number; locality: string | null }>(
       bench.jobConn,
       `SELECT s.entity_id AS id, s.locality FROM sample s
          JOIN sample_collector sc ON sc.sample_id = s.entity_id
@@ -149,7 +154,7 @@ try {
         ORDER BY s.entity_id LIMIT ${n + 1}`,
     );
     const saves = [];
-    for (const s of samples) {
+    for (const s of editable) {
       saves.push(
         await timed(bench, who, `/samples/${s.id}/edit`, {
           method: "POST",
@@ -169,6 +174,8 @@ try {
         status: bad?.status ?? 302,
         kb: 0,
         coldMs: Math.round(cold.ms * 10) / 10,
+        ms: samples(rest.map((r) => r.ms)),
+        statuses: statusCounts(saves),
       });
     }
   }

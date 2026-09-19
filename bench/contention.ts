@@ -6,8 +6,11 @@ import {
   environment,
   isConflict,
   openBench,
+  publishable,
   rows,
+  samples,
   sessionFor,
+  statusCounts,
   summarize,
   table,
   timed,
@@ -114,12 +117,12 @@ async function runPhase(
   const phaseStarted = performance.now();
   const consoleError = console.error;
   console.error = (...parts: unknown[]) => {
-    phase.logged.push(parts.map((x) => (x instanceof Error ? x.message : String(x))).join(" ").slice(0, 200));
+    phase.logged.push(publishable(parts.map((x) => (x instanceof Error ? x.message : String(x))).join(" ")));
   };
   const until = performance.now() + seconds * 1000;
   const running = () => performance.now() < until;
   const fail = (actor: string, message: string) =>
-    phase.failures.push({ actor, conflict: isConflict(message), message: message.slice(0, 200) });
+    phase.failures.push({ actor: actor.replace(/\d+/g, ":id"), conflict: isConflict(message), message: publishable(message) });
 
   const shared = { volunteer: bench.volunteer, staff: bench.staff };
   const readers = Array.from({ length: readerCount }, async (_, i) => {
@@ -265,6 +268,14 @@ try {
       edits,
       nightly,
       overlapWrites: p.overlapWrites,
+      // The evidence under the summaries: every timing, failures included, and what each request answered.
+      raw: {
+        readMs: samples(p.reads.map((r) => r.ms)),
+        readStatuses: statusCounts(p.reads),
+        editMs: samples(p.edits.map((r) => r.ms)),
+        editStatuses: statusCounts(p.edits),
+        nightlyMs: samples(p.nightlyMs),
+      },
       conflicts: {
         reads: by((f) => f.conflict && f.actor.startsWith("read")),
         edits: by((f) => f.conflict && f.actor.startsWith("edit")),

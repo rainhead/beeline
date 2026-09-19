@@ -276,12 +276,24 @@ JOIN (
 -- from the stored projection (observation_field, schema/060) instead of a
 -- Darwin Core phylum string. IS FALSE keeps stale loads silent: NULL means
 -- no taxon or a load predating ancestor_ids, not a non-plant host.
+--
+-- This rule's detail IS a scientific name, so it is the one rule that reports
+-- a taxon rather than prose about one, and it says so in its own columns
+-- (beeline-dys). Rendered from `details` it reached the screen inside a
+-- <code>, which /design/type and /design/names both forbid: Homo sapiens and
+-- Andrena want italics, Life and Insecta must not have them, and no view can
+-- tell which is which from a string. Name and rank are what TaxonName needs
+-- to decide, so both travel. `details` is then the fallback and only the
+-- fallback — the projection occasionally has an id and no name.
 CREATE VIEW qc_rule_non_tracheophyte_host AS
 SELECT s.entity_id AS sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'non_tracheophyte_host' AS rule_name,
-       concat('observation taxon ', coalesce(f.host_taxon_name, CAST(f.host_taxon_id AS TEXT)),
-              ' is not a vascular plant') AS details
+       CASE WHEN f.host_taxon_name IS NULL
+            THEN concat('observation taxon ', CAST(f.host_taxon_id AS TEXT), ' is not a vascular plant')
+       END AS details,
+       f.host_taxon_name AS detail_taxon_name,
+       f.host_taxon_rank AS detail_taxon_rank
 FROM sample s
 JOIN observation_field f ON f.inat_id = s.inat_observation_id
 WHERE f.host_is_tracheophyte IS FALSE;

@@ -11,6 +11,7 @@ export { Button, LinkButton, BUTTON_VARIANTS, type ButtonVariant } from "./butto
 export { Card } from "./card.js";
 export { Chip, TONES, type Tone } from "./chip.js";
 export { Callout, EmptyState } from "./feedback.js";
+export { FindingDetail } from "./finding.js";
 export { DetailList, type Detail } from "./details.js";
 export { CheckboxField, Field, SelectField, TextField } from "./field.js";
 export {

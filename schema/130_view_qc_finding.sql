@@ -1,20 +1,32 @@
+-- Most rules report prose, and one reports a taxon: detail_taxon_name and
+-- detail_taxon_rank are what a finding whose detail is a scientific name says
+-- instead of spelling it into `details`, so the view can set it as a name
+-- rather than as a machine value (beeline-dys, schema/120). NULL on every
+-- other rule, which is why the twelve of them are wrapped rather than each
+-- carrying two casts: the NULLs belong in one place, and a new prose rule
+-- stays one line.
 CREATE VIEW qc_finding AS
-SELECT * FROM qc_rule_missing_required_field
-UNION ALL SELECT * FROM qc_rule_missing_recommended_field
-UNION ALL SELECT * FROM qc_rule_obscured_no_true_coordinates
-UNION ALL SELECT * FROM qc_rule_locality_format
-UNION ALL SELECT * FROM qc_rule_place_unabbreviated
-UNION ALL SELECT * FROM qc_rule_place_unrecognised
-UNION ALL SELECT * FROM qc_rule_coordinate_uncertainty
-UNION ALL SELECT * FROM qc_rule_coordinate_out_of_region
-UNION ALL SELECT * FROM qc_rule_duplicate_sample_number
-UNION ALL SELECT * FROM qc_rule_non_tracheophyte_host
-UNION ALL SELECT * FROM qc_rule_count_mismatch
-UNION ALL SELECT * FROM qc_rule_count_below_printed
-UNION ALL SELECT * FROM qc_rule_observation_missing_upstream
--- Stored ingestion-time findings join the derived ones (schema/050).
-UNION ALL SELECT sample_id, CAST(NULL AS INTEGER) AS specimen_id, rule_name, details
-FROM sample_promotion_finding;
+SELECT sample_id, specimen_id, rule_name, details,
+       CAST(NULL AS TEXT) AS detail_taxon_name,
+       CAST(NULL AS TEXT) AS detail_taxon_rank
+FROM (
+  SELECT * FROM qc_rule_missing_required_field
+  UNION ALL SELECT * FROM qc_rule_missing_recommended_field
+  UNION ALL SELECT * FROM qc_rule_obscured_no_true_coordinates
+  UNION ALL SELECT * FROM qc_rule_locality_format
+  UNION ALL SELECT * FROM qc_rule_place_unabbreviated
+  UNION ALL SELECT * FROM qc_rule_place_unrecognised
+  UNION ALL SELECT * FROM qc_rule_coordinate_uncertainty
+  UNION ALL SELECT * FROM qc_rule_coordinate_out_of_region
+  UNION ALL SELECT * FROM qc_rule_duplicate_sample_number
+  UNION ALL SELECT * FROM qc_rule_count_mismatch
+  UNION ALL SELECT * FROM qc_rule_count_below_printed
+  UNION ALL SELECT * FROM qc_rule_observation_missing_upstream
+  -- Stored ingestion-time findings join the derived ones (schema/050).
+  UNION ALL SELECT sample_id, CAST(NULL AS INTEGER) AS specimen_id, rule_name, details
+  FROM sample_promotion_finding
+) prose
+UNION ALL SELECT * FROM qc_rule_non_tracheophyte_host;
 
 -- The same findings, keyed to the sample each one belongs to, by both routes a
 -- finding can take: keyed to the sample itself, or to one of its specimens.
@@ -28,6 +40,8 @@ CREATE VIEW sample_qc_finding AS
 SELECT coalesce(f.sample_id, sp.sample_id) AS sample_id,
        f.specimen_id,
        f.rule_name,
-       f.details
+       f.details,
+       f.detail_taxon_name,
+       f.detail_taxon_rank
 FROM qc_finding f
 LEFT JOIN specimen sp ON sp.entity_id = f.specimen_id;

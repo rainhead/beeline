@@ -2,7 +2,18 @@ import { EMPTY_QUERY, listingHref, MINE } from "../listings.js";
 import { sampleHref } from "../record.js";
 import type { Geoprivacy, QcSeverity } from "../../model.js";
 import type { Messages } from "../messages/index.js";
-import { Absent, Callout, Chip, DataTable, EmptyState, Meta, OrAbsent, PageHeader, TaxonName } from "./components/index.js";
+import {
+  Absent,
+  Callout,
+  Chip,
+  DataTable,
+  EmptyState,
+  FindingDetail,
+  Meta,
+  OrAbsent,
+  PageHeader,
+  TaxonName,
+} from "./components/index.js";
 
 /**
  * The front page: one table of this season's samples that want something —
@@ -49,6 +60,9 @@ export const DASHBOARD_RULES: ReadonlyMap<string, FlagColumn | null> = new Map([
 export interface Finding {
   rule_name: string;
   details: string | null;
+  /** Set only where the detail is a taxon rather than prose (beeline-dys). */
+  detail_taxon_name: string | null;
+  detail_taxon_rank: string | null;
   severity: QcSeverity;
 }
 
@@ -222,10 +236,15 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
                 {f.severity === "blocking" ? m.qc.blocksPrinting : m.qc.headsUp}
               </Chip>{" "}
               {m.qcInstructions[f.rule_name] ?? f.rule_name}
-              {f.details && (
+              {(f.details || f.detail_taxon_name) && (
                 <>
                   {" "}
-                  <code>{f.details}</code>
+                  <FindingDetail
+                    details={f.details}
+                    taxonName={f.detail_taxon_name}
+                    taxonRank={f.detail_taxon_rank}
+                    taxonLead={m.qc.identifiedAs}
+                  />
                 </>
               )}
               {fixHref !== null && (

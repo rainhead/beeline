@@ -110,6 +110,9 @@ export interface SampleDetail {
 export interface RecordFinding {
   rule_name: string;
   details: string | null;
+  /** Set only where the detail is a taxon rather than prose (beeline-dys). */
+  detail_taxon_name: string | null;
+  detail_taxon_rank: string | null;
   severity: QcSeverity;
   /** Set when the finding is about one specimen rather than the sample. */
   specimen_id: number | null;
@@ -328,7 +331,7 @@ export async function determinationHistory(
  */
 export async function recordFindings(db: Kysely<Database>, sampleId: number): Promise<RecordFinding[]> {
   const found = await sql<RecordFinding>`
-    SELECT f.rule_name, f.details, r.severity, f.specimen_id, sp.field_number
+    SELECT f.rule_name, f.details, f.detail_taxon_name, f.detail_taxon_rank, r.severity, f.specimen_id, sp.field_number
     FROM sample_qc_finding f
     JOIN qc_rule r ON r.name = f.rule_name
     LEFT JOIN specimen sp ON sp.entity_id = f.specimen_id

@@ -216,6 +216,7 @@ describe("shutdown (beeline-fth)", () => {
     const deps = await jobDeps();
     const hold = deferred();
     const entered = deferred();
+    const interrupted = deferred();
     let second = false;
     const scheduler = startScheduler({
       ...deps,
@@ -224,6 +225,7 @@ describe("shutdown (beeline-fth)", () => {
           name: "two-step",
           ...daily,
           run: async (ctx) => {
+            ctx.signal.addEventListener("abort", () => interrupted.resolve());
             await ctx.step("first", () => (entered.resolve(), hold.promise));
             await ctx.step("second", async () => void (second = true));
           },
@@ -233,8 +235,13 @@ describe("shutdown (beeline-fth)", () => {
     });
     void scheduler.runNow("two-step");
     await entered.promise;
-    const stopping = scheduler.stop({ graceMs: 20 });
-    await sleep(60); // grace expires while the first step is still held
+    const stopping = scheduler.stop({ graceMs: 1 });
+    // Wait for the grace to have expired, not for longer than it should take:
+    // the shutdown signal aborting is the observable fact this test is about,
+    // so hold the first step until it has. Racing a 20ms grace against a 60ms
+    // sleep left a 3x margin that a loaded runner could close, and did once
+    // (beeline-e5b).
+    await interrupted.promise;
     hold.resolve();
     await stopping;
     expect(second).toBe(false);

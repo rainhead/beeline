@@ -231,6 +231,14 @@ export const en = {
     blocksPrinting: "blocks printing",
     headsUp: "heads-up",
     /**
+     * What the record actually says, where that is a name rather than a
+     * measurement (beeline-dys). A finding's detail follows the rule's
+     * instruction, and most details are machine values that read as an
+     * annotation on their own; a bare scientific name after a full stop
+     * reads as a dropped fragment, so it gets three words of its own.
+     */
+    identifiedAs: "It is currently identified as",
+    /**
      * An observation numbered as a sample and left at 0 specimens: the
      * placeholder a volunteer makes in the field and fills in once the catch
      * is counted — or forgets to (Peter, 2026-09-16). Not a sample yet, so
@@ -1174,8 +1182,13 @@ export const en = {
       "The location accuracy is worse than this record allows — the flag says by how much, and which limit applied. Records from 2 September 2026 onwards must be within 100 m, the resolution of a GPS reading; for a trap, the day it was emptied is the one that counts. Earlier records keep the 250 m that was in force when they were collected. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.",
     coordinate_out_of_region:
       "The coordinates on this record are not in North America, but the record says they should be. Usually the pin was moved on the observation after its location text was written, or a longitude lost its minus sign. Check the pin on the iNaturalist observation — if the record really was collected outside North America, set its country to match and ask staff to confirm it.",
+    // The second sentence used to be "Its current identification is something
+    // else (a moss, alga, fungus, or the bee itself)", which was as close as
+    // this could get to naming the taxon while the detail was a machine value.
+    // The detail now says which one it is, so the generic list folds into the
+    // first sentence rather than being said twice (beeline-dys).
     non_tracheophyte_host:
-      "The iNaturalist observation should be identified as the floral host — a vascular plant. Its current identification is something else (a moss, alga, fungus, or the bee itself). Correct the observation's identification to the plant the bee was collected from.",
+      "The iNaturalist observation should be identified as the floral host — a vascular plant, not a moss, an alga, a fungus, or the bee itself. Correct the observation's identification to the plant the bee was collected from.",
     duplicate_sample_number:
       "Two of your samples on the same day share a sample number. Renumber one of the observations so each sample that day is distinct.",
     count_mismatch:

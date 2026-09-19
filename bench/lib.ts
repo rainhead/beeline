@@ -240,7 +240,12 @@ export async function environment(bench: Bench, sourcePath: string) {
     host: process.env.FLY_MACHINE_ID
       ? `fly:${process.env.FLY_APP_NAME}:${process.env.FLY_REGION}`
       : (process.env.BENCH_HOST ?? "workstation"),
-    argv: process.argv.slice(2).map((a) => (a.startsWith("--") ? a : "<store>")),
+    // The flags as given, their values only where they are numbers: every
+    // other value is a path (`--compare`, `--out`), and a path names a home
+    // directory (CodeRabbit on PR #84).
+    argv: process.argv.slice(2).map((a) =>
+      a.startsWith("--") ? a.replace(/=(?!\d+(\.\d+)?$).*$/, "=<path>") : "<store>",
+    ),
     // The image has no .git; a Fly machine says which image it is running instead.
     commit: git("git rev-parse --short HEAD") ?? process.env.FLY_IMAGE_REF?.split(":").pop() ?? null,
     dirty: git("git status --porcelain") === null ? null : git("git status --porcelain") !== "",

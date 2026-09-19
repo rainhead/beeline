@@ -5,7 +5,7 @@
     "argv": [
       "<store>",
       "--n=15",
-      "--out=bench/results/pages-workstation-2026-09-18.json"
+      "--out=<path>"
     ],
     "commit": "d248d7c",
     "dirty": true,

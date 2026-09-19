@@ -251,6 +251,31 @@ describe("the sample page", () => {
     expect(await get(legacy, `/samples/${a2}`)).not.toContain("Recorded in iNaturalist as");
   });
 
+  it("shows the observer's own notes, as text and never as markup", async () => {
+    // Where no observation field held what the collector had to say: the
+    // plant's condition, the weather, why a count is odd (beeline-hza). The
+    // text is whatever they typed, and iNaturalist lets them type markdown
+    // and HTML — so what is shown is the characters, escaped, rather than a
+    // bold word and a live link on a page the record is read from.
+    const { app, conn, aliceSample } = await recordApp();
+    await conn.run(
+      `INSERT INTO observation_field (inat_id, notes)
+       VALUES (998877, 'Two queens on <b>Salvia</b>; second net pass & short of light.')`,
+    );
+    const body = await get(app, `/samples/${aliceSample}`);
+    expect(body).toContain("Notes");
+    expect(body).toContain("Two queens on &lt;b&gt;Salvia&lt;/b&gt;; second net pass &amp; short of light.");
+    expect(body).not.toContain("<b>Salvia</b>");
+  });
+
+  it("gives an observation with no notes no row at all, since most have none", async () => {
+    // An absence is worth words only where it tells the reader something
+    // (components/text.tsx), and "this volunteer typed nothing" does not.
+    const { app, conn, aliceSample } = await recordApp();
+    await conn.run(`INSERT INTO observation_field (inat_id, notes) VALUES (998877, NULL)`);
+    expect(await get(app, `/samples/${aliceSample}`)).not.toContain("Notes");
+  });
+
   it("prints the floral host as a scientific name, italicised from its rank", async () => {
     // Names are derived, never typed: TaxonName reads the RANK because the
     // string cannot be read for it. 'Onagraceae' (family) and 'Chamaenerion'

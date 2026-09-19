@@ -473,6 +473,11 @@ export interface ObservationFieldTable {
   private_place_guess: string | null;
   /** iNaturalist's rank for the floral host — what italics are derived from. */
   host_taxon_rank: string | null;
+  /** The observer's free text (iNat's `description`), verbatim and possibly
+   *  containing markup — escaped where it is rendered, never here. Null on
+   *  every load synced before beeline-hza: the sync's whitelist is the
+   *  projection and never asked for it. LAST — positional (schema/060). */
+  notes: string | null;
 }
 
 /** schema/105: observation_field disagreeing with a fresh shred of the loads. */

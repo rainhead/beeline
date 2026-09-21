@@ -2,7 +2,7 @@ import type { Child } from "hono/jsx";
 import type { Messages } from "../messages/index.js";
 import type { Session } from "../session.js";
 import type { Acting } from "../acting.js";
-import { MenuIcon, PersonIcon } from "./icons.js";
+import { FeedbackIcon, MenuIcon, PersonIcon } from "./icons.js";
 
 export interface PageEnv {
   /** Stamp appended to stylesheet URLs so a CSS change is not cached past it. */
@@ -20,6 +20,11 @@ export interface PageEnv {
    * about a household.
    */
   acting: Acting;
+  /**
+   * The header's "Send feedback" mailto, already carrying the page, the time,
+   * the browser and the session; null when no address is configured.
+   */
+  feedbackHref: string | null;
   m: Messages;
 }
 
@@ -181,6 +186,14 @@ export function Layout(props: {
           <nav class="nav-inline">
             <NavLinks m={m} />
           </nav>
+          {/* In the header itself, never in a menu: the one thing a person
+              who has hit something wrong must not have to hunt for. */}
+          {env.feedbackHref !== null && (
+            <a class="feedback-link" href={env.feedbackHref}>
+              <FeedbackIcon />
+              <span>{m.layout.feedback.label}</span>
+            </a>
+          )}
           {/* The account menu is about the person signed in — who they are,
               who they act for, signing out — and never a place to find pages. */}
           <details class="menu account-menu">

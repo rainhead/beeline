@@ -18,6 +18,23 @@ body > header .brand {
 body > header .nav-inline { display: flex; gap: var(--space-4); }
 body > header .nav-inline a { font: var(--md-sys-typescale-label); text-decoration: none; }
 body > header .account-menu { margin-left: auto; }
+/* The feedback link takes over pushing right, so it and the avatar sit
+   together at the end of the header. */
+body > header .feedback-link { margin-left: auto; }
+body > header .feedback-link + .account-menu { margin-left: 0; }
+.feedback-link {
+  font: var(--md-sys-typescale-label);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-height: var(--touch-target);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  color: var(--md-sys-color-on-surface-variant);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.feedback-link:hover { background: var(--md-sys-color-surface); }
 
 /* Header dropdowns: <details> so they work without JavaScript (the islands
    bundle adds outside-click and Escape dismissal). The panel is absolutely

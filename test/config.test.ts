@@ -61,3 +61,19 @@ describe("configFromEnv deploy safety", () => {
     expect(configFromEnv({ BEELINE_ADMIN_LOGINS: "" }).adminLogins).toEqual([]); // explicit nobody
   });
 });
+
+describe("configFromEnv feedback address", () => {
+  it("takes one address or a comma-separated list, and nothing means no link", () => {
+    expect(configFromEnv({}).feedbackEmail).toBeNull();
+    expect(configFromEnv({ BEELINE_FEEDBACK_EMAIL: " a@example.org " }).feedbackEmail).toBe("a@example.org");
+    expect(configFromEnv({ BEELINE_FEEDBACK_EMAIL: "a@example.org,b@example.org" }).feedbackEmail).toBe(
+      "a@example.org,b@example.org",
+    );
+  });
+
+  it("refuses anything that would break out of the mailto's address", () => {
+    for (const bad of ["a@example.org?cc=x@evil.example", "a@example.org#x", "a@example.org&body=x", "a b@example.org", "nobody"]) {
+      expect(() => configFromEnv({ BEELINE_FEEDBACK_EMAIL: bad })).toThrow(/BEELINE_FEEDBACK_EMAIL/);
+    }
+  });
+});

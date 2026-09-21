@@ -85,6 +85,11 @@ fly secrets set --app beeline \
   INAT_CLIENT_ID=... INAT_CLIENT_SECRET=...
 ```
 
+`BEELINE_FEEDBACK_EMAIL` is optional: set, it puts a "Send feedback" email
+link in every page's header, pre-filled with the page, time, browser and a
+short hash of the session; unset, there is no link. It is a secret only so the
+address stays out of this public repository.
+
 Keep a copy of the private-store key in your password manager before you set
 it: Fly secrets are write-only, and losing the key is losing the private store
 ([ADR 0003](../adr/0003-private-data-store.md)).

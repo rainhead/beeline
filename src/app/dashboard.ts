@@ -25,6 +25,12 @@ export interface Dashboard {
    */
   settledThrough: string;
   everSynced: boolean;
+  /**
+   * The atlas this person belongs to (person_membership), whose mark the page
+   * carries. Null for program-only membership and for nobody having asked:
+   * with no atlas to act on behalf of, the program acts as itself.
+   */
+  atlas: { code: string; name: string } | null;
 }
 
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
@@ -61,7 +67,7 @@ type RawPlaceholderRow = Omit<
 export async function loadDashboard(db: Kysely<Database>, personId: number): Promise<Dashboard> {
   const rules = [...DASHBOARD_RULES.keys()];
   const ruleList = sql.join(rules.map((r) => sql`${r}`));
-  const [samples, findings, placeholders, partners, sync, season] = await Promise.all([
+  const [samples, findings, placeholders, partners, sync, season, atlas] = await Promise.all([
     // A sample is on the page when a rule the page shows fires on it, or
     // when labels are waiting for it. The roll-up (sample_qc_finding), not
     // qc_finding: a finding on one of a sample's specimens is something to
@@ -150,6 +156,12 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       .executeTakeFirst(),
     // Date minus an integer is a date in both engines (ADR 0001).
     sql<{ through: string }>`SELECT CAST(started_on - 1 AS TEXT) AS through FROM season`.execute(db),
+    db
+      .selectFrom("person_membership as pm")
+      .innerJoin("atlas as a", "a.entity_id", "pm.atlas_id")
+      .where("pm.person_id", "=", personId)
+      .select(["a.code", "a.name"])
+      .executeTakeFirst(),
   ]);
 
   const findingsBySample = new Map<number, Finding[]>();
@@ -245,5 +257,6 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
     settledFlagged,
     settledThrough: season.rows[0]?.through ?? "",
     everSynced: (sync?.at ?? null) !== null,
+    atlas: atlas ?? null,
   };
 }

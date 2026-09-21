@@ -86,6 +86,21 @@ describe("the front page", () => {
     expect(body).not.toContain("Samples needing attention");
   });
 
+  it("carries the mark of the atlas the person belongs to, and none without one", async () => {
+    const { app, conn, alice } = await qcApp();
+    // Nobody has asked where Alice belongs: the program acts as itself.
+    expect(await (await app.request("/")).text()).not.toContain('class="atlas-mark"');
+    await conn.run(
+      `INSERT INTO person_membership (person_id, kind, atlas_id)
+       SELECT ${alice}, 'atlas', entity_id FROM atlas WHERE code = 'WaBA'`,
+    );
+    // Belonging is what counts, not where her samples fell (they are in Oregon).
+    const body = await (await app.request("/")).text();
+    expect(body).toContain('<img class="atlas-mark" src="/static/atlas/WaBA.jpg" alt="Washington Bee Atlas"');
+    await conn.run(`UPDATE person_membership SET kind = 'program', atlas_id = NULL WHERE person_id = ${alice}`);
+    expect(await (await app.request("/")).text()).not.toContain('class="atlas-mark"');
+  });
+
   it("lists the signed-in collector's flagged samples in one table, blocking first", async () => {
     const { app } = await qcApp();
     const body = await (await app.request("/")).text();

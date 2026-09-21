@@ -570,9 +570,14 @@ describe("the roster screen", () => {
   });
 
   it("sets a home atlas, and refuses a code no atlas has", async () => {
+    expect(await (await ctx.app.request("/people/1")).text()).not.toContain('class="atlas-mark"');
     await post(ctx.app, "/people/1/membership", { home_atlas: "WaBA", reason: "" });
     const home = await ctx.db.selectFrom("person_membership").where("person_id", "=", 1).selectAll().executeTakeFirst();
     expect(home?.kind).toBe("atlas");
+    // Their page carries the mark of the atlas they now belong to.
+    expect(await (await ctx.app.request("/people/1")).text()).toContain(
+      '<img class="atlas-mark" src="/static/atlas/WaBA.jpg" alt="Washington Bee Atlas"',
+    );
     const bad = await post(ctx.app, "/people/1/membership", { home_atlas: "ZZ", reason: "" });
     expect(await bad.text()).toContain("no atlas with code");
   });

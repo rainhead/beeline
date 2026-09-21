@@ -19,12 +19,30 @@ export function Meta({ children, block }: { children: Child; block?: boolean }) 
  * Every page opens the same way: a title, an optional sentence saying what
  * this screen is for, and optional meta beneath it.
  */
-export function PageHeader({ title, lede, meta }: { title: Child; lede?: Child; meta?: Child }) {
-  return (
-    <div class="page-header">
+export function PageHeader({
+  title,
+  lede,
+  meta,
+  mark,
+}: {
+  title: Child;
+  lede?: Child;
+  meta?: Child;
+  /** An atlas mark set beside the text, where the page is about someone in that atlas. */
+  mark?: Child;
+}) {
+  const text = (
+    <>
       <h1>{title}</h1>
       {lede !== undefined && <p>{lede}</p>}
       {meta !== undefined && <Meta block>{meta}</Meta>}
+    </>
+  );
+  if (mark === undefined || mark === null) return <div class="page-header">{text}</div>;
+  return (
+    <div class="page-header page-header-marked">
+      <div>{text}</div>
+      {mark}
     </div>
   );
 }

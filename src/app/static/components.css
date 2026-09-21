@@ -24,6 +24,10 @@
 /* Page header — <h1> plus an optional lede and meta line. */
 .page-header { margin-bottom: var(--space-6); }
 .page-header > :last-child { margin-bottom: 0; }
+/* A page about someone in an atlas carries its mark at the header's end. */
+.page-header-marked { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
+.page-header-marked > div > :last-child { margin-bottom: 0; }
+.atlas-mark { flex: none; width: 4.5rem; height: 4.5rem; border-radius: 50%; object-fit: cover; }
 
 /* Breadcrumbs: where a page sits in a hierarchy, above its header. The
    separator is drawn here rather than typed, with empty alternative text, so

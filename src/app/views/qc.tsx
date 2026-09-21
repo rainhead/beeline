@@ -4,6 +4,7 @@ import type { Geoprivacy, QcSeverity } from "../../model.js";
 import type { Messages } from "../messages/index.js";
 import {
   Absent,
+  AtlasMark,
   Callout,
   Chip,
   DataTable,
@@ -277,6 +278,8 @@ export function QcHome(props: {
   settledFlagged?: number;
   /** The last day of the settled seasons, ISO: where the link to them points the listing's date filter. */
   settledThrough?: string;
+  /** The atlas whose mark the page carries; absent or null, the program acts as itself. */
+  atlas?: { code: string; name: string } | null;
 }) {
   const { m, rows } = props;
   const withOthers: CoCollectors = props.withOthers ?? new Map();
@@ -293,7 +296,11 @@ export function QcHome(props: {
   // That note now sits under the table, where the flags it explains are.
   return (
     <>
-      <PageHeader title={m.qc.heading} lede={m.qc.lede} />
+      <PageHeader
+        title={m.qc.heading}
+        lede={m.qc.lede}
+        mark={props.atlas ? <AtlasMark code={props.atlas.code} name={props.atlas.name} /> : undefined}
+      />
       {settledFlagged > 0 && (
         <Callout>
           <Meta block>

@@ -59,7 +59,7 @@ export interface ScopeOption {
   atlas_id: number;
   code: string;
   name: string;
-  /** Prints its own labels, so the unscoped run leaves it alone. */
+  /** Prints its own labels: the unscoped run leaves it alone, and only such an atlas can be a run's scope. */
   own: boolean;
   samples: number;
   labels: number;

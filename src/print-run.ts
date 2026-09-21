@@ -42,12 +42,15 @@ export function withPrintRunLock<T>(fn: () => Promise<T>): Promise<T> {
 export type PrintRunRefusal =
   | { code: "no_location"; sampleId: number }
   | { code: "no_primary_collector"; sampleId: number }
-  | { code: "determined"; printRunId: number; specimens: number };
+  | { code: "determined"; printRunId: number; specimens: number }
+  | { code: "atlas_not_printing"; atlasId: number };
 
 export class PrintRunRefused extends Error {
   constructor(public readonly refusal: PrintRunRefusal) {
     super(
-      refusal.code === "determined"
+      refusal.code === "atlas_not_printing"
+        ? `atlas ${refusal.atlasId} does not print its own labels; a run scoped to it is refused`
+        : refusal.code === "determined"
         ? `print run ${refusal.printRunId} has ${refusal.specimens} determined specimen(s); cancel refused`
         : refusal.code === "no_location"
           ? `sample ${refusal.sampleId} is pending print but has no location row`
@@ -57,7 +60,11 @@ export class PrintRunRefused extends Error {
 }
 
 export interface PrepareOptions {
-  /** Null = every atlas that does not print its own labels (atlas_printing), plus samples outside any atlas. */
+  /**
+   * Null = every atlas that does not print its own labels (atlas_printing),
+   * plus samples outside any atlas. Otherwise an atlas in atlas_printing: the
+   * rest are the program's to print, so a run scoped to one is refused.
+   */
   atlasId: number | null;
   personId: number;
   now?: Date;
@@ -192,6 +199,16 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
         `CREATE TEMP TABLE freeze_scope AS SELECT sample_id, pending_count FROM print_scope_sample`,
       );
     } else {
+      // Checked here rather than only in the scope picker, so no caller can
+      // print an atlas's labels that the unscoped run already covers.
+      const [printing] = await rows<{ n: bigint }>(
+        conn,
+        `SELECT count(*) AS n FROM atlas_printing WHERE atlas_id = $1`,
+        [opts.atlasId],
+      );
+      if (Number(printing?.n ?? 0) === 0) {
+        throw new PrintRunRefused({ code: "atlas_not_printing", atlasId: opts.atlasId });
+      }
       await conn.run(
         `CREATE TEMP TABLE freeze_scope AS
            SELECT p.sample_id, p.pending_count

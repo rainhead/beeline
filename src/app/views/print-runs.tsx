@@ -66,13 +66,12 @@ export function PrintRuns({
     labels === 0 ? p.prepare.nothingWaiting : p.prepare.waiting(labels, samples);
   const options: ReadonlyArray<readonly [string, Child]> = [
     ["", `${p.prepare.program} — ${waiting(scope.program.labels, scope.program.samples)}`],
-    ...scope.atlases.map(
-      (a) =>
-        [
-          String(a.atlas_id),
-          `${a.name}${a.own ? ` (${p.prepare.own})` : ""} — ${waiting(a.labels, a.samples)}`,
-        ] as const,
-    ),
+    // Only an atlas that prints its own labels can be a run of its own; the
+    // rest are the program's run, which the hint names (src/print-run.ts
+    // refuses the others too, so this list is not the guard).
+    ...scope.atlases
+      .filter((a) => a.own)
+      .map((a) => [String(a.atlas_id), `${a.name} — ${waiting(a.labels, a.samples)}`] as const),
   ];
   return (
     <>

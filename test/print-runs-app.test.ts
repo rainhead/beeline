@@ -86,8 +86,22 @@ describe("the print-run screens", () => {
     expect(body).toContain("No print runs yet.");
     // The Prepare form says what it will take before anyone presses it.
     expect(body).toContain("Everyone Oregon prints for — 4 labels for 2 samples waiting");
-    expect(body).toContain("Oregon Bee Atlas — 3 labels for 1 sample waiting");
-    expect(body).toContain("Washington Bee Atlas — nothing waiting");
+    // No atlas prints its own labels, so no atlas is a scope of its own.
+    expect(body).not.toContain("Oregon Bee Atlas —");
+    expect(body).not.toContain("Washington Bee Atlas —");
+    await staff.conn.run(`INSERT INTO atlas_printing SELECT entity_id FROM atlas WHERE code = 'WaBA'`);
+    const flagged = await (await staff.app.request("/print-runs")).text();
+    expect(flagged).toContain("Washington Bee Atlas — nothing waiting");
+    expect(flagged).not.toContain("Oregon Bee Atlas —");
+  });
+
+  it("refuses a run scoped to an atlas that does not print its own labels, in words", async () => {
+    const { conn, post } = await printApp();
+    const [[oba]] = (await rows(conn, `SELECT entity_id FROM atlas WHERE code = 'OBA'`)) as [[number]];
+    const refused = await post("/print-runs", { atlas_id: String(oba) });
+    expect(refused.status).toBe(409);
+    expect(await refused.text()).toContain("that atlas does not print its own labels");
+    expect(Number(((await rows(conn, "SELECT count(*) FROM print_run")) as [[bigint]])[0][0])).toBe(0);
   });
 
   it("prepares, proofs, downloads, and walks prepared → approved → printed → mailed", async () => {

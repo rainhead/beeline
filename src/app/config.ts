@@ -66,6 +66,12 @@ export interface AppConfig {
   syncProjects: number[];
   /** Anti-entropy sweep depth in days: the presence-proof window (d1 = today - sweepDays). */
   sweepDays: number;
+  /**
+   * Where the header's "Send feedback" link addresses its email, or null to
+   * offer no link. From the environment rather than checked in, because the
+   * repository is public and the address is somebody's inbox.
+   */
+  feedbackEmail: string | null;
 }
 
 /**
@@ -164,5 +170,6 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     devLogin: environment === "development" ? (env.BEELINE_DEV_LOGIN ?? null) : null,
     syncProjects,
     sweepDays,
+    feedbackEmail: env.BEELINE_FEEDBACK_EMAIL?.trim() || null,
   };
 }

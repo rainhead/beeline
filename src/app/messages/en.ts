@@ -108,6 +108,29 @@ export const en = {
     more: "Reference and tools",
     /** The records nav as it appears inside the menu on a narrow screen. Read aloud, never shown. */
     records: "Records",
+    /**
+     * The feedback link in the header: an email, pre-filled with what staff
+     * need to find what the person was looking at. In the header rather than
+     * a menu so nobody has to go looking for it; the body leaves room at the
+     * top for the person's own words, which are the point.
+     */
+    feedback: {
+      label: "Send feedback",
+      subject: "Beeline feedback",
+      body: (context: { url: string; when: string; userAgent: string; login: string; session: string }) =>
+        [
+          "What happened, or what would you like to tell us?",
+          "",
+          "",
+          "",
+          "-- Please leave the lines below: they help us find what you were looking at. --",
+          `Page: ${context.url}`,
+          `Page loaded: ${context.when}`,
+          `Signed in as: ${context.login}`,
+          `Session: ${context.session}`,
+          `Browser: ${context.userAgent}`,
+        ].join("\n"),
+    },
     /** The hamburger button left of the brand: reference pages and staff tools, and the nav on narrow screens. */
     menu: "Menu",
     /** The avatar button that opens the account menu. */

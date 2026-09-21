@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import { sql, type Kysely } from "kysely";
@@ -21,7 +21,18 @@ export interface Session {
    * cannot work (Peter hit exactly that, 2026-08-23).
    */
   stub?: boolean;
+  /**
+   * A short name for this session that is safe to hand to a person: the
+   * cookie's value is the bearer credential, so a feedback email carrying it
+   * would let whoever reads the email sign in as the sender. The first 12 hex
+   * digits of its SHA-256 find the row again (`sha256(id)` in DuckDB) and
+   * grant nothing. Absent on a dev-login stub, which has no cookie.
+   */
+  ref?: string;
 }
+
+/** See {@link Session.ref}. */
+export const sessionRef = (id: string) => createHash("sha256").update(id).digest("hex").slice(0, 12);
 
 /** Resolves a request to a session, or null for anonymous. */
 export type SessionResolver = (c: Context) => Promise<Session | null>;
@@ -160,7 +171,7 @@ export function cookieSessionResolver(db: Kysely<Database>): SessionResolver {
         .execute(),
     );
     await bookkeeping(() => recordActivity(db, row.inat_user_id));
-    return { personId: row.person_id, login: row.login, iconUrl: row.icon_url };
+    return { personId: row.person_id, login: row.login, iconUrl: row.icon_url, ref: sessionRef(id) };
   };
 }
 

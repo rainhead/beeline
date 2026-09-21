@@ -107,7 +107,7 @@ export interface JobsDep {
 
 export interface AppDeps {
   db: Kysely<Database>;
-  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins">>;
+  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail">>;
   inat: InatClient;
   resolveSession: SessionResolver;
   /** The job registry; absent in tests that don't exercise /jobs. */
@@ -376,8 +376,26 @@ export function createApp({
     return c.redirect("/people");
   });
 
+  // The feedback email, pre-filled. The URL is rebuilt on the public origin,
+  // since behind Fly's proxy the request URL is the internal one.
+  const feedbackHref = (c: Context<AppEnv>): string | null => {
+    if (!config.feedbackEmail) return null;
+    const m = c.get("m");
+    const session = c.get("session");
+    const url = new URL(c.req.url);
+    const body = m.layout.feedback.body({
+      url: `${config.origin}${url.pathname}${url.search}`,
+      when: new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles", timeZoneName: "short" }),
+      userAgent: c.req.header("user-agent") ?? "unknown",
+      login: session.login,
+      session: session.ref ?? "none",
+    });
+    const query = [`subject=${encodeURIComponent(m.layout.feedback.subject)}`, `body=${encodeURIComponent(body)}`];
+    return `mailto:${config.feedbackEmail}?${query.join("&")}`;
+  };
+
   const page = async (
-    c: { get<K extends "session" | "m" | "admin" | "acting">(k: K): AppEnv["Variables"][K] },
+    c: Context<AppEnv>,
     title: string,
     children: Child,
     stylesheets?: readonly string[],
@@ -391,6 +409,7 @@ export function createApp({
           session: c.get("session"),
           admin: c.get("admin"),
           acting: c.get("acting"),
+          feedbackHref: feedbackHref(c),
           m: c.get("m"),
         }}
         title={title}

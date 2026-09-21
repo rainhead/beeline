@@ -7,7 +7,7 @@ import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { attachPrivateStore } from "../src/app/db.js";
 import { createApp } from "../src/app/server.js";
-import { cookieSessionResolver, endSessionsFor, purgeIdleSessions } from "../src/app/session.js";
+import { cookieSessionResolver, endSessionsFor, purgeIdleSessions, sessionRef } from "../src/app/session.js";
 import { createFileDb, createMemoryDb } from "./helpers.js";
 
 const ORIGIN = "http://localhost:3054";
@@ -21,7 +21,7 @@ const fakeInat = (identity: FakeIdentity): InatClient => ({
   identity: async () => ({ iconUrl: null, ...identity }),
 });
 
-async function testApp(identity: FakeIdentity) {
+async function testApp(identity: FakeIdentity, feedbackEmail?: string) {
   const { instance, conn } = await createMemoryDb();
   await attachPrivateStore(instance, { path: ":memory:", key: null });
   await conn.run(`INSERT INTO person (entity_id, display_name) VALUES (11, 'Member Bee')`);
@@ -29,7 +29,7 @@ async function testApp(identity: FakeIdentity) {
   const db = createKysely(instance);
   const app = createApp({
     db,
-    config: { environment: "development", origin: ORIGIN },
+    config: { environment: "development", origin: ORIGIN, feedbackEmail },
     inat: fakeInat(identity),
     resolveSession: cookieSessionResolver(db),
   });
@@ -79,6 +79,34 @@ describe("iNat OAuth sign-in", () => {
 
     const home = await app.request("/", { headers: { cookie: `beeline_session=${session}` } });
     expect(await home.text()).toContain(`<img class="avatar" src="${icon}"`);
+  });
+
+  it("the feedback link names the session without handing over the cookie", async () => {
+    const { app } = await testApp({ inatUserId: 501, login: "memberbee" }, "staff@example.org");
+    const cb = await signIn(app);
+    const session = /beeline_session=([a-f0-9]+)/.exec(cb.headers.get("set-cookie")!)![1]!;
+
+    const page = await app.request("/glossary?q=trap", {
+      headers: { cookie: `beeline_session=${session}`, "user-agent": "TestBrowser/1.0" },
+    });
+    const href = /href="(mailto:[^"]+)"/.exec(await page.text())![1]!.replaceAll("&amp;", "&");
+    expect(href.startsWith("mailto:staff@example.org?")).toBe(true);
+    const body = decodeURIComponent(/body=([^&]+)/.exec(href)![1]!);
+    expect(body).toContain(`Page: ${ORIGIN}/glossary?q=trap`);
+    expect(body).toContain("Browser: TestBrowser/1.0");
+    expect(body).toContain("Signed in as: memberbee");
+    expect(body).toMatch(/Page loaded: .*P[DS]T/);
+    expect(body).toContain(`Session: ${sessionRef(session)}`);
+    // The cookie is the bearer credential: whoever read the email could sign in.
+    expect(href).not.toContain(session);
+  });
+
+  it("there is no feedback link without an address to send it to", async () => {
+    const { app } = await testApp({ inatUserId: 501, login: "memberbee" });
+    const cb = await signIn(app);
+    const session = /beeline_session=([a-f0-9]+)/.exec(cb.headers.get("set-cookie")!)![1];
+    const page = await app.request("/glossary", { headers: { cookie: `beeline_session=${session}` } });
+    expect(await page.text()).not.toContain("mailto:");
   });
 
   it("an unknown signer-in gets a holding page, no session — but the token is stored", async () => {

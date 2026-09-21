@@ -148,6 +148,12 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (!Number.isInteger(sweepDays) || sweepDays <= 0) {
     throw new Error(`BEELINE_SWEEP_DAYS must be a whole number of days, got '${env.BEELINE_SWEEP_DAYS}'`);
   }
+  // Spliced into a mailto URL, so anything that would end the address part
+  // early — a query, a fragment, whitespace — is a boot error, not a broken link.
+  const feedbackEmail = env.BEELINE_FEEDBACK_EMAIL?.trim() || null;
+  if (feedbackEmail !== null && !/^[^\s@,?#&]+@[^\s@,?#&]+(,[^\s@,?#&]+@[^\s@,?#&]+)*$/.test(feedbackEmail)) {
+    throw new Error(`BEELINE_FEEDBACK_EMAIL must be an address or a comma-separated list of them, got '${feedbackEmail}'`);
+  }
   return {
     port,
     dbPath: env.BEELINE_DB ?? "beeline.duckdb",
@@ -170,6 +176,6 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     devLogin: environment === "development" ? (env.BEELINE_DEV_LOGIN ?? null) : null,
     syncProjects,
     sweepDays,
-    feedbackEmail: env.BEELINE_FEEDBACK_EMAIL?.trim() || null,
+    feedbackEmail,
   };
 }

@@ -166,6 +166,18 @@ describe("preparing a run", () => {
     expect(await count("SELECT count(*) FROM pending_print_sample")).toBe(0);
   });
 
+  it("refuses a run scoped to an atlas that does not print its own labels, writing nothing", async () => {
+    const [[waba]] = (await rows(conn, `SELECT entity_id FROM atlas WHERE code = 'WaBA'`)) as [[number]];
+    const sample = await insertCleanSample(conn, { collector_id: String(ash), atlas_id: String(waba) });
+    const refused = await prepareRun(conn, { atlasId: waba, personId: ash, now: NOW }).catch((err: unknown) => err);
+    expect(refused).toBeInstanceOf(PrintRunRefused);
+    expect((refused as PrintRunRefused).refusal).toEqual({ code: "atlas_not_printing", atlasId: waba });
+    expect(await count("SELECT count(*) FROM print_run")).toBe(0);
+    expect(await rows(conn, `SELECT sample_id FROM pending_print_sample`)).toEqual([[sample]]);
+    // Washington's samples are Oregon's to print, through the unscoped run.
+    expect(await prepareRun(conn, { atlasId: null, personId: ash, now: NOW })).toMatchObject({ samples: 1 });
+  });
+
   it("stops rather than skipping a pending sample whose collector list has no head", async () => {
     const sample = await insertCleanSample(conn, { collector_id: String(ash), specimen_count: "1" });
     await conn.run(`UPDATE sample_collector SET position = 2 WHERE sample_id = ${sample}`);

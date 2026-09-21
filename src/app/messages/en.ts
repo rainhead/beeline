@@ -890,7 +890,6 @@ export const en = {
         codes.length === 0
           ? "Covers samples outside every atlas; each atlas prints its own."
           : `Covers ${list(codes)}, and samples outside every atlas.`,
-      own: "prints its own labels",
       waiting: (labels: number, samples: number) =>
         `${n(labels)} ${labels === 1 ? "label" : "labels"} for ${n(samples)} ${samples === 1 ? "sample" : "samples"} waiting`,
       nothingWaiting: "nothing waiting",
@@ -919,9 +918,12 @@ export const en = {
       refusal:
         | { code: "no_location"; sampleId: number }
         | { code: "no_primary_collector"; sampleId: number }
-        | { code: "determined"; printRunId: number; specimens: number },
+        | { code: "determined"; printRunId: number; specimens: number }
+        | { code: "atlas_not_printing"; atlasId: number },
     ) =>
-      refusal.code === "determined"
+      refusal.code === "atlas_not_printing"
+        ? "No run was prepared: that atlas does not print its own labels, so its samples go in the run for everyone Oregon prints for."
+        : refusal.code === "determined"
         ? `This run cannot be canceled: ${n(refusal.specimens)} of its specimens ${refusal.specimens === 1 ? "has" : "have"} already been identified, and canceling would take their field numbers away. Nothing was changed.`
         : refusal.code === "no_location"
           ? `No run was prepared: sample ${refusal.sampleId} is waiting to print but has no coordinates on record, which should not be possible. Look at /samples/${refusal.sampleId} before trying again.`

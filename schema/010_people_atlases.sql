@@ -57,7 +57,7 @@ COMMENT ON COLUMN atlas.inat_place_id IS 'The atlas''s iNaturalist place (Washin
 CREATE TABLE atlas_printing (
   atlas_id INTEGER PRIMARY KEY REFERENCES atlas(entity_id)
 );
-COMMENT ON TABLE atlas_printing IS 'Atlases that print their own labels; presence is the flag. Empty today: Oregon prints for every atlas. An unscoped print run freezes the samples of every atlas NOT here (print_scope_sample), and an atlas here gets labels only from a run scoped to it.';
+COMMENT ON TABLE atlas_printing IS 'Atlases that print their own labels; presence is the flag. Empty today: Oregon prints for every atlas. An unscoped print run freezes the samples of every atlas NOT here (print_scope_sample), and an atlas here gets labels only from a run scoped to it. Only an atlas here can be a run''s scope: the rest are the program''s to print, and src/print-run.ts refuses a run scoped to one.';
 
 -- The six member atlases. Place ids are filled in as they are verified
 -- against iNat (only Washington's is documented so far).

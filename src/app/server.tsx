@@ -439,6 +439,7 @@ export function createApp({
           everSynced={dashboard.everSynced}
           settledFlagged={dashboard.settledFlagged}
           settledThrough={dashboard.settledThrough}
+          atlas={dashboard.atlas}
         />,
       ),
     );

@@ -1,60 +1,19 @@
-import { SEED_COLOR } from "../../theme/tokens.js";
+import { ATLAS_IDENTITY } from "../../theme/atlas.js";
+import { AtlasMark } from "../components/index.js";
 import { DesignPage, DoDont, OpenQuestion, Specimen } from "./shell.js";
 
 /**
- * The six member atlases (schema/010_people_atlases.sql), their public homes,
- * and their colorways as far as they are known.
- *
- * `disc` and `ring` are EYEDROPPED from published marks — approximate,
- * unconfirmed against any brand source, and not yet used by the product,
- * which still renders every atlas in Beeline's own honey. A null pair means
- * the mark exists but has not been located yet, NOT that the atlas lacks one.
- * They sit here so replacing a guess with a real value is a one-line change
- * (beeline-2c3.12).
+ * The six member atlases (schema/010_people_atlases.sql) by the names this
+ * page proofs them under. Their homes, colorways and marks are
+ * ATLAS_IDENTITY's, which is what the product reads too.
  */
 const ATLASES = [
-  {
-    code: "OBA",
-    name: "Oregon Bee Atlas",
-    url: "https://extension.oregonstate.edu/bee-atlas",
-    disc: "#d23c00",
-    ring: "#8c8c82",
-  },
-  {
-    code: "WaBA",
-    name: "Washington Bee Atlas",
-    url: "https://agr.wa.gov/beeatlas",
-    disc: "#fab446",
-    ring: "#1e1e5a",
-  },
-  {
-    code: "BC",
-    name: "British Columbia Bee Atlas",
-    url: "https://www.bcnativebees.org/bc-bee-atlas",
-    disc: "#6eb4d2",
-    ring: "#6e001e",
-  },
-  {
-    code: "ID",
-    name: "Idaho Bee Atlas",
-    url: "https://sites.google.com/view/idahobeeatlas/home",
-    disc: "#f0aa00",
-    ring: "#141414",
-  },
-  {
-    code: "NM",
-    name: "New Mexico Bee Atlas",
-    url: "https://www.inaturalist.org/projects/new-mexico-bee-atlas",
-    disc: null,
-    ring: null,
-  },
-  {
-    code: "OK",
-    name: "Oklahoma Bee Atlas",
-    url: "https://www.inaturalist.org/projects/oklahoma-bee-atlas",
-    disc: null,
-    ring: null,
-  },
+  { code: "OBA", name: "Oregon Bee Atlas" },
+  { code: "WaBA", name: "Washington Bee Atlas" },
+  { code: "BC", name: "British Columbia Bee Atlas" },
+  { code: "ID", name: "Idaho Bee Atlas" },
+  { code: "NM", name: "New Mexico Bee Atlas" },
+  { code: "OK", name: "Oklahoma Bee Atlas" },
 ] as const;
 
 /**
@@ -63,8 +22,7 @@ const ATLASES = [
  * decision. A swatch of a stored value is data, the same as the string beside
  * it.
  */
-function Colour({ hex }: { hex: string | null }) {
-  if (hex === null) return <span class="meta">unknown</span>;
+function Colour({ hex }: { hex: string }) {
   return (
     <span class="row">
       <span class="swatch-dot" style={`background: ${hex}`}></span>
@@ -114,15 +72,17 @@ export function DesignIdentity() {
         instead would render Washington navy throughout and Idaho black, which is not what either identity means.
       </p>
       <p>
-        Three of the four known discs are warm — Oregon brick, Washington and Idaho gold — close enough to
+        Four of the six discs are warm — Oregon brick, Washington, Idaho and New Mexico gold — close enough to
         Beeline&apos;s honey that the product barely shifts. British Columbia is sky blue, and is the useful case:
         it proves the disc is the seed because it <em>is</em> the accent, not because atlas colours happen to be
-        warm. A BC-seeded Beeline should come out blue.
+        warm. A BC-seeded Beeline should come out blue. Oklahoma turns the usual contrast around, with a dark red
+        disc inside a charcoal ring; the disc is still the accent and still the seed.
       </p>
       <Specimen>
         <table>
           <thead>
             <tr>
+              <th>Mark</th>
               <th>Atlas</th>
               <th>Disc — the seed</th>
               <th>Ring — dark chrome</th>
@@ -130,22 +90,28 @@ export function DesignIdentity() {
             </tr>
           </thead>
           <tbody>
-            {ATLASES.map((a) => (
-              <tr>
-                <td>
-                  <a href={a.url}>{a.name}</a> <span class="meta">{a.code}</span>
-                </td>
-                <td>
-                  <Colour hex={a.disc} />
-                </td>
-                <td>
-                  <Colour hex={a.ring} />
-                </td>
-                <td>
-                  <a href={`/tokens.css?seed=${encodeURIComponent(a.disc ?? SEED_COLOR)}`}>tokens.css</a>
-                </td>
-              </tr>
-            ))}
+            {ATLASES.map((a) => {
+              const identity = ATLAS_IDENTITY[a.code]!;
+              return (
+                <tr>
+                  <td>
+                    <AtlasMark code={a.code} name={a.name} />
+                  </td>
+                  <td>
+                    <a href={identity.url}>{a.name}</a> <span class="meta">{a.code}</span>
+                  </td>
+                  <td>
+                    <Colour hex={identity.disc} />
+                  </td>
+                  <td>
+                    <Colour hex={identity.ring} />
+                  </td>
+                  <td>
+                    <a href={`/tokens.css?seed=${encodeURIComponent(identity.disc)}`}>tokens.css</a>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </Specimen>
@@ -156,35 +122,30 @@ export function DesignIdentity() {
 
       <OpenQuestion bead="beeline-2c3.12">
         <p>
-          Four of the six are known by eye — Oregon, Washington, British Columbia and Idaho, sampled from their
-          published marks and recorded on beeline-2c3.12. None has been confirmed against a brand source.
-        </p>
-        <p>
-          New Mexico and Oklahoma have marks and colours too; they simply have not been found. Neither runs a website —
-          both are reachable only as iNaturalist projects, whose icons are stand-ins rather than identity (New Mexico&apos;s
-          is a photograph of a bee; Oklahoma&apos;s is a green state silhouette). Do not read a null pair as an atlas
-          without a mark.
+          All six colours are sampled from the marks the program distributes on Canvas, recorded on beeline-2c3.12.
+          None has been stated by a brand source, and none seeds the product palette yet: every atlas still renders
+          in Beeline&apos;s own honey.
         </p>
       </OpenQuestion>
 
-      <OpenQuestion bead="beeline-2c3.11">
-        <p>
-          Nothing links a person to an atlas. The <code>atlas</code> table exists and samples are assigned to atlases
-          by geography, but a volunteer has no home atlas — so no screen can currently show atlas branding at all. This
-          section describes a contract, not something you can see working.
-        </p>
-      </OpenQuestion>
+      <h2>Where the mark appears</h2>
+      <p>
+        At the end of the page header on the two screens about one person: the volunteer&apos;s own front page, and
+        that person&apos;s page on <code>/people</code>. The atlas is the one they belong to, as{" "}
+        <code>person_membership</code> records it, never the one their samples happened to land in, so a Washington volunteer
+        collecting in Oregon still sees Washington. Program-only membership, or nobody having asked, carries no mark:
+        the program acts as itself.
+      </p>
 
       <h2>Wordmark</h2>
       <p>
-        Today the identity is typographic: "Beeline" set in the title step, in <code>on-surface</code>, top-left,
-        linking home. That is a placeholder for the atlas roundel, not a design — no mark ships in this repository.
+        The program itself is still typographic: "Beeline" set in the title step, in <code>on-surface</code>,
+        top-left, linking home. No program mark ships in this repository, only the six atlas adaptations of it.
       </p>
       <p>
-        One constraint the real marks impose: the roundel carries its own circular type, so the mark and the atlas
-        name are a single object. There is no lockup to break apart, and at small sizes the wrapped name is
-        unreadable — which means a favicon or an avatar needs the bee-and-pin glyph on its own, and that cropped
-        version does not currently exist as an asset.
+        The atlas marks carry their own circular type, so the mark and the atlas name are a single object. There is no
+        lockup to break apart, and at small sizes the wrapped name is unreadable, which means a favicon or an avatar
+        needs the bee-and-pin glyph on its own. That cropped version does not exist as an asset yet.
       </p>
       <Specimen>
         <span style="font: var(--md-sys-typescale-title); color: var(--md-sys-color-on-surface)">Beeline</span>
@@ -192,9 +153,10 @@ export function DesignIdentity() {
 
       <OpenQuestion bead="beeline-2c3.13">
         <p>
-          No logo asset exists. When one arrives this section needs the things a logo section normally states: clear
-          space, minimum size, approved colorways, what may never be done to it, and which mark is used at favicon
-          sizes.
+          The marks here are 216-pixel JPEGs from Canvas, with a white field and no transparency. They are cropped to
+          their circle and drawn at one small size, 4.5rem, and nowhere larger. The vector artwork would lift both
+          limits, and would bring with it what a logo section normally states: clear space, minimum size, approved
+          colorways, what may never be done to it, and which mark is used at favicon sizes.
         </p>
       </OpenQuestion>
 
@@ -216,10 +178,11 @@ export function DesignIdentity() {
           "Let the program carry the chrome and the atlas carry the volunteer's own screens.",
           "Treat a colorway as the pair it is: the disc seeds the palette, the ring dresses the chrome.",
           "Say plainly when identity is missing rather than inventing a placeholder mark.",
+          "Crop an atlas mark to its circle, and keep it small until the vector files arrive.",
         ]}
         donts={[
           "Don't give an atlas its own separate logo; the program mark adapts.",
-          "Don't hard-code an atlas colour anywhere but the colorway table.",
+          "Don't hard-code an atlas colour or mark anywhere but ATLAS_IDENTITY.",
           "Don't seed the palette from a ring colour — Washington would come out navy throughout.",
           "Don't put decoration behind data.",
         ]}

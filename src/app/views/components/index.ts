@@ -6,6 +6,7 @@
  * All of these are plain hono/jsx functions: none needs client-side
  * behavior, so none is an island. Proofed at /design/components.
  */
+export { AtlasMark } from "./atlas-mark.js";
 export { Breadcrumbs } from "./breadcrumbs.js";
 export { Button, LinkButton, BUTTON_VARIANTS, type ButtonVariant } from "./button.js";
 export { Card } from "./card.js";

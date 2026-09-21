@@ -22,6 +22,7 @@ import type { PersonChange } from "../../person-change.js";
 import type { Child } from "hono/jsx";
 import {
   Absent,
+  AtlasMark,
   Button,
   Callout,
   Card,
@@ -494,6 +495,7 @@ export function PersonPage({
   // Every form on this page posts back to the handle the URL was asked for,
   // so a login-addressed page stays login-addressed.
   const action = `/people/${encodeURIComponent(personHandle(person))}`;
+  const atlas = person.atlas_code === null ? undefined : atlases.find((a) => a.code === person.atlas_code);
   return (
     <>
       <p>
@@ -502,6 +504,7 @@ export function PersonPage({
       <PageHeader
         title={person.display_name}
         lede={p.samplesCollected(person.samples, person.primary_samples)}
+        mark={atlas === undefined ? undefined : <AtlasMark code={atlas.code} name={atlas.name} />}
       />
       <Meta block>
         {p.colLastSample}: {when(m, person.last_sample)} · {p.colLastSeen}: {lastSeen(m, person)}

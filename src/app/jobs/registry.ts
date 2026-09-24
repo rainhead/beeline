@@ -86,8 +86,8 @@ export async function refreshPlaces(
   }
 }
 
-/** Fetch places, promote, and elevation, shared by both sync jobs. */
-async function pipelineTail(
+/** Fetch places, promote, and elevation, shared by both sync jobs. Exported for its test. */
+export async function pipelineTail(
   ctx: JobContext,
   parts: string[],
   personChanges: string,
@@ -113,7 +113,6 @@ async function pipelineTail(
     recordSampleChanges(duckdbReader(ctx.conn), samplePaths, { source: "observation_promotion" }),
   );
   if (samples.baselined) parts.push("sample change log baselined");
-  else if (samples.refused !== null) parts.push(`sample history not recorded: ${samples.refused}`);
   else if (samples.appended > 0) parts.push(`${samples.appended} sample changes recorded`);
   const elevation = await ctx.step("derive elevations", () => deriveElevations(ctx.conn));
   parts.push(
@@ -121,6 +120,18 @@ async function pipelineTail(
       (elevation.refused > 0 ? `, ${elevation.refused} refused as too uncertain` : "") +
       (elevation.missingTiles.length > 0 ? ` (missing tiles: ${elevation.missingTiles.join(", ")})` : ""),
   );
+  // A refused snapshot (beeline-hrw) fails the run — after every store step
+  // has done its work, so nothing the nightly is for waits on it — because a
+  // refusal is a standing condition that needs a person, and a run marked
+  // succeeded would leave `/healthz/jobs` green while the history went
+  // unrecorded night after night (CodeRabbit on PR #92). The retry is the
+  // framework's ordinary one: every fifteen minutes inside the night
+  // carve-out, an incremental sync and a promotion each time, bounded by
+  // the carve-out's end; `failing` is what the health check then says, with
+  // this message as the detail.
+  if (samples.refused !== null) {
+    throw new Error(`sample history not recorded: ${samples.refused} (${parts.join("; ")})`);
+  }
   return parts.join("; ");
 }
 

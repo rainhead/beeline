@@ -634,6 +634,13 @@ export interface SampleRecordResult {
   baselined: boolean;
   unreferenceable: number;
   contested: number;
+  /**
+   * Set when a full pass found a snapshot that mostly names samples this
+   * store does not hold, and so appended nothing and restated nothing: the
+   * snapshot is another store's statement, and the difference between two
+   * stores is not a history of either (beeline-hrw). Says what to do.
+   */
+  refused: string | null;
 }
 
 /**
@@ -685,15 +692,61 @@ async function recordPass(
   // First pass: the store as it stands is the baseline, and nothing is an
   // event. (A narrowed first pass must not write a one-sample snapshot that
   // erases the baseline's purpose — it baselines the whole store instead.)
-  if (snapshot === null) {
+  // A snapshot with no rows is the same thing: a store that held nothing has
+  // no history for this one to continue, and diffing a corpus against it
+  // would write the whole corpus into the log as arrivals — the baseline's
+  // business, which is why the baseline lives beside the log and not in it.
+  if (snapshot === null || snapshot.size === 0) {
     const all = opts.where == null ? states : (await readSampleStates(read)).states;
     await writeSnapshot(paths.state, all.values());
-    return { appended: 0, baselined: true, unreferenceable, colliding, contested: 0 };
+    return { appended: 0, baselined: true, unreferenceable, colliding, contested: 0, refused: null };
   }
 
   const { matched, contested, contestedRows } = matchSamples(snapshot, states, {
     directOnly: opts.where != null,
   });
+
+  // A snapshot this store does not answer to is another store's statement,
+  // and a full pass refuses it whole: no entries, no restatement. On
+  // 2026-09-21 the screenshot fixture app — a scratch store with thirty
+  // samples, pointed at the shared data/ paths — booted, restated the
+  // snapshot with its own samples, and the real store's 68,000 rows fell
+  // silent, which the vanishing rule records as nothing. The next real pass
+  // then found no row for any sample it held and appended 1,085,665
+  // arrivals, plus 33 fabricated inheritances where number-and-date matched
+  // a real sample to a fixture row whose collector was no longer live
+  // (beeline-hrw). Between two passes over one store a few samples vanish;
+  // more of the snapshot vanishing than surviving is a different store —
+  // and refusing rather than re-baselining is what keeps the FIXTURE's
+  // pass from destroying the real snapshot, so the mistake costs nothing
+  // in either direction. A store that has genuinely replaced the
+  // snapshot's re-baselines by deleting the file, which the message says.
+  // A narrowed pass cannot judge this: it holds one sample.
+  if (opts.where == null) {
+    const claimed = new Set<string>();
+    for (const row of matched.values()) claimed.add(stateKey(row));
+    for (const key of contestedRows) claimed.add(key);
+    for (const [key, row] of snapshot) {
+      if (suppressedKeys.has(key) || (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation))) {
+        claimed.add(key);
+      }
+    }
+    const unclaimed = snapshot.size - claimed.size;
+    if (unclaimed > claimed.size) {
+      return {
+        appended: 0,
+        baselined: false,
+        unreferenceable,
+        colliding,
+        contested: contested.size,
+        refused:
+          `${paths.state} is another store's snapshot: ${unclaimed} of its ${snapshot.size} rows name samples ` +
+          `this store does not hold, against ${claimed.size} it does. Nothing was recorded and the snapshot ` +
+          `was left as it was. If this store has replaced that one, delete the snapshot and the next pass ` +
+          `re-baselines from it.`,
+      };
+    }
+  }
   const at = opts.at ?? new Date().toISOString();
   const rows: SampleChange[] = [];
   for (const [key, state] of states) {
@@ -786,7 +839,7 @@ async function recordPass(
     }
     if (touched) await writeSnapshot(paths.state, next.values());
   }
-  return { appended: rows.length, baselined: false, unreferenceable, colliding, contested: contested.size };
+  return { appended: rows.length, baselined: false, unreferenceable, colliding, contested: contested.size, refused: null };
 }
 
 // ── Reading one sample's history ─────────────────────────────────────────

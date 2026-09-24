@@ -189,3 +189,13 @@ counted — and varies in three places, each a consequence of the corpus being
   cannot dispute it. Two samples colliding on one triple — a live
   `duplicate_sample_number` — are recorded as nothing and counted, since one
   reference naming two samples can only hand one the other's history.
+- **A snapshot the store mostly does not answer to is refused, not diffed**
+  (2026-09-23, beeline-hrw). The person log's baseline is in the log and a
+  foreign store can only add to it; this one's baseline is a file another
+  store can restate, and the vanishing rule then records the real corpus's
+  disappearance as silence and its return as a million arrivals. So a full
+  pass whose snapshot has more rows unclaimed than claimed appends nothing,
+  restates nothing, and says which file — a refusal in both directions, so
+  the scratch store that caused it leaves the real snapshot standing. A
+  store that has genuinely replaced the snapshot's deletes the file and the
+  next pass is the baseline.

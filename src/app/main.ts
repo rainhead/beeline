@@ -68,6 +68,8 @@ try {
   );
   if (samples.baselined) {
     console.log(`sample change log baselined: snapshot written to ${config.sampleStatePath}`);
+  } else if (samples.refused !== null) {
+    console.warn(`sample history not recorded: ${samples.refused}`);
   } else if (samples.appended > 0) {
     console.log(`recorded ${samples.appended} sample change(s) made while the app was down`);
   }

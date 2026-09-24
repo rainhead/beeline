@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { isDue, runJob, startScheduler, type Job, type JobContext } from "../src/app/jobs/framework.js";
-import { lastSyncStart, refreshPlaces } from "../src/app/jobs/registry.js";
+import { lastSyncStart, pipelineTail, refreshPlaces } from "../src/app/jobs/registry.js";
 import { createApp } from "../src/app/server.js";
 import { createMemoryDb } from "./helpers.js";
 
@@ -452,5 +452,50 @@ describe("/jobs page", () => {
     await grant(true);
     const admin = appFor();
     expect((await admin.request("/jobs")).status).toBe(200);
+  });
+});
+
+describe("the nightly and a refused sample snapshot (beeline-hrw)", () => {
+  it("fails the run after the store steps have run, so job health says so", async () => {
+    const deps = await jobDeps();
+    const { mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { SAMPLE_FIELDS, writeSnapshot } = await import("../src/sample-change.js");
+    const dir = await mkdtemp(join(tmpdir(), "nightly-refused-"));
+    const samplePaths = { log: join(dir, "sample-change.csv"), state: join(dir, "sample-state.csv") };
+    // A snapshot naming samples this store has never held: the store is
+    // empty, so every row is unclaimed and the pass refuses it.
+    const fields = Object.fromEntries(SAMPLE_FIELDS.map((f) => [f, ""])) as Record<(typeof SAMPLE_FIELDS)[number], string>;
+    await writeSnapshot(samplePaths.state, [
+      { collector: "name:Ada Adams", sample_number: "8", date_start: "2026-05-15", fields: { ...fields, collector: "name:Ada Adams", sample_number: "8", date_start: "2026-05-15" } },
+      { collector: "name:Cleo Cortez", sample_number: "9", date_start: "2026-04-20", fields: { ...fields, collector: "name:Cleo Cortez", sample_number: "9", date_start: "2026-04-20" } },
+    ]);
+    const steps: string[] = [];
+    const job: Job = {
+      name: "nightly-pipeline",
+      schedule: { kind: "dailyLA", hour: 2 },
+      window: "night",
+      run: (ctx: JobContext) => {
+        const wrapped: JobContext = {
+          ...ctx,
+          step: (label, fn) => {
+            steps.push(label);
+            return ctx.step(label, fn);
+          },
+        };
+        return pipelineTail(wrapped, [], join(dir, "person-change.csv"), samplePaths);
+      },
+    };
+    await runJob(deps, job);
+    const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+    expect(run.outcome).toBe("failed");
+    expect(run.detail).toMatch(/sample history not recorded: .*another store's snapshot: 2 of its 2 rows/);
+    // Elevation ran before the failure was raised: the refusal gates nothing the store needs.
+    expect(steps).toContain("derive elevations");
+    expect(steps.indexOf("derive elevations")).toBeGreaterThan(steps.indexOf("record sample changes"));
+    // And the snapshot is untouched: the refusal restates nothing.
+    const { readFile } = await import("node:fs/promises");
+    expect(await readFile(samplePaths.state, "utf8")).toContain("name:Ada Adams");
   });
 });

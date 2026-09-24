@@ -17,9 +17,7 @@ erDiagram
     person ||--o| mailing_address : "has"
     atlas ||--o{ sample : "assigned (geography or explicit)"
     program ||--o| program_region : "an atlas is a program with one"
-    program ||--o{ sample_program : "collected for (stated)"
-    program ||--o{ protocol : "owns"
-    program ||--o{ collecting_event : "holds"
+    program ||--o{ collecting_event : "holds; a sample is collected for a program through its event"
     protocol ||--o{ sample : "taken by"
     collecting_event ||--o{ sample_event : "the day's samples"
     collecting_event ||--o{ event_photo : "protocol or social"
@@ -63,7 +61,12 @@ CREATE TABLE email_address (
 );
 
 -- The other truly private datum. Readable only by the label-printing side;
--- writable by its owner.
+-- writable by its owner. Every atlas collector SHOULD have one, since their labels are
+-- mailed to them; not every person, and not necessarily a BLM collector, whose labels
+-- may go to whoever pins for that program instead. So it is a gate on printing rather
+-- than a column on person: a sample whose labels have no destination — no address for
+-- the primary collector and no label destination for the program — is not pending
+-- (Peter, 2026-09-24; where BLM labels go is questions.md, BLM 2).
 CREATE TABLE mailing_address (
   person_id  INTEGER PRIMARY KEY REFERENCES person(id),
   address    TEXT NOT NULL,
@@ -102,22 +105,21 @@ CREATE TABLE program_region (                    -- the atlas half: a program re
   inat_place_id BIGINT UNIQUE NOT NULL
 );
 
--- Which program a sample was collected FOR: stated, never derived. Its atlas is derived
--- from where it fell and stays in sample_atlas; both stand on the sample. No row means
--- "for whatever atlas it fell in", which is every legacy sample.
-CREATE TABLE sample_program (
-  sample_id  INTEGER PRIMARY KEY REFERENCES sample(id),
-  program_id INTEGER NOT NULL REFERENCES program(id)
-);
+-- Which program a sample was collected FOR is read off the event it belongs to
+-- (sample_event → collecting_event.program_id): stated by whoever recorded the event,
+-- never derived from geography. Its atlas is derived from where it fell and stays in
+-- sample_atlas; both stand. A sample with no event was collected for whatever atlas it
+-- fell in, which is every legacy sample. There is no sample_program table: it was the
+-- same fact written twice.
 
--- How a sample was taken: reference data a program owns, like animal_rank, never free
--- text. A row says what the protocol FIXES, so effort is never smuggled into a string.
--- grain='event' rows are a day's shape (the BLM plot day), composed of the program's
--- sample protocols; their sample-level columns are NULL.
+-- How a sample was taken: shared reference data, like animal_rank, never free text and
+-- owned by no program — every atlas uses the same net protocol, or nearly the same, and
+-- a "nearly" is its own row. A row says what the protocol FIXES, so effort is never
+-- smuggled into a string. grain='event' rows are a day's shape (the BLM plot day),
+-- composed of sample protocols; their sample-level columns are NULL.
 CREATE TABLE protocol (
   id               INTEGER PRIMARY KEY,
-  program_id       INTEGER NOT NULL REFERENCES program(id),
-  code             TEXT UNIQUE NOT NULL,   -- 'atlas-net', 'atlas-trap', 'blm-net-10', 'blm-pan-6h', 'blm-plot-day'
+  code             TEXT UNIQUE NOT NULL,   -- 'net', 'trap', 'net-10min', 'pan-6h', 'plot-day'
   name             TEXT NOT NULL,
   grain            TEXT NOT NULL CHECK (grain IN ('sample', 'event')),
   method           TEXT CHECK (method IN ('net', 'pan trap', 'vane trap', 'nest block')),
@@ -193,13 +195,12 @@ Two people survey plot `EMPP1` on 2027-06-12, pan traps out 08:45 to 14:45 and t
 | Table | Row |
 | --- | --- |
 | `program` | `BLM`, "BLM bee surveys", governor: Olivia |
-| `protocol` | `blm-plot-day` (grain event); `blm-pan-6h` (sample, pan trap, 360 min, times recorded, zero is a record); `blm-net-10` (sample, net, 10 min, times recorded, host per sample, zero is a record, host and time on the label) |
-| `collecting_event` | kind collecting, "EMPP1, 12 Jun 2027", protocol `blm-plot-day`, site code `EMPP1`, 2027-06-12 to 2027-06-12 |
+| `protocol` | `plot-day` (grain event); `pan-6h` (sample, pan trap, 360 min, times recorded, zero is a record); `net-10min` (sample, net, 10 min, times recorded, host per sample, zero is a record, host and time on the label) |
+| `collecting_event` | program `BLM`, kind collecting, "EMPP1, 12 Jun 2027", protocol `plot-day`, site code `EMPP1`, 2027-06-12 to 2027-06-12 |
 | `event_attendance` | Olivia; a contractor |
-| `sample` × 4 | one pan-trap sample, `blm-pan-6h`, 08:45–14:45, 61 specimens; three net samples, `blm-net-10`, one vial per plant, 09:20 *Penstemon*, 09:35 *Eriogonum* (0 specimens, still a record), 13:10 *Cleome* |
-| `sample_program` × 4 | `BLM` on each |
+| `sample` × 4 | one pan-trap sample, `pan-6h`, 08:45–14:45, 61 specimens; three net samples, `net-10min`, one vial per plant, 09:20 *Penstemon*, 09:35 *Eriogonum* (0 specimens, still a record), 13:10 *Cleome* |
+| `sample_event` × 4 | all four on the one event, which is what makes them BLM samples |
 | `sample_atlas` × 4 | `NM`, derived from where the plot is — not written by anything here |
-| `sample_event` × 4 | all four on the one event |
 | `event_photo` | two protocol photos (the plot, the *Penstemon* stand); one social photo of the pair at the truck |
 | `event_note` | "Gate on the county road locked; combination from the field office. *Eriogonum* just opening." |
 
@@ -214,7 +215,7 @@ A Washington Bee Atlas collecting day at a state park on 2024-05-18, recorded in
 | `collecting_event` | program `WaBA`, kind collecting, "Cottonwood Canyon, 18 May 2024", no protocol, property "Cottonwood Canyon State Park", created 2027-03-02 by the coordinator |
 | `event_attendance` | the six people whose samples are attached, plus two who collected nothing |
 | `sample_event` | eleven legacy samples from that date and place, attached by hand; their `sample_number`s are untouched and still run per collector per day |
-| `sample_program` | none — legacy samples were collected for whatever atlas they fell in |
+| program | `WaBA`, through the event; before the event existed they were collected for whatever atlas they fell in, and that is what the other legacy samples still are |
 | `event_photo` | one social photo |
 | `event_note` | "Balsamroot past peak by mid-May here; a week earlier next year." |
 
@@ -288,7 +289,7 @@ CREATE TABLE sample (
   geoprivacy         TEXT,                -- null | 'obscured' | 'private', user- or taxon-driven
   country TEXT, state_province TEXT, county TEXT, locality TEXT,
   elevation_m        INTEGER,
-  protocol           TEXT,                -- legacy free text; becomes protocol_id → protocol (Programs, protocols and collecting events above)
+  protocol           TEXT,                -- legacy free text; becomes protocol_id → protocol (shared reference data, above)
   sampling_effort    TEXT                 -- trap-count × trap-days etc. TBD (Q6)
 );
 

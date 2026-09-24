@@ -15,7 +15,13 @@ The design follows three commitments made so far:
 ```mermaid
 erDiagram
     person ||--o| mailing_address : "has"
-    atlas ||--o{ sample : "assigned (geography or explicit)"
+    program ||--o| program_region : "an atlas is a program with a region"
+    program ||--o{ sample : "atlas: the region it fell in (derived)"
+    program ||--o{ collecting_event : "holds; a sample is collected for a program through its event"
+    protocol ||--o{ sample : "taken by"
+    collecting_event ||--o{ sample_event : "the day's samples"
+    collecting_event ||--o{ event_photo : "protocol or social"
+    collecting_event ||--o{ event_note : "what had no home on a sample"
     person ||--o{ sample : "collects"
     sample ||--o{ specimen : "individuated at print"
     sample ||--o| sample_true_location : "trusted coordinates"
@@ -29,7 +35,7 @@ erDiagram
     qc_rule ||--o{ qc_waiver : "excused by"
 ```
 
-## People and atlases
+## People and programs
 
 ```sql
 -- Deliberately anemic: a person is an identity to hang facts on. "Person" (like "user")
@@ -55,24 +61,179 @@ CREATE TABLE email_address (
 );
 
 -- The other truly private datum. Readable only by the label-printing side;
--- writable by its owner.
+-- writable by its owner. Every atlas collector SHOULD have one, since their labels are
+-- mailed to them; not every person, and not necessarily a BLM collector, whose labels
+-- may go to whoever pins for that program instead. So it is a gate on printing rather
+-- than a column on person: a sample whose labels have no destination — no address for
+-- the primary collector and no label destination for the program — is not pending
+-- (Peter, 2026-09-24; where BLM labels go is questions.md, BLM 2).
 CREATE TABLE mailing_address (
   person_id  INTEGER PRIMARY KEY REFERENCES person(id),
   address    TEXT NOT NULL,
   updated_at TIMESTAMP NOT NULL
 );
 
-CREATE TABLE atlas (
-  id            INTEGER PRIMARY KEY,
-  code          TEXT UNIQUE NOT NULL,     -- 'OBA', 'WaBA', 'BC', 'ID', 'NM', 'OK'
-  name          TEXT NOT NULL,
-  inat_place_id BIGINT UNIQUE,            -- e.g. Washington = place 46
-  prints_labels BOOLEAN NOT NULL DEFAULT false
+-- A program governs what is collected through it (CONTEXT: Program, Governor). There is
+-- no atlas table: an ATLAS IS A PROGRAM WITH A REGION — the row in program_region is what
+-- makes it one — and everything that used to hang off `atlas` hangs off program: the
+-- code, the mark, who prints, membership, the sample's atlas. Master Melittology and the
+-- BLM surveys are the rows with no region.
+CREATE TABLE program (
+  id                 INTEGER PRIMARY KEY,
+  code               TEXT UNIQUE NOT NULL,       -- 'OBA', 'WaBA', 'BC', 'ID', 'NM', 'OK', 'MM', 'BLM'
+  name               TEXT NOT NULL,
+  slug               TEXT UNIQUE NOT NULL,       -- its content page on the site, possibly with subpages
+  prints_labels      BOOLEAN NOT NULL DEFAULT false,  -- built as the atlas_printing satellite (schema/010)
+  governor_person_id INTEGER REFERENCES person(id)    -- who decides what leaves it
 );
--- Geographic assignment costs nothing: iNat already stamps observations with place_ids,
--- so "sample belongs to atlas A" ≈ A.inat_place_id ∈ observation place_ids.
--- Ambiguous or out-of-region samples get explicit assignment (atlas_assigned_by).
+-- The region is what an atlas has and the other programs do not. Geographic assignment
+-- then costs nothing: iNat stamps observations with place_ids, so "sample fell in atlas
+-- A" ≈ A.inat_place_id ∈ observation place_ids; ambiguous or out-of-region samples get
+-- explicit assignment (sample_atlas.assigned_by, built). A program's page, /programs/<slug>,
+-- possibly with subpages — what it is, how to take part, its protocols — is content, not
+-- records; the model holds only the slug. The catch-all — Master Melittology itself,
+-- which a sample outside every region is collected for — is known today only by its iNat
+-- project's name, "Master Melittologist (outside of Oregon)", and is due a name of its
+-- own (Peter, 2026-09-24).
+CREATE TABLE program_region (
+  program_id    INTEGER PRIMARY KEY REFERENCES program(id),
+  inat_place_id BIGINT UNIQUE NOT NULL         -- e.g. Washington = place 46
+);
+-- Membership (built: person_membership, kind 'atlas' | 'program') becomes a program_id,
+-- with "atlas or the program itself" read off whether that program has a region.
 ```
+
+## Programs, protocols and collecting events
+
+Sketched 2026-09-24 from the BLM conversations ([CONTEXT.md](../CONTEXT.md): Collecting event, Outing, Protocol, Programs and governance; [questions.md](questions.md), BLM surveys). Minimal on purpose: it says how the three concepts relate to each other and to `sample`, and no more. Weather, habitat and the plot's floral list are on Olivia's Kobo form and are not sketched until the form has been seen.
+
+`program` and `program_region` are defined under People and programs above; this section adds what hangs off them.
+
+```sql
+-- Which program a sample was collected FOR is derived, in order of evidence: the event
+-- it belongs to, stated by whoever recorded it; else the atlas it fell in; else the
+-- catch-all, Master Melittology itself (Peter, 2026-09-24). A view, never a table — the
+-- table version said the event's fact a second time — and its atlas stays a separate
+-- fact in sample_atlas, since a BLM sample inside New Mexico is both.
+CREATE VIEW sample_program AS
+SELECT s.id AS sample_id,
+       coalesce(e.program_id, sa.atlas_id, (SELECT id FROM program WHERE code = 'MM')) AS program_id
+FROM sample s
+LEFT JOIN sample_event se ON se.sample_id = s.id
+LEFT JOIN collecting_event e ON e.id = se.event_id
+LEFT JOIN sample_atlas sa ON sa.sample_id = s.id;   -- built (schema/010); atlas_id is a program with a region
+
+-- How a sample was taken: shared reference data, like animal_rank, never free text and
+-- owned by no program — every atlas uses the same net protocol, or nearly the same, and
+-- a "nearly" is its own row. A row says what the protocol FIXES, so effort is never
+-- smuggled into a string. grain='event' rows are a day's shape (the BLM plot day); their
+-- sample-level columns are NULL. Which sample protocols make up an event protocol is NOT
+-- stored: with one event protocol in existence its parts are its written protocol's to
+-- say, and a composition table now would be guessing its cardinality. It arrives with the
+-- second event protocol, as a check that a sample's protocol belongs to its event's.
+CREATE TABLE protocol (
+  id               INTEGER PRIMARY KEY,
+  code             TEXT UNIQUE NOT NULL,   -- 'net', 'trap', 'net-10min', 'pan-6h', 'plot-day'
+  name             TEXT NOT NULL,
+  grain            TEXT NOT NULL CHECK (grain IN ('sample', 'event')),
+  method           TEXT CHECK (method IN ('net', 'pan trap', 'vane trap', 'nest block')),
+  duration_minutes INTEGER,                -- fixed by the protocol: 10, 360; NULL = not fixed
+  records_times    BOOLEAN,                -- start and end are recorded, not assumed
+  host_per_sample  BOOLEAN,                -- one floral host per sample (one vial per plant)
+  zero_is_record   BOOLEAN,                -- a session with no bees is still a record
+  label_host       BOOLEAN,                -- the host prints on the label
+  label_time       BOOLEAN                 -- the collection time prints on the label
+);
+-- sample gains: protocol_id INTEGER REFERENCES protocol(id), time_start TIME, time_end TIME.
+-- The legacy protocol strings ("6 Vane Traps") map onto protocol rows by curation and
+-- stay verbatim beside them; they never constrain the table.
+
+-- A program's day at a place. Named, usually scheduled, created before, during or after
+-- the day. The name is a label and never a key; identity is the program, the place and
+-- the dates. An outing (one person's road trip) is deliberately not here.
+CREATE TABLE collecting_event (
+  id          INTEGER PRIMARY KEY,
+  program_id  INTEGER NOT NULL REFERENCES program(id),
+  kind        TEXT NOT NULL CHECK (kind IN ('collecting', 'training')),
+  name        TEXT NOT NULL,                     -- 'Cottonwood Canyon, 12 Jun 2027'
+  protocol_id INTEGER REFERENCES protocol(id),   -- an event-grain protocol, or NULL
+  property    TEXT,                              -- 'Cottonwood Canyon State Park'
+  site_code   TEXT,                              -- 'EMPP1': opaque, not unique (CONTEXT: Site code)
+  latitude    DOUBLE,
+  longitude   DOUBLE,
+  date_start  DATE NOT NULL,
+  date_end    DATE NOT NULL,
+  created_by  INTEGER NOT NULL REFERENCES person(id),
+  created_at  TIMESTAMP NOT NULL
+);
+CREATE TABLE event_attendance (
+  event_id  INTEGER NOT NULL REFERENCES collecting_event(id),
+  person_id INTEGER NOT NULL REFERENCES person(id),
+  PRIMARY KEY (event_id, person_id)
+);
+
+-- A sample belongs to at most one event; no row = none, as with sample_atlas. A legacy
+-- sample joins an event a person creates for it; none is minted from the legacy records.
+CREATE TABLE sample_event (
+  sample_id INTEGER PRIMARY KEY REFERENCES sample(id),
+  event_id  INTEGER NOT NULL REFERENCES collecting_event(id)
+);
+
+-- Photos and notes hold what has no home on a sample. The bytes live in an object store
+-- chosen before this is built; the row holds the key. A protocol photo is evidence and
+-- carries the rare-plant question; a social photo carries faces.
+CREATE TABLE event_photo (
+  id         INTEGER PRIMARY KEY,
+  event_id   INTEGER NOT NULL REFERENCES collecting_event(id),
+  kind       TEXT NOT NULL CHECK (kind IN ('protocol', 'social')),
+  object_key TEXT NOT NULL,
+  taken_at   TIMESTAMP,
+  taken_by   INTEGER REFERENCES person(id),
+  caption    TEXT
+);
+CREATE TABLE event_note (
+  id        INTEGER PRIMARY KEY,
+  event_id  INTEGER NOT NULL REFERENCES collecting_event(id),
+  author_id INTEGER NOT NULL REFERENCES person(id),
+  noted_at  TIMESTAMP NOT NULL,
+  body      TEXT NOT NULL                        -- access, phenology, what was learned
+);
+-- Later, maybe: event_track (event_id, person_id, object_key) for a GPS track, the one
+-- thing an outing holds that a sample cannot. Belongs to whoever walked it.
+```
+
+### Worked example: a BLM plot day
+
+Two people survey plot `EMPP1` on 2027-06-12, pan traps out 08:45 to 14:45 and two net sessions between. The event is created the evening before from the Kobo form's schedule; the samples arrive with the day's submissions and are edited in Beeline from then on.
+
+| Table | Row |
+| --- | --- |
+| `program` | `BLM`, "BLM bee surveys", governor: Olivia |
+| `protocol` | `plot-day` (grain event); `pan-6h` (sample, pan trap, 360 min, times recorded, zero is a record); `net-10min` (sample, net, 10 min, times recorded, host per sample, zero is a record, host and time on the label) |
+| `collecting_event` | program `BLM`, kind collecting, "EMPP1, 12 Jun 2027", protocol `plot-day`, site code `EMPP1`, 2027-06-12 to 2027-06-12 |
+| `event_attendance` | Olivia; a contractor |
+| `sample` × 4 | one pan-trap sample, `pan-6h`, 08:45–14:45, 61 specimens; three net samples, `net-10min`, one vial per plant, 09:20 *Penstemon*, 09:35 *Eriogonum* (0 specimens, still a record), 13:10 *Cleome* |
+| `sample_event` × 4 | all four on the one event, which is what makes them BLM samples |
+| `sample_atlas` × 4 | `NM`, derived from where the plot is — not written by anything here |
+| `event_photo` | two protocol photos (the plot, the *Penstemon* stand); one social photo of the pair at the truck |
+| `event_note` | "Gate on the county road locked; combination from the field office. *Eriogonum* just opening." |
+
+The pan-trap sample and the net samples are distinct samples within one event, and the trap sample's specimens carry the six-hour window, not a day. Nothing here decides which of the two collectors' Kobo submissions is the record (questions.md, 17).
+
+### Worked example: an atlas event with legacy samples
+
+A Washington Bee Atlas collecting day at a state park on 2024-05-18, recorded in 2027 because the group photo had nowhere to go.
+
+| Table | Row |
+| --- | --- |
+| `collecting_event` | program `WaBA`, kind collecting, "Cottonwood Canyon, 18 May 2024", no protocol, property "Cottonwood Canyon State Park", created 2027-03-02 by the coordinator |
+| `event_attendance` | the six people whose samples are attached, plus two who collected nothing |
+| `sample_event` | eleven legacy samples from that date and place, attached by hand; their `sample_number`s are untouched and still run per collector per day |
+| `sample_program` (view) | `WaBA`, through the event; before the event existed it was `WaBA` through the atlas they fell in, so attaching them changed nothing here. A legacy sample outside every atlas resolves to the catch-all |
+| `event_photo` | one social photo |
+| `event_note` | "Balsamroot past peak by mid-May here; a week earlier next year." |
+
+A training event is the same row with kind `training`, attendance, and no samples.
 
 ## Curated taxonomy
 
@@ -125,8 +286,8 @@ CREATE TABLE sample (
   id                 INTEGER PRIMARY KEY,
   kind               TEXT NOT NULL,       -- 'net' | 'trap'
   collector_id       INTEGER NOT NULL REFERENCES person(id),
-  atlas_id           INTEGER REFERENCES atlas(id),
-  atlas_assigned_by  INTEGER REFERENCES person(id),  -- null ⇒ assigned by geography
+  -- atlas: the built shape is the sample_atlas satellite (schema/010, beeline-6e9), whose
+  -- atlas_id is a program with a region and whose assigned_by is null ⇒ by geography
   sample_number      TEXT NOT NULL,       -- '3' (net: per collector per day) | 'OBAS-00657' (trap series)
   date_start         DATE NOT NULL,
   date_end           DATE NOT NULL,       -- = date_start for net; range for trap
@@ -142,7 +303,7 @@ CREATE TABLE sample (
   geoprivacy         TEXT,                -- null | 'obscured' | 'private', user- or taxon-driven
   country TEXT, state_province TEXT, county TEXT, locality TEXT,
   elevation_m        INTEGER,
-  protocol           TEXT,                -- controlled vocabulary TBD with staff (Q3)
+  protocol           TEXT,                -- legacy free text; becomes protocol_id → protocol (shared reference data, above)
   sampling_effort    TEXT                 -- trap-count × trap-days etc. TBD (Q6)
 );
 

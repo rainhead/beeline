@@ -126,8 +126,11 @@ LEFT JOIN sample_atlas sa ON sa.sample_id = s.id;   -- built (schema/010); atlas
 -- How a sample was taken: shared reference data, like animal_rank, never free text and
 -- owned by no program — every atlas uses the same net protocol, or nearly the same, and
 -- a "nearly" is its own row. A row says what the protocol FIXES, so effort is never
--- smuggled into a string. grain='event' rows are a day's shape (the BLM plot day),
--- composed of sample protocols; their sample-level columns are NULL.
+-- smuggled into a string. grain='event' rows are a day's shape (the BLM plot day); their
+-- sample-level columns are NULL. Which sample protocols make up an event protocol is NOT
+-- stored: with one event protocol in existence its parts are its written protocol's to
+-- say, and a composition table now would be guessing its cardinality. It arrives with the
+-- second event protocol, as a check that a sample's protocol belongs to its event's.
 CREATE TABLE protocol (
   id               INTEGER PRIMARY KEY,
   code             TEXT UNIQUE NOT NULL,   -- 'net', 'trap', 'net-10min', 'pan-6h', 'plot-day'

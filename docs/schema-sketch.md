@@ -15,8 +15,8 @@ The design follows three commitments made so far:
 ```mermaid
 erDiagram
     person ||--o| mailing_address : "has"
-    atlas ||--o{ sample : "assigned (geography or explicit)"
-    program ||--o| program_region : "an atlas is a program with one"
+    program ||--o| program_region : "an atlas is a program with a region"
+    program ||--o{ sample : "atlas: the region it fell in (derived)"
     program ||--o{ collecting_event : "holds; a sample is collected for a program through its event"
     protocol ||--o{ sample : "taken by"
     collecting_event ||--o{ sample_event : "the day's samples"
@@ -35,7 +35,7 @@ erDiagram
     qc_rule ||--o{ qc_waiver : "excused by"
 ```
 
-## People and atlases
+## People and programs
 
 ```sql
 -- Deliberately anemic: a person is an identity to hang facts on. "Person" (like "user")
@@ -73,44 +73,43 @@ CREATE TABLE mailing_address (
   updated_at TIMESTAMP NOT NULL
 );
 
-CREATE TABLE atlas (
-  id            INTEGER PRIMARY KEY,
-  code          TEXT UNIQUE NOT NULL,     -- 'OBA', 'WaBA', 'BC', 'ID', 'NM', 'OK'
-  name          TEXT NOT NULL,
-  inat_place_id BIGINT UNIQUE,            -- e.g. Washington = place 46
-  prints_labels BOOLEAN NOT NULL DEFAULT false
+-- A program governs what is collected through it (CONTEXT: Program, Governor). There is
+-- no atlas table: an ATLAS IS A PROGRAM WITH A REGION — the row in program_region is what
+-- makes it one — and everything that used to hang off `atlas` hangs off program: the
+-- code, the mark, who prints, membership, the sample's atlas. Master Melittology and the
+-- BLM surveys are the rows with no region.
+CREATE TABLE program (
+  id                 INTEGER PRIMARY KEY,
+  code               TEXT UNIQUE NOT NULL,       -- 'OBA', 'WaBA', 'BC', 'ID', 'NM', 'OK', 'MM', 'BLM'
+  name               TEXT NOT NULL,
+  slug               TEXT UNIQUE NOT NULL,       -- its content page on the site, possibly with subpages
+  prints_labels      BOOLEAN NOT NULL DEFAULT false,  -- built as the atlas_printing satellite (schema/010)
+  governor_person_id INTEGER REFERENCES person(id)    -- who decides what leaves it
 );
--- Geographic assignment costs nothing: iNat already stamps observations with place_ids,
--- so "sample belongs to atlas A" ≈ A.inat_place_id ∈ observation place_ids.
--- Ambiguous or out-of-region samples get explicit assignment (atlas_assigned_by).
+-- The region is what an atlas has and the other programs do not. Geographic assignment
+-- then costs nothing: iNat stamps observations with place_ids, so "sample fell in atlas
+-- A" ≈ A.inat_place_id ∈ observation place_ids; ambiguous or out-of-region samples get
+-- explicit assignment (sample_atlas.assigned_by, built). A program's page, /programs/<slug>,
+-- possibly with subpages — what it is, how to take part, its protocols — is content, not
+-- records; the model holds only the slug. The catch-all — Master Melittology itself,
+-- which a sample outside every region is collected for — is known today only by its iNat
+-- project's name, "Master Melittologist (outside of Oregon)", and is due a name of its
+-- own (Peter, 2026-09-24).
+CREATE TABLE program_region (
+  program_id    INTEGER PRIMARY KEY REFERENCES program(id),
+  inat_place_id BIGINT UNIQUE NOT NULL         -- e.g. Washington = place 46
+);
+-- Membership (built: person_membership, kind 'atlas' | 'program') becomes a program_id,
+-- with "atlas or the program itself" read off whether that program has a region.
 ```
 
 ## Programs, protocols and collecting events
 
 Sketched 2026-09-24 from the BLM conversations ([CONTEXT.md](../CONTEXT.md): Collecting event, Outing, Protocol, Programs and governance; [questions.md](questions.md), BLM surveys). Minimal on purpose: it says how the three concepts relate to each other and to `sample`, and no more. Weather, habitat and the plot's floral list are on Olivia's Kobo form and are not sketched until the form has been seen.
 
-```sql
--- A program governs what is collected through it. The atlases are programs with a
--- geography; Master Melittology and the BLM surveys are programs without one. `atlas`
--- above becomes the program that also has a region: the code, the mark, who prints and
--- membership are all a program's, and only the region is the atlas's own.
-CREATE TABLE program (
-  id                 INTEGER PRIMARY KEY,
-  code               TEXT UNIQUE NOT NULL,       -- 'OBA', 'WaBA', 'NM', 'MM', 'BLM'
-  name               TEXT NOT NULL,
-  slug               TEXT UNIQUE NOT NULL,       -- its content page on the site, possibly with subpages
-  governor_person_id INTEGER REFERENCES person(id)  -- who decides what leaves it (CONTEXT: Governor)
-);
--- A program has a page on the site, /programs/<slug>, possibly with subpages: what it is,
--- how to take part, its protocols. Content, not records; the model holds only the slug.
--- The catch-all — Master Melittology itself, which a sample outside every atlas is
--- collected for — is known today only by its iNat project's name, "Master Melittologist
--- (outside of Oregon)", and is due a name of its own (Peter, 2026-09-24).
-CREATE TABLE program_region (                    -- the atlas half: a program readable off a place
-  program_id    INTEGER PRIMARY KEY REFERENCES program(id),
-  inat_place_id BIGINT UNIQUE NOT NULL
-);
+`program` and `program_region` are defined under People and programs above; this section adds what hangs off them.
 
+```sql
 -- Which program a sample was collected FOR is derived, in order of evidence: the event
 -- it belongs to, stated by whoever recorded it; else the atlas it fell in; else the
 -- catch-all, Master Melittology itself (Peter, 2026-09-24). A view, never a table — the
@@ -118,12 +117,11 @@ CREATE TABLE program_region (                    -- the atlas half: a program re
 -- fact in sample_atlas, since a BLM sample inside New Mexico is both.
 CREATE VIEW sample_program AS
 SELECT s.id AS sample_id,
-       coalesce(e.program_id, a.program_id, (SELECT id FROM program WHERE code = 'MM')) AS program_id
+       coalesce(e.program_id, sa.atlas_id, (SELECT id FROM program WHERE code = 'MM')) AS program_id
 FROM sample s
 LEFT JOIN sample_event se ON se.sample_id = s.id
 LEFT JOIN collecting_event e ON e.id = se.event_id
-LEFT JOIN sample_atlas sa ON sa.sample_id = s.id
-LEFT JOIN program_region a ON a.program_id = sa.atlas_id;   -- once atlas IS a program
+LEFT JOIN sample_atlas sa ON sa.sample_id = s.id;   -- built (schema/010); atlas_id is a program with a region
 
 -- How a sample was taken: shared reference data, like animal_rank, never free text and
 -- owned by no program — every atlas uses the same net protocol, or nearly the same, and
@@ -285,8 +283,8 @@ CREATE TABLE sample (
   id                 INTEGER PRIMARY KEY,
   kind               TEXT NOT NULL,       -- 'net' | 'trap'
   collector_id       INTEGER NOT NULL REFERENCES person(id),
-  atlas_id           INTEGER REFERENCES atlas(id),
-  atlas_assigned_by  INTEGER REFERENCES person(id),  -- null ⇒ assigned by geography
+  -- atlas: the built shape is the sample_atlas satellite (schema/010, beeline-6e9), whose
+  -- atlas_id is a program with a region and whose assigned_by is null ⇒ by geography
   sample_number      TEXT NOT NULL,       -- '3' (net: per collector per day) | 'OBAS-00657' (trap series)
   date_start         DATE NOT NULL,
   date_end           DATE NOT NULL,       -- = date_start for net; range for trap

@@ -98,19 +98,32 @@ CREATE TABLE program (
   id                 INTEGER PRIMARY KEY,
   code               TEXT UNIQUE NOT NULL,       -- 'OBA', 'WaBA', 'NM', 'MM', 'BLM'
   name               TEXT NOT NULL,
+  slug               TEXT UNIQUE NOT NULL,       -- its content page on the site, possibly with subpages
   governor_person_id INTEGER REFERENCES person(id)  -- who decides what leaves it (CONTEXT: Governor)
 );
+-- A program has a page on the site, /programs/<slug>, possibly with subpages: what it is,
+-- how to take part, its protocols. Content, not records; the model holds only the slug.
+-- The catch-all — Master Melittology itself, which a sample outside every atlas is
+-- collected for — is known today only by its iNat project's name, "Master Melittologist
+-- (outside of Oregon)", and is due a name of its own (Peter, 2026-09-24).
 CREATE TABLE program_region (                    -- the atlas half: a program readable off a place
   program_id    INTEGER PRIMARY KEY REFERENCES program(id),
   inat_place_id BIGINT UNIQUE NOT NULL
 );
 
--- Which program a sample was collected FOR is read off the event it belongs to
--- (sample_event → collecting_event.program_id): stated by whoever recorded the event,
--- never derived from geography. Its atlas is derived from where it fell and stays in
--- sample_atlas; both stand. A sample with no event was collected for whatever atlas it
--- fell in, which is every legacy sample. There is no sample_program table: it was the
--- same fact written twice.
+-- Which program a sample was collected FOR is derived, in order of evidence: the event
+-- it belongs to, stated by whoever recorded it; else the atlas it fell in; else the
+-- catch-all, Master Melittology itself (Peter, 2026-09-24). A view, never a table — the
+-- table version said the event's fact a second time — and its atlas stays a separate
+-- fact in sample_atlas, since a BLM sample inside New Mexico is both.
+CREATE VIEW sample_program AS
+SELECT s.id AS sample_id,
+       coalesce(e.program_id, a.program_id, (SELECT id FROM program WHERE code = 'MM')) AS program_id
+FROM sample s
+LEFT JOIN sample_event se ON se.sample_id = s.id
+LEFT JOIN collecting_event e ON e.id = se.event_id
+LEFT JOIN sample_atlas sa ON sa.sample_id = s.id
+LEFT JOIN program_region a ON a.program_id = sa.atlas_id;   -- once atlas IS a program
 
 -- How a sample was taken: shared reference data, like animal_rank, never free text and
 -- owned by no program — every atlas uses the same net protocol, or nearly the same, and
@@ -215,7 +228,7 @@ A Washington Bee Atlas collecting day at a state park on 2024-05-18, recorded in
 | `collecting_event` | program `WaBA`, kind collecting, "Cottonwood Canyon, 18 May 2024", no protocol, property "Cottonwood Canyon State Park", created 2027-03-02 by the coordinator |
 | `event_attendance` | the six people whose samples are attached, plus two who collected nothing |
 | `sample_event` | eleven legacy samples from that date and place, attached by hand; their `sample_number`s are untouched and still run per collector per day |
-| program | `WaBA`, through the event; before the event existed they were collected for whatever atlas they fell in, and that is what the other legacy samples still are |
+| `sample_program` (view) | `WaBA`, through the event; before the event existed it was `WaBA` through the atlas they fell in, so attaching them changed nothing here. A legacy sample outside every atlas resolves to the catch-all |
 | `event_photo` | one social photo |
 | `event_note` | "Balsamroot past peak by mid-May here; a week earlier next year." |
 

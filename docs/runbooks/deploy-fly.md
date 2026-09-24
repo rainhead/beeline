@@ -202,6 +202,25 @@ and only the way you get a shell differs here. The machine already sets
 recording into the change logs while the new store is half built — leave it
 set as it is, and let the next boot record the difference (beeline-6cr).
 
+The CLIs do not read `BEELINE_DB` for the store they open: `inat:sync` takes
+`--db <path>`, and `inat:promote`, `inat:fetch-places` and `legacy:promote`
+take it as their first positional argument, defaulting to `./beeline.duckdb` —
+which on the machine is a store that does not exist and would be created empty.
+Name `data/beeline.duckdb` every time. A promotion pointed at the live store
+records into the change logs; pointed anywhere else it says so and records
+nothing. Syncing one project by hand — the 2026-09-23 case was project 99706
+after rainhead was made its manager, so that its obscured observations arrive
+with their true coordinates — is:
+
+```sh
+wc -l data/sample-change.csv                    # before: expect hundreds to low thousands appended, never ~1M (beeline-hrw)
+INAT_JWT=<minted> pnpm inat:sync 99706 --db data/beeline.duckdb   # the CLI reads INAT_JWT or data/secrets/inat-jwt; the machine
+                                                                  # holds only the OAuth token — mint from it as mintJwt does (src/app/jobs/registry.ts)
+pnpm inat:fetch-places data/beeline.duckdb
+pnpm inat:promote data/beeline.duckdb
+wc -l data/sample-change.csv
+```
+
 ## ITIS
 
 The curated taxonomy is matched against ITIS (beeline-45v): `itis_taxon` and

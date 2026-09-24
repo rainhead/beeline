@@ -113,6 +113,7 @@ async function pipelineTail(
     recordSampleChanges(duckdbReader(ctx.conn), samplePaths, { source: "observation_promotion" }),
   );
   if (samples.baselined) parts.push("sample change log baselined");
+  else if (samples.refused !== null) parts.push(`sample history not recorded: ${samples.refused}`);
   else if (samples.appended > 0) parts.push(`${samples.appended} sample changes recorded`);
   const elevation = await ctx.step("derive elevations", () => deriveElevations(ctx.conn));
   parts.push(

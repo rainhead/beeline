@@ -146,6 +146,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   } catch (err) {
     console.warn(`could not record sample history: ${(err as Error).message}`);
   }
+  if (sampleRecorded?.refused != null) console.warn(`sample history not recorded: ${sampleRecorded.refused}`);
   conn.closeSync();
   console.log(
     JSON.stringify(
@@ -154,6 +155,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
         personChangesRecorded: recorded?.appended ?? null,
         sampleChangesRecorded: sampleRecorded?.appended ?? null,
         sampleBaselined: sampleRecorded?.baselined ?? false,
+        sampleHistoryRefused: sampleRecorded?.refused ?? null,
       },
       null,
       2,

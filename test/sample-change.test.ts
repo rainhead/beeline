@@ -428,3 +428,59 @@ describe("what the pass deliberately does not say", () => {
     void rows;
   });
 });
+
+describe("a snapshot another store wrote", () => {
+  const replaceCorpus = async (numbers: string[]) => {
+    for (const t of ["sample_atlas", "sample_location", "sample_collector", "sample"]) await conn.run(`DELETE FROM ${t}`);
+    for (const n of numbers) await insertCleanSample(conn, { sample_number: `'${n}'` });
+  };
+
+  it("is refused whole when it mostly names samples this store does not hold: nothing appended, nothing restated", async () => {
+    // beeline-hrw: the screenshot fixture — a scratch store with thirty
+    // samples — booted against the shared data/ paths and restated the
+    // snapshot with its own samples. The real store's next pass then found
+    // a row for nothing it held, and the vanishing rule plus the arrival
+    // rule made that 1,085,665 entries in a file that cannot be un-appended.
+    await replaceCorpus(["1", "2", "3"]);
+    await record();
+    const { readFile: rf, unlink } = await import("node:fs/promises");
+    const before = await rf(paths.state, "utf8");
+    await replaceCorpus(["9"]);
+    const result = await record({ source: "observation_promotion" });
+    expect(result).toMatchObject({ appended: 0, baselined: false });
+    expect(result.refused).toMatch(/3 of its 3 rows/);
+    expect(await rf(paths.state, "utf8")).toBe(before);
+    expect(await readSampleChanges(paths.log)).toEqual([]);
+    // The way back is the one the message names: delete the snapshot, and
+    // the next pass is the baseline — after which recording resumes.
+    await unlink(paths.state);
+    expect(await record()).toMatchObject({ appended: 0, baselined: true, refused: null });
+    await conn.run("UPDATE sample SET locality = 'Albany'");
+    expect(await record()).toMatchObject({ appended: 1, refused: null });
+  });
+
+  it("in the other direction too: the scratch store's own pass leaves the real snapshot standing", async () => {
+    // Refusing rather than re-baselining is what makes the mistake free:
+    // had the fixture's boot been allowed to restate, the real snapshot
+    // would already be gone by the time the real pass could notice.
+    await replaceCorpus(["1", "2", "3", "4", "5"]);
+    await record();
+    const { readFile: rf } = await import("node:fs/promises");
+    const real = await rf(paths.state, "utf8");
+    await replaceCorpus(["8"]);
+    const result = await record();
+    expect(result.refused).toMatch(/5 of its 5 rows/);
+    expect(await rf(paths.state, "utf8")).toBe(real);
+    // The real store returns and finds its own snapshot: a steady pass.
+    await replaceCorpus(["1", "2", "3", "4", "5"]);
+    expect(await record()).toMatchObject({ appended: 0, refused: null });
+  });
+
+  it("a snapshot with no rows is no snapshot: the corpus arriving is the baseline, not a million events", async () => {
+    // The app booted on a freshly built store before anything was promoted.
+    expect(await record()).toMatchObject({ appended: 0, baselined: true });
+    await insertCleanSample(conn);
+    expect(await record()).toMatchObject({ appended: 0, baselined: true, refused: null });
+    expect((await readSnapshot(paths.state))?.size).toBe(1);
+  });
+});

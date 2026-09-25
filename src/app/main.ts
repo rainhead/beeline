@@ -5,6 +5,7 @@ import { openAppDb, seedAdmins } from "./db.js";
 import { CURATED_OVERLAY, mergeOverlays, readOverlay } from "../person-overlay.js";
 import { kyselyReader, recordPersonChanges } from "../person-change.js";
 import { recordSampleChanges } from "../sample-change.js";
+import { ensureSampleOverlayFile } from "../sample-overlay.js";
 import { startScheduler } from "./jobs/framework.js";
 import { buildJobs } from "./jobs/registry.js";
 import { createApp } from "./server.js";
@@ -12,6 +13,12 @@ import { cookieSessionResolver, type SessionResolver } from "./session.js";
 
 const config = configFromEnv();
 const { db, instance, close } = await openAppDb(config);
+
+// The sample overlay exists from the first boot, header only, rather than
+// from the first staff save: the nightly backup carries it as one of the
+// authored files a rebuild cannot reconstruct, and a file that is simply not
+// there yet would read to it as a file that failed to transfer (beeline-649).
+await ensureSampleOverlayFile(config.sampleOverlayPath);
 
 // Both overlays, merged as promotion merges them: the guard's job is to spot
 // a decision a person made, and half the decisions are curated in git.

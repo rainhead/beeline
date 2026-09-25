@@ -7,7 +7,15 @@ exists — in-app sample edits write correction events to `data/corrections.csv`
 (outside the blow-away path; [src/corrections.ts](../../src/corrections.ts)),
 read at promotion union the git-curated CSV with app rows winning per
 (record, field). The correction table for *synced iNat observations* still
-waits.
+waits. **Reviewed** (2026-09-25, beeline-649): its first instance exists
+without the table — a staff locality over an iNat-linked sample lives in
+`data/sample-overlay.csv` ([src/sample-overlay.ts](../../src/sample-overlay.ts)),
+keyed by observation id rather than by load, with the base recorded as the
+locality the observation yielded at the time. The merge is this ADR's with
+one simplification: a conflict is a view
+(`sample_locality_override_diverged`) shown on the sample page, not a QC
+finding, and nothing auto-retires — the override stands until a person
+removes it.
 
 ## Context
 

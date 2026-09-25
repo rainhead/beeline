@@ -120,7 +120,13 @@ SELECT m.sample_id, m.person_id, 1 FROM minted_sample m;
 -- printed, which the run page shows the proofer (beeline-1kb.3). The
 -- fill-only refresh below still fills a gap on a printed sample, since a
 -- label that printed nothing there is contradicted by nothing. A sample
--- whose observation is gone from observation_field keeps what it has.
+-- whose observation is gone from observation_field keeps what it has. And
+-- one a staff member has set stays set (sample_locality_override,
+-- beeline-649): the observation is no longer the only writer on that row,
+-- and the person outranks it. The override is re-applied after this file
+-- runs, so on a rebuild the row briefly reads the observation's value and
+-- then the staffer's; the exclusion here is what keeps the nightly from
+-- flipping it back in between.
 UPDATE sample SET locality = followed.locality
 FROM (
   SELECT s.entity_id AS sample_id, loc.locality
@@ -128,6 +134,7 @@ FROM (
   JOIN observation_field f ON f.inat_id = s.inat_observation_id
   LEFT JOIN observation_locality loc ON loc.inat_id = f.inat_id
   WHERE NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+    AND NOT EXISTS (SELECT 1 FROM sample_locality_override o WHERE o.sample_id = s.entity_id)
 ) followed
 WHERE sample.entity_id = followed.sample_id
   AND sample.locality IS DISTINCT FROM followed.locality;

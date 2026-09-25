@@ -110,9 +110,9 @@ fly deploy --env BEELINE_MAINTENANCE=1
 fly ssh sftp shell --app beeline
 #   put beeline.duckdb                       -> /app/data/beeline.duckdb
 #   put data/corrections.csv                 -> /app/data/corrections.csv
-#   put data/person-overlay.csv              (and person-change, sample-change,
-#   put data/sample-state.csv                 sample-state — the five that a
-#                                             rebuild cannot reconstruct)
+#   put data/person-overlay.csv              (and sample-overlay, person-change,
+#   put data/sample-state.csv                 sample-change, sample-state — the
+#                                             six that a rebuild cannot reconstruct)
 #   put data/secrets/inat-oauth-token        -> /app/data/secrets/
 fly machine update --env BEELINE_MAINTENANCE= <id>
 ```
@@ -319,14 +319,14 @@ daily block-level snapshot (`snapshot_retention = 14`).
 
 Pre-cutover most of that is tolerable — `beeline.duckdb` is reconstructible by
 re-ingestion. What is **not** reconstructible is `data/corrections.csv`,
-`data/person-overlay.csv`, `data/person-change.csv`, `data/sample-change.csv`
-and `data/sample-state.csv`: they sit outside the blow-away path precisely
+`data/person-overlay.csv`, `data/sample-overlay.csv`, `data/person-change.csv`,
+`data/sample-change.csv` and `data/sample-state.csv`: they sit outside the blow-away path precisely
 because a rebuild must not lose them, and
 [ADR 0007](../adr/0007-authored-changes-are-events.md)'s whole argument is
 that a history a rebuild erases answers "who changed this" with "nobody, we
 rebuilt it". A volume failure would answer it the same way.
 
-So those five are copied off the volume by
+So those six are copied off the volume by
 [`scripts/backup-authored-files.sh`](../../scripts/backup-authored-files.sh),
 which pulls them over `fly ssh sftp`, checks each against a `sha256sum` taken
 on the machine, and writes one gzipped tarball per run (~1.7 MB). A file that
@@ -400,7 +400,7 @@ outside: the archive that should be there is not. So a second cron line asks
 the question the runbook used to leave to a person —
 [`scripts/check-backup-age.sh`](../../scripts/check-backup-age.sh) prints
 nothing while the newest archive is under two days old, reads as an archive,
-and holds all five files, and speaks only when one of those is false. Two
+and holds all six files, and speaks only when one of those is false. Two
 days, so a single missed night is not an alarm and two in a row is:
 
 ```cron

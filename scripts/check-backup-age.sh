@@ -18,7 +18,7 @@ DEST="${1:-${BEELINE_BACKUP_DIR:-$HOME/beeline-backups}}"
 # Two days, so one missed night — the machine was mid-restart at 02:30 — is
 # not an alarm, and two in a row is.
 MAX_DAYS="${BEELINE_BACKUP_MAX_AGE_DAYS:-2}"
-FILES="corrections.csv person-overlay.csv person-change.csv sample-change.csv sample-state.csv"
+FILES="corrections.csv person-overlay.csv sample-overlay.csv person-change.csv sample-change.csv sample-state.csv"
 
 newest=$(ls -1t "$DEST"/beeline-authored-*.tar.gz 2>/dev/null | head -1 || true)
 if [ -z "$newest" ]; then
@@ -36,7 +36,7 @@ fi
 # Young is not enough. The backup script builds each archive under a
 # temporary name and renames it into place, so a truncated one should be
 # impossible — and "should be" is what a check exists to replace. Listing it
-# reads every block, and the five names are the five the runbook says a
+# reads every block, and the six names are the six the runbook says a
 # rebuild cannot reconstruct.
 listed=$(tar -tzf "$newest" 2>&1) || {
   echo "error: the newest backup does not read as an archive: $(basename "$newest")" >&2

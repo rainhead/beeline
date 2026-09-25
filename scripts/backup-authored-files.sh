@@ -73,7 +73,7 @@ DEST="${1:-${BEELINE_BACKUP_DIR:-$HOME/beeline-backups}}"
 KEEP="${BEELINE_BACKUP_KEEP:-30}"
 REMOTE_DIR=/app/data
 
-FILES="corrections.csv person-overlay.csv person-change.csv sample-change.csv sample-state.csv"
+FILES="corrections.csv person-overlay.csv sample-overlay.csv person-change.csv sample-change.csv sample-state.csv"
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$DEST"

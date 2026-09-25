@@ -45,6 +45,31 @@ export async function observationLocalityOf(conn: DuckDBConnection, sampleId: nu
   return v === null || v === undefined ? null : String(v);
 }
 
+/**
+ * The one sample carrying an observation, or why there is not exactly one.
+ * The store admits two samples on one observation (a legacy shape,
+ * sample_multi_observation's inverse), and a decision keyed by that
+ * observation then names nobody rather than both. The route asks this
+ * before writing the file, so an ambiguous reference is refused at the
+ * form rather than persisted as a row every nightly reports and never
+ * applies.
+ */
+export async function resolveObservationSample(
+  conn: DuckDBConnection,
+  inatObservationId: bigint | number | string,
+): Promise<{ sampleId: number } | { problem: string }> {
+  const found = await rows(conn, `SELECT entity_id FROM sample WHERE inat_observation_id = $1`, [
+    BigInt(inatObservationId),
+  ]);
+  if (found.length === 1) return { sampleId: Number(found[0]![0]) };
+  return {
+    problem:
+      found.length === 0
+        ? `no sample carries observation ${inatObservationId}`
+        : `${found.length} samples carry observation ${inatObservationId}`,
+  };
+}
+
 export async function applySampleOverlay(
   conn: DuckDBConnection,
   overlay: readonly SampleOverlayRow[],
@@ -65,34 +90,29 @@ export async function applySampleOverlay(
       result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: "not a sample reference" });
       continue;
     }
-    const found = await rows(conn, `SELECT entity_id FROM sample WHERE inat_observation_id = $1`, [
-      BigInt(ref.inat_observation_id),
-    ]);
-    if (found.length !== 1) {
-      result.unresolved.push({
-        sample_ref: row.sample_ref,
-        field: row.field,
-        reason:
-          found.length === 0
-            ? `no sample carries observation ${ref.inat_observation_id}`
-            : `${found.length} samples carry observation ${ref.inat_observation_id}`,
-      });
+    const found = await resolveObservationSample(conn, ref.inat_observation_id);
+    if ("problem" in found) {
+      result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: found.problem });
       continue;
     }
-    const sampleId = Number(found[0]![0]);
+    const { sampleId } = found;
 
     if (row.value === "") {
       // Removal: the observation is the only writer again. Hand the sample
       // back what the follow rule would give it — now, rather than at the
       // next nightly, so the page does not show a value nobody stands
-      // behind for a day. A printed sample keeps what it has, as it would
-      // under the follow rule: the label is on paper.
+      // behind for a day. The follow rule's terms exactly: a printed sample
+      // keeps what it has, since the label is on paper, and so does one
+      // whose observation is gone from observation_field — the inner join
+      // is what says so, and without it an absent observation reads as a
+      // locality of nothing (CodeRabbit on PR #94).
       await conn.run(`DELETE FROM sample_locality_override WHERE sample_id = $1`, [sampleId] as never);
       await conn.run(
         `UPDATE sample SET locality = followed.locality
          FROM (SELECT s.entity_id AS sample_id, loc.locality
                FROM sample s
-               LEFT JOIN observation_locality loc ON loc.inat_id = s.inat_observation_id
+               JOIN observation_field f ON f.inat_id = s.inat_observation_id
+               LEFT JOIN observation_locality loc ON loc.inat_id = f.inat_id
                WHERE s.entity_id = $1
                  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)) followed
          WHERE sample.entity_id = followed.sample_id

@@ -1,7 +1,7 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
-import { applySampleOverlay, observationLocalityOf } from "../apply-sample-overlay.js";
+import { applySampleOverlay, observationLocalityOf, resolveObservationSample } from "../apply-sample-overlay.js";
 import { observationRef, sampleValueProblem, upsertSampleOverlay, type SampleOverlayRow } from "../sample-overlay.js";
 import { applySampleEdit, loadSampleForStaff } from "./sample-edit.js";
 
@@ -80,6 +80,18 @@ export async function setStaffLocality(
     const problem = sampleValueProblem("locality", value);
     if (problem !== null) return { outcome: "invalid", problem };
     if (value === "") return { outcome: "invalid", problem: "locality cannot be blank" };
+  }
+  // Before anything durable: the row will name the sample by its
+  // observation, and that has to name exactly this sample. Two samples on
+  // one observation is a shape the store admits, and a row written for it
+  // would be refused by every pass and reported by every nightly, never
+  // applied (CodeRabbit on PR #94). Refused at the form instead.
+  if (deps.conn !== undefined) {
+    const resolved = await resolveObservationSample(deps.conn, sample.inat_observation_id);
+    if ("problem" in resolved) return { outcome: "unresolved", reason: resolved.problem };
+    if (resolved.sampleId !== sample.entity_id) {
+      return { outcome: "unresolved", reason: `observation ${sample.inat_observation_id} is on another sample` };
+    }
   }
   // The merge base: what the observation yields as the staffer looks at it,
   // so a later upstream move is tellable from the one they already saw

@@ -180,6 +180,19 @@ describe("a staff locality stands over the observation's", () => {
     expect(await one("SELECT locality FROM sample")).toEqual(["Bald Hill"]);
   });
 
+  test("removing it on a sample whose observation has left the store keeps what it has", async () => {
+    await stage(obs(7));
+    await upsertSampleOverlay(overlayPath, [override("Bald Hill")]);
+    await promoteObservations(conn, { sampleOverlayPath: overlayPath });
+    // The follow rule joins observation_field, so a sample whose observation
+    // is gone keeps its locality; the removal has to say the same, or an
+    // absent observation reads as a locality of nothing.
+    await conn.run("DELETE FROM observation_field WHERE inat_id = 7");
+    await applySampleOverlay(conn, [override("")]);
+    expect(await count("SELECT count(*) FROM sample_locality_override")).toBe(0);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Bald Hill"]);
+  });
+
   test("an observation that moves to a third value is named, and the override stands", async () => {
     await stage(obs(7));
     await upsertSampleOverlay(overlayPath, [override("Bald Hill")]);

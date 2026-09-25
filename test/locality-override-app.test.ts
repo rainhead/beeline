@@ -135,10 +135,25 @@ describe("the staff locality form", () => {
     expect(res.status).toBe(302);
     expect(await one(conn, `SELECT count(*) FROM sample_locality_override`)).toEqual([0n]);
     // No observation is staged here, so there is nothing to follow back to
-    // and the sample keeps its last value; the file records the removal.
+    // and the sample keeps its last value — as under the follow rule, whose
+    // inner join on observation_field is what an absent observation means;
+    // the first version nulled it. The file records the removal.
+    expect(await one(conn, `SELECT locality FROM sample WHERE entity_id = ${sampleId}`)).toEqual(["Bald Hill"]);
     expect((await readSampleOverlay(sampleOverlayPath))[0]).toMatchObject({ value: "" });
     const page = await (await app.request(`/samples/${sampleId}`)).text();
     expect(page).not.toContain("Locality set here");
+  });
+
+  it("refuses to write a decision two samples would claim", async () => {
+    const { app, conn, sampleId, sampleOverlayPath } = await inatApp("sam");
+    await insertCleanSample(conn, { sample_number: "'A-2'", inat_observation_id: "998877" });
+    const res = await post(app, `/samples/${sampleId}/locality`, { locality: "Bald Hill" });
+    expect(res.status).toBe(409);
+    expect(await res.text()).toBe("2 samples carry observation 998877");
+    // Nothing durable: a row here would be refused by every pass and
+    // reported by every nightly.
+    expect(await readSampleOverlay(sampleOverlayPath)).toEqual([]);
+    expect(await one(conn, `SELECT locality FROM sample WHERE entity_id = ${sampleId}`)).toEqual(["Corvallis"]);
   });
 
   it("refuses a blank locality, and refuses the collector", async () => {

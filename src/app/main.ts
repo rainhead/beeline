@@ -124,6 +124,7 @@ const app = createApp({
   jobs: { list: jobs, runNow: (name) => scheduler.runNow(name) },
   correctionsPath: config.correctionsPath,
   personOverlayPath: config.personOverlayPath,
+  sampleOverlayPath: config.sampleOverlayPath,
   personChangesPath: config.personChangesPath,
   sampleChangesPath: config.sampleChangesPath,
   sampleStatePath: config.sampleStatePath,

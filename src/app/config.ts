@@ -40,6 +40,12 @@ export interface AppConfig {
    */
   personOverlayPath: string;
   /**
+   * App-written store of staff decisions about samples — a locality set over
+   * the observation's (beeline-649). Outside the blow-away path like the
+   * person overlay; observation promotion replays it.
+   */
+  sampleOverlayPath: string;
+  /**
    * The append-only log of what happened to a person, and when (beeline-o22).
    * Outside the blow-away path like the two overlays, and for a sharper
    * reason: a history a rebuild erases answers "who changed this" with
@@ -168,6 +174,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
             .filter((s) => s !== ""),
     correctionsPath: env.BEELINE_CORRECTIONS ?? "data/corrections.csv",
     personOverlayPath: env.BEELINE_PERSON_OVERLAY ?? "data/person-overlay.csv",
+    sampleOverlayPath: env.BEELINE_SAMPLE_OVERLAY ?? "data/sample-overlay.csv",
     personChangesPath: env.BEELINE_PERSON_CHANGES ?? CHANGE_LOG,
     sampleChangesPath: env.BEELINE_SAMPLE_CHANGES ?? SAMPLE_CHANGE_LOG,
     sampleStatePath: env.BEELINE_SAMPLE_STATE ?? SAMPLE_STATE_SNAPSHOT,

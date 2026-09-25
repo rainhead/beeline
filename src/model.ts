@@ -316,6 +316,29 @@ export interface SampleAtlasTable {
   assigned_by: number | null;
 }
 
+/** A locality staff set, which promotion never overwrites (beeline-649). */
+export interface SampleLocalityOverrideTable {
+  sample_id: number;
+  locality: string;
+  /** The merge base: what the observation yielded when this was written. */
+  observed_locality: string | null;
+  set_by: number | null;
+  reason: string | null;
+}
+
+export interface SampleLocalityOverrideStaleView {
+  sample_id: number;
+  override_locality: string;
+  sample_locality: string | null;
+}
+
+export interface SampleLocalityOverrideDivergedView {
+  sample_id: number;
+  override_locality: string;
+  observed_locality: string | null;
+  observation_locality: string | null;
+}
+
 export interface SpecimenTable {
   entity_id: Generated<number>;
   sample_id: number;
@@ -854,6 +877,9 @@ export interface Database {
   sample_primary_collector: SamplePrimaryCollectorView;
   sample_primary_collector_invalid: SamplePrimaryCollectorInvalidView;
   sample_atlas: SampleAtlasTable;
+  sample_locality_override: SampleLocalityOverrideTable;
+  sample_locality_override_stale: SampleLocalityOverrideStaleView;
+  sample_locality_override_diverged: SampleLocalityOverrideDivergedView;
   elevation_derivation_limit: ElevationDerivationLimitView;
   coordinate_precision_rule: CoordinatePrecisionRuleView;
   sample_coordinate_limit: SampleCoordinateLimitView;

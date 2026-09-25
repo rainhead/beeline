@@ -92,10 +92,17 @@ export async function pipelineTail(
   parts: string[],
   personChanges: string,
   samplePaths: SampleLogPaths,
+  sampleOverlayPath?: string,
 ): Promise<string> {
   parts.push(await ctx.step("fetch places", () => refreshPlaces(ctx.conn, { signal: ctx.signal })));
-  const promoted = await ctx.step("promote observations", () => promoteObservations(ctx.conn));
+  const promoted = await ctx.step("promote observations", () => promoteObservations(ctx.conn, { sampleOverlayPath }));
   parts.push(`${promoted.linkedSamples} samples linked`);
+  // A staff decision naming a sample the store no longer holds is a standing
+  // condition somebody should read, not a failure: the run's detail carries
+  // it and the rest of the pipeline goes on.
+  if (promoted.overlayUnresolved.length > 0) {
+    parts.push(`${promoted.overlayUnresolved.length} sample overlay row(s) name no sample`);
+  }
   // iNaturalist renames an account and promotion rewrites the cached login,
   // which used to happen with no trace at all (beeline-o22). Recorded as its
   // own step rather than inside promotion, because the log is the app's file
@@ -136,7 +143,11 @@ export async function pipelineTail(
 }
 
 export function buildJobs(
-  config: Pick<AppConfig, "syncProjects" | "sweepDays" | "personChangesPath" | "sampleChangesPath" | "sampleStatePath">,
+  config: Pick<
+    AppConfig,
+    "syncProjects" | "sweepDays" | "personChangesPath" | "sampleChangesPath" | "sampleStatePath"
+  > &
+    Partial<Pick<AppConfig, "sampleOverlayPath">>,
 ): Job[] {
   const samplePaths: SampleLogPaths = { log: config.sampleChangesPath, state: config.sampleStatePath };
   return [
@@ -173,7 +184,7 @@ export function buildJobs(
             parts.push(`project ${projectId} (updated since ${updatedSince.slice(0, 16)}Z): ${r.fetched} fetched, ${r.newLoads} new`);
           }
         }
-        return pipelineTail(ctx, parts, config.personChangesPath, samplePaths);
+        return pipelineTail(ctx, parts, config.personChangesPath, samplePaths, config.sampleOverlayPath);
       },
     },
     {
@@ -194,7 +205,7 @@ export function buildJobs(
           const r = await ctx.step(`sweep ${projectId}`, () => syncINat(ctx.conn, { projectId, d1, token, signal: ctx.signal }));
           parts.push(`project ${projectId} (full sweep since ${d1}): ${r.fetched} fetched, ${r.newLoads} new`);
         }
-        return pipelineTail(ctx, parts, config.personChangesPath, samplePaths);
+        return pipelineTail(ctx, parts, config.personChangesPath, samplePaths, config.sampleOverlayPath);
       },
     },
   ];

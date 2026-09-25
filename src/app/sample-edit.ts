@@ -59,6 +59,21 @@ export async function loadEditableSample(
     .executeTakeFirst();
 }
 
+/**
+ * The same sample for a staff member, who reaches it without being on it
+ * (beeline-649): the collector gate is gone and the iNat gate stays, since
+ * the corrections overlay can only name a staging row. The caller is
+ * admin-gated; this only shapes the row.
+ */
+export async function loadSampleForStaff(db: Kysely<Database>, sampleId: number): Promise<EditableSample | undefined> {
+  return db
+    .selectFrom("sample")
+    .where("entity_id", "=", sampleId)
+    .where("inat_observation_id", "is", null)
+    .select(["entity_id", "sample_number", "date_start", "locality", "country", "state_province", "county", "protocol"])
+    .executeTakeFirst();
+}
+
 interface StagingMember {
   _id: string;
   locality: string | null;

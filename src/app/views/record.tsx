@@ -14,6 +14,7 @@ import {
 } from "../record.js";
 import {
   Absent,
+  Button,
   Card,
   Chip,
   DataTable,
@@ -27,6 +28,7 @@ import {
   Pager,
   TaxonName,
   Term,
+  TextField,
   type Detail,
 } from "./components/index.js";
 
@@ -78,6 +80,22 @@ export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }
               missing this is the string that has to change upstream. */}
           {sample.observation_place_guess === null ? null : (
             <Meta block>{s.asRecorded(sample.observation_place_guess)}</Meta>
+          )}
+          {/* A staff-set locality carries its provenance beside it, as the
+              coordinates carry theirs (beeline-649): who, why, and what
+              iNaturalist says now where the observation has moved on. */}
+          {sample.locality_override === null ? null : (
+            <Meta block>
+              {sample.locality_override.set_by === null
+                ? s.staffLocality.setByStaff
+                : s.staffLocality.setBy(sample.locality_override.set_by)}
+              {sample.locality_override.reason === null ? null : (
+                <> {s.staffLocality.because(sample.locality_override.reason)}</>
+              )}
+            </Meta>
+          )}
+          {sample.locality_override?.observation_now == null ? null : (
+            <Meta block>{s.staffLocality.observationNow(sample.locality_override.observation_now)}</Meta>
           )}
         </>
       ),
@@ -283,6 +301,42 @@ function SampleActions({ m, sample }: { m: Messages; sample: SampleDetail }) {
   );
 }
 
+/**
+ * The staff write on a sample page (beeline-649): set the locality, standing
+ * over the observation, or remove the one that stands. Plain form POST, like
+ * the collector's edit. Rendered only for an admin — and the admin flag is
+ * off while impersonating, so a staffer viewing as a volunteer sees what
+ * the volunteer sees.
+ */
+function StaffLocality({ m, sample }: { m: Messages; sample: SampleDetail }) {
+  const t = m.record.sample.staffLocality;
+  const action = `/samples/${sample.sample_id}/locality`;
+  return (
+    <>
+      <h3>{t.heading}</h3>
+      <Meta block>{sample.inat_observation_id === null ? t.hintNoObservation : t.hint}</Meta>
+      {sample.printed ? <Meta block>{t.printed}</Meta> : null}
+      <form method="post" action={action} class="form-column">
+        <TextField id="staff-locality" name="locality" label={t.field} value={sample.locality} />
+        <TextField id="staff-locality-note" name="note" label={t.note} />
+        <p class="row">
+          <Button>{t.save}</Button>
+          {sample.locality_override === null ? null : (
+            <Button variant="outlined" form="staff-locality-remove">
+              {t.remove}
+            </Button>
+          )}
+        </p>
+      </form>
+      {sample.locality_override === null ? null : (
+        <form id="staff-locality-remove" method="post" action={action}>
+          <input type="hidden" name="remove" value="1" />
+        </form>
+      )}
+    </>
+  );
+}
+
 /** The determination of record for one specimen, as a listing cell. */
 function RecordedName({
   m,
@@ -381,12 +435,15 @@ export function SamplePage({
   findings,
   specimens,
   history,
+  admin = false,
 }: {
   m: Messages;
   sample: SampleDetail;
   findings: readonly RecordFinding[];
   specimens: SampleSpecimenPage;
   history: readonly SampleChange[];
+  /** Staff see the locality form; off while impersonating, like every admin surface. */
+  admin?: boolean;
 }) {
   return (
     <>
@@ -405,6 +462,7 @@ export function SamplePage({
       <Card>
         <SampleFacts m={m} sample={sample} />
         <SampleActions m={m} sample={sample} />
+        {admin ? <StaffLocality m={m} sample={sample} /> : null}
       </Card>
       <Card>
         <WhereCollected m={m} sample={sample} />

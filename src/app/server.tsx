@@ -75,6 +75,7 @@ import { DesignImagery } from "./views/design/imagery.js";
 import { MessagesProof } from "./views/design/messages-proof.js";
 import { QcProof } from "./views/design/qc-proof.js";
 import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
+import { setStaffLocality } from "./locality-override.js";
 import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
 import { SampleEditForm } from "./views/sample-edit.js";
 import {
@@ -116,6 +117,8 @@ export interface AppDeps {
   correctionsPath?: string;
   /** App-written store of staff decisions about people (ADR 0004 overlay). */
   personOverlayPath?: string;
+  /** App-written store of staff decisions about samples — a locality set over the observation's (beeline-649). */
+  sampleOverlayPath?: string;
   /** Append-only log of what happened to a person, and when (beeline-o22). */
   personChangesPath?: string;
   /** Sample history: the append-only log and its snapshot baseline (beeline-ewl). */
@@ -152,6 +155,7 @@ export function createApp({
   jobs,
   correctionsPath,
   personOverlayPath,
+  sampleOverlayPath,
   personChangesPath,
   sampleChangesPath,
   sampleStatePath,
@@ -164,6 +168,7 @@ export function createApp({
   const printWriter = printConn ?? conn;
   const corrections = correctionsPath ?? "data/corrections.csv";
   const overlayPath = personOverlayPath ?? "data/person-overlay.csv";
+  const sampleOverlay = sampleOverlayPath ?? "data/sample-overlay.csv";
   const changesPath = personChangesPath ?? CHANGE_LOG;
   const samplePaths = {
     log: sampleChangesPath ?? SAMPLE_CHANGE_LOG,
@@ -552,7 +557,14 @@ export function createApp({
       await page(
         c,
         m.record.sample.title(sample.sample_number),
-        <SamplePage m={m} sample={sample} findings={findings} specimens={specimens} history={history} />,
+        <SamplePage
+          m={m}
+          sample={sample}
+          findings={findings}
+          specimens={specimens}
+          history={history}
+          admin={c.get("admin")}
+        />,
       ),
     );
   });
@@ -652,6 +664,46 @@ export function createApp({
       }
     }
     return c.redirect("/");
+  });
+
+  // A staff member sets a sample's locality from its page (beeline-649): the
+  // one write a volunteer cannot make on an iNat-linked sample, standing
+  // over the observation on every sync. Admin-gated — and the admin flag is
+  // off while impersonating, so the impersonation refusal is stated first
+  // and the gate then catches everything else.
+  app.post("/samples/:id/locality", async (c) => {
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const session = c.get("session");
+    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, true);
+    if (sample === null) return c.text(m.record.notFound, 404);
+    const body = await c.req.parseBody();
+    const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+    const result = await setStaffLocality(
+      { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections },
+      { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality },
+      { value: field("locality"), remove: field("remove") !== "", note: field("note"), author: session.login },
+    );
+    if (result.outcome === "invalid") return c.text(result.problem, 400);
+    if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
+    if (result.outcome === "unresolved") return c.text(result.reason, 409);
+    // Credited to whoever typed it, narrowed to this sample — the same
+    // reasoning as the collector's edit above; the overlay carries the
+    // attribution durably whatever happens here.
+    if (result.outcome === "saved" || result.outcome === "removed") {
+      try {
+        await recordSampleChanges(kyselyReader(db), samplePaths, {
+          source: "app",
+          author: session.login,
+          reason: field("note").trim() || undefined,
+          where: `s.entity_id = ${sample.sample_id}`,
+        });
+      } catch (err) {
+        console.warn(`could not record the locality change: ${(err as Error).message}`);
+      }
+    }
+    return c.redirect(`/samples/${sample.sample_id}`);
   });
 
   // The glossary is volunteer-facing: in the nav for everyone, and the one

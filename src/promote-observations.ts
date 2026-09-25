@@ -5,6 +5,8 @@ import { pathToFileURL } from "node:url";
 import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
 import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
 import { refreshObservationFields } from "./refresh-observation-fields.js";
+import { applySampleOverlay, type UnresolvedSampleRow } from "./apply-sample-overlay.js";
+import { readSampleOverlay } from "./sample-overlay.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -24,6 +26,11 @@ const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
  *    locations (private/trusted > public-unobscured; obscured-untrusted
  *    writes nothing), keyed on the inat_observation_id step 2 has just set,
  *    so a sample minted on this pass is located on this pass.
+ * 4. The sample overlay (src/sample-overlay.ts), last, because it names
+ *    samples by the observation ids steps 2 and 3 have just set: a staff
+ *    locality stands over whatever the follow rule wrote (beeline-649).
+ *    Applied only when a path is given — a test store, and any scratch
+ *    promotion, must not read the deployed store's decisions.
  */
 
 export interface ObservationPromotionCounts {
@@ -37,10 +44,19 @@ export interface ObservationPromotionCounts {
   obscuredWithheld: number;
   accountsLinked: number;
   accountConflicts: number;
+  /** Overlay rows applied, and the ones naming no sample (or two). */
+  overlayApplied: number;
+  overlayUnresolved: UnresolvedSampleRow[];
+}
+
+export interface ObservationPromotionOptions {
+  /** data/sample-overlay.csv on a deployment; absent ⇒ no overlay is read. */
+  sampleOverlayPath?: string;
 }
 
 export async function promoteObservations(
   conn: DuckDBConnection,
+  opts: ObservationPromotionOptions = {},
 ): Promise<ObservationPromotionCounts> {
   const scalar = async (sql: string): Promise<number> => {
     const [[v]] = (await (await conn.run(sql)).getRows()) as [[bigint]];
@@ -65,6 +81,10 @@ export async function promoteObservations(
     const ambiguousGroups = await scalar("SELECT count(*) FROM sample_mint_ambiguous");
     await conn.run(await readFile(`${INGEST_DIR}mint-samples.sql`, "utf8"));
     await conn.run(await readFile(`${INGEST_DIR}promote-observations.sql`, "utf8"));
+    const overlay =
+      opts.sampleOverlayPath === undefined
+        ? { applied: 0, unresolved: [] }
+        : await applySampleOverlay(conn, await readSampleOverlay(opts.sampleOverlayPath));
     const counts: ObservationPromotionCounts = {
       linkedSamples: await scalar(
         `SELECT count(*) FROM sample s
@@ -103,6 +123,8 @@ export async function promoteObservations(
             OR EXISTS (SELECT 1 FROM inat_account a
                        WHERE a.inat_user_id = p.user_id AND a.person_id <> p.person_id)`,
       ),
+      overlayApplied: overlay.applied,
+      overlayUnresolved: overlay.unresolved,
     };
     await conn.run("COMMIT");
     return counts;
@@ -117,7 +139,11 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const dbPath = process.argv[2] ?? DEFAULT_DB;
   const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
-  const counts = await promoteObservations(conn);
+  // The overlay belongs to the deployment, like the change logs below: a
+  // scratch copy is promoted without it.
+  const counts = await promoteObservations(conn, {
+    sampleOverlayPath: process.env.BEELINE_SAMPLE_OVERLAY ?? "data/sample-overlay.csv",
+  });
   // A login iNaturalist has renamed is a change to a person; the nightly job
   // records the same thing after the same step (beeline-o22). The log belongs
   // to the database this was pointed at — promoting a scratch copy must not

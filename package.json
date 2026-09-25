@@ -26,6 +26,7 @@
     "itis:fetch": "scripts/fetch-itis.sh",
     "itis:load": "tsx src/load-itis.ts",
     "person:apply": "tsx src/apply-person-overlay.ts",
+    "sample:apply": "tsx src/apply-sample-overlay.ts",
     "bench:pages": "tsx bench/pages.ts",
     "bench:contention": "tsx bench/contention.ts"
   },

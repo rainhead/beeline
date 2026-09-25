@@ -79,6 +79,30 @@ CREATE TABLE sample_atlas (
 COMMENT ON TABLE sample_atlas IS 'The atlas a sample files under. No row ⇒ no member atlas covers where it was collected (ordinary, what the "outside" scope lists). A satellite of sample so the assignment is writable — beeline-6e9: DuckDB will not update an indexed column on a row an incoming foreign key references, and every sample is referenced.';
 COMMENT ON COLUMN sample_atlas.assigned_by IS 'Null ⇒ assigned by geography (atlas_region lookup at promotion, or the fill-only refresh); set ⇒ explicit administrative assignment (border ambiguity, out-of-region collecting), which the refresh never overwrites.';
 
+-- A locality staff have set, standing over whatever the observation says
+-- (beeline-649). Until its labels print a sample's locality FOLLOWS its
+-- observation on every promotion (ingest/mint-samples.sql), and nobody can
+-- edit an iNat-linked sample in the app — so a place name the observation
+-- cannot yield had nowhere to go. This is where it goes: a satellite in the
+-- shape of sample_atlas, present only where a person has spoken, and the
+-- follow rule leaves a sample with a row here alone. The durable record is
+-- data/sample-overlay.csv (src/sample-overlay.ts), keyed by observation id
+-- because entity_id is a per-store draw a rebuild redraws; this table is
+-- what promotion re-derives from it, so a rebuild reproduces the override
+-- exactly. observed_locality is the three-way merge's base (ADR 0004): what
+-- the observation yielded when the override was written, so a later upstream
+-- change is tellable from the one the staffer already saw.
+CREATE TABLE sample_locality_override (
+  sample_id         INTEGER PRIMARY KEY REFERENCES sample(entity_id),
+  locality          TEXT NOT NULL CHECK (locality <> ''),
+  observed_locality TEXT,
+  set_by            INTEGER REFERENCES person(entity_id),
+  reason            TEXT
+);
+COMMENT ON TABLE sample_locality_override IS 'A locality a staff member set on a sample, which promotion never overwrites: the follow rule (ingest/mint-samples.sql) skips samples with a row here. Re-derived at the end of observation promotion from data/sample-overlay.csv, the durable record; sample.locality is written beside it because every read uses that column, and sample_locality_override_stale asserts the two agree.';
+COMMENT ON COLUMN sample_locality_override.observed_locality IS 'What observation_locality yielded when the override was written — the merge base. sample_locality_override_diverged names the overrides whose observation has since moved to a third value.';
+COMMENT ON COLUMN sample_locality_override.set_by IS 'Whoever set it, resolved from the overlay row''s author login through inat_account at apply time; null where the login no longer resolves.';
+
 -- Where an elevation value came from: the legacy import, or (once Beeline
 -- derives its own) a specific DEM tile, identified by name and content hash so
 -- a re-derivation against updated data is distinguishable from the original.

@@ -590,6 +590,32 @@ export const en = {
       edit: "Edit this sample",
       /** Every value the record simply does not carry. */
       unknown: "not recorded",
+      /**
+       * Staff set a locality the observation cannot yield (beeline-649). The
+       * provenance lines sit under the place, in the same voice as
+       * asRecorded: what stands, who said so, and what iNaturalist says now
+       * where that has moved on. The form is the page's only write for
+       * staff, and says plainly that the value stands over the observation
+       * until it is removed — the one thing a staffer needs to know before
+       * pressing it.
+       */
+      staffLocality: {
+        setBy: (name: string) => `Locality set here by ${name}.`,
+        setByStaff: "Locality set here by staff.",
+        because: (reason: string) => `Reason: ${reason}`,
+        observationNow: (text: string) =>
+          `iNaturalist now yields “${text}” for this observation; the locality set here stands until it is removed.`,
+        heading: "Set the locality",
+        hint: "For staff. A locality set here stands over the observation's on every sync, and survives rebuilds, until it is removed.",
+        hintNoObservation:
+          "For staff. This sample has no observation, so the locality is kept as a correction — the same way the collector's own edits are.",
+        printed:
+          "Labels for this sample have already been printed and carry the locality as it was; changing it here does not change them.",
+        field: "Locality",
+        note: "Why (optional)",
+        save: "Set locality",
+        remove: "Remove, and follow iNaturalist again",
+      },
 
       where: {
         heading: "Where it was collected",

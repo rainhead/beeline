@@ -108,8 +108,26 @@ export interface SampleDetail {
   elevation_stale: boolean;
   /** Whether the viewer is one of this sample's collectors. */
   mine: boolean;
+  /** At least one label on paper (schema/155): the locality no longer follows upstream. */
+  printed: boolean;
+  /**
+   * A locality staff set over the observation's (beeline-649), with its
+   * provenance: who, why, and — where the observation has since moved to a
+   * third value — what it yields now, so the page can say the override
+   * stands against something rather than silently.
+   */
+  locality_override: LocalityOverride | null;
   /** Everyone who collected it, in recordedBy order (beeline-77j). */
   collectors: ListedCollector[];
+}
+
+export interface LocalityOverride {
+  locality: string;
+  observed_locality: string | null;
+  set_by: string | null;
+  reason: string | null;
+  /** Null unless the observation now yields neither the base nor the override. */
+  observation_now: string | null;
 }
 
 /** A QC finding on a sample, with the copy that says what to do about it. */
@@ -217,6 +235,10 @@ const sampleColumns = (personId: number) => sql`
   -- it follows upstream when nothing would ever want it not to.
   f.notes AS observation_notes,
   EXISTS (SELECT 1 FROM sample_elevation_stale st WHERE st.sample_id = s.entity_id) AS elevation_stale,
+  EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id) AS printed,
+  o.locality AS override_locality, o.observed_locality AS override_observed,
+  ob.display_name AS override_set_by, o.reason AS override_reason,
+  dv.observation_locality AS override_observation_now,
   ${isMine(personId)} AS mine`;
 
 const SAMPLE_JOINS = sql`
@@ -225,16 +247,38 @@ const SAMPLE_JOINS = sql`
   LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
   LEFT JOIN elevation_source es ON es.entity_id = loc.elevation_source_id
-  LEFT JOIN observation_field f ON f.inat_id = s.inat_observation_id`;
+  LEFT JOIN observation_field f ON f.inat_id = s.inat_observation_id
+  LEFT JOIN sample_locality_override o ON o.sample_id = s.entity_id
+  LEFT JOIN person ob ON ob.entity_id = o.set_by
+  LEFT JOIN sample_locality_override_diverged dv ON dv.sample_id = s.entity_id`;
 
 /** Numbers arrive from DuckDB as bigint or string depending on the column. */
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
-type RawSample = Omit<SampleDetail, "collectors">;
+type RawSample = Omit<SampleDetail, "collectors" | "locality_override"> & {
+  override_locality: string | null;
+  override_observed: string | null;
+  override_set_by: string | null;
+  override_reason: string | null;
+  override_observation_now: string | null;
+};
 
-async function hydrate(db: Kysely<Database>, row: RawSample): Promise<SampleDetail> {
+async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDetail> {
+  const { override_locality, override_observed, override_set_by, override_reason, override_observation_now, ...row } =
+    raw;
   return {
     ...row,
+    locality_override:
+      override_locality === null
+        ? null
+        : {
+            locality: override_locality,
+            observed_locality: override_observed,
+            set_by: override_set_by,
+            reason: override_reason,
+            observation_now: override_observation_now,
+          },
+    printed: Boolean(row.printed),
     sample_id: Number(row.sample_id),
     specimen_count: Number(row.specimen_count),
     latitude: num(row.latitude),

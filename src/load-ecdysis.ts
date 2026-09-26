@@ -42,12 +42,15 @@ import { DEFAULT_DB } from "./person-change.js";
  * recorded_at, lands on the current one, and a flat export loaded in
  * February and the archive's history loaded in July agree. Loading is
  * idempotent twice over: each identification's Symbiota recordID is
- * remembered, and a row that merely restates the specimen's current Ecdysis
- * record — the same node, qualifier and determiner — is not recorded again,
- * which is how a flat export and an archive of one collection can both be
- * loaded without doubling anything. The one thing this cannot survive is an
- * older export loaded after a newer one, whose since-revised "current" rows
- * would supersede the revisions; the loader refuses that unless forced.
+ * remembered, and an identification the store already holds under another
+ * key — the same node, qualifier and determiner on the same specimen,
+ * recorded from a flat export that could not know the recordID — is
+ * ADOPTED, its recordID linked to the event that already exists, rather
+ * than recorded again or skipped. Skipping was the first version, and it
+ * skipped a superseded row for matching what happened to be current, so the
+ * next load recorded it. The one thing none of this survives is an older
+ * export loaded after a newer one, whose since-revised "current" rows would
+ * supersede the revisions; the loader refuses that unless forced.
  */
 
 export interface LoadEcdysisOptions {
@@ -73,6 +76,7 @@ export interface LoadEcdysisResult {
   identifications: number;
   /** Rows that assert nothing: no name, or Symbiota's 'undetermined' placeholder. */
   placeholders: number;
+  /** Rows already recorded: by recordID, or adopted as an event recorded under another key. */
   alreadyLoaded: number;
   /** Rows whose name no node carries, or two do; each is a curation task. */
   unresolvedNames: Array<{ name: string; rows: number }>;
@@ -206,19 +210,29 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
        )
        SELECT *,
               EXISTS (SELECT 1 FROM ecdysis_identification e WHERE e.record_id = named.record_id) AS already,
-              -- A flat export and an archive key the same identification
-              -- differently, so a row is also "already" when the specimen's
-              -- determination of record is this very assertion, from
-              -- Ecdysis: same node, same qualifier, same determiner.
-              EXISTS (SELECT 1 FROM determination_of_record r
-                      WHERE r.specimen_id = named.specimen_id AND r.channel = 'ecdysis_import'
-                        AND r.animal_id = named.animal_id
-                        AND r.qualifier IS NOT DISTINCT FROM named.qualifier
-                        AND r.determiner_name IS NOT DISTINCT FROM CASE WHEN named.by_text IS NULL OR named.by_text = '' THEN NULL ELSE named.identified_by END) AS restated,
+              -- The same identification under another key. A flat export
+              -- and an archive key one identification differently, so an
+              -- event on this specimen with this node, qualifier and
+              -- determiner that no Symbiota recordID has claimed yet is this
+              -- identification, seen before its id was: the row adopts it.
+              -- An event a recordID already claims is a different
+              -- identification that happens to say the same thing — Ecdysis
+              -- does re-enter one — and is left alone. A flat row, being
+              -- current by definition, may also adopt the specimen's
+              -- current Ecdysis record whatever claims it, since one
+              -- current identification cannot be two events.
+              (SELECT min(d.entity_id) FROM determination d
+                WHERE d.specimen_id = named.specimen_id AND d.channel = 'ecdysis_import'
+                  AND d.animal_id = named.animal_id
+                  AND d.qualifier IS NOT DISTINCT FROM named.qualifier
+                  AND d.determiner_name IS NOT DISTINCT FROM CASE WHEN named.by_text IS NULL OR named.by_text = '' THEN NULL ELSE named.identified_by END
+                  AND (NOT EXISTS (SELECT 1 FROM ecdysis_identification e WHERE e.determination_id = d.entity_id AND e.record_id NOT LIKE 'occ:%')
+                       OR ($1 AND EXISTS (SELECT 1 FROM determination_of_record r WHERE r.entity_id = d.entity_id)))) AS adopt_id,
               nullif(concat_ws('; ',
                 CASE WHEN qualifier IS NULL AND qualifier_text <> '' THEN qualifier_text END,
                 nullif(remarks, '')), '') AS notes
        FROM named`,
+      [files.input === "flat"],
     );
     // Exports must arrive in the order they were taken: an older one loaded
     // after a newer would record its since-revised identifications as new
@@ -243,13 +257,13 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     const placeholders = await scalar(conn, `SELECT count(*) FROM ecd_candidate WHERE placeholder`);
     const alreadyLoaded = await scalar(
       conn,
-      `SELECT count(*) FROM ecd_candidate WHERE NOT placeholder AND (already OR restated)`,
+      `SELECT count(*) FROM ecd_candidate WHERE NOT placeholder AND (already OR adopt_id IS NOT NULL)`,
     );
     const unresolvedNames = (
       await rows(
         conn,
         `SELECT scientific_name, count(*) FROM ecd_candidate
-         WHERE NOT placeholder AND NOT already AND NOT restated AND nodes <> 1 GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 40`,
+         WHERE NOT placeholder AND NOT already AND adopt_id IS NULL AND nodes <> 1 GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 40`,
       )
     ).map((r) => ({ name: String(r[0]), rows: Number(r[1]) }));
     const determiners = (
@@ -271,7 +285,16 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                    ELSE coalesce(c.entered_at::TIMESTAMPTZ, $1::TIMESTAMPTZ - INTERVAL 1 SECOND) END
                 + INTERVAL (row_number() OVER (ORDER BY c.specimen_id, c.is_current, c.entered_at NULLS FIRST, c.record_id)) MICROSECOND AS recorded_at
        FROM ecd_candidate c
-       WHERE NOT c.placeholder AND NOT c.already AND NOT c.restated AND c.nodes = 1`,
+       WHERE NOT c.placeholder AND NOT c.already AND c.adopt_id IS NULL AND c.nodes = 1`,
+      [now.toISOString()],
+    );
+    // Adoptions: the recordID is linked to the event that already stands.
+    await conn.run(
+      `INSERT INTO ecdysis_identification (record_id, determination_id, occurrence_id, entered_at, loaded_at)
+       SELECT c.record_id, c.adopt_id, c.occurrence_record_id, c.entered_at, $1::TIMESTAMPTZ
+       FROM ecd_candidate c
+       WHERE NOT c.placeholder AND NOT c.already AND c.adopt_id IS NOT NULL
+       QUALIFY row_number() OVER (PARTITION BY c.record_id ORDER BY c.record_id) = 1`,
       [now.toISOString()],
     );
     // The rows this load inserts are the ones above the sequence's current

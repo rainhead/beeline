@@ -70,8 +70,10 @@ has to get *arrival order* right, and `dateIdentified` cannot help. Two moments 
 - A **superseded** identification is recorded at the moment Ecdysis entered it. It is
   history, and it lands in the past where it belongs, whichever export brings it.
 
-Loading is idempotent twice over: by Symbiota's `recordID`, and by restatement, since a
-flat export and an archive key the same identification differently. An older export
+Loading is idempotent twice over: by Symbiota's `recordID`, and by adoption, since a
+flat export and an archive key the same identification differently: an event the store
+holds under a flat export's key is linked to the archive's `recordID` when it arrives,
+rather than recorded again or skipped. An older export
 loaded after a newer one would make since-revised identifications current again; the
 loader refuses that unless forced.
 
@@ -81,10 +83,10 @@ Measured on a migrated copy of the dev store, loading in date order:
 |---|---|---|---|---|
 | Flat, 2026-02-25 | 51,633 | 50,091 | 0 | 25,715 |
 | Flat, 2026-03-05 | 46,091 | 44,549 | 23,858 | 175 |
-| Archive, 2026-07-10 | 46,090 | 44,549 | 24,263 | 8,094 |
+| Archive, 2026-07-10 | 46,090 | 44,549 | 24,331 | 8,026 |
 
 After which 30,465 of Washington's 30,995 expert determinations of record are the
-Ecdysis event, 30,772 of the 33,984 imported events carry a year, and 221 records
+Ecdysis event, 30,758 of the 33,916 imported events carry a year, and 221 records
 name a different taxon than the August legacy dump did. Each load takes under ten
 seconds.
 

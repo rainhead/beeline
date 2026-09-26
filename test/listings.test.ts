@@ -522,6 +522,37 @@ describe("the host plant column", () => {
     expect(body).toContain("1 sample");
     expect(body).toContain("Host plant: phac");
   });
+
+  it("is on the specimens listing too, with the same filter", async () => {
+    const { app, conn } = await listingApp("staffer");
+    await conn.run(`UPDATE sample SET host_name_as_observed = 'Phacelia', host_rank = 'genus' WHERE sample_number = 'A-1'`);
+    const body = await get(app, "/specimens?scope=all&host=phac");
+    expect(body).toContain("<i>Phacelia</i>");
+    expect(body).toContain("2 specimens");
+    expect(body).toContain("Host plant: phac");
+    // A bee off no flower: the dash, since the absence repeats down the column.
+    const all = await get(app, "/specimens?scope=all");
+    expect(all).toContain("WABA0001");
+    expect(all).not.toMatch(/<td><\/td>/);
+  });
+});
+
+describe("the determination date column", () => {
+  it("shows when the determination of record was made, and orders by it", async () => {
+    const { app, conn } = await listingApp("staffer");
+    await conn.run(`UPDATE determination SET determined_on = DATE '2025-04-28' WHERE verbatim_identification = 'Bombus cf. vosnesenskii'`);
+    const body = await get(app, "/specimens?scope=all");
+    expect(body).toContain("Determined</");
+    expect(body).toContain("Apr 28, 2025");
+    // Newest determination first by default; undated and undetermined last.
+    const sorted = await get(app, "/specimens?scope=all&sort=determined");
+    expect(sorted.indexOf("OBA00001")).toBeLessThan(sorted.indexOf("WABA0001"));
+    expect(sorted).toContain('aria-sort="descending"');
+    const csv = await (await app.request("/specimens.csv?scope=all")).text();
+    expect(csv.split("\r\n")[0]).toContain("host,host_rank");
+    expect(csv.split("\r\n")[0]).toContain("determined_by,determined_on,expert_determination");
+    expect(csv).toContain(",2025-04-28,");
+  });
 });
 
 describe("missing values", () => {

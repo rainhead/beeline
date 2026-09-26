@@ -343,8 +343,11 @@ export const en = {
       colDate: "Date",
       colCollectors: "Collectors",
       colPlace: "Place",
+      colHost: "Host plant",
       colDetermination: "Determination",
       colDeterminer: "Determined by",
+      /** When the determination of record was made — the date on the determination, not when it reached Beeline. */
+      colDetermined: "Determined",
       colAtlas: "Atlas",
       /** An imported specimen whose label predates field numbering. */
       noFieldNumber: "not numbered",

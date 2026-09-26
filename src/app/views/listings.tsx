@@ -645,6 +645,7 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
               dateColumn({ ...col, label: copy.colDate }),
               collectorsColumn({ ...col, label: copy.colCollectors, atlases, admin }),
               placeColumn({ ...col, label: copy.colPlace }),
+              hostColumn({ ...col, label: copy.colHost }),
               // On a specimen listing the taxon filter is about *this*
               // specimen's determination, not its sample's.
               column({
@@ -660,6 +661,10 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
                 ),
               }),
               column({ ...col, label: copy.colDeterminer, sort: "determiner" }),
+              // When it was determined: an order and no filter, since the
+              // question it answers — what came back from the taxonomist
+              // this winter — is asked by sorting, not by a window.
+              column({ ...col, label: copy.colDetermined, sort: "determined", kind: "date" }),
               atlasColumn({ ...col, label: copy.colAtlas, atlases, admin }),
             ]}
           >
@@ -683,6 +688,15 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
                   <OrAbsent value={m.format.place([row.locality, row.county, row.state_province])} label={m.absence.notRecorded} />
                 </td>
                 <td>
+                  {/* As on the samples listing: a bee off no flower has no
+                      host, and that is complete rather than missing. */}
+                  {row.host_name === null ? (
+                    <Absent label={m.absence.none} />
+                  ) : (
+                    <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} />
+                  )}
+                </td>
+                <td>
                   {row.scientific_name !== null && row.taxon_rank !== null ? (
                     <TaxonName
                       rank={row.taxon_rank}
@@ -701,6 +715,12 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
                       <Chip>{copy.expert}</Chip>
                     </>
                   )}
+                </td>
+                <td class="nowrap">
+                  {/* The dash: most legacy determinations carry no date, so
+                      the words would be noise down the column; the specimen
+                      page spells it. */}
+                  {row.determined_on === null ? <Absent label={m.absence.none} /> : m.format.date(row.determined_on)}
                 </td>
                 <td>
                   <OrAbsent value={row.atlas_code} label={m.listings.samples.atlasOutside} spelled />

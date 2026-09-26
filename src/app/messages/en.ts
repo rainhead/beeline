@@ -637,7 +637,7 @@ export const en = {
         noObservation: "Coordinates can only be set here on a sample with an iNaturalist observation.",
         latitude: "Latitude",
         longitude: "Longitude",
-        uncertainty: "Accuracy, in metres (optional)",
+        uncertainty: "Accuracy, in meters (optional)",
         note: "Why (optional)",
         save: "Set coordinates",
         remove: "Remove, and follow iNaturalist again",

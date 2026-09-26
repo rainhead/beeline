@@ -334,7 +334,7 @@ describe("staff coordinates stand over the observation's (beeline-942)", () => {
     const header = "sample_ref,field,base_value,value,author,reason\n";
     expect(() => parseSampleOverlay(`${header}inat:7,coordinates,,91 -123.3,samstaff,\n`, "f")).toThrow(/not a latitude/);
     expect(() => parseSampleOverlay(`${header}inat:7,coordinates,,44.6,samstaff,\n`, "f")).toThrow(/latitude> <longitude/);
-    expect(() => parseSampleOverlay(`${header}inat:7,coordinates,,44.6 -123.3 -5,samstaff,\n`, "f")).toThrow(/whole metres/);
+    expect(() => parseSampleOverlay(`${header}inat:7,coordinates,,44.6 -123.3 -5,samstaff,\n`, "f")).toThrow(/whole meters/);
     expect(parseSampleOverlay(`${header}inat:7,coordinates,,44.6 -123.3,samstaff,\n`, "f")).toHaveLength(1);
   });
 });

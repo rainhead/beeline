@@ -64,7 +64,7 @@ export function parseSampleRef(ref: string): { inat_observation_id: string } | n
 
 /**
  * A point as the overlay writes it: `<latitude> <longitude>`, optionally
- * followed by the uncertainty in metres, then — on a base value only — the
+ * followed by the uncertainty in meters, then — on a base value only — the
  * source the row had. Space-separated so the CSV never has to quote it and
  * a diff stays readable; `-` stands for an uncertainty that is not known.
  *
@@ -88,7 +88,7 @@ export function parsePoint(value: string): OverlayPoint | { problem: string } {
   let coordinate_uncertainty_m: number | null = null;
   if (parts.length >= 3 && parts[2] !== "-") {
     const u = Number(parts[2]);
-    if (!Number.isInteger(u) || u <= 0) return { problem: `'${parts[2]}' is not an uncertainty in whole metres` };
+    if (!Number.isInteger(u) || u <= 0) return { problem: `'${parts[2]}' is not an uncertainty in whole meters` };
     coordinate_uncertainty_m = u;
   }
   return { latitude, longitude, coordinate_uncertainty_m, source: parts[3] ?? null };

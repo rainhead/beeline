@@ -274,6 +274,11 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
        WHERE NOT c.placeholder AND NOT c.already AND NOT c.restated AND c.nodes = 1`,
       [now.toISOString()],
     );
+    // The rows this load inserts are the ones above the sequence's current
+    // high-water mark, which is how the provenance rows below find them:
+    // recorded_at is not an identity, since a later load can give another
+    // superseded row the same entry time and offset (CodeRabbit on PR #101).
+    const before = await scalar(conn, `SELECT coalesce(max(entity_id), 0) FROM determination`);
     await conn.run(
       `INSERT INTO determination (specimen_id, animal_id, qualifier, verbatim_identification, sex, caste,
                                   determiner_id, determiner_name, is_expert, channel, determined_on, determined_on_precision,
@@ -287,8 +292,9 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       `INSERT INTO ecdysis_identification (record_id, determination_id, occurrence_id, entered_at, loaded_at)
        SELECT i.record_id, d.entity_id, i.occurrence_record_id, i.entered_at, $1::TIMESTAMPTZ
        FROM ecd_insert i
-       JOIN determination d ON d.specimen_id = i.specimen_id AND d.recorded_at = i.recorded_at AND d.channel = 'ecdysis_import'`,
-      [now.toISOString()],
+       JOIN determination d ON d.specimen_id = i.specimen_id AND d.recorded_at = i.recorded_at
+                            AND d.channel = 'ecdysis_import' AND d.entity_id > $2`,
+      [now.toISOString(), before],
     );
     const loaded = await scalar(conn, `SELECT count(*) FROM ecd_insert`);
     await conn.run("COMMIT");
@@ -311,20 +317,26 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
   }
 }
 
-// CLI: pnpm ecdysis:load <archive-dir-or-export.csv> [db] [--prefix WSDA_] [--force]
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const args = process.argv.slice(2);
+/** The CLI's arguments: path, db, --prefix and --force in any order. */
+export function parseArgs(args: readonly string[]): { path: string | undefined; db: string | undefined; catalogPrefix: string; force: boolean } {
   const prefixAt = args.indexOf("--prefix");
   const catalogPrefix = prefixAt >= 0 ? (args[prefixAt + 1] ?? "") : "WSDA_";
   const force = args.includes("--force");
-  const positional = args.filter((a, i) => a !== "--prefix" && a !== "--force" && i !== prefixAt + 1);
-  const path = positional[0];
+  // The prefix's value is skipped only when --prefix is present: with it
+  // absent, prefixAt + 1 is 0, which is the path (CodeRabbit on PR #101).
+  const positional = args.filter((a, i) => a !== "--prefix" && a !== "--force" && (prefixAt < 0 || i !== prefixAt + 1));
+  return { path: positional[0], db: positional[1], catalogPrefix, force };
+}
+
+// CLI: pnpm ecdysis:load <archive-dir-or-export.csv> [db] [--prefix WSDA_] [--force]
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  const { path, db, catalogPrefix, force } = parseArgs(process.argv.slice(2));
   if (path === undefined) {
-    console.error("usage: pnpm ecdysis:load <archive-dir-or-export.csv> [db] [--prefix WSDA_]");
+    console.error("usage: pnpm ecdysis:load <archive-dir-or-export.csv> [db] [--prefix WSDA_] [--force]");
     process.exit(2);
   }
   const { openDuckDb } = await import("./db.js");
-  const instance = await openDuckDb(positional[1] ?? process.env.BEELINE_DB ?? DEFAULT_DB);
+  const instance = await openDuckDb(db ?? process.env.BEELINE_DB ?? DEFAULT_DB);
   const conn = await instance.connect();
   const result = await loadEcdysis(conn, { path, catalogPrefix, force });
   await conn.run("CHECKPOINT");

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
-import { loadEcdysis } from "../src/load-ecdysis.js";
+import { loadEcdysis, parseArgs } from "../src/load-ecdysis.js";
 
 /**
  * Determinations from Ecdysis (beeline-9ut). The fixture is the shape of a
@@ -161,5 +161,14 @@ describe("a flat occurrence export", () => {
                     SELECT ${a}, entity_id, true, 'legacy_import', 'Sam A. Staff', TIMESTAMPTZ '2026-08-20 22:20:40Z' FROM animal WHERE scientific_name = 'Andrena sladeni'`);
     await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(await record(a)).toEqual(["Andrena sladeni", null, "Sam Staff", "2025-01-01", "year", null, "ecdysis_import"]);
+  });
+});
+
+describe("the CLI's arguments", () => {
+  test("the path survives without --prefix, and the options come in any order", () => {
+    expect(parseArgs(["export.csv"])).toEqual({ path: "export.csv", db: undefined, catalogPrefix: "WSDA_", force: false });
+    expect(parseArgs(["--force", "export.csv", "store.duckdb"])).toEqual({ path: "export.csv", db: "store.duckdb", catalogPrefix: "WSDA_", force: true });
+    expect(parseArgs(["archive", "--prefix", "OSAC_", "store.duckdb"])).toEqual({ path: "archive", db: "store.duckdb", catalogPrefix: "OSAC_", force: false });
+    expect(parseArgs(["--prefix", "OSAC_", "archive"])).toMatchObject({ path: "archive", catalogPrefix: "OSAC_" });
   });
 });

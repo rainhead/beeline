@@ -29,23 +29,12 @@ WHERE sample.inat_observation_id = f.inat_id;
 -- Obscured without private coordinates yields no candidate — deliberately
 -- shifted pairs never enter the sample layer, so existing believed-true
 -- rows (legacy private-preferred ingestion) are left untouched.
+-- The rule itself is observation_location (schema/105), so the sample page
+-- and the override's diverged view read what promotion writes.
 CREATE OR REPLACE TEMP TABLE observation_location_candidate AS
--- The private pair is used only whole: a half-present pair (never seen from
--- the API, but ruinous if mixed) falls back to the public coordinates.
-SELECT s.entity_id AS sample_id,
-       CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL
-            THEN 'inat_trusted' ELSE 'inat_public' END AS source,
-       CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL
-            THEN f.private_latitude ELSE f.latitude END   AS latitude,
-       CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL
-            THEN f.private_longitude ELSE f.longitude END AS longitude,
-       f.positional_accuracy                              AS coordinate_uncertainty_m
+SELECT s.entity_id AS sample_id, ol.source, ol.latitude, ol.longitude, ol.coordinate_uncertainty_m
 FROM sample s
-JOIN observation_field f ON f.inat_id = s.inat_observation_id
-WHERE (f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL)
-   OR (f.latitude IS NOT NULL AND f.longitude IS NOT NULL
-       AND nullif(f.geoprivacy, 'open') IS NULL
-       AND nullif(f.taxon_geoprivacy, 'open') IS NULL);
+JOIN observation_location ol ON ol.inat_id = s.inat_observation_id;
 
 -- Upgrade in place. positional_accuracy describes the true location even on
 -- obscured records, so it accompanies both sources. Coordinates move here
@@ -63,7 +52,10 @@ WHERE (f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL)
 -- point replacing the import's rounded one, none moving more than 58 m, and
 -- nothing is lost by keeping the rounded one that printed. The INSERT below
 -- for a sample with no location row at all is not guarded: a label that
--- printed no coordinates is contradicted by none.
+-- printed no coordinates is contradicted by none. And not on a sample whose
+-- coordinates a staff member has set (sample_location_override,
+-- beeline-942): the person outranks the observation, and the override is
+-- re-applied after this file runs, as the locality one is.
 UPDATE sample_location SET
   latitude = c.latitude,
   longitude = c.longitude,
@@ -71,7 +63,8 @@ UPDATE sample_location SET
   source = c.source
 FROM observation_location_candidate c
 WHERE sample_location.sample_id = c.sample_id
-  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = c.sample_id);
+  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = c.sample_id)
+  AND NOT EXISTS (SELECT 1 FROM sample_location_override o WHERE o.sample_id = c.sample_id);
 
 -- Drop every elevation the move left behind, so the row says "unknown"
 -- rather than something confident about a place it was not read at, and

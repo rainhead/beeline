@@ -75,7 +75,7 @@ import { DesignImagery } from "./views/design/imagery.js";
 import { MessagesProof } from "./views/design/messages-proof.js";
 import { QcProof } from "./views/design/qc-proof.js";
 import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
-import { setStaffLocality } from "./locality-override.js";
+import { setStaffCoordinates, setStaffLocality } from "./locality-override.js";
 import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
 import { SampleEditForm } from "./views/sample-edit.js";
 import {
@@ -701,6 +701,49 @@ export function createApp({
         });
       } catch (err) {
         console.warn(`could not record the locality change: ${(err as Error).message}`);
+      }
+    }
+    return c.redirect(`/samples/${sample.sample_id}`);
+  });
+
+  // The coordinates, on the same terms (beeline-942). The one case a
+  // volunteer cannot fix upstream at all is an obscured observation with no
+  // trust, which yields no coordinates and cannot print; this is where staff
+  // put the true point in.
+  app.post("/samples/:id/coordinates", async (c) => {
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const session = c.get("session");
+    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, true);
+    if (sample === null) return c.text(m.record.notFound, 404);
+    if (sample.inat_observation_id === null) return c.text(m.record.sample.staffCoordinates.noObservation, 409);
+    const body = await c.req.parseBody();
+    const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+    const result = await setStaffCoordinates(
+      { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections },
+      { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality },
+      {
+        latitude: field("latitude"),
+        longitude: field("longitude"),
+        uncertainty: field("uncertainty"),
+        remove: field("remove") !== "",
+        note: field("note"),
+        author: session.login,
+      },
+    );
+    if (result.outcome === "invalid") return c.text(result.problem, 400);
+    if (result.outcome === "unresolved") return c.text(result.reason, 409);
+    if (result.outcome === "saved" || result.outcome === "removed") {
+      try {
+        await recordSampleChanges(kyselyReader(db), samplePaths, {
+          source: "app",
+          author: session.login,
+          reason: field("note").trim() || undefined,
+          where: `s.entity_id = ${sample.sample_id}`,
+        });
+      } catch (err) {
+        console.warn(`could not record the coordinate change: ${(err as Error).message}`);
       }
     }
     return c.redirect(`/samples/${sample.sample_id}`);

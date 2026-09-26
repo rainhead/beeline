@@ -103,6 +103,36 @@ COMMENT ON TABLE sample_locality_override IS 'A locality a staff member set on a
 COMMENT ON COLUMN sample_locality_override.observed_locality IS 'What observation_locality yielded when the override was written — the merge base. sample_locality_override_diverged names the overrides whose observation has since moved to a third value.';
 COMMENT ON COLUMN sample_locality_override.set_by IS 'Whoever set it, resolved from the overlay row''s author login through inat_account at apply time; null where the login no longer resolves.';
 
+-- Coordinates staff have set, the same shape (beeline-942). Promotion used
+-- to rewrite sample_location unconditionally on every run, so a staff
+-- override survived until the next nightly and then vanished. A row here
+-- holds promotion off that sample; sample_location is written beside it
+-- with source 'staff_entry', the provenance every read already carries.
+-- The observed_* columns are the merge base: what sample_location held when
+-- the override was written, whatever its source, so removing the override
+-- can hand the sample back exactly what it had — an imported coordinate as
+-- readily as an observation's — and the diverged view can tell an upstream
+-- move from the point the staffer already saw.
+CREATE TABLE sample_location_override (
+  sample_id                INTEGER PRIMARY KEY REFERENCES sample(entity_id),
+  latitude                 DOUBLE NOT NULL,
+  longitude                DOUBLE NOT NULL,
+  coordinate_uncertainty_m INTEGER,
+  observed_latitude        DOUBLE,
+  observed_longitude       DOUBLE,
+  observed_uncertainty_m   INTEGER,
+  observed_source          TEXT,
+  set_by                   INTEGER REFERENCES person(entity_id),
+  reason                   TEXT,
+  CHECK (latitude BETWEEN -90 AND 90),
+  CHECK (longitude BETWEEN -180 AND 180),
+  CHECK (coordinate_uncertainty_m IS NULL OR coordinate_uncertainty_m > 0),
+  CHECK ((observed_latitude IS NULL) = (observed_longitude IS NULL)),
+  CHECK ((observed_latitude IS NULL) = (observed_source IS NULL))
+);
+COMMENT ON TABLE sample_location_override IS 'Coordinates a staff member set on a sample, which promotion never overwrites: the location upgrade (ingest/promote-observations.sql) skips samples with a row here. Re-derived at the end of observation promotion from data/sample-overlay.csv; sample_location carries the same point with source staff_entry, and sample_location_override_stale asserts the two agree.';
+COMMENT ON COLUMN sample_location_override.observed_latitude IS 'With observed_longitude, observed_uncertainty_m and observed_source: the sample_location row as it stood when the override was written — the merge base, and what removal restores. All null where the sample had no coordinates then.';
+
 -- Where an elevation value came from: the legacy import, or (once Beeline
 -- derives its own) a specific DEM tile, identified by name and content hash so
 -- a re-derivation against updated data is distinguishable from the original.

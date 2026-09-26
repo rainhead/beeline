@@ -618,6 +618,30 @@ export const en = {
         save: "Set locality",
         remove: "Remove, and follow iNaturalist again",
       },
+      /**
+       * Staff set the coordinates (beeline-942), on the same terms as the
+       * locality. The case that matters most is an obscured observation
+       * with no trusted access: it yields no coordinates, cannot print, and
+       * only a person who knows where the bees were caught can say.
+       */
+      staffCoordinates: {
+        setBy: (name: string) => `Coordinates set here by ${name}.`,
+        setByStaff: "Coordinates set here by staff.",
+        because: (reason: string) => `Reason: ${reason}`,
+        observationNow: (lat: number, lon: number) =>
+          `iNaturalist now puts this observation at ${lat}, ${lon}; the coordinates set here stand until they are removed.`,
+        heading: "Set the coordinates",
+        hint: "For staff. Coordinates set here are believed true, stand over the observation's on every sync, and survive rebuilds, until they are removed. The elevation is read again on the next run.",
+        printed:
+          "Labels for this sample have already been printed and carry the coordinates as they were; changing them here does not change them.",
+        noObservation: "Coordinates can only be set here on a sample with an iNaturalist observation.",
+        latitude: "Latitude",
+        longitude: "Longitude",
+        uncertainty: "Accuracy, in meters (optional)",
+        note: "Why (optional)",
+        save: "Set coordinates",
+        remove: "Remove, and follow iNaturalist again",
+      },
 
       where: {
         heading: "Where it was collected",

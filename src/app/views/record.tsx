@@ -153,13 +153,19 @@ export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }
  * pairs are deliberately never brought into the sample layer, so "no
  * coordinates" means none believed rather than none recorded.
  */
-export function WhereCollected({ m, sample }: { m: Messages; sample: SampleDetail }) {
+export function WhereCollected({ m, sample, admin = false }: { m: Messages; sample: SampleDetail; admin?: boolean }) {
   const w = m.record.sample.where;
+  // The staff form belongs on both branches, and matters most on this one:
+  // an obscured observation with no trusted access yields no coordinates
+  // and cannot print, and only a person can put the true point in
+  // (beeline-942). A sample with no observation is not offered it.
+  const staff = admin && sample.inat_observation_id !== null ? <StaffCoordinates m={m} sample={sample} /> : null;
   if (sample.latitude === null || sample.longitude === null) {
     return (
       <>
         <h2>{w.heading}</h2>
         <Meta block>{w.coordinatesNone}</Meta>
+        {staff}
       </>
     );
   }
@@ -195,7 +201,31 @@ export function WhereCollected({ m, sample }: { m: Messages; sample: SampleDetai
           },
           {
             term: w.source,
-            value: <Meta>{w.sources[sample.location_source ?? ""] ?? sample.location_source}</Meta>,
+            value: (
+              <>
+                <Meta>{w.sources[sample.location_source ?? ""] ?? sample.location_source}</Meta>
+                {/* Who set them and why, beside the source — the same lines
+                    the locality carries (beeline-942). */}
+                {sample.location_override === null ? null : (
+                  <Meta block>
+                    {sample.location_override.set_by === null
+                      ? m.record.sample.staffCoordinates.setByStaff
+                      : m.record.sample.staffCoordinates.setBy(sample.location_override.set_by)}
+                    {sample.location_override.reason === null ? null : (
+                      <> {m.record.sample.staffCoordinates.because(sample.location_override.reason)}</>
+                    )}
+                  </Meta>
+                )}
+                {sample.location_override?.observation_now == null ? null : (
+                  <Meta block>
+                    {m.record.sample.staffCoordinates.observationNow(
+                      sample.location_override.observation_now.latitude,
+                      sample.location_override.observation_now.longitude,
+                    )}
+                  </Meta>
+                )}
+              </>
+            ),
           },
           privacy === null
             ? null
@@ -224,6 +254,40 @@ export function WhereCollected({ m, sample }: { m: Messages; sample: SampleDetai
           },
         ]}
       />
+      {staff}
+    </>
+  );
+}
+
+/** The staff write for coordinates (beeline-942): the locality form's twin. */
+function StaffCoordinates({ m, sample }: { m: Messages; sample: SampleDetail }) {
+  const t = m.record.sample.staffCoordinates;
+  const action = `/samples/${sample.sample_id}/coordinates`;
+  const num = (v: number | null) => (v === null ? null : String(v));
+  return (
+    <>
+      <h3>{t.heading}</h3>
+      <Meta block>{t.hint}</Meta>
+      {sample.printed ? <Meta block>{t.printed}</Meta> : null}
+      <form method="post" action={action} class="form-column">
+        <TextField id="staff-latitude" name="latitude" label={t.latitude} value={num(sample.latitude)} />
+        <TextField id="staff-longitude" name="longitude" label={t.longitude} value={num(sample.longitude)} />
+        <TextField id="staff-uncertainty" name="uncertainty" label={t.uncertainty} value={num(sample.coordinate_uncertainty_m)} />
+        <TextField id="staff-coordinates-note" name="note" label={t.note} />
+        <p class="row">
+          <Button>{t.save}</Button>
+          {sample.location_override === null ? null : (
+            <Button variant="outlined" form="staff-coordinates-remove">
+              {t.remove}
+            </Button>
+          )}
+        </p>
+      </form>
+      {sample.location_override === null ? null : (
+        <form id="staff-coordinates-remove" method="post" action={action}>
+          <input type="hidden" name="remove" value="1" />
+        </form>
+      )}
     </>
   );
 }
@@ -468,7 +532,7 @@ export function SamplePage({
         {admin ? <StaffLocality m={m} sample={sample} /> : null}
       </Card>
       <Card>
-        <WhereCollected m={m} sample={sample} />
+        <WhereCollected m={m} sample={sample} admin={admin} />
       </Card>
       <Card>
         <SampleFlags m={m} findings={findings} />

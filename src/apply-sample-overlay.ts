@@ -1,6 +1,6 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { pathToFileURL } from "node:url";
-import { parseSampleRef, type SampleOverlayRow } from "./sample-overlay.js";
+import { formatPoint, parsePoint, parseSampleRef, type OverlayPoint, type SampleOverlayRow } from "./sample-overlay.js";
 
 /**
  * Apply staff decisions about samples to the store (src/sample-overlay.ts).
@@ -70,6 +70,67 @@ export async function resolveObservationSample(
   };
 }
 
+/**
+ * The base a new coordinate override records, in the overlay's own grammar:
+ * what removal will restore. Where an override already stands, its recorded
+ * base — the row as it stood before any staff point — and not the current
+ * row, which by then IS the earlier staff point; a second save must not make
+ * the first save the thing removal goes back to (CodeRabbit on PR #99).
+ * Otherwise the sample_location row as it stands. Empty where the sample
+ * has no coordinates.
+ */
+export async function currentLocationOf(conn: DuckDBConnection, sampleId: number): Promise<string> {
+  const prior = await rows(
+    conn,
+    `SELECT observed_latitude, observed_longitude, observed_uncertainty_m, observed_source
+     FROM sample_location_override WHERE sample_id = $1`,
+    [sampleId],
+  );
+  const p = prior[0];
+  if (p !== undefined) {
+    if (p[0] === null) return "";
+    return formatPoint({
+      latitude: Number(p[0]),
+      longitude: Number(p[1]),
+      coordinate_uncertainty_m: p[2] === null ? null : Number(p[2]),
+      source: String(p[3]),
+    });
+  }
+  const r = await rows(
+    conn,
+    `SELECT latitude, longitude, coordinate_uncertainty_m, source FROM sample_location WHERE sample_id = $1`,
+    [sampleId],
+  );
+  const row = r[0];
+  if (row === undefined) return "";
+  return formatPoint({
+    latitude: Number(row[0]),
+    longitude: Number(row[1]),
+    coordinate_uncertainty_m: row[2] === null ? null : Number(row[2]),
+    source: String(row[3]),
+  });
+}
+
+/** Write a point onto sample_location, keeping or inserting the row. */
+async function writeLocation(conn: DuckDBConnection, sampleId: number, p: OverlayPoint, source: string): Promise<void> {
+  const exists = (await rows(conn, `SELECT 1 FROM sample_location WHERE sample_id = $1`, [sampleId])).length > 0;
+  if (exists) {
+    // The elevation is left where it is: sample_elevation_stale notices the
+    // move and the derive job re-reads it (schema/170, beeline-x5c).
+    await conn.run(
+      `UPDATE sample_location SET latitude = $1, longitude = $2, coordinate_uncertainty_m = $3, source = $4
+       WHERE sample_id = $5`,
+      [p.latitude, p.longitude, p.coordinate_uncertainty_m, source, sampleId] as never,
+    );
+  } else {
+    await conn.run(
+      `INSERT INTO sample_location (sample_id, latitude, longitude, coordinate_uncertainty_m, source)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [sampleId, p.latitude, p.longitude, p.coordinate_uncertainty_m, source] as never,
+    );
+  }
+}
+
 export async function applySampleOverlay(
   conn: DuckDBConnection,
   overlay: readonly SampleOverlayRow[],
@@ -96,6 +157,58 @@ export async function applySampleOverlay(
       continue;
     }
     const { sampleId } = found;
+    const setBy = byLogin.get(row.author.toLowerCase()) ?? null;
+
+    if (row.field === "coordinates") {
+      if (row.value === "") {
+        // Removal restores what the row held before the override — an
+        // imported point as readily as an observation's — unless the labels
+        // have printed since, in which case the point on paper stays. A
+        // sample that had no coordinates goes back to having none; if the
+        // observation yields some, the next promotion writes them.
+        const base = await rows(conn, `SELECT observed_latitude, observed_longitude, observed_uncertainty_m, observed_source
+                                       FROM sample_location_override WHERE sample_id = $1`, [sampleId]);
+        await conn.run(`DELETE FROM sample_location_override WHERE sample_id = $1`, [sampleId] as never);
+        const printed = (await rows(conn, `SELECT 1 FROM printed_sample WHERE sample_id = $1`, [sampleId])).length > 0;
+        if (!printed) {
+          const b = base[0];
+          if (b === undefined || b[0] === null) {
+            await conn.run(`DELETE FROM sample_location WHERE sample_id = $1`, [sampleId] as never);
+          } else {
+            await writeLocation(
+              conn,
+              sampleId,
+              { latitude: Number(b[0]), longitude: Number(b[1]), coordinate_uncertainty_m: b[2] === null ? null : Number(b[2]), source: null },
+              String(b[3]),
+            );
+          }
+        }
+        result.applied++;
+        continue;
+      }
+      const p = parsePoint(row.value);
+      if ("problem" in p) {
+        result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: p.problem });
+        continue;
+      }
+      const base = row.base_value === "" ? null : parsePoint(row.base_value);
+      const observed = base !== null && !("problem" in base) ? base : null;
+      await conn.run(`DELETE FROM sample_location_override WHERE sample_id = $1`, [sampleId] as never);
+      await conn.run(
+        `INSERT INTO sample_location_override (sample_id, latitude, longitude, coordinate_uncertainty_m,
+           observed_latitude, observed_longitude, observed_uncertainty_m, observed_source, set_by, reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          sampleId, p.latitude, p.longitude, p.coordinate_uncertainty_m,
+          observed?.latitude ?? null, observed?.longitude ?? null, observed?.coordinate_uncertainty_m ?? null,
+          observed?.source ?? (observed === null ? null : "legacy_import"),
+          setBy, row.reason === "" ? null : row.reason,
+        ] as never,
+      );
+      await writeLocation(conn, sampleId, p, "staff_entry");
+      result.applied++;
+      continue;
+    }
 
     if (row.value === "") {
       // Removal: the observation is the only writer again. Hand the sample
@@ -123,7 +236,6 @@ export async function applySampleOverlay(
       continue;
     }
 
-    const setBy = byLogin.get(row.author.toLowerCase()) ?? null;
     // Delete-then-insert rather than an engine-specific upsert (ADR 0001);
     // nothing references this table, so the delete is unconditional.
     await conn.run(`DELETE FROM sample_locality_override WHERE sample_id = $1`, [sampleId] as never);

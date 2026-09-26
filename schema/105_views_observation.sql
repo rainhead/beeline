@@ -190,3 +190,29 @@ SELECT inat_id FROM (
   EXCEPT
   SELECT * FROM observation_current_fields
 ) extra;
+
+-- Where an observation says it was, believed true (beeline-942, moved here
+-- from a temp table in ingest/promote-observations.sql so that promotion and
+-- the sample page read one definition). Trust is evidenced by the PRESENCE
+-- of private coordinates in the projection: viewer_trusted_by_observer
+-- signals only personal trust, and project-level trust delivers
+-- private_geojson with that flag false. An unobscured observation's public
+-- coordinates are true by definition. Obscured without private coordinates
+-- yields no row — deliberately shifted pairs never enter the sample layer.
+-- The private pair is used only whole: a half-present pair (never seen from
+-- the API, but ruinous if mixed) falls back to the public coordinates.
+CREATE VIEW observation_location AS
+SELECT f.inat_id,
+       CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL
+            THEN 'inat_trusted' ELSE 'inat_public' END AS source,
+       CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL
+            THEN f.private_latitude ELSE f.latitude END   AS latitude,
+       CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL
+            THEN f.private_longitude ELSE f.longitude END AS longitude,
+       f.positional_accuracy                              AS coordinate_uncertainty_m
+FROM observation_field f
+WHERE (f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL)
+   OR (f.latitude IS NOT NULL AND f.longitude IS NOT NULL
+       AND nullif(f.geoprivacy, 'open') IS NULL
+       AND nullif(f.taxon_geoprivacy, 'open') IS NULL);
+COMMENT ON VIEW observation_location IS 'Per observation with believed-true coordinates: the private pair where trust delivers one, else the public pair of an unobscured observation, with its source and uncertainty. Promotion writes it onto linked samples; nothing is here for an obscured observation without trust.';

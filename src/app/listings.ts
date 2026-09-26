@@ -86,7 +86,8 @@ export type SortKey =
   | "flags"
   | "atlas"
   | "determination"
-  | "determiner";
+  | "determiner"
+  | "determined";
 export const SORT_KEYS = [
   "date",
   "number",
@@ -99,11 +100,13 @@ export const SORT_KEYS = [
   "atlas",
   "determination",
   "determiner",
+  "determined",
 ] as const;
 export type SortDirection = "asc" | "desc";
 export const DEFAULT_SORT: SortKey = "date";
 /** Newest first is the default for dates; everything else reads A–Z or smallest first. */
-export const defaultDirection = (key: SortKey): SortDirection => (key === "date" ? "desc" : "asc");
+export const defaultDirection = (key: SortKey): SortDirection =>
+  key === "date" || key === "determined" ? "desc" : "asc";
 
 export interface ListingQuery {
   /** MINE, ALL, or an atlas code. */
@@ -352,6 +355,9 @@ export interface SpecimenRow {
   county: string | null;
   state_province: string | null;
   atlas_code: string | null;
+  /** The sample's floral host, as the observation named it — a column here as on the samples listing. */
+  host_name: string | null;
+  host_rank: string | null;
   taxon_rank: string | null;
   scientific_name: string | null;
   authorship: string | null;
@@ -360,6 +366,8 @@ export interface SpecimenRow {
   sex: string | null;
   is_expert: boolean | null;
   determiner: string | null;
+  /** When the determination of record was made; null where its source did not say. */
+  determined_on: Date | null;
   latitude: number | null;
   longitude: number | null;
   coordinate_uncertainty_m: number | null;
@@ -464,6 +472,8 @@ export function specimenOrder(query: ListingQuery) {
       return sql`an.scientific_name ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     case "determiner":
       return sql`lower(coalesce(det.display_name, d.determiner_name)) ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+    case "determined":
+      return sql`d.determined_on ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     case "atlas":
       return sql`a.code ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     default:
@@ -802,6 +812,8 @@ export async function listSpecimens(
         "s.county",
         "s.state_province",
         "a.code as atlas_code",
+        "s.host_name_as_observed as host_name",
+        "s.host_rank",
         "an.rank as taxon_rank",
         "an.scientific_name",
         "an.authorship",
@@ -809,6 +821,7 @@ export async function listSpecimens(
         "d.verbatim_identification",
         "d.sex",
         "d.is_expert",
+        "d.determined_on",
         "loc.latitude",
         "loc.longitude",
         "loc.coordinate_uncertainty_m",
@@ -962,6 +975,8 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       "county",
       "state_province",
       "atlas",
+      "host",
+      "host_rank",
       "latitude",
       "longitude",
       "coordinate_uncertainty_m",
@@ -976,6 +991,7 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       "verbatim_identification",
       "sex",
       "determined_by",
+      "determined_on",
       "expert_determination",
     ],
     page.rows.map((r) => [
@@ -988,6 +1004,8 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       r.county,
       r.state_province,
       r.atlas_code,
+      r.host_name,
+      r.host_rank,
       r.latitude,
       r.longitude,
       r.coordinate_uncertainty_m,
@@ -1002,6 +1020,7 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       r.verbatim_identification,
       r.sex,
       r.determiner,
+      r.determined_on === null ? null : isoDate(r.determined_on),
       r.is_expert === null ? "" : String(r.is_expert),
     ]),
   );

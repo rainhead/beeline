@@ -667,7 +667,11 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
               <tr>
                 <td>
                   <Pill href={specimenHref(row.specimen_id)} mono={row.field_number !== null}>
-                    {row.field_number === null ? copy.noFieldNumber : row.field_number}
+                    {row.field_number !== null
+                      ? row.field_number
+                      : row.awaiting_number
+                        ? copy.awaitingNumber
+                        : copy.noFieldNumber}
                   </Pill>
                 </td>
                 <td>

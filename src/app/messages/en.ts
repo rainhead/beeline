@@ -346,8 +346,10 @@ export const en = {
       colDetermination: "Determination",
       colDeterminer: "Determined by",
       colAtlas: "Atlas",
-      /** A specimen whose label predates field numbering. */
+      /** An imported specimen whose label predates field numbering. */
       noFieldNumber: "not numbered",
+      /** A number taken back by a canceled run; the next run issues another (beeline-1kb.21). */
+      awaitingNumber: "awaiting a number",
       undetermined: "not determined",
       expert: "expert",
     },
@@ -685,7 +687,10 @@ export const en = {
         colNumber: "#",
         colDetermination: "Determination",
         colDeterminer: "Determined by",
+        /** An imported specimen whose label predates field numbering. */
         noFieldNumber: "not numbered",
+        /** A number taken back by a canceled run — the Label column says so — until the next run issues another. */
+        awaitingNumber: "awaiting a number",
         undetermined: "not determined",
         expert: "expert",
         colLabel: "Label",
@@ -712,7 +717,16 @@ export const en = {
         `Specimen ${n(specimenNumber)} of sample ${sampleNumber}`,
       back: (sampleNumber: string) => `← Sample ${sampleNumber}`,
       fieldNumber: "Field number",
+      /** An imported specimen: no label row at all. */
       fieldNumberNone: "Not numbered — this specimen's label predates field numbering.",
+      /**
+       * A specimen a canceled run had numbered (beeline-1kb.21): the number
+       * is burned and stays visible in the Labels table below, and the next
+       * run numbers the specimen afresh. Said in the same words as the sample
+       * page's Label column, so the two cannot read as contradicting.
+       */
+      fieldNumberWithdrawn: (number: string, run: string) =>
+        `Not numbered — ${number} was taken back when ${run} was canceled; the next run will number this specimen again.`,
       inSample: "Number in its sample",
       fromSample: "From sample",
       /** Every time a label for this specimen went into a print run (schema/035). */
@@ -723,6 +737,8 @@ export const en = {
         /** An imported specimen: printed, but by the old system, so there is no run to show. */
         legacy: "Printed before Beeline — the previous system printed this label, so there is no print run to show.",
         colRun: "Print run",
+        /** As printed, or as it would have: a canceled run's number lives on only here. */
+        colNumber: "Number",
         colState: "State",
         colSheet: "Sheet · cell",
         colPrepared: "Prepared",

@@ -117,8 +117,17 @@ export interface SampleDetail {
    * stands against something rather than silently.
    */
   locality_override: LocalityOverride | null;
+  /** Coordinates staff set over the observation's (beeline-942), same shape. */
+  location_override: LocationOverride | null;
   /** Everyone who collected it, in recordedBy order (beeline-77j). */
   collectors: ListedCollector[];
+}
+
+export interface LocationOverride {
+  set_by: string | null;
+  reason: string | null;
+  /** Where the observation now puts it, when that is neither the base nor the override. */
+  observation_now: { latitude: number; longitude: number } | null;
 }
 
 export interface LocalityOverride {
@@ -239,6 +248,9 @@ const sampleColumns = (personId: number) => sql`
   o.locality AS override_locality, o.observed_locality AS override_observed,
   ob.display_name AS override_set_by, o.reason AS override_reason,
   dv.observation_locality AS override_observation_now,
+  lo.sample_id IS NOT NULL AS location_overridden,
+  lob.display_name AS location_set_by, lo.reason AS location_reason,
+  ldv.observation_latitude AS location_observation_latitude, ldv.observation_longitude AS location_observation_longitude,
   ${isMine(personId)} AS mine`;
 
 const SAMPLE_JOINS = sql`
@@ -250,24 +262,53 @@ const SAMPLE_JOINS = sql`
   LEFT JOIN observation_field f ON f.inat_id = s.inat_observation_id
   LEFT JOIN sample_locality_override o ON o.sample_id = s.entity_id
   LEFT JOIN person ob ON ob.entity_id = o.set_by
-  LEFT JOIN sample_locality_override_diverged dv ON dv.sample_id = s.entity_id`;
+  LEFT JOIN sample_locality_override_diverged dv ON dv.sample_id = s.entity_id
+  LEFT JOIN sample_location_override lo ON lo.sample_id = s.entity_id
+  LEFT JOIN person lob ON lob.entity_id = lo.set_by
+  LEFT JOIN sample_location_override_diverged ldv ON ldv.sample_id = s.entity_id`;
 
 /** Numbers arrive from DuckDB as bigint or string depending on the column. */
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
-type RawSample = Omit<SampleDetail, "collectors" | "locality_override"> & {
+type RawSample = Omit<SampleDetail, "collectors" | "locality_override" | "location_override"> & {
   override_locality: string | null;
   override_observed: string | null;
   override_set_by: string | null;
   override_reason: string | null;
   override_observation_now: string | null;
+  location_overridden: boolean;
+  location_set_by: string | null;
+  location_reason: string | null;
+  location_observation_latitude: number | null;
+  location_observation_longitude: number | null;
 };
 
 async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDetail> {
-  const { override_locality, override_observed, override_set_by, override_reason, override_observation_now, ...row } =
-    raw;
+  const {
+    override_locality,
+    override_observed,
+    override_set_by,
+    override_reason,
+    override_observation_now,
+    location_overridden,
+    location_set_by,
+    location_reason,
+    location_observation_latitude,
+    location_observation_longitude,
+    ...row
+  } = raw;
   return {
     ...row,
+    location_override: !location_overridden
+      ? null
+      : {
+          set_by: location_set_by,
+          reason: location_reason,
+          observation_now:
+            location_observation_latitude === null || location_observation_longitude === null
+              ? null
+              : { latitude: Number(location_observation_latitude), longitude: Number(location_observation_longitude) },
+        },
     locality_override:
       override_locality === null
         ? null

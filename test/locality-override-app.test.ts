@@ -202,3 +202,53 @@ describe("the staff locality form", () => {
     expect(await readSampleOverlay(paths.sampleOverlayPath)).toEqual([]);
   });
 });
+
+describe("the staff coordinates form", () => {
+  it("is offered to staff on a sample with an observation, sets, shows provenance, and removes", async () => {
+    const { app, conn, sampleId, sampleOverlayPath } = await inatApp("sam");
+    const page = await (await app.request(`/samples/${sampleId}`)).text();
+    expect(page).toContain("Set the coordinates");
+
+    const res = await post(app, `/samples/${sampleId}/coordinates`, {
+      latitude: "44.6",
+      longitude: "-123.3",
+      uncertainty: "15",
+      note: "GPS from the field notebook",
+    });
+    expect(res.status).toBe(302);
+    expect(await one(conn, `SELECT latitude, longitude, coordinate_uncertainty_m, source FROM sample_location WHERE sample_id = ${sampleId}`))
+      .toEqual([44.6, -123.3, 15, "staff_entry"]);
+    const file = await readSampleOverlay(sampleOverlayPath);
+    expect(file[0]).toMatchObject({ field: "coordinates", value: "44.6 -123.3 15", author: "samstaff" });
+    // The fixture's clean sample has a location row, so the base names it.
+    expect(file[0]!.base_value).toMatch(/^[-\d.]+ [-\d.]+ (\d+|-) inat_public$/);
+
+    const after = await (await app.request(`/samples/${sampleId}`)).text();
+    expect(after).toContain("Coordinates set here by Sam Staff.");
+    expect(after).toContain("Reason: GPS from the field notebook");
+    expect(after).toContain("Entered by staff.");
+
+    expect((await post(app, `/samples/${sampleId}/coordinates`, { remove: "1" })).status).toBe(302);
+    expect(await one(conn, `SELECT count(*) FROM sample_location_override`)).toEqual([0n]);
+    expect(await one(conn, `SELECT source FROM sample_location WHERE sample_id = ${sampleId}`)).toEqual(["inat_public"]);
+  });
+
+  it("refuses a bad point, the collector, and a sample with no observation", async () => {
+    const staff = await inatApp("sam");
+    const bad = await post(staff.app, `/samples/${staff.sampleId}/coordinates`, { latitude: "95", longitude: "-123.3" });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain("not a latitude");
+    const half = await post(staff.app, `/samples/${staff.sampleId}/coordinates`, { latitude: "44.6", longitude: "" });
+    expect(half.status).toBe(400);
+
+    const collector = await inatApp("alice");
+    expect((await post(collector.app, `/samples/${collector.sampleId}/coordinates`, { latitude: "44.6", longitude: "-123.3" })).status).toBe(403);
+
+    // No observation: not offered, and refused with the reason.
+    await staff.conn.run(`UPDATE sample SET inat_observation_id = NULL WHERE entity_id = ${staff.sampleId}`);
+    const page = await (await staff.app.request(`/samples/${staff.sampleId}`)).text();
+    expect(page).not.toContain("Set the coordinates");
+    const res = await post(staff.app, `/samples/${staff.sampleId}/coordinates`, { latitude: "44.6", longitude: "-123.3" });
+    expect(res.status).toBe(409);
+  });
+});

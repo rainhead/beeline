@@ -7,8 +7,7 @@ import { parseCsv } from "./corrections.js";
  * (src/person-overlay.ts): app-written rows outside the blow-away path, one
  * current row per (sample_ref, field), latest wins, replayed onto a rebuilt
  * store at the end of observation promotion (src/apply-sample-overlay.ts).
- * The first field is `locality` (beeline-649); a coordinate override
- * (beeline-942) is the next.
+ * Two fields: `locality` (beeline-649) and `coordinates` (beeline-942).
  *
  * The key is the design problem again. A sample's `entity_id` is a per-store
  * draw a rebuild redraws (beeline-ten), and the legacy corrections' Mongo
@@ -32,7 +31,7 @@ import { parseCsv } from "./corrections.js";
  * sample, or two, is reported and never guessed at.
  */
 
-export const SAMPLE_OVERLAY_FIELDS = ["locality"] as const;
+export const SAMPLE_OVERLAY_FIELDS = ["locality", "coordinates"] as const;
 export type SampleOverlayField = (typeof SAMPLE_OVERLAY_FIELDS)[number];
 
 export interface SampleOverlayRow {
@@ -63,8 +62,52 @@ export function parseSampleRef(ref: string): { inat_observation_id: string } | n
   return m === null ? null : { inat_observation_id: m[1]! };
 }
 
+/**
+ * A point as the overlay writes it: `<latitude> <longitude>`, optionally
+ * followed by the uncertainty in metres, then — on a base value only — the
+ * source the row had. Space-separated so the CSV never has to quote it and
+ * a diff stays readable; `-` stands for an uncertainty that is not known.
+ *
+ *   44.5646 -123.262 30
+ *   44.5646 -123.262 - legacy_import
+ */
+export interface OverlayPoint {
+  latitude: number;
+  longitude: number;
+  coordinate_uncertainty_m: number | null;
+  source: string | null;
+}
+
+export function parsePoint(value: string): OverlayPoint | { problem: string } {
+  const parts = value.trim().split(/\s+/);
+  if (parts.length < 2 || parts.length > 4) return { problem: "coordinates are '<latitude> <longitude> [uncertainty m]'" };
+  const latitude = Number(parts[0]);
+  const longitude = Number(parts[1]);
+  if (!Number.isFinite(latitude) || Math.abs(latitude) > 90) return { problem: `'${parts[0]}' is not a latitude` };
+  if (!Number.isFinite(longitude) || Math.abs(longitude) > 180) return { problem: `'${parts[1]}' is not a longitude` };
+  let coordinate_uncertainty_m: number | null = null;
+  if (parts.length >= 3 && parts[2] !== "-") {
+    const u = Number(parts[2]);
+    if (!Number.isInteger(u) || u <= 0) return { problem: `'${parts[2]}' is not an uncertainty in whole metres` };
+    coordinate_uncertainty_m = u;
+  }
+  return { latitude, longitude, coordinate_uncertainty_m, source: parts[3] ?? null };
+}
+
+export function formatPoint(p: OverlayPoint): string {
+  const parts = [String(p.latitude), String(p.longitude)];
+  if (p.coordinate_uncertainty_m !== null || p.source !== null) parts.push(p.coordinate_uncertainty_m === null ? "-" : String(p.coordinate_uncertainty_m));
+  if (p.source !== null) parts.push(p.source);
+  return parts.join(" ");
+}
+
 /** Why this value cannot be stored for this field, or null if it can. */
 export function sampleValueProblem(field: SampleOverlayField, value: string): string | null {
+  if (field === "coordinates") {
+    if (value === "") return null;
+    const p = parsePoint(value);
+    return "problem" in p ? p.problem : null;
+  }
   if (field === "locality") {
     // Empty removes; anything else must be a place name. Whitespace-only is
     // refused rather than trimmed, since a save that stored '' by accident

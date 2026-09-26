@@ -326,6 +326,50 @@ export interface SampleLocalityOverrideTable {
   reason: string | null;
 }
 
+/** Coordinates staff set, which promotion never overwrites (beeline-942). */
+export interface SampleLocationOverrideTable {
+  sample_id: number;
+  latitude: number;
+  longitude: number;
+  coordinate_uncertainty_m: number | null;
+  /** The sample_location row as it stood when this was written: the merge base, and what removal restores. */
+  observed_latitude: number | null;
+  observed_longitude: number | null;
+  observed_uncertainty_m: number | null;
+  observed_source: LocationSource | null;
+  set_by: number | null;
+  reason: string | null;
+}
+
+/** Where an observation says it was, believed true (schema/105). */
+export interface ObservationLocationView {
+  inat_id: BigIntCol;
+  source: "inat_trusted" | "inat_public";
+  latitude: number;
+  longitude: number;
+  coordinate_uncertainty_m: number | null;
+}
+
+export interface SampleLocationOverrideStaleView {
+  sample_id: number;
+  override_latitude: number;
+  override_longitude: number;
+  sample_latitude: number | null;
+  sample_longitude: number | null;
+  source: LocationSource | null;
+}
+
+export interface SampleLocationOverrideDivergedView {
+  sample_id: number;
+  override_latitude: number;
+  override_longitude: number;
+  observed_latitude: number | null;
+  observed_longitude: number | null;
+  observation_latitude: number;
+  observation_longitude: number;
+  observation_uncertainty_m: number | null;
+}
+
 export interface SampleLocalityOverrideStaleView {
   sample_id: number;
   override_locality: string;
@@ -880,6 +924,10 @@ export interface Database {
   sample_locality_override: SampleLocalityOverrideTable;
   sample_locality_override_stale: SampleLocalityOverrideStaleView;
   sample_locality_override_diverged: SampleLocalityOverrideDivergedView;
+  sample_location_override: SampleLocationOverrideTable;
+  sample_location_override_stale: SampleLocationOverrideStaleView;
+  sample_location_override_diverged: SampleLocationOverrideDivergedView;
+  observation_location: ObservationLocationView;
   elevation_derivation_limit: ElevationDerivationLimitView;
   coordinate_precision_rule: CoordinatePrecisionRuleView;
   sample_coordinate_limit: SampleCoordinateLimitView;

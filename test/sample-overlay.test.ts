@@ -235,3 +235,106 @@ describe("a staff locality stands over the observation's", () => {
     expect(await one("SELECT set_by FROM sample_locality_override")).toEqual([null]);
   });
 });
+
+const point = (value: string, extra: Partial<SampleOverlayRow> = {}): SampleOverlayRow => ({
+  sample_ref: "inat:7",
+  field: "coordinates",
+  base_value: "44.5646 -123.262 30 inat_public",
+  value,
+  author: "samstaff",
+  reason: "GPS from the field notebook",
+  ...extra,
+});
+
+const location = () =>
+  one("SELECT latitude, longitude, coordinate_uncertainty_m, source FROM sample_location");
+
+describe("staff coordinates stand over the observation's (beeline-942)", () => {
+  test("the location upgrade leaves an overridden sample alone, on every pass", async () => {
+    await stage(obs(7));
+    await promoteObservations(conn);
+    expect(await location()).toEqual([44.5646, -123.262, 30, "inat_public"]);
+
+    await upsertSampleOverlay(overlayPath, [point("44.6 -123.3 15")]);
+    expect(await applySampleOverlay(conn, await readSampleOverlay(overlayPath))).toEqual({ applied: 1, unresolved: [] });
+    expect(await location()).toEqual([44.6, -123.3, 15, "staff_entry"]);
+    expect(
+      await one(`SELECT o.observed_latitude, o.observed_longitude, o.observed_uncertainty_m, o.observed_source, p.display_name, o.reason
+                 FROM sample_location_override o JOIN person p ON p.entity_id = o.set_by`),
+    ).toEqual([44.5646, -123.262, 30, "inat_public", "Sam Staff", "GPS from the field notebook"]);
+
+    // The nightly used to put the observation's pair straight back.
+    await promoteObservations(conn, { sampleOverlayPath: overlayPath });
+    expect(await location()).toEqual([44.6, -123.3, 15, "staff_entry"]);
+    await promoteObservations(conn);
+    expect(await location()).toEqual([44.6, -123.3, 15, "staff_entry"]);
+    expect(await count("SELECT count(*) FROM sample_location_override_stale")).toBe(0);
+    expect(await count("SELECT count(*) FROM sample_location_override_diverged")).toBe(0);
+  });
+
+  test("an elevation read at the old point is stale, not cleared: the derive job re-reads it", async () => {
+    await stage(obs(7));
+    await promoteObservations(conn);
+    await conn.run(`INSERT INTO elevation_source (description) VALUES ('test tile')`);
+    await conn.run(`UPDATE sample_location SET elevation_m = 70, elevation_source_id = (SELECT min(entity_id) FROM elevation_source),
+                    elevation_latitude = latitude, elevation_longitude = longitude`);
+    await applySampleOverlay(conn, [point("44.6 -123.3 15")]);
+    expect(await count("SELECT count(*) FROM sample_elevation_stale")).toBe(1);
+    expect(await count("SELECT count(*) FROM sample_elevation_pending")).toBe(1);
+  });
+
+  test("removing it hands back what the row held before, source and all", async () => {
+    await stage(obs(7));
+    await promoteObservations(conn);
+    await applySampleOverlay(conn, [point("44.6 -123.3 15")]);
+    await applySampleOverlay(conn, [point("")]);
+    expect(await count("SELECT count(*) FROM sample_location_override")).toBe(0);
+    expect(await location()).toEqual([44.5646, -123.262, 30, "inat_public"]);
+  });
+
+  test("an obscured observation with no trust: the override is the only point, and removal takes it away again", async () => {
+    // No candidate, no row — the case that cannot print and that only a
+    // person can fix.
+    await stage(obs(7, { geoprivacy: "obscured" }));
+    await promoteObservations(conn);
+    expect(await count("SELECT count(*) FROM sample_location")).toBe(0);
+    await applySampleOverlay(conn, [point("44.6 -123.3 15", { base_value: "" })]);
+    expect(await location()).toEqual([44.6, -123.3, 15, "staff_entry"]);
+    expect(await one("SELECT observed_latitude, observed_source FROM sample_location_override")).toEqual([null, null]);
+    await promoteObservations(conn, { sampleOverlayPath: overlayPath });
+    expect(await location()).toEqual([44.6, -123.3, 15, "staff_entry"]);
+    await applySampleOverlay(conn, [point("", { base_value: "" })]);
+    expect(await count("SELECT count(*) FROM sample_location")).toBe(0);
+  });
+
+  test("removing it on a printed sample keeps the point the label carries", async () => {
+    await stage(obs(7));
+    await promoteObservations(conn);
+    await applySampleOverlay(conn, [point("44.6 -123.3 15")]);
+    await conn.run("INSERT INTO specimen (sample_id, specimen_number) SELECT entity_id, 1 FROM sample");
+    await applySampleOverlay(conn, [point("")]);
+    expect(await location()).toEqual([44.6, -123.3, 15, "staff_entry"]);
+  });
+
+  test("an observation that moves to a third point is named, and the override stands", async () => {
+    await stage(obs(7));
+    await upsertSampleOverlay(overlayPath, [point("44.6 -123.3 15")]);
+    await promoteObservations(conn, { sampleOverlayPath: overlayPath });
+    await stage(obs(7, { geojson: { coordinates: [-123.4, 44.7], type: "Point" } }));
+    await promoteObservations(conn, { sampleOverlayPath: overlayPath });
+    expect(await location()).toEqual([44.6, -123.3, 15, "staff_entry"]);
+    expect(await one("SELECT observation_latitude, observation_longitude FROM sample_location_override_diverged")).toEqual([44.7, -123.4]);
+    // Converging on the override is not a disagreement.
+    await stage(obs(7, { geojson: { coordinates: [-123.3, 44.6], type: "Point" } }));
+    await promoteObservations(conn, { sampleOverlayPath: overlayPath });
+    expect(await count("SELECT count(*) FROM sample_location_override_diverged")).toBe(0);
+  });
+
+  test("the file refuses a point it cannot stand behind", () => {
+    const header = "sample_ref,field,base_value,value,author,reason\n";
+    expect(() => parseSampleOverlay(`${header}inat:7,coordinates,,91 -123.3,samstaff,\n`, "f")).toThrow(/not a latitude/);
+    expect(() => parseSampleOverlay(`${header}inat:7,coordinates,,44.6,samstaff,\n`, "f")).toThrow(/latitude> <longitude/);
+    expect(() => parseSampleOverlay(`${header}inat:7,coordinates,,44.6 -123.3 -5,samstaff,\n`, "f")).toThrow(/whole metres/);
+    expect(parseSampleOverlay(`${header}inat:7,coordinates,,44.6 -123.3,samstaff,\n`, "f")).toHaveLength(1);
+  });
+});

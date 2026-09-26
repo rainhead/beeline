@@ -1,8 +1,20 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
-import { applySampleOverlay, observationLocalityOf, resolveObservationSample } from "../apply-sample-overlay.js";
-import { observationRef, sampleValueProblem, upsertSampleOverlay, type SampleOverlayRow } from "../sample-overlay.js";
+import {
+  applySampleOverlay,
+  currentLocationOf,
+  observationLocalityOf,
+  resolveObservationSample,
+} from "../apply-sample-overlay.js";
+import {
+  formatPoint,
+  observationRef,
+  parsePoint,
+  sampleValueProblem,
+  upsertSampleOverlay,
+  type SampleOverlayRow,
+} from "../sample-overlay.js";
 import { applySampleEdit, loadSampleForStaff } from "./sample-edit.js";
 
 /**
@@ -31,6 +43,16 @@ export interface StaffLocalityTarget {
   entity_id: number;
   inat_observation_id: bigint | null;
   locality: string | null;
+}
+
+export interface StaffCoordinatesInput {
+  latitude: string;
+  longitude: string;
+  /** Metres; blank for unknown. */
+  uncertainty: string;
+  remove: boolean;
+  note: string;
+  author: string;
 }
 
 export interface StaffLocalityInput {
@@ -106,6 +128,56 @@ export async function setStaffLocality(
     reason,
   };
   // Durability before immediacy: if the file write fails, nothing applied.
+  await upsertSampleOverlay(deps.sampleOverlayPath, [row]);
+  if (deps.conn !== undefined) {
+    const applied = await applySampleOverlay(deps.conn, [row]);
+    const first = applied.unresolved[0];
+    if (first !== undefined) return { outcome: "unresolved", reason: first.reason };
+  }
+  return { outcome: input.remove ? "removed" : "saved" };
+}
+
+/**
+ * A staff member setting a sample's coordinates (beeline-942): the twin of
+ * setStaffLocality for samples with an observation. There is no corrections
+ * path for a sample without one — the corrections overlay names a staging
+ * row and legacy promotion would land the point as legacy_import, which
+ * would misstate who said so — so the form is not offered on those. The
+ * base recorded is what sample_location held as the staffer looked at it,
+ * whatever its source, which is what removal hands back.
+ */
+export async function setStaffCoordinates(
+  deps: StaffLocalityDeps,
+  sample: StaffLocalityTarget,
+  input: StaffCoordinatesInput,
+): Promise<StaffLocalityResult> {
+  if (sample.inat_observation_id === null) return { outcome: "unchanged" };
+  const reason = input.note.trim();
+  let value = "";
+  if (!input.remove) {
+    const parts = [input.latitude.trim(), input.longitude.trim()];
+    if (parts[0] === "" || parts[1] === "") return { outcome: "invalid", problem: "latitude and longitude are both needed" };
+    if (input.uncertainty.trim() !== "") parts.push(input.uncertainty.trim());
+    const p = parsePoint(parts.join(" "));
+    if ("problem" in p) return { outcome: "invalid", problem: p.problem };
+    value = formatPoint({ ...p, source: null });
+  }
+  if (deps.conn !== undefined) {
+    const resolved = await resolveObservationSample(deps.conn, sample.inat_observation_id);
+    if ("problem" in resolved) return { outcome: "unresolved", reason: resolved.problem };
+    if (resolved.sampleId !== sample.entity_id) {
+      return { outcome: "unresolved", reason: `observation ${sample.inat_observation_id} is on another sample` };
+    }
+  }
+  const base = deps.conn === undefined ? "" : await currentLocationOf(deps.conn, sample.entity_id);
+  const row: SampleOverlayRow = {
+    sample_ref: observationRef(sample.inat_observation_id),
+    field: "coordinates",
+    base_value: base,
+    value,
+    author: input.author,
+    reason,
+  };
   await upsertSampleOverlay(deps.sampleOverlayPath, [row]);
   if (deps.conn !== undefined) {
     const applied = await applySampleOverlay(deps.conn, [row]);

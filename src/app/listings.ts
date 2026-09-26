@@ -338,6 +338,13 @@ export interface SpecimenRow {
   specimen_id: number;
   specimen_number: number;
   field_number: string | null;
+  /**
+   * No number, but a label: minted in a run that was then canceled, which
+   * burned the number, and waiting for the next freeze to number it again.
+   * Distinguishes that from an imported specimen whose label predates field
+   * numbering, which the cell used to call both (beeline-1kb.21).
+   */
+  awaiting_number: boolean;
   sample_id: number;
   sample_number: string;
   date_start: Date;
@@ -785,6 +792,9 @@ export async function listSpecimens(
         "sp.entity_id as specimen_id",
         "sp.specimen_number",
         "sp.field_number",
+        sql<boolean>`sp.field_number IS NULL AND EXISTS (SELECT 1 FROM printed_label pl WHERE pl.specimen_id = sp.entity_id)`.as(
+          "awaiting_number",
+        ),
         "s.entity_id as sample_id",
         "s.sample_number",
         "s.date_start",

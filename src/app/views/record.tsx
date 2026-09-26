@@ -389,7 +389,10 @@ function SampleSpecimens({ m, sample, page }: { m: Messages; sample: SampleDetai
                 <td>
                   <a href={specimenHref(row.specimen_id)}>
                     {row.field_number === null ? (
-                      <Absent label={c.noFieldNumber} spelled />
+                      /* Two absences, told apart by the label column's state:
+                         a number taken back by a canceled run, which the next
+                         run replaces, or a label that predates numbering. */
+                      <Absent label={row.label_state === "canceled" ? c.awaitingNumber : c.noFieldNumber} spelled />
                     ) : (
                       <span class="mono">{row.field_number}</span>
                     )}
@@ -626,7 +629,7 @@ function SpecimenLabels({ m, labels, admin }: { m: Messages; labels: readonly Sp
       ) : (
         <>
           <Meta block>{c.intro}</Meta>
-          <DataTable columns={[c.colRun, c.colState, c.colSheet, c.colPrepared, c.colPrinted, c.colMailed]}>
+          <DataTable columns={[c.colRun, c.colNumber, c.colState, c.colSheet, c.colPrepared, c.colPrinted, c.colMailed]}>
             {labels.map((l) => (
               <tr>
                 <td>
@@ -635,6 +638,13 @@ function SpecimenLabels({ m, labels, admin }: { m: Messages; labels: readonly Sp
                   ) : (
                     m.printRuns.run.title(l.print_run_id)
                   )}
+                </td>
+                {/* The number as it printed or would have. On a canceled
+                    run it is burned and gone from the registry, so this cell
+                    is where a proof sheet from that run is matched to its
+                    specimen (beeline-1kb.21). */}
+                <td>
+                  <span class="mono">{l.number_text}</span>
                 </td>
                 <td>{state[l.state] ?? l.state}</td>
                 <td class="nowrap">
@@ -687,7 +697,17 @@ export function SpecimenPage({
         ])}`}
       />
       <RecordScopeNote m={m} mine={sample.mine} />
-      {specimen.field_number === null && <Meta block>{c.fieldNumberNone}</Meta>}
+      {/* No number is two different stories. A label row with none means a
+          run minted a number and was canceled, burning it; the next freeze
+          numbers the specimen again. No label row at all is an imported
+          specimen from before field numbering. The first version told the
+          second story about both (beeline-1kb.21). */}
+      {specimen.field_number === null &&
+        (labels.length > 0 ? (
+          <Meta block>{c.fieldNumberWithdrawn(labels[0]!.number_text, m.printRuns.run.title(labels[0]!.print_run_id))}</Meta>
+        ) : (
+          <Meta block>{c.fieldNumberNone}</Meta>
+        ))}
 
       {/* The history first: it is why this page exists. */}
       <Card>

@@ -222,11 +222,26 @@ describe("the print-run screens", () => {
     const sheets = await app.request(`${runPath}/labels.pdf`);
     expect(sheets.status).toBe(409);
     expect(await sheets.text()).toContain("canceled");
-    // The volunteer's specimen rows say what happened rather than going blank.
+    // The volunteer's specimen rows say what happened rather than going blank
+    // — and say it as a number taken back, not as a label from before
+    // numbering, which is what "not numbered" means elsewhere (beeline-1kb.21).
     const sample = await (await app.request(`/samples/${ashSample}`)).text();
     expect(sample).toContain("run canceled; it will be numbered again in the next run");
-    expect(sample).toContain("not numbered");
+    expect(sample).toContain("awaiting a number");
+    expect(sample).not.toContain("not numbered");
     expect(sample).not.toMatch(/<td><\/td>/);
+    // The specimen page tells the same story, names the burned number, and
+    // keeps it in the Labels table, where a proof sheet from the canceled
+    // run can still be matched to its specimen.
+    const [[specimenId]] = (await rows(conn, `SELECT entity_id FROM specimen WHERE sample_id = ${ashSample} ORDER BY specimen_number LIMIT 1`)) as [[number]];
+    const specimen = await (await app.request(`/specimens/${specimenId}`)).text();
+    expect(specimen).toContain("26000001 was taken back when");
+    expect(specimen).toContain("was canceled; the next run will number this specimen again.");
+    expect(specimen).not.toContain("predates field numbering");
+    expect(specimen).toContain('<span class="mono">26000001</span>');
+    // And the listing, which cannot see the Label column, says the same.
+    const listing = await (await app.request("/specimens?scope=all")).text();
+    expect(listing).toContain("awaiting a number");
     expect(await rows(conn, `SELECT count(*) FROM pending_print_sample`)).toEqual([[2n]]);
   });
 

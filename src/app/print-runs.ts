@@ -276,6 +276,8 @@ async function runPdfUncoalesced(
 /** A specimen's labels across runs, for the specimen page and the proofing lookup. */
 export interface SpecimenLabelRow {
   print_run_id: number;
+  /** The number as it printed, or would have: a canceled run's is burned, and this is the only place it survives (beeline-1kb.21). */
+  number_text: string;
   state: PrintRunState;
   sheet: number;
   cell: number;
@@ -289,7 +291,7 @@ export async function specimenLabels(db: Kysely<Database>, specimenId: number): 
   const rows = await db
     .selectFrom("specimen_label")
     .where("specimen_id", "=", specimenId)
-    .select(["print_run_id", "state", "sheet", "cell", "prepared_at", "printed_at", "mailed_at", "canceled_at"])
+    .select(["print_run_id", "number_text", "state", "sheet", "cell", "prepared_at", "printed_at", "mailed_at", "canceled_at"])
     .orderBy("prepared_at", "desc")
     .orderBy("print_run_id", "desc")
     .execute();

@@ -148,6 +148,13 @@ export function parseSampleOverlay(text: string, where: string): SampleOverlayRo
     }
     const bad = sampleValueProblem(row.field, row.value);
     if (bad !== null) throw new Error(`${where} line ${line}: ${bad}`);
+    // The base is read back too: on removal it becomes the sample's point
+    // again, and a base the applier cannot parse would read as "there was
+    // none" and take the row away (CodeRabbit on PR #99).
+    if (row.field === "coordinates" && row.base_value !== "") {
+      const base = parsePoint(row.base_value);
+      if ("problem" in base) throw new Error(`${where} line ${line}: base ${base.problem}`);
+    }
     return row;
   });
 }

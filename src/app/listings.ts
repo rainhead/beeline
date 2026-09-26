@@ -368,6 +368,8 @@ export interface SpecimenRow {
   determiner: string | null;
   /** When the determination of record was made; null where its source did not say. */
   determined_on: Date | null;
+  /** How much of that date the source stated; null is the day (beeline-9ut). */
+  determined_on_precision: "month" | "year" | null;
   latitude: number | null;
   longitude: number | null;
   coordinate_uncertainty_m: number | null;
@@ -822,6 +824,7 @@ export async function listSpecimens(
         "d.sex",
         "d.is_expert",
         "d.determined_on",
+        "d.determined_on_precision",
         "loc.latitude",
         "loc.longitude",
         "loc.coordinate_uncertainty_m",
@@ -1020,7 +1023,14 @@ export function specimenCsv(page: Page<SpecimenRow>): string {
       r.verbatim_identification,
       r.sex,
       r.determiner,
-      r.determined_on === null ? null : isoDate(r.determined_on),
+      // As Darwin Core would have it: a year-only date is the year, not January 1st.
+      r.determined_on === null
+        ? null
+        : r.determined_on_precision === "year"
+          ? isoDate(r.determined_on).slice(0, 4)
+          : r.determined_on_precision === "month"
+            ? isoDate(r.determined_on).slice(0, 7)
+            : isoDate(r.determined_on),
       r.is_expert === null ? "" : String(r.is_expert),
     ]),
   );

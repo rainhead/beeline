@@ -62,6 +62,13 @@ const day = (d: Date | string) =>
 // A collecting window: one day for a net sample, a range for a trap left out
 // across several. One formatter rather than one per screen, because it is a
 // value formatting rule and not something a screen decides.
+// A date the source stated only part of (beeline-9ut): a bare year from
+// Ecdysis is shown as the year, never as a confident January 1st.
+const datePrecise = (d: Date | string, precision: "month" | "year" | null) => {
+  if (typeof d === "string" || precision === null) return date(d);
+  if (precision === "year") return String(d.getFullYear());
+  return d.toLocaleDateString(locale, { year: "numeric", month: "short" });
+};
 const dateRange = (start: Date | string, end: Date | string) =>
   date(start) === date(end) ? date(start) : `${date(start)} – ${date(end)}`;
 // Where a record was collected, from whichever parts it carries. A formatter
@@ -85,7 +92,7 @@ export const en = {
   },
 
   /** Locale-aware value formatters, for views composing values into markup. */
-  format: { date, day, dateTime, dateRange, number: n, list, place },
+  format: { date, datePrecise, day, dateTime, dateRange, number: n, list, place },
 
   layout: {
     /** Any instance that is not production says so (beeline-2u8). */

@@ -552,6 +552,13 @@ describe("the determination date column", () => {
     expect(csv.split("\r\n")[0]).toContain("host,host_rank");
     expect(csv.split("\r\n")[0]).toContain("determined_by,determined_on,expert_determination");
     expect(csv).toContain(",2025-04-28,");
+
+    // A year-only date is the year, on the page and in the file (beeline-9ut).
+    await conn.run(`UPDATE determination SET determined_on_precision = 'year' WHERE verbatim_identification = 'Bombus cf. vosnesenskii'`);
+    const yearly = await get(app, "/specimens?scope=all");
+    expect(yearly).toContain(">2025<");
+    expect(yearly).not.toContain("Apr 28, 2025");
+    expect(await (await app.request("/specimens.csv?scope=all")).text()).toContain(",2025,");
   });
 });
 

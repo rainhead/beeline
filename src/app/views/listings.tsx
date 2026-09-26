@@ -720,7 +720,11 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
                   {/* The dash: most legacy determinations carry no date, so
                       the words would be noise down the column; the specimen
                       page spells it. */}
-                  {row.determined_on === null ? <Absent label={m.absence.none} /> : m.format.date(row.determined_on)}
+                  {row.determined_on === null ? (
+                    <Absent label={m.absence.none} />
+                  ) : (
+                    m.format.datePrecise(row.determined_on, row.determined_on_precision)
+                  )}
                 </td>
                 <td>
                   <OrAbsent value={row.atlas_code} label={m.listings.samples.atlasOutside} spelled />

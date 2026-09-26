@@ -4,7 +4,7 @@
 CREATE VIEW determination_of_record AS
 SELECT entity_id, specimen_id, animal_id, qualifier, verbatim_identification,
        sex, caste, determiner_id, determiner_name,
-       is_expert, channel, determined_on, recorded_at, notes
+       is_expert, channel, determined_on, determined_on_precision, recorded_at, notes
 FROM (
   SELECT d.*,
          row_number() OVER (

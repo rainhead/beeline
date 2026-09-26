@@ -1,0 +1,7 @@
+id,institutionCode,collectionCode,catalogNumber,recordID,scientificName,identifiedBy,dateIdentified,identificationQualifier,identificationRemarks,modified
+100,WSUC,WSDA,WSDA_2303966,occ-a,Andrena sladeni,Sam A. Staff,2025,,,2025-09-23 14:13:48
+101,WSUC,WSDA,WSDA_2303967,occ-b,Lasioglossum cooleyi,Ellen Expert,2025-04-28,cf. cooleyi,Dialictus,2025-05-02 09:00:00
+102,WSUC,WSDA,WSDA_2303968,occ-c,Nomada,Ellen Expert,2024,zonalis group,,2025-06-01 12:00:00
+103,WSUC,WSDA,WSDA_9999999,occ-x,Nomada,Ellen Expert,2024,,,2025-06-01 12:00:00
+104,WSUC,WSDA,OTHER_2303966,occ-y,Bombus,unknown,s.d.,,,2025-01-01 00:00:00
+105,WSUC,WSDA,WSDA_2303969,occ-d,Ceratina acantha,Ellen Expert,2026,,,2026-02-20 11:00:00

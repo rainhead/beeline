@@ -71,11 +71,31 @@ export async function resolveObservationSample(
 }
 
 /**
- * The sample_location row as it stands, in the overlay's own grammar — the
- * base a new coordinate override records, and what removal restores. Empty
- * where the sample has no coordinates.
+ * The base a new coordinate override records, in the overlay's own grammar:
+ * what removal will restore. Where an override already stands, its recorded
+ * base — the row as it stood before any staff point — and not the current
+ * row, which by then IS the earlier staff point; a second save must not make
+ * the first save the thing removal goes back to (CodeRabbit on PR #99).
+ * Otherwise the sample_location row as it stands. Empty where the sample
+ * has no coordinates.
  */
 export async function currentLocationOf(conn: DuckDBConnection, sampleId: number): Promise<string> {
+  const prior = await rows(
+    conn,
+    `SELECT observed_latitude, observed_longitude, observed_uncertainty_m, observed_source
+     FROM sample_location_override WHERE sample_id = $1`,
+    [sampleId],
+  );
+  const p = prior[0];
+  if (p !== undefined) {
+    if (p[0] === null) return "";
+    return formatPoint({
+      latitude: Number(p[0]),
+      longitude: Number(p[1]),
+      coordinate_uncertainty_m: p[2] === null ? null : Number(p[2]),
+      source: String(p[3]),
+    });
+  }
   const r = await rows(
     conn,
     `SELECT latitude, longitude, coordinate_uncertainty_m, source FROM sample_location WHERE sample_id = $1`,

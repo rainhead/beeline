@@ -91,6 +91,11 @@ export function parsePoint(value: string): OverlayPoint | { problem: string } {
     if (!Number.isInteger(u) || u <= 0) return { problem: `'${parts[2]}' is not an uncertainty in whole meters` };
     coordinate_uncertainty_m = u;
   }
+  // A base's source goes back into sample_location.source on removal, and
+  // that column has a CHECK: an unknown token here would fail the whole
+  // promotion transaction there (CodeRabbit on PR #99).
+  const SOURCES = ["inat_trusted", "inat_public", "legacy_import", "staff_entry"];
+  if (parts[3] !== undefined && !SOURCES.includes(parts[3])) return { problem: `'${parts[3]}' is not a coordinate source` };
   return { latitude, longitude, coordinate_uncertainty_m, source: parts[3] ?? null };
 }
 

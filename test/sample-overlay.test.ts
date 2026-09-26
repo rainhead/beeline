@@ -330,11 +330,26 @@ describe("staff coordinates stand over the observation's (beeline-942)", () => {
     expect(await count("SELECT count(*) FROM sample_location_override_diverged")).toBe(0);
   });
 
+  test("a second save keeps the first save's base, so removal goes back past both", async () => {
+    const { currentLocationOf } = await import("../src/apply-sample-overlay.js");
+    await stage(obs(7));
+    await promoteObservations(conn);
+    const [[sampleId]] = (await rows(conn, "SELECT entity_id FROM sample")) as [[number]];
+    expect(await currentLocationOf(conn, Number(sampleId))).toBe("44.5646 -123.262 30 inat_public");
+    await applySampleOverlay(conn, [point("44.6 -123.3 15")]);
+    // The row is now the staff point; the base the form should record is not.
+    expect(await currentLocationOf(conn, Number(sampleId))).toBe("44.5646 -123.262 30 inat_public");
+    await applySampleOverlay(conn, [point("44.61 -123.31 10", { base_value: await currentLocationOf(conn, Number(sampleId)) })]);
+    await applySampleOverlay(conn, [point("")]);
+    expect(await location()).toEqual([44.5646, -123.262, 30, "inat_public"]);
+  });
+
   test("the file refuses a point it cannot stand behind", () => {
     const header = "sample_ref,field,base_value,value,author,reason\n";
     expect(() => parseSampleOverlay(`${header}inat:7,coordinates,,91 -123.3,samstaff,\n`, "f")).toThrow(/not a latitude/);
     expect(() => parseSampleOverlay(`${header}inat:7,coordinates,,44.6,samstaff,\n`, "f")).toThrow(/latitude> <longitude/);
     expect(() => parseSampleOverlay(`${header}inat:7,coordinates,,44.6 -123.3 -5,samstaff,\n`, "f")).toThrow(/whole meters/);
+    expect(() => parseSampleOverlay(`${header}inat:7,coordinates,44.5 -123.2 30 inat,44.6 -123.3,samstaff,\n`, "f")).toThrow(/not a coordinate source/);
     expect(parseSampleOverlay(`${header}inat:7,coordinates,,44.6 -123.3,samstaff,\n`, "f")).toHaveLength(1);
   });
 });

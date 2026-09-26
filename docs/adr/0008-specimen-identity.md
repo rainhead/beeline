@@ -6,7 +6,9 @@ together · the evidence is
 [field-number-history.md](../field-number-history.md) · phase 5 (beeline-1kb)
 is gated on it · reframed the same day it was drafted: the first version was
 titled *A field number is minted once and never moves* and answered the right
-question with the wrong identifier (beeline-1kb.14, beeline-1kb.15)
+question with the wrong identifier (beeline-1kb.14, beeline-1kb.15) ·
+**reviewed 2026-09-25** (Peter): (1) overstated its own case against a URI
+that carries the field number — see the note under it and open question 1
 
 Throughout, *Beeline* is this codebase. The system it replaces is *the
 reference implementation* — OBP-Server, which staff also call Beeline — and
@@ -198,7 +200,25 @@ answers which label is right.
    it. It is the value Beeline publishes as `dwc:occurrenceID` and the one
    Ecdysis and GBIF are asked to cite. Its shape — a UUID, or a URI under a
    domain the program controls — is not decided here; what is decided is that
-   nothing can be read out of it and that the field number is not in it.
+   nothing is ever read out of it and that it is never re-derived.
+
+   *Reviewed 2026-09-25.* The first version said the field number could not
+   be **in** it, and that was more than the argument supports. (2) makes the
+   field number permanent, so a URI built from it at the freeze and never
+   rebuilt — OSAC's `…/OBS/OBA_<number>` form, minted once — is a function of
+   a value that no longer moves, and is as permanent as a UUID. What the
+   reference implementation got wrong was not the shape but the derivation:
+   the URI was computed from the *current* field number and written only
+   where empty, which is how 592 came to name somebody else's specimen. What
+   is still true is narrower. Such a URI collides in exactly the case (4)
+   repairs, two specimens on one number, so it cannot be the identity of an
+   imported specimen until beeline-1kb.14 is settled; Beeline-minted numbers
+   cannot collide, since the registry's key forbids it. It names one atlas,
+   so it can be Oregon's form and not the program's. And it visibly disagrees
+   with the label after a repair, which invites the correction that
+   fossilised the reference implementation's — a UUID says nothing, so nobody
+   edits it. Beeline mints a UUID v7 today (PR #74) and would mint the URI
+   form for Oregon on the same terms if OSAC asks for it.
 2. **The field number is minted once and every reprint reuses it.** Lost,
    destroyed, never attached, or data found wrong after printing — the
    replacement carries the *same* field number. There is no correction
@@ -431,11 +451,14 @@ wait.
 Beyond gh-17, which this ADR inherits, the reframing opens three, none of
 which this project can answer alone:
 
-1. **Does OSAC want to keep issuing the `https://osac.oregonstate.edu/OBS/OBA_`
-   URI form for Oregon specimens?** Under (1) it cannot be the
-   `occurrenceID`, since it embeds the field number. It can be a catalog
-   number, an alias, or retired for new records. This is a question for OSAC
-   through Andony, and it decides what Beeline's Oregon export carries in
+1. **For Oregon specimens, does OSAC want its `https://osac.oregonstate.edu/OBS/OBA_`
+   URI form to be the `occurrenceID`, or an alias beside a UUID?** Either
+   works (see the review note under (1)): as the `occurrenceID` it is minted
+   once at the freeze from the field number and never re-derived; as an
+   alias it is a catalog number beside a UUID. What does not work is
+   deriving it live from the current field number, or backfilling it over
+   legacy numbers before beeline-1kb.14 is repaired. This is a question for
+   OSAC through Andony, and it decides what Beeline's Oregon export carries in
    which column.
 2. **What do Ecdysis and WSUC expect for Washington?** The museum's
    `catalogNumber` is `WSDA_`-prefixed and the reference implementation reads

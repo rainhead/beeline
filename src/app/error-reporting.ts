@@ -46,7 +46,15 @@ export function redact(text: string): string {
     .replace(/-?\b\d{1,3}\.\d{4,}\b/g, "[coordinate]");
 }
 
-const redactValue = (v: unknown): unknown => (typeof v === "string" ? redact(v) : v);
+/** Every string in a value, however deeply nested: a logged object can arrive as attributes of any shape. */
+const redactValue = (v: unknown): unknown => {
+  if (typeof v === "string") return redact(v);
+  if (Array.isArray(v)) return v.map(redactValue);
+  if (v !== null && typeof v === "object") {
+    return Object.fromEntries(Object.entries(v).map(([k, value]) => [k, redactValue(value)]));
+  }
+  return v;
+};
 
 /** beforeSend: an error event, reduced to what the rule above allows. */
 export function scrubEvent<E extends Sentry.ErrorEvent>(event: E): E {

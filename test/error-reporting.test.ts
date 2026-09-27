@@ -95,6 +95,15 @@ describe("scrubLog", () => {
     expect(log.message).toBe("admin seed: no inat_account for '[redacted]'");
     expect(log.attributes).toEqual({ "sentry.message.parameter.0": "[coordinate]", count: 3 });
   });
+
+  it("reaches strings nested in objects and arrays", () => {
+    const log = scrubLog({
+      level: "error",
+      message: "failed:",
+      attributes: { err: { message: "no sample 'Ada Example'", points: ["44.56789"], code: 7 } },
+    });
+    expect(log.attributes).toEqual({ err: { message: "no sample '[redacted]'", points: ["[coordinate]"], code: 7 } });
+  });
 });
 
 describe("monitorConfig", () => {

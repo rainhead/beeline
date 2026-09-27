@@ -264,7 +264,7 @@ export async function seedAdmins(
     .execute();
   const missing = logins.filter((l) => !people.some((p) => p.login === l));
   if (missing.length > 0) {
-    console.warn(`admin seed: no inat_account for ${missing.join(", ")} — they cannot sign in yet`);
+    console.warn(`admin seed: no inat_account for ${missing.map((l) => `'${l}'`).join(", ")} — they cannot sign in yet`);
   }
   const grant = people.filter(
     (p) =>

@@ -657,7 +657,7 @@ export function createApp({
         // still holds it, durably, from applySampleEdit).
         if (recorded.baselined) {
           console.warn(
-            `sample edit by ${session.login} fell on a missing snapshot and was baselined, not recorded; ` +
+            `sample edit by '${session.login}' fell on a missing snapshot and was baselined, not recorded; ` +
               `the corrections overlay carries the attribution`,
           );
         }

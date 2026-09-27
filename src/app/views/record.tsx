@@ -657,7 +657,13 @@ export function Determinations({ m, events }: { m: Messages; events: readonly De
                 </>
               )}
             </td>
-            <td>{e.determined_on === null ? <Meta>{d.determinedUnknown}</Meta> : m.format.date(e.determined_on)}</td>
+            <td>
+              {e.determined_on === null ? (
+                <Meta>{d.determinedUnknown}</Meta>
+              ) : (
+                m.format.datePrecise(e.determined_on, e.determined_on_precision)
+              )}
+            </td>
             <td>
               {m.format.day(e.recorded_at)}
               <Meta block>{d.channels[e.channel] ?? e.channel}</Meta>

@@ -1,5 +1,5 @@
 import { sql, type Kysely } from "kysely";
-import type {
+import type { DeterminedOnPrecision,
   PrintRunState,
   Database,
   DeterminationChannel,
@@ -167,6 +167,8 @@ export interface DeterminationEvent {
   is_expert: boolean;
   channel: DeterminationChannel;
   determined_on: Date | null;
+  /** How much of determined_on the source stated; null is the day (beeline-9ut). */
+  determined_on_precision: DeterminedOnPrecision | null;
   recorded_at: Date;
   notes: string | null;
   /** Whether determination_of_record picks this event out of the history. */
@@ -401,7 +403,7 @@ export async function determinationHistory(
     SELECT d.entity_id, an.rank, an.scientific_name, an.authorship,
            d.qualifier, d.verbatim_identification, d.sex, d.caste,
            coalesce(p.display_name, d.determiner_name) AS determiner,
-           d.is_expert, d.channel, d.determined_on, d.recorded_at, d.notes,
+           d.is_expert, d.channel, d.determined_on, d.determined_on_precision, d.recorded_at, d.notes,
            (dor.entity_id IS NOT NULL) AS of_record
     FROM determination d
     JOIN animal an ON an.entity_id = d.animal_id

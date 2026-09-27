@@ -469,8 +469,21 @@ export interface DeterminationTable {
   is_expert: boolean;
   channel: DeterminationChannel;
   determined_on: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  /** How much of determined_on the source stated; null is the day (beeline-9ut). */
+  determined_on_precision: DeterminedOnPrecision | null;
   recorded_at: Timestamped;
   notes: string | null;
+}
+
+export type DeterminedOnPrecision = "month" | "year";
+
+/** The Ecdysis identification an imported determination came from (beeline-9ut). */
+export interface EcdysisIdentificationTable {
+  record_id: string;
+  determination_id: number;
+  occurrence_id: string | null;
+  entered_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  loaded_at: Timestamped;
 }
 
 // schema/050_qc.sql
@@ -905,6 +918,7 @@ export interface Database {
   sample_collector: SampleCollectorTable;
   specimen: SpecimenTable;
   determination: DeterminationTable;
+  ecdysis_identification: EcdysisIdentificationTable;
   qc_rule: QcRuleTable;
   sample_promotion_finding: SamplePromotionFindingTable;
   sync_run: SyncRunTable;

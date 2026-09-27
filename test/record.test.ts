@@ -158,6 +158,14 @@ describe("the determination history", () => {
     expect(body).toContain("Wing venation checked under scope.");
   });
 
+  it("shows a determination dated only to the year as the year (beeline-9ut)", async () => {
+    const { app, conn, specimen } = await recordApp();
+    await conn.run(`UPDATE determination SET determined_on = DATE '2025-01-01', determined_on_precision = 'year' WHERE specimen_id = ${specimen} AND is_expert`);
+    const body = await get(app, `/specimens/${specimen}`);
+    expect(body).toContain("<td>2025</td>");
+    expect(body).not.toContain("Jan 1, 2025");
+  });
+
   it("says why the record is not the newest entry", async () => {
     const { app, specimen } = await recordApp();
     const body = await get(app, `/specimens/${specimen}`);

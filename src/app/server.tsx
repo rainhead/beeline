@@ -14,6 +14,7 @@ import { resolveActing, startActing, stopActing, startImpersonating, stopImperso
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
 import { jobHealth, type Job, type LastOutcome } from "./jobs/framework.js";
+import { onAppError } from "./error-reporting.js";
 import { Glossary } from "./views/glossary.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomySummary } from "./taxonomy.js";
@@ -196,6 +197,7 @@ export function createApp({
     return row !== undefined;
   };
   const app = new Hono<AppEnv>();
+  app.onError(onAppError);
   const tokens = tokensCss();
 
   // Every route (sign-in pages included) reads copy from the catalog; the

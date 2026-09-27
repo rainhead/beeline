@@ -77,3 +77,19 @@ describe("configFromEnv feedback address", () => {
     }
   });
 });
+
+describe("configFromEnv error reporting", () => {
+  it("reports nowhere without a DSN", () => {
+    expect(configFromEnv({}).sentryDsn).toBeNull();
+    expect(configFromEnv({ SENTRY_DSN: "  " }).sentryDsn).toBeNull();
+    expect(configFromEnv({ SENTRY_DSN: " https://key@example.invalid/1 " }).sentryDsn).toBe("https://key@example.invalid/1");
+  });
+
+  it("names the release after Fly's deployment tag unless told otherwise", () => {
+    expect(configFromEnv({}).release).toBeNull();
+    expect(configFromEnv({ FLY_IMAGE_REF: "registry.fly.io/beeline:deployment-01M3G930QECMR7WVXDVVFP1CH8" }).release).toBe(
+      "deployment-01M3G930QECMR7WVXDVVFP1CH8",
+    );
+    expect(configFromEnv({ FLY_IMAGE_REF: "registry.fly.io/beeline:deployment-x", BEELINE_RELEASE: "v1" }).release).toBe("v1");
+  });
+});

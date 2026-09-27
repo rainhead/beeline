@@ -9,9 +9,14 @@ import { ensureSampleOverlayFile } from "../sample-overlay.js";
 import { startScheduler } from "./jobs/framework.js";
 import { buildJobs } from "./jobs/registry.js";
 import { createApp } from "./server.js";
+import { flushErrorReporting, initErrorReporting, jobCheckIns } from "./error-reporting.js";
 import { cookieSessionResolver, type SessionResolver } from "./session.js";
 
 const config = configFromEnv();
+// First, so that whatever goes wrong from here on — the store failing to
+// open, the boot-time reconciliation — is reported (beeline-8w6.1).
+const reporting = initErrorReporting(config);
+if (reporting) console.log(`reporting errors to Sentry as ${config.environment}${config.release ? ` (${config.release})` : ""}`);
 const { db, instance, close } = await openAppDb(config);
 
 // The sample overlay exists from the first boot, header only, rather than
@@ -117,7 +122,7 @@ if (config.devLogin) {
 
 const jobs = buildJobs(config);
 const jobConn = await instance.connect();
-const scheduler = startScheduler({ db, conn: jobConn, jobs });
+const scheduler = startScheduler({ db, conn: jobConn, jobs, observe: reporting ? jobCheckIns : undefined });
 // The print runs' own connection: a freeze is one transaction and cannot
 // share a connection with the nightly's (src/print-run.ts).
 const printConn = await instance.connect();
@@ -208,6 +213,8 @@ async function shutdown(signal: string): Promise<never> {
   } catch (err) {
     failed("closing the store", err);
   }
+  // Last, so the shutdown's own failures are among what it sends.
+  await flushErrorReporting().catch(() => undefined);
   process.exit(code);
 }
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

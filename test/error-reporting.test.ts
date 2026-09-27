@@ -150,6 +150,23 @@ describe("runJob's observer", () => {
       ["failed", boom],
     ]);
   });
+
+  it("still runs and records the job when the observer throws", async () => {
+    const d = await deps();
+    const throwsAtStart = () => {
+      throw new Error("observer broke");
+    };
+    const throwsAtEnd = () => () => {
+      throw new Error("observer broke");
+    };
+    await runJob({ ...d, observe: throwsAtStart }, job(async () => "first"));
+    await runJob({ ...d, observe: throwsAtEnd }, job(async () => "second"));
+    const runs = await d.db.selectFrom("job_run").select(["outcome", "detail"]).orderBy("entity_id").execute();
+    expect(runs).toEqual([
+      { outcome: "succeeded", detail: "first" },
+      { outcome: "succeeded", detail: "second" },
+    ]);
+  });
 });
 
 describe("with Sentry initialised", () => {

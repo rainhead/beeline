@@ -264,20 +264,31 @@ export async function runJob(
       .where("entity_id", "=", run.entity_id)
       .execute();
   ctx.log("started");
-  // Once: a success whose job_run update then throws lands in the catch
-  // below, and the observer has already been told it succeeded.
-  const observed = deps.observe?.(job);
+  // An observer reports elsewhere and must never cost the run: whatever it
+  // throws is logged and dropped, since runJob promises not to throw.
+  const guarded = <T>(what: string, fn: () => T): T | undefined => {
+    try {
+      return fn();
+    } catch (err) {
+      console.error(`[job ${job.name}] observer failed ${what}: ${(err as Error).message}`);
+      return undefined;
+    }
+  };
+  const observed = deps.observe && guarded("at start", () => deps.observe!(job));
+  // Told once, and only after job_run says the same thing: a success whose
+  // update then throws lands in the catch below and is reported as the
+  // failure the store records.
   let told = false;
   const ended = (outcome: "succeeded" | "failed", err?: unknown) => {
     if (told || observed === undefined) return;
     told = true;
-    observed(outcome, err);
+    guarded("at the end", () => observed(outcome, err));
   };
   try {
     const detail = await job.run(ctx);
     ctx.log(`succeeded${detail ? `: ${detail}` : ""}`);
-    ended("succeeded");
     await finish("succeeded", detail ?? null);
+    ended("succeeded");
   } catch (err) {
     console.error(`[job ${job.name}] failed: ${(err as Error).stack ?? String(err)}`);
     ended("failed", err);

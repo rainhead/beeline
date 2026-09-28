@@ -77,7 +77,7 @@ export function listingAttributes(
 }
 
 /** The attributes of one /people request. Exported for its test. */
-export function rosterAttributes(format: "page" | "csv", q: RosterQuery): Attributes {
+export function rosterAttributes(format: "page" | "csv", q: RosterQuery, viewer: Viewer): Attributes {
   const used = {
     search: q.search !== "",
     suspect: q.suspect,
@@ -91,7 +91,8 @@ export function rosterAttributes(format: "page" | "csv", q: RosterQuery): Attrib
   return {
     listing: "people",
     format,
-    role: "staff",
+    role: role(viewer),
+    acting_for: viewer.actingFor,
     sort: q.sort,
     dir: q.dir,
     sort_changed: q.sort !== DEFAULT_ROSTER_SORT || q.dir !== defaultRosterDirection(DEFAULT_ROSTER_SORT),

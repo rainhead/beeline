@@ -78,9 +78,15 @@ describe("listingAttributes", () => {
 
 describe("rosterAttributes", () => {
   it("reduces the search to whether it was used", () => {
-    const attrs = rosterAttributes("page", { ...EMPTY_ROSTER_QUERY, search: "Ada Example", active: "inactive", suspect: true });
+    const attrs = rosterAttributes(
+      "page",
+      { ...EMPTY_ROSTER_QUERY, search: "Ada Example", active: "inactive", suspect: true },
+      { ...staff, actingFor: true },
+    );
     expect(attrs).toMatchObject({
       listing: "people",
+      role: "staff",
+      acting_for: true,
       filters: "search+suspect+active",
       "filter.search": true,
       active: "inactive",

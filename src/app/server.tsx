@@ -966,7 +966,7 @@ export function createApp({
     const m = c.get("m");
     const atlases = await atlasOptions(db);
     const query = parseRosterQuery(new URL(c.req.url).searchParams, atlases.map((a) => a.code));
-    countListingView(rosterAttributes("page", query));
+    countListingView(rosterAttributes("page", query, viewer(c)));
     const listed = await listRoster(db, query);
     // Only on the unfiltered roster. The panel is about the store as a whole,
     // and a search for one person that answers with somebody else's history
@@ -1024,7 +1024,7 @@ export function createApp({
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const atlases = await atlasOptions(db);
     const query = parseRosterQuery(new URL(c.req.url).searchParams, atlases.map((a) => a.code));
-    countListingView(rosterAttributes("csv", query));
+    countListingView(rosterAttributes("csv", query, viewer(c)));
     const listed = await listRoster(db, query, { limit: CSV_ROW_LIMIT, offset: 0 });
     return csv(c, rosterCsv(listed), "beeline-people.csv");
   });

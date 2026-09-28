@@ -762,6 +762,9 @@ describe("CSV export", () => {
     const csv = toCsv(["a", "b", "c", "d"], [[`say "hi", now`, "=SUM(A1:A2)", -123.262, "-45.1"]]);
     expect(csv).toBe(`\uFEFFa,b,c,d\n"say ""hi"", now",'=SUM(A1:A2),-123.262,-45.1\n`);
     expect(csvCell("-Ada")).toBe("'-Ada");
+    // A tab or carriage return in front is a formula trigger too.
+    expect(csvCell("\t=1+1")).toBe("'\t=1+1");
+    expect(csvCell("\r=1+1")).toBe(`"'\r=1+1"`);
   });
 });
 

@@ -1,5 +1,4 @@
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type Context } from "hono";
@@ -873,15 +872,24 @@ export function createApp({
 
   app.get("/exports/occurrences.csv", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
-    const file = await occurrencesFile();
-    if (file === null) return c.text(c.get("m").exports.missing, 404);
+    // One handle for the size and the bytes: the nightly job replaces the
+    // file by rename, and a stat by name followed by an open by name could
+    // describe one file and send another (CodeRabbit on #110).
+    let handle;
+    try {
+      handle = await open(occurrencesPath, "r");
+    } catch {
+      return c.text(c.get("m").exports.missing, 404);
+    }
+    const st = await handle.stat();
     // Named the way the legacy system named its own occurrences files, with
     // the moment it was written, so a script that picks "the newest" by name
     // still does.
-    const stamp = file.writtenAt.toISOString().slice(0, 19).replaceAll(":", ".");
-    return c.body(Readable.toWeb(createReadStream(occurrencesPath)) as ReadableStream, 200, {
+    const stamp = st.mtime.toISOString().slice(0, 19).replaceAll(":", ".");
+    // autoClose: the stream closes the handle when it ends or is destroyed.
+    return c.body(Readable.toWeb(handle.createReadStream({ autoClose: true })) as ReadableStream, 200, {
       "content-type": "text/csv; charset=utf-8",
-      "content-length": String(file.bytes),
+      "content-length": String(st.size),
       "content-disposition": `attachment; filename="occurrences_beeline_${stamp}.csv"`,
     });
   });

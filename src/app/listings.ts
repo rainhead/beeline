@@ -941,9 +941,10 @@ export function csvCell(value: unknown): string {
   // A number is data, and a negative one is most of our longitudes.
   if (typeof value === "number" || typeof value === "bigint") return String(value);
   let cell = value instanceof Date ? isoDate(value) : String(value);
-  // A text cell starting with =, +, -, or @ is a formula to Excel and Sheets;
-  // one that is only a number written as text is data like any other.
-  if (/^[=+\-@]/.test(cell) && !/^[+-]?\d+(\.\d+)?$/.test(cell)) cell = `'${cell}`;
+  // A text cell starting with =, +, -, @, a tab or a carriage return is a
+  // formula to Excel and Sheets (OWASP's CSV-injection list); one that is only
+  // a number written as text is data like any other.
+  if (/^[=+\-@\t\r]/.test(cell) && !/^[+-]?\d+(\.\d+)?$/.test(cell)) cell = `'${cell}`;
   return /[",\n\r]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
 }
 

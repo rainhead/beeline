@@ -55,7 +55,7 @@ export const LEGACY_EXPORT_COLUMNS = [
 /** Staged legacy columns the export reads, when the store holds staging at all. */
 const STAGED = [
   "_id", "errorFlags", "dateLabelPrint", "catalogNumber", "occurrenceID", "userId", "userLogin", "specimenId",
-  "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "relationshipOfResource", "resourceID",
+  "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "coordinateSource", "relationshipOfResource", "resourceID",
   "relatedResourceID", "relationshipRemarks", "phylumPlant", "orderPlant", "familyPlant", "genusPlant",
   "speciesPlant", "taxonRankPlant", "url", "taxonomicNotes", "sex", "caste", "geoprivacy", "taxon_geoprivacy",
 ] as const;
@@ -65,38 +65,62 @@ const scalar = async (conn: DuckDBConnection, sql: string): Promise<number> => {
   return Number(v ?? 0);
 };
 
-/** Whether this store holds the staged legacy records and the map from them to specimens. */
-async function hasStaging(conn: DuckDBConnection): Promise<boolean> {
-  return (
-    (await scalar(
-      conn,
-      `SELECT count(*) FROM duckdb_tables()
-       WHERE table_name IN ('legacy_occurrence', 'legacy_specimen_number') AND NOT temporary`,
-    )) === 2
+/**
+ * The staged legacy columns this store holds, or null when it holds no
+ * staging (or no map from it to specimens) at all. A store loaded before a
+ * column joined STAGING_COLUMNS lacks it — coordinateSource did, until
+ * 2026-09-28 — and the export reads such a column as blank.
+ */
+async function stagedColumns(conn: DuckDBConnection): Promise<Set<string> | null> {
+  const tables = await scalar(
+    conn,
+    `SELECT count(*) FROM duckdb_tables()
+     WHERE table_name IN ('legacy_occurrence', 'legacy_specimen_number') AND NOT temporary`,
   );
+  if (tables !== 2) return null;
+  const rows = (await (
+    await conn.run(`SELECT column_name FROM duckdb_columns() WHERE table_name = 'legacy_occurrence'`)
+  ).getRows()) as [string][];
+  return new Set(rows.map(([c]) => c));
 }
 
+/**
+ * A value as the reference's composite_sort writes it. parseFloat reads a
+ * leading number and ignores the rest, which try_cast does not, but every
+ * field that sorts as a number here is digits or not a number at all.
+ */
+const Z16 = "'zzzzzzzzzzzzzzzz'";
+const sortNumber = (col: string) =>
+  `CASE WHEN try_cast(${col} AS DOUBLE) IS NULL THEN ${Z16}
+        ELSE lpad(CAST(CAST(try_cast(${col} AS DOUBLE) AS BIGINT) AS VARCHAR), 16, '0') END`;
+const sortText = (col: string) => `coalesce(nullif(${col}, ''), ${Z16})`;
+
 /** The query behind the file: one row per specimen, every column TEXT, blanks as NULL. Exported for its test. */
-export function legacyExportSql(staging: boolean): string {
+export function legacyExportSql(staging: Set<string> | null): string {
   // Without staging (a store built from iNaturalist alone) every staged
   // column is simply NULL: the same query, with the join replaced by nothing.
+  // With it, a column the store's staging predates is NULL the same way.
+  const column = (c: string) =>
+    staging?.has(c) ? `CAST("${c}" AS VARCHAR) AS "${c}"` : `CAST(NULL AS VARCHAR) AS "${c}"`;
   const staged = staging
     ? `LEFT JOIN legacy_specimen_number lsn
          ON lsn.sample_id = sp.sample_id AND lsn.specimen_number = sp.specimen_number
-       LEFT JOIN legacy_occurrence lo ON lo._id = lsn._id`
-    : `LEFT JOIN (SELECT ${STAGED.map((c) => `CAST(NULL AS VARCHAR) AS "${c}"`).join(", ")}) lo ON false`;
+       LEFT JOIN (SELECT ${STAGED.map(column).join(", ")} FROM legacy_occurrence) lo ON lo._id = lsn._id`
+    : `LEFT JOIN (SELECT ${STAGED.map(column).join(", ")}) lo ON false`;
   const rank = (r: string) => `max(CASE WHEN a.rank = '${r}' THEN a.scientific_name END)`;
   const t = (expr: string) => `nullif(CAST(${expr} AS VARCHAR), '')`;
   // An imported specimen carries its staged value exactly — a blank included,
   // since a blank is what the legacy file said; only a Beeline-originated
   // specimen, which has no staged record, gets the model's own value.
   const orStaged = (col: string, model: string) => `CASE WHEN lo._id IS NOT NULL THEN lo."${col}" ELSE ${model} END`;
+  // The reference writes a coordinate with toFixed(4): always four places,
+  // "44.5000", which a join on the text would otherwise miss.
   // Everything after the genus and an optional "(Subgenus)": the epithet can
   // be more than one word ("verbesinae complex"), so the last word is not it.
   const epithet = (name: string) => `regexp_replace(${name}, '^\\S+\\s+(\\([^)]*\\)\\s+)?', '')`;
   const coord = (col: string, model: string) =>
     `CASE WHEN loc.source = 'legacy_import' AND nullif(lo."${col}", '') IS NOT NULL THEN lo."${col}"
-          ELSE CAST(round(CAST(${model} AS DOUBLE), 4) AS VARCHAR) END`;
+          ELSE printf('%.4f', CAST(${model} AS DOUBLE)) END`;
   return `
 WITH RECURSIVE up(node_id, anc_id) AS (
   SELECT entity_id, entity_id FROM animal
@@ -177,7 +201,12 @@ rows AS (
     ${t(coord("decimalLongitude", "loc.longitude"))} AS "decimalLongitude",
     ${t(`CASE WHEN loc.source = 'legacy_import' AND nullif(lo."coordinateUncertaintyInMeters", '') IS NOT NULL
                THEN lo."coordinateUncertaintyInMeters" ELSE CAST(loc.coordinate_uncertainty_m AS VARCHAR) END`)} AS "coordinateUncertaintyInMeters",
-    ${t(`CASE loc.source WHEN 'inat_trusted' THEN 'private' WHEN 'inat_public' THEN 'public' END`)} AS "coordinateSource",
+    -- Like the coordinates it describes: an imported point Beeline has not
+    -- replaced keeps what the legacy row said about it; a point Beeline took
+    -- from iNaturalist says which projection it came from.
+    ${t(`CASE WHEN loc.source = 'legacy_import' AND lo._id IS NOT NULL THEN lo."coordinateSource"
+               WHEN loc.source = 'inat_trusted' THEN 'private'
+               WHEN loc.source = 'inat_public' THEN 'public' END`)} AS "coordinateSource",
     ${t("s.protocol")} AS "samplingProtocol",
     ${t(orStaged("relationshipOfResource", `CASE WHEN nullif(s.host_name_as_observed, '') IS NOT NULL THEN 'visits flowers of' END`))} AS "relationshipOfResource",
     ${t(orStaged("resourceID", "sp.occurrence_id"))} AS "resourceID",
@@ -226,16 +255,8 @@ rows AS (
     -- imported sample it never linked keeps what the legacy record said.
     ${t(`coalesce(s.geoprivacy, nullif(lo."geoprivacy", ''))`)} AS "geoprivacy",
     ${t(`coalesce(s.taxon_geoprivacy, nullif(lo."taxon_geoprivacy", ''))`)} AS "taxon_geoprivacy",
-    -- The reference's composite_sort, as its parts.
-    try_cast(sp.field_number AS BIGINT) AS sort_field_number,
-    sp.field_number AS sort_field_text,
-    nullif(p.family_name, '') AS sort_last,
-    nullif(p.given_name, '') AS sort_first,
-    month(s.date_start) AS sort_month,
-    day(s.date_start) AS sort_day,
-    try_cast(s.sample_number AS BIGINT) AS sort_sample,
-    s.sample_number AS sort_sample_text,
-    sp.specimen_number AS sort_specimen
+    -- (the composite sort is computed from these columns below)
+    sp.entity_id AS sort_tiebreak
   FROM specimen sp
   JOIN sample s ON s.entity_id = sp.sample_id
   LEFT JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
@@ -254,8 +275,14 @@ rows AS (
 )
 SELECT ${LEGACY_EXPORT_COLUMNS.map((c) => `"${c}"`).join(", ")}
 FROM rows
-ORDER BY sort_field_number NULLS LAST, sort_field_text NULLS LAST, sort_last NULLS LAST, sort_first NULLS LAST,
-         sort_month, sort_day, sort_sample NULLS LAST, sort_sample_text, sort_specimen`;
+-- The reference's composite_sort, byte for byte (OccurrenceRepository
+-- setSortField): one string of the sort fields joined with "|", a number
+-- padded to 16 digits, a blank or non-number as sixteen z's, compared as
+-- bytes. Built from the columns as written, so a joint sample's
+-- "Trapper | Collector" sorts where the legacy file put it.
+ORDER BY concat_ws('|', ${sortNumber('"fieldNumber"')}, ${sortText('"lastName"')}, ${sortText('"firstName"')},
+                        ${sortNumber('"month"')}, ${sortNumber('"day"')}, ${sortNumber('"sampleId"')}, ${sortNumber('"specimenId"')}),
+         sort_tiebreak`;
 }
 
 /** Where the app keeps the current export, inside its exports directory. */
@@ -272,7 +299,7 @@ const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
  */
 export async function writeLegacyExport(conn: DuckDBConnection, path: string): Promise<{ rows: number; staged: boolean }> {
   await mkdir(dirname(path), { recursive: true });
-  const staging = await hasStaging(conn);
+  const staging = await stagedColumns(conn);
   const body = `${path}.body.tmp`;
   const whole = `${path}.tmp`;
   try {
@@ -289,5 +316,5 @@ export async function writeLegacyExport(conn: DuckDBConnection, path: string): P
     await rm(whole, { force: true });
   }
   const rows = await scalar(conn, "SELECT count(*) FROM specimen");
-  return { rows, staged: staging };
+  return { rows, staged: staging !== null };
 }

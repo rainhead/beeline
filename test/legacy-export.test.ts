@@ -132,6 +132,36 @@ describe("the legacy-format export", () => {
     expect(row!.dateLabelPrint).toBeNull();
     expect(row!.catalogNumber).toBeNull();
   });
+
+  test("writes coordinates to four places and sorts as the reference's composite_sort does", async () => {
+    const { conn: fresh } = await createMemoryDb();
+    await fresh.run(`INSERT INTO person (display_name, given_name, family_name) VALUES ('Cy Newcomer', 'Cy', 'Newcomer')`);
+    const sampleId = await insertCleanSample(fresh, {}, { latitude: "44.5", longitude: "-123", source: "'inat_public'" });
+    // A number sorts by its value, padded; a blank or a non-number (the E and
+    // Name: eras) sorts after every number, and then by name, date and sample.
+    for (const [n, fn] of [[1, "'E2332481'"], [2, "NULL"], [3, "'26090002'"], [4, "'9'"], [5, "'26090001'"]] as const) {
+      await fresh.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${sampleId}, ${n}, ${fn})`);
+    }
+    const out = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+    await writeLegacyExport(fresh, out);
+    const got = (
+      await fresh.runAndReadAll(`SELECT "fieldNumber", "specimenId", "decimalLatitude", "decimalLongitude", "coordinateSource"
+                                 FROM read_csv('${out}', header = true, all_varchar = true)`)
+    ).getRowObjectsJson() as Record<string, string | null>[];
+    expect(got.map((r) => r.fieldNumber)).toEqual(["9", "26090001", "26090002", "E2332481", null]);
+    expect(got[0]).toMatchObject({ decimalLatitude: "44.5000", decimalLongitude: "-123.0000", coordinateSource: "public" });
+  });
+
+  test("keeps the legacy row's coordinateSource for a point Beeline has not replaced", async () => {
+    await conn.run(`UPDATE legacy_occurrence SET "coordinateSource" = 'private' WHERE "fieldNumber" = '25000001'`);
+    await conn.run(`UPDATE sample_location SET source = 'legacy_import'`);
+    const out = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+    await writeLegacyExport(conn, out);
+    const [row] = (
+      await conn.runAndReadAll(`SELECT "coordinateSource" FROM read_csv('${out}', header = true, all_varchar = true) WHERE "fieldNumber" = '25000001'`)
+    ).getRowObjectsJson();
+    expect(row).toEqual({ coordinateSource: "private" });
+  });
 });
 
 describe("the Exports page", () => {

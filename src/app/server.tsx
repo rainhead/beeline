@@ -537,7 +537,7 @@ export function createApp({
     const { personId, query } = await listingRequest(c);
     countListingView(listingAttributes("samples", "csv", query, viewer(c)));
     // The whole selection, a page at a time: no cap, no truncation line.
-    const body = csvStream(SAMPLE_CSV_HEADER, (limit, offset) => listSamples(db, query, personId, { limit, offset }), sampleCsvRow);
+    const body = csvStream(SAMPLE_CSV_HEADER, (limit, offset) => listSamples(db, query, personId, { limit, offset, withTotal: false }), sampleCsvRow);
     return csv(c, body, "beeline-samples");
   });
 
@@ -558,7 +558,7 @@ export function createApp({
   app.get("/specimens.csv", async (c) => {
     const { personId, query } = await listingRequest(c);
     countListingView(listingAttributes("specimens", "csv", query, viewer(c)));
-    const body = csvStream(SPECIMEN_CSV_HEADER, (limit, offset) => listSpecimens(db, query, personId, { limit, offset }), specimenCsvRow);
+    const body = csvStream(SPECIMEN_CSV_HEADER, (limit, offset) => listSpecimens(db, query, personId, { limit, offset, withTotal: false }), specimenCsvRow);
     return csv(c, body, "beeline-specimens");
   });
 

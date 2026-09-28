@@ -758,6 +758,18 @@ describe("CSV export", () => {
     expect(lines.at(-2)).toBe(String(CSV_PAGE_SIZE + 1));
   });
 
+  it("ends a download that fails partway as an error, not as a quietly short file", async () => {
+    const stream = csvStream(
+      ["n"],
+      async (limit, offset) => {
+        if (offset > 0) throw new Error("store went away");
+        return { rows: Array.from({ length: limit }, (_, i) => i), total: 0, collectors: new Map() };
+      },
+      (n: number) => [n],
+    );
+    await expect(new Response(stream).text()).rejects.toThrow();
+  });
+
   it("quotes what must be quoted and defuses formulas, but never a number", async () => {
     const csv = toCsv(["a", "b", "c", "d"], [[`say "hi", now`, "=SUM(A1:A2)", -123.262, "-45.1"]]);
     expect(csv).toBe(`\uFEFFa,b,c,d\n"say ""hi"", now",'=SUM(A1:A2),-123.262,-45.1\n`);

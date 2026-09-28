@@ -137,6 +137,14 @@ export async function flushErrorReporting(timeoutMs = 2000): Promise<void> {
   await Sentry.close(timeoutMs);
 }
 
+/** Report an error caught outside a request handler, with tags saying where. A no-op without a DSN. */
+export function reportError(err: unknown, tags: Record<string, string> = {}): void {
+  Sentry.withScope((scope) => {
+    for (const [k, v] of Object.entries(tags)) scope.setTag(k, v);
+    Sentry.captureException(err);
+  });
+}
+
 /**
  * Hono's error handler, reporting what it catches. Behaves as Hono's default
  * does — an HTTPException answers with its own response, anything else is a

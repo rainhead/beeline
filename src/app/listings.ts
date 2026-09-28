@@ -1,4 +1,5 @@
 import { sql, type Kysely } from "kysely";
+import { reportError } from "./error-reporting.js";
 import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
 import { labelName } from "../person-name.js";
 
@@ -424,6 +425,13 @@ export interface ListedCollector {
   label: string;
 }
 
+export interface ListingPageOptions {
+  limit?: number;
+  offset?: number;
+  /** False skips counting the whole selection; `total` is then 0. */
+  withTotal?: boolean;
+}
+
 export interface Page<Row> {
   rows: Row[];
   /** Rows the filters select in total, not the page's length. */
@@ -606,7 +614,7 @@ export async function listSamples(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,
-  opts: { limit?: number; offset?: number } = {},
+  opts: ListingPageOptions = {},
 ): Promise<Page<SampleRow>> {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   let base = db
@@ -750,7 +758,8 @@ export async function listSamples(
       .limit(limit)
       .offset(offset)
       .execute(),
-    base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
+    // A streamed download pages through everything and never shows a total.
+    opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
   ]);
   const sampleRows = rows as unknown as SampleRow[];
   return {
@@ -764,7 +773,7 @@ export async function listSpecimens(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,
-  opts: { limit?: number; offset?: number } = {},
+  opts: ListingPageOptions = {},
 ): Promise<Page<SpecimenRow>> {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   let base = db
@@ -879,7 +888,8 @@ export async function listSpecimens(
       .limit(limit)
       .offset(offset)
       .execute(),
-    base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
+    // A streamed download pages through everything and never shows a total.
+    opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
   ]);
   const specimenRows = rows as unknown as SpecimenRow[];
   return {
@@ -982,7 +992,18 @@ export function csvStream<Row>(
         controller.enqueue(encoder.encode(CSV_BOM + csvLine(header)));
         return;
       }
-      const page = await fetch(CSV_PAGE_SIZE, offset);
+      let page: Page<Row>;
+      try {
+        page = await fetch(CSV_PAGE_SIZE, offset);
+      } catch (err) {
+        // The 200 and the header went out with the first page, so the app's
+        // error handler never sees this: the client gets a cut-off transfer
+        // and nothing else would record why (Fable's review of #110).
+        reportError(err, { download: header[0] ?? "csv", rowsWritten: String(offset) });
+        console.error(`CSV download failed after ${offset} rows: ${(err as Error).stack ?? String(err)}`);
+        controller.error(err);
+        return;
+      }
       if (page.rows.length > 0) controller.enqueue(encoder.encode(page.rows.map((r) => csvLine(toRow(r, page))).join("")));
       offset += page.rows.length;
       if (page.rows.length < CSV_PAGE_SIZE) controller.close();
@@ -1005,11 +1026,20 @@ const eventDate = (start: Date | string, end: Date | string) => {
 const ALPHA2: Record<string, string> = { USA: "US", CAN: "CA", MEX: "MX", NZL: "NZ" };
 const countryCode = (country: string | null) => (country === null ? null : (ALPHA2[country] ?? country));
 
-/** dwc:associatedTaxa: the floral host, with the relationship the legacy records also used. */
-const associatedTaxa = (host: string | null) => (host === null || host === "" ? null : `visits flowers of: ${host}`);
+/**
+ * dwc:associatedTaxa: the floral host, in the term's own quoted form
+ * ("host":"Quercus alba"), with the relationship the legacy records used.
+ */
+const associatedTaxa = (host: string | null) =>
+  host === null || host === "" ? null : `"visits flowers of":"${host.replaceAll('"', "'")}"`;
 
-/** Where a coordinate is stated, its datum is: iNaturalist's, and every GPS's, is WGS84. */
-const datum = (latitude: number | null) => (latitude === null ? null : "WGS84");
+/**
+ * dwc:geodeticDatum: WGS84 for a point that came from iNaturalist, which
+ * stores nothing else; "unknown", as the term asks, for one nobody recorded
+ * a datum for — an imported point or a staff entry.
+ */
+const datum = (latitude: number | null, source: string | null) =>
+  latitude === null ? null : source === "inat_trusted" || source === "inat_public" ? "WGS84" : "unknown";
 
 const qcLabel = (row: { blocking: number; warning: number }) =>
   row.blocking > 0 ? "blocking" : row.warning > 0 ? "warning" : "clean";
@@ -1057,7 +1087,7 @@ export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => 
   r.locality,
   r.latitude,
   r.longitude,
-  datum(r.latitude),
+  datum(r.latitude, r.location_source),
   r.coordinate_uncertainty_m,
   r.elevation_m,
   r.elevation_m,
@@ -1125,7 +1155,7 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.locality,
   r.latitude,
   r.longitude,
-  datum(r.latitude),
+  datum(r.latitude, r.location_source),
   r.coordinate_uncertainty_m,
   r.elevation_m,
   r.elevation_m,

@@ -109,14 +109,16 @@ export async function compareLegacyExport(conn: DuckDBConnection, exportPath: st
 }
 
 // CLI: pnpm legacy:compare-export [db] [export.csv]
-// With no export path, writes a fresh export beside the store first.
+// With no export path, writes a fresh export to data/exports/ first.
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const dbPath = process.argv[2] ?? process.env.BEELINE_DB ?? "beeline.duckdb";
   const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
   let exportPath = process.argv[3];
   if (exportPath === undefined) {
-    exportPath = `${dbPath}.legacy-export.csv`;
+    // Inside data/, which git ignores: the file is every collector's name and
+    // true coordinates, and the repository is public (Fable's review of #110).
+    exportPath = "data/exports/compare-legacy-export.csv";
     const { rows } = await writeLegacyExport(conn, exportPath);
     console.error(`wrote ${rows} rows to ${exportPath}`);
   }

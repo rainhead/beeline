@@ -152,6 +152,20 @@ describe("the legacy-format export", () => {
     expect(got[0]).toMatchObject({ decimalLatitude: "44.5000", decimalLongitude: "-123.0000", coordinateSource: "public" });
   });
 
+  test("keeps the sex an earlier determination stated when a newer one, as from Ecdysis, states none", async () => {
+    await conn.run(`
+      INSERT INTO determination (specimen_id, animal_id, verbatim_identification, determiner_name, is_expert, channel, recorded_at)
+      SELECT sp.entity_id, d.animal_id, 'Bombus vosnesenskii', 'Someone Newer', true, 'ecdysis_import', now()
+      FROM specimen sp JOIN determination d ON d.specimen_id = sp.entity_id
+      WHERE sp.field_number = '25000001' LIMIT 1`);
+    const out = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+    await writeLegacyExport(conn, out);
+    const [row] = (
+      await conn.runAndReadAll(`SELECT "sex", "identifiedBy" FROM read_csv('${out}', header = true, all_varchar = true) WHERE "fieldNumber" = '25000001'`)
+    ).getRowObjectsJson();
+    expect(row).toEqual({ sex: "female", identifiedBy: "Someone Newer" });
+  });
+
   test("keeps the legacy row's coordinateSource for a point Beeline has not replaced", async () => {
     await conn.run(`UPDATE legacy_occurrence SET "coordinateSource" = 'private' WHERE "fieldNumber" = '25000001'`);
     await conn.run(`UPDATE sample_location SET source = 'legacy_import'`);

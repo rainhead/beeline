@@ -140,6 +140,17 @@ latest AS (
   FROM determination d
 ),
 expert AS (SELECT * FROM latest WHERE is_expert AND rn = 1),
+-- Sex and caste as the newest expert determination that states them: an
+-- Ecdysis identification records a name and no sex, and becoming the record
+-- must not erase the sex an earlier determination gave (35,000 specimens on
+-- the sandbox, 2026-09-28).
+stated AS (
+  SELECT specimen_id,
+         arg_max(sex, (recorded_at, entity_id)) FILTER (WHERE nullif(sex, '') IS NOT NULL) AS sex,
+         arg_max(caste, (recorded_at, entity_id)) FILTER (WHERE nullif(caste, '') IS NOT NULL) AS caste
+  FROM determination WHERE is_expert
+  GROUP BY specimen_id
+),
 volunteer AS (SELECT * FROM latest WHERE NOT is_expert AND rn = 1),
 printed AS (
   SELECT pl.specimen_id, max(r.printed_at) AS printed_at
@@ -242,8 +253,8 @@ rows AS (
     -- Beeline keeps sex and caste on a determination, so a specimen the legacy
     -- system sexed but nobody has identified has nowhere to hold them: 24,217
     -- such rows in the 2026-09-27 corpus. Those carry the staged value.
-    ${t(`CASE WHEN e.entity_id IS NOT NULL THEN e.sex ELSE lo."sex" END`)} AS "sex",
-    ${t(`CASE WHEN e.entity_id IS NOT NULL THEN e.caste ELSE lo."caste" END`)} AS "caste",
+    ${t(`coalesce(st.sex, lo."sex")`)} AS "sex",
+    ${t(`coalesce(st.caste, lo."caste")`)} AS "caste",
     ${t("CASE WHEN ea.rank IS NOT NULL THEN concat(upper(left(ea.rank, 1)), substr(ea.rank, 2)) END")} AS "taxonRank",
     ${t("coalesce(nullif(e.determiner_name, ''), dp.display_name)")} AS "identifiedBy",
     ${t("vl.family")} AS "familyVolDet",
@@ -265,6 +276,7 @@ rows AS (
   LEFT JOIN collectors c ON c.sample_id = s.entity_id
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
   LEFT JOIN expert e ON e.specimen_id = sp.entity_id
+  LEFT JOIN stated st ON st.specimen_id = sp.entity_id
   LEFT JOIN animal ea ON ea.entity_id = e.animal_id
   LEFT JOIN lineage el ON el.node_id = e.animal_id
   LEFT JOIN person dp ON dp.entity_id = e.determiner_id

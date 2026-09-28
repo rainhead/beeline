@@ -15,6 +15,7 @@ import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
 import { jobHealth, type Job, type LastOutcome } from "./jobs/framework.js";
 import { onAppError } from "./error-reporting.js";
+import { countListingView, listingAttributes, rosterAttributes, type Viewer } from "./usage.js";
 import { Glossary } from "./views/glossary.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomySummary } from "./taxonomy.js";
@@ -494,6 +495,16 @@ export function createApp({
     return { personId, admin, atlases, query, homeAtlas: home ?? null };
   };
 
+  /** Who is browsing, as the usage counts see it: a role, never a person. */
+  const viewer = (c: Context<AppEnv>): Viewer => {
+    const acting = c.get("acting");
+    return {
+      admin: c.get("admin"),
+      impersonating: acting.impersonating,
+      actingFor: !acting.impersonating && acting.actingFor !== null,
+    };
+  };
+
   const csv = (c: Context<AppEnv>, body: string, filename: string) =>
     c.body(body, 200, {
       "content-type": "text/csv; charset=utf-8",
@@ -503,6 +514,7 @@ export function createApp({
   app.get("/samples", async (c) => {
     const m = c.get("m");
     const { personId, admin, atlases, query, homeAtlas } = await listingRequest(c);
+    countListingView(listingAttributes("samples", "page", query, viewer(c)));
     const results = await listSamples(db, query, personId);
     return c.html(
       await page(
@@ -515,6 +527,7 @@ export function createApp({
 
   app.get("/samples.csv", async (c) => {
     const { personId, query } = await listingRequest(c);
+    countListingView(listingAttributes("samples", "csv", query, viewer(c)));
     const results = await listSamples(db, query, personId, { limit: CSV_ROW_LIMIT, offset: 0 });
     return csv(c, sampleCsv(results), "beeline-samples.csv");
   });
@@ -522,6 +535,7 @@ export function createApp({
   app.get("/specimens", async (c) => {
     const m = c.get("m");
     const { personId, admin, atlases, query, homeAtlas } = await listingRequest(c);
+    countListingView(listingAttributes("specimens", "page", query, viewer(c)));
     const results = await listSpecimens(db, query, personId);
     return c.html(
       await page(
@@ -534,6 +548,7 @@ export function createApp({
 
   app.get("/specimens.csv", async (c) => {
     const { personId, query } = await listingRequest(c);
+    countListingView(listingAttributes("specimens", "csv", query, viewer(c)));
     const results = await listSpecimens(db, query, personId, { limit: CSV_ROW_LIMIT, offset: 0 });
     return csv(c, specimenCsv(results), "beeline-specimens.csv");
   });
@@ -951,6 +966,7 @@ export function createApp({
     const m = c.get("m");
     const atlases = await atlasOptions(db);
     const query = parseRosterQuery(new URL(c.req.url).searchParams, atlases.map((a) => a.code));
+    countListingView(rosterAttributes("page", query));
     const listed = await listRoster(db, query);
     // Only on the unfiltered roster. The panel is about the store as a whole,
     // and a search for one person that answers with somebody else's history
@@ -1008,6 +1024,7 @@ export function createApp({
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const atlases = await atlasOptions(db);
     const query = parseRosterQuery(new URL(c.req.url).searchParams, atlases.map((a) => a.code));
+    countListingView(rosterAttributes("csv", query));
     const listed = await listRoster(db, query, { limit: CSV_ROW_LIMIT, offset: 0 });
     return csv(c, rosterCsv(listed), "beeline-people.csv");
   });

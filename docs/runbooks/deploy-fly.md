@@ -265,7 +265,7 @@ DuckDB replays the newer WAL onto the older file.
 ## Errors, logs and job check-ins
 
 With `SENTRY_DSN` set ([`src/app/error-reporting.ts`](../../src/app/error-reporting.ts),
-beeline-8w6.1), the app sends Sentry three things, tagged with `BEELINE_ENV` as
+beeline-8w6.1), the app sends Sentry four things, tagged with `BEELINE_ENV` as
 the environment and the Fly deployment as the release:
 
 - **Errors.** A request that fails with a 500 is reported with its route
@@ -274,6 +274,12 @@ the environment and the Fly deployment as the release:
 - **The console log.** Every `console.log`, `warn` and `error`, searchable,
   and kept past the rolling window `fly logs` shows — which is where the boot
   pass's `recorded N sample change(s)` line lives.
+- **Listing usage.** Each request to `/samples`, `/specimens` or `/people`,
+  page or CSV, is counted as the metric `listing.view` with the scope, sort,
+  page band and the filters in use as attributes — which filters, never what
+  was typed in them — and whether the viewer was staff, a volunteer, or staff
+  impersonating one. Query it in Sentry's metrics explorer, grouped by
+  `filters` or `sort`.
 - **Job check-ins.** Each job is a cron monitor named after it, created on its
   first run from the schedule the scheduler already uses. Sentry opens an issue
   when a run fails, and when the nightly has not started by the end of the

@@ -17,7 +17,7 @@ const STAGING_COLUMNS = [
   "verbatimEventDate", "day2", "month2", "year2", "startDayofYear",
   "endDayofYear", "country", "stateProvince", "county", "locality",
   "verbatimElevation", "decimalLatitude", "decimalLongitude",
-  "coordinateUncertaintyInMeters", "samplingProtocol",
+  "coordinateUncertaintyInMeters", "coordinateSource", "samplingProtocol",
   "relationshipOfResource", "resourceID", "relatedResourceID",
   "relationshipRemarks", "phylumPlant", "orderPlant", "familyPlant",
   "genusPlant", "speciesPlant", "taxonRankPlant", "url", "phylum", "class",

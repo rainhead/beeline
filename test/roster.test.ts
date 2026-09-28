@@ -140,7 +140,7 @@ describe("the roster screen", () => {
     expect(body).toContain(`href="/people.csv?q=Ada"`);
     const csv = await ctx.app.request("/people.csv?q=Ada");
     expect(csv.status).toBe(200);
-    const [header, row] = (await csv.text()).split("\r\n");
+    const [header, row] = (await csv.text()).split("\n");
     expect(header).toBe("display_name,login,inat_user_id,samples,last_sample,last_visit,last_login,membership,atlas,admin");
     expect(row).toContain("Ada Collector,adacollects,111,");
   });

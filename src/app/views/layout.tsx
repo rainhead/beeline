@@ -69,6 +69,7 @@ function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
         { href: "/people", label: m.layout.nav.people, shown: admin },
         { href: "/jobs", label: m.layout.nav.jobs, shown: admin },
         { href: "/print-runs", label: m.layout.nav.printRuns, shown: admin },
+        { href: "/exports", label: m.layout.nav.exports, shown: admin },
         { href: "/design", label: m.layout.nav.design, shown: admin },
       ]
         .filter((link) => link.shown)

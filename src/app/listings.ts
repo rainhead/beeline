@@ -1,4 +1,5 @@
 import { sql, type Kysely } from "kysely";
+import { reportError } from "./error-reporting.js";
 import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
 import { labelName } from "../person-name.js";
 
@@ -26,7 +27,11 @@ import { labelName } from "../person-name.js";
 
 /** Rows per page. Big enough to scan, small enough to render fast. */
 export const PAGE_SIZE = 50;
-/** A CSV is one query, not a crawl: past this the export says it was cut. */
+/**
+ * The cap on the People download, which is built in one piece: a roster is
+ * hundreds of rows, so this is a guard rather than a limit anyone meets. The
+ * samples and specimens downloads stream the whole selection (csvStream).
+ */
 export const CSV_ROW_LIMIT = 20_000;
 
 const exportStampParts = new Intl.DateTimeFormat("en-US", {
@@ -343,6 +348,7 @@ export interface SampleRow {
   county: string | null;
   state_province: string | null;
   country: string | null;
+  protocol: string | null;
   specimen_count: number;
   inat_observation_id: bigint | null;
   atlas_code: string | null;
@@ -375,9 +381,14 @@ export interface SpecimenRow {
   sample_id: number;
   sample_number: string;
   date_start: Date;
+  date_end: Date;
   locality: string | null;
   county: string | null;
   state_province: string | null;
+  country: string | null;
+  protocol: string | null;
+  /** The specimen's persistent identity downstream (ADR 0008); null for an imported specimen until one is minted. */
+  occurrence_id: string | null;
   atlas_code: string | null;
   /** The sample's floral host, as the observation named it — a column here as on the samples listing. */
   host_name: string | null;
@@ -412,6 +423,13 @@ export interface SpecimenRow {
 export interface ListedCollector {
   display: string;
   label: string;
+}
+
+export interface ListingPageOptions {
+  limit?: number;
+  offset?: number;
+  /** False skips counting the whole selection; `total` is then 0. */
+  withTotal?: boolean;
 }
 
 export interface Page<Row> {
@@ -596,7 +614,7 @@ export async function listSamples(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,
-  opts: { limit?: number; offset?: number } = {},
+  opts: ListingPageOptions = {},
 ): Promise<Page<SampleRow>> {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   let base = db
@@ -717,6 +735,7 @@ export async function listSamples(
         "s.county",
         "s.state_province",
         "s.country",
+        "s.protocol",
         "s.specimen_count",
         "s.inat_observation_id",
         "a.code as atlas_code",
@@ -739,7 +758,8 @@ export async function listSamples(
       .limit(limit)
       .offset(offset)
       .execute(),
-    base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
+    // A streamed download pages through everything and never shows a total.
+    opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
   ]);
   const sampleRows = rows as unknown as SampleRow[];
   return {
@@ -753,7 +773,7 @@ export async function listSpecimens(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,
-  opts: { limit?: number; offset?: number } = {},
+  opts: ListingPageOptions = {},
 ): Promise<Page<SpecimenRow>> {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   let base = db
@@ -834,9 +854,13 @@ export async function listSpecimens(
         "s.entity_id as sample_id",
         "s.sample_number",
         "s.date_start",
+        "s.date_end",
         "s.locality",
         "s.county",
         "s.state_province",
+        "s.country",
+        "s.protocol",
+        "sp.occurrence_id",
         "a.code as atlas_code",
         "s.host_name_as_observed as host_name",
         "s.host_rank",
@@ -864,7 +888,8 @@ export async function listSpecimens(
       .limit(limit)
       .offset(offset)
       .execute(),
-    base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
+    // A streamed download pages through everything and never shows a total.
+    opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
   ]);
   const specimenRows = rows as unknown as SpecimenRow[];
   return {
@@ -903,30 +928,87 @@ export async function collectorsOf(
 /**
  * CSV export.
  *
- * Headers are stable machine names, not the table's column labels: a CSV is
- * read by a spreadsheet and by whatever script comes after it, so renaming a
- * screen must not rename a column. Coordinates are in it, with the provenance
- * and geoprivacy of the record beside them, so a row carries what a reader
- * needs to judge it.
+ * Headers are Darwin Core terms wherever one exists, because these files go
+ * on to taxonomists, Ecdysis and GBIF, all of which read Darwin Core (Peter,
+ * 2026-09-28: adherence to Darwin Core matters more here than matching the
+ * legacy system, which has its own export, src/legacy-export.ts). Two follow
+ * ADR 0008: the field number printed on the pin is the collection's number
+ * for the specimen, so it is `catalogNumber`; `fieldNumber` is Darwin Core's
+ * identifier of the collecting event, which is our sample number. A column
+ * Darwin Core has no term for keeps a plain lowerCamelCase name of our own.
+ * Coordinates are in it, with their provenance and geoprivacy beside them,
+ * so a row carries what a reader needs to judge it.
+ *
+ * The format is the plain one: UTF-8 with a byte order mark (without it
+ * Excel reads an accented name as mojibake), "\n" after every record, a
+ * field quoted only when it must be. The whole selection is written, a page
+ * at a time, so there is no cap and no line in the file that is not a record.
  */
 
 /** RFC 4180 quoting, plus the leading-punctuation guard spreadsheets need. */
-function csvCell(value: unknown): string {
+export function csvCell(value: unknown): string {
   if (value === null || value === undefined) return "";
+  // A number is data, and a negative one is most of our longitudes.
+  if (typeof value === "number" || typeof value === "bigint") return String(value);
   let cell = value instanceof Date ? isoDate(value) : String(value);
-  // A cell starting with =, +, -, or @ is a formula to Excel and Sheets.
-  if (/^[=+\-@]/.test(cell)) cell = `'${cell}`;
+  // A text cell starting with =, +, -, @, a tab or a carriage return is a
+  // formula to Excel and Sheets (OWASP's CSV-injection list); one that is only
+  // a number written as text is data like any other.
+  if (/^[=+\-@\t\r]/.test(cell) && !/^[+-]?\d+(\.\d+)?$/.test(cell)) cell = `'${cell}`;
   return /[",\n\r]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
 }
 
+/** One record, with its terminator. */
+export const csvLine = (row: readonly unknown[]) => `${row.map(csvCell).join(",")}\n`;
+
+/** UTF-8 byte order mark, first in every file. */
+export const CSV_BOM = "﻿";
+
+/** A whole file, for the small exports that are built in one piece. */
 export function toCsv(header: readonly string[], rows: ReadonlyArray<readonly unknown[]>): string {
-  const lines = [header.join(","), ...rows.map((row) => row.map(csvCell).join(","))];
-  // A file that stopped short must say so inside itself: the page's warning
-  // does not travel with a bookmarked download.
-  if (rows.length >= CSV_ROW_LIMIT) {
-    lines.push(csvCell(`truncated at ${CSV_ROW_LIMIT} rows — narrow the filters for the rest`));
-  }
-  return lines.join("\r\n");
+  return CSV_BOM + csvLine(header) + rows.map(csvLine).join("");
+}
+
+/** How many rows each round trip to the store fetches while a download streams. */
+export const CSV_PAGE_SIZE = 5_000;
+
+/**
+ * A whole selection as a stream: the header, then page after page until the
+ * store has none left. The listing queries end in a unique tie-breaker, so
+ * paging by offset neither skips nor repeats a row.
+ */
+export function csvStream<Row>(
+  header: readonly string[],
+  fetch: (limit: number, offset: number) => Promise<Page<Row>>,
+  toRow: (row: Row, page: Page<Row>) => readonly unknown[],
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let offset = 0;
+  let started = false;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!started) {
+        started = true;
+        controller.enqueue(encoder.encode(CSV_BOM + csvLine(header)));
+        return;
+      }
+      let page: Page<Row>;
+      try {
+        page = await fetch(CSV_PAGE_SIZE, offset);
+      } catch (err) {
+        // The 200 and the header went out with the first page, so the app's
+        // error handler never sees this: the client gets a cut-off transfer
+        // and nothing else would record why (Fable's review of #110).
+        reportError(err, { download: header[0] ?? "csv", rowsWritten: String(offset) });
+        console.error(`CSV download failed after ${offset} rows: ${(err as Error).stack ?? String(err)}`);
+        controller.error(err);
+        return;
+      }
+      if (page.rows.length > 0) controller.enqueue(encoder.encode(page.rows.map((r) => csvLine(toRow(r, page))).join("")));
+      offset += page.rows.length;
+      if (page.rows.length < CSV_PAGE_SIZE) controller.close();
+    },
+  });
 }
 
 /** Dates go out as ISO, whatever shape the driver handed back. */
@@ -934,128 +1016,170 @@ function isoDate(value: Date | string): string {
   return value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
 }
 
+/** dwc:eventDate: the day, or the ISO 8601 interval a trap sample spans. */
+const eventDate = (start: Date | string, end: Date | string) => {
+  const [a, b] = [isoDate(start), isoDate(end)];
+  return a === b ? a : `${a}/${b}`;
+};
+
+/** dwc:countryCode is ISO 3166-1 alpha-2; the store keeps alpha-3. */
+const ALPHA2: Record<string, string> = { USA: "US", CAN: "CA", MEX: "MX", NZL: "NZ" };
+const countryCode = (country: string | null) => (country === null ? null : (ALPHA2[country] ?? country));
+
+/**
+ * dwc:associatedTaxa: the floral host, in the term's own quoted form
+ * ("host":"Quercus alba"), with the relationship the legacy records used.
+ */
+const associatedTaxa = (host: string | null) =>
+  host === null || host === "" ? null : `"visits flowers of":"${host.replaceAll('"', "'")}"`;
+
+/**
+ * dwc:geodeticDatum: WGS84 for a point that came from iNaturalist, which
+ * stores nothing else; "unknown", as the term asks, for one nobody recorded
+ * a datum for — an imported point or a staff entry.
+ */
+const datum = (latitude: number | null, source: string | null) =>
+  latitude === null ? null : source === "inat_trusted" || source === "inat_public" ? "WGS84" : "unknown";
+
 const qcLabel = (row: { blocking: number; warning: number }) =>
   row.blocking > 0 ? "blocking" : row.warning > 0 ? "warning" : "clean";
 
-export function sampleCsv(page: Page<SampleRow>): string {
-  return toCsv(
-    [
-      "sample_number",
-      "kind",
-      "date_start",
-      "date_end",
-      "collectors",
-      "locality",
-      "county",
-      "state_province",
-      "country",
-      "specimen_count",
-      "host",
-      "host_rank",
-      "atlas",
-      "latitude",
-      "longitude",
-      "coordinate_uncertainty_m",
-      "elevation_m",
-      "location_source",
-      "geoprivacy",
-      "taxon_geoprivacy",
-      "qc_status",
-      "inat_observation_id",
-    ],
-    page.rows.map((r) => [
-      r.sample_number,
-      r.kind,
-      isoDate(r.date_start),
-      isoDate(r.date_end),
-      (page.collectors.get(r.sample_id) ?? []).map((c) => c.display).join(" | "),
-      r.locality,
-      r.county,
-      r.state_province,
-      r.country,
-      r.specimen_count,
-      r.host_name,
-      r.host_rank,
-      r.atlas_code,
-      r.latitude,
-      r.longitude,
-      r.coordinate_uncertainty_m,
-      r.elevation_m,
-      r.location_source,
-      r.geoprivacy,
-      r.taxon_geoprivacy,
-      qcLabel(r),
-      r.inat_observation_id,
-    ]),
-  );
-}
+const recordedBy = <Row>(page: Page<Row>, sampleId: number) =>
+  (page.collectors.get(sampleId) ?? []).map((c) => c.display).join(" | ");
 
-export function specimenCsv(page: Page<SpecimenRow>): string {
-  return toCsv(
-    [
-      "field_number",
-      "specimen_number",
-      "sample_number",
-      "date_start",
-      "collectors",
-      "locality",
-      "county",
-      "state_province",
-      "atlas",
-      "host",
-      "host_rank",
-      "latitude",
-      "longitude",
-      "coordinate_uncertainty_m",
-      "elevation_m",
-      "location_source",
-      "geoprivacy",
-      "taxon_geoprivacy",
-      "scientific_name",
-      "rank",
-      "authorship",
-      "identification_qualifier",
-      "verbatim_identification",
-      "sex",
-      "determined_by",
-      "determined_on",
-      "expert_determination",
-    ],
-    page.rows.map((r) => [
-      r.field_number,
-      r.specimen_number,
-      r.sample_number,
-      isoDate(r.date_start),
-      (page.collectors.get(r.sample_id) ?? []).map((c) => c.display).join(" | "),
-      r.locality,
-      r.county,
-      r.state_province,
-      r.atlas_code,
-      r.host_name,
-      r.host_rank,
-      r.latitude,
-      r.longitude,
-      r.coordinate_uncertainty_m,
-      r.elevation_m,
-      r.location_source,
-      r.geoprivacy,
-      r.taxon_geoprivacy,
-      r.scientific_name,
-      r.taxon_rank,
-      r.authorship,
-      r.qualifier,
-      r.verbatim_identification,
-      r.sex,
-      r.determiner,
-      // As Darwin Core would have it: a year-only date is the year, not January 1st.
-      r.determined_on === null
-        ? null
-        : r.determined_on_precision === "year"
-          ? isoDate(r.determined_on).slice(0, 4)
-          : r.determined_on_precision === "month"
-            ? isoDate(r.determined_on).slice(0, 7)
-            : isoDate(r.determined_on),
-      r.is_expert === null ? "" : String(r.is_expert),
-    ]),
-  );
-}
+/** The samples download: one collecting event per row. */
+export const SAMPLE_CSV_HEADER = [
+  "fieldNumber",
+  "eventDate",
+  "samplingProtocol",
+  "recordedBy",
+  "countryCode",
+  "stateProvince",
+  "county",
+  "locality",
+  "decimalLatitude",
+  "decimalLongitude",
+  "geodeticDatum",
+  "coordinateUncertaintyInMeters",
+  "minimumElevationInMeters",
+  "maximumElevationInMeters",
+  "associatedTaxa",
+  // Beeline's own, with no Darwin Core term.
+  "kind",
+  "specimenCount",
+  "hostRank",
+  "atlas",
+  "locationSource",
+  "geoprivacy",
+  "taxonGeoprivacy",
+  "qcStatus",
+  "inatObservationId",
+] as const;
+
+export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => [
+  r.sample_number,
+  eventDate(r.date_start, r.date_end),
+  r.protocol,
+  recordedBy(page, r.sample_id),
+  countryCode(r.country),
+  r.state_province,
+  r.county,
+  r.locality,
+  r.latitude,
+  r.longitude,
+  datum(r.latitude, r.location_source),
+  r.coordinate_uncertainty_m,
+  r.elevation_m,
+  r.elevation_m,
+  associatedTaxa(r.host_name),
+  r.kind,
+  r.specimen_count,
+  r.host_rank,
+  r.atlas_code,
+  r.location_source,
+  r.geoprivacy,
+  r.taxon_geoprivacy,
+  qcLabel(r),
+  r.inat_observation_id,
+];
+
+/** The specimens download: one occurrence per row, a preserved specimen. */
+export const SPECIMEN_CSV_HEADER = [
+  "occurrenceID",
+  "basisOfRecord",
+  "catalogNumber",
+  "fieldNumber",
+  "eventDate",
+  "samplingProtocol",
+  "recordedBy",
+  "countryCode",
+  "stateProvince",
+  "county",
+  "locality",
+  "decimalLatitude",
+  "decimalLongitude",
+  "geodeticDatum",
+  "coordinateUncertaintyInMeters",
+  "minimumElevationInMeters",
+  "maximumElevationInMeters",
+  "associatedTaxa",
+  "scientificName",
+  "scientificNameAuthorship",
+  "taxonRank",
+  "identificationQualifier",
+  "verbatimIdentification",
+  "sex",
+  "identifiedBy",
+  "dateIdentified",
+  // Beeline's own, with no Darwin Core term.
+  "specimenNumber",
+  "atlas",
+  "hostRank",
+  "locationSource",
+  "geoprivacy",
+  "taxonGeoprivacy",
+  "identifiedByExpert",
+] as const;
+
+export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown[] => [
+  r.occurrence_id,
+  "PreservedSpecimen",
+  r.field_number,
+  r.sample_number,
+  eventDate(r.date_start, r.date_end),
+  r.protocol,
+  recordedBy(page, r.sample_id),
+  countryCode(r.country),
+  r.state_province,
+  r.county,
+  r.locality,
+  r.latitude,
+  r.longitude,
+  datum(r.latitude, r.location_source),
+  r.coordinate_uncertainty_m,
+  r.elevation_m,
+  r.elevation_m,
+  associatedTaxa(r.host_name),
+  r.scientific_name,
+  r.authorship,
+  r.taxon_rank,
+  r.qualifier,
+  r.verbatim_identification,
+  r.sex,
+  r.determiner,
+  // As Darwin Core would have it: a year-only date is the year, not January 1st.
+  r.determined_on === null
+    ? null
+    : r.determined_on_precision === "year"
+      ? isoDate(r.determined_on).slice(0, 4)
+      : r.determined_on_precision === "month"
+        ? isoDate(r.determined_on).slice(0, 7)
+        : isoDate(r.determined_on),
+  r.specimen_number,
+  r.atlas_code,
+  r.host_rank,
+  r.location_source,
+  r.geoprivacy,
+  r.taxon_geoprivacy,
+  r.is_expert === null ? null : String(r.is_expert),
+];

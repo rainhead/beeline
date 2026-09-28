@@ -1,3 +1,5 @@
+import { open, stat } from "node:fs/promises";
+import { Readable } from "node:stream";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -20,6 +22,8 @@ import { Glossary } from "./views/glossary.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomySummary } from "./taxonomy.js";
 import { Jobs } from "./views/jobs.js";
+import { Exports } from "./views/exports.js";
+import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
 import { listRuns, loadRun, runLabels, runPdf, scopeCounts, specimenLabels } from "./print-runs.js";
 import {
@@ -88,8 +92,11 @@ import {
   listSamples,
   listSpecimens,
   parseListingQuery,
-  sampleCsv,
-  specimenCsv,
+  csvStream,
+  SAMPLE_CSV_HEADER,
+  sampleCsvRow,
+  SPECIMEN_CSV_HEADER,
+  specimenCsvRow,
 } from "./listings.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
 import {
@@ -111,7 +118,7 @@ export interface JobsDep {
 
 export interface AppDeps {
   db: Kysely<Database>;
-  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail">>;
+  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail" | "exportsDir">>;
   inat: InatClient;
   resolveSession: SessionResolver;
   /** The job registry; absent in tests that don't exercise /jobs. */
@@ -506,7 +513,7 @@ export function createApp({
     };
   };
 
-  const csv = (c: Context<AppEnv>, body: string, base: string) =>
+  const csv = (c: Context<AppEnv>, body: string | ReadableStream<Uint8Array>, base: string) =>
     c.body(body, 200, {
       "content-type": "text/csv; charset=utf-8",
       "content-disposition": `attachment; filename="${exportFilename(base, new Date())}"`,
@@ -529,8 +536,9 @@ export function createApp({
   app.get("/samples.csv", async (c) => {
     const { personId, query } = await listingRequest(c);
     countListingView(listingAttributes("samples", "csv", query, viewer(c)));
-    const results = await listSamples(db, query, personId, { limit: CSV_ROW_LIMIT, offset: 0 });
-    return csv(c, sampleCsv(results), "beeline-samples");
+    // The whole selection, a page at a time: no cap, no truncation line.
+    const body = csvStream(SAMPLE_CSV_HEADER, (limit, offset) => listSamples(db, query, personId, { limit, offset, withTotal: false }), sampleCsvRow);
+    return csv(c, body, "beeline-samples");
   });
 
   app.get("/specimens", async (c) => {
@@ -550,8 +558,8 @@ export function createApp({
   app.get("/specimens.csv", async (c) => {
     const { personId, query } = await listingRequest(c);
     countListingView(listingAttributes("specimens", "csv", query, viewer(c)));
-    const results = await listSpecimens(db, query, personId, { limit: CSV_ROW_LIMIT, offset: 0 });
-    return csv(c, specimenCsv(results), "beeline-specimens");
+    const body = csvStream(SPECIMEN_CSV_HEADER, (limit, offset) => listSpecimens(db, query, personId, { limit, offset, withTotal: false }), specimenCsvRow);
+    return csv(c, body, "beeline-specimens");
   });
 
   // --- One record (beeline-2c3.34). The listings answer "what is there";
@@ -840,6 +848,57 @@ export function createApp({
       .limit(20)
       .execute();
     return c.html(await page(c, m.jobs.title, <Jobs m={m} jobs={jobsDep.list} runs={runs} />));
+  });
+
+  // --- Exports (beeline-6q8). The legacy-format occurrences file the
+  // nightly legacy-export job writes: every specimen, with names and true
+  // coordinates, so admins only, like /jobs. Served from disk rather than
+  // built per request — it is ~160 MB and takes a DuckDB COPY to make.
+  const occurrencesPath = legacyExportPath(config.exportsDir ?? "data/exports");
+  const occurrencesFile = async () => {
+    try {
+      const st = await stat(occurrencesPath);
+      return { writtenAt: st.mtime, bytes: st.size };
+    } catch {
+      return null;
+    }
+  };
+
+  app.get("/exports", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    return c.html(await page(c, m.exports.title, <Exports m={m} occurrences={await occurrencesFile()} />));
+  });
+
+  app.get("/exports/occurrences.csv", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    // One handle for the size and the bytes: the nightly job replaces the
+    // file by rename, and a stat by name followed by an open by name could
+    // describe one file and send another (CodeRabbit on #110).
+    let handle;
+    try {
+      handle = await open(occurrencesPath, "r");
+    } catch {
+      return c.text(c.get("m").exports.missing, 404);
+    }
+    let st;
+    try {
+      st = await handle.stat();
+    } catch (err) {
+      // The stream would have closed it; with no stream, nothing else will.
+      await handle.close();
+      throw err;
+    }
+    // Named the way the legacy system named its own occurrences files, with
+    // the moment it was written, so a script that picks "the newest" by name
+    // still does.
+    const stamp = st.mtime.toISOString().slice(0, 19).replaceAll(":", ".");
+    // autoClose: the stream closes the handle when it ends or is destroyed.
+    return c.body(Readable.toWeb(handle.createReadStream({ autoClose: true })) as ReadableStream, 200, {
+      "content-type": "text/csv; charset=utf-8",
+      "content-length": String(st.size),
+      "content-disposition": `attachment; filename="occurrences_beeline_${stamp}.csv"`,
+    });
   });
 
   // --- Print runs (beeline-1kb.2, beeline-1kb.4). Admin-gated like /jobs;

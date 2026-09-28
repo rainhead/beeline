@@ -2,7 +2,6 @@ import type { Child } from "hono/jsx";
 import { PROGRAM_MEMBERSHIP } from "../../model.js";
 import {
   ALL,
-  CSV_ROW_LIMIT,
   DEFAULT_SORT,
   MEMBER_ANY,
   MEMBER_UNRECORDED,
@@ -304,11 +303,7 @@ function ResultsHeader({
         <span class="results-count">{count(total)}</span>
         {total > 0 && <a href={listingHref(`${path}.csv`, query, { page: 1 })}>{m.listings.csv.download}</a>}
       </p>
-      <Meta block>
-        {m.listings.csv.note}
-        {/* An export that silently stops short is worse than a small one. */}
-        {total > CSV_ROW_LIMIT && <> {m.listings.csv.truncated(CSV_ROW_LIMIT)}</>}
-      </Meta>
+      <Meta block>{m.listings.csv.note}</Meta>
     </div>
   );
 }

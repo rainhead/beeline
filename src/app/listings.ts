@@ -29,6 +29,30 @@ export const PAGE_SIZE = 50;
 /** A CSV is one query, not a crawl: past this the export says it was cut. */
 export const CSV_ROW_LIMIT = 20_000;
 
+const exportStampParts = new Intl.DateTimeFormat("en-US", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+  timeZone: "America/Los_Angeles",
+});
+
+/**
+ * A download's file name, stamped with when it was taken (GitHub #106):
+ * `beeline-samples-2026-09-28-140507.csv`. Two exports of one listing are two
+ * versions of it, and a browser saving both as `beeline-samples (1).csv`
+ * leaves nobody able to say which is newer. Pacific time, as every instant
+ * the app shows is, and to the second; year first so the names sort in the
+ * order they were taken; no colons, which Windows refuses in a file name.
+ */
+export function exportFilename(base: string, at: Date): string {
+  const p = Object.fromEntries(exportStampParts.formatToParts(at).map((x) => [x.type, x.value]));
+  return `${base}-${p.year}-${p.month}-${p.day}-${p.hour}${p.minute}${p.second}.csv`;
+}
+
 /** The scope every volunteer has, and the only one they have. */
 export const MINE = "mine";
 /** Every atlas at once — the staff escape hatch for cross-atlas questions. */

@@ -84,6 +84,7 @@ import {
   atlasOptions,
   BY_SAMPLE_NUMBER,
   CSV_ROW_LIMIT,
+  exportFilename,
   listSamples,
   listSpecimens,
   parseListingQuery,
@@ -505,10 +506,10 @@ export function createApp({
     };
   };
 
-  const csv = (c: Context<AppEnv>, body: string, filename: string) =>
+  const csv = (c: Context<AppEnv>, body: string, base: string) =>
     c.body(body, 200, {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="${filename}"`,
+      "content-disposition": `attachment; filename="${exportFilename(base, new Date())}"`,
     });
 
   app.get("/samples", async (c) => {
@@ -529,7 +530,7 @@ export function createApp({
     const { personId, query } = await listingRequest(c);
     countListingView(listingAttributes("samples", "csv", query, viewer(c)));
     const results = await listSamples(db, query, personId, { limit: CSV_ROW_LIMIT, offset: 0 });
-    return csv(c, sampleCsv(results), "beeline-samples.csv");
+    return csv(c, sampleCsv(results), "beeline-samples");
   });
 
   app.get("/specimens", async (c) => {
@@ -550,7 +551,7 @@ export function createApp({
     const { personId, query } = await listingRequest(c);
     countListingView(listingAttributes("specimens", "csv", query, viewer(c)));
     const results = await listSpecimens(db, query, personId, { limit: CSV_ROW_LIMIT, offset: 0 });
-    return csv(c, specimenCsv(results), "beeline-specimens.csv");
+    return csv(c, specimenCsv(results), "beeline-specimens");
   });
 
   // --- One record (beeline-2c3.34). The listings answer "what is there";
@@ -1026,7 +1027,7 @@ export function createApp({
     const query = parseRosterQuery(new URL(c.req.url).searchParams, atlases.map((a) => a.code));
     countListingView(rosterAttributes("csv", query, viewer(c)));
     const listed = await listRoster(db, query, { limit: CSV_ROW_LIMIT, offset: 0 });
-    return csv(c, rosterCsv(listed), "beeline-people.csv");
+    return csv(c, rosterCsv(listed), "beeline-people");
   });
 
   app.get("/people/:id", async (c) => {

@@ -285,15 +285,30 @@ export interface SpecimenLabelRow {
   printed_at: Date | null;
   mailed_at: Date | null;
   canceled_at: Date | null;
+  /** The run's scope, for its name: an atlas's code, or null for the program's run. */
+  atlas_code: string | null;
 }
 
 export async function specimenLabels(db: Kysely<Database>, specimenId: number): Promise<SpecimenLabelRow[]> {
   const rows = await db
-    .selectFrom("specimen_label")
-    .where("specimen_id", "=", specimenId)
-    .select(["print_run_id", "number_text", "state", "sheet", "cell", "prepared_at", "printed_at", "mailed_at", "canceled_at"])
-    .orderBy("prepared_at", "desc")
-    .orderBy("print_run_id", "desc")
+    .selectFrom("specimen_label as l")
+    .innerJoin("print_run as r", "r.entity_id", "l.print_run_id")
+    .leftJoin("atlas as a", "a.entity_id", "r.atlas_id")
+    .where("l.specimen_id", "=", specimenId)
+    .select([
+      "l.print_run_id",
+      "l.number_text",
+      "l.state",
+      "l.sheet",
+      "l.cell",
+      "l.prepared_at",
+      "l.printed_at",
+      "l.mailed_at",
+      "l.canceled_at",
+      "a.code as atlas_code",
+    ])
+    .orderBy("l.prepared_at", "desc")
+    .orderBy("l.print_run_id", "desc")
     .execute();
   return rows.map((r) => ({ ...r, print_run_id: Number(r.print_run_id), sheet: Number(r.sheet), cell: Number(r.cell) }));
 }

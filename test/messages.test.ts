@@ -24,6 +24,14 @@ describe("message catalog", () => {
     expect(en.qc.sampleTitle("7", new Date("2026-07-14T12:00:00"))).toContain("Jul");
   });
 
+  it("names a print run by when it was prepared, in Pacific time, and its scope — never by its id (GitHub #105)", () => {
+    expect(en.printRuns.run.title(new Date("2026-09-28T21:05:07Z"), null)).toBe("Print run 2026-09-28 14:05:07 PDT · program");
+    // Winter, and a UTC evening that is still the day before in Oregon.
+    expect(en.printRuns.run.title(new Date("2026-01-03T03:00:09Z"), "WA")).toBe("Print run 2026-01-02 19:00:09 PST · WA");
+    // Midnight reads 00, not 24.
+    expect(en.printRuns.run.title(new Date("2026-09-28T07:00:00Z"), null)).toBe("Print run 2026-09-28 00:00:00 PDT · program");
+  });
+
   it("carries instructions for exactly the QC rules the schema declares", async () => {
     const { conn } = await createMemoryDb();
     const ruleNames = (await rows(conn, "SELECT name FROM qc_rule ORDER BY name")).map(([name]) => name as string);

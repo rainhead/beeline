@@ -16,6 +16,8 @@
     "legacy:load": "tsx src/load-legacy.ts",
     "legacy:promote": "tsx src/promote-legacy.ts",
     "legacy:reconcile": "tsx src/reconcile-legacy.ts",
+    "legacy:export": "tsx src/export-legacy.ts",
+    "legacy:compare-export": "tsx src/compare-legacy-export.ts",
     "inat:sync": "tsx src/sync-inat.ts",
     "inat:promote": "tsx src/promote-observations.ts",
     "inat:fetch-places": "tsx src/fetch-places.ts",

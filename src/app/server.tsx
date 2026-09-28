@@ -1,3 +1,6 @@
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { Readable } from "node:stream";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -20,6 +23,8 @@ import { Glossary } from "./views/glossary.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomySummary } from "./taxonomy.js";
 import { Jobs } from "./views/jobs.js";
+import { Exports } from "./views/exports.js";
+import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
 import { listRuns, loadRun, runLabels, runPdf, scopeCounts, specimenLabels } from "./print-runs.js";
 import {
@@ -111,7 +116,7 @@ export interface JobsDep {
 
 export interface AppDeps {
   db: Kysely<Database>;
-  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail">>;
+  config: Pick<AppConfig, "environment" | "origin"> & Partial<Pick<AppConfig, "adminLogins" | "feedbackEmail" | "exportsDir">>;
   inat: InatClient;
   resolveSession: SessionResolver;
   /** The job registry; absent in tests that don't exercise /jobs. */
@@ -840,6 +845,41 @@ export function createApp({
       .limit(20)
       .execute();
     return c.html(await page(c, m.jobs.title, <Jobs m={m} jobs={jobsDep.list} runs={runs} />));
+  });
+
+  // --- Exports (beeline-6q8). The legacy-format occurrences file the
+  // nightly legacy-export job writes: every specimen, with names and true
+  // coordinates, so admins only, like /jobs. Served from disk rather than
+  // built per request — it is ~160 MB and takes a DuckDB COPY to make.
+  const occurrencesPath = legacyExportPath(config.exportsDir ?? "data/exports");
+  const occurrencesFile = async () => {
+    try {
+      const st = await stat(occurrencesPath);
+      return { writtenAt: st.mtime, bytes: st.size };
+    } catch {
+      return null;
+    }
+  };
+
+  app.get("/exports", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    return c.html(await page(c, m.exports.title, <Exports m={m} occurrences={await occurrencesFile()} />));
+  });
+
+  app.get("/exports/occurrences.csv", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const file = await occurrencesFile();
+    if (file === null) return c.text(c.get("m").exports.missing, 404);
+    // Named the way the legacy system named its own occurrences files, with
+    // the moment it was written, so a script that picks "the newest" by name
+    // still does.
+    const stamp = file.writtenAt.toISOString().slice(0, 19).replaceAll(":", ".");
+    return c.body(Readable.toWeb(createReadStream(occurrencesPath)) as ReadableStream, 200, {
+      "content-type": "text/csv; charset=utf-8",
+      "content-length": String(file.bytes),
+      "content-disposition": `attachment; filename="occurrences_beeline_${stamp}.csv"`,
+    });
   });
 
   // --- Print runs (beeline-1kb.2, beeline-1kb.4). Admin-gated like /jobs;

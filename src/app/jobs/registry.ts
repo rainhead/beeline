@@ -1,3 +1,4 @@
+import { legacyExportPath, writeLegacyExport } from "../../legacy-export.js";
 import { readFile } from "node:fs/promises";
 import type { Kysely } from "kysely";
 import { deriveElevations } from "../../derive-elevation.js";
@@ -147,7 +148,7 @@ export function buildJobs(
     AppConfig,
     "syncProjects" | "sweepDays" | "personChangesPath" | "sampleChangesPath" | "sampleStatePath"
   > &
-    Partial<Pick<AppConfig, "sampleOverlayPath">>,
+    Partial<Pick<AppConfig, "sampleOverlayPath" | "exportsDir">>,
 ): Job[] {
   const samplePaths: SampleLogPaths = { log: config.sampleChangesPath, state: config.sampleStatePath };
   return [
@@ -206,6 +207,21 @@ export function buildJobs(
           parts.push(`project ${projectId} (full sweep since ${d1}): ${r.fetched} fetched, ${r.newLoads} new`);
         }
         return pipelineTail(ctx, parts, config.personChangesPath, samplePaths, config.sampleOverlayPath);
+      },
+    },
+    {
+      // The legacy system's occurrences file, kept current (beeline-6q8):
+      // reporting built on that dump — Andony's comparison, the taxonomists'
+      // Ecdysis uploads — reads this instead once the legacy system freezes.
+      // After the nightly and clear of Sunday's sweep, so it describes the
+      // store the night's promotion left behind.
+      name: "legacy-export",
+      schedule: { kind: "dailyLA", hour: 4 },
+      window: "night",
+      async run(ctx) {
+        const path = legacyExportPath(config.exportsDir ?? "data/exports");
+        const { rows, staged } = await ctx.step("write the export", () => writeLegacyExport(ctx.conn, path));
+        return `${rows} rows written to ${path}${staged ? "" : " (no legacy staging: legacy-only columns blank)"}`;
       },
     },
   ];

@@ -58,6 +58,8 @@ export interface AppConfig {
   sampleStatePath: string;
   /** Where rendered label sheets are cached, one PDF per print run (beeline-1kb.4). */
   printRunsDir: string;
+  /** Where the nightly legacy-format export is written (beeline-6q8); regenerable, so not backed up. */
+  exportsDir: string;
   /**
    * Deployment environment. Anything but 'production' renders the
    * environment banner (sandbox-until-launch, beeline-2u8).
@@ -192,6 +194,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     sampleChangesPath: env.BEELINE_SAMPLE_CHANGES ?? SAMPLE_CHANGE_LOG,
     sampleStatePath: env.BEELINE_SAMPLE_STATE ?? SAMPLE_STATE_SNAPSHOT,
     printRunsDir: env.BEELINE_PRINT_RUNS ?? "data/print-runs",
+    exportsDir: env.BEELINE_EXPORTS ?? "data/exports",
     environment,
     devLogin: environment === "development" ? (env.BEELINE_DEV_LOGIN ?? null) : null,
     syncProjects,

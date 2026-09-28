@@ -150,6 +150,7 @@ describe("the taxonomy pages", () => {
     const group = between(menu, `aria-label="${en.layout.more}"`, "</nav>");
     expect([...group.matchAll(/href="([^"]+)"/g)].map((match) => match[1])).toEqual([
       "/design",
+      "/exports",
       "/glossary",
       "/jobs",
       "/people",

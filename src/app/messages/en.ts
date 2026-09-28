@@ -128,6 +128,7 @@ export const en = {
       jobs: "Jobs",
       taxonomy: "Taxonomy",
       printRuns: "Print runs",
+      exports: "Exports",
     },
     /**
      * The menu's destinations beyond the records — reference pages and staff
@@ -927,6 +928,17 @@ export const en = {
     notFound: "There is no such name in the taxonomy.",
   },
 
+  exports: {
+    title: "Exports",
+    heading: "Exports",
+    intro:
+      "Files for work outside Beeline. The occurrences file has the old system's columns, in its order and format, so reports and uploads built on that file read it unchanged. It is rewritten every night at 4am Pacific; run the legacy-export job on Jobs to write it now.",
+    occurrences: "Occurrences, in the old system's format",
+    written: (when: string) => `Written ${when}`,
+    size: (megabytes: string) => `${megabytes} MB`,
+    download: "Download",
+    missing: "Not written yet. It appears after the next nightly run, or after running the legacy-export job on Jobs.",
+  },
   jobs: {
     title: "Jobs",
     heading: "Scheduled jobs",
@@ -938,6 +950,8 @@ export const en = {
       "session-purge": "Deletes sign-in sessions idle for more than 30 days; their cookies stop working.",
       "nightly-pipeline":
         "Pulls every observation changed since the last run (edits and new records, however old the observation), promotes into samples, and fills missing elevations from the DEM tiles on disk.",
+      "legacy-export":
+        "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
       "weekly-sweep":
         "Re-fetches the full trailing year from each project as a presence proof — the run that detects deletions and anything the incremental pulls missed — then promotes and derives elevations.",
     } as Record<string, string>,

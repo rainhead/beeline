@@ -353,6 +353,17 @@ This exists because the nightly failed on every run for about half a day and
 nothing said so (beeline-6td): `job_run` recorded it and `/jobs` displayed it,
 to an admin who went looking. It was found by accident.
 
+## The legacy-format export
+
+The `legacy-export` job writes every specimen as the legacy system's
+occurrences file at 4am Pacific, to `data/exports/occurrences.csv` (config
+`exportsDir`, `BEELINE_EXPORTS`), and admins download it from `/exports`
+(beeline-6q8). It is regenerable, so the backup below leaves it out. To write
+it now, press Run now on `legacy-export` at `/jobs`. To check how close it is
+to what the legacy system held, run `pnpm legacy:compare-export` against a
+copy of the store — it needs the staged legacy records, which a reseeded
+store carries.
+
 ## Backups
 
 Fly's own advice is that an app should have two volumes and that snapshots are

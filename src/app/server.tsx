@@ -881,7 +881,14 @@ export function createApp({
     } catch {
       return c.text(c.get("m").exports.missing, 404);
     }
-    const st = await handle.stat();
+    let st;
+    try {
+      st = await handle.stat();
+    } catch (err) {
+      // The stream would have closed it; with no stream, nothing else will.
+      await handle.close();
+      throw err;
+    }
     // Named the way the legacy system named its own occurrences files, with
     // the moment it was written, so a script that picks "the newest" by name
     // still does.

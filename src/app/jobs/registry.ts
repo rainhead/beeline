@@ -220,7 +220,20 @@ export function buildJobs(
       window: "night",
       async run(ctx) {
         const path = legacyExportPath(config.exportsDir ?? "data/exports");
-        const { rows, staged } = await ctx.step("write the export", () => writeLegacyExport(ctx.conn, path));
+        // The join against the staged legacy records is the export's memory:
+        // measured on the 2026-09-27 corpus it needs ~600 MB on one thread and
+        // ~800 MB on two, inside the app's 1 GB DuckDB budget. One thread keeps
+        // the headroom, at 4am when nothing else is asking. threads is a
+        // setting of the whole instance, so it is put back however this ends.
+        const [[threads]] = (await (await ctx.conn.run(`SELECT current_setting('threads')`)).getRows()) as [[bigint | number]];
+        await ctx.conn.run("SET threads = 1");
+        let result;
+        try {
+          result = await ctx.step("write the export", () => writeLegacyExport(ctx.conn, path));
+        } finally {
+          await ctx.conn.run(`SET threads = ${Number(threads)}`);
+        }
+        const { rows, staged } = result;
         return `${rows} rows written to ${path}${staged ? "" : " (no legacy staging: legacy-only columns blank)"}`;
       },
     },

@@ -204,3 +204,25 @@ describe("the Exports page", () => {
     expect(Buffer.from(await res.arrayBuffer()).equals(await readFile(join(dir, "occurrences.csv")))).toBe(true);
   });
 });
+
+describe("the legacy-export job", () => {
+  test("writes the file on one thread and puts the instance's thread count back", async () => {
+    const { buildJobs } = await import("../src/app/jobs/registry.js");
+    const { runJob } = await import("../src/app/jobs/framework.js");
+    const dir = await mkdtemp(join(tmpdir(), "exports-job-"));
+    const job = buildJobs({
+      syncProjects: [],
+      sweepDays: 365,
+      personChangesPath: "unused",
+      sampleChangesPath: "unused",
+      sampleStatePath: "unused",
+      exportsDir: dir,
+    }).find((j) => j.name === "legacy-export")!;
+    await conn.run("SET threads = 3");
+    const { instance } = await createMemoryDb();
+    await runJob({ db: createKysely(instance), conn }, job);
+    const [[threads]] = (await (await conn.run(`SELECT current_setting('threads')`)).getRows()) as [[bigint]];
+    expect(Number(threads)).toBe(3);
+    expect((await readFile(join(dir, "occurrences.csv"))).subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+  });
+});

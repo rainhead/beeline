@@ -4,7 +4,9 @@ import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import {
   exportFilename,
-  CSV_ROW_LIMIT,
+  CSV_PAGE_SIZE,
+  csvCell,
+  csvStream,
   EMPTY_QUERY,
   listSamples,
   listingHref,
@@ -550,8 +552,7 @@ describe("the determination date column", () => {
     expect(sorted.indexOf("OBA00001")).toBeLessThan(sorted.indexOf("WABA0001"));
     expect(sorted).toContain('aria-sort="descending"');
     const csv = await (await app.request("/specimens.csv?scope=all")).text();
-    expect(csv.split("\r\n")[0]).toContain("host,host_rank");
-    expect(csv.split("\r\n")[0]).toContain("determined_by,determined_on,expert_determination");
+    expect(csv.split("\n")[0]).toContain("identifiedBy,dateIdentified");
     expect(csv).toContain(",2025-04-28,");
 
     // A year-only date is the year, on the page and in the file (beeline-9ut).
@@ -692,16 +693,26 @@ describe("CSV export", () => {
     expect(res.headers.get("content-type")).toContain("text/csv");
     // Stamped, so two exports of one listing save as two files (GitHub #106).
     expect(res.headers.get("content-disposition")).toMatch(/filename="beeline-samples-\d{4}-\d{2}-\d{2}-\d{6}\.csv"/);
-    const csv = await res.text();
-    const [header, ...lines] = csv.split("\r\n");
+    // A byte order mark so Excel reads names as UTF-8 (text() strips it, so
+    // it is read from the bytes), and Unix line endings.
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const csv = new TextDecoder().decode(bytes);
+    expect(csv).not.toContain("\r");
+    const [header, ...lines] = csv.split("\n").filter((l) => l !== "");
+    // Darwin Core terms wherever one exists: the sample is the collecting
+    // event, so its number is dwc:fieldNumber.
+    expect(header!.split(",").slice(0, 4)).toEqual(["fieldNumber", "eventDate", "samplingProtocol", "recordedBy"]);
     // A collector's own coordinates are the ones they recorded and the ones
     // their labels print; withholding them protected nobody (Peter, 2026-08-23).
-    expect(header).toContain("latitude");
-    expect(header).toContain("longitude");
+    expect(header).toContain("decimalLatitude,decimalLongitude,geodeticDatum,coordinateUncertaintyInMeters");
     // And a reader can tell what they are looking at without asking us.
-    expect(header).toContain("location_source");
+    expect(header).toContain("locationSource");
     expect(header).toContain("geoprivacy");
     expect(lines).toHaveLength(1);
+    // A longitude is a number, never a defused "formula" with an apostrophe in front.
+    expect(lines[0]).toContain(",-123.");
+    expect(lines[0]).not.toContain("'-");
     expect(lines[0]).toContain("B-1");
     expect(lines[0]).toContain("44.5646");
     expect(lines[0]).toContain("inat_public");
@@ -719,21 +730,38 @@ describe("CSV export", () => {
     // How sure the determiner was, and the words they wrote — a downstream
     // consumer reading only scientific_name would read an assertion that was
     // never made (beeline-tgu).
-    expect(csv.split("\r\n")[0]).toContain("identification_qualifier,verbatim_identification");
+    expect(csv.split("\n")[0]).toContain("identificationQualifier,verbatimIdentification");
     expect(csv).toContain("cf.,Bombus cf. vosnesenskii");
+    // The pin's number is the collection's number for the specimen (ADR 0008).
+    expect(csv.split("\n")[0]).toContain("occurrenceID,basisOfRecord,catalogNumber,fieldNumber");
+    expect(csv).toContain("PreservedSpecimen,OBA00001,");
   });
 
-  it("says so inside the file when it stopped short", async () => {
-    // The page's warning does not travel with a bookmarked download.
-    const rows = Array.from({ length: CSV_ROW_LIMIT }, (_, i) => [i]);
-    const csv = toCsv(["n"], rows);
-    expect(csv.split("\r\n").at(-1)).toContain(`truncated at ${CSV_ROW_LIMIT} rows`);
-    expect(toCsv(["n"], [[1]]).split("\r\n")).toHaveLength(2);
+  it("writes the whole selection, a page at a time, with nothing in the file that is not a record", async () => {
+    const offsets: number[] = [];
+    const stream = csvStream(
+      ["n"],
+      async (limit, offset) => {
+        offsets.push(offset);
+        // A full page, then a short one: the short page is the last.
+        const size = offset === 0 ? limit : 2;
+        return { rows: Array.from({ length: size }, (_, i) => offset + i), total: limit + 2, collectors: new Map() };
+      },
+      (n: number) => [n],
+    );
+    const text = await new Response(stream).text();
+    expect(offsets).toEqual([0, CSV_PAGE_SIZE]);
+    const lines = text.split("\n"); // text() has already dropped the byte order mark
+    expect(lines[0]).toBe("n");
+    expect(lines.at(-1)).toBe(""); // every record ends in \n, the last included
+    expect(lines).toHaveLength(1 + CSV_PAGE_SIZE + 2 + 1);
+    expect(lines.at(-2)).toBe(String(CSV_PAGE_SIZE + 1));
   });
 
-  it("quotes what must be quoted and defuses formulas", async () => {
-    const csv = toCsv(["a", "b"], [[`say "hi", now`, "=SUM(A1:A2)"]]);
-    expect(csv).toBe(`a,b\r\n"say ""hi"", now",'=SUM(A1:A2)`);
+  it("quotes what must be quoted and defuses formulas, but never a number", async () => {
+    const csv = toCsv(["a", "b", "c", "d"], [[`say "hi", now`, "=SUM(A1:A2)", -123.262, "-45.1"]]);
+    expect(csv).toBe(`\uFEFFa,b,c,d\n"say ""hi"", now",'=SUM(A1:A2),-123.262,-45.1\n`);
+    expect(csvCell("-Ada")).toBe("'-Ada");
   });
 });
 

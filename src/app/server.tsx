@@ -93,8 +93,11 @@ import {
   listSamples,
   listSpecimens,
   parseListingQuery,
-  sampleCsv,
-  specimenCsv,
+  csvStream,
+  SAMPLE_CSV_HEADER,
+  sampleCsvRow,
+  SPECIMEN_CSV_HEADER,
+  specimenCsvRow,
 } from "./listings.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
 import {
@@ -511,7 +514,7 @@ export function createApp({
     };
   };
 
-  const csv = (c: Context<AppEnv>, body: string, base: string) =>
+  const csv = (c: Context<AppEnv>, body: string | ReadableStream<Uint8Array>, base: string) =>
     c.body(body, 200, {
       "content-type": "text/csv; charset=utf-8",
       "content-disposition": `attachment; filename="${exportFilename(base, new Date())}"`,
@@ -534,8 +537,9 @@ export function createApp({
   app.get("/samples.csv", async (c) => {
     const { personId, query } = await listingRequest(c);
     countListingView(listingAttributes("samples", "csv", query, viewer(c)));
-    const results = await listSamples(db, query, personId, { limit: CSV_ROW_LIMIT, offset: 0 });
-    return csv(c, sampleCsv(results), "beeline-samples");
+    // The whole selection, a page at a time: no cap, no truncation line.
+    const body = csvStream(SAMPLE_CSV_HEADER, (limit, offset) => listSamples(db, query, personId, { limit, offset }), sampleCsvRow);
+    return csv(c, body, "beeline-samples");
   });
 
   app.get("/specimens", async (c) => {
@@ -555,8 +559,8 @@ export function createApp({
   app.get("/specimens.csv", async (c) => {
     const { personId, query } = await listingRequest(c);
     countListingView(listingAttributes("specimens", "csv", query, viewer(c)));
-    const results = await listSpecimens(db, query, personId, { limit: CSV_ROW_LIMIT, offset: 0 });
-    return csv(c, specimenCsv(results), "beeline-specimens");
+    const body = csvStream(SPECIMEN_CSV_HEADER, (limit, offset) => listSpecimens(db, query, personId, { limit, offset }), specimenCsvRow);
+    return csv(c, body, "beeline-specimens");
   });
 
   // --- One record (beeline-2c3.34). The listings answer "what is there";

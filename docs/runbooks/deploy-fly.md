@@ -90,6 +90,10 @@ link in every page's header, pre-filled with the page, time, browser and a
 short hash of the session; unset, there is no link. It is a secret only so the
 address stays out of this public repository.
 
+`SENTRY_DSN` is optional too: set, the app reports errors, its console log and
+each job run to Sentry (see [Errors, logs and job check-ins](#errors-logs-and-job-check-ins));
+unset, it reports nothing and behaves exactly the same.
+
 Keep a copy of the private-store key in your password manager before you set
 it: Fly secrets are write-only, and losing the key is losing the private store
 ([ADR 0003](../adr/0003-private-data-store.md)).
@@ -258,7 +262,40 @@ To restore one, boot into maintenance mode and move it back over
 `beeline.duckdb` — **and delete any `beeline.duckdb.wal` beside it first**, or
 DuckDB replays the newer WAL onto the older file.
 
+## Errors, logs and job check-ins
+
+With `SENTRY_DSN` set ([`src/app/error-reporting.ts`](../../src/app/error-reporting.ts),
+beeline-8w6.1), the app sends Sentry three things, tagged with `BEELINE_ENV` as
+the environment and the Fly deployment as the release:
+
+- **Errors.** A request that fails with a 500 is reported with its route
+  pattern (`GET /samples/:id`, never the id) and the signed-in iNaturalist
+  login; a failed job is reported with the job's name.
+- **The console log.** Every `console.log`, `warn` and `error`, searchable,
+  and kept past the rolling window `fly logs` shows — which is where the boot
+  pass's `recorded N sample change(s)` line lives.
+- **Job check-ins.** Each job is a cron monitor named after it, created on its
+  first run from the schedule the scheduler already uses. Sentry opens an issue
+  when a run fails, and when the nightly has not started by the end of the
+  night window.
+
+A Sentry uptime monitor also polls `/healthz` every five minutes and alerts
+after two failures in a row. It lives in Sentry's settings, not in this repo.
+
+**What never leaves the machine.** An error from DuckDB quotes the value it
+choked on, and a stack frame's locals hold the row being read. So the SDK
+collects no request body, query string, cookie, header other than the user
+agent, database parameter or local variable. Every message that does go —
+exception text, log line, breadcrumb — is passed through `redact` first:
+anything quoted, any decimal with four or more places (every coordinate this
+store holds), tokens, and email addresses are replaced. Log a message as a
+string, not as an object: the log integration serialises an object as JSON,
+whose every key is quoted and so redacted into nothing.
+
 ## Knowing the nightly is running
+
+The Sentry check-ins above now alert on a failed or missing run. What follows
+predates them and still runs.
 
 `/healthz` proves the store is readable, and Fly restarts the machine when it
 fails — which is why job staleness is **not** on it. Restarting is the wrong

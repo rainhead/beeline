@@ -67,7 +67,7 @@ export function laParts(instant: Date): { date: string; hour: number; weekday: n
 }
 
 /** End of the night carve-out: night jobs must not START at or after this LA hour (beeline-7tt). */
-const NIGHT_END_HOUR = 5;
+export const NIGHT_END_HOUR = 5;
 /** Pause between retries of a failed daily/weekly run — not every tick (beeline-40m). */
 const RETRY_MS = 15 * 60_000;
 
@@ -198,10 +198,19 @@ export function jobHealth(jobs: Job[], last: Map<string, LastOutcome>, now: Date
   });
 }
 
+/**
+ * Told when a run starts, and handed back the function to call when it ends.
+ * How a run reaches something outside the store — Sentry's cron monitors
+ * (beeline-8w6.1) — without the framework knowing what that is. It must not
+ * throw: runJob never does, and an observer is no reason to start.
+ */
+export type JobObserver = (job: Job) => (outcome: "succeeded" | "failed", err?: unknown) => void;
+
 export interface SchedulerDeps {
   db: Kysely<Database>;
   conn: DuckDBConnection;
   jobs: Job[];
+  observe?: JobObserver;
   tickMs?: number;
   /** Interactive-window step budget; override only in tests. */
   budgetMs?: number;
@@ -218,7 +227,7 @@ export class JobInterrupted extends Error {
 
 /** Run one job to completion, recording the run. Never throws: failures land in job_run. */
 export async function runJob(
-  deps: Pick<SchedulerDeps, "db" | "conn" | "budgetMs">,
+  deps: Pick<SchedulerDeps, "db" | "conn" | "budgetMs" | "observe">,
   job: Job,
   signal: AbortSignal = new AbortController().signal,
 ): Promise<void> {
@@ -255,12 +264,34 @@ export async function runJob(
       .where("entity_id", "=", run.entity_id)
       .execute();
   ctx.log("started");
+  // An observer reports elsewhere and must never cost the run: whatever it
+  // throws is logged and dropped, since runJob promises not to throw.
+  const guarded = <T>(what: string, fn: () => T): T | undefined => {
+    try {
+      return fn();
+    } catch (err) {
+      console.error(`[job ${job.name}] observer failed ${what}: ${(err as Error).message}`);
+      return undefined;
+    }
+  };
+  const observed = deps.observe && guarded("at start", () => deps.observe!(job));
+  // Told once, and only after job_run says the same thing: a success whose
+  // update then throws lands in the catch below and is reported as the
+  // failure the store records.
+  let told = false;
+  const ended = (outcome: "succeeded" | "failed", err?: unknown) => {
+    if (told || observed === undefined) return;
+    told = true;
+    guarded("at the end", () => observed(outcome, err));
+  };
   try {
     const detail = await job.run(ctx);
     ctx.log(`succeeded${detail ? `: ${detail}` : ""}`);
     await finish("succeeded", detail ?? null);
+    ended("succeeded");
   } catch (err) {
-    console.error(`[job ${job.name}] failed:`, err);
+    console.error(`[job ${job.name}] failed: ${(err as Error).stack ?? String(err)}`);
+    ended("failed", err);
     await finish("failed", (err as Error).message);
   }
 }

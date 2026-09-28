@@ -78,6 +78,19 @@ export interface AppConfig {
    * repository is public and the address is somebody's inbox.
    */
   feedbackEmail: string | null;
+  /**
+   * Where errors, logs and job check-ins are reported (beeline-8w6.1), or
+   * null to report nothing — the app runs the same either way. From the
+   * environment for the same reason as the feedback address: a DSN in a
+   * public repository lets anybody send events into the project.
+   */
+  sentryDsn: string | null;
+  /**
+   * What a report calls this build, so an error can be tied to a deploy.
+   * `BEELINE_RELEASE` when set, else the deployment tag Fly puts in
+   * `FLY_IMAGE_REF` (`registry.fly.io/beeline:deployment-01M…`), else null.
+   */
+  release: string | null;
 }
 
 /**
@@ -184,5 +197,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     syncProjects,
     sweepDays,
     feedbackEmail,
+    sentryDsn: env.SENTRY_DSN?.trim() || null,
+    release: env.BEELINE_RELEASE?.trim() || env.FLY_IMAGE_REF?.split(":").pop()?.trim() || null,
   };
 }

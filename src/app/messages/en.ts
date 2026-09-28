@@ -54,6 +54,28 @@ const dateTime = (d: Date | string) =>
         timeZone: ZONE,
         timeZoneName: "short",
       });
+// A print run's name (GitHub #105): the moment it was prepared, to the
+// second, in Pacific time, beside its scope. It used to be the run's
+// entity_id — "Print run 804,984" — which says nothing to the people holding
+// the sheets and is a per-store draw a rebuild redraws. Year first, because a reader seeing
+// 04.09 cannot tell April from September; seconds, because two runs
+// prepared in the same minute are still two runs.
+const stampParts = new Intl.DateTimeFormat("en-US", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+  timeZone: ZONE,
+  timeZoneName: "short",
+});
+const stamp = (d: Date | string) => {
+  if (typeof d === "string") return d;
+  const p = Object.fromEntries(stampParts.formatToParts(d).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second} ${p.timeZoneName}`;
+};
 /** The calendar day an INSTANT fell on, in Pacific time — never for a DATE column, which is `date`. */
 const day = (d: Date | string) =>
   typeof d === "string"
@@ -1007,7 +1029,9 @@ export const en = {
     scopeProgram: "program",
     notYet: "not yet",
     run: {
-      title: (id: number) => `Print run ${n(id)}`,
+      /** When it was prepared and for whom: the atlas's code, or the program's run (GitHub #105). */
+      title: (preparedAt: Date | string, atlasCode: string | null) =>
+        `Print run ${stamp(preparedAt)} · ${atlasCode ?? "program"}`,
       back: "← Print runs",
       preparedBy: (name: string, when: string) => `Prepared by ${name}, ${when}.`,
       scopeProgram: "Everyone Oregon prints for.",

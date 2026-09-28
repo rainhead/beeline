@@ -117,7 +117,7 @@ export function PrintRuns({
           {runs.map((run) => (
             <tr>
               <td>
-                <a href={printRunHref(run.print_run_id)}>{p.run.title(run.print_run_id)}</a>
+                <a href={printRunHref(run.print_run_id)}>{p.run.title(run.prepared_at, run.atlas_code)}</a>
               </td>
               <td>
                 <Scope m={m} run={run} />
@@ -198,7 +198,7 @@ export function PrintRun({ m, run, labels }: { m: Messages; run: RunDetail; labe
         <a href="/print-runs">{r.back}</a>
       </p>
       <PageHeader
-        title={r.title(run.print_run_id)}
+        title={r.title(run.prepared_at, run.atlas_code)}
         lede={
           <>
             {run.atlas_name === null ? r.scopeProgram : r.scopeAtlas(run.atlas_name)}{" "}

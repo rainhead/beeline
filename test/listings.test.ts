@@ -3,6 +3,7 @@ import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import {
+  exportFilename,
   CSV_ROW_LIMIT,
   EMPTY_QUERY,
   listSamples,
@@ -677,12 +678,20 @@ describe("the toolbar", () => {
 });
 
 describe("CSV export", () => {
+  it("names the file for when it was taken, in Pacific time, sortable and without colons (GitHub #106)", () => {
+    expect(exportFilename("beeline-samples", new Date("2026-09-28T21:05:07Z"))).toBe("beeline-samples-2026-09-28-140507.csv");
+    // A UTC morning that is still the evening before in Oregon, and midnight as 00.
+    expect(exportFilename("beeline-people", new Date("2026-01-03T03:00:09Z"))).toBe("beeline-people-2026-01-02-190009.csv");
+    expect(exportFilename("beeline-specimens", new Date("2026-09-28T07:00:00Z"))).toBe("beeline-specimens-2026-09-28-000000.csv");
+  });
+
   it("downloads the filtered rows, coordinates and provenance included", async () => {
     const { app } = await listingApp("staffer");
     const res = await app.request("/samples.csv?scope=all&place=whatcom");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/csv");
-    expect(res.headers.get("content-disposition")).toContain("beeline-samples.csv");
+    // Stamped, so two exports of one listing save as two files (GitHub #106).
+    expect(res.headers.get("content-disposition")).toMatch(/filename="beeline-samples-\d{4}-\d{2}-\d{2}-\d{6}\.csv"/);
     const csv = await res.text();
     const [header, ...lines] = csv.split("\r\n");
     // A collector's own coordinates are the ones they recorded and the ones

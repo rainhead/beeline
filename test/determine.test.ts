@@ -325,4 +325,15 @@ describe("the page and its endpoints", () => {
     expect(write.status).toBe(403);
     expect((await json("/determinations/batch", { add: "26000101" }, cookie)).status).toBe(403);
   });
+
+  it("answers a malformed body as the client's error, not the server's", async () => {
+    const { app, json } = await appFixture();
+    const raw = (path: string, body: string) =>
+      app.request(path, { method: "POST", headers: { origin: "http://localhost:3054", "content-type": "application/json" }, body });
+    expect((await raw("/determinations/drafts", "not json")).status).toBe(400);
+    expect((await raw("/determinations/batch", "[1, 2]")).status).toBe(400);
+    expect((await json("/determinations/drafts", { writes: "all of them" })).status).toBe(400);
+    expect((await json("/determinations/drafts", { writes: [null] })).status).toBe(400);
+    expect((await json("/determinations/drafts", { writes: [{ specimenId: "abc" }] })).status).toBe(400);
+  });
 });

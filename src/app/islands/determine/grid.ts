@@ -71,6 +71,14 @@ class DetermineGrid extends LitElement {
   #unnamedAtLoad: Set<number>;
   #anchor: number | null = null;
   #queue: Promise<unknown> = Promise.resolve();
+  /**
+   * The newest write sent for each row and not yet answered. A row reads
+   * through it, so a second change made before the first is saved builds on
+   * the first — choosing a sex while the name is still saving must not send
+   * the row without its name — and only the answer to the newest write is
+   * allowed to land.
+   */
+  #pending = new Map<number, Write>();
 
   constructor() {
     super();
@@ -113,7 +121,7 @@ class DetermineGrid extends LitElement {
   }
 
   #current(r: EntryRow): EntryValue {
-    const v = this.failed.get(r.id) ?? r.draft ?? r.prior;
+    const v = this.#pending.get(r.id) ?? this.failed.get(r.id) ?? r.draft ?? r.prior;
     return v ? { animalId: v.animalId, sex: v.sex, caste: v.caste } : { animalId: null, sex: null, caste: null };
   }
 
@@ -133,8 +141,15 @@ class DetermineGrid extends LitElement {
   /** Send writes in order, one request at a time, and take the server's word for the result. */
   #send(writes: Write[]) {
     if (writes.length === 0 || this.data.readOnly) return Promise.resolve();
+    for (const w of writes) this.#pending.set(w.specimenId, w);
     const ids = writes.map((w) => w.specimenId);
     this.saving = new Set([...this.saving, ...ids]);
+    /** The rows this write is still the newest for; taking them out of pending as it lands. */
+    const settle = () => {
+      const latest = writes.filter((w) => this.#pending.get(w.specimenId) === w);
+      for (const w of latest) this.#pending.delete(w.specimenId);
+      return latest;
+    };
     const run = async () => {
       try {
         const res = await fetch("/determinations/drafts", {
@@ -146,18 +161,20 @@ class DetermineGrid extends LitElement {
         if (!res.ok) throw new Error(String(res.status));
         const { rows } = (await res.json()) as { rows: EntryRow[] };
         const by = new Map(rows.map((r) => [r.id, r]));
-        this.rows = this.rows.map((r) => by.get(r.id) ?? r);
+        const landed = new Set(settle().map((w) => w.specimenId));
+        this.rows = this.rows.map((r) => (landed.has(r.id) ? (by.get(r.id) ?? r) : r));
         const failed = new Map(this.failed);
-        for (const id of ids) failed.delete(id);
+        for (const id of landed) failed.delete(id);
         this.failed = failed;
       } catch {
         const failed = new Map(this.failed);
-        for (const w of writes) failed.set(w.specimenId, w);
+        for (const w of settle()) failed.set(w.specimenId, w);
         this.failed = failed;
         this.message = d.saveFailed;
       } finally {
+        // Still saving while a newer write for the row is on its way.
         const saving = new Set(this.saving);
-        for (const id of ids) saving.delete(id);
+        for (const id of ids) if (!this.#pending.has(id)) saving.delete(id);
         this.saving = saving;
       }
     };

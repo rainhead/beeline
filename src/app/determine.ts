@@ -267,6 +267,9 @@ export class UnreachableSpecimens extends Error {
   }
 }
 
+/** A request whose body is not the shape the endpoint takes: the client's error, answered 400. */
+export class BadRequest extends Error {}
+
 export class UnknownTaxon extends Error {
   constructor(readonly ids: number[]) {
     super(`no such taxa: ${ids.join(", ")}`);

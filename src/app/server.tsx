@@ -33,6 +33,7 @@ import {
   rowTaxa,
   saveDrafts,
   seasonRows,
+  BadRequest,
   UnknownTaxon,
   UnreachableSpecimens,
   type DraftWrite,
@@ -870,20 +871,46 @@ export function createApp({
       // know exists, the same 404 the record pages give (beeline-2c3.34).
       if (err instanceof UnreachableSpecimens) return c.json({ error: "not found" }, 404);
       if (err instanceof UnknownTaxon) return c.json({ error: "unknown taxon" }, 400);
+      if (err instanceof BadRequest) return c.json({ error: err.message }, 400);
       throw err;
     }
   };
 
+  /** The JSON object a write endpoint was sent; anything else is the client's error. */
+  const jsonBody = async (c: Context<AppEnv>): Promise<Record<string, unknown>> => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new BadRequest("the body is not JSON");
+    }
+    if (typeof body !== "object" || body === null || Array.isArray(body)) throw new BadRequest("the body is not a JSON object");
+    return body as Record<string, unknown>;
+  };
+
   app.post("/determinations/drafts", (c) =>
     determineWrite(c, async () => {
-      const body = (await c.req.json()) as { writes?: unknown };
-      const writes = Array.isArray(body.writes) ? (body.writes as DraftWrite[]) : [];
-      const clean = writes.map((w) => ({
-        specimenId: Number(w.specimenId),
-        animalId: w.animalId === null || w.animalId === undefined ? null : Number(w.animalId),
-        sex: w.sex ?? null,
-        caste: w.caste ?? null,
-      }));
+      const body = await jsonBody(c);
+      if (!Array.isArray(body.writes)) throw new BadRequest("writes must be a list");
+      const id = (v: unknown, nullable: boolean) => {
+        if (nullable && (v === null || v === undefined)) return null;
+        const n = Number(v);
+        if (!Number.isInteger(n)) throw new BadRequest("an id is not a whole number");
+        return n;
+      };
+      const text = (v: unknown) => (typeof v === "string" ? v : null);
+      const clean = body.writes.map((w: unknown): DraftWrite => {
+        if (typeof w !== "object" || w === null) throw new BadRequest("each write must be an object");
+        const r = w as Record<string, unknown>;
+        // saveDrafts normalises sex and caste against the taxon, dropping
+        // anything it does not know; only the type is checked here.
+        return {
+          specimenId: id(r.specimenId, false)!,
+          animalId: id(r.animalId, true),
+          sex: text(r.sex) as DraftWrite["sex"],
+          caste: text(r.caste) as DraftWrite["caste"],
+        };
+      });
       return { rows: await saveDrafts(db, c.get("acting").personId, determiner(c), clean) };
     }),
   );
@@ -892,7 +919,7 @@ export function createApp({
     determineWrite(c, async () => {
       const { personId } = c.get("acting");
       const me = determiner(c);
-      const body = (await c.req.json()) as { add?: unknown; addIds?: unknown; remove?: unknown };
+      const body = await jsonBody(c);
       const ids = (v: unknown) => (Array.isArray(v) ? v.map(Number).filter(Number.isInteger) : []);
       let addition = null;
       if (typeof body.add === "string") addition = await addToBatch(db, personId, me, body.add);

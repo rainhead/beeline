@@ -24,14 +24,22 @@ const unusedInat: InatClient = {
 const ORIGIN = "http://localhost:3054";
 const apos = (s: string) => s.replaceAll("'", "&#39;");
 
-async function errorApp({ environment = "sandbox", signedIn = true }: { environment?: AppConfig["environment"]; signedIn?: boolean } = {}) {
+async function errorApp({
+  environment = "sandbox",
+  signedIn = true,
+  gateFails = false,
+}: { environment?: AppConfig["environment"]; signedIn?: boolean; gateFails?: boolean } = {}) {
   const { instance, conn } = await createMemoryDb();
   const [[ada]] = (await (await conn.run(`INSERT INTO person (display_name) VALUES ('Ada Adams') RETURNING entity_id`)).getRows()) as [[number]];
   const app = createApp({
     db: createKysely(instance),
     config: { environment, origin: ORIGIN, feedbackEmail: "staff@example.org" },
     inat: unusedInat,
-    resolveSession: async () => (signedIn ? { personId: ada, login: "ada", iconUrl: null } : null),
+    resolveSession: async () => {
+      // The session store unreadable: a failure before anyone is signed in.
+      if (gateFails) throw new Error('IO Error: could not read "private.duckdb"');
+      return signedIn ? { personId: ada, login: "ada", iconUrl: null } : null;
+    },
   });
   // A failure the way DuckDB words one: the value it choked on, quoted.
   app.get("/boom", () => {
@@ -65,6 +73,18 @@ describe("a page that is not there", () => {
     expect(from).toContain('href="/samples?page=2"');
     const away = await (await app.request("/no/such/page", { headers: { referer: "https://elsewhere.example/x" } })).text();
     expect(away).not.toContain(en.errorPage.back);
+    // This origin, but a path that as an href is protocol-relative and leaves.
+    for (const sneaky of [`${ORIGIN}//evil.example/x`, `${ORIGIN}/\\evil.example/x`]) {
+      const body = await (await app.request("/no/such/page", { headers: { referer: sneaky } })).text();
+      expect(body, sneaky).not.toContain(en.errorPage.back);
+    }
+  });
+
+  it("answers a caller that asked for JSON with JSON", async () => {
+    const app = await errorApp();
+    const res = await app.request("/no/such/thing.json");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "not found" });
   });
 });
 
@@ -77,7 +97,8 @@ describe("a request that failed", () => {
     expect(body).toContain(apos(en.errorPage.failed.body));
     const reference = /Reference: ([0-9a-f]{8})/.exec(body)?.[1];
     expect(reference).toBeDefined();
-    expect(decodeURIComponent(body)).toContain(`Error reference: ${reference}`);
+    const mailto = /href="(mailto:[^"]*)"/.exec(body)?.[1];
+    expect(decodeURIComponent(mailto!.replaceAll("&amp;", "&"))).toContain(`Error reference: ${reference}`);
     expect(body).not.toContain("Binder Error");
     expect(body).not.toContain("44.567891");
   });
@@ -87,6 +108,17 @@ describe("a request that failed", () => {
     const body = await (await app.request("/boom")).text();
     expect(body).toContain("Binder Error");
     expect(body).toContain(en.errorPage.dev.staleStore);
+  });
+
+  it("is still a page, on the sign-in shell, when it fails before anyone is signed in", async () => {
+    const app = await errorApp({ gateFails: true });
+    const res = await app.request("/samples");
+    expect(res.status).toBe(500);
+    const body = await res.text();
+    expect(body).toContain(apos(en.errorPage.failed.body));
+    expect(body).toMatch(/Reference: [0-9a-f]{8}/);
+    expect(body).not.toContain("private.duckdb");
+    expect(body).not.toContain('href="/samples"'); // no session, so no app chrome
   });
 
   it("answers a caller that asked for JSON with JSON", async () => {

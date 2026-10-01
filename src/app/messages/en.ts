@@ -512,6 +512,8 @@ export const en = {
     save: "Save changes",
     cancel: "Cancel",
     notEditable: "This sample can't be edited here — it may not be yours, or its fixes belong on iNaturalist.",
+    /** The error page's heading for that refusal: "There's nothing here" would contradict it. */
+    notEditableHeading: "This sample isn't edited here",
     noStagingRows: "This sample has no underlying records to correct — ask staff to look into it.",
   },
 
@@ -1021,7 +1023,7 @@ export const en = {
       heading: "Something went wrong",
       body:
         "Beeline ran into a problem and couldn't show this page. It wasn't anything you did. " +
-        "Try again in a minute. If it keeps happening, send feedback: the email it starts includes the reference below, which helps us find the problem.",
+        "Try again in a minute. If it keeps happening, tell us, and include the reference below: it helps us find the problem.",
       reference: (reference: string) => `Reference: ${reference}`,
     },
     back: "Go back",

@@ -476,7 +476,7 @@ export function createApp({
   const errorResponse = async (
     c: Context<AppEnv>,
     kind: ErrorKind,
-    { reference, err, message }: { reference?: string; err?: Error; message?: string } = {},
+    { reference, err, message, heading }: { reference?: string; err?: Error; message?: string; heading?: string } = {},
   ): Promise<Response> => {
     const status = kind === "failed" ? 500 : 404;
     const m = c.get("m") ?? messagesFor(null);
@@ -486,12 +486,21 @@ export function createApp({
       (c.req.header("content-type") ?? "").includes("application/json") ||
       (c.req.header("accept") ?? "").startsWith("application/json");
     if (json) return c.json({ error: kind === "failed" ? "failed" : "not found", ...(reference === undefined ? {} : { reference }) }, status);
-    // Back only to a page of this site, and never to this very page.
+    // Back only to a page of this site, and never to this very page. The
+    // path is checked as well as the origin: a referrer of
+    // https://beeline.fly.dev//evil.example/x has this origin and a pathname
+    // of //evil.example/x, which as an href is protocol-relative and leaves.
     let back: string | null = null;
     try {
       const referer = new URL(c.req.header("referer") ?? "");
-      if (referer.origin === config.origin && `${referer.pathname}${referer.search}` !== `${url.pathname}${url.search}`) {
-        back = `${referer.pathname}${referer.search}`;
+      const path = `${referer.pathname}${referer.search}`;
+      if (
+        referer.origin === config.origin &&
+        /^\/(?![/\\])/.test(path) &&
+        new URL(path, config.origin).origin === config.origin &&
+        path !== `${url.pathname}${url.search}`
+      ) {
+        back = path;
       }
     } catch {
       back = null;
@@ -500,7 +509,7 @@ export function createApp({
       config.environment === "development" && err !== undefined
         ? { text: err.stack ?? err.message, staleStore: /Binder Error|Catalog Error/.test(err.message) }
         : null;
-    const body = <ErrorPage m={m} kind={kind} reference={reference} message={message} back={back} dev={dev} />;
+    const body = <ErrorPage m={m} kind={kind} reference={reference} message={message} heading={heading} back={back} dev={dev} />;
     const title = m.errorPage[kind].title;
     try {
       if (c.get("session") !== undefined && c.get("acting") !== undefined) {
@@ -710,7 +719,7 @@ export function createApp({
     // Acting for someone is reach to act, not only to look: the collector
     // gate reads the effective person (beeline-oyl).
     const sample = await loadEditableSample(db, Number(c.req.param("id")), c.get("acting").personId);
-    if (sample === undefined) return errorResponse(c, "notFound", { message: m.sampleEdit.notEditable });
+    if (sample === undefined) return errorResponse(c, "notFound", { heading: m.sampleEdit.notEditableHeading, message: m.sampleEdit.notEditable });
     return c.html(await page(c, m.sampleEdit.title, <SampleEditForm m={m} sample={sample} />));
   });
 
@@ -725,7 +734,7 @@ export function createApp({
     // the one who typed it (beeline-oyl: reach, never credit).
     const session = c.get("session");
     const sample = await loadEditableSample(db, Number(c.req.param("id")), c.get("acting").personId);
-    if (sample === undefined) return errorResponse(c, "notFound", { message: m.sampleEdit.notEditable });
+    if (sample === undefined) return errorResponse(c, "notFound", { heading: m.sampleEdit.notEditableHeading, message: m.sampleEdit.notEditable });
     const body = await c.req.parseBody();
     // Absent fields stay untouched (applySampleEdit's contract); only strings pass.
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : undefined);

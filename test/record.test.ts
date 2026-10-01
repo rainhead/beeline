@@ -121,7 +121,9 @@ async function recordApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
     db,
     // Sandbox, not development: development makes everyone an admin, and the
     // reach gate is half of what these tests are about.
-    config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
+    // With a feedback address, as deployed: the header then carries a mailto
+    // that names the page and the time, which the not-found test must see past.
+    config: { environment: "sandbox" as const, origin: "http://localhost:3054", feedbackEmail: "staff@example.org" },
     inat: unusedInat,
     resolveSession: async () => ({ personId: people[signedInAs], login: signedInAs, iconUrl: null }),
   });
@@ -367,15 +369,18 @@ describe("reaching a record", () => {
 
   it("gives somebody else's record the same answer as one that does not exist", async () => {
     const { app, bobSample, bobSpecimen } = await recordApp();
-    // One page, byte for byte, whichever it was — so a URL cannot be used to
-    // learn whether somebody else's record exists (beeline-0kj).
+    // One page whichever it was — so a URL cannot be used to learn whether
+    // somebody else's record exists (beeline-0kj). Identical but for the
+    // feedback link, whose email records the address asked for and the
+    // minute: the requester's own input, so it tells them nothing.
     const bodies = new Set<string>();
     for (const path of [`/samples/${bobSample}`, `/specimens/${bobSpecimen}`, "/samples/999999", "/specimens/abc"]) {
       const res = await app.request(path);
       expect(res.status, path).toBe(404);
       const body = await res.text();
       expect(body).not.toContain("B-1");
-      bodies.add(body);
+      expect(body).toContain("mailto:staff@example.org");
+      bodies.add(body.replace(/href="mailto:[^"]*"/g, 'href="mailto:…"'));
     }
     expect(bodies.size).toBe(1);
     expect([...bodies][0]).toContain(en.errorPage.notFound.heading.replace("'", "&#39;"));

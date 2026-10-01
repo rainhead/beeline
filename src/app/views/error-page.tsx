@@ -16,18 +16,20 @@ export interface ErrorPageProps {
   reference?: string;
   /** Overrides the not-found wording where the page knows more and saying so leaks nothing. */
   message?: string;
+  /** And its heading, where the generic one would contradict the message. */
+  heading?: string;
   /** Where "Go back" leads: the same-site page that linked here, if there was one. */
   back?: string | null;
   /** The error itself — development only, never anywhere a volunteer could see it. */
   dev?: { text: string; staleStore: boolean } | null;
 }
 
-export function ErrorPage({ m, kind, reference, message, back, dev }: ErrorPageProps) {
+export function ErrorPage({ m, kind, reference, message, heading, back, dev }: ErrorPageProps) {
   const e = m.errorPage;
   const copy = e[kind];
   return (
     <>
-      <PageHeader title={copy.heading} lede={kind === "notFound" ? (message ?? copy.body) : copy.body} />
+      <PageHeader title={kind === "notFound" ? (heading ?? copy.heading) : copy.heading} lede={kind === "notFound" ? (message ?? copy.body) : copy.body} />
       {kind === "failed" && reference !== undefined && <p class="meta">{e.failed.reference(reference)}</p>}
       <p class="row">
         {back && (

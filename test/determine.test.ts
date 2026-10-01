@@ -319,7 +319,7 @@ describe("the page and its endpoints", () => {
     const { app, json, animal, spec } = await appFixture("gil");
     const cookie = `${IMPERSONATING_COOKIE}=${encodeURIComponent("Ada Adams")}`;
     const page = await (await app.request("/determinations", { headers: { cookie } })).text();
-    expect(page).toContain(en.determine.readOnly.replace("'", "&#39;"));
+    expect(page).toContain(en.determine.readOnly.replaceAll("'", "&#39;"));
     expect(page).toContain("26000101");
     const write = await json("/determinations/drafts", { writes: [{ specimenId: await spec("26000101"), animalId: await animal("Bombus") }] }, cookie);
     expect(write.status).toBe(403);

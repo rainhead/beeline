@@ -502,13 +502,19 @@ which this project can answer alone:
    different from the repair for one that has not (fix it before it does).
    Andony can answer this from the publication history.
 
-   *Answered 2026-10-01: none have.* In the corpus fetched 2026-09-28 the
+   *Answered 2026-10-01: no duplicated identifier has; one of the specimens
+   has, under an identifier of its own.* In the corpus fetched 2026-09-28 the
    population is 204 identifiers on 574 records, against the 598 counted on
    2026-09-09: 438 Oregon records from 2025 sharing 198 OSAC URIs, and 136
    from 2024 in Oregon, Idaho and Washington sharing six bare numbers. OSAC's
    published archive (the 2026-07-28 release) holds nothing later than the
    2024 season and no identifier twice, and none of the 204, nor any of the
-   592 misembedded URIs, appear in it. The six bare numbers are on GBIF only
+   592 misembedded URIs, appear in it. Matched by field number instead, so
+   that a specimen published under some other identifier is not missed, one
+   of the 574 records is there: `2463556`, an Idaho specimen from 2024 whose
+   corpus identifier is the bare `6556262` it shares with 34 others, published
+   by OSAC as `…/OBS/OBA_2463556` — its own number, and not the duplicate. None
+   of the 592 misembedded records is there by field number either. The six bare numbers are on GBIF only
    as other publishers' records — `7842549` is a woodcock in the Estonian
    Ornithological Society's dataset — which is what a bare number as an
    `occurrenceID` invites. The 2025 season goes out at OSAC's next annual

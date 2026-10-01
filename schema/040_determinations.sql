@@ -9,7 +9,7 @@ CREATE TABLE determination (
   determiner_id   INTEGER REFERENCES person(entity_id),
   determiner_name TEXT,
   is_expert       BOOLEAN NOT NULL,
-  channel         TEXT NOT NULL CHECK (channel IN ('in_app', 'ecdysis_import', 'legacy_import')),
+  channel         TEXT NOT NULL CHECK (channel IN ('in_app', 'ecdysis_import', 'legacy_import', 'worksheet_import')),
   determined_on   DATE,
   determined_on_precision TEXT CHECK (determined_on_precision IN ('month', 'year')),
   recorded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -44,3 +44,26 @@ CREATE TABLE ecdysis_identification (
 COMMENT ON TABLE ecdysis_identification IS 'Provenance and idempotence for determinations imported from Ecdysis: the Symbiota identification recordID each one came from. A row here means that identification is already recorded, whatever export it next arrives in.';
 COMMENT ON COLUMN ecdysis_identification.occurrence_id IS 'The Symbiota occurrence recordID the identification hangs off — dwc:occurrenceID as Ecdysis publishes it.';
 COMMENT ON COLUMN ecdysis_identification.entered_at IS 'When the identification was entered in Ecdysis (its initialTimeStamp, exported as modified). What orders the history within one load; recorded_at on the determination stays the moment it crossed into Beeline.';
+
+-- Which worksheet row each imported volunteer determination came from
+-- (beeline-pbk). Until Beeline, a volunteer determined their specimens in a
+-- copy of a Google Sheet (OBA Number, Sex/Caste, Family, Genus, Species) kept
+-- in a shared Drive folder, and the loader (src/load-worksheets.ts) reads an
+-- export of that folder. A sheet is a working document, edited and copied
+-- under new names, so only a determiner's newest file says what they think
+-- of a specimen: the file's modification time is what a later load compares,
+-- and the row is kept so a held or doubted entry can be found again.
+CREATE TABLE worksheet_determination (
+  determination_id INTEGER PRIMARY KEY REFERENCES determination(entity_id),
+  file_id          TEXT NOT NULL,
+  file_name        TEXT NOT NULL,
+  file_modified_at TIMESTAMPTZ NOT NULL,
+  sheet            TEXT NOT NULL,
+  row_number       INTEGER NOT NULL,
+  loaded_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE worksheet_determination IS 'Provenance for determinations imported from volunteer worksheets: the Drive file, tab and row each one came from, and when that file was last changed. A later load records a determiner''s entry for a specimen only from a file changed after the one already recorded.';
+COMMENT ON COLUMN worksheet_determination.file_id IS 'The Google Drive file id — stable across renames, unlike file_name.';
+COMMENT ON COLUMN worksheet_determination.file_name IS 'The file''s title when it was loaded, for a person looking for it in Drive.';
+COMMENT ON COLUMN worksheet_determination.file_modified_at IS 'Drive''s modifiedTime for the version loaded: an upper bound on when the entry was made, and what orders one determiner''s copies.';
+COMMENT ON COLUMN worksheet_determination.row_number IS 'The spreadsheet row, 1-based as the sheet numbers it.';

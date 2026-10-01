@@ -840,6 +840,7 @@ export const en = {
         in_app: "entered here",
         ecdysis_import: "imported from Ecdysis",
         legacy_import: "imported from the old atlas database",
+        worksheet_import: "imported from a determination worksheet",
       } as Record<string, string>,
     },
   },

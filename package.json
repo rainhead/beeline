@@ -28,6 +28,8 @@
     "itis:fetch": "scripts/fetch-itis.sh",
     "itis:load": "tsx src/load-itis.ts",
     "ecdysis:load": "tsx src/load-ecdysis.ts",
+    "worksheets:fetch": "tsx src/fetch-worksheets.ts",
+    "worksheets:load": "tsx src/load-worksheets.ts",
     "person:apply": "tsx src/apply-person-overlay.ts",
     "sample:apply": "tsx src/apply-sample-overlay.ts",
     "bench:pages": "tsx bench/pages.ts",

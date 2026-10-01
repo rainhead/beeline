@@ -450,7 +450,7 @@ export interface PrintedLabelTable {
 
 // schema/040_determinations.sql
 
-export type DeterminationChannel = "in_app" | "ecdysis_import" | "legacy_import";
+export type DeterminationChannel = "in_app" | "ecdysis_import" | "legacy_import" | "worksheet_import";
 
 /** Open nomenclature: how sure the determiner was. Never sp./spp., which a
  * genus-rank determination already says. */
@@ -483,6 +483,17 @@ export interface EcdysisIdentificationTable {
   determination_id: number;
   occurrence_id: string | null;
   entered_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  loaded_at: Timestamped;
+}
+
+/** The worksheet row an imported volunteer determination came from (beeline-pbk). */
+export interface WorksheetDeterminationTable {
+  determination_id: number;
+  file_id: string;
+  file_name: string;
+  file_modified_at: ColumnType<Date, Date | string, Date | string>;
+  sheet: string;
+  row_number: number;
   loaded_at: Timestamped;
 }
 
@@ -958,6 +969,7 @@ export interface Database {
   specimen: SpecimenTable;
   determination: DeterminationTable;
   ecdysis_identification: EcdysisIdentificationTable;
+  worksheet_determination: WorksheetDeterminationTable;
   animal_caste: AnimalCasteTable;
   determination_draft: DeterminationDraftTable;
   determination_batch: DeterminationBatchTable;

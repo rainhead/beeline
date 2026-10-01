@@ -119,6 +119,11 @@ describe("a file nobody has decided about", () => {
     await exportOf([{ id: "f1", name: "Collector 2025", modified: "2026-02-01T10:00:00Z", rows: ADA_2025 }]);
     const result = await load();
     expect(result).toMatchObject({ files: 1, undecided: 1, recorded: 0, rows: 0 });
+    // Held whole, so the held list is everything that did not load.
+    expect(result.statuses).toEqual([
+      { status: "undecided", season: "none", rows: 1 },
+      { status: "undecided", season: "open", rows: 7 },
+    ]);
     expect(await determinations()).toEqual([]);
     const written = (await readFile(manifest, "utf8")).split("\n");
     expect(written[0]).toBe(MANIFEST_COLUMNS.join(","));
@@ -168,6 +173,24 @@ describe("a decided file", () => {
     expect(await determinations()).toEqual([["26000099", "Halictus", "Halictus", "female", null, null, "Ada Collector", "worksheet_import", false]]);
   });
 
+  test("a row that names a taxon but has no label number is held, with what the cell held", async () => {
+    // From the export: a volunteer's own code in the number column, and a blank.
+    await exportOf([{ id: "f1", name: "Collector 2025", modified: "2026-02-01T10:00:00Z", rows: [[26000001, "female", "Apidae", "Bombus", null], [null, "male", "Apidae", "Bombus", null]] }]);
+    await decide({ f1: { determiner: "name:Ada Collector" } });
+    const result = await load();
+    expect(result.recorded).toBe(1);
+    expect(result.statuses.find((s) => s.status === "no_number")).toEqual({ status: "no_number", season: "none", rows: 1 });
+    expect((await readFile(join(dir, "held.csv"), "utf8")).split("\n")[1]).toBe("Collector 2025,USE THIS SHEET,3,,no_number,Bombus,male,26000001,");
+  });
+
+  test("a held cell that would read as a formula is guarded", async () => {
+    // Synthetic: nothing in the export starts with =, but a volunteer's cell could.
+    await exportOf([{ id: "f1", name: "Collector 2025", modified: "2026-02-01T10:00:00Z", rows: [[null, "female", "Apidae", "=HYPERLINK(1)", null]] }]);
+    await decide({ f1: { determiner: "name:Ada Collector" } });
+    await load();
+    expect((await readFile(join(dir, "held.csv"), "utf8")).split("\n")[1]).toBe("Collector 2025,USE THIS SHEET,2,,no_number,'=HYPERLINK(1),female,,");
+  });
+
   test("a renamed tab is named in the manifest", async () => {
     // Four files in the export keep their rows on a tab called something else.
     await exportOf([{ id: "f1", name: "Collector 2025", modified: "2026-02-01T10:00:00Z", rows: [[26000001, "female", "Apidae", "Bombus", null]], tab: "2025" }]);
@@ -188,6 +211,10 @@ describe("a decided file", () => {
     await decide({ f1: { determiner: "skip" }, f2: { determiner: "name:Nobody Here" } });
     const result = await load();
     expect(result).toMatchObject({ skipped: 1, recorded: 0, unresolvedDeterminers: [{ file: "Someone 2025", determiner: "name:Nobody Here", problem: "no person named 'Nobody Here'" }] });
+    // The skipped file holds nothing back; the one naming nobody holds everything.
+    const held = (await readFile(join(dir, "held.csv"), "utf8")).split("\n").filter((l) => l.includes(",undecided,"));
+    expect(held.every((l) => l.startsWith("Someone 2025,"))).toBe(true);
+    expect(held).toHaveLength(8);
   });
 });
 
@@ -318,13 +345,13 @@ describe("reading a sheet", () => {
       ["OBA Number", "Species", "Genus", "Sex/Caste"],
       ["2.5000001E7", "vosnesenskii", "Bombus", "Queen"],
     ]);
-    expect(titled).toEqual([{ rowNumber: 3, number: "25000001", sex: "queen", family: null, genus: "Bombus", species: "vosnesenskii" }]);
+    expect(titled).toEqual([{ rowNumber: 3, number: "25000001", sex: "queen", family: null, genus: "Bombus", species: "vosnesenskii", numberText: null }]);
     // The export's own case: '250' typed over the Genus heading.
     expect(readSheetRows([["OBA Number", "Sex/Caste", "Family", "250.0", "Species"], ["2.5035356E7", "female", "Halictidae", "Halictus", "rubicundus"]])).toEqual([
-      { rowNumber: 2, number: "25035356", sex: "female", family: "Halictidae", genus: "Halictus", species: "rubicundus" },
+      { rowNumber: 2, number: "25035356", sex: "female", family: "Halictidae", genus: "Halictus", species: "rubicundus", numberText: null },
     ]);
     expect(readSheetRows([["2.5000001E7", "female", "Halictidae", "Halictus"]])).toEqual([
-      { rowNumber: 1, number: "25000001", sex: "female", family: "Halictidae", genus: "Halictus", species: null },
+      { rowNumber: 1, number: "25000001", sex: "female", family: "Halictidae", genus: "Halictus", species: null, numberText: null },
     ]);
   });
 });

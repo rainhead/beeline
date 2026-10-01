@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { resolver } from "./apply-person-overlay.js";
+import { csvCell } from "./app/listings.js";
 import { parseCsv } from "./corrections.js";
 import { DEFAULT_DB } from "./person-change.js";
 
@@ -106,19 +107,25 @@ export type WorksheetStatus =
   | "already_loaded"
   /** Two of the determiner's files say different things about the specimen. */
   | "versions_disagree"
+  /** The row names a taxon but its number cell is empty or not a label number. */
+  | "no_number"
   | "no_specimen"
   | "several_specimens"
   | "not_theirs"
   | "conflicting_rows"
-  | "unresolved_name";
+  | "unresolved_name"
+  /** The file has no determiner in the manifest yet, or one that names nobody. */
+  | "undecided";
 
 const HELD: readonly WorksheetStatus[] = [
+  "no_number",
   "no_specimen",
   "several_specimens",
   "not_theirs",
   "conflicting_rows",
   "versions_disagree",
   "unresolved_name",
+  "undecided",
 ];
 
 export interface LoadWorksheetsOptions {
@@ -141,7 +148,7 @@ export interface LoadWorksheetsResult {
   unreadable: Array<{ file: string; problem: string }>;
   /** Manifest references that name nobody, or two people. */
   unresolvedDeterminers: Array<{ file: string; determiner: string; problem: string }>;
-  /** Rows with a number and a name, from the files that load. */
+  /** Rows with a name, from the files that load. */
   rows: number;
   /** Rows with a number and nothing else: numbers filled in ahead and never determined. */
   undetermined: number;
@@ -202,6 +209,8 @@ async function writeAtomically(path: string, text: string): Promise<void> {
 export interface SheetRow {
   rowNumber: number;
   number: string | null;
+  /** What the number cell held, when it held something that is not a label number. */
+  numberText: string | null;
   sex: string | null;
   family: string | null;
   genus: string | null;
@@ -267,6 +276,7 @@ export function readSheetRows(grid: readonly (readonly unknown[])[], rowNumbers?
     out.push({
       rowNumber: rowNumbers?.[i] ?? i + 1,
       number: labelNumber(blank(r[0])),
+      numberText: labelNumber(blank(r[0])) === null ? blank(r[0]) : null,
       sex: (sexAt < 0 ? null : blank(r[sexAt]))?.toLowerCase() ?? null,
       family: familyAt < 0 ? null : blank(r[familyAt]),
       genus: genusAt < 0 ? null : blank(r[genusAt]),
@@ -357,7 +367,7 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
     await conn.run(`CREATE OR REPLACE TEMP TABLE ws_file (
       file_id TEXT, file_name TEXT, modified_at TIMESTAMPTZ, decision TEXT, determiner_id INTEGER, for_others BOOLEAN)`);
     await conn.run(`CREATE OR REPLACE TEMP TABLE ws_row (
-      file_id TEXT, sheet TEXT, row_number INTEGER, number TEXT, sex_text TEXT, family TEXT, genus TEXT, species TEXT)`);
+      file_id TEXT, sheet TEXT, row_number INTEGER, number TEXT, number_text TEXT, sex_text TEXT, family TEXT, genus TEXT, species TEXT)`);
 
     const { resolve } = await resolver(conn);
     const unresolvedDeterminers: LoadWorksheetsResult["unresolvedDeterminers"] = [];
@@ -376,8 +386,10 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
     }
     const values = parsed.flatMap(({ file, sheet, rows: rs }) =>
       rs
-        .filter((r) => r.number !== null)
-        .map((r) => `(${[file.id, sheet, r.rowNumber, r.number, r.sex, r.family, r.genus, r.species].map(sqlValue).join(", ")})`),
+        // A row with a name and no usable number is kept, to be held: it is
+        // a determination that cannot be placed, and dropping it would be silent.
+        .filter((r) => r.number !== null || r.family !== null || r.genus !== null || r.species !== null)
+        .map((r) => `(${[file.id, sheet, r.rowNumber, r.number, r.numberText, r.sex, r.family, r.genus, r.species].map(sqlValue).join(", ")})`),
     );
     for (let i = 0; i < values.length; i += 1000) {
       await conn.run(`INSERT INTO ws_row VALUES ${values.slice(i, i + 1000).join(", ")}`);
@@ -459,7 +471,7 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
         -- Where the row lands, before anything about its content: a row that
         -- reaches no specimen, or someone else's, says nothing about this
         -- determiner's view of any specimen of theirs.
-        SELECT c.*, CASE WHEN specimens = 0 THEN 'no_specimen' WHEN specimens > 1 THEN 'several_specimens'
+        SELECT c.*, CASE WHEN number IS NULL THEN 'no_number' WHEN specimens = 0 THEN 'no_specimen' WHEN specimens > 1 THEN 'several_specimens'
                          WHEN NOT theirs AND NOT for_others THEN 'not_theirs' END AS placement
         FROM c
       ), read AS (
@@ -486,7 +498,13 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
                   WHEN n.animal_id IS NULL THEN 'unresolved_name' END AS status
       FROM versions n LEFT JOIN animal_castes an ON an.animal_id = n.animal_id
       UNION ALL BY NAME
-      SELECT p.*, p.placement AS status FROM placed p WHERE placement IS NOT NULL`);
+      SELECT p.*, p.placement AS status FROM placed p WHERE placement IS NOT NULL
+      -- A file nobody has decided about is held whole, so a list of what did
+      -- not load is a list of everything that did not (Peter, 2026-10-01).
+      UNION ALL BY NAME
+      SELECT n.*, 'undecided' AS status,
+             (SELECT CASE WHEN count(*) = 1 THEN min(sp.sample_id) END FROM specimen sp WHERE sp.field_number = n.number) AS sample_id
+      FROM ws_named n WHERE n.determiner_id IS NULL AND n.decision IS DISTINCT FROM 'skip'`);
 
     // What the store already holds for this determiner and specimen.
     await conn.run(`
@@ -523,7 +541,7 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
     // say, and the numbers either side, which is usually enough to see the slip.
     const held = await rows(
       conn,
-      `SELECT c.file_name, c.sheet, c.row_number, c.number, c.status, c.verbatim, c.sex_text,
+      `SELECT c.file_name, c.sheet, c.row_number, coalesce(c.number, c.number_text), c.status, c.verbatim, c.sex_text,
               (SELECT string_agg(o.number, ' ' ORDER BY o.row_number) FROM ws_row o
                WHERE o.file_id = c.file_id AND o.sheet = c.sheet AND o.row_number BETWEEN c.row_number - 2 AND c.row_number + 2 AND o.row_number <> c.row_number) AS neighbours,
               (SELECT string_agg(DISTINCT concat_ws(' ', concat(o.file_name, ':'), o.verbatim, o.sex_text), '; ') FROM ws_candidate o
@@ -535,7 +553,9 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
     await writeAtomically(
       join(opts.dir, "held.csv"),
       `${["file", "sheet", "row", "number", "reason", "name", "sex_caste", "neighbours", "other_copies"].join(",")}\n` +
-        held.map((r) => r.map((v) => cell(v === null ? "" : String(v))).join(",")).join("\n") +
+        // Guarded against formulas, unlike the manifest: these are volunteers'
+        // cells, written for a person to open in a spreadsheet, never read back.
+        held.map((r) => r.map((v) => csvCell(v === null ? "" : String(v))).join(",")).join("\n") +
         (held.length > 0 ? "\n" : ""),
     );
 

@@ -129,6 +129,7 @@ export const en = {
       taxonomy: "Taxonomy",
       printRuns: "Print runs",
       exports: "Exports",
+      identify: "Identify specimens",
     },
     /**
      * The menu's destinations beyond the records — reference pages and staff
@@ -841,6 +842,163 @@ export const en = {
     },
   },
 
+  /**
+   * Naming your own specimens (beeline-bcq). Written for a volunteer who has
+   * never read a glossary: plain verbs ("name", "tick"), the program's one
+   * technical word — determination — introduced once and linked, and the
+   * overnight commit said as what it means to them: you can change today's
+   * entries until tonight.
+   */
+  determine: {
+    title: "Identify your specimens",
+    lede: "Say what each of your pinned specimens is. Go only as far as you're sure — a genus is plenty, and a family will do.",
+    /** The glossary link after the lede. */
+    aboutDetermination: "More about determinations.",
+    /**
+     * The overnight commit, said as what it means to the person: undo is free
+     * until 1am; after that a change is still possible and is kept beside the
+     * earlier name. And why expert names are missing, so nobody thinks an
+     * expert's work was lost.
+     */
+    tonight:
+      "Everything saves as you go. Until 1am (Pacific) you can undo anything you entered that day. " +
+      "After that you can still change a name: your newest one is used, and the earlier one stays in the specimen's history.",
+    experts:
+      "Names given by experts aren't shown here, so they don't steer you. They're kept, and they're on each specimen's own page.",
+    readOnly: "You're viewing this as someone else, so nothing here can be changed.",
+    season: "Season",
+    seasonOption: (season: number, unnamed: number) =>
+      unnamed === 0 ? String(season) : `${season} · ${n(unnamed)} to name`,
+    empty: "You have no specimens yet. A specimen appears here once its label has been printed.",
+    emptySeason: "No specimens from this season.",
+    mode: {
+      label: "Work through",
+      bySample: "By sample",
+      batch: (count: number) => `Batch (${n(count)})`,
+    },
+    show: {
+      label: "Show",
+      unnamed: (count: number) => `Not yet named (${n(count)})`,
+      all: (count: number) => `All (${n(count)})`,
+    },
+    jump: {
+      label: "Go to field number",
+      placeholder: "26019685, or its last few digits",
+      notHere: (typed: string, season: number) =>
+        `${typed} isn't among your ${season} specimens. Try another season, or add it to your batch, which looks in every season.`,
+    },
+    batch: {
+      lede:
+        "Gather specimens from any season by their field numbers — a box you've sorted by genus, say. " +
+        "They're listed in the order you add them, and your batch is kept until you clear it.",
+      /** How to write numbers, under the box. */
+      hint:
+        "Separate numbers with commas. A range can end in just its last digits: 26019685-697 means 26019685 to 26019697. " +
+        "If only one of your numbers ends in 412, 412 is enough.",
+      add: "Add field numbers",
+      addButton: "Add",
+      placeholder: "26019685-697, 26027608 — or scan each label",
+      empty: "Your batch is empty. Add field numbers above, or select rows in the By sample view and add them from there.",
+      added: (count: number) => `Added ${n(count)}.`,
+      addedSome: (added: number, already: number) =>
+        `Added ${n(added)}; ${n(already)} ${already === 1 ? "was" : "were"} already in your batch.`,
+      alreadyOne: (fieldNumber: string) => `${fieldNumber} is already in your batch.`,
+      alreadyAll: (count: number) => `All ${n(count)} are already in your batch.`,
+      dismiss: (text: string) => `Dismiss ${text}`,
+      emptyBatch: "Clear the batch",
+      remove: (fieldNumber: string) => `Remove ${fieldNumber} from the batch (its name stays)`,
+    },
+    /** Why a field number someone typed found nothing. */
+    problem: {
+      notNumber: "That isn't a field number.",
+      ambiguous: (typed: string, count: number, examples: readonly string[] | string) => {
+        // A plain string passes through, for the proofing page's «sample» placeholders.
+        const some = Array.isArray(examples) ? examples : [String(examples)];
+        return `${n(count)} of your field numbers end in ${typed} (${some.join(", ")}${count > some.length ? "…" : ""}). Type more of it.`;
+      },
+      digits: (typed: string, spans: string) => `${typed} has ${typed.length} digits. ${spans}`,
+      /** A number one digit short of the person's newest: almost always a dropped digit. */
+      digitsShort: (typed: string, digits: number, example: string) =>
+        `${typed} has ${typed.length} digits. Is one missing? Your newest have ${n(digits)}, like ${example}.`,
+      notTheirs: (typed: string, spans: string) => `${typed} isn't one of your field numbers. ${spans}`,
+      rangeStart: (inner: string) => `A range has to start at one of your field numbers. ${inner}`,
+      backwards: "That range runs backwards. Put the lower number first.",
+      tooLong: (max: number) => `That range covers more than ${n(max)} numbers. Is a digit missing, or one too many?`,
+      lengthsDiffer: (start: string, end: string) => `${start} and ${end} have different numbers of digits. Is one missing?`,
+      emptyRange: (spans: string) => `None of your field numbers fall in that range. ${spans}`,
+      /** A range written one digit short of the person's newest numbers: almost always a dropped digit. */
+      digitMissing: (digits: number, example: string) =>
+        `None of your field numbers fall in that range. Is a digit missing? Your newest have ${n(digits)} digits, like ${example}.`,
+      noSpecimens: "You have no specimens with field numbers yet.",
+      /** What their numbers look like, so a dropped or doubled digit shows. One span or several, by length. */
+      spans: (spans: readonly { digits: number; first: string; last: string }[] | string) =>
+        typeof spans === "string"
+          ? spans
+          : spans.length === 1
+          ? `Yours run from ${spans[0]!.first} to ${spans[0]!.last}.`
+          : `Yours run ${list(spans.map((s) => `${s.first} to ${s.last} (${s.digits} digits)`))}.`,
+    },
+    bulk: {
+      none: "Select rows to name several at once. Hold Shift to select a block.",
+      ticked: (count: number) => `${n(count)} selected`,
+      namePlaceholder: (count: number) => (count === 0 ? "Name them…" : count === 1 ? "Name it…" : `Name all ${n(count)}…`),
+      named: (count: number, name: string) => `Named ${n(count)} ${name}.`,
+      sexSet: (count: number) => `Set the sex of ${n(count)}.`,
+      undo: "Undo",
+      untick: "Clear selection",
+      addToBatch: "Add to batch",
+      removeFromBatch: "Remove from batch",
+      sexLabel: "Sex of the selected specimens",
+    },
+    table: {
+      tickAll: (count: number) => `Select all ${n(count)} shown`,
+      tickSample: "Select every specimen in this sample",
+      tick: (fieldNumber: string) => `Select ${fieldNumber}`,
+      position: "#",
+      fieldNumber: "Field number",
+      sample: "Sample",
+      name: "Identified as",
+      sex: "Sex",
+      saved: "Entered",
+      sampleHeading: (sampleNumber: string, when: string) => `Sample ${sampleNumber} · ${when}`,
+      onHost: "on",
+      viewOnInat: "View on iNaturalist",
+      addName: "Add a name",
+      /** A specimen whose label never carried a field number, or whose number a canceled print run took back. */
+      noNumber: "no field number",
+      showMore: (more: number, left: number) => `Show ${n(more)} more (${n(left)} left)`,
+    },
+    /** The Saved column. */
+    saved: {
+      today: "Today",
+      todayHint: "You can undo this until 1am (Pacific).",
+      undo: "Undo",
+      undoHint: "Go back to what this said before today",
+      on: (when: string) => when,
+      beforeBeeline: "Old system",
+      nothing: "nothing entered",
+      saving: "Saving…",
+      failed: "Not saved",
+      retry: "Try again",
+    },
+    sex: {
+      label: "Sex",
+      female: "Female",
+      male: "Male",
+      queen: "Queen",
+      worker: "Worker",
+      /** Why some rows offer queen and worker. */
+      castesHint: "Bumble bees and honey bees: queen, worker or male",
+    },
+    picker: {
+      placeholder: "Type a name — bombus, osmia lig…",
+      noBees: "No bee's name starts like that.",
+      noNames: "No name starts like that.",
+      bycatch: "Include wasps and other non-bees",
+    },
+    saveFailed: "That didn't save. Check your connection, then try again.",
+  },
+
   errors: {
     crossOrigin: "cross-origin request refused",
     /** Asking to act for somebody nobody granted you (beeline-oyl). */
@@ -951,6 +1109,8 @@ export const en = {
         "Pulls every observation changed since the last run (edits and new records, however old the observation), promotes into samples, and fills missing elevations from the DEM tiles on disk.",
       "legacy-export":
         "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
+      "commit-determinations":
+        "Turns the day's entries on Identify specimens into determinations. Until it runs, volunteers can change what they entered; after it, a change is added beside the old one.",
       "weekly-sweep":
         "Re-fetches the full trailing year from each project as a presence proof — the run that detects deletions and anything the incremental pulls missed — then promotes and derives elevations.",
     } as Record<string, string>,

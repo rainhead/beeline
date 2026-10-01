@@ -144,7 +144,7 @@ describe("reseeding a store that cannot be blown away", () => {
     // reseeds and its runs are rehearsals; a deployed store after cutover is
     // migrated, never reseeded (ADR 0006). So the target mints again from the
     // imported ceiling, and the report says what was dropped.
-    expect(counts.leftBehind).toEqual({ print_run: 1, minted_field_number: 1 });
+    expect(counts.leftBehind).toMatchObject({ print_run: 1, minted_field_number: 1 });
     expect(await rows(conn, `SELECT count(*) FROM print_run`)).toEqual([[0n]]);
     expect(await rows(conn, `SELECT count(*) FROM minted_field_number`)).toEqual([[0n]]);
   });

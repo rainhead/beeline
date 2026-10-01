@@ -486,6 +486,45 @@ export interface EcdysisIdentificationTable {
   loaded_at: Timestamped;
 }
 
+// schema/045_determination_entry.sql, schema/119 (beeline-bcq)
+
+/** Which taxa record sex as queen/worker/male; the nearest stated ancestor decides. */
+export interface AnimalCasteTable {
+  rank: string;
+  scientific_name: string;
+  has_castes: boolean;
+}
+
+export type DraftSex = "female" | "male";
+export type DraftCaste = "gyne" | "worker" | "drone";
+
+/** A volunteer's entry, changeable until the overnight commit makes it a determination. */
+export interface DeterminationDraftTable {
+  specimen_id: number;
+  determiner_id: number;
+  animal_id: number | null;
+  sex: DraftSex | null;
+  caste: DraftCaste | null;
+  updated_at: Timestamped;
+}
+
+/** Specimens a person has gathered to name together, in the order added. */
+export interface DeterminationBatchTable {
+  person_id: number;
+  specimen_id: number;
+  position: number;
+}
+
+export interface SampleSeasonView {
+  sample_id: number;
+  season: number;
+}
+
+export interface AnimalCastesView {
+  animal_id: number;
+  has_castes: boolean;
+}
+
 // schema/050_qc.sql
 
 export type QcSeverity = "blocking" | "warning";
@@ -919,6 +958,11 @@ export interface Database {
   specimen: SpecimenTable;
   determination: DeterminationTable;
   ecdysis_identification: EcdysisIdentificationTable;
+  animal_caste: AnimalCasteTable;
+  determination_draft: DeterminationDraftTable;
+  determination_batch: DeterminationBatchTable;
+  animal_castes: AnimalCastesView;
+  sample_season: SampleSeasonView;
   qc_rule: QcRuleTable;
   sample_promotion_finding: SamplePromotionFindingTable;
   sync_run: SyncRunTable;

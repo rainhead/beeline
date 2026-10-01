@@ -24,3 +24,13 @@ SELECT s.entity_id AS sample_id
 FROM sample s, season
 WHERE s.date_end < season.started_on;
 COMMENT ON VIEW settled_sample IS 'Samples from a closed season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags, keep their printability, and stay editable.';
+
+-- Which season a sample belongs to, by the same 1 March line: the year its
+-- season began. Judged on date_end, like settled_sample. Written without
+-- interval arithmetic so a port reads it as it stands.
+CREATE VIEW sample_season AS
+SELECT entity_id AS sample_id,
+       CAST(EXTRACT(YEAR FROM date_end) AS INTEGER)
+         - CASE WHEN EXTRACT(MONTH FROM date_end) < 3 THEN 1 ELSE 0 END AS season
+FROM sample;
+COMMENT ON VIEW sample_season IS 'The season each sample belongs to, named by the year it began (1 March). A sample emptied in February belongs to the previous year''s season.';

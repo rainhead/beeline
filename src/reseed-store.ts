@@ -99,7 +99,19 @@ export interface ReseedCounts {
    * happen after it. Reported rather than silent, because the numbers were
    * burned in the source and are not in the target.
    */
-  leftBehind: { print_run: number; minted_field_number: number };
+  leftBehind: {
+    print_run: number;
+    minted_field_number: number;
+    /**
+     * Volunteers' determinations entered in Beeline, and what they had not
+     * committed yet (beeline-bcq). Same reason as the runs: every row hangs
+     * off a specimen and a person a reseed redraws, and before cutover the
+     * sandbox's entries are rehearsals.
+     */
+    in_app_determination: number;
+    determination_draft: number;
+    determination_batch: number;
+  };
   /** The next id promotion will draw — where the carried rows left off. */
   sequenceAt: number;
 }
@@ -215,6 +227,9 @@ export async function carryStaging(
       minted_field_number: (await has("minted_field_number"))
         ? await scalar(conn, `SELECT count(*) FROM old.minted_field_number`)
         : 0,
+      in_app_determination: await scalar(conn, `SELECT count(*) FROM old.determination WHERE channel = 'in_app'`),
+      determination_draft: (await has("determination_draft")) ? await scalar(conn, `SELECT count(*) FROM old.determination_draft`) : 0,
+      determination_batch: (await has("determination_batch")) ? await scalar(conn, `SELECT count(*) FROM old.determination_batch`) : 0,
     };
 
     // Scoped to the target: both catalogs are attached and both have a
@@ -269,6 +284,13 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     console.log(
       `\nLeft behind: ${counts.leftBehind.print_run} print run(s) and ${counts.leftBehind.minted_field_number} ` +
         `minted field number(s). A reseed carries neither; the target mints again from the imported ceiling.`,
+    );
+  }
+  const { in_app_determination, determination_draft, determination_batch } = counts.leftBehind;
+  if (in_app_determination + determination_draft + determination_batch > 0) {
+    console.log(
+      `\nLeft behind: ${in_app_determination} determination(s) entered in Beeline, ${determination_draft} uncommitted ` +
+        `draft(s) and ${determination_batch} batch row(s). A reseed carries none of them.`,
     );
   }
   console.log(

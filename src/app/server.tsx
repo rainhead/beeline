@@ -21,6 +21,23 @@ import { countListingView, listingAttributes, rosterAttributes, type Viewer } fr
 import { Glossary } from "./views/glossary.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomySummary } from "./taxonomy.js";
+import {
+  addSpecimensToBatch,
+  addToBatch,
+  batchRows,
+  batchSize,
+  defaultSeason,
+  entrySeasons,
+  entryTaxa,
+  removeFromBatch,
+  rowTaxa,
+  saveDrafts,
+  seasonRows,
+  UnknownTaxon,
+  UnreachableSpecimens,
+  type DraftWrite,
+} from "./determine.js";
+import { DeterminePage } from "./views/determine.js";
 import { Jobs } from "./views/jobs.js";
 import { Exports } from "./views/exports.js";
 import { legacyExportPath } from "../legacy-export.js";
@@ -804,6 +821,88 @@ export function createApp({
     if (node === null) return c.text(m.taxonomy.notFound, 404);
     return c.html(await page(c, node.scientific_name, <TaxonPage m={m} node={node} admin={c.get("admin")} />));
   });
+
+  // --- Identify your specimens (beeline-bcq). Reach is "mine", following
+  // the acting-for switch; whoever is signed in is the determiner and owns
+  // the drafts and the batch, since delegation grants reach, never credit.
+  // Impersonation may look and not write, like every other write path.
+  // Nothing here writes a determination: the overnight job does
+  // (src/commit-determinations.ts). ---
+  const determiner = (c: Context<AppEnv>) => c.get("session").personId;
+
+  app.get("/determinations", async (c) => {
+    const m = c.get("m");
+    const acting = c.get("acting");
+    const me = determiner(c);
+    const seasons = await entrySeasons(db, acting.personId, me);
+    const view = c.req.query("view") === "batch" ? "batch" : "sample";
+    const asked = Number(c.req.query("season"));
+    const season = seasons.some((s) => s.season === asked) ? asked : defaultSeason(seasons);
+    const rows =
+      view === "batch" ? await batchRows(db, acting.personId, me) : season === null ? [] : await seasonRows(db, acting.personId, me, season);
+    const data = {
+      view,
+      season,
+      rows,
+      taxa: await rowTaxa(db, rows),
+      readOnly: acting.impersonating,
+      batchCount: view === "batch" ? rows.length : await batchSize(db, acting.personId, me),
+    } as const;
+    return c.html(
+      await page(c, m.determine.title, <DeterminePage m={m} seasons={seasons} data={data} />, ["/static/determine.css"]),
+    );
+  });
+
+  // The names change only when the tree is promoted; a few minutes' staleness
+  // costs nothing and saves 400 KB on every page of a long sitting.
+  app.get("/determinations/taxa.json", async (c) => {
+    c.header("cache-control", "private, max-age=600");
+    return c.json(await entryTaxa(db));
+  });
+
+  /** Refuse a write while impersonating, and answer the module's refusals in HTTP. */
+  const determineWrite = async (c: Context<AppEnv>, write: () => Promise<unknown>) => {
+    if (c.get("acting").impersonating) return c.json({ error: c.get("m").errors.readOnlyImpersonating }, 403);
+    try {
+      return c.json(await write());
+    } catch (err) {
+      // Not "forbidden": a specimen someone cannot reach is one they cannot
+      // know exists, the same 404 the record pages give (beeline-2c3.34).
+      if (err instanceof UnreachableSpecimens) return c.json({ error: "not found" }, 404);
+      if (err instanceof UnknownTaxon) return c.json({ error: "unknown taxon" }, 400);
+      throw err;
+    }
+  };
+
+  app.post("/determinations/drafts", (c) =>
+    determineWrite(c, async () => {
+      const body = (await c.req.json()) as { writes?: unknown };
+      const writes = Array.isArray(body.writes) ? (body.writes as DraftWrite[]) : [];
+      const clean = writes.map((w) => ({
+        specimenId: Number(w.specimenId),
+        animalId: w.animalId === null || w.animalId === undefined ? null : Number(w.animalId),
+        sex: w.sex ?? null,
+        caste: w.caste ?? null,
+      }));
+      return { rows: await saveDrafts(db, c.get("acting").personId, determiner(c), clean) };
+    }),
+  );
+
+  app.post("/determinations/batch", (c) =>
+    determineWrite(c, async () => {
+      const { personId } = c.get("acting");
+      const me = determiner(c);
+      const body = (await c.req.json()) as { add?: unknown; addIds?: unknown; remove?: unknown };
+      const ids = (v: unknown) => (Array.isArray(v) ? v.map(Number).filter(Number.isInteger) : []);
+      let addition = null;
+      if (typeof body.add === "string") addition = await addToBatch(db, personId, me, body.add);
+      if (body.addIds !== undefined) await addSpecimensToBatch(db, personId, me, ids(body.addIds));
+      if (body.remove === "all") await removeFromBatch(db, me, "all");
+      else if (body.remove !== undefined) await removeFromBatch(db, me, ids(body.remove));
+      const rows = await batchRows(db, personId, me);
+      return { addition, rows, taxa: await rowTaxa(db, rows) };
+    }),
+  );
 
   // --- The design system. English-only by policy: these views carry literal
   // prose. Not gated, unlike /jobs and /people — it reads no records and

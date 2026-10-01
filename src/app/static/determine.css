@@ -1,0 +1,82 @@
+/* Identify your specimens (beeline-bcq). Page-specific: the grid and its
+   controls. Everything reusable stays in components.css. */
+
+/* The grid wants the room: it is the page. */
+main > determine-grid { grid-column: full; padding: 0 var(--space-6); }
+
+.determine-views { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-4); align-items: center; margin: var(--space-4) 0; }
+
+determine-grid button.small { min-height: 0; padding: var(--space-1) var(--space-2); font: var(--md-sys-typescale-label); }
+determine-grid button[disabled] { opacity: 0.45; cursor: not-allowed; }
+.determine-rank { font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant); margin-left: var(--space-1); }
+
+/* The name picker */
+.determine-picker { position: relative; min-width: 16rem; }
+.determine-picker input { width: 100%; box-sizing: border-box; }
+.determine-picker-panel {
+  position: absolute; z-index: 20; top: calc(100% + 2px); left: 0; min-width: 100%; width: max-content; max-width: 32rem;
+  background: var(--md-sys-color-surface); border: 1px solid var(--md-sys-color-outline);
+  border-radius: var(--radius-sm); box-shadow: 0 6px 18px rgb(0 0 0 / 0.15); padding: var(--space-1) 0;
+}
+.determine-picker-panel ul { list-style: none; margin: 0; padding: 0; }
+.determine-picker-panel li { padding: var(--space-1-5) var(--space-3); cursor: pointer; display: flex; gap: var(--space-2); align-items: baseline; }
+.determine-picker-panel li[aria-selected="true"], .determine-picker-panel li:hover { background: var(--md-sys-color-secondary-container); }
+.determine-picker-panel li .meta { margin-left: auto; padding-left: var(--space-4); }
+.determine-picker-panel > .meta { padding: var(--space-2) var(--space-3); margin: 0; }
+.determine-bycatch { display: flex; gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); border-top: 1px solid var(--md-sys-color-outline-variant); font: var(--md-sys-typescale-label); }
+
+/* Sex: one segmented control, a click sets it and a click on the choice set clears it */
+.determine-sex { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 4.75rem; border: 1px solid var(--md-sys-color-outline); border-radius: var(--radius-full); overflow: hidden; }
+.determine-sex button { min-height: 2rem; padding: 0 var(--space-2); border: 0; border-radius: 0; background: transparent; color: var(--md-sys-color-on-surface); font: var(--md-sys-typescale-label); }
+.determine-sex button + button { border-left: 1px solid var(--md-sys-color-outline); }
+.determine-sex button:hover:not([disabled]) { background: var(--md-sys-color-surface-variant); }
+.determine-sex button[aria-pressed="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font-weight: 700; }
+
+/* Toolbars */
+.determine-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-4); align-items: center; }
+.determine-jump { display: inline-flex; gap: var(--space-2); align-items: center; font: var(--md-sys-typescale-label); }
+.determine-jump input { width: 16rem; }
+.determine-numbers { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; }
+.determine-numbers > label { font: var(--md-sys-typescale-label); }
+.determine-numbers-box { flex: 1; min-width: min(28rem, 100%); display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; padding: var(--space-1); border: 1px solid var(--md-sys-color-outline); border-radius: var(--radius-sm); background: var(--md-sys-color-surface); }
+.determine-numbers-box input { flex: 1; min-width: 14rem; border: 0; outline: none; background: transparent; }
+.determine-numbers-box .chip { display: inline-flex; align-items: center; gap: var(--space-1); }
+determine-grid button.remove { min-height: 0; padding: 0 var(--space-1); background: transparent; color: inherit; border: 0; font-size: 1.1rem; }
+.determine-message { min-height: 1.5em; margin: var(--space-2) 0; }
+
+/* The bulk bar: always there, so ticking the first row never moves the table */
+.determine-bulk {
+  position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center;
+  min-height: 3.5rem; box-sizing: border-box; padding: var(--space-2) var(--space-3); margin-bottom: var(--space-2);
+  background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-radius: var(--radius-md);
+}
+.determine-bulk[data-empty] { background: var(--md-sys-color-surface-variant); color: var(--md-sys-color-on-surface-variant); }
+.determine-bulk .count { min-width: 14rem; }
+.determine-bulk .done { flex: 1; display: inline-flex; gap: var(--space-2); align-items: center; }
+
+/* The grid: fixed columns, so naming a row never reflows the table */
+.determine-grid { table-layout: fixed; }
+.determine-grid col.tick { width: 2.75rem; }
+.determine-grid col.position { width: 3rem; }
+.determine-grid col.field-number { width: 8rem; }
+.determine-grid col.sample { width: 18rem; }
+.determine-grid col.sex { width: 16.5rem; }
+.determine-grid col.saved { width: 11rem; }
+.determine-grid th, .determine-grid td { padding: var(--space-1) var(--space-3); }
+.determine-grid tr { height: 2.75rem; }
+.determine-grid td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.determine-grid td.name { overflow: visible; }
+.determine-grid td.position { text-align: right; }
+.determine-grid td.field-number { font: var(--md-sys-typescale-mono); }
+.determine-grid td.sample { font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant); }
+.determine-grid:not(.batch) tbody { border-top: 3px solid var(--md-sys-color-outline); }
+.determine-grid tr.sample-heading td { background: var(--md-sys-color-surface-variant); font: var(--md-sys-typescale-label); white-space: normal; }
+.determine-grid tr.sample-heading .inat-link img { vertical-align: middle; }
+.determine-grid tr.selected td { background: color-mix(in srgb, var(--md-sys-color-secondary-container) 60%, transparent); }
+.determine-grid tr.flash td { animation: determine-flash 1.5s ease-out; }
+@keyframes determine-flash { from { background: var(--md-sys-color-tertiary-container); } }
+.determine-grid .name-cell { background: none; border: 1px dashed transparent; color: inherit; padding: var(--space-1); min-height: 0; text-align: left; width: 100%; border-radius: var(--radius-sm); }
+.determine-grid .name-cell:hover:not([disabled]) { border-color: var(--md-sys-color-outline); background: none; }
+.determine-numbers .determine-hint { flex-basis: 100%; margin: 0; }
+.determine-bycatch { white-space: nowrap; }
+.determine-bycatch input { width: auto; flex: none; margin: 0; }

@@ -7,6 +7,7 @@ declare module "hono/jsx" {
   namespace JSX {
     interface IntrinsicElements {
       "demo-counter": { class?: string };
+      "determine-grid": Record<string, never>;
     }
   }
 }

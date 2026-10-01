@@ -1,4 +1,5 @@
 import { legacyExportPath, writeLegacyExport } from "../../legacy-export.js";
+import { commitDeterminationDrafts } from "../../commit-determinations.js";
 import { readFile } from "node:fs/promises";
 import type { Kysely } from "kysely";
 import { deriveElevations } from "../../derive-elevation.js";
@@ -207,6 +208,18 @@ export function buildJobs(
           parts.push(`project ${projectId} (full sweep since ${d1}): ${r.fetched} fetched, ${r.newLoads} new`);
         }
         return pipelineTail(ctx, parts, config.personChangesPath, samplePaths, config.sampleOverlayPath);
+      },
+    },
+    {
+      // Volunteers' entries become determinations (beeline-bcq): a draft is
+      // theirs to change all day, and from tonight it is history. At 1am, so
+      // the 4am legacy export carries the day's work.
+      name: "commit-determinations",
+      schedule: { kind: "dailyLA", hour: 1 },
+      window: "night",
+      async run(ctx) {
+        const { committed, unchanged, waiting } = await ctx.step("commit drafts", () => commitDeterminationDrafts(ctx.conn));
+        return `${committed} determination(s) recorded, ${unchanged} draft(s) unchanged and dropped, ${waiting} waiting for a name`;
       },
     },
     {

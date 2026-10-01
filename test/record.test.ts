@@ -383,7 +383,7 @@ describe("reaching a record", () => {
       bodies.add(body.replace(/href="mailto:[^"]*"/g, 'href="mailto:…"'));
     }
     expect(bodies.size).toBe(1);
-    expect([...bodies][0]).toContain(en.errorPage.notFound.heading.replace("'", "&#39;"));
+    expect([...bodies][0]).toContain(en.errorPage.notFound.heading.replaceAll("'", "&#39;"));
   });
 
   it("lets staff reach any record, and says whose it is not", async () => {

@@ -109,7 +109,7 @@ main > det-proto-grid, main > det-proto-box, main > det-proto-tray, main > det-p
 .proto-grid { table-layout: fixed; }
 .proto-col-check { width: 2.75rem; }
 .proto-col-number { width: 7.5rem; }
-.proto-col-sex { width: 15.5rem; }
+.proto-col-sex { width: 16.5rem; }
 .proto-col-entered { width: 15rem; }
 .proto-grid td { overflow: hidden; text-overflow: ellipsis; }
 .proto-grid td.proto-det { overflow: visible; min-width: 0; }

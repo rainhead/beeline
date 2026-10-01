@@ -269,8 +269,12 @@ beeline-8w6.1), the app sends Sentry four things, tagged with `BEELINE_ENV` as
 the environment and the Fly deployment as the release:
 
 - **Errors.** A request that fails with a 500 is reported with its route
-  pattern (`GET /samples/:id`, never the id) and the signed-in iNaturalist
-  login; a failed job is reported with the job's name.
+  pattern (`GET /samples/:id`, never the id), the signed-in iNaturalist
+  login, and a `reference` tag; a failed job is reported with the job's name.
+  The reference is the eight hex digits the person's error page shows and
+  their feedback email carries ("Error reference: …"): search Sentry for
+  `reference:<it>`, or `fly logs` for `[<it>]`, which ends the failure's log
+  line.
 - **The console log.** Every `console.log`, `warn` and `error`, searchable,
   and kept past the rolling window `fly logs` shows — which is where the boot
   pass's `recorded N sample change(s)` line lives.

@@ -22,6 +22,7 @@ export class TaxonPicker extends Light {
   static properties = {
     placeholder: {},
     autofocus: { type: Boolean },
+    disabled: { type: Boolean },
     query: { state: true },
     active: { state: true },
     bycatch: { state: true },
@@ -29,6 +30,7 @@ export class TaxonPicker extends Light {
   };
   declare placeholder: string;
   declare autofocus: boolean;
+  declare disabled: boolean;
   declare query: string;
   declare active: number;
   declare bycatch: boolean;
@@ -81,6 +83,7 @@ export class TaxonPicker extends Light {
       <input
         type="search"
         autocomplete="off"
+        ?disabled=${this.disabled}
         .value=${this.query}
         placeholder=${this.placeholder}
         @input=${(e: InputEvent) => {
@@ -268,3 +271,24 @@ export class ProtoSwitcher extends Light {
   }
 }
 customElements.define("proto-switcher", ProtoSwitcher);
+
+/**
+ * Sex as one segmented control: a single click sets it, a click on the
+ * choice already set clears it. Queen and worker appear only for the social
+ * genera; everything else is female or male.
+ */
+export function sexSegments(
+  animalId: number | null,
+  current: Pick<Assertion, "sex" | "caste"> | null,
+  onPick: (sex: string | null, caste: string | null) => void,
+  { disabled = false, label = "Sex" } = {},
+) {
+  const choices = sexChoices(animalId);
+  return html`<div class=${`proto-seg proto-seg-${choices.length}`} role="group" aria-label=${label}>
+    ${choices.map((c) => {
+      const on = current?.sex === c.sex && (current?.caste ?? null) === c.caste;
+      return html`<button type="button" aria-pressed=${on} ?disabled=${disabled}
+        @click=${() => (on ? onPick(null, null) : onPick(c.sex, c.caste))}>${c.label}</button>`;
+    })}
+  </div>`;
+}

@@ -26,6 +26,7 @@ export interface Prior {
   caste: string | null;
   qualifier: string | null;
   recordedAt: string;
+  channel: string;
 }
 
 export interface Specimen {
@@ -119,6 +120,12 @@ class Store extends EventTarget {
       if (a.animalId !== undefined && !hasCaste(next.animalId)) next.caste = null;
       this.drafts.set(id, { ...next, specimenId: id, at });
     }
+    this.changed();
+  }
+
+  /** Put drafts back as they were — the undo of a bulk change. */
+  restoreDrafts(before: Map<number, Draft | undefined>) {
+    for (const [id, d] of before) (d ? this.drafts.set(id, d) : this.drafts.delete(id));
     this.changed();
   }
 

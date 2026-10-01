@@ -104,3 +104,33 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
 /* The work surfaces want the width; the page heading keeps the column. */
 main > det-proto-grid, main > det-proto-box, main > det-proto-tray, main > det-proto-ledger { grid-column: full; padding: 0 var(--space-6); }
 .proto-scan input::placeholder { font-size: 1.1rem; letter-spacing: normal; }
+
+/* A, round 2 */
+.proto-grid { table-layout: fixed; }
+.proto-col-check { width: 2.75rem; }
+.proto-col-number { width: 7.5rem; }
+.proto-col-sex { width: 15.5rem; }
+.proto-col-entered { width: 15rem; }
+.proto-grid td { overflow: hidden; text-overflow: ellipsis; }
+.proto-grid td.proto-det { overflow: visible; min-width: 0; }
+.proto-grid tr { height: 2.75rem; }
+.proto-grid td.proto-entered { white-space: nowrap; text-overflow: clip; }
+
+.proto-seg { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 4.75rem; border: 1px solid var(--md-sys-color-outline); border-radius: var(--radius-full); overflow: hidden; }
+.proto-seg button { min-height: 2rem; padding: 0 var(--space-2); border: 0; border-radius: 0; background: transparent; color: var(--md-sys-color-on-surface); font: var(--md-sys-typescale-label); }
+.proto-seg button + button { border-left: 1px solid var(--md-sys-color-outline); }
+.proto-seg button:hover { background: var(--md-sys-color-surface-variant); }
+.proto-seg button[aria-pressed="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font-weight: 700; }
+
+.proto-numbers { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; margin: var(--space-3) 0; }
+.proto-numbers > label { font: var(--md-sys-typescale-label); }
+.proto-numbers-box { flex: 1; min-width: 24rem; display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; padding: var(--space-1); border: 1px solid var(--md-sys-color-outline); border-radius: var(--radius-sm); background: var(--md-sys-color-surface); }
+.proto-numbers-box input { flex: 1; min-width: 14rem; border: 0; outline: none; background: transparent; }
+.proto-numbers-box .chip { font-family: ui-monospace, monospace; display: inline-flex; align-items: center; gap: var(--space-1); }
+.proto-chip-x { min-height: 0; padding: 0 var(--space-1); background: transparent; color: inherit; border: 0; font-size: 1rem; }
+.segmented[data-overridden] { opacity: 0.55; }
+
+.proto-fillbar { min-height: 3.5rem; box-sizing: border-box; }
+.proto-fillbar[data-empty] { background: var(--md-sys-color-surface-variant); color: var(--md-sys-color-on-surface-variant); }
+.proto-fill-count { min-width: 15rem; }
+.proto-fill-done { flex: 1; display: inline-flex; gap: var(--space-2); align-items: center; }

@@ -35,7 +35,7 @@ export interface ProtoSpecimen {
   observation: number | null;
   host: string | null;
   /** The newest volunteer determination already in the store, if any. Expert ones are withheld (anti-anchoring, beeline-bcq). */
-  prior: { animalId: number; sex: string | null; caste: string | null; qualifier: string | null; recordedAt: string } | null;
+  prior: { animalId: number; sex: string | null; caste: string | null; qualifier: string | null; recordedAt: string; channel: string } | null;
 }
 
 export interface ProtoTaxon {
@@ -101,6 +101,7 @@ export async function loadProtoData(db: Kysely<Database>, personId: number, requ
       prior_caste: string | null;
       prior_qualifier: string | null;
       prior_at: string | null;
+      prior_channel: string | null;
     }>`
       WITH mine AS (
         SELECT DISTINCT s.* FROM sample_collector sc JOIN sample s ON s.entity_id = sc.sample_id
@@ -118,7 +119,7 @@ export async function loadProtoData(db: Kysely<Database>, personId: number, requ
              s.kind, s.locality, s.county, CAST(s.inat_observation_id AS TEXT) AS observation,
              s.host_name_as_observed AS host,
              vol.animal_id AS prior_animal, vol.sex AS prior_sex, vol.caste AS prior_caste,
-             vol.qualifier AS prior_qualifier, CAST(vol.recorded_at AS TEXT) AS prior_at
+             vol.qualifier AS prior_qualifier, CAST(vol.recorded_at AS TEXT) AS prior_at, vol.channel AS prior_channel
       FROM mine s
       JOIN specimen sp ON sp.sample_id = s.entity_id
       LEFT JOIN vol ON vol.specimen_id = sp.entity_id
@@ -140,7 +141,7 @@ export async function loadProtoData(db: Kysely<Database>, personId: number, requ
       prior:
         r.prior_animal === null
           ? null
-          : { animalId: r.prior_animal, sex: r.prior_sex, caste: r.prior_caste, qualifier: r.prior_qualifier, recordedAt: r.prior_at ?? "" },
+          : { animalId: r.prior_animal, sex: r.prior_sex, caste: r.prior_caste, qualifier: r.prior_qualifier, recordedAt: r.prior_at ?? "", channel: r.prior_channel ?? "" },
     }),
   );
 

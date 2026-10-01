@@ -50,6 +50,8 @@ export type AppEnv = {
      */
     acting: import("./acting.js").Acting;
     m: import("./messages/index.js").Messages;
+    /** Set while answering a failed request: the reference its page and feedback email carry (beeline-0kj). */
+    errorReference: string | undefined;
   };
 };
 

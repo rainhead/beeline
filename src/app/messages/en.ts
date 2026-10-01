@@ -148,7 +148,7 @@ export const en = {
     feedback: {
       label: "Send feedback",
       subject: "Beeline feedback",
-      body: (context: { url: string; when: string; userAgent: string; login: string; session: string }) =>
+      body: (context: { url: string; when: string; userAgent: string; login: string; session: string; reference?: string }) =>
         [
           "What happened, or what would you like to tell us?",
           "",
@@ -159,6 +159,8 @@ export const en = {
           `Page loaded: ${context.when}`,
           `Signed in as: ${context.login}`,
           `Session: ${context.session}`,
+          // Only on an error page: the reference that finds the failure in the logs (beeline-0kj).
+          ...(context.reference === undefined ? [] : [`Error reference: ${context.reference}`]),
           `Browser: ${context.userAgent}`,
         ].join("\n"),
     },
@@ -570,8 +572,6 @@ export const en = {
         reconcile: "found at startup",
       },
     },
-    /** Unreachable and non-existent are one answer, so this covers both. */
-    notFound: "No such record, or not one you can see.",
     staffNote: "Staff view: this is not one of your own records.",
 
     sample: {
@@ -997,6 +997,40 @@ export const en = {
       bycatch: "Include wasps and other non-bees",
     },
     saveFailed: "That didn't save. Check your connection, then try again.",
+  },
+
+  /**
+   * The pages a request gets when it fails or finds nothing (beeline-0kj).
+   * Written for a volunteer who has never seen a status code: what happened,
+   * that it is not their fault where it isn't, what to do next. The
+   * not-found page never says whether a record is missing or merely not
+   * theirs — record pages answer both the same way so a URL cannot be used
+   * to probe — and the failure page never says what failed, because the
+   * error's own words come from the database and quote record values.
+   */
+  errorPage: {
+    notFound: {
+      title: "Page not found",
+      heading: "There's nothing here",
+      body:
+        "This page doesn't exist, or it holds records that aren't yours to see. " +
+        "If a link in Beeline brought you here, please send feedback so we can fix it.",
+    },
+    failed: {
+      title: "Something went wrong",
+      heading: "Something went wrong",
+      body:
+        "Beeline ran into a problem and couldn't show this page. It wasn't anything you did. " +
+        "Try again in a minute. If it keeps happening, send feedback: the email it starts includes the reference below, which helps us find the problem.",
+      reference: (reference: string) => `Reference: ${reference}`,
+    },
+    back: "Go back",
+    home: "Go to your front page",
+    /** Shown in development only: the error itself, and a hint where it looks like a store behind its migrations. */
+    dev: {
+      heading: "The error (shown in development only)",
+      staleStore: "This looks like a store behind the schema. Check it with pnpm db:migrate --status.",
+    },
   },
 
   errors: {

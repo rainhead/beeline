@@ -16,7 +16,9 @@ import { resolveActing, startActing, stopActing, startImpersonating, stopImperso
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
 import { jobHealth, type Job, type LastOutcome } from "./jobs/framework.js";
-import { onAppError } from "./error-reporting.js";
+import { reportAppError } from "./error-reporting.js";
+import { ErrorPage, staticErrorPage, type ErrorKind } from "./views/error-page.js";
+import { HTTPException } from "hono/http-exception";
 import { countListingView, listingAttributes, rosterAttributes, type Viewer } from "./usage.js";
 import { Glossary } from "./views/glossary.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
@@ -224,7 +226,15 @@ export function createApp({
     return row !== undefined;
   };
   const app = new Hono<AppEnv>();
-  app.onError(onAppError);
+  // Failures and dead ends answer with a page (beeline-0kj): errorResponse
+  // below, defined once the page helper exists. Hono calls these after
+  // registration, so naming it before it is defined is fine.
+  app.onError(async (err, c) => {
+    if (err instanceof HTTPException) return err.getResponse();
+    const reference = reportAppError(err, c);
+    return errorResponse(c, "failed", { reference, err });
+  });
+  app.notFound((c) => errorResponse(c, "notFound"));
   const tokens = tokensCss();
 
   // Every route (sign-in pages included) reads copy from the catalog; the
@@ -423,6 +433,7 @@ export function createApp({
       userAgent: c.req.header("user-agent") ?? "unknown",
       login: session.login,
       session: session.ref ?? "none",
+      reference: c.get("errorReference"),
     });
     const query = [`subject=${encodeURIComponent(m.layout.feedback.subject)}`, `body=${encodeURIComponent(body)}`];
     return `mailto:${config.feedbackEmail}?${query.join("&")}`;
@@ -452,6 +463,63 @@ export function createApp({
         {children}
       </Layout>
     )}`;
+
+  /**
+   * The answer to a request that failed or found nothing (beeline-0kj). The
+   * ordinary page where there is a session, the sign-in page's shell where
+   * there is not, and a static page if rendering either one fails too —
+   * an error page must not depend on what broke. A caller that asked for
+   * JSON (the determinations grid) gets JSON. Not-found never says whether
+   * a record is missing or not the person's to see; a page that knows more
+   * and leaks nothing by saying it passes its own message.
+   */
+  const errorResponse = async (
+    c: Context<AppEnv>,
+    kind: ErrorKind,
+    { reference, err, message }: { reference?: string; err?: Error; message?: string } = {},
+  ): Promise<Response> => {
+    const status = kind === "failed" ? 500 : 404;
+    const m = c.get("m") ?? messagesFor(null);
+    const url = new URL(c.req.url);
+    const json =
+      url.pathname.endsWith(".json") ||
+      (c.req.header("content-type") ?? "").includes("application/json") ||
+      (c.req.header("accept") ?? "").startsWith("application/json");
+    if (json) return c.json({ error: kind === "failed" ? "failed" : "not found", ...(reference === undefined ? {} : { reference }) }, status);
+    // Back only to a page of this site, and never to this very page.
+    let back: string | null = null;
+    try {
+      const referer = new URL(c.req.header("referer") ?? "");
+      if (referer.origin === config.origin && `${referer.pathname}${referer.search}` !== `${url.pathname}${url.search}`) {
+        back = `${referer.pathname}${referer.search}`;
+      }
+    } catch {
+      back = null;
+    }
+    const dev =
+      config.environment === "development" && err !== undefined
+        ? { text: err.stack ?? err.message, staleStore: /Binder Error|Catalog Error/.test(err.message) }
+        : null;
+    const body = <ErrorPage m={m} kind={kind} reference={reference} message={message} back={back} dev={dev} />;
+    const title = m.errorPage[kind].title;
+    try {
+      if (c.get("session") !== undefined && c.get("acting") !== undefined) {
+        c.set("errorReference", reference);
+        return c.html(await page(c, title, body), status);
+      }
+      return c.html(
+        await html`<!doctype html>${(
+          <PublicPage environment={config.environment} m={m} title={title} styleVersion={await styleVersion()}>
+            {body}
+          </PublicPage>
+        )}`,
+        status,
+      );
+    } catch (renderErr) {
+      console.error(`the error page could not be rendered either: ${(renderErr as Error).message}`);
+      return c.html(staticErrorPage(m, kind, reference), status);
+    }
+  };
 
   // The front page: your samples that want something this season, as one
   // table (src/app/dashboard.ts).
@@ -591,7 +659,7 @@ export function createApp({
   app.get("/samples/:id", async (c) => {
     const m = c.get("m");
     const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, c.get("admin"));
-    if (sample === null) return c.text(m.record.notFound, 404);
+    if (sample === null) return errorResponse(c, "notFound");
     const [findings, specimens, history] = await Promise.all([
       recordFindings(db, sample.sample_id),
       listSampleSpecimens(db, sample.sample_id, parsePage(c.req.query("page"))),
@@ -616,7 +684,7 @@ export function createApp({
   app.get("/specimens/:id", async (c) => {
     const m = c.get("m");
     const specimen = await loadSpecimen(db, Number(c.req.param("id")), c.get("acting").personId, c.get("admin"));
-    if (specimen === null) return c.text(m.record.notFound, 404);
+    if (specimen === null) return errorResponse(c, "notFound");
     const [events, findings, labels] = await Promise.all([
       determinationHistory(db, specimen.specimen_id),
       recordFindings(db, specimen.sample.sample_id),
@@ -642,7 +710,7 @@ export function createApp({
     // Acting for someone is reach to act, not only to look: the collector
     // gate reads the effective person (beeline-oyl).
     const sample = await loadEditableSample(db, Number(c.req.param("id")), c.get("acting").personId);
-    if (sample === undefined) return c.text(m.sampleEdit.notEditable, 404);
+    if (sample === undefined) return errorResponse(c, "notFound", { message: m.sampleEdit.notEditable });
     return c.html(await page(c, m.sampleEdit.title, <SampleEditForm m={m} sample={sample} />));
   });
 
@@ -657,7 +725,7 @@ export function createApp({
     // the one who typed it (beeline-oyl: reach, never credit).
     const session = c.get("session");
     const sample = await loadEditableSample(db, Number(c.req.param("id")), c.get("acting").personId);
-    if (sample === undefined) return c.text(m.sampleEdit.notEditable, 404);
+    if (sample === undefined) return errorResponse(c, "notFound", { message: m.sampleEdit.notEditable });
     const body = await c.req.parseBody();
     // Absent fields stay untouched (applySampleEdit's contract); only strings pass.
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : undefined);
@@ -721,7 +789,7 @@ export function createApp({
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const session = c.get("session");
     const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, true);
-    if (sample === null) return c.text(m.record.notFound, 404);
+    if (sample === null) return errorResponse(c, "notFound");
     const body = await c.req.parseBody();
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
     const result = await setStaffLocality(
@@ -760,7 +828,7 @@ export function createApp({
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const session = c.get("session");
     const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, true);
-    if (sample === null) return c.text(m.record.notFound, 404);
+    if (sample === null) return errorResponse(c, "notFound");
     if (sample.inat_observation_id === null) return c.text(m.record.sample.staffCoordinates.noObservation, 409);
     const body = await c.req.parseBody();
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
@@ -819,7 +887,7 @@ export function createApp({
   app.get("/taxonomy/:rank/:name", async (c) => {
     const m = c.get("m");
     const node = await loadTaxon(db, c.req.param("rank"), c.req.param("name"));
-    if (node === null) return c.text(m.taxonomy.notFound, 404);
+    if (node === null) return errorResponse(c, "notFound", { message: m.taxonomy.notFound });
     return c.html(await page(c, node.scientific_name, <TaxonPage m={m} node={node} admin={c.get("admin")} />));
   });
 
@@ -1005,7 +1073,7 @@ export function createApp({
     try {
       handle = await open(occurrencesPath, "r");
     } catch {
-      return c.text(c.get("m").exports.missing, 404);
+      return errorResponse(c, "notFound", { message: c.get("m").exports.missing });
     }
     let st;
     try {
@@ -1046,7 +1114,7 @@ export function createApp({
   const showRun = async (c: Context<AppEnv>, id: number) => {
     const m = c.get("m");
     const run = await loadRun(db, id);
-    if (run === null) return c.text(m.printRuns.run.notFound, 404);
+    if (run === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
     const labels = await runLabels(db, id);
     return c.html(await page(c, m.printRuns.run.title(run.prepared_at, run.atlas_code), <PrintRun m={m} run={run} labels={labels} />));
   };
@@ -1071,7 +1139,7 @@ export function createApp({
       if (run.state === "canceled") return "canceled" as const;
       return runPdf(db, id, run.prepared_at, run.pdf_sha256, printRunsPath);
     });
-    if (sheets === "missing") return c.text(m.printRuns.run.notFound, 404);
+    if (sheets === "missing") return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
     if (sheets === "canceled") return c.text(m.printRuns.run.canceledNoSheets, 409);
     const { bytes } = sheets;
     return c.body(bytes as Uint8Array<ArrayBuffer>, 200, {
@@ -1098,7 +1166,7 @@ export function createApp({
     } catch (err) {
       if (err instanceof PrintRunTransitionError) {
         // No state at all means no such run, which is a 404 and not "the run is null".
-        if (err.from === null) return c.text(m.printRuns.run.notFound, 404);
+        if (err.from === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
         return c.text(m.printRuns.run.wrongState(m.printRuns.state[err.from] ?? err.from), 409);
       }
       // The store declined for a reason the printer can act on: say it,
@@ -1189,7 +1257,7 @@ export function createApp({
   const showPerson = async (c: Context<AppEnv>, notice?: string, problem?: string) => {
     const m = c.get("m");
     const person = await personFromUrl(c);
-    if (person === null) return c.text(m.people.notFound, 404);
+    if (person === null) return errorResponse(c, "notFound", { message: m.people.notFound });
     return c.html(
       await page(
         c,
@@ -1232,7 +1300,7 @@ export function createApp({
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
     const person = await personFromUrl(c);
-    if (person === null) return c.text(m.people.notFound, 404);
+    if (person === null) return errorResponse(c, "notFound", { message: m.people.notFound });
     if (!(await nameIsUnique(db, person.display_name))) {
       return showPerson(c, undefined, m.people.viewAsNameShared);
     }
@@ -1260,7 +1328,7 @@ export function createApp({
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
     const person = await personFromUrl(c);
-    if (person === null) return c.text(m.people.notFound, 404);
+    if (person === null) return errorResponse(c, "notFound", { message: m.people.notFound });
 
     const form = await c.req.formData();
     const author = c.get("session").login;

@@ -5,6 +5,7 @@ import { createApp } from "../src/app/server.js";
 import { ACTING_COOKIE } from "../src/app/acting.js";
 import { determinationHistory } from "../src/app/record.js";
 import { createMemoryDb, insertCleanSample } from "./helpers.js";
+import { en } from "../src/app/messages/en.js";
 
 /**
  * The record pages (beeline-2c3.34).
@@ -366,11 +367,18 @@ describe("reaching a record", () => {
 
   it("gives somebody else's record the same answer as one that does not exist", async () => {
     const { app, bobSample, bobSpecimen } = await recordApp();
+    // One page, byte for byte, whichever it was — so a URL cannot be used to
+    // learn whether somebody else's record exists (beeline-0kj).
+    const bodies = new Set<string>();
     for (const path of [`/samples/${bobSample}`, `/specimens/${bobSpecimen}`, "/samples/999999", "/specimens/abc"]) {
       const res = await app.request(path);
       expect(res.status, path).toBe(404);
-      expect(await res.text()).toBe("No such record, or not one you can see.");
+      const body = await res.text();
+      expect(body).not.toContain("B-1");
+      bodies.add(body);
     }
+    expect(bodies.size).toBe(1);
+    expect([...bodies][0]).toContain(en.errorPage.notFound.heading.replace("'", "&#39;"));
   });
 
   it("lets staff reach any record, and says whose it is not", async () => {

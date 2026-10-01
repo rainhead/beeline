@@ -293,7 +293,7 @@ describe("the print-run screens", () => {
     // A run that is not there is a 404 in words, not "the run is null".
     const missing = await post("/print-runs/999999/approve");
     expect(missing.status).toBe(404);
-    expect(await missing.text()).toBe("No such print run.");
+    expect(await missing.text()).toContain("<p>No such print run.</p>");
 
     // And a pending sample that is not fit to freeze stops Prepare, by name.
     const broken = await printApp();

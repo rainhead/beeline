@@ -146,22 +146,36 @@ export function reportError(err: unknown, tags: Record<string, string> = {}): vo
 }
 
 /**
- * Hono's error handler, reporting what it catches. Behaves as Hono's default
- * does — an HTTPException answers with its own response, anything else is a
- * logged 500 — and adds a report carrying the route pattern (`/samples/:id`,
- * never the id) and the signed-in login, if there is one.
+ * Report a request that failed, and return the reference the error page
+ * shows (beeline-0kj): eight hex digits, in the log line and as a Sentry tag,
+ * so whoever reads the feedback email can find the failure with Sentry or
+ * without it. Carries the route pattern (`/samples/:id`, never the id) and
+ * the signed-in login, if there is one.
  */
-export function onAppError(err: Error, c: Context): Response | Promise<Response> {
-  if (err instanceof HTTPException) return err.getResponse();
+export function reportAppError(err: Error, c: Context): string {
+  const reference = crypto.randomUUID().replaceAll("-", "").slice(0, 8);
   const session = c.get("session") as { login?: string } | undefined;
   Sentry.withScope((scope) => {
     scope.setTag("route", `${c.req.method} ${c.req.routePath}`);
+    scope.setTag("reference", reference);
     if (session?.login !== undefined) scope.setUser({ username: session.login });
     Sentry.captureException(err);
   });
   // A string, not the Error: the log integration serialises an object as
   // JSON, whose every key is quoted and so redacted into nothing.
-  console.error(`${c.req.method} ${c.req.routePath} failed: ${err.stack ?? err.message}`);
+  console.error(`${c.req.method} ${c.req.routePath} failed [${reference}]: ${err.stack ?? err.message}`);
+  return reference;
+}
+
+/**
+ * Hono's error handler at its plainest: an HTTPException answers with its
+ * own response, anything else is reported and answered with a bare 500. The
+ * app renders a page instead (src/app/server.tsx); this is for anything
+ * mounted without the app's chrome.
+ */
+export function onAppError(err: Error, c: Context): Response | Promise<Response> {
+  if (err instanceof HTTPException) return err.getResponse();
+  reportAppError(err, c);
   return c.text("Internal Server Error", 500);
 }
 

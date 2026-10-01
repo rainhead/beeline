@@ -183,6 +183,14 @@ describe("a decided file", () => {
     expect((await readFile(join(dir, "held.csv"), "utf8")).split("\n")[1]).toBe("Collector 2025,USE THIS SHEET,3,,no_number,Bombus,male,26000001,");
   });
 
+  test("a held cell that would read as a formula is guarded", async () => {
+    // Synthetic: nothing in the export starts with =, but a volunteer's cell could.
+    await exportOf([{ id: "f1", name: "Collector 2025", modified: "2026-02-01T10:00:00Z", rows: [[null, "female", "Apidae", "=HYPERLINK(1)", null]] }]);
+    await decide({ f1: { determiner: "name:Ada Collector" } });
+    await load();
+    expect((await readFile(join(dir, "held.csv"), "utf8")).split("\n")[1]).toBe("Collector 2025,USE THIS SHEET,2,,no_number,'=HYPERLINK(1),female,,");
+  });
+
   test("a renamed tab is named in the manifest", async () => {
     // Four files in the export keep their rows on a tab called something else.
     await exportOf([{ id: "f1", name: "Collector 2025", modified: "2026-02-01T10:00:00Z", rows: [[26000001, "female", "Apidae", "Bombus", null]], tab: "2025" }]);

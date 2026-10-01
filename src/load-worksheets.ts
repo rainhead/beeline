@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { resolver } from "./apply-person-overlay.js";
+import { csvCell } from "./app/listings.js";
 import { parseCsv } from "./corrections.js";
 import { DEFAULT_DB } from "./person-change.js";
 
@@ -552,7 +553,9 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
     await writeAtomically(
       join(opts.dir, "held.csv"),
       `${["file", "sheet", "row", "number", "reason", "name", "sex_caste", "neighbours", "other_copies"].join(",")}\n` +
-        held.map((r) => r.map((v) => cell(v === null ? "" : String(v))).join(",")).join("\n") +
+        // Guarded against formulas, unlike the manifest: these are volunteers'
+        // cells, written for a person to open in a spreadsheet, never read back.
+        held.map((r) => r.map((v) => csvCell(v === null ? "" : String(v))).join(",")).join("\n") +
         (held.length > 0 ? "\n" : ""),
     );
 

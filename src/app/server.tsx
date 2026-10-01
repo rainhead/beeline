@@ -21,6 +21,7 @@ import { countListingView, listingAttributes, rosterAttributes, type Viewer } fr
 import { Glossary } from "./views/glossary.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomySummary } from "./taxonomy.js";
+import { loadProtoData, ProtoDeterminations, PROTO_VARIANTS } from "./prototype-determinations.js";
 import { Jobs } from "./views/jobs.js";
 import { Exports } from "./views/exports.js";
 import { legacyExportPath } from "../legacy-export.js";
@@ -804,6 +805,23 @@ export function createApp({
     if (node === null) return c.text(m.taxonomy.notFound, 404);
     return c.html(await page(c, node.scientific_name, <TaxonPage m={m} node={node} admin={c.get("admin")} />));
   });
+
+  // PROTOTYPE (beeline-bcq): three volunteer determination screens, read-only
+  // against the store. Throwaway branch only, and never served in production.
+  if (config.environment !== "production") {
+    app.get("/prototype/determinations", async (c) => {
+      const { personId } = c.get("acting");
+      const asked = c.req.query("variant") ?? "A";
+      const variant = PROTO_VARIANTS.some((v) => v.key === asked) ? asked : "A";
+      const season = Number(c.req.query("season"));
+      const data = await loadProtoData(db, personId, Number.isInteger(season) && season > 0 ? season : null);
+      return c.html(
+        await page(c, "Your determinations (prototype)", <ProtoDeterminations data={data} variant={variant} />, [
+          "/static/prototype-determinations.css",
+        ]),
+      );
+    });
+  }
 
   // --- The design system. English-only by policy: these views carry literal
   // prose. Not gated, unlike /jobs and /people — it reads no records and

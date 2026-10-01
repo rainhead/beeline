@@ -5,3 +5,8 @@
  */
 import "./demo-counter.js";
 import "./menus.js";
+// PROTOTYPE (beeline-bcq), throwaway branch only.
+import "./prototype-determinations/shared.js";
+import "./prototype-determinations/variant-a-grid.js";
+import "./prototype-determinations/variant-b-box.js";
+import "./prototype-determinations/variant-c-tray.js";

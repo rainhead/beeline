@@ -1,0 +1,106 @@
+/* PROTOTYPE (beeline-bcq) — styles for /prototype/determinations only.
+   Throwaway branch; nothing here is part of the design system. */
+
+.proto-banner { margin-bottom: var(--space-4); }
+.proto-rank { font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant); margin-left: var(--space-1); }
+.proto-small { min-height: 0; padding: var(--space-1) var(--space-2); font: var(--md-sys-typescale-label); }
+.proto-number { font: var(--md-sys-typescale-mono); }
+.proto-spacer { flex: 1; }
+.proto-hint { margin: var(--space-2) 0; }
+button[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+/* Taxon picker */
+.proto-picker { position: relative; min-width: 18rem; }
+.proto-picker input { width: 100%; box-sizing: border-box; }
+.proto-picker-panel {
+  position: absolute; z-index: 20; top: calc(100% + 2px); left: 0; min-width: 100%; width: max-content; max-width: 32rem;
+  background: var(--md-sys-color-surface); border: 1px solid var(--md-sys-color-outline);
+  border-radius: var(--radius-sm); box-shadow: 0 6px 18px rgb(0 0 0 / 0.15); padding: var(--space-1) 0;
+}
+.proto-picker-panel ul { list-style: none; margin: 0; padding: 0; }
+.proto-picker-panel li { padding: var(--space-1-5) var(--space-3); cursor: pointer; display: flex; gap: var(--space-2); align-items: baseline; }
+.proto-picker-panel li[aria-selected="true"], .proto-picker-panel li:hover { background: var(--md-sys-color-secondary-container); }
+.proto-picker-panel .meta { margin-left: auto; padding-left: var(--space-4); }
+.proto-picker-panel > .meta { padding: var(--space-2) var(--space-3); }
+.proto-bycatch { display: flex; gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); border-top: 1px solid var(--md-sys-color-outline-variant); font: var(--md-sys-typescale-label); }
+
+.proto-sex { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); }
+
+/* Ledger */
+.proto-ledger { margin: var(--space-8) 0 6rem; border: 1px dashed var(--md-sys-color-outline); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); }
+.proto-ledger summary { cursor: pointer; font: var(--md-sys-typescale-label); }
+.proto-ledger-body { display: grid; gap: var(--space-4); margin-top: var(--space-3); }
+.proto-ledger table { font-size: 0.85em; }
+.proto-ledger th, .proto-ledger td { padding: var(--space-1) var(--space-2); }
+
+/* Switcher */
+.proto-switcher {
+  position: fixed; bottom: var(--space-4); left: 50%; transform: translateX(-50%); z-index: 50;
+  display: flex; align-items: center; gap: var(--space-3); padding: var(--space-1) var(--space-2);
+  background: #111; color: #fff; border-radius: 999px; box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+  font: 600 14px/1 system-ui, sans-serif;
+}
+.proto-switcher button { background: #333; color: #fff; border: 0; border-radius: 999px; min-height: 2rem; min-width: 2rem; padding: 0; }
+.proto-switcher button:hover { background: #555; }
+
+/* A — grid */
+.proto-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; margin-bottom: var(--space-2); }
+.proto-jump { display: inline-flex; gap: var(--space-2); align-items: center; font: var(--md-sys-typescale-label); }
+.proto-jump input { width: 11rem; }
+.proto-fillbar {
+  position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center;
+  padding: var(--space-2) var(--space-3); margin: var(--space-2) 0;
+  background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-radius: var(--radius-md);
+}
+.proto-fill-name { display: inline-flex; gap: var(--space-2); align-items: center; }
+.proto-grid th, .proto-grid td { padding: var(--space-1) var(--space-3); }
+.proto-grid .proto-check { width: 2rem; }
+.proto-grid tbody { border-top: 3px solid var(--md-sys-color-outline); }
+.proto-grid tr.proto-sample td { background: var(--md-sys-color-surface-variant); font: var(--md-sys-typescale-label); }
+.proto-grid tr.proto-selected td { background: color-mix(in srgb, var(--md-sys-color-secondary-container) 60%, transparent); }
+.proto-grid tr.proto-flash td { animation: proto-flash 1.5s ease-out; }
+@keyframes proto-flash { from { background: var(--md-sys-color-tertiary-container); } }
+.proto-cell { background: none; border: 1px dashed transparent; color: inherit; padding: var(--space-1); min-height: 0; text-align: left; width: 100%; border-radius: var(--radius-sm); }
+.proto-cell:hover { border-color: var(--md-sys-color-outline); background: none; }
+.proto-det { min-width: 20rem; }
+
+/* B — box */
+.proto-box { display: grid; grid-template-columns: minmax(18rem, 24rem) 1fr; gap: var(--space-6); align-items: start; }
+.proto-box-side { position: sticky; top: var(--space-4); display: grid; gap: var(--space-2); padding: var(--space-4); border-radius: var(--radius-md); background: var(--md-sys-color-surface-variant); }
+.proto-box-side h2, .proto-box-main h2 { font: var(--md-sys-typescale-title); margin: var(--space-2) 0 0; }
+.proto-box-name { font-size: 1.6rem; margin: 0; }
+.proto-tally { margin: var(--space-2) 0 0; }
+.proto-scan input { font: 600 2rem/1.2 ui-monospace, monospace; width: 100%; box-sizing: border-box; padding: var(--space-3); letter-spacing: 0.08em; }
+.proto-log { list-style: none; padding: 0; margin: var(--space-3) 0; display: grid; gap: var(--space-1); }
+.proto-log li { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: baseline; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--md-sys-color-surface); border-left: 4px solid var(--md-sys-color-success); }
+.proto-log li.proto-log-changed { border-left-color: var(--md-sys-color-warning); }
+.proto-log li.proto-log-error { border-left-color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.proto-log li.proto-log-same { border-left-color: var(--md-sys-color-outline); }
+.proto-log li:first-child { font-weight: 600; }
+.proto-remaining summary { cursor: pointer; }
+.proto-remaining-sample { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; margin: var(--space-2) 0; }
+.proto-remaining-sample .meta { flex-basis: 100%; }
+
+/* C — one by one */
+.proto-tray-layout { display: grid; grid-template-columns: 14rem 1fr 20rem; gap: var(--space-4); align-items: start; }
+.proto-queue, .proto-tray { position: sticky; top: var(--space-4); max-height: calc(100vh - 8rem); overflow: auto; }
+.proto-queue h2, .proto-tray h2 { font: var(--md-sys-typescale-title); margin: 0 0 var(--space-2); }
+.proto-queue ol, .proto-tray ol { list-style: none; padding: 0; margin: 0; }
+.proto-queue-sample { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-3); }
+.proto-queue-sample .meta { flex-basis: 100%; }
+.proto-big-number { font: 600 2.4rem/1 ui-monospace, monospace; margin: 0 0 var(--space-2); }
+.proto-card h3 { font: var(--md-sys-typescale-title); margin: var(--space-4) 0 var(--space-2); }
+.proto-crumbs { display: flex; gap: var(--space-2); align-items: center; margin-bottom: var(--space-2); }
+.proto-choices { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.proto-species button { min-width: 9rem; justify-content: flex-start; }
+.proto-species-filter { margin-left: var(--space-3); }
+.proto-or-type { margin: var(--space-3) 0; }
+.proto-or-type summary { cursor: pointer; font: var(--md-sys-typescale-label); }
+.proto-answer { font-size: 1.3rem; margin: var(--space-3) 0; }
+.proto-tray li { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+.proto-tray-actions { grid-column: 1 / -1; display: flex; gap: var(--space-1); }
+.proto-tray > button { margin-top: var(--space-3); width: 100%; }
+
+/* The work surfaces want the width; the page heading keeps the column. */
+main > det-proto-grid, main > det-proto-box, main > det-proto-tray, main > det-proto-ledger { grid-column: full; padding: 0 var(--space-6); }
+.proto-scan input::placeholder { font-size: 1.1rem; letter-spacing: normal; }

@@ -36,27 +36,60 @@ const isDigits = (s: string | null): s is string => s !== null && /^\d+$/.test(s
  * Resolve one token: a whole number, the unique tail of one (412 for
  * 26000412), or a range whose end may be abbreviated (26019685-690).
  */
+/** "26019685 to 26072073": what this season's numbers look like, for a message that has to say why one did not fit. */
+function seasonSpan(specimens: Specimen[]): string {
+  const nums = specimens.map((s) => s.fieldNumber).filter(isDigits).sort((a, b) => a.length - b.length || a.localeCompare(b));
+  return nums.length === 0 ? "" : `${nums[0]} to ${nums[nums.length - 1]}`;
+}
+
+/** One number: written whole, or the last few digits of exactly one of yours. */
+function single(token: string, specimens: Specimen[], season: number): { hit: Specimen } | { problem: string } {
+  const exact = specimens.find((s) => s.fieldNumber === token);
+  if (exact) return { hit: exact };
+  const tail = token.length >= 3 ? specimens.filter((s) => s.fieldNumber?.endsWith(token)) : [];
+  if (tail.length === 1) return { hit: tail[0]! };
+  if (tail.length > 1) {
+    const some = tail.slice(0, 3).map((s) => s.fieldNumber).join(", ");
+    return { problem: `${tail.length} of your ${season} numbers end in ${token} (${some}${tail.length > 3 ? "…" : ""}) — type more of it` };
+  }
+  const lengths = new Set(specimens.map((s) => s.fieldNumber?.length));
+  const span = seasonSpan(specimens);
+  if (!lengths.has(token.length) && token.length > 3) {
+    const want = [...lengths].filter((n) => n !== undefined).join(" or ");
+    return { problem: `${token} has ${token.length} digits, and your ${season} numbers have ${want} — they run ${span}` };
+  }
+  return { problem: `not one of your ${season} numbers, which run ${span}` };
+}
+
+/**
+ * Resolve one token: a whole number, the unique tail of one (412 for
+ * 26000412), or a range — whose start may be a tail too, and whose end may
+ * be abbreviated (26019685-697, or 9685-697).
+ */
 function resolve(token: string, specimens: Specimen[], season: number): NumberEntry {
   const range = /^(\d+)-(\d+)$/.exec(token);
   if (range) {
-    const [, start, rawEnd] = range as unknown as [string, string, string];
+    const [, typedStart, rawEnd] = range as unknown as [string, string, string];
+    // A whole-length start need not be one of yours — a range may begin in a gap.
+    let start = typedStart;
+    if (!specimens.some((s) => s.fieldNumber?.length === typedStart.length)) {
+      const first = single(typedStart, specimens, season);
+      if ("problem" in first) return { text: `${typedStart}–${rawEnd}`, ids: [], problem: `the range's first number: ${first.problem}` };
+      start = first.hit.fieldNumber!;
+    }
     const end = rawEnd.length < start.length ? start.slice(0, start.length - rawEnd.length) + rawEnd : rawEnd;
     const text = `${start}–${end}`;
-    if (!specimens.some((s) => s.fieldNumber?.length === start.length)) return { text, ids: [], problem: "start a range with a whole number" };
+    if (end.length !== start.length) return { text, ids: [], problem: `${end} and ${start} are different lengths — is a digit missing?` };
     if (BigInt(end) < BigInt(start)) return { text, ids: [], problem: "the range runs backwards" };
     if (BigInt(end) - BigInt(start) > BigInt(MAX_RANGE)) return { text, ids: [], problem: `more than ${MAX_RANGE} numbers — is that a typo?` };
     const ids = specimens
       .filter((s) => isDigits(s.fieldNumber) && s.fieldNumber.length === start.length && BigInt(s.fieldNumber) >= BigInt(start) && BigInt(s.fieldNumber) <= BigInt(end))
       .map((s) => s.id);
-    return { text, ids, problem: ids.length === 0 ? `none of your ${season} numbers` : null };
+    return { text, ids, problem: ids.length === 0 ? `none of your ${season} numbers fall in it — they run ${seasonSpan(specimens)}` : null };
   }
   if (!/^\d+$/.test(token)) return { text: token, ids: [], problem: "not a number" };
-  const exact = specimens.find((s) => s.fieldNumber === token);
-  if (exact) return { text: token, ids: [exact.id], problem: null };
-  const tail = token.length >= 3 ? specimens.filter((s) => s.fieldNumber?.endsWith(token)) : [];
-  if (tail.length === 1) return { text: tail[0]!.fieldNumber!, ids: [tail[0]!.id], problem: null };
-  if (tail.length > 1) return { text: token, ids: [], problem: `${tail.length} of your numbers end in ${token}` };
-  return { text: token, ids: [], problem: `not one of your ${season} specimens` };
+  const one = single(token, specimens, season);
+  return "problem" in one ? { text: token, ids: [], problem: one.problem } : { text: one.hit.fieldNumber!, ids: [one.hit.id], problem: null };
 }
 
 function tokens(raw: string): string[] {

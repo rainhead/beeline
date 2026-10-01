@@ -110,7 +110,9 @@ export type WorksheetStatus =
   | "several_specimens"
   | "not_theirs"
   | "conflicting_rows"
-  | "unresolved_name";
+  | "unresolved_name"
+  /** The file has no determiner in the manifest yet, or one that names nobody. */
+  | "undecided";
 
 const HELD: readonly WorksheetStatus[] = [
   "no_specimen",
@@ -119,6 +121,7 @@ const HELD: readonly WorksheetStatus[] = [
   "conflicting_rows",
   "versions_disagree",
   "unresolved_name",
+  "undecided",
 ];
 
 export interface LoadWorksheetsOptions {
@@ -486,7 +489,13 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
                   WHEN n.animal_id IS NULL THEN 'unresolved_name' END AS status
       FROM versions n LEFT JOIN animal_castes an ON an.animal_id = n.animal_id
       UNION ALL BY NAME
-      SELECT p.*, p.placement AS status FROM placed p WHERE placement IS NOT NULL`);
+      SELECT p.*, p.placement AS status FROM placed p WHERE placement IS NOT NULL
+      -- A file nobody has decided about is held whole, so a list of what did
+      -- not load is a list of everything that did not (Peter, 2026-10-01).
+      UNION ALL BY NAME
+      SELECT n.*, 'undecided' AS status,
+             (SELECT CASE WHEN count(*) = 1 THEN min(sp.sample_id) END FROM specimen sp WHERE sp.field_number = n.number) AS sample_id
+      FROM ws_named n WHERE n.determiner_id IS NULL AND n.decision IS DISTINCT FROM 'skip'`);
 
     // What the store already holds for this determiner and specimen.
     await conn.run(`

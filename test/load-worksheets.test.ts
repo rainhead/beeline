@@ -119,6 +119,11 @@ describe("a file nobody has decided about", () => {
     await exportOf([{ id: "f1", name: "Collector 2025", modified: "2026-02-01T10:00:00Z", rows: ADA_2025 }]);
     const result = await load();
     expect(result).toMatchObject({ files: 1, undecided: 1, recorded: 0, rows: 0 });
+    // Held whole, so the held list is everything that did not load.
+    expect(result.statuses).toEqual([
+      { status: "undecided", season: "none", rows: 1 },
+      { status: "undecided", season: "open", rows: 7 },
+    ]);
     expect(await determinations()).toEqual([]);
     const written = (await readFile(manifest, "utf8")).split("\n");
     expect(written[0]).toBe(MANIFEST_COLUMNS.join(","));
@@ -188,6 +193,10 @@ describe("a decided file", () => {
     await decide({ f1: { determiner: "skip" }, f2: { determiner: "name:Nobody Here" } });
     const result = await load();
     expect(result).toMatchObject({ skipped: 1, recorded: 0, unresolvedDeterminers: [{ file: "Someone 2025", determiner: "name:Nobody Here", problem: "no person named 'Nobody Here'" }] });
+    // The skipped file holds nothing back; the one naming nobody holds everything.
+    const held = (await readFile(join(dir, "held.csv"), "utf8")).split("\n").filter((l) => l.includes(",undecided,"));
+    expect(held.every((l) => l.startsWith("Someone 2025,"))).toBe(true);
+    expect(held).toHaveLength(8);
   });
 });
 

@@ -50,7 +50,7 @@ const tableExists = async (conn: DuckDBConnection, name: string) =>
  * is what lets a rename be replayed: renaming someone does not move the
  * reference that renamed them.
  */
-async function resolver(conn: DuckDBConnection, overlay: readonly PersonOverlayRow[] = []) {
+export async function resolver(conn: DuckDBConnection, overlay: readonly PersonOverlayRow[] = []) {
   const byName = new Map<string, number[]>();
   if (await tableExists(conn, "legacy_person_name")) {
     for (const [name, id] of await rows(conn, `SELECT name, person_id FROM legacy_person_name`)) {

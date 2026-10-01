@@ -8,7 +8,10 @@ is gated on it · reframed the same day it was drafted: the first version was
 titled *A field number is minted once and never moves* and answered the right
 question with the wrong identifier (beeline-1kb.14, beeline-1kb.15) ·
 **reviewed 2026-09-25** (Peter): (1) overstated its own case against a URI
-that carries the field number — see the note under it and open question 1
+that carries the field number — see the note under it and open question 1 ·
+**reviewed 2026-10-01**: open question 3 answered from what OSAC has
+actually published, which also undercuts the reason the corpus paragraph
+gave for keeping imported `occurrenceID`s verbatim
 
 Throughout, *Beeline* is this codebase. The system it replaces is *the
 reference implementation* — OBP-Server, which staff also call Beeline — and
@@ -69,7 +72,11 @@ settled, and nothing here changes it. But `dwc:catalogNumber` is also a
 fills it. The museum's number is the museum's business, and whether Ecdysis
 keeps shaping it from the field number is an open question below. Oregon does
 not use Ecdysis; its records carry an OSAC URI as their `occurrenceID`, and
-that URI is the subject of the next section.
+that URI is the subject of the next section. OSAC publishes Oregon's records
+to GBIF itself, from its own IPT, as the
+[Oregon Bee Atlas](https://www.gbif.org/dataset/1fa69ff3-3e40-465f-927f-12b1484d3731)
+dataset — 64,913 records through the 2024 season as of the 2026-07-28
+release, Lincoln Best its originator.
 
 ### The reference implementation derives the permanent one from the mutable one
 
@@ -431,6 +438,19 @@ than a duplicated identifier is a migrated one nobody told GBIF about. What
 to do with the 598 is beeline-1kb.14, and the answer depends on the last open
 question below.
 
+*Reviewed 2026-10-01.* For Oregon, "verbatim" and "as published" are not the
+same value, so keeping the first does not protect the second. Field number
+`1900026` is on GBIF as `https://osac.oregonstate.edu/SP/OSAC_0001252110`,
+OSAC's catalog URI for a specimen it holds, and in the legacy corpus as
+`https://osac.oregonstate.edu/OBS/OBA_1900026`. 4,636 published records are
+like it — matched to the corpus by field number, published under a different
+identifier — all from the 2017–2024 seasons, so all settled; another 66 match
+a corpus record with no `occurrenceID` at all. An export carrying the
+corpus's value would hand GBIF those 4,636 specimens under new identities,
+which it reads as new records beside the existing ones. The published
+identifier is OSAC's to state, and which of the two an Oregon export carries
+is beeline-1kb.22.
+
 **If Arthur's account is the practice, this ADR changes at (2) and (4), and
 the cost is bounded.** Should gh-17 come back saying that a bad-data reprint
 does renumber, then the model needs a renumbering event beyond the duplicate
@@ -459,7 +479,11 @@ which this project can answer alone:
    deriving it live from the current field number, or backfilling it over
    legacy numbers before beeline-1kb.14 is repaired. This is a question for
    OSAC through Andony, and it decides what Beeline's Oregon export carries in
-   which column.
+   which column. Two facts bear on it (2026-10-01): the URI names no page of
+   its own — `…/OBS/OBA_<anything>`, a real number or not, serves the same
+   static page pointing at the Melittology Lab — and OSAC already publishes a
+   second form, `…/SP/OSAC_<catalog number>`, for the specimens it has
+   catalogued (beeline-1kb.22).
 2. **What do Ecdysis and WSUC expect for Washington?** The museum's
    `catalogNumber` is `WSDA_`-prefixed and the reference implementation reads
    the field number back by stripping the prefix. Under this ADR the join is
@@ -477,6 +501,18 @@ which this project can answer alone:
    gone out (a supplied old→new list, per GBIF's migration route) is
    different from the repair for one that has not (fix it before it does).
    Andony can answer this from the publication history.
+
+   *Answered 2026-10-01: none have.* In the corpus fetched 2026-09-28 the
+   population is 204 identifiers on 574 records, against the 598 counted on
+   2026-09-09: 438 Oregon records from 2025 sharing 198 OSAC URIs, and 136
+   from 2024 in Oregon, Idaho and Washington sharing six bare numbers. OSAC's
+   published archive (the 2026-07-28 release) holds nothing later than the
+   2024 season and no identifier twice, and none of the 204, nor any of the
+   592 misembedded URIs, appear in it. The six bare numbers are on GBIF only
+   as other publishers' records — `7842549` is a woodcock in the Estonian
+   Ornithological Society's dataset — which is what a bare number as an
+   `occurrenceID` invites. The 2025 season goes out at OSAC's next annual
+   update, so the repair is still the cheap one, but only until then.
 
 ## Alternatives considered
 

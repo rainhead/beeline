@@ -69,6 +69,16 @@ export interface Recorded extends Draft {
 
 const ITALIC = new Set(["genus", "subgenus", "species", "subspecies"]);
 const CASTE_GENERA = new Set(["Bombus", "Apis"]);
+/**
+ * Cuckoo bumble bees (subgenus Psithyrus) have no workers. The tree cannot
+ * say so — every Bombus species hangs straight off the genus — and the
+ * expert records cannot either (24 B. flavidus "workers" on the dev store),
+ * so the prototype names them. A real build needs this curated.
+ */
+const PSITHYRUS = new Set([
+  "Bombus flavidus", "Bombus fernaldae", "Bombus insularis", "Bombus suckleyi", "Bombus citrinus",
+  "Bombus variabilis", "Bombus bohemicus", "Bombus ashtoni",
+]);
 
 class Store extends EventTarget {
   data: Data;
@@ -162,7 +172,7 @@ export const store = (): Store => (instance ??= new Store());
 export function hasCaste(animalId: number | null): boolean {
   if (animalId == null) return false;
   const t = store().taxa.get(animalId);
-  return t?.genus != null && CASTE_GENERA.has(t.genus);
+  return t?.genus != null && CASTE_GENERA.has(t.genus) && !PSITHYRUS.has(t.name);
 }
 
 export interface SexChoice {

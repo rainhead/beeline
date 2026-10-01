@@ -353,8 +353,16 @@ class GridVariant extends Light {
             input.value = "";
           }}
           @paste=${(e: ClipboardEvent) => {
+            // Paste is typing, not Enter: a pasted number may be the start of
+            // a range. Only the line breaks of a column copied from a
+            // spreadsheet are rewritten, since a text input would otherwise
+            // drop them and run the numbers together.
+            const text = e.clipboardData?.getData("text") ?? "";
+            if (!/[\r\n\t]/.test(text)) return;
             e.preventDefault();
-            this.#addNumbers(e.clipboardData?.getData("text") ?? "");
+            const input = e.target as HTMLInputElement;
+            const list = text.split(/[\r\n\t]+/).map((t) => t.trim()).filter(Boolean).join(", ");
+            input.setRangeText(list, input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, "end");
           }} />
       </div>
       ${this.added ? html`<span class="meta">${this.added}</span>` : nothing}
@@ -394,7 +402,14 @@ class GridVariant extends Light {
             <label class="proto-jump">
               Go to number
               <input type="text" inputmode="numeric" placeholder="26019685 or 685"
-                @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this.#jump(e.target as HTMLInputElement); }} />
+                @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this.#jump(e.target as HTMLInputElement); }}
+                @paste=${(e: ClipboardEvent) => {
+                  // Here a paste is the whole question, so it goes at once.
+                  const input = e.target as HTMLInputElement;
+                  e.preventDefault();
+                  input.value = (e.clipboardData?.getData("text") ?? "").trim();
+                  this.#jump(input);
+                }} />
             </label>
             ${this.jumpMessage ? html`<span class="chip warning">${this.jumpMessage}</span>` : nothing}`}
         <span class="proto-spacer"></span>

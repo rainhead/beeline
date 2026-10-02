@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { upsertCorrections, type CorrectionEvent } from "../corrections.js";
+import { retryOnWriteConflict } from "../write-conflict.js";
 
 /**
  * In-app editing for samples with no iNaturalist observation to fix
@@ -167,7 +168,13 @@ export async function applySampleEdit(
       return [f.name, submitted === "" ? null : submitted];
     }),
   );
-  await db.updateTable("sample").set(updates).where("entity_id", "=", sample.entity_id).execute();
+  // The nightly promotion rewrites sample rows inside a long transaction, so
+  // an edit landing on one it has already touched loses the race rather than
+  // waiting for it. The overlay above already holds the edit durably; trying
+  // the row again once promotion commits is better than a 500 (beeline-lpx).
+  await retryOnWriteConflict(() =>
+    db.updateTable("sample").set(updates).where("entity_id", "=", sample.entity_id).execute(),
+  );
 
   // A within-sample disagreement on an edited field is settled by the edit:
   // every member row now carries one value, so the stored finding would not

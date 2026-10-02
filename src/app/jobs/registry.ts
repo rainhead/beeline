@@ -98,8 +98,13 @@ export async function pipelineTail(
   sampleOverlayPath?: string,
 ): Promise<string> {
   parts.push(await ctx.step("fetch places", () => refreshPlaces(ctx.conn, { signal: ctx.signal })));
-  const promoted = await ctx.step("promote observations", () => promoteObservations(ctx.conn, { sampleOverlayPath }));
+  const promoted = await ctx.step("promote observations", () =>
+    promoteObservations(ctx.conn, { sampleOverlayPath, retry: { signal: ctx.signal } }),
+  );
   parts.push(`${promoted.linkedSamples} samples linked`);
+  // A promotion that lost a write race and was run again says so in the
+  // run's detail: a retry that keeps happening is a writer worth finding.
+  if (promoted.retries > 0) parts.push(`promotion retried ${promoted.retries}× after a write conflict`);
   // A staff decision naming a sample the store no longer holds is a standing
   // condition somebody should read, not a failure: the run's detail carries
   // it and the rest of the pipeline goes on.

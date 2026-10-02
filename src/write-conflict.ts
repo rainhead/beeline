@@ -51,6 +51,8 @@ export async function retryOnWriteConflict<T>(
     } catch (err) {
       if (!isWriteConflict(err) || retries >= delays.length || opts.signal?.aborted) throw err;
       await sleep(delays[retries]!);
+      // Aborted while waiting: shutdown has begun, so do not start over.
+      if (opts.signal?.aborted) throw err;
     }
   }
 }

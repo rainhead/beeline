@@ -172,8 +172,11 @@ export async function applySampleEdit(
   // an edit landing on one it has already touched loses the race rather than
   // waiting for it. The overlay above already holds the edit durably; trying
   // the row again once promotion commits is better than a 500 (beeline-lpx).
-  await retryOnWriteConflict(() =>
-    db.updateTable("sample").set(updates).where("entity_id", "=", sample.entity_id).execute(),
+  // Shorter waits than promotion's: a request has to fit inside the 10 s
+  // shutdown drain (src/app/main.ts), so these total 4.25 s.
+  await retryOnWriteConflict(
+    () => db.updateTable("sample").set(updates).where("entity_id", "=", sample.entity_id).execute(),
+    { delaysMs: [250, 1_000, 3_000] },
   );
 
   // A within-sample disagreement on an edited field is settled by the edit:

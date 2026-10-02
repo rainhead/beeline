@@ -99,6 +99,26 @@ describe("retryOnWriteConflict", () => {
   });
 });
 
+describe("an abort during the wait", () => {
+  test("stops before another attempt starts", async () => {
+    // Shutdown aborts the job's signal while a retry is waiting; the wait
+    // finishing must not start the transaction over.
+    const conflict = await conflictError();
+    const controller = new AbortController();
+    let calls = 0;
+    await expect(
+      retryOnWriteConflict(
+        async () => {
+          calls++;
+          throw conflict;
+        },
+        { signal: controller.signal, sleep: async () => controller.abort() },
+      ),
+    ).rejects.toBe(conflict);
+    expect(calls).toBe(1);
+  });
+});
+
 describe("promotion against a concurrent writer", () => {
   test("loses to a writer holding a row it rewrites, and succeeds once that writer commits", async () => {
     // bench/contention.ts's '+ overlap' phase, made deterministic: another

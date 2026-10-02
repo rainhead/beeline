@@ -7,6 +7,7 @@ import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
 import { refreshObservationFields } from "./refresh-observation-fields.js";
 import { applySampleOverlay, type UnresolvedSampleRow } from "./apply-sample-overlay.js";
 import { readSampleOverlay } from "./sample-overlay.js";
+import { retryOnWriteConflict, type ConflictRetryOptions } from "./write-conflict.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -47,17 +48,34 @@ export interface ObservationPromotionCounts {
   /** Overlay rows applied, and the ones naming no sample (or two). */
   overlayApplied: number;
   overlayUnresolved: UnresolvedSampleRow[];
+  /** Attempts that lost a write conflict and were run again (beeline-lpx). */
+  retries: number;
 }
 
 export interface ObservationPromotionOptions {
   /** data/sample-overlay.csv on a deployment; absent ⇒ no overlay is read. */
   sampleOverlayPath?: string;
+  /**
+   * How a lost write race is retried. Promotion is one idempotent
+   * transaction, so running it again after a small writer has committed to
+   * a row it rewrites is safe — and without it the nightly lost to such a
+   * writer every time it met one (bench/contention.ts, beeline-lpx).
+   */
+  retry?: ConflictRetryOptions;
 }
 
 export async function promoteObservations(
   conn: DuckDBConnection,
   opts: ObservationPromotionOptions = {},
 ): Promise<ObservationPromotionCounts> {
+  const { value, retries } = await retryOnWriteConflict(() => promoteOnce(conn, opts), opts.retry);
+  return { ...value, retries };
+}
+
+async function promoteOnce(
+  conn: DuckDBConnection,
+  opts: ObservationPromotionOptions,
+): Promise<Omit<ObservationPromotionCounts, "retries">> {
   const scalar = async (sql: string): Promise<number> => {
     const [[v]] = (await (await conn.run(sql)).getRows()) as [[bigint]];
     return Number(v);
@@ -85,7 +103,7 @@ export async function promoteObservations(
       opts.sampleOverlayPath === undefined
         ? { applied: 0, unresolved: [] }
         : await applySampleOverlay(conn, await readSampleOverlay(opts.sampleOverlayPath));
-    const counts: ObservationPromotionCounts = {
+    const counts: Omit<ObservationPromotionCounts, "retries"> = {
       linkedSamples: await scalar(
         `SELECT count(*) FROM sample s
          JOIN observation_field f ON f.inat_id = s.inat_observation_id`,

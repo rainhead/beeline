@@ -181,6 +181,21 @@ WHERE sample.inat_observation_id = f.inat_id
   AND sample.host_rank IS NULL
   AND f.host_taxon_rank IS NOT NULL;
 
+-- And the host's iNaturalist taxon, which the legacy import never carries:
+-- it holds the plant as a bare name, so an imported sample whose observation
+-- names the taxon kept no reference to it — the 2026-09-27 reseed recorded
+-- ~3,600 hosts losing their id this way (beeline-z9j). Labels print the
+-- name, so nothing printed changes; what is filled is the reference an
+-- export reads. Guarded on the names agreeing, since the legacy name was
+-- typed separately from the observation and may name another plant — an id
+-- beside a name it does not belong to is worse than no id.
+UPDATE sample SET host_inat_taxon_id = f.host_taxon_id
+FROM observation_field f
+WHERE sample.inat_observation_id = f.inat_id
+  AND sample.host_inat_taxon_id IS NULL
+  AND f.host_taxon_id IS NOT NULL
+  AND lower(trim(sample.host_name_as_observed)) = lower(trim(f.host_taxon_name));
+
 -- The atlas joins the refresh now (beeline-6e9). It could not while it was a
 -- column on sample: DuckDB will not update an INDEXED column on a row an
 -- incoming foreign key references — measured and pinned in test/schema.test.ts

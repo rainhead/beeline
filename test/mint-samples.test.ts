@@ -407,6 +407,37 @@ describe("descriptive fields are a fill-only refresh", () => {
     expect(await one(`SELECT locality FROM sample WHERE entity_id = ${sampleId}`)).toEqual(["Bald Hill"]);
   });
 
+  test("an imported host name gains the observation's taxon id where the names agree", async () => {
+    // The legacy import carries the plant as a bare name and no id
+    // (beeline-z9j); the observation here names Rubus, taxon 47604.
+    const agrees = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'",
+      host_name_as_observed: "'Rubus'", host_inat_taxon_id: "NULL",
+    });
+    await stage(obs(7));
+    await promoteObservations(conn);
+    expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed FROM sample WHERE entity_id = ${agrees}`))
+      .toEqual([47604n, "Rubus"]);
+  });
+
+  test("a host name the observation disagrees with gets no id, and a held id is never replaced", async () => {
+    // The legacy name was typed apart from the observation, so where they
+    // name different plants the id would be a claim about the wrong one.
+    const disagrees = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'",
+      host_name_as_observed: "'Ericameria nauseosa'", host_inat_taxon_id: "NULL",
+    });
+    const held = await insertCleanSample(conn, {
+      inat_observation_id: "8", sample_number: "'8'",
+      host_name_as_observed: "'Rubus'", host_inat_taxon_id: "12345",
+    });
+    await stage(obs(7));
+    await stage(obs(8, { ofvs: ofvs("8", "3") }));
+    await promoteObservations(conn);
+    expect(await one(`SELECT host_inat_taxon_id FROM sample WHERE entity_id = ${disagrees}`)).toEqual([null]);
+    expect(await one(`SELECT host_inat_taxon_id FROM sample WHERE entity_id = ${held}`)).toEqual([12345n]);
+  });
+
   test("an atlas a human assigned is not moved by the lookup", async () => {
     // A row with a NULL atlas and assigned_by set is a person stating
     // "belongs to none" — the one state the CHECK admits a NULL atlas for —

@@ -36,6 +36,7 @@ export interface UsageSummary {
     balanceEmptyMinutes: number;
   };
   memory: { totalMb: number; peakUsedMb: number; peakSwapMb: number; oomExits: number };
+  /** usedGb is the peak across the window. */
   disk: { totalGb: number; usedGb: number };
 }
 
@@ -61,7 +62,10 @@ const BALANCE_EMPTY = 100;
 /** One sample per minute. */
 const STEP_S = 60;
 
-type Fetch = (url: string, init: { headers: Record<string, string> }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown>; text(): Promise<string> }>;
+/** Each request's own limit, so one stalled answer cannot hold the job. */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+type Fetch = (url: string, init: { headers: Record<string, string>; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown>; text(): Promise<string> }>;
 
 interface PromResult {
   status: string;
@@ -70,7 +74,14 @@ interface PromResult {
 
 export async function measureFlyUsage(
   target: FlyMetricsTarget,
-  opts: { hours?: number; now?: Date; fetchImpl?: Fetch; step?: <T>(label: string, fn: () => Promise<T>) => Promise<T> } = {},
+  opts: {
+    hours?: number;
+    now?: Date;
+    fetchImpl?: Fetch;
+    step?: <T>(label: string, fn: () => Promise<T>) => Promise<T>;
+    /** The job's shutdown signal; each request is also given REQUEST_TIMEOUT_MS of its own. */
+    signal?: AbortSignal;
+  } = {},
 ): Promise<UsageSummary> {
   const hours = opts.hours ?? 24;
   const end = Math.floor((opts.now ?? new Date()).getTime() / 1000);
@@ -82,7 +93,8 @@ export async function measureFlyUsage(
 
   const ask = async (label: string, path: string, params: Record<string, string>) =>
     step(label, async () => {
-      const res = await fetchImpl(`${base}/${path}?${new URLSearchParams(params)}`, { headers: { Authorization: target.token } });
+      const signal = AbortSignal.any([opts.signal ?? new AbortController().signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
+      const res = await fetchImpl(`${base}/${path}?${new URLSearchParams(params)}`, { headers: { Authorization: target.token }, signal });
       if (!res.ok) throw new Error(`Fly metrics answered ${res.status} for ${label}: ${(await res.text()).slice(0, 200)}`);
       const body = (await res.json()) as PromResult;
       if (body.status !== "success") throw new Error(`Fly metrics refused ${label}`);
@@ -90,32 +102,49 @@ export async function measureFlyUsage(
     });
   const range = (label: string, query: string) =>
     ask(label, "query_range", { query, start: String(start), end: String(end), step: String(STEP_S) });
-  const instant = async (label: string, query: string) =>
-    Number((await ask(label, "query", { query, time: String(end) }))[0]?.value?.[1] ?? 0);
-  /** One value per timestamp: the largest across series, so a machine replaced mid-window counts once. */
-  const merged = (result: PromResult["data"]["result"]) => {
+  /**
+   * One value per timestamp: the largest across series, so a machine replaced
+   * mid-window counts once. A metric with no samples is an error, never zero:
+   * Prometheus answers success with an empty result when a series is gone, and
+   * a zero would read as "inside the limit" (CodeRabbit on #120).
+   */
+  const merged = (label: string, result: PromResult["data"]["result"]) => {
     const at = new Map<number, number>();
-    for (const r of result) for (const [t, v] of r.values ?? []) at.set(t, Math.max(at.get(t) ?? -Infinity, Number(v)));
+    for (const r of result) {
+      for (const [t, v] of r.values ?? []) {
+        const n = v === null ? NaN : Number(v);
+        if (Number.isFinite(n)) at.set(t, Math.max(at.get(t) ?? -Infinity, n));
+      }
+    }
+    if (at.size === 0) throw new Error(`Fly metrics have no ${label} samples for the last ${hours}h`);
     return [...at.values()];
   };
+  const series = async (label: string, query: string) => merged(label, await range(label, query));
 
   // fly_instance_cpu counts clock ticks (USER_HZ, a hundredth of a second),
   // not seconds: verified on 2026-10-01 against the machine's own /proc/stat,
   // which it matches tick for tick. Read as seconds it reports 100× the load.
-  const cpu = merged(
-    await range("cpu", `sum by (instance) (rate(fly_instance_cpu{${app},mode!~"idle|iowait|steal|guest|guest_nice"}[5m])) / 100`),
+  const cpu = (
+    await series("cpu", `sum by (instance) (rate(fly_instance_cpu{${app},mode!~"idle|iowait|steal|guest|guest_nice"}[5m])) / 100`)
   ).sort((a, b) => a - b);
-  const balance = merged(await range("cpu balance", `min(fly_instance_cpu_balance{${app}})`));
-  const memUsed = merged(await range("memory", `max(fly_instance_memory_mem_total{${app}} - fly_instance_memory_mem_available{${app}})`));
-  const swapUsed = merged(await range("swap", `max(fly_instance_memory_swap_total{${app}} - fly_instance_memory_swap_free{${app}})`));
-  const memTotal = await instant("memory total", `max(fly_instance_memory_mem_total{${app}})`);
-  const oom = await instant("oom exits", `max(max_over_time(fly_instance_exit_oom{${app}}[${hours}h]))`);
+  const balance = await series("cpu balance", `min(fly_instance_cpu_balance{${app}})`);
+  const memUsed = await series("memory", `max(fly_instance_memory_mem_total{${app}} - fly_instance_memory_mem_available{${app}})`);
+  const swapUsed = await series("swap", `max(fly_instance_memory_swap_total{${app}} - fly_instance_memory_swap_free{${app}})`);
+  const memTotal = Math.max(...(await series("memory total", `max(fly_instance_memory_mem_total{${app}})`)));
+  // The one metric whose absence is an answer: no exit recorded is no OOM kill.
+  const oomResult = await ask("oom exits", "query", { query: `max(max_over_time(fly_instance_exit_oom{${app}}[${hours}h]))`, time: String(end) });
+  const oom = Number(oomResult[0]?.value?.[1] ?? 0) || 0;
+  // Across the window, not at its end: a file written and removed before 4am still filled the disk.
   const disk = `${app},mount="/app/data"`;
-  const diskUsed = await instant(
-    "disk used",
-    `max((fly_instance_filesystem_blocks{${disk}} - fly_instance_filesystem_blocks_avail{${disk}}) * fly_instance_filesystem_block_size{${disk}})`,
+  const diskUsed = Math.max(
+    ...(await series(
+      "disk used",
+      `max((fly_instance_filesystem_blocks{${disk}} - fly_instance_filesystem_blocks_avail{${disk}}) * fly_instance_filesystem_block_size{${disk}})`,
+    )),
   );
-  const diskTotal = await instant("disk total", `max(fly_instance_filesystem_blocks{${disk}} * fly_instance_filesystem_block_size{${disk}})`);
+  const diskTotal = Math.max(
+    ...(await series("disk total", `max(fly_instance_filesystem_blocks{${disk}} * fly_instance_filesystem_block_size{${disk}})`)),
+  );
 
   const MB = 1024 * 1024;
   const round = (n: number, places: number) => Number(n.toFixed(places));
@@ -146,7 +175,7 @@ export function budgetProblems(s: UsageSummary): string[] {
   }
   if (s.memory.peakSwapMb >= BUDGET.swapMb) out.push(`${s.memory.peakSwapMb} MB of swap in use`);
   if (s.disk.totalGb > 0 && s.disk.usedGb >= BUDGET.diskFraction * s.disk.totalGb) {
-    out.push(`the volume is ${Math.round((100 * s.disk.usedGb) / s.disk.totalGb)}% full (${s.disk.usedGb} of ${s.disk.totalGb} GB); Fly grows it at 80%`);
+    out.push(`the volume reached ${Math.round((100 * s.disk.usedGb) / s.disk.totalGb)}% full (${s.disk.usedGb} of ${s.disk.totalGb} GB); Fly grows it at 80%`);
   }
   if (s.cpu.balanceEmptyMinutes >= BUDGET.balanceEmptyMinutes) {
     out.push(`the CPU burst balance was empty for ${s.cpu.balanceEmptyMinutes} minutes, holding the machine to its baseline`);
@@ -159,7 +188,7 @@ export function describeUsage(s: UsageSummary): string {
   return (
     `last ${s.hours}h: CPU mean ${s.cpu.meanCores} cores, p95 ${s.cpu.p95Cores}, peak ${s.cpu.peakCores}; ` +
     `burst balance empty ${s.cpu.balanceEmptyMinutes} min; memory peak ${s.memory.peakUsedMb}/${s.memory.totalMb} MB, ` +
-    `swap ${s.memory.peakSwapMb} MB, OOM exits ${s.memory.oomExits}; volume ${s.disk.usedGb}/${s.disk.totalGb} GB`
+    `swap ${s.memory.peakSwapMb} MB, OOM exits ${s.memory.oomExits}; volume peak ${s.disk.usedGb}/${s.disk.totalGb} GB`
   );
 }
 

@@ -21,10 +21,11 @@ const at = (v: number) => [{ metric: {}, value: [NOW.getTime() / 1000, String(v)
 
 function fakeFly(answers: Array<[RegExp, Series]>) {
   const asked: string[] = [];
-  const fetchImpl = async (url: string, init: { headers: Record<string, string> }) => {
+  const fetchImpl = async (url: string, init: { headers: Record<string, string>; signal?: AbortSignal }) => {
     const query = new URL(url).searchParams.get("query") ?? "";
     asked.push(query);
     expect(init.headers.Authorization).toBe("FlyV1 read-only");
+    expect(init.signal).toBeInstanceOf(AbortSignal);
     const hit = answers.find(([re]) => re.test(query));
     if (hit === undefined) throw new Error(`unexpected query ${query}`);
     return { ok: true, status: 200, json: async () => ({ status: "success", data: { result: hit[1] } }), text: async () => "" };
@@ -39,10 +40,11 @@ const RESEED_DAY: Array<[RegExp, Series]> = [
   [/cpu_balance/, [over([100000, 1, 1])]],
   [/mem_available/, [over([600 * MB, 1302 * MB, 700 * MB])]],
   [/swap_free/, [over([0, 5 * MB, 2 * MB])]],
-  [/max\(fly_instance_memory_mem_total/, at(1968 * MB)],
+  [/max\(fly_instance_memory_mem_total/, [over([1968 * MB, 1968 * MB, 1968 * MB])]],
   [/exit_oom/, at(0)],
-  [/blocks_avail/, at(2.36e9)],
-  [/filesystem_blocks\{[^}]*\} \* /, at(10.45e9)],
+  // The peak across the window: an export written and removed before 4am still filled the disk.
+  [/blocks_avail/, [over([2.36e9, 2.9e9, 2.36e9])]],
+  [/filesystem_blocks\{[^}]*\} \* /, [over([10.45e9, 10.45e9, 10.45e9])]],
 ];
 
 const target = { token: "FlyV1 read-only", org: "osu-mm", app: "beeline" };
@@ -54,11 +56,21 @@ describe("measuring", () => {
       hours: 24,
       cpu: { meanCores: 0.162, p95Cores: 0.004, peakCores: 0.48, balanceEmptyMinutes: 2 },
       memory: { totalMb: 1968, peakUsedMb: 1302, peakSwapMb: 5, oomExits: 0 },
-      disk: { totalGb: 10.45, usedGb: 2.36 },
+      disk: { totalGb: 10.45, usedGb: 2.9 },
     });
     // fly_instance_cpu counts clock ticks: read as seconds it says 100× the load.
     expect(asked.find((q) => q.includes("fly_instance_cpu{"))).toMatch(/\/ 100$/);
     expect(asked.every((q) => q.includes('app="beeline"'))).toBe(true);
+  });
+
+  test("a metric with no samples is an error, never a zero inside the limit", async () => {
+    const { fetchImpl } = fakeFly(RESEED_DAY.map(([re, s]) => [re, /mem_available/.test(re.source) ? [] : s]));
+    await expect(measureFlyUsage(target, { now: NOW, fetchImpl })).rejects.toThrow("Fly metrics have no memory samples for the last 24h");
+  });
+
+  test("no exit recorded is no OOM kill", async () => {
+    const { fetchImpl } = fakeFly(RESEED_DAY.map(([re, s]) => [re, /exit_oom/.test(re.source) ? [] : s]));
+    expect((await measureFlyUsage(target, { now: NOW, fetchImpl })).memory.oomExits).toBe(0);
   });
 
   test("an answer that is not a success is an error naming the query", async () => {
@@ -92,7 +104,7 @@ describe("the budget", () => {
       "the machine was killed for running out of memory (1 time(s))",
       "memory peaked at 1700 MB of 1968 MB",
       "300 MB of swap in use",
-      "the volume is 75% full (7.5 of 10 GB); Fly grows it at 80%",
+      "the volume reached 75% full (7.5 of 10 GB); Fly grows it at 80%",
       "the CPU burst balance was empty for 60 minutes, holding the machine to its baseline",
     ]);
   });
@@ -102,7 +114,7 @@ describe("the resource-budget job", () => {
   afterEach(() => vi.unstubAllGlobals());
   const config = { syncProjects: [], sweepDays: 365, personChangesPath: "x", sampleChangesPath: "x", sampleStatePath: "x" };
   const job = (flyMetrics: typeof target | null) => buildJobs({ ...config, flyMetrics }).find((j) => j.name === "resource-budget")!;
-  const ctx = { step: <T>(_l: string, fn: () => Promise<T>) => fn() } as never;
+  const ctx = { step: <T>(_l: string, fn: () => Promise<T>) => fn(), signal: new AbortController().signal } as never;
 
   test("off Fly it says there is nothing to measure", async () => {
     expect(await job(null).run(ctx)).toMatch(/^not on Fly/);
@@ -111,9 +123,9 @@ describe("the resource-budget job", () => {
   test("says what the day used, and fails when a limit was crossed", async () => {
     vi.stubGlobal("fetch", fakeFly(RESEED_DAY).fetchImpl);
     expect(await job(target).run(ctx)).toBe(describeUsage(await measureFlyUsage(target, { fetchImpl: fakeFly(RESEED_DAY).fetchImpl })));
-    const full: Array<[RegExp, Series]> = RESEED_DAY.map(([re, s]) => [re, /blocks_avail/.test(re.source) ? at(8e9) : s]);
+    const full: Array<[RegExp, Series]> = RESEED_DAY.map(([re, s]) => [re, /blocks_avail/.test(re.source) ? [over([2e9, 8e9, 2e9])] : s]);
     vi.stubGlobal("fetch", fakeFly(full).fetchImpl);
-    await expect(job(target).run(ctx)).rejects.toThrow(/^the volume is 77% full/);
+    await expect(job(target).run(ctx)).rejects.toThrow(/^the volume reached 77% full/);
   });
 
   test("is configured only where Fly runs it with a token", () => {

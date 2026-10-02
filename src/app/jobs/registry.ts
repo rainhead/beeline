@@ -262,7 +262,7 @@ export function buildJobs(
       window: "night",
       async run(ctx) {
         if (!config.flyMetrics) return "not on Fly (no FLY_METRICS_TOKEN / FLY_APP_NAME) — nothing to measure";
-        const usage = await measureFlyUsage(config.flyMetrics, { step: ctx.step });
+        const usage = await measureFlyUsage(config.flyMetrics, { step: ctx.step, signal: ctx.signal });
         const problems = budgetProblems(usage);
         if (problems.length > 0) throw new Error(`${problems.join("; ")} — ${describeUsage(usage)}`);
         return describeUsage(usage);

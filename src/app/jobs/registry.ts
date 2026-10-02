@@ -224,6 +224,25 @@ export function buildJobs(
       },
     },
     {
+      // What the machine used in the last day against what it has (Peter,
+      // 2026-10-01): it fails when a limit in BUDGET was crossed, which is
+      // what puts it on /healthz/jobs and fails its Sentry check-in. Ahead of
+      // the export in this list, so it starts first at 4am — due jobs run in
+      // list order, and an export running past 5 would otherwise leave the
+      // day unchecked (CodeRabbit on #120). It takes seconds, and the 24
+      // hours it reads still hold yesterday's export.
+      name: "resource-budget",
+      schedule: { kind: "dailyLA", hour: 4 },
+      window: "night",
+      async run(ctx) {
+        if (!config.flyMetrics) return "not on Fly (no FLY_METRICS_TOKEN / FLY_APP_NAME) — nothing to measure";
+        const usage = await measureFlyUsage(config.flyMetrics, { step: ctx.step, signal: ctx.signal });
+        const problems = budgetProblems(usage);
+        if (problems.length > 0) throw new Error(`${problems.join("; ")} — ${describeUsage(usage)}`);
+        return describeUsage(usage);
+      },
+    },
+    {
       // The legacy system's occurrences file, kept current (beeline-6q8):
       // reporting built on that dump — Andony's comparison, the taxonomists'
       // Ecdysis uploads — reads this instead once the legacy system freezes.
@@ -249,23 +268,6 @@ export function buildJobs(
         }
         const { rows, staged } = result;
         return `${rows} rows written to ${path}${staged ? "" : " (no legacy staging: legacy-only columns blank)"}`;
-      },
-    },
-    {
-      // What the machine used in the last day against what it has (Peter,
-      // 2026-10-01): it fails when a limit in BUDGET was crossed, which is
-      // what puts it on /healthz/jobs and fails its Sentry check-in. After
-      // the export, so the night's heaviest work is in the window; a daily
-      // window measured each day covers every hour whatever runs first.
-      name: "resource-budget",
-      schedule: { kind: "dailyLA", hour: 4 },
-      window: "night",
-      async run(ctx) {
-        if (!config.flyMetrics) return "not on Fly (no FLY_METRICS_TOKEN / FLY_APP_NAME) — nothing to measure";
-        const usage = await measureFlyUsage(config.flyMetrics, { step: ctx.step, signal: ctx.signal });
-        const problems = budgetProblems(usage);
-        if (problems.length > 0) throw new Error(`${problems.join("; ")} — ${describeUsage(usage)}`);
-        return describeUsage(usage);
       },
     },
   ];

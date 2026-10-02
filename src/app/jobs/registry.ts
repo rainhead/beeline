@@ -1,4 +1,5 @@
 import { legacyExportPath, writeLegacyExport } from "../../legacy-export.js";
+import { budgetProblems, describeUsage, measureFlyUsage } from "../../fly-usage.js";
 import { commitDeterminationDrafts } from "../../commit-determinations.js";
 import { readFile } from "node:fs/promises";
 import type { Kysely } from "kysely";
@@ -149,7 +150,7 @@ export function buildJobs(
     AppConfig,
     "syncProjects" | "sweepDays" | "personChangesPath" | "sampleChangesPath" | "sampleStatePath"
   > &
-    Partial<Pick<AppConfig, "sampleOverlayPath" | "exportsDir">>,
+    Partial<Pick<AppConfig, "sampleOverlayPath" | "exportsDir" | "flyMetrics">>,
 ): Job[] {
   const samplePaths: SampleLogPaths = { log: config.sampleChangesPath, state: config.sampleStatePath };
   return [
@@ -248,6 +249,23 @@ export function buildJobs(
         }
         const { rows, staged } = result;
         return `${rows} rows written to ${path}${staged ? "" : " (no legacy staging: legacy-only columns blank)"}`;
+      },
+    },
+    {
+      // What the machine used in the last day against what it has (Peter,
+      // 2026-10-01): it fails when a limit in BUDGET was crossed, which is
+      // what puts it on /healthz/jobs and fails its Sentry check-in. After
+      // the export, so the night's heaviest work is in the window; a daily
+      // window measured each day covers every hour whatever runs first.
+      name: "resource-budget",
+      schedule: { kind: "dailyLA", hour: 4 },
+      window: "night",
+      async run(ctx) {
+        if (!config.flyMetrics) return "not on Fly (no FLY_METRICS_TOKEN / FLY_APP_NAME) — nothing to measure";
+        const usage = await measureFlyUsage(config.flyMetrics, { step: ctx.step });
+        const problems = budgetProblems(usage);
+        if (problems.length > 0) throw new Error(`${problems.join("; ")} — ${describeUsage(usage)}`);
+        return describeUsage(usage);
       },
     },
   ];

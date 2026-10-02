@@ -302,6 +302,42 @@ store holds), tokens, and email addresses are replaced. Log a message as a
 string, not as an object: the log integration serialises an object as JSON,
 whose every key is quoted and so redacted into nothing.
 
+## The machine's budget
+
+The machine is `shared-cpu-2x`, 2 GB with 1 GB of swap, and a 10 GB volume Fly
+grows by 5 GB at 80% full ([`fly.toml`](../../fly.toml)). What it actually used,
+2026-09-12 to 10-01 from Fly's own metrics: a normal day ~0.003 cores and
+0.5–0.65 GB of memory, no swap, ~2.4 GB on the volume, no OOM kills. The one
+limit it reaches is the **CPU burst balance**: a shared vCPU may run above its
+baseline only while the balance lasts, and a reseed or a large manual load
+empties it and is held to the baseline for the rest of the run — 15–40
+minutes on each of the three days it happened, and most likely why the
+2026-10-01 reseed took 38 minutes where the 09-28 one took 23. Memory peaked
+at 1.4 GB during those runs.
+
+The `resource-budget` job reads the last 24 hours at 4am Pacific
+([`src/fly-usage.ts`](../../src/fly-usage.ts)) and **fails** when a limit in
+`BUDGET` was crossed — memory past 85%, swap past 256 MB, any OOM kill, the
+volume past 70% (short of the 80% that costs money), or the burst balance empty
+for an hour — so `/healthz/jobs` and its Sentry check-in say so. Otherwise its
+`job_run.detail` on `/jobs` is the day's numbers. A day with one reseed in it
+stays green; a machine throttled every night does not.
+
+It reads Fly's Prometheus store with a read-only org token held as the
+`FLY_METRICS_TOKEN` secret; the app name comes from `FLY_APP_NAME`, which Fly
+sets. An expired token fails the job with `Fly metrics answered 401`. To mint
+or rotate it, and to measure by hand:
+
+```sh
+fly tokens create readonly osu-mm --name "beeline resource-budget job" --expiry 8760h
+fly secrets set --app beeline FLY_METRICS_TOKEN='FlyV1 …'      # restarts the machine
+FLY_METRICS_TOKEN="$(fly tokens create readonly osu-mm --expiry 1h)" pnpm fly:usage 168
+```
+
+Read `fly_instance_cpu` as clock ticks, a hundredth of a second, not seconds:
+it matches the machine's `/proc/stat` tick for tick, and read as seconds it
+says the machine is a hundred times busier than it is.
+
 ## Knowing the nightly is running
 
 The Sentry check-ins above now alert on a failed or missing run. What follows

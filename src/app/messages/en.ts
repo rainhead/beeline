@@ -1148,6 +1148,8 @@ export const en = {
         "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
       "commit-determinations":
         "Turns the day's entries on Identify specimens into determinations. Until it runs, volunteers can change what they entered; after it, a change is added beside the old one.",
+      "resource-budget":
+        "Reads what the machine used in the last day — processor, memory, swap and disk — from Fly's metrics, and fails when it came close to a limit, so somebody looks before the machine is throttled, killed or its disk grows.",
       "weekly-sweep":
         "Re-fetches the full trailing year from each project as a presence proof — the run that detects deletions and anything the incremental pulls missed — then promotes and derives elevations.",
     } as Record<string, string>,

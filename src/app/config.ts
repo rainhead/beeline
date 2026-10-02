@@ -1,3 +1,4 @@
+import type { FlyMetricsTarget } from "../fly-usage.js";
 import { CHANGE_LOG } from "../person-change.js";
 import { SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
 
@@ -93,6 +94,13 @@ export interface AppConfig {
    * `FLY_IMAGE_REF` (`registry.fly.io/beeline:deployment-01M…`), else null.
    */
   release: string | null;
+  /**
+   * Where the resource-budget job reads the machine's usage (src/fly-usage.ts),
+   * or null where there is no Fly machine to ask. The token is a read-only org
+   * token, from the environment because it is a credential; the app name is
+   * the one Fly sets on its machines.
+   */
+  flyMetrics: FlyMetricsTarget | null;
 }
 
 /**
@@ -202,5 +210,9 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     feedbackEmail,
     sentryDsn: env.SENTRY_DSN?.trim() || null,
     release: env.BEELINE_RELEASE?.trim() || env.FLY_IMAGE_REF?.split(":").pop()?.trim() || null,
+    flyMetrics:
+      env.FLY_METRICS_TOKEN?.trim() && env.FLY_APP_NAME?.trim()
+        ? { token: env.FLY_METRICS_TOKEN.trim(), org: env.BEELINE_FLY_ORG?.trim() || "osu-mm", app: env.FLY_APP_NAME.trim() }
+        : null,
   };
 }

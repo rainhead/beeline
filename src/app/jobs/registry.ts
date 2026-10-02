@@ -1,4 +1,5 @@
 import { legacyExportPath, writeLegacyExport } from "../../legacy-export.js";
+import { budgetProblems, describeUsage, measureFlyUsage } from "../../fly-usage.js";
 import { commitDeterminationDrafts } from "../../commit-determinations.js";
 import { readFile } from "node:fs/promises";
 import type { Kysely } from "kysely";
@@ -149,7 +150,7 @@ export function buildJobs(
     AppConfig,
     "syncProjects" | "sweepDays" | "personChangesPath" | "sampleChangesPath" | "sampleStatePath"
   > &
-    Partial<Pick<AppConfig, "sampleOverlayPath" | "exportsDir">>,
+    Partial<Pick<AppConfig, "sampleOverlayPath" | "exportsDir" | "flyMetrics">>,
 ): Job[] {
   const samplePaths: SampleLogPaths = { log: config.sampleChangesPath, state: config.sampleStatePath };
   return [
@@ -220,6 +221,25 @@ export function buildJobs(
       async run(ctx) {
         const { committed, unchanged, waiting } = await ctx.step("commit drafts", () => commitDeterminationDrafts(ctx.conn));
         return `${committed} determination(s) recorded, ${unchanged} draft(s) unchanged and dropped, ${waiting} waiting for a name`;
+      },
+    },
+    {
+      // What the machine used in the last day against what it has (Peter,
+      // 2026-10-01): it fails when a limit in BUDGET was crossed, which is
+      // what puts it on /healthz/jobs and fails its Sentry check-in. Ahead of
+      // the export in this list, so it starts first at 4am — due jobs run in
+      // list order, and an export running past 5 would otherwise leave the
+      // day unchecked (CodeRabbit on #120). It takes seconds, and the 24
+      // hours it reads still hold yesterday's export.
+      name: "resource-budget",
+      schedule: { kind: "dailyLA", hour: 4 },
+      window: "night",
+      async run(ctx) {
+        if (!config.flyMetrics) return "not on Fly (no FLY_METRICS_TOKEN / FLY_APP_NAME) — nothing to measure";
+        const usage = await measureFlyUsage(config.flyMetrics, { step: ctx.step, signal: ctx.signal });
+        const problems = budgetProblems(usage);
+        if (problems.length > 0) throw new Error(`${problems.join("; ")} — ${describeUsage(usage)}`);
+        return describeUsage(usage);
       },
     },
     {

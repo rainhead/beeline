@@ -28,7 +28,7 @@ pnpm inat:promote                           # current observation state → samp
 pnpm inat:backfill-accounts                 # resolve legacy logins → iNat accounts
 pnpm elevation:fetch && pnpm elevation:derive  # DEM tiles (SRTM 1-arc-second, Copernicus GLO-30 where SRTM does not reach) → missing elevations
 pnpm itis:fetch && pnpm itis:load            # ITIS release (224 MB, run on maderas) → the insects in data/itis/ → itis_taxon, every animal node matched
-pnpm taxon:fetch-sheet <sheet-id> [dir]      # a taxonomist's worksheet, every tab as CSV, to data/taxon-decisions/<date>/ — to be read, not parsed
+pnpm taxon:fetch-sheet <sheet-id> [dir]      # a taxonomist's worksheet, every tab as CSV, to data/taxon-decisions/<modified instant>/ — to be read, not parsed
 pnpm taxon:decide <kind> <rank> "<name>" --by … --reason …   # record one decision (or --batch file.csv): the ITIS facts filled from the store, the row validated, the file merged
 pnpm taxon:apply [db]                        # replay ingest/taxon-curation.csv onto a store: the program's departures from ITIS, and what a new release moved from under
 pnpm legacy:export [db] [out.csv]            # every specimen as the legacy occurrences file (the app writes it nightly)

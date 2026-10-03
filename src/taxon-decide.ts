@@ -146,8 +146,19 @@ export async function decide(input: DecisionInput, ctx: DecideContext): Promise<
   return row;
 }
 
-/** The file with these decisions in it: a row for a name already decided is superseded, the rest kept. */
+/**
+ * The file with these decisions in it: a row for a name already decided is
+ * superseded, the rest kept. A name decided twice in the same batch is
+ * refused rather than last-wins: the reader meant one of them, and nothing
+ * here can say which.
+ */
 export function mergeDecisions(existing: readonly TaxonCurationRow[], incoming: readonly TaxonCurationRow[]): TaxonCurationRow[] {
+  const seen = new Set<string>();
+  for (const r of incoming) {
+    const k = curationKey(r);
+    if (seen.has(k)) throw new Error(`${r.name} (${r.rank}): decided twice in one batch`);
+    seen.add(k);
+  }
   const byKey = new Map(existing.map((r) => [curationKey(r), r]));
   for (const r of incoming) byKey.set(curationKey(r), r);
   return [...byKey.values()];

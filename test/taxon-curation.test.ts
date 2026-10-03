@@ -267,12 +267,20 @@ describe("recording a decision", () => {
     expect(() => parseBatch("kind,rank,name,reason\nadopt,species,X y,why", "mem")).toThrow(/line 2: 'adopt' is not a kind/);
   });
 
-  test("merging supersedes a decision about the same name and keeps the rest", () => {
+  test("merging supersedes a decision about the same name and keeps the rest; one batch deciding a name twice is refused", () => {
     const merged = mergeDecisions([row({}), DEPARTURE], [row({ reason: "revised" }), HOMONYM]);
     expect(merged.map((r) => [r.name, r.reason])).toEqual([
       ["Lasioglossum (Dialictus)", "revised"],
       ["Lasioglossum zonulum", DEPARTURE.reason],
       ["Hoplitis truncata", HOMONYM.reason],
+    ]);
+    expect(() => mergeDecisions([], [row({}), row({ reason: "again" })])).toThrow(/Lasioglossum \(Dialictus\) \(subgenus\): decided twice in one batch/);
+  });
+
+  test("a snapshot names each tab's file apart, however the titles sanitise", async () => {
+    const { snapshotFileNames } = await import("../src/fetch-taxon-sheet.js");
+    expect(snapshotFileNames(["Read me", "1 Names ITIS does not have", "A B", "A-B", "!!!"])).toEqual([
+      "read-me.csv", "1-names-itis-does-not-have.csv", "a-b.csv", "a-b-2.csv", "tab.csv",
     ]);
   });
 });

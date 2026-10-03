@@ -5,8 +5,11 @@ import { accessToken, fileMeta, sheetTabs } from "./google-drive.js";
 
 /**
  * A taxonomist's worksheet, as they left it, to disk (beeline-45v.1): every
- * tab of the Google Sheet as a CSV under data/taxon-decisions/<date>/, with
- * a meta.json naming the sheet and when it was last touched.
+ * tab of the Google Sheet as a CSV under data/taxon-decisions/<modified>/,
+ * with a meta.json naming the sheet and when it was last touched. The
+ * directory is the sheet's last-modified instant, so each version of the
+ * sheet is its own snapshot and a second fetch of an unchanged sheet lands in
+ * the same place; nothing is ever overwritten by a later version.
  *
  * Fetch and nothing more. The first version of this read the answers too —
  * matched the dropdown strings, prefix-matched "Keep…", picked an author's
@@ -28,17 +31,31 @@ export const DEFAULT_SNAPSHOT_DIR = "data/taxon-decisions";
 const cell = (v: string) => (/[",\n\r]/.test(v) ? `"${v.replaceAll('"', '""')}"` : v);
 const safeName = (title: string) => title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
 
+/** Two titles can sanitise to one name ("A B", "A-B"); the second gets a suffix rather than the first's file. */
+export const snapshotFileNames = (titles: readonly string[]): string[] => {
+  const taken = new Set<string>();
+  return titles.map((t) => {
+    const base = safeName(t) || "tab";
+    let file = `${base}.csv`;
+    for (let n = 2; taken.has(file); n++) file = `${base}-${n}.csv`;
+    taken.add(file);
+    return file;
+  });
+};
+
 export async function fetchTaxonSheet(sheetId: string, dir: string = DEFAULT_SNAPSHOT_DIR): Promise<{ dir: string; tabs: { title: string; file: string; rows: number }[] }> {
   const token = accessToken();
   const meta = await fileMeta(token, sheetId);
   const tabs = await sheetTabs(token, sheetId);
-  const out = join(dir, meta.modifiedTime.slice(0, 10));
+  // 2026-10-07T14-32-11Z: the instant, with the colons a filename cannot hold.
+  const out = join(dir, meta.modifiedTime.replace(/\.\d+Z$/, "Z").replaceAll(":", "-"));
   await mkdir(out, { recursive: true });
   const written = [];
-  for (const tab of tabs) {
+  const files = snapshotFileNames(tabs.map((t) => t.title));
+  for (const [n, tab] of tabs.entries()) {
     const width = Math.max(0, ...tab.rows.map((r) => r.length));
     const text = tab.rows.map((r) => Array.from({ length: width }, (_, i) => cell(r[i] ?? "")).join(",")).join("\n");
-    const file = `${safeName(tab.title)}.csv`;
+    const file = files[n]!;
     await writeFile(join(out, file), `${text}\n`);
     written.push({ title: tab.title, file, rows: Math.max(0, tab.rows.length - 1) });
   }

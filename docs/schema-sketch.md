@@ -247,7 +247,7 @@ CREATE TABLE taxon (
 );
 ```
 
-Bees to species; non-bee scaffold deep enough for wasps at species rank (seeded on demand from ITIS, the program's basis for bees and bycatch alike — beeline-45v). *Open: versioning mechanics — likely git-versioned seed data plus an append-only `taxon_change` log; decide when the curation workflow (Lincoln et al.) is designed.* Floral hosts do **not** live here — they are iNat taxon references on the sample.
+Bees to species; non-bee scaffold deep enough for wasps at species rank (seeded on demand from ITIS, the program's basis for bees and bycatch alike — beeline-45v). The curation layer over ITIS is built as `animal_curation` ([schema/022](../schema/022_animal_curation.sql), beeline-45v.1): git-versioned decisions in `ingest/taxon-curation.csv`, each a taxonomist's, replayed on every rebuild. *Open: versioning mechanics beyond that — an append-only `taxon_change` log, after cutover, per ADR 0007.* Floral hosts do **not** live here — they are iNat taxon references on the sample.
 
 ## Ingestion (observation history)
 

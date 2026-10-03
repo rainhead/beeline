@@ -8,7 +8,7 @@ import { applyPersonOverlay, type Unresolved } from "./apply-person-overlay.js";
 import { mergeOverlays, readOverlay, CURATED_OVERLAY } from "./person-overlay.js";
 import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
 import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
-import { matchAnimalsToItis } from "./load-itis.js";
+import { applyTaxonCuration, CURATED_TAXON_CURATION, readTaxonCuration, type Unplaced } from "./taxon-curation.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -44,6 +44,12 @@ export interface PromotionCounts {
   unusedTaxonAliases: number;
   /** Animal nodes carrying an ITIS TSN — zero until ITIS has been loaded (beeline-45v.4). */
   animalsMatchedToItis: number;
+  /** Taxonomists' decisions replayed from ingest/taxon-curation.csv (beeline-45v.1). */
+  taxonCurationApplied: number;
+  /** Nodes the curation file brought into existence. */
+  taxonCurationCreated: number;
+  /** Curation rows whose node could not be placed — reported, never guessed at. */
+  taxonCurationUnplaced: Unplaced[];
   /** Logins two person records file under: one human twice, or a shared account. */
   collectorDuplicateLogins: number;
   correctionsApplied: number;
@@ -93,6 +99,8 @@ export interface PromotionInputs {
   collectorAliases: string;
   /** Misspelt taxon names and the name each writer meant (beeline-45v.2). */
   taxonAliases: string;
+  /** The program's stated departures from ITIS, each on a taxonomist's word (beeline-45v.1). */
+  taxonCuration: string;
   /** The legacy name register (beeline-8t8); absent reads as empty. */
   usernameRegister: string;
 }
@@ -112,6 +120,7 @@ export const LIVE_INPUTS: PromotionInputs = {
   appOverlay: "data/person-overlay.csv",
   collectorAliases: "ingest/collector-aliases.csv",
   taxonAliases: "ingest/taxon-aliases.csv",
+  taxonCuration: CURATED_TAXON_CURATION,
   usernameRegister: "data/legacy/usernames.csv",
 };
 
@@ -122,7 +131,7 @@ export async function promoteLegacy(
 ): Promise<PromotionCounts> {
   const {
     taxonomyCsv, determinerAliases, determinerRegister, legacyCorrections,
-    appCorrections, curatedOverlay, appOverlay, collectorAliases, taxonAliases, usernameRegister,
+    appCorrections, curatedOverlay, appOverlay, collectorAliases, taxonAliases, taxonCuration, usernameRegister,
   } = inputs;
   const scalar = async (sql: string): Promise<number> => {
     const [[v]] = (await (await conn.run(sql)).getRows()) as [[bigint]];
@@ -146,10 +155,13 @@ export async function promoteLegacy(
   );
   const seedSql = await readFile(`${INGEST_DIR}seed-animals.sql`, "utf8");
   await conn.run(seedSql.replaceAll("{{TAXONOMY_CSV}}", taxonomyCsv.replaceAll("'", "''")));
-  // Against whatever ITIS the store carries (beeline-45v.4): itis_taxon is
-  // loaded on its own schedule and survives a reseed, so a rebuilt tree is
-  // matched here rather than waiting for the next ITIS load.
-  await matchAnimalsToItis(conn);
+  // The taxonomists' decisions, after the seed so their nodes are there to be
+  // decided about, and before the match so a homonym resolution is honoured
+  // by it. applyTaxonCuration ends by matching, against whatever ITIS the
+  // store carries (beeline-45v.4): itis_taxon is loaded on its own schedule
+  // and survives a reseed, so a rebuilt tree is matched here rather than
+  // waiting for the next ITIS load.
+  const curation = await applyTaxonCuration(conn, await readTaxonCuration(taxonCuration));
   const detSql = await readFile(`${INGEST_DIR}promote-determinations.sql`, "utf8");
   await conn.run(
     detSql
@@ -184,6 +196,9 @@ export async function promoteLegacy(
     unusedCollectorAliases: await scalar("SELECT count(*) FROM legacy_collector_alias_unused"),
     unusedTaxonAliases: await scalar("SELECT count(*) FROM legacy_taxon_alias_unused"),
     animalsMatchedToItis: await scalar("SELECT count(itis_tsn) FROM animal"),
+    taxonCurationApplied: curation.applied,
+    taxonCurationCreated: curation.created,
+    taxonCurationUnplaced: curation.unplaced,
     collectorDuplicateLogins: await scalar(
       "SELECT count(DISTINCT login) FROM legacy_collector_duplicate_candidate",
     ),

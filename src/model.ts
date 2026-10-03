@@ -190,6 +190,25 @@ export interface AnimalTable {
   itis_tsn: BigIntCol | null;
 }
 
+// schema/022_animal_curation.sql
+
+export type CurationKind = "addition" | "departure" | "homonym";
+
+/** The program's stated departures from ITIS, one per node, each on a taxonomist's word (beeline-45v.1). Replayed from ingest/taxon-curation.csv. */
+export interface AnimalCurationTable {
+  animal_id: number;
+  kind: CurationKind;
+  /** Departure: the TSN of the program's name in ITIS. Homonym: the TSN chosen. Null for an addition. */
+  itis_tsn: BigIntCol | null;
+  /** Departure only: what ITIS accepted instead when the decision was made. */
+  itis_current_name: string | null;
+  itis_release: ColumnType<Date, Date | string, Date | string>;
+  taxonomist: string;
+  decided_on: ColumnType<Date, Date | string, Date | string>;
+  reference: string | null;
+  reason: string;
+}
+
 // schema/025_itis.sql
 
 /** ITIS insects at the ranks animal_rank admits, from one release (beeline-45v.4). */
@@ -948,6 +967,17 @@ export interface AnimalItisView {
   current_name: string | null;
 }
 
+/** Curation rows the loaded ITIS release has moved from under (schema/118). */
+export interface AnimalCurationStaleView {
+  animal_id: number;
+  rank: string;
+  scientific_name: string;
+  kind: CurationKind;
+  itis_release: Date;
+  itis_as_of: Date;
+  problem: string;
+}
+
 export interface AnimalItisStaleView {
   entity_id: number;
   rank: string;
@@ -968,6 +998,7 @@ export interface Database {
   atlas_printing: AtlasPrintingTable;
   atlas_region: AtlasRegionTable;
   animal: AnimalTable;
+  animal_curation: AnimalCurationTable;
   itis_taxon: ItisTaxonTable;
   itis_synonym: ItisSynonymTable;
   sample: SampleTable;
@@ -1048,6 +1079,7 @@ export interface Database {
   animal_itis: AnimalItisView;
   animal_itis_match: AnimalItisMatchView;
   animal_itis_stale: AnimalItisStaleView;
+  animal_curation_stale: AnimalCurationStaleView;
   // Attached private store (ADR 0003), catalog-qualified:
   "private.inat_sign_in": InatSignInTable;
   "private.session": SessionTable;

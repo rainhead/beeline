@@ -759,6 +759,14 @@ export interface SampleMultiObservationView {
   other_specimen_count: number;
 }
 
+/** A sample whose cited observation another sample also cites (beeline-15k); shape is the group's. */
+export interface SampleSharedObservationView {
+  sample_id: number;
+  inat_observation_id: BigIntCol;
+  samples_sharing: number;
+  shape: "different_collectors" | "collector_unknown" | "same_date" | "same_number" | "duplicate" | "other";
+}
+
 /** A sample whose cited observation now reports a different number or date —
  *  the cost of never rewriting an existing sample, made visible. */
 export interface SampleObservationNumberMismatchView {
@@ -1012,6 +1020,7 @@ export interface Database {
   sample_mint_pending: SampleMintPendingView;
   sample_atlas_unfilled: SampleAtlasUnfilledView;
   sample_multi_observation: SampleMultiObservationView;
+  sample_shared_observation: SampleSharedObservationView;
   sample_observation_number_mismatch: SampleObservationNumberMismatchView;
   sample_elevation_unsupportable: SampleElevationUnsupportableView;
   sample_elevation_stale: SampleElevationStaleView;

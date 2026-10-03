@@ -248,6 +248,7 @@ describe("the taxonomy pages", () => {
     expect(departure).toContain(en.taxonomy.decision.by("L. Best", new Date(2026, 9, 9), new Date(2026, 7, 26)));
     expect(departure).toContain("the neuter ending, pending Gibbs");
     expect(departure).toContain('href="https://doi.org/10.0000/zonulum"');
+
     expect(departure).toContain(en.taxonomy.standing.synonym);
     expect(departure).not.toContain(en.taxonomy.decision.moved);
 
@@ -277,6 +278,18 @@ describe("the taxonomy pages", () => {
     expect(moved).toContain(en.taxonomy.decision.moved);
     expect(moved).toContain("the departure can be retired");
     expect(await page(app, "/taxonomy?decided=moved")).toContain(en.taxonomy.found(1));
+
+    // Restated wholesale, so this comes last. A bare DOI links through doi.org; anything that is not http(s) or a DOI is text, not a link.
+    await applyTaxonCuration(conn, [
+      decided({ reference: "10.11646/zootaxa.3073.1.1" }),
+      decided({ kind: "homonym", name: "Hoplitis truncata", itis_tsn: "715497", reference: "javascript:alert(1)", reason: "the Nearctic one" }),
+    ]);
+    expect(await page(app, taxonHref({ rank: "species", scientific_name: "Brachymelecta californica" }))).toContain(
+      'href="https://doi.org/10.11646/zootaxa.3073.1.1"',
+    );
+    const unsafe = await page(app, taxonHref({ rank: "species", scientific_name: "Hoplitis truncata" }));
+    expect(unsafe).toContain("javascript:alert(1)");
+    expect(unsafe).not.toContain('href="javascript:');
   });
 
   it("says ITIS is not loaded rather than calling every name absent", async () => {

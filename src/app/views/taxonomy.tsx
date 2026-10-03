@@ -336,7 +336,7 @@ function Decision({ m, node, decision }: { m: Messages; node: TaxonNode; decisio
       <p>{decision.reason}</p>
       {decision.reference !== null && (
         <p>
-          {d.reference} <a href={decision.reference}>{decision.reference}</a>
+          {d.reference} <Reference value={decision.reference} />
         </p>
       )}
       {node.moved !== null && (
@@ -346,6 +346,18 @@ function Decision({ m, node, decision }: { m: Messages; node: TaxonNode; decisio
       )}
     </Callout>
   );
+}
+
+/**
+ * The paper behind a decision, as a link where it can safely be one: an
+ * http(s) URL as written, a bare DOI through doi.org, and anything else as
+ * text — the value arrives from a taxonomist's sheet, and escaping does not
+ * stop a `javascript:` scheme from being a scheme (CodeRabbit, #124).
+ */
+function Reference({ value }: { value: string }) {
+  if (/^https?:\/\//i.test(value)) return <a href={value}>{value}</a>;
+  if (/^10\.\d{4,}\/\S+$/.test(value)) return <a href={`https://doi.org/${value}`}>{value}</a>;
+  return <>{value}</>;
 }
 
 export function TaxonPage({ m, node, admin }: { m: Messages; node: TaxonNode; admin: boolean }) {

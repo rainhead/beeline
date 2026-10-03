@@ -336,6 +336,59 @@ describe("reconciling against samples the store already holds", () => {
   });
 });
 
+describe("one observation cited by several samples", () => {
+  // beeline-15k. The legacy import carries it (the Label Czar's records share
+  // one observation URL across sampleIDs); minting cannot make it. The two
+  // same-collector shapes are the bead's own examples from the dev store.
+  const shapes = async () =>
+    rows(conn, "SELECT sample_id, inat_observation_id, samples_sharing, shape FROM sample_shared_observation ORDER BY sample_id");
+
+  test("one collector, one day, two numbers", async () => {
+    const a = await insertCleanSample(conn, {
+      inat_observation_id: "129100300", sample_number: "'147'",
+      date_start: "DATE '2022-07-31'", date_end: "DATE '2022-07-31'",
+    });
+    const b = await insertCleanSample(conn, {
+      inat_observation_id: "129100300", sample_number: "'148'",
+      date_start: "DATE '2022-07-31'", date_end: "DATE '2022-07-31'",
+    });
+    expect(await shapes()).toEqual([
+      [a, 129100300n, 2, "same_date"],
+      [b, 129100300n, 2, "same_date"],
+    ]);
+  });
+
+  test("one collector, one number, two dates — and a different collector outranks both", async () => {
+    const a = await insertCleanSample(conn, {
+      inat_observation_id: "201443458", sample_number: "'1'",
+      date_start: "DATE '2021-07-29'", date_end: "DATE '2021-07-29'",
+    });
+    const b = await insertCleanSample(conn, {
+      inat_observation_id: "201443458", sample_number: "'1'",
+      date_start: "DATE '2021-08-01'", date_end: "DATE '2021-08-01'",
+    });
+    expect((await shapes()).map((r) => r[3])).toEqual(["same_number", "same_number"]);
+
+    await conn.run("INSERT INTO person (display_name) VALUES ('Bea Other')");
+    const c = await insertCleanSample(conn, {
+      inat_observation_id: "201443458", sample_number: "'9'",
+      collector_id: "(SELECT max(entity_id) FROM person)",
+    });
+    expect(await shapes()).toEqual([
+      [a, 201443458n, 3, "different_collectors"],
+      [b, 201443458n, 3, "different_collectors"],
+      [c, 201443458n, 3, "different_collectors"],
+    ]);
+  });
+
+  test("a sample alone on its observation, or with none, is not named", async () => {
+    await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'" });
+    await insertCleanSample(conn, { sample_number: "'8'" });
+    await insertCleanSample(conn, { sample_number: "'9'" });
+    expect(await shapes()).toEqual([]);
+  });
+});
+
 describe("descriptive fields are a fill-only refresh", () => {
   test("a gap is filled from the observation", async () => {
     // Why fill rather than write-once: inat_place is network-fetched, so a

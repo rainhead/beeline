@@ -250,3 +250,50 @@ describe("app scaffold", () => {
     }
   });
 });
+
+// beeline-m9o. Registered first, so no route can be added without them —
+// asserted here on a public page, a signed-out page, and a dead end, since
+// those are three different paths through createApp.
+describe("security headers", () => {
+  it("every response carries the policy, signed in or out, found or not", async () => {
+    const signedOut = await appOnMemoryDb(null);
+    const signedIn = await appOnMemoryDb("someone");
+    for (const res of [
+      await signedOut.request("/healthz"),
+      await signedOut.request("/samples"),
+      await signedIn.request("/"),
+      await signedIn.request("/no/such/page"),
+    ]) {
+      const csp = res.headers.get("content-security-policy") ?? "";
+      expect(csp).toContain("default-src 'self'");
+      expect(csp).toContain("script-src 'self'");
+      expect(csp).toContain("frame-ancestors 'none'");
+      expect(csp).toContain("object-src 'none'");
+      // Inline style attributes, yes (the /design pages use them); inline
+      // <style> elements and inline script, no.
+      expect(csp).toContain("style-src-attr 'unsafe-inline'");
+      expect(csp).not.toMatch(/(script|style)-src 'self'[^;]*'unsafe-inline'/);
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("x-frame-options")).toBe("DENY");
+    }
+  });
+
+  it("keeps the same-origin referrer the error page's way back reads", async () => {
+    const app = await appOnMemoryDb("someone");
+    const res = await app.request("/no/such/page");
+    expect(res.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
+  });
+
+  it("sends HSTS only outside development", async () => {
+    const dev = await appOnMemoryDb(null);
+    expect((await dev.request("/healthz")).headers.get("strict-transport-security")).toBeNull();
+    const { instance } = await createMemoryDb();
+    const prod = createApp({
+      db: createKysely(instance),
+      config: { environment: "sandbox" as const, origin: "https://beeline.fly.dev" },
+      inat: unusedInat,
+      resolveSession: noSession,
+    });
+    expect((await prod.request("/healthz")).headers.get("strict-transport-security")).toContain("max-age=");
+  });
+});

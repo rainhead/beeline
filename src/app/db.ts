@@ -88,6 +88,22 @@ export async function attachPrivateStore(
     // fresh?" probe sent a half-patched store down the fresh path to re-run
     // DDL for a table that still existed, which is an unrecoverable boot crash
     // on the store holding everyone's live sessions.
+    // A rename runs BEFORE the create-missing loop, which is the opposite of
+    // every patch below. The loop creates any table its DDL names and does not
+    // find, so with the DDL renamed and this after it, a deployed store would
+    // CREATE inat_sign_in empty and keep everyone's sign-in history stranded
+    // under the old name, silently (beeline-cj6). The table held no token
+    // after 2026-08-28; the old name said it did.
+    if ((await tableExists("inat_oauth_token")) && !(await tableExists("inat_sign_in"))) {
+      await conn.run(`ALTER TABLE private.inat_oauth_token RENAME TO inat_sign_in`);
+      await conn.run(`CHECKPOINT private`);
+      console.log("renamed private.inat_oauth_token to inat_sign_in: it holds no token");
+    } else if (await tableExists("inat_oauth_token")) {
+      // Both exist only if something created the new table first; the rows
+      // that matter are in the old one, so say so rather than pick.
+      console.warn("private store holds both inat_oauth_token and inat_sign_in; sign-in history is in the old table");
+    }
+
     const files = (await readdir(PRIVATE_SCHEMA_DIR)).filter((f) => f.endsWith(".sql")).sort();
     let created = false;
     for (const file of files) {
@@ -103,8 +119,8 @@ export async function attachPrivateStore(
 
     // Columns added to a table that already exists are patched in rather than
     // rebuilt, since the rows are live.
-    if (!(await columnExists("inat_oauth_token", "icon_url"))) {
-      await conn.run(`ALTER TABLE private.inat_oauth_token ADD COLUMN icon_url TEXT`);
+    if (!(await columnExists("inat_sign_in", "icon_url"))) {
+      await conn.run(`ALTER TABLE private.inat_sign_in ADD COLUMN icon_url TEXT`);
       await conn.run(`CHECKPOINT private`);
     }
 
@@ -114,8 +130,8 @@ export async function attachPrivateStore(
     // than as a volunteer (Peter, 2026-08-28). Dropping the column is what
     // actually deletes them from a store that has been collecting them since
     // the first sign-in, so it is a patch rather than a schema change alone.
-    if (await columnExists("inat_oauth_token", "access_token")) {
-      await conn.run(`ALTER TABLE private.inat_oauth_token DROP COLUMN access_token`);
+    if (await columnExists("inat_sign_in", "access_token")) {
+      await conn.run(`ALTER TABLE private.inat_sign_in DROP COLUMN access_token`);
       await conn.run(`CHECKPOINT private`);
       console.log("dropped stored iNaturalist access tokens: nothing read them");
     }
@@ -141,9 +157,45 @@ export async function attachPrivateStore(
       }
       await conn.run(`CHECKPOINT private`);
     }
+
+    // Comments follow the DDL. The loop above applies a file only to a store
+    // missing its table, so a corrected COMMENT ON never reached a store that
+    // already had one — and a comment is what anyone reading the store trusts
+    // about what it holds and keeps (beeline-zg4: two of them promised a purge
+    // no job ran). Only the ones that differ are written.
+    let commented = false;
+    for (const file of files) {
+      for (const c of commentsIn(await readDdl(file))) {
+        const current = await conn.run(
+          c.column === null
+            ? `SELECT comment FROM duckdb_tables() WHERE database_name = 'private' AND table_name = $1`
+            : `SELECT comment FROM duckdb_columns() WHERE database_name = 'private' AND table_name = $1 AND column_name = $2`,
+          (c.column === null ? [c.table] : [c.table, c.column]) as never,
+        );
+        const rows = (await current.getRows()) as Array<[string | null]>;
+        if (rows[0] === undefined || rows[0][0] === c.text) continue;
+        await apply(c.statement);
+        commented = true;
+      }
+    }
+    if (commented) await conn.run(`CHECKPOINT private`);
   } finally {
     conn.closeSync();
   }
+}
+
+/** The COMMENT ON statements in a DDL file, with what each one says. Exported for its test. */
+export function commentsIn(ddl: string): Array<{ statement: string; table: string; column: string | null; text: string }> {
+  const out = [];
+  for (const m of ddl.matchAll(/COMMENT ON (TABLE|COLUMN) (\w+)(?:\.(\w+))? IS '((?:[^']|'')*)';/g)) {
+    out.push({
+      statement: m[0],
+      table: m[2]!,
+      column: m[1] === "COLUMN" ? m[3]! : null,
+      text: m[4]!.replaceAll("''", "'"),
+    });
+  }
+  return out;
 }
 
 export interface AppDb {

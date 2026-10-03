@@ -196,7 +196,7 @@ export async function hasSessions(db: Kysely<Database>): Promise<boolean> {
   const found = await sql<{ n: number | bigint }>`
     SELECT count(*) AS n FROM information_schema.tables
     WHERE table_catalog = 'private'
-      AND table_name IN ('session', 'inat_oauth_token', 'person_activity')`.execute(db);
+      AND table_name IN ('session', 'inat_sign_in', 'person_activity')`.execute(db);
   return Number(found.rows[0]?.n ?? 0) === 3;
 }
 
@@ -220,7 +220,7 @@ const lastVisitSql = sql`greatest(
  * exactly the judgement a silent fallback got wrong (beeline-dji).
  */
 const lastLoginSql = sql`(
-  SELECT t.last_login_at FROM private.inat_oauth_token t WHERE t.inat_user_id = a.inat_user_id)`;
+  SELECT t.last_login_at FROM private.inat_sign_in t WHERE t.inat_user_id = a.inat_user_id)`;
 
 /**
  * When they last collected. Read from sample_collector, never from

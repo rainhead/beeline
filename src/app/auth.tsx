@@ -161,7 +161,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
     }
 
     await deps.db
-      .insertInto("private.inat_oauth_token")
+      .insertInto("private.inat_sign_in")
       .values({
         inat_user_id: identity.inatUserId,
         login: identity.login,

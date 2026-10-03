@@ -152,7 +152,7 @@ export function cookieSessionResolver(db: Kysely<Database>): SessionResolver {
       .selectFrom("private.session")
       .innerJoin("inat_account", "inat_account.inat_user_id", "private.session.inat_user_id")
       .innerJoin("person", "person.entity_id", "inat_account.person_id")
-      .leftJoin("private.inat_oauth_token as token", "token.inat_user_id", "private.session.inat_user_id")
+      .leftJoin("private.inat_sign_in as token", "token.inat_user_id", "private.session.inat_user_id")
       .where("private.session.id", "=", id)
       .where("last_seen_at", ">", idleCutoff)
       .select([

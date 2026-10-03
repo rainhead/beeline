@@ -221,8 +221,8 @@ The service must be stopped throughout: one process owns the store (ADR
 0005), and `db:reseed` reads it while promotion writes the new one. Downtime
 is the length of a promotion — about a minute for 383k rows.
 
-`private.duckdb` is untouched, and sessions and volunteer tokens both survive
-a reseed: `inat_oauth_token` is keyed by `inat_user_id`, and since
+`private.duckdb` is untouched, and sessions and sign-in records both survive
+a reseed: `inat_sign_in` is keyed by `inat_user_id`, and since
 [beeline-ten](../../.beads/) so is `session`. They used to hold
 `person.entity_id`, which a reseed redraws — so every surviving session
 resolved to whoever inherited its number, and a volunteer browsed and acted as

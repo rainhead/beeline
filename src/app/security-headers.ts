@@ -15,7 +15,7 @@ import { secureHeaders } from "hono/secure-headers";
  *   and the static error page use them (Peter, 2026-10-03) — and inline
  *   `<style>` elements stay forbidden, since nothing uses one.
  * - images: same-origin, plus iNaturalist's static host for the account
- *   menu's avatar (`private.inat_oauth_token.icon_url`). Pinned to the host
+ *   menu's avatar (`private.inat_sign_in.icon_url`). Pinned to the host
  *   rather than `https:`.
  * - connections: the islands fetch only same-origin JSON.
  * - forms: same-origin only. Sign-in starts from a link, not a form, so the

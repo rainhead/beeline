@@ -98,7 +98,7 @@ scp beeline.duckdb maderas:dev/beeline/
 ```
 
 The encrypted `private.duckdb` is created by the app at first boot; it holds
-sessions and volunteer OAuth tokens and should not be copied between hosts.
+sessions and sign-in records and should not be copied between hosts.
 
 ### 4. Service
 
@@ -335,4 +335,4 @@ printing.
   sure the two don't overlap on the shared two cores.
 - Real backups start at roadmap phase 7. Until then the database is
   reconstructible by re-ingestion; the private store's contents (sessions,
-  volunteer tokens) are acceptable losses pre-cutover.
+  sign-in records) are acceptable losses pre-cutover.

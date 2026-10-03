@@ -1,7 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { accessToken, drive, SHEET_MIME as SHEET, XLSX_MIME as XLSX } from "./google-drive.js";
 import { DEFAULT_DIR, type WorksheetFile } from "./load-worksheets.js";
 
 /**
@@ -13,35 +13,16 @@ import { DEFAULT_DIR, type WorksheetFile } from "./load-worksheets.js";
  * say it was there and was not read.
  *
  * The folder is on a shared drive, which the Drive API lists only when asked
- * to look in all drives. Authentication is gcloud's: an access token from an
- * account signed in with `gcloud auth login --enable-gdrive-access`, or one
- * passed as GOOGLE_ACCESS_TOKEN. The export holds volunteers' names and
- * belongs under data/, which is gitignored.
+ * to look in all drives. Authentication is gcloud's (src/google-drive.ts).
+ * The export holds volunteers' names and belongs under data/, which is
+ * gitignored.
  */
-
-const SHEET = "application/vnd.google-apps.spreadsheet";
-const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 interface DriveFile {
   id: string;
   name: string;
   mimeType: string;
   modifiedTime: string;
-}
-
-function accessToken(): string {
-  const fromEnv = process.env.GOOGLE_ACCESS_TOKEN;
-  if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
-  return execFileSync("gcloud", ["auth", "print-access-token"], { encoding: "utf8" }).trim();
-}
-
-async function drive(token: string, url: string): Promise<Response> {
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) {
-    const hint = res.status === 403 ? " (is gcloud signed in with --enable-gdrive-access?)" : "";
-    throw new Error(`Drive answered ${res.status} for ${url.split("?")[0]}${hint}: ${(await res.text()).slice(0, 300)}`);
-  }
-  return res;
 }
 
 export async function fetchWorksheets(folderId: string, dir: string): Promise<WorksheetFile[]> {

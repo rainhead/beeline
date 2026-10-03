@@ -33,6 +33,9 @@ describe("legacy promotion", () => {
       unusedCollectorAliases: 0,
       unusedTaxonAliases: 0,
       animalsMatchedToItis: 0, // no ITIS loaded into this store
+      taxonCurationApplied: 0, // the fixture file decides nothing
+      taxonCurationCreated: 0,
+      taxonCurationUnplaced: [],
       collectorDuplicateLogins: 0,
       correctionsApplied: 0,
       correctionsRetired: 0,

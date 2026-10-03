@@ -27,6 +27,8 @@
     "elevation:derive": "tsx src/derive-elevation.ts",
     "itis:fetch": "scripts/fetch-itis.sh",
     "itis:load": "tsx src/load-itis.ts",
+    "taxon:apply": "tsx src/taxon-curation.ts",
+    "taxon:decisions": "tsx src/fetch-taxon-decisions.ts",
     "ecdysis:load": "tsx src/load-ecdysis.ts",
     "fly:usage": "tsx src/fly-usage.ts",
     "worksheets:fetch": "tsx src/fetch-worksheets.ts",

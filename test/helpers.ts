@@ -68,6 +68,7 @@ export const FIXTURE_INPUTS: PromotionInputs = {
   appOverlay: fixture("empty-person-overlay.csv"),
   collectorAliases: fixture("no-collector-aliases.csv"),
   taxonAliases: fixture("no-taxon-aliases.csv"),
+  taxonCuration: fixture("no-taxon-curation.csv"),
   usernameRegister: fixture("no-usernames.csv"),
 };
 

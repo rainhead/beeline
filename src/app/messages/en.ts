@@ -1065,6 +1065,9 @@ export const en = {
       synonym: (count: number) => `${n(count)} outdated`,
       homonym: (count: number) => `${n(count)} ambiguous`,
       absent: (count: number) => `${n(count)} not in ITIS`,
+      /** Names a taxonomist has decided about, and the ones the loaded release has moved from under. */
+      decided: (count: number) => `${n(count)} decided by a taxonomist`,
+      moved: (count: number) => `${n(count)} to look at again`,
     },
     search: "Name",
     searchHint: "Any part of a scientific name.",
@@ -1075,6 +1078,12 @@ export const en = {
       synonym: "Outdated",
       homonym: "Ambiguous",
       absent: "Not in ITIS",
+    },
+    decidedLabel: "Taxonomist's decision",
+    decidedOptions: {
+      any: "Any",
+      decided: "Decided",
+      moved: "To look at again",
     },
     apply: "Apply",
     clear: "Clear",
@@ -1097,6 +1106,12 @@ export const en = {
       synonym: "Outdated",
       homonym: "Ambiguous",
       absent: "Not in ITIS",
+      /** A name a taxonomist has decided about says so instead, in the decision's words. */
+      decided: {
+        addition: "Kept beyond ITIS",
+        departure: "Kept against ITIS",
+        homonym: "Chosen",
+      },
     },
     nowCalled: "ITIS now:",
     specimens: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"}`,
@@ -1118,6 +1133,20 @@ export const en = {
       absent: (rank: string) =>
         `ITIS has no ${rank} spelled this way. A name newer than ITIS, a subgenus ITIS does not carry, and a misspelling all look like this.`,
       report: (tsn: string) => `ITIS record ${tsn}`,
+    },
+    /** What the program has decided about a name against ITIS, and on whose word (beeline-45v.1). */
+    decision: {
+      addition: "The program keeps this name, which ITIS does not have.",
+      departure: "The program keeps this name under its own treatment. ITIS calls it:",
+      homonym: (author: string | null) =>
+        author === null
+          ? "Of ITIS's names spelled this way, the program has said which one it means."
+          : `Of ITIS's names spelled this way, the program means the one by ${author}.`,
+      by: (taxonomist: string, decidedOn: Date | string, release: Date | string) =>
+        `Decided by ${taxonomist}, ${date(decidedOn)}, against the ITIS release of ${date(release)}.`,
+      reference: "Reference:",
+      /** Before what animal_curation_stale says has moved since the decision. */
+      moved: "ITIS has moved since.",
     },
     notFound: "There is no such name in the taxonomy.",
   },

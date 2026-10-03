@@ -1,11 +1,13 @@
 import type { Messages } from "../messages/index.js";
 import {
+  DECIDED_FILTERS,
   STANDING_FILTERS,
   itisReportHref,
   taxonHref,
   taxonomyHref,
   taxonSpecimensHref,
   type CurrentName,
+  type TaxonDecision,
   type TaxonList,
   type TaxonNode,
   type TaxonRef,
@@ -77,9 +79,26 @@ function CurrentNames({ names }: { names: readonly CurrentName[] }) {
   );
 }
 
-/** A row's ITIS cell: nothing, unless there is something to say. */
+/**
+ * A row's ITIS cell: nothing, unless there is something to say. A name a
+ * taxonomist has decided about says that first, in the decision's words, and
+ * keeps the ITIS fact beneath it — the warning tone is for a disagreement
+ * nobody has ruled on.
+ */
 function StandingCell({ m, row }: { m: Messages; row: TaxonRow }) {
   const t = m.taxonomy;
+  if (row.decision !== null) {
+    return (
+      <>
+        <Chip>{t.chip.decided[row.decision.kind]}</Chip>
+        {row.standing === "synonym" && row.current.length > 0 && (
+          <Meta block>
+            {t.nowCalled} <CurrentNames names={row.current} />
+          </Meta>
+        )}
+      </>
+    );
+  }
   switch (row.standing) {
     case "synonym":
       return (
@@ -174,9 +193,19 @@ export function TaxonomyIndex({
           {(["valid", "synonym", "homonym", "absent"] as const).map((standing, i) => (
             <>
               {i > 0 && " · "}
-              <a href={taxonomyHref({ search: "", standing, page: 1 })}>{t.summary[standing](summary.standings[standing])}</a>
+              <a href={taxonomyHref({ search: "", standing, decided: "any", page: 1 })}>{t.summary[standing](summary.standings[standing])}</a>
             </>
           ))}
+          {/* Said only once somebody has decided something: a program with no
+              decisions yet is not one with zero to worry about. */}
+          {summary.decided > 0 && (
+            <>
+              {" · "}
+              <a href={taxonomyHref({ search: "", standing: "any", decided: "decided", page: 1 })}>{t.summary.decided(summary.decided)}</a>
+              {", "}
+              <a href={taxonomyHref({ search: "", standing: "any", decided: "moved", page: 1 })}>{t.summary.moved(summary.moved)}</a>
+            </>
+          )}
         </Meta>
       )}
 
@@ -200,6 +229,15 @@ export function TaxonomyIndex({
             label={t.standingLabel}
             value={query.standing}
             options={STANDING_FILTERS.map((standing) => [standing, t.standingOptions[standing]] as const)}
+          />
+        )}
+        {loaded && (
+          <SelectField
+            id="decided"
+            name="decided"
+            label={t.decidedLabel}
+            value={query.decided}
+            options={DECIDED_FILTERS.map((decided) => [decided, t.decidedOptions[decided]] as const)}
           />
         )}
       </FilterBar>
@@ -274,6 +312,54 @@ function ItisStanding({ m, node }: { m: Messages; node: TaxonNode }) {
   }
 }
 
+/**
+ * What the program has decided about this name against ITIS, and on whose
+ * word (beeline-45v.1): the kind of decision in words, who and when, the
+ * reason, the paper where there is one, and — when the ITIS release now
+ * loaded has moved since — what moved, so the page is also where a taxonomist
+ * sees that a decision wants another look.
+ */
+function Decision({ m, node, decision }: { m: Messages; node: TaxonNode; decision: TaxonDecision }) {
+  const d = m.taxonomy.decision;
+  return (
+    <Callout>
+      <p>
+        {decision.kind === "addition" && d.addition}
+        {decision.kind === "departure" && (
+          <>
+            {d.departure} <CurrentNames names={node.current} />
+          </>
+        )}
+        {decision.kind === "homonym" && d.homonym(decision.author)}
+      </p>
+      <p>{d.by(decision.taxonomist, decision.decided_on, decision.itis_release)}</p>
+      <p>{decision.reason}</p>
+      {decision.reference !== null && (
+        <p>
+          {d.reference} <Reference value={decision.reference} />
+        </p>
+      )}
+      {node.moved !== null && (
+        <p>
+          <strong>{d.moved}</strong> {node.moved}
+        </p>
+      )}
+    </Callout>
+  );
+}
+
+/**
+ * The paper behind a decision, as a link where it can safely be one: an
+ * http(s) URL as written, a bare DOI through doi.org, and anything else as
+ * text — the value arrives from a taxonomist's sheet, and escaping does not
+ * stop a `javascript:` scheme from being a scheme (CodeRabbit, #124).
+ */
+function Reference({ value }: { value: string }) {
+  if (/^https?:\/\//i.test(value)) return <a href={value}>{value}</a>;
+  if (/^10\.\d{4,}\/\S+$/.test(value)) return <a href={`https://doi.org/${value}`}>{value}</a>;
+  return <>{value}</>;
+}
+
 export function TaxonPage({ m, node, admin }: { m: Messages; node: TaxonNode; admin: boolean }) {
   const t = m.taxonomy;
   return (
@@ -288,6 +374,7 @@ export function TaxonPage({ m, node, admin }: { m: Messages; node: TaxonNode; ad
         }
       />
       <ItisStanding m={m} node={node} />
+      {node.decision !== null && <Decision m={m} node={node} decision={node.decision} />}
       {node.specimens > 0 && (
         <p>
           {/* Said only when something below was counted: on a name with nothing

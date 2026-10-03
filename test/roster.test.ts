@@ -318,7 +318,7 @@ describe("the roster screen", () => {
     };
     const signedIn = async (when: string) => {
       const ctx = await rosterApp({ personId: 3, admin: true, privateStore: true });
-      await ctx.conn.run(`INSERT INTO private.inat_oauth_token (inat_user_id, login, last_login_at)
+      await ctx.conn.run(`INSERT INTO private.inat_sign_in (inat_user_id, login, last_login_at)
                           VALUES (111, 'adacollects', TIMESTAMP '${when}')`);
       return ctx;
     };
@@ -341,7 +341,7 @@ describe("the roster screen", () => {
       // The sign-in is the older fact here, which is the normal shape: people
       // sign in once and then keep turning up.
       const ctx = await visited("2026-03-04 09:00:00");
-      await ctx.conn.run(`INSERT INTO private.inat_oauth_token (inat_user_id, login, last_login_at)
+      await ctx.conn.run(`INSERT INTO private.inat_sign_in (inat_user_id, login, last_login_at)
                           VALUES (111, 'adacollects', TIMESTAMP '2025-11-01 09:00:00')`);
       const body = await (await ctx.app.request("/people?q=Ada")).text();
       expect(body).toContain("Mar 4, 2026");

@@ -1,11 +1,11 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "kysely";
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
-import { attachPrivateStore } from "../src/app/db.js";
+import { attachPrivateStore, commentsIn } from "../src/app/db.js";
 import { createApp } from "../src/app/server.js";
 import { cookieSessionResolver, endSessionsFor, purgeIdleSessions, sessionRef } from "../src/app/session.js";
 import { createFileDb, createMemoryDb } from "./helpers.js";
@@ -74,7 +74,7 @@ describe("iNat OAuth sign-in", () => {
     const cb = await signIn(app);
     const session = /beeline_session=([a-f0-9]+)/.exec(cb.headers.get("set-cookie")!)![1];
 
-    const token = await db.selectFrom("private.inat_oauth_token").selectAll().executeTakeFirstOrThrow();
+    const token = await db.selectFrom("private.inat_sign_in").selectAll().executeTakeFirstOrThrow();
     expect(token.icon_url).toBe(icon);
 
     const home = await app.request("/", { headers: { cookie: `beeline_session=${session}` } });
@@ -123,7 +123,7 @@ describe("iNat OAuth sign-in", () => {
     // nothing ever read one back, and a non-expiring credential kept for no
     // reason is one leaked for no reason (Peter, 2026-08-28).
     const recorded = await db
-      .selectFrom("private.inat_oauth_token")
+      .selectFrom("private.inat_sign_in")
       .selectAll()
       .executeTakeFirstOrThrow();
     expect(recorded.login).toBe("stranger");
@@ -286,9 +286,9 @@ describe("iNat OAuth sign-in", () => {
     const db = createKysely(fresh);
 
     // The session is gone with its key; who signed in, which was never the
-    // problem, is not.
+    // problem, is not — now under the name that says what it is (beeline-cj6).
     expect(await db.selectFrom("private.session").selectAll().execute()).toEqual([]);
-    expect(await db.selectFrom("private.inat_oauth_token").select("login").execute()).toEqual([
+    expect(await db.selectFrom("private.inat_sign_in").select("login").execute()).toEqual([
       { login: "memberbee" },
     ]);
     // And the access token that store had been keeping since its first
@@ -296,7 +296,7 @@ describe("iNat OAuth sign-in", () => {
     // a deployed store, so booting against one is the only thing that does.
     const columns = await sql<{ n: number | bigint }>`
       SELECT count(*) AS n FROM information_schema.columns
-       WHERE table_catalog = 'private' AND table_name = 'inat_oauth_token'
+       WHERE table_catalog = 'private' AND table_name = 'inat_sign_in'
          AND column_name = 'access_token'`.execute(db);
     expect(Number(columns.rows[0]!.n)).toBe(0);
     // And the new shape is there to sign in against.
@@ -304,6 +304,63 @@ describe("iNat OAuth sign-in", () => {
     expect(
       await db.selectFrom("private.session").select("inat_user_id").execute(),
     ).toEqual([{ inat_user_id: 501n }]);
+  });
+
+  it("a deployed store's sign-in table is renamed in place, rows and all, and its comments follow the DDL", async () => {
+    // The shape the sandbox holds today: the token column already dropped,
+    // the old name and the old comments still on it. Renamed BEFORE the
+    // create-missing loop, or that loop would build inat_sign_in empty and
+    // strand everyone's sign-in history under the old name (beeline-cj6).
+    const { conn } = await createMemoryDb();
+    const file = join(await mkdtemp(join(tmpdir(), "beeline-private-")), "private.duckdb");
+    await conn.run(`ATTACH '${file}' AS deployed`);
+    await conn.run(`USE deployed`);
+    await conn.run(`CREATE TABLE inat_oauth_token (
+      inat_user_id BIGINT PRIMARY KEY, login TEXT NOT NULL, icon_url TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+      last_login_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
+    await conn.run(`COMMENT ON TABLE inat_oauth_token IS 'retention is still minimized'`);
+    await conn.run(`INSERT INTO inat_oauth_token (inat_user_id, login, last_login_at)
+                    VALUES (501, 'memberbee', TIMESTAMP '2025-05-01 12:00:00')`);
+    await conn.run(`CREATE TABLE person_activity (
+      inat_user_id BIGINT PRIMARY KEY,
+      last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
+    await conn.run(`COMMENT ON COLUMN person_activity.last_seen_at IS 'No job does that yet (beeline-zg4)'`);
+    await conn.run(`USE memory`);
+    await conn.run(`DETACH deployed`);
+    conn.closeSync();
+
+    const { instance: fresh } = await createMemoryDb();
+    await attachPrivateStore(fresh, { path: file, key: null });
+    const db = createKysely(fresh);
+    expect(
+      await db.selectFrom("private.inat_sign_in").select(["login", "last_login_at"]).execute(),
+    ).toEqual([{ login: "memberbee", last_login_at: new Date("2025-05-01T12:00:00Z") }]);
+    const tables = await sql<{ table_name: string }>`
+      SELECT table_name FROM information_schema.tables
+       WHERE table_catalog = 'private' AND table_name LIKE 'inat_%' ORDER BY 1`.execute(db);
+    expect(tables.rows.map((r) => r.table_name)).toEqual(["inat_sign_in"]);
+
+    // The comments a deployed store already had are the DDL's now — the
+    // create path never re-applied them, so the purge they promised stood.
+    const ddl = (f: string) => readFile(join("schema/private", f), "utf8");
+    const want = [...commentsIn(await ddl("010_auth.sql")), ...commentsIn(await ddl("030_activity.sql"))];
+    const tableComment = await sql<{ comment: string }>`
+      SELECT comment FROM duckdb_tables() WHERE database_name = 'private' AND table_name = 'inat_sign_in'`.execute(db);
+    expect(tableComment.rows[0]!.comment).toBe(want.find((c) => c.table === "inat_sign_in" && c.column === null)!.text);
+    expect(tableComment.rows[0]!.comment).toContain("no purge");
+    const activity = await sql<{ comment: string }>`
+      SELECT comment FROM duckdb_columns()
+       WHERE database_name = 'private' AND table_name = 'person_activity' AND column_name = 'last_seen_at'`.execute(db);
+    expect(activity.rows[0]!.comment).toBe(want.find((c) => c.column === "last_seen_at")!.text);
+    fresh.closeSync();
+
+    // And a second boot finds nothing to do and changes nothing.
+    const { instance: again } = await createMemoryDb();
+    await attachPrivateStore(again, { path: file, key: null });
+    expect(await createKysely(again).selectFrom("private.inat_sign_in").select("login").execute()).toEqual([
+      { login: "memberbee" },
+    ]);
   });
 
   it("a store left holding tokens and no session table boots and repairs itself", async () => {
@@ -332,7 +389,7 @@ describe("iNat OAuth sign-in", () => {
     const db = createKysely(fresh);
     // The missing table is built; the surviving one is untouched.
     await db.insertInto("private.session").values({ id: "s", inat_user_id: 501 }).execute();
-    expect(await db.selectFrom("private.inat_oauth_token").select("login").execute()).toEqual([
+    expect(await db.selectFrom("private.inat_sign_in").select("login").execute()).toEqual([
       { login: "memberbee" },
     ]);
   });
@@ -494,7 +551,7 @@ describe("the private store against a file-backed main database", () => {
     // next one.
     await db.insertInto("private.session").values({ id: "s", inat_user_id: 501 }).execute();
     await db
-      .insertInto("private.inat_oauth_token")
+      .insertInto("private.inat_sign_in")
       .values({ inat_user_id: 501, login: "memberbee" })
       .execute();
     await db.insertInto("private.person_activity").values({ inat_user_id: 501 }).execute();

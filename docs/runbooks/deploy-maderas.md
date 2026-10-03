@@ -98,7 +98,7 @@ scp beeline.duckdb maderas:dev/beeline/
 ```
 
 The encrypted `private.duckdb` is created by the app at first boot; it holds
-sessions and volunteer OAuth tokens and should not be copied between hosts.
+sessions and sign-in records and should not be copied between hosts.
 
 ### 4. Service
 
@@ -221,8 +221,8 @@ The service must be stopped throughout: one process owns the store (ADR
 0005), and `db:reseed` reads it while promotion writes the new one. Downtime
 is the length of a promotion — about a minute for 383k rows.
 
-`private.duckdb` is untouched, and sessions and volunteer tokens both survive
-a reseed: `inat_oauth_token` is keyed by `inat_user_id`, and since
+`private.duckdb` is untouched, and sessions and sign-in records both survive
+a reseed: `inat_sign_in` is keyed by `inat_user_id`, and since
 [beeline-ten](../../.beads/) so is `session`. They used to hold
 `person.entity_id`, which a reseed redraws — so every surviving session
 resolved to whoever inherited its number, and a volunteer browsed and acted as
@@ -335,4 +335,4 @@ printing.
   sure the two don't overlap on the shared two cores.
 - Real backups start at roadmap phase 7. Until then the database is
   reconstructible by re-ingestion; the private store's contents (sessions,
-  volunteer tokens) are acceptable losses pre-cutover.
+  sign-in records) are acceptable losses pre-cutover.

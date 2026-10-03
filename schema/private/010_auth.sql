@@ -20,13 +20,13 @@
 -- from an inline copy of this DDL would be a second copy to drift from
 -- (it did: the deployed sandbox lost every COMMENT ON).
 
-CREATE TABLE inat_oauth_token (
+CREATE TABLE inat_sign_in (
   inat_user_id  BIGINT PRIMARY KEY,
   login         TEXT NOT NULL,
   icon_url      TEXT,
   created_at    TIMESTAMP NOT NULL DEFAULT current_timestamp,
   last_login_at TIMESTAMP NOT NULL DEFAULT current_timestamp
 );
-COMMENT ON TABLE inat_oauth_token IS 'Who has signed in with iNaturalist, when, and what they look like — no longer the token itself (Peter, 2026-08-28). It held every volunteer''s non-expiring OAuth access token, which nothing ever read back: the session cookie is what authenticates a request, and sync authenticates as the pipeline rather than as a volunteer. A credential kept for no reason is a credential leaked for no reason. The name is now wrong and is kept only until the rename lands. Rows are still written before approval, keyed by iNat user because a person row may not exist yet, and retention is still minimized (beeline-2c3.4).';
-COMMENT ON COLUMN inat_oauth_token.login IS 'Cached at sign-in for staff to recognize pending accounts.';
-COMMENT ON COLUMN inat_oauth_token.icon_url IS 'iNat profile picture URL, cached at sign-in; shown as the account-menu button. Stale until the next login (periodic re-fetch is beeline-1b7).';
+COMMENT ON TABLE inat_sign_in IS 'Who has signed in with iNaturalist, when, and what they look like: a sign-in record, not a credential. Until 2026-08-28 it was inat_oauth_token and held every volunteer''s non-expiring OAuth access token, which nothing ever read back — the session cookie authenticates a request, and sync authenticates as the pipeline rather than as a volunteer — so the column was dropped and the table renamed to say what it holds (beeline-cj6). Rows are written before approval, keyed by iNat user because a person row may not exist yet. Kept, with no purge (Peter, 2026-10-03): with the token gone a row is a login, a public avatar URL and two dates, and it is what /people answers "last seen" from for anyone with no recorded visit. A retention rule for everything personal would belong to the data-handling policy (beeline-bla), not to one table (beeline-zg4).';
+COMMENT ON COLUMN inat_sign_in.login IS 'Cached at sign-in for staff to recognize pending accounts.';
+COMMENT ON COLUMN inat_sign_in.icon_url IS 'iNat profile picture URL, cached at sign-in; shown as the account-menu button. Stale until the next login (periodic re-fetch is beeline-1b7).';

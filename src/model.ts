@@ -103,7 +103,7 @@ export interface InatPlaceAbsentTable {
 
 // schema/private/010_auth.sql — the attached private store (ADR 0003)
 
-export interface InatOauthTokenTable {
+export interface InatSignInTable {
   inat_user_id: BigIntCol;
   login: string;
   icon_url: string | null;
@@ -1040,7 +1040,7 @@ export interface Database {
   animal_itis_match: AnimalItisMatchView;
   animal_itis_stale: AnimalItisStaleView;
   // Attached private store (ADR 0003), catalog-qualified:
-  "private.inat_oauth_token": InatOauthTokenTable;
+  "private.inat_sign_in": InatSignInTable;
   "private.session": SessionTable;
   "private.person_activity": PersonActivityTable;
   "private.impersonation": ImpersonationTable;

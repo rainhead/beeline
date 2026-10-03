@@ -132,7 +132,7 @@ datasets that want no credential. Fetch them **on the machine** rather than
 uploading them — see below.
 
 `private.duckdb` is not copied between hosts. The app creates it at first
-boot; sessions and volunteer tokens are acceptable losses pre-cutover.
+boot; sessions and sign-in records are acceptable losses pre-cutover.
 
 ## Deploying a change
 

@@ -5,6 +5,7 @@ import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { en } from "../src/app/messages/en.js";
 import { loadItis } from "../src/load-itis.js";
+import { applyTaxonCuration, type TaxonCurationRow } from "../src/taxon-curation.js";
 import { itisReportHref, parseTaxonomyQuery, taxonHref, taxonomyHref } from "../src/app/taxonomy.js";
 import { createMemoryDb, insertCleanSample } from "./helpers.js";
 
@@ -226,6 +227,58 @@ describe("the taxonomy pages", () => {
     expect(rowFor(genus, "species", "Lasioglossum tenax")).not.toContain(`class="chip`);
   });
 
+  it("says what a taxonomist decided about a name, on its page, in its row, and as a list", async () => {
+    const decided = (over: Partial<TaxonCurationRow>): TaxonCurationRow => ({
+      kind: "addition", rank: "species", name: "Brachymelecta californica", parent_rank: "", parent_name: "",
+      itis_tsn: "", itis_current_name: "", itis_release: "2026-08-26", taxonomist: "L. Best", decided_on: "2026-10-09",
+      reference: "", reason: "ITIS has only Xeromelecta californica and has not reviewed the move", ...over,
+    });
+    await loadItis(conn, ITIS);
+    await applyTaxonCuration(conn, [
+      decided({}),
+      decided({ kind: "departure", name: "Lasioglossum zonulum", itis_tsn: "759593", itis_current_name: "Lasioglossum zonulus", reference: "https://doi.org/10.0000/zonulum", reason: "the neuter ending, pending Gibbs" }),
+      decided({ kind: "homonym", name: "Hoplitis truncata", itis_tsn: "715497", reason: "the Nearctic one" }),
+    ]);
+    const app = await taxonomyApp({ itis: false });
+
+    // The departure: the decision in words, who and when, the reason, the paper, and ITIS's view kept beneath.
+    const departure = await page(app, taxonHref({ rank: "species", scientific_name: "Lasioglossum zonulum" }));
+    expect(departure).toContain(en.taxonomy.decision.departure);
+    // Local midnights, as a DATE column arrives; a UTC midnight would read as the day before west of Greenwich.
+    expect(departure).toContain(en.taxonomy.decision.by("L. Best", new Date(2026, 9, 9), new Date(2026, 7, 26)));
+    expect(departure).toContain("the neuter ending, pending Gibbs");
+    expect(departure).toContain('href="https://doi.org/10.0000/zonulum"');
+    expect(departure).toContain(en.taxonomy.standing.synonym);
+    expect(departure).not.toContain(en.taxonomy.decision.moved);
+
+    // The resolved homonym now reads as current, and names the author chosen.
+    const homonym = await page(app, taxonHref({ rank: "species", scientific_name: "Hoplitis truncata" }));
+    expect(homonym).toContain(en.taxonomy.standing.valid);
+    expect(homonym).toContain(en.taxonomy.decision.homonym("(Cresson, 1878)").replaceAll("'", "&#39;"));
+    expect(homonym).toContain(html(itisReportHref(715497)));
+
+    // In a row, the chip speaks in the decision's words rather than as a warning.
+    const genus = await page(app, taxonHref({ rank: "genus", scientific_name: "Lasioglossum" }));
+    expect(rowFor(genus, "species", "Lasioglossum zonulum")).toContain(en.taxonomy.chip.decided.departure);
+    expect(rowFor(genus, "species", "Lasioglossum zonulum")).not.toContain(en.taxonomy.chip.synonym);
+    expect(rowFor(genus, "species", "Lasioglossum zonulum")).toContain(en.taxonomy.nowCalled);
+
+    // The index counts them and lists them; nothing has moved yet.
+    const index = await page(app, "/taxonomy");
+    expect(index).toContain(en.taxonomy.summary.decided(3));
+    expect(index).toContain(en.taxonomy.summary.moved(0));
+    const list = await page(app, "/taxonomy?decided=decided");
+    expect(list).toContain(en.taxonomy.found(3));
+    expect(await page(app, "/taxonomy?decided=moved")).toContain(en.taxonomy.found(0));
+
+    // A later release accepts zonulum again: the page says so where the decision is, and the worklist has it.
+    await conn.run("UPDATE itis_taxon SET usage = 'valid' WHERE tsn = 759593");
+    const moved = await page(app, taxonHref({ rank: "species", scientific_name: "Lasioglossum zonulum" }));
+    expect(moved).toContain(en.taxonomy.decision.moved);
+    expect(moved).toContain("the departure can be retired");
+    expect(await page(app, "/taxonomy?decided=moved")).toContain(en.taxonomy.found(1));
+  });
+
   it("says ITIS is not loaded rather than calling every name absent", async () => {
     const app = await taxonomyApp({ itis: false });
     const body = await page(app, "/taxonomy");
@@ -266,12 +319,13 @@ describe("the taxonomy pages", () => {
   });
 
   it("keeps its filters in the URL", () => {
-    const query = { search: "zon", standing: "synonym", page: 2 } as const;
+    const query = { search: "zon", standing: "synonym", decided: "moved", page: 2 } as const;
     expect(parseTaxonomyQuery(new URL(taxonomyHref(query), "http://x").searchParams)).toEqual(query);
-    expect(taxonomyHref({ search: "", standing: "any", page: 1 })).toBe("/taxonomy");
-    expect(parseTaxonomyQuery(new URLSearchParams("standing=octarine&page=0"))).toEqual({
+    expect(taxonomyHref({ search: "", standing: "any", decided: "any", page: 1 })).toBe("/taxonomy");
+    expect(parseTaxonomyQuery(new URLSearchParams("standing=octarine&decided=maybe&page=0"))).toEqual({
       search: "",
       standing: "any",
+      decided: "any",
       page: 1,
     });
   });

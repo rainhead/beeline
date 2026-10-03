@@ -84,7 +84,13 @@ const HEADER = CURATION_COLUMNS.join(",");
 
 export const curationKey = (r: { rank: string; name: string }) => `${r.rank} ${r.name}`;
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+// The shape and the calendar both: 2026-13-45 is the shape, and would fail
+// only at the INSERT, after the table had been emptied.
+const isDate = (s: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(s);
+};
 
 /** Why this row cannot be stored, or null if it can. */
 export function rowProblem(row: TaxonCurationRow): string | null {
@@ -99,8 +105,8 @@ export function rowProblem(row: TaxonCurationRow): string | null {
     if (row.kind === "departure" && row.itis_current_name === "") return "a departure says what ITIS calls the name instead";
     if (row.kind === "homonym" && row.itis_current_name !== "") return "a homonym resolution has no ITIS current name";
   }
-  if (!ISO_DATE.test(row.itis_release)) return `itis_release '${row.itis_release}' is not a date (YYYY-MM-DD)`;
-  if (!ISO_DATE.test(row.decided_on)) return `decided_on '${row.decided_on}' is not a date (YYYY-MM-DD)`;
+  if (!isDate(row.itis_release)) return `itis_release '${row.itis_release}' is not a date (YYYY-MM-DD)`;
+  if (!isDate(row.decided_on)) return `decided_on '${row.decided_on}' is not a date (YYYY-MM-DD)`;
   if (row.taxonomist.trim() === "") return "every row names the taxonomist who decided";
   if (row.reason.trim() === "") return "every row says why";
   return null;
@@ -198,9 +204,14 @@ const lit = (s: string) => `'${s.replaceAll("'", "''")}'`;
  * removed from the file — a departure ITIS has since adopted — is gone from
  * the store too. Missing nodes are created under their parent; a row whose
  * parent is not in the tree is reported and skipped rather than guessed at,
- * since minting a chain of ancestors from one row would invent placements
+* since minting a chain of ancestors from one row would invent placements
  * nobody decided. Ends by restating animal.itis_tsn, because a homonym
  * resolution changes what its node matches.
+ *
+ * Opens no transaction of its own: legacy promotion runs it as one step of
+ * building a store that is thrown away if any step fails, and a BEGIN here
+ * would refuse to nest should promotion ever wrap itself. The CLI, which
+ * writes to a store that is kept, wraps it.
  */
 export async function applyTaxonCuration(conn: DuckDBConnection, rows: readonly TaxonCurationRow[]): Promise<ApplyResult> {
   const one = async (sql: string): Promise<unknown[] | undefined> => (await (await conn.run(sql)).getRows())[0];
@@ -250,7 +261,17 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
   try {
-    const result = await applyTaxonCuration(conn, rows);
+    // One transaction: the table is emptied before it is refilled, and a row
+    // that fails halfway must not leave the store with half the decisions.
+    await conn.run("BEGIN TRANSACTION");
+    let result: ApplyResult;
+    try {
+      result = await applyTaxonCuration(conn, rows);
+      await conn.run("COMMIT");
+    } catch (err) {
+      await conn.run("ROLLBACK").catch(() => {});
+      throw err;
+    }
     const stale = await (await conn.run("SELECT rank, scientific_name, problem FROM animal_curation_stale ORDER BY 1, 2")).getRows();
     console.log(JSON.stringify({ ...result, stale }, null, 2));
   } finally {

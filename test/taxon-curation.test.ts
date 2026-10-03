@@ -91,6 +91,7 @@ describe("the curation file", () => {
     ["a homonym resolution has no ITIS current name", { kind: "homonym", itis_tsn: "12", itis_current_name: "X" }],
     ["go together", { parent_rank: "genus" }],
     ["is not a date", { decided_on: "Oct 9" }],
+    ["is not a date", { itis_release: "2026-13-45" }],
   ])("refuses a row that %s", (_, over) => {
     expect(() => parseTaxonCuration(formatTaxonCuration([row(over)]), "mem")).toThrow(/line 2/);
   });
@@ -156,6 +157,22 @@ describe("replaying decisions onto a store", () => {
     await applyTaxonCuration(conn, [row({ ...HOMONYM, itis_tsn: "999" })]);
     expect(await rows(conn, "SELECT standing, itis_tsn FROM animal_itis WHERE scientific_name = 'Hoplitis truncata'")).toEqual([["homonym", null]]);
     expect(await rows(conn, "SELECT problem FROM animal_curation_stale")).toEqual([["ITIS no longer carries the chosen TSN 999"]]);
+  });
+
+  test("a choice that is a current name for something else is not honoured, and says what it names", async () => {
+    // 759441 is Lasioglossum tenax, current — and not Hoplitis truncata.
+    await applyTaxonCuration(conn, [row({ ...HOMONYM, itis_tsn: "759441" })]);
+    expect(await rows(conn, "SELECT standing, itis_tsn FROM animal_itis WHERE scientific_name = 'Hoplitis truncata'")).toEqual([["homonym", null]]);
+    expect(await rows(conn, "SELECT problem FROM animal_curation_stale")).toEqual([
+      ["the chosen TSN 759441 is Lasioglossum tenax (species), not a name at this rank and spelling"],
+    ]);
+  });
+
+  test("with ITIS not loaded there is nothing to compare, so nothing is stale", async () => {
+    await conn.run("DELETE FROM itis_synonym; DELETE FROM itis_taxon");
+    await applyTaxonCuration(conn, [row({}), DEPARTURE, HOMONYM]);
+    expect(await rows(conn, "SELECT animal_id FROM animal_curation_stale")).toEqual([]);
+    expect(await rows(conn, "SELECT DISTINCT standing FROM animal_itis")).toEqual([["not loaded"]]);
   });
 
   test("restates the table wholesale, so a row dropped from the file leaves the store", async () => {

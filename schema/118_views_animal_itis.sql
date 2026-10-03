@@ -74,7 +74,8 @@ COMMENT ON VIEW animal_itis_stale IS 'Nodes whose stored itis_tsn disagrees with
 -- what ITIS said when it was made (schema/022); this is the check of every
 -- later release against it, which is what keeps the layer from going stale in
 -- the opposite direction from ITIS (beeline-45v.1). Empty while ITIS is not
--- loaded — there is nothing to compare — and otherwise one row per decision
+-- loaded — there is nothing to compare, and the two branches that LEFT JOIN
+-- itis_taxon would otherwise call every TSN gone — and otherwise one row per decision
 -- the release has moved from under, saying how. Three kinds, three selects,
 -- rather than one CASE over all of them: each kind's question is different.
 CREATE VIEW animal_curation_stale AS
@@ -120,14 +121,21 @@ LEFT JOIN current_name cn ON cn.entity_id = c.animal_id
 LEFT JOIN itis_taxon t ON t.tsn = c.itis_tsn
 LEFT JOIN accepted acc ON acc.tsn = c.itis_tsn
 WHERE c.kind = 'departure'
+  AND l.itis_as_of IS NOT NULL
   AND (cn.tsn IS NOT NULL OR t.tsn IS NULL OR t.usage = 'valid' OR acc.names IS DISTINCT FROM c.itis_current_name)
 UNION ALL
 -- A homonym resolution whose choice is no longer one of two: the chosen name
--- gone or outdated, or the other one gone, so there is nothing left to choose.
+-- gone or outdated, the other one gone so there is nothing left to choose, or
+-- a TSN that is current but names something else — which the match already
+-- refuses to honour (animal_itis_match takes a choice only from among the
+-- candidates), so without this row the node would silently read as an
+-- unresolved homonym.
 SELECT c.animal_id, a.rank, a.scientific_name, c.kind, c.itis_release, l.itis_as_of,
        CASE
          WHEN t.tsn IS NULL THEN concat('ITIS no longer carries the chosen TSN ', c.itis_tsn)
          WHEN t.usage <> 'valid' THEN concat('the chosen TSN ', c.itis_tsn, ' is no longer a current name')
+         WHEN t.rank <> a.rank OR t.name <> a.scientific_name
+           THEN concat('the chosen TSN ', c.itis_tsn, ' is ', t.name, ' (', t.rank, '), not a name at this rank and spelling')
          WHEN coalesce(cn.n, 0) < 2 THEN 'ITIS now has one current name at this spelling: the choice is no longer needed'
        END AS problem
 FROM animal_curation c
@@ -136,5 +144,6 @@ CROSS JOIN loaded l
 LEFT JOIN current_name cn ON cn.entity_id = c.animal_id
 LEFT JOIN itis_taxon t ON t.tsn = c.itis_tsn
 WHERE c.kind = 'homonym'
-  AND (t.tsn IS NULL OR t.usage <> 'valid' OR coalesce(cn.n, 0) < 2);
+  AND l.itis_as_of IS NOT NULL
+  AND (t.tsn IS NULL OR t.usage <> 'valid' OR t.rank <> a.rank OR t.name <> a.scientific_name OR coalesce(cn.n, 0) < 2);
 COMMENT ON VIEW animal_curation_stale IS 'Curation rows the ITIS release now loaded has moved from under: an addition ITIS now carries, a departure ITIS has adopted (retire it) or renamed again, a homonym choice ITIS no longer offers. Each names the problem; a taxonomist decides what follows. Empty while ITIS is not loaded.';

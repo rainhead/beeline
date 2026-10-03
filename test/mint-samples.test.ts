@@ -381,6 +381,28 @@ describe("one observation cited by several samples", () => {
     ]);
   });
 
+  test("a sample with no single primary collector makes the collector unknown, and is counted once", async () => {
+    // count(DISTINCT person_id) ignores NULL, so a headless sample beside one
+    // with a collector used to read as "one collector" (CodeRabbit on #123);
+    // and two heads at position 1 would have been two member rows.
+    const a = await insertCleanSample(conn, { inat_observation_id: "163515852", sample_number: "'12'" });
+    const b = await insertCleanSample(conn, { inat_observation_id: "163515852", sample_number: "'13'" });
+    await conn.run(`DELETE FROM sample_collector WHERE sample_id = ${b}`);
+    expect(await shapes()).toEqual([
+      [a, 163515852n, 2, "collector_unknown"],
+      [b, 163515852n, 2, "collector_unknown"],
+    ]);
+
+    await conn.run("INSERT INTO person (display_name) VALUES ('Bea Other')");
+    await conn.run(`INSERT INTO sample_collector (sample_id, person_id, position)
+                    VALUES (${b}, (SELECT min(entity_id) FROM person), 1),
+                           (${b}, (SELECT max(entity_id) FROM person), 1)`);
+    expect(await shapes()).toEqual([
+      [a, 163515852n, 2, "collector_unknown"],
+      [b, 163515852n, 2, "collector_unknown"],
+    ]);
+  });
+
   test("a sample alone on its observation, or with none, is not named", async () => {
     await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'" });
     await insertCleanSample(conn, { sample_number: "'8'" });

@@ -764,7 +764,7 @@ export interface SampleSharedObservationView {
   sample_id: number;
   inat_observation_id: BigIntCol;
   samples_sharing: number;
-  shape: "different_collectors" | "same_date" | "same_number" | "duplicate" | "other";
+  shape: "different_collectors" | "collector_unknown" | "same_date" | "same_number" | "duplicate" | "other";
 }
 
 /** A sample whose cited observation now reports a different number or date —

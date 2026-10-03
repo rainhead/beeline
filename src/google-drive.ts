@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
  * account signed in with `gcloud auth login --enable-gdrive-access`, or one
  * passed as GOOGLE_ACCESS_TOKEN. Shared by the worksheet export
  * (src/fetch-worksheets.ts) and the taxonomist's decisions
- * (src/fetch-taxon-decisions.ts), which read the same way.
+ * (src/fetch-taxon-sheet.ts), which read the same way.
  */
 
 export const SHEET_MIME = "application/vnd.google-apps.spreadsheet";

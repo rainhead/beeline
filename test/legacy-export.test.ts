@@ -145,6 +145,30 @@ describe("the legacy-format export", () => {
     }
   });
 
+  test("never writes one coordinate from the legacy row and the other from the model", async () => {
+    // Synthetic: no exported row on the sandbox holds half a point (2026-10-04).
+    const [[savedLat, savedLon]] = (await conn.runAndReadAll(
+      `SELECT "decimalLatitude", "decimalLongitude" FROM legacy_occurrence WHERE "fieldNumber" = '25000003'`,
+    )).getRows() as [[string, string]];
+    try {
+      await conn.run(`UPDATE legacy_occurrence SET "decimalLatitude" = '1.2345', "decimalLongitude" = '' WHERE "fieldNumber" = '25000003'`);
+      const other = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+      await writeLegacyExport(conn, other);
+      const [[lat, lon]] = (await conn.runAndReadAll(
+        `SELECT "decimalLatitude", "decimalLongitude" FROM read_csv('${other}', header = true, all_varchar = true, quote = '"', escape = '"')
+         WHERE "fieldNumber" = '25000003'`,
+      )).getRows() as [[string, string]];
+      const [[modelLat, modelLon]] = (await conn.runAndReadAll(
+        `SELECT printf('%.4f', latitude), printf('%.4f', longitude) FROM sample_location
+         WHERE sample_id = (SELECT sample_id FROM specimen WHERE field_number = '25000003')`,
+      )).getRows() as [[string, string]];
+      expect([lat, lon]).toEqual([modelLat, modelLon]);
+    } finally {
+      await conn.run(`UPDATE legacy_occurrence SET "decimalLatitude" = ?, "decimalLongitude" = ? WHERE "fieldNumber" = '25000003'`,
+        [savedLat, savedLon] as never);
+    }
+  });
+
   test("writes the initials a label_name gives, as the person's labels do", async () => {
     // Synthetic: the fixture's collector given the shape of a real register
     // override (J.M. for a given name of Juan Manuel).

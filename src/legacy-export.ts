@@ -158,9 +158,12 @@ export function legacyExportSql(staging: Set<string> | null): string {
     `CASE WHEN NOT ${rowPoint} THEN CAST(${model} AS VARCHAR)
           WHEN nullif(lo."${col}", '') IS NOT NULL THEN lo."${col}"
           WHEN ${atRowPoint(lat, lon)} THEN CAST(${model} AS VARCHAR) END`;
+  // Both coordinates come from the same place, the row or the model, never
+  // one of each: a row holding only a latitude takes the model's pair, and
+  // with it the model's elevation and uncertainty (CodeRabbit on #130; no
+  // such row on the sandbox, 2026-10-04).
   const coord = (col: string, model: string) =>
-    `CASE WHEN loc.source = 'legacy_import' AND nullif(lo."${col}", '') IS NOT NULL THEN lo."${col}"
-          ELSE printf('%.4f', CAST(${model} AS DOUBLE)) END`;
+    `CASE WHEN ${rowPoint} THEN lo."${col}" ELSE printf('%.4f', CAST(${model} AS DOUBLE)) END`;
   return `
 WITH RECURSIVE up(node_id, anc_id) AS (
   SELECT entity_id, entity_id FROM animal

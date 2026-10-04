@@ -198,14 +198,24 @@ describe("what the store knows about a difference", () => {
     exportPath = join(dir, "occurrences.csv");
     await writeLegacyExport(conn, exportPath);
     await conn.run(`INSERT INTO legacy_collector_alias (alias, person, basis) VALUES ('Ada Colector', 'Ada Collector', 'test')`);
-    await conn.run(`UPDATE legacy_occurrence SET "recordedBy" = 'Ada Colector', "firstName" = 'Adda' WHERE "fieldNumber" = '25000001'`);
+    // The misspelling, in the name and the part it spells.
+    await conn.run(`UPDATE legacy_occurrence SET "recordedBy" = 'Ada Colector', "lastName" = 'Colector' WHERE "fieldNumber" = '25000001'`);
+    // The same misspelling, and a first name wrong some other way besides.
+    await conn.run(`UPDATE legacy_occurrence SET "recordedBy" = 'Ada Colector', "firstName" = 'Adda', "lastName" = 'Colector' WHERE "fieldNumber" = '25000003'`);
     await conn.run(`UPDATE legacy_occurrence SET "userLogin" = 'an_old_login' WHERE "fieldNumber" = '25000002'`);
     await conn.run(`UPDATE legacy_occurrence SET "userId" = '1', "userLogin" = 'someone_else' WHERE "fieldNumber" = '25000005'`);
+    // A sample whose rows disagreed between what Beeline wrote and 'There'.
     await conn.run(
       `INSERT INTO sample_promotion_finding (sample_id, rule_name, details)
-       SELECT sample_id, 'within_sample_disagreement', 'locality: Here | There' FROM specimen WHERE field_number = '25000003'`,
+       SELECT s.entity_id, 'within_sample_disagreement', concat('locality: ', s.locality, ' | There')
+       FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id WHERE sp.field_number = '25000003'`,
     );
     await conn.run(`UPDATE legacy_occurrence SET locality = 'There' WHERE "fieldNumber" = '25000003'`);
+    // One whose rows disagreed between two other values: what Beeline wrote is not the merge's doing.
+    await conn.run(
+      `INSERT INTO sample_promotion_finding (sample_id, rule_name, details)
+       SELECT sample_id, 'within_sample_disagreement', 'locality: Here | Somewhere else' FROM specimen WHERE field_number = '25000002'`,
+    );
     await conn.run(`UPDATE legacy_occurrence SET locality = 'Somewhere else' WHERE "fieldNumber" = '25000002'`);
   });
 
@@ -215,17 +225,21 @@ describe("what the store knows about a difference", () => {
     await writeDifferences(conn, [], path);
     const kinds = (await conn.runAndReadAll(
       `SELECT field_number, "column", kind FROM read_csv('${path}', header = true, all_varchar = true)
-       WHERE (field_number = '25000001' AND "column" IN ('recordedBy', 'firstName'))
+       WHERE (field_number IN ('25000001', '25000003') AND "column" IN ('recordedBy', 'firstName', 'lastName'))
           OR (field_number IN ('25000002', '25000005') AND "column" = 'userLogin')
           OR (field_number IN ('25000002', '25000003') AND "column" = 'locality')
        ORDER BY 1, 2`,
     )).getRows();
     expect(kinds).toEqual([
-      ["25000001", "firstName", "collector_alias"],
+      ["25000001", "lastName", "collector_alias"],
       ["25000001", "recordedBy", "collector_alias"],
-      ["25000002", "locality", "changed"], // its sample's rows agreed: not explained by the merge
+      ["25000002", "locality", "changed"], // Beeline wrote neither of the values the rows disagreed between
       ["25000002", "userLogin", "login_renamed"],
+      // The parts no longer spell the misspelled name, so the alias explains neither.
+      ["25000003", "firstName", "changed"],
+      ["25000003", "lastName", "changed"],
       ["25000003", "locality", "sample_disagreement"],
+      ["25000003", "recordedBy", "collector_alias"],
       ["25000005", "userLogin", "changed"], // another user id: not a rename
     ]);
   });

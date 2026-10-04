@@ -571,6 +571,12 @@ export interface SamplePromotionFindingTable {
   details: string;
 }
 
+// schema/030_samples_specimens.sql — written by legacy promotion (beeline-0199)
+export interface SampleLegacyObservationTable {
+  sample_id: number;
+  inat_observation_id: BigIntCol;
+}
+
 // schema/060_sync.sql
 
 export interface SyncRunTable {
@@ -1016,6 +1022,7 @@ export interface Database {
   sample_season: SampleSeasonView;
   qc_rule: QcRuleTable;
   sample_promotion_finding: SamplePromotionFindingTable;
+  sample_legacy_observation: SampleLegacyObservationTable;
   sync_run: SyncRunTable;
   observation_field: ObservationFieldTable;
   job_run: JobRunTable;

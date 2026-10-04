@@ -215,7 +215,7 @@ describe("reconciling against samples the store already holds", () => {
     // The finding that made the key a date RANGE rather than date_start. All
     // 20 samples this reaches on the dev store cite no observation, so keying
     // on date_start turned free links into duplicate collecting events —
-    // invisible, because qc_rule_duplicate_sample_number also groups on
+    // invisible, because duplicate_sample_number also groups on
     // date_start.
     const sampleId = await insertCleanSample(conn, {
       kind: "'trap'",
@@ -309,16 +309,19 @@ describe("reconciling against samples the store already holds", () => {
     expect(await one(`SELECT inat_observation_id FROM sample WHERE entity_id = ${sampleId}`))
       .toEqual([30494816n]);
     // The day it did not take is not lost, and not minted into a second
-    // sample either: it is the same collecting event, and this is what says so.
+    // sample either: it is named, and since two observations claim one sample
+    // number, the collector is told (Peter, 2026-10-04, beeline-0199).
     expect(await one("SELECT sample_id, cited_inat_id, other_observations FROM sample_multi_observation"))
       .toEqual([sampleId, 30494816n, 1]);
+    expect(await one(`SELECT rule_name, details FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'duplicate_sample_number'`))
+      .toEqual(["duplicate_sample_number", "sample number 7 is on 2 observations: 30494816, 30587701; keep 30494816, the one this sample cites"]);
     // And a second pass changes nothing, rather than swapping the citation.
     expect((await promoteObservations(conn)).freeLinks).toBe(0);
     expect(await one(`SELECT inat_observation_id FROM sample WHERE entity_id = ${sampleId}`))
       .toEqual([30494816n]);
   });
 
-  test("several observations of one collecting event make one sample, counting them all", async () => {
+  test("several observations claiming one sample number make one sample, counting them all, and the collector is told", async () => {
     await stage(obs(12, { ofvs: ofvs("7", "3") }));
     await stage(obs(9, { ofvs: ofvs("7", "5") }));
     expect((await promoteObservations(conn)).samplesMinted).toBe(1);
@@ -333,6 +336,41 @@ describe("reconciling against samples the store already holds", () => {
       .toEqual(["count_mismatch", "observation says 5 but sample count is 8"]);
     expect(await one("SELECT sample_id, cited_inat_id, other_observations FROM sample_multi_observation"))
       .toEqual([sampleId, 9n, 1]);
+    // Several observations claiming one sample number is the collector's
+    // error (Peter, 2026-10-04, beeline-0199). Nothing is printed yet, so the
+    // fix is theirs, and it blocks printing until then. The flag says which
+    // to keep: the one the sample cites, since that one, renumbered, would be
+    // stranded — cited, it is never minted again.
+    const held = `SELECT rule_name, details FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name LIKE '%sample_number%'`;
+    expect(await rows(conn, held))
+      .toEqual([["duplicate_sample_number", "sample number 7 is on 2 observations: 9, 12; keep 9, the one this sample cites"]]);
+    // The volunteer renumbers the other. It becomes its own sample on the
+    // next promotion and the block clears; the first sample's count still
+    // includes it, which count_mismatch says as for any count that changes
+    // before printing, and staff carry across.
+    await stage(obs(12, { ofvs: ofvs("8", "3") }));
+    expect((await promoteObservations(conn)).samplesMinted).toBe(1);
+    expect(await rows(conn, held)).toEqual([]);
+    expect(await rows(conn, `SELECT sample_number, specimen_count, inat_observation_id FROM sample ORDER BY sample_number`))
+      .toEqual([["7", 8, 9n], ["8", 3, 12n]]);
+    expect(await rows(conn, `SELECT details FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'count_mismatch'`))
+      .toEqual([["observation says 5 but sample count is 8"]]);
+  });
+
+  test("an observation another sample cites is not a claim on this one", async () => {
+    // Fable's review of beeline-0199: a trap whose range takes in a day on
+    // which the same collector numbered a net sample the same. The link is
+    // the identity, so these are two samples, not one claimed twice.
+    const trap = await insertCleanSample(conn, {
+      kind: "'trap'", sample_number: "'9'", date_start: "DATE '2026-07-15'", date_end: "DATE '2026-07-25'",
+      inat_observation_id: "21",
+    });
+    await insertCleanSample(conn, { sample_number: "'9'", date_start: "DATE '2026-07-20'", date_end: "DATE '2026-07-20'", inat_observation_id: "20" });
+    await stage(obs(21, { observed_on: "2026-07-25", ofvs: ofvs("9", "3") }));
+    await stage(obs(20, { observed_on: "2026-07-20", ofvs: ofvs("9", "2") }));
+    await refreshObservationFields(conn);
+    expect(await rows(conn, `SELECT rule_name FROM qc_finding WHERE rule_name LIKE '%sample_number%'`)).toEqual([]);
+    expect(await rows(conn, `SELECT inat_id FROM sample_claiming_observation WHERE sample_id = ${trap}`)).toEqual([[21n]]);
   });
 });
 

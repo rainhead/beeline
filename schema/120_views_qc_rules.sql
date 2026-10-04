@@ -250,13 +250,19 @@ JOIN sample s ON s.entity_id = loc.sample_id
 WHERE NOT (loc.latitude BETWEEN 14 AND 84 AND loc.longitude BETWEEN -172 AND -50)
   AND (s.country IS NULL OR s.country IN ('USA', 'CAN', 'MEX'));
 
--- Same collector, same day, same sample number, more than one sample: an
--- identity collision the reference implementation silently merged.
-CREATE VIEW qc_rule_duplicate_sample_number AS
+-- Same collector, same day, same sample number, more than once: an identity
+-- collision the reference implementation silently merged — and so, it turned
+-- out, did Beeline. Counting samples, the rule never fired once (0 findings
+-- on the sandbox, 2026-10-04): legacy promotion and minting both merge on
+-- that very key first, so the duplicate lands inside one sample, claimed by
+-- several observations. Peter, 2026-10-04: several observations claiming one
+-- sample number is collector error. So a conflict is either shape: two
+-- samples sharing the key, or one sample several observations claim
+-- (sample_several_observations, schema/108).
+CREATE VIEW sample_number_conflict AS
 SELECT s.entity_id AS sample_id,
-       CAST(NULL AS INTEGER) AS specimen_id,
-       'duplicate_sample_number' AS rule_name,
-       concat('sample number ', s.sample_number, ' used ', dup.n, ' times on ', s.date_start) AS details
+       concat('sample number ', s.sample_number, ' used ', dup.n, ' times on ', s.date_start) AS details,
+       CAST(NULL AS BIGINT) AS keep_inat_id
 FROM sample s
 JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
 JOIN (
@@ -267,7 +273,39 @@ JOIN (
   HAVING count(*) > 1
 ) dup ON dup.person_id = pc.person_id
      AND dup.date_start = s.date_start
-     AND dup.sample_number = s.sample_number;
+     AND dup.sample_number = s.sample_number
+UNION ALL
+SELECT s.entity_id,
+       concat('sample number ', s.sample_number, ' is on ', o.observations, ' observations: ', o.inat_ids),
+       o.cited_inat_id
+FROM sample s
+JOIN sample_several_observations o ON o.sample_id = s.entity_id;
+COMMENT ON VIEW sample_number_conflict IS 'A sample whose number its collector used more than once that day: two samples sharing (collector, date, number), or several observations claiming one (beeline-0199). keep_inat_id is the claiming observation the sample cites, the one to keep. qc_rule_sample_number reads it.';
+
+-- One view for both rules, so the conflict is computed once per read of
+-- qc_finding rather than once per rule (Fable's review of beeline-0199: 15 ms
+-- to 45 ms on a full-size store with them separate).
+--
+-- Not yet printed: duplicate_sample_number, blocking, and renumbering is the
+-- fix asked of the volunteer — all but the observation the sample cites,
+-- which the detail names, since renumbering that one instead strands it:
+-- being cited, it is never minted again, and its specimens would have no
+-- sample. The count then still includes the others, which count_mismatch
+-- reports as for any count that changes before printing.
+--
+-- Printed: shared_sample_number_printed, a warning kept off the volunteer's
+-- front page (DASHBOARD_RULES). The pins carry the number and, where
+-- observations were merged, each specimen's own place; renumbering after the
+-- fact would set the record against the pin, so staff repair it.
+CREATE VIEW qc_rule_sample_number AS
+SELECT c.sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       CASE WHEN p.sample_id IS NULL THEN 'duplicate_sample_number' ELSE 'shared_sample_number_printed' END AS rule_name,
+       CASE WHEN p.sample_id IS NULL AND c.keep_inat_id IS NOT NULL
+            THEN concat(c.details, '; keep ', c.keep_inat_id, ', the one this sample cites')
+            ELSE c.details END AS details
+FROM sample_number_conflict c
+LEFT JOIN printed_sample p ON p.sample_id = c.sample_id;
 
 -- The evidencing observation's taxon is the floral host in this protocol,
 -- and a host must be a vascular plant: anything else — a moss, a fungus, or

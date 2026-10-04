@@ -190,3 +190,18 @@ COMMENT ON TABLE specimen IS 'One physical insect. Specimens are individuated by
 COMMENT ON COLUMN specimen.specimen_number IS '1..N within the sample at freeze time.';
 COMMENT ON COLUMN specimen.field_number IS 'The number Beeline issues and prints on the label (CONTEXT.md, beeline-nfo) — never the museum''s catalog number, which arrives from Ecdysis with its institutional prefix and gets its own column when import lands. Opaque verbatim text: all four historical identifier eras land here, including the era of duplicates — so no UNIQUE. A number Beeline mints is written here AND as a row in minted_field_number (schema/035), whose PRIMARY KEY is the guarantee (ADR 0008); specimen_field_number_stale (schema/155) checks that the two agree. Not indexed, deliberately: an indexed column on a row a determination references could never be updated (duckdb/duckdb#20246), and a duplicate repair will one day update this one.';
 COMMENT ON COLUMN specimen.occurrence_id IS 'dwc:occurrenceID — the specimen''s permanent identity downstream, minted once by a print run (a UUID v7, generated in src/print-run.ts) and never changed (ADR 0008 §1). NULL on every imported specimen: the legacy corpus''s own occurrenceIDs are not unique (216 values on 598 records, beeline-1kb.14) and are kept in staging until the export phase decides what to publish for them. Nothing reads meaning out of it.';
+
+-- Which iNaturalist observations an imported sample's legacy records came
+-- from. Legacy promotion merges records on (collector, sample number, date),
+-- and a record carries its observation's URL; only staging can see that a
+-- merged sample came from several observations, and staging is not the
+-- schema, so promotion writes it down here. One observation per sample is the
+-- rule (Peter, 2026-10-04: several observations claiming one sample number is
+-- collector error), and sample_claiming_observation (schema/108) reads this
+-- with the iNaturalist side to say when it is broken.
+CREATE TABLE sample_legacy_observation (
+  sample_id           INTEGER NOT NULL REFERENCES sample(entity_id),
+  inat_observation_id BIGINT NOT NULL,
+  PRIMARY KEY (sample_id, inat_observation_id)
+);
+COMMENT ON TABLE sample_legacy_observation IS 'The iNaturalist observations an imported sample''s legacy records named in their URLs, written by legacy promotion because staging is the only place that can see them. More than one row for a sample is a collector error the reference system merged and printed (beeline-0199).';

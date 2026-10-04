@@ -111,6 +111,15 @@ describe("legacy promotion", () => {
     expect(found.flat()).toEqual(["bad_elevation", "bad_specimen_number", "missing_person"]);
   });
 
+  test("each sample records the observations its records came from", async () => {
+    // Ada's sample 1 has two records citing one observation and one with no
+    // URL: one observation, which is the rule, so nothing is flagged.
+    expect(await rows(conn, `
+      SELECT s.sample_number, o.inat_observation_id FROM sample_legacy_observation o
+      JOIN sample s ON s.entity_id = o.sample_id ORDER BY 1, 2`)).toEqual([["1", 250000001n]]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_several_observations`)).toEqual([[0n]]);
+  });
+
   test("net and trap samples are distinguished by date range", async () => {
     const kinds = await rows(
       conn,

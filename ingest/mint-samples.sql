@@ -104,7 +104,7 @@ SELECT m.sample_id, m.person_id, 1 FROM minted_sample m;
 
 -- ── A locality follows its observation until the labels print ───────────
 -- The one descriptive field rewritten rather than filled, and only on a
--- sample not in printed_sample (schema/155): no label of its is on paper.
+-- sample not in printed_sample (schema/119): no label of its is on paper.
 -- Until its labels print, a sample's locality is the volunteer's to fix on
 -- iNaturalist (CONTEXT.md, Upstream). A place name too long for a label is
 -- minted as written and flagged (schema/108), and nobody can edit an

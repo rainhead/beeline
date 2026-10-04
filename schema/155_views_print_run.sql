@@ -45,28 +45,6 @@ LEFT JOIN atlas_printing ap ON ap.atlas_id = sa.atlas_id
 WHERE ap.atlas_id IS NULL;
 COMMENT ON VIEW print_scope_sample IS 'The pending samples an unscoped print run freezes: those filed under an atlas that does not print its own labels (absent from atlas_printing), or under no atlas at all. A run scoped to one atlas reads pending_print_sample joined to sample_atlas instead.';
 
--- Samples whose labels are on paper — the ones that stop following
--- iNaturalist for date, locality and coordinates (CONTEXT.md, Upstream;
--- beeline-1kb.2). A specimen row is on paper when a printed run holds a
--- label for it, OR when no run holds any label for it at all, which is every
--- imported specimen: the legacy system printed them, the labels are on pins,
--- and Peter decided (2026-09-14) that they lock too. A specimen frozen into
--- a run that has not printed, or only into runs since canceled, is on paper
--- by neither test, so a canceled run locks nothing and neither does a
--- prepared one — and a printed specimen being reprinted in a later,
--- unprinted run stays locked, because its first run still says printed. Promotion reads this view (ingest/mint-samples.sql,
--- ingest/promote-observations.sql); nothing else should reinvent it.
-CREATE VIEW printed_sample AS
-SELECT DISTINCT sp.sample_id
-FROM specimen sp
-WHERE EXISTS (
-        SELECT 1 FROM printed_label pl
-        JOIN print_run r ON r.entity_id = pl.print_run_id
-        WHERE pl.specimen_id = sp.entity_id AND r.printed_at IS NOT NULL)
-   OR NOT EXISTS (
-        SELECT 1 FROM printed_label pl WHERE pl.specimen_id = sp.entity_id);
-COMMENT ON VIEW printed_sample IS 'Samples with at least one label on paper: printed by a Beeline print run, or imported (the legacy system printed every specimen it holds). These keep their date, locality and coordinates when iNaturalist changes them; a sample frozen into an unprinted run is not here, so a canceled run holds nothing back.';
-
 -- Labels on their way: per sample, how many are in a live print run that has
 -- not been mailed — still being printed (the run is prepared or approved),
 -- or on paper and not yet in the post. This exists because the freeze takes

@@ -95,8 +95,11 @@ describe("the legacy-format export", () => {
   test("writes the initials a label_name gives, as the person's labels do", async () => {
     // Synthetic: the fixture's collector given the shape of a real register
     // override (J.M. for a given name of Juan Manuel).
-    // A stray tab around it, as an overlay value can carry, is trimmed as the label trims it.
-    await conn.run(`UPDATE person SET label_name = concat(chr(9), 'A.B. Collector', chr(9)) WHERE display_name = 'Ada Collector'`);
+    // Stray whitespace around it, as an overlay value can carry, is trimmed as
+    // the label's JavaScript trim() trims it: a tab, and the two characters
+    // RE2's \s and \p{Z} both miss, a vertical tab and U+FEFF.
+    await conn.run(`UPDATE person SET label_name = concat(chr(9), chr(11), 'A.B. Collector', chr(65279), chr(9))
+                    WHERE display_name = 'Ada Collector'`);
     try {
       const other = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
       await writeLegacyExport(conn, other);

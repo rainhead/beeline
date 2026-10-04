@@ -100,11 +100,14 @@ const sortText = (col: string) => `coalesce(nullif(${col}, ''), ${Z16})`;
  * and their own family name (`J.M.` of `J.M. Benitez Alvarez`), else NULL:
  * the SQL twin of `labelInitials` in src/label-text.ts, so the file's
  * firstNameInitial says what the person's labels say. Both sides are
- * trimmed of any whitespace, as JavaScript's trim() does, not only of
- * spaces as DuckDB's trim() does, or a stray tab in an overlay value would
- * close up on the label and not here (CodeRabbit on #129).
+ * trimmed of exactly what JavaScript's trim() removes, not only of spaces as
+ * DuckDB's trim() does, or a stray tab in an overlay value would close up on
+ * the label and not here (CodeRabbit on #129). That set is ECMAScript's
+ * WhiteSpace and LineTerminator: RE2's \s (tab, LF, FF, CR, space) misses
+ * the vertical tab, and \p{Z} (Zs, plus U+2028 and U+2029) misses U+FEFF.
  */
-const jsTrim = (x: string) => `regexp_replace(${x}, '^[\\s\\p{Z}]+|[\\s\\p{Z}]+$', '', 'g')`;
+const JS_SPACE = "[\\s\\x{0B}\\x{FEFF}\\p{Z}]";
+const jsTrim = (x: string) => `regexp_replace(${x}, '^${JS_SPACE}+|${JS_SPACE}+$', '', 'g')`;
 const labelInitials = (p: string) => {
   const name = jsTrim(`${p}.label_name`);
   return `CASE

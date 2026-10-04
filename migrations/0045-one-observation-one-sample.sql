@@ -17,7 +17,10 @@
 -- so left alone those specimens would be counted twice — and an unprinted
 -- sample's count is how many labels print (on the sandbox, 2026-10-04: 15
 -- samples, 141 specimens). So each such sample, not yet printed, takes its
--- own observation's count. A printed one keeps what its labels say.
+-- own observation's count. A printed one keeps what its labels say, and so
+-- does any imported one: its count is its legacy records, not a sum minting
+-- made (every imported sample is printed anyway; this says so rather than
+-- relying on it — CodeRabbit on #133).
 -- sample_multi_observation is still the old shape when this runs: a sample
 -- whose collector's other observations carry its number on its dates.
 UPDATE sample SET specimen_count = c.specimen_count
@@ -25,7 +28,8 @@ FROM sample_multi_observation smo
 JOIN observation_sample_candidate c ON c.inat_id = smo.cited_inat_id
 WHERE sample.entity_id = smo.sample_id
   AND sample.specimen_count > c.specimen_count
-  AND NOT EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = sample.entity_id);
+  AND NOT EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = sample.entity_id)
+  AND NOT EXISTS (SELECT 1 FROM sample_legacy_observation lo WHERE lo.sample_id = sample.entity_id);
 
 UPDATE qc_rule
    SET instructions = 'Each sample has its own number, and this one is on more than one of your samples that day. Renumber all but one of their observations on iNaturalist; until their labels print, the samples follow.'

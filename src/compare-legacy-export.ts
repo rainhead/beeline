@@ -262,6 +262,62 @@ export async function compareLegacyExport(
  * cmp_difference: one row per difference — a matched record's column that
  * differs, or a record only one side holds — with its kind and season.
  */
+/** The legacy place columns, as promotion names them in a within_sample_disagreement finding. */
+const PLACE_FINDING_FIELD: Record<string, string> = {
+  country: "country",
+  stateProvince: "state_province",
+  county: "county",
+  locality: "locality",
+  samplingProtocol: "protocol",
+};
+
+/**
+ * What the store knows about a difference that its two values cannot say
+ * (Peter, 2026-10-04), so one ruling covers the case for good rather than a
+ * list of field numbers every new pull adds to:
+ *   collector_alias      the legacy collector, spelled as ingest/collector-aliases.csv
+ *                        corrects it, is who Beeline wrote — and the record's name
+ *                        parts differ for the same reason
+ *   login_renamed        both sides carry the same iNaturalist user id
+ *   sample_disagreement  promotion found the legacy rows of this specimen's sample
+ *                        disagreeing about this field, and the sample keeps one value
+ */
+async function kindFromStore(conn: DuckDBConnection): Promise<void> {
+  const fold = (x: string) => `regexp_replace(lower(${x}), '[^a-z0-9]', '', 'g')`;
+  if ((await one(conn, `SELECT count(*) FROM duckdb_tables() WHERE table_name = 'legacy_collector_alias'`)) > 0) {
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'collector_alias'
+      FROM (
+        SELECT p.field_number, string_agg(coalesce(a.person, p.part), ' | ' ORDER BY p.idx) AS corrected
+        FROM (SELECT field_number, unnest(string_split(legacy, ' | ')) AS part, generate_subscripts(string_split(legacy, ' | '), 1) AS idx
+              FROM cmp_value_difference WHERE "column" = 'recordedBy') p
+        LEFT JOIN legacy_collector_alias a ON ${fold("a.alias")} = ${fold("p.part")}
+        GROUP BY p.field_number
+      ) m
+      WHERE d.field_number = m.field_number AND d."column" = 'recordedBy' AND m.corrected = d.exported`);
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'collector_alias'
+      WHERE d."column" IN ('firstName', 'lastName', 'firstNameInitial')
+        AND EXISTS (SELECT 1 FROM cmp_value_difference r
+                    WHERE r.field_number = d.field_number AND r."column" = 'recordedBy' AND r.kind = 'collector_alias')`);
+  }
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'login_renamed'
+    WHERE d."column" = 'userLogin' AND d.kind = 'changed'
+      AND EXISTS (SELECT 1 FROM cmp_pairs p
+                  WHERE p."e_fieldNumber" = d.field_number AND p."e_userId" <> '' AND p."e_userId" = p."l_userId")`);
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'sample_disagreement'
+    WHERE d.kind IN ('changed', 'filled', 'blanked')
+      AND d."column" IN (${Object.keys(PLACE_FINDING_FIELD).map(sqlString).join(", ")})
+      AND EXISTS (
+        SELECT 1 FROM specimen sp JOIN sample_promotion_finding f ON f.sample_id = sp.sample_id
+        WHERE sp.field_number = d.field_number AND f.rule_name = 'within_sample_disagreement'
+          AND starts_with(f.details, concat(CASE d."column" ${Object.entries(PLACE_FINDING_FIELD)
+            .map(([c, f]) => `WHEN ${sqlString(c)} THEN ${sqlString(f)}`)
+            .join(" ")} END, ':')))`);
+}
+
 async function buildDifferences(conn: DuckDBConnection): Promise<void> {
   const perColumn = LEGACY_EXPORT_COLUMNS.map(
     (c) => `SELECT "e_fieldNumber" AS field_number, ${sqlString(c)} AS "column", "e_${c}" AS exported, "l_${c}" AS legacy,
@@ -272,6 +328,7 @@ async function buildDifferences(conn: DuckDBConnection): Promise<void> {
     CREATE OR REPLACE TEMP TABLE cmp_value_difference AS
     SELECT field_number, "column", exported, legacy, open_season, ${DIFFERENCE_KIND_SQL} AS kind
     FROM (${perColumn})`);
+  await kindFromStore(conn);
 
   // Why a staged record has no exported counterpart: the blocking finding
   // that kept it from promotion, where the store has promoted at all.

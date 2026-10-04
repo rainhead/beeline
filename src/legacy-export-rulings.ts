@@ -34,7 +34,9 @@ export const OUTCOMES = ["expected", "reference-wrong", "beeline-wrong", "known-
 
 /**
  * What a difference in one column's value looks like, judged on the two
- * values alone, first match winning. `changed` is everything else.
+ * values alone, first match winning. `changed` is everything else. The last
+ * three are read from the store instead, because the values alone cannot
+ * say them, and they take precedence over what the values look like.
  */
 export const VALUE_KINDS = [
   "filled", // the legacy record is blank and Beeline says something
@@ -47,6 +49,9 @@ export const VALUE_KINDS = [
   "subgenus_form", // the subgenus written inside or beside the name: Dialictus / Lasioglossum (Dialictus)
   "authorship", // the same name with or without its author and year: Halictus ligatus Say, 1837
   "changed",
+  "collector_alias", // the legacy spelling of a collector, corrected in ingest/collector-aliases.csv: Brendon / Brendan
+  "login_renamed", // the same iNaturalist user id under another login
+  "sample_disagreement", // the legacy rows Beeline merged into one sample name different places, and the sample keeps one
 ] as const;
 
 /**

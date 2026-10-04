@@ -181,3 +181,52 @@ describe("comparing against rulings", () => {
     expect(a.reference.fingerprint).toMatch(/^[0-9a-f]{32}$/);
   });
 });
+
+describe("what the store knows about a difference", () => {
+  let conn: DuckDBConnection;
+  let dir: string;
+  let exportPath: string;
+
+  // Synthetic, in the shapes found on the sandbox: a collector the old system
+  // misspelled, a login renamed on iNaturalist, and a sample whose legacy rows
+  // named different places.
+  beforeAll(async () => {
+    ({ conn } = await createMemoryDb());
+    await loadLegacyStaging(conn, FIXTURE);
+    await promoteLegacy(conn, FIXTURE_INPUTS);
+    dir = await mkdtemp(join(tmpdir(), "compare-store-"));
+    exportPath = join(dir, "occurrences.csv");
+    await writeLegacyExport(conn, exportPath);
+    await conn.run(`INSERT INTO legacy_collector_alias (alias, person, basis) VALUES ('Ada Colector', 'Ada Collector', 'test')`);
+    await conn.run(`UPDATE legacy_occurrence SET "recordedBy" = 'Ada Colector', "firstName" = 'Adda' WHERE "fieldNumber" = '25000001'`);
+    await conn.run(`UPDATE legacy_occurrence SET "userLogin" = 'an_old_login' WHERE "fieldNumber" = '25000002'`);
+    await conn.run(`UPDATE legacy_occurrence SET "userId" = '1', "userLogin" = 'someone_else' WHERE "fieldNumber" = '25000005'`);
+    await conn.run(
+      `INSERT INTO sample_promotion_finding (sample_id, rule_name, details)
+       SELECT sample_id, 'within_sample_disagreement', 'locality: Here | There' FROM specimen WHERE field_number = '25000003'`,
+    );
+    await conn.run(`UPDATE legacy_occurrence SET locality = 'There' WHERE "fieldNumber" = '25000003'`);
+    await conn.run(`UPDATE legacy_occurrence SET locality = 'Somewhere else' WHERE "fieldNumber" = '25000002'`);
+  });
+
+  test("labels each difference the store can account for, and leaves the rest as changed", async () => {
+    await compareLegacyExport(conn, exportPath, []);
+    const path = join(dir, "differences.csv");
+    await writeDifferences(conn, [], path);
+    const kinds = (await conn.runAndReadAll(
+      `SELECT field_number, "column", kind FROM read_csv('${path}', header = true, all_varchar = true)
+       WHERE (field_number = '25000001' AND "column" IN ('recordedBy', 'firstName'))
+          OR (field_number IN ('25000002', '25000005') AND "column" = 'userLogin')
+          OR (field_number IN ('25000002', '25000003') AND "column" = 'locality')
+       ORDER BY 1, 2`,
+    )).getRows();
+    expect(kinds).toEqual([
+      ["25000001", "firstName", "collector_alias"],
+      ["25000001", "recordedBy", "collector_alias"],
+      ["25000002", "locality", "changed"], // its sample's rows agreed: not explained by the merge
+      ["25000002", "userLogin", "login_renamed"],
+      ["25000003", "locality", "sample_disagreement"],
+      ["25000005", "userLogin", "changed"], // another user id: not a rename
+    ]);
+  });
+});

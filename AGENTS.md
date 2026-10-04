@@ -202,10 +202,13 @@ Committing straight to `main` was the stance until CodeRabbit began reviewing
 every pull request, and the reason to change was empirical rather than
 procedural: on beeline-o22 it found a real defect that four rounds of
 adversarial design review had missed — an identity shortcut on the sibling code
-path of one already fixed. A second reader that only ever sees pull requests is
-worth the branch, and it is good at exactly what design review is worst at.
-Triage what it says: fix what is real, and reply on the PR with the reason when
-declining.
+path of one already fixed. It is good at exactly what design review is worst
+at. Since 2026-10-04 it reads Peter's branches locally, through the CodeRabbit
+CLI, before the pull request is opened, so findings become ordinary edits rather
+than push-and-wait round trips; the PR bot skips his PRs (`.coderabbit.yaml`)
+and still reviews everyone else's. Triage what it says: fix what is real, and
+give the reason in the PR when declining. The branch still earns its keep: CI
+runs on it, and the pull request records what landed and why.
 
 Why the commit authority itself is broad is the era, not the tooling:
 pre-cutover the store is blown away and rebuilt at will, nothing downstream

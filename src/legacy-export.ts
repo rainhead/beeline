@@ -58,6 +58,7 @@ const STAGED = [
   "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "coordinateSource", "relationshipOfResource", "resourceID",
   "relatedResourceID", "relationshipRemarks", "phylumPlant", "orderPlant", "familyPlant", "genusPlant",
   "speciesPlant", "taxonRankPlant", "url", "taxonomicNotes", "sex", "caste", "geoprivacy", "taxon_geoprivacy",
+  "verbatimElevation", "familyVolDet", "genusVolDet", "speciesVolDet", "sexVolDet", "casteVolDet",
 ] as const;
 
 const scalar = async (conn: DuckDBConnection, sql: string): Promise<number> => {
@@ -139,9 +140,30 @@ export function legacyExportSql(staging: Set<string> | null): string {
   // Everything after the genus and an optional "(Subgenus)": the epithet can
   // be more than one word ("verbesinae complex"), so the last word is not it.
   const epithet = (name: string) => `regexp_replace(${name}, '^\\S+\\s+(\\([^)]*\\)\\s+)?', '')`;
+  // A row whose own point is written — an imported point Beeline has not
+  // replaced — describes that point in full: its elevation and uncertainty
+  // are the legacy row's too, as the legacy file had them. The sample keeps
+  // one location, and where a sample merges legacy rows taken at different
+  // points (106 samples in the 2026 season on the sandbox, one 304 km
+  // across), the sample's elevation beside a row's own coordinates was the
+  // elevation of somewhere else: 1,182 m written beside a point whose own
+  // record says 918 m (beeline-en7i). The model's value fills a blank only
+  // where it was read at this row's point, within sample_elevation_stale's
+  // tolerance; anywhere else it says nothing, since nothing is known.
+  const rowPoint = `(loc.source = 'legacy_import' AND nullif(lo."decimalLatitude", '') IS NOT NULL
+                     AND nullif(lo."decimalLongitude", '') IS NOT NULL)`;
+  const atRowPoint = (lat: string, lon: string) =>
+    `(abs(try_cast(lo."decimalLatitude" AS DOUBLE) - ${lat}) <= 5e-5 AND abs(try_cast(lo."decimalLongitude" AS DOUBLE) - ${lon}) <= 5e-5)`;
+  const ofRowPoint = (col: string, model: string, lat: string, lon: string) =>
+    `CASE WHEN NOT ${rowPoint} THEN CAST(${model} AS VARCHAR)
+          WHEN nullif(lo."${col}", '') IS NOT NULL THEN lo."${col}"
+          WHEN ${atRowPoint(lat, lon)} THEN CAST(${model} AS VARCHAR) END`;
+  // Both coordinates come from the same place, the row or the model, never
+  // one of each: a row holding only a latitude takes the model's pair, and
+  // with it the model's elevation and uncertainty (CodeRabbit on #130; no
+  // such row on the sandbox, 2026-10-04).
   const coord = (col: string, model: string) =>
-    `CASE WHEN loc.source = 'legacy_import' AND nullif(lo."${col}", '') IS NOT NULL THEN lo."${col}"
-          ELSE printf('%.4f', CAST(${model} AS DOUBLE)) END`;
+    `CASE WHEN ${rowPoint} THEN lo."${col}" ELSE printf('%.4f', CAST(${model} AS DOUBLE)) END`;
   return `
 WITH RECURSIVE up(node_id, anc_id) AS (
   SELECT entity_id, entity_id FROM animal
@@ -230,11 +252,10 @@ rows AS (
     ${t("s.state_province")} AS "stateProvince",
     ${t("s.county")} AS "county",
     ${t("s.locality")} AS "locality",
-    ${t("loc.elevation_m")} AS "verbatimElevation",
+    ${t(ofRowPoint("verbatimElevation", "loc.elevation_m", "loc.elevation_latitude", "loc.elevation_longitude"))} AS "verbatimElevation",
     ${t(coord("decimalLatitude", "loc.latitude"))} AS "decimalLatitude",
     ${t(coord("decimalLongitude", "loc.longitude"))} AS "decimalLongitude",
-    ${t(`CASE WHEN loc.source = 'legacy_import' AND nullif(lo."coordinateUncertaintyInMeters", '') IS NOT NULL
-               THEN lo."coordinateUncertaintyInMeters" ELSE CAST(loc.coordinate_uncertainty_m AS VARCHAR) END`)} AS "coordinateUncertaintyInMeters",
+    ${t(ofRowPoint("coordinateUncertaintyInMeters", "loc.coordinate_uncertainty_m", "loc.latitude", "loc.longitude"))} AS "coordinateUncertaintyInMeters",
     -- Like the coordinates it describes: an imported point Beeline has not
     -- replaced keeps what the legacy row said about it; a point Beeline took
     -- from iNaturalist says which projection it came from.
@@ -280,11 +301,15 @@ rows AS (
     ${t(`coalesce(st.caste, lo."caste")`)} AS "caste",
     ${t("CASE WHEN ea.rank IS NOT NULL THEN concat(upper(left(ea.rank, 1)), substr(ea.rank, 2)) END")} AS "taxonRank",
     ${t("coalesce(nullif(e.determiner_name, ''), dp.display_name)")} AS "identifiedBy",
-    ${t("vl.family")} AS "familyVolDet",
-    ${t("vl.genus")} AS "genusVolDet",
-    ${t(`CASE WHEN vl.species IS NOT NULL THEN ${epithet("vl.species")} END`)} AS "speciesVolDet",
-    ${t("v.sex")} AS "sexVolDet",
-    ${t("v.caste")} AS "casteVolDet",
+    -- A volunteer's identification, where Beeline holds one; where it holds
+    -- none, what the legacy row said, as it said it: a sex with no name, or
+    -- a name the tree could not place, has no determination to live on.
+    ${t(`CASE WHEN v.entity_id IS NULL AND lo._id IS NOT NULL THEN lo."familyVolDet" ELSE vl.family END`)} AS "familyVolDet",
+    ${t(`CASE WHEN v.entity_id IS NULL AND lo._id IS NOT NULL THEN lo."genusVolDet" ELSE vl.genus END`)} AS "genusVolDet",
+    ${t(`CASE WHEN v.entity_id IS NULL AND lo._id IS NOT NULL THEN lo."speciesVolDet"
+               WHEN vl.species IS NOT NULL THEN ${epithet("vl.species")} END`)} AS "speciesVolDet",
+    ${t(`CASE WHEN v.entity_id IS NULL AND lo._id IS NOT NULL THEN lo."sexVolDet" ELSE v.sex END`)} AS "sexVolDet",
+    ${t(`CASE WHEN v.entity_id IS NULL AND lo._id IS NOT NULL THEN lo."casteVolDet" ELSE v.caste END`)} AS "casteVolDet",
     -- iNaturalist's, and the model holds them only for a linked sample; an
     -- imported sample it never linked keeps what the legacy record said.
     ${t(`coalesce(s.geoprivacy, nullif(lo."geoprivacy", ''))`)} AS "geoprivacy",

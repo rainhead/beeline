@@ -262,6 +262,84 @@ export async function compareLegacyExport(
  * cmp_difference: one row per difference — a matched record's column that
  * differs, or a record only one side holds — with its kind and season.
  */
+/** The legacy place columns, as promotion names them in a within_sample_disagreement finding. */
+const PLACE_FINDING_FIELD: Record<string, string> = {
+  country: "country",
+  stateProvince: "state_province",
+  county: "county",
+  locality: "locality",
+  samplingProtocol: "protocol",
+};
+
+/**
+ * What the store knows about a difference that its two values cannot say
+ * (Peter, 2026-10-04), so one ruling covers the case for good rather than a
+ * list of field numbers every new pull adds to:
+ *   collector_alias      the legacy collector, spelled as ingest/collector-aliases.csv
+ *                        corrects it, is who Beeline wrote — and the record's name
+ *                        parts differ for the same reason
+ *   login_renamed        both sides carry the same iNaturalist user id
+ *   sample_disagreement  promotion found the legacy rows of this specimen's sample
+ *                        disagreeing about this field, and the sample keeps one value
+ */
+async function kindFromStore(conn: DuckDBConnection): Promise<void> {
+  const fold = (x: string) => `regexp_replace(lower(${x}), '[^a-z0-9]', '', 'g')`;
+  if ((await one(conn, `SELECT count(*) FROM duckdb_tables() WHERE table_name = 'legacy_collector_alias'`)) > 0) {
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'collector_alias'
+      FROM (
+        SELECT p.field_number, string_agg(coalesce(a.person, p.part), ' | ' ORDER BY p.idx) AS corrected
+        FROM (SELECT field_number, unnest(string_split(legacy, ' | ')) AS part, generate_subscripts(string_split(legacy, ' | '), 1) AS idx
+              FROM cmp_value_difference WHERE "column" = 'recordedBy') p
+        LEFT JOIN legacy_collector_alias a ON ${fold("a.alias")} = ${fold("p.part")}
+        GROUP BY p.field_number
+      ) m
+      WHERE d.field_number = m.field_number AND d."column" = 'recordedBy' AND m.corrected = d.exported`);
+    // A record's name parts differ for the alias's reason only where they
+    // spell the very name the alias corrects — 'Brendon' and 'McGarry' of
+    // 'Brendon McGarry' — and its initials follow from those first names.
+    // A part that is wrong some other way stays what it is (CodeRabbit on #130).
+    await conn.run(`
+      CREATE OR REPLACE TEMP TABLE cmp_name_parts AS
+      SELECT field_number,
+             ${fold("string_agg(concat(f, l), '' ORDER BY i)")} = ${fold("any_value(recorded_by)")} AS spelled,
+             string_agg(concat(upper(left(f, 1)), '.'), ' | ' ORDER BY i) = any_value(initials) AS initials_follow
+      FROM (
+        SELECT p."e_fieldNumber" AS field_number, p."l_recordedBy" AS recorded_by, p."l_firstNameInitial" AS initials,
+               unnest(string_split(p."l_firstName", ' | ')) AS f, unnest(string_split(p."l_lastName", ' | ')) AS l,
+               generate_subscripts(string_split(p."l_firstName", ' | '), 1) AS i
+        FROM cmp_pairs p
+        WHERE p."e_fieldNumber" IN (SELECT field_number FROM cmp_value_difference WHERE "column" = 'recordedBy' AND kind = 'collector_alias'))
+      GROUP BY field_number`);
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'collector_alias'
+      FROM cmp_name_parts n
+      WHERE n.field_number = d.field_number AND n.spelled
+        AND (d."column" IN ('firstName', 'lastName') OR (d."column" = 'firstNameInitial' AND n.initials_follow))`);
+  }
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'login_renamed'
+    WHERE d."column" = 'userLogin' AND d.kind = 'changed'
+      AND EXISTS (SELECT 1 FROM cmp_pairs p
+                  WHERE p."e_fieldNumber" = d.field_number AND p."e_userId" <> '' AND p."e_userId" = p."l_userId")`);
+  // Only where Beeline wrote one of the values the merged rows disagreed
+  // between: a value from anywhere else, a staff correction say, is not the
+  // merge's doing (CodeRabbit on #130). promote-legacy.sql writes the finding
+  // as '<field>: <value> | <value>', values sorted and blanks left out.
+  const field = `CASE d."column" ${Object.entries(PLACE_FINDING_FIELD)
+    .map(([c, f]) => `WHEN ${sqlString(c)} THEN ${sqlString(f)}`)
+    .join(" ")} END`;
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'sample_disagreement'
+    WHERE d.kind IN ('changed', 'filled', 'blanked')
+      AND d."column" IN (${Object.keys(PLACE_FINDING_FIELD).map(sqlString).join(", ")})
+      AND EXISTS (
+        SELECT 1 FROM specimen sp JOIN sample_promotion_finding f ON f.sample_id = sp.sample_id
+        WHERE sp.field_number = d.field_number AND f.rule_name = 'within_sample_disagreement'
+          AND starts_with(f.details, concat(${field}, ': '))
+          AND list_contains(string_split(substr(f.details, length(${field}) + 3), ' | '), d.exported))`);
+}
+
 async function buildDifferences(conn: DuckDBConnection): Promise<void> {
   const perColumn = LEGACY_EXPORT_COLUMNS.map(
     (c) => `SELECT "e_fieldNumber" AS field_number, ${sqlString(c)} AS "column", "e_${c}" AS exported, "l_${c}" AS legacy,
@@ -272,6 +350,7 @@ async function buildDifferences(conn: DuckDBConnection): Promise<void> {
     CREATE OR REPLACE TEMP TABLE cmp_value_difference AS
     SELECT field_number, "column", exported, legacy, open_season, ${DIFFERENCE_KIND_SQL} AS kind
     FROM (${perColumn})`);
+  await kindFromStore(conn);
 
   // Why a staged record has no exported counterpart: the blocking finding
   // that kept it from promotion, where the store has promoted at all.

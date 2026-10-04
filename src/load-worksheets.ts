@@ -41,6 +41,10 @@ import { DEFAULT_DB } from "./person-change.js";
  * creation time gets that pair right and three others wrong. A person
  * settles it by marking the stale copy `skip`, and the entry loads on the
  * next run. Rows in one file which disagree about a specimen are held too.
+ * So is a row that disagrees with the determiner's own identification in
+ * the old system, which had a Determinations page of its own and kept no
+ * date either: one that would contradict it, say less than it, or change
+ * its sex is held; one that refines it loads (beeline-wuwm).
  *
  * WHETHER THE NUMBER IS RIGHT. Numbers were typed by hand with no validation,
  * and a slip lands the name on someone else's bee — where, with nothing else
@@ -107,6 +111,11 @@ export type WorksheetStatus =
   | "already_loaded"
   /** Two of the determiner's files say different things about the specimen. */
   | "versions_disagree"
+  /**
+   * The determiner's identification in the old system says something the row
+   * would contradict, leave out, or change the sex of. Refining it loads.
+   */
+  | "old_system_disagrees"
   /** The row names a taxon but its number cell is empty or not a label number. */
   | "no_number"
   | "no_specimen"
@@ -124,6 +133,7 @@ const HELD: readonly WorksheetStatus[] = [
   "not_theirs",
   "conflicting_rows",
   "versions_disagree",
+  "old_system_disagrees",
   "unresolved_name",
   "undecided",
 ];
@@ -506,7 +516,27 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
              (SELECT CASE WHEN count(*) = 1 THEN min(sp.sample_id) END FROM specimen sp WHERE sp.field_number = n.number) AS sample_id
       FROM ws_named n WHERE n.determiner_id IS NULL AND n.decision IS DISTINCT FROM 'skip'`);
 
-    // What the store already holds for this determiner and specimen.
+    // What the store already holds for this determiner and specimen. The old
+    // system had its own Determinations page, saved with no date, so a
+    // volunteer could identify a specimen there and on a sheet; neither says
+    // which came later (beeline-wuwm, sandbox 2026-10-04: none of the old
+    // values appears in any of 34 Drive revisions of the sheets that disagree
+    // with them). A row that would contradict the determiner's old-system
+    // identification, say less than it, or change its sex is held (Peter,
+    // 2026-10-04); a row that refines it is new information and loads.
+    await conn.run(`
+      CREATE OR REPLACE TEMP TABLE ws_ancestry AS
+      WITH RECURSIVE up(node_id, anc_id) AS (
+        SELECT entity_id, entity_id FROM animal
+        UNION ALL
+        SELECT up.node_id, a.parent_id FROM up JOIN animal a ON a.entity_id = up.anc_id WHERE a.parent_id IS NOT NULL
+      ) SELECT * FROM up`);
+    await conn.run(`
+      CREATE OR REPLACE TEMP TABLE ws_old_system AS
+      SELECT d.specimen_id, d.determiner_id, d.animal_id, d.sex, d.caste
+      FROM determination d
+      WHERE d.channel = 'legacy_import' AND NOT d.is_expert
+      QUALIFY row_number() OVER (PARTITION BY d.specimen_id, d.determiner_id ORDER BY d.recorded_at DESC, d.entity_id DESC) = 1`);
     await conn.run(`
       UPDATE ws_candidate c SET status = CASE
         WHEN EXISTS (
@@ -519,6 +549,12 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
               FROM determination d
               WHERE d.specimen_id = c.specimen_id AND d.determiner_id = c.determiner_id AND NOT d.is_expert
               ORDER BY d.recorded_at DESC, d.entity_id DESC LIMIT 1) THEN 'already_recorded'
+        WHEN EXISTS (
+          SELECT 1 FROM ws_old_system o
+          WHERE o.specimen_id = c.specimen_id AND o.determiner_id = c.determiner_id
+            AND NOT (EXISTS (SELECT 1 FROM ws_ancestry x WHERE x.node_id = c.animal_id AND x.anc_id = o.animal_id)
+                     AND (o.sex IS NULL OR o.sex IS NOT DISTINCT FROM c.sex)
+                     AND (o.caste IS NULL OR o.caste IS NOT DISTINCT FROM c.caste))) THEN 'old_system_disagrees'
         ELSE 'recorded' END
       WHERE c.status IS NULL`);
 
@@ -544,9 +580,12 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
       `SELECT c.file_name, c.sheet, c.row_number, coalesce(c.number, c.number_text), c.status, c.verbatim, c.sex_text,
               (SELECT string_agg(o.number, ' ' ORDER BY o.row_number) FROM ws_row o
                WHERE o.file_id = c.file_id AND o.sheet = c.sheet AND o.row_number BETWEEN c.row_number - 2 AND c.row_number + 2 AND o.row_number <> c.row_number) AS neighbours,
-              (SELECT string_agg(DISTINCT concat_ws(' ', concat(o.file_name, ':'), o.verbatim, o.sex_text), '; ') FROM ws_candidate o
-               WHERE c.status = 'versions_disagree' AND o.determiner_id = c.determiner_id AND o.specimen_id = c.specimen_id
-                 AND o.file_id <> c.file_id AND o.reading <> c.reading) AS other_copies
+              coalesce(
+                (SELECT string_agg(DISTINCT concat_ws(' ', concat(o.file_name, ':'), o.verbatim, o.sex_text), '; ') FROM ws_candidate o
+                 WHERE c.status = 'versions_disagree' AND o.determiner_id = c.determiner_id AND o.specimen_id = c.specimen_id
+                   AND o.file_id <> c.file_id AND o.reading <> c.reading),
+                (SELECT concat_ws(' ', 'old system:', a.scientific_name, o.sex, o.caste) FROM ws_old_system o JOIN animal a ON a.entity_id = o.animal_id
+                 WHERE c.status = 'old_system_disagrees' AND o.specimen_id = c.specimen_id AND o.determiner_id = c.determiner_id)) AS other_copies
        FROM ws_candidate c WHERE c.status IN (${HELD.map(sqlString).join(", ")})
        ORDER BY c.file_name, c.sheet, c.row_number`,
     );

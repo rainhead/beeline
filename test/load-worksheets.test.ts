@@ -317,6 +317,54 @@ describe("loading again", () => {
     ]);
   });
 
+  test("a row that would undo the determiner's identification in the old system is held; one that refines it loads", async () => {
+    // The shapes found on the sandbox (beeline-wuwm): the volunteer named a
+    // genus in the old system and only a family on the sheet, named two
+    // different genera, or gave two different sexes.
+    const old: Array<[string, string, string]> = [
+      ["26000001", "Bombus", "female"],
+      ["26000002", "Lasioglossum", "female"],
+      ["26000003", "Bombus", "female"],
+      ["26000004", "Bombus", "female"],
+      ["26000005", "Bombus", "female"],
+    ];
+    for (const [number, name, sex] of old) {
+      await conn.run(
+        `INSERT INTO determination (specimen_id, animal_id, sex, determiner_id, is_expert, channel)
+         SELECT sp.entity_id, (SELECT entity_id FROM animal WHERE scientific_name = '${name}'), '${sex}', ${ada}, false, 'legacy_import'
+         FROM specimen sp WHERE field_number = '${number}'`,
+      );
+    }
+    await exportOf([
+      {
+        id: "f1",
+        name: "Collector 2026",
+        modified: "2026-07-30T20:00:00Z",
+        rows: [
+          [26000001, "female", "Apidae", "Bombus", "vosnesenskii"], // refines: loads
+          [26000002, "female", "Halictidae", null, null], // says less
+          [26000003, "female", "Halictidae", "Halictus", null], // contradicts
+          [26000004, "male", "Apidae", "Bombus", null], // changes the sex
+          [26000005, null, "Apidae", "Bombus", null], // leaves the sex out
+        ],
+      },
+    ]);
+    await decide({ f1: { determiner: "name:Ada Collector" } });
+    const result = await load();
+    expect(result.recorded).toBe(1);
+    expect((await determinations()).filter((r) => r[7] === "worksheet_import").map((r) => [r[0], r[1]])).toEqual([
+      ["26000001", "Bombus vosnesenskii"],
+    ]);
+    expect(result.statuses.find((s) => s.status === "old_system_disagrees")).toEqual({ status: "old_system_disagrees", season: "open", rows: 4 });
+    // Each held row names what the old system says.
+    expect((await readFile(join(dir, "held.csv"), "utf8")).split("\n").slice(1, 5).map((l) => l.split(",").slice(3).join(","))).toEqual([
+      "26000002,old_system_disagrees,Halictidae,female,26000001 26000003 26000004,old system: Lasioglossum female",
+      "26000003,old_system_disagrees,Halictus,female,26000001 26000002 26000004 26000005,old system: Bombus female",
+      "26000004,old_system_disagrees,Bombus,male,26000002 26000003 26000005,old system: Bombus female",
+      "26000005,old_system_disagrees,Bombus,,26000003 26000004,old system: Bombus female",
+    ]);
+  });
+
   test("a dry run reports and records nothing", async () => {
     await exportOf([{ id: "f1", name: "Collector 2025", modified: "2026-02-01T10:00:00Z", rows: ADA_2025 }]);
     await decide({ f1: { determiner: "name:Ada Collector" } });

@@ -341,6 +341,12 @@ describe("reconciling against samples the store already holds", () => {
     // fix is theirs: renumber one, and it blocks printing until then.
     expect(await rows(conn, `SELECT rule_name, details FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name LIKE '%sample_number%'`))
       .toEqual([["duplicate_sample_number", "sample number 7 is on 2 observations: 9, 12"]]);
+    // Renumbering is the fix asked for, and renumbering the very observation
+    // the sample cites has to clear it too: a stale citation is not a claim.
+    await stage(obs(9, { ofvs: ofvs("8", "5") }));
+    await refreshObservationFields(conn);
+    expect(await rows(conn, `SELECT rule_name FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name LIKE '%sample_number%'`))
+      .toEqual([]);
   });
 });
 

@@ -1564,9 +1564,9 @@ export const en = {
     non_tracheophyte_host:
       "The iNaturalist observation should be identified as the floral host — a vascular plant, not a moss, an alga, a fungus, or the bee itself. Correct the observation's identification to the plant the bee was collected from.",
     duplicate_sample_number:
-      "Each sample is one iNaturalist observation with its own number, and this number is on more than one of your observations or samples that day — the flag lists them. Renumber all but one on iNaturalist so each sample that day is distinct.",
+      "Each sample has its own number, and this one is on more than one of your observations or samples that day — the flag lists them. Renumber all but one so each sample that day is distinct: on iNaturalist, or here for a sample with no observation.",
     shared_sample_number_printed:
-      "More than one iNaturalist observation carries this sample's number on the same day, and its labels are already printed, each with its own observation's place. Nothing to change on iNaturalist: the labels are right, and staff will split this sample.",
+      "This sample's number is on more than one observation or sample from the same day, and its labels are already printed. Nothing to change on iNaturalist: the labels are right as printed, and staff will correct the record.",
     count_mismatch:
       "The specimen count on your iNaturalist observation has changed since this sample was made from it. Until labels print, the observation is the record; staff carry the new count across.",
     count_below_printed:

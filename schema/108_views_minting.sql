@@ -471,17 +471,17 @@ WHERE s.inat_observation_id IS NOT NULL
 GROUP BY s.entity_id, s.inat_observation_id;
 COMMENT ON VIEW sample_multi_observation IS 'A sample more than one observation claims, which is a collector error (beeline-0199). It cites one; a scalar link cannot say more. This is what explains a count_mismatch finding on a sample whose count is the total over all of them.';
 
--- Every observation that claims a sample: the one it cites, any other
--- observation by its collector carrying its number on its dates, and the ones
--- its legacy records came from. One is the rule; several is a collector's
--- error that both minting and legacy promotion merge into one sample, which is
--- why duplicate_sample_number, counting samples, never saw it (beeline-0199).
+-- Every observation that claims a sample: any observation by its collector
+-- carrying its number on its dates now, and the ones its legacy records came
+-- from. One is the rule; several is a collector's error that both minting and
+-- legacy promotion merge into one sample, which is why
+-- duplicate_sample_number, counting samples, never saw it (beeline-0199).
+-- The observation a sample cites counts only while it still carries the
+-- number: once the volunteer renumbers it, which is the fix asked of them,
+-- it claims this sample no longer, and sample_observation_number_mismatch is
+-- what names the stale link (CodeRabbit on beeline-0199).
 CREATE VIEW sample_claiming_observation AS
-SELECT s.entity_id AS sample_id, s.inat_observation_id AS inat_id
-FROM sample s
-WHERE s.inat_observation_id IS NOT NULL
-UNION
-SELECT s.entity_id, c.inat_id
+SELECT s.entity_id AS sample_id, c.inat_id
 FROM sample s
 JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
 JOIN inat_account a ON a.person_id = pc.person_id
@@ -490,7 +490,7 @@ JOIN observation_sample_candidate c ON c.user_id = a.inat_user_id
                                    AND c.observed_on BETWEEN s.date_start AND s.date_end
 UNION
 SELECT sample_id, inat_observation_id FROM sample_legacy_observation;
-COMMENT ON VIEW sample_claiming_observation IS 'Each iNaturalist observation that claims a sample: the one it cites, its collector''s others carrying its number on its dates, and those its legacy records came from (sample_legacy_observation).';
+COMMENT ON VIEW sample_claiming_observation IS 'Each iNaturalist observation that claims a sample: its collector''s observations carrying its number on its dates now, and those its legacy records came from (sample_legacy_observation). A cited observation since renumbered claims it no longer.';
 
 CREATE VIEW sample_several_observations AS
 SELECT sample_id,
@@ -499,7 +499,7 @@ SELECT sample_id,
 FROM sample_claiming_observation
 GROUP BY sample_id
 HAVING count(*) > 1;
-COMMENT ON VIEW sample_several_observations IS 'A sample more than one observation claims: a collector error (Peter, 2026-10-04). duplicate_sample_number reads it for a sample not yet printed, shared_sample_number_printed for one that is.';
+COMMENT ON VIEW sample_several_observations IS 'A sample more than one observation claims: a collector error (Peter, 2026-10-04), and one of the two shapes of sample_number_conflict (schema/120).';
 
 -- The other direction, and not an expected one: one observation cited by
 -- several samples (beeline-15k). sample.inat_observation_id carries no UNIQUE

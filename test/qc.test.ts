@@ -429,6 +429,14 @@ describe("QC findings and printability", () => {
     expect(await findings(b)).toEqual([]);
   });
 
+  test("two printed samples sharing a number are for staff too", async () => {
+    const a = await insertCleanSample(conn);
+    const b = await insertCleanSample(conn); // same collector, day, and number '1'
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${a}, 1, '26000001'), (${b}, 1, '26000002')`);
+    expect(await findings(a)).toEqual([{ rule: "shared_sample_number_printed", details: expect.stringContaining("used 2 times") }]);
+    expect(await findings(b)).toEqual([{ rule: "shared_sample_number_printed", details: expect.stringContaining("used 2 times") }]);
+  });
+
   test("zero-count samples are not printable even when clean", async () => {
     const id = await insertCleanSample(conn, { specimen_count: "0" });
     expect(await findings(id)).toEqual([]);

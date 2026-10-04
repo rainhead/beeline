@@ -574,7 +574,7 @@ export interface SamplePromotionFindingTable {
 // schema/030_samples_specimens.sql — written by legacy promotion (beeline-0199)
 export interface SampleLegacyObservationTable {
   sample_id: number;
-  inat_observation_id: number;
+  inat_observation_id: BigIntCol;
 }
 
 // schema/060_sync.sql

@@ -4,11 +4,12 @@
 -- duplicate_sample_number, which counted samples, never saw it, because
 -- legacy promotion and minting both merge on the key it groups by.
 --
--- A new table (filled by the next legacy promotion, so empty on a deployed
--- store until it is reseeded: the iNaturalist side works at once), two new
--- views, a new rule for printed samples, and the duplicate rule gaining an
--- arm. printed_sample moved from schema/155 to schema/119 only so the rules
--- can read it; its definition is unchanged and it is already in the store.
+-- A new table, filled here from the staging a deployed store keeps
+-- (legacy_specimen_number and legacy_occurrence, which db:reseed carries) the
+-- way legacy promotion fills it on a fresh build; three new views; a new rule
+-- for printed samples; and the duplicate rule reading the conflict view.
+-- printed_sample moved from schema/155 to schema/119 only so the rules can
+-- read it; its definition is unchanged and it is already in the store.
 
 CREATE TABLE sample_legacy_observation (
   sample_id           INTEGER NOT NULL REFERENCES sample(entity_id),
@@ -17,21 +18,23 @@ CREATE TABLE sample_legacy_observation (
 );
 COMMENT ON TABLE sample_legacy_observation IS 'The iNaturalist observations an imported sample''s legacy records named in their URLs, written by legacy promotion because staging is the only place that can see them. More than one row for a sample is a collector error the reference system merged and printed (beeline-0199).';
 
+INSERT INTO sample_legacy_observation (sample_id, inat_observation_id)
+SELECT DISTINCT n.sample_id, CAST(regexp_extract(lo.url, '([0-9]+)$', 1) AS BIGINT)
+FROM legacy_specimen_number n
+JOIN legacy_occurrence lo ON lo._id = n._id
+WHERE regexp_matches(lo.url, '/observations/[0-9]+$');
+
 UPDATE qc_rule
-   SET instructions = 'Each sample is one iNaturalist observation with its own number, and this number is on more than one of your observations or samples that day — the flag lists them. Renumber all but one on iNaturalist so each sample that day is distinct.'
+   SET instructions = 'Each sample has its own number, and this one is on more than one of your observations or samples that day — the flag lists them. Renumber all but one so each sample that day is distinct: on iNaturalist, or here for a sample with no observation.'
  WHERE name = 'duplicate_sample_number';
 INSERT INTO qc_rule (name, severity, instructions) VALUES
   ('shared_sample_number_printed', 'warning',
-   'More than one iNaturalist observation carries this sample''s number on the same day, and its labels are already printed, each with its own observation''s place. Nothing to change on iNaturalist: the labels are right, and staff will split this sample.');
+   'This sample''s number is on more than one observation or sample from the same day, and its labels are already printed. Nothing to change on iNaturalist: the labels are right as printed, and staff will correct the record.');
 
 COMMENT ON VIEW sample_multi_observation IS 'A sample more than one observation claims, which is a collector error (beeline-0199). It cites one; a scalar link cannot say more. This is what explains a count_mismatch finding on a sample whose count is the total over all of them.';
 
 CREATE VIEW sample_claiming_observation AS
-SELECT s.entity_id AS sample_id, s.inat_observation_id AS inat_id
-FROM sample s
-WHERE s.inat_observation_id IS NOT NULL
-UNION
-SELECT s.entity_id, c.inat_id
+SELECT s.entity_id AS sample_id, c.inat_id
 FROM sample s
 JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
 JOIN inat_account a ON a.person_id = pc.person_id
@@ -40,7 +43,7 @@ JOIN observation_sample_candidate c ON c.user_id = a.inat_user_id
                                    AND c.observed_on BETWEEN s.date_start AND s.date_end
 UNION
 SELECT sample_id, inat_observation_id FROM sample_legacy_observation;
-COMMENT ON VIEW sample_claiming_observation IS 'Each iNaturalist observation that claims a sample: the one it cites, its collector''s others carrying its number on its dates, and those its legacy records came from (sample_legacy_observation).';
+COMMENT ON VIEW sample_claiming_observation IS 'Each iNaturalist observation that claims a sample: its collector''s observations carrying its number on its dates now, and those its legacy records came from (sample_legacy_observation). A cited observation since renumbered claims it no longer.';
 
 CREATE VIEW sample_several_observations AS
 SELECT sample_id,
@@ -49,12 +52,10 @@ SELECT sample_id,
 FROM sample_claiming_observation
 GROUP BY sample_id
 HAVING count(*) > 1;
-COMMENT ON VIEW sample_several_observations IS 'A sample more than one observation claims: a collector error (Peter, 2026-10-04). duplicate_sample_number reads it for a sample not yet printed, shared_sample_number_printed for one that is.';
+COMMENT ON VIEW sample_several_observations IS 'A sample more than one observation claims: a collector error (Peter, 2026-10-04), and one of the two shapes of sample_number_conflict (schema/120).';
 
-CREATE OR REPLACE VIEW qc_rule_duplicate_sample_number AS
+CREATE VIEW sample_number_conflict AS
 SELECT s.entity_id AS sample_id,
-       CAST(NULL AS INTEGER) AS specimen_id,
-       'duplicate_sample_number' AS rule_name,
        concat('sample number ', s.sample_number, ' used ', dup.n, ' times on ', s.date_start) AS details
 FROM sample s
 JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
@@ -68,22 +69,27 @@ JOIN (
      AND dup.date_start = s.date_start
      AND dup.sample_number = s.sample_number
 UNION ALL
-SELECT s.entity_id, CAST(NULL AS INTEGER), 'duplicate_sample_number',
-       concat('sample number ', s.sample_number, ' is on ', o.observations,
-              ' observations: ', o.inat_ids)
+SELECT s.entity_id,
+       concat('sample number ', s.sample_number, ' is on ', o.observations, ' observations: ', o.inat_ids)
 FROM sample s
-JOIN sample_several_observations o ON o.sample_id = s.entity_id
-WHERE NOT EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = s.entity_id);
+JOIN sample_several_observations o ON o.sample_id = s.entity_id;
+COMMENT ON VIEW sample_number_conflict IS 'A sample whose number its collector used more than once that day: two samples sharing (collector, date, number), or several observations claiming one (beeline-0199). duplicate_sample_number reads it for a sample not yet printed, shared_sample_number_printed for one that is.';
+
+CREATE OR REPLACE VIEW qc_rule_duplicate_sample_number AS
+SELECT c.sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'duplicate_sample_number' AS rule_name,
+       c.details
+FROM sample_number_conflict c
+WHERE NOT EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = c.sample_id);
 
 CREATE VIEW qc_rule_shared_sample_number_printed AS
-SELECT s.entity_id AS sample_id,
+SELECT c.sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'shared_sample_number_printed' AS rule_name,
-       concat('sample number ', s.sample_number, ' is on ', o.observations,
-              ' observations: ', o.inat_ids) AS details
-FROM sample s
-JOIN sample_several_observations o ON o.sample_id = s.entity_id
-WHERE EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = s.entity_id);
+       c.details
+FROM sample_number_conflict c
+WHERE EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = c.sample_id);
 
 CREATE OR REPLACE VIEW qc_finding AS
 SELECT sample_id, specimen_id, rule_name, details,

@@ -402,7 +402,9 @@ occurrences file at 4am Pacific, to `data/exports/occurrences.csv` (config
 it now, press Run now on `legacy-export` at `/jobs`. To check how close it is
 to what the legacy system held, run `pnpm legacy:compare-export` against a
 copy of the store — it needs the staged legacy records, which a reseeded
-store carries.
+store carries. It reports only the differences
+[`ingest/legacy-export-rulings.csv`](../../ingest/legacy-export-rulings.csv)
+does not explain.
 
 ## Backups
 

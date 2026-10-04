@@ -249,12 +249,18 @@ export function createApp({
   });
 
   // --- Public surface: assets, liveness, and the way in. ---
-  // Liveness, and it has to mean something: Fly restarts a machine whose
-  // health check fails, so this must fail exactly when a restart is the right
-  // answer. A process that is listening but cannot read its own store is
-  // precisely that case, and `ok` from a bare handler was not it
-  // (beeline-2c3.17) — the store could be missing, locked by a second writer,
-  // or a file the app never opened, and this would have said ok throughout.
+  // Readiness, and it has to mean something. Fly's service check polls this,
+  // and a failing check does NOT restart the machine: "a failing check won't
+  // cause the Machine to restart or stop" (docs.fly.io/reference/health-checks,
+  // read 2026-10-04 — this comment used to say it did). What it does is take
+  // the machine out of routing and hold a deploy or `fly machine update`
+  // until it passes. So it must fail exactly when this process cannot serve:
+  // a process that is listening but cannot read its own store is precisely
+  // that case, and `ok` from a bare handler was not it (beeline-2c3.17) — the
+  // store could be missing, locked by a second writer, or a file the app
+  // never opened, and this would have said ok throughout. Maintenance mode,
+  // when this app is not running at all, answers it from
+  // src/app/maintenance.ts, so that switching into it does not hang.
   app.get("/healthz", async (c) => {
     try {
       await db.selectFrom("qc_rule").select("name").limit(1).execute();
@@ -266,10 +272,12 @@ export function createApp({
   });
 
   // Job staleness, deliberately NOT part of /healthz (beeline-6td). Fly acts
-  // on that endpoint by restarting the machine, and restarting is the wrong
-  // response to a job that failed — it would lose the running process to fix
-  // something a restart cannot fix, and on a bad night would loop. So this is
-  // its own endpoint, which nothing on Fly polls and an external checker does.
+  // on that endpoint by taking the machine out of routing and holding
+  // deploys, and both are the wrong response to a job that failed: the site
+  // would go dark for something serving pages has nothing to do with. (The
+  // reason first given here was that Fly restarts on a failed check; it does
+  // not, which changes the reason and not the conclusion.) So this is its own
+  // endpoint, which nothing on Fly polls and an external checker does.
   //
   // Unauthenticated, and therefore it says only WHICH job and WHAT KIND of
   // wrong — never job_run.detail. That column holds whatever a caught Error

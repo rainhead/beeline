@@ -148,7 +148,7 @@ is applied there, and a person who exists only in that file still cannot sign
 in. After the deploy is healthy:
 
 ```sh
-fly machine update --env BEELINE_MAINTENANCE=1 <id> --yes   # see the note below
+fly machine update --env BEELINE_MAINTENANCE=1 <id> --yes
 fly ssh console --app beeline -C "sh -c 'cd /app && pnpm person:apply'"
 fly machine update --env BEELINE_MAINTENANCE= <id> --yes
 ```
@@ -162,20 +162,22 @@ down`, which is the applied rows reaching the change log, attributed to the
 pass rather than to a person. `N` counts what *changed*, not what was applied:
 replaying a row the store already agrees with changes nothing, so on
 2026-09-17 the whole overlay went on as 417 rows and the boot recorded 7, all
-of them one new person. Going *into* maintenance mode, `fly machine update`
-sits for about five minutes waiting on a health check that mode deliberately
-never passes, and then exits 0. The machine is ready long before: look for
-`maintenance mode: app not started` in `fly logs` and carry on in another
-shell rather than waiting for it.
+of them one new person.
 
-Two things about the **first** deploy that look like failures and are not, or
-are not yours:
+**Maintenance mode answers the health check.** While the app is stopped, a
+small responder (`src/app/maintenance.ts`) answers `/healthz` with 200 and
+every other path with a 503 page saying Beeline is down for maintenance, and
+never opens the store. So switching into the mode — `fly machine update` or
+`fly deploy --env BEELINE_MAINTENANCE=1` — finishes in a boot, like any other
+update. Until 2026-10-04 nothing listened: the update sat for five minutes on a
+check nothing could pass, holding the machine's lease, so the update back out
+had to wait for the lease to lapse, and a deploy into maintenance always
+reported a timeout. If the responder itself ever fails to start, the entrypoint
+says so in `fly logs` and holds the machine up anyway, since a shell is what
+the mode is for; the check then fails as it used to, and the wait is back.
 
-**Deploying into maintenance mode always "fails".** `fly deploy --env
-BEELINE_MAINTENANCE=1` ends with `timeout reached waiting for health checks to
-pass`, because the app deliberately is not listening. The machine and the
-volume are created correctly regardless — check with `fly machine list` and
-`fly logs` rather than believing the exit code.
+One thing about the **first** deploy that looks like a failure and is not
+yours:
 
 **IP allocation can fail on a first deploy.** Ours did, with an internal error
 (`org_slug is only supported with private_v6 type`), leaving the app with no

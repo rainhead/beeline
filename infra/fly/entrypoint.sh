@@ -69,8 +69,24 @@ node_run() { node --import tsx "$@"; }
 # the privilege drop above runs first, and it has to: the first-fill case is
 # maintenance mode on an empty volume, which is exactly when the chown is
 # needed.
+#
+# Something still answers on the app's port (src/app/maintenance.ts): /healthz
+# with 200, so that `fly machine update` and `fly deploy` into this mode finish
+# instead of waiting out a health check nothing could pass while holding the
+# machine's lease; everything else with a 503 page, so people see why. It never
+# opens the store. It is a child rather than exec'd so that if it ever fails to
+# start the machine still stays up for a shell, which is this mode's whole
+# point; the trap passes Fly's SIGTERM on, since a shell as PID 1 would not.
 if [ -n "$BEELINE_MAINTENANCE" ]; then
   echo "maintenance mode: app not started; $BEELINE_DB is free for CLI use"
+  # node itself, not node_run: a backgrounded shell function runs in a
+  # subshell, $! is that subshell, and the TERM would stop it and orphan node
+  # (tried, 2026-10-04).
+  node --import tsx src/app/maintenance.ts &
+  responder=$!
+  trap 'kill -TERM "$responder" 2>/dev/null; wait "$responder"; exit 0' TERM INT
+  wait "$responder" || true
+  echo "maintenance responder exited; holding the machine up for a shell" >&2
   exec sleep infinity
 fi
 

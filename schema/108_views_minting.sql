@@ -329,7 +329,7 @@ COMMENT ON VIEW sample_mint_group IS 'Unlinked collection records grouped into t
 -- 20 samples whose observed_on falls strictly inside [date_start, date_end],
 -- and all 20 cite no observation — so they are free links that would instead
 -- have become duplicate collecting events, invisible because
--- qc_rule_duplicate_sample_number (schema/120) also groups on date_start.
+-- duplicate_sample_number (schema/120) also groups on date_start.
 -- "Cannot manufacture a duplicate finding" is not a safety property when the
 -- finding is blind to the failure mode.
 CREATE VIEW sample_mint_match AS
@@ -355,7 +355,7 @@ COMMENT ON VIEW sample_mint_match IS 'A group of unlinked observations against t
 -- Three on the dev store, none in the open season: all one collector, all
 -- trap samples of the same number with overlapping ranges — pre-existing
 -- duplicate collecting events
--- that qc_rule_duplicate_sample_number cannot see because it groups on
+-- that duplicate_sample_number cannot see because it groups on
 -- date_start. Refusing names them; a test asserts nothing more than that the
 -- refusal is what happens.
 CREATE VIEW sample_mint_ambiguous AS
@@ -479,7 +479,11 @@ COMMENT ON VIEW sample_multi_observation IS 'A sample more than one observation 
 -- The observation a sample cites counts only while it still carries the
 -- number: once the volunteer renumbers it, which is the fix asked of them,
 -- it claims this sample no longer, and sample_observation_number_mismatch is
--- what names the stale link (CodeRabbit on beeline-0199).
+-- what names the stale link (CodeRabbit on beeline-0199). And an observation
+-- another sample cites is that sample's, not a claim on this one — the link
+-- is the identity: a household sharing one login, or a trap whose range
+-- takes in another day's same-numbered net sample, are two samples, not one
+-- claimed twice (Fable's review of beeline-0199).
 CREATE VIEW sample_claiming_observation AS
 SELECT s.entity_id AS sample_id, c.inat_id
 FROM sample s
@@ -488,16 +492,20 @@ JOIN inat_account a ON a.person_id = pc.person_id
 JOIN observation_sample_candidate c ON c.user_id = a.inat_user_id
                                    AND c.sample_number = s.sample_number
                                    AND c.observed_on BETWEEN s.date_start AND s.date_end
+WHERE NOT EXISTS (SELECT 1 FROM sample other
+                  WHERE other.inat_observation_id = c.inat_id AND other.entity_id <> s.entity_id)
 UNION
 SELECT sample_id, inat_observation_id FROM sample_legacy_observation;
 COMMENT ON VIEW sample_claiming_observation IS 'Each iNaturalist observation that claims a sample: its collector''s observations carrying its number on its dates now, and those its legacy records came from (sample_legacy_observation). A cited observation since renumbered claims it no longer.';
 
 CREATE VIEW sample_several_observations AS
-SELECT sample_id,
+SELECT co.sample_id,
        CAST(count(*) AS INTEGER) AS observations,
-       string_agg(CAST(inat_id AS TEXT), ', ' ORDER BY inat_id) AS inat_ids
-FROM sample_claiming_observation
-GROUP BY sample_id
+       string_agg(CAST(co.inat_id AS TEXT), ', ' ORDER BY co.inat_id) AS inat_ids,
+       max(CASE WHEN co.inat_id = s.inat_observation_id THEN co.inat_id END) AS cited_inat_id
+FROM sample_claiming_observation co
+JOIN sample s ON s.entity_id = co.sample_id
+GROUP BY co.sample_id
 HAVING count(*) > 1;
 COMMENT ON VIEW sample_several_observations IS 'A sample more than one observation claims: a collector error (Peter, 2026-10-04), and one of the two shapes of sample_number_conflict (schema/120).';
 

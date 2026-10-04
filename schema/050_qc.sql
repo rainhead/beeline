@@ -44,7 +44,7 @@ INSERT INTO qc_rule (name, severity, instructions) VALUES
   ('non_tracheophyte_host', 'blocking',
    'The iNaturalist observation should be identified as the floral host — a vascular plant. Its current identification is something else (a moss, alga, fungus, or the bee itself). Correct the observation''s identification to the plant the bee was collected from and it will clear on the next sync.'),
   ('duplicate_sample_number', 'blocking',
-   'Each sample has its own number, and this one is on more than one of your observations or samples that day — the flag lists them. Renumber all but one so each sample that day is distinct: on iNaturalist, or here for a sample with no observation.'),
+   'Each sample has its own number, and this one is on more than one of your observations or samples that day — the flag lists them. Renumber all but one on iNaturalist so each sample that day is distinct, and where the flag names one to keep, keep that one.'),
   ('shared_sample_number_printed', 'warning',
    'This sample''s number is on more than one observation or sample from the same day, and its labels are already printed. Nothing to change on iNaturalist: the labels are right as printed, and staff will correct the record.'),
   ('count_mismatch', 'warning',

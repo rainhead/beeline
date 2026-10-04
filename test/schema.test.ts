@@ -287,7 +287,7 @@ describe("schema application", () => {
 
   test("qc_rule metadata is seeded", async () => {
     const [[n]] = (await rows(conn, "SELECT count(*) FROM qc_rule")) as [[bigint]];
-    expect(Number(n)).toBe(15);
+    expect(Number(n)).toBe(14);
   });
 });
 

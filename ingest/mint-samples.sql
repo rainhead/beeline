@@ -15,12 +15,16 @@
 -- reconcile it writes from is stated as views in schema/108, so beeline-e85's
 -- unclaimed screen and the alarms read the same definitions this does.
 --
--- WHAT IT NEVER DOES: rewrite an existing sample's number, date or specimen
--- count. sample.inat_observation_id stays scalar and there is no
--- sample_observation list, which is what makes that guarantee cheap — and
--- what protects a staff edit to any field minting writes.
+-- WHAT IT NEVER DOES: rewrite an existing sample's date or specimen count, or
+-- a printed sample's number. sample.inat_observation_id stays scalar and
+-- there is no sample_observation list, which is what makes that guarantee
+-- cheap — and what protects a staff edit to any field minting writes.
 -- sample_observation_number_mismatch and sample_multi_observation (schema/108)
--- are the cost of it, named rather than argued away.
+-- are the cost of it, named rather than argued away. An UNPRINTED sample's
+-- number does follow its observation, as its locality does (below): one
+-- observation is one sample, and renumbering on iNaturalist is how a
+-- volunteer clears a duplicate number (beeline-0199). Nobody can edit an
+-- iNat-linked sample in the app, so no staff edit is at risk there.
 
 -- ── Free links ───────────────────────────────────────────────────────────
 -- An existing sample that cites no observation, and an unlinked observation
@@ -33,7 +37,7 @@ FROM sample_mint_free_link l
 WHERE sample.entity_id = l.sample_id;
 
 -- ── Mint ─────────────────────────────────────────────────────────────────
--- One sample per group that matches nothing the store already holds.
+-- One sample per observation that sample_mint_pending (schema/108) lets through.
 -- Materialised first because the ids have to be drawn once and then used
 -- three times — sample, sample_collector, and the descriptive fill below.
 CREATE OR REPLACE TEMP TABLE minted_sample AS
@@ -104,7 +108,7 @@ SELECT m.sample_id, m.person_id, 1 FROM minted_sample m;
 
 -- ── A locality follows its observation until the labels print ───────────
 -- The one descriptive field rewritten rather than filled, and only on a
--- sample not in printed_sample (schema/119): no label of its is on paper.
+-- sample not in printed_sample (schema/101): no label of its is on paper.
 -- Until its labels print, a sample's locality is the volunteer's to fix on
 -- iNaturalist (CONTEXT.md, Upstream). A place name too long for a label is
 -- minted as written and flagged (schema/108), and nobody can edit an
@@ -138,6 +142,26 @@ FROM (
 ) followed
 WHERE sample.entity_id = followed.sample_id
   AND sample.locality IS DISTINCT FROM followed.locality;
+
+-- ── So does its number (beeline-0199) ───────────────────────────────────
+-- Two observations carrying one number are two samples with that number, and
+-- duplicate_sample_number asks the volunteer to renumber all but one on
+-- iNaturalist. That only works if the sample follows: so an unprinted
+-- sample's number tracks its observation's, on the locality's terms and for
+-- the same reason — until labels print, the observation is the record
+-- (Peter, 2026-10-04). Once a label is on paper the number is the label's.
+-- Only a number the observation still carries as a collection record: an
+-- observation that drops its number or its count is
+-- sample_observation_number_mismatch's to name, not this file's to follow.
+UPDATE sample SET sample_number = followed.sample_number
+FROM (
+  SELECT s.entity_id AS sample_id, c.sample_number
+  FROM sample s
+  JOIN observation_sample_candidate c ON c.inat_id = s.inat_observation_id
+  WHERE NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+) followed
+WHERE sample.entity_id = followed.sample_id
+  AND sample.sample_number IS DISTINCT FROM followed.sample_number;
 
 -- ── Descriptive fields: a fill-only refresh ──────────────────────────────
 -- Write-once is right for number, date and count and WRONG for everything

@@ -571,13 +571,41 @@ SELECT person_id, uid, login FROM owned
 QUALIFY row_number() OVER (PARTITION BY person_id ORDER BY records DESC, login) = 1;
 
 -- ── Samples ─────────────────────────────────────────────────────────────
--- One sample per (person, start date, sample number). Descriptive fields
--- take the representative row (min _id); within-group disagreement becomes
--- a sample_promotion_finding below.
+-- One sample per (person, start date, sample number) — and per observation,
+-- where the rows of one such group name more than one. One observation is
+-- one sample: several claiming one number is the collector's error, which
+-- the legacy system kept by merging them and which this keeps by NOT merging
+-- them, so each is the sample its pins describe, with its own place, and the
+-- duplicate number shows as what it is (Peter, 2026-10-04, beeline-0199).
+-- obs_key is NULL for every other row, so a group naming one observation, or
+-- none, or one plus rows with no link at all, stays one sample as before. On
+-- the 2026-10-04 corpus 434 groups split, every row of them carrying a link,
+-- and none numbered its specimens twice across observations.
+CREATE TABLE legacy_row_observation AS
+WITH linked AS (
+  SELECT r._id, m.person_id, r.sid, r.p_date_start,
+         CASE WHEN regexp_matches(r.url, '/observations/[0-9]+$') THEN r.p_inat_obs_id END AS obs
+  FROM legacy_promotable r
+  JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
+), several AS (
+  SELECT person_id, sid, p_date_start
+  FROM linked
+  GROUP BY person_id, sid, p_date_start
+  HAVING count(DISTINCT obs) > 1
+)
+SELECT l._id,
+       CASE WHEN sv.person_id IS NOT NULL THEN l.obs END AS obs_key
+FROM linked l
+LEFT JOIN several sv
+  ON sv.person_id = l.person_id AND sv.sid IS NOT DISTINCT FROM l.sid
+ AND sv.p_date_start IS NOT DISTINCT FROM l.p_date_start;
+
+-- Descriptive fields take the representative row (min _id); within-group
+-- disagreement becomes a sample_promotion_finding below.
 CREATE TABLE legacy_sample_map AS
 SELECT
   m.person_id,
-  r.sid, r.p_date_start,
+  r.sid, r.p_date_start, k.obs_key,
   coalesce(max(r.p_date_end), r.p_date_start)      AS date_end,
   CASE WHEN max(r.p_date_end) IS NOT NULL THEN 'trap' ELSE 'net' END AS kind,
   count(*)                                          AS specimen_count,
@@ -609,7 +637,8 @@ SELECT
   nextval('entity_id_seq')                          AS sample_id
 FROM legacy_promotable r
 JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
-GROUP BY m.person_id, r.sid, r.p_date_start;
+JOIN legacy_row_observation k ON k._id = r._id
+GROUP BY m.person_id, r.sid, r.p_date_start, k.obs_key;
 
 INSERT INTO sample (entity_id, kind, sample_number,
                     date_start, date_end, specimen_count, inat_observation_id,
@@ -666,8 +695,10 @@ FROM (
            CASE WHEN n.person_id = s.person_id THEN 1 ELSE 0 END AS is_primary
     FROM legacy_promotable r
     JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
+    JOIN legacy_row_observation k ON k._id = r._id
     JOIN legacy_sample_map s
       ON s.person_id = m.person_id AND s.sid IS NOT DISTINCT FROM r.sid AND s.p_date_start = r.p_date_start
+     AND s.obs_key IS NOT DISTINCT FROM k.obs_key
     JOIN legacy_row_collector c ON c._id = r._id
     JOIN legacy_person_name n ON n.name = c.name
     UNION ALL
@@ -725,9 +756,11 @@ SELECT r._id,
                                ORDER BY r.p_specimen_number, r._id) AS INTEGER) AS specimen_number
 FROM legacy_promotable r
 JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
+JOIN legacy_row_observation k ON k._id = r._id
 JOIN legacy_sample_map s
   ON s.person_id = m.person_id AND s.sid = r.sid
- AND s.p_date_start IS NOT DISTINCT FROM r.p_date_start;
+ AND s.p_date_start IS NOT DISTINCT FROM r.p_date_start
+ AND s.obs_key IS NOT DISTINCT FROM k.obs_key;
 
 INSERT INTO specimen (sample_id, specimen_number, field_number)
 SELECT n.sample_id, n.specimen_number, nullif(r.fieldNumber, '')
@@ -748,9 +781,11 @@ WITH member AS (
          r.samplingProtocol, r.p_lat, r.p_lon
   FROM legacy_promotable r
   JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
+  JOIN legacy_row_observation k ON k._id = r._id
   JOIN legacy_sample_map s
     ON s.person_id = m.person_id AND s.sid = r.sid
    AND s.p_date_start IS NOT DISTINCT FROM r.p_date_start
+   AND s.obs_key IS NOT DISTINCT FROM k.obs_key
 ), field_value AS (
   SELECT sample_id, 'country' AS field, nullif(country, '') AS value FROM member
   UNION ALL SELECT sample_id, 'state_province', nullif(stateProvince, '') FROM member
@@ -779,9 +814,11 @@ INSERT INTO sample_legacy_observation (sample_id, inat_observation_id)
 SELECT DISTINCT s.sample_id, r.p_inat_obs_id
 FROM legacy_promotable r
 JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
+JOIN legacy_row_observation k ON k._id = r._id
 JOIN legacy_sample_map s
   ON s.person_id = m.person_id AND s.sid = r.sid
  AND s.p_date_start IS NOT DISTINCT FROM r.p_date_start
+ AND s.obs_key IS NOT DISTINCT FROM k.obs_key
 WHERE r.p_inat_obs_id IS NOT NULL
   AND regexp_matches(r.url, '/observations/[0-9]+$');
 

@@ -298,28 +298,29 @@ WHERE NOT EXISTS (SELECT 1 FROM inat_account a WHERE a.inat_user_id = c.user_id)
 COMMENT ON VIEW observation_sample_unresolved IS 'A collection record from an iNaturalist user the store holds no account for: nothing mints it, because every sample has a primary collector and a placeholder person is worse than a queue. The unclaimed-samples screen (beeline-e85) reads this.';
 
 -- ── The reconcile ────────────────────────────────────────────────────────
--- Every unlinked candidate whose observer resolves, grouped into the sample
--- it belongs to. An observation already named by some sample's
--- inat_observation_id is excluded before grouping: once linked, THE LINK IS
--- THE IDENTITY, which is what stops an upstream edit to a sampleId minting a
--- second sample for a collecting event that already exists (the reference
--- implementation's sha256-primary-key bug).
+-- Every unlinked candidate whose observer resolves, one row per observation:
+-- one observation is one sample (Peter, 2026-10-04, beeline-0199), so two
+-- observations that share a collector, number and date are two samples with
+-- the same number — a collector's error duplicate_sample_number (schema/120)
+-- asks them to fix — and never one sample counting both. An observation
+-- already named by some sample's inat_observation_id is excluded: once
+-- linked, THE LINK IS THE IDENTITY, which is what stops an upstream edit to a
+-- sampleId minting a second sample for a collecting event that already exists
+-- (the reference implementation's sha256-primary-key bug). So is one an
+-- imported sample's legacy records came from (sample_legacy_observation):
+-- those specimens are already on pins, under that sample.
 CREATE VIEW sample_mint_group AS
 SELECT a.person_id,
        c.sample_number,
        c.observed_on,
-       CAST(count(*) AS INTEGER)      AS observations,
-       -- Lowest id where the group holds several, as legacy_sample_map's
-       -- arg_min does: arbitrary but stable, and stability is the property
-       -- that matters when the choice decides which observation a sample
-       -- cites.
-       min(c.inat_id)                 AS lead_inat_id,
-       CAST(sum(c.specimen_count) AS INTEGER) AS specimen_count
+       CAST(1 AS INTEGER)               AS observations,
+       c.inat_id                        AS lead_inat_id,
+       c.specimen_count
 FROM observation_sample_candidate c
 JOIN inat_account a ON a.inat_user_id = c.user_id
 WHERE NOT EXISTS (SELECT 1 FROM sample s WHERE s.inat_observation_id = c.inat_id)
-GROUP BY a.person_id, c.sample_number, c.observed_on;
-COMMENT ON VIEW sample_mint_group IS 'Unlinked collection records grouped into the sample each belongs to, by (collector, sample number, date). Specimen count is the group total; lead_inat_id is the observation the sample will cite.';
+  AND NOT EXISTS (SELECT 1 FROM sample_legacy_observation lo WHERE lo.inat_observation_id = c.inat_id);
+COMMENT ON VIEW sample_mint_group IS 'Unlinked collection records, one per observation, each the sample it will become: one observation is one sample (beeline-0199). lead_inat_id is the observation; an observation an imported sample''s legacy records came from is excluded, since those specimens are on pins already.';
 
 -- Which existing sample, if any, a group is already recorded as.
 --
@@ -357,15 +358,18 @@ COMMENT ON VIEW sample_mint_match IS 'A group of unlinked observations against t
 -- duplicate collecting events
 -- that duplicate_sample_number cannot see because it groups on
 -- date_start. Refusing names them; a test asserts nothing more than that the
--- refusal is what happens.
+-- refusal is what happens. Only samples that cite nothing take part: a
+-- sample citing another observation is that observation's, and this one is
+-- another collecting event under the same number (beeline-0199).
 CREATE VIEW sample_mint_ambiguous AS
 SELECT person_id, sample_number, observed_on, lead_inat_id,
        CAST(count(*) AS INTEGER) AS samples,
        array_to_string(list_sort(list(sample_id)), ' | ') AS sample_ids
 FROM sample_mint_match
+WHERE inat_observation_id IS NULL
 GROUP BY person_id, sample_number, observed_on, lead_inat_id
 HAVING count(*) > 1;
-COMMENT ON VIEW sample_mint_ambiguous IS 'A group of unlinked observations that matches two or more existing samples. Neither linked nor minted — the store already holds duplicate collecting events under that number, and picking one silently would be worse than saying so.';
+COMMENT ON VIEW sample_mint_ambiguous IS 'An unlinked observation matching two or more existing samples that cite none: neither linked nor minted, since picking one silently would be worse than saying so. Samples already citing another observation do not count — they are other collecting events, and the observation is minted beside them (beeline-0199).';
 
 -- A group whose sample exists and cites no observation yet: free evidence.
 --
@@ -388,9 +392,10 @@ COMMENT ON VIEW sample_mint_ambiguous IS 'A group of unlinked observations that 
 -- the observation dated on date_end — a trap's retrieval, the one that
 -- actually carries the catch — is arguable and is a domain claim nobody has
 -- made; noted here so choosing the id stays a choice rather than an oversight.)
--- The group not chosen is not lost: it matches the sample on the next run,
--- finds it citing another observation, and is left alone, which is what
--- sample_multi_observation names.
+-- The observation not chosen is not minted, since the sample it matched cited
+-- nothing and may well hold its specimens on pins already (a legacy sample
+-- whose records name no observation): it is left alone, and
+-- sample_multi_observation and duplicate_sample_number name it.
 CREATE VIEW sample_mint_free_link AS
 SELECT sample_id, lead_inat_id, person_id, sample_number, observed_on
 FROM (
@@ -398,23 +403,30 @@ FROM (
          row_number() OVER (PARTITION BY m.sample_id ORDER BY m.lead_inat_id) AS rn
   FROM sample_mint_match m
   WHERE m.inat_observation_id IS NULL
-    AND NOT EXISTS (SELECT 1 FROM sample_mint_ambiguous a
-                    WHERE a.person_id = m.person_id
-                      AND a.sample_number = m.sample_number
-                      AND a.observed_on = m.observed_on)
+    AND NOT EXISTS (SELECT 1 FROM sample_mint_ambiguous a WHERE a.lead_inat_id = m.lead_inat_id)
 ) ranked
 WHERE rn = 1;
 COMMENT ON VIEW sample_mint_free_link IS 'An existing sample that cites no observation and whose collector, number and date range an unlinked observation matches: the link is free, and it is what carries believed-true coordinates and geoprivacy onto a record the legacy dump supplied without them.';
 
--- What minting actually creates: a group that matches no existing sample.
+-- What minting actually creates: an observation that matches no existing
+-- sample, or matches only unprinted ones citing other observations. Those
+-- are the second collecting event under one number, minted so the collision
+-- shows and the volunteer renumbers before anything prints (beeline-0199).
+-- A match against a sample citing nothing stops it — free-linking or the
+-- ambiguity view decides that one — and so does a match against a PRINTED
+-- sample, whatever it cites: its specimens may be on pins already under
+-- that sample (a legacy one whose records name no observation, or a trap
+-- whose second observation free-linking passed over), and minting beside it
+-- could label them twice, which is the one outcome nothing can undo. That
+-- observation is left unminted and sample_multi_observation names it.
 CREATE VIEW sample_mint_pending AS
 SELECT g.*
 FROM sample_mint_group g
 WHERE NOT EXISTS (SELECT 1 FROM sample_mint_match m
-                  WHERE m.person_id = g.person_id
-                    AND m.sample_number = g.sample_number
-                    AND m.observed_on = g.observed_on);
-COMMENT ON VIEW sample_mint_pending IS 'The samples ingest/mint-samples.sql will create on its next run: a collecting event iNaturalist evidences and the store does not hold.';
+                  WHERE m.lead_inat_id = g.lead_inat_id
+                    AND (m.inat_observation_id IS NULL
+                         OR EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = m.sample_id)));
+COMMENT ON VIEW sample_mint_pending IS 'The samples ingest/mint-samples.sql will create on its next run, one per observation: an observation matching no existing sample, or only unprinted ones citing other observations (beeline-0199). One matching a sample citing nothing, or a printed sample, is not minted.';
 
 -- A sample whose state names an atlas and which carries none, with no human
 -- having placed it deliberately.
@@ -499,13 +511,11 @@ SELECT sample_id, inat_observation_id FROM sample_legacy_observation;
 COMMENT ON VIEW sample_claiming_observation IS 'Each iNaturalist observation that claims a sample: its collector''s observations carrying its number on its dates now, and those its legacy records came from (sample_legacy_observation). A cited observation since renumbered claims it no longer.';
 
 CREATE VIEW sample_several_observations AS
-SELECT co.sample_id,
+SELECT sample_id,
        CAST(count(*) AS INTEGER) AS observations,
-       string_agg(CAST(co.inat_id AS TEXT), ', ' ORDER BY co.inat_id) AS inat_ids,
-       max(CASE WHEN co.inat_id = s.inat_observation_id THEN co.inat_id END) AS cited_inat_id
-FROM sample_claiming_observation co
-JOIN sample s ON s.entity_id = co.sample_id
-GROUP BY co.sample_id
+       string_agg(CAST(inat_id AS TEXT), ', ' ORDER BY inat_id) AS inat_ids
+FROM sample_claiming_observation
+GROUP BY sample_id
 HAVING count(*) > 1;
 COMMENT ON VIEW sample_several_observations IS 'A sample more than one observation claims: a collector error (Peter, 2026-10-04), and one of the two shapes of sample_number_conflict (schema/120).';
 

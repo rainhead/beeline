@@ -92,6 +92,59 @@ describe("the legacy-format export", () => {
     expect(byNumber.get("25000009")?.scientificName).toBe("Lasioglossum nr. tenax");
   });
 
+  test("writes each row's own elevation and uncertainty beside its own coordinates, and a volunteer's word where Beeline holds none", async () => {
+    // Synthetic, in the shape of the 2026 sandbox's merged samples: one
+    // sample whose legacy rows were taken at different points. Staging is
+    // edited after promotion, so the sample keeps its one location.
+    const [[sampleId]] = (await conn.runAndReadAll(
+      `SELECT sp.sample_id FROM specimen sp JOIN sample_location loc ON loc.sample_id = sp.sample_id
+       WHERE loc.source = 'legacy_import' AND loc.elevation_m IS NOT NULL
+       GROUP BY 1 HAVING count(*) >= 2 ORDER BY 1 LIMIT 1`,
+    )).getRows() as [[number]];
+    const specimens = (await conn.runAndReadAll(
+      `SELECT sp.field_number, n._id FROM specimen sp
+       JOIN legacy_specimen_number n ON n.sample_id = sp.sample_id AND n.specimen_number = sp.specimen_number
+       WHERE sp.sample_id = ${sampleId} ORDER BY sp.specimen_number`,
+    )).getRows() as [string, string][];
+    const [[lat, lon, elevation, uncertainty]] = (await conn.runAndReadAll(
+      `SELECT latitude, longitude, elevation_m, coordinate_uncertainty_m FROM sample_location WHERE sample_id = ${sampleId}`,
+    )).getRows() as [[number, number, number, number]];
+    const [[first, firstId], [second, secondId]] = specimens as [[string, string], [string, string]];
+    const saved = (await conn.runAndReadAll(`SELECT * FROM legacy_occurrence WHERE _id IN ('${firstId}', '${secondId}')`)).getRowObjectsJson();
+    try {
+      // The first row: another point, with an elevation and no uncertainty of its own.
+      await conn.run(`UPDATE legacy_occurrence SET "decimalLatitude" = '${(lat + 0.0882).toFixed(4)}', "verbatimElevation" = '918',
+                      "coordinateUncertaintyInMeters" = '', "sexVolDet" = 'female' WHERE _id = '${firstId}'`);
+      // The second row: the sample's own point, with no elevation or uncertainty of its own.
+      await conn.run(`UPDATE legacy_occurrence SET "decimalLatitude" = '${lat.toFixed(4)}', "decimalLongitude" = '${lon.toFixed(4)}',
+                      "verbatimElevation" = '', "coordinateUncertaintyInMeters" = '', "sexVolDet" = '' WHERE _id = '${secondId}'`);
+      const other = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+      await writeLegacyExport(conn, other);
+      const out = (await conn.runAndReadAll(
+        `SELECT "fieldNumber", "verbatimElevation", "coordinateUncertaintyInMeters", "sexVolDet"
+         FROM read_csv('${other}', header = true, all_varchar = true, quote = '"', escape = '"')
+         WHERE "fieldNumber" IN ('${first}', '${second}') ORDER BY 1`,
+      )).getRows();
+      expect([first, second]).toEqual(["25000001", "25000003"]);
+      expect([elevation, uncertainty]).toEqual([72, 30]);
+      expect(out).toEqual([
+        // Its own elevation; no uncertainty, since the sample's describes
+        // another point; and the volunteer's sex from the legacy row, since
+        // Beeline holds no volunteer identification of this specimen.
+        ["25000001", "918", null, "female"],
+        // At the sample's own point, the model's values fill the row's blanks.
+        ["25000003", "72", "30", null],
+      ]);
+    } finally {
+      for (const row of saved) {
+        const r = row as Record<string, string | null>;
+        await conn.run(`UPDATE legacy_occurrence SET "decimalLatitude" = ?, "decimalLongitude" = ?, "verbatimElevation" = ?,
+                        "coordinateUncertaintyInMeters" = ?, "sexVolDet" = ? WHERE _id = ?`,
+          [r.decimalLatitude, r.decimalLongitude, r.verbatimElevation, r.coordinateUncertaintyInMeters, r.sexVolDet, r._id] as never);
+      }
+    }
+  });
+
   test("writes the initials a label_name gives, as the person's labels do", async () => {
     // Synthetic: the fixture's collector given the shape of a real register
     // override (J.M. for a given name of Juan Manuel).

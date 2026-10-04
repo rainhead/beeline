@@ -41,7 +41,7 @@ JOIN observation_location ol ON ol.inat_id = s.inat_observation_id;
 -- and the elevation stays where it was — which is exactly what makes the row
 -- stale, and the next statement is what notices.
 --
--- Not on a sample whose labels are on paper (printed_sample, schema/155):
+-- Not on a sample whose labels are on paper (printed_sample, schema/119):
 -- once printed, the coordinates are what the label says about where the
 -- bees were collected, and an iNaturalist edit to them is a divergence from
 -- the label to show a person (beeline-1kb.17), not a value to take (Andony,

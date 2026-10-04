@@ -768,6 +768,23 @@ WHERE value IS NOT NULL
 GROUP BY sample_id, field
 HAVING count(DISTINCT value) > 1;
 
+-- ── The observations behind each sample (beeline-0199) ──────────────────
+-- A legacy record names its observation in its URL, and the merge above can
+-- put records from several observations into one sample: the reference
+-- system's way of keeping a collector's error, since several observations
+-- claiming one sample number is one (Peter, 2026-10-04). Only staging can see
+-- it, so it is written down here; sample_claiming_observation (schema/108)
+-- reads it. A URL pointing anywhere but an observation names none.
+INSERT INTO sample_legacy_observation (sample_id, inat_observation_id)
+SELECT DISTINCT s.sample_id, r.p_inat_obs_id
+FROM legacy_promotable r
+JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
+JOIN legacy_sample_map s
+  ON s.person_id = m.person_id AND s.sid = r.sid
+ AND s.p_date_start IS NOT DISTINCT FROM r.p_date_start
+WHERE r.p_inat_obs_id IS NOT NULL
+  AND regexp_matches(r.url, '/observations/[0-9]+$');
+
 -- ── Where iNaturalist and the import disagree about the coordinates ──────
 --
 -- A sample whose coordinates came from iNaturalist, against the pair the

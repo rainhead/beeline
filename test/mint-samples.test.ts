@@ -309,16 +309,19 @@ describe("reconciling against samples the store already holds", () => {
     expect(await one(`SELECT inat_observation_id FROM sample WHERE entity_id = ${sampleId}`))
       .toEqual([30494816n]);
     // The day it did not take is not lost, and not minted into a second
-    // sample either: it is the same collecting event, and this is what says so.
+    // sample either: it is named, and since two observations claim one sample
+    // number, the collector is told (Peter, 2026-10-04, beeline-0199).
     expect(await one("SELECT sample_id, cited_inat_id, other_observations FROM sample_multi_observation"))
       .toEqual([sampleId, 30494816n, 1]);
+    expect(await one(`SELECT rule_name, details FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'duplicate_sample_number'`))
+      .toEqual(["duplicate_sample_number", "sample number 7 is on 2 observations: 30494816, 30587701"]);
     // And a second pass changes nothing, rather than swapping the citation.
     expect((await promoteObservations(conn)).freeLinks).toBe(0);
     expect(await one(`SELECT inat_observation_id FROM sample WHERE entity_id = ${sampleId}`))
       .toEqual([30494816n]);
   });
 
-  test("several observations of one collecting event make one sample, counting them all", async () => {
+  test("several observations claiming one sample number make one sample, counting them all, and the collector is told", async () => {
     await stage(obs(12, { ofvs: ofvs("7", "3") }));
     await stage(obs(9, { ofvs: ofvs("7", "5") }));
     expect((await promoteObservations(conn)).samplesMinted).toBe(1);
@@ -333,6 +336,11 @@ describe("reconciling against samples the store already holds", () => {
       .toEqual(["count_mismatch", "observation says 5 but sample count is 8"]);
     expect(await one("SELECT sample_id, cited_inat_id, other_observations FROM sample_multi_observation"))
       .toEqual([sampleId, 9n, 1]);
+    // Several observations claiming one sample number is the collector's
+    // error (Peter, 2026-10-04, beeline-0199). Nothing is printed yet, so the
+    // fix is theirs: renumber one, and it blocks printing until then.
+    expect(await rows(conn, `SELECT rule_name, details FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name LIKE '%sample_number%'`))
+      .toEqual([["duplicate_sample_number", "sample number 7 is on 2 observations: 9, 12"]]);
   });
 });
 

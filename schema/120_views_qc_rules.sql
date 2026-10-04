@@ -250,8 +250,17 @@ JOIN sample s ON s.entity_id = loc.sample_id
 WHERE NOT (loc.latitude BETWEEN 14 AND 84 AND loc.longitude BETWEEN -172 AND -50)
   AND (s.country IS NULL OR s.country IN ('USA', 'CAN', 'MEX'));
 
--- Same collector, same day, same sample number, more than one sample: an
--- identity collision the reference implementation silently merged.
+-- Same collector, same day, same sample number, more than once: an identity
+-- collision the reference implementation silently merged — and so, it turned
+-- out, did Beeline. Counting samples, this rule never fired once (0 findings
+-- on the sandbox, 2026-10-04): legacy promotion and minting both merge on
+-- that very key first, so the duplicate lands inside one sample, claimed by
+-- several observations. Peter, 2026-10-04: several observations claiming one
+-- sample number is collector error. So the rule counts observations too
+-- (sample_several_observations, schema/108) — for a sample not yet printed,
+-- where renumbering an observation is the fix. A printed one is
+-- shared_sample_number_printed below: its labels already carry the number,
+-- and renumbering after the fact would set the record against the pin.
 CREATE VIEW qc_rule_duplicate_sample_number AS
 SELECT s.entity_id AS sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
@@ -267,7 +276,29 @@ JOIN (
   HAVING count(*) > 1
 ) dup ON dup.person_id = pc.person_id
      AND dup.date_start = s.date_start
-     AND dup.sample_number = s.sample_number;
+     AND dup.sample_number = s.sample_number
+UNION ALL
+SELECT s.entity_id, CAST(NULL AS INTEGER), 'duplicate_sample_number',
+       concat('sample number ', s.sample_number, ' is on ', o.observations,
+              ' observations: ', o.inat_ids)
+FROM sample s
+JOIN sample_several_observations o ON o.sample_id = s.entity_id
+WHERE NOT EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = s.entity_id);
+
+-- The same collector error on a sample whose labels are already printed:
+-- nothing for the volunteer to change, since the pins carry the number and,
+-- the legacy system having printed each observation's own place, the right
+-- place for each specimen. The repair is splitting the sample in Beeline.
+-- A warning for staff, kept off the volunteer's front page (DASHBOARD_RULES).
+CREATE VIEW qc_rule_shared_sample_number_printed AS
+SELECT s.entity_id AS sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'shared_sample_number_printed' AS rule_name,
+       concat('sample number ', s.sample_number, ' is on ', o.observations,
+              ' observations: ', o.inat_ids) AS details
+FROM sample s
+JOIN sample_several_observations o ON o.sample_id = s.entity_id
+WHERE EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = s.entity_id);
 
 -- The evidencing observation's taxon is the floral host in this protocol,
 -- and a host must be a vascular plant: anything else — a moss, a fungus, or

@@ -411,6 +411,24 @@ describe("QC findings and printability", () => {
     expect(await isPrintable(a)).toBe(false);
   });
 
+  test("a printed sample several observations claim is for staff, not the volunteer", async () => {
+    // The legacy shape (beeline-0199): records from two observations merged
+    // into one sample and printed, each pin with its own observation's place.
+    // An imported specimen is printed (printed_sample), so renumbering on
+    // iNaturalist is no longer the fix and the flag says so.
+    const a = await insertCleanSample(conn);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${a}, 1, '26000001')`);
+    await conn.run(`INSERT INTO sample_legacy_observation VALUES (${a}, 372516130), (${a}, 397257272)`);
+    expect(await findings(a)).toEqual([
+      { rule: "shared_sample_number_printed", details: "sample number 1 is on 2 observations: 372516130, 397257272" },
+    ]);
+    // One observation is the rule, and says nothing.
+    const b = await insertCleanSample(conn, { sample_number: "'2'" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${b}, 1, '26000002')`);
+    await conn.run(`INSERT INTO sample_legacy_observation VALUES (${b}, 372516131)`);
+    expect(await findings(b)).toEqual([]);
+  });
+
   test("zero-count samples are not printable even when clean", async () => {
     const id = await insertCleanSample(conn, { specimen_count: "0" });
     expect(await findings(id)).toEqual([]);

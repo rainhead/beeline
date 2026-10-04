@@ -26,8 +26,8 @@ import { OUTCOMES, readRulings, RECORD_COLUMN, type Ruling } from "./legacy-expo
  * compared as text, and each difference is given a kind (a blank filled,
  * Roman numerals, a country code, …; VALUE_KINDS) and split by season as
  * every check in this repo is (CLAUDE.md): the open season against the
- * settled ones, on the record's own collecting date, using the store's own
- * line (`season.started_on`). A number only one side holds is a difference
+ * settled ones, on the record's own collecting date (its end, where it has
+ * one), using the store's own line (`season.started_on`). A number only one side holds is a difference
  * about the whole record, kinded by why. The rulings
  * (`ingest/legacy-export-rulings.csv`) then say which differences are
  * explained; what is left is the report.
@@ -94,6 +94,15 @@ const monthNumber = (x: string) =>
   `CASE upper(trim(${x})) ${ROMAN.map((r, i) => `WHEN '${r}' THEN '${i + 1}'`).join(" ")} ELSE trim(${x}) END`;
 /** Roman months inside a Y-M-D date, as numbers: 2022-VI-26 → 2022-6-26. */
 const deRoman = (x: string) => ROMAN.reduce((acc, r, i) => `replace(${acc}, '-${r}-', '-${i + 1}-')`, x);
+/**
+ * The date a record's season is judged on: its collecting end where it has
+ * one, its start otherwise, as the store judges a sample on `date_end`
+ * (CLAUDE.md), so a trap set in February and emptied in March is the open
+ * season's. `t` is the alias of a table with the template's date columns.
+ */
+export const seasonDate = (t: string) => `coalesce(
+    try_cast(concat(${t}."year2", '-', ${monthNumber(`${t}."month2"`)}, '-', ${t}."day2") AS DATE),
+    try_cast(concat(${t}."year", '-', ${monthNumber(`${t}."month"`)}, '-', ${t}."day") AS DATE))`;
 const isoDay = (x: string, format: string) => `strftime(try_strptime(${x}, '${format}'), '%Y-%m-%d')`;
 /** A date or a date range, as `start/end` in ISO; NULL when it is neither. */
 const dateRange = (raw: string) => {
@@ -171,7 +180,7 @@ export async function compareLegacyExport(
                SELECT "fieldNumber" FROM legacy_occurrence WHERE nullif("fieldNumber", '') IS NOT NULL
                GROUP BY 1 HAVING count(*) = 1))
     SELECT ${LEGACY_EXPORT_COLUMNS.map((c) => `coalesce(e."${c}", '') AS "e_${c}", ${legacyValue(c)} AS "l_${c}"`).join(", ")},
-           try_cast(concat(e."year", '-', e."month", '-', e."day") AS DATE) >= (SELECT started_on FROM season) AS open_season
+           ${seasonDate("e")} >= (SELECT started_on FROM season) AS open_season
     FROM e JOIN l ON l."fieldNumber" = e."fieldNumber"`);
   const one = async (sql: string) => Number(((await (await conn.run(sql)).getRows()) as [[bigint]])[0]![0]);
   const exported = await one("SELECT count(*) FROM cmp_export");
@@ -268,10 +277,9 @@ async function buildDifferences(conn: DuckDBConnection): Promise<void> {
   // that kept it from promotion, where the store has promoted at all.
   const promoted = await one(conn, `SELECT count(*) FROM duckdb_views() WHERE view_name = 'legacy_promotion_finding'`);
   const startedOn = `(SELECT started_on FROM season)`;
-  const legacyDate = `try_cast(concat(l."year", '-', ${monthNumber(`l."month"`)}, '-', l."day") AS DATE)`;
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE cmp_only_legacy AS
-    SELECT l._id, l."fieldNumber" AS field_number, coalesce(${legacyDate} >= ${startedOn}, false) AS open_season
+    SELECT l._id, l."fieldNumber" AS field_number, coalesce(${seasonDate("l")} >= ${startedOn}, false) AS open_season
     FROM legacy_occurrence l
     WHERE nullif(l."fieldNumber", '') IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM cmp_export e WHERE e."fieldNumber" = l."fieldNumber")`);
@@ -293,7 +301,7 @@ async function buildDifferences(conn: DuckDBConnection): Promise<void> {
       FROM cmp_only_legacy o
       UNION ALL
       SELECT e."fieldNumber", '${RECORD_COLUMN}', 'present', '',
-             coalesce(try_cast(concat(e."year", '-', e."month", '-', e."day") AS DATE) >= ${startedOn}, false),
+             coalesce(${seasonDate("e")} >= ${startedOn}, false),
              ${mintedKind}
       FROM cmp_export e
       WHERE nullif(e."fieldNumber", '') IS NOT NULL

@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
-import { compareLegacyExport, DIFFERENCE_KIND_SQL, writeDifferences } from "../src/compare-legacy-export.js";
+import { compareLegacyExport, DIFFERENCE_KIND_SQL, seasonDate, writeDifferences } from "../src/compare-legacy-export.js";
 import { parseRulings, RULING_COLUMNS, type Ruling } from "../src/legacy-export-rulings.js";
 import { writeLegacyExport } from "../src/legacy-export.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
@@ -12,6 +12,25 @@ import { promoteLegacy } from "../src/promote-legacy.js";
 import { createMemoryDb, FIXTURE_INPUTS } from "./helpers.js";
 
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
+
+describe("the date a record's season is judged on", () => {
+  // The end where there is one, as a sample is judged on date_end: a trap
+  // set before 1 March and emptied after it is the open season's. Roman
+  // months are the legacy file's own (2022-VI-26/2022-VII-29 in the corpus).
+  test.each([
+    [["2026", "II", "20", "2026", "III", "5"], "2026-03-05"],
+    [["2026", "2", "20", "", "", ""], "2026-02-20"],
+    [["2022", "VI", "26", "2022", "VII", "29"], "2022-07-29"],
+  ])("%j is judged on %s", async ([year, month, day, year2, month2, day2], expected) => {
+    const conn = await (await DuckDBInstance.create(":memory:")).connect();
+    const reader = await conn.runAndReadAll(
+      `SELECT strftime(${seasonDate("t")}, '%Y-%m-%d') FROM (SELECT '${year}' AS "year", '${month}' AS "month", '${day}' AS "day",
+              '${year2}' AS "year2", '${month2}' AS "month2", '${day2}' AS "day2") t`,
+    );
+    expect(reader.getRows()[0]![0]).toBe(expected);
+    conn.closeSync();
+  });
+});
 
 describe("the kind of a difference", () => {
   // Every pair but the two marked synthetic is lifted from the dev store's

@@ -95,7 +95,8 @@ describe("the legacy-format export", () => {
   test("writes the initials a label_name gives, as the person's labels do", async () => {
     // Synthetic: the fixture's collector given the shape of a real register
     // override (J.M. for a given name of Juan Manuel).
-    await conn.run(`UPDATE person SET label_name = 'A.B. Collector' WHERE display_name = 'Ada Collector'`);
+    // A stray tab around it, as an overlay value can carry, is trimmed as the label trims it.
+    await conn.run(`UPDATE person SET label_name = concat(chr(9), 'A.B. Collector', chr(9)) WHERE display_name = 'Ada Collector'`);
     try {
       const other = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
       await writeLegacyExport(conn, other);

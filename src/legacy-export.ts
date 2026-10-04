@@ -99,12 +99,19 @@ const sortText = (col: string) => `coalesce(nullif(${col}, ''), ${Z16})`;
  * A person's label initials where their `label_name` is unspaced initials
  * and their own family name (`J.M.` of `J.M. Benitez Alvarez`), else NULL:
  * the SQL twin of `labelInitials` in src/label-text.ts, so the file's
- * firstNameInitial says what the person's labels say.
+ * firstNameInitial says what the person's labels say. Both sides are
+ * trimmed of any whitespace, as JavaScript's trim() does, not only of
+ * spaces as DuckDB's trim() does, or a stray tab in an overlay value would
+ * close up on the label and not here (CodeRabbit on #129).
  */
-const labelInitials = (p: string) => `CASE
-  WHEN regexp_full_match(trim(${p}.label_name), '((?:\\p{Lu}\\.)+) (.+)')
-   AND regexp_extract(trim(${p}.label_name), '^((?:\\p{Lu}\\.)+) (.+)$', 2) = trim(${p}.family_name)
-  THEN regexp_extract(trim(${p}.label_name), '^((?:\\p{Lu}\\.)+) (.+)$', 1) END`;
+const jsTrim = (x: string) => `regexp_replace(${x}, '^[\\s\\p{Z}]+|[\\s\\p{Z}]+$', '', 'g')`;
+const labelInitials = (p: string) => {
+  const name = jsTrim(`${p}.label_name`);
+  return `CASE
+  WHEN regexp_full_match(${name}, '((?:\\p{Lu}\\.)+) (.+)')
+   AND regexp_extract(${name}, '^((?:\\p{Lu}\\.)+) (.+)$', 2) = ${jsTrim(`${p}.family_name`)}
+  THEN regexp_extract(${name}, '^((?:\\p{Lu}\\.)+) (.+)$', 1) END`;
+};
 
 /** The query behind the file: one row per specimen, every column TEXT, blanks as NULL. Exported for its test. */
 export function legacyExportSql(staging: Set<string> | null): string {

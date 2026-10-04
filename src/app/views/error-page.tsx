@@ -64,12 +64,25 @@ const escape = (s: string) =>
 export function staticErrorPage(m: Messages, kind: ErrorKind, reference?: string): string {
   const copy = m.errorPage[kind];
   const ref = kind === "failed" && reference !== undefined ? `<p>${escape(m.errorPage.failed.reference(reference))}</p>` : "";
+  return staticPage(m, copy, `${ref}<p><a href="/">${escape(m.errorPage.home)}</a></p>`);
+}
+
+/**
+ * What the machine serves in maintenance mode (src/app/maintenance.ts), when
+ * the app is not running at all. The same page of last resort, with no way
+ * on to offer: every link would land here again.
+ */
+export function staticMaintenancePage(m: Messages): string {
+  return staticPage(m, m.errorPage.maintenance, "");
+}
+
+function staticPage(m: Messages, copy: { title: string; heading: string; body: string }, after: string): string {
   return (
     `<!doctype html><html lang="${escape(m.locale)}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<title>${escape(m.layout.pageTitle(copy.title))}</title></head>` +
     `<body style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5">` +
-    `<h1>${escape(copy.heading)}</h1><p>${escape(copy.body)}</p>${ref}<p><a href="/">${escape(m.errorPage.home)}</a></p>` +
+    `<h1>${escape(copy.heading)}</h1><p>${escape(copy.body)}</p>${after}` +
     `</body></html>`
   );
 }

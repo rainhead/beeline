@@ -1027,6 +1027,16 @@ export const en = {
         "Try again in a minute. If it keeps happening, tell us, and include the reference below: it helps us find the problem.",
       reference: (reference: string) => `Reference: ${reference}`,
     },
+    /**
+     * Served by the machine while it is in maintenance mode (src/app/maintenance.ts):
+     * the app is stopped so staff can work on the store, and nothing can be
+     * looked up, not even who is asking.
+     */
+    maintenance: {
+      title: "Down for maintenance",
+      heading: "Beeline is down for maintenance",
+      body: "Staff are working on Beeline and it will be back shortly. Please try again in a few minutes.",
+    },
     back: "Go back",
     home: "Go to your front page",
     /** Shown in development only: the error itself, and a hint where it looks like a store behind its migrations. */

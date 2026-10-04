@@ -4,6 +4,7 @@ import {
   composeLabel,
   coordinatesText,
   dateText,
+  labelInitials,
   layoutSheets,
   locationText,
   methodText,
@@ -127,6 +128,16 @@ describe("the collector line", () => {
 
   it("prints both names in full when the family names differ", () => {
     expect(collectorText([sheehy, malaby])).toBe("S.Sheehy&S.Malaby");
+  });
+
+  it("closes up a label_name that is the register's initials and the family name, as the legacy labels did", () => {
+    const juan = { display_name: "Juan Manuel Benitez Alvarez", given_name: "Juan Manuel", family_name: "Benitez Alvarez" };
+    expect(collectorText([juan])).toBe("J.Benitez Alvarez");
+    expect(collectorText([{ ...juan, label_name: "J.M. Benitez Alvarez" }])).toBe("J.M.Benitez Alvarez");
+    expect(labelInitials("J.M. Benitez Alvarez", "Benitez Alvarez")).toBe("J.M.");
+    // Anything else in label_name is somebody's deliberate choice and prints as written.
+    expect(labelInitials("J.M. Benitez", "Benitez Alvarez")).toBeNull();
+    expect(collectorText([{ ...juan, label_name: "J.M. Benitez" }])).toBe("J.M. Benitez");
   });
 
   it("does not collapse across a label_name override or an unparted name", () => {

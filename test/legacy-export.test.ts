@@ -92,6 +92,23 @@ describe("the legacy-format export", () => {
     expect(byNumber.get("25000009")?.scientificName).toBe("Lasioglossum nr. tenax");
   });
 
+  test("writes the initials a label_name gives, as the person's labels do", async () => {
+    // Synthetic: the fixture's collector given the shape of a real register
+    // override (J.M. for a given name of Juan Manuel).
+    await conn.run(`UPDATE person SET label_name = 'A.B. Collector' WHERE display_name = 'Ada Collector'`);
+    try {
+      const other = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+      await writeLegacyExport(conn, other);
+      const rows = (await conn.runAndReadAll(
+        `SELECT "fieldNumber", "firstNameInitial" FROM read_csv('${other}', header = true, all_varchar = true, quote = '"', escape = '"')
+         WHERE "fieldNumber" IN ('25000001', '25000005') ORDER BY 1`,
+      )).getRows();
+      expect(rows).toEqual([["25000001", "A.B."], ["25000005", "B. | A.B."]]);
+    } finally {
+      await conn.run(`UPDATE person SET label_name = NULL WHERE display_name = 'Ada Collector'`);
+    }
+  });
+
   test("gives a specimen Beeline created its own identifiers and host, and no legacy residue", async () => {
     const { conn: fresh } = await createMemoryDb();
     await fresh.run(`INSERT INTO person (display_name, given_name, family_name) VALUES ('Cy Newcomer', 'Cy', 'Newcomer')`);

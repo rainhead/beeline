@@ -152,7 +152,14 @@ export function dateText(
  * (2026-09-18): it is how every label in the drawers reads, and on a label
  * two thirds of an inch wide the space is width the name needs. Screens keep
  * `labelName()`'s `A. Bulger`; only the label closes it up. A `label_name`
- * override and a name with no parts print exactly as they are.
+ * override and a name with no parts print exactly as they are — except an
+ * override that is the derived form with other initials, `J.M. Benitez
+ * Alvarez` for a person whose given name is Juan Manuel: unspaced initials
+ * and then the person's own family name. That is the register's label
+ * initial, which the legacy labels set as `J.M.Benitez Alvarez`, so it
+ * closes up like any derived name (Peter, 2026-10-04). An override spaced
+ * any other way (`D. J. O'Loughlin`) is somebody's deliberate choice and
+ * prints as written.
  *
  * Two or more collectors all print (Andony, gh-17: paired trap collectors
  * always both appear), joined with `&` and as tight as the rest, and a
@@ -164,7 +171,22 @@ function parts(c: PersonNameParts): { initial: string; family: string } | null {
   const family = c.family_name?.trim() || null;
   const given = c.given_name?.trim() || null;
   const override = c.label_name?.trim() || null;
-  return override || !family || !given ? null : { initial: [...given][0]!.toUpperCase(), family };
+  if (override) {
+    const initials = labelInitials(override, family);
+    return initials === null ? null : { initial: initials.slice(0, -1), family: family! };
+  }
+  return !family || !given ? null : { initial: [...given][0]!.toUpperCase(), family };
+}
+
+/**
+ * The initials of a `label_name` that is unspaced initials and then the
+ * person's own family name (`J.M.` of `J.M. Benitez Alvarez`), or null when
+ * the override is anything else.
+ */
+export function labelInitials(labelName: string | null | undefined, familyName: string | null | undefined): string | null {
+  const family = familyName?.trim();
+  const m = /^((?:\p{Lu}\.)+) (.+)$/u.exec(labelName?.trim() ?? "");
+  return m && family && m[2] === family ? m[1]! : null;
 }
 
 export function collectorText(collectors: PersonNameParts[]): string {

@@ -95,6 +95,17 @@ const sortNumber = (col: string) =>
         ELSE lpad(CAST(CAST(try_cast(${col} AS DOUBLE) AS BIGINT) AS VARCHAR), 16, '0') END`;
 const sortText = (col: string) => `coalesce(nullif(${col}, ''), ${Z16})`;
 
+/**
+ * A person's label initials where their `label_name` is unspaced initials
+ * and their own family name (`J.M.` of `J.M. Benitez Alvarez`), else NULL:
+ * the SQL twin of `labelInitials` in src/label-text.ts, so the file's
+ * firstNameInitial says what the person's labels say.
+ */
+const labelInitials = (p: string) => `CASE
+  WHEN regexp_full_match(trim(${p}.label_name), '((?:\\p{Lu}\\.)+) (.+)')
+   AND regexp_extract(trim(${p}.label_name), '^((?:\\p{Lu}\\.)+) (.+)$', 2) = trim(${p}.family_name)
+  THEN regexp_extract(trim(${p}.label_name), '^((?:\\p{Lu}\\.)+) (.+)$', 1) END`;
+
 /** The query behind the file: one row per specimen, every column TEXT, blanks as NULL. Exported for its test. */
 export function legacyExportSql(staging: Set<string> | null): string {
   // Without staging (a store built from iNaturalist alone) every staged
@@ -167,7 +178,8 @@ collectors AS (
          string_agg(p.display_name, ' | ' ORDER BY sc.position) AS recorded_by,
          string_agg(coalesce(p.given_name, ''), ' | ' ORDER BY sc.position) AS given_names,
          string_agg(coalesce(p.family_name, ''), ' | ' ORDER BY sc.position) AS family_names,
-         string_agg(CASE WHEN nullif(p.given_name, '') IS NOT NULL THEN concat(left(p.given_name, 1), '.') ELSE '' END,
+         string_agg(coalesce(${labelInitials("p")},
+                             CASE WHEN nullif(p.given_name, '') IS NOT NULL THEN concat(left(p.given_name, 1), '.') ELSE '' END),
                     ' | ' ORDER BY sc.position) AS initials
   FROM sample_collector sc JOIN person p ON p.entity_id = sc.person_id
   GROUP BY sc.sample_id
@@ -185,6 +197,7 @@ rows AS (
     ${t(`coalesce(ia.login, nullif(lo."userLogin", ''))`)} AS "userLogin",
     ${t("CASE WHEN c.n > 1 THEN c.given_names ELSE p.given_name END")} AS "firstName",
     ${t(`CASE WHEN c.n > 1 THEN c.initials
+               WHEN ${labelInitials("p")} IS NOT NULL THEN ${labelInitials("p")}
                WHEN nullif(p.given_name, '') IS NOT NULL THEN concat(left(p.given_name, 1), '.') END`)} AS "firstNameInitial",
     ${t("CASE WHEN c.n > 1 THEN c.family_names ELSE p.family_name END")} AS "lastName",
     ${t("c.recorded_by")} AS "recordedBy",

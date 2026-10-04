@@ -1,7 +1,7 @@
--- Defined ahead of the QC rules (schema/120), which read it to tell a sample
--- still to print from one already on paper (beeline-0199). It reads tables
--- only, so it can sit this early; it lived in schema/155 with the print-run
--- views until then.
+-- Defined ahead of minting (schema/108) and the QC rules (schema/120), which
+-- read it to tell a sample still to print from one already on paper
+-- (beeline-0199). It reads tables only, so it can sit this early; it lived
+-- in schema/155 with the print-run views until then.
 --
 -- Samples whose labels are on paper — the ones that stop following
 -- iNaturalist for date, locality and coordinates (CONTEXT.md, Upstream;

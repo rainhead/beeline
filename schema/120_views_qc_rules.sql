@@ -261,8 +261,7 @@ WHERE NOT (loc.latitude BETWEEN 14 AND 84 AND loc.longitude BETWEEN -172 AND -50
 -- (sample_several_observations, schema/108).
 CREATE VIEW sample_number_conflict AS
 SELECT s.entity_id AS sample_id,
-       concat('sample number ', s.sample_number, ' used ', dup.n, ' times on ', s.date_start) AS details,
-       CAST(NULL AS BIGINT) AS keep_inat_id
+       concat('sample number ', s.sample_number, ' used ', dup.n, ' times on ', s.date_start) AS details
 FROM sample s
 JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
 JOIN (
@@ -276,36 +275,25 @@ JOIN (
      AND dup.sample_number = s.sample_number
 UNION ALL
 SELECT s.entity_id,
-       concat('sample number ', s.sample_number, ' is on ', o.observations, ' observations: ', o.inat_ids),
-       o.cited_inat_id
+       concat('sample number ', s.sample_number, ' is on ', o.observations, ' observations: ', o.inat_ids)
 FROM sample s
 JOIN sample_several_observations o ON o.sample_id = s.entity_id;
-COMMENT ON VIEW sample_number_conflict IS 'A sample whose number its collector used more than once that day: two samples sharing (collector, date, number), or several observations claiming one (beeline-0199). keep_inat_id is the claiming observation the sample cites, the one to keep. qc_rule_sample_number reads it.';
+COMMENT ON VIEW sample_number_conflict IS 'A sample whose number its collector used more than once that day: two samples sharing (collector, date, number), or several observations claiming one (beeline-0199). qc_rule_sample_number flags it where the sample is not yet printed; a printed one is named here and flagged nowhere.';
 
--- One view for both rules, so the conflict is computed once per read of
--- qc_finding rather than once per rule (Fable's review of beeline-0199: 15 ms
--- to 45 ms on a full-size store with them separate).
---
--- Not yet printed: duplicate_sample_number, blocking, and renumbering is the
--- fix asked of the volunteer — all but the observation the sample cites,
--- which the detail names, since renumbering that one instead strands it:
--- being cited, it is never minted again, and its specimens would have no
--- sample. The count then still includes the others, which count_mismatch
--- reports as for any count that changes before printing.
---
--- Printed: shared_sample_number_printed, a warning kept off the volunteer's
--- front page (DASHBOARD_RULES). The pins carry the number and, where
--- observations were merged, each specimen's own place; renumbering after the
--- fact would set the record against the pin, so staff repair it.
+-- Only a sample not yet printed is flagged: renumbering is the fix, asked of
+-- the volunteer, and since an unprinted sample's number follows its
+-- observation (ingest/mint-samples.sql), renumbering on iNaturalist clears it
+-- on the next nightly. A printed one is not flagged at all (Peter,
+-- 2026-10-04): its pins carry the number for good and there is nothing left
+-- to do — legacy promotion already splits a merged sample by observation —
+-- so sample_number_conflict still names it, for reporting, and nothing asks.
 CREATE VIEW qc_rule_sample_number AS
 SELECT c.sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
-       CASE WHEN p.sample_id IS NULL THEN 'duplicate_sample_number' ELSE 'shared_sample_number_printed' END AS rule_name,
-       CASE WHEN p.sample_id IS NULL AND c.keep_inat_id IS NOT NULL
-            THEN concat(c.details, '; keep ', c.keep_inat_id, ', the one this sample cites')
-            ELSE c.details END AS details
+       'duplicate_sample_number' AS rule_name,
+       c.details
 FROM sample_number_conflict c
-LEFT JOIN printed_sample p ON p.sample_id = c.sample_id;
+WHERE NOT EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = c.sample_id);
 
 -- The evidencing observation's taxon is the floral host in this protocol,
 -- and a host must be a vascular plant: anything else — a moss, a fungus, or

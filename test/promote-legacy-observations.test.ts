@@ -5,8 +5,8 @@ import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
 
 /**
- * The legacy shape beeline-0199 is about: records from two observations
- * merged into one sample by legacy promotion. Synthetic on the shared
+ * The legacy shape beeline-0199 is about: records from two observations that
+ * legacy promotion used to merge into one sample. Synthetic on the shared
  * fixture — Ada's sample 1 has records 25000001 and 25000009 citing
  * observation 250000001 and 25000003 citing none; here 25000003 is given an
  * observation of its own, as the sandbox's merged samples have (Fanny Bay
@@ -26,20 +26,36 @@ beforeAll(async () => {
 });
 
 describe("a legacy sample several observations claim", () => {
-  test("promotion records each observation its records came from, and none for a taxon page", async () => {
+  test("is split, one sample per observation, each with its own specimens", async () => {
+    // Peter, 2026-10-04 (beeline-0199): one observation is one sample.
     expect(await rows(conn, `
-      SELECT s.sample_number, o.inat_observation_id FROM sample_legacy_observation o
-      JOIN sample s ON s.entity_id = o.sample_id ORDER BY 1, 2`)).toEqual([
-      ["1", 250000001n],
-      ["1", 250000003n],
+      SELECT s.sample_number, s.inat_observation_id, string_agg(sp.field_number, ' ' ORDER BY sp.field_number), s.specimen_count
+      FROM sample s JOIN specimen sp ON sp.sample_id = s.entity_id
+      WHERE s.sample_number = '1'
+      GROUP BY s.entity_id, s.sample_number, s.inat_observation_id, s.specimen_count ORDER BY 2`)).toEqual([
+      ["1", 250000001n, "25000001 25000009", 2],
+      ["1", 250000003n, "25000003", 1],
     ]);
   });
 
-  test("it is printed, so it is for staff and not the volunteer", async () => {
+  test("records the one observation each came from, and none for a taxon page", async () => {
     expect(await rows(conn, `
-      SELECT f.rule_name, f.details FROM qc_finding f JOIN sample s ON s.entity_id = f.sample_id
-      WHERE s.sample_number = '1' AND f.rule_name LIKE '%sample_number%'`)).toEqual([
-      ["shared_sample_number_printed", "sample number 1 is on 2 observations: 250000001, 250000003"],
+      SELECT s.inat_observation_id, o.inat_observation_id FROM sample_legacy_observation o
+      JOIN sample s ON s.entity_id = o.sample_id ORDER BY 1`)).toEqual([
+      [250000001n, 250000001n],
+      [250000003n, 250000003n],
+    ]);
+  });
+
+  test("its pins carry the number for good, so it is named and flagged nowhere", async () => {
+    expect(await rows(conn, `
+      SELECT f.rule_name FROM qc_finding f JOIN sample s ON s.entity_id = f.sample_id
+      WHERE s.sample_number = '1' AND f.rule_name = 'duplicate_sample_number'`)).toEqual([]);
+    expect(await rows(conn, `
+      SELECT c.details FROM sample_number_conflict c JOIN sample s ON s.entity_id = c.sample_id
+      WHERE s.sample_number = '1'`)).toEqual([
+      [expect.stringContaining("sample number 1 used 2 times")],
+      [expect.stringContaining("sample number 1 used 2 times")],
     ]);
   });
 });

@@ -275,9 +275,18 @@ describe("reconciling against samples the store already holds", () => {
     await stage(obs(7, { ofvs: ofvs("8", "3") }));
     expect((await promoteObservations(conn)).samplesMinted).toBe(0);
     expect(await count("SELECT count(*) FROM sample")).toBe(1);
-    // And the disagreement is named rather than silent.
+    // Until labels print, the sample's number follows its observation, as its
+    // locality does — which is how renumbering on iNaturalist clears a
+    // duplicate number (beeline-0199).
+    expect(await one("SELECT sample_number FROM sample")).toEqual(["8"]);
+    expect(await count("SELECT count(*) FROM sample_observation_number_mismatch")).toBe(0);
+    // Once a label is on paper it is the label's, and the disagreement is
+    // named rather than silent.
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) SELECT entity_id, 1, '26000001' FROM sample`);
+    await stage(obs(7, { ofvs: ofvs("9", "3") }));
+    expect((await promoteObservations(conn)).samplesMinted).toBe(0);
     expect(await one("SELECT sample_number, observation_sample_number FROM sample_observation_number_mismatch"))
-      .toEqual(["7", "8"]);
+      .toEqual(["8", "9"]);
   });
 
   test("a trap sample matched on two of its days links once, to the lowest observation id", async () => {
@@ -294,6 +303,8 @@ describe("reconciling against samples the store already holds", () => {
       date_start: "DATE '2026-07-10'",
       date_end: "DATE '2026-07-14'",
     });
+    // Printed, as the dev store's two are: imported, their labels on pins.
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${sampleId}, 1, '19000001')`);
     await stage(obs(30587701, { observed_on: "2026-07-14" }));
     await stage(obs(30494816, { observed_on: "2026-07-10" }));
 
@@ -309,52 +320,45 @@ describe("reconciling against samples the store already holds", () => {
     expect(await one(`SELECT inat_observation_id FROM sample WHERE entity_id = ${sampleId}`))
       .toEqual([30494816n]);
     // The day it did not take is not lost, and not minted into a second
-    // sample either: it is named, and since two observations claim one sample
-    // number, the collector is told (Peter, 2026-10-04, beeline-0199).
+    // sample either: the sample is printed, so its specimens may be on pins
+    // already, and minting beside it could label them twice (beeline-0199).
+    // It is named, and since the pins carry the number for good nothing asks.
     expect(await one("SELECT sample_id, cited_inat_id, other_observations FROM sample_multi_observation"))
       .toEqual([sampleId, 30494816n, 1]);
-    expect(await one(`SELECT rule_name, details FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'duplicate_sample_number'`))
-      .toEqual(["duplicate_sample_number", "sample number 7 is on 2 observations: 30494816, 30587701; keep 30494816, the one this sample cites"]);
+    expect(await one(`SELECT details FROM sample_number_conflict WHERE sample_id = ${sampleId}`))
+      .toEqual(["sample number 7 is on 2 observations: 30494816, 30587701"]);
+    expect(await count(`SELECT count(*) FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'duplicate_sample_number'`)).toBe(0);
     // And a second pass changes nothing, rather than swapping the citation.
     expect((await promoteObservations(conn)).freeLinks).toBe(0);
     expect(await one(`SELECT inat_observation_id FROM sample WHERE entity_id = ${sampleId}`))
       .toEqual([30494816n]);
   });
 
-  test("several observations claiming one sample number make one sample, counting them all, and the collector is told", async () => {
+  test("two observations claiming one sample number are two samples, the collector is told, and renumbering either clears it", async () => {
+    // One observation is one sample (Peter, 2026-10-04, beeline-0199): two
+    // carrying one number are two samples with that number — the collector's
+    // error, shown rather than merged into one sample counting both.
     await stage(obs(12, { ofvs: ofvs("7", "3") }));
     await stage(obs(9, { ofvs: ofvs("7", "5") }));
-    expect((await promoteObservations(conn)).samplesMinted).toBe(1);
-    // It cites the lowest id — arbitrary but stable, as legacy_sample_map's
-    // arg_min is — and its count is the total.
-    const [sampleId] = (await one("SELECT entity_id, inat_observation_id, specimen_count FROM sample")) as [number];
-    expect(await one("SELECT inat_observation_id, specimen_count FROM sample")).toEqual([9n, 8]);
-    // A scalar link cannot say the rest, so qc_rule_count_mismatch compares 8
-    // against the cited observation's 5 and reports a disagreement in which
-    // both sides are right. This is the view that explains it.
-    expect(await one("SELECT rule_name, details FROM qc_finding WHERE rule_name = 'count_mismatch'"))
-      .toEqual(["count_mismatch", "observation says 5 but sample count is 8"]);
-    expect(await one("SELECT sample_id, cited_inat_id, other_observations FROM sample_multi_observation"))
-      .toEqual([sampleId, 9n, 1]);
-    // Several observations claiming one sample number is the collector's
-    // error (Peter, 2026-10-04, beeline-0199). Nothing is printed yet, so the
-    // fix is theirs, and it blocks printing until then. The flag says which
-    // to keep: the one the sample cites, since that one, renumbered, would be
-    // stranded — cited, it is never minted again.
-    const held = `SELECT rule_name, details FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name LIKE '%sample_number%'`;
-    expect(await rows(conn, held))
-      .toEqual([["duplicate_sample_number", "sample number 7 is on 2 observations: 9, 12; keep 9, the one this sample cites"]]);
-    // The volunteer renumbers the other. It becomes its own sample on the
-    // next promotion and the block clears; the first sample's count still
-    // includes it, which count_mismatch says as for any count that changes
-    // before printing, and staff carry across.
-    await stage(obs(12, { ofvs: ofvs("8", "3") }));
-    expect((await promoteObservations(conn)).samplesMinted).toBe(1);
+    expect((await promoteObservations(conn)).samplesMinted).toBe(2);
+    expect(await rows(conn, `SELECT inat_observation_id, sample_number, specimen_count FROM sample ORDER BY 1`))
+      .toEqual([[9n, "7", 5], [12n, "7", 3]]);
+    // Nothing is printed yet, so both are blocked until the volunteer fixes it.
+    const held = `SELECT s.inat_observation_id, f.details FROM qc_finding f JOIN sample s ON s.entity_id = f.sample_id
+                  WHERE f.rule_name = 'duplicate_sample_number' ORDER BY 1`;
+    expect(await rows(conn, held)).toEqual([
+      [9n, expect.stringContaining("sample number 7 used 2 times")],
+      [12n, expect.stringContaining("sample number 7 used 2 times")],
+    ]);
+    // Each count is its own observation's, so nothing disagrees about counts.
+    expect(await count("SELECT count(*) FROM qc_finding WHERE rule_name = 'count_mismatch'")).toBe(0);
+    // The volunteer renumbers one on iNaturalist; until labels print, its
+    // sample follows, and the next promotion clears both. Either one works:
+    // each observation has a sample of its own.
+    await stage(obs(9, { ofvs: ofvs("8", "5") }));
+    expect((await promoteObservations(conn)).samplesMinted).toBe(0);
+    expect(await rows(conn, `SELECT inat_observation_id, sample_number FROM sample ORDER BY 1`)).toEqual([[9n, "8"], [12n, "7"]]);
     expect(await rows(conn, held)).toEqual([]);
-    expect(await rows(conn, `SELECT sample_number, specimen_count, inat_observation_id FROM sample ORDER BY sample_number`))
-      .toEqual([["7", 8, 9n], ["8", 3, 12n]]);
-    expect(await rows(conn, `SELECT details FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'count_mismatch'`))
-      .toEqual([["observation says 5 but sample count is 8"]]);
   });
 
   test("an observation another sample cites is not a claim on this one", async () => {

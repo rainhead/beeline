@@ -411,30 +411,23 @@ describe("QC findings and printability", () => {
     expect(await isPrintable(a)).toBe(false);
   });
 
-  test("a printed sample several observations claim is for staff, not the volunteer", async () => {
-    // The legacy shape (beeline-0199): records from two observations merged
-    // into one sample and printed, each pin with its own observation's place.
-    // An imported specimen is printed (printed_sample), so renumbering on
-    // iNaturalist is no longer the fix and the flag says so.
-    const a = await insertCleanSample(conn);
-    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${a}, 1, '26000001')`);
-    await conn.run(`INSERT INTO sample_legacy_observation VALUES (${a}, 372516130), (${a}, 397257272)`);
-    expect(await findings(a)).toEqual([
-      { rule: "shared_sample_number_printed", details: "sample number 1 is on 2 observations: 372516130, 397257272" },
-    ]);
-    // One observation is the rule, and says nothing.
+  test("a printed sample whose number its collector used twice is named, and flagged nowhere", async () => {
+    // Peter, 2026-10-04 (beeline-0199): the pins carry the number for good and
+    // there is nothing left for anyone to do. Both shapes: a legacy sample
+    // whose records came from two observations, and two printed samples
+    // sharing a collector, number and date.
+    const merged = await insertCleanSample(conn);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${merged}, 1, '26000001')`);
+    await conn.run(`INSERT INTO sample_legacy_observation VALUES (${merged}, 372516130), (${merged}, 397257272)`);
+    const a = await insertCleanSample(conn, { sample_number: "'2'" });
     const b = await insertCleanSample(conn, { sample_number: "'2'" });
-    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${b}, 1, '26000002')`);
-    await conn.run(`INSERT INTO sample_legacy_observation VALUES (${b}, 372516131)`);
-    expect(await findings(b)).toEqual([]);
-  });
-
-  test("two printed samples sharing a number are for staff too", async () => {
-    const a = await insertCleanSample(conn);
-    const b = await insertCleanSample(conn); // same collector, day, and number '1'
-    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${a}, 1, '26000001'), (${b}, 1, '26000002')`);
-    expect(await findings(a)).toEqual([{ rule: "shared_sample_number_printed", details: expect.stringContaining("used 2 times") }]);
-    expect(await findings(b)).toEqual([{ rule: "shared_sample_number_printed", details: expect.stringContaining("used 2 times") }]);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${a}, 1, '26000002'), (${b}, 1, '26000003')`);
+    for (const id of [merged, a, b]) expect(await findings(id)).toEqual([]);
+    expect(await rows(conn, `SELECT sample_id, details FROM sample_number_conflict ORDER BY sample_id`)).toEqual([
+      [merged, "sample number 1 is on 2 observations: 372516130, 397257272"],
+      [a, expect.stringContaining("sample number 2 used 2 times")],
+      [b, expect.stringContaining("sample number 2 used 2 times")],
+    ]);
   });
 
   test("zero-count samples are not printable even when clean", async () => {

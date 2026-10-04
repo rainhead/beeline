@@ -48,12 +48,11 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   // One row per promoted staged occurrence with its sample's finding rules.
   await conn.run(`
     CREATE OR REPLACE TEMP VIEW reconcile_base AS
-    SELECT r._id, r.errorFlags, sm2.sample_id
+    SELECT r._id, r.errorFlags, n.sample_id
     FROM legacy_promotable r
-    JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
-    JOIN legacy_sample_map sm2
-      ON sm2.person_id = m.person_id AND sm2.sid = r.sid
-     AND sm2.p_date_start IS NOT DISTINCT FROM r.p_date_start
+    -- Each promoted row's own sample, which since beeline-0199 can be one of
+    -- several sharing a collector, number and date.
+    JOIN legacy_specimen_number n ON n._id = r._id
   `);
 
   console.log("rule-by-rule agreement (rows: promoted staged occurrences)\n");

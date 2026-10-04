@@ -71,8 +71,8 @@ without saying what they are, and no assumption the reader has the repo checked 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature
 requests; `/triage` reads this flag.)_
 
-Note that PRs are reviewed by CodeRabbit and are the way all code lands
-([AGENTS.md](../../AGENTS.md#git-authority)); that is a review surface, not a request one.
+Note that PRs are the way all code lands ([AGENTS.md](../../AGENTS.md#git-authority));
+that is a review surface, not a request one.
 
 ## When a skill says "publish to the issue tracker"
 

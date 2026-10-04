@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
 import { compareLegacyExport, DIFFERENCE_KIND_SQL, seasonDate, writeDifferences } from "../src/compare-legacy-export.js";
-import { parseRulings, RULING_COLUMNS, type Ruling } from "../src/legacy-export-rulings.js";
+import { parseRulings, readRulings, RULING_COLUMNS, type Ruling } from "../src/legacy-export-rulings.js";
 import { writeLegacyExport } from "../src/legacy-export.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
@@ -97,6 +97,11 @@ describe("the rulings file", () => {
 
   test("refuses the same column, kind and record ruled on twice", () => {
     expect(() => parseRulings(`${header}\n${row()}\n${row({ reason: "again" })}\n`, "t")).toThrow("twice");
+  });
+
+  test("the checked-in rulings are all well formed", async () => {
+    // Written by hand, so a typo would otherwise surface only on the next comparison.
+    expect((await readRulings(new URL("../ingest/legacy-export-rulings.csv", import.meta.url).pathname)).length).toBeGreaterThan(0);
   });
 });
 
@@ -217,6 +222,17 @@ describe("what the store knows about a difference", () => {
        SELECT sample_id, 'within_sample_disagreement', 'locality: Here | Somewhere else' FROM specimen WHERE field_number = '25000002'`,
     );
     await conn.run(`UPDATE legacy_occurrence SET locality = 'Somewhere else' WHERE "fieldNumber" = '25000002'`);
+    // Misspelt names the alias file corrects, a genus and a species, and one it does not.
+    await conn.run(`INSERT INTO legacy_taxon_alias (rank, alias, name, basis) VALUES
+      ('genus', 'Bommbus', 'Bombus', 'test'), ('species', 'Bombus vosnesenski', 'Bombus vosnesenskii', 'test')`);
+    await conn.run(`UPDATE legacy_occurrence SET "genusVolDet" = 'Bommbus' WHERE "fieldNumber" = '25000002'`);
+    await conn.run(`UPDATE legacy_occurrence SET "specificEpithet" = 'vosnesenski' WHERE "fieldNumber" = '25000001'`);
+    await conn.run(`UPDATE legacy_occurrence SET "genusVolDet" = 'Bumbus' WHERE "fieldNumber" = '25000005'`);
+    // A genus column holding only the subgenus, as '(Peponapis)' does on the sandbox.
+    await conn.run(`INSERT INTO animal (parent_id, rank, scientific_name)
+      SELECT entity_id, 'subgenus', 'Lasioglossum (Dialictus)' FROM animal WHERE rank = 'genus' AND scientific_name = 'Lasioglossum'
+        AND NOT EXISTS (SELECT 1 FROM animal WHERE scientific_name = 'Lasioglossum (Dialictus)')`);
+    await conn.run(`UPDATE legacy_occurrence SET genus = '(Dialictus)' WHERE "fieldNumber" = '25000009'`);
   });
 
   test("labels each difference the store can account for, and leaves the rest as changed", async () => {
@@ -228,11 +244,15 @@ describe("what the store knows about a difference", () => {
        WHERE (field_number IN ('25000001', '25000003') AND "column" IN ('recordedBy', 'firstName', 'lastName'))
           OR (field_number IN ('25000002', '25000005') AND "column" = 'userLogin')
           OR (field_number IN ('25000002', '25000003') AND "column" = 'locality')
+          OR (field_number IN ('25000001', '25000002', '25000005') AND "column" IN ('genusVolDet', 'specificEpithet'))
+          OR (field_number = '25000009' AND "column" = 'genus')
        ORDER BY 1, 2`,
     )).getRows();
     expect(kinds).toEqual([
       ["25000001", "lastName", "collector_alias"],
       ["25000001", "recordedBy", "collector_alias"],
+      ["25000001", "specificEpithet", "taxon_alias"],
+      ["25000002", "genusVolDet", "taxon_alias"],
       ["25000002", "locality", "changed"], // Beeline wrote neither of the values the rows disagreed between
       ["25000002", "userLogin", "login_renamed"],
       // The parts no longer spell the misspelled name, so the alias explains neither.
@@ -240,7 +260,9 @@ describe("what the store knows about a difference", () => {
       ["25000003", "lastName", "changed"],
       ["25000003", "locality", "sample_disagreement"],
       ["25000003", "recordedBy", "collector_alias"],
+      ["25000005", "genusVolDet", "changed"], // a misspelling nobody has curated
       ["25000005", "userLogin", "changed"], // another user id: not a rename
+      ["25000009", "genus", "subgenus_form"],
     ]);
   });
 });

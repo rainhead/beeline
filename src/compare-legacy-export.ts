@@ -278,6 +278,10 @@ const PLACE_FINDING_FIELD: Record<string, string> = {
  *   collector_alias      the legacy collector, spelled as ingest/collector-aliases.csv
  *                        corrects it, is who Beeline wrote — and the record's name
  *                        parts differ for the same reason
+ *   taxon_alias          the legacy genus or epithet is a misspelling
+ *                        ingest/taxon-aliases.csv corrects to what Beeline wrote
+ *   subgenus_form        (also from the values alone) a genus column holding only
+ *                        '(Peponapis)', exported as the genus the tree files it under
  *   login_renamed        both sides carry the same iNaturalist user id
  *   sample_disagreement  promotion found the legacy rows of this specimen's sample
  *                        disagreeing about this field, and the sample keeps one value
@@ -317,6 +321,32 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
       WHERE n.field_number = d.field_number AND n.spelled
         AND (d."column" IN ('firstName', 'lastName') OR (d."column" = 'firstNameInitial' AND n.initials_follow))`);
   }
+  // A genus spelled as an alias's written form and exported as its name; an
+  // epithet the same, read with the record's genus beside it, since a species
+  // alias names both (ingest/parse-names.sql).
+  if ((await one(conn, `SELECT count(*) FROM duckdb_tables() WHERE table_name = 'legacy_taxon_alias'`)) > 0) {
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'taxon_alias'
+      WHERE d.kind = 'changed' AND d."column" IN ('genus', 'genusVolDet')
+        AND EXISTS (SELECT 1 FROM legacy_taxon_alias a
+                    WHERE a.rank = 'genus' AND a.alias = trim(d.legacy) AND a.name = d.exported)`);
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'taxon_alias'
+      FROM cmp_pairs p, legacy_taxon_alias a
+      WHERE d.kind = 'changed' AND d."column" IN ('specificEpithet', 'speciesVolDet')
+        AND p."e_fieldNumber" = d.field_number AND a.rank = 'species'
+        AND a.alias = concat_ws(' ', trim(CASE d."column" WHEN 'specificEpithet' THEN p."l_genus" ELSE p."l_genusVolDet" END), trim(d.legacy))
+        AND a.name = concat_ws(' ', CASE d."column" WHEN 'specificEpithet' THEN p."e_genus" ELSE p."e_genusVolDet" END, d.exported)`);
+  }
+  // A genus column holding only a bracketed subgenus, '(Peponapis)', which
+  // promotion files under the genus the tree holds it in: the same form as
+  // 'Xenoglossa (Peponapis)', missing the half the values alone would show.
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'subgenus_form'
+    WHERE d.kind = 'changed' AND d."column" IN ('genus', 'genusVolDet')
+      AND regexp_full_match(trim(d.legacy), '\\([A-Z][a-z]+\\)')
+      AND EXISTS (SELECT 1 FROM animal a
+                  WHERE a.rank = 'subgenus' AND a.scientific_name = concat(d.exported, ' ', trim(d.legacy)))`);
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'login_renamed'
     WHERE d."column" = 'userLogin' AND d.kind = 'changed'

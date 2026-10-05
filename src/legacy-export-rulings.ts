@@ -46,8 +46,10 @@ export const VALUE_KINDS = [
   "number_form", // the same number written differently: 10 / 10.0
   "date_form", // the same date or range: VII / 7, 2018-5-17/2018-5-17 / 5/17/2018
   "country_code", // a three-letter code where the template has two: CAN / CA
+  "initial_form", // the same initials with or without their full stops: S / S.
   "collector_list_form", // the same collectors, one name each: Michael and Dan / Michael | Dan, O'Loughlin / O'Loughlin | O'Loughlin
   "collector_added", // the legacy record's collectors and more, the rest of its sample's: Maggie / Maggie | Henry
+  "name_spelling", // a collector's name spaced or punctuated another way: MaryJo Mosby / Mary Jo Mosby
   "subgenus_form", // the subgenus written inside or beside the name: Dialictus / Lasioglossum (Dialictus)
   "authorship", // the same name with or without its author and year: Halictus ligatus Say, 1837
   "changed",

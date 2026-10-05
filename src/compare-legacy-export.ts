@@ -144,12 +144,15 @@ export const DIFFERENCE_KIND_SQL = `CASE
   WHEN "column" IN (${list(DATE_COLUMNS)}) AND ${dateRange("exported")} = ${dateRange("legacy")} THEN 'date_form'
   WHEN "column" = 'country' AND length(legacy) = 3 AND length(exported) = 2
        AND upper(left(legacy, 2)) = upper(exported) THEN 'country_code'
+  WHEN "column" = 'firstNameInitial' AND replace(exported, '.', '') = replace(legacy, '.', '') THEN 'initial_form'
   WHEN "column" IN (${list(COLLECTOR_COLUMNS)}) AND (
          ${collectors("legacy")} = ${collectors("exported")}
       OR (len(${collectors("legacy")}) = 1 AND list_distinct(${collectors("exported")}) = ${collectors("legacy")})) THEN 'collector_list_form'
   WHEN "column" IN (${list(COLLECTOR_COLUMNS)})
        AND len(${collectors("exported")}) > len(${collectors("legacy")})
        AND list_has_all(${collectors("exported")}, ${collectors("legacy")}) THEN 'collector_added'
+  WHEN "column" IN (${list(COLLECTOR_COLUMNS)})
+       AND regexp_replace(lower(exported), '[^a-z0-9|]', '', 'g') = regexp_replace(lower(legacy), '[^a-z0-9|]', '', 'g') THEN 'name_spelling'
   WHEN "column" IN (${list(NAME_COLUMNS)}) AND (
          (${withoutSubgenus("exported")} = ${withoutSubgenus("legacy")} AND ${withoutSubgenus("exported")} <> '')
       OR (${subgenusOf("exported")} <> '' AND ${subgenusOf("exported")} = legacy)

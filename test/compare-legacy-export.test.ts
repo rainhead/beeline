@@ -52,6 +52,9 @@ describe("the kind of a difference", () => {
     ["scientificName", "Halictus ligatus", "Halictus ligatus Say, 1837", "authorship"],
     ["scientificName", "Lasioglossum titusi", "Lasioglossum titusi (Crawford, 1902)", "authorship"],
     // From the sandbox's comparison against the 2026-10-04 pull.
+    ["firstNameInitial", "S.", "S", "initial_form"],
+    ["firstNameInitial", "A.", "AC", "changed"],
+    ["recordedBy", "Mary Jo Mosby", "MaryJo Mosby", "name_spelling"],
     ["firstName", "Michael | Dan", "Michael and Dan", "collector_list_form"],
     ["firstNameInitial", "S. | S.", "S./S.", "collector_list_form"],
     ["lastName", "Sheehy | Malaby", "Sheehy&Malaby", "collector_list_form"],

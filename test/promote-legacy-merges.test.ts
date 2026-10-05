@@ -235,7 +235,9 @@ describe("legacy rows that merge into one sample", () => {
       `SELECT display_name, given_name, family_name FROM person ORDER BY display_name`,
     );
     expect(parts).toEqual([
-      ["Ada Collector", null, null], // named only inside a joint recordedBy
+      // Named only inside a joint recordedBy, whose columns 'Bea and Ada' /
+      // 'Trapper/Collector' are a list in its order (legacy_name_list).
+      ["Ada Collector", "Ada", "Collector"],
       ["Bea Trapper", "Bea", "Trapper"],
       ["Cy Ambiguous", "Cy", "Ambiguous"],
       ["Dot Other", null, null],

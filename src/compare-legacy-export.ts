@@ -400,11 +400,15 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
     WHERE d.kind = 'changed' AND d."column" IN (${list(COLLECTOR_COLUMNS)})
       AND list_sort(${collectors("d.exported")}) = list_sort(${collectors("d.legacy")})
       AND EXISTS (
-        SELECT 1 FROM specimen sp
+        -- Another row of the same sample lists the collectors in the order
+        -- written here, so the order is the sample's own, not an invented one.
+        SELECT 1 FROM cmp_pairs p
+        JOIN specimen sp ON sp.field_number = p."e_fieldNumber"
         JOIN legacy_specimen_number n ON n.sample_id = sp.sample_id
         JOIN legacy_occurrence o ON o._id = n._id
-        WHERE sp.field_number = d.field_number
-        GROUP BY sp.sample_id HAVING count(DISTINCT lower(o."recordedBy")) > 1)`);
+        WHERE p."e_fieldNumber" = d.field_number
+          AND lower(o."recordedBy") = lower(p."e_recordedBy")
+          AND lower(p."l_recordedBy") <> lower(p."e_recordedBy"))`);
   // An initial the legacy record took from the family name: Alyssa Tollefson as T.
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'initial_from_surname'

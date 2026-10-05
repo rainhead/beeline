@@ -401,7 +401,9 @@ The `legacy-export` job writes every specimen as the legacy system's
 occurrences file at 4am Pacific, to `data/exports/occurrences.csv` (config
 `exportsDir`, `BEELINE_EXPORTS`), and admins download it from `/exports`
 (beeline-6q8). It is regenerable, so the backup below leaves it out. To write
-it now, press Run now on `legacy-export` at `/jobs`. To check how close it is
+it now, press Run now on `legacy-export` at `/jobs`. It runs on one thread
+whoever starts it, the job or `pnpm legacy:export`: on two it needs more than
+the 1 GB DuckDB is given here (beeline-1w2d). To check how close it is
 to what the legacy system held, run `pnpm legacy:compare-export` against a
 copy of the store — it needs the staged legacy records, which a reseeded
 store carries. It reports only the differences

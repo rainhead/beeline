@@ -396,7 +396,7 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
   }
   // A legacy record that contradicts itself about its pair's order: its name
   // columns list them in the order Beeline wrote and its recordedBy in the
-  // other ("Dan | Michael" beside "Michael | Dan"), so no order matches it.
+  // other ("B | A" beside "A | B"), so no order matches it.
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'collector_order_contradicted'
     WHERE d.kind = 'changed' AND d."column" = 'recordedBy'
@@ -404,7 +404,7 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
       AND EXISTS (SELECT 1 FROM cmp_pairs p
                   WHERE p."e_fieldNumber" = d.field_number AND len(${collectors('p."e_firstName"')}) > 1
                     AND ${collectors('p."l_firstName"')} = ${collectors('p."e_firstName"')})`);
-  // An initial the legacy record took from the family name: Alyssa Tollefson as T.
+  // An initial the legacy record took from the family name: T. for an A.
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'initial_from_surname'
     WHERE d.kind = 'changed' AND d."column" = 'firstNameInitial'
@@ -413,8 +413,8 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
                     AND p."l_firstNameInitial" = concat(upper(left(trim(p."l_lastName"), 1)), '.')
                     AND p."l_firstNameInitial" <> concat(upper(left(trim(p."l_firstName"), 1)), '.')
                     AND d.exported = concat(upper(left(trim(p."e_firstName"), 1)), '.'))`);
-  // The initials a person's label name gives (J.M. Benitez Alvarez), or the
-  // derived one beside a label name printed as written (AC Quinn).
+  // The initials a person's label name gives (J.M. of a label name in that
+  // form), or the derived one beside a label name printed as written (AC).
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'label_name'
     WHERE d.kind IN ('changed', 'collector_alias') AND d."column" = 'firstNameInitial'
@@ -423,10 +423,10 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
                   JOIN person p ON p.entity_id = pc.person_id
                   WHERE sp.field_number = d.field_number AND nullif(trim(p.label_name), '') IS NOT NULL
                     AND (
-                      -- The initials the label name gives: J.M. of J.M. Benitez Alvarez.
+                      -- The initials the label name gives: J.M. of 'J.M. Family'.
                       (nullif(regexp_extract(trim(p.label_name), '^((?:\\p{Lu}\\.)+) ', 1), '') = d.exported)
                       -- Or a label name printed as written, whose initials the legacy
-                      -- record kept whole (AC of AC Quinn) beside the derived one.
+                      -- record kept whole (AC of 'AC Family') beside the derived one.
                       OR (d.exported = concat(upper(left(trim(p.given_name), 1)), '.')
                           AND d.legacy = split_part(trim(p.label_name), ' ', 1))))`);
   // An identification the legacy system never received: the specimen's

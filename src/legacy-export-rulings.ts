@@ -47,15 +47,19 @@ export const VALUE_KINDS = [
   "date_form", // the same date or range: VII / 7, 2018-5-17/2018-5-17 / 5/17/2018
   "country_code", // a three-letter code where the template has two: CAN / CA
   "initial_form", // the same initials with or without their full stops: S / S.
-  "collector_list_form", // the same collectors, one name each: Michael and Dan / Michael | Dan, O'Loughlin / O'Loughlin | O'Loughlin
-  "collector_added", // the legacy record's collectors and more, the rest of its sample's: Maggie / Maggie | Henry
-  "name_spelling", // a collector's name spaced or punctuated another way: MaryJo Mosby / Mary Jo Mosby
+  "collector_list_form", // the same collectors, one name each: Ada and Bea / Ada | Bea, Collector / Collector | Collector
+  "collector_added", // the legacy record's collectors and more, the rest of its sample's: Ada / Ada | Bea
+  "name_spelling", // a collector's name spaced or punctuated another way: MaryAnn / Mary Ann
   "subgenus_form", // the subgenus written inside or beside the name: Dialictus / Lasioglossum (Dialictus)
   "authorship", // the same name with or without its author and year: Halictus ligatus Say, 1837
   "morphospecies", // a morphospecies the tree cannot hold, written as its genus: Melissodes sp.1 / Melissodes
   "changed",
   "collector_alias", // the legacy spelling of a collector, corrected in ingest/collector-aliases.csv: Brendon / Brendan
   "taxon_alias", // a misspelt genus or epithet, corrected in ingest/taxon-aliases.csv: Agopostemon / Agapostemon
+  "staff_correction", // the legacy row as staff corrected it: Kennedy Rd. / Caledon
+  "collector_order_contradicted", // a record whose recordedBy and name columns list its pair in opposite orders
+  "initial_from_surname", // an initial taken from the family name: T. for an A.
+  "label_name", // the initials a label name gives: J. / J.M.
   "newer_determination", // an expert identification from Ecdysis or Beeline, newer than the legacy record's
   "one_day_range", // an end the legacy record wrote on its start day: 2018-7-26/2018-7-26
   "login_renamed", // the same iNaturalist user id under another login

@@ -366,10 +366,10 @@ describe("the legacy name register", () => {
 });
 
 describe("a joint row whose name columns are a list", () => {
-  // Synthetic, in shapes on the sandbox: the O'Loughlins' columns read
-  // 'Michael | Dan' / "O'Loughlin" and their rows name Michael first on some
-  // samples and Dan first on others; Charles Schelz collected only ever beside
-  // Judith Maxwell, as 'Charles | Judith' / 'Schelz | Maxwell'.
+  // Synthetic, in shapes on the sandbox: one household pair's columns name
+  // them in one order and their rows name either first, sample by sample; and
+  // a collector who only ever collected beside one other person, written
+  // 'First | First' / 'Family | Family'.
   let c: DuckDBConnection;
   beforeAll(async () => {
     ({ conn: c } = await createMemoryDb());

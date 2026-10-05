@@ -283,8 +283,8 @@ CREATE OR REPLACE MACRO legacy_name_key(n) AS
   regexp_replace(lower(n), '[^a-z0-9]', '', 'g');
 
 -- A joint row's name columns, as the list they are in recordedBy order. The
--- entry form let a pair be written any way: 'Michael | Dan', 'Michael and
--- Dan', 'Steve/Sarah', 'Sheehy&Malaby', 'Jan/ Walt'. 'and' only as a word, in
+-- entry form let a pair be written any way: 'Ada | Bea', 'Ada and Bea',
+-- 'Ada/Bea', 'Collector&Trapper', 'Ada/ Bea'. 'and' only as a word, in
 -- any case, so no name is cut inside ('Alexander', 'Anderson').
 CREATE OR REPLACE MACRO legacy_name_list(s) AS
   list_transform(regexp_split_to_array(s, '\s*(\||/|&|\b(?i:and)\b)\s*'), x -> trim(x));
@@ -450,9 +450,9 @@ GROUP BY person_id;
 -- family name, which cannot be recovered from a joined display name
 -- (Van Otterloo, Benitez Alvarez). See src/person-name.ts.
 -- A joint row parts its names too, its columns being a list in recordedBy
--- order however the pair was written (legacy_name_list) — 'Charles | Judith'
--- / 'Schelz | Maxwell', 'Jan/ Walt' / 'Ochsner/ Stahlnecker', or one shared
--- family name, 'Michael and Dan' / 'O''Loughlin' — read by position, behind
+-- order however the pair was written (legacy_name_list) — 'Ada | Bea' /
+-- 'Collector | Trapper', 'Ada/ Bea' / 'Collector/ Trapper', or one shared
+-- family name, 'Ada and Bea' / 'Collector' — read by position, behind
 -- any solo row. Only solo rows used to count, so 9 of the 10 people who only
 -- ever collected beside somebody had NULL parts, and the legacy export
 -- blanked their half of the name columns on the 691 records they collected.
@@ -572,10 +572,10 @@ WHERE s.login IN (SELECT login FROM standalone GROUP BY login HAVING count(*) > 
 -- spelled 'Amy GRotta'. The pair's own name columns break the tie, and plain
 -- name order breaks it when none matches, so the choice is deterministic;
 -- the person not chosen still exists and still lands in sample_collector.
--- On a joint row the columns name both, 'Michael | Dan' / 'O''Loughlin', so
+-- On a joint row the columns name both, 'Ada | Bea' / 'Collector', so
 -- it is the first name in them that breaks the tie. Matching the whole
 -- columns never matched a joint pair, so name order made Dan the primary of
--- 71 samples whose every row lists Michael first, and the export wrote their
+-- 71 samples whose every row lists the other first, and the export wrote their
 -- 1,934 records in the reverse order to the legacy file's.
 CREATE TABLE legacy_person_map AS
 SELECT fn, ln, person_id FROM (

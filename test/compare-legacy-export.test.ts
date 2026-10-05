@@ -44,6 +44,7 @@ describe("the kind of a difference", () => {
     ["month", "6", "VI", "date_form"],
     ["verbatimEventDate", "2022-6-26/2022-7-29", "2022-VI-26/2022-VII-29", "date_form"],
     ["verbatimEventDate", "5/17/2018", "2018-5-17/2018-5-17", "date_form"],
+    ["verbatimEventDate", "8/25/2024", "VIII/25/2024", "date_form"], // from the sandbox, 2026-10-04
     ["verbatimEventDate", "2020-4-28/2020-4-29", "2020-4-28/2020-4-28", "changed"],
     ["country", "CA", "CAN", "country_code"],
     ["country", "USA", "CAN", "changed"],
@@ -51,22 +52,22 @@ describe("the kind of a difference", () => {
     ["genus", "Lasioglossum", "Lasioglossum (Dialictus)", "subgenus_form"],
     ["scientificName", "Halictus ligatus", "Halictus ligatus Say, 1837", "authorship"],
     ["scientificName", "Lasioglossum titusi", "Lasioglossum titusi (Crawford, 1902)", "authorship"],
-    // From the sandbox's comparison against the 2026-10-04 pull.
+    // In the shapes of the sandbox's comparison against the 2026-10-04 pull, names invented.
     ["firstNameInitial", "S.", "S", "initial_form"],
     ["firstNameInitial", "A.", "AC", "changed"],
-    ["recordedBy", "Mary Jo Mosby", "MaryJo Mosby", "name_spelling"],
-    ["firstName", "Michael | Dan", "Michael and Dan", "collector_list_form"],
+    ["recordedBy", "Mary Ann Collector", "MaryAnn Collector", "name_spelling"],
+    ["firstName", "Ada | Bea", "Ada and Bea", "collector_list_form"],
     ["firstNameInitial", "S. | S.", "S./S.", "collector_list_form"],
-    ["lastName", "Sheehy | Malaby", "Sheehy&Malaby", "collector_list_form"],
-    ["lastName", "O'Loughlin | O'Loughlin", "O'Loughlin", "collector_list_form"],
-    ["lastName", "Best | Herrmann | Melathopoulos | Seitz", "Best| Herrmann | Melathopoulos | Seitz", "collector_list_form"],
-    ["recordedBy", "Maggie Graham | Henry Whitridge", "Maggie Graham", "collector_added"],
-    ["firstName", "Dan | Michael", "Michael | Dan", "changed"],
+    ["lastName", "Collector | Trapper", "Collector&Trapper", "collector_list_form"],
+    ["lastName", "Collector | Collector", "Collector", "collector_list_form"],
+    ["lastName", "Collector | Trapper | Helper | Other", "Collector| Trapper | Helper | Other", "collector_list_form"],
+    ["recordedBy", "Ada Collector | Bea Trapper", "Ada Collector", "collector_added"],
+    ["firstName", "Bea | Ada", "Ada | Bea", "changed"],
     ["lastName", "Anderson", "Anders", "changed"], // synthetic: 'and' inside a name splits nothing
     ["scientificName", "Melissodes", "Melissodes sp.1", "morphospecies"],
     ["scientificName", "Lasioglossum (Dialictus)", "Lasioglossum  sp.1", "morphospecies"],
     ["scientificName", "Melissodes microstictus", "Melissodes sp.1", "changed"], // synthetic: a species is not the morphospecies
-    ["firstName", "Michael | Dan", "Michael And Dan", "collector_list_form"], // synthetic
+    ["firstName", "Ada | Bea", "Ada And Bea", "collector_list_form"], // synthetic
     ["verbatimElevation", "61", "65", "changed"],
     ["stateProvince", "WA", "OR", "changed"],
   ];
@@ -219,6 +220,8 @@ describe("what the store knows about a difference", () => {
     await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, is_expert, channel)
       SELECT sp.entity_id, a.entity_id, 'Bombus vosnesenskii', true, 'ecdysis_import'
       FROM specimen sp, animal a WHERE sp.field_number = '25000005' AND a.scientific_name = 'Bombus vosnesenskii'`);
+    // A label name in the register's initials form, as one collector's J.M.
+    await conn.run(`UPDATE person SET label_name = 'A.D. Collector' WHERE display_name = 'Ada Collector'`);
     dir = await mkdtemp(join(tmpdir(), "compare-store-"));
     exportPath = join(dir, "occurrences.csv");
     await writeLegacyExport(conn, exportPath);
@@ -253,6 +256,26 @@ describe("what the store knows about a difference", () => {
       SELECT entity_id, 'subgenus', 'Lasioglossum (Dialictus)' FROM animal WHERE rank = 'genus' AND scientific_name = 'Lasioglossum'
         AND NOT EXISTS (SELECT 1 FROM animal WHERE scientific_name = 'Lasioglossum (Dialictus)')`);
     await conn.run(`UPDATE legacy_occurrence SET genus = '(Dialictus)' WHERE "fieldNumber" = '25000009'`);
+    // An initial taken from the family name, as the sandbox's T. for an A.
+    await conn.run(`UPDATE legacy_occurrence SET "firstNameInitial" = 'T.' WHERE "fieldNumber" = '25000002'`);
+    // A staff correction to the place, as Caledon's on the sandbox: the row as
+    // staged says one thing, the correction what Beeline wrote.
+    await conn.run(`UPDATE legacy_occurrence SET locality = 'Kennedy Rd.' WHERE "fieldNumber" = '25000005'`);
+    await conn.run(`INSERT INTO legacy_correction (_id, field, base_value, new_value, author, reason)
+      SELECT o._id, 'locality', 'Kennedy Rd.', s.locality, 'test', 'test'
+      FROM legacy_occurrence o JOIN specimen sp ON sp.field_number = o."fieldNumber" JOIN sample s ON s.entity_id = sp.sample_id
+      WHERE o."fieldNumber" = '25000005'`);
+    // And a correction elsewhere whose value is what 25000003 exports: it
+    // explains 25000005's difference, never 25000003's.
+    await conn.run(`UPDATE legacy_occurrence SET "stateProvince" = 'Wrong' WHERE "fieldNumber" = '25000003'`);
+    await conn.run(`UPDATE legacy_occurrence SET "stateProvince" = 'Also wrong' WHERE "fieldNumber" = '25000005'`);
+    await conn.run(`INSERT INTO legacy_correction (_id, field, base_value, new_value, author, reason)
+      SELECT o._id, 'stateProvince', 'Also wrong', (SELECT s.state_province FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id
+                                             WHERE sp.field_number = '25000003'), 'test', 'test'
+      FROM legacy_occurrence o WHERE o."fieldNumber" = '25000005'`);
+    // A record whose recordedBy lists its pair the other way round from its own
+    // name columns, as 1,362 of one household pair's do.
+    await conn.run(`UPDATE legacy_occurrence SET "recordedBy" = 'Ada Collector | Bea Trapper' WHERE "fieldNumber" = '25000005'`);
     // A one-day collection written as a range ending on its start, as the 2018 records are.
     await conn.run(`UPDATE legacy_occurrence SET year2 = "year", month2 = "month", day2 = "day" WHERE "fieldNumber" = '25000001'`);
   });
@@ -269,7 +292,9 @@ describe("what the store knows about a difference", () => {
           OR (field_number IN ('25000001', '25000002', '25000005') AND "column" IN ('genusVolDet', 'specificEpithet'))
           OR (field_number = '25000009' AND "column" = 'genus')
           OR (field_number = '25000001' AND "column" = 'day2')
-          OR (field_number = '25000005' AND "column" = 'scientificName')
+          OR (field_number = '25000005' AND "column" IN ('scientificName', 'locality', 'recordedBy'))
+          OR (field_number IN ('25000002', '25000009') AND "column" = 'firstNameInitial')
+          OR (field_number = '25000003' AND "column" = 'stateProvince')
        ORDER BY 1, 2`,
     )).getRows();
     expect(kinds).toEqual([
@@ -277,6 +302,7 @@ describe("what the store knows about a difference", () => {
       ["25000001", "lastName", "collector_alias"],
       ["25000001", "recordedBy", "collector_alias"],
       ["25000001", "specificEpithet", "taxon_alias"],
+      ["25000002", "firstNameInitial", "initial_from_surname"],
       ["25000002", "genusVolDet", "taxon_alias"],
       ["25000002", "locality", "changed"], // Beeline wrote neither of the values the rows disagreed between
       ["25000002", "userLogin", "login_renamed"],
@@ -285,10 +311,14 @@ describe("what the store knows about a difference", () => {
       ["25000003", "lastName", "changed"],
       ["25000003", "locality", "sample_disagreement"],
       ["25000003", "recordedBy", "collector_alias"],
+      ["25000003", "stateProvince", "changed"], // another record's correction is not this one's
       ["25000005", "genusVolDet", "changed"], // a misspelling nobody has curated
+      ["25000005", "locality", "staff_correction"],
+      ["25000005", "recordedBy", "collector_order_contradicted"],
       ["25000005", "scientificName", "newer_determination"],
       ["25000005", "specificEpithet", "newer_determination"],
       ["25000005", "userLogin", "changed"], // another user id: not a rename
+      ["25000009", "firstNameInitial", "label_name"],
       ["25000009", "genus", "subgenus_form"],
     ]);
   });

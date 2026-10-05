@@ -184,13 +184,14 @@ export function legacyExportSql(staging: Set<string> | null, rowSource: string |
 disagreeing AS (
   SELECT lsn.sample_id,
          ${ROW_FIELDS.map((f) => `count(DISTINCT coalesce(r."${f}", '')) > 1 AS "${f}"`).join(",\n         ")},
-         count(DISTINCT concat_ws('-', r."year2", r."month2", r."day2")) > 1 AS end_date
+         count(DISTINCT concat_ws('-', coalesce(r."year2", ''), coalesce(r."month2", ''), coalesce(r."day2", ''))) > 1 AS end_date
   FROM legacy_specimen_number lsn JOIN ${rowSource} r ON r._id = lsn._id
   GROUP BY lsn.sample_id
 )`
     : "";
   const rowJoins = rowSource
     ? `LEFT JOIN disagreeing dg ON dg.sample_id = sp.sample_id
+  LEFT JOIN sample_locality_override slo ON slo.sample_id = sp.sample_id
   LEFT JOIN (SELECT _id, ${[...ROW_FIELDS, ...END_FIELDS].map((f) => `CAST("${f}" AS VARCHAR) AS "${f}"`).join(", ")}
              FROM ${rowSource}) lr ON lr._id = lo._id`
     : "";
@@ -281,7 +282,8 @@ rows AS (
     ${t(ownRow('"country"', "country", "CASE s.country WHEN 'CAN' THEN 'CA' WHEN 'NZL' THEN 'NZ' WHEN 'MEX' THEN 'MX' ELSE s.country END"))} AS "country",
     ${t(ownRow('"stateProvince"', "stateProvince", "s.state_province"))} AS "stateProvince",
     ${t(ownRow('"county"', "county", "s.county"))} AS "county",
-    ${t(ownRow('"locality"', "locality", "s.locality"))} AS "locality",
+    -- A locality staff set on the sample is the sample's, whatever its rows said.
+    ${t(ownRow('"locality" AND slo.sample_id IS NULL', "locality", "s.locality"))} AS "locality",
     ${t(ofRowPoint("verbatimElevation", "loc.elevation_m", "loc.elevation_latitude", "loc.elevation_longitude"))} AS "verbatimElevation",
     ${t(coord("decimalLatitude", "loc.latitude"))} AS "decimalLatitude",
     ${t(coord("decimalLongitude", "loc.longitude"))} AS "decimalLongitude",

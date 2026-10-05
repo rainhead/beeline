@@ -419,10 +419,16 @@ GROUP BY person_id;
 
 -- Name parts survive promotion: a label prints the initial and the whole
 -- family name, which cannot be recovered from a joined display name
--- (Van Otterloo, Benitez Alvarez). See src/person-name.ts. Someone who only
--- ever appears inside a joint recordedBy has no parted name to take, and
--- keeps NULL parts — their label falls back to the full name.
--- ...and only where that one name is the pair's own: a pair whose recordedBy
+-- (Van Otterloo, Benitez Alvarez). See src/person-name.ts.
+-- A joint row parts its names too where its columns are a list in recordedBy
+-- order — 'Charles | Judith' / 'Schelz | Maxwell', or one shared family name,
+-- 'Michael | Dan' / 'O''Loughlin' — and are read by position, behind any solo
+-- row: 4 of the 10 people who only ever collected in a pair had NULL parts,
+-- so the legacy export blanked their half of the name columns on 394 records
+-- that say it. 'Bea and Ada' / 'Trapper/Collector' is not a list and parts
+-- nobody. Someone whose every row is like that keeps NULL parts, and their
+-- label falls back to the full name.
+-- ...and only where that one name is the row's own: a pair whose recordedBy
 -- names somebody else ('Mark Gorman' rows recorded by 'Pam Arion') would
 -- otherwise hand Pam the name parts off Mark's columns. The comparison is
 -- against what the row RECORDED, before aliasing — the alias says who the
@@ -435,17 +441,30 @@ GROUP BY person_id;
 -- the surviving name keeps the other spelling's parts — same initial, same
 -- family name, and ingest/person-overlay.csv for the rest.
 CREATE TABLE legacy_person_parts AS
+WITH listed AS (
+  SELECT c.*, string_split(c.fn, '|') AS fns, string_split(c.ln, '|') AS lns,
+         max(c.pos) OVER (PARTITION BY c.fn, c.ln) AS names_in_pair
+  FROM legacy_collector_name c
+),
+parted AS (
+  SELECT name, recorded_name, fn, ln, 0 AS joint
+  FROM listed WHERE names_in_pair = 1
+  UNION ALL
+  SELECT name, recorded_name, trim(fns[pos]), trim(CASE WHEN len(lns) = 1 THEN lns[1] ELSE lns[pos] END), 1
+  FROM listed
+  WHERE names_in_pair > 1 AND len(fns) = names_in_pair AND len(lns) IN (1, names_in_pair)
+)
 SELECT person_id, fn, ln FROM (
   SELECT n.person_id, c.fn, c.ln,
          row_number() OVER (
            PARTITION BY n.person_id
-           ORDER BY CASE WHEN legacy_name_key(concat_ws(' ', c.fn, c.ln))
+           ORDER BY c.joint,
+                    CASE WHEN legacy_name_key(concat_ws(' ', c.fn, c.ln))
                             = legacy_name_key(d.display_name) THEN 0 ELSE 1 END,
                     CASE WHEN c.name = d.display_name THEN 0 ELSE 1 END,
                     concat(c.fn, ' ', c.ln)
          ) AS rn
-  FROM legacy_collector_name c
-  JOIN legacy_solo_pair sp ON sp.fn IS NOT DISTINCT FROM c.fn AND sp.ln IS NOT DISTINCT FROM c.ln
+  FROM parted c
   JOIN legacy_person_name n ON n.name = c.name
   JOIN legacy_person_display d ON d.person_id = n.person_id
   WHERE legacy_name_key(c.recorded_name) = legacy_name_key(concat_ws(' ', c.fn, c.ln))

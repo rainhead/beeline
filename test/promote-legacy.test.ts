@@ -365,19 +365,42 @@ describe("the legacy name register", () => {
   });
 });
 
-describe("a pair written in both orders", () => {
-  // Synthetic, in the O'Loughlins' shape on the sandbox: the pair's columns
-  // read 'Michael | Dan' / "O'Loughlin", and its rows name Michael first on
-  // some samples and Dan first on others.
-  test("is led by the first name its own columns give, not by name order", async () => {
-    const { conn: c } = await createMemoryDb();
+describe("a joint row whose name columns are a list", () => {
+  // Synthetic, in shapes on the sandbox: the O'Loughlins' columns read
+  // 'Michael | Dan' / "O'Loughlin" and their rows name Michael first on some
+  // samples and Dan first on others; Charles Schelz collected only ever beside
+  // Judith Maxwell, as 'Charles | Judith' / 'Schelz | Maxwell'.
+  let c: DuckDBConnection;
+  beforeAll(async () => {
+    ({ conn: c } = await createMemoryDb());
     await loadLegacyStaging(c, FIXTURE);
     await c.run(`UPDATE legacy_occurrence SET "firstName" = 'Bea | Ada', "lastName" = 'Trapper | Collector'
                  WHERE "fieldNumber" = '25000005'`);
     await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('reordered' AS _id, '25000011' AS "fieldNumber",
                    'OBAS-00659' AS "sampleId", 'Ada Collector | Bea Trapper' AS "recordedBy")
                  FROM legacy_occurrence WHERE "fieldNumber" = '25000005'`);
+    await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('pair-only' AS _id, '25000012' AS "fieldNumber",
+                   'OBAS-00660' AS "sampleId", 'Bea Trapper | Cy Helper' AS "recordedBy",
+                   'Bea | Cy' AS "firstName", 'Trapper | Helper' AS "lastName")
+                 FROM legacy_occurrence WHERE "fieldNumber" = '25000005'`);
+    await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('shared-surname' AS _id, '25000013' AS "fieldNumber",
+                   'OBAS-00661' AS "sampleId", 'Bea Trapper | Dee Trapper' AS "recordedBy",
+                   'Bea | Dee' AS "firstName", 'Trapper' AS "lastName")
+                 FROM legacy_occurrence WHERE "fieldNumber" = '25000005'`);
     await promoteLegacy(c, FIXTURE_INPUTS);
+  });
+
+  test("parts a name that appears in no solo row by its position in the columns", async () => {
+    expect(await rows(c, `
+      SELECT display_name, given_name, family_name FROM person
+      WHERE display_name IN ('Bea Trapper', 'Cy Helper', 'Dee Trapper') ORDER BY 1`)).toEqual([
+      ["Bea Trapper", "Bea", "Trapper"], // her solo row, ahead of any pair's
+      ["Cy Helper", "Cy", "Helper"],
+      ["Dee Trapper", "Dee", "Trapper"], // one family name for the pair
+    ]);
+  });
+
+  test("is led by the first name its own columns give, not by name order", async () => {
     expect(await rows(c, `
       SELECT s.sample_number, string_agg(p.display_name, ' | ' ORDER BY sc.position)
       FROM sample s JOIN sample_collector sc ON sc.sample_id = s.entity_id JOIN person p ON p.entity_id = sc.person_id

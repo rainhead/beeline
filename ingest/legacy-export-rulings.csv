@@ -162,3 +162,14 @@ field_number,column,kind,outcome,reason,source,decided_by,decided_on
 ,scientificName,case,reference-wrong,"A genus is capitalised; the legacy record wrote it in lower case.","Peter, in review of the parallel run",Peter,2026-10-04
 ,genus,subgenus_form,expected,"The legacy record wrote a subgenus in the genus column; promotion reads a bracketed name as a subgenus wherever it is written, and the column carries the genus.","ingest/parse-names.sql (beeline-45v.2)",Peter,2026-10-04
 ,scientificName,subgenus_form,expected,"A determination to a subgenus is written with its genus, Lasioglossum (Dialictus), where the legacy record wrote the genus alone.","ingest/parse-names.sql (beeline-45v.2)",Peter,2026-10-04
+,verbatimElevation,filled,expected,"Derived from the elevation model at the record's own point, where the legacy record had none.","AGENTS.md, Ingestion, jobs, and elevation",Peter,2026-10-04
+,coordinateUncertaintyInMeters,filled,expected,"The sample's uncertainty at this same point, where the legacy record had none.","Peter, in review of the parallel run",Peter,2026-10-04
+,decimalLatitude,filled,expected,"The sample's point, where the legacy record had none.","Peter, in review of the parallel run",Peter,2026-10-04
+,decimalLongitude,filled,expected,"The sample's point, where the legacy record had none.","Peter, in review of the parallel run",Peter,2026-10-04
+,url,filled,expected,"The iNaturalist observation Beeline linked the sample to, where the legacy record had no link.","AGENTS.md, minting and free-linking (beeline-oyq)",Peter,2026-10-04
+,geoprivacy,filled,expected,"From the iNaturalist observation Beeline linked the sample to, where the legacy record had none.","Peter, in review of the parallel run",Peter,2026-10-04
+,(record),bad_date,reference-wrong,"The legacy record's date cannot be read, or its end precedes its start, so promotion refuses it.","ingest/promote-legacy.sql, legacy_promotion_finding",Peter,2026-10-04
+,(record),bad_specimen_number,reference-wrong,"The legacy record's specimen number is not a positive number, so promotion refuses it.","ingest/promote-legacy.sql, legacy_promotion_finding",Peter,2026-10-04
+,(record),missing_sample_number,reference-wrong,"The legacy record has no sample number, so promotion refuses it.","ingest/promote-legacy.sql, legacy_promotion_finding",Peter,2026-10-04
+,(record),missing_person,reference-wrong,"The legacy record names no collector, so promotion refuses it.","ingest/promote-legacy.sql, legacy_promotion_finding",Peter,2026-10-04
+,(record),duplicate_specimen,known-gap,"A record naming the same specimen of the same observation as a later print; whether the extra labels were pinned or discarded is not yet known.","beeline-bib1",Peter,2026-10-04

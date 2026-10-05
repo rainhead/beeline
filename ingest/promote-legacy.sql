@@ -179,27 +179,25 @@ FROM legacy_occurrence_corrected;
 -- observation only in such a group, as legacy_row_observation keys samples,
 -- so a group with one observation and some unlinked rows — the 2019–2021
 -- reprints whose older copy carries no link — still ranks as one specimen.
+-- A window rather than a join to the groups that split: promotion reads this
+-- view a dozen times over, and the join made each read six times slower,
+-- enough to spill 6.4 GiB on the sandbox's machine (2026-10-04).
 CREATE OR REPLACE VIEW legacy_ranked AS
-WITH linked AS (
-  SELECT *, CASE WHEN regexp_matches(url, '/observations/[0-9]+$') THEN p_inat_obs_id END AS obs_link
-  FROM legacy_parsed
-), several AS (
-  SELECT fn, ln, sid, p_date_start, true AS split
-  FROM linked
-  GROUP BY fn, ln, sid, p_date_start
-  HAVING count(DISTINCT obs_link) > 1
-)
-SELECT l.* EXCLUDE (obs_link),
+SELECT * EXCLUDE (obs_link, split),
   row_number() OVER (
-    PARTITION BY l.fn, l.ln, l.sid, l.p_date_start, l.p_specimen_number,
-                 CASE WHEN s.split THEN l.obs_link END
-    ORDER BY try_strptime(l.dateLabelPrint, '%d-%b-%y') DESC NULLS LAST,
-             l.fieldNumber DESC, l._id
+    PARTITION BY fn, ln, sid, p_date_start, p_specimen_number,
+                 CASE WHEN split THEN obs_link END
+    ORDER BY try_strptime(dateLabelPrint, '%d-%b-%y') DESC NULLS LAST,
+             fieldNumber DESC, _id
   ) AS dup_rank
-FROM linked l
-LEFT JOIN several s
-  ON s.fn IS NOT DISTINCT FROM l.fn AND s.ln IS NOT DISTINCT FROM l.ln
- AND s.sid IS NOT DISTINCT FROM l.sid AND s.p_date_start IS NOT DISTINCT FROM l.p_date_start;
+FROM (
+  SELECT *, min(obs_link) OVER g <> max(obs_link) OVER g AS split
+  FROM (
+    SELECT *, CASE WHEN regexp_matches(url, '/observations/[0-9]+$') THEN p_inat_obs_id END AS obs_link
+    FROM legacy_parsed
+  ) linked
+  WINDOW g AS (PARTITION BY fn, ln, sid, p_date_start)
+) grouped;
 
 -- ── Findings over staging ───────────────────────────────────────────────
 -- Keyed by Mongo _id: this is where problems live for rows that never

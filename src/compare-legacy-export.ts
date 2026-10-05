@@ -403,7 +403,11 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
       AND list_sort(${collectors("d.exported")}) = list_sort(${collectors("d.legacy")})
       AND EXISTS (SELECT 1 FROM cmp_pairs p
                   WHERE p."e_fieldNumber" = d.field_number AND len(${collectors('p."e_firstName"')}) > 1
-                    AND ${collectors('p."l_firstName"')} = ${collectors('p."e_firstName"')})`);
+                    AND ${collectors('p."l_firstName"')} = ${collectors('p."e_firstName"')}
+                    -- and the family names agree, written once for both where they share it
+                    AND (${collectors('p."l_lastName"')} = ${collectors('p."e_lastName"')}
+                         OR (len(${collectors('p."l_lastName"')}) = 1
+                             AND list_distinct(${collectors('p."e_lastName"')}) = ${collectors('p."l_lastName"')})))`);
   // An initial the legacy record took from the family name: T. for an A.
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'initial_from_surname'

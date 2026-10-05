@@ -421,6 +421,16 @@ describe("the Exports page", () => {
   });
 });
 
+describe("writing the export", () => {
+  test("leaves the instance's thread count as it found it", async () => {
+    // The CLI, which used to run on the machine's two and outgrew the budget (beeline-1w2d).
+    await conn.run("SET threads = 2");
+    await writeLegacyExport(conn, join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv"));
+    const [[threads]] = (await (await conn.run(`SELECT current_setting('threads')`)).getRows()) as [[bigint]];
+    expect(Number(threads)).toBe(2);
+  });
+});
+
 describe("the legacy-export job", () => {
   test("writes the file on one thread and puts the instance's thread count back", async () => {
     const { buildJobs } = await import("../src/app/jobs/registry.js");

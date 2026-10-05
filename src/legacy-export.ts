@@ -398,6 +398,15 @@ const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
  * whole corpus is ~160 MB, which the app has no business holding as strings),
  * then the BOM is put in front of it in a second file that replaces `path`
  * only once complete, so a reader never sees half an export.
+ *
+ * On one thread, whoever calls it. The join against the staged legacy records
+ * and the final sort are the export's memory, and DuckDB holds a share of
+ * both per thread: measured on a local copy of the sandbox's 2026-10-04 corpus, it
+ * needs about 830 MB on one thread and 1,150 MB on two, against the 1.5 GB
+ * fly.toml gives DuckDB on the sandbox, 1 GB until the two-thread CLI ran
+ * out (beeline-1w2d; 700 MB and 830 MB before #136 carried more of the
+ * legacy row). Under that budget one thread is no slower than two. threads
+ * is a setting of the whole instance, so it is put back however this ends.
  */
 export async function writeLegacyExport(conn: DuckDBConnection, path: string): Promise<{ rows: number; staged: boolean }> {
   await mkdir(dirname(path), { recursive: true });
@@ -411,6 +420,8 @@ export async function writeLegacyExport(conn: DuckDBConnection, path: string): P
         : "legacy_occurrence";
   const body = `${path}.body.tmp`;
   const whole = `${path}.tmp`;
+  const [[threads]] = (await (await conn.run(`SELECT current_setting('threads')`)).getRows()) as [[bigint | number]];
+  await conn.run("SET threads = 1");
   try {
     await conn.run(
       `COPY (${legacyExportSql(staging, rowSource)}) TO '${body.replaceAll("'", "''")}'
@@ -421,8 +432,12 @@ export async function writeLegacyExport(conn: DuckDBConnection, path: string): P
     await pipeline(createReadStream(body), out);
     await rename(whole, path);
   } finally {
-    await rm(body, { force: true });
-    await rm(whole, { force: true });
+    try {
+      await conn.run(`SET threads = ${Number(threads)}`);
+    } finally {
+      await rm(body, { force: true });
+      await rm(whole, { force: true });
+    }
   }
   const rows = await scalar(conn, "SELECT count(*) FROM specimen");
   return { rows, staged: staging !== null };

@@ -186,6 +186,50 @@ describe("the legacy-format export", () => {
     }
   });
 
+  test("writes the legacy row's subgenus while its determination is the record, and the model's after", async () => {
+    // Synthetic, in the shape of 2,427 sandbox records: a species the tree
+    // files under its genus, which the legacy determination placed in a subgenus.
+    const subgenusOf = async () => {
+      const other = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+      await writeLegacyExport(conn, other);
+      const [[subgenus]] = (await conn.runAndReadAll(
+        `SELECT subgenus FROM read_csv('${other}', header = true, all_varchar = true, quote = '"', escape = '"')
+         WHERE "fieldNumber" = '25000001'`,
+      )).getRows() as [[string | null]];
+      return subgenus;
+    };
+    const [[saved]] = (await conn.runAndReadAll(`SELECT subgenus FROM legacy_occurrence WHERE "fieldNumber" = '25000001'`)).getRows() as [[string]];
+    try {
+      await conn.run(`UPDATE legacy_occurrence SET subgenus = 'Pyrobombus' WHERE "fieldNumber" = '25000001'`);
+      expect(await subgenusOf()).toBe("Pyrobombus");
+      // A newer expert determination, as Ecdysis brings, is the model's to write.
+      await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, is_expert, channel, recorded_at)
+        SELECT d.specimen_id, d.animal_id, 'Bombus vosnesenskii', true, 'ecdysis_import', d.recorded_at + INTERVAL 1 DAY
+        FROM determination d JOIN specimen sp ON sp.entity_id = d.specimen_id
+        WHERE sp.field_number = '25000001' AND d.is_expert`);
+      expect(await subgenusOf()).toBeNull();
+    } finally {
+      await conn.run(`DELETE FROM determination WHERE channel = 'ecdysis_import'`);
+      await conn.run(`UPDATE legacy_occurrence SET subgenus = ? WHERE "fieldNumber" = '25000001'`, [saved] as never);
+    }
+  });
+
+  test("writes the legacy row's identification where Beeline holds no expert determination", async () => {
+    // As on 88 sandbox records: a determiner named, and no name to determine.
+    const [[saved]] = (await conn.runAndReadAll(`SELECT "identifiedBy" FROM legacy_occurrence WHERE "fieldNumber" = '25000003'`)).getRows() as [[string]];
+    expect(await rows(conn, `SELECT count(*) FROM determination d JOIN specimen sp ON sp.entity_id = d.specimen_id
+                             WHERE sp.field_number = '25000003' AND d.is_expert`)).toEqual([[0n]]);
+    try {
+      await conn.run(`UPDATE legacy_occurrence SET "identifiedBy" = 'L.R.Best' WHERE "fieldNumber" = '25000003'`);
+      const other = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+      await writeLegacyExport(conn, other);
+      expect(await rows(conn, `SELECT "identifiedBy" FROM read_csv('${other}', header = true, all_varchar = true, quote = '"', escape = '"')
+                               WHERE "fieldNumber" = '25000003'`)).toEqual([["L.R.Best"]]);
+    } finally {
+      await conn.run(`UPDATE legacy_occurrence SET "identifiedBy" = ? WHERE "fieldNumber" = '25000003'`, [saved] as never);
+    }
+  });
+
   test("never writes one coordinate from the legacy row and the other from the model", async () => {
     // Synthetic: no exported row on the sandbox holds half a point (2026-10-04).
     const [[savedLat, savedLon]] = (await conn.runAndReadAll(

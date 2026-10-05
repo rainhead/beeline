@@ -63,6 +63,8 @@ describe("the kind of a difference", () => {
     ["recordedBy", "Maggie Graham | Henry Whitridge", "Maggie Graham", "collector_added"],
     ["firstName", "Dan | Michael", "Michael | Dan", "changed"],
     ["lastName", "Anderson", "Anders", "changed"], // synthetic: 'and' inside a name splits nothing
+    ["scientificName", "Melissodes", "Melissodes sp.1", "morphospecies"],
+    ["scientificName", "Lasioglossum (Dialictus)", "Lasioglossum  sp.1", "morphospecies"],
     ["verbatimElevation", "61", "65", "changed"],
     ["stateProvince", "WA", "OR", "changed"],
   ];
@@ -211,6 +213,10 @@ describe("what the store knows about a difference", () => {
     ({ conn } = await createMemoryDb());
     await loadLegacyStaging(conn, FIXTURE);
     await promoteLegacy(conn, FIXTURE_INPUTS);
+    // An expert identification the legacy system never received, as Ecdysis brings.
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, is_expert, channel)
+      SELECT sp.entity_id, a.entity_id, 'Bombus vosnesenskii', true, 'ecdysis_import'
+      FROM specimen sp, animal a WHERE sp.field_number = '25000005' AND a.scientific_name = 'Bombus vosnesenskii'`);
     dir = await mkdtemp(join(tmpdir(), "compare-store-"));
     exportPath = join(dir, "occurrences.csv");
     await writeLegacyExport(conn, exportPath);
@@ -261,6 +267,7 @@ describe("what the store knows about a difference", () => {
           OR (field_number IN ('25000001', '25000002', '25000005') AND "column" IN ('genusVolDet', 'specificEpithet'))
           OR (field_number = '25000009' AND "column" = 'genus')
           OR (field_number = '25000001' AND "column" = 'day2')
+          OR (field_number = '25000005' AND "column" = 'scientificName')
        ORDER BY 1, 2`,
     )).getRows();
     expect(kinds).toEqual([
@@ -277,6 +284,8 @@ describe("what the store knows about a difference", () => {
       ["25000003", "locality", "sample_disagreement"],
       ["25000003", "recordedBy", "collector_alias"],
       ["25000005", "genusVolDet", "changed"], // a misspelling nobody has curated
+      ["25000005", "scientificName", "newer_determination"],
+      ["25000005", "specificEpithet", "newer_determination"],
       ["25000005", "userLogin", "changed"], // another user id: not a rename
       ["25000009", "genus", "subgenus_form"],
     ]);

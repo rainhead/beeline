@@ -58,7 +58,8 @@ const STAGED = [
   "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "coordinateSource", "relationshipOfResource", "resourceID",
   "relatedResourceID", "relationshipRemarks", "phylumPlant", "orderPlant", "familyPlant", "genusPlant",
   "speciesPlant", "taxonRankPlant", "url", "taxonomicNotes", "sex", "caste", "geoprivacy", "taxon_geoprivacy",
-  "verbatimElevation", "familyVolDet", "genusVolDet", "speciesVolDet", "sexVolDet", "casteVolDet",
+  "verbatimElevation", "phylum", "class", "order", "family", "genus", "subgenus", "specificEpithet",
+  "scientificName", "taxonRank", "identifiedBy", "familyVolDet", "genusVolDet", "speciesVolDet", "sexVolDet", "casteVolDet",
 ] as const;
 
 const scalar = async (conn: DuckDBConnection, sql: string): Promise<number> => {
@@ -135,6 +136,8 @@ export function legacyExportSql(staging: Set<string> | null, rowSource: string |
   // since a blank is what the legacy file said; only a Beeline-originated
   // specimen, which has no staged record, gets the model's own value.
   const orStaged = (col: string, model: string) => `CASE WHEN lo._id IS NOT NULL THEN lo."${col}" ELSE ${model} END`;
+  const unidentified = (col: string, model: string) =>
+    `CASE WHEN e.entity_id IS NULL AND lo._id IS NOT NULL THEN lo."${col}" ELSE ${model} END`;
   // The reference writes a coordinate with toFixed(4): always four places,
   // "44.5000", which a join on the text would otherwise miss.
   // Everything after the genus and an optional "(Subgenus)": the epithet can
@@ -308,26 +311,35 @@ rows AS (
     ${t(`coalesce(nullif(lo."url", ''),
                   CASE WHEN s.inat_observation_id IS NOT NULL
                        THEN concat('https://www.inaturalist.org/observations/', s.inat_observation_id) END)`)} AS "url",
-    ${t("el.phylum")} AS "phylum",
-    ${t("el.class_name")} AS "class",
-    ${t("el.order_name")} AS "order",
-    ${t("el.family")} AS "family",
-    ${t("el.genus")} AS "genus",
-    ${t("el.subgenus")} AS "subgenus",
-    ${t(`CASE WHEN el.species IS NOT NULL THEN ${epithet("el.species")} END`)} AS "specificEpithet",
+    -- An expert identification where Beeline holds one; where it holds none,
+    -- what the legacy row said, as it said it: a determiner with no name
+    -- (L.R.Best on 88 records), or a name the tree could not place, has no
+    -- determination to live on, as with the volunteer columns below.
+    ${t(unidentified("phylum", "el.phylum"))} AS "phylum",
+    ${t(unidentified("class", "el.class_name"))} AS "class",
+    ${t(unidentified("order", "el.order_name"))} AS "order",
+    ${t(unidentified("family", "el.family"))} AS "family",
+    ${t(unidentified("genus", "el.genus"))} AS "genus",
+    -- The tree files a species under its genus, so a subgenus the legacy
+    -- determination stated (Lasioglossum kincaidii in Hemihalictus) is held
+    -- nowhere in the model; while that determination is still the record the
+    -- column is the legacy row's, as written (Peter, 2026-10-04), and a later
+    -- determination writes the model's.
+    ${t(`CASE WHEN (e.channel = 'legacy_import' OR e.entity_id IS NULL) AND lo._id IS NOT NULL THEN lo."subgenus" ELSE el.subgenus END`)} AS "subgenus",
+    ${t(unidentified("specificEpithet", `CASE WHEN el.species IS NOT NULL THEN ${epithet("el.species")} END`))} AS "specificEpithet",
     ${t(`lo."taxonomicNotes"`)} AS "taxonomicNotes",
     -- The legacy file writes an open-nomenclature qualifier inside the name:
     -- "Lasioglossum nr. tenax", which is also how the determiner wrote it.
-    ${t(`CASE WHEN e.qualifier IS NOT NULL AND el.species IS NOT NULL
+    ${t(unidentified("scientificName", `CASE WHEN e.qualifier IS NOT NULL AND el.species IS NOT NULL
                THEN concat(el.genus, ' ', e.qualifier, ' ', ${epithet("el.species")})
-               ELSE ea.scientific_name END`)} AS "scientificName",
+               ELSE ea.scientific_name END`))} AS "scientificName",
     -- Beeline keeps sex and caste on a determination, so a specimen the legacy
     -- system sexed but nobody has identified has nowhere to hold them: 24,217
     -- such rows in the 2026-09-27 corpus. Those carry the staged value.
     ${t(`coalesce(st.sex, lo."sex")`)} AS "sex",
     ${t(`coalesce(st.caste, lo."caste")`)} AS "caste",
-    ${t("CASE WHEN ea.rank IS NOT NULL THEN concat(upper(left(ea.rank, 1)), substr(ea.rank, 2)) END")} AS "taxonRank",
-    ${t("coalesce(nullif(e.determiner_name, ''), dp.display_name)")} AS "identifiedBy",
+    ${t(unidentified("taxonRank", "CASE WHEN ea.rank IS NOT NULL THEN concat(upper(left(ea.rank, 1)), substr(ea.rank, 2)) END"))} AS "taxonRank",
+    ${t(unidentified("identifiedBy", "coalesce(nullif(e.determiner_name, ''), dp.display_name)"))} AS "identifiedBy",
     -- A volunteer's identification, where Beeline holds one; where it holds
     -- none, what the legacy row said, as it said it: a sex with no name, or
     -- a name the tree could not place, has no determination to live on.

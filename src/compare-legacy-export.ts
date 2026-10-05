@@ -87,6 +87,7 @@ const MONTH_COLUMNS = ["month", "month2"];
 const DATE_COLUMNS = ["day", "year", "day2", "year2", "verbatimEventDate", ...MONTH_COLUMNS];
 const NAME_COLUMNS = ["genus", "subgenus", "specificEpithet", "scientificName", "genusVolDet", "speciesVolDet"];
 const COLLECTOR_COLUMNS = ["recordedBy", "firstName", "lastName", "firstNameInitial"];
+const IDENTIFICATION_COLUMNS = ["family", "genus", "subgenus", "specificEpithet", "scientificName", "taxonRank", "identifiedBy"];
 const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
 
 const list = (xs: readonly string[]) => xs.map((x) => `'${x}'`).join(", ");
@@ -157,6 +158,8 @@ export const DIFFERENCE_KIND_SQL = `CASE
          (${withoutSubgenus("exported")} = ${withoutSubgenus("legacy")} AND ${withoutSubgenus("exported")} <> '')
       OR (${subgenusOf("exported")} <> '' AND ${subgenusOf("exported")} = legacy)
       OR (${subgenusOf("legacy")} <> '' AND ${subgenusOf("legacy")} = exported)) THEN 'subgenus_form'
+  WHEN "column" = 'scientificName' AND regexp_full_match(legacy, '\\S+\\s+sp\\.\\s*\\d+')
+       AND starts_with(exported, regexp_extract(legacy, '^\\S+', 0)) THEN 'morphospecies'
   WHEN "column" = 'scientificName' AND starts_with(legacy, concat(exported, ' '))
        AND regexp_full_match(substr(legacy, length(exported) + 2), '\\(?[A-Z].*\\d{4}\\)?') THEN 'authorship'
   ELSE 'changed'
@@ -296,6 +299,8 @@ const PLACE_FINDING_FIELD: Record<string, string> = {
  *                        ingest/taxon-aliases.csv corrects to what Beeline wrote
  *   subgenus_form        (also from the values alone) a genus column holding only
  *                        '(Peponapis)', exported as the genus the tree files it under
+ *   newer_determination  the specimen's newest expert determination came from
+ *                        Ecdysis or Beeline, so the legacy system never received it
  *   one_day_range        an end the legacy record wrote on its start day, blank here
  *   login_renamed        both sides carry the same iNaturalist user id
  *   sample_disagreement  promotion found the legacy rows of this specimen's sample
@@ -370,6 +375,16 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
       AND EXISTS (SELECT 1 FROM cmp_pairs p
                   WHERE p."e_fieldNumber" = d.field_number AND p."l_year2" = p."l_year"
                     AND p."l_month2" = p."l_month" AND p."l_day2" = p."l_day")`);
+  // An identification the legacy system never received: the specimen's
+  // newest expert determination came from Ecdysis or was made in Beeline.
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'newer_determination'
+    WHERE d."column" IN (${list(IDENTIFICATION_COLUMNS)})
+      AND EXISTS (
+        SELECT 1 FROM specimen sp
+        JOIN (SELECT specimen_id, arg_max(channel, (recorded_at, entity_id)) AS channel
+              FROM determination WHERE is_expert GROUP BY specimen_id) e ON e.specimen_id = sp.entity_id
+        WHERE sp.field_number = d.field_number AND e.channel <> 'legacy_import')`);
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'login_renamed'
     WHERE d."column" = 'userLogin' AND d.kind = 'changed'

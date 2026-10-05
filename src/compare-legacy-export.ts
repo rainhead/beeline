@@ -87,6 +87,7 @@ const MONTH_COLUMNS = ["month", "month2"];
 const DATE_COLUMNS = ["day", "year", "day2", "year2", "verbatimEventDate", ...MONTH_COLUMNS];
 const NAME_COLUMNS = ["genus", "subgenus", "specificEpithet", "scientificName", "genusVolDet", "speciesVolDet"];
 const COLLECTOR_COLUMNS = ["recordedBy", "firstName", "lastName", "firstNameInitial"];
+const CORRECTABLE_COLUMNS = ["county", "locality", "stateProvince", "country", "samplingProtocol"];
 const IDENTIFICATION_COLUMNS = ["family", "genus", "subgenus", "specificEpithet", "scientificName", "taxonRank", "identifiedBy"];
 const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
 
@@ -96,6 +97,8 @@ const monthNumber = (x: string) =>
   `CASE upper(trim(${x})) ${ROMAN.map((r, i) => `WHEN '${r}' THEN '${i + 1}'`).join(" ")} ELSE trim(${x}) END`;
 /** Roman months inside a Y-M-D date, as numbers: 2022-VI-26 → 2022-6-26. */
 const deRoman = (x: string) => ROMAN.reduce((acc, r, i) => `replace(${acc}, '-${r}-', '-${i + 1}-')`, x);
+/** The same for a leading month in M/D/Y: VIII/25/2024 → 8/25/2024. */
+const deRomanMdy = (x: string) => ROMAN.reduce((acc, r, i) => `regexp_replace(${acc}, '^${r}/', '${i + 1}/')`, x);
 /**
  * The date a record's season is judged on: its collecting end where it has
  * one, its start otherwise, as the store judges a sample on `date_end`
@@ -108,7 +111,7 @@ export const seasonDate = (t: string) => `coalesce(
 const isoDay = (x: string, format: string) => `strftime(try_strptime(${x}, '${format}'), '%Y-%m-%d')`;
 /** A date or a date range, as `start/end` in ISO; NULL when it is neither. */
 const dateRange = (raw: string) => {
-  const x = `trim(${deRoman(raw)})`;
+  const x = `trim(${deRomanMdy(`trim(${deRoman(raw)})`)})`;
   const ymd = (s: string) => isoDay(s, "%Y-%m-%d");
   const a = ymd(`split_part(${x}, '/', 1)`);
   const b = ymd(`split_part(${x}, '/', 2)`);
@@ -299,6 +302,10 @@ const PLACE_FINDING_FIELD: Record<string, string> = {
  *                        ingest/taxon-aliases.csv corrects to what Beeline wrote
  *   subgenus_form        (also from the values alone) a genus column holding only
  *                        '(Peponapis)', exported as the genus the tree files it under
+ *   staff_correction     the legacy row as staff corrected it says what Beeline wrote
+ *   collector_order      the pair in one order where the sample's rows give both
+ *   initial_from_surname an initial the legacy record took from the family name
+ *   label_name           the initials a label name gives, or the derived one beside it
  *   newer_determination  the specimen's newest expert determination came from
  *                        Ecdysis or Beeline, so the legacy system never received it
  *   one_day_range        an end the legacy record wrote on its start day, blank here
@@ -375,6 +382,46 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
       AND EXISTS (SELECT 1 FROM cmp_pairs p
                   WHERE p."e_fieldNumber" = d.field_number AND p."l_year2" = p."l_year"
                     AND p."l_month2" = p."l_month" AND p."l_day2" = p."l_day")`);
+  // A staff correction (ADR 0004): the legacy row as corrected says what
+  // Beeline wrote, and the row as staged does not.
+  if ((await one(conn, `SELECT count(*) FROM duckdb_views() WHERE view_name = 'legacy_occurrence_corrected'`)) > 0) {
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'staff_correction'
+      WHERE d."column" IN (${list(CORRECTABLE_COLUMNS)})
+        AND EXISTS (
+          SELECT 1 FROM legacy_occurrence o JOIN legacy_occurrence_corrected c ON c._id = o._id
+          WHERE o."fieldNumber" = d.field_number
+            AND ${CORRECTABLE_COLUMNS.map((c) => `(d."column" = ${sqlString(c)} AND c."${c}" = d.exported AND c."${c}" IS DISTINCT FROM o."${c}")`).join("\n             OR ")})`);
+  }
+  // The pair in one order where the sample's own legacy rows give both: a
+  // sample has one collector list, and no order matches all its records.
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'collector_order'
+    WHERE d.kind = 'changed' AND d."column" IN (${list(COLLECTOR_COLUMNS)})
+      AND list_sort(${collectors("d.exported")}) = list_sort(${collectors("d.legacy")})
+      AND EXISTS (
+        SELECT 1 FROM specimen sp
+        JOIN legacy_specimen_number n ON n.sample_id = sp.sample_id
+        JOIN legacy_occurrence o ON o._id = n._id
+        WHERE sp.field_number = d.field_number
+        GROUP BY sp.sample_id HAVING count(DISTINCT lower(o."recordedBy")) > 1)`);
+  // An initial the legacy record took from the family name: Alyssa Tollefson as T.
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'initial_from_surname'
+    WHERE d.kind = 'changed' AND d."column" = 'firstNameInitial'
+      AND EXISTS (SELECT 1 FROM cmp_pairs p
+                  WHERE p."e_fieldNumber" = d.field_number
+                    AND p."l_firstNameInitial" = concat(upper(left(trim(p."l_lastName"), 1)), '.')
+                    AND p."l_firstNameInitial" <> concat(upper(left(trim(p."l_firstName"), 1)), '.'))`);
+  // The initials a person's label name gives (J.M. Benitez Alvarez), or the
+  // derived one beside a label name printed as written (AC Quinn).
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'label_name'
+    WHERE d.kind IN ('changed', 'collector_alias') AND d."column" = 'firstNameInitial'
+      AND EXISTS (SELECT 1 FROM specimen sp
+                  JOIN sample_primary_collector pc ON pc.sample_id = sp.sample_id
+                  JOIN person p ON p.entity_id = pc.person_id
+                  WHERE sp.field_number = d.field_number AND nullif(trim(p.label_name), '') IS NOT NULL)`);
   // An identification the legacy system never received: the specimen's
   // newest expert determination came from Ecdysis or was made in Beeline.
   await conn.run(`

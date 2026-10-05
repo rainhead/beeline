@@ -44,6 +44,7 @@ describe("the kind of a difference", () => {
     ["month", "6", "VI", "date_form"],
     ["verbatimEventDate", "2022-6-26/2022-7-29", "2022-VI-26/2022-VII-29", "date_form"],
     ["verbatimEventDate", "5/17/2018", "2018-5-17/2018-5-17", "date_form"],
+    ["verbatimEventDate", "8/25/2024", "VIII/25/2024", "date_form"], // from the sandbox, 2026-10-04
     ["verbatimEventDate", "2020-4-28/2020-4-29", "2020-4-28/2020-4-28", "changed"],
     ["country", "CA", "CAN", "country_code"],
     ["country", "USA", "CAN", "changed"],
@@ -219,6 +220,8 @@ describe("what the store knows about a difference", () => {
     await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, is_expert, channel)
       SELECT sp.entity_id, a.entity_id, 'Bombus vosnesenskii', true, 'ecdysis_import'
       FROM specimen sp, animal a WHERE sp.field_number = '25000005' AND a.scientific_name = 'Bombus vosnesenskii'`);
+    // A label name in the register's initials form, as Juan Manuel Benitez Alvarez's.
+    await conn.run(`UPDATE person SET label_name = 'A.D. Collector' WHERE display_name = 'Ada Collector'`);
     dir = await mkdtemp(join(tmpdir(), "compare-store-"));
     exportPath = join(dir, "occurrences.csv");
     await writeLegacyExport(conn, exportPath);
@@ -253,6 +256,15 @@ describe("what the store knows about a difference", () => {
       SELECT entity_id, 'subgenus', 'Lasioglossum (Dialictus)' FROM animal WHERE rank = 'genus' AND scientific_name = 'Lasioglossum'
         AND NOT EXISTS (SELECT 1 FROM animal WHERE scientific_name = 'Lasioglossum (Dialictus)')`);
     await conn.run(`UPDATE legacy_occurrence SET genus = '(Dialictus)' WHERE "fieldNumber" = '25000009'`);
+    // An initial taken from the family name, as Alyssa Tollefson's T.
+    await conn.run(`UPDATE legacy_occurrence SET "firstNameInitial" = 'T.' WHERE "fieldNumber" = '25000002'`);
+    // A staff correction to the place, as Caledon's on the sandbox: the row as
+    // staged says one thing, the correction what Beeline wrote.
+    await conn.run(`UPDATE legacy_occurrence SET locality = 'Kennedy Rd.' WHERE "fieldNumber" = '25000005'`);
+    await conn.run(`INSERT INTO legacy_correction (_id, field, base_value, new_value, author, reason)
+      SELECT o._id, 'locality', 'Kennedy Rd.', s.locality, 'test', 'test'
+      FROM legacy_occurrence o JOIN specimen sp ON sp.field_number = o."fieldNumber" JOIN sample s ON s.entity_id = sp.sample_id
+      WHERE o."fieldNumber" = '25000005'`);
     // A one-day collection written as a range ending on its start, as the 2018 records are.
     await conn.run(`UPDATE legacy_occurrence SET year2 = "year", month2 = "month", day2 = "day" WHERE "fieldNumber" = '25000001'`);
   });
@@ -269,7 +281,8 @@ describe("what the store knows about a difference", () => {
           OR (field_number IN ('25000001', '25000002', '25000005') AND "column" IN ('genusVolDet', 'specificEpithet'))
           OR (field_number = '25000009' AND "column" = 'genus')
           OR (field_number = '25000001' AND "column" = 'day2')
-          OR (field_number = '25000005' AND "column" = 'scientificName')
+          OR (field_number = '25000005' AND "column" IN ('scientificName', 'locality'))
+          OR (field_number IN ('25000002', '25000009') AND "column" = 'firstNameInitial')
        ORDER BY 1, 2`,
     )).getRows();
     expect(kinds).toEqual([
@@ -277,6 +290,7 @@ describe("what the store knows about a difference", () => {
       ["25000001", "lastName", "collector_alias"],
       ["25000001", "recordedBy", "collector_alias"],
       ["25000001", "specificEpithet", "taxon_alias"],
+      ["25000002", "firstNameInitial", "initial_from_surname"],
       ["25000002", "genusVolDet", "taxon_alias"],
       ["25000002", "locality", "changed"], // Beeline wrote neither of the values the rows disagreed between
       ["25000002", "userLogin", "login_renamed"],
@@ -286,9 +300,11 @@ describe("what the store knows about a difference", () => {
       ["25000003", "locality", "sample_disagreement"],
       ["25000003", "recordedBy", "collector_alias"],
       ["25000005", "genusVolDet", "changed"], // a misspelling nobody has curated
+      ["25000005", "locality", "staff_correction"],
       ["25000005", "scientificName", "newer_determination"],
       ["25000005", "specificEpithet", "newer_determination"],
       ["25000005", "userLogin", "changed"], // another user id: not a rename
+      ["25000009", "firstNameInitial", "label_name"],
       ["25000009", "genus", "subgenus_form"],
     ]);
   });

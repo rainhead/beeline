@@ -405,13 +405,20 @@ describe("a joint row whose name columns are a list", () => {
     ]);
   });
 
-  test("is led by the first name its own columns give, not by name order", async () => {
+  test("lists each sample's collectors in the order its own rows give", async () => {
     expect(await rows(c, `
       SELECT s.sample_number, string_agg(p.display_name, ' | ' ORDER BY sc.position)
       FROM sample s JOIN sample_collector sc ON sc.sample_id = s.entity_id JOIN person p ON p.entity_id = sc.person_id
       WHERE s.sample_number IN ('OBAS-00658', 'OBAS-00659') GROUP BY 1 ORDER BY 1`)).toEqual([
       ["OBAS-00658", "Bea Trapper | Ada Collector"],
-      ["OBAS-00659", "Bea Trapper | Ada Collector"], // the pair's head, ahead of this row's own order
+      ["OBAS-00659", "Ada Collector | Bea Trapper"], // not the pair's other order
     ]);
+  });
+
+  test("keys the pair's samples on the first name its own columns give, not on name order", async () => {
+    // The person the pair's rows file under, whose numbering they carry.
+    expect(await rows(c, `
+      SELECT p.display_name FROM legacy_person_map m JOIN person p ON p.entity_id = m.person_id
+      WHERE m.fn = 'Bea | Ada'`)).toEqual([["Bea Trapper"]]);
   });
 });

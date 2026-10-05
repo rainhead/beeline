@@ -725,10 +725,16 @@ FROM legacy_sample_map s
 JOIN atlas_region reg ON reg.state_province = nullif(s.state_province, '')
 WHERE reg.atlas_id IS NOT NULL;
 
--- Everyone who collected each sample, primary first. A sample can gather rows
--- recorded both jointly and solo, and the O'Loughlins wrote their pair in both
--- orders, so a person is taken once at their earliest position and the whole
--- list is renumbered with the primary pinned to 1.
+-- Everyone who collected each sample, in the order its own rows give. A
+-- sample can gather rows recorded both jointly and solo, so a person is taken
+-- once at their earliest position and the whole list renumbered. The
+-- O'Loughlins wrote their pair in both orders, sample by sample, so the order
+-- is the sample's and not the pair's: pinning the pair's primary to 1 put one
+-- partner first on every sample, and the legacy export wrote 1,934 records in
+-- the reverse order to the legacy file's, then 1,362 when the tie-break
+-- below changed which partner that was. The primary leads where the rows tie
+-- (a sample whose rows name the pair both ways) and where they do not name
+-- them at all.
 --
 -- Read from the rows the sample is made of (legacy_row_collector, keyed by
 -- _id), never from everything the (fn, ln) pair ever recorded: a name that
@@ -739,13 +745,13 @@ WHERE reg.atlas_id IS NOT NULL;
 -- The primary is unioned in unconditionally, because the sample carries their
 -- numbering by definition (legacy_sample_map keys on them) — a sample all of
 -- whose rows name somebody else is still theirs, with that somebody else
--- beside them. Position 1 IS the primary collector (beeline-6e9 dropped the
+-- beside them, and first. Position 1 IS the primary collector (beeline-6e9 dropped the
 -- collector_id column this used to have to agree with), so without this a
 -- sample could have no head at all — sample_primary_collector_invalid names
 -- that state.
 INSERT INTO sample_collector (sample_id, person_id, position)
 SELECT sample_id, person_id,
-       row_number() OVER (PARTITION BY sample_id ORDER BY is_primary DESC, first_pos, person_id)
+       row_number() OVER (PARTITION BY sample_id ORDER BY coalesce(first_pos, 0), is_primary DESC, person_id)
 FROM (
   SELECT sample_id, person_id, min(pos) AS first_pos, max(is_primary) AS is_primary
   FROM (
@@ -760,7 +766,7 @@ FROM (
     JOIN legacy_row_collector c ON c._id = r._id
     JOIN legacy_person_name n ON n.name = c.name
     UNION ALL
-    SELECT s.sample_id, s.person_id, 1, 1 FROM legacy_sample_map s
+    SELECT s.sample_id, s.person_id, NULL, 1 FROM legacy_sample_map s
   ) named
   GROUP BY sample_id, person_id
 ) g;

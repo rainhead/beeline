@@ -391,7 +391,7 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
         AND EXISTS (
           SELECT 1 FROM legacy_occurrence o JOIN legacy_occurrence_corrected c ON c._id = o._id
           WHERE o."fieldNumber" = d.field_number
-            AND ${CORRECTABLE_COLUMNS.map((c) => `(d."column" = ${sqlString(c)} AND c."${c}" = d.exported AND c."${c}" IS DISTINCT FROM o."${c}")`).join("\n             OR ")})`);
+            AND (${CORRECTABLE_COLUMNS.map((c) => `(d."column" = ${sqlString(c)} AND c."${c}" = d.exported AND c."${c}" IS DISTINCT FROM o."${c}")`).join("\n              OR ")}))`);
   }
   // The pair in one order where the sample's own legacy rows give both: a
   // sample has one collector list, and no order matches all its records.

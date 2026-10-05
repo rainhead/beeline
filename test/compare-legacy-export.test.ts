@@ -245,6 +245,8 @@ describe("what the store knows about a difference", () => {
       SELECT entity_id, 'subgenus', 'Lasioglossum (Dialictus)' FROM animal WHERE rank = 'genus' AND scientific_name = 'Lasioglossum'
         AND NOT EXISTS (SELECT 1 FROM animal WHERE scientific_name = 'Lasioglossum (Dialictus)')`);
     await conn.run(`UPDATE legacy_occurrence SET genus = '(Dialictus)' WHERE "fieldNumber" = '25000009'`);
+    // A one-day collection written as a range ending on its start, as the 2018 records are.
+    await conn.run(`UPDATE legacy_occurrence SET year2 = "year", month2 = "month", day2 = "day" WHERE "fieldNumber" = '25000001'`);
   });
 
   test("labels each difference the store can account for, and leaves the rest as changed", async () => {
@@ -258,9 +260,11 @@ describe("what the store knows about a difference", () => {
           OR (field_number IN ('25000002', '25000003') AND "column" = 'locality')
           OR (field_number IN ('25000001', '25000002', '25000005') AND "column" IN ('genusVolDet', 'specificEpithet'))
           OR (field_number = '25000009' AND "column" = 'genus')
+          OR (field_number = '25000001' AND "column" = 'day2')
        ORDER BY 1, 2`,
     )).getRows();
     expect(kinds).toEqual([
+      ["25000001", "day2", "one_day_range"],
       ["25000001", "lastName", "collector_alias"],
       ["25000001", "recordedBy", "collector_alias"],
       ["25000001", "specificEpithet", "taxon_alias"],

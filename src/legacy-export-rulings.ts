@@ -55,6 +55,7 @@ export const VALUE_KINDS = [
   "changed",
   "collector_alias", // the legacy spelling of a collector, corrected in ingest/collector-aliases.csv: Brendon / Brendan
   "taxon_alias", // a misspelt genus or epithet, corrected in ingest/taxon-aliases.csv: Agopostemon / Agapostemon
+  "one_day_range", // an end the legacy record wrote on its start day: 2018-7-26/2018-7-26
   "login_renamed", // the same iNaturalist user id under another login
   "sample_disagreement", // the legacy rows Beeline merged into one sample name different places, and the sample keeps one
 ] as const;

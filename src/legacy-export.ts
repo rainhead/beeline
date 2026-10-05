@@ -118,7 +118,7 @@ const labelInitials = (p: string) => {
 };
 
 /** The query behind the file: one row per specimen, every column TEXT, blanks as NULL. Exported for its test. */
-export function legacyExportSql(staging: Set<string> | null): string {
+export function legacyExportSql(staging: Set<string> | null, rowSource: string | null = null): string {
   // Without staging (a store built from iNaturalist alone) every staged
   // column is simply NULL: the same query, with the join replaced by nothing.
   // With it, a column the store's staging predates is NULL the same way.
@@ -164,6 +164,33 @@ export function legacyExportSql(staging: Set<string> | null): string {
   // such row on the sandbox, 2026-10-04).
   const coord = (col: string, model: string) =>
     `CASE WHEN ${rowPoint} THEN lo."${col}" ELSE printf('%.4f', CAST(${model} AS DOUBLE)) END`;
+  // The same rule for how and when a specimen was caught, and where by name:
+  // a sample holds one method, one end date and one place, so where the
+  // legacy rows promotion merged into it disagree, each row carries its own
+  // (Peter, 2026-10-04). One collector numbered specimens 1–5 under sample 1
+  // on 25 April 2019: 1 and 2 netted that day, 3–5 from pan traps emptied the
+  // next, and the sample's trap and end date were written on the netted
+  // ones. Read from the corrected rows, so a staff edit, which corrects every
+  // row of its sample, leaves them agreeing and the model's value written.
+  const ROW_FIELDS = ["samplingProtocol", "locality", "county", "stateProvince", "country"];
+  const END_FIELDS = ["verbatimEventDate", "day2", "month2", "year2", "startDayofYear", "endDayofYear"];
+  const ownRow = (flag: string, col: string, model: string) =>
+    rowSource ? `CASE WHEN dg.${flag} AND lr._id IS NOT NULL THEN lr."${col}" ELSE ${model} END` : model;
+  const disagreeing = rowSource
+    ? `,
+disagreeing AS (
+  SELECT lsn.sample_id,
+         ${ROW_FIELDS.map((f) => `count(DISTINCT coalesce(r."${f}", '')) > 1 AS "${f}"`).join(",\n         ")},
+         count(DISTINCT concat_ws('-', r."year2", r."month2", r."day2")) > 1 AS end_date
+  FROM legacy_specimen_number lsn JOIN ${rowSource} r ON r._id = lsn._id
+  GROUP BY lsn.sample_id
+)`
+    : "";
+  const rowJoins = rowSource
+    ? `LEFT JOIN disagreeing dg ON dg.sample_id = sp.sample_id
+  LEFT JOIN (SELECT _id, ${[...ROW_FIELDS, ...END_FIELDS].map((f) => `CAST("${f}" AS VARCHAR) AS "${f}"`).join(", ")}
+             FROM ${rowSource}) lr ON lr._id = lo._id`
+    : "";
   return `
 WITH RECURSIVE up(node_id, anc_id) AS (
   SELECT entity_id, entity_id FROM animal
@@ -215,7 +242,7 @@ collectors AS (
                     ' | ' ORDER BY sc.position) AS initials
   FROM sample_collector sc JOIN person p ON p.entity_id = sc.person_id
   GROUP BY sc.sample_id
-),
+)${disagreeing},
 rows AS (
   SELECT
     ${t(`lo."errorFlags"`)} AS "errorFlags",
@@ -238,20 +265,20 @@ rows AS (
     ${t("day(s.date_start)")} AS "day",
     ${t("month(s.date_start)")} AS "month",
     ${t("year(s.date_start)")} AS "year",
-    ${t(`CASE WHEN s.date_end > s.date_start
+    ${t(ownRow("end_date", "verbatimEventDate", `CASE WHEN s.date_end > s.date_start
                THEN concat(strftime(s.date_start, '%Y-%-m-%-d'), '/', strftime(s.date_end, '%Y-%-m-%-d'))
-               ELSE strftime(s.date_start, '%-m/%-d/%Y') END`)} AS "verbatimEventDate",
-    ${t("CASE WHEN s.date_end > s.date_start THEN day(s.date_end) END")} AS "day2",
-    ${t("CASE WHEN s.date_end > s.date_start THEN month(s.date_end) END")} AS "month2",
-    ${t("CASE WHEN s.date_end > s.date_start THEN year(s.date_end) END")} AS "year2",
-    ${t("CASE WHEN s.date_end > s.date_start THEN dayofyear(s.date_start) END")} AS "startDayofYear",
-    ${t("CASE WHEN s.date_end > s.date_start THEN dayofyear(s.date_end) END")} AS "endDayofYear",
+               ELSE strftime(s.date_start, '%-m/%-d/%Y') END`))} AS "verbatimEventDate",
+    ${t(ownRow("end_date", "day2", "CASE WHEN s.date_end > s.date_start THEN CAST(day(s.date_end) AS VARCHAR) END"))} AS "day2",
+    ${t(ownRow("end_date", "month2", "CASE WHEN s.date_end > s.date_start THEN CAST(month(s.date_end) AS VARCHAR) END"))} AS "month2",
+    ${t(ownRow("end_date", "year2", "CASE WHEN s.date_end > s.date_start THEN CAST(year(s.date_end) AS VARCHAR) END"))} AS "year2",
+    ${t(ownRow("end_date", "startDayofYear", "CASE WHEN s.date_end > s.date_start THEN CAST(dayofyear(s.date_start) AS VARCHAR) END"))} AS "startDayofYear",
+    ${t(ownRow("end_date", "endDayofYear", "CASE WHEN s.date_end > s.date_start THEN CAST(dayofyear(s.date_end) AS VARCHAR) END"))} AS "endDayofYear",
     -- The legacy file's country is the short name its places file gives a
     -- country — USA, but CA and NZ — where Beeline keeps ISO alpha-3 codes.
-    ${t("CASE s.country WHEN 'CAN' THEN 'CA' WHEN 'NZL' THEN 'NZ' WHEN 'MEX' THEN 'MX' ELSE s.country END")} AS "country",
-    ${t("s.state_province")} AS "stateProvince",
-    ${t("s.county")} AS "county",
-    ${t("s.locality")} AS "locality",
+    ${t(ownRow('"country"', "country", "CASE s.country WHEN 'CAN' THEN 'CA' WHEN 'NZL' THEN 'NZ' WHEN 'MEX' THEN 'MX' ELSE s.country END"))} AS "country",
+    ${t(ownRow('"stateProvince"', "stateProvince", "s.state_province"))} AS "stateProvince",
+    ${t(ownRow('"county"', "county", "s.county"))} AS "county",
+    ${t(ownRow('"locality"', "locality", "s.locality"))} AS "locality",
     ${t(ofRowPoint("verbatimElevation", "loc.elevation_m", "loc.elevation_latitude", "loc.elevation_longitude"))} AS "verbatimElevation",
     ${t(coord("decimalLatitude", "loc.latitude"))} AS "decimalLatitude",
     ${t(coord("decimalLongitude", "loc.longitude"))} AS "decimalLongitude",
@@ -262,7 +289,7 @@ rows AS (
     ${t(`CASE WHEN loc.source = 'legacy_import' AND lo._id IS NOT NULL THEN lo."coordinateSource"
                WHEN loc.source = 'inat_trusted' THEN 'private'
                WHEN loc.source = 'inat_public' THEN 'public' END`)} AS "coordinateSource",
-    ${t("s.protocol")} AS "samplingProtocol",
+    ${t(ownRow('"samplingProtocol"', "samplingProtocol", "s.protocol"))} AS "samplingProtocol",
     ${t(orStaged("relationshipOfResource", `CASE WHEN nullif(s.host_name_as_observed, '') IS NOT NULL THEN 'visits flowers of' END`))} AS "relationshipOfResource",
     ${t(orStaged("resourceID", "sp.occurrence_id"))} AS "resourceID",
     ${t(`lo."relatedResourceID"`)} AS "relatedResourceID",
@@ -332,6 +359,7 @@ rows AS (
   LEFT JOIN lineage vl ON vl.node_id = v.animal_id
   LEFT JOIN printed pr ON pr.specimen_id = sp.entity_id
   ${staged}
+  ${rowJoins}
 )
 SELECT ${LEGACY_EXPORT_COLUMNS.map((c) => `"${c}"`).join(", ")}
 FROM rows
@@ -360,11 +388,18 @@ const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 export async function writeLegacyExport(conn: DuckDBConnection, path: string): Promise<{ rows: number; staged: boolean }> {
   await mkdir(dirname(path), { recursive: true });
   const staging = await stagedColumns(conn);
+  // Promotion's corrected staging, where it has run: the rows as staff left them.
+  const rowSource =
+    staging === null
+      ? null
+      : (await scalar(conn, `SELECT count(*) FROM duckdb_views() WHERE view_name = 'legacy_occurrence_corrected'`)) > 0
+        ? "legacy_occurrence_corrected"
+        : "legacy_occurrence";
   const body = `${path}.body.tmp`;
   const whole = `${path}.tmp`;
   try {
     await conn.run(
-      `COPY (${legacyExportSql(staging)}) TO '${body.replaceAll("'", "''")}'
+      `COPY (${legacyExportSql(staging, rowSource)}) TO '${body.replaceAll("'", "''")}'
        (FORMAT csv, HEADER true, DELIMITER ',', QUOTE '"', ESCAPE '"', NULLSTR '')`,
     );
     const out = createWriteStream(whole);

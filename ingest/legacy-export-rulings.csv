@@ -142,3 +142,10 @@ field_number,column,kind,outcome,reason,source,decided_by,decided_on
 25014796,firstName,changed,reference-wrong,The legacy record writes Mary Barrett's family name as her first name.,"Peter, in review of the parallel run",Peter,2026-10-04
 25014797,firstName,changed,reference-wrong,The legacy record writes Mary Barrett's family name as her first name.,"Peter, in review of the parallel run",Peter,2026-10-04
 25014798,firstName,changed,reference-wrong,The legacy record writes Mary Barrett's family name as her first name.,"Peter, in review of the parallel run",Peter,2026-10-04
+,day2,one_day_range,expected,"A one-day collection the legacy record wrote as a range ending on its start day; Beeline writes an end only for a range.","Peter, in review of the parallel run",Peter,2026-10-04
+,month2,one_day_range,expected,"A one-day collection the legacy record wrote as a range ending on its start day; Beeline writes an end only for a range.","Peter, in review of the parallel run",Peter,2026-10-04
+,year2,one_day_range,expected,"A one-day collection the legacy record wrote as a range ending on its start day; Beeline writes an end only for a range.","Peter, in review of the parallel run",Peter,2026-10-04
+,startDayofYear,one_day_range,expected,"A one-day collection the legacy record wrote as a range ending on its start day; Beeline writes an end only for a range.","Peter, in review of the parallel run",Peter,2026-10-04
+,endDayofYear,one_day_range,expected,"A one-day collection the legacy record wrote as a range ending on its start day; Beeline writes an end only for a range.","Peter, in review of the parallel run",Peter,2026-10-04
+,startDayofYear,filled,expected,"Computed from the date, which the legacy record left blank where it spelled the month in Roman numerals (2022-VI-26/2022-VII-29).","Peter, in review of the parallel run",Peter,2026-10-04
+,endDayofYear,filled,expected,"Computed from the date, which the legacy record left blank where it spelled the month in Roman numerals (2022-VI-26/2022-VII-29).","Peter, in review of the parallel run",Peter,2026-10-04

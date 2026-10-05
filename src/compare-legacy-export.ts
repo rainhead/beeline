@@ -296,6 +296,7 @@ const PLACE_FINDING_FIELD: Record<string, string> = {
  *                        ingest/taxon-aliases.csv corrects to what Beeline wrote
  *   subgenus_form        (also from the values alone) a genus column holding only
  *                        '(Peponapis)', exported as the genus the tree files it under
+ *   one_day_range        an end the legacy record wrote on its start day, blank here
  *   login_renamed        both sides carry the same iNaturalist user id
  *   sample_disagreement  promotion found the legacy rows of this specimen's sample
  *                        disagreeing about this field, and the sample keeps one value
@@ -361,6 +362,14 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
       AND regexp_full_match(trim(d.legacy), '\\([A-Z][a-z]+\\)')
       AND EXISTS (SELECT 1 FROM animal a
                   WHERE a.rank = 'subgenus' AND a.scientific_name = concat(d.exported, ' ', trim(d.legacy)))`);
+  // An end the legacy record wrote on the day it started, which Beeline,
+  // writing an end only for a range, leaves blank with its day of the year.
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'one_day_range'
+    WHERE d.kind = 'blanked' AND d."column" IN ('day2', 'month2', 'year2', 'startDayofYear', 'endDayofYear')
+      AND EXISTS (SELECT 1 FROM cmp_pairs p
+                  WHERE p."e_fieldNumber" = d.field_number AND p."l_year2" = p."l_year"
+                    AND p."l_month2" = p."l_month" AND p."l_day2" = p."l_day")`);
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'login_renamed'
     WHERE d."column" = 'userLogin' AND d.kind = 'changed'

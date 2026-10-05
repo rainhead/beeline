@@ -145,6 +145,47 @@ describe("the legacy-format export", () => {
     }
   });
 
+  test("writes each row's own method, end date and place where its sample's rows disagree", async () => {
+    // Synthetic, in the shape of the sandbox's 2019 Portland sample: rows
+    // numbered as one sample, some netted and some from pan traps emptied the
+    // next day. Staging is edited after promotion, so the sample keeps one
+    // value of each; 25000001 and 25000003 are Ada's sample 1.
+    const fields = ["samplingProtocol", "locality", "verbatimEventDate", "day2", "month2", "year2", "startDayofYear", "endDayofYear"];
+    const saved = (await conn.runAndReadAll(
+      `SELECT _id, ${fields.map((f) => `"${f}"`).join(", ")} FROM legacy_occurrence WHERE "fieldNumber" IN ('25000001', '25000003')`,
+    )).getRowObjectsJson();
+    try {
+      await conn.run(`UPDATE legacy_occurrence SET "samplingProtocol" = 'pan traps', locality = 'Elsewhere',
+                      "verbatimEventDate" = '2025-VII-14/2025-VII-15', year2 = '2025', month2 = 'VII', day2 = '15',
+                      "startDayofYear" = '195', "endDayofYear" = '196' WHERE "fieldNumber" = '25000003'`);
+      const other = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+      await writeLegacyExport(conn, other);
+      const out = (await conn.runAndReadAll(
+        `SELECT "fieldNumber", ${fields.map((f) => `"${f}"`).join(", ")}
+         FROM read_csv('${other}', header = true, all_varchar = true, quote = '"', escape = '"')
+         WHERE "fieldNumber" IN ('25000001', '25000003', '25000005') ORDER BY 1`,
+      )).getRows();
+      const staged = (await conn.runAndReadAll(
+        `SELECT "fieldNumber", ${fields.map((f) => `nullif("${f}", '')`).join(", ")} FROM legacy_occurrence
+         WHERE "fieldNumber" IN ('25000001', '25000003') ORDER BY 1`,
+      )).getRows();
+      // Each row of the disagreeing sample says what its own record said.
+      expect(out.slice(0, 2)).toEqual(staged);
+      expect(out[1]).toEqual(["25000003", "pan traps", "Elsewhere", "2025-VII-14/2025-VII-15", "15", "VII", "2025", "195", "196"]);
+      // A sample whose rows agree is written from the model, as before.
+      const [[protocol]] = (await conn.runAndReadAll(
+        `SELECT s.protocol FROM sample s JOIN specimen sp ON sp.sample_id = s.entity_id WHERE sp.field_number = '25000005'`,
+      )).getRows() as [[string]];
+      expect(out[2]![1]).toBe(protocol);
+    } finally {
+      for (const row of saved) {
+        const r = row as Record<string, string | null>;
+        await conn.run(`UPDATE legacy_occurrence SET ${fields.map((f) => `"${f}" = ?`).join(", ")} WHERE _id = ?`,
+          [...fields.map((f) => r[f]), r._id] as never);
+      }
+    }
+  });
+
   test("never writes one coordinate from the legacy row and the other from the model", async () => {
     // Synthetic: no exported row on the sandbox holds half a point (2026-10-04).
     const [[savedLat, savedLon]] = (await conn.runAndReadAll(

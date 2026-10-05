@@ -260,6 +260,13 @@ WHERE dup_rank = 1
 CREATE OR REPLACE MACRO legacy_name_key(n) AS
   regexp_replace(lower(n), '[^a-z0-9]', '', 'g');
 
+-- A joint row's name columns, as the list they are in recordedBy order. The
+-- entry form let a pair be written any way: 'Michael | Dan', 'Michael and
+-- Dan', 'Steve/Sarah', 'Sheehy&Malaby', 'Jan/ Walt'. 'and' only as a word, so
+-- no name is cut inside ('Alexander', 'Anderson').
+CREATE OR REPLACE MACRO legacy_name_list(s) AS
+  list_transform(regexp_split_to_array(s, '\s*(\||/|&|\band\b)\s*'), x -> trim(x));
+
 -- Two spellings that differ by an actual letter are still two people to the
 -- fold — 'Emma Hoskins' / 'Emily Hoskins', 'Barrett Barrett' / 'Mary Barrett'
 -- — and no wider fold can tell those from two siblings. They are curation, in
@@ -420,14 +427,16 @@ GROUP BY person_id;
 -- Name parts survive promotion: a label prints the initial and the whole
 -- family name, which cannot be recovered from a joined display name
 -- (Van Otterloo, Benitez Alvarez). See src/person-name.ts.
--- A joint row parts its names too where its columns are a list in recordedBy
--- order — 'Charles | Judith' / 'Schelz | Maxwell', or one shared family name,
--- 'Michael | Dan' / 'O''Loughlin' — and are read by position, behind any solo
--- row: 4 of the 10 people who only ever collected in a pair had NULL parts,
--- so the legacy export blanked their half of the name columns on 394 records
--- that say it. 'Bea and Ada' / 'Trapper/Collector' is not a list and parts
--- nobody. Someone whose every row is like that keeps NULL parts, and their
--- label falls back to the full name.
+-- A joint row parts its names too, its columns being a list in recordedBy
+-- order however the pair was written (legacy_name_list) — 'Charles | Judith'
+-- / 'Schelz | Maxwell', 'Jan/ Walt' / 'Ochsner/ Stahlnecker', or one shared
+-- family name, 'Michael and Dan' / 'O''Loughlin' — read by position, behind
+-- any solo row. Only solo rows used to count, so 9 of the 10 people who only
+-- ever collected beside somebody had NULL parts, and the legacy export
+-- blanked their half of the name columns on the 691 records they collected.
+-- Columns that do not split into one name per collector part nobody, and
+-- someone with only such rows keeps NULL parts: their label falls back to the
+-- full name.
 -- ...and only where that one name is the row's own: a pair whose recordedBy
 -- names somebody else ('Mark Gorman' rows recorded by 'Pam Arion') would
 -- otherwise hand Pam the name parts off Mark's columns. The comparison is
@@ -442,7 +451,7 @@ GROUP BY person_id;
 -- family name, and ingest/person-overlay.csv for the rest.
 CREATE TABLE legacy_person_parts AS
 WITH listed AS (
-  SELECT c.*, string_split(c.fn, '|') AS fns, string_split(c.ln, '|') AS lns,
+  SELECT c.*, legacy_name_list(c.fn) AS fns, legacy_name_list(c.ln) AS lns,
          max(c.pos) OVER (PARTITION BY c.fn, c.ln) AS names_in_pair
   FROM legacy_collector_name c
 ),
@@ -552,8 +561,8 @@ SELECT fn, ln, person_id FROM (
          row_number() OVER (
            PARTITION BY c.fn, c.ln
            ORDER BY CASE WHEN lower(c.name) = lower(concat_ws(' ', c.fn, c.ln)) THEN 0 ELSE 1 END,
-                    CASE WHEN lower(c.name) = lower(concat_ws(' ', trim(string_split(c.fn, '|')[1]),
-                                                                   trim(string_split(c.ln, '|')[1]))) THEN 0 ELSE 1 END,
+                    CASE WHEN lower(c.name) = lower(concat_ws(' ', legacy_name_list(c.fn)[1],
+                                                                   legacy_name_list(c.ln)[1])) THEN 0 ELSE 1 END,
                     c.name
          ) AS rn
   FROM legacy_collector_name c

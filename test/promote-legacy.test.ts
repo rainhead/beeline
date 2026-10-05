@@ -385,7 +385,11 @@ describe("a joint row whose name columns are a list", () => {
                  FROM legacy_occurrence WHERE "fieldNumber" = '25000005'`);
     await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('shared-surname' AS _id, '25000013' AS "fieldNumber",
                    'OBAS-00661' AS "sampleId", 'Bea Trapper | Dee Trapper' AS "recordedBy",
-                   'Bea | Dee' AS "firstName", 'Trapper' AS "lastName")
+                   'Bea and Dee' AS "firstName", 'Trapper' AS "lastName")
+                 FROM legacy_occurrence WHERE "fieldNumber" = '25000005'`);
+    await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('slashed' AS _id, '25000014' AS "fieldNumber",
+                   'OBAS-00662' AS "sampleId", 'Bea Trapper | Eve Anderson' AS "recordedBy",
+                   'Bea/ Eve' AS "firstName", 'Trapper&Anderson' AS "lastName")
                  FROM legacy_occurrence WHERE "fieldNumber" = '25000005'`);
     await promoteLegacy(c, FIXTURE_INPUTS);
   });
@@ -393,10 +397,11 @@ describe("a joint row whose name columns are a list", () => {
   test("parts a name that appears in no solo row by its position in the columns", async () => {
     expect(await rows(c, `
       SELECT display_name, given_name, family_name FROM person
-      WHERE display_name IN ('Bea Trapper', 'Cy Helper', 'Dee Trapper') ORDER BY 1`)).toEqual([
+      WHERE display_name IN ('Bea Trapper', 'Cy Helper', 'Dee Trapper', 'Eve Anderson') ORDER BY 1`)).toEqual([
       ["Bea Trapper", "Bea", "Trapper"], // her solo row, ahead of any pair's
       ["Cy Helper", "Cy", "Helper"],
       ["Dee Trapper", "Dee", "Trapper"], // one family name for the pair
+      ["Eve Anderson", "Eve", "Anderson"], // 'and' only as a word
     ]);
   });
 

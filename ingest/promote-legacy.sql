@@ -522,12 +522,19 @@ WHERE s.login IN (SELECT login FROM standalone GROUP BY login HAVING count(*) > 
 -- spelled 'Amy GRotta'. The pair's own name columns break the tie, and plain
 -- name order breaks it when none matches, so the choice is deterministic;
 -- the person not chosen still exists and still lands in sample_collector.
+-- On a joint row the columns name both, 'Michael | Dan' / 'O''Loughlin', so
+-- it is the first name in them that breaks the tie. Matching the whole
+-- columns never matched a joint pair, so name order made Dan the primary of
+-- 71 samples whose every row lists Michael first, and the export wrote their
+-- 1,934 records in the reverse order to the legacy file's.
 CREATE TABLE legacy_person_map AS
 SELECT fn, ln, person_id FROM (
   SELECT c.fn, c.ln, n.person_id,
          row_number() OVER (
            PARTITION BY c.fn, c.ln
            ORDER BY CASE WHEN lower(c.name) = lower(concat_ws(' ', c.fn, c.ln)) THEN 0 ELSE 1 END,
+                    CASE WHEN lower(c.name) = lower(concat_ws(' ', trim(string_split(c.fn, '|')[1]),
+                                                                   trim(string_split(c.ln, '|')[1]))) THEN 0 ELSE 1 END,
                     c.name
          ) AS rn
   FROM legacy_collector_name c

@@ -364,3 +364,26 @@ describe("the legacy name register", () => {
     expect(claimed).toEqual([[0n]]);
   });
 });
+
+describe("a pair written in both orders", () => {
+  // Synthetic, in the O'Loughlins' shape on the sandbox: the pair's columns
+  // read 'Michael | Dan' / "O'Loughlin", and its rows name Michael first on
+  // some samples and Dan first on others.
+  test("is led by the first name its own columns give, not by name order", async () => {
+    const { conn: c } = await createMemoryDb();
+    await loadLegacyStaging(c, FIXTURE);
+    await c.run(`UPDATE legacy_occurrence SET "firstName" = 'Bea | Ada', "lastName" = 'Trapper | Collector'
+                 WHERE "fieldNumber" = '25000005'`);
+    await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('reordered' AS _id, '25000011' AS "fieldNumber",
+                   'OBAS-00659' AS "sampleId", 'Ada Collector | Bea Trapper' AS "recordedBy")
+                 FROM legacy_occurrence WHERE "fieldNumber" = '25000005'`);
+    await promoteLegacy(c, FIXTURE_INPUTS);
+    expect(await rows(c, `
+      SELECT s.sample_number, string_agg(p.display_name, ' | ' ORDER BY sc.position)
+      FROM sample s JOIN sample_collector sc ON sc.sample_id = s.entity_id JOIN person p ON p.entity_id = sc.person_id
+      WHERE s.sample_number IN ('OBAS-00658', 'OBAS-00659') GROUP BY 1 ORDER BY 1`)).toEqual([
+      ["OBAS-00658", "Bea Trapper | Ada Collector"],
+      ["OBAS-00659", "Bea Trapper | Ada Collector"], // the pair's head, ahead of this row's own order
+    ]);
+  });
+});

@@ -168,14 +168,38 @@ FROM legacy_occurrence_corrected;
 -- The hash-id bug duplicated specimens: same (person, date, sample,
 -- specimen) printed under two fieldNumbers on two dates. Keep the latest
 -- print, deterministically; losers become findings.
+--
+-- Except across observations. Where a (person, date, sample) group names
+-- more than one observation, each observation is its own sample
+-- (legacy_row_observation, below) numbering its own specimens from 1, so
+-- specimen 1 of one and specimen 1 of the other are two pins, not one pin
+-- printed twice. Ranking them together refused 2,467 real specimens on the
+-- 2026-10-04 corpus, 701 of them from the open season (beeline-bib1); the
+-- 435 it still refuses all date from before 2025. The key is the
+-- observation only in such a group, as legacy_row_observation keys samples,
+-- so a group with one observation and some unlinked rows — the 2019–2021
+-- reprints whose older copy carries no link — still ranks as one specimen.
 CREATE OR REPLACE VIEW legacy_ranked AS
-SELECT *,
+WITH linked AS (
+  SELECT *, CASE WHEN regexp_matches(url, '/observations/[0-9]+$') THEN p_inat_obs_id END AS obs_link
+  FROM legacy_parsed
+), several AS (
+  SELECT fn, ln, sid, p_date_start, true AS split
+  FROM linked
+  GROUP BY fn, ln, sid, p_date_start
+  HAVING count(DISTINCT obs_link) > 1
+)
+SELECT l.* EXCLUDE (obs_link),
   row_number() OVER (
-    PARTITION BY fn, ln, sid, p_date_start, p_specimen_number
-    ORDER BY try_strptime(dateLabelPrint, '%d-%b-%y') DESC NULLS LAST,
-             fieldNumber DESC, _id
+    PARTITION BY l.fn, l.ln, l.sid, l.p_date_start, l.p_specimen_number,
+                 CASE WHEN s.split THEN l.obs_link END
+    ORDER BY try_strptime(l.dateLabelPrint, '%d-%b-%y') DESC NULLS LAST,
+             l.fieldNumber DESC, l._id
   ) AS dup_rank
-FROM legacy_parsed;
+FROM linked l
+LEFT JOIN several s
+  ON s.fn IS NOT DISTINCT FROM l.fn AND s.ln IS NOT DISTINCT FROM l.ln
+ AND s.sid IS NOT DISTINCT FROM l.sid AND s.p_date_start IS NOT DISTINCT FROM l.p_date_start;
 
 -- ── Findings over staging ───────────────────────────────────────────────
 -- Keyed by Mongo _id: this is where problems live for rows that never
@@ -579,8 +603,9 @@ QUALIFY row_number() OVER (PARTITION BY person_id ORDER BY records DESC, login) 
 -- duplicate number shows as what it is (Peter, 2026-10-04, beeline-0199).
 -- obs_key is NULL for every other row, so a group naming one observation, or
 -- none, or one plus rows with no link at all, stays one sample as before. On
--- the 2026-10-04 corpus 434 groups split, every row of them carrying a link,
--- and none numbered its specimens twice across observations.
+-- the 2026-10-04 corpus 434 groups split, every row of them carrying a link.
+-- Each observation numbers its own specimens from 1, which is why
+-- legacy_ranked keys reprints on the observation in exactly these groups.
 CREATE TABLE legacy_row_observation AS
 WITH linked AS (
   SELECT r._id, m.person_id, r.sid, r.p_date_start,

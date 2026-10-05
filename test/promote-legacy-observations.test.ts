@@ -22,6 +22,14 @@ beforeAll(async () => {
   await loadLegacyStaging(conn, FIXTURE);
   await conn.run(`UPDATE legacy_occurrence SET url = 'https://www.inaturalist.org/observations/250000003' WHERE "fieldNumber" = '25000003'`);
   await conn.run(`UPDATE legacy_occurrence SET url = 'https://www.inaturalist.org/taxa/47604' WHERE "fieldNumber" = '25000002'`);
+  // Each observation numbers its own specimens from 1, as the sandbox's do:
+  // 26075301 and 26075302 were both specimen 1 of one collector's sample 1
+  // that day, from two observations, and promotion refused one as a reprint
+  // (beeline-bib1).
+  await conn.run(`UPDATE legacy_occurrence SET "specimenId" = '1' WHERE "fieldNumber" = '25000003'`);
+  // And a true reprint: 25000001 printed again, earlier, as 25000010.
+  await conn.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('reprint' AS _id, '25000010' AS "fieldNumber", '1-Aug-25' AS "dateLabelPrint")
+    FROM legacy_occurrence WHERE "fieldNumber" = '25000001'`);
   await promoteLegacy(conn, FIXTURE_INPUTS);
 });
 
@@ -36,6 +44,13 @@ describe("a legacy sample several observations claim", () => {
       ["1", 250000001n, "25000001 25000009", 2],
       ["1", 250000003n, "25000003", 1],
     ]);
+  });
+
+  test("numbers its specimens per observation, so specimen 1 of each is two pins", async () => {
+    // Only the copy printed twice under one observation is refused.
+    expect(await rows(conn, `
+      SELECT o."fieldNumber" FROM legacy_promotion_finding f JOIN legacy_occurrence o USING (_id)
+      WHERE f.rule = 'duplicate_specimen'`)).toEqual([["25000010"]]);
   });
 
   test("records the one observation each came from, and none for a taxon page", async () => {

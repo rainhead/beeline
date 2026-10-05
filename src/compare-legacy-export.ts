@@ -128,7 +128,7 @@ const subgenusOf = (x: string) => `regexp_extract(${x}, '\\(([A-Z][a-z]+)\\)', 1
 // A collector column as its list of names, written any way the legacy entry
 // form allowed: the same split as promotion's legacy_name_list.
 const collectors = (x: string) =>
-  `list_transform(regexp_split_to_array(trim(${x}), '\\s*(\\||/|&|\\band\\b)\\s*'), y -> trim(y))`;
+  `list_transform(regexp_split_to_array(trim(${x}), '\\s*(\\||/|&|\\b(?i:and)\\b)\\s*'), y -> trim(y))`;
 
 /**
  * The kind of one difference, over columns `column`, `exported` and `legacy`
@@ -159,7 +159,7 @@ export const DIFFERENCE_KIND_SQL = `CASE
       OR (${subgenusOf("exported")} <> '' AND ${subgenusOf("exported")} = legacy)
       OR (${subgenusOf("legacy")} <> '' AND ${subgenusOf("legacy")} = exported)) THEN 'subgenus_form'
   WHEN "column" = 'scientificName' AND regexp_full_match(legacy, '\\S+\\s+sp\\.\\s*\\d+')
-       AND starts_with(exported, regexp_extract(legacy, '^\\S+', 0)) THEN 'morphospecies'
+       AND regexp_full_match(exported, concat(regexp_extract(legacy, '^[A-Za-z]+', 0), '( \\([A-Z][a-z]+\\))?')) THEN 'morphospecies'
   WHEN "column" = 'scientificName' AND starts_with(legacy, concat(exported, ' '))
        AND regexp_full_match(substr(legacy, length(exported) + 2), '\\(?[A-Z].*\\d{4}\\)?') THEN 'authorship'
   ELSE 'changed'

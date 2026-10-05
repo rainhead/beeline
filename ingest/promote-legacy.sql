@@ -262,10 +262,10 @@ CREATE OR REPLACE MACRO legacy_name_key(n) AS
 
 -- A joint row's name columns, as the list they are in recordedBy order. The
 -- entry form let a pair be written any way: 'Michael | Dan', 'Michael and
--- Dan', 'Steve/Sarah', 'Sheehy&Malaby', 'Jan/ Walt'. 'and' only as a word, so
--- no name is cut inside ('Alexander', 'Anderson').
+-- Dan', 'Steve/Sarah', 'Sheehy&Malaby', 'Jan/ Walt'. 'and' only as a word, in
+-- any case, so no name is cut inside ('Alexander', 'Anderson').
 CREATE OR REPLACE MACRO legacy_name_list(s) AS
-  list_transform(regexp_split_to_array(s, '\s*(\||/|&|\band\b)\s*'), x -> trim(x));
+  list_transform(regexp_split_to_array(s, '\s*(\||/|&|\b(?i:and)\b)\s*'), x -> trim(x));
 
 -- Two spellings that differ by an actual letter are still two people to the
 -- fold — 'Emma Hoskins' / 'Emily Hoskins', 'Barrett Barrett' / 'Mary Barrett'

@@ -65,6 +65,8 @@ describe("the kind of a difference", () => {
     ["lastName", "Anderson", "Anders", "changed"], // synthetic: 'and' inside a name splits nothing
     ["scientificName", "Melissodes", "Melissodes sp.1", "morphospecies"],
     ["scientificName", "Lasioglossum (Dialictus)", "Lasioglossum  sp.1", "morphospecies"],
+    ["scientificName", "Melissodes microstictus", "Melissodes sp.1", "changed"], // synthetic: a species is not the morphospecies
+    ["firstName", "Michael | Dan", "Michael And Dan", "collector_list_form"], // synthetic
     ["verbatimElevation", "61", "65", "changed"],
     ["stateProvince", "WA", "OR", "changed"],
   ];

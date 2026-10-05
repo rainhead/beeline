@@ -51,6 +51,15 @@ describe("the kind of a difference", () => {
     ["genus", "Lasioglossum", "Lasioglossum (Dialictus)", "subgenus_form"],
     ["scientificName", "Halictus ligatus", "Halictus ligatus Say, 1837", "authorship"],
     ["scientificName", "Lasioglossum titusi", "Lasioglossum titusi (Crawford, 1902)", "authorship"],
+    // From the sandbox's comparison against the 2026-10-04 pull.
+    ["firstName", "Michael | Dan", "Michael and Dan", "collector_list_form"],
+    ["firstNameInitial", "S. | S.", "S./S.", "collector_list_form"],
+    ["lastName", "Sheehy | Malaby", "Sheehy&Malaby", "collector_list_form"],
+    ["lastName", "O'Loughlin | O'Loughlin", "O'Loughlin", "collector_list_form"],
+    ["lastName", "Best | Herrmann | Melathopoulos | Seitz", "Best| Herrmann | Melathopoulos | Seitz", "collector_list_form"],
+    ["recordedBy", "Maggie Graham | Henry Whitridge", "Maggie Graham", "collector_added"],
+    ["firstName", "Dan | Michael", "Michael | Dan", "changed"],
+    ["lastName", "Anderson", "Anders", "changed"], // synthetic: 'and' inside a name splits nothing
     ["verbatimElevation", "61", "65", "changed"],
     ["stateProvince", "WA", "OR", "changed"],
   ];

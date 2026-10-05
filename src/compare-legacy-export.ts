@@ -86,6 +86,7 @@ const IDENTIFYING = new Set([
 const MONTH_COLUMNS = ["month", "month2"];
 const DATE_COLUMNS = ["day", "year", "day2", "year2", "verbatimEventDate", ...MONTH_COLUMNS];
 const NAME_COLUMNS = ["genus", "subgenus", "specificEpithet", "scientificName", "genusVolDet", "speciesVolDet"];
+const COLLECTOR_COLUMNS = ["recordedBy", "firstName", "lastName", "firstNameInitial"];
 const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
 
 const list = (xs: readonly string[]) => xs.map((x) => `'${x}'`).join(", ");
@@ -123,6 +124,10 @@ const squash = (x: string) => `trim(regexp_replace(${x}, '\\s+', ' ', 'g'))`;
 // (an author and year) is not one.
 const withoutSubgenus = (x: string) => `trim(regexp_replace(${x}, '\\s*\\([A-Z][a-z]+\\)', '', 'g'))`;
 const subgenusOf = (x: string) => `regexp_extract(${x}, '\\(([A-Z][a-z]+)\\)', 1)`;
+// A collector column as its list of names, written any way the legacy entry
+// form allowed: the same split as promotion's legacy_name_list.
+const collectors = (x: string) =>
+  `list_transform(regexp_split_to_array(trim(${x}), '\\s*(\\||/|&|\\band\\b)\\s*'), y -> trim(y))`;
 
 /**
  * The kind of one difference, over columns `column`, `exported` and `legacy`
@@ -139,6 +144,12 @@ export const DIFFERENCE_KIND_SQL = `CASE
   WHEN "column" IN (${list(DATE_COLUMNS)}) AND ${dateRange("exported")} = ${dateRange("legacy")} THEN 'date_form'
   WHEN "column" = 'country' AND length(legacy) = 3 AND length(exported) = 2
        AND upper(left(legacy, 2)) = upper(exported) THEN 'country_code'
+  WHEN "column" IN (${list(COLLECTOR_COLUMNS)}) AND (
+         ${collectors("legacy")} = ${collectors("exported")}
+      OR (len(${collectors("legacy")}) = 1 AND list_distinct(${collectors("exported")}) = ${collectors("legacy")})) THEN 'collector_list_form'
+  WHEN "column" IN (${list(COLLECTOR_COLUMNS)})
+       AND len(${collectors("exported")}) > len(${collectors("legacy")})
+       AND list_has_all(${collectors("exported")}, ${collectors("legacy")}) THEN 'collector_added'
   WHEN "column" IN (${list(NAME_COLUMNS)}) AND (
          (${withoutSubgenus("exported")} = ${withoutSubgenus("legacy")} AND ${withoutSubgenus("exported")} <> '')
       OR (${subgenusOf("exported")} <> '' AND ${subgenusOf("exported")} = legacy)

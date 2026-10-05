@@ -412,7 +412,8 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
       AND EXISTS (SELECT 1 FROM cmp_pairs p
                   WHERE p."e_fieldNumber" = d.field_number
                     AND p."l_firstNameInitial" = concat(upper(left(trim(p."l_lastName"), 1)), '.')
-                    AND p."l_firstNameInitial" <> concat(upper(left(trim(p."l_firstName"), 1)), '.'))`);
+                    AND p."l_firstNameInitial" <> concat(upper(left(trim(p."l_firstName"), 1)), '.')
+                    AND d.exported = concat(upper(left(trim(p."e_firstName"), 1)), '.'))`);
   // The initials a person's label name gives (J.M. Benitez Alvarez), or the
   // derived one beside a label name printed as written (AC Quinn).
   await conn.run(`
@@ -421,7 +422,10 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
       AND EXISTS (SELECT 1 FROM specimen sp
                   JOIN sample_primary_collector pc ON pc.sample_id = sp.sample_id
                   JOIN person p ON p.entity_id = pc.person_id
-                  WHERE sp.field_number = d.field_number AND nullif(trim(p.label_name), '') IS NOT NULL)`);
+                  WHERE sp.field_number = d.field_number AND nullif(trim(p.label_name), '') IS NOT NULL
+                    AND d.exported = coalesce(
+                      nullif(regexp_extract(trim(p.label_name), '^((?:\\p{Lu}\\.)+) ', 1), ''),
+                      concat(upper(left(trim(p.given_name), 1)), '.')))`);
   // An identification the legacy system never received: the specimen's
   // newest expert determination came from Ecdysis or was made in Beeline.
   await conn.run(`

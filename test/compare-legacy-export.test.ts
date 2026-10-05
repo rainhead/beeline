@@ -273,6 +273,9 @@ describe("what the store knows about a difference", () => {
       SELECT o._id, 'stateProvince', 'Also wrong', (SELECT s.state_province FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id
                                              WHERE sp.field_number = '25000003'), 'test', 'test'
       FROM legacy_occurrence o WHERE o."fieldNumber" = '25000005'`);
+    // A record whose recordedBy lists its pair the other way round from its own
+    // name columns, as 1,362 of the O'Loughlins' do.
+    await conn.run(`UPDATE legacy_occurrence SET "recordedBy" = 'Ada Collector | Bea Trapper' WHERE "fieldNumber" = '25000005'`);
     // A one-day collection written as a range ending on its start, as the 2018 records are.
     await conn.run(`UPDATE legacy_occurrence SET year2 = "year", month2 = "month", day2 = "day" WHERE "fieldNumber" = '25000001'`);
   });
@@ -289,7 +292,7 @@ describe("what the store knows about a difference", () => {
           OR (field_number IN ('25000001', '25000002', '25000005') AND "column" IN ('genusVolDet', 'specificEpithet'))
           OR (field_number = '25000009' AND "column" = 'genus')
           OR (field_number = '25000001' AND "column" = 'day2')
-          OR (field_number = '25000005' AND "column" IN ('scientificName', 'locality'))
+          OR (field_number = '25000005' AND "column" IN ('scientificName', 'locality', 'recordedBy'))
           OR (field_number IN ('25000002', '25000009') AND "column" = 'firstNameInitial')
           OR (field_number = '25000003' AND "column" = 'stateProvince')
        ORDER BY 1, 2`,
@@ -311,6 +314,7 @@ describe("what the store knows about a difference", () => {
       ["25000003", "stateProvince", "changed"], // another record's correction is not this one's
       ["25000005", "genusVolDet", "changed"], // a misspelling nobody has curated
       ["25000005", "locality", "staff_correction"],
+      ["25000005", "recordedBy", "collector_order_contradicted"],
       ["25000005", "scientificName", "newer_determination"],
       ["25000005", "specificEpithet", "newer_determination"],
       ["25000005", "userLogin", "changed"], // another user id: not a rename

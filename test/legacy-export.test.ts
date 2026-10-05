@@ -154,6 +154,9 @@ describe("the legacy-format export", () => {
     const saved = (await conn.runAndReadAll(
       `SELECT _id, ${fields.map((f) => `"${f}"`).join(", ")} FROM legacy_occurrence WHERE "fieldNumber" IN ('25000001', '25000003')`,
     )).getRowObjectsJson();
+    const [[sampleLocality]] = (await conn.runAndReadAll(
+      `SELECT s.locality FROM sample s JOIN specimen sp ON sp.sample_id = s.entity_id WHERE sp.field_number = '25000003'`,
+    )).getRows() as [[string]];
     try {
       await conn.run(`UPDATE legacy_occurrence SET "samplingProtocol" = 'pan traps', locality = 'Elsewhere',
                       "verbatimEventDate" = '2025-VII-14/2025-VII-15', year2 = '2025', month2 = 'VII', day2 = '15',
@@ -177,7 +180,23 @@ describe("the legacy-format export", () => {
         `SELECT s.protocol FROM sample s JOIN specimen sp ON sp.sample_id = s.entity_id WHERE sp.field_number = '25000005'`,
       )).getRows() as [[string]];
       expect(out[2]![1]).toBe(protocol);
+      // A locality staff set on the sample wins over what its rows said. The
+      // override and the sample beside it, as src/apply-sample-overlay.ts writes them.
+      await conn.run(`INSERT INTO sample_locality_override (sample_id, locality)
+        SELECT sample_id, 'Staff Place' FROM specimen WHERE field_number = '25000003'`);
+      await conn.run(`UPDATE sample SET locality = 'Staff Place'
+        WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '25000003')`);
+      const again = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+      await writeLegacyExport(conn, again);
+      expect(await rows(conn, `SELECT "fieldNumber", locality FROM read_csv('${again}', header = true, all_varchar = true, quote = '"', escape = '"')
+                               WHERE "fieldNumber" IN ('25000001', '25000003') ORDER BY 1`)).toEqual([
+        ["25000001", "Staff Place"],
+        ["25000003", "Staff Place"],
+      ]);
     } finally {
+      await conn.run(`DELETE FROM sample_locality_override`);
+      await conn.run(`UPDATE sample SET locality = ?
+        WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '25000003')`, [sampleLocality] as never);
       for (const row of saved) {
         const r = row as Record<string, string | null>;
         await conn.run(`UPDATE legacy_occurrence SET ${fields.map((f) => `"${f}" = ?`).join(", ")} WHERE _id = ?`,

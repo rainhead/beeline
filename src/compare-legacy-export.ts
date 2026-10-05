@@ -303,7 +303,8 @@ const PLACE_FINDING_FIELD: Record<string, string> = {
  *   subgenus_form        (also from the values alone) a genus column holding only
  *                        '(Peponapis)', exported as the genus the tree files it under
  *   staff_correction     the legacy row as staff corrected it says what Beeline wrote
- *   collector_order      the pair in one order where the sample's rows give both
+ *   collector_order_contradicted  a record whose recordedBy and name columns
+ *                        list its pair in opposite orders
  *   initial_from_surname an initial the legacy record took from the family name
  *   label_name           the initials a label name gives, or the derived one beside it
  *   newer_determination  the specimen's newest expert determination came from
@@ -393,22 +394,16 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
           WHERE o."fieldNumber" = d.field_number
             AND (${CORRECTABLE_COLUMNS.map((c) => `(d."column" = ${sqlString(c)} AND c."${c}" = d.exported AND c."${c}" IS DISTINCT FROM o."${c}")`).join("\n              OR ")}))`);
   }
-  // The pair in one order where the sample's own legacy rows give both: a
-  // sample has one collector list, and no order matches all its records.
+  // A legacy record that contradicts itself about its pair's order: its name
+  // columns list them in the order Beeline wrote and its recordedBy in the
+  // other ("Dan | Michael" beside "Michael | Dan"), so no order matches it.
   await conn.run(`
-    UPDATE cmp_value_difference d SET kind = 'collector_order'
-    WHERE d.kind = 'changed' AND d."column" IN (${list(COLLECTOR_COLUMNS)})
+    UPDATE cmp_value_difference d SET kind = 'collector_order_contradicted'
+    WHERE d.kind = 'changed' AND d."column" = 'recordedBy'
       AND list_sort(${collectors("d.exported")}) = list_sort(${collectors("d.legacy")})
-      AND EXISTS (
-        -- Another row of the same sample lists the collectors in the order
-        -- written here, so the order is the sample's own, not an invented one.
-        SELECT 1 FROM cmp_pairs p
-        JOIN specimen sp ON sp.field_number = p."e_fieldNumber"
-        JOIN legacy_specimen_number n ON n.sample_id = sp.sample_id
-        JOIN legacy_occurrence o ON o._id = n._id
-        WHERE p."e_fieldNumber" = d.field_number
-          AND lower(o."recordedBy") = lower(p."e_recordedBy")
-          AND lower(p."l_recordedBy") <> lower(p."e_recordedBy"))`);
+      AND EXISTS (SELECT 1 FROM cmp_pairs p
+                  WHERE p."e_fieldNumber" = d.field_number AND len(${collectors('p."e_firstName"')}) > 1
+                    AND ${collectors('p."l_firstName"')} = ${collectors('p."e_firstName"')})`);
   // An initial the legacy record took from the family name: Alyssa Tollefson as T.
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'initial_from_surname'
@@ -427,9 +422,13 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
                   JOIN sample_primary_collector pc ON pc.sample_id = sp.sample_id
                   JOIN person p ON p.entity_id = pc.person_id
                   WHERE sp.field_number = d.field_number AND nullif(trim(p.label_name), '') IS NOT NULL
-                    AND d.exported = coalesce(
-                      nullif(regexp_extract(trim(p.label_name), '^((?:\\p{Lu}\\.)+) ', 1), ''),
-                      concat(upper(left(trim(p.given_name), 1)), '.')))`);
+                    AND (
+                      -- The initials the label name gives: J.M. of J.M. Benitez Alvarez.
+                      (nullif(regexp_extract(trim(p.label_name), '^((?:\\p{Lu}\\.)+) ', 1), '') = d.exported)
+                      -- Or a label name printed as written, whose initials the legacy
+                      -- record kept whole (AC of AC Quinn) beside the derived one.
+                      OR (d.exported = concat(upper(left(trim(p.given_name), 1)), '.')
+                          AND d.legacy = split_part(trim(p.label_name), ' ', 1))))`);
   // An identification the legacy system never received: the specimen's
   // newest expert determination came from Ecdysis or was made in Beeline.
   await conn.run(`

@@ -57,7 +57,7 @@ export const VALUE_KINDS = [
   "collector_alias", // the legacy spelling of a collector, corrected in ingest/collector-aliases.csv: Brendon / Brendan
   "taxon_alias", // a misspelt genus or epithet, corrected in ingest/taxon-aliases.csv: Agopostemon / Agapostemon
   "staff_correction", // the legacy row as staff corrected it: Kennedy Rd. / Caledon
-  "collector_order", // the pair in one order where its sample's rows list it both ways
+  "collector_order_contradicted", // a record whose recordedBy and name columns list its pair in opposite orders
   "initial_from_surname", // an initial taken from the family name: Alyssa Tollefson as T.
   "label_name", // the initials a label name gives: J. / J.M.
   "newer_determination", // an expert identification from Ecdysis or Beeline, newer than the legacy record's

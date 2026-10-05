@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
 import { compareLegacyExport, DIFFERENCE_KIND_SQL, seasonDate, writeDifferences } from "../src/compare-legacy-export.js";
-import { parseRulings, RULING_COLUMNS, type Ruling } from "../src/legacy-export-rulings.js";
+import { parseRulings, readRulings, RULING_COLUMNS, type Ruling } from "../src/legacy-export-rulings.js";
 import { writeLegacyExport } from "../src/legacy-export.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
@@ -51,6 +51,22 @@ describe("the kind of a difference", () => {
     ["genus", "Lasioglossum", "Lasioglossum (Dialictus)", "subgenus_form"],
     ["scientificName", "Halictus ligatus", "Halictus ligatus Say, 1837", "authorship"],
     ["scientificName", "Lasioglossum titusi", "Lasioglossum titusi (Crawford, 1902)", "authorship"],
+    // From the sandbox's comparison against the 2026-10-04 pull.
+    ["firstNameInitial", "S.", "S", "initial_form"],
+    ["firstNameInitial", "A.", "AC", "changed"],
+    ["recordedBy", "Mary Jo Mosby", "MaryJo Mosby", "name_spelling"],
+    ["firstName", "Michael | Dan", "Michael and Dan", "collector_list_form"],
+    ["firstNameInitial", "S. | S.", "S./S.", "collector_list_form"],
+    ["lastName", "Sheehy | Malaby", "Sheehy&Malaby", "collector_list_form"],
+    ["lastName", "O'Loughlin | O'Loughlin", "O'Loughlin", "collector_list_form"],
+    ["lastName", "Best | Herrmann | Melathopoulos | Seitz", "Best| Herrmann | Melathopoulos | Seitz", "collector_list_form"],
+    ["recordedBy", "Maggie Graham | Henry Whitridge", "Maggie Graham", "collector_added"],
+    ["firstName", "Dan | Michael", "Michael | Dan", "changed"],
+    ["lastName", "Anderson", "Anders", "changed"], // synthetic: 'and' inside a name splits nothing
+    ["scientificName", "Melissodes", "Melissodes sp.1", "morphospecies"],
+    ["scientificName", "Lasioglossum (Dialictus)", "Lasioglossum  sp.1", "morphospecies"],
+    ["scientificName", "Melissodes microstictus", "Melissodes sp.1", "changed"], // synthetic: a species is not the morphospecies
+    ["firstName", "Michael | Dan", "Michael And Dan", "collector_list_form"], // synthetic
     ["verbatimElevation", "61", "65", "changed"],
     ["stateProvince", "WA", "OR", "changed"],
   ];
@@ -97,6 +113,11 @@ describe("the rulings file", () => {
 
   test("refuses the same column, kind and record ruled on twice", () => {
     expect(() => parseRulings(`${header}\n${row()}\n${row({ reason: "again" })}\n`, "t")).toThrow("twice");
+  });
+
+  test("the checked-in rulings are all well formed", async () => {
+    // Written by hand, so a typo would otherwise surface only on the next comparison.
+    expect((await readRulings(new URL("../ingest/legacy-export-rulings.csv", import.meta.url).pathname)).length).toBeGreaterThan(0);
   });
 });
 
@@ -194,6 +215,10 @@ describe("what the store knows about a difference", () => {
     ({ conn } = await createMemoryDb());
     await loadLegacyStaging(conn, FIXTURE);
     await promoteLegacy(conn, FIXTURE_INPUTS);
+    // An expert identification the legacy system never received, as Ecdysis brings.
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, is_expert, channel)
+      SELECT sp.entity_id, a.entity_id, 'Bombus vosnesenskii', true, 'ecdysis_import'
+      FROM specimen sp, animal a WHERE sp.field_number = '25000005' AND a.scientific_name = 'Bombus vosnesenskii'`);
     dir = await mkdtemp(join(tmpdir(), "compare-store-"));
     exportPath = join(dir, "occurrences.csv");
     await writeLegacyExport(conn, exportPath);
@@ -217,6 +242,19 @@ describe("what the store knows about a difference", () => {
        SELECT sample_id, 'within_sample_disagreement', 'locality: Here | Somewhere else' FROM specimen WHERE field_number = '25000002'`,
     );
     await conn.run(`UPDATE legacy_occurrence SET locality = 'Somewhere else' WHERE "fieldNumber" = '25000002'`);
+    // Misspelt names the alias file corrects, a genus and a species, and one it does not.
+    await conn.run(`INSERT INTO legacy_taxon_alias (rank, alias, name, basis) VALUES
+      ('genus', 'Bommbus', 'Bombus', 'test'), ('species', 'Bombus vosnesenski', 'Bombus vosnesenskii', 'test')`);
+    await conn.run(`UPDATE legacy_occurrence SET "genusVolDet" = 'Bommbus' WHERE "fieldNumber" = '25000002'`);
+    await conn.run(`UPDATE legacy_occurrence SET "specificEpithet" = 'vosnesenski' WHERE "fieldNumber" = '25000001'`);
+    await conn.run(`UPDATE legacy_occurrence SET "genusVolDet" = 'Bumbus' WHERE "fieldNumber" = '25000005'`);
+    // A genus column holding only the subgenus, as '(Peponapis)' does on the sandbox.
+    await conn.run(`INSERT INTO animal (parent_id, rank, scientific_name)
+      SELECT entity_id, 'subgenus', 'Lasioglossum (Dialictus)' FROM animal WHERE rank = 'genus' AND scientific_name = 'Lasioglossum'
+        AND NOT EXISTS (SELECT 1 FROM animal WHERE scientific_name = 'Lasioglossum (Dialictus)')`);
+    await conn.run(`UPDATE legacy_occurrence SET genus = '(Dialictus)' WHERE "fieldNumber" = '25000009'`);
+    // A one-day collection written as a range ending on its start, as the 2018 records are.
+    await conn.run(`UPDATE legacy_occurrence SET year2 = "year", month2 = "month", day2 = "day" WHERE "fieldNumber" = '25000001'`);
   });
 
   test("labels each difference the store can account for, and leaves the rest as changed", async () => {
@@ -228,11 +266,18 @@ describe("what the store knows about a difference", () => {
        WHERE (field_number IN ('25000001', '25000003') AND "column" IN ('recordedBy', 'firstName', 'lastName'))
           OR (field_number IN ('25000002', '25000005') AND "column" = 'userLogin')
           OR (field_number IN ('25000002', '25000003') AND "column" = 'locality')
+          OR (field_number IN ('25000001', '25000002', '25000005') AND "column" IN ('genusVolDet', 'specificEpithet'))
+          OR (field_number = '25000009' AND "column" = 'genus')
+          OR (field_number = '25000001' AND "column" = 'day2')
+          OR (field_number = '25000005' AND "column" = 'scientificName')
        ORDER BY 1, 2`,
     )).getRows();
     expect(kinds).toEqual([
+      ["25000001", "day2", "one_day_range"],
       ["25000001", "lastName", "collector_alias"],
       ["25000001", "recordedBy", "collector_alias"],
+      ["25000001", "specificEpithet", "taxon_alias"],
+      ["25000002", "genusVolDet", "taxon_alias"],
       ["25000002", "locality", "changed"], // Beeline wrote neither of the values the rows disagreed between
       ["25000002", "userLogin", "login_renamed"],
       // The parts no longer spell the misspelled name, so the alias explains neither.
@@ -240,7 +285,11 @@ describe("what the store knows about a difference", () => {
       ["25000003", "lastName", "changed"],
       ["25000003", "locality", "sample_disagreement"],
       ["25000003", "recordedBy", "collector_alias"],
+      ["25000005", "genusVolDet", "changed"], // a misspelling nobody has curated
+      ["25000005", "scientificName", "newer_determination"],
+      ["25000005", "specificEpithet", "newer_determination"],
       ["25000005", "userLogin", "changed"], // another user id: not a rename
+      ["25000009", "genus", "subgenus_form"],
     ]);
   });
 });

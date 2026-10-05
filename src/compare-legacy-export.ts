@@ -86,6 +86,8 @@ const IDENTIFYING = new Set([
 const MONTH_COLUMNS = ["month", "month2"];
 const DATE_COLUMNS = ["day", "year", "day2", "year2", "verbatimEventDate", ...MONTH_COLUMNS];
 const NAME_COLUMNS = ["genus", "subgenus", "specificEpithet", "scientificName", "genusVolDet", "speciesVolDet"];
+const COLLECTOR_COLUMNS = ["recordedBy", "firstName", "lastName", "firstNameInitial"];
+const IDENTIFICATION_COLUMNS = ["family", "genus", "subgenus", "specificEpithet", "scientificName", "taxonRank", "identifiedBy"];
 const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
 
 const list = (xs: readonly string[]) => xs.map((x) => `'${x}'`).join(", ");
@@ -123,6 +125,10 @@ const squash = (x: string) => `trim(regexp_replace(${x}, '\\s+', ' ', 'g'))`;
 // (an author and year) is not one.
 const withoutSubgenus = (x: string) => `trim(regexp_replace(${x}, '\\s*\\([A-Z][a-z]+\\)', '', 'g'))`;
 const subgenusOf = (x: string) => `regexp_extract(${x}, '\\(([A-Z][a-z]+)\\)', 1)`;
+// A collector column as its list of names, written any way the legacy entry
+// form allowed: the same split as promotion's legacy_name_list.
+const collectors = (x: string) =>
+  `list_transform(regexp_split_to_array(trim(${x}), '\\s*(\\||/|&|\\b(?i:and)\\b)\\s*'), y -> trim(y))`;
 
 /**
  * The kind of one difference, over columns `column`, `exported` and `legacy`
@@ -139,10 +145,21 @@ export const DIFFERENCE_KIND_SQL = `CASE
   WHEN "column" IN (${list(DATE_COLUMNS)}) AND ${dateRange("exported")} = ${dateRange("legacy")} THEN 'date_form'
   WHEN "column" = 'country' AND length(legacy) = 3 AND length(exported) = 2
        AND upper(left(legacy, 2)) = upper(exported) THEN 'country_code'
+  WHEN "column" = 'firstNameInitial' AND replace(exported, '.', '') = replace(legacy, '.', '') THEN 'initial_form'
+  WHEN "column" IN (${list(COLLECTOR_COLUMNS)}) AND (
+         ${collectors("legacy")} = ${collectors("exported")}
+      OR (len(${collectors("legacy")}) = 1 AND list_distinct(${collectors("exported")}) = ${collectors("legacy")})) THEN 'collector_list_form'
+  WHEN "column" IN (${list(COLLECTOR_COLUMNS)})
+       AND len(${collectors("exported")}) > len(${collectors("legacy")})
+       AND list_has_all(${collectors("exported")}, ${collectors("legacy")}) THEN 'collector_added'
+  WHEN "column" IN (${list(COLLECTOR_COLUMNS)})
+       AND regexp_replace(lower(exported), '[^a-z0-9|]', '', 'g') = regexp_replace(lower(legacy), '[^a-z0-9|]', '', 'g') THEN 'name_spelling'
   WHEN "column" IN (${list(NAME_COLUMNS)}) AND (
          (${withoutSubgenus("exported")} = ${withoutSubgenus("legacy")} AND ${withoutSubgenus("exported")} <> '')
       OR (${subgenusOf("exported")} <> '' AND ${subgenusOf("exported")} = legacy)
       OR (${subgenusOf("legacy")} <> '' AND ${subgenusOf("legacy")} = exported)) THEN 'subgenus_form'
+  WHEN "column" = 'scientificName' AND regexp_full_match(legacy, '\\S+\\s+sp\\.\\s*\\d+')
+       AND regexp_full_match(exported, concat(regexp_extract(legacy, '^[A-Za-z]+', 0), '( \\([A-Z][a-z]+\\))?')) THEN 'morphospecies'
   WHEN "column" = 'scientificName' AND starts_with(legacy, concat(exported, ' '))
        AND regexp_full_match(substr(legacy, length(exported) + 2), '\\(?[A-Z].*\\d{4}\\)?') THEN 'authorship'
   ELSE 'changed'
@@ -278,6 +295,13 @@ const PLACE_FINDING_FIELD: Record<string, string> = {
  *   collector_alias      the legacy collector, spelled as ingest/collector-aliases.csv
  *                        corrects it, is who Beeline wrote — and the record's name
  *                        parts differ for the same reason
+ *   taxon_alias          the legacy genus or epithet is a misspelling
+ *                        ingest/taxon-aliases.csv corrects to what Beeline wrote
+ *   subgenus_form        (also from the values alone) a genus column holding only
+ *                        '(Peponapis)', exported as the genus the tree files it under
+ *   newer_determination  the specimen's newest expert determination came from
+ *                        Ecdysis or Beeline, so the legacy system never received it
+ *   one_day_range        an end the legacy record wrote on its start day, blank here
  *   login_renamed        both sides carry the same iNaturalist user id
  *   sample_disagreement  promotion found the legacy rows of this specimen's sample
  *                        disagreeing about this field, and the sample keeps one value
@@ -317,6 +341,50 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
       WHERE n.field_number = d.field_number AND n.spelled
         AND (d."column" IN ('firstName', 'lastName') OR (d."column" = 'firstNameInitial' AND n.initials_follow))`);
   }
+  // A genus spelled as an alias's written form and exported as its name; an
+  // epithet the same, read with the record's genus beside it, since a species
+  // alias names both (ingest/parse-names.sql).
+  if ((await one(conn, `SELECT count(*) FROM duckdb_tables() WHERE table_name = 'legacy_taxon_alias'`)) > 0) {
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'taxon_alias'
+      WHERE d.kind = 'changed' AND d."column" IN ('genus', 'genusVolDet')
+        AND EXISTS (SELECT 1 FROM legacy_taxon_alias a
+                    WHERE a.rank = 'genus' AND a.alias = trim(d.legacy) AND a.name = d.exported)`);
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'taxon_alias'
+      FROM cmp_pairs p, legacy_taxon_alias a
+      WHERE d.kind = 'changed' AND d."column" IN ('specificEpithet', 'speciesVolDet')
+        AND p."e_fieldNumber" = d.field_number AND a.rank = 'species'
+        AND a.alias = concat_ws(' ', trim(CASE d."column" WHEN 'specificEpithet' THEN p."l_genus" ELSE p."l_genusVolDet" END), trim(d.legacy))
+        AND a.name = concat_ws(' ', CASE d."column" WHEN 'specificEpithet' THEN p."e_genus" ELSE p."e_genusVolDet" END, d.exported)`);
+  }
+  // A genus column holding only a bracketed subgenus, '(Peponapis)', which
+  // promotion files under the genus the tree holds it in: the same form as
+  // 'Xenoglossa (Peponapis)', missing the half the values alone would show.
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'subgenus_form'
+    WHERE d.kind = 'changed' AND d."column" IN ('genus', 'genusVolDet')
+      AND regexp_full_match(trim(d.legacy), '\\([A-Z][a-z]+\\)')
+      AND EXISTS (SELECT 1 FROM animal a
+                  WHERE a.rank = 'subgenus' AND a.scientific_name = concat(d.exported, ' ', trim(d.legacy)))`);
+  // An end the legacy record wrote on the day it started, which Beeline,
+  // writing an end only for a range, leaves blank with its day of the year.
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'one_day_range'
+    WHERE d.kind = 'blanked' AND d."column" IN ('day2', 'month2', 'year2', 'startDayofYear', 'endDayofYear')
+      AND EXISTS (SELECT 1 FROM cmp_pairs p
+                  WHERE p."e_fieldNumber" = d.field_number AND p."l_year2" = p."l_year"
+                    AND p."l_month2" = p."l_month" AND p."l_day2" = p."l_day")`);
+  // An identification the legacy system never received: the specimen's
+  // newest expert determination came from Ecdysis or was made in Beeline.
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'newer_determination'
+    WHERE d."column" IN (${list(IDENTIFICATION_COLUMNS)})
+      AND EXISTS (
+        SELECT 1 FROM specimen sp
+        JOIN (SELECT specimen_id, arg_max(channel, (recorded_at, entity_id)) AS channel
+              FROM determination WHERE is_expert GROUP BY specimen_id) e ON e.specimen_id = sp.entity_id
+        WHERE sp.field_number = d.field_number AND e.channel <> 'legacy_import')`);
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'login_renamed'
     WHERE d."column" = 'userLogin' AND d.kind = 'changed'

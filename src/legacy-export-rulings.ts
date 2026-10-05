@@ -34,8 +34,8 @@ export const OUTCOMES = ["expected", "reference-wrong", "beeline-wrong", "known-
 
 /**
  * What a difference in one column's value looks like, judged on the two
- * values alone, first match winning. `changed` is everything else. The last
- * three are read from the store instead, because the values alone cannot
+ * values alone, first match winning. `changed` is everything else. Those
+ * after it are read from the store instead, because the values alone cannot
  * say them, and they take precedence over what the values look like.
  */
 export const VALUE_KINDS = [
@@ -46,10 +46,18 @@ export const VALUE_KINDS = [
   "number_form", // the same number written differently: 10 / 10.0
   "date_form", // the same date or range: VII / 7, 2018-5-17/2018-5-17 / 5/17/2018
   "country_code", // a three-letter code where the template has two: CAN / CA
+  "initial_form", // the same initials with or without their full stops: S / S.
+  "collector_list_form", // the same collectors, one name each: Michael and Dan / Michael | Dan, O'Loughlin / O'Loughlin | O'Loughlin
+  "collector_added", // the legacy record's collectors and more, the rest of its sample's: Maggie / Maggie | Henry
+  "name_spelling", // a collector's name spaced or punctuated another way: MaryJo Mosby / Mary Jo Mosby
   "subgenus_form", // the subgenus written inside or beside the name: Dialictus / Lasioglossum (Dialictus)
   "authorship", // the same name with or without its author and year: Halictus ligatus Say, 1837
+  "morphospecies", // a morphospecies the tree cannot hold, written as its genus: Melissodes sp.1 / Melissodes
   "changed",
   "collector_alias", // the legacy spelling of a collector, corrected in ingest/collector-aliases.csv: Brendon / Brendan
+  "taxon_alias", // a misspelt genus or epithet, corrected in ingest/taxon-aliases.csv: Agopostemon / Agapostemon
+  "newer_determination", // an expert identification from Ecdysis or Beeline, newer than the legacy record's
+  "one_day_range", // an end the legacy record wrote on its start day: 2018-7-26/2018-7-26
   "login_renamed", // the same iNaturalist user id under another login
   "sample_disagreement", // the legacy rows Beeline merged into one sample name different places, and the sample keeps one
 ] as const;

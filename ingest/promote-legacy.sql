@@ -284,6 +284,13 @@ WHERE dup_rank = 1
 CREATE OR REPLACE MACRO legacy_name_key(n) AS
   regexp_replace(lower(n), '[^a-z0-9]', '', 'g');
 
+-- A joint row's name columns, as the list they are in recordedBy order. The
+-- entry form let a pair be written any way: 'Michael | Dan', 'Michael and
+-- Dan', 'Steve/Sarah', 'Sheehy&Malaby', 'Jan/ Walt'. 'and' only as a word, in
+-- any case, so no name is cut inside ('Alexander', 'Anderson').
+CREATE OR REPLACE MACRO legacy_name_list(s) AS
+  list_transform(regexp_split_to_array(s, '\s*(\||/|&|\b(?i:and)\b)\s*'), x -> trim(x));
+
 -- Two spellings that differ by an actual letter are still two people to the
 -- fold — 'Emma Hoskins' / 'Emily Hoskins', 'Barrett Barrett' / 'Mary Barrett'
 -- — and no wider fold can tell those from two siblings. They are curation, in
@@ -443,10 +450,18 @@ GROUP BY person_id;
 
 -- Name parts survive promotion: a label prints the initial and the whole
 -- family name, which cannot be recovered from a joined display name
--- (Van Otterloo, Benitez Alvarez). See src/person-name.ts. Someone who only
--- ever appears inside a joint recordedBy has no parted name to take, and
--- keeps NULL parts — their label falls back to the full name.
--- ...and only where that one name is the pair's own: a pair whose recordedBy
+-- (Van Otterloo, Benitez Alvarez). See src/person-name.ts.
+-- A joint row parts its names too, its columns being a list in recordedBy
+-- order however the pair was written (legacy_name_list) — 'Charles | Judith'
+-- / 'Schelz | Maxwell', 'Jan/ Walt' / 'Ochsner/ Stahlnecker', or one shared
+-- family name, 'Michael and Dan' / 'O''Loughlin' — read by position, behind
+-- any solo row. Only solo rows used to count, so 9 of the 10 people who only
+-- ever collected beside somebody had NULL parts, and the legacy export
+-- blanked their half of the name columns on the 691 records they collected.
+-- Columns that do not split into one name per collector part nobody, and
+-- someone with only such rows keeps NULL parts: their label falls back to the
+-- full name.
+-- ...and only where that one name is the row's own: a pair whose recordedBy
 -- names somebody else ('Mark Gorman' rows recorded by 'Pam Arion') would
 -- otherwise hand Pam the name parts off Mark's columns. The comparison is
 -- against what the row RECORDED, before aliasing — the alias says who the
@@ -459,17 +474,30 @@ GROUP BY person_id;
 -- the surviving name keeps the other spelling's parts — same initial, same
 -- family name, and ingest/person-overlay.csv for the rest.
 CREATE TABLE legacy_person_parts AS
+WITH listed AS (
+  SELECT c.*, legacy_name_list(c.fn) AS fns, legacy_name_list(c.ln) AS lns,
+         max(c.pos) OVER (PARTITION BY c.fn, c.ln) AS names_in_pair
+  FROM legacy_collector_name c
+),
+parted AS (
+  SELECT name, recorded_name, fn, ln, 0 AS joint
+  FROM listed WHERE names_in_pair = 1
+  UNION ALL
+  SELECT name, recorded_name, trim(fns[pos]), trim(CASE WHEN len(lns) = 1 THEN lns[1] ELSE lns[pos] END), 1
+  FROM listed
+  WHERE names_in_pair > 1 AND len(fns) = names_in_pair AND len(lns) IN (1, names_in_pair)
+)
 SELECT person_id, fn, ln FROM (
   SELECT n.person_id, c.fn, c.ln,
          row_number() OVER (
            PARTITION BY n.person_id
-           ORDER BY CASE WHEN legacy_name_key(concat_ws(' ', c.fn, c.ln))
+           ORDER BY c.joint,
+                    CASE WHEN legacy_name_key(concat_ws(' ', c.fn, c.ln))
                             = legacy_name_key(d.display_name) THEN 0 ELSE 1 END,
                     CASE WHEN c.name = d.display_name THEN 0 ELSE 1 END,
                     concat(c.fn, ' ', c.ln)
          ) AS rn
-  FROM legacy_collector_name c
-  JOIN legacy_solo_pair sp ON sp.fn IS NOT DISTINCT FROM c.fn AND sp.ln IS NOT DISTINCT FROM c.ln
+  FROM parted c
   JOIN legacy_person_name n ON n.name = c.name
   JOIN legacy_person_display d ON d.person_id = n.person_id
   WHERE legacy_name_key(c.recorded_name) = legacy_name_key(concat_ws(' ', c.fn, c.ln))
@@ -546,12 +574,19 @@ WHERE s.login IN (SELECT login FROM standalone GROUP BY login HAVING count(*) > 
 -- spelled 'Amy GRotta'. The pair's own name columns break the tie, and plain
 -- name order breaks it when none matches, so the choice is deterministic;
 -- the person not chosen still exists and still lands in sample_collector.
+-- On a joint row the columns name both, 'Michael | Dan' / 'O''Loughlin', so
+-- it is the first name in them that breaks the tie. Matching the whole
+-- columns never matched a joint pair, so name order made Dan the primary of
+-- 71 samples whose every row lists Michael first, and the export wrote their
+-- 1,934 records in the reverse order to the legacy file's.
 CREATE TABLE legacy_person_map AS
 SELECT fn, ln, person_id FROM (
   SELECT c.fn, c.ln, n.person_id,
          row_number() OVER (
            PARTITION BY c.fn, c.ln
            ORDER BY CASE WHEN lower(c.name) = lower(concat_ws(' ', c.fn, c.ln)) THEN 0 ELSE 1 END,
+                    CASE WHEN lower(c.name) = lower(concat_ws(' ', legacy_name_list(c.fn)[1],
+                                                                   legacy_name_list(c.ln)[1])) THEN 0 ELSE 1 END,
                     c.name
          ) AS rn
   FROM legacy_collector_name c

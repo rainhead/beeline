@@ -58,7 +58,8 @@ const STAGED = [
   "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "coordinateSource", "relationshipOfResource", "resourceID",
   "relatedResourceID", "relationshipRemarks", "phylumPlant", "orderPlant", "familyPlant", "genusPlant",
   "speciesPlant", "taxonRankPlant", "url", "taxonomicNotes", "sex", "caste", "geoprivacy", "taxon_geoprivacy",
-  "verbatimElevation", "familyVolDet", "genusVolDet", "speciesVolDet", "sexVolDet", "casteVolDet",
+  "verbatimElevation", "phylum", "class", "order", "family", "genus", "subgenus", "specificEpithet",
+  "scientificName", "taxonRank", "identifiedBy", "familyVolDet", "genusVolDet", "speciesVolDet", "sexVolDet", "casteVolDet",
 ] as const;
 
 const scalar = async (conn: DuckDBConnection, sql: string): Promise<number> => {
@@ -118,7 +119,7 @@ const labelInitials = (p: string) => {
 };
 
 /** The query behind the file: one row per specimen, every column TEXT, blanks as NULL. Exported for its test. */
-export function legacyExportSql(staging: Set<string> | null): string {
+export function legacyExportSql(staging: Set<string> | null, rowSource: string | null = null): string {
   // Without staging (a store built from iNaturalist alone) every staged
   // column is simply NULL: the same query, with the join replaced by nothing.
   // With it, a column the store's staging predates is NULL the same way.
@@ -135,6 +136,8 @@ export function legacyExportSql(staging: Set<string> | null): string {
   // since a blank is what the legacy file said; only a Beeline-originated
   // specimen, which has no staged record, gets the model's own value.
   const orStaged = (col: string, model: string) => `CASE WHEN lo._id IS NOT NULL THEN lo."${col}" ELSE ${model} END`;
+  const unidentified = (col: string, model: string) =>
+    `CASE WHEN e.entity_id IS NULL AND lo._id IS NOT NULL THEN lo."${col}" ELSE ${model} END`;
   // The reference writes a coordinate with toFixed(4): always four places,
   // "44.5000", which a join on the text would otherwise miss.
   // Everything after the genus and an optional "(Subgenus)": the epithet can
@@ -164,6 +167,33 @@ export function legacyExportSql(staging: Set<string> | null): string {
   // such row on the sandbox, 2026-10-04).
   const coord = (col: string, model: string) =>
     `CASE WHEN ${rowPoint} THEN lo."${col}" ELSE printf('%.4f', CAST(${model} AS DOUBLE)) END`;
+  // The same rule for how and when a specimen was caught, and where by name:
+  // a sample holds one method, one end date and one place, so where the
+  // legacy rows promotion merged into it disagree, each row carries its own
+  // (Peter, 2026-10-04). One collector numbered specimens 1–5 under sample 1
+  // on 25 April 2019: 1 and 2 netted that day, 3–5 from pan traps emptied the
+  // next, and the sample's trap and end date were written on the netted
+  // ones. Read from the corrected rows, so a staff edit, which corrects every
+  // row of its sample, leaves them agreeing and the model's value written.
+  const ROW_FIELDS = ["samplingProtocol", "locality", "county", "stateProvince", "country"];
+  const END_FIELDS = ["verbatimEventDate", "day2", "month2", "year2", "startDayofYear", "endDayofYear"];
+  const ownRow = (flag: string, col: string, model: string) =>
+    rowSource ? `CASE WHEN dg.${flag} AND lr._id IS NOT NULL THEN lr."${col}" ELSE ${model} END` : model;
+  const disagreeing = rowSource
+    ? `,
+disagreeing AS (
+  SELECT lsn.sample_id,
+         ${ROW_FIELDS.map((f) => `count(DISTINCT coalesce(r."${f}", '')) > 1 AS "${f}"`).join(",\n         ")},
+         count(DISTINCT concat_ws('-', r."year2", r."month2", r."day2")) > 1 AS end_date
+  FROM legacy_specimen_number lsn JOIN ${rowSource} r ON r._id = lsn._id
+  GROUP BY lsn.sample_id
+)`
+    : "";
+  const rowJoins = rowSource
+    ? `LEFT JOIN disagreeing dg ON dg.sample_id = sp.sample_id
+  LEFT JOIN (SELECT _id, ${[...ROW_FIELDS, ...END_FIELDS].map((f) => `CAST("${f}" AS VARCHAR) AS "${f}"`).join(", ")}
+             FROM ${rowSource}) lr ON lr._id = lo._id`
+    : "";
   return `
 WITH RECURSIVE up(node_id, anc_id) AS (
   SELECT entity_id, entity_id FROM animal
@@ -215,7 +245,7 @@ collectors AS (
                     ' | ' ORDER BY sc.position) AS initials
   FROM sample_collector sc JOIN person p ON p.entity_id = sc.person_id
   GROUP BY sc.sample_id
-),
+)${disagreeing},
 rows AS (
   SELECT
     ${t(`lo."errorFlags"`)} AS "errorFlags",
@@ -238,20 +268,20 @@ rows AS (
     ${t("day(s.date_start)")} AS "day",
     ${t("month(s.date_start)")} AS "month",
     ${t("year(s.date_start)")} AS "year",
-    ${t(`CASE WHEN s.date_end > s.date_start
+    ${t(ownRow("end_date", "verbatimEventDate", `CASE WHEN s.date_end > s.date_start
                THEN concat(strftime(s.date_start, '%Y-%-m-%-d'), '/', strftime(s.date_end, '%Y-%-m-%-d'))
-               ELSE strftime(s.date_start, '%-m/%-d/%Y') END`)} AS "verbatimEventDate",
-    ${t("CASE WHEN s.date_end > s.date_start THEN day(s.date_end) END")} AS "day2",
-    ${t("CASE WHEN s.date_end > s.date_start THEN month(s.date_end) END")} AS "month2",
-    ${t("CASE WHEN s.date_end > s.date_start THEN year(s.date_end) END")} AS "year2",
-    ${t("CASE WHEN s.date_end > s.date_start THEN dayofyear(s.date_start) END")} AS "startDayofYear",
-    ${t("CASE WHEN s.date_end > s.date_start THEN dayofyear(s.date_end) END")} AS "endDayofYear",
+               ELSE strftime(s.date_start, '%-m/%-d/%Y') END`))} AS "verbatimEventDate",
+    ${t(ownRow("end_date", "day2", "CASE WHEN s.date_end > s.date_start THEN CAST(day(s.date_end) AS VARCHAR) END"))} AS "day2",
+    ${t(ownRow("end_date", "month2", "CASE WHEN s.date_end > s.date_start THEN CAST(month(s.date_end) AS VARCHAR) END"))} AS "month2",
+    ${t(ownRow("end_date", "year2", "CASE WHEN s.date_end > s.date_start THEN CAST(year(s.date_end) AS VARCHAR) END"))} AS "year2",
+    ${t(ownRow("end_date", "startDayofYear", "CASE WHEN s.date_end > s.date_start THEN CAST(dayofyear(s.date_start) AS VARCHAR) END"))} AS "startDayofYear",
+    ${t(ownRow("end_date", "endDayofYear", "CASE WHEN s.date_end > s.date_start THEN CAST(dayofyear(s.date_end) AS VARCHAR) END"))} AS "endDayofYear",
     -- The legacy file's country is the short name its places file gives a
     -- country — USA, but CA and NZ — where Beeline keeps ISO alpha-3 codes.
-    ${t("CASE s.country WHEN 'CAN' THEN 'CA' WHEN 'NZL' THEN 'NZ' WHEN 'MEX' THEN 'MX' ELSE s.country END")} AS "country",
-    ${t("s.state_province")} AS "stateProvince",
-    ${t("s.county")} AS "county",
-    ${t("s.locality")} AS "locality",
+    ${t(ownRow('"country"', "country", "CASE s.country WHEN 'CAN' THEN 'CA' WHEN 'NZL' THEN 'NZ' WHEN 'MEX' THEN 'MX' ELSE s.country END"))} AS "country",
+    ${t(ownRow('"stateProvince"', "stateProvince", "s.state_province"))} AS "stateProvince",
+    ${t(ownRow('"county"', "county", "s.county"))} AS "county",
+    ${t(ownRow('"locality"', "locality", "s.locality"))} AS "locality",
     ${t(ofRowPoint("verbatimElevation", "loc.elevation_m", "loc.elevation_latitude", "loc.elevation_longitude"))} AS "verbatimElevation",
     ${t(coord("decimalLatitude", "loc.latitude"))} AS "decimalLatitude",
     ${t(coord("decimalLongitude", "loc.longitude"))} AS "decimalLongitude",
@@ -262,7 +292,7 @@ rows AS (
     ${t(`CASE WHEN loc.source = 'legacy_import' AND lo._id IS NOT NULL THEN lo."coordinateSource"
                WHEN loc.source = 'inat_trusted' THEN 'private'
                WHEN loc.source = 'inat_public' THEN 'public' END`)} AS "coordinateSource",
-    ${t("s.protocol")} AS "samplingProtocol",
+    ${t(ownRow('"samplingProtocol"', "samplingProtocol", "s.protocol"))} AS "samplingProtocol",
     ${t(orStaged("relationshipOfResource", `CASE WHEN nullif(s.host_name_as_observed, '') IS NOT NULL THEN 'visits flowers of' END`))} AS "relationshipOfResource",
     ${t(orStaged("resourceID", "sp.occurrence_id"))} AS "resourceID",
     ${t(`lo."relatedResourceID"`)} AS "relatedResourceID",
@@ -281,26 +311,35 @@ rows AS (
     ${t(`coalesce(nullif(lo."url", ''),
                   CASE WHEN s.inat_observation_id IS NOT NULL
                        THEN concat('https://www.inaturalist.org/observations/', s.inat_observation_id) END)`)} AS "url",
-    ${t("el.phylum")} AS "phylum",
-    ${t("el.class_name")} AS "class",
-    ${t("el.order_name")} AS "order",
-    ${t("el.family")} AS "family",
-    ${t("el.genus")} AS "genus",
-    ${t("el.subgenus")} AS "subgenus",
-    ${t(`CASE WHEN el.species IS NOT NULL THEN ${epithet("el.species")} END`)} AS "specificEpithet",
+    -- An expert identification where Beeline holds one; where it holds none,
+    -- what the legacy row said, as it said it: a determiner with no name
+    -- (L.R.Best on 88 records), or a name the tree could not place, has no
+    -- determination to live on, as with the volunteer columns below.
+    ${t(unidentified("phylum", "el.phylum"))} AS "phylum",
+    ${t(unidentified("class", "el.class_name"))} AS "class",
+    ${t(unidentified("order", "el.order_name"))} AS "order",
+    ${t(unidentified("family", "el.family"))} AS "family",
+    ${t(unidentified("genus", "el.genus"))} AS "genus",
+    -- The tree files a species under its genus, so a subgenus the legacy
+    -- determination stated (Lasioglossum kincaidii in Hemihalictus) is held
+    -- nowhere in the model; while that determination is still the record the
+    -- column is the legacy row's, as written (Peter, 2026-10-04), and a later
+    -- determination writes the model's.
+    ${t(`CASE WHEN (e.channel = 'legacy_import' OR e.entity_id IS NULL) AND lo._id IS NOT NULL THEN lo."subgenus" ELSE el.subgenus END`)} AS "subgenus",
+    ${t(unidentified("specificEpithet", `CASE WHEN el.species IS NOT NULL THEN ${epithet("el.species")} END`))} AS "specificEpithet",
     ${t(`lo."taxonomicNotes"`)} AS "taxonomicNotes",
     -- The legacy file writes an open-nomenclature qualifier inside the name:
     -- "Lasioglossum nr. tenax", which is also how the determiner wrote it.
-    ${t(`CASE WHEN e.qualifier IS NOT NULL AND el.species IS NOT NULL
+    ${t(unidentified("scientificName", `CASE WHEN e.qualifier IS NOT NULL AND el.species IS NOT NULL
                THEN concat(el.genus, ' ', e.qualifier, ' ', ${epithet("el.species")})
-               ELSE ea.scientific_name END`)} AS "scientificName",
+               ELSE ea.scientific_name END`))} AS "scientificName",
     -- Beeline keeps sex and caste on a determination, so a specimen the legacy
     -- system sexed but nobody has identified has nowhere to hold them: 24,217
     -- such rows in the 2026-09-27 corpus. Those carry the staged value.
     ${t(`coalesce(st.sex, lo."sex")`)} AS "sex",
     ${t(`coalesce(st.caste, lo."caste")`)} AS "caste",
-    ${t("CASE WHEN ea.rank IS NOT NULL THEN concat(upper(left(ea.rank, 1)), substr(ea.rank, 2)) END")} AS "taxonRank",
-    ${t("coalesce(nullif(e.determiner_name, ''), dp.display_name)")} AS "identifiedBy",
+    ${t(unidentified("taxonRank", "CASE WHEN ea.rank IS NOT NULL THEN concat(upper(left(ea.rank, 1)), substr(ea.rank, 2)) END"))} AS "taxonRank",
+    ${t(unidentified("identifiedBy", "coalesce(nullif(e.determiner_name, ''), dp.display_name)"))} AS "identifiedBy",
     -- A volunteer's identification, where Beeline holds one; where it holds
     -- none, what the legacy row said, as it said it: a sex with no name, or
     -- a name the tree could not place, has no determination to live on.
@@ -332,6 +371,7 @@ rows AS (
   LEFT JOIN lineage vl ON vl.node_id = v.animal_id
   LEFT JOIN printed pr ON pr.specimen_id = sp.entity_id
   ${staged}
+  ${rowJoins}
 )
 SELECT ${LEGACY_EXPORT_COLUMNS.map((c) => `"${c}"`).join(", ")}
 FROM rows
@@ -360,11 +400,18 @@ const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 export async function writeLegacyExport(conn: DuckDBConnection, path: string): Promise<{ rows: number; staged: boolean }> {
   await mkdir(dirname(path), { recursive: true });
   const staging = await stagedColumns(conn);
+  // Promotion's corrected staging, where it has run: the rows as staff left them.
+  const rowSource =
+    staging === null
+      ? null
+      : (await scalar(conn, `SELECT count(*) FROM duckdb_views() WHERE view_name = 'legacy_occurrence_corrected'`)) > 0
+        ? "legacy_occurrence_corrected"
+        : "legacy_occurrence";
   const body = `${path}.body.tmp`;
   const whole = `${path}.tmp`;
   try {
     await conn.run(
-      `COPY (${legacyExportSql(staging)}) TO '${body.replaceAll("'", "''")}'
+      `COPY (${legacyExportSql(staging, rowSource)}) TO '${body.replaceAll("'", "''")}'
        (FORMAT csv, HEADER true, DELIMITER ',', QUOTE '"', ESCAPE '"', NULLSTR '')`,
     );
     const out = createWriteStream(whole);

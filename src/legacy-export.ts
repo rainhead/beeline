@@ -431,9 +431,12 @@ export async function writeLegacyExport(conn: DuckDBConnection, path: string): P
     await pipeline(createReadStream(body), out);
     await rename(whole, path);
   } finally {
-    await conn.run(`SET threads = ${Number(threads)}`);
-    await rm(body, { force: true });
-    await rm(whole, { force: true });
+    try {
+      await conn.run(`SET threads = ${Number(threads)}`);
+    } finally {
+      await rm(body, { force: true });
+      await rm(whole, { force: true });
+    }
   }
   const rows = await scalar(conn, "SELECT count(*) FROM specimen");
   return { rows, staged: staging !== null };

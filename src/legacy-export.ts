@@ -402,9 +402,10 @@ const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
  * On one thread, whoever calls it. The join against the staged legacy records
  * and the final sort are the export's memory, and DuckDB holds a share of
  * both per thread: measured on a local copy of the sandbox's 2026-10-04 corpus, it
- * needs about 830 MB on one thread and 1,150 MB on two, against the 1 GB
- * budget fly.toml gives DuckDB (beeline-1w2d; 700 MB and 830 MB before #136
- * carried more of the legacy row). Under that budget one thread is no slower than two. threads
+ * needs about 830 MB on one thread and 1,150 MB on two, against the 1.5 GB
+ * fly.toml gives DuckDB on the sandbox, 1 GB until the two-thread CLI ran
+ * out (beeline-1w2d; 700 MB and 830 MB before #136 carried more of the
+ * legacy row). Under that budget one thread is no slower than two. threads
  * is a setting of the whole instance, so it is put back however this ends.
  */
 export async function writeLegacyExport(conn: DuckDBConnection, path: string): Promise<{ rows: number; staged: boolean }> {

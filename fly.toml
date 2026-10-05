@@ -69,7 +69,11 @@ swap_size_mb = 1024
   # 8.0 MiB". Measured against a copy of the deployed store: 384 MB fails,
   # 512 MB completes in 1.3s. This is set well clear of that line because the
   # corpus grows nightly and the failure is invisible until somebody looks.
-  BEELINE_DUCKDB_MEMORY_LIMIT = "1024MB"
+  #
+  # 1.5 GB since 2026-10-04, with the machine's third GB: the legacy-format
+  # export needs ~830 MB on one thread after #136 (1,150 MB on two), which
+  # left it ~190 MB under 1 GB and shrinking every season (beeline-1w2d).
+  BEELINE_DUCKDB_MEMORY_LIMIT = "1536MB"
   BEELINE_DUCKDB_THREADS = "2"
 
   BEELINE_SYNC_PROJECTS = "18521,166376,99706"
@@ -118,7 +122,8 @@ swap_size_mb = 1024
   # promotion burns 27s of CPU in 16s of wall time and every listing scans the
   # QC union.
   size = "shared-cpu-2x"
-  # 2 GB: DuckDB's 1 GB plus the process around it, which measured ~250 MB
-  # beyond DuckDB's own limit during a promotion. Serving needs a fraction of
-  # this — 54-62 MB RSS — so the nightly is what the machine is sized for.
-  memory = "2gb"
+  # 3 GB: DuckDB's 1.5 GB plus the process around it, which measured ~250 MB
+  # beyond DuckDB's own limit during a promotion, with room to spare. Serving
+  # needs a fraction of this — 54-62 MB RSS — so the batch work is what the
+  # machine is sized for: 2 GB until the export's growth (beeline-1w2d).
+  memory = "3gb"

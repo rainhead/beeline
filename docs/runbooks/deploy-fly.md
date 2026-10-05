@@ -306,8 +306,9 @@ whose every key is quoted and so redacted into nothing.
 
 ## The machine's budget
 
-The machine is `shared-cpu-2x`, 2 GB with 1 GB of swap, and a 10 GB volume Fly
-grows by 5 GB at 80% full ([`fly.toml`](../../fly.toml)). What it actually used,
+The machine is `shared-cpu-2x`, 3 GB with 1 GB of swap (2 GB until
+2026-10-04, beeline-1w2d), and a volume Fly grows by 5 GB at 80% full — 10 GB
+until a failed reseed filled it on 2026-10-04, 15 GB since ([`fly.toml`](../../fly.toml)). What it actually used,
 2026-09-12 to 10-01 from Fly's own metrics: a normal day ~0.003 cores and
 0.5–0.65 GB of memory, no swap, ~2.4 GB on the volume, no OOM kills. The one
 limit it reaches is the **CPU burst balance**: a shared vCPU may run above its
@@ -402,8 +403,8 @@ occurrences file at 4am Pacific, to `data/exports/occurrences.csv` (config
 `exportsDir`, `BEELINE_EXPORTS`), and admins download it from `/exports`
 (beeline-6q8). It is regenerable, so the backup below leaves it out. To write
 it now, press Run now on `legacy-export` at `/jobs`. It runs on one thread
-whoever starts it, the job or `pnpm legacy:export`: on two it needs more than
-the 1 GB DuckDB is given here (beeline-1w2d). To check how close it is
+whoever starts it, the job or `pnpm legacy:export`: on two it needs 1,150 MB
+of the 1.5 GB DuckDB is given here, where one needs 830 MB (beeline-1w2d). To check how close it is
 to what the legacy system held, run `pnpm legacy:compare-export` against a
 copy of the store — it needs the staged legacy records, which a reseeded
 store carries. It reports only the differences

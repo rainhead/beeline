@@ -176,7 +176,8 @@ describe("replaying decisions onto a store", () => {
   test("a later release moving from under a decision is reported, per kind", async () => {
     await applyTaxonCuration(conn, [row({}), DEPARTURE, HOMONYM]);
     // ITIS gains the subgenus, accepts zonulum again, and drops Wu's truncata.
-    await conn.run(`INSERT INTO itis_taxon VALUES (9000001, 'subgenus', 'Lasioglossum (Dialictus)', 'valid', 'Robertson, 1902', 154357, DATE '2026-11-30')`);
+    await conn.run(`INSERT INTO itis_taxon (tsn, rank, name, usage, author, parent_tsn, itis_as_of)
+                    VALUES (9000001, 'subgenus', 'Lasioglossum (Dialictus)', 'valid', 'Robertson, 1902', 154357, DATE '2026-11-30')`);
     await conn.run(`UPDATE itis_taxon SET usage = 'valid', itis_as_of = DATE '2026-11-30' WHERE tsn = 759593`);
     await conn.run(`DELETE FROM itis_taxon WHERE tsn = 756786`);
     expect(await rows(conn, "SELECT scientific_name, kind, itis_as_of::VARCHAR, problem FROM animal_curation_stale ORDER BY scientific_name")).toEqual([

@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { loadEcdysis, parseArgs } from "../src/load-ecdysis.js";
+import { loadItis } from "../src/load-itis.js";
 
 /**
  * Determinations from Ecdysis (beeline-9ut). The fixture is the shape of a
@@ -186,6 +190,26 @@ describe("a flat occurrence export", () => {
                     SELECT ${a}, entity_id, true, 'legacy_import', 'Sam A. Staff', TIMESTAMPTZ '2026-08-20 22:20:40Z' FROM animal WHERE scientific_name = 'Andrena sladeni'`);
     await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(await record(a)).toEqual(["Andrena sladeni", null, "Sam Staff", "2025-01-01", "year", null, "ecdysis_import"]);
+  });
+
+  test("a name the tree lacks and ITIS accepts is adopted, and its rows load", async () => {
+    // Nomada, which the archive's current row for C names, as the 2026-09-21
+    // ITIS release files it: a genus under Apidae (beeline-45v.1.1).
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-itis-"));
+    await writeFile(
+      join(dir, "itis-taxon.csv"),
+      "tsn,rank,name,usage,author,parent_tsn,itis_as_of,admitted_parent_tsn\n" +
+        "154394,family,Apidae,valid,,154344,2026-09-21,154344\n" +
+        '154382,genus,Nomada,valid,"Scopoli, 1770",633972,2026-09-21,154394\n',
+    );
+    await writeFile(join(dir, "itis-synonym.csv"), "tsn,accepted_tsn\n");
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Apidae')`);
+    await loadItis(conn, { taxonCsv: join(dir, "itis-taxon.csv"), synonymCsv: join(dir, "itis-synonym.csv") });
+
+    const result = await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(result.adopted).toEqual([{ name: "Nomada", rank: "genus", tsn: 154382, ancestors: [] }]);
+    expect(result.unresolvedNames).toEqual([]);
+    expect(await record(c)).toEqual(["Nomada", null, "Ellen Expert", "2024-01-01", "year", "zonalis group", "ecdysis_import"]);
   });
 
   test("where the history flags nothing current, the occurrence's own determination is current", async () => {

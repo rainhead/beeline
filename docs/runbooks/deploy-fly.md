@@ -231,12 +231,12 @@ wc -l data/sample-change.csv
 
 The curated taxonomy is matched against ITIS (beeline-45v): `itis_taxon` and
 `itis_synonym` hold every insect from one ITIS release, and `animal.itis_tsn`
-is read against them. The download is 224 MB zipped and 925 MB unpacked, so it
-is fetched and extracted on maderas, and only the extract — two CSVs, about
-27 MB — goes to the machine:
+is read against them. The download is 224 MB zipped and 925 MB unpacked; fetch
+and extract it on a workstation (about a minute on a fast connection), and send
+only the extract — two CSVs, about 27 MB — to the machine:
 
 ```sh
-pnpm itis:fetch                                        # on maderas → data/itis/
+pnpm itis:fetch                                        # on a workstation → data/itis/
 fly ssh console --app beeline -C "mkdir -p /app/data/itis"
 fly ssh sftp put --app beeline data/itis/itis-taxon.csv /app/data/itis/itis-taxon.csv
 fly ssh sftp put --app beeline data/itis/itis-synonym.csv /app/data/itis/itis-synonym.csv

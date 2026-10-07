@@ -13,8 +13,10 @@ import { DEFAULT_DB } from "./person-change.js";
  * Two shapes of input, one row model. A Symbiota Darwin Core archive, once
  * unpacked, holds `occurrences.*` and `identifications.*`: every
  * identification an occurrence has ever had, each with the moment it was
- * entered and exactly one of them flagged current — the whole history, which
- * is what an append-only determination log wants. A flat occurrence export,
+ * entered and, usually, one of them flagged current — the whole history,
+ * which is what an append-only determination log wants. Where none is
+ * flagged, the occurrence's own determination is the current one, read as a
+ * flat export's is. A flat occurrence export,
  * which is what staff have downloaded until now, carries only the current
  * identification, with no id of its own; it is read as one current
  * identification per occurrence and keyed by the occurrence and its fields.
@@ -126,6 +128,17 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
        SELECT "id" AS occ_id, trim("catalogNumber") AS catalog_number, "recordID" AS occurrence_record_id
        FROM read_csv(${sqlString(files.occurrences)}, header = true, all_varchar = true)`,
     );
+    // An occurrence row read as its current identification, keyed by the
+    // occurrence and the fields that make it: a later export whose current
+    // identification differs derives a different key and so is new. It is
+    // all a flat export has, and what an archive falls back on below.
+    const occurrenceAsCurrent = `
+         SELECT "id" AS occ_id,
+                concat('occ:', "recordID", ':', md5(concat_ws('|', trim("scientificName"), trim("identifiedBy"), trim("dateIdentified"), trim("identificationQualifier")))) AS record_id,
+                trim("identifiedBy") AS identified_by, trim("dateIdentified") AS date_identified,
+                trim("identificationQualifier") AS qualifier_text, trim("scientificName") AS scientific_name,
+                true AS is_current, trim("identificationRemarks") AS remarks, "modified" AS entered_text
+         FROM read_csv(${sqlString(files.occurrences)}, header = true, all_varchar = true)`;
     if (files.input === "archive") {
       await conn.run(
         `CREATE OR REPLACE TEMP TABLE ecd_identification AS
@@ -136,19 +149,22 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                 trim("identificationRemarks") AS remarks, "modified" AS entered_text
          FROM read_csv(${sqlString(files.identifications)}, header = true, all_varchar = true)`,
       );
-    } else {
-      // One current identification per occurrence, keyed by the occurrence
-      // and the fields that make it: a later export whose current
-      // identification differs derives a different key and so is new.
+      // Symbiota keeps an occurrence's current determination on the
+      // occurrence itself; the history's flag usually agrees, but not always.
+      // 484 occurrences in Washington's 2026-09-24 archive flag nothing
+      // current — typically a placeholder, then a name and a nameless row
+      // entered together — while the occurrence names its determination, and
+      // in a third of them the newest history row is not what it names. Read
+      // from the flags alone, all of it was history and the legacy copy stayed
+      // the record (beeline-9ut.6). There the occurrence row is the current
+      // identification, keyed as a flat export would key it.
       await conn.run(
-        `CREATE OR REPLACE TEMP TABLE ecd_identification AS
-         SELECT "id" AS occ_id,
-                concat('occ:', "recordID", ':', md5(concat_ws('|', trim("scientificName"), trim("identifiedBy"), trim("dateIdentified"), trim("identificationQualifier")))) AS record_id,
-                trim("identifiedBy") AS identified_by, trim("dateIdentified") AS date_identified,
-                trim("identificationQualifier") AS qualifier_text, trim("scientificName") AS scientific_name,
-                true AS is_current, trim("identificationRemarks") AS remarks, "modified" AS entered_text
-         FROM read_csv(${sqlString(files.occurrences)}, header = true, all_varchar = true)`,
+        `INSERT INTO ecd_identification
+         SELECT * FROM (${occurrenceAsCurrent}) o
+         WHERE NOT EXISTS (SELECT 1 FROM ecd_identification i WHERE i.occ_id = o.occ_id AND i.is_current)`,
       );
+    } else {
+      await conn.run(`CREATE OR REPLACE TEMP TABLE ecd_identification AS ${occurrenceAsCurrent}`);
     }
     await conn.run(
       `CREATE OR REPLACE TEMP TABLE ecd_alias AS

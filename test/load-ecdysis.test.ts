@@ -187,6 +187,27 @@ describe("a flat occurrence export", () => {
     await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(await record(a)).toEqual(["Andrena sladeni", null, "Sam Staff", "2025-01-01", "year", null, "ecdysis_import"]);
   });
+
+  test("where the history flags nothing current, the occurrence's own determination is current", async () => {
+    // 484 occurrences in the 2026-09-24 Washington archive, this one's
+    // shape copied from them: a placeholder, then a genus and a nameless row
+    // entered together, none flagged current, while the occurrence itself
+    // says Lasioglossum, "cf. cooleyi", 2025. Read only from the flags, all
+    // of it was history and the legacy copy stayed the record (beeline-9ut.6).
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name, recorded_at)
+                    SELECT ${a}, entity_id, true, 'legacy_import', 'Sam A. Staff', TIMESTAMPTZ '2026-08-20 22:20:40Z' FROM animal WHERE scientific_name = 'Andrena sladeni'`);
+    const result = await loadEcdysis(conn, { path: `${FIXTURES}archive-no-current`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(result).toMatchObject({ identifications: 4, loaded: 2 });
+    expect(await record(a)).toEqual(["Lasioglossum", null, "Ellen Expert", "2025-01-01", "year", "cf. cooleyi", "ecdysis_import"]);
+    // The history's genus row stays history, in the past, beside the legacy copy.
+    expect(
+      await rows(conn, `SELECT d.channel, an.scientific_name FROM determination d JOIN animal an ON an.entity_id = d.animal_id WHERE d.specimen_id = ${a} ORDER BY d.recorded_at`),
+    ).toEqual([["ecdysis_import", "Lasioglossum"], ["legacy_import", "Andrena sladeni"], ["ecdysis_import", "Lasioglossum"]]);
+    // Keyed as a flat export keys the same row, so the archive again, or a
+    // flat export of the same state, records nothing.
+    expect(await rows(conn, `SELECT record_id FROM ecdysis_identification ORDER BY record_id`)).toEqual([["id-n2"], [expect.stringMatching(/^occ:occ-n:/)]]);
+    expect((await loadEcdysis(conn, { path: `${FIXTURES}archive-no-current`, catalogPrefix: "WSDA_", determinerAliases: ALIASES })).loaded).toBe(0);
+  });
 });
 
 describe("the CLI's arguments", () => {

@@ -429,6 +429,15 @@ describe("writing the export", () => {
     const [[threads]] = (await (await conn.run(`SELECT current_setting('threads')`)).getRows()) as [[bigint]];
     expect(Number(threads)).toBe(2);
   });
+
+  test("leaves no table behind for the rows it sorted", async () => {
+    // The app's shared connection runs it, so a temporary table would outlive the job.
+    await writeLegacyExport(conn, join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv"));
+    const [[left]] = (await (
+      await conn.run(`SELECT count(*) FROM duckdb_tables() WHERE table_name = 'legacy_export_rows'`)
+    ).getRows()) as [[bigint]];
+    expect(Number(left)).toBe(0);
+  });
 });
 
 describe("the legacy-export job", () => {

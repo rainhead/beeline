@@ -404,7 +404,11 @@ occurrences file at 4am Pacific, to `data/exports/occurrences.csv` (config
 (beeline-6q8). It is regenerable, so the backup below leaves it out. To write
 it now, press Run now on `legacy-export` at `/jobs`. It runs on one thread
 whoever starts it, the job or `pnpm legacy:export`: on two it needs 1,150 MB
-of the 1.5 GB DuckDB is given here, where one needs 830 MB (beeline-1w2d). To check how close it is
+of the 1.5 GB DuckDB is given here, where one needs 830 MB (beeline-1w2d). It
+sorts its rows only after writing them to a temporary table, because sorting
+them straight out of the joins failed at 1.5 GB while fitting in 1 GB — more
+memory did not cure it, and it failed every night from 5 to 7 October; a
+"failed to pin block" from this job is that, not a budget to raise. To check how close it is
 to what the legacy system held, run `pnpm legacy:compare-export` against a
 copy of the store — it needs the staged legacy records, which a reseeded
 store carries. It reports only the differences

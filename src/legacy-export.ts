@@ -119,7 +119,16 @@ const labelInitials = (p: string) => {
 };
 
 /** The query behind the file: one row per specimen, every column TEXT, blanks as NULL. Exported for its test. */
-export function legacyExportSql(staging: Set<string> | null, rowSource: string | null = null): string {
+/**
+ * The export as two statements: `rows`, every specimen's 63 values and the
+ * sort tiebreak, unordered; and `ordered(table)`, those values read back from
+ * wherever `rows` was put, in the legacy file's order. They are two because
+ * the sort must not share a pipeline with the joins — see writeLegacyExport.
+ */
+export function legacyExportSql(
+  staging: Set<string> | null,
+  rowSource: string | null = null,
+): { rows: string; ordered: (table: string) => string } {
   // Without staging (a store built from iNaturalist alone) every staged
   // column is simply NULL: the same query, with the join replaced by nothing.
   // With it, a column the store's staging predates is NULL the same way.
@@ -195,7 +204,7 @@ disagreeing AS (
   LEFT JOIN (SELECT _id, ${[...ROW_FIELDS, ...END_FIELDS].map((f) => `CAST("${f}" AS VARCHAR) AS "${f}"`).join(", ")}
              FROM ${rowSource}) lr ON lr._id = lo._id`
     : "";
-  return `
+  const rows = `
 WITH RECURSIVE up(node_id, anc_id) AS (
   SELECT entity_id, entity_id FROM animal
   UNION ALL
@@ -375,8 +384,10 @@ rows AS (
   ${staged}
   ${rowJoins}
 )
+SELECT * FROM rows`;
+  const ordered = (table: string) => `
 SELECT ${LEGACY_EXPORT_COLUMNS.map((c) => `"${c}"`).join(", ")}
-FROM rows
+FROM ${table}
 -- The reference's composite_sort, byte for byte (OccurrenceRepository
 -- setSortField): one string of the sort fields joined with "|", a number
 -- padded to 16 digits, a blank or non-number as sixteen z's, compared as
@@ -385,6 +396,7 @@ FROM rows
 ORDER BY concat_ws('|', ${sortNumber('"fieldNumber"')}, ${sortText('"lastName"')}, ${sortText('"firstName"')},
                         ${sortNumber('"month"')}, ${sortNumber('"day"')}, ${sortNumber('"sampleId"')}, ${sortNumber('"specimenId"')}),
          sort_tiebreak`;
+  return { rows, ordered };
 }
 
 /** Where the app keeps the current export, inside its exports directory. */
@@ -407,6 +419,17 @@ const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
  * out (beeline-1w2d; 700 MB and 830 MB before #136 carried more of the
  * legacy row). Under that budget one thread is no slower than two. threads
  * is a setting of the whole instance, so it is put back however this ends.
+ *
+ * The rows go into a temporary table before they are sorted, because sorting
+ * them as they come out of the joins ran out of memory in a way more memory
+ * did not cure: on a copy of the sandbox's store of 2026-10-07 the one
+ * statement failed at 768 MB and at the sandbox's 1.5 GB and succeeded at
+ * 1 GB and 1.8 GB, on DuckDB 1.5.5 and 1.5.6 alike — the sort shares its
+ * pipeline with some twenty join hash tables, and at some budgets it plans
+ * to keep in memory what they leave it no room for. Every nightly export
+ * from 5 to 7 October failed that way. Materialized first, the joins are
+ * done and released before the sort begins, and the same store exports at
+ * every budget from 768 MB up, as fast, byte for byte the same.
  */
 export async function writeLegacyExport(conn: DuckDBConnection, path: string): Promise<{ rows: number; staged: boolean }> {
   await mkdir(dirname(path), { recursive: true });
@@ -422,9 +445,11 @@ export async function writeLegacyExport(conn: DuckDBConnection, path: string): P
   const whole = `${path}.tmp`;
   const [[threads]] = (await (await conn.run(`SELECT current_setting('threads')`)).getRows()) as [[bigint | number]];
   await conn.run("SET threads = 1");
+  const sql = legacyExportSql(staging, rowSource);
   try {
+    await conn.run(`CREATE OR REPLACE TEMP TABLE legacy_export_rows AS ${sql.rows}`);
     await conn.run(
-      `COPY (${legacyExportSql(staging, rowSource)}) TO '${body.replaceAll("'", "''")}'
+      `COPY (${sql.ordered("legacy_export_rows")}) TO '${body.replaceAll("'", "''")}'
        (FORMAT csv, HEADER true, DELIMITER ',', QUOTE '"', ESCAPE '"', NULLSTR '')`,
     );
     const out = createWriteStream(whole);
@@ -435,8 +460,12 @@ export async function writeLegacyExport(conn: DuckDBConnection, path: string): P
     try {
       await conn.run(`SET threads = ${Number(threads)}`);
     } finally {
-      await rm(body, { force: true });
-      await rm(whole, { force: true });
+      try {
+        await conn.run("DROP TABLE IF EXISTS temp.legacy_export_rows");
+      } finally {
+        await rm(body, { force: true });
+        await rm(whole, { force: true });
+      }
     }
   }
   const rows = await scalar(conn, "SELECT count(*) FROM specimen");

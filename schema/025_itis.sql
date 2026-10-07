@@ -22,7 +22,8 @@ CREATE TABLE itis_taxon (
   usage      TEXT NOT NULL CHECK (usage IN ('valid', 'invalid')),
   author     TEXT,
   parent_tsn BIGINT,
-  itis_as_of DATE NOT NULL
+  itis_as_of DATE NOT NULL,
+  admitted_parent_tsn BIGINT
 );
 COMMENT ON TABLE itis_taxon IS 'ITIS names for the insects, at the ranks animal_rank admits, from one ITIS release: what animal.itis_tsn is matched against (beeline-45v). Reference data keyed by ITIS''s TSN, filled by pnpm itis:load from an extract pnpm itis:fetch makes, and carried by db:reseed because promotion cannot recompute it.';
 COMMENT ON COLUMN itis_taxon.rank IS 'An animal_rank rank. ITIS numbers its ranks exactly as animal_rank.ordinal does (genus 180, species 220), which is where Symbiota''s numbering came from; src/extract-itis.ts maps them and a test pins the two to agree.';
@@ -31,6 +32,7 @@ COMMENT ON COLUMN itis_taxon.usage IS 'ITIS''s name_usage: valid is a current na
 COMMENT ON COLUMN itis_taxon.author IS 'ITIS''s authorship string, as ITIS writes it.';
 COMMENT ON COLUMN itis_taxon.parent_tsn IS 'ITIS''s parent, NULL on an outdated name (ITIS files it under its current name instead). Not a foreign key: the extract keeps only admitted ranks, so a parent can be a tribe or a subfamily this table does not hold.';
 COMMENT ON COLUMN itis_taxon.itis_as_of IS 'The newest change recorded in the ITIS release this row came from — the date that identifies the release, since ITIS publishes one monthly and the download carries no version of its own. Every row of a load carries the same value.';
+COMMENT ON COLUMN itis_taxon.admitted_parent_tsn IS 'A current name''s nearest ancestor at a rank animal_rank admits, read from ITIS''s hierarchy: where parent_tsn is a tribe, a subfamily or an infraorder this table does not hold, this skips to the family or superfamily above it, so every current name but Animalia can be followed up to the root inside this table. What adopting an ITIS name into the tree walks (beeline-45v.1.1). NULL on an outdated name, and on a store loaded from an extract made before the column existed.';
 
 -- The current names an outdated ITIS name points at. Usually one; 87 outdated
 -- insect names point at more than one, which a single column on itis_taxon

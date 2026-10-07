@@ -221,6 +221,8 @@ export interface ItisTaxonTable {
   author: string | null;
   parent_tsn: BigIntCol | null;
   itis_as_of: ColumnType<Date, Date | string, Date | string>;
+  /** A current name's nearest ancestor at an admitted rank; what adopting an ITIS name walks. */
+  admitted_parent_tsn: BigIntCol | null;
 }
 
 export interface ItisSynonymTable {

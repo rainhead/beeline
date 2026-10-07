@@ -1,6 +1,6 @@
 import { DuckDBConnection } from "@duckdb/node-api";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { openDuckDb } from "./db.js";
 import { DEFAULT_DB } from "./person-change.js";
@@ -12,8 +12,8 @@ import { DEFAULT_DB } from "./person-change.js";
  * The extract is two CSVs `pnpm itis:fetch` writes (src/extract-itis.ts): the
  * insects from one ITIS release at the ranks animal_rank admits, and the
  * synonym links between them. The ITIS download is 925 MB unpacked, so it is
- * extracted on a host with the bandwidth for it and only these files travel
- * to a store — the Fly machine included (docs/runbooks/deploy-fly.md, ITIS).
+ * extracted on a workstation and only these files travel to a store — the
+ * Fly machine included (docs/runbooks/deploy-fly.md, ITIS).
  *
  * Wholesale and in one transaction: a release replaces the one before it, and
  * animal.itis_tsn is restated from the new rows before anything commits, so no
@@ -50,6 +50,17 @@ export async function matchAnimalsToItis(conn: DuckDBConnection): Promise<void> 
 
 const literal = (path: string) => `'${path.replaceAll("'", "''")}'`;
 
+/** A CSV's header line, without reading the rest of a 27 MB file. */
+async function firstLine(path: string): Promise<string> {
+  const handle = await open(path);
+  try {
+    const { buffer, bytesRead } = await handle.read({ buffer: Buffer.alloc(4096), position: 0 });
+    return buffer.subarray(0, bytesRead).toString("utf8").split("\n", 1)[0] ?? "";
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function loadItis(conn: DuckDBConnection, files: ItisFiles = LIVE_ITIS_FILES): Promise<LoadItisResult> {
   for (const path of [files.taxonCsv, files.synonymCsv]) {
     if (!existsSync(path)) throw new Error(`${path} is missing — run pnpm itis:fetch to make the extract`);
@@ -59,16 +70,22 @@ export async function loadItis(conn: DuckDBConnection, files: ItisFiles = LIVE_I
     return value;
   };
 
+  // An extract made before admitted_parent_tsn existed still loads, with the
+  // column empty; adopting ITIS names needs a newer one (beeline-45v.1.1).
+  const header = await firstLine(files.taxonCsv).then((line) => line.trim().split(","));
+  const hasAdmittedParent = header.includes("admitted_parent_tsn");
+
   await conn.run("BEGIN TRANSACTION");
   try {
     await conn.run("DELETE FROM itis_synonym");
     await conn.run("DELETE FROM itis_taxon");
     await conn.run(
-      `INSERT INTO itis_taxon (tsn, rank, name, usage, author, parent_tsn, itis_as_of)
-       SELECT tsn, rank, name, usage, nullif(author, ''), parent_tsn, itis_as_of
+      `INSERT INTO itis_taxon (tsn, rank, name, usage, author, parent_tsn, itis_as_of, admitted_parent_tsn)
+       SELECT tsn, rank, name, usage, nullif(author, ''), parent_tsn, itis_as_of,
+              ${hasAdmittedParent ? "admitted_parent_tsn" : "CAST(NULL AS BIGINT)"}
        FROM read_csv(${literal(files.taxonCsv)}, header = true,
          columns = {'tsn': 'BIGINT', 'rank': 'VARCHAR', 'name': 'VARCHAR', 'usage': 'VARCHAR',
-                    'author': 'VARCHAR', 'parent_tsn': 'BIGINT', 'itis_as_of': 'DATE'})`,
+                    'author': 'VARCHAR', 'parent_tsn': 'BIGINT', 'itis_as_of': 'DATE'${hasAdmittedParent ? ", 'admitted_parent_tsn': 'BIGINT'" : ""}})`,
     );
     if (Number(await scalar("SELECT count(*) FROM itis_taxon")) === 0) {
       throw new Error(`${files.taxonCsv} is empty — refusing to replace the loaded ITIS with nothing`);

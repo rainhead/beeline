@@ -1,0 +1,16 @@
+tsn,rank,name,usage,author,parent_tsn,itis_as_of,admitted_parent_tsn
+202423,kingdom,Animalia,valid,,,2026-09-21,
+82696,phylum,Arthropoda,valid,,914158,2026-09-21,202423
+99208,class,Insecta,valid,,563886,2026-09-21,82696
+152741,order,Hymenoptera,valid,,914213,2026-09-21,99208
+152864,suborder,Apocrita,valid,,152741,2026-09-21,152741
+709265,superfamily,Chrysidoidea,valid,,709253,2026-09-21,152864
+154152,family,Chrysididae,valid,,709265,2026-09-21,709265
+154153,genus,Chrysis,valid,"Linnaeus, 1761",154152,2026-09-21,154152
+154394,family,Apidae,valid,,154344,2026-09-21,154344
+154386,genus,Melecta,valid,"Latreille, 1802",633942,2026-09-21,154394
+699284,species,Melecta pacifica,valid,"Cresson, 1879",154386,2026-09-21,154386
+699596,subspecies,Melecta pacifica fulvida,valid,"Cresson, 1879",699284,2026-09-21,699284
+154376,genus,Hoplitis,valid,"Klug, 1807",633963,2026-09-21,154365
+715497,species,Hoplitis truncata,valid,"(Cresson, 1878)",154376,2026-09-21,154376
+756786,species,Hoplitis truncata,valid,"Wu, 1992",154376,2026-09-21,154376

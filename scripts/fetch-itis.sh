@@ -3,9 +3,8 @@
 # taxonomy against (beeline-45v.4) into data/itis/. Load them with
 # `pnpm itis:load [db]`.
 #
-# Network-heavy — 224 MB zipped, 925 MB unpacked — so run it on maderas, never
-# over a home connection. Only the two extracted CSVs need to travel to a
-# store. Needs curl and unzip.
+# 224 MB zipped, 925 MB unpacked: run it on a workstation, and send only the
+# two extracted CSVs to a store. Needs curl and unzip.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

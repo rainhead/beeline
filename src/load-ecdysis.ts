@@ -2,6 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { adoptItisNames, type AdoptedName } from "./adopt-itis.js";
 import { DEFAULT_DB } from "./person-change.js";
 
 /**
@@ -80,7 +81,9 @@ export interface LoadEcdysisResult {
   placeholders: number;
   /** Rows already recorded: by recordID, or adopted as an event recorded under another key. */
   alreadyLoaded: number;
-  /** Rows whose name no node carries, or two do; each is a curation task. */
+  /** Names the tree lacked and ITIS accepts, adopted into the tree with any ancestors it also lacked. */
+  adopted: AdoptedName[];
+  /** Rows whose name no node carries, or two do, and ITIS could not supply; each is a curation task. */
   unresolvedNames: Array<{ name: string; rows: number }>;
   loaded: number;
   /** The determiners seen, and whether each reached a person. */
@@ -186,6 +189,19 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     const unmatchedSample = (
       await rows(conn, `SELECT catalog_number FROM ecd_match WHERE specimen_id IS NULL ORDER BY catalog_number LIMIT 5`)
     ).map((r) => String(r[0]));
+
+    // A name the tree does not spell, but that ITIS accepts, comes in from
+    // ITIS before anything resolves (beeline-45v.1.1); what is left is
+    // reported below as before, for a taxonomist.
+    const unplaced = (
+      await rows(
+        conn,
+        `SELECT DISTINCT i.scientific_name FROM ecd_identification i JOIN ecd_match m ON m.occ_id = i.occ_id
+         WHERE m.specimen_id IS NOT NULL AND coalesce(i.scientific_name, '') <> ''
+           AND NOT EXISTS (SELECT 1 FROM animal a WHERE a.scientific_name = i.scientific_name)`,
+      )
+    ).map((r) => String(r[0]));
+    const adoptedNames = await adoptItisNames(conn, unplaced);
 
     // Each identification, resolved as far as it goes. Placeholders — no
     // name, or Symbiota's 'undetermined' — assert nothing and are not
@@ -346,6 +362,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       identifications,
       placeholders,
       alreadyLoaded,
+      adopted: adoptedNames,
       unresolvedNames,
       loaded,
       determiners,

@@ -992,6 +992,8 @@ export function csvStream<Row>(
   let offset = 0;
   let started = false;
   let storeMs = 0;
+  /** When the page being fetched now was asked for; null between fetches. */
+  let fetchingSince: number | null = null;
   let reported = false;
   const report = (outcome: "complete" | "failed" | "cancelled") => {
     if (reported || timing === undefined) return;
@@ -1008,14 +1010,17 @@ export function csvStream<Row>(
       let page: Page<Row>;
       let lines: string;
       const t0 = performance.now();
+      fetchingSince = t0;
       let fetched = false;
       try {
         page = await fetch(CSV_PAGE_SIZE, offset);
         storeMs += performance.now() - t0;
+        fetchingSince = null;
         fetched = true;
         lines = page.rows.map((r) => csvLine(toRow(r, page))).join("");
       } catch (err) {
         if (!fetched) storeMs += performance.now() - t0;
+        fetchingSince = null;
         // The 200 and the header went out with the first page, so the app's
         // error handler never sees this: the client gets a cut-off transfer
         // and nothing else would record why (Fable's review of #110). A row
@@ -1033,8 +1038,10 @@ export function csvStream<Row>(
         controller.close();
       }
     },
-    // The client went away before the end: what was fetched still cost what it cost.
+    // The client went away before the end: what was fetched still cost what
+    // it cost, a page still being fetched included, up to now.
     cancel() {
+      if (fetchingSince !== null) storeMs += performance.now() - fetchingSince;
       report("cancelled");
     },
   });

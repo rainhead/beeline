@@ -19,6 +19,7 @@ import { jobHealth, type Job, type LastOutcome } from "./jobs/framework.js";
 import { reportAppError } from "./error-reporting.js";
 import { ErrorPage, staticErrorPage, type ErrorKind } from "./views/error-page.js";
 import { HTTPException } from "hono/http-exception";
+import { requestTiming } from "./request-timing.js";
 import { securityHeaders } from "./security-headers.js";
 import { countListingView, listingAttributes, rosterAttributes, type Viewer } from "./usage.js";
 import { Glossary } from "./views/glossary.js";
@@ -227,8 +228,11 @@ export function createApp({
     return row !== undefined;
   };
   const app = new Hono<AppEnv>();
-  // First, so every response carries them — error pages and static files
-  // included (beeline-m9o; the policy and its reasons are in the module).
+  // Outermost, so the time it records is the whole request, every middleware
+  // after it included, and so it sees the status an error page settled on.
+  app.use(requestTiming());
+  // So every response carries them — error pages and static files included
+  // (beeline-m9o; the policy and its reasons are in the module).
   app.use(securityHeaders(config.environment));
   // Failures and dead ends answer with a page (beeline-0kj): errorResponse
   // below, defined once the page helper exists. Hono calls these after

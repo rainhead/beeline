@@ -42,8 +42,8 @@ describe("CSV generation timing", () => {
     timing(420.4, 1000, "complete");
     timing(2345.6, 394493, "cancelled");
     expect(recorded).toEqual([
-      { ms: 420, attributes: { listing: "specimens", outcome: "complete", rows: 1000 } },
-      { ms: 2346, attributes: { listing: "specimens", outcome: "cancelled", rows: 394493 } },
+      { ms: 420, attributes: { listing: "specimens", outcome: "complete" } },
+      { ms: 2346, attributes: { listing: "specimens", outcome: "cancelled" } },
     ]);
     expect(warnings).toEqual(["[request] slow: specimens CSV spent 2346ms in the store for 394493 rows (cancelled)"]);
   });

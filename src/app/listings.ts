@@ -1006,22 +1006,27 @@ export function csvStream<Row>(
         return;
       }
       let page: Page<Row>;
+      let lines: string;
       const t0 = performance.now();
+      let fetched = false;
       try {
         page = await fetch(CSV_PAGE_SIZE, offset);
-      } catch (err) {
         storeMs += performance.now() - t0;
+        fetched = true;
+        lines = page.rows.map((r) => csvLine(toRow(r, page))).join("");
+      } catch (err) {
+        if (!fetched) storeMs += performance.now() - t0;
         // The 200 and the header went out with the first page, so the app's
         // error handler never sees this: the client gets a cut-off transfer
-        // and nothing else would record why (Fable's review of #110).
+        // and nothing else would record why (Fable's review of #110). A row
+        // that will not convert ends the download the same way.
         reportError(err, { download: header[0] ?? "csv", rowsWritten: String(offset) });
         console.error(`CSV download failed after ${offset} rows: ${(err as Error).stack ?? String(err)}`);
         report("failed");
         controller.error(err);
         return;
       }
-      storeMs += performance.now() - t0;
-      if (page.rows.length > 0) controller.enqueue(encoder.encode(page.rows.map((r) => csvLine(toRow(r, page))).join("")));
+      if (lines !== "") controller.enqueue(encoder.encode(lines));
       offset += page.rows.length;
       if (page.rows.length < CSV_PAGE_SIZE) {
         report("complete");

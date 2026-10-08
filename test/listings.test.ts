@@ -790,6 +790,15 @@ describe("CSV export", () => {
     await expect(new Response(csvStream(["n"], pages(true), (n: number) => [n], timing)).text()).rejects.toThrow();
     expect(heard.map((h) => h.slice(1))).toEqual([[CSV_PAGE_SIZE, "failed"]]);
 
+    // A row that will not convert ends the download as a failure too.
+    heard.length = 0;
+    const badRow = (n: number) => {
+      if (n === 3) throw new Error("cannot write this row");
+      return [n];
+    };
+    await expect(new Response(csvStream(["n"], pages(false), badRow, timing)).text()).rejects.toThrow();
+    expect(heard.map((h) => h.slice(1))).toEqual([[0, "failed"]]);
+
     heard.length = 0;
     const reader = csvStream(["n"], pages(false), (n: number) => [n], timing).getReader();
     await reader.read(); // the header

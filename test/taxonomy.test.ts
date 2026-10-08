@@ -181,6 +181,33 @@ describe("the taxonomy pages", () => {
     expect(body).toContain(en.taxonomy.summary.synonym(1));
   });
 
+  it("links staff from a count to every record it counts, whatever scope they last browsed", async () => {
+    const app = await taxonomyApp({ admin: true });
+    const all = (name: string) => html(`/specimens?taxon=${encodeURIComponent(name).replaceAll("%20", "+")}&scope=all`);
+    // A remembered "my records" must not decide where a count of everyone's lands.
+    const index = await (await app.request("/taxonomy", { headers: { cookie: "beeline_scope=mine" } })).text();
+    expect(rowFor(index, "family", "Halictidae")).toContain(`<a href="${all("Halictidae")}">2</a>`);
+    expect(rowFor(index, "family", "Apidae")).toContain(`<a href="${all("Apidae")}">1</a>`);
+    // Nothing to open behind a zero.
+    expect(rowFor(index, "family", "Megachilidae")).toContain("<td>0</td>");
+
+    const genus = await page(app, taxonHref({ rank: "genus", scientific_name: "Lasioglossum" }));
+    expect(genus).toContain(`href="${all("Lasioglossum")}"`);
+    expect(genus).toContain(en.taxonomy.seeSpecimens);
+    expect(rowFor(genus, "species", "Lasioglossum zonulum")).toContain(`<a href="${all("Lasioglossum zonulum")}">1</a>`);
+
+    // And the listing it opens shows them all, though the cookie said mine.
+    const listing = await app.request("/specimens?taxon=Lasioglossum&scope=all", { headers: { cookie: "beeline_scope=mine" } });
+    expect(listing.status).toBe(200);
+  });
+
+  it("shows a volunteer counts, not links to a listing that holds only their own", async () => {
+    const app = await taxonomyApp();
+    const index = await page(app, "/taxonomy");
+    expect(rowFor(index, "family", "Halictidae")).toContain("<td>2</td>");
+    expect(rowFor(index, "family", "Halictidae")).not.toContain("/specimens?");
+  });
+
   it("shows a name where it is filed, what is filed below it, and what is determined to it alone", async () => {
     const app = await taxonomyApp();
     const body = await page(app, taxonHref({ rank: "genus", scientific_name: "Lasioglossum" }));

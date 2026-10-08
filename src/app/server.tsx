@@ -901,7 +901,7 @@ export function createApp({
     const list = isFiltering(query) ? await searchTaxa(db, query) : null;
     const start = list === null ? await browseStart(db) : null;
     return c.html(
-      await page(c, m.taxonomy.title, <TaxonomyIndex m={m} query={query} summary={summary} list={list} start={start} />),
+      await page(c, m.taxonomy.title, <TaxonomyIndex m={m} query={query} summary={summary} list={list} start={start} admin={c.get("admin")} />),
     );
   });
 

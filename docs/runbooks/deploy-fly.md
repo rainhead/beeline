@@ -271,7 +271,7 @@ DuckDB replays the newer WAL onto the older file.
 ## Errors, logs and job check-ins
 
 With `SENTRY_DSN` set ([`src/app/error-reporting.ts`](../../src/app/error-reporting.ts),
-beeline-8w6.1), the app sends Sentry four things, tagged with `BEELINE_ENV` as
+beeline-8w6.1), the app sends Sentry five things, tagged with `BEELINE_ENV` as
 the environment and the Fly deployment as the release:
 
 - **Errors.** A request that fails with a 500 is reported with its route
@@ -290,6 +290,19 @@ the environment and the Fly deployment as the release:
   was typed in them — and whether the viewer was staff, a volunteer, or staff
   impersonating one. Query it in Sentry's metrics explorer, grouped by
   `filters` or `sort`.
+- **Request durations.** Every request records the metric `request.duration`
+  in milliseconds ([`src/app/request-timing.ts`](../../src/app/request-timing.ts)),
+  with the route pattern, method and status as attributes: a route's p95 over
+  time is a query grouped by `route`, and a Sentry alert on it is how a page
+  getting slower gets noticed. A request over a second also logs
+  `[request] slow: GET /samples/:id took 2345ms (status 200, signed in as …)`,
+  so search the log for `[request] slow` to see which pages and whose. It is
+  the time to a response; a listing's CSV fetches its rows after that, as the
+  client reads, so that time is its own metric, `csv.generation` — the time
+  its pages spent in the store, by listing and by whether the download
+  completed, failed or was abandoned — with its own slow line past a second.
+  It leaves out the client's connection, so a slow download over a slow link
+  is not a slow server.
 - **Job check-ins.** Each job is a cron monitor named after it, created on its
   first run from the schedule the scheduler already uses. Sentry opens an issue
   when a run fails, and when the nightly has not started by the end of the

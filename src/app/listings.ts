@@ -1,5 +1,6 @@
 import { sql, type Kysely } from "kysely";
 import { reportError } from "./error-reporting.js";
+import type { CsvTiming } from "./request-timing.js";
 import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
 import { labelName } from "../person-name.js";
 
@@ -976,15 +977,31 @@ export const CSV_PAGE_SIZE = 5_000;
  * A whole selection as a stream: the header, then page after page until the
  * store has none left. The listing queries end in a unique tie-breaker, so
  * paging by offset neither skips nor repeats a row.
+ *
+ * `timing`, when given, hears once how long the pages spent in the store and
+ * how the download ended: the response has gone before any page is fetched,
+ * so the request's own duration sees none of this (src/app/request-timing.ts).
  */
 export function csvStream<Row>(
   header: readonly string[],
   fetch: (limit: number, offset: number) => Promise<Page<Row>>,
   toRow: (row: Row, page: Page<Row>) => readonly unknown[],
+  timing?: CsvTiming,
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let offset = 0;
   let started = false;
+  let storeMs = 0;
+  /** When the page being fetched now was asked for; null between fetches. */
+  let fetchingSince: number | null = null;
+  /** The client cancelled while a page was being fetched: report when it settles. */
+  let cancelled = false;
+  let reported = false;
+  const report = (outcome: "complete" | "failed" | "cancelled") => {
+    if (reported || timing === undefined) return;
+    reported = true;
+    timing(storeMs, offset, outcome);
+  };
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       if (!started) {
@@ -993,20 +1010,50 @@ export function csvStream<Row>(
         return;
       }
       let page: Page<Row>;
+      let lines: string;
+      const t0 = performance.now();
+      fetchingSince = t0;
+      let fetched = false;
       try {
         page = await fetch(CSV_PAGE_SIZE, offset);
+        storeMs += performance.now() - t0;
+        fetchingSince = null;
+        fetched = true;
+        lines = page.rows.map((r) => csvLine(toRow(r, page))).join("");
       } catch (err) {
+        if (!fetched) storeMs += performance.now() - t0;
+        fetchingSince = null;
         // The 200 and the header went out with the first page, so the app's
         // error handler never sees this: the client gets a cut-off transfer
-        // and nothing else would record why (Fable's review of #110).
+        // and nothing else would record why (Fable's review of #110). A row
+        // that will not convert ends the download the same way.
         reportError(err, { download: header[0] ?? "csv", rowsWritten: String(offset) });
         console.error(`CSV download failed after ${offset} rows: ${(err as Error).stack ?? String(err)}`);
+        if (cancelled) {
+          report("cancelled"); // nobody is reading any more; there is no stream to fail
+          return;
+        }
+        report("failed");
         controller.error(err);
         return;
       }
-      if (page.rows.length > 0) controller.enqueue(encoder.encode(page.rows.map((r) => csvLine(toRow(r, page))).join("")));
+      if (cancelled) {
+        report("cancelled");
+        return;
+      }
+      if (lines !== "") controller.enqueue(encoder.encode(lines));
       offset += page.rows.length;
-      if (page.rows.length < CSV_PAGE_SIZE) controller.close();
+      if (page.rows.length < CSV_PAGE_SIZE) {
+        report("complete");
+        controller.close();
+      }
+    },
+    // The client went away before the end: what was fetched still cost what
+    // it cost. A page still being fetched reports when it settles, so its
+    // whole time is counted.
+    cancel() {
+      if (fetchingSince !== null) cancelled = true;
+      else report("cancelled");
     },
   });
 }

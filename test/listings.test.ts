@@ -770,6 +770,34 @@ describe("CSV export", () => {
     await expect(new Response(stream).text()).rejects.toThrow();
   });
 
+  it("reports once how long its pages spent in the store, and how the download ended", async () => {
+    // The response has gone before any page is fetched, so this is the only
+    // place a slow CSV can be seen (src/app/request-timing.ts).
+    const heard: Array<[number, number, string]> = [];
+    const timing = (ms: number, rows: number, outcome: string) => void heard.push([ms, rows, outcome]);
+    const pages = (fail: boolean) => async (limit: number, offset: number) => {
+      await new Promise((r) => setTimeout(r, 15));
+      if (fail && offset > 0) throw new Error("store went away");
+      return { rows: Array.from({ length: offset === 0 ? limit : 2 }, (_, i) => offset + i), total: 0, collectors: new Map() };
+    };
+
+    await new Response(csvStream(["n"], pages(false), (n: number) => [n], timing)).text();
+    expect(heard).toHaveLength(1);
+    expect(heard[0]![0]).toBeGreaterThanOrEqual(25); // two pages of at least 15ms each, less timer slack
+    expect(heard[0]!.slice(1)).toEqual([CSV_PAGE_SIZE + 2, "complete"]);
+
+    heard.length = 0;
+    await expect(new Response(csvStream(["n"], pages(true), (n: number) => [n], timing)).text()).rejects.toThrow();
+    expect(heard.map((h) => h.slice(1))).toEqual([[CSV_PAGE_SIZE, "failed"]]);
+
+    heard.length = 0;
+    const reader = csvStream(["n"], pages(false), (n: number) => [n], timing).getReader();
+    await reader.read(); // the header
+    await reader.read(); // the first page
+    await reader.cancel();
+    expect(heard.map((h) => h.slice(1))).toEqual([[CSV_PAGE_SIZE, "cancelled"]]);
+  });
+
   it("quotes what must be quoted and defuses formulas, but never a number", async () => {
     const csv = toCsv(["a", "b", "c", "d"], [[`say "hi", now`, "=SUM(A1:A2)", -123.262, "-45.1"]]);
     expect(csv).toBe(`\uFEFFa,b,c,d\n"say ""hi"", now",'=SUM(A1:A2),-123.262,-45.1\n`);

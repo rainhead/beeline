@@ -297,7 +297,12 @@ the environment and the Fly deployment as the release:
   getting slower gets noticed. A request over a second also logs
   `[request] slow: GET /samples/:id took 2345ms (status 200, signed in as …)`,
   so search the log for `[request] slow` to see which pages and whose. It is
-  the time to a response, so a streamed CSV counts until its first chunk.
+  the time to a response; a listing's CSV fetches its rows after that, as the
+  client reads, so that time is its own metric, `csv.generation` — the time
+  its pages spent in the store, by listing and by whether the download
+  completed, failed or was abandoned — with its own slow line past a second.
+  It leaves out the client's connection, so a slow download over a slow link
+  is not a slow server.
 - **Job check-ins.** Each job is a cron monitor named after it, created on its
   first run from the schedule the scheduler already uses. Sentry opens an issue
   when a run fails, and when the nightly has not started by the end of the

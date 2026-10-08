@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
-import { requestTiming } from "../src/app/request-timing.js";
+import { csvGenerationTiming, requestTiming } from "../src/app/request-timing.js";
 
 /**
  * Request timing: every request's duration by route pattern, and a warning
@@ -26,8 +26,28 @@ function app(slowMs = 50) {
   a.get("/broken", () => {
     throw new Error("nope");
   });
+  // Registered after the routes and matching everything: a handler that
+  // answers never reaches it, so it must not be what the request is named by.
+  a.use("*", async (_c, next) => {
+    await next();
+  });
   return { a, recorded, warnings };
 }
+
+describe("CSV generation timing", () => {
+  test("records the store time by listing and outcome, and warns past the threshold", () => {
+    const recorded: Array<{ ms: number; attributes: Record<string, string | number> }> = [];
+    const warnings: string[] = [];
+    const timing = csvGenerationTiming("specimens", { slowMs: 1000, record: (ms, attributes) => recorded.push({ ms, attributes }), warn: (l) => warnings.push(l) });
+    timing(420.4, 1000, "complete");
+    timing(2345.6, 394493, "cancelled");
+    expect(recorded).toEqual([
+      { ms: 420, attributes: { listing: "specimens", outcome: "complete", rows: 1000 } },
+      { ms: 2346, attributes: { listing: "specimens", outcome: "cancelled", rows: 394493 } },
+    ]);
+    expect(warnings).toEqual(["[request] slow: specimens CSV spent 2346ms in the store for 394493 rows (cancelled)"]);
+  });
+});
 
 describe("request timing", () => {
   test("records each request by its route pattern, never its path or query", async () => {

@@ -23,8 +23,9 @@ import { routePath } from "hono/route";
  * login, as an error report does, so a slow page can be reproduced as the
  * person who saw it. Nothing here touches the store.
  *
- * What it measures is the time to a Response, which for a streamed body — the
- * listings' CSVs — is the time to the first chunk, not to the last byte.
+ * What it measures is the time to a Response. A listing's CSV does its real
+ * work after that, a page at a time as the client reads, so that work is
+ * timed where it happens: csvGenerationTiming below, `csv.generation`.
  */
 
 /** Slower than this is worth a line in the log: the interactive jobs' step budget is the same second. */
@@ -47,14 +48,46 @@ const recordToSentry = (ms: number, attributes: Record<string, string | number>)
 };
 
 /**
- * The pattern the request was answered by. After the handler has run, the last
- * matched route is the one that answered; an address nothing answers is named
- * as such rather than as the catch-all middleware it last passed through.
+ * The pattern the request was answered by. After the handler has run, the
+ * route index is the one that answered — not the last route that matched,
+ * which can be a catch-all registered later that never ran; an address
+ * nothing answers is named as such rather than as the middleware it last
+ * passed through.
  */
 function routeOf(c: Context): string {
-  const route = routePath(c, -1);
+  const route = routePath(c);
   if (c.res.status === 404 && (route === "*" || route === "/*")) return "(not found)";
   return route;
+}
+
+/** How a streamed CSV ended, and how long its pages spent in the store. Called once per download. */
+export type CsvTiming = (storeMs: number, rows: number, outcome: "complete" | "failed" | "cancelled") => void;
+
+/**
+ * The work a listing CSV does after its response has gone: csvStream fetches
+ * page after page as the client reads, so request.duration ends at the
+ * header row and sees none of it. Timing the whole stream instead would charge
+ * a slow connection to the server; what is measured is the time spent in the
+ * store fetching pages, as `csv.generation`, with a slow line past the same
+ * second.
+ */
+export function csvGenerationTiming(listing: string, opts: RequestTimingOptions = {}): CsvTiming {
+  const slowMs = opts.slowMs ?? SLOW_REQUEST_MS;
+  const warn = opts.warn ?? ((line: string) => console.warn(line));
+  const record =
+    opts.record ??
+    ((ms: number, attributes: Record<string, string | number>) => {
+      try {
+        Sentry.metrics.distribution("csv.generation", ms, { unit: "millisecond", attributes });
+      } catch {
+        // Best-effort, as above.
+      }
+    });
+  return (storeMs, rows, outcome) => {
+    const ms = Math.round(storeMs);
+    record(ms, { listing, outcome, rows });
+    if (ms > slowMs) warn(`[request] slow: ${listing} CSV spent ${ms}ms in the store for ${rows} rows (${outcome})`);
+  };
 }
 
 export function requestTiming(opts: RequestTimingOptions = {}): MiddlewareHandler {

@@ -19,7 +19,7 @@ import { jobHealth, type Job, type LastOutcome } from "./jobs/framework.js";
 import { reportAppError } from "./error-reporting.js";
 import { ErrorPage, staticErrorPage, type ErrorKind } from "./views/error-page.js";
 import { HTTPException } from "hono/http-exception";
-import { requestTiming } from "./request-timing.js";
+import { csvGenerationTiming, requestTiming } from "./request-timing.js";
 import { securityHeaders } from "./security-headers.js";
 import { countListingView, listingAttributes, rosterAttributes, type Viewer } from "./usage.js";
 import { Glossary } from "./views/glossary.js";
@@ -648,7 +648,12 @@ export function createApp({
     const { personId, query } = await listingRequest(c);
     countListingView(listingAttributes("samples", "csv", query, viewer(c)));
     // The whole selection, a page at a time: no cap, no truncation line.
-    const body = csvStream(SAMPLE_CSV_HEADER, (limit, offset) => listSamples(db, query, personId, { limit, offset, withTotal: false }), sampleCsvRow);
+    const body = csvStream(
+      SAMPLE_CSV_HEADER,
+      (limit, offset) => listSamples(db, query, personId, { limit, offset, withTotal: false }),
+      sampleCsvRow,
+      csvGenerationTiming("samples"),
+    );
     return csv(c, body, "beeline-samples");
   });
 
@@ -669,7 +674,12 @@ export function createApp({
   app.get("/specimens.csv", async (c) => {
     const { personId, query } = await listingRequest(c);
     countListingView(listingAttributes("specimens", "csv", query, viewer(c)));
-    const body = csvStream(SPECIMEN_CSV_HEADER, (limit, offset) => listSpecimens(db, query, personId, { limit, offset, withTotal: false }), specimenCsvRow);
+    const body = csvStream(
+      SPECIMEN_CSV_HEADER,
+      (limit, offset) => listSpecimens(db, query, personId, { limit, offset, withTotal: false }),
+      specimenCsvRow,
+      csvGenerationTiming("specimens"),
+    );
     return csv(c, body, "beeline-specimens");
   });
 

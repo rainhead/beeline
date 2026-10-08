@@ -94,6 +94,10 @@ address stays out of this public repository.
 each job run to Sentry (see [Errors, logs and job check-ins](#errors-logs-and-job-check-ins));
 unset, it reports nothing and behaves exactly the same.
 
+`ECDYSIS_USERNAME` and `ECDYSIS_PASSWORD` are the Ecdysis login the
+`ecdysis-fetch` job signs in with ([Ecdysis](#ecdysis)); set both or neither,
+since half a login stops the app at boot.
+
 Keep a copy of the private-store key in your password manager before you set
 it: Fly secrets are write-only, and losing the key is losing the private store
 ([ADR 0003](../adr/0003-private-data-store.md)).
@@ -395,6 +399,22 @@ reason is on `/jobs`, behind the admin gate, which is where this sends you.
 This exists because the nightly failed on every run for about half a day and
 nothing said so (beeline-6td): `job_run` recorded it and `/jobs` displayed it,
 to an admin who went looking. It was found by accident.
+
+## Ecdysis
+
+The `ecdysis-fetch` job brings back determinations made in Ecdysis at 3am
+Pacific, between the nightly sync and the legacy export (beeline-9ut.1). It
+asks Ecdysis's public API whether Washington's dataset has changed since the
+last download, signs in and downloads the archive (about two minutes for
+Ecdysis to build) only if it has, and otherwise reloads the archive it kept.
+The loader is idempotent, so a reload records nothing on an ordinary night,
+and after a reseed — which drops every Ecdysis determination — it puts them
+back by the next morning. The archive and the probe's baseline live in
+`data/ecdysis/` (config `ecdysisDir`, `BEELINE_ECDYSIS`) as `44.zip` and
+`44.probe.json`; deleting the baseline forces the next run to download. The
+run's detail on `/jobs` says what it did and why, and names any names it
+adopted from ITIS or could not place. Without the login (above) the job
+reports that it has nothing to fetch.
 
 ## The legacy-format export
 

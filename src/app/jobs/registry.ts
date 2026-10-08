@@ -1,6 +1,7 @@
 import { legacyExportPath, writeLegacyExport } from "../../legacy-export.js";
 import { budgetProblems, describeUsage, measureFlyUsage } from "../../fly-usage.js";
 import { commitDeterminationDrafts } from "../../commit-determinations.js";
+import { describeFetch, ECDYSIS_COLLECTIONS, fetchEcdysis } from "../../fetch-ecdysis.js";
 import { readFile } from "node:fs/promises";
 import type { Kysely } from "kysely";
 import { deriveElevations } from "../../derive-elevation.js";
@@ -155,7 +156,7 @@ export function buildJobs(
     AppConfig,
     "syncProjects" | "sweepDays" | "personChangesPath" | "sampleChangesPath" | "sampleStatePath"
   > &
-    Partial<Pick<AppConfig, "sampleOverlayPath" | "exportsDir" | "flyMetrics">>,
+    Partial<Pick<AppConfig, "sampleOverlayPath" | "exportsDir" | "flyMetrics" | "ecdysis" | "ecdysisDir">>,
 ): Job[] {
   const samplePaths: SampleLogPaths = { log: config.sampleChangesPath, state: config.sampleStatePath };
   return [
@@ -226,6 +227,30 @@ export function buildJobs(
       async run(ctx) {
         const { committed, unchanged, waiting } = await ctx.step("commit drafts", () => commitDeterminationDrafts(ctx.conn));
         return `${committed} determination(s) recorded, ${unchanged} draft(s) unchanged and dropped, ${waiting} waiting for a name`;
+      },
+    },
+    {
+      // Determinations made in Ecdysis come back nightly (beeline-9ut.1). At
+      // 3am: after the 2am sync's promotion has made tonight's specimens, and
+      // before the 4am legacy export, which then carries what the museum
+      // changed today. A download only when Ecdysis says something moved; the
+      // cached archive reloaded otherwise, so a reseeded store recovers.
+      name: "ecdysis-fetch",
+      schedule: { kind: "dailyLA", hour: 3 },
+      window: "night",
+      async run(ctx) {
+        if (!config.ecdysis) return "no Ecdysis login (ECDYSIS_USERNAME / ECDYSIS_PASSWORD) — nothing to fetch";
+        const parts: string[] = [];
+        for (const collection of ECDYSIS_COLLECTIONS) {
+          const r = await fetchEcdysis(ctx.conn, collection, {
+            dir: config.ecdysisDir ?? "data/ecdysis",
+            credentials: config.ecdysis,
+            signal: ctx.signal,
+            step: ctx.step,
+          });
+          parts.push(describeFetch(r));
+        }
+        return parts.join("; ");
       },
     },
     {

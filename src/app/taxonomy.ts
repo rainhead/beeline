@@ -1,5 +1,6 @@
 import { sql, type Kysely } from "kysely";
 import type { AnimalItisStanding, Database, CurationKind } from "../model.js";
+import { ALL } from "./listings.js";
 
 /**
  * The curated taxonomy, as a page anyone signed in can read (beeline-45v.5).
@@ -75,11 +76,15 @@ export const taxonHref = (taxon: TaxonRef): string =>
   `/taxonomy/${encodeURIComponent(taxon.rank)}/${encodeURIComponent(taxon.scientific_name)}`;
 
 /**
- * The specimens under a node, on the specimen listing — whose own scope
- * decides whose they are, so for a volunteer this is their own.
+ * The specimens under a node, on the specimen listing. For staff it names
+ * every record, as the count beside it does: left to itself the listing
+ * falls back to the scope a staff member last chose, so a link from a count of
+ * everyone's specimens could land on "my records" and show a different
+ * number. A volunteer can only ever see their own, so their link names
+ * nothing and the listing's own scope applies.
  */
-export const taxonSpecimensHref = (taxon: TaxonRef): string =>
-  `/specimens?${new URLSearchParams({ taxon: taxon.scientific_name }).toString()}`;
+export const taxonSpecimensHref = (taxon: TaxonRef, { all = false }: { all?: boolean } = {}): string =>
+  `/specimens?${new URLSearchParams({ taxon: taxon.scientific_name, ...(all ? { scope: ALL } : {}) }).toString()}`;
 
 /** ITIS's own report for a TSN. */
 export const itisReportHref = (tsn: bigint | number): string =>

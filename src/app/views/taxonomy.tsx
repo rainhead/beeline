@@ -128,7 +128,17 @@ function StandingCell({ m, row }: { m: Messages; row: TaxonRow }) {
   }
 }
 
-function TaxonTable({ m, rows, filedUnder = false }: { m: Messages; rows: readonly TaxonRow[]; filedUnder?: boolean }) {
+function TaxonTable({
+  m,
+  rows,
+  admin,
+  filedUnder = false,
+}: {
+  m: Messages;
+  rows: readonly TaxonRow[];
+  admin: boolean;
+  filedUnder?: boolean;
+}) {
   const t = m.taxonomy;
   const columns = filedUnder
     ? [t.colName, t.colRank, t.colFiledUnder, t.colItis, t.colSpecimens]
@@ -147,7 +157,16 @@ function TaxonTable({ m, rows, filedUnder = false }: { m: Messages; rows: readon
           <td>
             <StandingCell m={m} row={row} />
           </td>
-          <td>{m.format.number(row.specimens)}</td>
+          <td>
+            {/* Everyone's specimens, counted; staff can open exactly those.
+                A volunteer's listing holds only their own, so for them the
+                count is a number rather than a link to a different one. */}
+            {admin && row.specimens > 0 ? (
+              <a href={taxonSpecimensHref(row, { all: true })}>{m.format.number(row.specimens)}</a>
+            ) : (
+              m.format.number(row.specimens)
+            )}
+          </td>
         </tr>
       ))}
     </DataTable>
@@ -162,6 +181,7 @@ export function TaxonomyIndex({
   summary,
   list,
   start,
+  admin,
 }: {
   m: Messages;
   query: TaxonomyQuery;
@@ -170,6 +190,8 @@ export function TaxonomyIndex({
   list: TaxonList | null;
   /** Where browsing starts, when nothing was. */
   start: { node: TaxonNode | null; roots: TaxonRow[] } | null;
+  /** Staff, whose specimen counts link to every record they count. */
+  admin: boolean;
 }) {
   const t = m.taxonomy;
   const loaded = summary.itisAsOf !== null;
@@ -245,7 +267,7 @@ export function TaxonomyIndex({
       {list !== null ? (
         <>
           <Meta block>{t.found(list.total)}</Meta>
-          {list.rows.length === 0 ? <EmptyState>{t.nothingFound}</EmptyState> : <TaxonTable m={m} rows={list.rows} filedUnder />}
+          {list.rows.length === 0 ? <EmptyState>{t.nothingFound}</EmptyState> : <TaxonTable m={m} rows={list.rows} admin={admin} filedUnder />}
           <Pager
             summary={t.pageOf(list.page, list.pages)}
             previousHref={list.page > 1 ? taxonomyHref(query, { page: list.page - 1 }) : null}
@@ -258,12 +280,12 @@ export function TaxonomyIndex({
         <>
           <h2>{t.browse}</h2>
           <Breadcrumbs label={t.filedUnder} trail={trailTo([...start.node.lineage, start.node])} />
-          <TaxonTable m={m} rows={start.node.children} />
+          <TaxonTable m={m} rows={start.node.children} admin={admin} />
         </>
       ) : start !== null && start.roots.length > 0 ? (
         <>
           <h2>{t.browse}</h2>
-          <TaxonTable m={m} rows={start.roots} />
+          <TaxonTable m={m} rows={start.roots} admin={admin} />
         </>
       ) : (
         <EmptyState>{t.empty}</EmptyState>
@@ -380,12 +402,13 @@ export function TaxonPage({ m, node, admin }: { m: Messages; node: TaxonNode; ad
           {/* Said only when something below was counted: on a name with nothing
               below it, both halves are the same number. */}
           {node.determinedHere < node.specimens ? t.determinedHere(node.determinedHere, node.rank) : t.counted}{" "}
-          {/* The listing applies its own scope, so a volunteer lands on their own. */}
-          <a href={taxonSpecimensHref(node)}>{admin ? t.seeSpecimens : t.seeYourSpecimens}</a>
+          {/* Staff go to every record, as counted here; a volunteer, whose
+              listing holds only their own, to theirs. */}
+          <a href={taxonSpecimensHref(node, { all: admin })}>{admin ? t.seeSpecimens : t.seeYourSpecimens}</a>
         </p>
       )}
       <h2>{t.below}</h2>
-      {node.children.length === 0 ? <EmptyState>{t.nothingBelow}</EmptyState> : <TaxonTable m={m} rows={node.children} />}
+      {node.children.length === 0 ? <EmptyState>{t.nothingBelow}</EmptyState> : <TaxonTable m={m} rows={node.children} admin={admin} />}
     </>
   );
 }

@@ -42,8 +42,9 @@ export interface RequestTimingOptions {
 const recordToSentry = (ms: number, attributes: Record<string, string | number>) => {
   try {
     Sentry.metrics.distribution("request.duration", ms, { unit: "millisecond", attributes });
-  } catch {
-    // Reporting is best-effort: a metric is no reason to fail a page.
+  } catch (err) {
+    // A metric is no reason to fail a page, but a failing one is worth knowing about.
+    console.error(`request.duration not recorded: ${(err as Error).stack ?? String(err)}`);
   }
 };
 
@@ -79,8 +80,9 @@ export function csvGenerationTiming(listing: string, opts: RequestTimingOptions 
     ((ms: number, attributes: Record<string, string | number>) => {
       try {
         Sentry.metrics.distribution("csv.generation", ms, { unit: "millisecond", attributes });
-      } catch {
-        // Best-effort, as above.
+      } catch (err) {
+        // As above: logged, never thrown into the download.
+        console.error(`csv.generation not recorded: ${(err as Error).stack ?? String(err)}`);
       }
     });
   return (storeMs, rows, outcome) => {

@@ -817,7 +817,7 @@ export const en = {
        * newest (schema/110).
        */
       recordRule:
-        "The one marked of record is the one the rest of this site uses: the most recent expert determination, or the most recent of any kind if no expert has looked.",
+        "The one marked “of record” is the one the rest of this site uses: the most recent expert determination, or the most recent of any kind if no expert has looked.",
       recordNotNewest:
         "It is not the newest entry here — an expert's determination stands until another expert revises it, so a later identification does not displace it.",
       empty: "Nobody has identified this specimen yet.",

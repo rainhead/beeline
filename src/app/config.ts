@@ -1,3 +1,4 @@
+import type { EcdysisCredentials } from "../fetch-ecdysis.js";
 import type { FlyMetricsTarget } from "../fly-usage.js";
 import { CHANGE_LOG } from "../person-change.js";
 import { SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
@@ -101,6 +102,14 @@ export interface AppConfig {
    * the one Fly sets on its machines.
    */
   flyMetrics: FlyMetricsTarget | null;
+  /**
+   * The Ecdysis login the ecdysis-fetch job signs in with (beeline-9ut.1), or
+   * null to fetch nothing: Ecdysis serves its archive only to a signed-in
+   * session. From the environment because it is a credential.
+   */
+  ecdysis: EcdysisCredentials | null;
+  /** Where the Ecdysis archive and its change-probe baseline are kept between runs. */
+  ecdysisDir: string;
 }
 
 /**
@@ -179,6 +188,13 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
   // Spliced into a mailto URL, so anything that would end the address part
   // early — a query, a fragment, whitespace — is a boot error, not a broken link.
+  // Both or neither: half a login would fail every night at 3am instead of
+  // here, where the deploy that set it can see.
+  const ecdysisUser = env.ECDYSIS_USERNAME?.trim() || null;
+  const ecdysisPassword = env.ECDYSIS_PASSWORD || null;
+  if ((ecdysisUser === null) !== (ecdysisPassword === null)) {
+    throw new Error("ECDYSIS_USERNAME and ECDYSIS_PASSWORD must be set together");
+  }
   const feedbackEmail = env.BEELINE_FEEDBACK_EMAIL?.trim() || null;
   if (feedbackEmail !== null && !/^[^\s@,?#&]+@[^\s@,?#&]+(,[^\s@,?#&]+@[^\s@,?#&]+)*$/.test(feedbackEmail)) {
     throw new Error(`BEELINE_FEEDBACK_EMAIL must be an address or a comma-separated list of them, got '${feedbackEmail}'`);
@@ -214,5 +230,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
       env.FLY_METRICS_TOKEN?.trim() && env.FLY_APP_NAME?.trim()
         ? { token: env.FLY_METRICS_TOKEN.trim(), org: env.BEELINE_FLY_ORG?.trim() || "osu-mm", app: env.FLY_APP_NAME.trim() }
         : null,
+    ecdysis: ecdysisUser !== null && ecdysisPassword !== null ? { username: ecdysisUser, password: ecdysisPassword } : null,
+    ecdysisDir: env.BEELINE_ECDYSIS ?? "data/ecdysis",
   };
 }

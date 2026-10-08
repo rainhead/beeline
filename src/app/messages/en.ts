@@ -1185,6 +1185,8 @@ export const en = {
         "Pulls every observation changed since the last run (edits and new records, however old the observation), promotes into samples, and fills missing elevations from the DEM tiles on disk.",
       "legacy-export":
         "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
+      "ecdysis-fetch":
+        "Brings back the determinations made in Ecdysis, Washington's museum database. Downloads the collection only when Ecdysis says something changed, and otherwise reloads the copy it kept; names Beeline lacks are taken from ITIS where it accepts them, and the rest are listed in the run.",
       "commit-determinations":
         "Turns the day's entries on Identify specimens into determinations. Until it runs, volunteers can change what they entered; after it, a change is added beside the old one.",
       "resource-budget":

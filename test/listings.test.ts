@@ -805,6 +805,24 @@ describe("CSV export", () => {
     await reader.read(); // the first page
     await reader.cancel();
     expect(heard.map((h) => h.slice(1))).toEqual([[CSV_PAGE_SIZE, "cancelled"]]);
+
+    // Cancelled while a page is still being fetched: reported once that page
+    // settles, with its whole time counted.
+    heard.length = 0;
+    const slowPages = async (limit: number, offset: number) => {
+      await new Promise((r) => setTimeout(r, 60));
+      return { rows: Array.from({ length: limit }, (_, i) => offset + i), total: 0, collectors: new Map() };
+    };
+    const midway = csvStream(["n"], slowPages, (n: number) => [n], timing).getReader();
+    await midway.read(); // the header
+    const pending = midway.read(); // starts fetching the first page
+    await new Promise((r) => setTimeout(r, 10));
+    await midway.cancel();
+    await pending.catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 80));
+    expect(heard).toHaveLength(1);
+    expect(heard[0]![2]).toBe("cancelled");
+    expect(heard[0]![0]).toBeGreaterThanOrEqual(50);
   });
 
   it("quotes what must be quoted and defuses formulas, but never a number", async () => {

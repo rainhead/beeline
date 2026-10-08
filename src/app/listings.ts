@@ -994,6 +994,8 @@ export function csvStream<Row>(
   let storeMs = 0;
   /** When the page being fetched now was asked for; null between fetches. */
   let fetchingSince: number | null = null;
+  /** The client cancelled while a page was being fetched: report when it settles. */
+  let cancelled = false;
   let reported = false;
   const report = (outcome: "complete" | "failed" | "cancelled") => {
     if (reported || timing === undefined) return;
@@ -1027,8 +1029,16 @@ export function csvStream<Row>(
         // that will not convert ends the download the same way.
         reportError(err, { download: header[0] ?? "csv", rowsWritten: String(offset) });
         console.error(`CSV download failed after ${offset} rows: ${(err as Error).stack ?? String(err)}`);
+        if (cancelled) {
+          report("cancelled"); // nobody is reading any more; there is no stream to fail
+          return;
+        }
         report("failed");
         controller.error(err);
+        return;
+      }
+      if (cancelled) {
+        report("cancelled");
         return;
       }
       if (lines !== "") controller.enqueue(encoder.encode(lines));
@@ -1039,10 +1049,11 @@ export function csvStream<Row>(
       }
     },
     // The client went away before the end: what was fetched still cost what
-    // it cost, a page still being fetched included, up to now.
+    // it cost. A page still being fetched reports when it settles, so its
+    // whole time is counted.
     cancel() {
-      if (fetchingSince !== null) storeMs += performance.now() - fetchingSince;
-      report("cancelled");
+      if (fetchingSince !== null) cancelled = true;
+      else report("cancelled");
     },
   });
 }

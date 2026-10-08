@@ -127,6 +127,16 @@ describe("the nightly Ecdysis fetch", () => {
     expect(again.load.loaded).toBe(6);
   });
 
+  test("a kept archive that cannot be read is downloaded afresh rather than failing every night", async () => {
+    const e = ecdysis();
+    await fetchWith(e);
+    await (await import("node:fs/promises")).writeFile(join(dir, "44.zip"), "not a zip");
+    const again = await fetchWith(e, new Date("2026-10-10T10:00:00Z"));
+    expect(again.source).toBe("downloaded");
+    expect(again.reason).toMatch(/^the kept archive could not be loaded \(.+\), so downloading$/);
+    expect(e.downloads).toBe(2);
+  });
+
   test("a record added or edited since the last download means downloading again", async () => {
     const e = ecdysis();
     await fetchWith(e);

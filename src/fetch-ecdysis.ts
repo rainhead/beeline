@@ -256,9 +256,17 @@ export async function fetchEcdysis(
   }
 
   if (unchanged) {
-    const zip = new Uint8Array(await readFile(zipPath));
-    const load = await step("load the cached archive", () => loadArchive(conn, zip, opts.dir, collection, now));
-    return { datasetId, source: "cached", reason, load };
+    try {
+      const zip = new Uint8Array(await readFile(zipPath));
+      const load = await step("load the cached archive", () => loadArchive(conn, zip, opts.dir, collection, now));
+      return { datasetId, source: "cached", reason, load };
+    } catch (err) {
+      // A kept archive that will not load would fail every night until
+      // somebody deleted it; a fresh one costs two minutes. An abort is the
+      // job being stopped, not the archive, and goes on up.
+      if (opts.signal?.aborted) throw err;
+      reason = `the kept archive could not be loaded (${(err as Error).message}), so downloading`;
+    }
   }
 
   const zip = await step("download the archive", () => downloadArchive(f, opts.credentials, datasetId, opts.signal));

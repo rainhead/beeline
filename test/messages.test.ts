@@ -17,6 +17,11 @@ describe("message catalog", () => {
     expect(en.qc.summary(1, 0, 2, 1)).toBe(
       "1 sample needs attention · 2 are waiting on labels · 1 observation still says 0 specimens",
     );
+    expect(en.qc.summary(0, 0, 0, 0, 2)).toBe("2 observations have no sample number");
+    // A day's skipped numbers: plural by how many numbers, not how many runs.
+    expect(en.qc.skipped.day("«day»", ["3"], 1)).toBe("«day»: no sample 3");
+    expect(en.qc.skipped.day("«day»", ["3–5"], 3)).toBe("«day»: no samples 3–5");
+    expect(en.qc.skipped.day("«day»", ["2", "7"], 2)).toBe("«day»: no samples 2 and 7");
   });
 
   it("date formatters pass the proofing placeholder through", () => {

@@ -262,6 +262,64 @@ describe("the front page", () => {
     expect(body).not.toContain("Sample 4 ");
   });
 
+  it("asks about an observation in the project with its sample number left blank", async () => {
+    const { app, conn, alice } = await qcApp();
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${alice}, 501, 'alice')`);
+    // The shape beeline-a04 found: the field attached and empty, the count
+    // blank too, and the number in the notes in the collector's own words.
+    await conn.run(
+      `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, notes, sample_number_field_attached)
+       VALUES (778001, DATE '2026-05-23', 501, 'alice', '1C red cuckoo', true)`,
+    );
+    // No sample-number field at all: not a collection record, not asked about.
+    await conn.run(
+      `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, notes, sample_number_field_attached)
+       VALUES (778002, DATE '2026-05-23', 501, 'alice', 'Sample 9', false)`,
+    );
+    // Last season's has settled, like every other row here.
+    await conn.run(
+      `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, sample_number_field_attached)
+       VALUES (778003, DATE '2025-05-23', 501, 'alice', true)`,
+    );
+    const body = await (await app.request("/")).text();
+    expect(body).toContain("No number · May 23, 2026");
+    expect(body).toContain("https://www.inaturalist.org/observations/778001");
+    expect(body).toContain("its sample number left blank");
+    expect(body).toContain("Your notes say: “1C red cuckoo”.");
+    expect(body).toContain("1 observation has no sample number");
+    // The sample cell carries the flag, and a blank count is not a zero.
+    expect(body).toMatch(/<td class="flagged warning"><a href="https:\/\/www\.inaturalist\.org\/observations\/778001">/);
+    expect(body).not.toContain("observations/778002");
+    expect(body).not.toContain("observations/778003");
+    // Never parsed: "1C" is not a sample number anybody recorded.
+    expect(body).not.toContain("Sample 1C");
+  });
+
+  it("says which numbers a day skipped, below the table, and links to that day on iNaturalist", async () => {
+    const { app, conn, alice } = await qcApp();
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${alice}, 501, 'alice')`);
+    // 1, 2 and 6 on one day: 3 to 5 skipped. A day of 1 and 2 is whole.
+    let id = 779000;
+    for (const [on, n] of [
+      ["2026-06-10", "1"],
+      ["2026-06-10", "2"],
+      ["2026-06-10", "6"],
+      ["2026-06-11", "1"],
+      ["2026-06-11", "2"],
+    ]) {
+      await conn.run(
+        `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, sample_number_raw, specimen_count_raw,
+                                        sample_number_field_attached)
+         VALUES (${id++}, DATE '${on}', 501, 'alice', '${n}', '1', true)`,
+      );
+    }
+    const body = await (await app.request("/")).text();
+    expect(body).toContain("Some days this season skip a sample number");
+    expect(body).toContain("Jun 10, 2026: no samples 3–5");
+    expect(body).toContain("https://www.inaturalist.org/observations?user_id=alice&amp;on=2026-06-10&amp;verifiable=any");
+    expect(body).not.toContain("Jun 11, 2026: no");
+  });
+
   it("thanks a clean record and still links onward", async () => {
     const { app, conn, alice, bob } = await qcApp();
     // Repair Alice's sample; Bob's stays broken and must not spoil her all-clear.

@@ -635,6 +635,9 @@ export interface ObservationFieldTable {
    *  every load synced before beeline-hza: the sync's whitelist is the
    *  projection and never asked for it. LAST — positional (schema/060). */
   notes: string | null;
+  /** Whether a sample-number field is attached at all, blank or not — what a
+   *  blank sample_number_raw cannot say (beeline-a04). LAST — positional. */
+  sample_number_field_attached: boolean | null;
 }
 
 /** schema/105: observation_field disagreeing with a fresh shred of the loads. */
@@ -792,6 +795,26 @@ export interface SampleSharedObservationView {
   inat_observation_id: BigIntCol;
   samples_sharing: number;
   shape: "different_collectors" | "collector_unknown" | "same_date" | "same_number" | "duplicate" | "other";
+}
+
+// schema/109_views_sample_numbering.sql
+
+/** An observation in a sampling project with its sample number left blank, not a sample (beeline-a04). */
+export interface ObservationUnnumberedView {
+  inat_id: BigIntCol;
+  person_id: number;
+  user_id: BigIntCol;
+  user_login: string | null;
+  observed_on: ColumnType<Date, Date | string, Date | string>;
+  notes: string | null;
+}
+
+/** A number missing from a daily-numbering collector's run on one day (beeline-virz). */
+export interface SampleNumberGapView {
+  person_id: number;
+  collected_on: ColumnType<Date, Date | string, Date | string>;
+  season: number;
+  sample_number: number;
 }
 
 /** A sample whose cited observation now reports a different number or date —
@@ -1062,6 +1085,8 @@ export interface Database {
   sample_multi_observation: SampleMultiObservationView;
   sample_shared_observation: SampleSharedObservationView;
   sample_observation_number_mismatch: SampleObservationNumberMismatchView;
+  observation_unnumbered: ObservationUnnumberedView;
+  sample_number_gap: SampleNumberGapView;
   sample_elevation_unsupportable: SampleElevationUnsupportableView;
   sample_elevation_stale: SampleElevationStaleView;
   sample_elevation_pending: SampleElevationPendingView;

@@ -94,6 +94,32 @@ describe("the stored projection", () => {
     ]);
   });
 
+  /**
+   * A blank sample number is absent as a number and present as a field
+   * (beeline-a04): the project requires 'sampleId' to join and an empty
+   * value satisfies it, so "attached and blank" is how an unnumbered
+   * collection record gets in. Shapes from the API: an empty string, and the
+   * 2018 field name.
+   */
+  test("says whether a sample-number field is attached, even when its value is blank", async () => {
+    await stageLoad(obs(31, { ofvs: [{ name: "sampleId", value: "" }, { name: "numberOfSpecimens", value: "" }] }));
+    await stageLoad(obs(32, { ofvs: [{ name: "sample id", value: "4" }] }));
+    await stageLoad(obs(33, { ofvs: [{ name: "numberOfSpecimens", value: "2" }] }));
+    await stageLoad(obs(34, { ofvs: undefined }));
+    await stageLoad(obs(35));
+    await refreshObservationFields(conn);
+    expect(await count("SELECT count(*) FROM observation_field_stale")).toBe(0);
+    expect(
+      await rows(conn, "SELECT inat_id, sample_number_raw, sample_number_field_attached FROM observation_field ORDER BY inat_id"),
+    ).toEqual([
+      [31n, null, true],
+      [32n, "4", true],
+      [33n, null, false],
+      [34n, null, false],
+      [35n, "1", true],
+    ]);
+  });
+
   test("keeps markup as written, because what the collector typed is the record", async () => {
     await stageLoad(obs(24, { description: "on <b>Salvia</b> — see [notes](http://x/) & co." }));
     await refreshObservationFields(conn);
@@ -102,12 +128,16 @@ describe("the stored projection", () => {
     ]);
   });
 
-  test("keeps notes last, so the positional refresh cannot swap it with a neighbour", async () => {
+  // The columns added by migration, in the order the migrations added them:
+  // ALTER TABLE ADD COLUMN appends, so a fresh build has to put each one
+  // exactly there or the positional refresh swaps it with a neighbour on
+  // whichever store was built the other way.
+  test("keeps the migrated columns last, in the order they were added", async () => {
     const columns = (await rows(
       conn,
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'observation_field' ORDER BY ordinal_position",
     )).map(([c]) => c);
-    expect(columns[columns.length - 1]).toBe("notes");
+    expect(columns.slice(-2)).toEqual(["notes", "sample_number_field_attached"]);
   });
 
   test("a sync refreshes it in its own transaction, so loads and shred never disagree", async () => {

@@ -1,10 +1,11 @@
 import { sql, type Kysely } from "kysely";
 import type { Database, Geoprivacy, QcSeverity } from "../model.js";
-import { DASHBOARD_RULES, type CoCollectors, type DashboardRow, type Finding } from "./views/qc.js";
+import { DASHBOARD_RULES, type CoCollectors, type DashboardRow, type Finding, type SkippedDay } from "./views/qc.js";
 
 /**
  * What the front page reads: the person's samples that want something this
- * season, and the observations they numbered but left at zero. The queries
+ * season, the observations they numbered but left at zero, the ones they put
+ * in the project with no number at all, and the days their numbers skip one. The queries
  * are here rather than in the route so the page's membership rule can be
  * tested as a function of the store, the way the listings' are.
  *
@@ -31,6 +32,8 @@ export interface Dashboard {
    * with no atlas to act on behalf of, the program acts as itself.
    */
   atlas: { code: string; name: string } | null;
+  /** This season's days whose run of sample numbers skips one (sample_number_gap, beeline-virz). */
+  skipped: SkippedDay[];
 }
 
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
@@ -64,10 +67,12 @@ type RawPlaceholderRow = Omit<
   "sample_id" | "specimen_count" | "pending_count" | "printing_count" | "printed_count" | "printed_at" | "flagged" | "settled"
 >;
 
+type RawUnnumberedRow = Omit<RawPlaceholderRow, "sample_number"> & { specimen_count: unknown; notes: string | null };
+
 export async function loadDashboard(db: Kysely<Database>, personId: number): Promise<Dashboard> {
   const rules = [...DASHBOARD_RULES.keys()];
   const ruleList = sql.join(rules.map((r) => sql`${r}`));
-  const [samples, findings, placeholders, partners, sync, season, atlas] = await Promise.all([
+  const [samples, findings, placeholders, unnumbered, skipped, partners, sync, season, atlas] = await Promise.all([
     // A sample is on the page when a rule the page shows fires on it, or
     // when labels are waiting for it. The roll-up (sample_qc_finding), not
     // qc_finding: a finding on one of a sample's specimens is something to
@@ -139,6 +144,43 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
         AND f.observed_on >= season.started_on
         AND NOT EXISTS (SELECT 1 FROM sample s WHERE s.inat_observation_id = f.inat_id)
       ORDER BY f.observed_on DESC, length(trim(f.sample_number_raw)) DESC, trim(f.sample_number_raw) DESC`.execute(db),
+    // In the project with the sample number left blank (observation_unnumbered,
+    // schema/109): not a sample, and never going to be one until it is
+    // numbered, so the page asks. The same coordinate rule as the placeholders.
+    sql<RawUnnumberedRow>`
+      SELECT f.inat_id AS inat_observation_id,
+             f.observed_on AS date_start,
+             ol.locality, op.county_name AS county, op.state_province,
+             CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL THEN f.private_latitude
+                  WHEN nullif(f.geoprivacy, 'open') IS NULL AND nullif(f.taxon_geoprivacy, 'open') IS NULL THEN f.latitude
+             END AS latitude,
+             CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL THEN f.private_longitude
+                  WHEN nullif(f.geoprivacy, 'open') IS NULL AND nullif(f.taxon_geoprivacy, 'open') IS NULL THEN f.longitude
+             END AS longitude,
+             f.positional_accuracy AS coordinate_uncertainty_m,
+             nullif(f.geoprivacy, 'open') AS geoprivacy,
+             nullif(f.taxon_geoprivacy, 'open') AS taxon_geoprivacy,
+             f.host_taxon_name AS host_name, f.host_taxon_rank AS host_rank,
+             try_cast(f.specimen_count_raw AS INTEGER) AS specimen_count,
+             u.notes
+      FROM observation_unnumbered u
+      JOIN observation_field f ON f.inat_id = u.inat_id
+      CROSS JOIN season
+      LEFT JOIN observation_locality ol ON ol.inat_id = f.inat_id
+      LEFT JOIN observation_place op ON op.inat_id = f.inat_id
+      WHERE u.person_id = ${personId}
+        AND u.observed_on >= season.started_on
+      ORDER BY f.observed_on DESC, f.inat_id DESC`.execute(db),
+    // The days this season whose run skips a number. A season is named by
+    // the year it began, so this one is the year of season.started_on.
+    sql<{ collected_on: Date; sample_number: number; login: string | null }>`
+      SELECT g.collected_on, g.sample_number, a.login
+      FROM sample_number_gap g
+      CROSS JOIN season
+      LEFT JOIN inat_account a ON a.person_id = g.person_id
+      WHERE g.person_id = ${personId}
+        AND g.season = EXTRACT(YEAR FROM season.started_on)
+      ORDER BY g.collected_on DESC, g.sample_number`.execute(db),
     // Who else collected those samples, so a row can say whose numbering
     // it is you are looking at.
     db
@@ -212,6 +254,31 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       findings: s.settled ? [] : (findingsBySample.get(sampleId) ?? []),
     });
   }
+  for (const u of unnumbered.rows) {
+    rows.push({
+      sample_id: null,
+      inat_observation_id: u.inat_observation_id,
+      sample_number: null,
+      date_start: u.date_start,
+      locality: u.locality,
+      county: u.county,
+      state_province: u.state_province,
+      latitude: num(u.latitude),
+      longitude: num(u.longitude),
+      coordinate_uncertainty_m: num(u.coordinate_uncertainty_m),
+      geoprivacy: u.geoprivacy,
+      taxon_geoprivacy: u.taxon_geoprivacy,
+      host_name: u.host_name,
+      host_rank: u.host_rank,
+      specimen_count: num(u.specimen_count),
+      notes: u.notes,
+      pending_count: 0,
+      printing_count: 0,
+      printed_count: 0,
+      printed_at: null,
+      findings: [],
+    });
+  }
   for (const p of placeholders.rows) {
     rows.push({
       sample_id: null,
@@ -236,13 +303,33 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       findings: [],
     });
   }
-  // One order for both kinds: newest first, then by number as the listings sort it.
-  rows.sort(
-    (a, b) =>
-      b.date_start.getTime() - a.date_start.getTime() ||
-      b.sample_number.length - a.sample_number.length ||
-      (b.sample_number < a.sample_number ? -1 : b.sample_number > a.sample_number ? 1 : 0),
-  );
+  // One order for every kind: newest first, then by number as the listings
+  // sort it, an observation with no number after the day's numbered ones.
+  rows.sort((a, b) => {
+    const an = a.sample_number ?? "";
+    const bn = b.sample_number ?? "";
+    return b.date_start.getTime() - a.date_start.getTime() || bn.length - an.length || (bn < an ? -1 : bn > an ? 1 : 0);
+  });
+
+  // One entry per day, its numbers in order. The link is iNaturalist's list
+  // of everything the person observed that day, in the project or not, which
+  // is where a sample left out of the project would turn up.
+  const skippedDays = new Map<string, SkippedDay>();
+  for (const g of skipped.rows) {
+    const day = new Date(g.collected_on);
+    const key = day.toISOString().slice(0, 10);
+    let entry = skippedDays.get(key);
+    if (entry === undefined) {
+      const query = g.login === null ? null : new URLSearchParams({ user_id: g.login, on: key, verifiable: "any" });
+      entry = {
+        collected_on: day,
+        numbers: [],
+        observationsHref: query === null ? null : `https://www.inaturalist.org/observations?${query}`,
+      };
+      skippedDays.set(key, entry);
+    }
+    entry.numbers.push(Number(g.sample_number));
+  }
 
   const withOthers = new Map<number, string[]>();
   for (const row of partners as Array<{ sample_id: number; display_name: string }>) {
@@ -258,5 +345,6 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
     settledThrough: season.rows[0]?.through ?? "",
     everSynced: (sync?.at ?? null) !== null,
     atlas: atlas ?? null,
+    skipped: [...skippedDays.values()],
   };
 }

@@ -1,5 +1,5 @@
 import type { Messages } from "../../messages/index.js";
-import { QcHome, type CoCollectors, type DashboardRow, type Finding } from "../qc.js";
+import { QcHome, type CoCollectors, type DashboardRow, type Finding, type SkippedDay } from "../qc.js";
 import { DesignPage, Specimen } from "./shell.js";
 
 /**
@@ -80,6 +80,7 @@ const FIXTURES: Array<{
   rows: DashboardRow[];
   withOthers?: CoCollectors;
   everSynced: boolean;
+  skipped?: SkippedDay[];
 }> = [
   { label: "All clear, nothing waiting", rows: [], everSynced: true },
   { label: "All clear, samples waiting on labels", rows: WAITING, everSynced: true },
@@ -125,6 +126,47 @@ const FIXTURES: Array<{
         host_name: null,
         host_rank: null,
       }),
+    ],
+    everSynced: true,
+  },
+  {
+    // beeline-a04: in the project with the number left blank, count blank
+    // too, and the number in the notes in the collector's own words.
+    label: "An observation with its sample number left blank",
+    rows: [
+      row({
+        sample_id: null,
+        sample_number: null,
+        date_start: new Date("2026-05-23T12:00:00"),
+        specimen_count: null,
+        notes: "1C red cuckoo",
+      }),
+      row({
+        sample_id: null,
+        sample_number: null,
+        date_start: new Date("2026-05-23T12:00:00"),
+        specimen_count: null,
+        host_name: "Vicia villosa",
+        host_rank: "species",
+      }),
+    ],
+    everSynced: true,
+  },
+  {
+    // beeline-virz: advisory, below the table, nothing blocked.
+    label: "Skipped sample numbers",
+    rows: [row({ pending_count: 3 })],
+    skipped: [
+      {
+        collected_on: new Date("2026-06-10T12:00:00"),
+        numbers: [3],
+        observationsHref: "https://www.inaturalist.org/observations?user_id=example&on=2026-06-10&verifiable=any",
+      },
+      {
+        collected_on: new Date("2026-06-02T12:00:00"),
+        numbers: [2, 5, 6, 7],
+        observationsHref: "https://www.inaturalist.org/observations?user_id=example&on=2026-06-02&verifiable=any",
+      },
     ],
     everSynced: true,
   },
@@ -247,7 +289,7 @@ export function QcProof({ m }: { m: Messages }) {
         <>
           <h2>{state.label}</h2>
           <Specimen>
-            <QcHome m={m} rows={state.rows} withOthers={state.withOthers} everSynced={state.everSynced} />
+            <QcHome m={m} rows={state.rows} withOthers={state.withOthers} everSynced={state.everSynced} skipped={state.skipped} />
           </Specimen>
         </>
       ))}

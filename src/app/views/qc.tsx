@@ -69,15 +69,17 @@ export interface Finding {
 
 /**
  * One row of the table. A sample, or — when `sample_id` is null — an
- * observation the volunteer numbered and left at zero specimens: a
- * placeholder, made before the catch was counted, that Beeline will not
- * turn into a sample until it says how many. It is on this page precisely
- * because the volunteer may have forgotten it (Peter, 2026-09-16).
+ * observation that is not one yet: either numbered and left at zero
+ * specimens, a placeholder made before the catch was counted (Peter,
+ * 2026-09-16), or in the project with its sample number left blank, which
+ * Beeline cannot make a sample at all (beeline-a04). Both are on this page
+ * precisely because the volunteer may have forgotten them.
  */
 export interface DashboardRow {
   sample_id: number | null;
   inat_observation_id: bigint | null;
-  sample_number: string;
+  /** Null only for an observation whose sample number was left blank. */
+  sample_number: string | null;
   date_start: Date;
   locality: string | null;
   county: string | null;
@@ -90,7 +92,10 @@ export interface DashboardRow {
   taxon_geoprivacy: Geoprivacy | null;
   host_name: string | null;
   host_rank: string | null;
-  specimen_count: number;
+  /** Null only where an unnumbered observation's count was left blank too. */
+  specimen_count: number | null;
+  /** An unnumbered observation's own notes, where the number sometimes is. */
+  notes?: string | null;
   /** Labels still to print; 0 when nothing is waiting or nothing can print. */
   pending_count: number;
   /** Labels frozen into a run that has not printed yet, and printed but not yet mailed (schema/155). */
@@ -104,7 +109,22 @@ export interface DashboardRow {
 export type CoCollectors = ReadonlyMap<number, string[]>;
 
 export function isPlaceholder(row: DashboardRow): boolean {
-  return row.sample_id === null;
+  return row.sample_id === null && row.sample_number !== null;
+}
+
+export function isUnnumbered(row: DashboardRow): boolean {
+  return row.sample_number === null;
+}
+
+/**
+ * The days this season whose run of sample numbers skips one (beeline-virz),
+ * with where on iNaturalist that day's observations are.
+ */
+export interface SkippedDay {
+  collected_on: Date;
+  numbers: number[];
+  /** iNaturalist's list of the volunteer's observations that day, every one — in the project or not. */
+  observationsHref: string | null;
 }
 
 /**
@@ -142,6 +162,7 @@ export function flaggedColumns(row: DashboardRow): Map<FlagColumn, QcSeverity> {
     }
   }
   if (isPlaceholder(row)) out.set("specimens", "warning");
+  if (isUnnumbered(row) && out.get("sample") !== "blocking") out.set("sample", "warning");
   return out;
 }
 
@@ -171,9 +192,69 @@ function Coordinates({ m, row }: { m: Messages; row: DashboardRow }) {
   return hidden ? <Absent label={m.qc.coordinatesObscured} spelled /> : <Absent label={m.qc.coordinatesNone} />;
 }
 
+/**
+ * Notes run from one word to a paragraph about a crushed bee; the number,
+ * when it is there, is at the start. Cut on a word, whitespace folded.
+ */
+const NOTES_EXCERPT = 120;
+function excerpt(notes: string): string {
+  const flat = notes.replace(/\s+/g, " ").trim();
+  if (flat.length <= NOTES_EXCERPT) return flat;
+  const cut = flat.slice(0, NOTES_EXCERPT);
+  const space = cut.lastIndexOf(" ");
+  return `${space > NOTES_EXCERPT / 2 ? cut.slice(0, space) : cut}…`;
+}
+
+/**
+ * The days a run skips a number, as runs of numbers: "3", "3 and 7",
+ * "5–7". Below the table and outside it, because it is advisory — it asks
+ * about samples that may never have existed — and a row in the table is
+ * something wrong with a record.
+ */
+function Skipped({ m, days }: { m: Messages; days: SkippedDay[] }) {
+  return (
+    <Callout>
+      <Meta block>{m.qc.skipped.note}</Meta>
+      <ul>
+        {days.map((d) => (
+          <li>
+            {m.qc.skipped.day(d.collected_on, numberRuns(d.numbers), d.numbers.length)}
+            {d.observationsHref !== null && (
+              <>
+                {" · "}
+                <a href={d.observationsHref}>{m.qc.skipped.link}</a>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Callout>
+  );
+}
+
+/** [3, 5, 6, 7] → ["3", "5–7"]; [3, 4] → ["3", "4"]. */
+export function numberRuns(numbers: readonly number[]): string[] {
+  const sorted = [...numbers].sort((a, b) => a - b);
+  const runs: string[] = [];
+  let start = sorted[0];
+  for (let i = 1; i <= sorted.length; i++) {
+    if (i < sorted.length && sorted[i] === sorted[i - 1]! + 1) continue;
+    const end = sorted[i - 1]!;
+    if (start === undefined) break;
+    // Two in a row read better as two numbers than as a range of two.
+    if (end - start >= 2) runs.push(`${start}–${end}`);
+    else for (let k = start; k <= end; k++) runs.push(String(k));
+    start = sorted[i];
+  }
+  return runs;
+}
+
 function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: string[] }) {
   const marks = flaggedColumns(row);
   const placeholder = isPlaceholder(row);
+  const unnumbered = isUnnumbered(row);
+  const title =
+    row.sample_number === null ? m.qc.unnumberedTitle(row.date_start) : m.qc.sampleTitle(row.sample_number, row.date_start);
   const observationHref =
     row.inat_observation_id === null ? null : `https://www.inaturalist.org/observations/${row.inat_observation_id}`;
   const fixHref = observationHref ?? (row.sample_id === null ? null : `/samples/${row.sample_id}/edit`);
@@ -186,9 +267,9 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
           {/* A sample links to its record; a placeholder has none yet and
               links to the observation it will be made from. */}
           {row.sample_id !== null ? (
-            <a href={sampleHref(row.sample_id)}>{m.qc.sampleTitle(row.sample_number, row.date_start)}</a>
+            <a href={sampleHref(row.sample_id)}>{title}</a>
           ) : (
-            <a href={observationHref ?? "#"}>{m.qc.sampleTitle(row.sample_number, row.date_start)}</a>
+            <a href={observationHref ?? "#"}>{title}</a>
           )}
           {others.length > 0 && <Meta block>{m.qc.collectedWith(m.format.list(others))}</Meta>}
         </td>
@@ -206,7 +287,10 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
           )}
         </td>
         <td class={cellClass(marks, "specimens")}>
-          {m.format.number(row.specimen_count)}
+          <OrAbsent
+            value={row.specimen_count === null ? null : m.format.number(row.specimen_count)}
+            label={m.absence.notRecorded}
+          />
           {row.pending_count > 0 && <Meta block>{m.qc.labelsWaiting(row.pending_count)}</Meta>}
           {row.printing_count > 0 && <Meta block>{m.qc.labelsPrinting(row.printing_count)}</Meta>}
           {row.printed_count > 0 && row.printed_at !== null && (
@@ -219,6 +303,22 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
           <td colspan={5}>
             <div class="flag-body">
               <Chip tone="warning">{m.qc.placeholder.chip}</Chip> {m.qc.placeholder.note}
+              {observationHref !== null && (
+                <>
+                  {" "}
+                  <a href={observationHref}>{m.qc.fixOnInat}</a>
+                </>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+      {unnumbered && (
+        <tr class="flag">
+          <td colspan={5}>
+            <div class="flag-body">
+              <Chip tone="warning">{m.qc.unnumbered.chip}</Chip> {m.qc.unnumbered.note}
+              {row.notes != null && <> {m.qc.unnumbered.notesSay(excerpt(row.notes))}</>}
               {observationHref !== null && (
                 <>
                   {" "}
@@ -280,6 +380,8 @@ export function QcHome(props: {
   settledThrough?: string;
   /** The atlas whose mark the page carries; absent or null, the program acts as itself. */
   atlas?: { code: string; name: string } | null;
+  /** This season's days whose run of sample numbers skips one; advisory, below the table. */
+  skipped?: SkippedDay[];
 }) {
   const { m, rows } = props;
   const withOthers: CoCollectors = props.withOthers ?? new Map();
@@ -288,6 +390,8 @@ export function QcHome(props: {
   // Waiting on labels lasts until they are mailed, not until a run is prepared.
   const waiting = rows.filter((r) => r.pending_count + r.printing_count + r.printed_count > 0).length;
   const placeholders = rows.filter(isPlaceholder).length;
+  const unnumbered = rows.filter(isUnnumbered).length;
+  const skipped = props.skipped ?? [];
   const settledFlagged = props.settledFlagged ?? 0;
 
   // The summary is the page's second heading, not a meta line: "2 samples
@@ -319,7 +423,7 @@ export function QcHome(props: {
         <EmptyState>{m.qc.allClear}</EmptyState>
       ) : (
         <>
-          <h2>{m.qc.summary(flagged, blocking, waiting, placeholders)}</h2>
+          <h2>{m.qc.summary(flagged, blocking, waiting, placeholders, unnumbered)}</h2>
           <DataTable columns={[m.qc.col.sample, m.qc.col.place, m.qc.col.coordinates, m.qc.col.host, m.qc.col.specimens]}>
             {rows.map((row) => (
               <Row m={m} row={row} others={row.sample_id === null ? [] : (withOthers.get(row.sample_id) ?? [])} />
@@ -327,6 +431,7 @@ export function QcHome(props: {
           </DataTable>
         </>
       )}
+      {skipped.length > 0 && <Skipped m={m} days={skipped} />}
       <Meta block>{props.everSynced ? m.qc.refreshNote : m.qc.neverSynced}</Meta>
     </>
   );

@@ -227,7 +227,7 @@ export const en = {
       "its specimens get labels, and what the experts determine them to be comes back to it. " +
       "This page is your samples from this season that need something from you, or are waiting on labels.",
     /** Positional so the proofing page can call it with placeholders (messages-proof.tsx). */
-    summary: (flagged: number, blocking: number, waiting: number, placeholders: number) => {
+    summary: (flagged: number, blocking: number, waiting: number, placeholders: number, unnumbered = 0) => {
       const parts: string[] = [];
       if (flagged > 0) {
         parts.push(
@@ -247,6 +247,11 @@ export const en = {
       if (placeholders > 0) {
         parts.push(
           `${n(placeholders)} ${placeholders === 1 ? "observation still says" : "observations still say"} 0 specimens`,
+        );
+      }
+      if (unnumbered > 0) {
+        parts.push(
+          `${n(unnumbered)} ${unnumbered === 1 ? "observation has" : "observations have"} no sample number`,
         );
       }
       return parts.join(" · ");
@@ -269,6 +274,8 @@ export const en = {
       "A fix you make on iNaturalist shows up here the next day.",
     neverSynced: "This instance has not read anything from iNaturalist yet.",
     sampleTitle: (sampleNumber: string, when: Date | string) => `Sample ${sampleNumber} · ${date(when)}`,
+    /** An observation whose sample number was left blank: it has no number to be titled by. */
+    unnumberedTitle: (when: Date | string) => `No number · ${date(when)}`,
     specimens: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"}`,
     labelsWaiting: (count: number) => `${n(count)} ${count === 1 ? "label" : "labels"} to print`,
     /** In a print run that is not on paper yet. Still on the page: waiting ends when the envelope goes. */
@@ -305,6 +312,37 @@ export const en = {
       note:
         "This observation still says 0 specimens, so it is not a sample yet and has nothing to print. " +
         "Once you have checked the place, the pin and the count, enter how many you collected.",
+    },
+    /**
+     * An observation in the atlas's iNaturalist project with its sample
+     * number left blank (beeline-a04). The project lets an observation in
+     * with the field empty, and nothing becomes a sample without a number,
+     * so it would otherwise vanish. The volunteer's own notes are quoted
+     * back when there are any, since that is where some wrote the number —
+     * quoted, never read for one.
+     */
+    unnumbered: {
+      chip: "no number",
+      note:
+        "This observation is in your atlas's iNaturalist project with its sample number left blank, so it is not a sample yet. " +
+        "If you collected bees from this plant, enter the sample number on the observation.",
+      notesSay: (notes: string) => `Your notes say: “${notes}”.`,
+    },
+    /**
+     * Numbers missing from a day's run — 1, 2, 4 and no 3 (beeline-virz).
+     * Advisory: a skipped number is fine, and only the volunteer knows
+     * whether one was skipped or is a vial whose observation never reached
+     * the project. So it asks, below the table, and blocks nothing.
+     */
+    skipped: {
+      note:
+        "Some days this season skip a sample number. A skipped number is fine. " +
+        "But if you collected a sample under one of these, its observation is missing from your atlas's iNaturalist project, " +
+        "or is in it without its number.",
+      /** `runs` is the numbers as runs ("3", "5–7"); `count` is how many numbers they hold. */
+      day: (when: Date | string, runs: readonly string[], count: number) =>
+        `${date(when)}: ${count === 1 ? "no sample" : "no samples"} ${list(runs)}`,
+      link: "your observations that day",
     },
     /**
      * Whose sample you are looking at when it isn't only yours: the sample

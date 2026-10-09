@@ -567,6 +567,7 @@ export function createApp({
           settledFlagged={dashboard.settledFlagged}
           settledThrough={dashboard.settledThrough}
           atlas={dashboard.atlas}
+          skipped={dashboard.skipped}
         />,
       ),
     );

@@ -135,7 +135,18 @@ SELECT o.inat_id,
   -- #83).
   CASE WHEN trim(coalesce(json_extract_string(o.content, '$.description'), '')) = ''
        THEN NULL
-       ELSE json_extract_string(o.content, '$.description') END           AS notes
+       ELSE json_extract_string(o.content, '$.description') END           AS notes,
+  -- Whether a sample-number field is attached at all, blank or not
+  -- (beeline-a04). sample_number_raw above treats blank as absent, and that
+  -- is right for the number, but it loses the one thing a blank says: the
+  -- three synced projects are traditional ones that REQUIRE 'sampleId' to
+  -- join, and an empty value satisfies the requirement. So an observation in
+  -- the project with the field attached and empty was put there as a
+  -- collection record by someone who left the number for later — 34 in the
+  -- open season on the dev store, against 100 settled, none of them samples.
+  EXISTS (SELECT 1
+          FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
+          WHERE j.j ->> '$.name' IN ('sampleId', 'sample id'))           AS sample_number_field_attached
 FROM observation_current o;
 
 -- The two sample-number fields disagreeing on one observation.

@@ -1496,6 +1496,20 @@ export const en = {
     membershipProgram: "Master Melittology (no atlas)",
     /** The same answer in a table cell, where the column is already "Atlas". */
     membershipProgramShort: "Program",
+    /**
+     * Program leads (beeline-7c1): whose a program's work is, and who to
+     * raise its questions with. Responsibility, not access, which the hint
+     * says because the card sits beside admin rights and could be read as one.
+     */
+    leadership: "Program leads",
+    leadershipHint:
+      "The programs this person leads: their work is this person's to take up, and their questions this person's to answer. A program can have several leads. Leading a program grants no access — that is admin rights, below.",
+    leadsNothing: "Leads no program",
+    saveLeads: "Save",
+    colLeads: "Leads",
+    leadAny: "Anyone",
+    leadSome: "Any program",
+    notALead: "leads no program",
     adminRights: "Admin rights",
     adminHint: "Admins reach Jobs, People, Design, and the atlas-wide listings.",
     grantAdmin: "Grant admin",
@@ -1556,6 +1570,7 @@ export const en = {
         membership: "Belongs to",
         admin: "Admin rights",
         acts_for: "May act for",
+        leads: "Leads",
       },
       /**
        * Who, where nobody can be named. Four of these are passes over the

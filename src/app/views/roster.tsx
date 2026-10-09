@@ -3,6 +3,8 @@ import type { Messages } from "../messages/index.js";
 import type { AtlasOption } from "../listings.js";
 import {
   DEFAULT_ROSTER_SORT,
+  LEAD_OFF,
+  LEAD_SOME,
   MEMBER_ANY,
   MEMBER_UNRECORDED,
   isRosterFiltered,
@@ -12,6 +14,7 @@ import {
   type BindingVerdict,
   type LinkedChange,
   type PersonDetail,
+  type ProgramOption,
   type RosterPage,
   type RosterRow,
   type RosterQuery,
@@ -268,7 +271,12 @@ function column({
 }
 
 /** The filters in force, as pills; scope and sort are not filters. */
-function pills(m: Messages, query: RosterQuery, atlases: readonly AtlasOption[]): FilterPill[] {
+function pills(
+  m: Messages,
+  query: RosterQuery,
+  atlases: readonly AtlasOption[],
+  programs: readonly ProgramOption[],
+): FilterPill[] {
   const p = m.people;
   const clear = (override: Partial<RosterQuery>) => rosterHref(query, { ...override, page: 1 });
   const out: FilterPill[] = [];
@@ -291,6 +299,10 @@ function pills(m: Messages, query: RosterQuery, atlases: readonly AtlasOption[])
     out.push({ label: p.colMembership, value, clearHref: clear({ member: MEMBER_ANY }) });
   }
   if (query.admin) out.push({ label: p.colAdmin, value: p.onlyAdmins, clearHref: clear({ admin: false }) });
+  if (query.lead !== LEAD_OFF) {
+    const value = query.lead === LEAD_SOME ? p.leadSome : (programs.find((x) => x.code === query.lead)?.name ?? query.lead);
+    out.push({ label: p.colLeads, value, clearHref: clear({ lead: LEAD_OFF }) });
+  }
   return out;
 }
 
@@ -300,6 +312,7 @@ const emptyRosterFilters: Omit<RosterQuery, "sort" | "dir" | "page"> = {
   active: "any",
   member: MEMBER_ANY,
   admin: false,
+  lead: LEAD_OFF,
 };
 
 export function Roster({
@@ -308,12 +321,14 @@ export function Roster({
   query,
   recent,
   atlases,
+  programs,
 }: {
   m: Messages;
   page: RosterPage;
   query: RosterQuery;
   recent: readonly LinkedChange[];
   atlases: readonly AtlasOption[];
+  programs: readonly ProgramOption[];
 }) {
   const p = m.people;
   // No staging to weigh an account against: the checking apparatus is not
@@ -329,7 +344,7 @@ export function Roster({
         <SearchForm action="/people" params={rosterParams(query)} value={query.search} label={p.search} placeholder={p.searchHint} />
       </div>
       <FilterPills
-        filters={pills(m, query, atlases)}
+        filters={pills(m, query, atlases, programs)}
         clearAllHref={isRosterFiltered(query) ? rosterHref(query, { ...emptyRosterFilters, page: 1 }) : null}
         clearAllLabel={p.clear}
         groupLabel={p.inForce}
@@ -420,6 +435,27 @@ export function Roster({
               fields: ["admin"],
               controls: <CheckboxField id="admin" name="admin" label={p.onlyAdmins} checked={query.admin} />,
             }),
+            // Filters and does not sort, like Admin: a list of codes has no
+            // order anybody would ask for.
+            column({
+              ...col,
+              label: p.colLeads,
+              sort: null,
+              fields: ["lead"],
+              controls: (
+                <SelectField
+                  id="lead"
+                  name="lead"
+                  label={p.colLeads}
+                  value={query.lead}
+                  options={[
+                    [LEAD_OFF, p.leadAny] as const,
+                    [LEAD_SOME, p.leadSome] as const,
+                    ...programs.map((x) => [x.code, x.name] as const),
+                  ]}
+                />
+              ),
+            }),
           ]}
         >
           {page.rows.map((row) => (
@@ -450,6 +486,7 @@ export function Roster({
               <td class="nowrap">{lastSeen(m, row)}</td>
               <td>{membershipCell(m, row)}</td>
               <td>{row.is_admin ? <Chip tone="success">{p.colAdmin}</Chip> : <Absent label={p.notAdmin} />}</td>
+              <td>{row.leads.length === 0 ? <Absent label={p.notALead} /> : row.leads.join(", ")}</td>
             </tr>
           ))}
         </DataTable>
@@ -479,6 +516,7 @@ export function PersonPage({
   m,
   person,
   atlases,
+  programs,
   history,
   notice,
   problem,
@@ -486,6 +524,7 @@ export function PersonPage({
   m: Messages;
   person: PersonDetail;
   atlases: readonly AtlasOption[];
+  programs: readonly ProgramOption[];
   /** Everything the change log holds about them, newest first (beeline-o22). */
   history: readonly PersonChange[];
   notice?: string;
@@ -621,6 +660,31 @@ export function PersonPage({
           <Reason m={m} id="membership_reason" />
           <p class="row">
             <Button>{p.saveMembership}</Button>
+          </p>
+        </form>
+      </Card>
+
+      {/* Beside membership, which it is easily mistaken for and is not:
+          where somebody belongs, against whose work they take up
+          (beeline-7c1). One box per program, posting the whole set, because
+          the overlay row states every program they lead. */}
+      <Card>
+        <h2>{p.leadership}</h2>
+        <Meta block>{p.leadershipHint}</Meta>
+        <form method="post" action={`${action}/leads`} class="form-column">
+          {programs.map((x) => (
+            <CheckboxField
+              id={`lead_${x.code}`}
+              name="lead"
+              value={x.code}
+              label={x.name}
+              checked={person.leads.includes(x.code)}
+            />
+          ))}
+          <Reason m={m} id="leads_reason" />
+          <p class="row">
+            {person.leads.length === 0 && <Chip>{p.leadsNothing}</Chip>}
+            <Button>{p.saveLeads}</Button>
           </p>
         </form>
       </Card>

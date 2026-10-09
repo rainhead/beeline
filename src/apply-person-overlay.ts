@@ -1,7 +1,7 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { pathToFileURL } from "node:url";
 import { PROGRAM_MEMBERSHIP } from "./model.js";
-import { splitRefs, parseRef, type OverlayField, type PersonOverlayRow } from "./person-overlay.js";
+import { splitCodes, splitRefs, parseRef, type OverlayField, type PersonOverlayRow } from "./person-overlay.js";
 
 /**
  * Apply staff decisions about people to the store (ADR 0004 overlay, keyed as
@@ -264,6 +264,27 @@ async function applyField(
         `INSERT INTO person_delegate (person_id, acts_for_id, granted_by) VALUES ($1, $2, $3)
          ON CONFLICT (person_id, acts_for_id) DO NOTHING`,
         [personId, target, author] as never,
+      );
+    }
+    return null;
+  }
+
+  if (field === "leads") {
+    // The complete set, replaced wholesale and all or nothing, by acts_for's
+    // rule and for its reason: a half-applied set would silently drop
+    // whichever program came after the code that failed.
+    const programs: number[] = [];
+    for (const code of splitCodes(value)) {
+      const program = await scalar(conn, `SELECT entity_id FROM program WHERE code = $1`, [code]);
+      if (program === null) return `no program with code '${code}'`;
+      programs.push(Number(program));
+    }
+    await conn.run(`DELETE FROM program_lead WHERE person_id = $1`, [personId] as never);
+    for (const program of programs) {
+      await conn.run(
+        `INSERT INTO program_lead (program_id, person_id, granted_by) VALUES ($1, $2, $3)
+         ON CONFLICT (program_id, person_id) DO NOTHING`,
+        [program, personId, author] as never,
       );
     }
     return null;

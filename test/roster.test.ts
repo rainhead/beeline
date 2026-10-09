@@ -100,6 +100,7 @@ describe("the roster screen", () => {
       "Last seen: sort",
       "Belongs to: sort and filter",
       "Admin: filter",
+      "Leads: filter",
     ]) {
       expect(body).toContain(`aria-label="${label}"`);
     }
@@ -108,8 +109,8 @@ describe("the roster screen", () => {
   it("draws its column menus through the same component as the record listings", async () => {
     const body = await (await ctx.app.request("/people")).text();
     const menus = body.match(/<details class="menu col-menu">/g) ?? [];
-    expect(menus).toHaveLength(7);
-    expect(body.match(/d="m19\.5 8\.25-7\.5 7\.5-7\.5-7\.5"/g)).toHaveLength(7);
+    expect(menus).toHaveLength(8);
+    expect(body.match(/d="m19\.5 8\.25-7\.5 7\.5-7\.5-7\.5"/g)).toHaveLength(8);
     // Ordered by samples, highest first, by default — and says so.
     expect(body).toContain(`<th aria-sort="descending">`);
     expect(body).toMatch(/class="col-filter">.*?<button type="submit">Apply<\/button>/s);
@@ -141,7 +142,7 @@ describe("the roster screen", () => {
     const csv = await ctx.app.request("/people.csv?q=Ada");
     expect(csv.status).toBe(200);
     const [header, row] = (await csv.text()).split("\n");
-    expect(header).toBe("display_name,login,inat_user_id,samples,last_sample,last_visit,last_login,membership,atlas,admin");
+    expect(header).toBe("display_name,login,inat_user_id,samples,last_sample,last_visit,last_login,membership,atlas,admin,leads");
     expect(row).toContain("Ada Collector,adacollects,111,");
   });
 
@@ -746,5 +747,115 @@ describe("granting one person reach over another", () => {
     // The apostrophes come back HTML-escaped, which is the point of rendering
     // the reason rather than interpolating it.
     expect(await res.text()).toContain("no person named &#39;Nobody At All&#39;");
+  });
+});
+
+describe("recording who leads a program", () => {
+  let ctx: Awaited<ReturnType<typeof rosterApp>>;
+  beforeEach(async () => {
+    ctx = await rosterApp({ personId: 3, admin: true });
+  });
+
+  /** A form with one value per ticked box, as the browser sends it. */
+  const tick = (path: string, leads: string[], reason = "") =>
+    ctx.app.request(path, {
+      method: "POST",
+      headers: { origin: "http://localhost:3054", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams([...leads.map((code) => ["lead", code]), ["reason", reason]]),
+    });
+
+  const ledBy = async (code: string) =>
+    (
+      await (
+        await ctx.conn.run(
+          `SELECT p.display_name FROM program_lead pl
+           JOIN program pr ON pr.entity_id = pl.program_id
+           JOIN person p ON p.entity_id = pl.person_id
+           WHERE pr.code = '${code}' ORDER BY 1`,
+        )
+      ).getRows()
+    ).flat();
+
+  it("knows every atlas as a program, and the two programs that are not atlases", async () => {
+    const programs = await (await ctx.conn.run(`SELECT code, atlas_id IS NOT NULL FROM program ORDER BY code`)).getRows();
+    expect(programs).toEqual([
+      ["BC", true],
+      ["BLM", false],
+      ["ID", true],
+      ["MM", false],
+      ["NM", true],
+      ["OBA", true],
+      ["OK", true],
+      ["WaBA", true],
+    ]);
+  });
+
+  it("records the whole set in the overlay, sorted, and applies it", async () => {
+    const res = await tick("/people/adacollects/leads", ["WaBA", "MM"], "runs Washington and the program volunteers");
+    expect(res.status).toBe(200);
+    expect(await readOverlay(ctx.overlayPath)).toContainEqual(
+      expect.objectContaining({
+        person_ref: "name:Ada Collector",
+        field: "leads",
+        value: "MM;WaBA",
+        author: "whoever",
+      }) as unknown as PersonOverlayRow,
+    );
+    expect(await ledBy("WaBA")).toEqual(["Ada Collector"]);
+    expect(await ledBy("MM")).toEqual(["Ada Collector"]);
+  });
+
+  it("lets a program have several leads, and replaces only this person's set", async () => {
+    await tick("/people/adacollects/leads", ["WaBA"]);
+    await tick("/people/staffer/leads", ["WaBA", "OBA"]);
+    await tick("/people/staffer/leads", ["OBA"], "handed Washington back");
+    expect(await ledBy("WaBA")).toEqual(["Ada Collector"]);
+    expect(await ledBy("OBA")).toEqual(["Staff Person"]);
+  });
+
+  it("clears every program when no box is ticked", async () => {
+    await tick("/people/adacollects/leads", ["WaBA", "MM"]);
+    await tick("/people/adacollects/leads", [], "stepped down");
+    expect((await (await ctx.conn.run(`SELECT count(*) FROM program_lead`)).getRows()).flat()).toEqual([0n]);
+  });
+
+  it("refuses a code no program has, and changes nothing", async () => {
+    await tick("/people/adacollects/leads", ["WaBA"]);
+    const res = await tick("/people/adacollects/leads", ["WaBA", "XX"]);
+    expect(await res.text()).toContain("no program with code &#39;XX&#39;");
+    expect(await ledBy("WaBA")).toEqual(["Ada Collector"]);
+  });
+
+  it("ticks the programs they lead on their page", async () => {
+    await tick("/people/adacollects/leads", ["BLM"]);
+    const page = await (await ctx.app.request("/people/adacollects")).text();
+    expect(page).toMatch(/<input id="lead_BLM" name="lead" type="checkbox" value="BLM" checked=""/);
+    expect(page).not.toMatch(/<input id="lead_WaBA"[^>]*checked/);
+  });
+
+  it("says what changed in the person's history", async () => {
+    await tick("/people/adacollects/leads", ["WaBA"], "new lead");
+    expect(await readChanges(ctx.changesPath)).toContainEqual(
+      expect.objectContaining({ field: "leads", old_value: "", new_value: "WaBA", author: "whoever", reason: "new lead" }),
+    );
+  });
+
+  it("shows leads in the roster, filters to one program's or anyone's, and puts them in the CSV", async () => {
+    await tick("/people/adacollects/leads", ["WaBA", "MM"]);
+    await tick("/people/staffer/leads", ["OBA"]);
+    const all = await (await ctx.app.request("/people")).text();
+    expect(all).toContain("<td>MM, WaBA</td>");
+    const washington = await (await ctx.app.request("/people?lead=WaBA")).text();
+    expect(washington).toContain(">Ada Collector<");
+    expect(washington).not.toContain(">Staff Person<");
+    expect(washington).toContain("Washington Bee Atlas");
+    const anyLead = await (await ctx.app.request("/people?lead=any")).text();
+    expect(anyLead).toContain(">Ada Collector<");
+    expect(anyLead).toContain(">Staff Person<");
+    expect(anyLead).not.toContain(">Bo Netter<");
+    // A code that names no program is no filter, not an empty roster.
+    expect(await (await ctx.app.request("/people?lead=XX")).text()).toContain(">Bo Netter<");
+    const csv = await (await ctx.app.request("/people.csv?lead=WaBA")).text();
+    expect(csv).toContain(",MM;WaBA");
   });
 });

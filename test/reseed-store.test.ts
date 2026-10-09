@@ -192,7 +192,8 @@ describe("reseeding a store that cannot be blown away", () => {
   test("a source that never synced reseeds anyway", async () => {
     // Skipping a missing table rather than failing: legacy-only stores exist,
     // and so will iNat-only ones. Nothing carried, so the sequence sits right
-    // after the seed rows the schema itself inserts — the atlases.
+    // after the seed rows the schema itself inserts — the atlases, then the
+    // programs.
     const bare = join(dir, "bare.duckdb");
     const out = join(dir, "bare-target.duckdb");
     const instance = await DuckDBInstance.create(bare);
@@ -214,9 +215,12 @@ describe("reseeding a store that cannot be blown away", () => {
     });
     const bareInstance = await DuckDBInstance.create(out);
     const bareConn = await bareInstance.connect();
-    const atlases = await rows(bareConn, `SELECT max(entity_id) FROM atlas`);
+    const seeded = await rows(
+      bareConn,
+      `SELECT greatest((SELECT max(entity_id) FROM atlas), (SELECT max(entity_id) FROM program))`,
+    );
     bareConn.closeSync();
-    expect(bareCounts.sequenceAt).toBe(Number(atlases[0]![0]) + 1);
+    expect(bareCounts.sequenceAt).toBe(Number(seeded[0]![0]) + 1);
   });
 
   test("reseeding onto the source refuses rather than destroying it", async () => {

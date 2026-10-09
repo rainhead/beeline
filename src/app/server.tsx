@@ -65,6 +65,7 @@ import {
   nameIsUnique,
   parsePersonHandle,
   parseRosterQuery,
+  programOptions,
   isRosterFiltered,
   rosterCsv,
   personDetail,
@@ -1255,7 +1256,12 @@ export function createApp({
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
     const atlases = await atlasOptions(db);
-    const query = parseRosterQuery(new URL(c.req.url).searchParams, atlases.map((a) => a.code));
+    const programs = await programOptions(db);
+    const query = parseRosterQuery(
+      new URL(c.req.url).searchParams,
+      atlases.map((a) => a.code),
+      programs.map((x) => x.code),
+    );
     countListingView(rosterAttributes("page", query, viewer(c)));
     const listed = await listRoster(db, query);
     // Only on the unfiltered roster. The panel is about the store as a whole,
@@ -1268,7 +1274,11 @@ export function createApp({
       ? []
       : await linkChanges(db, recentChanges(await readChanges(changesPath), RECENT_CHANGES));
     return c.html(
-      await page(c, m.people.title, <Roster m={m} page={listed} query={query} recent={linked} atlases={atlases} />),
+      await page(
+        c,
+        m.people.title,
+        <Roster m={m} page={listed} query={query} recent={linked} atlases={atlases} programs={programs} />,
+      ),
     );
   });
 
@@ -1302,6 +1312,7 @@ export function createApp({
           m={m}
           person={person}
           atlases={await atlasOptions(db)}
+          programs={await programOptions(db)}
           history={await history(person.person_id)}
           notice={notice}
           problem={problem}
@@ -1313,7 +1324,12 @@ export function createApp({
   app.get("/people.csv", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const atlases = await atlasOptions(db);
-    const query = parseRosterQuery(new URL(c.req.url).searchParams, atlases.map((a) => a.code));
+    const programs = await programOptions(db);
+    const query = parseRosterQuery(
+      new URL(c.req.url).searchParams,
+      atlases.map((a) => a.code),
+      programs.map((x) => x.code),
+    );
     countListingView(rosterAttributes("csv", query, viewer(c)));
     const listed = await listRoster(db, query, { limit: CSV_ROW_LIMIT, offset: 0 });
     return csv(c, rosterCsv(listed), "beeline-people");
@@ -1471,6 +1487,22 @@ export function createApp({
   // overlay row, so the field states everyone this person may act for and an
   // empty field revokes the lot (beeline-oyl).
   app.post("/people/:id/delegate", (c) => decide(c, (form) => [["acts_for", text(form, "acts_for")]]));
+
+  // One box per program, so the ticked ones are the whole set: sorted, so the
+  // overlay row reads the same as the store does (beeline-7c1).
+  app.post("/people/:id/leads", (c) =>
+    decide(c, (form) => [
+      [
+        "leads",
+        form
+          .getAll("lead")
+          .map((v) => String(v).trim())
+          .filter((v) => v !== "")
+          .sort()
+          .join(";"),
+      ],
+    ]),
+  );
 
   app.post("/jobs/run/:name", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);

@@ -68,6 +68,7 @@ export const CHANGE_FIELDS = [
   "membership",
   "admin",
   "acts_for",
+  "leads",
 ] as const;
 export type ChangeField = (typeof CHANGE_FIELDS)[number];
 
@@ -103,6 +104,7 @@ const ABSENT: Record<ChangeField, string> = {
   membership: "",
   admin: "no",
   acts_for: "",
+  leads: "",
 };
 
 /**
@@ -288,6 +290,10 @@ export const PERSON_STATE_SQL = `
                    FROM person_delegate d
                    JOIN person p2 ON p2.entity_id = d.acts_for_id
                    WHERE d.person_id = p.entity_id), '') AS acts_for,
+         coalesce((SELECT string_agg(pr.code, ';' ORDER BY pr.code)
+                   FROM program_lead pl
+                   JOIN program pr ON pr.entity_id = pl.program_id
+                   WHERE pl.person_id = p.entity_id), '') AS leads,
          (SELECT count(*) FROM person q WHERE q.display_name = p.display_name) AS namesakes
   FROM person p
   LEFT JOIN inat_account a ON a.person_id = p.entity_id

@@ -757,13 +757,11 @@ describe("recording who leads a program", () => {
     ctx = await rosterApp({ personId: 3, admin: true });
   });
 
-  /** A form with one value per ticked box, as the browser sends it. */
-  const tick = (path: string, leads: string[], reason = "") =>
-    ctx.app.request(path, {
-      method: "POST",
-      headers: { origin: "http://localhost:3054", "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams([...leads.map((code) => ["lead", code]), ["reason", reason]]),
-    });
+  /** The dropdown's form, and a pill's ×: one change each, as the page sends it. */
+  const change = (person: string, change: "add" | "remove", program: string, reason = "") =>
+    post(ctx.app, `/people/${person}/leads`, { change, program, reason });
+  const add = (person: string, ...programs: string[]) =>
+    programs.reduce<Promise<unknown>>((done, code) => done.then(() => change(person, "add", code)), Promise.resolve());
 
   const ledBy = async (code: string) =>
     (
@@ -792,7 +790,8 @@ describe("recording who leads a program", () => {
   });
 
   it("records the whole set in the overlay, sorted, and applies it", async () => {
-    const res = await tick("/people/adacollects/leads", ["WaBA", "MM"], "runs Washington and the program volunteers");
+    await add("adacollects", "WaBA");
+    const res = await change("adacollects", "add", "MM", "also runs the program volunteers");
     expect(res.status).toBe(200);
     expect(await readOverlay(ctx.overlayPath)).toContainEqual(
       expect.objectContaining({
@@ -806,23 +805,25 @@ describe("recording who leads a program", () => {
     expect(await ledBy("MM")).toEqual(["Ada Collector"]);
   });
 
-  it("lets a program have several leads, and replaces only this person's set", async () => {
-    await tick("/people/adacollects/leads", ["WaBA"]);
-    await tick("/people/staffer/leads", ["WaBA", "OBA"]);
-    await tick("/people/staffer/leads", ["OBA"], "handed Washington back");
+  it("lets a program have several leads, and a removal touches only this person's", async () => {
+    await add("adacollects", "WaBA");
+    await add("staffer", "WaBA", "OBA");
+    await change("staffer", "remove", "WaBA", "handed Washington back");
     expect(await ledBy("WaBA")).toEqual(["Ada Collector"]);
     expect(await ledBy("OBA")).toEqual(["Staff Person"]);
   });
 
-  it("clears every program when no box is ticked", async () => {
-    await tick("/people/adacollects/leads", ["WaBA", "MM"]);
-    await tick("/people/adacollects/leads", [], "stepped down");
+  it("removing the last program leaves them leading nothing", async () => {
+    await add("adacollects", "WaBA");
+    await change("adacollects", "remove", "WaBA", "stepped down");
     expect((await (await ctx.conn.run(`SELECT count(*) FROM program_lead`)).getRows()).flat()).toEqual([0n]);
+    const leads = (await readOverlay(ctx.overlayPath)).filter((r) => r.field === "leads");
+    expect(leads.map((r) => [r.value, r.reason])).toEqual([["", "stepped down"]]);
   });
 
   it("refuses a code no program has, and changes nothing — the overlay included", async () => {
-    await tick("/people/adacollects/leads", ["WaBA"]);
-    const res = await tick("/people/adacollects/leads", ["WaBA", "XX"]);
+    await add("adacollects", "WaBA");
+    const res = await change("adacollects", "add", "XX");
     expect(await res.text()).toContain("no program with code &#39;XX&#39;");
     expect(await ledBy("WaBA")).toEqual(["Ada Collector"]);
     // The last good decision is still the one a rebuild would replay.
@@ -831,7 +832,7 @@ describe("recording who leads a program", () => {
   });
 
   it("keeps a lead it already holds when the overlay is replayed", async () => {
-    await tick("/people/adacollects/leads", ["WaBA"]);
+    await add("adacollects", "WaBA");
     await ctx.conn.run(`UPDATE program_lead SET granted_at = TIMESTAMPTZ '2026-01-01 00:00:00Z'`);
     await applyPersonOverlay(ctx.conn, await readOverlay(ctx.overlayPath));
     const kept = await ctx.conn.run(
@@ -840,23 +841,30 @@ describe("recording who leads a program", () => {
     expect((await kept.getRows()).flat()).toEqual([true]);
   });
 
-  it("ticks the programs they lead on their page", async () => {
-    await tick("/people/adacollects/leads", ["BLM"]);
+  it("shows what they lead as pills, and offers only the rest in the dropdown", async () => {
+    const none = await (await ctx.app.request("/people/adacollects")).text();
+    expect(none).toContain("Leads no program");
+    await add("adacollects", "NM", "BLM");
     const page = await (await ctx.app.request("/people/adacollects")).text();
-    expect(page).toMatch(/<input id="lead_BLM" name="lead" type="checkbox" value="BLM" checked=""/);
-    expect(page).not.toMatch(/<input id="lead_WaBA"[^>]*checked/);
+    expect(page).not.toContain("Leads no program");
+    expect(page).toContain('aria-label="Stop leading New Mexico Bee Atlas"');
+    expect(page).toContain('aria-label="Stop leading BLM surveys"');
+    const dropdown = page.slice(page.indexOf('<select id="program"'), page.indexOf("</select>", page.indexOf('<select id="program"')));
+    expect(dropdown).toContain('value="WaBA"');
+    expect(dropdown).not.toContain('value="NM"');
+    expect(dropdown).not.toContain('value="BLM"');
   });
 
   it("says what changed in the person's history", async () => {
-    await tick("/people/adacollects/leads", ["WaBA"], "new lead");
+    await change("adacollects", "add", "WaBA", "new lead");
     expect(await readChanges(ctx.changesPath)).toContainEqual(
       expect.objectContaining({ field: "leads", old_value: "", new_value: "WaBA", author: "whoever", reason: "new lead" }),
     );
   });
 
   it("shows leads in the roster, filters to one program's or anyone's, and puts them in the CSV", async () => {
-    await tick("/people/adacollects/leads", ["WaBA", "MM"]);
-    await tick("/people/staffer/leads", ["OBA"]);
+    await add("adacollects", "WaBA", "MM");
+    await add("staffer", "OBA");
     const all = await (await ctx.app.request("/people")).text();
     expect(all).toContain("<td>MM, WaBA</td>");
     const washington = await (await ctx.app.request("/people?lead=WaBA")).text();

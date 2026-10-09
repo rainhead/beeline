@@ -255,7 +255,8 @@ INSERT INTO program (code, name, atlas_id) VALUES
 -- with (beeline-7c1). Responsibility, not permission — admin rights stay one
 -- global grant (person_admin), and whether staff reach should narrow to their
 -- own program is a separate question (beeline-wf3n). A program may have
--- several leads and a person may lead several programs.
+-- several leads, and a person usually leads one program but can lead more
+-- (Olivia leads both the New Mexico Bee Atlas and the BLM surveys).
 CREATE TABLE program_lead (
   program_id INTEGER NOT NULL REFERENCES program(entity_id),
   person_id  INTEGER NOT NULL REFERENCES person(entity_id),

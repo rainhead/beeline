@@ -666,27 +666,53 @@ export function PersonPage({
 
       {/* Beside membership, which it is easily mistaken for and is not:
           where somebody belongs, against whose work they take up
-          (beeline-7c1). One box per program, posting the whole set, because
-          the overlay row states every program they lead. */}
+          (beeline-7c1). What they lead as pills, each dismissable, and a
+          dropdown to add one: a box per program would grow with every
+          program there is, for a person who usually leads one (Peter,
+          2026-10-09). Each form says one change; the route turns it into the
+          whole set the overlay row states. A pill's × is a button, not the
+          filter pills' link, because removing a lead is a write. */}
       <Card>
         <h2>{p.leadership}</h2>
         <Meta block>{p.leadershipHint}</Meta>
-        <form method="post" action={`${action}/leads`} class="form-column">
-          {programs.map((x) => (
-            <CheckboxField
-              id={`lead_${x.code}`}
-              name="lead"
-              value={x.code}
-              label={x.name}
-              checked={person.leads.includes(x.code)}
+        <div class="active-filters" role="group" aria-label={p.leadership}>
+          {person.leads.length === 0 ? (
+            <Chip>{p.leadsNothing}</Chip>
+          ) : (
+            person.leads.map((code) => {
+              const name = programs.find((x) => x.code === code)?.name ?? code;
+              return (
+                <form method="post" action={`${action}/leads`} class="chip">
+                  <input type="hidden" name="change" value="remove" />
+                  <input type="hidden" name="program" value={code} />
+                  {name}{" "}
+                  <button type="submit" class="chip-remove" aria-label={p.removeLead(name)}>
+                    ×
+                  </button>
+                </form>
+              );
+            })
+          )}
+        </div>
+        {programs.some((x) => !person.leads.includes(x.code)) && (
+          <form method="post" action={`${action}/leads`} class="form-column">
+            <input type="hidden" name="change" value="add" />
+            <SelectField
+              id="program"
+              name="program"
+              label={p.addLead}
+              value=""
+              options={[
+                ["", p.chooseProgram] as const,
+                ...programs.filter((x) => !person.leads.includes(x.code)).map((x) => [x.code, x.name] as const),
+              ]}
             />
-          ))}
-          <Reason m={m} id="leads_reason" />
-          <p class="row">
-            {person.leads.length === 0 && <Chip>{p.leadsNothing}</Chip>}
-            <Button>{p.saveLeads}</Button>
-          </p>
-        </form>
+            <Reason m={m} id="leads_reason" />
+            <p class="row">
+              <Button variant="tonal">{p.saveLead}</Button>
+            </p>
+          </form>
+        )}
       </Card>
 
       {/* Reach over somebody else's records (beeline-oyl). A text field of

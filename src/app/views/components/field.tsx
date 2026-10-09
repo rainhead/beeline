@@ -103,20 +103,17 @@ export function CheckboxField({
   label,
   checked,
   hint,
-  value = "1",
 }: {
   id: string;
   name: string;
   label: Child;
   checked?: boolean;
   hint?: Child;
-  /** What a ticked box posts. "1" for a lone yes/no; a set of boxes sharing a name posts one value each. */
-  value?: string;
 }) {
   return (
     <div class="field">
       <span class="row">
-        <input id={id} name={name} type="checkbox" value={value} checked={checked} />
+        <input id={id} name={name} type="checkbox" value="1" checked={checked} />
         <label for={id}>{label}</label>
       </span>
       {hint !== undefined && <p class="field-hint">{hint}</p>}

@@ -1505,7 +1505,10 @@ export const en = {
     leadershipHint:
       "The programs this person leads: their work is this person's to take up, and their questions this person's to answer. A program can have several leads. Leading a program grants no access — that is admin rights, below.",
     leadsNothing: "Leads no program",
-    saveLeads: "Save",
+    removeLead: (program: string) => `Stop leading ${program}`,
+    addLead: "Add a program they lead",
+    chooseProgram: "Choose a program",
+    saveLead: "Add",
     colLeads: "Leads",
     leadAny: "Anyone",
     leadSome: "Any program",

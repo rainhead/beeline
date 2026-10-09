@@ -220,3 +220,52 @@ COMMENT ON TABLE person_delegate IS 'person_id may see and act on acts_for_id''s
 COMMENT ON COLUMN person_delegate.person_id IS 'The delegate — the one who signs in, so in practice the holder of the household''s iNat account. Not enforced: a grant to someone with no account is inert rather than refused, because the same overlay pass may bind their account after this row is applied.';
 COMMENT ON COLUMN person_delegate.acts_for_id IS 'The person acted for, typically the household partner who does not hold the shared login. Usually has no inat_account at all, which is the state this table exists to make workable.';
 COMMENT ON COLUMN person_delegate.granted_by IS 'iNat login of the staff member who granted it. Not a foreign key: the granter may be gone — same stance as person_admin.granted_by.';
+
+-- Programs (beeline-7c1). A program is a body people take part in that
+-- governs what they collect through it (CONTEXT.md): each atlas, Master
+-- Melittology itself, and the BLM surveys. "An atlas is the program that
+-- also has a region", which is the arrow here: a program names the atlas it
+-- is, and a program with no region names none.
+--
+-- A table beside atlas rather than a rework of it. Everything atlas-shaped
+-- today (regions, printing, membership, the mark) is a program's in
+-- principle, but atlas is referenced from five tables and DuckDB cannot
+-- restructure a referenced table, so the generalisation arrives one fact at a
+-- time, starting with the first fact that is not an atlas's: who leads it.
+CREATE TABLE program (
+  entity_id INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
+  code      TEXT UNIQUE NOT NULL,
+  name      TEXT NOT NULL,
+  atlas_id  INTEGER UNIQUE REFERENCES atlas(entity_id)
+);
+COMMENT ON TABLE program IS 'A program people take part in: each atlas, Master Melittology itself, and the BLM surveys. The overlay names a program by its code.';
+COMMENT ON COLUMN program.atlas_id IS 'The atlas this program is, for a program with a region. Null for one without: Master Melittology, the BLM surveys.';
+COMMENT ON COLUMN program.code IS 'How the person overlay names the program (field leads), and so stable: an atlas''s is its atlas code, then MM and BLM. Letters and digits only, which is what lets a set of them be written joined with semicolons.';
+COMMENT ON COLUMN program.name IS 'The name staff see. An atlas''s is its atlas name.';
+
+-- Each atlas is a program under its own code and name; then the two that are
+-- not atlases (Peter, 2026-10-09). Master Melittology was known only by its
+-- iNaturalist project's name, "Master Melittologist (outside of Oregon)".
+INSERT INTO program (code, name, atlas_id) SELECT code, name, entity_id FROM atlas ORDER BY entity_id;
+INSERT INTO program (code, name, atlas_id) VALUES
+  ('MM',  'Master Melittology', NULL),
+  ('BLM', 'BLM surveys',        NULL);
+
+-- Who leads each program: whose work it is, and who to raise its questions
+-- with (beeline-7c1). Responsibility, not permission — admin rights stay one
+-- global grant (person_admin), and whether staff reach should narrow to their
+-- own program is a separate question (beeline-wf3n). A program may have
+-- several leads, and a person usually leads one program but can lead more
+-- (Olivia leads both the New Mexico Bee Atlas and the BLM surveys).
+CREATE TABLE program_lead (
+  program_id INTEGER NOT NULL REFERENCES program(entity_id),
+  person_id  INTEGER NOT NULL REFERENCES person(entity_id),
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  granted_by TEXT,
+  PRIMARY KEY (program_id, person_id)
+);
+COMMENT ON TABLE program_lead IS 'person_id leads program_id: the program''s work is theirs to take up, and its questions theirs to answer. Set from /people through the person overlay (field leads). Grants no access.';
+COMMENT ON COLUMN program_lead.program_id IS 'The program led.';
+COMMENT ON COLUMN program_lead.person_id IS 'Its lead. Needs no account: a lead is somebody whose work this is, not somebody who signs in.';
+COMMENT ON COLUMN program_lead.granted_at IS 'When this store first recorded it. Replaying the overlay keeps a lead it already holds, so this survives promotion — but not a rebuild, which starts every lead afresh; when a decision was made is the person change log''s to say.';
+COMMENT ON COLUMN program_lead.granted_by IS 'iNat login of whoever recorded it. Not a foreign key: the granter may be gone — same stance as person_admin.granted_by.';

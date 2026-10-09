@@ -323,6 +323,17 @@ tbody tr.flag:hover { background: inherit; }
   font-weight: 700;
   padding-left: var(--space-1);
 }
+/* The same ×, as a button where removing is a write rather than a link. */
+button.chip-remove {
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  padding: 0 0 0 var(--space-1);
+  cursor: pointer;
+}
+form.chip { margin: 0; }
 /* A record's number as a click target: tonal, rounded, tall enough for a
    finger. */
 .pill, a.pill:visited {

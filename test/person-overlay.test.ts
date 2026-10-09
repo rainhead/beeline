@@ -62,6 +62,15 @@ describe("the overlay file", () => {
     expect(parseOverlay(`${head}name:Ada,acts_for,name:Bo;name:Cy,me,\n`, "f")[0]!.value).toBe("name:Bo;name:Cy");
   });
 
+  it("reads leads as a set of program codes, and refuses anything else", () => {
+    const head = "person_ref,field,value,author,reason\n";
+    expect(parseOverlay(`${head}name:Ada,leads,MM;WaBA,me,\n`, "f")[0]!.value).toBe("MM;WaBA");
+    expect(parseOverlay(`${head}name:Ada,leads,,me,stepped down\n`, "f")[0]!.value).toBe("");
+    // A reference where a code belongs is the likely slip, since acts_for sits beside it.
+    expect(() => parseOverlay(`${head}name:Ada,leads,name:Bo,me,\n`, "f")).toThrow(/not a program code/);
+    expect(() => parseOverlay(`${head}name:Ada,leads,Wa BA,me,\n`, "f")).toThrow(/not a program code/);
+  });
+
   it("keeps the login beside the id, so the file is reviewable", () => {
     const parsed = parseOverlay(
       "person_ref,field,value,author,reason\nname:Ada,inat_user_id,429964 amelathopoulos,me,verified\n",

@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import { PROGRAM_MEMBERSHIP, type Database, type MembershipKind } from "../model.js";
 import type { PersonChange } from "../person-change.js";
+import { splitCodes } from "../person-overlay.js";
 import { toCsv } from "./listings.js";
 
 /**
@@ -55,6 +56,8 @@ export interface RosterRow {
   membership: MembershipKind | null;
   atlas_code: string | null;
   is_admin: boolean;
+  /** The codes of the programs they lead, alphabetical; empty for almost everybody (beeline-7c1). */
+  leads: string[];
   /** Records backing the bound login, null when there is nothing to weigh. */
   bound_records: number | null;
   /** The best-attested account on their records, and its count. */
@@ -95,6 +98,26 @@ export const ACTIVE_WITHIN_MONTHS = 12;
 export const MEMBER_ANY = "";
 export const MEMBER_UNRECORDED = "unrecorded";
 
+/** Which program they lead: a program code, any program at all, or the filter off. */
+export const LEAD_OFF = "";
+export const LEAD_SOME = "any";
+
+/** A program, as a form or a filter offers it (schema/010, beeline-7c1). */
+export interface ProgramOption {
+  code: string;
+  name: string;
+}
+
+/** The atlases first, in the order they were seeded, then the programs with no region. */
+export async function programOptions(db: Kysely<Database>): Promise<ProgramOption[]> {
+  return db
+    .selectFrom("program")
+    .select(["code", "name"])
+    .orderBy(sql`atlas_id IS NULL`)
+    .orderBy("name")
+    .execute();
+}
+
 export type RosterSort = "name" | "login" | "samples" | "lastSample" | "lastSeen" | "membership";
 export const ROSTER_SORTS = ["name", "login", "samples", "lastSample", "lastSeen", "membership"] as const;
 export type SortDirection = "asc" | "desc";
@@ -111,6 +134,8 @@ export interface RosterQuery {
   member: string;
   /** Only the admins. */
   admin: boolean;
+  /** Only the leads of one program, or of any (LEAD_SOME); LEAD_OFF for everyone. */
+  lead: string;
   sort: RosterSort;
   dir: SortDirection;
   page: number;
@@ -122,15 +147,21 @@ export const EMPTY_ROSTER_QUERY: RosterQuery = {
   active: "any",
   member: MEMBER_ANY,
   admin: false,
+  lead: LEAD_OFF,
   sort: DEFAULT_ROSTER_SORT,
   dir: defaultRosterDirection(DEFAULT_ROSTER_SORT),
   page: 1,
 };
 
-export function parseRosterQuery(params: URLSearchParams, atlasCodes: readonly string[] = []): RosterQuery {
+export function parseRosterQuery(
+  params: URLSearchParams,
+  atlasCodes: readonly string[] = [],
+  programCodes: readonly string[] = [],
+): RosterQuery {
   const page = Number(params.get("page") ?? "1");
   const active = params.get("active") ?? "";
   const member = params.get("member") ?? "";
+  const lead = params.get("lead") ?? "";
   const sortParam = params.get("sort") ?? "";
   const sort = (ROSTER_SORTS as readonly string[]).includes(sortParam) ? (sortParam as RosterSort) : DEFAULT_ROSTER_SORT;
   const dir = params.get("dir");
@@ -141,6 +172,7 @@ export function parseRosterQuery(params: URLSearchParams, atlasCodes: readonly s
     member:
       member === PROGRAM_MEMBERSHIP || member === MEMBER_UNRECORDED || atlasCodes.includes(member) ? member : MEMBER_ANY,
     admin: params.get("admin") === "1",
+    lead: lead === LEAD_SOME || programCodes.includes(lead) ? lead : LEAD_OFF,
     sort,
     dir: dir === "asc" || dir === "desc" ? dir : defaultRosterDirection(sort),
     page: Number.isInteger(page) && page >= 1 ? page : 1,
@@ -156,6 +188,7 @@ export function rosterParams(query: RosterQuery, overrides: Partial<RosterQuery>
   if (q.active !== "any") params.set("active", q.active);
   if (q.member !== MEMBER_ANY) params.set("member", q.member);
   if (q.admin) params.set("admin", "1");
+  if (q.lead !== LEAD_OFF) params.set("lead", q.lead);
   if (q.sort !== DEFAULT_ROSTER_SORT) params.set("sort", q.sort);
   if (q.dir !== defaultRosterDirection(q.sort)) params.set("dir", q.dir);
   if (q.page > 1) params.set("page", String(q.page));
@@ -169,7 +202,7 @@ export function rosterHref(query: RosterQuery, overrides: Partial<RosterQuery> =
 
 /** Whether anything but the sort is narrowing the roster. */
 export const isRosterFiltered = (q: RosterQuery) =>
-  q.search !== "" || q.suspect || q.active !== "any" || q.member !== MEMBER_ANY || q.admin;
+  q.search !== "" || q.suspect || q.active !== "any" || q.member !== MEMBER_ANY || q.admin || q.lead !== LEAD_OFF;
 
 /**
  * Whether legacy staging is still attached. Without it there is nothing to
@@ -221,6 +254,17 @@ const lastVisitSql = sql`greatest(
  */
 const lastLoginSql = sql`(
   SELECT t.last_login_at FROM private.inat_sign_in t WHERE t.inat_user_id = a.inat_user_id)`;
+
+/**
+ * The programs they lead, as the overlay spells them: codes, alphabetical,
+ * joined with ';' — so the person page's form and the file it writes say the
+ * same thing, and the change log (PERSON_STATE_SQL) agrees with both.
+ */
+const leadsSql = sql`coalesce((
+  SELECT array_to_string(list(pr.code ORDER BY pr.code), ';')
+  FROM program_lead pl
+  JOIN program pr ON pr.entity_id = pl.program_id
+  WHERE pl.person_id = p.entity_id), '')`;
 
 /**
  * When they last collected. Read from sample_collector, never from
@@ -312,6 +356,7 @@ export async function listRoster(
              pm.kind AS membership,
              atl.code AS atlas_code,
              (adm.person_id IS NOT NULL) AS is_admin,
+             ${leadsSql} AS leads,
              ${boundRecords} AS bound_records,
              best.top_login,
              best.top_uid,
@@ -364,13 +409,23 @@ export async function listRoster(
         : query.member === PROGRAM_MEMBERSHIP
           ? sql`membership = 'program'`
           : sql`atlas_code = ${query.member}`;
+  // `leads` is the codes joined with ';' (leadsSql). A code is letters and
+  // digits only (valueProblem), so bounded by separators it is a whole code,
+  // and it carries no LIKE wildcard.
+  const lead =
+    query.lead === LEAD_OFF
+      ? sql`TRUE`
+      : query.lead === LEAD_SOME
+        ? sql`leads <> ''`
+        : sql`concat(';', leads, ';') LIKE ${`%;${query.lead};%`}`;
   const base = sql`
     SELECT * FROM (${judged})
     WHERE (${query.search === ""} OR lower(display_name) LIKE ${term} OR lower(coalesce(login, '')) LIKE ${term})
       AND (${!query.suspect} OR verdict IN ('outweighed', 'unattested'))
       AND ${activity}
       AND ${member}
-      AND (${!query.admin} OR is_admin)`;
+      AND (${!query.admin} OR is_admin)
+      AND ${lead}`;
 
   const counted = await sql<{ n: number | bigint }>`SELECT count(*) AS n FROM (${base})`.execute(db);
   const total = Number(counted.rows[0]?.n ?? 0);
@@ -381,7 +436,7 @@ export async function listRoster(
   // Ordered as a listing of people, not as a worklist. Sorting the doubtful
   // ones to the front made the first page a queue wearing a roster's name;
   // a column's own order is a reader's choice and ends in the roster's.
-  const listed = await sql<RosterRow>`
+  const listed = await sql<Omit<RosterRow, "leads"> & { leads: string }>`
     ${base}
     ORDER BY ${rosterOrder(query)}, samples DESC, display_name
     LIMIT ${limit} OFFSET ${offset}`.execute(db);
@@ -389,6 +444,7 @@ export async function listRoster(
   return {
     rows: listed.rows.map((r) => ({
       ...r,
+      leads: splitCodes(r.leads),
       person_id: Number(r.person_id),
       samples: Number(r.samples),
       inat_user_id: r.inat_user_id === null ? null : Number(r.inat_user_id),
@@ -435,7 +491,19 @@ export function rosterCsv(page: RosterPage): string {
   // The listings' writer, so quoting, the formula guard and the line that
   // says a file stopped short are one implementation rather than two.
   return toCsv(
-    ["display_name", "login", "inat_user_id", "samples", "last_sample", "last_visit", "last_login", "membership", "atlas", "admin"],
+    [
+      "display_name",
+      "login",
+      "inat_user_id",
+      "samples",
+      "last_sample",
+      "last_visit",
+      "last_login",
+      "membership",
+      "atlas",
+      "admin",
+      "leads",
+    ],
     page.rows.map((r) => [
       r.display_name,
       r.login,
@@ -447,6 +515,7 @@ export function rosterCsv(page: RosterPage): string {
       r.membership,
       r.atlas_code,
       r.is_admin ? "yes" : "no",
+      r.leads.join(";"),
     ]),
   );
 }
@@ -480,7 +549,7 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
   const sessions = await hasSessions(db);
   const lastVisit = sessions ? lastVisitSql : sql`NULL::TIMESTAMP`;
   const lastLogin = sessions ? lastLoginSql : sql`NULL::TIMESTAMP`;
-  const found = await sql<PersonDetail>`
+  const found = await sql<Omit<PersonDetail, "leads"> & { leads: string }>`
     SELECT p.entity_id AS person_id, p.display_name, p.given_name, p.family_name, p.label_name,
            a.login, a.inat_user_id,
            (SELECT count(*) FROM sample_collector sc WHERE sc.person_id = p.entity_id) AS samples,
@@ -492,6 +561,7 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
                      FROM person_delegate d
                      JOIN person p2 ON p2.entity_id = d.acts_for_id
                      WHERE d.person_id = p.entity_id), '') AS acts_for,
+           ${leadsSql} AS leads,
            ${lastSampleSql} AS last_sample,
            ${lastVisit} AS last_visit,
            ${lastLogin} AS last_login
@@ -556,6 +626,7 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
 
   return {
     ...row,
+    leads: splitCodes(row.leads),
     person_id: Number(row.person_id),
     samples: Number(row.samples),
     primary_samples: Number(row.primary_samples),

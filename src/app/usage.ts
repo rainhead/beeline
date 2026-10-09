@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/node";
 import { DEFAULT_SORT, defaultDirection, MEMBER_ANY, MINE, type ListingQuery } from "./listings.js";
-import { DEFAULT_ROSTER_SORT, defaultRosterDirection, type RosterQuery } from "./roster.js";
+import { DEFAULT_ROSTER_SORT, defaultRosterDirection, LEAD_OFF, type RosterQuery } from "./roster.js";
 
 /**
  * How people use the listings: which filters, sorts and scopes they reach
@@ -84,6 +84,7 @@ export function rosterAttributes(format: "page" | "csv", q: RosterQuery, viewer:
     active: q.active !== "any",
     member: q.member !== MEMBER_ANY,
     admin: q.admin,
+    lead: q.lead !== LEAD_OFF,
   };
   const filters = Object.entries(used)
     .filter(([, on]) => on)
@@ -102,6 +103,7 @@ export function rosterAttributes(format: "page" | "csv", q: RosterQuery, viewer:
     ...Object.fromEntries(Object.entries(used).map(([name, on]) => [`filter.${name}`, on])),
     active: q.active,
     member: q.member === MEMBER_ANY ? "any" : q.member,
+    lead: q.lead === LEAD_OFF ? "off" : q.lead,
   };
 }
 

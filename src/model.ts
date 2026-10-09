@@ -60,6 +60,23 @@ export interface PersonDelegateTable {
   granted_by: string | null;
 }
 
+/** schema/010: a program — each atlas, Master Melittology, the BLM surveys (beeline-7c1). */
+export interface ProgramTable {
+  entity_id: Generated<number>;
+  code: string;
+  name: string;
+  /** The atlas this program is; null for a program with no region. */
+  atlas_id: number | null;
+}
+
+/** schema/010: who leads a program — responsibility, never access (beeline-7c1). */
+export interface ProgramLeadTable {
+  program_id: number;
+  person_id: number;
+  granted_at: Generated<Date>;
+  granted_by: string | null;
+}
+
 export interface AtlasTable {
   entity_id: Generated<number>;
   code: string;
@@ -1025,6 +1042,8 @@ export interface Database {
   person_membership: PersonMembershipTable;
   person_admin: PersonAdminTable;
   person_delegate: PersonDelegateTable;
+  program: ProgramTable;
+  program_lead: ProgramLeadTable;
   atlas: AtlasTable;
   atlas_printing: AtlasPrintingTable;
   atlas_region: AtlasRegionTable;

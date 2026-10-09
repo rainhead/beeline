@@ -240,6 +240,8 @@ CREATE TABLE program (
 );
 COMMENT ON TABLE program IS 'A program people take part in: each atlas, Master Melittology itself, and the BLM surveys. The overlay names a program by its code.';
 COMMENT ON COLUMN program.atlas_id IS 'The atlas this program is, for a program with a region. Null for one without: Master Melittology, the BLM surveys.';
+COMMENT ON COLUMN program.code IS 'How the person overlay names the program (field leads), and so stable: an atlas''s is its atlas code, then MM and BLM. Letters and digits only, which is what lets a set of them be written joined with semicolons.';
+COMMENT ON COLUMN program.name IS 'The name staff see. An atlas''s is its atlas name.';
 
 -- Each atlas is a program under its own code and name; then the two that are
 -- not atlases (Peter, 2026-10-09). Master Melittology was known only by its
@@ -262,4 +264,7 @@ CREATE TABLE program_lead (
   PRIMARY KEY (program_id, person_id)
 );
 COMMENT ON TABLE program_lead IS 'person_id leads program_id: the program''s work is theirs to take up, and its questions theirs to answer. Set from /people through the person overlay (field leads). Grants no access.';
+COMMENT ON COLUMN program_lead.program_id IS 'The program led.';
+COMMENT ON COLUMN program_lead.person_id IS 'Its lead. Needs no account: a lead is somebody whose work this is, not somebody who signs in.';
+COMMENT ON COLUMN program_lead.granted_at IS 'When this store first recorded it. Replaying the overlay keeps a lead it already holds, so this survives promotion — but not a rebuild, which starts every lead afresh; when a decision was made is the person change log''s to say.';
 COMMENT ON COLUMN program_lead.granted_by IS 'iNat login of whoever recorded it. Not a foreign key: the granter may be gone — same stance as person_admin.granted_by.';

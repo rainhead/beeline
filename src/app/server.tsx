@@ -1489,20 +1489,21 @@ export function createApp({
   app.post("/people/:id/delegate", (c) => decide(c, (form) => [["acts_for", text(form, "acts_for")]]));
 
   // One box per program, so the ticked ones are the whole set: sorted, so the
-  // overlay row reads the same as the store does (beeline-7c1).
-  app.post("/people/:id/leads", (c) =>
-    decide(c, (form) => [
-      [
-        "leads",
-        form
-          .getAll("lead")
-          .map((v) => String(v).trim())
-          .filter((v) => v !== "")
-          .sort()
-          .join(";"),
-      ],
-    ]),
-  );
+  // overlay row reads the same as the store does (beeline-7c1). A code no
+  // program has is refused here, before the overlay: decide writes the file
+  // first, and an unappliable row there would replace the last good decision,
+  // so the next rebuild would drop every lead the person holds.
+  app.post("/people/:id/leads", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const known = new Set((await programOptions(db)).map((x) => x.code));
+    const ticked = (await c.req.formData())
+      .getAll("lead")
+      .map((v) => String(v).trim())
+      .filter((v) => v !== "");
+    const unknown = ticked.find((code) => !known.has(code));
+    if (unknown !== undefined) return showPerson(c, undefined, `no program with code '${unknown}'`);
+    return decide(c, () => [["leads", [...ticked].sort().join(";")]]);
+  });
 
   app.post("/jobs/run/:name", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);

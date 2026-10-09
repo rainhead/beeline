@@ -8,6 +8,7 @@ import { createMemoryDb } from "./helpers.js";
 import { createApp } from "../src/app/server.js";
 import { readOverlay, type PersonOverlayRow } from "../src/person-overlay.js";
 import { readChanges } from "../src/person-change.js";
+import { applyPersonOverlay } from "../src/apply-person-overlay.js";
 import { attachPrivateStore, seedAdmins } from "../src/app/db.js";
 import type { InatClient } from "../src/app/auth.js";
 
@@ -819,11 +820,24 @@ describe("recording who leads a program", () => {
     expect((await (await ctx.conn.run(`SELECT count(*) FROM program_lead`)).getRows()).flat()).toEqual([0n]);
   });
 
-  it("refuses a code no program has, and changes nothing", async () => {
+  it("refuses a code no program has, and changes nothing — the overlay included", async () => {
     await tick("/people/adacollects/leads", ["WaBA"]);
     const res = await tick("/people/adacollects/leads", ["WaBA", "XX"]);
     expect(await res.text()).toContain("no program with code &#39;XX&#39;");
     expect(await ledBy("WaBA")).toEqual(["Ada Collector"]);
+    // The last good decision is still the one a rebuild would replay.
+    const leads = (await readOverlay(ctx.overlayPath)).filter((r) => r.field === "leads");
+    expect(leads.map((r) => r.value)).toEqual(["WaBA"]);
+  });
+
+  it("keeps a lead it already holds when the overlay is replayed", async () => {
+    await tick("/people/adacollects/leads", ["WaBA"]);
+    await ctx.conn.run(`UPDATE program_lead SET granted_at = TIMESTAMPTZ '2026-01-01 00:00:00Z'`);
+    await applyPersonOverlay(ctx.conn, await readOverlay(ctx.overlayPath));
+    const kept = await ctx.conn.run(
+      `SELECT granted_at = TIMESTAMPTZ '2026-01-01 00:00:00Z' FROM program_lead`,
+    );
+    expect((await kept.getRows()).flat()).toEqual([true]);
   });
 
   it("ticks the programs they lead on their page", async () => {

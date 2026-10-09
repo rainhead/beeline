@@ -270,16 +270,26 @@ async function applyField(
   }
 
   if (field === "leads") {
-    // The complete set, replaced wholesale and all or nothing, by acts_for's
-    // rule and for its reason: a half-applied set would silently drop
-    // whichever program came after the code that failed.
+    // The complete set, all or nothing, by acts_for's rule and for its
+    // reason: a half-applied set would silently drop whichever program came
+    // after the code that failed. Unlike acts_for, a lead already held is
+    // kept rather than deleted and re-inserted, because promotion replays
+    // this on every pass and would otherwise restamp granted_at each time.
     const programs: number[] = [];
     for (const code of splitCodes(value)) {
       const program = await scalar(conn, `SELECT entity_id FROM program WHERE code = $1`, [code]);
       if (program === null) return `no program with code '${code}'`;
       programs.push(Number(program));
     }
-    await conn.run(`DELETE FROM program_lead WHERE person_id = $1`, [personId] as never);
+    const held = await conn.run(`SELECT program_id FROM program_lead WHERE person_id = $1`, [personId] as never);
+    for (const [program] of await held.getRows()) {
+      if (!programs.includes(Number(program))) {
+        await conn.run(`DELETE FROM program_lead WHERE person_id = $1 AND program_id = $2`, [
+          personId,
+          Number(program),
+        ] as never);
+      }
+    }
     for (const program of programs) {
       await conn.run(
         `INSERT INTO program_lead (program_id, person_id, granted_by) VALUES ($1, $2, $3)

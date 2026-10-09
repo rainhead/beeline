@@ -61,7 +61,9 @@ COMMENT ON VIEW observation_unnumbered IS 'Observations in a sampling project wi
 --
 -- Checked against iNaturalist on fourteen open-season gaps before building
 -- it: one missing number was an observation outside the project, carrying
--- the number and a count of 11; the rest had no observation at all.
+-- the number and a count of 11. In the other thirteen no observation carries
+-- the missing number, though three of those days hold an observation outside
+-- the project with no number at all, which may be it.
 --
 -- What it asks about, and why each limit is there:
 --

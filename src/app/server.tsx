@@ -1,4 +1,5 @@
 import { open, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type Context } from "hono";
@@ -126,7 +127,9 @@ import {
   SPECIMEN_CSV_HEADER,
   specimenCsvRow,
 } from "./listings.js";
-import { identificationsOf, programArchives, specimenArchiveStream } from "./dwc-archive.js";
+import { programArchives } from "./dwc-archive.js";
+import { archiveDir, readArchiveManifest, stillAllowed } from "./program-archives.js";
+import { readProgramGovernance, type GovernancePaths } from "../program-governance.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
 import {
   determinationHistory,
@@ -186,6 +189,8 @@ export interface AppDeps {
   mintConn?: DuckDBConnection;
   /** Where rendered label sheets are kept (config.printRunsDir). */
   printRunsDir?: string;
+  /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
+  programGovernance?: GovernancePaths;
 }
 
 /**
@@ -210,6 +215,7 @@ export function createApp({
   printConn,
   mintConn,
   printRunsDir,
+  programGovernance,
 }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], runNow: async () => false };
   const printRunsPath = printRunsDir ?? "data/print-runs";
@@ -1100,7 +1106,8 @@ export function createApp({
   // nightly legacy-export job writes: every specimen, with names and true
   // coordinates, so admins only, like /jobs. Served from disk rather than
   // built per request — it is ~160 MB and takes a DuckDB COPY to make.
-  const occurrencesPath = legacyExportPath(config.exportsDir ?? "data/exports");
+  const exportsDir = config.exportsDir ?? "data/exports";
+  const occurrencesPath = legacyExportPath(exportsDir);
   const occurrencesFile = async () => {
     try {
       const st = await stat(occurrencesPath);
@@ -1117,30 +1124,46 @@ export function createApp({
       await page(
         c,
         m.exports.title,
-        <Exports m={m} occurrences={await occurrencesFile()} programs={await programArchives(db)} />,
+        <Exports
+          m={m}
+          occurrences={await occurrencesFile()}
+          programs={await programArchives(db)}
+          archives={await readArchiveManifest(exportsDir)}
+          governance={await readProgramGovernance(programGovernance)}
+        />,
       ),
     );
   });
 
-  // One program's specimens as a Darwin Core archive (src/app/dwc-archive.ts),
-  // built per request — concurrent downloads are unlikely, and one costs
-  // about as much as the specimens CSV. Per program because each will govern
-  // what leaves it; for now they are for operations and validation, and the
-  // page says so. Which specimens are a program's is programArchives', which
-  // says why the BLM surveys have none.
-  app.get("/exports/dwca/:file{[A-Za-z0-9]+\\.zip}", async (c) => {
+  // One program-season's Darwin Core archive, as the dwc-archives job wrote
+  // it (src/app/program-archives.ts). Served only while the program's licence
+  // and privacy policy for that season still stand — the decisions are read
+  // again here, so withdrawing one withdraws the download at once rather than
+  // at the next nightly run.
+  app.get("/exports/dwca/:file{[A-Za-z0-9]+-\\d{4}\\.zip}", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
-    const code = c.req.param("file").replace(/\.zip$/, "");
-    const scope = (await programArchives(db)).find((p) => p.code === code)?.scope ?? null;
-    if (scope === null) return errorResponse(c, "notFound");
-    const query = { ...EMPTY_QUERY, scope };
-    const body = specimenArchiveStream(async (limit, offset) => {
-      const page = await listSpecimens(db, query, c.get("acting").personId, { limit, offset, withTotal: false });
-      return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
-    }, csvGenerationTiming(`dwca ${code}`));
-    return c.body(body, 200, {
+    const name = c.req.param("file");
+    const entry = (await readArchiveManifest(exportsDir))?.entries.find((e) => e.file === name) ?? null;
+    if (entry === null || !stillAllowed(await readProgramGovernance(programGovernance), entry)) {
+      return errorResponse(c, "notFound");
+    }
+    let handle;
+    try {
+      handle = await open(join(archiveDir(exportsDir), name), "r");
+    } catch {
+      return errorResponse(c, "notFound");
+    }
+    let st;
+    try {
+      st = await handle.stat();
+    } catch (err) {
+      await handle.close();
+      throw err;
+    }
+    return c.body(Readable.toWeb(handle.createReadStream({ autoClose: true })) as ReadableStream, 200, {
       "content-type": "application/zip",
-      "content-disposition": `attachment; filename="${exportFilename(`beeline-${code}-dwca`, new Date(), "zip")}"`,
+      "content-length": String(st.size),
+      "content-disposition": `attachment; filename="beeline-${entry.program}-${entry.season}-dwca.zip"`,
     });
   });
 

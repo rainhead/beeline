@@ -14,8 +14,9 @@ import type { CsvTiming } from "./request-timing.js";
 import type { Database, DeterminationQualifier } from "../model.js";
 
 /**
- * One program's specimens as a Darwin Core archive (https://dwc.tdwg.org/text/),
- * offered to admins on /exports: the columns of the specimens CSV, zipped with
+ * One program's specimens for a season as a Darwin Core archive
+ * (https://dwc.tdwg.org/text/), written nightly and offered to admins on
+ * /exports (src/app/program-archives.ts): the columns of the specimens CSV, zipped with
  * a `meta.xml` that maps each to its Darwin Core term, and with what a flat
  * file cannot carry — every determination of every specimen, in the
  * Identification extension. `determination` is append-only and the CSV holds
@@ -25,8 +26,9 @@ import type { Database, DeterminationQualifier } from "../model.js";
  * It is for operations and for validating against GBIF's and Symbiota's
  * readers, and the page says not to upload it anywhere: what each program
  * publishes is undecided — which `occurrenceID` an imported specimen carries
- * (ADR 0008, beeline-1kb.14, beeline-1kb.22), the licence and metadata, and
- * each atlas's answer on taxon-obscured coordinates (beeline-1kb.7.1). Which
+ * (ADR 0008, beeline-1kb.14, beeline-1kb.22), the catalog-number prefix and
+ * identity Ecdysis matches on, the dataset metadata, and each atlas's answer
+ * on taxon-obscured coordinates (beeline-1kb.7.1). Which
  * volunteer determinations go downstream is the atlas staff's call after
  * downloading (beeline-pyr), so every determination is in the file.
  *
@@ -36,14 +38,17 @@ import type { Database, DeterminationQualifier } from "../model.js";
  *   follow them undeclared, so a reader of the archive ignores them and a
  *   person opening the file still sees them.
  * - `identification.txt`, the extension: one row per determination, oldest
- *   first, joined to the core by `coreid`; its sex and caste, whether it is
- *   the record, and whether an expert made it follow undeclared.
+ *   first, joined to the core by `coreid`, with Symbiota's flag for the
+ *   current one; its sex and caste, and whether an expert made it, follow
+ *   undeclared.
  *
  * `id` is the specimen's `entity_id`. It joins the two files and means nothing
  * outside the archive: a rebuild redraws it (ADR 0002), and neither
  * `occurrenceID` (minted only by a print run) nor `catalogNumber` (absent
  * before field numbering, and not unique across the identifier eras) is on
- * every row.
+ * every row. That is fine for reading and wrong for an upload — Symbiota keys
+ * a record on it, so after a rebuild an identification lands on the wrong
+ * specimen — which is one reason the page says not to upload these yet.
  *
  * Tab-separated with nothing quoted, as GBIF's IPT writes archives: a tab or a
  * line break inside a value becomes a space, and nothing is formula-guarded,
@@ -113,22 +118,38 @@ export interface IdentificationRow {
   of_record: boolean;
 }
 
-export const IDENTIFICATION_DWC_COLUMNS = [
-  "scientificName",
-  "scientificNameAuthorship",
-  "taxonRank",
-  "identificationQualifier",
-  "verbatimIdentification",
-  "identifiedBy",
-  "dateIdentified",
-] as const;
+const SYMBIOTA = "https://symbiota.org/terms/";
 
 /**
- * Beeline's own, with no Darwin Core term. Sex and caste are a determination's
- * too, and an earlier one may have said something else; Darwin Core has `sex`
- * only on the occurrence, which carries the determination of record's.
+ * The identification columns meta.xml declares: the header each is written
+ * under and the term it maps to. All Darwin Core but the last. Darwin Core
+ * cannot say which identification is current — GBIF reads the current one off
+ * the occurrence — and Symbiota, which Ecdysis runs, marks it with its own
+ * term, as 1 or 0, and imports every identification as not current without
+ * it (SpecUploadBase.php, checked by importing an archive into Symbiota
+ * 3.x on 2026-10-10).
  */
-export const IDENTIFICATION_OWN_COLUMNS = ["sex", "caste", "identificationOfRecord", "identifiedByExpert"] as const;
+export const IDENTIFICATION_TERMS: readonly (readonly [header: string, term: string])[] = [
+  ...(
+    [
+      "scientificName",
+      "scientificNameAuthorship",
+      "taxonRank",
+      "identificationQualifier",
+      "verbatimIdentification",
+      "identifiedBy",
+      "dateIdentified",
+    ] as const
+  ).map((t) => [t, `${DWC}${t}`] as const),
+  ["identificationIsCurrent", `${SYMBIOTA}identificationIsCurrent`],
+];
+
+/**
+ * Beeline's own, with no term. Sex and caste are a determination's too, and an
+ * earlier one may have said something else; Darwin Core has `sex` only on the
+ * occurrence, which carries the determination of record's.
+ */
+export const IDENTIFICATION_OWN_COLUMNS = ["sex", "caste", "identifiedByExpert"] as const;
 
 /** Every determination of these specimens, each specimen's oldest first. */
 export async function identificationsOf(db: Kysely<Database>, specimenIds: number[]): Promise<IdentificationRow[]> {
@@ -175,9 +196,9 @@ const identificationRow = (r: IdentificationRow): unknown[] => [
   r.verbatim_identification,
   r.determiner,
   dateIdentified(r.determined_on, r.determined_on_precision),
+  r.of_record ? 1 : 0,
   r.sex,
   r.caste,
-  String(r.of_record),
   String(r.is_expert),
 ];
 
@@ -190,23 +211,29 @@ export function tabCell(value: unknown): string {
 
 const tabLine = (row: readonly unknown[]) => `${row.map(tabCell).join("\t")}\n`;
 
-const fields = (columns: readonly string[]) =>
-  columns.map((term, i) => `    <field index="${i + 1}" term="${DWC}${term}"/>`).join("\n");
+const fields = (terms: readonly string[]) =>
+  terms.map((term, i) => `    <field index="${i + 1}" term="${term}"/>`).join("\n");
 
-/** The descriptor: which file is which, and which column holds which term. */
-export const META_XML = `<?xml version="1.0" encoding="UTF-8"?>
+const xmlAttr = (v: string) => v.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+
+/**
+ * The descriptor: which file is which, and which column holds which term.
+ * The licence, where there is one, is a constant every record carries
+ * (`dcterms:license`, a field with a default and no column).
+ */
+export const metaXml = (license: string | null = null) => `<?xml version="1.0" encoding="UTF-8"?>
 <archive xmlns="http://rs.tdwg.org/dwc/text/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://rs.tdwg.org/dwc/text/ http://rs.tdwg.org/dwc/text/tdwg_dwc_text.xsd">
   <core encoding="UTF-8" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="${DWC}Occurrence">
     <files><location>occurrence.txt</location></files>
     <id index="0"/>
-${fields(SPECIMEN_DWC_COLUMNS)}
-    <!-- Columns ${SPECIMEN_DWC_COLUMNS.length + 1} onwards are Beeline's own and have no Darwin Core term: ${SPECIMEN_OWN_COLUMNS.join(", ")}. -->
+${fields(SPECIMEN_DWC_COLUMNS.map((t) => `${DWC}${t}`))}
+${license === null ? "" : `    <field default="${xmlAttr(license)}" term="http://purl.org/dc/terms/license"/>\n`}    <!-- Columns ${SPECIMEN_DWC_COLUMNS.length + 1} onwards are Beeline's own and have no Darwin Core term: ${SPECIMEN_OWN_COLUMNS.join(", ")}. -->
   </core>
   <extension encoding="UTF-8" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="${DWC}Identification">
     <files><location>identification.txt</location></files>
     <coreid index="0"/>
-${fields(IDENTIFICATION_DWC_COLUMNS)}
-    <!-- Columns ${IDENTIFICATION_DWC_COLUMNS.length + 1} onwards are Beeline's own and have no Darwin Core term: ${IDENTIFICATION_OWN_COLUMNS.join(", ")}. -->
+${fields(IDENTIFICATION_TERMS.map(([, term]) => term))}
+    <!-- Columns ${IDENTIFICATION_TERMS.length + 1} onwards are Beeline's own and have no term: ${IDENTIFICATION_OWN_COLUMNS.join(", ")}. -->
   </extension>
 </archive>
 `;
@@ -227,7 +254,7 @@ export interface ArchivePage extends Page<SpecimenRow> {
  */
 export function specimenArchiveStream(
   fetch: (limit: number, offset: number) => Promise<ArchivePage>,
-  timing?: CsvTiming,
+  opts: { license?: string | null; timing?: CsvTiming } = {},
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const out: Uint8Array[] = [];
@@ -248,12 +275,12 @@ export function specimenArchiveStream(
     fetch,
     {
       head: () => {
-        file("meta.xml").push(encoder.encode(META_XML), true);
+        file("meta.xml").push(encoder.encode(metaXml(opts.license ?? null)), true);
         core = file("occurrence.txt");
         core.push(encoder.encode(tabLine(["id", ...SPECIMEN_DWC_COLUMNS, ...SPECIMEN_OWN_COLUMNS])));
         identifications = file("identification.txt");
         identifications.push(
-          encoder.encode(tabLine(["coreid", ...IDENTIFICATION_DWC_COLUMNS, ...IDENTIFICATION_OWN_COLUMNS])),
+          encoder.encode(tabLine(["coreid", ...IDENTIFICATION_TERMS.map(([header]) => header), ...IDENTIFICATION_OWN_COLUMNS])),
         );
         return take();
       },
@@ -269,6 +296,6 @@ export function specimenArchiveStream(
         return take();
       },
     },
-    timing,
+    opts.timing,
   );
 }

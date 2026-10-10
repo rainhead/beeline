@@ -431,6 +431,12 @@ export interface ListingPageOptions {
   offset?: number;
   /** False skips counting the whole selection; `total` is then 0. */
   withTotal?: boolean;
+  /**
+   * Only samples of this season (`sample_season`, the 1 March line). Not a
+   * listing filter — the listings have none, by design — but the grain the
+   * program archives are written at (src/app/dwc-archive.ts).
+   */
+  season?: number;
 }
 
 export interface Page<Row> {
@@ -840,6 +846,17 @@ export async function listSpecimens(
   if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
+  if (opts.season !== undefined) {
+    const season = opts.season;
+    base = base.where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom("sample_season as ss")
+          .select("ss.sample_id")
+          .whereRef("ss.sample_id", "=", "s.entity_id")
+          .where("ss.season", "=", season),
+      ),
+    );
+  }
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;

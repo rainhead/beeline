@@ -1,7 +1,8 @@
 import { Zip, ZipDeflate } from "fflate";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import {
   dateIdentified,
+  OUTSIDE,
   pagedStream,
   SPECIMEN_DWC_COLUMNS,
   SPECIMEN_OWN_COLUMNS,
@@ -24,9 +25,10 @@ import type { Database, DeterminationQualifier } from "../model.js";
  * It is for operations and for validating against GBIF's and Symbiota's
  * readers, and the page says not to upload it anywhere: what each program
  * publishes is undecided — which `occurrenceID` an imported specimen carries
- * (ADR 0008, beeline-1kb.14, beeline-1kb.22), the licence and metadata, the
- * gate on volunteer determinations (beeline-pyr) and on taxon-obscured
- * coordinates (beeline-1kb.7.1).
+ * (ADR 0008, beeline-1kb.14, beeline-1kb.22), the licence and metadata, and
+ * each atlas's answer on taxon-obscured coordinates (beeline-1kb.7.1). Which
+ * volunteer determinations go downstream is the atlas staff's call after
+ * downloading (beeline-pyr), so every determination is in the file.
  *
  * - `occurrence.txt`, the core: one row per specimen, the CSV's columns in the
  *   CSV's order behind an `id`. Only the Darwin Core columns are declared in
@@ -49,6 +51,48 @@ import type { Database, DeterminationQualifier } from "../model.js";
  * No `eml.xml` yet: the metadata names a publisher and a contact, which is
  * the program's to say.
  */
+
+/**
+ * A program as the archive sees it: the listing scope that selects its
+ * specimens, or null where none can yet.
+ *
+ * A sample's program is stated, not derived (CONTEXT.md, Program): its
+ * collecting event's program where it belongs to one, else the atlas it fell
+ * in, else Master Melittology. No sample belongs to an event yet, so an
+ * atlas's specimens are the ones collected on its ground and Master
+ * Melittology's are those no atlas covers — the listing's `outside`. The BLM
+ * surveys are the program that rule leaves out on purpose: their samples will
+ * arrive through their own pipeline (field entry, and a collecting event that
+ * says whose day it was), and a BLM sample taken in New Mexico is BLM's and
+ * not the New Mexico Bee Atlas's, though it fell on that atlas's ground. Until
+ * that pipeline exists Beeline holds none of them and offers no archive; when
+ * it does, the archives must select by the sample's program, never by where it
+ * fell, or BLM's samples land in the atlas archives.
+ */
+export interface ProgramArchive {
+  code: string;
+  name: string;
+  scope: string | null;
+}
+
+/** Master Melittology: the program a sample belongs to when no atlas and no event claims it. */
+const CATCH_ALL_PROGRAM = "MM";
+
+/** Every program, atlases first, with the scope its archive reads. */
+export async function programArchives(db: Kysely<Database>): Promise<ProgramArchive[]> {
+  const rows = await db
+    .selectFrom("program as p")
+    .leftJoin("atlas as a", "a.entity_id", "p.atlas_id")
+    .select(["p.code", "p.name", "a.code as atlas_code"])
+    .orderBy(sql`p.atlas_id IS NULL`)
+    .orderBy("p.name")
+    .execute();
+  return rows.map((r) => ({
+    code: r.code,
+    name: r.name,
+    scope: r.atlas_code ?? (r.code === CATCH_ALL_PROGRAM ? OUTSIDE : null),
+  }));
+}
 
 const DWC = "http://rs.tdwg.org/dwc/terms/";
 

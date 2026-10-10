@@ -126,7 +126,7 @@ import {
   SPECIMEN_CSV_HEADER,
   specimenCsvRow,
 } from "./listings.js";
-import { identificationsOf, specimenArchiveStream } from "./dwc-archive.js";
+import { identificationsOf, programArchives, specimenArchiveStream } from "./dwc-archive.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
 import {
   determinationHistory,
@@ -1117,30 +1117,30 @@ export function createApp({
       await page(
         c,
         m.exports.title,
-        <Exports m={m} occurrences={await occurrencesFile()} atlases={await atlasOptions(db)} />,
+        <Exports m={m} occurrences={await occurrencesFile()} programs={await programArchives(db)} />,
       ),
     );
   });
 
   // One program's specimens as a Darwin Core archive (src/app/dwc-archive.ts),
-  // built per request. Per program because each will govern what leaves it;
-  // for now they are for operations and validation, and the page says so.
-  // A program here is an atlas, read off where a sample fell, or `outside`
-  // for what no atlas covers — the listing's own scopes, so an archive holds
-  // what that scope's specimen listing holds.
+  // built per request — concurrent downloads are unlikely, and one costs
+  // about as much as the specimens CSV. Per program because each will govern
+  // what leaves it; for now they are for operations and validation, and the
+  // page says so. Which specimens are a program's is programArchives', which
+  // says why the BLM surveys have none.
   app.get("/exports/dwca/:file{[A-Za-z0-9]+\\.zip}", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
-    const scope = c.req.param("file").replace(/\.zip$/, "");
-    const atlases = await atlasOptions(db);
-    if (scope !== OUTSIDE && !atlases.some((a) => a.code === scope)) return errorResponse(c, "notFound");
+    const code = c.req.param("file").replace(/\.zip$/, "");
+    const scope = (await programArchives(db)).find((p) => p.code === code)?.scope ?? null;
+    if (scope === null) return errorResponse(c, "notFound");
     const query = { ...EMPTY_QUERY, scope };
     const body = specimenArchiveStream(async (limit, offset) => {
       const page = await listSpecimens(db, query, c.get("acting").personId, { limit, offset, withTotal: false });
       return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
-    }, csvGenerationTiming(`dwca ${scope}`));
+    }, csvGenerationTiming(`dwca ${code}`));
     return c.body(body, 200, {
       "content-type": "application/zip",
-      "content-disposition": `attachment; filename="${exportFilename(`beeline-${scope}-dwca`, new Date(), "zip")}"`,
+      "content-disposition": `attachment; filename="${exportFilename(`beeline-${code}-dwca`, new Date(), "zip")}"`,
     });
   });
 

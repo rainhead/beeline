@@ -940,15 +940,19 @@ describe("Darwin Core archive", () => {
     const exports = await get(app, "/exports");
     expect(exports).toContain(`href="/exports/dwca/OBA.zip"`);
     expect(exports).toContain(`href="/exports/dwca/WaBA.zip"`);
-    expect(exports).toContain(`href="/exports/dwca/outside.zip"`);
+    // Master Melittology's is what no atlas covers; the BLM surveys are named
+    // with no archive, since their samples are not BLM's by where they fell.
+    expect(exports).toContain(`href="/exports/dwca/MM.zip"`);
+    expect(exports).toContain("BLM surveys");
+    expect(exports).not.toContain(`href="/exports/dwca/BLM.zip"`);
     // And says what it is for, and what it is not.
     expect(exports).toContain("Do not upload them");
     expect(await get(app, "/specimens?scope=OBA")).not.toContain(".zip");
   });
 
-  it("holds what was collected outside every atlas under its own name", async () => {
+  it("gives Master Melittology what was collected outside every atlas", async () => {
     const { app } = await listingApp("staffer");
-    const files = unpack(new Uint8Array(await (await app.request("/exports/dwca/outside.zip")).arrayBuffer()));
+    const files = unpack(new Uint8Array(await (await app.request("/exports/dwca/MM.zip")).arrayBuffer()));
     // B-3 and C-1 were collected in Nevada and have no specimens; nothing from an atlas is here.
     expect(table(files["occurrence.txt"]!)).toHaveLength(1);
   });
@@ -959,6 +963,8 @@ describe("Darwin Core archive", () => {
     const { app: staff } = await listingApp("staffer");
     expect((await staff.request("/exports/dwca/NOPE.zip")).status).toBe(404);
     expect((await staff.request("/exports/dwca/all.zip")).status).toBe(404);
+    expect((await staff.request("/exports/dwca/outside.zip")).status).toBe(404);
+    expect((await staff.request("/exports/dwca/BLM.zip")).status).toBe(404);
   });
 });
 

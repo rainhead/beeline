@@ -1215,7 +1215,10 @@ export const en = {
       "Each program's specimens as a Darwin Core archive: the columns of the specimens CSV, and every identification each specimen has had. Built when you download it, so it is always current.",
     archivesCaution:
       "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else: what each program publishes, and under which identifiers and licence, is not decided yet. They hold collectors' names and true coordinates, including taxon-obscured ones.",
-    archiveOutside: "Collected outside every atlas",
+    archivesWhich:
+      "An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers.",
+    archiveNone:
+      "No archive yet: survey samples will come in through the surveys' own field entry, and belong to them by the day they were collected on rather than by where they fell.",
     archiveDownload: (program: string) => `Download the archive for ${program}`,
   },
   jobs: {

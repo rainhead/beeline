@@ -1,5 +1,5 @@
 import type { Messages } from "../messages/index.js";
-import { OUTSIDE, type AtlasOption } from "../listings.js";
+import type { ProgramArchive } from "../dwc-archive.js";
 import { Callout, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
 
 /** The current export file, as the page describes it; null when none has been written. */
@@ -19,16 +19,12 @@ export interface ExportFile {
 export function Exports({
   m,
   occurrences,
-  atlases,
+  programs,
 }: {
   m: Messages;
   occurrences: ExportFile | null;
-  atlases: AtlasOption[];
+  programs: ProgramArchive[];
 }) {
-  const programs = [
-    ...atlases.map((a) => ({ scope: a.code, name: a.name })),
-    { scope: OUTSIDE, name: m.exports.archiveOutside },
-  ];
   return (
     <>
       <PageHeader title={m.exports.heading} lede={m.exports.intro} />
@@ -45,13 +41,20 @@ export function Exports({
       )}
       <h2>{m.exports.archives}</h2>
       <p>{m.exports.archivesIntro}</p>
+      <p>{m.exports.archivesWhich}</p>
       <Callout tone="warning">{m.exports.archivesCaution}</Callout>
       <ul>
         {programs.map((p) => (
           <li>
-            <a href={`/exports/dwca/${p.scope}.zip`} aria-label={m.exports.archiveDownload(p.name)}>
-              {p.name}
-            </a>
+            {p.scope === null ? (
+              <>
+                {p.name} <Meta>{m.exports.archiveNone}</Meta>
+              </>
+            ) : (
+              <a href={`/exports/dwca/${p.code}.zip`} aria-label={m.exports.archiveDownload(p.name)}>
+                {p.name}
+              </a>
+            )}
           </li>
         ))}
       </ul>

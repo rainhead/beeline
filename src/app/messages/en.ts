@@ -130,6 +130,7 @@ export const en = {
       printRuns: "Print runs",
       exports: "Exports",
       identify: "Identify specimens",
+      unclaimed: "Unknown collectors",
     },
     /**
      * The menu's destinations beyond the records — reference pages and staff
@@ -1599,6 +1600,97 @@ export const en = {
     },
 
     notFound: "No such person.",
+    problem: (why: string) => `Not saved: ${why}`,
+  },
+
+  /**
+   * Collectors Beeline does not know (beeline-e85). Staff-facing, English-only.
+   * Said as staff would say it: somebody posted collection records and
+   * nobody here is connected to their iNaturalist account — never "unresolved"
+   * or "unbound", which are the model's words.
+   */
+  unclaimed: {
+    title: "Unknown collectors",
+    heading: "Collectors Beeline doesn't know",
+    intro:
+      "These people put collection records in the projects on iNaturalist, and nobody in Beeline is connected to their iNaturalist account. Until somebody says who they are, their records don't become samples and they can't sign in.",
+    summary: (records: number, people: number, open: number) =>
+      `${n(records)} ${records === 1 ? "record" : "records"} from ${n(people)} ${people === 1 ? "person" : "people"}, ${n(open)} of them this season.`,
+    empty: "Everyone who has put a collection record on iNaturalist is somebody Beeline knows.",
+    emptyHeading: "Nobody waiting",
+    ledBy: "Led by",
+    noLead: "No lead recorded",
+    colAccount: "iNaturalist account",
+    colRecords: "Records",
+    colThisSeason: "This season",
+    colCollected: "Collected",
+    colMightBe: "Might be",
+    colWhy: "Why",
+    noSuggestion: "no suggestion",
+    backToList: "All unknown collectors",
+    lede: (records: number, first: Date, last: Date) =>
+      `${n(records)} collection ${records === 1 ? "record" : "records"} on iNaturalist, ${dateRange(first, last)}.`,
+    profile: "Their iNaturalist profile",
+    profileName: (name: string) => `Named ${name} on iNaturalist`,
+    collectedIn: (programs: string) => `Collected in ${programs}`,
+    records: "Their records",
+    colSample: "Sample",
+    colSpecimens: "Specimens",
+    colPlace: "Place",
+    colProgram: "Program",
+    placeUnknown: "not known",
+    viewOnInat: "View on iNaturalist",
+
+    existing: "Somebody already here",
+    existingHint:
+      "A volunteer who changed accounts, or a household member, may already be in Beeline under another name or account. Connecting this account to them makes these records theirs, and any that are already in Beeline as samples are matched rather than made a second time.",
+    evidenceRegister: (login: string) => `The old system's list of volunteers has @${login} under this name.`,
+    evidenceInatName: "Their iNaturalist profile has this name.",
+    alreadyConnected: (login: string) => `Already connected to @${login}`,
+    thisIs: (name: string) => `This is ${name}`,
+    someoneElse: "Someone else",
+    someoneElseHint: "Their name as it appears on People.",
+    connect: "Connect",
+
+    newcomer: "Somebody new",
+    newcomerHint:
+      "Adds them to Beeline with this iNaturalist account, so their records become samples and they can sign in.",
+    checkFirst:
+      "Check the suggestions above first. If this is somebody already here, adding them again makes a second copy of samples Beeline already has.",
+    displayName: "Name",
+    displayNameHint: "How they appear across Beeline. Filled in from their iNaturalist profile where it has a name.",
+    givenName: "Given name",
+    familyName: "Family name",
+    namesHint: "Used for their labels.",
+    add: "Add them",
+
+    reason: "Why (optional)",
+    connectedReason: (records: number) => `${n(records)} collection records on iNaturalist under this account`,
+
+    connected: (login: string, name: string) => `@${login} is now ${name}.`,
+    outcome: (made: number, linked: number, left: number) =>
+      [
+        `${n(made)} new ${made === 1 ? "sample" : "samples"}`,
+        linked > 0 ? `${n(linked)} matched to ${linked === 1 ? "a sample" : "samples"} already here` : null,
+        left > 0 ? `${n(left)} ${left === 1 ? "record" : "records"} could not be made into samples` : null,
+      ]
+        .filter((x) => x !== null)
+        .join(", ") + ".",
+    notMadeYet:
+      "Saved, but their samples could not be made just now. The nightly run at 2am will make them.",
+    openPerson: (name: string) => `Open ${name}`,
+
+    gone: "Nobody is waiting under this account. It may have just been connected to somebody.",
+    nobodyCalled: (name: string) => `nobody here is called "${name}"`,
+    nameAmbiguous: (name: string) =>
+      `"${name}" is also how the old records name somebody else, so connecting by it could reach the wrong person — connect the account from the right person's page on People`,
+    nameShared: (name: string) =>
+      `two people here are called "${name}" — connect the account from the right one's page on People`,
+    alreadyHasAccount: (name: string, login: string) =>
+      `${name} is already connected to @${login}. A person has one iNaturalist account here; to move them to this one, change it on their page on People`,
+    nameBlank: "give them a name",
+    nameTaken: (name: string) =>
+      `somebody here is already called "${name}". If this is them, connect the account to them instead; if not, give the newcomer a name that tells them apart`,
     problem: (why: string) => `Not saved: ${why}`,
   },
 

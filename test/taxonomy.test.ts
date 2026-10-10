@@ -143,7 +143,7 @@ describe("the taxonomy pages", () => {
     const body = await page(app, "/taxonomy");
     const menu = between(body, 'class="menu nav-menu"', "</details>");
     const account = between(body, 'class="menu account-menu"', "</details>");
-    for (const path of ["/glossary", "/taxonomy", "/people", "/jobs", "/print-runs", "/design"]) {
+    for (const path of ["/glossary", "/taxonomy", "/people", "/jobs", "/print-runs", "/unclaimed", "/design"]) {
       expect(menu).toContain(`href="${path}"`);
       expect(account).not.toContain(`href="${path}"`);
     }
@@ -158,6 +158,7 @@ describe("the taxonomy pages", () => {
       "/people",
       "/print-runs",
       "/taxonomy",
+      "/unclaimed",
     ]);
   });
 

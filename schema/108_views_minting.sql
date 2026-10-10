@@ -297,6 +297,29 @@ WHERE NOT EXISTS (SELECT 1 FROM inat_account a WHERE a.inat_user_id = c.user_id)
   AND NOT EXISTS (SELECT 1 FROM sample s WHERE s.inat_observation_id = c.inat_id);
 COMMENT ON VIEW observation_sample_unresolved IS 'A collection record from an iNaturalist user the store holds no account for: nothing mints it, because every sample has a primary collector and a placeholder person is worse than a queue. The unclaimed-samples screen (beeline-e85) reads this.';
 
+-- Whose an unresolved record is to look into: the program whose region it
+-- fell in. Nobody can say who collected it — that is the question — but
+-- where it was collected is on the observation, and atlas assignment is
+-- geographic (CONTEXT.md), so the record is routed exactly as minting would
+-- assign its atlas: observation_place's state through atlas_region. Outside
+-- every atlas is Master Melittology's, the program itself (beeline-lcl), and
+-- so is a record with no state at all — today a private observation whose
+-- place ids iNaturalist withholds (beeline-rpni) — since an unrouted record
+-- would otherwise be nobody's and shown to nobody. Joined through
+-- program.atlas_id rather than by code, falling back to Master Melittology,
+-- so an atlas seeded later without its program row still shows its records.
+CREATE VIEW unclaimed_record AS
+SELECT u.inat_id, u.user_id, u.user_login, u.sample_number, u.specimen_count, u.observed_on,
+       pl.state_province, pl.county_name,
+       pr.entity_id AS program_id,
+       pr.code      AS program_code
+FROM observation_sample_unresolved u
+LEFT JOIN observation_place pl ON pl.inat_id = u.inat_id
+LEFT JOIN atlas_region reg ON reg.state_province = pl.state_province
+LEFT JOIN program pa ON pa.atlas_id = reg.atlas_id
+JOIN program pr ON pr.entity_id = coalesce(pa.entity_id, (SELECT entity_id FROM program WHERE code = 'MM'));
+COMMENT ON VIEW unclaimed_record IS 'An unresolved collection record (observation_sample_unresolved) with the program whose region it fell in: the atlas covering its state, or Master Melittology outside every atlas and where the state is unknown. Read by the unclaimed screen (beeline-e85), which groups observers by it.';
+
 -- ── The reconcile ────────────────────────────────────────────────────────
 -- Every unlinked candidate whose observer resolves, one row per observation:
 -- one observation is one sample (Peter, 2026-10-04, beeline-0199), so two

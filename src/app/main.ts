@@ -126,6 +126,18 @@ const scheduler = startScheduler({ db, conn: jobConn, jobs, observe: reporting ?
 // The print runs' own connection: a freeze is one transaction and cannot
 // share a connection with the nightly's (src/print-run.ts).
 const printConn = await instance.connect();
+// The unclaimed screen's, for the same reason: connecting a collector runs a
+// promotion, which is one transaction (src/app/unclaimed.ts, beeline-e85).
+const mintConn = await instance.connect();
+// The app's own writes — the overlay appliers behind /people, /unclaimed and
+// a sample's locality — on a connection of their own, not the scheduler's.
+// They are single statements, but on the scheduler's connection a write made
+// while the 2am promotion held its transaction landed INSIDE that
+// transaction: invisible to anything else until it committed, and rolled
+// back with it if it lost a conflict and retried, leaving only the overlay
+// file to remember the decision. The unclaimed screen is the first writer
+// whose next step (minting, on mintConn) needs the write already committed.
+const appConn = await instance.connect();
 
 const inat = inatClient(await loadInatCredentials());
 const app = createApp({
@@ -140,8 +152,9 @@ const app = createApp({
   personChangesPath: config.personChangesPath,
   sampleChangesPath: config.sampleChangesPath,
   sampleStatePath: config.sampleStatePath,
-  conn: jobConn,
+  conn: appConn,
   printConn,
+  mintConn,
   printRunsDir: config.printRunsDir,
 });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
@@ -207,6 +220,16 @@ async function shutdown(signal: string): Promise<never> {
     printConn.closeSync();
   } catch (err) {
     failed("closing the print connection", err);
+  }
+  try {
+    mintConn.closeSync();
+  } catch (err) {
+    failed("closing the unclaimed screen's connection", err);
+  }
+  try {
+    appConn.closeSync();
+  } catch (err) {
+    failed("closing the app's write connection", err);
   }
   try {
     await close();

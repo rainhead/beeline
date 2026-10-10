@@ -62,6 +62,14 @@ export interface ObservationPromotionOptions {
    * writer every time it met one (bench/contention.ts, beeline-lpx).
    */
   retry?: ConflictRetryOptions;
+  /**
+   * Whether to refresh observation_field first (default true). False only for
+   * a caller that runs between syncs and so knows the table is current: the
+   * unclaimed screen (beeline-e85), which promotes the moment staff bind an
+   * observer. The refresh is about 2 s of a pass that is otherwise under one,
+   * and only a sync changes what it reads.
+   */
+  refreshFields?: boolean;
 }
 
 export async function promoteObservations(
@@ -89,7 +97,7 @@ async function promoteOnce(
     // samples from this table, so reading an empty one would link nothing
     // and say so as a number rather than as an error
     // (src/refresh-observation-fields.ts).
-    await refreshObservationFields(conn);
+    if (opts.refreshFields ?? true) await refreshObservationFields(conn);
     const accountsBefore = await scalar("SELECT count(*) FROM inat_account");
     await conn.run(await readFile(`${INGEST_DIR}harvest-inat-accounts.sql`, "utf8"));
     // Counted BEFORE minting runs, because both views are defined over what

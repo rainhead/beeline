@@ -59,6 +59,8 @@ import {
   withPrintRunLock,
 } from "../print-run.js";
 import { PersonPage, Roster } from "./views/roster.js";
+import { ObserverPage, UnclaimedPage } from "./views/unclaimed.js";
+import { bindablePeople, listUnclaimed, mintNow, observerDetail, type ObserverDetail } from "./unclaimed.js";
 import {
   linkChanges,
   listRoster,
@@ -69,6 +71,7 @@ import {
   isRosterFiltered,
   rosterCsv,
   personDetail,
+  personHandle,
   personRef,
   RECENT_CHANGES,
   resolvePersonHandle,
@@ -86,7 +89,7 @@ import {
   readPersonStates,
   recentChanges,
 } from "../person-change.js";
-import { applyPersonOverlay } from "../apply-person-overlay.js";
+import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
@@ -159,8 +162,9 @@ export interface AppDeps {
   sampleStatePath?: string;
   /**
    * A raw connection, for the overlay applier. Kysely cannot run the applier's
-   * statements as one unit, and the app already keeps a spare connection for
-   * the scheduler (ADR 0005: one process, many connections, one writer).
+   * statements as one unit. Never the scheduler's (ADR 0005: one process,
+   * many connections): a write on it during the nightly's transaction would
+   * land inside that transaction (src/app/main.ts).
    */
   conn?: DuckDBConnection;
   /**
@@ -170,6 +174,13 @@ export interface AppDeps {
    * to `conn` where a test passes one connection for everything.
    */
   printConn?: DuckDBConnection;
+  /**
+   * The connection the unclaimed screen promotes on once staff connect a
+   * collector (beeline-e85): promotion is one raw BEGIN/COMMIT transaction,
+   * like a freeze, and must not share a connection with the scheduler's.
+   * Absent ⇒ the decision is saved and the nightly makes the samples.
+   */
+  mintConn?: DuckDBConnection;
   /** Where rendered label sheets are kept (config.printRunsDir). */
   printRunsDir?: string;
 }
@@ -194,6 +205,7 @@ export function createApp({
   sampleStatePath,
   conn,
   printConn,
+  mintConn,
   printRunsDir,
 }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], runNow: async () => false };
@@ -1371,18 +1383,119 @@ export function createApp({
     return c.redirect("/");
   });
 
+  // One decision about a person at a time, from whichever screen: each checks
+  // the store, then writes, and two at once — two staff on one collector, or
+  // a rebind on /people racing an add on /unclaimed — would both pass the
+  // checks and leave the loser's overlay row failing on every rebuild after.
+  // In process is enough, since one process owns the store (ADR 0005); what
+  // matters is that the checks are read inside the turn, not before it.
+  let decisionQueue: Promise<unknown> = Promise.resolve();
+  const oneDecisionAtATime = <T,>(work: () => Promise<T>): Promise<T> => {
+    const run = decisionQueue.then(work);
+    decisionQueue = run.catch(() => {});
+    return run;
+  };
+
   /**
-   * Record decisions and apply them. The overlay is written first: if the
+   * The writing half of a decision about a person, shared by their page and
+   * the unclaimed screen (beeline-e85). The overlay is written first: if the
    * apply fails, the decision is still on disk to be replayed, whereas a
-   * store-first order would leave a change nothing remembers.
+   * store-first order would leave a change nothing remembers. Then the
+   * store, the change log, and the sessions an account change orphans.
+   * `applied` is false where there is no connection to apply with (a test
+   * without one): the decision is saved and waits for the next rebuild.
    */
+  const commitDecisions = async (d: {
+    rows: PersonOverlayRow[];
+    ref: string;
+    author: string;
+    reason: string;
+    /** Who the decision is about, or null when it creates them. */
+    personId: number | null;
+    boundBefore: number | null;
+    /** Who it is about afterwards: the same person, or the one `create` made. */
+    findAfter: () => Promise<number | null>;
+  }): Promise<{ applied: boolean; problem: string | null; personId: number | null }> => {
+    await upsertOverlay(overlayPath, d.rows);
+    if (conn === undefined) return { applied: false, problem: null, personId: d.personId };
+    // What the person looks like now, so the log can say what they looked
+    // like before — the one thing the overlay's latest-wins row cannot carry
+    // (beeline-o22).
+    const before = d.personId === null ? undefined : (await stateOf(d.personId)).state;
+    const applied = await applyPersonOverlay(conn, d.rows);
+    const afterId = await d.findAfter();
+    // Recorded before the unresolved check, and against the same reference
+    // the overlay row used: a decision that half applied still changed
+    // somebody, and the history has to show what it did.
+    //
+    // Unless the change left them with no reference at all — unbinding the
+    // account of somebody who shares a display name does exactly that. They
+    // are still here; it is the log that can no longer name them, and
+    // diffing against nothing would record their name and account as
+    // *cleared*, over a staff member's own login. Say so instead.
+    const { state: after, names } =
+      afterId === null ? { state: undefined, names: new Set<string>() } : await stateOf(afterId);
+    if (after === undefined) {
+      console.warn(
+        `not recording: '${d.ref}' now shares a display name with somebody else and holds no ` +
+          `account, so nothing names them in the change log`,
+      );
+    } else {
+      // Filed under the reference the LOG knows them by, exactly as a pass
+      // over the store would file it (knownPerson). Using the store's own
+      // reference instead put an edit made during a namesake era under a
+      // second key, and the next pass then diffed the whole person against
+      // that half-record and re-reported fields nobody had touched.
+      const seen = knownPerson({ known: lastKnown(await readChanges(changesPath)), names }, before ?? after);
+      await appendChanges(
+        changesPath,
+        diffPerson(seen?.ref ?? before?.ref ?? d.ref, before, after, {
+          source: "app",
+          author: d.author,
+          reason: d.reason,
+        }),
+      );
+    }
+    if (applied.unresolved.length > 0) {
+      return { applied: true, problem: applied.unresolved.map((u) => u.reason).join("; "), personId: afterId };
+    }
+    // Whatever this account was, it stops being it now: a session issued under
+    // the old binding must not survive to be revived under the new one
+    // (beeline-ten). Both sides — the iNat user being taken away and the one
+    // being given — so neither a departing volunteer nor the person inheriting
+    // their account keeps a cookie the other made.
+    if (d.rows.some((r) => r.field === "inat_user_id")) {
+      const boundAfter =
+        afterId === null
+          ? undefined
+          : await db
+              .selectFrom("inat_account")
+              .select("inat_user_id")
+              .where("person_id", "=", afterId)
+              .executeTakeFirst();
+      for (const uid of [d.boundBefore, boundAfter?.inat_user_id]) {
+        if (uid !== null && uid !== undefined) await endSessionsFor(db, uid);
+      }
+    }
+    return { applied: true, problem: null, personId: afterId };
+  };
+
+  /** Record decisions about the person a /people URL names, and show their page. */
   const decide = async (c: Context<AppEnv>, build: (form: FormData) => Array<[OverlayField, string]>) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
+    const form = await c.req.formData();
+    return oneDecisionAtATime(() => decideInTurn(c, form, build));
+  };
+
+  const decideInTurn = async (
+    c: Context<AppEnv>,
+    form: FormData,
+    build: (form: FormData) => Array<[OverlayField, string]>,
+  ) => {
     const m = c.get("m");
     const person = await personFromUrl(c);
     if (person === null) return errorResponse(c, "notFound", { message: m.people.notFound });
 
-    const form = await c.req.formData();
     const author = c.get("session").login;
     const reason = String(form.get("reason") ?? "").trim();
     let ref: string;
@@ -1403,59 +1516,17 @@ export function createApp({
     // form post that succeeded.
     if (rows.length === 0) return c.redirect(`/people/${encodeURIComponent(c.req.param("id") ?? "")}`);
 
-    await upsertOverlay(overlayPath, rows);
-    if (conn === undefined) return showPerson(c, m.people.saved);
-    const boundBefore = person.inat_user_id;
-    // What the person looks like now, so the log can say what they looked
-    // like before — the one thing the overlay's latest-wins row cannot carry
-    // (beeline-o22).
-    const before = (await stateOf(person.person_id)).state;
-    const applied = await applyPersonOverlay(conn, rows);
-    // Recorded before the unresolved check, and against the same reference
-    // the overlay row used: a decision that half applied still changed
-    // somebody, and the history has to show what it did.
-    //
-    // Unless the change left them with no reference at all — unbinding the
-    // account of somebody who shares a display name does exactly that. They
-    // are still here; it is the log that can no longer name them, and
-    // diffing against nothing would record their name and account as
-    // *cleared*, over a staff member's own login. Say so instead.
-    const { state: after, names } = await stateOf(person.person_id);
-    if (after === undefined) {
-      console.warn(
-        `not recording: '${person.display_name}' now shares a display name with somebody else and holds no ` +
-          `account, so nothing names them in the change log`,
-      );
-    } else {
-      // Filed under the reference the LOG knows them by, exactly as a pass
-      // over the store would file it (knownPerson). Using the store's own
-      // reference instead put an edit made during a namesake era under a
-      // second key, and the next pass then diffed the whole person against
-      // that half-record and re-reported fields nobody had touched.
-      const seen = knownPerson({ known: lastKnown(await readChanges(changesPath)), names }, before ?? after);
-      await appendChanges(
-        changesPath,
-        diffPerson(seen?.ref ?? before?.ref ?? ref, before, after, { source: "app", author, reason }),
-      );
-    }
-    if (applied.unresolved.length > 0) {
-      return showPerson(c, undefined, applied.unresolved.map((u) => u.reason).join("; "));
-    }
-    // Whatever this account was, it stops being it now: a session issued under
-    // the old binding must not survive to be revived under the new one
-    // (beeline-ten). Both sides — the iNat user being taken away and the one
-    // being given — so neither a departing volunteer nor the person inheriting
-    // their account keeps a cookie the other made.
-    if (rows.some((r) => r.field === "inat_user_id")) {
-      const boundAfter = await db
-        .selectFrom("inat_account")
-        .select("inat_user_id")
-        .where("person_id", "=", person.person_id)
-        .executeTakeFirst();
-      for (const uid of [boundBefore, boundAfter?.inat_user_id]) {
-        if (uid !== null && uid !== undefined) await endSessionsFor(db, uid);
-      }
-    }
+    const outcome = await commitDecisions({
+      rows,
+      ref,
+      author,
+      reason,
+      personId: person.person_id,
+      boundBefore: person.inat_user_id,
+      findAfter: async () => person.person_id,
+    });
+    if (!outcome.applied) return showPerson(c, m.people.saved);
+    if (outcome.problem !== null) return showPerson(c, undefined, outcome.problem);
     return showPerson(c, m.people.savedRebuild);
   };
 
@@ -1509,6 +1580,225 @@ export function createApp({
     else if (change === "remove") leads.delete(program);
     else return showPerson(c, undefined, `'${change}' is neither add nor remove`);
     return decide(c, () => [["leads", [...leads].sort().join(";")]]);
+  });
+
+  // ── Collectors Beeline does not know (beeline-e85) ─────────────────────
+  // Records from iNaturalist users no person is connected to, grouped by the
+  // program whose region they fell in; connecting the account to somebody
+  // here, or adding somebody new, makes them samples at once. Admin-gated,
+  // and refused outright while impersonating, as every staff write is.
+  const unclaimedObserver = async (c: Context<AppEnv>) => {
+    const raw = c.req.param("uid") ?? "";
+    if (!/^\d{1,15}$/.test(raw)) return null;
+    return observerDetail(db, Number(raw));
+  };
+
+  /**
+   * The observer's page. Once nobody waits under the account — as when a
+   * decision just lost a race to another — a problem is said on the list
+   * rather than answered with a 404 that hides it.
+   */
+  const showObserver = async (c: Context<AppEnv>, problem?: string) => {
+    const m = c.get("m");
+    const detail = await unclaimedObserver(c);
+    if (detail === null) {
+      if (problem === undefined) return errorResponse(c, "notFound", { message: m.unclaimed.gone });
+      return c.html(
+        await page(c, m.unclaimed.title, <UnclaimedPage m={m} listing={await listUnclaimed(db)} problem={problem} />),
+      );
+    }
+    return c.html(
+      await page(
+        c,
+        `@${detail.observer.login}`,
+        <ObserverPage m={m} detail={detail} people={await bindablePeople(db)} problem={problem} />,
+      ),
+    );
+  };
+
+  app.get("/unclaimed", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    return c.html(await page(c, m.unclaimed.title, <UnclaimedPage m={m} listing={await listUnclaimed(db)} />));
+  });
+
+  app.get("/unclaimed/:uid", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    return showObserver(c);
+  });
+
+  /**
+   * What `name:<name>` will resolve to when these rows are applied — asked of
+   * the resolver the apply itself uses, because a current display name is not
+   * all it reads: legacy promotion's every recorded spelling comes first, and
+   * the renames among the rows. Checking display names alone let "MaryJo
+   * Mosby" be *added* as new while the overlay connected the account to the
+   * Mary Jo Mosby already here. Null where there is no connection to ask (a
+   * test without one), where current names are all there is.
+   */
+  const resolveName = async (name: string, rows: readonly PersonOverlayRow[]) =>
+    conn === undefined ? null : (await resolver(conn, rows)).resolve(`name:${name}`);
+
+  /** Whoever now holds the observer's account. */
+  const holderOf = async (uid: number) =>
+    (await db.selectFrom("inat_account").select("person_id").where("inat_user_id", "=", BigInt(uid)).executeTakeFirst())
+      ?.person_id ?? null;
+
+  /**
+   * After the person decision: make the observer's records into samples now
+   * (src/app/unclaimed.ts, mintNow), and say so on the list. A failure to
+   * mint is not a failure to connect — the decision is saved and the nightly
+   * makes the samples — so it is said rather than thrown.
+   *
+   * The sample log is reconciled afterwards by a full pass, filed as the
+   * promotion it was: mintNow runs the whole store's promotion, not only this
+   * observer's, and a narrowed pass records nothing for a sample it has no
+   * earlier row for — which is every sample just made. Who caused it is in
+   * the person log, against the decision. Not awaited: the page need not wait
+   * for the log, and the log's own queue keeps passes from interleaving.
+   */
+  const afterConnecting = async (
+    c: Context<AppEnv>,
+    detail: ObserverDetail,
+    decided: { personId: number | null; name: string; applied: boolean },
+  ) => {
+    const m = c.get("m");
+    const u = m.unclaimed;
+    const { user_id: uid, login } = detail.observer;
+    const person = decided.personId === null ? null : await personDetail(db, decided.personId);
+    const name = person?.display_name ?? decided.name;
+    let text = u.connected(login, name);
+    if (!decided.applied || mintConn === undefined) {
+      text = `${text} ${u.notMadeYet}`;
+    } else {
+      try {
+        const made = await mintNow(mintConn, uid, { sampleOverlayPath: sampleOverlay });
+        text = `${text} ${u.outcome(made.made, made.linked, made.left)}`;
+        // No reason: the pass files every change it finds, and most of a
+        // store-wide promotion's are not this connection's doing — another
+        // volunteer's renumbering would read as caused by it.
+        void recordSampleChanges(kyselyReader(db), samplePaths, { source: "observation_promotion" }).then(
+          (recorded) => {
+            if (recorded.refused != null) console.warn(`sample history not recorded: ${recorded.refused}`);
+          },
+          (err) => console.warn(`could not record the samples made for @${login}: ${(err as Error).message}`),
+        );
+      } catch (err) {
+        reportAppError(err as Error, c);
+        text = `${text} ${u.notMadeYet}`;
+      }
+    }
+    const personHref = person === null ? "/people" : `/people/${encodeURIComponent(personHandle(person))}`;
+    return c.html(
+      await page(
+        c,
+        u.title,
+        <UnclaimedPage m={m} listing={await listUnclaimed(db)} notice={{ text, personHref, personName: name }} />,
+      ),
+    );
+  };
+
+  // Somebody already here: their account becomes this one. Named by display
+  // name, the way the form offers them, so a name two people share is
+  // refused rather than guessed between; someone already connected to
+  // another account is refused too, since a person holds one and moving
+  // theirs is a decision for their own page.
+  app.post("/unclaimed/:uid/connect", async (c) => {
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const u = m.unclaimed;
+    const form = await c.req.formData();
+    return oneDecisionAtATime(async () => {
+      const detail = await unclaimedObserver(c);
+      if (detail === null) return errorResponse(c, "notFound", { message: u.gone });
+      const name = String(form.get("person") ?? "").trim();
+      const reason = String(form.get("reason") ?? "").trim() || u.connectedReason(detail.observer.records);
+      const found = await db.selectFrom("person").select("entity_id").where("display_name", "=", name).execute();
+      if (found.length === 0) return showObserver(c, u.nobodyCalled(name));
+      if (found.length > 1) return showObserver(c, u.nameShared(name));
+      const person = await personDetail(db, found[0]!.entity_id);
+      if (person === null) return showObserver(c, u.nobodyCalled(name));
+      if (person.inat_user_id !== null) {
+        return showObserver(c, u.alreadyHasAccount(name, person.login ?? String(person.inat_user_id)));
+      }
+
+      const author = c.get("session").login;
+      const ref = personRef({ ...person, nameIsUnique: true });
+      const { user_id, login } = detail.observer;
+      const rows: PersonOverlayRow[] = [
+        { person_ref: ref, field: "inat_user_id", value: `${user_id} ${login}`, author, reason },
+      ];
+      // The name has to reach this person when applied, not merely be theirs
+      // now: an old spelling of somebody else's would connect the account to
+      // them instead (legacy_person_name is read first).
+      const resolved = await resolveName(person.display_name, rows);
+      if (resolved !== null && !("id" in resolved && resolved.id === person.person_id)) {
+        return showObserver(c, u.nameAmbiguous(name));
+      }
+      const outcome = await commitDecisions({
+        rows,
+        ref,
+        author,
+        reason,
+        personId: person.person_id,
+        boundBefore: null,
+        findAfter: async () => person.person_id,
+      });
+      if (outcome.problem !== null) return showObserver(c, outcome.problem);
+      return afterConnecting(c, detail, { personId: person.person_id, name, applied: outcome.applied });
+    });
+  });
+
+  // Somebody new: the overlay's `create`, their account, and the name parts
+  // their labels are set from. A name that would resolve to anybody already
+  // here is refused rather than handed to `create`, which would read it as
+  // that person, connect the account to them, and overwrite their name parts
+  // without anyone having said so.
+  app.post("/unclaimed/:uid/add", async (c) => {
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const u = m.unclaimed;
+    const form = await c.req.formData();
+    const text = (name: string) => String(form.get(name) ?? "").trim();
+    return oneDecisionAtATime(async () => {
+      const detail = await unclaimedObserver(c);
+      if (detail === null) return errorResponse(c, "notFound", { message: u.gone });
+      const name = text("display_name");
+      const reason = text("reason") || u.connectedReason(detail.observer.records);
+      if (name === "") return showObserver(c, u.nameBlank);
+
+      const author = c.get("session").login;
+      const ref = `name:${name}`;
+      const { user_id, login } = detail.observer;
+      const rows: PersonOverlayRow[] = (
+        [
+          ["create", "yes"],
+          ["inat_user_id", `${user_id} ${login}`],
+          ["given_name", text("given_name")],
+          ["family_name", text("family_name")],
+        ] as Array<[OverlayField, string]>
+      )
+        .filter(([field, value]) => field === "create" || field === "inat_user_id" || value !== "")
+        .map(([field, value]) => ({ person_ref: ref, field, value, author, reason }));
+      const taken = await db.selectFrom("person").select("entity_id").where("display_name", "=", name).execute();
+      const resolved = await resolveName(name, rows);
+      if (taken.length > 0 || (resolved !== null && !("missing" in resolved && resolved.missing === true))) {
+        return showObserver(c, u.nameTaken(name));
+      }
+      const outcome = await commitDecisions({
+        rows,
+        ref,
+        author,
+        reason,
+        personId: null,
+        boundBefore: null,
+        findAfter: () => holderOf(user_id),
+      });
+      if (outcome.problem !== null) return showObserver(c, outcome.problem);
+      return afterConnecting(c, detail, { personId: outcome.personId, name, applied: outcome.applied });
+    });
   });
 
   app.post("/jobs/run/:name", async (c) => {

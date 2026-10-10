@@ -39,6 +39,7 @@ export function TextField({
   hint,
   placeholder,
   base,
+  list,
 }: {
   id: string;
   name: string;
@@ -47,11 +48,13 @@ export function TextField({
   hint?: Child;
   placeholder?: string;
   base?: string | null;
+  /** The id of a `<datalist>` whose options the browser offers as the person types. */
+  list?: string;
 }) {
   return (
     <Field id={id} label={label} hint={hint}>
       {base !== undefined && <input type="hidden" name={`base:${name}`} value={base ?? ""} />}
-      <input id={id} name={name} type="text" value={value ?? ""} placeholder={placeholder} />
+      <input id={id} name={name} type="text" value={value ?? ""} placeholder={placeholder} list={list} />
     </Field>
   );
 }

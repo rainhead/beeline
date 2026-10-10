@@ -15,11 +15,19 @@
 -- directions: newly obscured samples gain a flag, un-obscured ones lose it.
 -- iNat sends taxon_geoprivacy as the explicit string 'open' (not only null);
 -- the sample vocabulary is obscured/private/NULL.
+--
+-- Only rows whose flags actually differ: rewriting all ~63k linked samples
+-- every pass cost 3.6 s of a 6.3 s promotion on the dev store, and every row
+-- written is a row a concurrent small writer can lose a conflict on
+-- (beeline-lpx) — which matters now that binding an observer on the
+-- unclaimed screen runs this file from a request (beeline-e85).
 UPDATE sample SET
   geoprivacy       = nullif(f.geoprivacy, 'open'),
   taxon_geoprivacy = nullif(f.taxon_geoprivacy, 'open')
 FROM observation_field f
-WHERE sample.inat_observation_id = f.inat_id;
+WHERE sample.inat_observation_id = f.inat_id
+  AND (sample.geoprivacy       IS DISTINCT FROM nullif(f.geoprivacy, 'open')
+    OR sample.taxon_geoprivacy IS DISTINCT FROM nullif(f.taxon_geoprivacy, 'open'));
 
 -- ── Location candidates ──────────────────────────────────────────────────
 -- Trust is evidenced by the PRESENCE of private coordinates in the

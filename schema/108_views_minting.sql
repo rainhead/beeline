@@ -305,7 +305,9 @@ COMMENT ON VIEW observation_sample_unresolved IS 'A collection record from an iN
 -- every atlas is Master Melittology's, the program itself (beeline-lcl), and
 -- so is a record with no state at all — today a private observation whose
 -- place ids iNaturalist withholds (beeline-rpni) — since an unrouted record
--- would otherwise be nobody's and shown to nobody.
+-- would otherwise be nobody's and shown to nobody. Joined through
+-- program.atlas_id rather than by code, falling back to Master Melittology,
+-- so an atlas seeded later without its program row still shows its records.
 CREATE VIEW unclaimed_record AS
 SELECT u.inat_id, u.user_id, u.user_login, u.sample_number, u.specimen_count, u.observed_on,
        pl.state_province, pl.county_name,
@@ -314,8 +316,8 @@ SELECT u.inat_id, u.user_id, u.user_login, u.sample_number, u.specimen_count, u.
 FROM observation_sample_unresolved u
 LEFT JOIN observation_place pl ON pl.inat_id = u.inat_id
 LEFT JOIN atlas_region reg ON reg.state_province = pl.state_province
-LEFT JOIN atlas a ON a.entity_id = reg.atlas_id
-JOIN program pr ON pr.code = coalesce(a.code, 'MM');
+LEFT JOIN program pa ON pa.atlas_id = reg.atlas_id
+JOIN program pr ON pr.entity_id = coalesce(pa.entity_id, (SELECT entity_id FROM program WHERE code = 'MM'));
 COMMENT ON VIEW unclaimed_record IS 'An unresolved collection record (observation_sample_unresolved) with the program whose region it fell in: the atlas covering its state, or Master Melittology outside every atlas and where the state is unknown. Read by the unclaimed screen (beeline-e85), which groups observers by it.';
 
 -- ── The reconcile ────────────────────────────────────────────────────────

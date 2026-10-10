@@ -55,11 +55,14 @@ export function UnclaimedPage({
   m,
   listing,
   notice,
+  problem,
 }: {
   m: Messages;
   listing: UnclaimedListing;
   /** What the last connection did, with a link to the person it made. */
   notice?: { text: string; personHref: string; personName: string };
+  /** Why a decision was not saved, where the observer's own page is gone. */
+  problem?: string;
 }) {
   const u = m.unclaimed;
   return (
@@ -69,6 +72,7 @@ export function UnclaimedPage({
         lede={u.intro}
         meta={listing.observers > 0 ? u.summary(listing.records, listing.observers, listing.open_records) : undefined}
       />
+      {problem !== undefined && <Callout tone="blocking">{u.problem(problem)}</Callout>}
       {notice !== undefined && (
         <Callout tone="success">
           {notice.text} <a href={notice.personHref}>{u.openPerson(notice.personName)}</a>
@@ -176,7 +180,7 @@ export function ObserverPage({
         <h2>{u.existing}</h2>
         <Meta block>{u.existingHint}</Meta>
         {o.suggestions.length > 0 && (
-          <DataTable columns={[u.colMightBe, "", ""]}>
+          <DataTable columns={[u.colMightBe, u.colWhy, ""]}>
             {o.suggestions.map((s) => (
               <SuggestionRow m={m} s={s} login={o.login} action={action} />
             ))}

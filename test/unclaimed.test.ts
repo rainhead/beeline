@@ -8,6 +8,8 @@ import { createApp } from "../src/app/server.js";
 import { canonicalJson } from "../src/sync-inat.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
 import { readOverlay } from "../src/person-overlay.js";
+import { kyselyReader } from "../src/person-change.js";
+import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import type { InatClient } from "../src/app/auth.js";
 import { attachPrivateStore } from "../src/app/db.js";
 import { createMemoryDb, rows } from "./helpers.js";
@@ -104,7 +106,7 @@ async function unclaimedApp(opts: { admin?: boolean } = {}) {
     conn,
     mintConn,
   });
-  return { app, conn, db, overlayPath };
+  return { app, conn, db, overlayPath, dir };
 }
 
 const post = (app: Awaited<ReturnType<typeof unclaimedApp>>["app"], path: string, body: Record<string, string>) =>
@@ -274,6 +276,71 @@ describe("the unknown collectors screen", () => {
         "give them a name",
       );
     });
+
+    it("refuses a name the old records spell for somebody already here, which create would read as them", async () => {
+      // Legacy promotion keeps every spelling a person was recorded under,
+      // and the overlay resolves a name through those first: adding
+      // "AdaJo Collector" would have connected the account to Ada and
+      // overwritten her name parts.
+      const ada = await idOf(ctx.conn, "Ada Collector");
+      await ctx.conn.run("CREATE TABLE legacy_person_name (name TEXT, name_key TEXT, person_id INTEGER)");
+      await ctx.conn.run(`INSERT INTO legacy_person_name VALUES
+                          ('Ada Collector', 'adacollector', ${ada}), ('AdaJo Collector', 'adajocollector', ${ada})`);
+      const body = await (
+        await post(ctx.app, "/unclaimed/500/add", { display_name: "AdaJo Collector", given_name: "AdaJo" })
+      ).text();
+      expect(body).toContain("somebody here is already called");
+      expect(await count(ctx.conn, "SELECT count(*) FROM inat_account WHERE inat_user_id = 500")).toBe(0);
+      expect(await count(ctx.conn, `SELECT count(*) FROM person WHERE entity_id = ${ada} AND given_name = 'Ada'`)).toBe(1);
+      expect(await readOverlay(ctx.overlayPath)).toEqual([]);
+    });
+  });
+
+  it("refuses to connect by a name the old records spell for somebody else", async () => {
+    // Bo is now called "Ada Collector Jr" on screen, but the old records
+    // spell that name for Ada: written as name:, the binding would reach her.
+    const ada = await idOf(ctx.conn, "Ada Collector");
+    const bo = await idOf(ctx.conn, "Bo Netter");
+    await ctx.conn.run(`DELETE FROM inat_account WHERE person_id = ${bo}`);
+    await ctx.conn.run(`UPDATE person SET display_name = 'Ada Collector Jr' WHERE entity_id = ${bo}`);
+    await ctx.conn.run("CREATE TABLE legacy_person_name (name TEXT, name_key TEXT, person_id INTEGER)");
+    await ctx.conn.run(`INSERT INTO legacy_person_name VALUES ('Ada Collector Jr', 'adacollectorjr', ${ada})`);
+    const body = await (await post(ctx.app, "/unclaimed/500/connect", { person: "Ada Collector Jr" })).text();
+    expect(body).toContain("is also how the old records name somebody else");
+    expect(await count(ctx.conn, "SELECT count(*) FROM inat_account WHERE inat_user_id = 500")).toBe(0);
+  });
+
+  it("takes two decisions about one collector in turn: the second finds nobody waiting and writes nothing", async () => {
+    // Either may win — each reads its form before taking its turn — but only one.
+    const [connect, add] = await Promise.all([
+      post(ctx.app, "/unclaimed/500/connect", { person: "Ada Collector" }),
+      post(ctx.app, "/unclaimed/500/add", { display_name: "Cy Newcomer" }),
+    ]);
+    expect([connect.status, add.status].sort()).toEqual([200, 404]);
+    const loser = connect.status === 404 ? connect : add;
+    expect(await loser.text()).toContain("It may have just been connected to somebody.");
+    // Only the winner's decision is on file, so a rebuild replays cleanly.
+    const refs = new Set((await readOverlay(ctx.overlayPath)).map((r) => r.person_ref));
+    expect(refs).toEqual(new Set([connect.status === 200 ? "name:Ada Collector" : "name:Cy Newcomer"]));
+    expect(await count(ctx.conn, "SELECT count(*) FROM inat_account WHERE inat_user_id = 500")).toBe(1);
+  });
+
+  it("records the samples it made in the sample log, as the promotion that made them", async () => {
+    const paths = { log: join(ctx.dir, "sample-change.csv"), state: join(ctx.dir, "sample-state.csv") };
+    const reader = kyselyReader(ctx.db);
+    // A store that already has a baseline: a narrowed pass would skip new samples.
+    await ctx.conn.run(`INSERT INTO sample (entity_id, kind, sample_number, date_start, date_end, specimen_count)
+                        VALUES (nextval('entity_id_seq'), 'net', '99', '2025-07-01', '2025-07-01', 1)`);
+    await ctx.conn.run(`INSERT INTO sample_collector (sample_id, person_id, position)
+                        SELECT max(entity_id), ${await idOf(ctx.conn, "Bo Netter")}, 1 FROM sample`);
+    await recordSampleChanges(reader, paths, { source: "reconcile" });
+    await post(ctx.app, "/unclaimed/500/connect", { person: "Ada Collector" });
+    // Queued behind the app's own pass, so this returns after it.
+    await recordSampleChanges(reader, paths, { source: "reconcile" });
+    const made = (await readSampleChanges(paths.log)).filter((e) => e.reason === "connected @newbee to Ada Collector");
+    expect(made.length).toBeGreaterThan(0);
+    expect(new Set(made.map((e) => e.source))).toEqual(new Set(["observation_promotion"]));
+    expect(new Set(made.map((e) => e.sample_number))).toEqual(new Set(["1", "2"]));
   });
 
   it("says when the samples could not be made now, and keeps the decision", async () => {

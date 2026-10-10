@@ -92,8 +92,9 @@ async function hasRegister(db: Kysely<Database>): Promise<boolean> {
 }
 
 /**
- * The name on each observer's iNaturalist profile, from the newest load of
- * any of their unresolved records. Read from the stored JSON rather than
+ * The name on each observer's iNaturalist profile, as the highest-numbered of
+ * their unresolved observations carries it — iNaturalist numbers in order of
+ * creation, so that is usually their latest, and the choice is stable. Read from the stored JSON rather than
  * observation_field, which has no column for it: only these few hundred rows
  * ever need it.
  */

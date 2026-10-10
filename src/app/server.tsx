@@ -89,7 +89,7 @@ import {
   readPersonStates,
   recentChanges,
 } from "../person-change.js";
-import { applyPersonOverlay } from "../apply-person-overlay.js";
+import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
@@ -162,8 +162,9 @@ export interface AppDeps {
   sampleStatePath?: string;
   /**
    * A raw connection, for the overlay applier. Kysely cannot run the applier's
-   * statements as one unit, and the app already keeps a spare connection for
-   * the scheduler (ADR 0005: one process, many connections, one writer).
+   * statements as one unit. Never the scheduler's (ADR 0005: one process,
+   * many connections): a write on it during the nightly's transaction would
+   * land inside that transaction (src/app/main.ts).
    */
   conn?: DuckDBConnection;
   /**
@@ -1571,10 +1572,20 @@ export function createApp({
     return observerDetail(db, Number(raw));
   };
 
+  /**
+   * The observer's page. Once nobody waits under the account — as when a
+   * decision just lost a race to another — a problem is said on the list
+   * rather than answered with a 404 that hides it.
+   */
   const showObserver = async (c: Context<AppEnv>, problem?: string) => {
     const m = c.get("m");
     const detail = await unclaimedObserver(c);
-    if (detail === null) return errorResponse(c, "notFound", { message: m.unclaimed.gone });
+    if (detail === null) {
+      if (problem === undefined) return errorResponse(c, "notFound", { message: m.unclaimed.gone });
+      return c.html(
+        await page(c, m.unclaimed.title, <UnclaimedPage m={m} listing={await listUnclaimed(db)} problem={problem} />),
+      );
+    }
     return c.html(
       await page(
         c,
@@ -1595,57 +1606,85 @@ export function createApp({
     return showObserver(c);
   });
 
+  // One decision at a time. Each checks the observer and the person, then
+  // writes; two at once — two staff on one collector — would both pass the
+  // checks, and the loser's overlay row would fail on every rebuild after.
+  // In process is enough, since one process owns the store (ADR 0005), and
+  // the checks are re-read inside the turn rather than before it.
+  let unclaimedQueue: Promise<unknown> = Promise.resolve();
+  const oneAtATime = <T,>(work: () => Promise<T>): Promise<T> => {
+    const run = unclaimedQueue.then(work);
+    unclaimedQueue = run.catch(() => {});
+    return run;
+  };
+
+  /**
+   * What `name:<name>` will resolve to when these rows are applied — asked of
+   * the resolver the apply itself uses, because a current display name is not
+   * all it reads: legacy promotion's every recorded spelling comes first, and
+   * the renames among the rows. Checking display names alone let "MaryJo
+   * Mosby" be *added* as new while the overlay connected the account to the
+   * Mary Jo Mosby already here. Null where there is no connection to ask (a
+   * test without one), where current names are all there is.
+   */
+  const resolveName = async (name: string, rows: readonly PersonOverlayRow[]) =>
+    conn === undefined ? null : (await resolver(conn, rows)).resolve(`name:${name}`);
+
+  /** Whoever now holds the observer's account. */
+  const holderOf = async (uid: number) =>
+    (await db.selectFrom("inat_account").select("person_id").where("inat_user_id", "=", BigInt(uid)).executeTakeFirst())
+      ?.person_id ?? null;
+
   /**
    * After the person decision: make the observer's records into samples now
-   * (src/app/unclaimed.ts, mintNow), record what that did to the sample log
-   * — narrowed to their records and filed as the promotion it was, with the
-   * staff member who caused it as author — and say so on the list. A failure
-   * to mint is not a failure to connect: the decision is saved and the
-   * nightly makes the samples, so it is said rather than thrown.
+   * (src/app/unclaimed.ts, mintNow), and say so on the list. A failure to
+   * mint is not a failure to connect — the decision is saved and the nightly
+   * makes the samples — so it is said rather than thrown.
+   *
+   * The sample log is reconciled afterwards by a full pass, filed as the
+   * promotion it was: mintNow runs the whole store's promotion, not only this
+   * observer's, and a narrowed pass records nothing for a sample it has no
+   * earlier row for — which is every sample just made. Who caused it is in
+   * the person log, against the decision. Not awaited: the page need not wait
+   * for the log, and the log's own queue keeps passes from interleaving.
    */
   const afterConnecting = async (
     c: Context<AppEnv>,
     detail: ObserverDetail,
-    personId: number,
-    reason: string,
+    decided: { personId: number | null; name: string; applied: boolean },
   ) => {
     const m = c.get("m");
     const u = m.unclaimed;
-    const uid = detail.observer.user_id;
-    const person = await personDetail(db, personId);
-    const name = person?.display_name ?? detail.observer.login;
-    let text = u.connected(detail.observer.login, name);
-    if (mintConn === undefined) {
+    const { user_id: uid, login } = detail.observer;
+    const person = decided.personId === null ? null : await personDetail(db, decided.personId);
+    const name = person?.display_name ?? decided.name;
+    let text = u.connected(login, name);
+    if (!decided.applied || mintConn === undefined) {
       text = `${text} ${u.notMadeYet}`;
     } else {
       try {
         const made = await mintNow(mintConn, uid, { sampleOverlayPath: sampleOverlay });
         text = `${text} ${u.outcome(made.made, made.linked, made.left)}`;
-        try {
-          await recordSampleChanges(kyselyReader(db), samplePaths, {
-            source: "observation_promotion",
-            author: c.get("session").login,
-            reason,
-            where: `s.inat_observation_id IN (SELECT inat_id FROM observation_sample_candidate WHERE user_id = ${uid})`,
-          });
-        } catch (err) {
-          console.warn(`could not record the samples made for an unknown collector: ${(err as Error).message}`);
-        }
+        void recordSampleChanges(kyselyReader(db), samplePaths, {
+          source: "observation_promotion",
+          reason: `connected @${login} to ${name}`,
+        }).then(
+          (recorded) => {
+            if (recorded.refused != null) console.warn(`sample history not recorded: ${recorded.refused}`);
+          },
+          (err) => console.warn(`could not record the samples made for @${login}: ${(err as Error).message}`),
+        );
       } catch (err) {
         reportAppError(err as Error, c);
         text = `${text} ${u.notMadeYet}`;
       }
     }
-    const handle = person === null ? String(personId) : personHandle(person);
+    const personHref = person === null ? "/people" : `/people/${encodeURIComponent(personHandle(person))}`;
     return c.html(
       await page(
         c,
         u.title,
-        <UnclaimedPage
-          m={m}
-          listing={await listUnclaimed(db)}
-          notice={{ text, personHref: `/people/${encodeURIComponent(handle)}`, personName: name }}
-        />,
+        <UnclaimedPage m={m} listing={await listUnclaimed(db)} notice={{ text, personHref, personName: name }} />,
       ),
     );
   };
@@ -1660,86 +1699,97 @@ export function createApp({
     if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const u = m.unclaimed;
-    const detail = await unclaimedObserver(c);
-    if (detail === null) return errorResponse(c, "notFound", { message: u.gone });
     const form = await c.req.formData();
-    const name = String(form.get("person") ?? "").trim();
-    const reason = String(form.get("reason") ?? "").trim() || u.connectedReason(detail.observer.records);
-    const found = await db.selectFrom("person").select("entity_id").where("display_name", "=", name).execute();
-    if (found.length === 0) return showObserver(c, u.nobodyCalled(name));
-    if (found.length > 1) return showObserver(c, u.nameShared(name));
-    const person = await personDetail(db, found[0]!.entity_id);
-    if (person === null) return showObserver(c, u.nobodyCalled(name));
-    if (person.inat_user_id !== null) return showObserver(c, u.alreadyHasAccount(name, person.login ?? String(person.inat_user_id)));
+    return oneAtATime(async () => {
+      const detail = await unclaimedObserver(c);
+      if (detail === null) return errorResponse(c, "notFound", { message: u.gone });
+      const name = String(form.get("person") ?? "").trim();
+      const reason = String(form.get("reason") ?? "").trim() || u.connectedReason(detail.observer.records);
+      const found = await db.selectFrom("person").select("entity_id").where("display_name", "=", name).execute();
+      if (found.length === 0) return showObserver(c, u.nobodyCalled(name));
+      if (found.length > 1) return showObserver(c, u.nameShared(name));
+      const person = await personDetail(db, found[0]!.entity_id);
+      if (person === null) return showObserver(c, u.nobodyCalled(name));
+      if (person.inat_user_id !== null) {
+        return showObserver(c, u.alreadyHasAccount(name, person.login ?? String(person.inat_user_id)));
+      }
 
-    const { user_id, login } = detail.observer;
-    const outcome = await commitDecisions({
-      rows: [
-        {
-          person_ref: personRef({ ...person, nameIsUnique: true }),
-          field: "inat_user_id",
-          value: `${user_id} ${login}`,
-          author: c.get("session").login,
-          reason,
-        },
-      ],
-      ref: personRef({ ...person, nameIsUnique: true }),
-      author: c.get("session").login,
-      reason,
-      personId: person.person_id,
-      boundBefore: null,
-      findAfter: async () => person.person_id,
+      const author = c.get("session").login;
+      const ref = personRef({ ...person, nameIsUnique: true });
+      const { user_id, login } = detail.observer;
+      const rows: PersonOverlayRow[] = [
+        { person_ref: ref, field: "inat_user_id", value: `${user_id} ${login}`, author, reason },
+      ];
+      // The name has to reach this person when applied, not merely be theirs
+      // now: an old spelling of somebody else's would connect the account to
+      // them instead (legacy_person_name is read first).
+      const resolved = await resolveName(person.display_name, rows);
+      if (resolved !== null && !("id" in resolved && resolved.id === person.person_id)) {
+        return showObserver(c, u.nameAmbiguous(name));
+      }
+      const outcome = await commitDecisions({
+        rows,
+        ref,
+        author,
+        reason,
+        personId: person.person_id,
+        boundBefore: null,
+        findAfter: async () => person.person_id,
+      });
+      if (outcome.problem !== null) return showObserver(c, outcome.problem);
+      return afterConnecting(c, detail, { personId: person.person_id, name, applied: outcome.applied });
     });
-    if (outcome.problem !== null) return showObserver(c, outcome.problem);
-    return afterConnecting(c, detail, person.person_id, reason);
   });
 
   // Somebody new: the overlay's `create`, their account, and the name parts
-  // their labels are set from. A name somebody here already carries is
-  // refused rather than handed to `create`, which would read it as that
-  // person and connect the account to them without anyone having said so.
+  // their labels are set from. A name that would resolve to anybody already
+  // here is refused rather than handed to `create`, which would read it as
+  // that person, connect the account to them, and overwrite their name parts
+  // without anyone having said so.
   app.post("/unclaimed/:uid/add", async (c) => {
     const m = c.get("m");
     if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const u = m.unclaimed;
-    const detail = await unclaimedObserver(c);
-    if (detail === null) return errorResponse(c, "notFound", { message: u.gone });
     const form = await c.req.formData();
     const text = (name: string) => String(form.get(name) ?? "").trim();
-    const name = text("display_name");
-    const reason = text("reason") || u.connectedReason(detail.observer.records);
-    if (name === "") return showObserver(c, u.nameBlank);
-    const taken = await db.selectFrom("person").select("entity_id").where("display_name", "=", name).execute();
-    if (taken.length > 0) return showObserver(c, u.nameTaken(name));
+    return oneAtATime(async () => {
+      const detail = await unclaimedObserver(c);
+      if (detail === null) return errorResponse(c, "notFound", { message: u.gone });
+      const name = text("display_name");
+      const reason = text("reason") || u.connectedReason(detail.observer.records);
+      if (name === "") return showObserver(c, u.nameBlank);
 
-    const author = c.get("session").login;
-    const ref = `name:${name}`;
-    const { user_id, login } = detail.observer;
-    const rows: PersonOverlayRow[] = (
-      [
-        ["create", "yes"],
-        ["inat_user_id", `${user_id} ${login}`],
-        ["given_name", text("given_name")],
-        ["family_name", text("family_name")],
-      ] as Array<[OverlayField, string]>
-    )
-      .filter(([field, value]) => field === "create" || field === "inat_user_id" || value !== "")
-      .map(([field, value]) => ({ person_ref: ref, field, value, author, reason }));
-    const outcome = await commitDecisions({
-      rows,
-      ref,
-      author,
-      reason,
-      personId: null,
-      boundBefore: null,
-      findAfter: async () =>
-        (await db.selectFrom("person").select("entity_id").where("display_name", "=", name).executeTakeFirst())
-          ?.entity_id ?? null,
+      const author = c.get("session").login;
+      const ref = `name:${name}`;
+      const { user_id, login } = detail.observer;
+      const rows: PersonOverlayRow[] = (
+        [
+          ["create", "yes"],
+          ["inat_user_id", `${user_id} ${login}`],
+          ["given_name", text("given_name")],
+          ["family_name", text("family_name")],
+        ] as Array<[OverlayField, string]>
+      )
+        .filter(([field, value]) => field === "create" || field === "inat_user_id" || value !== "")
+        .map(([field, value]) => ({ person_ref: ref, field, value, author, reason }));
+      const taken = await db.selectFrom("person").select("entity_id").where("display_name", "=", name).execute();
+      const resolved = await resolveName(name, rows);
+      if (taken.length > 0 || (resolved !== null && !("missing" in resolved && resolved.missing === true))) {
+        return showObserver(c, u.nameTaken(name));
+      }
+      const outcome = await commitDecisions({
+        rows,
+        ref,
+        author,
+        reason,
+        personId: null,
+        boundBefore: null,
+        findAfter: () => holderOf(user_id),
+      });
+      if (outcome.problem !== null) return showObserver(c, outcome.problem);
+      return afterConnecting(c, detail, { personId: outcome.personId, name, applied: outcome.applied });
     });
-    if (outcome.problem !== null) return showObserver(c, outcome.problem);
-    if (outcome.personId === null) return showObserver(c, m.people.saved);
-    return afterConnecting(c, detail, outcome.personId, reason);
   });
 
   app.post("/jobs/run/:name", async (c) => {

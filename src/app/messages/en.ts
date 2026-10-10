@@ -1625,6 +1625,7 @@ export const en = {
     colThisSeason: "This season",
     colCollected: "Collected",
     colMightBe: "Might be",
+    colWhy: "Why",
     noSuggestion: "no suggestion",
     backToList: "All unknown collectors",
     lede: (records: number, first: Date, last: Date) =>
@@ -1681,6 +1682,8 @@ export const en = {
 
     gone: "Nobody is waiting under this account. It may have just been connected to somebody.",
     nobodyCalled: (name: string) => `nobody here is called "${name}"`,
+    nameAmbiguous: (name: string) =>
+      `"${name}" is also how the old records name somebody else, so connecting by it could reach the wrong person — connect the account from the right person's page on People`,
     nameShared: (name: string) =>
       `two people here are called "${name}" — connect the account from the right one's page on People`,
     alreadyHasAccount: (name: string, login: string) =>

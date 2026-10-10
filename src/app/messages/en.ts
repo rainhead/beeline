@@ -1214,7 +1214,7 @@ export const en = {
     archivesIntro:
       "Each program's specimens for a season, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. A season is written every night at 4am Pacific, but only once its program has said under which licence its records leave it and has a privacy policy for that season.",
     archivesCaution:
-      "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes and under which identifiers. They hold collectors' names and true coordinates, including taxon-obscured ones.",
+      "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including taxon-obscured ones.",
     archivesMissing:
       "Not written yet. They appear after the next nightly run, or after running the dwc-archives job on Jobs.",
     archiveNone:
@@ -1231,6 +1231,7 @@ export const en = {
     policyNoPage: "Agreed, not yet published",
     policyLink: "Read it",
     archiveTonight: "Written tonight",
+    downloadSized: (size: string) => `Download (${size})`,
     archiveWithheld: "withheld",
     archiveDownload: (program: string, season: number) => `Download the ${program} archive for the ${season} season`,
   },

@@ -72,6 +72,10 @@ export function Exports({
   );
 }
 
+/** A file's size the way a person reads it: kilobytes until it is a megabyte. */
+const fileSize = (bytes: number) =>
+  bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
+
 function ProgramSeasons({
   m,
   program,
@@ -125,7 +129,7 @@ function ProgramSeasons({
                 <td>
                   {stillAllowed(governance, entry) ? (
                     <a href={`/exports/dwca/${entry.file}`} aria-label={e.archiveDownload(program.name, entry.season)}>
-                      {e.size(((entry.bytes ?? 0) / 1e6).toFixed(1))}
+                      {e.downloadSized(fileSize(entry.bytes ?? 0))}
                     </a>
                   ) : license !== null && policy !== null ? (
                     <Meta>{e.archiveTonight}</Meta>

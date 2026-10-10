@@ -13,24 +13,29 @@ import type { CsvTiming } from "./request-timing.js";
 import type { Database, DeterminationQualifier } from "../model.js";
 
 /**
- * The specimens listing as a Darwin Core archive (https://dwc.tdwg.org/text/):
- * the same selection as its CSV, zipped with a `meta.xml` that maps each
- * column to its Darwin Core term, and with what a flat file cannot carry —
- * every determination of every specimen, in the Identification extension.
- * `determination` is append-only and the CSV holds only the determination of
- * record; Ecdysis (Symbiota) and GBIF both read an archive's identification
- * history, and the archive is the one download that keeps it.
+ * One program's specimens as a Darwin Core archive (https://dwc.tdwg.org/text/),
+ * offered to admins on /exports: the columns of the specimens CSV, zipped with
+ * a `meta.xml` that maps each to its Darwin Core term, and with what a flat
+ * file cannot carry — every determination of every specimen, in the
+ * Identification extension. `determination` is append-only and the CSV holds
+ * only the determination of record; Ecdysis (Symbiota) and GBIF both read an
+ * archive's identification history.
+ *
+ * It is for operations and for validating against GBIF's and Symbiota's
+ * readers, and the page says not to upload it anywhere: what each program
+ * publishes is undecided — which `occurrenceID` an imported specimen carries
+ * (ADR 0008, beeline-1kb.14, beeline-1kb.22), the licence and metadata, the
+ * gate on volunteer determinations (beeline-pyr) and on taxon-obscured
+ * coordinates (beeline-1kb.7.1).
  *
  * - `occurrence.txt`, the core: one row per specimen, the CSV's columns in the
  *   CSV's order behind an `id`. Only the Darwin Core columns are declared in
  *   `meta.xml`; Beeline's own (geoprivacy, coordinate provenance, the atlas)
  *   follow them undeclared, so a reader of the archive ignores them and a
- *   person opening the file before an upload still sees them — the open
- *   question about taxon-obscured coordinates is carried out by hand, at
- *   upload (docs/questions.md).
+ *   person opening the file still sees them.
  * - `identification.txt`, the extension: one row per determination, oldest
- *   first, joined to the core by `coreid`; whether it is the record, and
- *   whether an expert made it, follow undeclared.
+ *   first, joined to the core by `coreid`; its sex and caste, whether it is
+ *   the record, and whether an expert made it follow undeclared.
  *
  * `id` is the specimen's `entity_id`. It joins the two files and means nothing
  * outside the archive: a rebuild redraws it (ADR 0002), and neither
@@ -58,6 +63,8 @@ export interface IdentificationRow {
   determiner: string | null;
   determined_on: Date | string | null;
   determined_on_precision: "month" | "year" | null;
+  sex: string | null;
+  caste: string | null;
   is_expert: boolean;
   of_record: boolean;
 }
@@ -72,8 +79,12 @@ export const IDENTIFICATION_DWC_COLUMNS = [
   "dateIdentified",
 ] as const;
 
-/** Beeline's own, with no Darwin Core term. */
-export const IDENTIFICATION_OWN_COLUMNS = ["identificationOfRecord", "identifiedByExpert"] as const;
+/**
+ * Beeline's own, with no Darwin Core term. Sex and caste are a determination's
+ * too, and an earlier one may have said something else; Darwin Core has `sex`
+ * only on the occurrence, which carries the determination of record's.
+ */
+export const IDENTIFICATION_OWN_COLUMNS = ["sex", "caste", "identificationOfRecord", "identifiedByExpert"] as const;
 
 /** Every determination of these specimens, each specimen's oldest first. */
 export async function identificationsOf(db: Kysely<Database>, specimenIds: number[]): Promise<IdentificationRow[]> {
@@ -94,6 +105,8 @@ export async function identificationsOf(db: Kysely<Database>, specimenIds: numbe
       eb.fn.coalesce("p.display_name", "d.determiner_name").as("determiner"),
       "d.determined_on",
       "d.determined_on_precision",
+      "d.sex",
+      "d.caste",
       "d.is_expert",
       eb("dor.entity_id", "is not", null).as("of_record"),
     ])
@@ -118,6 +131,8 @@ const identificationRow = (r: IdentificationRow): unknown[] => [
   r.verbatim_identification,
   r.determiner,
   dateIdentified(r.determined_on, r.determined_on_precision),
+  r.sex,
+  r.caste,
   String(r.of_record),
   String(r.is_expert),
 ];

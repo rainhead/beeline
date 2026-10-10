@@ -114,9 +114,11 @@ import {
   atlasOptions,
   BY_SAMPLE_NUMBER,
   CSV_ROW_LIMIT,
+  EMPTY_QUERY,
   exportFilename,
   listSamples,
   listSpecimens,
+  OUTSIDE,
   parseListingQuery,
   csvStream,
   SAMPLE_CSV_HEADER,
@@ -698,21 +700,6 @@ export function createApp({
     return csv(c, body, "beeline-specimens");
   });
 
-  // The same selection as a Darwin Core archive, with every determination
-  // of each specimen beside it (src/app/dwc-archive.ts).
-  app.get("/specimens.zip", async (c) => {
-    const { personId, query } = await listingRequest(c);
-    countListingView(listingAttributes("specimens", "dwca", query, viewer(c)));
-    const body = specimenArchiveStream(async (limit, offset) => {
-      const page = await listSpecimens(db, query, personId, { limit, offset, withTotal: false });
-      return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
-    }, csvGenerationTiming("specimens archive"));
-    return c.body(body, 200, {
-      "content-type": "application/zip",
-      "content-disposition": `attachment; filename="${exportFilename("beeline-specimens-dwca", new Date(), "zip")}"`,
-    });
-  });
-
   // --- One record (beeline-2c3.34). The listings answer "what is there";
   // these answer everything about one, which is where the determination
   // history — append-only events, not a flattened current name — is finally
@@ -1126,7 +1113,35 @@ export function createApp({
   app.get("/exports", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
-    return c.html(await page(c, m.exports.title, <Exports m={m} occurrences={await occurrencesFile()} />));
+    return c.html(
+      await page(
+        c,
+        m.exports.title,
+        <Exports m={m} occurrences={await occurrencesFile()} atlases={await atlasOptions(db)} />,
+      ),
+    );
+  });
+
+  // One program's specimens as a Darwin Core archive (src/app/dwc-archive.ts),
+  // built per request. Per program because each will govern what leaves it;
+  // for now they are for operations and validation, and the page says so.
+  // A program here is an atlas, read off where a sample fell, or `outside`
+  // for what no atlas covers — the listing's own scopes, so an archive holds
+  // what that scope's specimen listing holds.
+  app.get("/exports/dwca/:file{[A-Za-z0-9]+\\.zip}", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const scope = c.req.param("file").replace(/\.zip$/, "");
+    const atlases = await atlasOptions(db);
+    if (scope !== OUTSIDE && !atlases.some((a) => a.code === scope)) return errorResponse(c, "notFound");
+    const query = { ...EMPTY_QUERY, scope };
+    const body = specimenArchiveStream(async (limit, offset) => {
+      const page = await listSpecimens(db, query, c.get("acting").personId, { limit, offset, withTotal: false });
+      return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
+    }, csvGenerationTiming(`dwca ${scope}`));
+    return c.body(body, 200, {
+      "content-type": "application/zip",
+      "content-disposition": `attachment; filename="${exportFilename(`beeline-${scope}-dwca`, new Date(), "zip")}"`,
+    });
   });
 
   app.get("/exports/occurrences.csv", async (c) => {

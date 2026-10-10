@@ -844,21 +844,21 @@ describe("Darwin Core archive", () => {
     Object.fromEntries(Object.entries(unzipSync(bytes)).map(([name, data]) => [name, strFromU8(data)]));
   const table = (text: string) => text.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
 
-  it("zips the specimens with every determination each has had", async () => {
+  it("zips a program's specimens with every determination each has had", async () => {
     const { app, conn } = await listingApp("staffer");
-    // An earlier volunteer determination of OBA00001, under the expert one
-    // the CSV shows; a tab in what they wrote must not split the row.
+    // A later volunteer determination of OBA00001, beside the expert one the
+    // CSV shows; a tab in what they wrote must not split the row.
     await conn.run(
       `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name,
-                                  verbatim_identification, recorded_at)
-       SELECT sp.entity_id, an.entity_id, false, 'in_app', 'A Volunteer', 'Bombus\tsp.', now() + INTERVAL 1 DAY
+                                  verbatim_identification, sex, recorded_at)
+       SELECT sp.entity_id, an.entity_id, false, 'in_app', 'A Volunteer', 'Bombus\tsp.', 'female', now() + INTERVAL 1 DAY
        FROM specimen sp, animal an
        WHERE sp.field_number = 'OBA00001' AND an.scientific_name = 'Bombus'`,
     );
-    const res = await app.request("/specimens.zip?scope=OBA");
+    const res = await app.request("/exports/dwca/OBA.zip");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/zip");
-    expect(res.headers.get("content-disposition")).toMatch(/filename="beeline-specimens-dwca-\d{4}-\d{2}-\d{2}-\d{6}\.zip"/);
+    expect(res.headers.get("content-disposition")).toMatch(/filename="beeline-OBA-dwca-\d{4}-\d{2}-\d{2}-\d{6}\.zip"/);
     const files = unpack(new Uint8Array(await res.arrayBuffer()));
     expect(Object.keys(files)).toEqual(["meta.xml", "occurrence.txt", "identification.txt"]);
 
@@ -895,6 +895,9 @@ describe("Darwin Core archive", () => {
     ]);
     // The expert's is the record even though the volunteer's came later.
     expect(identifications.map((r) => r[col("identificationOfRecord")])).toEqual(["true", "false"]);
+    // Each determination keeps its own sex, which the core holds only for the record.
+    expect(identifications.map((r) => r[col("sex")])).toEqual(["", "female"]);
+    expect(meta).not.toContain("terms/caste");
   });
 
   it("holds every page's identifications until the core is written", async () => {
@@ -916,6 +919,8 @@ describe("Darwin Core archive", () => {
       determiner: null,
       determined_on: null,
       determined_on_precision: null,
+      sex: null,
+      caste: null,
       is_expert: false,
       of_record: true,
     });
@@ -930,10 +935,30 @@ describe("Darwin Core archive", () => {
     expect(identifications.at(-1)![0]).toBe(String(CSV_PAGE_SIZE + 1));
   });
 
-  it("is offered on the specimens listing and not on the samples one", async () => {
+  it("is offered to admins on Exports, one per program, and not on the listings", async () => {
     const { app } = await listingApp("staffer");
-    expect(await get(app, "/specimens?scope=OBA")).toContain(`href="/specimens.zip?scope=OBA"`);
-    expect(await get(app, "/samples?scope=OBA")).not.toContain(".zip");
+    const exports = await get(app, "/exports");
+    expect(exports).toContain(`href="/exports/dwca/OBA.zip"`);
+    expect(exports).toContain(`href="/exports/dwca/WaBA.zip"`);
+    expect(exports).toContain(`href="/exports/dwca/outside.zip"`);
+    // And says what it is for, and what it is not.
+    expect(exports).toContain("Do not upload them");
+    expect(await get(app, "/specimens?scope=OBA")).not.toContain(".zip");
+  });
+
+  it("holds what was collected outside every atlas under its own name", async () => {
+    const { app } = await listingApp("staffer");
+    const files = unpack(new Uint8Array(await (await app.request("/exports/dwca/outside.zip")).arrayBuffer()));
+    // B-3 and C-1 were collected in Nevada and have no specimens; nothing from an atlas is here.
+    expect(table(files["occurrence.txt"]!)).toHaveLength(1);
+  });
+
+  it("is refused to a volunteer and to a program that does not exist", async () => {
+    const { app: volunteer } = await listingApp("alice");
+    expect((await volunteer.request("/exports/dwca/OBA.zip")).status).toBe(403);
+    const { app: staff } = await listingApp("staffer");
+    expect((await staff.request("/exports/dwca/NOPE.zip")).status).toBe(404);
+    expect((await staff.request("/exports/dwca/all.zip")).status).toBe(404);
   });
 });
 

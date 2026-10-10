@@ -26,8 +26,8 @@ import type { Database, DeterminationQualifier } from "../model.js";
  * It is for operations and for validating against GBIF's and Symbiota's
  * readers, and the page says not to upload it anywhere: what each program
  * publishes is undecided — which `occurrenceID` an imported specimen carries
- * (ADR 0008, beeline-1kb.14, beeline-1kb.22), the catalog-number prefix and
- * identity Ecdysis matches on, the dataset metadata, and each atlas's answer
+ * (ADR 0008, beeline-1kb.14, beeline-1kb.22), the catalog-number prefix
+ * Ecdysis matches on, the dataset metadata, and each atlas's answer
  * on taxon-obscured coordinates (beeline-1kb.7.1). Which
  * volunteer determinations go downstream is the atlas staff's call after
  * downloading (beeline-pyr), so every determination is in the file.
@@ -42,13 +42,14 @@ import type { Database, DeterminationQualifier } from "../model.js";
  *   current one; its sex and caste, and whether an expert made it, follow
  *   undeclared.
  *
- * `id` is the specimen's `entity_id`. It joins the two files and means nothing
- * outside the archive: a rebuild redraws it (ADR 0002), and neither
+ * `id` is the specimen's `entity_id`, which joins the two files; neither
  * `occurrenceID` (minted only by a print run) nor `catalogNumber` (absent
  * before field numbering, and not unique across the identifier eras) is on
- * every row. That is fine for reading and wrong for an upload — Symbiota keys
- * a record on it, so after a rebuild an identification lands on the wrong
- * specimen — which is one reason the page says not to upload these yet.
+ * every row. Symbiota keeps it as the record's key in a collection, so it has
+ * to stay put between uploads, and it does wherever an upload could come from:
+ * a rebuild redraws it (ADR 0002), but only the sandbox is ever rebuilt, and no
+ * archive the sandbox writes will be uploaded to GBIF or Ecdysis (Peter,
+ * 2026-10-10). Production is migrated, never rebuilt (ADR 0006).
  *
  * Tab-separated with nothing quoted, as GBIF's IPT writes archives: a tab or a
  * line break inside a value becomes a space, and nothing is formula-guarded,

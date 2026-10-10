@@ -738,6 +738,14 @@ export interface ObservationSampleUnresolvedView {
   observed_on: ColumnType<Date, Date | string, Date | string>;
 }
 
+/** An unresolved record with the program whose region it fell in (beeline-e85). */
+export interface UnclaimedRecordView extends ObservationSampleUnresolvedView {
+  state_province: string | null;
+  county_name: string | null;
+  program_id: number;
+  program_code: string;
+}
+
 /** Unlinked collection records grouped into the sample each belongs to. */
 export interface SampleMintGroupView {
   person_id: number;
@@ -1095,6 +1103,7 @@ export interface Database {
   observation_sample_candidate: ObservationSampleCandidateView;
   observation_sample_unusable: ObservationSampleUnusableView;
   observation_sample_unresolved: ObservationSampleUnresolvedView;
+  unclaimed_record: UnclaimedRecordView;
   sample_mint_group: SampleMintGroupView;
   sample_mint_match: SampleMintMatchView;
   sample_mint_ambiguous: SampleMintAmbiguousView;

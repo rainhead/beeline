@@ -126,6 +126,9 @@ const scheduler = startScheduler({ db, conn: jobConn, jobs, observe: reporting ?
 // The print runs' own connection: a freeze is one transaction and cannot
 // share a connection with the nightly's (src/print-run.ts).
 const printConn = await instance.connect();
+// The unclaimed screen's, for the same reason: connecting a collector runs a
+// promotion, which is one transaction (src/app/unclaimed.ts, beeline-e85).
+const mintConn = await instance.connect();
 
 const inat = inatClient(await loadInatCredentials());
 const app = createApp({
@@ -142,6 +145,7 @@ const app = createApp({
   sampleStatePath: config.sampleStatePath,
   conn: jobConn,
   printConn,
+  mintConn,
   printRunsDir: config.printRunsDir,
 });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
@@ -207,6 +211,11 @@ async function shutdown(signal: string): Promise<never> {
     printConn.closeSync();
   } catch (err) {
     failed("closing the print connection", err);
+  }
+  try {
+    mintConn.closeSync();
+  } catch (err) {
+    failed("closing the unclaimed screen's connection", err);
   }
   try {
     await close();

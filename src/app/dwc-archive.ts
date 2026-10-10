@@ -175,7 +175,11 @@ export interface ArchivePage extends Page<SpecimenRow> {
 /**
  * The archive as a stream, a page of the listing at a time. A ZIP holds its
  * files one after another, so the core streams out as it is written while
- * the identifications wait, compressed, until the core is finished.
+ * the identifications wait, compressed, until the core is finished. That
+ * wait is held in memory, and it is small: every determination in the dev
+ * store (272,906 of them, all programs at once) compresses to 1.6 MB, where
+ * a second pass over the listing to avoid it would cost the ~20 s the first
+ * one does.
  */
 export function specimenArchiveStream(
   fetch: (limit: number, offset: number) => Promise<ArchivePage>,

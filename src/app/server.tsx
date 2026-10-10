@@ -124,6 +124,7 @@ import {
   SPECIMEN_CSV_HEADER,
   specimenCsvRow,
 } from "./listings.js";
+import { identificationsOf, specimenArchiveStream } from "./dwc-archive.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
 import {
   determinationHistory,
@@ -695,6 +696,21 @@ export function createApp({
       csvGenerationTiming("specimens"),
     );
     return csv(c, body, "beeline-specimens");
+  });
+
+  // The same selection as a Darwin Core archive, with every determination
+  // of each specimen beside it (src/app/dwc-archive.ts).
+  app.get("/specimens.zip", async (c) => {
+    const { personId, query } = await listingRequest(c);
+    countListingView(listingAttributes("specimens", "dwca", query, viewer(c)));
+    const body = specimenArchiveStream(async (limit, offset) => {
+      const page = await listSpecimens(db, query, personId, { limit, offset, withTotal: false });
+      return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
+    }, csvGenerationTiming("specimens archive"));
+    return c.body(body, 200, {
+      "content-type": "application/zip",
+      "content-disposition": `attachment; filename="${exportFilename("beeline-specimens-dwca", new Date(), "zip")}"`,
+    });
   });
 
   // --- One record (beeline-2c3.34). The listings answer "what is there";

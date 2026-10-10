@@ -89,7 +89,7 @@ export function csvGenerationTiming(listing: string, opts: RequestTimingOptions 
     const ms = Math.round(storeMs);
     // Not the row count: it has no bound, which makes it a poor dimension; the slow line carries it.
     record(ms, { listing, outcome });
-    if (ms > slowMs) warn(`[request] slow: ${listing} CSV spent ${ms}ms in the store for ${rows} rows (${outcome})`);
+    if (ms > slowMs) warn(`[request] slow: ${listing} download spent ${ms}ms in the store for ${rows} rows (${outcome})`);
   };
 }
 

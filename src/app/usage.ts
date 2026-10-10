@@ -34,7 +34,7 @@ const pageBand = (page: number) => (page <= 1 ? "1" : page <= 5 ? "2-5" : "6+");
 /** The attributes of one /samples or /specimens request. Exported for its test. */
 export function listingAttributes(
   listing: "samples" | "specimens",
-  format: "page" | "csv",
+  format: "page" | "csv" | "dwca",
   q: ListingQuery,
   viewer: Viewer,
 ): Attributes {

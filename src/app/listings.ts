@@ -54,9 +54,9 @@ const exportStampParts = new Intl.DateTimeFormat("en-US", {
  * the app shows is, and to the second; year first so the names sort in the
  * order they were taken; no colons, which Windows refuses in a file name.
  */
-export function exportFilename(base: string, at: Date): string {
+export function exportFilename(base: string, at: Date, extension = "csv"): string {
   const p = Object.fromEntries(exportStampParts.formatToParts(at).map((x) => [x.type, x.value]));
-  return `${base}-${p.year}-${p.month}-${p.day}-${p.hour}${p.minute}${p.second}.csv`;
+  return `${base}-${p.year}-${p.month}-${p.day}-${p.hour}${p.minute}${p.second}.${extension}`;
 }
 
 /** The scope every volunteer has, and the only one they have. */
@@ -973,15 +973,7 @@ export function toCsv(header: readonly string[], rows: ReadonlyArray<readonly un
 /** How many rows each round trip to the store fetches while a download streams. */
 export const CSV_PAGE_SIZE = 5_000;
 
-/**
- * A whole selection as a stream: the header, then page after page until the
- * store has none left. The listing queries end in a unique tie-breaker, so
- * paging by offset neither skips nor repeats a row.
- *
- * `timing`, when given, hears once how long the pages spent in the store and
- * how the download ended: the response has gone before any page is fetched,
- * so the request's own duration sees none of this (src/app/request-timing.ts).
- */
+/** A listing as a CSV stream: the header, then every row the filters select. */
 export function csvStream<Row>(
   header: readonly string[],
   fetch: (limit: number, offset: number) => Promise<Page<Row>>,
@@ -989,6 +981,42 @@ export function csvStream<Row>(
   timing?: CsvTiming,
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
+  return pagedStream(
+    header[0] ?? "csv",
+    fetch,
+    {
+      head: () => [encoder.encode(CSV_BOM + csvLine(header))],
+      page: (page) => [encoder.encode(page.rows.map((r) => csvLine(toRow(r, page))).join(""))],
+      tail: () => [],
+    },
+    timing,
+  );
+}
+
+/** What a paged download writes: before the first page, for each page, and after the last. */
+export interface PagedWriter<P> {
+  head(): Uint8Array[];
+  page(page: P): Uint8Array[];
+  tail(): Uint8Array[];
+}
+
+/**
+ * A whole selection as a stream: whatever the writer puts first, then page
+ * after page until the store has none left, then whatever it puts last. The
+ * listing queries end in a unique tie-breaker, so paging by offset neither
+ * skips nor repeats a row.
+ *
+ * `timing`, when given, hears once how long the pages spent in the store and
+ * how the download ended: the response has gone before any page is fetched,
+ * so the request's own duration sees none of this (src/app/request-timing.ts).
+ * `name` says which download failed, in the log and in Sentry.
+ */
+export function pagedStream<P extends { rows: readonly unknown[] }>(
+  name: string,
+  fetch: (limit: number, offset: number) => Promise<P>,
+  writer: PagedWriter<P>,
+  timing?: CsvTiming,
+): ReadableStream<Uint8Array> {
   let offset = 0;
   let started = false;
   let storeMs = 0;
@@ -1006,11 +1034,11 @@ export function csvStream<Row>(
     async pull(controller) {
       if (!started) {
         started = true;
-        controller.enqueue(encoder.encode(CSV_BOM + csvLine(header)));
+        for (const chunk of writer.head()) controller.enqueue(chunk);
         return;
       }
-      let page: Page<Row>;
-      let lines: string;
+      let page: P;
+      let chunks: Uint8Array[];
       const t0 = performance.now();
       fetchingSince = t0;
       let fetched = false;
@@ -1019,7 +1047,8 @@ export function csvStream<Row>(
         storeMs += performance.now() - t0;
         fetchingSince = null;
         fetched = true;
-        lines = page.rows.map((r) => csvLine(toRow(r, page))).join("");
+        chunks = writer.page(page);
+        if (page.rows.length < CSV_PAGE_SIZE) chunks.push(...writer.tail());
       } catch (err) {
         if (!fetched) storeMs += performance.now() - t0;
         fetchingSince = null;
@@ -1027,8 +1056,8 @@ export function csvStream<Row>(
         // error handler never sees this: the client gets a cut-off transfer
         // and nothing else would record why (Fable's review of #110). A row
         // that will not convert ends the download the same way.
-        reportError(err, { download: header[0] ?? "csv", rowsWritten: String(offset) });
-        console.error(`CSV download failed after ${offset} rows: ${(err as Error).stack ?? String(err)}`);
+        reportError(err, { download: name, rowsWritten: String(offset) });
+        console.error(`Download of ${name} failed after ${offset} rows: ${(err as Error).stack ?? String(err)}`);
         if (cancelled) {
           report("cancelled"); // nobody is reading any more; there is no stream to fail
           return;
@@ -1041,7 +1070,7 @@ export function csvStream<Row>(
         report("cancelled");
         return;
       }
-      if (lines !== "") controller.enqueue(encoder.encode(lines));
+      for (const chunk of chunks) if (chunk.byteLength > 0) controller.enqueue(chunk);
       offset += page.rows.length;
       if (page.rows.length < CSV_PAGE_SIZE) {
         report("complete");
@@ -1150,8 +1179,22 @@ export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => 
   r.inat_observation_id,
 ];
 
-/** The specimens download: one occurrence per row, a preserved specimen. */
-export const SPECIMEN_CSV_HEADER = [
+/** dwc:dateIdentified, as Darwin Core would have it: a year-only date is the year, not January 1st. */
+export const dateIdentified = (on: Date | string | null, precision: "month" | "year" | null) =>
+  on === null
+    ? null
+    : precision === "year"
+      ? isoDate(on).slice(0, 4)
+      : precision === "month"
+        ? isoDate(on).slice(0, 7)
+        : isoDate(on);
+
+/**
+ * The specimens download: one occurrence per row, a preserved specimen. The
+ * Darwin Core columns come first and Beeline's own after them, kept apart
+ * because the Darwin Core archive declares only the first.
+ */
+export const SPECIMEN_DWC_COLUMNS = [
   "occurrenceID",
   "basisOfRecord",
   "catalogNumber",
@@ -1178,7 +1221,10 @@ export const SPECIMEN_CSV_HEADER = [
   "sex",
   "identifiedBy",
   "dateIdentified",
-  // Beeline's own, with no Darwin Core term.
+] as const;
+
+/** Beeline's own, with no Darwin Core term. */
+export const SPECIMEN_OWN_COLUMNS = [
   "specimenNumber",
   "atlas",
   "hostRank",
@@ -1187,6 +1233,8 @@ export const SPECIMEN_CSV_HEADER = [
   "taxonGeoprivacy",
   "identifiedByExpert",
 ] as const;
+
+export const SPECIMEN_CSV_HEADER = [...SPECIMEN_DWC_COLUMNS, ...SPECIMEN_OWN_COLUMNS] as const;
 
 export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown[] => [
   r.occurrence_id,
@@ -1214,14 +1262,7 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.verbatim_identification,
   r.sex,
   r.determiner,
-  // As Darwin Core would have it: a year-only date is the year, not January 1st.
-  r.determined_on === null
-    ? null
-    : r.determined_on_precision === "year"
-      ? isoDate(r.determined_on).slice(0, 4)
-      : r.determined_on_precision === "month"
-        ? isoDate(r.determined_on).slice(0, 7)
-        : isoDate(r.determined_on),
+  dateIdentified(r.determined_on, r.determined_on_precision),
   r.specimen_number,
   r.atlas_code,
   r.host_rank,

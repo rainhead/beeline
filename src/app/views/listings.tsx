@@ -290,20 +290,25 @@ function ResultsHeader({
   query,
   total,
   count,
+  archive,
 }: {
   m: Messages;
   path: string;
   query: ListingQuery;
   total: number;
   count: (total: number) => string;
+  archive: boolean;
 }) {
   return (
     <div class="results-header">
       <p class="row baseline">
         <span class="results-count">{count(total)}</span>
         {total > 0 && <a href={listingHref(`${path}.csv`, query, { page: 1 })}>{m.listings.csv.download}</a>}
+        {total > 0 && archive && (
+          <a href={listingHref(`${path}.zip`, query, { page: 1 })}>{m.listings.csv.downloadArchive}</a>
+        )}
       </p>
-      <Meta block>{m.listings.csv.note}</Meta>
+      <Meta block>{archive ? m.listings.csv.noteWithArchive : m.listings.csv.note}</Meta>
     </div>
   );
 }
@@ -337,10 +342,13 @@ function Toolbar<Row>({
   copy,
   path,
   props,
+  archive = false,
 }: {
   copy: { count: (total: number) => string };
   path: string;
   props: ListingProps<Row>;
+  /** Whether the listing also downloads as a Darwin Core archive (specimens only). */
+  archive?: boolean;
 }) {
   const { m, query, atlases, admin } = props;
   const homeAtlas = props.homeAtlas ?? null;
@@ -366,7 +374,14 @@ function Toolbar<Row>({
         removeLabel={m.listings.filters.remove}
       />
       {props.page.rows.length > 0 && (
-        <ResultsHeader m={m} path={path} query={query} total={props.page.total} count={copy.count} />
+        <ResultsHeader
+          m={m}
+          path={path}
+          query={query}
+          total={props.page.total}
+          count={copy.count}
+          archive={archive}
+        />
       )}
     </>
   );
@@ -628,7 +643,7 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
   return (
     <>
       <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
-      <Toolbar copy={copy} path={path} props={props} />
+      <Toolbar copy={copy} path={path} props={props} archive />
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
       ) : (

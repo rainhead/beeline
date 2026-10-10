@@ -527,8 +527,13 @@ export const en = {
 
     csv: {
       download: "Download CSV",
+      downloadArchive: "Download DwC Archive",
       note:
         "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns. " +
+        "Where iNaturalist obscures a record, its own columns say so — worth a look before anything is republished.",
+      noteWithArchive:
+        "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns; " +
+        "the Darwin Core archive holds the same specimens with every identification each one has had. " +
         "Where iNaturalist obscures a record, its own columns say so — worth a look before anything is republished.",
     },
   },

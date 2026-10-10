@@ -14,7 +14,10 @@ import {
   parseListingQuery,
   toCsv,
   type ListingQuery,
+  type SpecimenRow,
 } from "../src/app/listings.js";
+import { strFromU8, unzipSync } from "fflate";
+import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 const unusedInat: InatClient = {
@@ -832,6 +835,105 @@ describe("CSV export", () => {
     // A tab or carriage return in front is a formula trigger too.
     expect(csvCell("\t=1+1")).toBe("'\t=1+1");
     expect(csvCell("\r=1+1")).toBe(`"'\r=1+1"`);
+  });
+});
+
+describe("Darwin Core archive", () => {
+  /** The archive's files by name, as text. */
+  const unpack = (bytes: Uint8Array) =>
+    Object.fromEntries(Object.entries(unzipSync(bytes)).map(([name, data]) => [name, strFromU8(data)]));
+  const table = (text: string) => text.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
+
+  it("zips the specimens with every determination each has had", async () => {
+    const { app, conn } = await listingApp("staffer");
+    // An earlier volunteer determination of OBA00001, under the expert one
+    // the CSV shows; a tab in what they wrote must not split the row.
+    await conn.run(
+      `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name,
+                                  verbatim_identification, recorded_at)
+       SELECT sp.entity_id, an.entity_id, false, 'in_app', 'A Volunteer', 'Bombus\tsp.', now() + INTERVAL 1 DAY
+       FROM specimen sp, animal an
+       WHERE sp.field_number = 'OBA00001' AND an.scientific_name = 'Bombus'`,
+    );
+    const res = await app.request("/specimens.zip?scope=OBA");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/zip");
+    expect(res.headers.get("content-disposition")).toMatch(/filename="beeline-specimens-dwca-\d{4}-\d{2}-\d{2}-\d{6}\.zip"/);
+    const files = unpack(new Uint8Array(await res.arrayBuffer()));
+    expect(Object.keys(files)).toEqual(["meta.xml", "occurrence.txt", "identification.txt"]);
+
+    // meta.xml declares a Darwin Core term for each Darwin Core column, at
+    // the index the file holds it.
+    const meta = files["meta.xml"]!;
+    const [header, ...occurrences] = table(files["occurrence.txt"]!);
+    expect(meta).toContain(`rowType="http://rs.tdwg.org/dwc/terms/Occurrence"`);
+    expect(meta).toContain(`rowType="http://rs.tdwg.org/dwc/terms/Identification"`);
+    for (const term of ["occurrenceID", "catalogNumber", "decimalLatitude", "scientificName", "dateIdentified"]) {
+      expect(meta).toContain(`<field index="${header!.indexOf(term)}" term="http://rs.tdwg.org/dwc/terms/${term}"/>`);
+    }
+    // Beeline's own columns are in the file and declared as nothing.
+    expect(header).toContain("geoprivacy");
+    expect(meta).not.toContain("terms/geoprivacy");
+
+    // OBA's two specimens, and nothing of Washington's.
+    const catalog = header!.indexOf("catalogNumber");
+    expect(occurrences.map((r) => r[catalog]).sort()).toEqual(["OBA00001", "OBA00002"]);
+    const oba1 = occurrences.find((r) => r[catalog] === "OBA00001")!;
+    expect(oba1[header!.indexOf("scientificName")]).toBe("Bombus vosnesenskii");
+
+    // Both determinations of OBA00001, oldest first, joined by the core's id;
+    // OBA00002 has none and so no rows.
+    const [identHeader, ...identifications] = table(files["identification.txt"]!);
+    expect(identHeader!.slice(0, 2)).toEqual(["coreid", "scientificName"]);
+    expect(identifications.every((r) => r.length === identHeader!.length)).toBe(true);
+    expect(identifications.map((r) => r[0])).toEqual([oba1[0], oba1[0]]);
+    const col = (name: string) => identHeader!.indexOf(name);
+    expect(identifications.map((r) => r[col("scientificName")])).toEqual(["Bombus vosnesenskii", "Bombus"]);
+    expect(identifications.map((r) => r[col("verbatimIdentification")])).toEqual([
+      "Bombus cf. vosnesenskii",
+      "Bombus sp.",
+    ]);
+    // The expert's is the record even though the volunteer's came later.
+    expect(identifications.map((r) => r[col("identificationOfRecord")])).toEqual(["true", "false"]);
+  });
+
+  it("holds every page's identifications until the core is written", async () => {
+    // Synthetic rows, a page and one more: the second file's data is written
+    // while the first is still open, and must come out whole after it.
+    const specimen = (i: number) =>
+      ({ specimen_id: i, sample_id: 1, date_start: "2026-07-14", date_end: "2026-07-14", latitude: null, host_name: null }) as unknown as SpecimenRow;
+    const pages = [
+      Array.from({ length: CSV_PAGE_SIZE }, (_, i) => specimen(i + 1)),
+      [specimen(CSV_PAGE_SIZE + 1)],
+    ];
+    const ident = (id: number): IdentificationRow => ({
+      specimen_id: id,
+      scientific_name: "Bombus",
+      authorship: null,
+      rank: "genus",
+      qualifier: null,
+      verbatim_identification: null,
+      determiner: null,
+      determined_on: null,
+      determined_on_precision: null,
+      is_expert: false,
+      of_record: true,
+    });
+    const stream = specimenArchiveStream(async (_limit, offset) => {
+      const rows = pages[offset === 0 ? 0 : 1]!;
+      return { rows, total: 0, collectors: new Map(), identifications: rows.map((r) => ident(r.specimen_id)) };
+    });
+    const files = unpack(new Uint8Array(await new Response(stream).arrayBuffer()));
+    expect(table(files["occurrence.txt"]!)).toHaveLength(1 + CSV_PAGE_SIZE + 1);
+    const identifications = table(files["identification.txt"]!);
+    expect(identifications).toHaveLength(1 + CSV_PAGE_SIZE + 1);
+    expect(identifications.at(-1)![0]).toBe(String(CSV_PAGE_SIZE + 1));
+  });
+
+  it("is offered on the specimens listing and not on the samples one", async () => {
+    const { app } = await listingApp("staffer");
+    expect(await get(app, "/specimens?scope=OBA")).toContain(`href="/specimens.zip?scope=OBA"`);
+    expect(await get(app, "/samples?scope=OBA")).not.toContain(".zip");
   });
 });
 

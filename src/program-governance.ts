@@ -17,6 +17,12 @@ import { parseCsv } from "./corrections.js";
  * Both files are curated in git, beside the taxon decisions: they are a
  * program's decisions, written down by whoever was told them, and every row
  * says who decided and why. The loader transcribes; it never presumes.
+ *
+ * A policy row records only that a program has established one, and where to
+ * read it. Nothing in it is applied to the archive yet: what a policy must
+ * answer before Beeline could apply it — which records are sensitive, how far
+ * they are generalised, which other fields go with the coordinates, whether
+ * names go out — is docs/research/program-governance-for-exports.md §2.
  */
 
 export const PROGRAM_LICENSES = "ingest/program-licenses.csv";

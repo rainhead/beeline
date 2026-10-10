@@ -337,10 +337,13 @@ describe("the unknown collectors screen", () => {
     await post(ctx.app, "/unclaimed/500/connect", { person: "Ada Collector" });
     // Queued behind the app's own pass, so this returns after it.
     await recordSampleChanges(reader, paths, { source: "reconcile" });
-    const made = (await readSampleChanges(paths.log)).filter((e) => e.reason === "connected @newbee to Ada Collector");
-    expect(made.length).toBeGreaterThan(0);
-    expect(new Set(made.map((e) => e.source))).toEqual(new Set(["observation_promotion"]));
-    expect(new Set(made.map((e) => e.sample_number))).toEqual(new Set(["1", "2"]));
+    // Filed by the app's own pass, as the promotion: the reconcile after it finds nothing left.
+    const log = await readSampleChanges(paths.log);
+    expect(log.length).toBeGreaterThan(0);
+    expect(new Set(log.map((e) => e.source))).toEqual(new Set(["observation_promotion"]));
+    expect(new Set(log.map((e) => e.sample_number))).toEqual(new Set(["1", "2"]));
+    // Nobody's reason is borrowed for a store-wide pass.
+    expect(new Set(log.map((e) => e.reason))).toEqual(new Set([""]));
   });
 
   it("says when the samples could not be made now, and keeps the decision", async () => {

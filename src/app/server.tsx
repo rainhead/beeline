@@ -1383,6 +1383,19 @@ export function createApp({
     return c.redirect("/");
   });
 
+  // One decision about a person at a time, from whichever screen: each checks
+  // the store, then writes, and two at once — two staff on one collector, or
+  // a rebind on /people racing an add on /unclaimed — would both pass the
+  // checks and leave the loser's overlay row failing on every rebuild after.
+  // In process is enough, since one process owns the store (ADR 0005); what
+  // matters is that the checks are read inside the turn, not before it.
+  let decisionQueue: Promise<unknown> = Promise.resolve();
+  const oneDecisionAtATime = <T,>(work: () => Promise<T>): Promise<T> => {
+    const run = decisionQueue.then(work);
+    decisionQueue = run.catch(() => {});
+    return run;
+  };
+
   /**
    * The writing half of a decision about a person, shared by their page and
    * the unclaimed screen (beeline-e85). The overlay is written first: if the
@@ -1470,11 +1483,19 @@ export function createApp({
   /** Record decisions about the person a /people URL names, and show their page. */
   const decide = async (c: Context<AppEnv>, build: (form: FormData) => Array<[OverlayField, string]>) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
+    const form = await c.req.formData();
+    return oneDecisionAtATime(() => decideInTurn(c, form, build));
+  };
+
+  const decideInTurn = async (
+    c: Context<AppEnv>,
+    form: FormData,
+    build: (form: FormData) => Array<[OverlayField, string]>,
+  ) => {
     const m = c.get("m");
     const person = await personFromUrl(c);
     if (person === null) return errorResponse(c, "notFound", { message: m.people.notFound });
 
-    const form = await c.req.formData();
     const author = c.get("session").login;
     const reason = String(form.get("reason") ?? "").trim();
     let ref: string;
@@ -1606,18 +1627,6 @@ export function createApp({
     return showObserver(c);
   });
 
-  // One decision at a time. Each checks the observer and the person, then
-  // writes; two at once — two staff on one collector — would both pass the
-  // checks, and the loser's overlay row would fail on every rebuild after.
-  // In process is enough, since one process owns the store (ADR 0005), and
-  // the checks are re-read inside the turn rather than before it.
-  let unclaimedQueue: Promise<unknown> = Promise.resolve();
-  const oneAtATime = <T,>(work: () => Promise<T>): Promise<T> => {
-    const run = unclaimedQueue.then(work);
-    unclaimedQueue = run.catch(() => {});
-    return run;
-  };
-
   /**
    * What `name:<name>` will resolve to when these rows are applied — asked of
    * the resolver the apply itself uses, because a current display name is not
@@ -1665,10 +1674,10 @@ export function createApp({
       try {
         const made = await mintNow(mintConn, uid, { sampleOverlayPath: sampleOverlay });
         text = `${text} ${u.outcome(made.made, made.linked, made.left)}`;
-        void recordSampleChanges(kyselyReader(db), samplePaths, {
-          source: "observation_promotion",
-          reason: `connected @${login} to ${name}`,
-        }).then(
+        // No reason: the pass files every change it finds, and most of a
+        // store-wide promotion's are not this connection's doing — another
+        // volunteer's renumbering would read as caused by it.
+        void recordSampleChanges(kyselyReader(db), samplePaths, { source: "observation_promotion" }).then(
           (recorded) => {
             if (recorded.refused != null) console.warn(`sample history not recorded: ${recorded.refused}`);
           },
@@ -1700,7 +1709,7 @@ export function createApp({
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const u = m.unclaimed;
     const form = await c.req.formData();
-    return oneAtATime(async () => {
+    return oneDecisionAtATime(async () => {
       const detail = await unclaimedObserver(c);
       if (detail === null) return errorResponse(c, "notFound", { message: u.gone });
       const name = String(form.get("person") ?? "").trim();
@@ -1753,7 +1762,7 @@ export function createApp({
     const u = m.unclaimed;
     const form = await c.req.formData();
     const text = (name: string) => String(form.get(name) ?? "").trim();
-    return oneAtATime(async () => {
+    return oneDecisionAtATime(async () => {
       const detail = await unclaimedObserver(c);
       if (detail === null) return errorResponse(c, "notFound", { message: u.gone });
       const name = text("display_name");

@@ -24,8 +24,10 @@ import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./p
  * Unauthenticated: a profile is public, and a token would buy nothing.
  *
  * An account iNaturalist answered for is restated — its row replaced, or
- * removed if it has disconnected its ORCID. One it did not answer for (the
- * request failed) keeps what it had, so a bad night costs nothing.
+ * removed if it has disconnected its ORCID — and one whose answer did not
+ * read as an iD keeps what it had. A request that fails (anything but a 404,
+ * which means the account is gone) stops the run before anything is
+ * written: it is run by hand, so whoever ran it sees why and runs it again.
  */
 
 const IDS_PER_REQUEST = 100;

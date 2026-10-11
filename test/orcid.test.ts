@@ -198,6 +198,26 @@ describe("fetching what iNaturalist says", () => {
   });
 });
 
+describe("an answer that does not read as an iD", () => {
+  it("is no answer: what the store held stays", async () => {
+    const { conn } = await store();
+    await conn.run(`DELETE FROM inat_account WHERE inat_user_id = 333`);
+    await conn.run(`INSERT INTO inat_user_orcid (inat_user_id, orcid) VALUES (111, '${CARBERRY}')`);
+    const fetchImpl = (async (input: string | URL | Request) =>
+      new Response(
+        JSON.stringify(
+          String(input).includes("/observations/observers")
+            ? { results: [{ user: { id: 111, orcid: "https://sandbox.orcid.org/0000-0002-1825-0097" } }] }
+            : { results: [{ id: 111, orcid: "https://sandbox.orcid.org/0000-0002-1825-0097" }] },
+        ),
+        { status: 200 },
+      )) as typeof fetch;
+    const result = await fetchInatOrcids(conn, { fetchImpl, apiBase: "https://api.test/v1", requestDelayMs: 0 });
+    expect(result).toMatchObject({ accounts: 1, answered: 0 });
+    expect(await rows(conn, `SELECT orcid FROM inat_user_orcid`)).toEqual([[CARBERRY]]);
+  });
+});
+
 describe("loading confirmed iDs from a file", () => {
   const FILE = [
     "display_name,orcid,confirmed_by,confirmed_on,how",
@@ -317,5 +337,13 @@ describe("a person's ORCID on their page", () => {
     expect(body).toContain(`${CARBERRY} is already recorded for Bo Netter`);
     expect((await readOverlay(overlayPath)).map((r) => r.person_ref)).toEqual(["name:Bo Netter"]);
     expect((await app.request("/people/ada")).status).toBe(200);
+  });
+
+  it("lets only one of two simultaneous saves of one iD for two people through", async () => {
+    const { post, overlayPath } = await personPage();
+    const save = async (path: string) => (await post(path, { orcid: CARBERRY })).text();
+    const [ada, bo] = await Promise.all([save("/people/ada/orcid"), save("/people/2/orcid")]);
+    expect([ada, bo].filter((body) => body.includes("is already recorded for"))).toHaveLength(1);
+    expect(await readOverlay(overlayPath)).toHaveLength(1);
   });
 });

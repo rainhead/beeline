@@ -76,9 +76,16 @@ export async function fetchInatOrcids(
     const response = await fetchImpl(url, { signal: opts.signal });
     return response.ok ? response : response.status === 404 ? null : Promise.reject(new Error(`HTTP ${response.status} from ${url}`));
   };
-  // A profile's orcid is the URL iNaturalist shows, https://orcid.org/…;
-  // one that does not read as an iD is treated as none rather than stored.
-  const record = (user: InatUser) => answered.set(user.id, user.orcid ? parseOrcid(user.orcid) : null);
+  // A profile's orcid is the URL iNaturalist shows, https://orcid.org/…. One
+  // that does not read as an iD is no answer: neither stored nor taken to
+  // mean the account has none, so what the store held stays.
+  const record = (user: InatUser) => {
+    if (!user.orcid) answered.set(user.id, null);
+    else {
+      const orcid = parseOrcid(user.orcid);
+      if (orcid !== null) answered.set(user.id, orcid);
+    }
+  };
 
   for (let i = 0; i < ids.length; i += IDS_PER_REQUEST) {
     const chunk = ids.slice(i, i + IDS_PER_REQUEST);

@@ -114,8 +114,10 @@ export function inatClient(creds: InatCredentials): InatClient {
         inatUserId: user.id,
         login: user.login,
         iconUrl: user.icon_url ?? null,
-        // iNaturalist reports the iD as the URL its profile links to.
-        orcid: user.orcid ? parseOrcid(user.orcid) : null,
+        // iNaturalist reports the iD as the URL its profile links to. One
+        // that does not read as an iD says nothing either way, so it leaves
+        // what is stored alone rather than erasing it as "none".
+        orcid: user.orcid ? (parseOrcid(user.orcid) ?? undefined) : null,
       };
     },
   };

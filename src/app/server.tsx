@@ -1644,26 +1644,31 @@ export function createApp({
   // An ORCID iD staff recorded (beeline-0544): normalised from whatever was
   // pasted, and refused before the overlay is written when it fails its
   // checksum or another person already holds it — decide writes the file
-  // first, and an unappliable row there would fail on every rebuild.
+  // first, and an unappliable row there would fail on every rebuild. The
+  // holder is asked inside the decision lock, so two staff saving one iD
+  // for two people cannot both pass.
   app.post("/people/:id/orcid", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const m = c.get("m");
-    const person = await personFromUrl(c);
-    if (person === null) return errorResponse(c, "notFound", { message: m.people.notFound });
-    const given = text(await c.req.formData(), "orcid");
+    const form = await c.req.formData();
+    const given = text(form, "orcid");
     const orcid = given === "" ? "" : parseOrcid(given);
     if (orcid === null) return showPerson(c, undefined, m.people.orcidInvalid(given));
-    if (orcid !== "") {
-      const holder = await db
-        .selectFrom("person_orcid as o")
-        .innerJoin("person as p", "p.entity_id", "o.person_id")
-        .where("o.orcid", "=", orcid)
-        .where("o.person_id", "<>", person.person_id)
-        .select("p.display_name")
-        .executeTakeFirst();
-      if (holder !== undefined) return showPerson(c, undefined, m.people.orcidTaken(orcid, holder.display_name));
-    }
-    return decide(c, () => [["orcid", orcid]]);
+    return oneDecisionAtATime(async () => {
+      const person = await personFromUrl(c);
+      if (person === null) return errorResponse(c, "notFound", { message: m.people.notFound });
+      if (orcid !== "") {
+        const holder = await db
+          .selectFrom("person_orcid as o")
+          .innerJoin("person as p", "p.entity_id", "o.person_id")
+          .where("o.orcid", "=", orcid)
+          .where("o.person_id", "<>", person.person_id)
+          .select("p.display_name")
+          .executeTakeFirst();
+        if (holder !== undefined) return showPerson(c, undefined, m.people.orcidTaken(orcid, holder.display_name));
+      }
+      return decideInTurn(c, form, () => [["orcid", orcid]]);
+    });
   });
 
   app.post("/people/:id/membership", (c) => decide(c, (form) => [["home_atlas", text(form, "home_atlas")]]));

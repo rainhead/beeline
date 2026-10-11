@@ -63,6 +63,12 @@ beforeAll(async () => {
     `INSERT INTO inat_place_absent (inat_place_id, asked_at)
      VALUES (117476, TIMESTAMPTZ '2026-08-01 12:00:00+00')`,
   );
+  // An account's ORCID iD (beeline-yaaj): keyed by the iNat user id and
+  // fetched from iNaturalist, so it comes across as the place cache does.
+  await seed.run(
+    `INSERT INTO inat_user_orcid (inat_user_id, orcid, fetched_at)
+     VALUES (429964, '0000-0002-1825-0097', TIMESTAMPTZ '2026-08-01 12:00:00+00')`,
+  );
   // ITIS, on inat_place's terms: filled from outside the store, keyed by
   // ITIS's own id, and not something promotion can recompute (beeline-45v.4).
   await seed.run(
@@ -118,6 +124,7 @@ describe("reseeding a store that cannot be blown away", () => {
       job_run: 1,
       inat_place: 1,
       inat_place_absent: 1,
+      inat_user_orcid: 1,
       itis_taxon: 2,
       itis_synonym: 1,
     });
@@ -210,6 +217,7 @@ describe("reseeding a store that cannot be blown away", () => {
       job_run: 0,
       inat_place: 0,
       inat_place_absent: 0,
+      inat_user_orcid: 0,
       itis_taxon: 0,
       itis_synonym: 0,
     });

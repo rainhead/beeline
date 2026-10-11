@@ -10,6 +10,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { islandsSrc, styleVersion } from "./assets.js";
 import { registerAuthRoutes, signInHref, type InatClient } from "./auth.js";
+import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, SESSION_COOKIE, type AppEnv, type Session, type SessionResolver } from "./session.js";
@@ -355,7 +356,13 @@ export function createApp({
   });
   app.use("/static/*", serveStatic({ root: "./src/app" }));
   app.use("/assets/*", serveStatic({ root: "./dist/app" }));
-  registerAuthRoutes(app, { db, inat, origin: config.origin, environment: config.environment });
+  registerAuthRoutes(app, {
+    db,
+    inat,
+    origin: config.origin,
+    environment: config.environment,
+    recordOrcid: (inatUserId, orcid) => recordSignInOrcid(inatUserId, orcid),
+  });
 
   // --- CSRF: cross-origin writes die here (cookies are SameSite=Lax too). ---
   app.use(async (c, next) => {
@@ -1451,6 +1458,36 @@ export function createApp({
   };
 
   /**
+   * What iNaturalist said about an account's ORCID iD as it signed in
+   * (beeline-yaaj): stored where it changed, and entered in the person's
+   * history as the sign-in that found it. Behind the decision lock, because
+   * it reads the change log and appends to it as a decision does.
+   */
+  const recordSignInOrcid = (inatUserId: number, orcid: string | null) =>
+    oneDecisionAtATime(async () => {
+      const uid = BigInt(inatUserId);
+      const held = await db
+        .selectFrom("inat_user_orcid")
+        .where("inat_user_id", "=", uid)
+        .select("orcid")
+        .executeTakeFirst();
+      if ((held?.orcid ?? null) === orcid) return;
+      const account = await db
+        .selectFrom("inat_account")
+        .where("inat_user_id", "=", uid)
+        .select("person_id")
+        .executeTakeFirst();
+      const before = account === undefined ? undefined : (await stateOf(account.person_id)).state;
+      await db.deleteFrom("inat_user_orcid").where("inat_user_id", "=", uid).execute();
+      if (orcid !== null) await db.insertInto("inat_user_orcid").values({ inat_user_id: uid, orcid }).execute();
+      if (account === undefined || before === undefined) return;
+      const { state: after, names } = await stateOf(account.person_id);
+      if (after === undefined) return;
+      const seen = knownPerson({ known: lastKnown(await readChanges(changesPath)), names }, before);
+      await appendChanges(changesPath, diffPerson(seen?.ref ?? before.ref, before, after, { source: "sign_in" }));
+    });
+
+  /**
    * The writing half of a decision about a person, shared by their page and
    * the unclaimed screen (beeline-e85). The overlay is written first: if the
    * apply fails, the decision is still on disk to be replayed, whereas a
@@ -1603,6 +1640,36 @@ export function createApp({
       ["label_name", text(form, "label_name")],
     ]),
   );
+
+  // An ORCID iD staff recorded (beeline-0544): normalised from whatever was
+  // pasted, and refused before the overlay is written when it fails its
+  // checksum or another person already holds it — decide writes the file
+  // first, and an unappliable row there would fail on every rebuild. The
+  // holder is asked inside the decision lock, so two staff saving one iD
+  // for two people cannot both pass.
+  app.post("/people/:id/orcid", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    const form = await c.req.formData();
+    const given = text(form, "orcid");
+    const orcid = given === "" ? "" : parseOrcid(given);
+    if (orcid === null) return showPerson(c, undefined, m.people.orcidInvalid(given));
+    return oneDecisionAtATime(async () => {
+      const person = await personFromUrl(c);
+      if (person === null) return errorResponse(c, "notFound", { message: m.people.notFound });
+      if (orcid !== "") {
+        const holder = await db
+          .selectFrom("person_orcid as o")
+          .innerJoin("person as p", "p.entity_id", "o.person_id")
+          .where("o.orcid", "=", orcid)
+          .where("o.person_id", "<>", person.person_id)
+          .select("p.display_name")
+          .executeTakeFirst();
+        if (holder !== undefined) return showPerson(c, undefined, m.people.orcidTaken(orcid, holder.display_name));
+      }
+      return decideInTurn(c, form, () => [["orcid", orcid]]);
+    });
+  });
 
   app.post("/people/:id/membership", (c) => decide(c, (form) => [["home_atlas", text(form, "home_atlas")]]));
 

@@ -203,8 +203,10 @@ fly ssh console --app beeline
 fly machine update --env BEELINE_MAINTENANCE= <id>    # back to serving
 ```
 
-This is where `pnpm db:reseed`, `pnpm person:apply` and
-`pnpm elevation:fetch` run. The re-derivation procedure itself — what to run
+This is where `pnpm db:reseed`, `pnpm person:apply`,
+`pnpm person:orcids`, `pnpm inat:fetch-orcids` and
+`pnpm elevation:fetch` run. A list of confirmed ORCID iDs names people, so it
+goes up with `fly ssh sftp put` into `data/` and never into git. The re-derivation procedure itself — what to run
 after a change under `ingest/`, and why re-fetching is not the fix — is the
 one in [deploy-maderas.md](deploy-maderas.md#re-deriving-the-model-after-a-promotion-change),
 and only the way you get a shell differs here. The machine already sets

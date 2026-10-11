@@ -1540,6 +1540,33 @@ export const en = {
     leadAny: "Anyone",
     leadSome: "Any program",
     notALead: "leads no program",
+    /**
+     * ORCID (beeline-0544, beeline-yaaj). The card is staff-facing like the
+     * rest of the page, but the note on connecting one is written to be read
+     * out to the volunteer, since telling them is what staff use it for.
+     */
+    orcid: "ORCID",
+    orcidHint:
+      "An ORCID iD credits this person in the records Beeline publishes, as the collector and as the identifier. The iD connected on their iNaturalist account is the one used; one recorded here is used only when their account has none.",
+    orcidFromInat: "From their iNaturalist account",
+    orcidFromStaff: "Recorded by staff",
+    orcidNone: "No ORCID iD",
+    /** The note, in three pieces so the middle one can be the link. */
+    orcidConnect: "To be credited by name when their records are published, they can connect their ORCID iD on iNaturalist: in ",
+    orcidConnectLink: "iNaturalist's settings",
+    orcidConnectAfter:
+      ", under Applications, choose Connected Accounts and connect ORCID. Beeline picks it up the next time they sign in to Beeline — if they are already signed in, they sign out and back in.",
+    orcidOverridden: (staff: string) =>
+      `Staff also recorded ${staff}. Their iNaturalist account's iD is the one used.`,
+    orcidShared: (names: string) => `The same iD also credits ${names}. An iD belongs to one person — find out whose it is.`,
+    orcidField: "ORCID iD recorded by staff",
+    orcidFieldHint:
+      "Only an iD the person gave you or that you have confirmed is theirs. The full address (https://orcid.org/…) or the sixteen digits alone are both fine.",
+    orcidInvalid: (value: string) =>
+      `'${value}' is not an ORCID iD — it should be sixteen digits in four groups, like 0000-0002-1825-0097, and the last one is a check digit`,
+    orcidTaken: (orcid: string, name: string) => `${orcid} is already recorded for ${name}`,
+    saveOrcid: "Save ORCID",
+    removeOrcid: "Remove",
     adminRights: "Admin rights",
     adminHint: "Admins reach Jobs, People, Design, and the atlas-wide listings.",
     grantAdmin: "Grant admin",
@@ -1601,17 +1628,21 @@ export const en = {
         admin: "Admin rights",
         acts_for: "May act for",
         leads: "Leads",
+        orcid: "ORCID iD recorded by staff",
+        inat_orcid: "ORCID iD on iNaturalist",
       },
       /**
-       * Who, where nobody can be named. Four of these are passes over the
-       * store that found a difference, which is a weaker claim than a staff
-       * member's login and is written to read like one.
+       * Who, where nobody can be named. All but the first are passes over
+       * the store or moments that found a difference, which is a weaker
+       * claim than a staff member's login and is written to read like one.
        */
       source: {
         app: "staff",
         legacy_promotion: "a rebuild",
         observation_promotion: "an iNaturalist sync",
         inat_backfill: "an iNaturalist login lookup",
+        inat_orcid_fetch: "an iNaturalist ORCID lookup",
+        sign_in: "their sign-in",
         reconcile: "found at startup",
       },
       /** An empty value, in a cell that has to show something. */

@@ -3,6 +3,7 @@ import { reportError } from "./error-reporting.js";
 import type { CsvTiming } from "./request-timing.js";
 import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
 import { labelName } from "../person-name.js";
+import { orcidUrl } from "../orcid.js";
 
 /**
  * Browsing the collection: the query layer behind /samples and /specimens.
@@ -402,6 +403,8 @@ export interface SpecimenRow {
   sex: string | null;
   is_expert: boolean | null;
   determiner: string | null;
+  /** The ORCID iD crediting the determiner, bare; null for one with none or known only by name. */
+  determiner_orcid: string | null;
   /** When the determination of record was made; null where its source did not say. */
   determined_on: Date | null;
   /** How much of that date the source stated; null is the day (beeline-9ut). */
@@ -424,6 +427,8 @@ export interface SpecimenRow {
 export interface ListedCollector {
   display: string;
   label: string;
+  /** The ORCID iD that credits them (person_orcid_of_record), bare; null for most people. */
+  orcid: string | null;
 }
 
 export interface ListingPageOptions {
@@ -802,7 +807,8 @@ export async function listSpecimens(
     )
     .leftJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")
     .leftJoin("animal as an", "an.entity_id", "d.animal_id")
-    .leftJoin("person as det", "det.entity_id", "d.determiner_id");
+    .leftJoin("person as det", "det.entity_id", "d.determiner_id")
+    .leftJoin("person_orcid_of_record as det_orcid", "det_orcid.person_id", "d.determiner_id");
 
   if (query.scope === MINE) {
     base = base.where(({ exists, selectFrom }) =>
@@ -899,6 +905,7 @@ export async function listSpecimens(
         "s.geoprivacy",
         "s.taxon_geoprivacy",
         sql<string | null>`coalesce(det.display_name, d.determiner_name)`.as("determiner"),
+        "det_orcid.orcid as determiner_orcid",
       ])
       .orderBy(specimenOrder(query))
       .orderBy("sp.sample_id")
@@ -931,13 +938,14 @@ export async function collectorsOf(
   const rows = await db
     .selectFrom("sample_collector as c")
     .innerJoin("person as p", "p.entity_id", "c.person_id")
+    .leftJoin("person_orcid_of_record as o", "o.person_id", "c.person_id")
     .where("c.sample_id", "in", [...new Set(sampleIds)])
-    .select(["c.sample_id", "p.display_name", "p.given_name", "p.family_name", "p.label_name", "c.position"])
+    .select(["c.sample_id", "p.display_name", "p.given_name", "p.family_name", "p.label_name", "c.position", "o.orcid"])
     .orderBy("c.position")
     .execute();
   for (const row of rows) {
     const list = names.get(row.sample_id) ?? [];
-    list.push({ display: row.display_name, label: labelName(row) });
+    list.push({ display: row.display_name, label: labelName(row), orcid: row.orcid });
     names.set(row.sample_id, list);
   }
   return names;
@@ -1140,12 +1148,27 @@ const qcLabel = (row: { blocking: number; warning: number }) =>
 const recordedBy = <Row>(page: Page<Row>, sampleId: number) =>
   (page.collectors.get(sampleId) ?? []).map((c) => c.display).join(" | ");
 
+/**
+ * dwc:recordedByID: the ORCID iDs of whichever collectors have one, in
+ * recordedBy order and separated as recordedBy is (beeline-0544). Darwin
+ * Core gives the order of this list no meaning, so a collector with no iD is
+ * simply absent from it rather than held open by a blank.
+ */
+const recordedByID = <Row>(page: Page<Row>, sampleId: number) =>
+  (page.collectors.get(sampleId) ?? [])
+    .flatMap((c) => (c.orcid === null ? [] : [orcidUrl(c.orcid)]))
+    .join(" | ");
+
+/** dwc:identifiedByID: the determiner's ORCID iD, where they have one. */
+export const identifiedByID = (orcid: string | null) => (orcid === null ? null : orcidUrl(orcid));
+
 /** The samples download: one collecting event per row. */
 export const SAMPLE_CSV_HEADER = [
   "fieldNumber",
   "eventDate",
   "samplingProtocol",
   "recordedBy",
+  "recordedByID",
   "countryCode",
   "stateProvince",
   "county",
@@ -1174,6 +1197,7 @@ export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => 
   eventDate(r.date_start, r.date_end),
   r.protocol,
   recordedBy(page, r.sample_id),
+  recordedByID(page, r.sample_id),
   countryCode(r.country),
   r.state_province,
   r.county,
@@ -1219,6 +1243,7 @@ export const SPECIMEN_DWC_COLUMNS = [
   "eventDate",
   "samplingProtocol",
   "recordedBy",
+  "recordedByID",
   "countryCode",
   "stateProvince",
   "county",
@@ -1237,6 +1262,7 @@ export const SPECIMEN_DWC_COLUMNS = [
   "verbatimIdentification",
   "sex",
   "identifiedBy",
+  "identifiedByID",
   "dateIdentified",
 ] as const;
 
@@ -1261,6 +1287,7 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   eventDate(r.date_start, r.date_end),
   r.protocol,
   recordedBy(page, r.sample_id),
+  recordedByID(page, r.sample_id),
   countryCode(r.country),
   r.state_province,
   r.county,
@@ -1279,6 +1306,7 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.verbatim_identification,
   r.sex,
   r.determiner,
+  identifiedByID(r.determiner_orcid),
   dateIdentified(r.determined_on, r.determined_on_precision),
   r.specimen_number,
   r.atlas_code,

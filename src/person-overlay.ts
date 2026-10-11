@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { parseCsv } from "./corrections.js";
+import { parseOrcid } from "./orcid.js";
 
 /**
  * Staff decisions about people, in the same shape and spirit as the legacy
@@ -57,6 +58,7 @@ export const OVERLAY_FIELDS = [
   "given_name",
   "family_name",
   "label_name",
+  "orcid",
 ] as const;
 export type OverlayField = (typeof OVERLAY_FIELDS)[number];
 
@@ -175,6 +177,12 @@ export function valueProblem(field: OverlayField, value: string): string | null 
       if (!/^[A-Za-z][A-Za-z0-9]*$/.test(code)) return `'${code}' is not a program code`;
     }
     return null;
+  }
+  if (field === "orcid") {
+    // The bare iD, exactly: the file is read in diffs, and one spelling per
+    // iD is what lets a reader see that two rows name the same researcher.
+    // Empty clears. Whoever writes a row normalises first (parseOrcid).
+    return value === "" || parseOrcid(value) === value ? null : `'${value}' is not an ORCID iD (0000-0002-1825-0097)`;
   }
   if (field === "display_name" && value.trim() === "") return "display_name cannot be blank";
   return null;

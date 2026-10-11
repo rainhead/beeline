@@ -9,10 +9,11 @@ import { attachPrivateStore, commentsIn } from "../src/app/db.js";
 import { createApp } from "../src/app/server.js";
 import { cookieSessionResolver, endSessionsFor, purgeIdleSessions, sessionRef } from "../src/app/session.js";
 import { createFileDb, createMemoryDb } from "./helpers.js";
+import { readChanges } from "../src/person-change.js";
 
 const ORIGIN = "http://localhost:3054";
 
-type FakeIdentity = { inatUserId: number; login: string; iconUrl?: string | null };
+type FakeIdentity = { inatUserId: number; login: string; iconUrl?: string | null; orcid?: string | null };
 
 const fakeInat = (identity: FakeIdentity): InatClient => ({
   authorizeUrl: (state, redirectUri) =>
@@ -27,13 +28,16 @@ async function testApp(identity: FakeIdentity, feedbackEmail?: string) {
   await conn.run(`INSERT INTO person (entity_id, display_name) VALUES (11, 'Member Bee')`);
   await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (11, 501, 'memberbee')`);
   const db = createKysely(instance);
+  // Never the real log: sign-in records what it learns about a person there.
+  const changesPath = join(await mkdtemp(join(tmpdir(), "auth-")), "person-change.csv");
   const app = createApp({
     db,
     config: { environment: "development", origin: ORIGIN, feedbackEmail },
     inat: fakeInat(identity),
     resolveSession: cookieSessionResolver(db),
+    personChangesPath: changesPath,
   });
-  return { app, db };
+  return { app, db, changesPath };
 }
 
 /**
@@ -431,6 +435,28 @@ describe("iNat OAuth sign-in", () => {
     const { app } = await testApp({ inatUserId: 501, login: "memberbee" });
     const res = await app.request("/", { headers: { cookie: "beeline_session=deadbeef" } });
     expect(res.status).toBe(401);
+  });
+
+  it("keeps the ORCID iD the account has connected, and says in the person's history that sign-in found it", async () => {
+    // ORCID's documented example iD: synthetic, nobody in Beeline.
+    const { app, db, changesPath } = await testApp({ inatUserId: 501, login: "memberbee", orcid: "0000-0002-1825-0097" });
+    expect((await signIn(app)).status).toBe(302);
+    expect(await db.selectFrom("inat_user_orcid").select(["inat_user_id", "orcid"]).execute()).toEqual([
+      { inat_user_id: 501n, orcid: "0000-0002-1825-0097" },
+    ]);
+    expect((await readChanges(changesPath)).map((c) => [c.person_ref, c.field, c.old_value, c.new_value, c.source])).toEqual([
+      ["name:Member Bee", "inat_orcid", "", "0000-0002-1825-0097", "sign_in"],
+    ]);
+    // Signing in again with nothing changed writes nothing.
+    await signIn(app);
+    expect(await readChanges(changesPath)).toHaveLength(1);
+  });
+
+  it("forgets an ORCID iD the account has disconnected", async () => {
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee", orcid: null });
+    await db.insertInto("inat_user_orcid").values({ inat_user_id: 501n, orcid: "0000-0002-1825-0097" }).execute();
+    await signIn(app);
+    expect(await db.selectFrom("inat_user_orcid").selectAll().execute()).toEqual([]);
   });
 });
 

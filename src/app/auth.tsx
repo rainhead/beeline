@@ -5,6 +5,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html } from "hono/html";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
+import { parseOrcid } from "../orcid.js";
 import { SESSION_COOKIE, createSession, type AppEnv } from "./session.js";
 import { PublicPage } from "./views/layout.js";
 import { styleVersion } from "./assets.js";
@@ -47,6 +48,12 @@ export interface InatIdentity {
   login: string;
   /** Profile picture URL, when the account has one. */
   iconUrl: string | null;
+  /**
+   * The ORCID iD the account has connected, bare, or null for none
+   * (beeline-yaaj). Absent where a client does not say, which is not the
+   * same as saying there is none.
+   */
+  orcid?: string | null;
 }
 
 /** The iNaturalist side of sign-in — injectable so tests never hit the network. */
@@ -98,10 +105,20 @@ export function inatClient(creds: InatCredentials): InatClient {
       const { api_token: jwt } = (await jwtRes.json()) as { api_token: string };
       const meRes = await fetch(`${API}/users/me`, { headers: { Authorization: `Bearer ${jwt}` } });
       if (!meRes.ok) throw new Error(`identity fetch failed: ${meRes.status}`);
-      const me = (await meRes.json()) as { results: Array<{ id: number; login: string; icon_url?: string | null }> };
+      const me = (await meRes.json()) as {
+        results: Array<{ id: number; login: string; icon_url?: string | null; orcid?: string | null }>;
+      };
       const user = me.results[0];
       if (!user) throw new Error("identity fetch returned no user");
-      return { inatUserId: user.id, login: user.login, iconUrl: user.icon_url ?? null };
+      return {
+        inatUserId: user.id,
+        login: user.login,
+        iconUrl: user.icon_url ?? null,
+        // iNaturalist reports the iD as the URL its profile links to. One
+        // that does not read as an iD says nothing either way, so it leaves
+        // what is stored alone rather than erasing it as "none".
+        orcid: user.orcid ? (parseOrcid(user.orcid) ?? undefined) : null,
+      };
     },
   };
 }
@@ -112,6 +129,12 @@ export interface AuthDeps {
   origin: string;
   /** Non-production instances say so, on the pre-session pages too (beeline-2u8). */
   environment: PageEnv["environment"];
+  /**
+   * Keep what iNaturalist just said about the account's ORCID iD
+   * (beeline-yaaj). Sign-in is when Beeline asks iNaturalist who somebody
+   * is, so it is when an iD they connected arrives — no schedule needed.
+   */
+  recordOrcid?: (inatUserId: number, orcid: string | null) => Promise<void>;
 }
 
 /**
@@ -176,6 +199,16 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
         }),
       )
       .execute();
+
+    // Never fails the sign-in: an iD recorded at the next sign-in instead of
+    // this one costs nothing, and a person turned away for it would.
+    if (identity.orcid !== undefined && deps.recordOrcid !== undefined) {
+      try {
+        await deps.recordOrcid(identity.inatUserId, identity.orcid);
+      } catch (err) {
+        console.warn(`sign-in: could not record the ORCID iD: ${(err as Error).message}`);
+      }
+    }
 
     const account = await deps.db
       .selectFrom("inat_account")

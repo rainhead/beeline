@@ -34,7 +34,25 @@ CREATE TABLE person_orcid (
   person_id INTEGER PRIMARY KEY REFERENCES person(entity_id),
   orcid     TEXT NOT NULL UNIQUE
 );
-COMMENT ON TABLE person_orcid IS 'ORCiD where known — scholarly attribution for determiners and authors in exports. Some iNaturalist profiles note them; recorded as confirmed, never guessed.';
+COMMENT ON TABLE person_orcid IS 'An ORCID iD staff recorded for this person, from one the person gave or confirmed: set on /people/:id through the person overlay (field orcid) and replayed onto every rebuild. Never guessed. The one an archive writes is person_orcid_of_record, where the person''s own iNaturalist profile wins (inat_user_orcid).';
+COMMENT ON COLUMN person_orcid.orcid IS 'The bare iD, 0000-0002-1825-0097, checksum verified; an export writes it as https://orcid.org/<iD>.';
+
+-- What iNaturalist says about an account's ORCID (beeline-yaaj). iNaturalist
+-- holds one only as a connected account: the person signs in to ORCID from
+-- iNaturalist's settings, so the iD is their own statement, proved, and
+-- "recorded as confirmed" in exactly the sense person_orcid asks. Keyed by
+-- the iNat user id rather than by person, like everything else iNaturalist
+-- owns: the fetch knows accounts, a rebind moves the account and its iD
+-- with it, and a rebuild that redraws every entity_id leaves this alone.
+CREATE TABLE inat_user_orcid (
+  inat_user_id BIGINT PRIMARY KEY,
+  orcid        TEXT NOT NULL,
+  fetched_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE inat_user_orcid IS 'The ORCID iD an iNaturalist account has connected, as iNaturalist''s API reports it (user.orcid). Written when the account signs in to Beeline (src/app/auth.tsx), and for every bound account by pnpm inat:fetch-orcids; an account that has none has no row. Fetched, not derived, so db:reseed carries it.';
+COMMENT ON COLUMN inat_user_orcid.inat_user_id IS 'The account. Not a foreign key: an account keeps its iD while it is bound to nobody.';
+COMMENT ON COLUMN inat_user_orcid.orcid IS 'The bare iD, as person_orcid.orcid; iNaturalist reports it as a URL.';
+COMMENT ON COLUMN inat_user_orcid.fetched_at IS 'When iNaturalist last reported it.';
 
 CREATE TABLE atlas (
   entity_id     INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),

@@ -40,6 +40,28 @@ export interface PersonOrcidTable {
   orcid: string;
 }
 
+/** What iNaturalist reports an account has connected (beeline-yaaj). */
+export interface InatUserOrcidTable {
+  inat_user_id: BigIntCol;
+  orcid: string;
+  fetched_at: Generated<Date>;
+}
+
+export type OrcidSource = "inaturalist" | "staff";
+
+/** schema/103: the iD that credits a person downstream — iNaturalist's, else staff's. */
+export interface PersonOrcidOfRecordView {
+  person_id: number;
+  orcid: string;
+  source: OrcidSource;
+}
+
+export interface PersonOrcidSharedView {
+  orcid: string;
+  person_id: number;
+  source: OrcidSource;
+}
+
 /** Absent = never asked; 'program' = asked, and no member atlas applies. */
 export interface PersonMembershipTable {
   person_id: number;
@@ -1047,6 +1069,9 @@ export interface Database {
   person: PersonTable;
   inat_account: InatAccountTable;
   person_orcid: PersonOrcidTable;
+  inat_user_orcid: InatUserOrcidTable;
+  person_orcid_of_record: PersonOrcidOfRecordView;
+  person_orcid_shared: PersonOrcidSharedView;
   person_membership: PersonMembershipTable;
   person_admin: PersonAdminTable;
   person_delegate: PersonDelegateTable;

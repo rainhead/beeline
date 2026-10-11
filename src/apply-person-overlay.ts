@@ -326,6 +326,27 @@ async function applyField(
     return null;
   }
 
+  if (field === "orcid") {
+    // An iD credits one person, so one staff has already given somebody else
+    // is refused rather than moved: which of the two it belongs to is a
+    // person's question, and quietly taking it away from the first would be
+    // the answer nobody gave.
+    if (value === "") {
+      await conn.run(`DELETE FROM person_orcid WHERE person_id = $1`, [personId] as never);
+      return null;
+    }
+    const holder = await scalar(conn, `SELECT person_id FROM person_orcid WHERE orcid = $1`, [value]);
+    if (holder !== null && Number(holder) !== personId) {
+      return `ORCID ${value} is already recorded for person ${Number(holder)}`;
+    }
+    await conn.run(
+      `INSERT INTO person_orcid (person_id, orcid) VALUES ($1, $2)
+       ON CONFLICT (person_id) DO UPDATE SET orcid = excluded.orcid`,
+      [personId, value] as never,
+    );
+    return null;
+  }
+
   // The name columns. Blank clears to NULL, except display_name, which the
   // parser already refuses to blank.
   const columns: Partial<Record<OverlayField, string>> = {

@@ -14,7 +14,15 @@ import {
   parseListingQuery,
   toCsv,
   type ListingQuery,
+  type SpecimenRow,
 } from "../src/app/listings.js";
+import { mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { strFromU8, unzipSync } from "fflate";
+import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
+import { writeProgramArchives } from "../src/app/program-archives.js";
+import type { GovernancePaths } from "../src/program-governance.js";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 const unusedInat: InatClient = {
@@ -46,7 +54,11 @@ const person = async (conn: Awaited<ReturnType<typeof createMemoryDb>>["conn"], 
  * where Alice belongs. Those are three different answers, and a listing has
  * to be able to ask for each of them separately from where a sample fell.
  */
-async function listingApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
+async function listingApp(
+  signedInAs: "alice" | "bob" | "staffer" = "alice",
+  /** Where the program archives live and which decisions govern them; nowhere real unless a test says. */
+  exports: { dir?: string; governance?: GovernancePaths } = {},
+) {
   const { instance, conn } = await createMemoryDb();
   const alice = await person(conn, "Alice Adams");
   const bob = await person(conn, "Bob Barnes");
@@ -162,9 +174,10 @@ async function listingApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
     db,
     // Sandbox, not development: development makes everyone an admin, which
     // is exactly what these tests need to tell apart (beeline-6va).
-    config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
+    config: { environment: "sandbox" as const, origin: "http://localhost:3054", exportsDir: exports.dir },
     inat: unusedInat,
     resolveSession: async () => ({ personId: people[signedInAs], login: signedInAs, iconUrl: null }),
+    programGovernance: exports.governance,
   });
   return { app, db, conn, ...people };
 }
@@ -832,6 +845,191 @@ describe("CSV export", () => {
     // A tab or carriage return in front is a formula trigger too.
     expect(csvCell("\t=1+1")).toBe("'\t=1+1");
     expect(csvCell("\r=1+1")).toBe(`"'\r=1+1"`);
+  });
+});
+
+describe("Darwin Core archives, by program and season", () => {
+  /** The archive's files by name, as text. */
+  const unpack = (bytes: Uint8Array) =>
+    Object.fromEntries(Object.entries(unzipSync(bytes)).map(([name, data]) => [name, strFromU8(data)]));
+  const table = (text: string) => text.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
+
+  const LICENSES_HEADER = "program,from_season,license,decided_by,decided_on,source,reason";
+  const POLICIES_HEADER = "program,from_season,url,decided_by,decided_on,reason";
+
+  /** A scratch exports directory and decision files, written as a test says. */
+  async function exportsFixture(licenses: string[], policies: string[]) {
+    const dir = await mkdtemp(join(tmpdir(), "beeline-dwca-"));
+    const governance = { licenses: join(dir, "licenses.csv"), policies: join(dir, "policies.csv") };
+    const write = async (l: string[], p: string[]) => {
+      await writeFile(governance.licenses, [LICENSES_HEADER, ...l].join("\n") + "\n");
+      await writeFile(governance.policies, [POLICIES_HEADER, ...p].join("\n") + "\n");
+    };
+    await write(licenses, policies);
+    return { dir, governance, write };
+  }
+  const OBA_LICENSE = "OBA,2017,CC-BY-NC-4.0,Test,2026-10-10,https://example.org/oba,Published under it";
+  const OBA_POLICY = "OBA,2026,https://example.org/oba-privacy,Test,2026-10-10,Agreed";
+
+  it("writes a season once its program has a licence and a privacy policy, with every determination", async () => {
+    const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
+    const { app, db, conn } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
+    // A later volunteer determination of OBA00001, beside the expert one the
+    // CSV shows; a tab in what they wrote must not split the row.
+    await conn.run(
+      `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name,
+                                  verbatim_identification, sex, recorded_at)
+       SELECT sp.entity_id, an.entity_id, false, 'in_app', 'A Volunteer', 'Bombus\tsp.', 'female', now() + INTERVAL 1 DAY
+       FROM specimen sp, animal an
+       WHERE sp.field_number = 'OBA00001' AND an.scientific_name = 'Bombus'`,
+    );
+    const manifest = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
+    const oba = manifest.entries.find((e) => e.program === "OBA" && e.season === 2026)!;
+    expect(oba).toMatchObject({ specimens: 2, license: "CC-BY-NC-4.0", policy: true, file: "OBA-2026.zip" });
+    // Washington has specimens and no licence: listed, not written.
+    expect(manifest.entries.find((e) => e.program === "WaBA")).toMatchObject({ license: null, file: null });
+
+    const res = await app.request("/exports/dwca/OBA-2026.zip");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/zip");
+    expect(res.headers.get("content-disposition")).toContain(`filename="beeline-OBA-2026-dwca.zip"`);
+    const files = unpack(new Uint8Array(await res.arrayBuffer()));
+    expect(Object.keys(files)).toEqual(["meta.xml", "occurrence.txt", "identification.txt"]);
+
+    // meta.xml declares a Darwin Core term for each Darwin Core column, at
+    // the index the file holds it, and the licence as a constant.
+    const meta = files["meta.xml"]!;
+    const [header, ...occurrences] = table(files["occurrence.txt"]!);
+    expect(meta).toContain(`rowType="http://rs.tdwg.org/dwc/terms/Occurrence"`);
+    expect(meta).toContain(`rowType="http://rs.tdwg.org/dwc/terms/Identification"`);
+    for (const term of ["occurrenceID", "catalogNumber", "decimalLatitude", "scientificName", "dateIdentified"]) {
+      expect(meta).toContain(`<field index="${header!.indexOf(term)}" term="http://rs.tdwg.org/dwc/terms/${term}"/>`);
+    }
+    expect(meta).toContain(
+      `<field default="http://creativecommons.org/licenses/by-nc/4.0/legalcode" term="http://purl.org/dc/terms/license"/>`,
+    );
+    // Beeline's own columns are in the file and declared as nothing.
+    expect(header).toContain("geoprivacy");
+    expect(meta).not.toContain("terms/geoprivacy");
+
+    // OBA's two specimens, and nothing of Washington's.
+    const catalog = header!.indexOf("catalogNumber");
+    expect(occurrences.map((r) => r[catalog]).sort()).toEqual(["OBA00001", "OBA00002"]);
+    const oba1 = occurrences.find((r) => r[catalog] === "OBA00001")!;
+    expect(oba1[header!.indexOf("scientificName")]).toBe("Bombus vosnesenskii");
+
+    // Both determinations of OBA00001, oldest first, joined by the core's id;
+    // OBA00002 has none and so no rows.
+    const [identHeader, ...identifications] = table(files["identification.txt"]!);
+    expect(identHeader!.slice(0, 2)).toEqual(["coreid", "scientificName"]);
+    expect(identifications.every((r) => r.length === identHeader!.length)).toBe(true);
+    expect(identifications.map((r) => r[0])).toEqual([oba1[0], oba1[0]]);
+    const col = (name: string) => identHeader!.indexOf(name);
+    expect(identifications.map((r) => r[col("scientificName")])).toEqual(["Bombus vosnesenskii", "Bombus"]);
+    expect(identifications.map((r) => r[col("verbatimIdentification")])).toEqual([
+      "Bombus cf. vosnesenskii",
+      "Bombus sp.",
+    ]);
+    // The expert's is current even though the volunteer's came later, said as
+    // Symbiota reads it: its own term, 1 or 0.
+    expect(identifications.map((r) => r[col("identificationIsCurrent")])).toEqual(["1", "0"]);
+    expect(meta).toContain(
+      `<field index="${col("identificationIsCurrent")}" term="https://symbiota.org/terms/identificationIsCurrent"/>`,
+    );
+    // Each determination keeps its own sex, which the core holds only for the record.
+    expect(identifications.map((r) => r[col("sex")])).toEqual(["", "female"]);
+    expect(meta).not.toContain("terms/caste");
+  });
+
+  it("withholds a season with a licence and no privacy policy, and says which it lacks", async () => {
+    const fx = await exportsFixture([OBA_LICENSE], []);
+    const { app, db } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
+    const manifest = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
+    expect(manifest.entries.every((e) => e.file === null)).toBe(true);
+    expect(await readdir(join(fx.dir, "dwca"))).toEqual(["manifest.json"]);
+    expect((await app.request("/exports/dwca/OBA-2026.zip")).status).toBe(404);
+    const page = await get(app, "/exports");
+    expect(page).toContain("CC BY-NC 4.0");
+    expect(page).toContain("none yet");
+    expect(page).toContain("withheld");
+  });
+
+  it("withdraws the download as soon as a decision is withdrawn, and the file at the next run", async () => {
+    const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
+    const { app, db } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
+    await writeProgramArchives(db, fx.dir, { governance: fx.governance });
+    expect((await app.request("/exports/dwca/OBA-2026.zip")).status).toBe(200);
+    await fx.write([OBA_LICENSE], []);
+    // The file is still on disk; the download is not.
+    expect(await readdir(join(fx.dir, "dwca"))).toContain("OBA-2026.zip");
+    expect((await app.request("/exports/dwca/OBA-2026.zip")).status).toBe(404);
+    await writeProgramArchives(db, fx.dir, { governance: fx.governance });
+    expect(await readdir(join(fx.dir, "dwca"))).not.toContain("OBA-2026.zip");
+  });
+
+  it("lists every program by season, Master Melittology's included, and none for the BLM surveys", async () => {
+    const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
+    const { app, db } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
+    // Before the first run the page says when they appear.
+    expect(await get(app, "/exports")).toContain("Not written yet");
+    await writeProgramArchives(db, fx.dir, { governance: fx.governance });
+    const page = await get(app, "/exports");
+    expect(page).toContain(`href="/exports/dwca/OBA-2026.zip"`);
+    expect(page).toContain("2026 season");
+    expect(page).toContain(`href="https://example.org/oba-privacy"`);
+    expect(page).toContain("Washington Bee Atlas");
+    expect(page).toContain("Master Melittology");
+    expect(page).toContain("BLM surveys");
+    expect(page).toContain("belong to them by the day they were collected on");
+    // And says what it is for, and what it is not.
+    expect(page).toContain("Do not upload them");
+    expect(await get(app, "/specimens?scope=OBA")).not.toContain(".zip");
+  });
+
+  it("is refused to a volunteer, and an archive nobody wrote is not found", async () => {
+    const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
+    const { app: volunteer, db } = await listingApp("alice", { dir: fx.dir, governance: fx.governance });
+    await writeProgramArchives(db, fx.dir, { governance: fx.governance });
+    expect((await volunteer.request("/exports/dwca/OBA-2026.zip")).status).toBe(403);
+    const { app: staff } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
+    expect((await staff.request("/exports/dwca/OBA-2025.zip")).status).toBe(404);
+    expect((await staff.request("/exports/dwca/WaBA-2026.zip")).status).toBe(404);
+    expect((await staff.request("/exports/dwca/manifest.json")).status).toBe(404);
+  });
+
+  it("holds every page's identifications until the core is written", async () => {
+    // Synthetic rows, a page and one more: the second file's data is written
+    // while the first is still open, and must come out whole after it.
+    const specimen = (i: number) =>
+      ({ specimen_id: i, sample_id: 1, date_start: "2026-07-14", date_end: "2026-07-14", latitude: null, host_name: null }) as unknown as SpecimenRow;
+    const pages = [
+      Array.from({ length: CSV_PAGE_SIZE }, (_, i) => specimen(i + 1)),
+      [specimen(CSV_PAGE_SIZE + 1)],
+    ];
+    const ident = (id: number): IdentificationRow => ({
+      specimen_id: id,
+      scientific_name: "Bombus",
+      authorship: null,
+      rank: "genus",
+      qualifier: null,
+      verbatim_identification: null,
+      determiner: null,
+      determined_on: null,
+      determined_on_precision: null,
+      sex: null,
+      caste: null,
+      is_expert: false,
+      of_record: true,
+    });
+    const stream = specimenArchiveStream(async (_limit, offset) => {
+      const rows = pages[offset === 0 ? 0 : 1]!;
+      return { rows, total: 0, collectors: new Map(), identifications: rows.map((r) => ident(r.specimen_id)) };
+    });
+    const files = unpack(new Uint8Array(await new Response(stream).arrayBuffer()));
+    expect(table(files["occurrence.txt"]!)).toHaveLength(1 + CSV_PAGE_SIZE + 1);
+    const identifications = table(files["identification.txt"]!);
+    expect(identifications).toHaveLength(1 + CSV_PAGE_SIZE + 1);
+    expect(identifications.at(-1)![0]).toBe(String(CSV_PAGE_SIZE + 1));
   });
 });
 

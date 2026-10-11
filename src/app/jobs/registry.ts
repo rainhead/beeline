@@ -12,6 +12,7 @@ import { recordSampleChanges, type SampleLogPaths } from "../../sample-change.js
 import { promoteObservations } from "../../promote-observations.js";
 import { syncINat } from "../../sync-inat.js";
 import type { AppConfig } from "../config.js";
+import { describeManifest, writeProgramArchives } from "../program-archives.js";
 import { purgeIdleSessions } from "../session.js";
 import type { Job, JobContext } from "./framework.js";
 
@@ -286,6 +287,18 @@ export function buildJobs(
         // On one thread, as writeLegacyExport always runs, for its memory.
         const { rows, staged } = await ctx.step("write the export", () => writeLegacyExport(ctx.conn, path));
         return `${rows} rows written to ${path}${staged ? "" : " (no legacy staging: legacy-only columns blank)"}`;
+      },
+    },
+    {
+      // One Darwin Core archive per program per season, for each one whose
+      // program has a licence and a privacy policy in force (beeline-rvun).
+      // After the legacy export, so it reads the same store; on Exports.
+      name: "dwc-archives",
+      schedule: { kind: "dailyLA", hour: 4 },
+      window: "night",
+      async run(ctx) {
+        const manifest = await writeProgramArchives(ctx.db, config.exportsDir ?? "data/exports", { step: ctx.step });
+        return describeManifest(manifest);
       },
     },
   ];

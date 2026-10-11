@@ -1210,6 +1210,30 @@ export const en = {
     size: (megabytes: string) => `${megabytes} MB`,
     download: "Download",
     missing: "Not written yet. It appears after the next nightly run, or after running the legacy-export job on Jobs.",
+    archives: "Darwin Core archives, by program and season",
+    archivesIntro:
+      "Each program's specimens for a season, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. A season is written every night at 4am Pacific, but only once its program has said under which licence its records leave it and has a privacy policy for that season.",
+    archivesCaution:
+      "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including taxon-obscured ones.",
+    archivesMissing:
+      "Not written yet. They appear after the next nightly run, or after running the dwc-archives job on Jobs.",
+    archiveNone:
+      "No archives: survey samples will come in through the surveys' own field entry, and belong to them by the day they were collected on rather than by where they fell.",
+    noSpecimens: "No specimens yet.",
+    colSeason: "Season",
+    colSpecimens: "Specimens",
+    colLicense: "Licence",
+    colPolicy: "Privacy policy",
+    colArchive: "Archive",
+    season: (year: number) => `${year} season`,
+    noLicense: "no licence",
+    noPolicy: "none yet",
+    policyNoPage: "Agreed, not yet published",
+    policyLink: "Read it",
+    archiveTonight: "Written tonight",
+    downloadSized: (size: string) => `Download (${size})`,
+    archiveWithheld: "withheld",
+    archiveDownload: (program: string, season: number) => `Download the ${program} archive for the ${season} season`,
   },
   jobs: {
     title: "Jobs",
@@ -1224,6 +1248,8 @@ export const en = {
         "Pulls every observation changed since the last run (edits and new records, however old the observation), promotes into samples, and fills missing elevations from the DEM tiles on disk.",
       "legacy-export":
         "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
+      "dwc-archives":
+        "Writes a Darwin Core archive for each program and season whose program has said under which licence and privacy policy its records leave it, and removes any it no longer may. Download them from Exports.",
       "ecdysis-fetch":
         "Brings back the determinations made in Ecdysis, Washington's museum database. Downloads the collection only when Ecdysis says something changed, and otherwise reloads the copy it kept; names Beeline lacks are taken from ITIS where it accepts them, and the rest are listed in the run.",
       "commit-determinations":

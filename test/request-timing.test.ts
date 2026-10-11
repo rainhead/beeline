@@ -45,7 +45,7 @@ describe("CSV generation timing", () => {
       { ms: 420, attributes: { listing: "specimens", outcome: "complete" } },
       { ms: 2346, attributes: { listing: "specimens", outcome: "cancelled" } },
     ]);
-    expect(warnings).toEqual(["[request] slow: specimens CSV spent 2346ms in the store for 394493 rows (cancelled)"]);
+    expect(warnings).toEqual(["[request] slow: specimens download spent 2346ms in the store for 394493 rows (cancelled)"]);
   });
 });
 

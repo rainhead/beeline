@@ -21,6 +21,7 @@
     "inat:sync": "tsx src/sync-inat.ts",
     "inat:promote": "tsx src/promote-observations.ts",
     "inat:fetch-places": "tsx src/fetch-places.ts",
+    "inat:fetch-orcids": "tsx src/fetch-inat-orcids.ts",
     "inat:backfill-accounts": "tsx src/backfill-inat-accounts.ts",
     "inat:login": "tsx src/inat-login.ts",
     "elevation:fetch": "tsx src/fetch-dem.ts",
@@ -35,6 +36,7 @@
     "worksheets:fetch": "tsx src/fetch-worksheets.ts",
     "worksheets:load": "tsx src/load-worksheets.ts",
     "person:apply": "tsx src/apply-person-overlay.ts",
+    "person:orcids": "tsx src/load-orcids.ts",
     "sample:apply": "tsx src/apply-sample-overlay.ts",
     "bench:pages": "tsx bench/pages.ts",
     "bench:contention": "tsx bench/contention.ts"

@@ -81,6 +81,7 @@ export const CARRIED_TABLES = [
   "job_run",
   "inat_place",
   "inat_place_absent",
+  "inat_user_orcid",
   "itis_taxon",
   "itis_synonym",
 ] as const;
@@ -209,6 +210,12 @@ export async function carryStaging(
     if (await has("inat_place_absent")) {
       await conn.run(`INSERT INTO inat_place_absent BY NAME SELECT * FROM old.inat_place_absent`);
       await count("inat_place_absent");
+    }
+    // Same terms again: keyed by the iNat user id, which a rebuild does not
+    // redraw, and fetched rather than derived (beeline-yaaj).
+    if (await has("inat_user_orcid")) {
+      await conn.run(`INSERT INTO inat_user_orcid BY NAME SELECT * FROM old.inat_user_orcid`);
+      await count("inat_user_orcid");
     }
     // ITIS, whole and on inat_place's terms: keyed by ITIS's TSN, loaded from
     // outside the store, and not something promotion can recompute. Legacy

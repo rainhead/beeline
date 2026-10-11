@@ -543,13 +543,19 @@ export interface PersonDetail extends RosterRow {
    * everybody.
    */
   acts_for: string;
+  /** The ORCID iD staff recorded (person_orcid), bare. */
+  orcid_staff: string | null;
+  /** The one their bound iNaturalist account has connected (inat_user_orcid), bare. */
+  orcid_inat: string | null;
+  /** Everyone else the iD of record also credits (person_orcid_shared); empty for almost everybody. */
+  orcid_shared_with: string[];
 }
 
 export async function personDetail(db: Kysely<Database>, personId: number): Promise<PersonDetail | null> {
   const sessions = await hasSessions(db);
   const lastVisit = sessions ? lastVisitSql : sql`NULL::TIMESTAMP`;
   const lastLogin = sessions ? lastLoginSql : sql`NULL::TIMESTAMP`;
-  const found = await sql<Omit<PersonDetail, "leads"> & { leads: string }>`
+  const found = await sql<Omit<PersonDetail, "leads" | "orcid_shared_with"> & { leads: string }>`
     SELECT p.entity_id AS person_id, p.display_name, p.given_name, p.family_name, p.label_name,
            a.login, a.inat_user_id,
            (SELECT count(*) FROM sample_collector sc WHERE sc.person_id = p.entity_id) AS samples,
@@ -562,6 +568,8 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
                      JOIN person p2 ON p2.entity_id = d.acts_for_id
                      WHERE d.person_id = p.entity_id), '') AS acts_for,
            ${leadsSql} AS leads,
+           po.orcid AS orcid_staff,
+           io.orcid AS orcid_inat,
            ${lastSampleSql} AS last_sample,
            ${lastVisit} AS last_visit,
            ${lastLogin} AS last_login
@@ -570,9 +578,17 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
     LEFT JOIN person_membership pm ON pm.person_id = p.entity_id
     LEFT JOIN atlas atl ON atl.entity_id = pm.atlas_id
     LEFT JOIN person_admin adm ON adm.person_id = p.entity_id
+    LEFT JOIN person_orcid po ON po.person_id = p.entity_id
+    LEFT JOIN inat_user_orcid io ON io.inat_user_id = a.inat_user_id
     WHERE p.entity_id = ${personId}`.execute(db);
   const row = found.rows[0];
   if (row === undefined) return null;
+  const sharedWith = await sql<{ display_name: string }>`
+    SELECT p.display_name FROM person_orcid_of_record mine
+    JOIN person_orcid_of_record other ON other.orcid = mine.orcid AND other.person_id <> mine.person_id
+    JOIN person p ON p.entity_id = other.person_id
+    WHERE mine.person_id = ${personId}
+    ORDER BY p.display_name`.execute(db);
 
   const evidence = await hasLegacyEvidence(db);
   const logins: LoginWeight[] = [];
@@ -627,6 +643,7 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
   return {
     ...row,
     leads: splitCodes(row.leads),
+    orcid_shared_with: sharedWith.rows.map((r) => r.display_name),
     person_id: Number(row.person_id),
     samples: Number(row.samples),
     primary_samples: Number(row.primary_samples),

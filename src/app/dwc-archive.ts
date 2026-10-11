@@ -2,6 +2,7 @@ import { Zip, ZipDeflate } from "fflate";
 import { sql, type Kysely } from "kysely";
 import {
   dateIdentified,
+  identifiedByID,
   OUTSIDE,
   pagedStream,
   SPECIMEN_DWC_COLUMNS,
@@ -111,6 +112,7 @@ export interface IdentificationRow {
   qualifier: DeterminationQualifier | null;
   verbatim_identification: string | null;
   determiner: string | null;
+  determiner_orcid: string | null;
   determined_on: Date | string | null;
   determined_on_precision: "month" | "year" | null;
   sex: string | null;
@@ -139,6 +141,7 @@ export const IDENTIFICATION_TERMS: readonly (readonly [header: string, term: str
       "identificationQualifier",
       "verbatimIdentification",
       "identifiedBy",
+      "identifiedByID",
       "dateIdentified",
     ] as const
   ).map((t) => [t, `${DWC}${t}`] as const),
@@ -159,6 +162,7 @@ export async function identificationsOf(db: Kysely<Database>, specimenIds: numbe
     .selectFrom("determination as d")
     .innerJoin("animal as an", "an.entity_id", "d.animal_id")
     .leftJoin("person as p", "p.entity_id", "d.determiner_id")
+    .leftJoin("person_orcid_of_record as po", "po.person_id", "d.determiner_id")
     .leftJoin("determination_of_record as dor", "dor.entity_id", "d.entity_id")
     .where("d.specimen_id", "in", specimenIds)
     .select((eb) => [
@@ -169,6 +173,7 @@ export async function identificationsOf(db: Kysely<Database>, specimenIds: numbe
       "d.qualifier",
       "d.verbatim_identification",
       eb.fn.coalesce("p.display_name", "d.determiner_name").as("determiner"),
+      "po.orcid as determiner_orcid",
       "d.determined_on",
       "d.determined_on_precision",
       "d.sex",
@@ -196,6 +201,7 @@ const identificationRow = (r: IdentificationRow): unknown[] => [
   r.qualifier,
   r.verbatim_identification,
   r.determiner,
+  identifiedByID(r.determiner_orcid),
   dateIdentified(r.determined_on, r.determined_on_precision),
   r.of_record ? 1 : 0,
   r.sex,

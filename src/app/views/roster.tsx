@@ -22,6 +22,7 @@ import {
   type SortDirection,
 } from "../roster.js";
 import type { PersonChange } from "../../person-change.js";
+import { orcidUrl } from "../../orcid.js";
 import type { Child } from "hono/jsx";
 import {
   Absent,
@@ -508,6 +509,65 @@ export function Roster({
 }
 
 /** A hidden reason field, on every form that writes to the overlay. */
+/**
+ * The person's ORCID iD (beeline-0544, beeline-yaaj): the one that credits
+ * them and where it came from, what to tell them if there is none, and the
+ * iD staff recorded, which is the one used only while their iNaturalist
+ * account has none (person_orcid_of_record).
+ */
+function OrcidCard({ m, person, action }: { m: Messages; person: PersonDetail; action: string }) {
+  const p = m.people;
+  const used = person.orcid_inat ?? person.orcid_staff;
+  return (
+    <Card>
+      <h2>{p.orcid}</h2>
+      <Meta block>{p.orcidHint}</Meta>
+      <p class="row">
+        {used === null ? (
+          <Absent label={p.orcidNone} spelled />
+        ) : (
+          <>
+            <a href={orcidUrl(used)}>{orcidUrl(used)}</a>
+            <Chip>{person.orcid_inat !== null ? p.orcidFromInat : p.orcidFromStaff}</Chip>
+          </>
+        )}
+      </p>
+      {person.orcid_shared_with.length > 0 && (
+        <Callout tone="warning">{p.orcidShared(person.orcid_shared_with.join(", "))}</Callout>
+      )}
+      {person.orcid_inat !== null && person.orcid_staff !== null && person.orcid_staff !== person.orcid_inat && (
+        <Meta block>{p.orcidOverridden(person.orcid_staff)}</Meta>
+      )}
+      {/* Only for somebody who signs in: the note is about their own account. */}
+      {person.orcid_inat === null && person.inat_user_id !== null && (
+        <p>
+          {p.orcidConnect}
+          <a href="https://www.inaturalist.org/users/edit">{p.orcidConnectLink}</a>
+          {p.orcidConnectAfter}
+        </p>
+      )}
+      <form id="orcid-form" method="post" action={`${action}/orcid`} class="form-column">
+        <TextField id="orcid" name="orcid" label={p.orcidField} value={person.orcid_staff} hint={p.orcidFieldHint} />
+        <Reason m={m} id="orcid_reason" />
+      </form>
+      {person.orcid_staff !== null && (
+        <form id="orcid-remove-form" method="post" action={`${action}/orcid`}>
+          <input type="hidden" name="orcid" value="" />
+          <input type="hidden" name="reason" value={p.removeOrcid} />
+        </form>
+      )}
+      <p class="row">
+        <Button form="orcid-form">{p.saveOrcid}</Button>
+        {person.orcid_staff !== null && (
+          <Button form="orcid-remove-form" variant="outlined">
+            {p.removeOrcid}
+          </Button>
+        )}
+      </p>
+    </Card>
+  );
+}
+
 function Reason({ m, id }: { m: Messages; id: string }) {
   return <TextField id={id} name="reason" label={m.people.reason} hint={m.people.reasonHint} />;
 }
@@ -621,6 +681,8 @@ export function PersonPage({
           </>
         )}
       </Card>
+
+      <OrcidCard m={m} person={person} action={action} />
 
       <Card>
         <h2>{p.identity}</h2>

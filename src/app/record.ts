@@ -339,11 +339,12 @@ async function collectorsOfSample(db: Kysely<Database>, sampleId: number): Promi
   const rows = await db
     .selectFrom("sample_collector as c")
     .innerJoin("person as p", "p.entity_id", "c.person_id")
+    .leftJoin("person_orcid_of_record as o", "o.person_id", "c.person_id")
     .where("c.sample_id", "=", sampleId)
-    .select(["p.display_name", "p.given_name", "p.family_name", "p.label_name"])
+    .select(["p.display_name", "p.given_name", "p.family_name", "p.label_name", "o.orcid"])
     .orderBy("c.position")
     .execute();
-  return rows.map((r) => ({ display: r.display_name, label: labelName(r) }));
+  return rows.map((r) => ({ display: r.display_name, label: labelName(r), orcid: r.orcid }));
 }
 
 /** One sample, or null when this person cannot reach it (or it isn't there). */

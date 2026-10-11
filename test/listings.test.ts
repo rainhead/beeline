@@ -565,7 +565,7 @@ describe("the determination date column", () => {
     expect(sorted.indexOf("OBA00001")).toBeLessThan(sorted.indexOf("WABA0001"));
     expect(sorted).toContain('aria-sort="descending"');
     const csv = await (await app.request("/specimens.csv?scope=all")).text();
-    expect(csv.split("\n")[0]).toContain("identifiedBy,dateIdentified");
+    expect(csv.split("\n")[0]).toContain("identifiedBy,identifiedByID,dateIdentified");
     expect(csv).toContain(",2025-04-28,");
 
     // A year-only date is the year, on the page and in the file (beeline-9ut).
@@ -1014,6 +1014,7 @@ describe("Darwin Core archives, by program and season", () => {
       qualifier: null,
       verbatim_identification: null,
       determiner: null,
+      determiner_orcid: null,
       determined_on: null,
       determined_on_precision: null,
       sex: null,

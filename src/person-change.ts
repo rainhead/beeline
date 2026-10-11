@@ -57,6 +57,11 @@ import type { Database } from "./model.js";
  * writer intended, the next pass would find a difference nobody made and
  * record a change that never happened. Both sides read the same query instead
  * (PERSON_STATE_SQL), so a difference in the log is a difference in the store.
+ *
+ * ORCID is two fields because it is two facts (beeline-0544): the iD staff
+ * recorded, and the one the person's iNaturalist account has connected.
+ * Which of them credits the person is a rule (person_orcid_of_record), and a
+ * rule is not something that happens to somebody.
  */
 export const CHANGE_FIELDS = [
   "display_name",
@@ -69,6 +74,8 @@ export const CHANGE_FIELDS = [
   "admin",
   "acts_for",
   "leads",
+  "orcid",
+  "inat_orcid",
 ] as const;
 export type ChangeField = (typeof CHANGE_FIELDS)[number];
 
@@ -105,6 +112,8 @@ const ABSENT: Record<ChangeField, string> = {
   admin: "no",
   acts_for: "",
   leads: "",
+  orcid: "",
+  inat_orcid: "",
 };
 
 /**
@@ -124,6 +133,8 @@ export const CHANGE_SOURCES = [
   "legacy_promotion",
   "observation_promotion",
   "inat_backfill",
+  "inat_orcid_fetch",
+  "sign_in",
   "reconcile",
 ] as const;
 export type ChangeSource = (typeof CHANGE_SOURCES)[number];
@@ -294,12 +305,16 @@ export const PERSON_STATE_SQL = `
                    FROM program_lead pl
                    JOIN program pr ON pr.entity_id = pl.program_id
                    WHERE pl.person_id = p.entity_id), '') AS leads,
+         coalesce(po.orcid, '') AS orcid,
+         coalesce(io.orcid, '') AS inat_orcid,
          (SELECT count(*) FROM person q WHERE q.display_name = p.display_name) AS namesakes
   FROM person p
   LEFT JOIN inat_account a ON a.person_id = p.entity_id
   LEFT JOIN person_membership pm ON pm.person_id = p.entity_id
   LEFT JOIN atlas atl ON atl.entity_id = pm.atlas_id
-  LEFT JOIN person_admin adm ON adm.person_id = p.entity_id`;
+  LEFT JOIN person_admin adm ON adm.person_id = p.entity_id
+  LEFT JOIN person_orcid po ON po.person_id = p.entity_id
+  LEFT JOIN inat_user_orcid io ON io.inat_user_id = a.inat_user_id`;
 
 /** How the module reads the store; the two callers hold different handles. */
 export type StateReader = (sql: string) => Promise<Record<string, unknown>[]>;

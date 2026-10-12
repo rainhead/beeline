@@ -2,7 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -16,7 +16,7 @@ import {
   type DriveFile,
   type ServiceAccountKey,
 } from "./drive-service-account.js";
-import { snapshotCatalog, verifySnapshot, type TableCounts } from "./store-snapshot.js";
+import { snapshotCatalog, verifySnapshot, type Snapshot } from "./store-snapshot.js";
 
 /**
  * The nightly backup (beeline-elf, GitHub #126): both stores and the authored
@@ -37,10 +37,10 @@ import { snapshotCatalog, verifySnapshot, type TableCounts } from "./store-snaps
  *
  * Each step is checked rather than trusted, because a backup that only looks
  * like one is the failure this exists to prevent: the copies are reopened on
- * an instance of their own and counted, and after the upload the folder's
- * newest file must be the one just written, with the size and MD5 Drive
- * computed matching the local file's. Only then are old copies moved to the
- * bin by the retention rule.
+ * an instance of their own and their rows and schema counted, and the size
+ * and MD5 Drive computed for the upload must match the local file's — an
+ * upload that does not is moved to the bin before the run fails. Only then
+ * are old copies moved to the bin by the retention rule.
  */
 
 const execFileAsync = promisify(execFile);
@@ -114,6 +114,9 @@ function tarHeader(name: string, size: number, mtime: Date): Buffer {
   octal(100, 8, 0o600);
   octal(108, 8, 0);
   octal(116, 8, 0);
+  // Eleven octal digits: 8 GiB, past which ustar cannot say the size and a
+  // header written anyway would be silently wrong. Far off at ~275 MB.
+  if (size >= 8 ** 11) throw new Error(`${name} is too large for a ustar archive (${size} bytes)`);
   octal(124, 12, size);
   octal(136, 12, Math.floor(mtime.getTime() / 1000));
   field(148, 8, " ".repeat(8));
@@ -166,7 +169,9 @@ export interface BackupManifest {
   format: 1;
   takenAt: string;
   release: string | null;
-  stores: Record<string, { encrypted: boolean; tables: TableCounts }>;
+  /** The DuckDB that wrote the copies, so a restorer knows what can open them. */
+  duckdb: string;
+  stores: Record<string, { encrypted: boolean } & Snapshot>;
   /** Every member but this one, by name, with its SHA-256 and size. */
   files: Record<string, { sha256: string; bytes: number }>;
   /** Authored files the app is configured to write and has not (yet): named, so absence is never silent. */
@@ -200,6 +205,8 @@ export interface BackupResult {
   absent: string[];
   trashed: string[];
   kept: number;
+  /** Work directories left by runs the process did not survive, removed at the start of this one. */
+  staleRemoved: number;
 }
 
 /**
@@ -211,7 +218,18 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
   const now = opts.now ?? (() => new Date());
   const takenAt = now();
   const name = backupName(takenAt);
+  // A failure says which step it was in: on /jobs, "fetch failed" alone
+  // does not say whether Drive or Google's sign-in was unreachable.
+  const step = <T>(label: string, fn: () => Promise<T>): Promise<T> =>
+    opts.step(label, fn).catch((err: unknown) => {
+      throw new Error(`${label}: ${(err as Error).message}`, { cause: err });
+    });
   await mkdir(opts.workDir, { recursive: true, mode: 0o700 });
+  // A run the process did not survive — killed for memory, a machine
+  // restarted mid-copy — never reached its own clean-up, and left a few
+  // hundred megabytes that nothing else would ever remove.
+  const stale = (await readdir(opts.workDir)).filter((d) => d.startsWith("run-"));
+  for (const d of stale) await rm(join(opts.workDir, d), { recursive: true, force: true });
   const work = await mkdtemp(join(opts.workDir, "run-"));
   try {
     const stores: BackupManifest["stores"] = {};
@@ -221,14 +239,15 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
     ];
     for (const copy of copies) {
       const path = join(work, copy.file);
-      const tables = await opts.step(`copy ${copy.file}`, () => snapshotCatalog(conn, copy.catalog, path, copy.key));
-      await opts.step(`reopen ${copy.file}`, () => verifySnapshot(path, copy.key, tables));
-      stores[copy.file] = { encrypted: copy.key !== null, tables };
+      const snapshot = await step(`copy ${copy.file}`, () => snapshotCatalog(conn, copy.catalog, path, copy.key));
+      await step(`reopen ${copy.file}`, () => verifySnapshot(path, copy.key, snapshot));
+      stores[copy.file] = { encrypted: copy.key !== null, ...snapshot };
     }
+    const [[duckdb]] = (await (await conn.run("SELECT version()")).getRows()) as [[string]];
 
     const entries: ArchiveEntry[] = copies.map((c) => ({ name: c.file, path: join(work, c.file) }));
     const absent: string[] = [];
-    await opts.step("gather authored files", async () => {
+    await step("gather authored files", async () => {
       await mkdir(join(work, "authored"));
       const seen = new Set<string>();
       for (const source of opts.authored) {
@@ -258,27 +277,46 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
     for (const entry of entries) {
       files[entry.name] = { sha256: await fileHash(entry.path, "sha256"), bytes: (await stat(entry.path)).size };
     }
-    const manifest: BackupManifest = { format: 1, takenAt: takenAt.toISOString(), release: opts.release, stores, files, absent };
+    const manifest: BackupManifest = {
+      format: 1,
+      takenAt: takenAt.toISOString(),
+      release: opts.release,
+      duckdb,
+      stores,
+      files,
+      absent,
+    };
     const manifestPath = join(work, MANIFEST);
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
 
     const archive = join(work, name);
-    await opts.step("write the archive", () => writeArchive([{ name: MANIFEST, path: manifestPath }, ...entries], archive, takenAt));
+    await step("write the archive", () => writeArchive([{ name: MANIFEST, path: manifestPath }, ...entries], archive, takenAt));
     const bytes = (await stat(archive)).size;
     const md5 = await fileHash(archive, "md5");
 
-    const token = await opts.step("sign in to Drive", () => serviceAccountToken(opts.drive.key, opts.signal));
-    const uploaded = await opts.step("upload", () =>
+    const token = await step("sign in to Drive", () => serviceAccountToken(opts.drive.key, opts.signal));
+    const uploaded = await step("upload", () =>
       uploadFile(token, { folderId: opts.drive.folderId, path: archive, name, mimeType: BACKUP_MIME, signal: opts.signal }),
     );
-    const listed = await opts.step("confirm the upload", async () => {
+    const listed = await step("confirm the upload", async () => {
       const found = await listFolder(token, opts.drive.folderId, opts.signal);
-      confirmNewest(found, uploaded, { bytes, md5 });
+      try {
+        confirmUpload(found, uploaded, { bytes, md5 });
+      } catch (err) {
+        // A file that failed its check must not stay in the folder under a
+        // backup's name: the retention rule keeps the FIRST copy of each
+        // month, so a bad upload on the 1st, followed by a good retry, would
+        // be the month's copy kept for a year.
+        await trashFile(token, uploaded.id, opts.signal).catch((trashErr: unknown) => {
+          throw new Error(`${(err as Error).message}; and it could not be moved to the bin: ${(trashErr as Error).message}`);
+        });
+        throw err;
+      }
       return found;
     });
 
     const trash = backupsToTrash(listed, takenAt);
-    await opts.step("move old copies to the bin", async () => {
+    await step("move old copies to the bin", async () => {
       for (const file of trash) await trashFile(token, file.id, opts.signal);
     });
 
@@ -292,6 +330,7 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
       absent,
       trashed: trash.map((f) => f.name),
       kept: listed.length - trash.length,
+      staleRemoved: stale.length,
     };
   } finally {
     await rm(work, { recursive: true, force: true });
@@ -299,22 +338,21 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
 }
 
 /**
- * The folder's newest file must be the one just uploaded, holding what was
- * sent. Drive computes the MD5 from what it stored, so a match is the only
- * evidence on offer that the bytes there are the bytes here.
+ * What Drive stored must be what was sent: Drive computes the MD5 from the
+ * bytes it holds, so a match is the only evidence on offer that the bytes
+ * there are the bytes here. And the folder, listed afterwards, must hold it,
+ * since the retention rule is worked out from that listing. Holding it, not
+ * leading with it: a listing a moment behind is no reason to fail a good copy.
  */
-export function confirmNewest(listed: DriveFile[], uploaded: DriveFile, local: { bytes: number; md5: string }): void {
-  const newest = listed[0];
-  if (newest === undefined || newest.id !== uploaded.id) {
+export function confirmUpload(listed: DriveFile[], uploaded: DriveFile, local: { bytes: number; md5: string }): void {
+  if (uploaded.size !== local.bytes || uploaded.md5Checksum !== local.md5) {
     throw new Error(
-      `uploaded ${uploaded.name}, but the folder's newest file is ${newest === undefined ? "nothing" : newest.name}`,
-    );
-  }
-  if (newest.size !== local.bytes || newest.md5Checksum !== local.md5) {
-    throw new Error(
-      `${uploaded.name} on Drive is ${newest.size} bytes with MD5 ${newest.md5Checksum ?? "unknown"}; ` +
+      `${uploaded.name} on Drive is ${uploaded.size} bytes with MD5 ${uploaded.md5Checksum ?? "unknown"}; ` +
         `the archive sent was ${local.bytes} bytes with MD5 ${local.md5}`,
     );
+  }
+  if (!listed.some((f) => f.id === uploaded.id)) {
+    throw new Error(`uploaded ${uploaded.name}, but the folder does not list it`);
   }
 }
 
@@ -326,7 +364,8 @@ export function describeBackup(r: BackupResult): string {
     `${r.name}, ${megabytes(r.bytes)}: ${r.tables} tables, ${r.rows} rows, ${r.authored} authored files` +
     (r.absent.length > 0 ? ` (not yet written: ${r.absent.join(", ")})` : "") +
     `; ${r.kept} copies in the folder` +
-    (r.trashed.length > 0 ? `, ${r.trashed.length} older moved to the bin` : "")
+    (r.trashed.length > 0 ? `, ${r.trashed.length} older moved to the bin` : "") +
+    (r.staleRemoved > 0 ? `; removed ${r.staleRemoved} work directory left by a run that did not finish` : "")
   );
 }
 
@@ -360,7 +399,7 @@ export async function checkBackup(archive: string, opts: { dir: string; privateK
   const storesOpened: string[] = [];
   for (const [file, store] of Object.entries(manifest.stores)) {
     if (store.encrypted && opts.privateKey === null) continue;
-    await verifySnapshot(join(opts.dir, file), store.encrypted ? opts.privateKey : null, store.tables);
+    await verifySnapshot(join(opts.dir, file), store.encrypted ? opts.privateKey : null, store);
     storesOpened.push(file);
   }
   return { manifest, files: Object.keys(manifest.files).length, storesOpened };

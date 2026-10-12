@@ -140,7 +140,8 @@ datasets that want no credential. Fetch them **on the machine** rather than
 uploading them — see below.
 
 `private.duckdb` is not copied between hosts. The app creates it at first
-boot; sessions and sign-in records are acceptable losses pre-cutover.
+boot; sessions and sign-in records are acceptable losses pre-cutover. A
+restore from a backup is the exception ([Backups](#backups)).
 
 ## Deploying a change
 
@@ -468,12 +469,18 @@ somewhere else, every night, that has been shown to restore.
 
 The `store-backup` job ([`src/store-backup.ts`](../../src/store-backup.ts),
 beeline-elf, [#126](https://github.com/rainhead/beeline/issues/126)) runs at
-3am Pacific, after the night's determinations, promotion and Ecdysis fetch,
-and puts one file, `beeline-backup-<UTC instant>.tar.gz`, in the
+3am Pacific, after the night's determinations and promotion (and ahead of the
+Sunday sweep and the Ecdysis fetch, so neither can push it past the 5am end of
+the night window; what Ecdysis sends back is in the next night's copy), and
+puts one file, `beeline-backup-<UTC instant>.tar.gz`, in the
 `databaseBackups` folder inside Bee Line on the OSU shared drive
 (`BEELINE_BACKUP_FOLDER` in [`fly.toml`](../../fly.toml)). It is for recovery
-only: nobody opens these, and the drive's members are the people already
-trusted with the store. Inside:
+only: nobody opens these. **The main store's copy is not encrypted**, so every
+member of the drive can read the whole store, the true coordinates of obscured
+observations and every volunteer's name included. That is a decision, not an
+oversight: the drive's members are the staff already trusted with the store
+(Andony, 2026-09-11, beeline-elf). Encrypting it too would take one argument
+to the copy, if that ever changes. Inside:
 
 - `beeline.duckdb` and `private.duckdb` — consistent copies of both stores,
   taken inside the app because nothing else may open them (ADR 0005). Each is
@@ -483,7 +490,8 @@ trusted with the store. Inside:
   as recoverable as that key**: copies are kept off the server, in Peter's
   password manager and (beeline-yml3) Andony's.
 - `authored/` — the overlays and change logs a rebuild cannot reconstruct.
-- `manifest.json` — what each store held, table by table, and the SHA-256 of
+- `manifest.json` — what each store held, table by table and in the rest of
+  its schema, the DuckDB version that wrote the copies, and the SHA-256 of
   every file.
 
 Why the copy is made the way it is — DuckDB's one-line `COPY FROM DATABASE`
@@ -491,24 +499,39 @@ cannot copy this schema — is in
 [`src/store-snapshot.ts`](../../src/store-snapshot.ts).
 
 **Each step is checked rather than trusted.** The copies are reopened on an
-instance of their own and counted against what was copied; after the upload
-the folder's newest file must be this one, and the size and MD5 Drive computed
-from what it stored must match the file sent. Only then are old copies moved
+instance of their own, and their rows, constraints, indexes, views, macros,
+sequences and comments counted against the store's, so a DuckDB upgrade that
+stops carrying any of them fails the night it is deployed. The size and MD5
+that Drive computed from what it stored must match the file sent; an upload
+that does not is moved to the bin before the run fails, so it can never become
+a month's kept copy. Only then are old copies moved
 to the drive's bin, which empties itself after 30 days: every night's copy is
 kept for two weeks, and the first copy of each month for a year (Peter,
 2026-10-12). A shared drive's Content manager cannot delete outright, which is
 why it is the bin. Anything that fails, fails the run, so a missing backup
 shows on `/jobs`, on `/healthz/jobs` and as a missed Sentry check-in like any
-other nightly job — and the job fails rather than succeeding at nothing when
-the folder or key is not set, outside development.
+other nightly job, with the step that failed named in the run's detail.
+Outside development it also fails rather than succeeding at nothing when the
+folder or the Drive key is not set, and rather than upload the private store
+unencrypted when the store's key is not. A run killed partway, by memory or a
+restart, leaves its work directory under `data/backups/`; the next run
+removes it and says so.
 
 The writer is a service account,
 `beeline-production@beeline-510517.iam.gserviceaccount.com`, whose JSON key is
 the secret `BEELINE_DRIVE_KEY`. It holds the `drive.file` scope, so it sees
-only the files it made: a key that leaked reaches the backups and nothing
-else on the drive. The Cloud project that owns it, `beeline-510517`, is under
-Peter's account with Nora as a second owner; moving it under OSU's Google
-organisation is to come.
+only the files it made: a key that leaked reaches the backups, which are the
+whole store, and nothing else on the drive. The Cloud project that owns it,
+`beeline-510517`, is under Peter's account with Nora as a second owner; moving
+it under OSU's Google organisation is to come.
+
+**Rotate the key, never the account.** Because the scope is `drive.file`, a
+new service account cannot see the old one's files: it would never move them
+to the bin, and the year of monthly copies would start again from nothing. So
+a new key is made for the same account
+(`gcloud iam service-accounts keys create … --iam-account beeline-production@beeline-510517.iam.gserviceaccount.com`),
+set with `fly secrets set BEELINE_DRIVE_KEY=…`, and the old key deleted once
+a night's run has succeeded with the new one.
 
 ### Restoring, and the drill
 
@@ -522,9 +545,22 @@ BEELINE_PRIVATE_DB_KEY=… pnpm backup:check ~/Downloads/beeline-backup-….tar.
 It extracts the archive with the system's tar, checks every file against the
 manifest, and opens and counts both stores; without the key it says the
 private store was **not** checked rather than passing it. What it leaves in
-`dir` is what a restore puts back: the two stores at `BEELINE_DB` and
-`BEELINE_PRIVATE_DB`, and `authored/*` under `/app/data/`, in maintenance mode
-(the store is shipped to the volume as in [One-time setup](#one-time-setup)).
+`dir` is what a restore puts back. Unlike a first install, the private store
+**is** restored: from cutover it holds what volunteers cannot simply redo.
+
+1. `fly deploy --env BEELINE_MAINTENANCE=1`, so nothing holds the store.
+2. On the volume, **delete `beeline.duckdb.wal` and `private.duckdb.wal`** if
+   they exist. A WAL left beside an older store is replayed onto it, as with
+   [the pre-migrate copy](#the-pre-migrate-copy).
+3. `fly ssh sftp shell`, and `put` the two stores to `/app/data/beeline.duckdb`
+   and `/app/data/private.duckdb`, and each `authored/*.csv` to `/app/data/`.
+4. On a new volume, also what the archive does not hold: the pipeline's
+   `data/secrets/inat-oauth-token` ([One-time setup](#one-time-setup)), and
+   the DEM tiles, which are fetched on the machine. Ecdysis's archive and
+   the print runs' sheets come back by themselves: the first is fetched
+   again, the second re-rendered from the store.
+5. `fly machine update --env BEELINE_MAINTENANCE= <id>`. Boot applies any
+   migration newer than the copy, as it does for every deploy.
 
 The drill — download a real copy, `backup:check` it, and start a scratch app
 against what it extracted (with `BEELINE_SAMPLE_CHANGES`,

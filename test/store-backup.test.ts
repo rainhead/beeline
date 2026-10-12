@@ -1,6 +1,6 @@
 import { DuckDBInstance } from "@duckdb/node-api";
 import { createHash, generateKeyPairSync } from "node:crypto";
-import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +15,7 @@ import {
   backupsToTrash,
   backupTakenAt,
   checkBackup,
-  confirmNewest,
+  confirmUpload,
   writeArchive,
 } from "../src/store-backup.js";
 import { fillOrder, snapshotCatalog, verifySnapshot } from "../src/store-snapshot.js";
@@ -60,10 +60,10 @@ describe("a copy of a store", () => {
     const { conn, dir, catalog } = await storeWithData();
     const [[next]] = (await rows(conn, "SELECT nextval('entity_id_seq')")) as [[bigint]];
     const path = join(dir, "copy.duckdb");
-    const counts = await snapshotCatalog(conn, catalog, path, null);
-    expect(counts["main.animal"]).toBe(3);
-    expect(counts["main.person"]).toBe(1);
-    await verifySnapshot(path, null, counts);
+    const snap = await snapshotCatalog(conn, catalog, path, null);
+    expect(snap.tables["main.animal"]).toBe(3);
+    expect(snap.tables["main.person"]).toBe(1);
+    await verifySnapshot(path, null, snap);
 
     const copy = await (await DuckDBInstance.create(path)).connect();
     // A restored store must not hand out an entity_id it already used.
@@ -80,10 +80,10 @@ describe("a copy of a store", () => {
   it("encrypts the private store's copy with the store's own key", async () => {
     const { conn, dir } = await storeWithData();
     const path = join(dir, "private-copy.duckdb");
-    const counts = await snapshotCatalog(conn, "private", path, KEY);
-    expect(counts["main.session"]).toBe(1);
-    await verifySnapshot(path, KEY, counts);
-    await expect(verifySnapshot(path, null, counts)).rejects.toThrow();
+    const snap = await snapshotCatalog(conn, "private", path, KEY);
+    expect(snap.tables["main.session"]).toBe(1);
+    await verifySnapshot(path, KEY, snap);
+    await expect(verifySnapshot(path, null, snap)).rejects.toThrow();
     // Not a byte of it in the clear.
     expect((await readFile(path)).includes(Buffer.from("A. Collector"))).toBe(false);
   });
@@ -91,8 +91,13 @@ describe("a copy of a store", () => {
   it("is refused when it does not hold what was copied into it", async () => {
     const { conn, dir, catalog } = await storeWithData();
     const path = join(dir, "copy.duckdb");
-    const counts = await snapshotCatalog(conn, catalog, path, null);
-    await expect(verifySnapshot(path, null, { ...counts, "main.animal": 4 })).rejects.toThrow(/animal holds 3 rows, 4 were copied/);
+    const snap = await snapshotCatalog(conn, catalog, path, null);
+    await expect(verifySnapshot(path, null, { ...snap, tables: { ...snap.tables, "main.animal": 4 } })).rejects.toThrow(/animal holds 3 rows, 4 were copied/);
+    // And a copy that lost part of its schema without losing a row.
+    const constraints = snap.shape.constraints + 1;
+    await expect(verifySnapshot(path, null, { ...snap, shape: { ...snap.shape, constraints } })).rejects.toThrow(
+      new RegExp(`${constraints - 1} constraints where the store has ${constraints}`),
+    );
   });
 });
 
@@ -171,11 +176,13 @@ describe("the archive", () => {
 describe("the upload", () => {
   const uploaded: DriveFile = { id: "new", name: "b.tar.gz", size: 10, md5Checksum: "abc", createdTime: "" };
 
-  it("must be the folder's newest file, holding the bytes that were sent", () => {
-    expect(() => confirmNewest([uploaded], uploaded, { bytes: 10, md5: "abc" })).not.toThrow();
-    expect(() => confirmNewest([{ ...uploaded, id: "old" }, uploaded], uploaded, { bytes: 10, md5: "abc" })).toThrow(/newest file/);
-    expect(() => confirmNewest([], uploaded, { bytes: 10, md5: "abc" })).toThrow(/nothing/);
-    expect(() => confirmNewest([uploaded], uploaded, { bytes: 10, md5: "abd" })).toThrow(/MD5/);
+  it("must hold the bytes that were sent, and be in the folder", () => {
+    expect(() => confirmUpload([uploaded], uploaded, { bytes: 10, md5: "abc" })).not.toThrow();
+    // Listed, if not first: a listing a moment behind does not fail a good copy.
+    expect(() => confirmUpload([{ ...uploaded, id: "old" }, uploaded], uploaded, { bytes: 10, md5: "abc" })).not.toThrow();
+    expect(() => confirmUpload([{ ...uploaded, id: "old" }], uploaded, { bytes: 10, md5: "abc" })).toThrow(/does not list it/);
+    expect(() => confirmUpload([uploaded], uploaded, { bytes: 10, md5: "abd" })).toThrow(/MD5/);
+    expect(() => confirmUpload([uploaded], uploaded, { bytes: 11, md5: "abc" })).toThrow(/10 bytes/);
   });
 });
 
@@ -250,10 +257,11 @@ function testServiceAccount(): ServiceAccountKey {
 describe("a night's backup", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  const run = async (drive: ReturnType<typeof fakeDrive>, now: Date) => {
+  const run = async (drive: ReturnType<typeof fakeDrive>, now: Date, before?: (dir: string) => Promise<void>) => {
     vi.stubGlobal("fetch", drive.fetchImpl);
     const { conn, dir, catalog } = await storeWithData();
     await writeFile(join(dir, "person-change.csv"), "when,person_ref\n");
+    await before?.(dir);
     const result = await backUp(conn, {
       workDir: join(dir, "work"),
       catalogs: { main: catalog, private: "private" },
@@ -274,9 +282,14 @@ describe("a night's backup", () => {
       backupName(new Date("2026-09-20T10:00:00Z")),
       backupName(new Date("2026-09-01T10:00:00Z")),
     ]);
-    const { result, dir } = await run(drive, now);
+    // What a run the process did not survive leaves behind.
+    const { result, dir } = await run(drive, now, async (d) => {
+      await mkdir(join(d, "work", "run-killed"), { recursive: true });
+      await writeFile(join(d, "work", "run-killed", "beeline.duckdb"), "half a copy");
+    });
 
     expect(result.name).toBe("beeline-backup-20261012T100000Z.tar.gz");
+    expect(result.staleRemoved).toBe(1);
     expect(result.absent).toEqual(["corrections.csv"]);
     expect(result.trashed).toEqual([backupName(new Date("2026-09-20T10:00:00Z"))]);
     expect(result.kept).toBe(3);
@@ -288,22 +301,30 @@ describe("a night's backup", () => {
     expect(checked.storesOpened).toEqual(["beeline.duckdb", "private.duckdb"]);
     expect(checked.manifest.release).toBe("deployment-test");
     expect(checked.manifest.absent).toEqual(["corrections.csv"]);
+    expect(checked.manifest.duckdb).toMatch(/^v\d/);
     expect(await readFile(join(dir, "restored", "authored", "person-change.csv"), "utf8")).toBe("when,person_ref\n");
     // And the work directory is left empty.
     expect(await readdir(join(dir, "work"))).toEqual([]);
   });
 
-  it("fails when the file Drive holds is not the file that was sent", async () => {
-    const drive = fakeDrive("folder", [], { corrupt: true });
-    await expect(run(drive, new Date("2026-10-12T10:00:00Z"))).rejects.toThrow(/the archive sent was/);
-    // Nothing is moved to the bin on a run that did not confirm its upload.
-    expect(drive.files.every((f) => !f.trashed)).toBe(true);
+  it("fails, naming the step, when the file Drive holds is not the file that was sent, and bins that file", async () => {
+    const old = backupName(new Date("2026-08-15T10:00:00Z"));
+    const drive = fakeDrive("folder", [old], { corrupt: true });
+    await expect(run(drive, new Date("2026-10-12T10:00:00Z"))).rejects.toThrow(/^confirm the upload: .*the archive sent was/);
+    // The bad upload must not stay under a backup's name, where it could be
+    // the month's copy kept for a year; and retention, which never ran, has
+    // binned nothing else.
+    expect(drive.files.filter((f) => f.trashed).map((f) => f.id)).toEqual(["new"]);
   });
 });
 
 describe("the job", () => {
   const ctx = { conn: {} as JobContext["conn"], step: (_: string, fn: () => Promise<unknown>) => fn() } as unknown as JobContext;
-  const job = (environment: "development" | "sandbox") =>
+  const job = (
+    environment: "development" | "sandbox",
+    driveBackup: { key: ServiceAccountKey; folderId: string } | null = null,
+    privateDbKey: string | null = null,
+  ) =>
     buildJobs({
       syncProjects: [],
       sweepDays: 365,
@@ -311,12 +332,29 @@ describe("the job", () => {
       sampleChangesPath: "unused.csv",
       sampleStatePath: "unused.csv",
       environment,
-      driveBackup: null,
+      driveBackup,
+      privateDbKey,
     }).find((j) => j.name === "store-backup")!;
 
   it("fails outside development when it has nowhere to go, rather than succeeding at nothing", async () => {
     await expect(job("sandbox").run(ctx)).rejects.toThrow(/nothing was backed up/);
     await expect(job("development").run(ctx)).resolves.toMatch(/nothing backed up/);
+  });
+
+  it("refuses, outside development, to back up the private store without its key", async () => {
+    const drive = { key: testServiceAccount(), folderId: "f" };
+    await expect(job("sandbox", drive, null).run(ctx)).rejects.toThrow(/refusing to back up the private store unencrypted/);
+  });
+
+  it("runs ahead of the Sunday sweep, so a long sweep cannot push it past the night window", () => {
+    const names = buildJobs({
+      syncProjects: [],
+      sweepDays: 365,
+      personChangesPath: "unused.csv",
+      sampleChangesPath: "unused.csv",
+      sampleStatePath: "unused.csv",
+    }).map((j) => j.name);
+    expect(names.indexOf("store-backup")).toBeLessThan(names.indexOf("weekly-sweep"));
   });
 
   it("is configured from a key and a folder, set together", () => {

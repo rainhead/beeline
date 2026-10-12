@@ -215,6 +215,54 @@ export function buildJobs(
       },
     },
     {
+      // The nightly backup (beeline-elf, GitHub #126). At 3am, after the 1am
+      // determinations and the 2am promotion. Ahead of the Sunday sweep and
+      // the Ecdysis fetch in this list, because due jobs run in list order
+      // and a night job may not start at 5am or later: behind a long sweep it
+      // would miss the night, and a single missed night shows nowhere (a
+      // daily job is overdue after two). What Ecdysis sends back is in the
+      // next night's copy. The 4am jobs write exports, which are regenerated
+      // from the store.
+      name: "store-backup",
+      schedule: { kind: "dailyLA", hour: 3 },
+      window: "night",
+      async run(ctx) {
+        if (!config.driveBackup) {
+          const unset = "BEELINE_DRIVE_KEY and BEELINE_BACKUP_FOLDER are not set";
+          // A backup job that succeeds at doing nothing reads, on /jobs and
+          // in Sentry, like a backup.
+          if (config.environment === "development") return `${unset} — nothing backed up`;
+          throw new Error(`${unset}: nothing was backed up`);
+        }
+        // Never a plaintext copy of the private store on the drive: the job
+        // is handed the key with the rest of the config, and a caller that
+        // narrowed the config would otherwise back it up unencrypted, record
+        // `encrypted: false`, and pass every check.
+        if (!config.privateDbKey && config.environment !== "development") {
+          throw new Error("no private-store key (BEELINE_PRIVATE_DB_KEY): refusing to back up the private store unencrypted");
+        }
+        const [[main]] = (await (await ctx.conn.run("SELECT current_database()")).getRows()) as [[string]];
+        const result = await backUp(ctx.conn, {
+          workDir: config.backupsDir ?? "data/backups",
+          catalogs: { main, private: "private" },
+          privateKey: config.privateDbKey ?? null,
+          authored: [
+            config.correctionsPath ?? "data/corrections.csv",
+            config.personOverlayPath ?? "data/person-overlay.csv",
+            config.sampleOverlayPath ?? "data/sample-overlay.csv",
+            config.personChangesPath,
+            config.sampleChangesPath,
+            config.sampleStatePath,
+          ],
+          release: config.release ?? null,
+          drive: config.driveBackup,
+          step: ctx.step,
+          signal: ctx.signal,
+        });
+        return describeBackup(result);
+      },
+    },
+    {
       // Anti-entropy (beeline-3hj): a full presence sweep of the trailing
       // window — the only kind of run that can prove an observation gone
       // (deletion detection reads covering runs; incremental runs are not).
@@ -269,44 +317,6 @@ export function buildJobs(
           parts.push(describeFetch(r));
         }
         return parts.join("; ");
-      },
-    },
-    {
-      // The nightly backup (beeline-elf, GitHub #126). At 3am and after the
-      // Ecdysis fetch in this list, so the copy holds the night's work: the
-      // 1am determinations, the 2am promotion, what the museum sent back.
-      // Nothing after it writes anything a backup needs — the 4am jobs
-      // write exports, which are regenerated from the store.
-      name: "store-backup",
-      schedule: { kind: "dailyLA", hour: 3 },
-      window: "night",
-      async run(ctx) {
-        if (!config.driveBackup) {
-          const unset = "BEELINE_DRIVE_KEY and BEELINE_BACKUP_FOLDER are not set";
-          // A backup job that succeeds at doing nothing reads, on /jobs and
-          // in Sentry, like a backup.
-          if (config.environment === "development") return `${unset} — nothing backed up`;
-          throw new Error(`${unset}: nothing was backed up`);
-        }
-        const [[main]] = (await (await ctx.conn.run("SELECT current_database()")).getRows()) as [[string]];
-        const result = await backUp(ctx.conn, {
-          workDir: config.backupsDir ?? "data/backups",
-          catalogs: { main, private: "private" },
-          privateKey: config.privateDbKey ?? null,
-          authored: [
-            config.correctionsPath ?? "data/corrections.csv",
-            config.personOverlayPath ?? "data/person-overlay.csv",
-            config.sampleOverlayPath ?? "data/sample-overlay.csv",
-            config.personChangesPath,
-            config.sampleChangesPath,
-            config.sampleStatePath,
-          ],
-          release: config.release ?? null,
-          drive: config.driveBackup,
-          step: ctx.step,
-          signal: ctx.signal,
-        });
-        return describeBackup(result);
       },
     },
     {

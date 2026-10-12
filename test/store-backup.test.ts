@@ -170,6 +170,12 @@ describe("the archive", () => {
     await writeFile(join(dir, "manifest.json"), JSON.stringify(manifest));
     await writeArchive(entries, archive);
     await expect(checkBackup(archive, { dir: join(dir, "out2"), privateKey: null })).rejects.toThrow(/a\.csv does not match/);
+
+    // A manifest naming a path outside the archive is refused before anything is read.
+    const climbing = { ...manifest, files: { "../a.csv": { sha256: sha("a,b\n1,2\n"), bytes: 8 } } };
+    await writeFile(join(dir, "manifest.json"), JSON.stringify(climbing));
+    await writeArchive(entries, archive);
+    await expect(checkBackup(archive, { dir: join(dir, "out3"), privateKey: null })).rejects.toThrow(/not a path inside the archive/);
   });
 });
 

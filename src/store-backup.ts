@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
@@ -391,6 +391,13 @@ export async function checkBackup(archive: string, opts: { dir: string; privateK
   await execFileAsync("tar", ["-xzf", archive, "-C", opts.dir]);
   const manifest = JSON.parse(await readFile(join(opts.dir, MANIFEST), "utf8")) as BackupManifest;
   if (manifest.format !== 1) throw new Error(`${archive}: manifest format ${String(manifest.format)}, this checks format 1`);
+  // A downloaded archive is read, not trusted: a name in its manifest that
+  // climbs out of the directory would have this hash, or open, some other file.
+  for (const name of [...Object.keys(manifest.files), ...Object.keys(manifest.stores)]) {
+    if (isAbsolute(name) || name.split(/[\\/]/).includes("..")) {
+      throw new Error(`${archive}: the manifest names '${name}', which is not a path inside the archive`);
+    }
+  }
   for (const [name, expected] of Object.entries(manifest.files)) {
     const path = join(opts.dir, name);
     const actual = await fileHash(path, "sha256");

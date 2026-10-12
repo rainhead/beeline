@@ -1,4 +1,5 @@
 import { DuckDBInstance } from "@duckdb/node-api";
+import { execFileSync } from "node:child_process";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,6 +12,7 @@ import type { JobContext } from "../src/app/jobs/framework.js";
 import type { DriveFile, ServiceAccountKey } from "../src/drive-service-account.js";
 import {
   backUp,
+  type BackupManifest,
   backupName,
   backupsToTrash,
   backupTakenAt,
@@ -133,55 +135,26 @@ describe("which copies are kept", () => {
 });
 
 describe("the archive", () => {
-  it("is read by the system's tar, and a file that does not match the manifest is refused", async () => {
+  it("is read by the system's tar, every member whole", async () => {
     const dir = await scratch();
-    await writeFile(join(dir, "manifest.json"), JSON.stringify({ format: 1, takenAt: "x", release: null, stores: {}, files: {}, absent: [] }));
-    await writeFile(join(dir, "a.csv"), "a,b\n1,2\n");
-    // A member whose size is a multiple of the block, and one that is empty.
-    await writeFile(join(dir, "block.bin"), Buffer.alloc(512, 7));
-    await writeFile(join(dir, "empty.csv"), "");
-    const sha = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
-    const manifest = {
-      format: 1,
-      takenAt: "2026-10-12T10:00:00.000Z",
-      release: null,
-      stores: {},
-      files: {
-        "authored/a.csv": { sha256: sha("a,b\n1,2\n"), bytes: 8 },
-        "block.bin": { sha256: sha(Buffer.alloc(512, 7)), bytes: 512 },
-        "authored/empty.csv": { sha256: sha(""), bytes: 0 },
-      },
-      absent: [],
-    };
-    await writeFile(join(dir, "manifest.json"), JSON.stringify(manifest));
-    const entries = [
-      { name: "manifest.json", path: join(dir, "manifest.json") },
-      { name: "authored/a.csv", path: join(dir, "a.csv") },
-      { name: "block.bin", path: join(dir, "block.bin") },
-      { name: "authored/empty.csv", path: join(dir, "empty.csv") },
+    // An ordinary member, one whose size is a multiple of the block, and one that is empty.
+    const members: [string, Buffer][] = [
+      ["manifest.json", Buffer.from("{}\n")],
+      ["authored/a.csv", Buffer.from("a,b\n1,2\n")],
+      ["block.bin", Buffer.alloc(512, 7)],
+      ["authored/empty.csv", Buffer.alloc(0)],
     ];
+    const entries = [];
+    for (const [i, [name, content]] of members.entries()) {
+      await writeFile(join(dir, `m${i}`), content);
+      entries.push({ name, path: join(dir, `m${i}`) });
+    }
     const archive = join(dir, "x.tar.gz");
     await writeArchive(entries, archive);
-    const checked = await checkBackup(archive, { dir: join(dir, "out"), privateKey: null });
-    expect(checked.files).toBe(3);
-    expect(await readFile(join(dir, "out", "authored", "a.csv"), "utf8")).toBe("a,b\n1,2\n");
-
-    manifest.files["authored/a.csv"].sha256 = sha("something else");
-    await writeFile(join(dir, "manifest.json"), JSON.stringify(manifest));
-    await writeArchive(entries, archive);
-    await expect(checkBackup(archive, { dir: join(dir, "out2"), privateKey: null })).rejects.toThrow(/a\.csv does not match/);
-
-    // A manifest naming a path outside the archive is refused before anything is read.
-    const climbing = { ...manifest, files: { "../a.csv": { sha256: sha("a,b\n1,2\n"), bytes: 8 } } };
-    await writeFile(join(dir, "manifest.json"), JSON.stringify(climbing));
-    await writeArchive(entries, archive);
-    await expect(checkBackup(archive, { dir: join(dir, "out3"), privateKey: null })).rejects.toThrow(/not a path inside the archive/);
-
-    // And a store the manifest gives no hash for is never opened.
-    const unhashed = { ...manifest, stores: { "block.bin": { encrypted: false, tables: {}, shape: {} } }, files: {} };
-    await writeFile(join(dir, "manifest.json"), JSON.stringify(unhashed));
-    await writeArchive(entries, archive);
-    await expect(checkBackup(archive, { dir: join(dir, "out4"), privateKey: null })).rejects.toThrow(/gives no hash for block\.bin/);
+    expect(execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).trim().split("\n")).toEqual(members.map(([n]) => n));
+    await mkdir(join(dir, "out"));
+    execFileSync("tar", ["-xzf", archive, "-C", join(dir, "out")]);
+    for (const [name, content] of members) expect(await readFile(join(dir, "out", name))).toEqual(content);
   });
 });
 
@@ -317,6 +290,46 @@ describe("a night's backup", () => {
     expect(await readFile(join(dir, "restored", "authored", "person-change.csv"), "utf8")).toBe("when,person_ref\n");
     // And the work directory is left empty.
     expect(await readdir(join(dir, "work"))).toEqual([]);
+  });
+
+  it("is refused by backup:check once its manifest or its files have been tampered with", async () => {
+    const drive = fakeDrive("folder", []);
+    const { dir } = await run(drive, new Date("2026-10-12T10:00:00Z"));
+    const original = join(dir, "downloaded.tar.gz");
+    await writeFile(original, drive.files.find((f) => f.id === "new")!.bytes);
+    const unpacked = join(dir, "unpacked");
+    await mkdir(unpacked);
+    execFileSync("tar", ["-xzf", original, "-C", unpacked]);
+    const manifest = JSON.parse(await readFile(join(unpacked, "manifest.json"), "utf8")) as BackupManifest;
+    const members = ["manifest.json", ...Object.keys(manifest.files)];
+    let n = 0;
+    // Repack the night's files under an edited manifest, and check the result.
+    const tampered = async (edit: (m: BackupManifest) => void, extra: string[] = []) => {
+      const m = structuredClone(manifest);
+      edit(m);
+      await writeFile(join(unpacked, "manifest.json"), JSON.stringify(m));
+      const out = join(dir, `tampered-${++n}.tar.gz`);
+      await writeArchive([...members, ...extra].map((name) => ({ name, path: join(unpacked, name) })), out);
+      return checkBackup(out, { dir: join(dir, `check-${n}`), privateKey: KEY });
+    };
+
+    // Repacked unchanged, it passes: what fails below fails for its edit.
+    await expect(tampered(() => undefined)).resolves.toMatchObject({ storesOpened: ["beeline.duckdb", "private.duckdb"] });
+    await expect(tampered((m) => (m.files["authored/person-change.csv"]!.sha256 = "0".repeat(64)))).rejects.toThrow(
+      /person-change\.csv does not match/,
+    );
+    await expect(tampered((m) => (m.files["../person-change.csv"] = m.files["authored/person-change.csv"]!))).rejects.toThrow(
+      /not a path inside the archive/,
+    );
+    await expect(tampered((m) => delete m.files["beeline.duckdb"])).rejects.toThrow(/gives no hash for beeline\.duckdb/);
+    await expect(
+      tampered((m) => {
+        m.stores = {};
+        m.files = {};
+      }),
+    ).rejects.toThrow(/describes no beeline\.duckdb or private\.duckdb/);
+    await writeFile(join(unpacked, "stray.txt"), "not in the manifest");
+    await expect(tampered(() => undefined, ["stray.txt"])).rejects.toThrow(/holds stray\.txt, which the manifest does not hash/);
   });
 
   it("fails, naming the step, when the file Drive holds is not the file that was sent, and bins that file", async () => {

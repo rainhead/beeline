@@ -179,6 +179,8 @@ export interface BackupManifest {
 }
 
 export const MANIFEST = "manifest.json";
+/** The two stores every backup holds, by their names in the archive. */
+export const STORE_FILES = ["beeline.duckdb", "private.duckdb"] as const;
 
 export interface BackupOptions {
   /** Where the copies and the archive are written while a run is in progress. Emptied afterwards. */
@@ -234,8 +236,8 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
   try {
     const stores: BackupManifest["stores"] = {};
     const copies = [
-      { file: "beeline.duckdb", catalog: opts.catalogs.main, key: null },
-      { file: "private.duckdb", catalog: opts.catalogs.private, key: opts.privateKey },
+      { file: STORE_FILES[0], catalog: opts.catalogs.main, key: null },
+      { file: STORE_FILES[1], catalog: opts.catalogs.private, key: opts.privateKey },
     ];
     for (const copy of copies) {
       const path = join(work, copy.file);
@@ -398,9 +400,20 @@ export async function checkBackup(archive: string, opts: { dir: string; privateK
       throw new Error(`${archive}: the manifest names '${name}', which is not a path inside the archive`);
     }
   }
+  // Judged against what every backup holds, never only against what this
+  // manifest says it holds: a truncated or edited manifest that names less
+  // would otherwise pass by checking less.
+  const missing = STORE_FILES.filter((file) => !(file in manifest.stores));
+  if (missing.length > 0) throw new Error(`${archive}: the manifest describes no ${missing.join(" or ")}`);
   // A store is opened only once its bytes have been checked.
   const unhashed = Object.keys(manifest.stores).filter((file) => !(file in manifest.files));
   if (unhashed.length > 0) throw new Error(`${archive}: the manifest gives no hash for ${unhashed.join(", ")}`);
+  // And every file the archive holds is one the manifest hashed.
+  const { stdout } = await execFileAsync("tar", ["-tzf", archive]);
+  const unlisted = stdout
+    .split("\n")
+    .filter((m) => m !== "" && !m.endsWith("/") && m !== MANIFEST && !(m in manifest.files));
+  if (unlisted.length > 0) throw new Error(`${archive}: holds ${unlisted.join(", ")}, which the manifest does not hash`);
   for (const [name, expected] of Object.entries(manifest.files)) {
     const path = join(opts.dir, name);
     const actual = await fileHash(path, "sha256");

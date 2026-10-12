@@ -64,12 +64,41 @@ function canonPg(v: unknown, type: number): string {
       return canonJson(s);
     default:
       if (s.startsWith("{") && s.endsWith("}") && type !== pg.types.builtins.TEXT) {
-        const inner = s.slice(1, -1);
-        const items = inner === "" ? [] : inner.split(",").map((x) => x.replace(/^"(.*)"$/, "$1"));
-        return JSON.stringify(items.map((x) => (x === "NULL" ? "∅" : /^-?\d+(\.\d+)?$/.test(x) ? String(Number(x)) : x)));
+        return JSON.stringify(
+          parsePgArray(s).map((x) => (x === null ? "∅" : /^-?\d+(\.\d+)?$/.test(x) ? String(Number(x)) : x)),
+        );
       }
       return timestampish(s);
   }
+}
+
+/**
+ * A one-dimensional Postgres array literal's elements: a quoted element may
+ * hold commas and backslash-escaped quotes, and only an unquoted NULL is null.
+ */
+function parsePgArray(s: string): (string | null)[] {
+  const items: (string | null)[] = [];
+  let i = 1;
+  while (i < s.length - 1) {
+    if (s[i] === '"') {
+      let item = "";
+      i++;
+      while (s[i] !== '"') {
+        if (s[i] === "\\") i++;
+        item += s[i];
+        i++;
+      }
+      items.push(item);
+      i++;
+    } else {
+      const end = s.indexOf(",", i) < 0 ? s.length - 1 : s.indexOf(",", i);
+      const item = s.slice(i, end);
+      items.push(item === "NULL" ? null : item);
+      i = end;
+    }
+    if (s[i] === ",") i++;
+  }
+  return items;
 }
 
 /** '2026-09-01 12:00:00+00' and '2026-09-01 12:00:00' both → one form. */

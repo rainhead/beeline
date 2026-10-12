@@ -8,7 +8,7 @@
 import pg from "pg";
 import { readFile } from "node:fs/promises";
 import { args } from "../lib.js";
-import { toPostgres } from "../../src/postgres-port.js";
+import { numberPlaceholders, toPostgres } from "../../src/postgres-port.js";
 
 const { positional, flags } = args(process.argv.slice(2));
 const [file, url, prefix] = positional;
@@ -26,8 +26,7 @@ if (!query) throw new Error("no recorded query starts with that");
 const client = new pg.Client({ connectionString: url });
 await client.connect();
 await client.query("SET search_path = public, private");
-let k = 0;
-const ported = toPostgres(query.sql).replace(/\?/g, () => `$${++k}`);
+const ported = numberPlaceholders(toPostgres(query.sql));
 if (flags.sql) console.log(ported, "\n", JSON.stringify(query.params ?? []));
 const plan = await client.query({ text: `EXPLAIN (ANALYZE, BUFFERS, COSTS OFF) ${ported}`, values: query.params ?? [] });
 for (const row of plan.rows) console.log(row["QUERY PLAN"]);

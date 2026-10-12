@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SCHEMA_DIR } from "../src/schema.js";
-import { toPostgres } from "../src/postgres-port.js";
+import { numberPlaceholders, toPostgres } from "../src/postgres-port.js";
 
 /**
  * The rewrites src/postgres-port.ts makes, one rule at a time, on SQL in the
@@ -164,6 +164,18 @@ describe("toPostgres", () => {
   test("rewrites nest", () => {
     expect(port("SELECT try_cast(json_extract_string(c, '$.n') AS INTEGER)")).toBe(
       "SELECT beeline_try_cast_integer(CAST((c #>> '{n}') AS text))",
+    );
+  });
+
+  test("regexp_extract adds one to a group expression as a whole", () => {
+    expect(port("SELECT regexp_extract(s, '([a-z]+)', n - 1)")).toBe(
+      "SELECT coalesce((regexp_match(s, concat('(', '([a-z]+)', ')')))[(n - 1) + 1], '')",
+    );
+  });
+
+  test("placeholders are numbered, and a question mark in a string is not one", () => {
+    expect(numberPlaceholders("SELECT coalesce(ref, '?') FROM t WHERE a = ? AND b IN (?, ?)")).toBe(
+      "SELECT coalesce(ref, '?') FROM t WHERE a = $1 AND b IN ($2, $3)",
     );
   });
 

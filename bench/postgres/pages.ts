@@ -20,7 +20,7 @@ import pg from "pg";
 import { DuckDBConnection } from "@duckdb/node-api";
 import { writeFile } from "node:fs/promises";
 import { args, openBench, pageCases } from "../lib.js";
-import { toPostgres } from "../../src/postgres-port.js";
+import { numberPlaceholders, toPostgres } from "../../src/postgres-port.js";
 
 interface Captured {
   sql: string;
@@ -92,7 +92,7 @@ try {
     for (const q of page.queries) {
       let ported: string;
       try {
-        ported = toPostgres(q.sql).replace(/\?/g, (() => { let k = 0; return () => `$${++k}`; })());
+        ported = numberPlaceholders(toPostgres(q.sql));
       } catch (err) {
         failures.push(`no port rule: ${(err as Error).message}`);
         continue;

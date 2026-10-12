@@ -95,21 +95,24 @@ export async function withScratchDatabase<T>(
   const database = `beeline_check_${randomBytes(4).toString("hex")}`;
   const admin = new pg.Client(config);
   await admin.connect();
-  await admin.query(`CREATE DATABASE ${database}`);
   try {
-    // A connection string wins over `database`, so the name goes into it.
-    const scratch: pg.ClientConfig = config.connectionString
-      ? { ...config, connectionString: withDatabase(config.connectionString, database) }
-      : { ...config, database };
-    const client = new pg.Client(scratch);
-    await client.connect();
+    await admin.query(`CREATE DATABASE ${database}`);
     try {
-      return await fn(client, database);
+      // A connection string wins over `database`, so the name goes into it.
+      const scratch: pg.ClientConfig = config.connectionString
+        ? { ...config, connectionString: withDatabase(config.connectionString, database) }
+        : { ...config, database };
+      const client = new pg.Client(scratch);
+      await client.connect();
+      try {
+        return await fn(client, database);
+      } finally {
+        await client.end();
+      }
     } finally {
-      await client.end();
+      await admin.query(`DROP DATABASE ${database}`);
     }
   } finally {
-    await admin.query(`DROP DATABASE ${database}`);
     await admin.end();
   }
 }

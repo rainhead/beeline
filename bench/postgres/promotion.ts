@@ -38,6 +38,9 @@ const steps: { name: string; sql: string }[] = [
 const dir = await mkdtemp(join(tmpdir(), "beeline-pg-promotion-"));
 const copy = join(dir, "store.duckdb");
 await copyFile(storePath, copy);
+// Commits not yet checkpointed live in the WAL; without it the copy is older
+// than the rows load.ts gave Postgres.
+await copyFile(`${storePath}.wal`, `${copy}.wal`).catch(() => undefined);
 const instance = await DuckDBInstance.create(copy);
 const duck = await instance.connect();
 const client = new pg.Client({ connectionString: url });

@@ -123,8 +123,10 @@ rewrites each DuckDB-only construct, every view then answered the dev store's
 rows identically on Postgres 17, and CI applies the schema through it
 (`pnpm db:check-postgres`, beeline-l6w), so "a port, not a rewrite" is now
 checked rather than intended. The design does not port by indexes: ported as
-written, the pages people open spent 5 to 20 times as long in the database,
+written, most pages people open spent 5 to 20 times as long in the database,
 because the derived views compute their whole result on every read. Storing
 four of them (`qc_finding`, `determination_of_record`, `observation_place`,
-`observation_locality`) brought Postgres level with DuckDB or ahead of it,
-which turns a move into a decision about keeping stored rows current.
+`observation_locality`) brought every page but People level with DuckDB or
+ahead of it, which turns a move into a decision about keeping stored rows
+current. People is slow for another reason, a join Postgres cannot hash, and
+a one-line rewrite fixed it.

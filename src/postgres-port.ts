@@ -42,6 +42,18 @@ export function toPostgres(sql: string): string {
   return render(rewrite(parse(tokenize(sql))));
 }
 
+/**
+ * `?` placeholders numbered `$1`, `$2`, … as Postgres wants them. Only a `?`
+ * outside strings, quoted identifiers and comments is a placeholder, so
+ * `coalesce(ref, '?')` keeps its question mark.
+ */
+export function numberPlaceholders(sql: string): string {
+  let k = 0;
+  return tokenize(sql)
+    .map((tok) => (tok.t === "op" ? tok.v.replace(/\?/g, () => `$${++k}`) : tok.v))
+    .join("");
+}
+
 // ── Tokens ────────────────────────────────────────────────────────────────
 
 type Token =
@@ -380,7 +392,7 @@ function rewriteCall(name: string, children: Node[], siblings: Node[], callAt: n
       return `regexp_replace(${r(arg(0))}, ${regex(arg(1))}, ${r(arg(2))}${args[3] ? `, ${r(args[3])}` : ""})`;
     case "regexp_extract": {
       // DuckDB answers '' where nothing matches, and its group 0 is the match.
-      const group = args[2] ? `${r(args[2])} + 1` : "1";
+      const group = args[2] ? `(${r(args[2])}) + 1` : "1";
       return `coalesce((regexp_match(${r(arg(0))}, concat('(', ${regex(arg(1))}, ')')))[${group}], '')`;
     }
     case "round":

@@ -17,8 +17,9 @@ a list of rules, one for each DuckDB-only construct the SQL uses, and CI now app
 the schema to a real Postgres through it (`pnpm db:check-postgres`, beeline-l6w), so a
 construct with no rule fails a check instead of drifting in.
 
-**A straight port is 5 to 20 times slower on the pages people open, and indexes do not
-fix it.** The cause is how the schema is built. QC findings, printability,
+**A straight port is 5 to 20 times slower on most pages people open, and indexes do not
+fix it.** (The People pages are slower still, for a reason of their own, below.) The
+cause is how the schema is built. QC findings, printability,
 determination-of-record and the observation views are views that compute their whole
 result on every read. DuckDB does that for the 7,958 QC findings in about 120 ms;
 Postgres takes 1.4 to 1.6 s. A page that asks for one sample's findings cannot narrow
@@ -26,7 +27,8 @@ the work, because `sample_qc_finding` computes its `sample_id` with `coalesce()`
 union's arms rank and group across every sample, so Postgres computes all of it and
 then keeps one row. An index on every foreign key changed none of the timings.
 
-**Storing four views' rows puts Postgres level with DuckDB or ahead of it.** Created as
+**Storing four views' rows puts Postgres level with DuckDB or ahead of it on every page
+but People.** Created as
 materialized views — Postgres keeps the rows and recomputes them only when told — with
 an index on each `…_id` column, `qc_finding`, `determination_of_record`,
 `observation_place` and `observation_locality` took most pages below DuckDB's times. A
@@ -182,5 +184,6 @@ tsx bench/postgres/explain.ts <pages.json> postgres://…/<db> "<query prefix>" 
 ```
 
 The loader needs the Postgres server on the same machine, since the server reads the
-CSV files itself. Results stay out of the repository: the recorded queries carry real
+CSV files itself, and a role that may create databases, read server files and set
+`session_replication_role`, which in practice means a superuser. Results stay out of the repository: the recorded queries carry real
 people's ids as parameters.

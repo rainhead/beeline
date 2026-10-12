@@ -10,6 +10,7 @@
     "db:build": "tsx src/build-db.ts",
     "db:migrate": "tsx src/migrate.ts",
     "db:reseed": "tsx src/reseed-store.ts",
+    "db:check-postgres": "tsx src/check-postgres.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "legacy:fetch": "scripts/fetch-legacy.sh",
@@ -44,6 +45,8 @@
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "@types/pg": "8.23.1",
+    "pg": "8.23.0",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"

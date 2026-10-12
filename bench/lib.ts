@@ -285,3 +285,71 @@ export function args(argv: string[]): { positional: string[]; flags: Record<stri
   }
   return { positional, flags };
 }
+
+/** A page as one of the two kinds of people who open it (bench:pages, bench/postgres). */
+export interface Case {
+  name: string;
+  who: "volunteer" | "staff";
+  path: string;
+}
+
+export async function pageCases(bench: Bench): Promise<Case[]> {
+  const one = async (sql: string) => Object.values((await rows(bench.jobConn, sql))[0] ?? {})[0];
+  const mine = bench.volunteer.personId;
+  const ownSample = await one(
+    `SELECT s.entity_id FROM sample s JOIN sample_collector sc ON sc.sample_id = s.entity_id
+      WHERE sc.person_id = ${mine} ORDER BY s.date_end DESC, s.entity_id LIMIT 1`,
+  );
+  const ownSpecimen = await one(
+    `SELECT sp.entity_id FROM specimen sp JOIN sample_collector sc ON sc.sample_id = sp.sample_id
+      WHERE sc.person_id = ${mine} ORDER BY sp.entity_id DESC LIMIT 1`,
+  );
+  const biggestSample = await one(`SELECT sample_id FROM specimen GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`);
+  // The specimen with the longest determination history: the page that exists to show one.
+  const busiestSpecimen = await one(`SELECT specimen_id FROM determination GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`);
+  const genus = await one(
+    `SELECT g.scientific_name FROM determination_of_record d
+       JOIN animal a ON a.entity_id = d.animal_id
+       JOIN animal g ON g.entity_id = a.parent_id AND g.rank = 'genus'
+      GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`,
+  );
+  const state = await one(`SELECT state_province FROM sample WHERE state_province IS NOT NULL GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`);
+  const run = await one(`SELECT print_run_id FROM printed_label GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`);
+  const enc = (v: unknown) => encodeURIComponent(String(v));
+
+  const list: (Case | null)[] = [
+    { name: "front page", who: "volunteer", path: "/" },
+    { name: "samples, mine", who: "volunteer", path: "/samples" },
+    { name: "samples, mine, flagged", who: "volunteer", path: "/samples?qc=flagged" },
+    { name: "samples, mine, page 5", who: "volunteer", path: "/samples?page=5" },
+    { name: "specimens, mine", who: "volunteer", path: "/specimens" },
+    genus ? { name: "specimens, mine, by genus", who: "volunteer", path: `/specimens?taxon=${enc(genus)}` } : null,
+    { name: "samples.csv, mine", who: "volunteer", path: "/samples.csv" },
+    ownSample ? { name: "sample page, own", who: "volunteer", path: `/samples/${ownSample}` } : null,
+    ownSpecimen ? { name: "specimen page, own", who: "volunteer", path: `/specimens/${ownSpecimen}` } : null,
+    { name: "glossary", who: "volunteer", path: "/glossary" },
+    { name: "taxonomy index", who: "volunteer", path: "/taxonomy" },
+    genus ? { name: "taxonomy, top genus", who: "volunteer", path: `/taxonomy/genus/${enc(genus)}` } : null,
+    { name: "taxonomy search", who: "volunteer", path: "/taxonomy?q=bombus" },
+
+    { name: "front page", who: "staff", path: "/" },
+    { name: "samples, all", who: "staff", path: "/samples?scope=all" },
+    { name: "samples, all, flagged", who: "staff", path: "/samples?scope=all&qc=flagged" },
+    { name: "samples, all, by number", who: "staff", path: "/samples?scope=all&sort=number" },
+    { name: "samples, all, last page", who: "staff", path: "/samples?scope=all&page=100000" },
+    state ? { name: "samples, all, by place", who: "staff", path: `/samples?scope=all&place=${enc(state)}` } : null,
+    { name: "samples, all, search", who: "staff", path: "/samples?scope=all&q=26" },
+    { name: "specimens, all", who: "staff", path: "/specimens?scope=all" },
+    genus ? { name: "specimens, all, by genus", who: "staff", path: `/specimens?scope=all&taxon=${enc(genus)}` } : null,
+    { name: "specimens, all, undetermined", who: "staff", path: "/specimens?scope=all&det=undetermined" },
+    biggestSample ? { name: "sample page, largest", who: "staff", path: `/samples/${biggestSample}` } : null,
+    busiestSpecimen ? { name: "specimen page, longest history", who: "staff", path: `/specimens/${busiestSpecimen}` } : null,
+    { name: "people", who: "staff", path: "/people" },
+    { name: "people.csv", who: "staff", path: "/people.csv" },
+    { name: "person page", who: "staff", path: `/people/${mine}` },
+    { name: "jobs", who: "staff", path: "/jobs" },
+    { name: "print runs", who: "staff", path: "/print-runs" },
+    run ? { name: "print run, largest", who: "staff", path: `/print-runs/${run}` } : null,
+  ];
+  return list.filter((c): c is Case => c !== null);
+}

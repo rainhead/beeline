@@ -115,3 +115,16 @@ tables from `read_csv`/`read_ndjson` are the real cost of a move;
 [ADR 0003](0003-private-data-store.md)'s separate encrypted file is *not* —
 it becomes a schema, and its rationale (a main file "meant to be copied
 casually") is itself a DuckDB property. beeline-yfb has the reasoning.
+
+Both were measured on 2026-10-12
+([docs/research/postgres-feasibility.md](../research/postgres-feasibility.md)).
+The syntax ports by rule: [`src/postgres-port.ts`](../../src/postgres-port.ts)
+rewrites each DuckDB-only construct, every view then answered the dev store's
+rows identically on Postgres 17, and CI applies the schema through it
+(`pnpm db:check-postgres`, beeline-l6w), so "a port, not a rewrite" is now
+checked rather than intended. The design does not port by indexes: ported as
+written, the pages people open spent 5 to 20 times as long in the database,
+because the derived views compute their whole result on every read. Storing
+four of them (`qc_finding`, `determination_of_record`, `observation_place`,
+`observation_locality`) brought Postgres level with DuckDB or ahead of it,
+which turns a move into a decision about keeping stored rows current.

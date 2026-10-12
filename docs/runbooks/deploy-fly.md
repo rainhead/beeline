@@ -562,10 +562,22 @@ private store was **not** checked rather than passing it. What it leaves in
 5. `fly machine update --env BEELINE_MAINTENANCE= <id>`. Boot applies any
    migration newer than the copy, as it does for every deploy.
 
-The drill — download a real copy, `backup:check` it, and start a scratch app
-against what it extracted (with `BEELINE_SAMPLE_CHANGES`,
-`BEELINE_SAMPLE_STATE` and `BEELINE_PERSON_CHANGES` pointed away from
-`data/`) — is run once before cutover, not after something has gone wrong.
+**`store-backup` then reads as failing on `/jobs` and `/healthz/jobs`, and
+that is expected.** The copy was taken while that run was in progress, so the
+restored store holds it unfinished, and boot marks every unfinished run
+failed as "orphaned". It clears with the next backup, which can be run from
+`/jobs` straight away; the restored store is a good reason to.
+
+The drill is to download a real copy, `backup:check` it, and start a scratch
+app against what it extracted. Point every path the app writes — the stores,
+`BEELINE_CORRECTIONS`, both overlays, `BEELINE_SAMPLE_CHANGES`,
+`BEELINE_SAMPLE_STATE`, `BEELINE_PERSON_CHANGES` — at a copy, never at
+`data/`, and give it `BEELINE_DEV_LOGIN` and placeholder
+`INAT_CLIENT_ID`/`INAT_CLIENT_SECRET`, since it signs nobody in. Run it once
+before cutover, not after something has gone wrong. **First run, 2026-10-12**
+(beeline-elf): the sandbox's first copy, downloaded by a member of the drive,
+passed `backup:check` with both stores opened, and the scratch app served
+every main page from it, the orphaned run above included.
 
 ### The pull from maderas, until the Drive copies have a record
 

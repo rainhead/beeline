@@ -145,8 +145,8 @@ import { SamplePage, SpecimenPage } from "./views/record.js";
 
 export interface JobsDep {
   list: Job[];
-  /** Run a job immediately; false if unknown or busy. */
-  runNow(name: string): Promise<boolean>;
+  /** Start a job now and return once its run is recorded, while it goes on; false if unknown or busy. */
+  start(name: string): Promise<boolean>;
 }
 
 export interface AppDeps {
@@ -218,7 +218,7 @@ export function createApp({
   printRunsDir,
   programGovernance,
 }: AppDeps) {
-  const jobsDep: JobsDep = jobs ?? { list: [], runNow: async () => false };
+  const jobsDep: JobsDep = jobs ?? { list: [], start: async () => false };
   const printRunsPath = printRunsDir ?? "data/print-runs";
   const printWriter = printConn ?? conn;
   const corrections = correctionsPath ?? "data/corrections.csv";
@@ -1924,7 +1924,11 @@ export function createApp({
 
   app.post("/jobs/run/:name", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
-    await jobsDep.runNow(c.req.param("name"));
+    // Returns once the run is recorded, not when it ends: /jobs then shows it
+    // running, and a long job no longer holds the request open until the
+    // browser gives up on it. Closing the page never stopped a job, and still
+    // does not.
+    await jobsDep.start(c.req.param("name"));
     return c.redirect("/jobs");
   });
 

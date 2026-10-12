@@ -75,7 +75,7 @@ describe("app scaffold", () => {
       config: { environment: "development" as const, origin: "http://localhost:3054" },
       inat: unusedInat,
       resolveSession: noSession,
-      jobs: { list: jobs, runNow: async () => false },
+      jobs: { list: jobs, start: async () => false },
     });
 
     // Never run: a registered job with no history at all.

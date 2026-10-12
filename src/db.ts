@@ -48,7 +48,9 @@ export function duckDbConfig(env: NodeJS.ProcessEnv = process.env): Record<strin
  * apart wherever the process was not in UTC (beeline-j0aj). Fly runs in UTC,
  * which is why production never showed it. Pinning the session zone makes
  * every process store what production stores; reading the value back as UTC
- * is the other half, in `patches/kysely-duckdb.patch`.
+ * is the other half, in `patches/kysely-duckdb.patch`, which can go when
+ * kysely-duckdb offers that as an option
+ * (https://github.com/runoshun/kysely-duckdb/issues/15).
  */
 const STORE_TIME_ZONE = { TimeZone: "UTC" };
 

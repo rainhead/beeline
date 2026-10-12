@@ -22,9 +22,11 @@ engine runs them owns the heart of the system.
 - **DuckDB is the engine for phases 1–3** (data model, legacy ingestion, iNat
   ingestion), and the default candidate for the app store.
 - **The DDL stays dialect-neutral by convention** so a phase-4 move of the app
-  store to PostgreSQL is a port, not a rewrite. No mechanical enforcement (no
-  Postgres CI check) for now; the convention is cheap because the schema is
-  hand-written SQL. Concretely:
+  store to PostgreSQL is a port, not a rewrite. The convention is cheap
+  because the schema is hand-written SQL. It was unenforced until 2026-10-12;
+  since then CI applies the schema to Postgres through the rewrite rules in
+  `src/postgres-port.ts` (`db:check-postgres`, beeline-l6w; see Evidence
+  since). Concretely:
   - Row ids come from `CREATE SEQUENCE` + `DEFAULT nextval(...)` — identical in
     both engines. (DuckDB has no auto-increment; Postgres identity columns are
     not portable to DuckDB.) A single global `entity_id_seq` feeds every entity

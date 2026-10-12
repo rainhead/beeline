@@ -145,7 +145,7 @@ const app = createApp({
   config,
   inat,
   resolveSession,
-  jobs: { list: jobs, runNow: (name) => scheduler.runNow(name) },
+  jobs: { list: jobs, start: (name) => scheduler.start(name) },
   correctionsPath: config.correctionsPath,
   personOverlayPath: config.personOverlayPath,
   sampleOverlayPath: config.sampleOverlayPath,

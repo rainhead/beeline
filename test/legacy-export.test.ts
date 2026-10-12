@@ -395,7 +395,7 @@ describe("the Exports page", () => {
       config: { environment: "sandbox", origin: "https://beeline.example", exportsDir },
       inat,
       resolveSession: async () => ({ personId: 1, login: "someone", iconUrl: null }),
-      jobs: { list: [], runNow: async () => true },
+      jobs: { list: [], start: async () => true },
     });
   };
 

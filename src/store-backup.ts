@@ -362,12 +362,16 @@ const megabytes = (bytes: number) => `${(bytes / 1e6).toFixed(0)} MB`;
 
 /** The run's detail on /jobs. */
 export function describeBackup(r: BackupResult): string {
+  const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
   return (
-    `${r.name}, ${megabytes(r.bytes)}: ${r.tables} tables, ${r.rows} rows, ${r.authored} authored files` +
+    `${r.name}, ${megabytes(r.bytes)}: ${n(r.tables, "table", "tables")}, ${n(r.rows, "row", "rows")}, ` +
+    n(r.authored, "authored file", "authored files") +
     (r.absent.length > 0 ? ` (not yet written: ${r.absent.join(", ")})` : "") +
-    `; ${r.kept} copies in the folder` +
+    `; ${n(r.kept, "copy", "copies")} in the folder` +
     (r.trashed.length > 0 ? `, ${r.trashed.length} older moved to the bin` : "") +
-    (r.staleRemoved > 0 ? `; removed ${r.staleRemoved} work directory left by a run that did not finish` : "")
+    (r.staleRemoved > 0
+      ? `; removed ${n(r.staleRemoved, "work directory", "work directories")} left by a run that did not finish`
+      : "")
   );
 }
 

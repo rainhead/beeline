@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { isDue, runJob, startScheduler, type Job, type JobContext } from "../src/app/jobs/framework.js";
@@ -165,6 +165,41 @@ describe("scheduler", () => {
       expect(run.detail).toBe("on demand");
     } finally {
       scheduler.stop();
+    }
+  });
+
+  it("start returns once the run is recorded, while the job goes on (the Run button)", async () => {
+    const deps = await jobDeps();
+    let finish!: () => void;
+    const held = new Promise<void>((resolve) => (finish = resolve));
+    const scheduler = startScheduler({
+      ...deps,
+      jobs: [
+        { name: "long", schedule: { kind: "dailyLA", hour: 2 }, window: "night", run: async () => (await held, "finished") },
+      ],
+      tickMs: 3_600_000,
+    });
+    try {
+      expect(await scheduler.start("nope")).toBe(false);
+      expect(await scheduler.start("long")).toBe(true);
+      // Returned with the job still running: its row is there, unfinished,
+      // and the scheduler will start nothing else until it ends.
+      expect(scheduler.running()).toBe("long");
+      const running = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+      expect(running.completed_at).toBeNull();
+      expect(await scheduler.start("long")).toBe(false);
+
+      finish();
+      await vi.waitFor(() => expect(scheduler.running()).toBeNull());
+      const done = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+      expect(done.outcome).toBe("succeeded");
+      expect(done.detail).toBe("finished");
+    } finally {
+      // Released first: the job waits on `held` and not inside a step, so a
+      // failed assertion above would otherwise leave stop() waiting for it
+      // and bury the assertion under a timeout.
+      finish();
+      await scheduler.stop();
     }
   });
 });
@@ -389,7 +424,7 @@ describe("/jobs page", () => {
       config: { environment: "development", origin: "http://localhost:3054" },
       inat,
       resolveSession: async () => ({ personId: 1, login: "tester", iconUrl: null }),
-      jobs: { list: [job], runNow: async (name) => (name === "manual" ? (await runJob(deps, job), true) : false) },
+      jobs: { list: [job], start: async (name) => (name === "manual" ? (await runJob(deps, job), true) : false) },
     });
 
     const before = await (await app.request("/jobs")).text();
@@ -429,7 +464,7 @@ describe("/jobs page", () => {
         config: { environment: "sandbox", origin: "https://beeline.example" },
         inat,
         resolveSession: async () => ({ personId: 1, login: "volunteer", iconUrl: null }),
-        jobs: { list: [], runNow: async () => true },
+        jobs: { list: [], start: async () => true },
       });
 
     const gated = appFor();

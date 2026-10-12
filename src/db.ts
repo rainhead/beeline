@@ -38,16 +38,34 @@ export function duckDbConfig(env: NodeJS.ProcessEnv = process.env): Record<strin
 }
 
 /**
+ * A `TIMESTAMP` column holds a wall-clock time with no zone, and this store's
+ * mean UTC — in every process, wherever it runs, not only on the Fly machine.
+ *
+ * DuckDB's session zone defaults to the machine's. Under it `current_timestamp`
+ * stored Pacific wall-clock time on a workstation, while a JavaScript instant
+ * written as `toISOString()` (print runs, determination drafts, the Ecdysis
+ * and worksheet loads) stored UTC, so one column held two meanings seven hours
+ * apart wherever the process was not in UTC (beeline-j0aj). Fly runs in UTC,
+ * which is why production never showed it. Pinning the session zone makes
+ * every process store what production stores; reading the value back as UTC
+ * is the other half, in `patches/kysely-duckdb.patch`, which can go when
+ * kysely-duckdb offers that as an option
+ * (https://github.com/runoshun/kysely-duckdb/issues/15).
+ */
+const STORE_TIME_ZONE = { TimeZone: "UTC" };
+
+/**
  * Every DuckDB this project opens goes through here or through
- * {@link openMemoryDuckDb}, so the budgets above apply everywhere — and
- * `test/duckdb-openers.test.ts` holds that true, because the first attempt at
- * this refactor missed two call sites to a `grep | head` and nothing noticed.
+ * {@link openMemoryDuckDb}, so the budgets above and the store's time zone
+ * apply everywhere — and `test/duckdb-openers.test.ts` holds that true,
+ * because the first attempt at this refactor missed two call sites to a
+ * `grep | head` and nothing noticed.
  */
 export function openDuckDb(path: string): Promise<DuckDBInstance> {
-  return DuckDBInstance.create(path, duckDbConfig());
+  return DuckDBInstance.create(path, { ...duckDbConfig(), ...STORE_TIME_ZONE });
 }
 
 /** The in-memory case (tests, the migration tool's drift check). */
 export function openMemoryDuckDb(): Promise<DuckDBInstance> {
-  return DuckDBInstance.create(":memory:", duckDbConfig());
+  return DuckDBInstance.create(":memory:", { ...duckDbConfig(), ...STORE_TIME_ZONE });
 }

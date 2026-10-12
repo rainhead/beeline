@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  kysely-duckdb: 30ce2f8317b9731e3a35db2fd1e525d94d2d405446c808bfaaff4d1d5efa18f5
+
 importers:
 
   .:
@@ -40,7 +43,7 @@ importers:
         version: 0.28.17
       kysely-duckdb:
         specifier: ^0.4.0
-        version: 0.4.0(@duckdb/node-api@1.5.5-r.4)(kysely@0.28.17)(web-worker@1.5.0)
+        version: 0.4.0(patch_hash=30ce2f8317b9731e3a35db2fd1e525d94d2d405446c808bfaaff4d1d5efa18f5)(@duckdb/node-api@1.5.5-r.4)(kysely@0.28.17)(web-worker@1.5.0)
       lit:
         specifier: ^3.3.3
         version: 3.3.3
@@ -1952,7 +1955,7 @@ snapshots:
 
   json5@2.2.3: {}
 
-  kysely-duckdb@0.4.0(@duckdb/node-api@1.5.5-r.4)(kysely@0.28.17)(web-worker@1.5.0):
+  kysely-duckdb@0.4.0(patch_hash=30ce2f8317b9731e3a35db2fd1e525d94d2d405446c808bfaaff4d1d5efa18f5)(@duckdb/node-api@1.5.5-r.4)(kysely@0.28.17)(web-worker@1.5.0):
     dependencies:
       kysely: 0.28.17
     optionalDependencies:

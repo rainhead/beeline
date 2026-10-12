@@ -1,0 +1,44 @@
+diff --git a/dist/index.js b/dist/index.js
+index 24474b4163c37ff88653b1a1c86a5dc6ca2e5556..bfd3bb237310b74c36d32bc3d0da4099fb45830a 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -158,7 +158,7 @@ var DuckDBConnection = class {
+     }
+     if (value instanceof import_node_api.DuckDBTimestampValue) {
+       const { date: date2, time } = value.toParts();
+-      return new Date(
++      return new Date(Date.UTC(
+         date2.year,
+         date2.month - 1,
+         date2.day,
+@@ -166,7 +166,7 @@ var DuckDBConnection = class {
+         time.min,
+         time.sec,
+         Math.floor(time.micros / 1e3)
+-      );
++      ));
+     }
+     if (value instanceof import_node_api.DuckDBTimestampTZValue) {
+       return new Date(value.toString());
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 34969b74fb66797233ad4391e1a2af2821a15c9f..4174dd209aefc8bc0b278855e73e5e79d92fc02e 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -136,7 +136,7 @@ var DuckDBConnection = class {
+     }
+     if (value instanceof DuckDBTimestampValue) {
+       const { date: date2, time } = value.toParts();
+-      return new Date(
++      return new Date(Date.UTC(
+         date2.year,
+         date2.month - 1,
+         date2.day,
+@@ -144,7 +144,7 @@ var DuckDBConnection = class {
+         time.min,
+         time.sec,
+         Math.floor(time.micros / 1e3)
+-      );
++      ));
+     }
+     if (value instanceof DuckDBTimestampTZValue) {
+       return new Date(value.toString());

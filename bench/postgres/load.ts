@@ -101,11 +101,16 @@ await client.query("SET session_replication_role = replica");
 let total = 0;
 for (const [table, cols] of tables) {
   const started = performance.now();
-  // A list is written `[1, 2]` and Postgres reads arrays as `{1,2}`.
+  // A list is written `[1, 2]` and Postgres reads arrays as `{1,2}`. Numbers
+  // need no quoting inside the braces; a list of text would, and none exists.
   const select = cols
-    .map(({ column_name: c, data_type: t }) =>
-      t.endsWith("[]") ? `CASE WHEN "${c}" IS NULL THEN NULL ELSE concat('{', array_to_string("${c}", ','), '}') END AS "${c}"` : `"${c}"`,
-    )
+    .map(({ column_name: c, data_type: t }) => {
+      if (!t.endsWith("[]")) return `"${c}"`;
+      if (!/^(TINYINT|SMALLINT|INTEGER|BIGINT|DOUBLE|FLOAT)\[\]$/.test(t)) {
+        throw new Error(`${table}.${c} is ${t}; only lists of numbers are written as Postgres arrays`);
+      }
+      return `CASE WHEN "${c}" IS NULL THEN NULL ELSE concat('{', array_to_string("${c}", ','), '}') END AS "${c}"`;
+    })
     .join(", ");
   const file = join(dir, `${table}.csv`);
   await duck.run(`COPY (SELECT ${select} FROM "${table}") TO '${file}' (HEADER, FORCE_QUOTE *)`);

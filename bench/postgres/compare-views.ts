@@ -58,18 +58,23 @@ function canonPg(v: unknown, type: number): string {
     case pg.types.builtins.FLOAT4:
     case pg.types.builtins.FLOAT8:
     case pg.types.builtins.NUMERIC:
-      return String(Number(s));
+      return canonNumber(s);
     case pg.types.builtins.JSONB:
     case pg.types.builtins.JSON:
       return canonJson(s);
     default:
       if (s.startsWith("{") && s.endsWith("}") && type !== pg.types.builtins.TEXT) {
         return JSON.stringify(
-          parsePgArray(s).map((x) => (x === null ? "∅" : /^-?\d+(\.\d+)?$/.test(x) ? String(Number(x)) : x)),
+          parsePgArray(s).map((x) => (x === null ? "∅" : /^-?\d+(\.\d+)?$/.test(x) ? canonNumber(x) : x)),
         );
       }
       return timestampish(s);
   }
+}
+
+/** A whole number exactly, as BigInt prints it; anything else as JavaScript prints a double. */
+function canonNumber(s: string): string {
+  return /^-?\d+$/.test(s) ? BigInt(s).toString() : String(Number(s));
 }
 
 /**
@@ -139,7 +144,7 @@ for (const view of views) {
     const duckMs = performance.now() - t;
     // The JSON row form renders BIGINT/HUGEINT as strings; JS gives lists as arrays.
 
-    const dRows = d.getRowsJS().map((row) => row.map((v) => (typeof v === "bigint" ? String(Number(v)) : v)));
+    const dRows = d.getRowsJS().map((row) => row.map((v) => (typeof v === "bigint" ? v.toString() : v)));
     const duckSet = dRows.map((row) => row.map((v, k) => canonDuckTyped(v, d.columnType(k).toString())).join("|"));
 
     t = performance.now();

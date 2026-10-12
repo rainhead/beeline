@@ -83,6 +83,7 @@ describe("toPostgres", () => {
       "SELECT beeline_try_cast_integer(CAST(f.specimen_count_raw AS text)) > 0",
     );
     expect(port("SELECT try_cast(v AS DOUBLE)")).toBe("SELECT beeline_try_cast_double(CAST(v AS text))");
+    expect(() => toPostgres("SELECT try_cast(v AS TIMESTAMPTZ)")).toThrow(/no port rule/);
   });
 
   describe("regular expressions", () => {

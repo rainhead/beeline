@@ -224,7 +224,18 @@ function typeName(type: Node[]): string {
 
 // ── The rules ─────────────────────────────────────────────────────────────
 
-const INTERVAL_UNIT = /^(microsecond|millisecond|second|minute|hour|day|week|month|year)s?$/i;
+/** try_cast's target types, each to its helper in schema/postgres/prelude.sql. */
+const TRY_CAST_HELPER: Record<string, string> = {
+  integer: "beeline_try_cast_integer",
+  int: "beeline_try_cast_integer",
+  bigint: "beeline_try_cast_bigint",
+  double: "beeline_try_cast_double",
+  "double precision": "beeline_try_cast_double",
+  date: "beeline_try_cast_date",
+  timestamp: "beeline_try_cast_timestamp",
+};
+
+const INTERVAL_UNIT =/^(microsecond|millisecond|second|minute|hour|day|week|month|year)s?$/i;
 
 function rewrite(nodes: Node[]): Node[] {
   const out: Node[] = [];
@@ -376,8 +387,9 @@ function rewriteCall(name: string, children: Node[], siblings: Node[], callAt: n
     case "try_cast": {
       const parts = splitCast(children);
       if (!parts) throw new Error("try_cast without AS");
-      const type = typeName(parts.type).toLowerCase().replace(/ /g, "_");
-      return `beeline_try_cast_${type}(CAST(${r(parts.expr)} AS text))`;
+      const helper = TRY_CAST_HELPER[typeName(parts.type).toLowerCase()];
+      if (!helper) throw new Error(`try_cast to ${typeName(parts.type)} has no port rule yet`);
+      return `${helper}(CAST(${r(parts.expr)} AS text))`;
     }
     case "regexp_matches": {
       const flags = args[2] ? (literalValue(args[2]) ?? "") : "";

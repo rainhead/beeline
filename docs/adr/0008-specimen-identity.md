@@ -3,9 +3,11 @@
 **Status:** **proposed** (2026-09-09) · awaits Arthur and Andony settling the
 one question left on [gh-17](https://github.com/rainhead/beeline/issues/17)
 together · the evidence is
-[field-number-history.md](../field-number-history.md) · phase 5 (beeline-1kb)
-is gated on it · reframed the same day it was drafted: the first version was
-titled *A field number is minted once and never moves* and answered the right
+[field-number-history.md](../field-number-history.md) · only the reprint
+path of phase 5 (beeline-1kb.5) is gated on it; the rest is built as decided
+here — print runs mint the `occurrence_id` and the `minted_field_number` row
+(PR #74), as the closing paragraph of *Consequences* allows · reframed the
+same day it was drafted: the first version was titled *A field number is minted once and never moves* and answered the right
 question with the wrong identifier (beeline-1kb.14, beeline-1kb.15) ·
 **reviewed 2026-09-25** (Peter): (1) overstated its own case against a URI
 that carries the field number — see the note under it and open question 1 ·

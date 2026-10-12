@@ -1,7 +1,10 @@
 # ADR 0005: The app process owns the store; ingestion moves in-process
 
 **Status:** accepted (2026-08-22) · resolves the phase-4 decision point of
-[ADR 0001](0001-duckdb-first-with-portable-sql.md)
+[ADR 0001](0001-duckdb-first-with-portable-sql.md) · **Reviewed**
+(2026-10-12, beeline-elf): backups arrived as the night-window job this
+predicted, but by neither method it names — see *Backups happen from inside*
+below
 
 ## Context
 
@@ -83,6 +86,13 @@ long-lived, easily replaced) and recorded here to keep ADRs few:
   snapshotting is a night-window job (`CHECKPOINT` + copy, or
   `EXPORT DATABASE`) — designed when real backups arrive (phase 7), but the
   night window is where it will live.
+  *Built 2026-10-12* (#152): the `store-backup` job runs at 3am Pacific and
+  copies each store inside one read transaction, so the app keeps writing
+  while it runs. Neither method named above works on DuckDB 1.5.5 —
+  `COPY FROM DATABASE` fills tables in name order and stops at the first
+  foreign key — so the schema is copied on its own and the rows are inserted
+  parents first ([src/store-snapshot.ts](../../src/store-snapshot.ts) says
+  why).
 - **The SLA is a convention with a dashboard, not a guardrail.** Chunk
   timings and breach logs are the evidence the tripwire reads; if breaches
   become routine, that is the Postgres signal, not a reason to relax the

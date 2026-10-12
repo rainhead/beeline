@@ -176,6 +176,12 @@ describe("the archive", () => {
     await writeFile(join(dir, "manifest.json"), JSON.stringify(climbing));
     await writeArchive(entries, archive);
     await expect(checkBackup(archive, { dir: join(dir, "out3"), privateKey: null })).rejects.toThrow(/not a path inside the archive/);
+
+    // And a store the manifest gives no hash for is never opened.
+    const unhashed = { ...manifest, stores: { "block.bin": { encrypted: false, tables: {}, shape: {} } }, files: {} };
+    await writeFile(join(dir, "manifest.json"), JSON.stringify(unhashed));
+    await writeArchive(entries, archive);
+    await expect(checkBackup(archive, { dir: join(dir, "out4"), privateKey: null })).rejects.toThrow(/gives no hash for block\.bin/);
   });
 });
 

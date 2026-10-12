@@ -398,6 +398,9 @@ export async function checkBackup(archive: string, opts: { dir: string; privateK
       throw new Error(`${archive}: the manifest names '${name}', which is not a path inside the archive`);
     }
   }
+  // A store is opened only once its bytes have been checked.
+  const unhashed = Object.keys(manifest.stores).filter((file) => !(file in manifest.files));
+  if (unhashed.length > 0) throw new Error(`${archive}: the manifest gives no hash for ${unhashed.join(", ")}`);
   for (const [name, expected] of Object.entries(manifest.files)) {
     const path = join(opts.dir, name);
     const actual = await fileHash(path, "sha256");

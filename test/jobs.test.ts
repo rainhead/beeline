@@ -195,6 +195,10 @@ describe("scheduler", () => {
       expect(done.outcome).toBe("succeeded");
       expect(done.detail).toBe("finished");
     } finally {
+      // Released first: the job waits on `held` and not inside a step, so a
+      // failed assertion above would otherwise leave stop() waiting for it
+      // and bury the assertion under a timeout.
+      finish();
       await scheduler.stop();
     }
   });

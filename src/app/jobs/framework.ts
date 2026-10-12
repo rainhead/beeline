@@ -450,8 +450,9 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
     async start(name) {
       const run = await launch(name);
       if (run === null) return false;
-      // The run's row, or the run's end if it never got one: a failed insert
-      // ends it without starting it, and must not leave the caller waiting.
+      // The run's row, or the run's end if it never got one. A failed insert
+      // ends it without starting it, and rejects here — the Run button's
+      // request fails with the error page, as it did when it awaited runNow.
       await Promise.race([run.started, run.ended]);
       return true;
     },

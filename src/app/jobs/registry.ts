@@ -2,6 +2,7 @@ import { legacyExportPath, writeLegacyExport } from "../../legacy-export.js";
 import { budgetProblems, describeUsage, measureFlyUsage } from "../../fly-usage.js";
 import { commitDeterminationDrafts } from "../../commit-determinations.js";
 import { describeFetch, ECDYSIS_COLLECTIONS, fetchEcdysis } from "../../fetch-ecdysis.js";
+import { backUp, describeBackup } from "../../store-backup.js";
 import { readFile } from "node:fs/promises";
 import type { Kysely } from "kysely";
 import { deriveElevations } from "../../derive-elevation.js";
@@ -157,7 +158,23 @@ export function buildJobs(
     AppConfig,
     "syncProjects" | "sweepDays" | "personChangesPath" | "sampleChangesPath" | "sampleStatePath"
   > &
-    Partial<Pick<AppConfig, "sampleOverlayPath" | "exportsDir" | "flyMetrics" | "ecdysis" | "ecdysisDir">>,
+    Partial<
+      Pick<
+        AppConfig,
+        | "sampleOverlayPath"
+        | "exportsDir"
+        | "flyMetrics"
+        | "ecdysis"
+        | "ecdysisDir"
+        | "driveBackup"
+        | "backupsDir"
+        | "environment"
+        | "privateDbKey"
+        | "release"
+        | "correctionsPath"
+        | "personOverlayPath"
+      >
+    >,
 ): Job[] {
   const samplePaths: SampleLogPaths = { log: config.sampleChangesPath, state: config.sampleStatePath };
   return [
@@ -252,6 +269,44 @@ export function buildJobs(
           parts.push(describeFetch(r));
         }
         return parts.join("; ");
+      },
+    },
+    {
+      // The nightly backup (beeline-elf, GitHub #126). At 3am and after the
+      // Ecdysis fetch in this list, so the copy holds the night's work: the
+      // 1am determinations, the 2am promotion, what the museum sent back.
+      // Nothing after it writes anything a backup needs — the 4am jobs
+      // write exports, which are regenerated from the store.
+      name: "store-backup",
+      schedule: { kind: "dailyLA", hour: 3 },
+      window: "night",
+      async run(ctx) {
+        if (!config.driveBackup) {
+          const unset = "BEELINE_DRIVE_KEY and BEELINE_BACKUP_FOLDER are not set";
+          // A backup job that succeeds at doing nothing reads, on /jobs and
+          // in Sentry, like a backup.
+          if (config.environment === "development") return `${unset} — nothing backed up`;
+          throw new Error(`${unset}: nothing was backed up`);
+        }
+        const [[main]] = (await (await ctx.conn.run("SELECT current_database()")).getRows()) as [[string]];
+        const result = await backUp(ctx.conn, {
+          workDir: config.backupsDir ?? "data/backups",
+          catalogs: { main, private: "private" },
+          privateKey: config.privateDbKey ?? null,
+          authored: [
+            config.correctionsPath ?? "data/corrections.csv",
+            config.personOverlayPath ?? "data/person-overlay.csv",
+            config.sampleOverlayPath ?? "data/sample-overlay.csv",
+            config.personChangesPath,
+            config.sampleChangesPath,
+            config.sampleStatePath,
+          ],
+          release: config.release ?? null,
+          drive: config.driveBackup,
+          step: ctx.step,
+          signal: ctx.signal,
+        });
+        return describeBackup(result);
       },
     },
     {

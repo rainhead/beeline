@@ -1,3 +1,5 @@
 allowBuilds:
   esbuild: true
   '@duckdb/node-bindings': true
+patchedDependencies:
+  kysely-duckdb: patches/kysely-duckdb.patch

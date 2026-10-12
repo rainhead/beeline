@@ -1,3 +1,4 @@
+import { parseServiceAccountKey, type ServiceAccountKey } from "../drive-service-account.js";
 import type { EcdysisCredentials } from "../fetch-ecdysis.js";
 import type { FlyMetricsTarget } from "../fly-usage.js";
 import { CHANGE_LOG } from "../person-change.js";
@@ -110,6 +111,15 @@ export interface AppConfig {
   ecdysis: EcdysisCredentials | null;
   /** Where the Ecdysis archive and its change-probe baseline are kept between runs. */
   ecdysisDir: string;
+  /**
+   * Where the nightly backup goes (beeline-elf): the service account's key,
+   * a secret, and the shared-drive folder it was added to. Null where neither
+   * is set, which outside development fails the backup job every night
+   * rather than letting it succeed at nothing.
+   */
+  driveBackup: { key: ServiceAccountKey; folderId: string } | null;
+  /** Where a backup run writes its copies and archive before uploading them; emptied after each run. */
+  backupsDir: string;
 }
 
 /**
@@ -195,6 +205,15 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if ((ecdysisUser === null) !== (ecdysisPassword === null)) {
     throw new Error("ECDYSIS_USERNAME and ECDYSIS_PASSWORD must be set together");
   }
+  // Both or neither, and the key read now: a key that is not one would
+  // otherwise be found at 3am by the job it exists for.
+  const driveKey = env.BEELINE_DRIVE_KEY?.trim() || null;
+  const backupFolder = env.BEELINE_BACKUP_FOLDER?.trim() || null;
+  if ((driveKey === null) !== (backupFolder === null)) {
+    throw new Error("BEELINE_DRIVE_KEY and BEELINE_BACKUP_FOLDER must be set together");
+  }
+  const driveBackup =
+    driveKey !== null && backupFolder !== null ? { key: parseServiceAccountKey(driveKey), folderId: backupFolder } : null;
   const feedbackEmail = env.BEELINE_FEEDBACK_EMAIL?.trim() || null;
   if (feedbackEmail !== null && !/^[^\s@,?#&]+@[^\s@,?#&]+(,[^\s@,?#&]+@[^\s@,?#&]+)*$/.test(feedbackEmail)) {
     throw new Error(`BEELINE_FEEDBACK_EMAIL must be an address or a comma-separated list of them, got '${feedbackEmail}'`);
@@ -232,5 +251,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
         : null,
     ecdysis: ecdysisUser !== null && ecdysisPassword !== null ? { username: ecdysisUser, password: ecdysisPassword } : null,
     ecdysisDir: env.BEELINE_ECDYSIS ?? "data/ecdysis",
+    driveBackup,
+    backupsDir: env.BEELINE_BACKUPS ?? "data/backups",
   };
 }

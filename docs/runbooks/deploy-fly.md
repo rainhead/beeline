@@ -98,6 +98,10 @@ unset, it reports nothing and behaves exactly the same.
 `ecdysis-fetch` job signs in with ([Ecdysis](#ecdysis)); set both or neither,
 since half a login stops the app at boot.
 
+`BEELINE_DRIVE_KEY` is the service account's JSON key, whole, that the
+`store-backup` job writes with ([Backups](#backups)); `BEELINE_BACKUP_FOLDER`,
+in `fly.toml`, is the folder. Set both or neither, as with Ecdysis.
+
 Keep a copy of the private-store key in your password manager before you set
 it: Fly secrets are write-only, and losing the key is losing the private store
 ([ADR 0003](../adr/0003-private-data-store.md)).
@@ -136,7 +140,8 @@ datasets that want no credential. Fetch them **on the machine** rather than
 uploading them — see below.
 
 `private.duckdb` is not copied between hosts. The app creates it at first
-boot; sessions and sign-in records are acceptable losses pre-cutover.
+boot; sessions and sign-in records are acceptable losses pre-cutover. A
+restore from a backup is the exception ([Backups](#backups)).
 
 ## Deploying a change
 
@@ -455,112 +460,127 @@ does not explain.
 Fly's own advice is that an app should have two volumes and that snapshots are
 not a primary backup. **We can take neither**: ADR 0005 and single-attach
 volumes mean there is one copy of the store on one host's local disk, with a
-daily block-level snapshot (`snapshot_retention = 14`).
+daily block-level snapshot (`snapshot_retention = 14`). From cutover the store
+holds what exists nowhere else — the numbers printed on pins, print runs,
+determinations entered in the app, staff decisions — so the backup is a copy
+somewhere else, every night, that has been shown to restore.
 
-Pre-cutover most of that is tolerable — `beeline.duckdb` is reconstructible by
-re-ingestion. What is **not** reconstructible is `data/corrections.csv`,
-`data/person-overlay.csv`, `data/sample-overlay.csv`, `data/person-change.csv`,
-`data/sample-change.csv` and `data/sample-state.csv`: they sit outside the blow-away path precisely
-because a rebuild must not lose them, and
-[ADR 0007](../adr/0007-authored-changes-are-events.md)'s whole argument is
-that a history a rebuild erases answers "who changed this" with "nobody, we
-rebuilt it". A volume failure would answer it the same way.
+### The nightly copy on the OSU shared drive
 
-So those six are copied off the volume by
-[`scripts/backup-authored-files.sh`](../../scripts/backup-authored-files.sh),
-which pulls them over `fly ssh sftp`, checks each against a `sha256sum` taken
-on the machine, and writes one gzipped tarball per run (~1.7 MB). A file that
-does not transfer intact fails the whole run and writes nothing, because a
-truncated backup is worse than a missing one — it looks like a backup.
-`beeline.duckdb` is deliberately not included: at 211 MB it would turn a cheap
-frequent job into an expensive occasional one, and unlike these it can be
-re-derived by re-ingestion.
+The `store-backup` job ([`src/store-backup.ts`](../../src/store-backup.ts),
+beeline-elf, [#126](https://github.com/rainhead/beeline/issues/126)) runs at
+3am Pacific, after the night's determinations and promotion (and ahead of the
+Sunday sweep and the Ecdysis fetch, so neither can push it past the 5am end of
+the night window; what Ecdysis sends back is in the next night's copy), and
+puts one file, `beeline-backup-<UTC instant>.tar.gz`, in the
+`databaseBackups` folder inside Bee Line on the OSU shared drive
+(`BEELINE_BACKUP_FOLDER` in [`fly.toml`](../../fly.toml)). It is for recovery
+only: nobody opens these. **The main store's copy is not encrypted**, so every
+member of the drive can read the whole store, the true coordinates of obscured
+observations and every volunteer's name included. That is a decision, not an
+oversight: the drive's members are the staff already trusted with the store
+(Andony, 2026-09-11, beeline-elf). Encrypting it too would take one argument
+to the copy, if that ever changes. Inside:
 
-It **pulls** rather than pushes, so the Fly machine holds no credential and
-cannot reach the backup host — a compromised app cannot touch the history.
-The credential lives on the host that runs the job, and
-`fly tokens create ssh --app beeline` scopes it to SSH on that one app:
+- `beeline.duckdb` and `private.duckdb` — consistent copies of both stores,
+  taken inside the app because nothing else may open them (ADR 0005). Each is
+  an ordinary store the app opens as it is. The private one is encrypted with
+  `BEELINE_PRIVATE_DB_KEY`, the same key the running store uses
+  ([ADR 0003](../adr/0003-private-data-store.md)), so **a backup of it is only
+  as recoverable as that key**: copies are kept off the server, in Peter's
+  password manager and (beeline-yml3) Andony's.
+- `authored/` — the overlays and change logs a rebuild cannot reconstruct.
+- `manifest.json` — what each store held, table by table and in the rest of
+  its schema, the DuckDB version that wrote the copies, and the SHA-256 of
+  every file.
 
-**Give the token an expiry.** flyctl's default is `175200h` — twenty years —
-which is not a credential anyone should leave on a cron host. The script
-refuses to run without `FLY_API_TOKEN` rather than falling back to whatever
-`fly auth login` left behind, because that fallback is very likely a personal
-credential with rights over every app in the org, and an unattended job would
-use it without anyone noticing. (`BEELINE_BACKUP_AMBIENT_AUTH=1` overrides
-that for an interactive run.) The token is passed in the environment and never
-as `--access-token`, which would put it in `ps` for every user on the host.
+Why the copy is made the way it is — DuckDB's one-line `COPY FROM DATABASE`
+cannot copy this schema — is in
+[`src/store-snapshot.ts`](../../src/store-snapshot.ts).
 
-```sh
-fly tokens create ssh --app beeline --expiry 4320h   # 180 days
-```
+**Each step is checked rather than trusted.** The copies are reopened on an
+instance of their own, and their rows, constraints, indexes, views, macros,
+sequences and comments counted against the store's, so a DuckDB upgrade that
+stops carrying any of them fails the night it is deployed. The size and MD5
+that Drive computed from what it stored must match the file sent; an upload
+that does not is moved to the bin before the run fails, so it can never become
+a month's kept copy. Only then are old copies moved
+to the drive's bin, which empties itself after 30 days: every night's copy is
+kept for two weeks, and the first copy of each month for a year (Peter,
+2026-10-12). A shared drive's Content manager cannot delete outright, which is
+why it is the bin. Anything that fails, fails the run, so a missing backup
+shows on `/jobs`, on `/healthz/jobs` and as a missed Sentry check-in like any
+other nightly job, with the step that failed named in the run's detail.
+Outside development it also fails rather than succeeding at nothing when the
+folder or the Drive key is not set, and rather than upload the private store
+unencrypted when the store's key is not. A run killed partway, by memory or a
+restart, leaves its work directory under `data/backups/`; the next run
+removes it and says so.
 
-**Pick the expiry by where it lands, not by how long it is.** The first token
-was minted for 90 days on 2 September 2026 and so expired on 1 December —
-cutover month, the weeks the backup first genuinely matters and everyone is
-looking elsewhere (beeline-vl4). A rotation is routine only when it falls in a
-quiet month; check the [roadmap](../roadmap.md) before choosing.
+The writer is a service account,
+`beeline-production@beeline-510517.iam.gserviceaccount.com`, whose JSON key is
+the secret `BEELINE_DRIVE_KEY`. It holds the `drive.file` scope, so it sees
+only the files it made: a key that leaked reaches the backups, which are the
+whole store, and nothing else on the drive. The Cloud project that owns it,
+`beeline-510517`, is under Peter's account with Nora as a second owner; moving
+it under OSU's Google organisation is to come.
 
-Store it mode 600, **`export` it** — cron sources the file and then runs the
-script as a child, so a bare assignment would not reach it and the token check
-would fail every night — and **write the expiry down beside it**. Fly does not
-tell a scoped token when it ends, and the night it does the run fails with an
-authentication error that says nothing about why; with the date recorded the
-script warns to stderr from two weeks out, which cron mails, and names the
-date when the run does fail:
+**Rotate the key, never the account.** Because the scope is `drive.file`, a
+new service account cannot see the old one's files: it would never move them
+to the bin, and the year of monthly copies would start again from nothing. So
+a new key is made for the same account
+(`gcloud iam service-accounts keys create … --iam-account beeline-production@beeline-510517.iam.gserviceaccount.com`),
+set with `fly secrets set BEELINE_DRIVE_KEY=…`, and the old key deleted once
+a night's run has succeeded with the new one.
 
-```sh
-# ~/.config/beeline/backup-env   (chmod 600)
-export FLY_API_TOKEN='FlyV1 fm2_...'
-export BEELINE_FLY_TOKEN_EXPIRES=2027-03-09   # from `fly tokens create --expiry`
-```
+### Restoring, and the drill
 
-Then, on maderas, a little after the 02:00 nightly so each day's writes are
-captured, and clear of the 03:00 beeatlas job:
-
-```cron
-MAILTO=you@example.com
-30 2 * * *  mkdir -p $HOME/.local/state && . $HOME/.config/beeline/backup-env && $HOME/dev/beeline/scripts/backup-authored-files.sh >> $HOME/.local/state/beeline-backup.log
-```
-
-The `mkdir` is not decoration. The shell opens the redirect *before* it runs
-the script, so a missing `~/.local/state` — hardly guaranteed on an older
-account — means the backup never runs at all, every night, and what arrives is
-a redirection error rather than anything about backups.
-
-The redirect is what makes the mail worth reading: cron mails **captured
-output**, not failing exit codes, and this script prints the archive path on
-every successful run. Left alone it would mail nightly, which is how a person
-learns to filter it, which is how the one night it mattered goes unread.
-Sending stdout to a log leaves only stderr, and stderr means something went
-wrong.
-
-The backup cannot report that it did not run, and an expired token, a missing
-`flyctl`, a full disk and a host that was down at 02:30 all look the same from
-outside: the archive that should be there is not. So a second cron line asks
-the question the runbook used to leave to a person —
-[`scripts/check-backup-age.sh`](../../scripts/check-backup-age.sh) prints
-nothing while the newest archive is under two days old, reads as an archive,
-and holds all six files, and speaks only when one of those is false. Two
-days, so a single missed night is not an alarm and two in a row is:
-
-```cron
-0 9 * * *  $HOME/dev/beeline/scripts/check-backup-age.sh
-```
-
-All three lines — the backup, the `/healthz/jobs` poll and this — reach a
-person only through cron's mail, so they depend on the host having a working
-transport and a `MAILTO` that goes somewhere. maderas runs exim4 and delivers
-off-host; the `MAILTO` is the part to check, since without it everything lands
-in a local mailbox nobody opens. When any of this has to be done by hand, the
-check is still the same one the script runs:
+Download the copy from the folder (any member of the drive can), then check
+it before trusting it:
 
 ```sh
-find ~/beeline-backups -name 'beeline-authored-*.tar.gz' -mtime -2 | head -1   # silence = stale
+BEELINE_PRIVATE_DB_KEY=… pnpm backup:check ~/Downloads/beeline-backup-….tar.gz [dir]
 ```
 
-Restoring is `tar -xzf` and putting the files back under `/app/data` in
-maintenance mode. Verify a backup by extracting it, not by trusting the run
-that made it.
+It extracts the archive with the system's tar, checks every file against the
+manifest, and opens and counts both stores; without the key it says the
+private store was **not** checked rather than passing it. What it leaves in
+`dir` is what a restore puts back. Unlike a first install, the private store
+**is** restored: from cutover it holds what volunteers cannot simply redo.
+
+1. `fly deploy --env BEELINE_MAINTENANCE=1`, so nothing holds the store.
+2. On the volume, **delete `beeline.duckdb.wal` and `private.duckdb.wal`** if
+   they exist. A WAL left beside an older store is replayed onto it, as with
+   [the pre-migrate copy](#the-pre-migrate-copy).
+3. `fly ssh sftp shell`, and `put` the two stores to `/app/data/beeline.duckdb`
+   and `/app/data/private.duckdb`, and each `authored/*.csv` to `/app/data/`.
+4. On a new volume, also what the archive does not hold: the pipeline's
+   `data/secrets/inat-oauth-token` ([One-time setup](#one-time-setup)), and
+   the DEM tiles, which are fetched on the machine. Ecdysis's archive and
+   the print runs' sheets come back by themselves: the first is fetched
+   again, the second re-rendered from the store.
+5. `fly machine update --env BEELINE_MAINTENANCE= <id>`. Boot applies any
+   migration newer than the copy, as it does for every deploy.
+
+The drill — download a real copy, `backup:check` it, and start a scratch app
+against what it extracted (with `BEELINE_SAMPLE_CHANGES`,
+`BEELINE_SAMPLE_STATE` and `BEELINE_PERSON_CHANGES` pointed away from
+`data/`) — is run once before cutover, not after something has gone wrong.
+
+### The pull from maderas, until the Drive copies have a record
+
+Before the nightly copy existed, the authored files alone were pulled off the
+volume by [`scripts/backup-authored-files.sh`](../../scripts/backup-authored-files.sh)
+on maderas, nightly at 02:30, with
+[`scripts/check-backup-age.sh`](../../scripts/check-backup-age.sh) mailing
+when the newest archive was more than two days old. It stays until the Drive
+copies have run cleanly for a few weeks and the drill has passed, and it
+cannot outlive its token, which was minted to expire on 1 December 2026; it is
+then retired rather than renewed (beeline-elf). Its token is scoped to SSH on
+this one app (`fly tokens create ssh --app beeline`), sourced from a mode-600
+file on maderas with its expiry recorded beside it
+(`BEELINE_FLY_TOKEN_EXPIRES`), and the script warns from two weeks out. The
+script and its comments say the rest.
 
 ## What stays on maderas
 

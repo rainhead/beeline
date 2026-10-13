@@ -278,6 +278,63 @@ describe("a corrected reference moves, and the history follows", () => {
     expect(again.appended).toBe(0);
   });
 
+  // The sandbox's shape since 2026-10-04: two observations numbered 1 were one
+  // sample until promotion split them, and the volunteer had renumbered one to
+  // 2. Sample 2 holds the observation the log recorded; sample 1 holds the
+  // other. Both claimed the log's row, so the pair was contested on every pass
+  // and neither was recorded again. The store lists them in no stated order,
+  // and the newcomer filed ahead of the move would be carried into the
+  // renumbered sample's history, so both orders are run.
+  it.each([
+    ["the store's order", false],
+    ["the reverse", true],
+  ])("a renumbered sample and a newcomer on its old number are told apart by the link (%s)", async (_, reverse) => {
+    const a = await insertCleanSample(conn, { inat_observation_id: "77" });
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${a}`);
+    await insertCleanSample(conn, { inat_observation_id: "88", locality: "'Alsea'" }, null);
+    const reader = read();
+    const ordered: typeof reader = async (sql) => {
+      const rows = await reader(sql);
+      return reverse ? rows.reverse() : rows;
+    };
+    const result = await recordSampleChanges(ordered, paths, { source: "reconcile" });
+    expect(result.contested).toBe(0);
+
+    const entries = await readSampleChanges(paths.log);
+    const at = (sample_number: string) =>
+      sampleHistory(entries, { collector: "name:Ada Collector", sample_number, date_start: "2026-07-14" });
+    // Sample 2 is the sample the log knew, renumbered; nothing else happened to it.
+    expect(at("2").map((e) => [e.field, e.old_value, e.new_value])).toEqual([["sample_number", "1", "2"]]);
+    // Sample 1 is a newcomer, and only the newcomer.
+    const newcomer = at("1");
+    expect(newcomer.find((e) => e.field === "observation")?.new_value).toBe("88");
+    expect(newcomer.find((e) => e.field === "locality")?.new_value).toBe("Alsea");
+    expect(newcomer.every((e) => e.old_value === "")).toBe(true);
+
+    expect(await record()).toMatchObject({ appended: 0, contested: 0 });
+  });
+
+  it("a narrowed pass on the newcomer defers rather than overwrite the renumbered sample's row", async () => {
+    const a = await insertCleanSample(conn, { inat_observation_id: "77" });
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${a}`);
+    const b = await insertCleanSample(conn, { inat_observation_id: "88" }, null);
+    // One sample in view, so it cannot see that another holds observation 77.
+    const narrowed = await record({ source: "app", author: "ada", where: `s.entity_id = ${b}` });
+    expect(narrowed.appended).toBe(0);
+    expect([...(await readSnapshot(paths.state))!.values()].map((s) => s.fields.observation)).toEqual(["77"]);
+    // The full pass then tells them apart.
+    const full = await record();
+    expect(full.contested).toBe(0);
+    const entries = await readSampleChanges(paths.log);
+    expect(
+      sampleHistory(entries, { collector: "name:Ada Collector", sample_number: "2", date_start: "2026-07-14" }).map(
+        (e) => e.field,
+      ),
+    ).toEqual(["sample_number"]);
+  });
+
   it("a snapshot whose header this code did not write re-baselines instead of appending a million arrivals", async () => {
     await insertCleanSample(conn);
     await record();

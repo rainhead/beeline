@@ -521,7 +521,10 @@ export interface SampleMatching {
  * of how much the evidence is worth, every claim proposed before any is
  * granted (ADR 0007 — deciding one at a time is a different, wrong problem):
  *
- *   the triple itself      the ordinary case — nothing moved.
+ *   the triple itself      the ordinary case — nothing moved. Refused when
+ *                          this sample carries a different observation from
+ *                          the row's and another sample now carries the
+ *                          row's: the link outranks the triple there.
  *   the observation link   the reference moved around a stable link: a staff
  *                          correction to the number or date, a collector
  *                          whose person_ref changed when an account was
@@ -558,7 +561,23 @@ export function matchSamples(
   const proposed = new Map<SampleState, SampleState>();
   for (const state of states.values()) {
     const direct = snapshot.get(stateKey(state));
-    if (direct !== undefined) {
+    // Even the triple yields to the link, but only where the link says
+    // plainly that this is another sample: this one carries a DIFFERENT
+    // observation from the row's, and another store sample now carries the
+    // row's. That is a renumbered sample and a newcomer on its old number —
+    // what splitting two observations that shared a number leaves behind —
+    // and granting the triple made both claim the row, so neither was ever
+    // recorded again. A sample that merely lost its link is a different
+    // case and stays contested (the test of two claimants says why). A
+    // narrowed pass cannot see who holds the row's observation, so where the
+    // links differ it defers to the next full pass, as it does for any miss.
+    const relinked =
+      direct !== undefined &&
+      state.fields.observation !== "" &&
+      direct.fields.observation !== "" &&
+      direct.fields.observation !== state.fields.observation;
+    if (relinked && directOnly) continue;
+    if (direct !== undefined && !(relinked && holder.has(direct.fields.observation))) {
       proposed.set(state, direct);
       continue;
     }
@@ -749,7 +768,13 @@ async function recordPass(
   }
   const at = opts.at ?? new Date().toISOString();
   const rows: SampleChange[] = [];
-  for (const [key, state] of states) {
+  // Every sample the log already knows is recorded before any arrival. The
+  // fold follows a move as it meets it, so an arrival on a triple that a
+  // renumbered sample vacates in this same pass must come after the move;
+  // ahead of it, the arrival would be carried off into the renumbered
+  // sample's history.
+  const ordered = [...states].sort(([a], [b]) => Number(!matched.has(a)) - Number(!matched.has(b)));
+  for (const [key, state] of ordered) {
     if (contested.has(key)) continue;
     const before = matched.get(key);
     // A narrowed pass that cannot match its sample DIRECTLY defers whole:
@@ -831,8 +856,10 @@ async function recordPass(
       if (contested.has(key)) continue;
       const before = matched.get(key);
       // The same deferral as the emit loop: an unmatched sample is the next
-      // full pass's to place, and patching it in here would pre-empt that.
-      if (before === undefined && !snapshot.has(key)) continue;
+      // full pass's to place, and patching it in here would pre-empt that —
+      // and where the miss is a deferred relink, its own triple's row is
+      // another sample's history, which patching would overwrite.
+      if (before === undefined) continue;
       if (before !== undefined) next.delete(stateKey(before));
       next.set(key, state);
       touched = true;

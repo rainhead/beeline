@@ -400,6 +400,45 @@ describe("a corrected reference moves, and the history follows", () => {
     expect((await historyOf("2")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["observation", "", "77"]]);
   });
 
+  it("a newcomer is held, not handed the row, while the renumbered sample sits on a shared number", async () => {
+    // Found by Fable's review of PR #157. The renumbered sample lands on a
+    // number its collector already used that day, so the pass cannot speak
+    // for it; its observation still says the newcomer is not the row's sample.
+    const s2 = await insertCleanSample(conn, { inat_observation_id: "77", locality: "'Old history'" }, null);
+    const s3 = await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "99" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${s2}`);
+    await insertCleanSample(conn, { inat_observation_id: "88", locality: "'Alsea'" }, null);
+    const held = await record();
+    expect(held).toMatchObject({ appended: 0, colliding: 2, contested: 1 });
+    expect([...(await readSnapshot(paths.state))!.values()].map((s) => s.fields.observation).sort()).toEqual(["77", "99"]);
+
+    // The duplicate is resolved, and each sample is recognised.
+    await conn.run(`UPDATE sample SET sample_number = '3' WHERE entity_id = ${s3}`);
+    expect(await record()).toMatchObject({ colliding: 0, contested: 0 });
+    expect((await historyOf("2")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["sample_number", "1", "2"]]);
+    expect((await historyOf("3")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["sample_number", "2", "3"]]);
+    const newcomer = await historyOf("1");
+    expect(newcomer.find((e) => e.field === "observation")?.new_value).toBe("88");
+    expect(newcomer.every((e) => e.old_value === "")).toBe(true);
+  });
+
+  it("a newcomer is held, not handed the row, while the renumbered sample's own claim is contested", async () => {
+    // Also from Fable's review: the renumbered sample is contested on its new
+    // number, so it may yet be the row's sample, and the newcomer must not
+    // take the row in the meantime.
+    const s2 = await insertCleanSample(conn, { inat_observation_id: "77", locality: "'Old history'" }, null);
+    const c = await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "99" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '3' WHERE entity_id = ${c}`);
+    await insertCleanSample(conn, { sample_number: "'4'", inat_observation_id: "99" }, null);
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${s2}`);
+    await insertCleanSample(conn, { inat_observation_id: "88", locality: "'Alsea'" }, null);
+    await record();
+    expect(await historyOf("1")).toEqual([]);
+    expect([...(await readSnapshot(paths.state))!.values()].some((s) => s.fields.observation === "77")).toBe(true);
+  });
+
   it("a snapshot whose header this code did not write re-baselines instead of appending a million arrivals", async () => {
     await insertCleanSample(conn);
     await record();

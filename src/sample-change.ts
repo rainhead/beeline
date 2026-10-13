@@ -544,7 +544,10 @@ export interface SampleMatching {
 export function matchSamples(
   snapshot: ReadonlyMap<string, SampleState>,
   states: ReadonlyMap<string, SampleState>,
-  { directOnly = false } = {},
+  {
+    directOnly = false,
+    suppressedObservations = new Set<string>(),
+  }: { directOnly?: boolean; suppressedObservations?: ReadonlySet<string> } = {},
 ): SampleMatching {
   const rows = [...snapshot.values()];
   const byObservation = valueIndex(rows, (s) => s.fields.observation);
@@ -561,6 +564,9 @@ export function matchSamples(
   const proposed = new Map<SampleState, SampleState>();
   // Samples whose own triple's row was left to the sample holding its link.
   const displaced = new Map<SampleState, SampleState>();
+  // Samples that can neither take their triple's row nor be told they are not
+  // its sample: recorded as nothing, with the row carried, like a contest.
+  const held = new Map<SampleState, SampleState>();
   for (const state of states.values()) {
     const direct = snapshot.get(stateKey(state));
     // Even the triple yields to the link, but only where the link says
@@ -579,6 +585,14 @@ export function matchSamples(
       direct.fields.observation !== "" &&
       direct.fields.observation !== state.fields.observation;
     if (relinked && directOnly) continue;
+    // The row's observation belongs to a sample this pass cannot speak for —
+    // one on a shared triple, or with no collector reference. It is still
+    // evidence that this sample is not the row's, so the row is held for it
+    // rather than granted to the triple (Fable's review of PR #157).
+    if (relinked && suppressedObservations.has(direct.fields.observation)) {
+      held.set(state, direct);
+      continue;
+    }
     if (direct !== undefined && !(relinked && holder.has(direct.fields.observation))) {
       proposed.set(state, direct);
       continue;
@@ -612,15 +626,17 @@ export function matchSamples(
     proposed.set(state, byPair);
   }
 
-  // A displacement stands only where it leaves one clear history per sample;
-  // otherwise the sample goes back to its triple, which is what the pass did
-  // before the link outranked it. Two cases fall back. The holder of the
-  // row's observation did not get the row (it claimed another, or shares a
-  // claim), so the triple's history is nobody's to hand over. Or the moves
-  // form a loop — two linked samples that swapped numbers — and the log,
-  // which a reader follows from one triple to the next, cannot record a swap
-  // without folding the two histories into one. Falling back can unsettle
-  // another displacement, so this repeats until nothing changes.
+  // A displacement stands only where it leaves one clear history per sample.
+  // Where the moves form a loop — two linked samples that swapped numbers —
+  // the log, which a reader follows from one triple to the next, cannot
+  // record a swap without folding the two histories into one, so the sample
+  // goes back to its triple, which is what the pass did before the link
+  // outranked it. So it does where the holder of the row's observation
+  // settled on another row: the row's history then has no other heir. But
+  // where that holder's own claim is contested, it may yet be the row's
+  // sample, so this one is held and the row carried until that is settled
+  // (Fable's review of PR #157). Each change can unsettle another
+  // displacement, so this repeats until nothing changes.
   for (let changed = displaced.size > 0; changed; ) {
     changed = false;
     const claims = new Map<SampleState, number>();
@@ -641,10 +657,15 @@ export function matchSamples(
     };
     for (const [state, row] of displaced) {
       const heir = holder.get(row.fields.observation)!;
-      if (proposed.get(heir) === row && claims.get(row) === 1 && !inLoop(state)) continue;
-      proposed.set(state, row);
+      const heirRow = proposed.get(heir);
+      const loop = inLoop(state);
+      if (heirRow === row && claims.get(row) === 1 && !loop) continue;
       displaced.delete(state);
       changed = true;
+      if (!loop && (held.has(heir) || (heirRow !== undefined && (claims.get(heirRow) ?? 0) > 1))) {
+        proposed.delete(state);
+        held.set(state, row);
+      } else proposed.set(state, row);
     }
   }
 
@@ -658,6 +679,10 @@ export function matchSamples(
       contested.add(stateKey(state));
       contestedRows.add(stateKey(row));
     } else matched.set(stateKey(state), row);
+  }
+  for (const [state, row] of held) {
+    contested.add(stateKey(state));
+    contestedRows.add(stateKey(row));
   }
   return { matched, contested, contestedRows };
 }
@@ -762,6 +787,7 @@ async function recordPass(
 
   const { matched, contested, contestedRows } = matchSamples(snapshot, states, {
     directOnly: opts.where != null,
+    suppressedObservations,
   });
 
   // A snapshot this store does not answer to is another store's statement,

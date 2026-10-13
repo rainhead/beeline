@@ -335,6 +335,71 @@ describe("a corrected reference moves, and the history follows", () => {
     ).toEqual(["sample_number"]);
   });
 
+  const inOrder = (reverse: boolean) => {
+    const reader = read();
+    return (async (sql: string) => {
+      const rows = await reader(sql);
+      return reverse ? rows.reverse() : rows;
+    }) as typeof reader;
+  };
+  const historyOf = async (sample_number: string) =>
+    sampleHistory(await readSampleChanges(paths.log), {
+      collector: "name:Ada Collector",
+      sample_number,
+      date_start: "2026-07-14",
+    });
+
+  it.each([
+    ["the store's order", false],
+    ["the reverse", true],
+  ])("a chain of renumbers keeps each history its own (%s)", async (_, reverse) => {
+    // 1 becomes 2 while 2 becomes 3. Recorded 1→2 first, the fold would carry
+    // sample 1's history onto 2 and then on to 3 with sample 2's (CodeRabbit).
+    const a = await insertCleanSample(conn, { inat_observation_id: "77", locality: "'Alsea'" });
+    const b = await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "88" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '3' WHERE entity_id = ${b}`);
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${a}`);
+    const result = await recordSampleChanges(inOrder(reverse), paths, { source: "reconcile" });
+    expect(result).toMatchObject({ appended: 2, contested: 0 });
+    expect((await historyOf("2")).map((e) => [e.old_value, e.new_value])).toEqual([["1", "2"]]);
+    expect((await historyOf("3")).map((e) => [e.old_value, e.new_value])).toEqual([["2", "3"]]);
+  });
+
+  it.each([
+    ["the store's order", false],
+    ["the reverse", true],
+  ])("two linked samples that swap numbers fall back to their triples rather than merge (%s)", async (_, reverse) => {
+    // The log cannot record a swap: whichever move is written first lands on
+    // the triple the other still holds. So the pass does what it did before
+    // the link outranked the triple, and reads each triple as relinked.
+    const a = await insertCleanSample(conn, { inat_observation_id: "77" }, null);
+    const b = await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "88" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '0' WHERE entity_id = ${a}`);
+    await conn.run(`UPDATE sample SET sample_number = '1' WHERE entity_id = ${b}`);
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${a}`);
+    const result = await recordSampleChanges(inOrder(reverse), paths, { source: "reconcile" });
+    expect(result.contested).toBe(0);
+    expect((await historyOf("1")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["observation", "77", "88"]]);
+    expect((await historyOf("2")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["observation", "88", "77"]]);
+  });
+
+  it("a displacement whose heir took another row falls back to the triple", async () => {
+    // Sample 2, unlinked, takes observation 77 and keeps its own row; sample 1
+    // takes another observation. Nobody inherits sample 1's row through the
+    // link, so the triple keeps it rather than a newcomer starting on top of
+    // a history that is then left to nobody.
+    const a = await insertCleanSample(conn, { inat_observation_id: "77" }, null);
+    const b = await insertCleanSample(conn, { sample_number: "'2'" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET inat_observation_id = 88 WHERE entity_id = ${a}`);
+    await conn.run(`UPDATE sample SET inat_observation_id = 77 WHERE entity_id = ${b}`);
+    expect(await record()).toMatchObject({ appended: 2, contested: 0 });
+    expect((await historyOf("1")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["observation", "77", "88"]]);
+    expect((await historyOf("2")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["observation", "", "77"]]);
+  });
+
   it("a snapshot whose header this code did not write re-baselines instead of appending a million arrivals", async () => {
     await insertCleanSample(conn);
     await record();

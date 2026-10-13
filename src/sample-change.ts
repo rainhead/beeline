@@ -559,6 +559,8 @@ export function matchSamples(
   }
 
   const proposed = new Map<SampleState, SampleState>();
+  // Samples whose own triple's row was left to the sample holding its link.
+  const displaced = new Map<SampleState, SampleState>();
   for (const state of states.values()) {
     const direct = snapshot.get(stateKey(state));
     // Even the triple yields to the link, but only where the link says
@@ -581,6 +583,7 @@ export function matchSamples(
       proposed.set(state, direct);
       continue;
     }
+    if (direct !== undefined) displaced.set(state, direct);
     // The weaker tiers exist only for a FULL pass. Their guards — one
     // observation holder per link, two claimants record nothing — are built
     // from the whole store, and a pass narrowed to one sample has an empty
@@ -607,6 +610,42 @@ export function matchSamples(
     // ref-moved case this tier exists for (CodeRabbit on PR #33).
     if (byPair.collector !== state.collector && liveCollectors.has(byPair.collector)) continue;
     proposed.set(state, byPair);
+  }
+
+  // A displacement stands only where it leaves one clear history per sample;
+  // otherwise the sample goes back to its triple, which is what the pass did
+  // before the link outranked it. Two cases fall back. The holder of the
+  // row's observation did not get the row (it claimed another, or shares a
+  // claim), so the triple's history is nobody's to hand over. Or the moves
+  // form a loop — two linked samples that swapped numbers — and the log,
+  // which a reader follows from one triple to the next, cannot record a swap
+  // without folding the two histories into one. Falling back can unsettle
+  // another displacement, so this repeats until nothing changes.
+  for (let changed = displaced.size > 0; changed; ) {
+    changed = false;
+    const claims = new Map<SampleState, number>();
+    for (const row of proposed.values()) claims.set(row, (claims.get(row) ?? 0) + 1);
+    const leaving = new Map<string, SampleState>();
+    for (const [state, row] of proposed) {
+      if (stateKey(row) !== stateKey(state)) leaving.set(stateKey(row), state);
+    }
+    const inLoop = (start: SampleState) => {
+      let at = start;
+      for (let step = 0; step < leaving.size; step++) {
+        const next = leaving.get(stateKey(at));
+        if (next === undefined) return false;
+        if (next === start) return true;
+        at = next;
+      }
+      return false;
+    };
+    for (const [state, row] of displaced) {
+      const heir = holder.get(row.fields.observation)!;
+      if (proposed.get(heir) === row && claims.get(row) === 1 && !inLoop(state)) continue;
+      proposed.set(state, row);
+      displaced.delete(state);
+      changed = true;
+    }
   }
 
   const claimants = new Map<SampleState, number>();
@@ -768,13 +807,27 @@ async function recordPass(
   }
   const at = opts.at ?? new Date().toISOString();
   const rows: SampleChange[] = [];
-  // Every sample the log already knows is recorded before any arrival. The
-  // fold follows a move as it meets it, so an arrival on a triple that a
-  // renumbered sample vacates in this same pass must come after the move;
-  // ahead of it, the arrival would be carried off into the renumbered
-  // sample's history.
-  const ordered = [...states].sort(([a], [b]) => Number(!matched.has(a)) - Number(!matched.has(b)));
-  for (const [key, state] of ordered) {
+  // The fold follows a move as it meets it, so whatever leaves a triple in
+  // this pass is recorded before whatever arrives on it: a sample moving
+  // onto a triple after the one moving off it, and every arrival after every
+  // move. Ahead of the move, the newcomer's entries would be carried off
+  // into the departing sample's history. matchSamples leaves no loop of
+  // moves, and `done` would stop one anyway.
+  const leaving = new Map<string, string>();
+  for (const [key, row] of matched) if (stateKey(row) !== key) leaving.set(stateKey(row), key);
+  const order: string[] = [];
+  const done = new Set<string>();
+  const visit = (key: string) => {
+    if (done.has(key)) return;
+    done.add(key);
+    const departing = leaving.get(key);
+    if (departing !== undefined) visit(departing);
+    order.push(key);
+  };
+  for (const key of matched.keys()) visit(key);
+  for (const key of states.keys()) if (!matched.has(key)) order.push(key);
+  for (const key of order) {
+    const state = states.get(key)!;
     if (contested.has(key)) continue;
     const before = matched.get(key);
     // A narrowed pass that cannot match its sample DIRECTLY defers whole:

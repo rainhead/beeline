@@ -521,7 +521,10 @@ export interface SampleMatching {
  * of how much the evidence is worth, every claim proposed before any is
  * granted (ADR 0007 — deciding one at a time is a different, wrong problem):
  *
- *   the triple itself      the ordinary case — nothing moved.
+ *   the triple itself      the ordinary case — nothing moved. Refused when
+ *                          this sample carries a different observation from
+ *                          the row's and another sample now carries the
+ *                          row's: the link outranks the triple there.
  *   the observation link   the reference moved around a stable link: a staff
  *                          correction to the number or date, a collector
  *                          whose person_ref changed when an account was
@@ -541,7 +544,10 @@ export interface SampleMatching {
 export function matchSamples(
   snapshot: ReadonlyMap<string, SampleState>,
   states: ReadonlyMap<string, SampleState>,
-  { directOnly = false } = {},
+  {
+    directOnly = false,
+    suppressedObservations = new Set<string>(),
+  }: { directOnly?: boolean; suppressedObservations?: ReadonlySet<string> } = {},
 ): SampleMatching {
   const rows = [...snapshot.values()];
   const byObservation = valueIndex(rows, (s) => s.fields.observation);
@@ -556,12 +562,42 @@ export function matchSamples(
   }
 
   const proposed = new Map<SampleState, SampleState>();
+  // Samples whose own triple's row was left to the sample holding its link.
+  const displaced = new Map<SampleState, SampleState>();
+  // Samples that can neither take their triple's row nor be told they are not
+  // its sample: recorded as nothing, with the row carried, like a contest.
+  const held = new Map<SampleState, SampleState>();
   for (const state of states.values()) {
     const direct = snapshot.get(stateKey(state));
-    if (direct !== undefined) {
+    // Even the triple yields to the link, but only where the link says
+    // plainly that this is another sample: this one carries a DIFFERENT
+    // observation from the row's, and another store sample now carries the
+    // row's. That is a renumbered sample and a newcomer on its old number —
+    // what splitting two observations that shared a number leaves behind —
+    // and granting the triple made both claim the row, so neither was ever
+    // recorded again. A sample that merely lost its link is a different
+    // case and stays contested (the test of two claimants says why). A
+    // narrowed pass cannot see who holds the row's observation, so where the
+    // links differ it defers to the next full pass, as it does for any miss.
+    const relinked =
+      direct !== undefined &&
+      state.fields.observation !== "" &&
+      direct.fields.observation !== "" &&
+      direct.fields.observation !== state.fields.observation;
+    if (relinked && directOnly) continue;
+    // The row's observation belongs to a sample this pass cannot speak for —
+    // one on a shared triple, or with no collector reference. It is still
+    // evidence that this sample is not the row's, so the row is held for it
+    // rather than granted to the triple (Fable's review of PR #157).
+    if (relinked && suppressedObservations.has(direct.fields.observation)) {
+      held.set(state, direct);
+      continue;
+    }
+    if (direct !== undefined && !(relinked && holder.has(direct.fields.observation))) {
       proposed.set(state, direct);
       continue;
     }
+    if (direct !== undefined) displaced.set(state, direct);
     // The weaker tiers exist only for a FULL pass. Their guards — one
     // observation holder per link, two claimants record nothing — are built
     // from the whole store, and a pass narrowed to one sample has an empty
@@ -590,6 +626,49 @@ export function matchSamples(
     proposed.set(state, byPair);
   }
 
+  // A displacement stands only where it leaves one clear history per sample.
+  // Where the moves form a loop — two linked samples that swapped numbers —
+  // the log, which a reader follows from one triple to the next, cannot
+  // record a swap without folding the two histories into one, so the sample
+  // goes back to its triple, which is what the pass did before the link
+  // outranked it. So it does where the holder of the row's observation
+  // settled on another row: the row's history then has no other heir. But
+  // where that holder's own claim is contested, it may yet be the row's
+  // sample, so this one is held and the row carried until that is settled
+  // (Fable's review of PR #157). Each change can unsettle another
+  // displacement, so this repeats until nothing changes.
+  for (let changed = displaced.size > 0; changed; ) {
+    changed = false;
+    const claims = new Map<SampleState, number>();
+    for (const row of proposed.values()) claims.set(row, (claims.get(row) ?? 0) + 1);
+    const leaving = new Map<string, SampleState>();
+    for (const [state, row] of proposed) {
+      if (stateKey(row) !== stateKey(state)) leaving.set(stateKey(row), state);
+    }
+    const inLoop = (start: SampleState) => {
+      let at = start;
+      for (let step = 0; step < leaving.size; step++) {
+        const next = leaving.get(stateKey(at));
+        if (next === undefined) return false;
+        if (next === start) return true;
+        at = next;
+      }
+      return false;
+    };
+    for (const [state, row] of displaced) {
+      const heir = holder.get(row.fields.observation)!;
+      const heirRow = proposed.get(heir);
+      const loop = inLoop(state);
+      if (heirRow === row && claims.get(row) === 1 && !loop) continue;
+      displaced.delete(state);
+      changed = true;
+      if (!loop && (held.has(heir) || (heirRow !== undefined && (claims.get(heirRow) ?? 0) > 1))) {
+        proposed.delete(state);
+        held.set(state, row);
+      } else proposed.set(state, row);
+    }
+  }
+
   const claimants = new Map<SampleState, number>();
   for (const row of proposed.values()) claimants.set(row, (claimants.get(row) ?? 0) + 1);
   const matched = new Map<string, SampleState>();
@@ -600,6 +679,10 @@ export function matchSamples(
       contested.add(stateKey(state));
       contestedRows.add(stateKey(row));
     } else matched.set(stateKey(state), row);
+  }
+  for (const [state, row] of held) {
+    contested.add(stateKey(state));
+    contestedRows.add(stateKey(row));
   }
   return { matched, contested, contestedRows };
 }
@@ -704,6 +787,7 @@ async function recordPass(
 
   const { matched, contested, contestedRows } = matchSamples(snapshot, states, {
     directOnly: opts.where != null,
+    suppressedObservations,
   });
 
   // A snapshot this store does not answer to is another store's statement,
@@ -749,7 +833,27 @@ async function recordPass(
   }
   const at = opts.at ?? new Date().toISOString();
   const rows: SampleChange[] = [];
-  for (const [key, state] of states) {
+  // The fold follows a move as it meets it, so whatever leaves a triple in
+  // this pass is recorded before whatever arrives on it: a sample moving
+  // onto a triple after the one moving off it, and every arrival after every
+  // move. Ahead of the move, the newcomer's entries would be carried off
+  // into the departing sample's history. matchSamples leaves no loop of
+  // moves, and `done` would stop one anyway.
+  const leaving = new Map<string, string>();
+  for (const [key, row] of matched) if (stateKey(row) !== key) leaving.set(stateKey(row), key);
+  const order: string[] = [];
+  const done = new Set<string>();
+  const visit = (key: string) => {
+    if (done.has(key)) return;
+    done.add(key);
+    const departing = leaving.get(key);
+    if (departing !== undefined) visit(departing);
+    order.push(key);
+  };
+  for (const key of matched.keys()) visit(key);
+  for (const key of states.keys()) if (!matched.has(key)) order.push(key);
+  for (const key of order) {
+    const state = states.get(key)!;
     if (contested.has(key)) continue;
     const before = matched.get(key);
     // A narrowed pass that cannot match its sample DIRECTLY defers whole:
@@ -831,8 +935,10 @@ async function recordPass(
       if (contested.has(key)) continue;
       const before = matched.get(key);
       // The same deferral as the emit loop: an unmatched sample is the next
-      // full pass's to place, and patching it in here would pre-empt that.
-      if (before === undefined && !snapshot.has(key)) continue;
+      // full pass's to place, and patching it in here would pre-empt that —
+      // and where the miss is a deferred relink, its own triple's row is
+      // another sample's history, which patching would overwrite.
+      if (before === undefined) continue;
       if (before !== undefined) next.delete(stateKey(before));
       next.set(key, state);
       touched = true;

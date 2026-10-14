@@ -278,6 +278,167 @@ describe("a corrected reference moves, and the history follows", () => {
     expect(again.appended).toBe(0);
   });
 
+  // The sandbox's shape since 2026-10-04: two observations numbered 1 were one
+  // sample until promotion split them, and the volunteer had renumbered one to
+  // 2. Sample 2 holds the observation the log recorded; sample 1 holds the
+  // other. Both claimed the log's row, so the pair was contested on every pass
+  // and neither was recorded again. The store lists them in no stated order,
+  // and the newcomer filed ahead of the move would be carried into the
+  // renumbered sample's history, so both orders are run.
+  it.each([
+    ["the store's order", false],
+    ["the reverse", true],
+  ])("a renumbered sample and a newcomer on its old number are told apart by the link (%s)", async (_, reverse) => {
+    const a = await insertCleanSample(conn, { inat_observation_id: "77" });
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${a}`);
+    await insertCleanSample(conn, { inat_observation_id: "88", locality: "'Alsea'" }, null);
+    const reader = read();
+    const ordered: typeof reader = async (sql) => {
+      const rows = await reader(sql);
+      return reverse ? rows.reverse() : rows;
+    };
+    const result = await recordSampleChanges(ordered, paths, { source: "reconcile" });
+    expect(result.contested).toBe(0);
+
+    const entries = await readSampleChanges(paths.log);
+    const at = (sample_number: string) =>
+      sampleHistory(entries, { collector: "name:Ada Collector", sample_number, date_start: "2026-07-14" });
+    // Sample 2 is the sample the log knew, renumbered; nothing else happened to it.
+    expect(at("2").map((e) => [e.field, e.old_value, e.new_value])).toEqual([["sample_number", "1", "2"]]);
+    // Sample 1 is a newcomer, and only the newcomer.
+    const newcomer = at("1");
+    expect(newcomer.find((e) => e.field === "observation")?.new_value).toBe("88");
+    expect(newcomer.find((e) => e.field === "locality")?.new_value).toBe("Alsea");
+    expect(newcomer.every((e) => e.old_value === "")).toBe(true);
+
+    expect(await record()).toMatchObject({ appended: 0, contested: 0 });
+  });
+
+  it("a narrowed pass on the newcomer defers rather than overwrite the renumbered sample's row", async () => {
+    const a = await insertCleanSample(conn, { inat_observation_id: "77" });
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${a}`);
+    const b = await insertCleanSample(conn, { inat_observation_id: "88" }, null);
+    // One sample in view, so it cannot see that another holds observation 77.
+    const narrowed = await record({ source: "app", author: "ada", where: `s.entity_id = ${b}` });
+    expect(narrowed.appended).toBe(0);
+    expect([...(await readSnapshot(paths.state))!.values()].map((s) => s.fields.observation)).toEqual(["77"]);
+    // The full pass then tells them apart.
+    const full = await record();
+    expect(full.contested).toBe(0);
+    const entries = await readSampleChanges(paths.log);
+    expect(
+      sampleHistory(entries, { collector: "name:Ada Collector", sample_number: "2", date_start: "2026-07-14" }).map(
+        (e) => e.field,
+      ),
+    ).toEqual(["sample_number"]);
+  });
+
+  const inOrder = (reverse: boolean) => {
+    const reader = read();
+    return (async (sql: string) => {
+      const rows = await reader(sql);
+      return reverse ? rows.reverse() : rows;
+    }) as typeof reader;
+  };
+  const historyOf = async (sample_number: string) =>
+    sampleHistory(await readSampleChanges(paths.log), {
+      collector: "name:Ada Collector",
+      sample_number,
+      date_start: "2026-07-14",
+    });
+
+  it.each([
+    ["the store's order", false],
+    ["the reverse", true],
+  ])("a chain of renumbers keeps each history its own (%s)", async (_, reverse) => {
+    // 1 becomes 2 while 2 becomes 3. Recorded 1→2 first, the fold would carry
+    // sample 1's history onto 2 and then on to 3 with sample 2's (CodeRabbit).
+    const a = await insertCleanSample(conn, { inat_observation_id: "77", locality: "'Alsea'" });
+    const b = await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "88" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '3' WHERE entity_id = ${b}`);
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${a}`);
+    const result = await recordSampleChanges(inOrder(reverse), paths, { source: "reconcile" });
+    expect(result).toMatchObject({ appended: 2, contested: 0 });
+    expect((await historyOf("2")).map((e) => [e.old_value, e.new_value])).toEqual([["1", "2"]]);
+    expect((await historyOf("3")).map((e) => [e.old_value, e.new_value])).toEqual([["2", "3"]]);
+  });
+
+  it.each([
+    ["the store's order", false],
+    ["the reverse", true],
+  ])("two linked samples that swap numbers fall back to their triples rather than merge (%s)", async (_, reverse) => {
+    // The log cannot record a swap: whichever move is written first lands on
+    // the triple the other still holds. So the pass does what it did before
+    // the link outranked the triple, and reads each triple as relinked.
+    const a = await insertCleanSample(conn, { inat_observation_id: "77" }, null);
+    const b = await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "88" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '0' WHERE entity_id = ${a}`);
+    await conn.run(`UPDATE sample SET sample_number = '1' WHERE entity_id = ${b}`);
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${a}`);
+    const result = await recordSampleChanges(inOrder(reverse), paths, { source: "reconcile" });
+    expect(result.contested).toBe(0);
+    expect((await historyOf("1")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["observation", "77", "88"]]);
+    expect((await historyOf("2")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["observation", "88", "77"]]);
+  });
+
+  it("a displacement whose heir took another row falls back to the triple", async () => {
+    // Sample 2, unlinked, takes observation 77 and keeps its own row; sample 1
+    // takes another observation. Nobody inherits sample 1's row through the
+    // link, so the triple keeps it rather than a newcomer starting on top of
+    // a history that is then left to nobody.
+    const a = await insertCleanSample(conn, { inat_observation_id: "77" }, null);
+    const b = await insertCleanSample(conn, { sample_number: "'2'" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET inat_observation_id = 88 WHERE entity_id = ${a}`);
+    await conn.run(`UPDATE sample SET inat_observation_id = 77 WHERE entity_id = ${b}`);
+    expect(await record()).toMatchObject({ appended: 2, contested: 0 });
+    expect((await historyOf("1")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["observation", "77", "88"]]);
+    expect((await historyOf("2")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["observation", "", "77"]]);
+  });
+
+  it("a newcomer is held, not handed the row, while the renumbered sample sits on a shared number", async () => {
+    // Found by Fable's review of PR #157. The renumbered sample lands on a
+    // number its collector already used that day, so the pass cannot speak
+    // for it; its observation still says the newcomer is not the row's sample.
+    const s2 = await insertCleanSample(conn, { inat_observation_id: "77", locality: "'Old history'" }, null);
+    const s3 = await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "99" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${s2}`);
+    await insertCleanSample(conn, { inat_observation_id: "88", locality: "'Alsea'" }, null);
+    const held = await record();
+    expect(held).toMatchObject({ appended: 0, colliding: 2, contested: 1 });
+    expect([...(await readSnapshot(paths.state))!.values()].map((s) => s.fields.observation).sort()).toEqual(["77", "99"]);
+
+    // The duplicate is resolved, and each sample is recognised.
+    await conn.run(`UPDATE sample SET sample_number = '3' WHERE entity_id = ${s3}`);
+    expect(await record()).toMatchObject({ colliding: 0, contested: 0 });
+    expect((await historyOf("2")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["sample_number", "1", "2"]]);
+    expect((await historyOf("3")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["sample_number", "2", "3"]]);
+    const newcomer = await historyOf("1");
+    expect(newcomer.find((e) => e.field === "observation")?.new_value).toBe("88");
+    expect(newcomer.every((e) => e.old_value === "")).toBe(true);
+  });
+
+  it("a newcomer is held, not handed the row, while the renumbered sample's own claim is contested", async () => {
+    // Also from Fable's review: the renumbered sample is contested on its new
+    // number, so it may yet be the row's sample, and the newcomer must not
+    // take the row in the meantime.
+    const s2 = await insertCleanSample(conn, { inat_observation_id: "77", locality: "'Old history'" }, null);
+    const c = await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "99" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '3' WHERE entity_id = ${c}`);
+    await insertCleanSample(conn, { sample_number: "'4'", inat_observation_id: "99" }, null);
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${s2}`);
+    await insertCleanSample(conn, { inat_observation_id: "88", locality: "'Alsea'" }, null);
+    await record();
+    expect(await historyOf("1")).toEqual([]);
+    expect([...(await readSnapshot(paths.state))!.values()].some((s) => s.fields.observation === "77")).toBe(true);
+  });
+
   it("a snapshot whose header this code did not write re-baselines instead of appending a million arrivals", async () => {
     await insertCleanSample(conn);
     await record();

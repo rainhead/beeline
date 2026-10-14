@@ -108,6 +108,11 @@ export async function pipelineTail(
   // A promotion that lost a write race and was run again says so in the
   // run's detail: a retry that keeps happening is a writer worth finding.
   if (promoted.retries > 0) parts.push(`promotion retried ${promoted.retries}× after a write conflict`);
+  // A printed sample's coordinates changing is rare enough to name: these are
+  // imported stand-ins replaced by the true point (beeline-b34).
+  if (promoted.standinsCorrected > 0) {
+    parts.push(`${promoted.standinsCorrected} stand-in point(s) replaced by the true one`);
+  }
   // A staff decision naming a sample the store no longer holds is a standing
   // condition somebody should read, not a failure: the run's detail carries
   // it and the rest of the pipeline goes on.

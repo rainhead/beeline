@@ -90,6 +90,47 @@ describe("observation promotion", () => {
     expect(await rows(conn, "SELECT sample_id FROM printed_sample")).toEqual([[printed]]);
   });
 
+  test("a printed sample holding a stand-in point takes the true one, and then stays put", async () => {
+    // The old system printed the point iNaturalist publishes to hide an
+    // obscured observation's real one, and Arthur decided the record takes the
+    // true point even though the label keeps the stand-in (beeline-b34). The
+    // legacy point here is 10 km from the true one, as a stand-in typically is.
+    const standin = await insertCleanSample(conn, { inat_observation_id: "7" }, { source: "'legacy_import'" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${standin}, 1, '25000001')`);
+    // Same shape, but the legacy point is the true one rounded to four decimals.
+    const rounded = await insertCleanSample(
+      conn,
+      { inat_observation_id: "8", sample_number: "'2'" },
+      { source: "'legacy_import'" },
+    );
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${rounded}, 1, '25000002')`);
+    const hidden = { geoprivacy: "obscured", positional_accuracy: 9 };
+    await stage(obs(7, { ...hidden, private_geojson: { coordinates: [-123.262, 44.6546], type: "Point" } }));
+    await stage(obs(8, { ...hidden, private_geojson: { coordinates: [-123.26204, 44.56462], type: "Point" } }));
+    const counts = await promoteObservations(conn);
+    expect(counts.standinsCorrected).toBe(1);
+    // The elevation was read at the stand-in, so it goes, to be derived again.
+    expect(await location(standin)).toEqual(["inat_trusted", 44.6546, -123.262, 9, null]);
+    expect(await location(rounded)).toEqual(["legacy_import", 44.5646, -123.262, 30, 72]);
+    expect(await rows(conn, "SELECT sample_id FROM sample_location_standin")).toEqual([]);
+
+    // Corrected, it is printed like any other: a later move is not taken.
+    await stage(obs(7, { ...hidden, private_geojson: { coordinates: [-123.1, 44.7], type: "Point" } }));
+    expect((await promoteObservations(conn)).standinsCorrected).toBe(0);
+    expect(await location(standin)).toEqual(["inat_trusted", 44.6546, -123.262, 9, null]);
+  });
+
+  test("a printed point far from an open observation's is the label's, not a stand-in", async () => {
+    // Nothing was hidden, so nothing was published in its place: the observer
+    // moved the point after the labels printed, and the label stands
+    // (beeline-1kb.17).
+    const printed = await insertCleanSample(conn, { inat_observation_id: "7" }, { source: "'legacy_import'" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${printed}, 1, '25000001')`);
+    await stage(obs(7, { private_geojson: { coordinates: [-123.262, 44.6546], type: "Point" } }));
+    expect((await promoteObservations(conn)).standinsCorrected).toBe(0);
+    expect(await location(printed)).toEqual(["legacy_import", 44.5646, -123.262, 30, 72]);
+  });
+
   test("coordinates within the legacy 4-decimal export precision keep their derived elevation", async () => {
     // Legacy holds the iNat coordinates rounded to 4 decimals (measured on
     // the full corpus); a delta ≤ 5e-5° is the same place, so the elevation

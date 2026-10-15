@@ -312,7 +312,7 @@ describe("QC findings and printability", () => {
       }
     });
 
-    // Judged on date_end for the reason settled_sample is (schema/160): a trap
+    // Judged on date_end for the reason settled_sample is (schema/102): a trap
     // line that ran across the boundary belongs to the day it was emptied.
     test("a trap line spanning the change is judged by when it was emptied", async () => {
       const id = await insertCleanSample(

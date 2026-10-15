@@ -118,6 +118,21 @@ describe("preparing a run", () => {
     expect(await nextFieldNumber(conn, new Date("2027-04-01T12:00:00Z"))).toBe(27000001);
   });
 
+  it("takes nothing from a settled season, minted late or with its count raised", async () => {
+    // Nothing from a settled season is printed (Peter, 2026-10-14): a full
+    // sync minted 2018 samples from observations the old system never
+    // recorded, and each read as labels waiting.
+    const open = await insertCleanSample(conn, { collector_id: String(ash), specimen_count: "1" });
+    const settled = { collector_id: String(ash), date_start: "DATE '2024-07-14'", date_end: "DATE '2024-07-14'" };
+    await insertCleanSample(conn, { ...settled, sample_number: "'2'", specimen_count: "3" });
+    const raised = await insertCleanSample(conn, { ...settled, sample_number: "'3'", specimen_count: "1" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${raised}, 1, '2400001')`);
+    await conn.run(`UPDATE sample SET specimen_count = 2 WHERE entity_id = ${raised}`);
+
+    expect(await rows(conn, "SELECT sample_id, pending_count FROM pending_print_sample")).toEqual([[open, 1]]);
+    expect(await prepareRun(conn, { atlasId: null, personId: ash, now: NOW })).toMatchObject({ labels: 1, samples: 1 });
+  });
+
   it("mints only the new specimen numbers when a count was raised after an earlier run", async () => {
     const sample = await insertCleanSample(conn, { collector_id: String(ash), specimen_count: "2" });
     const first = await prepareRun(conn, { atlasId: null, personId: ash, now: NOW });

@@ -227,8 +227,9 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
     const printing = Number(s.printing_count);
     const printed = Number(s.printed_count);
     // A settled sample asks nothing: its flags are counted, and it stays on
-    // the page only if labels are waiting for it — that is not a question
-    // to the volunteer, and a season's end does not cancel a print job.
+    // the page only while a run already holds its labels, until they are
+    // mailed. It is never pending, since nothing from a settled season is
+    // printed (schema/102), but a run prepared before 1 March still goes out.
     if (s.settled && s.flagged) settledFlagged += 1;
     if (s.settled && pending === 0 && printing === 0 && printed === 0) continue;
     rows.push({

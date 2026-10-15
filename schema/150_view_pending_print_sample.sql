@@ -12,6 +12,9 @@
 -- Membership follows printable_sample, so the waiver clause and the
 -- per-atlas geoprivacy policy reach this view without the app knowing. A
 -- run with no atlas freezes the subset print_scope_sample names (schema/155).
+-- A settled sample (schema/102) is never pending: nothing from a closed
+-- season is printed (Peter, 2026-10-14), whether it was minted late from an
+-- old observation or had its count raised after the season ended.
 CREATE VIEW pending_print_sample AS
 SELECT s.entity_id AS sample_id,
        -- CAST because count() is 64-bit: the app reads this as a plain number.
@@ -21,4 +24,5 @@ JOIN sample s ON s.entity_id = p.sample_id
 LEFT JOIN (
   SELECT sample_id, count(*) AS n FROM individuated_specimen GROUP BY sample_id
 ) printed ON printed.sample_id = s.entity_id
-WHERE s.specimen_count > coalesce(printed.n, 0);
+WHERE s.specimen_count > coalesce(printed.n, 0)
+  AND NOT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id);

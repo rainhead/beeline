@@ -105,8 +105,8 @@ COMMENT ON VIEW observation_unnumbered IS 'Observations in a sampling project wi
 --
 -- The day is the observation's date, and a sample's date_end, the date its
 -- observation carries (schema/108). The season is the year it began on 1
--- March, as sample_season (schema/160) states it — restated rather than read,
--- since that view is applied after this one and is about samples.
+-- March, as sample_season (schema/102) states it — restated rather than read,
+-- since that view is about samples.
 CREATE VIEW sample_number_gap AS
 WITH used AS (
   SELECT a.person_id, f.observed_on AS collected_on, trim(f.sample_number_raw) AS sample_number

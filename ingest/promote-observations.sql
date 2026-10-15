@@ -64,6 +64,13 @@ JOIN observation_location ol ON ol.inat_id = s.inat_observation_id;
 -- coordinates a staff member has set (sample_location_override,
 -- beeline-942): the person outranks the observation, and the override is
 -- re-applied after this file runs, as the locality one is.
+--
+-- The one exception to the printed rule: an imported point that is a
+-- stand-in iNaturalist published to hide the real one
+-- (sample_location_standin, schema/106). Its label is wrong and stays
+-- wrong, but the record takes the true point (Arthur, 2026-10-14,
+-- beeline-b34). Once it has, the sample is printed like any other and stops
+-- following the observation.
 UPDATE sample_location SET
   latitude = c.latitude,
   longitude = c.longitude,
@@ -71,7 +78,8 @@ UPDATE sample_location SET
   source = c.source
 FROM observation_location_candidate c
 WHERE sample_location.sample_id = c.sample_id
-  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = c.sample_id)
+  AND (NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = c.sample_id)
+       OR EXISTS (SELECT 1 FROM sample_location_standin st WHERE st.sample_id = c.sample_id))
   AND NOT EXISTS (SELECT 1 FROM sample_location_override o WHERE o.sample_id = c.sample_id);
 
 -- Drop every elevation the move left behind, so the row says "unknown"

@@ -43,6 +43,8 @@ export interface ObservationPromotionCounts {
   trustedLocations: number;
   publicLocations: number;
   obscuredWithheld: number;
+  /** Imported stand-in points replaced by the true point (sample_location_standin, beeline-b34). */
+  standinsCorrected: number;
   accountsLinked: number;
   accountConflicts: number;
   /** Overlay rows applied, and the ones naming no sample (or two). */
@@ -106,6 +108,8 @@ async function promoteOnce(
     const freeLinks = await scalar("SELECT count(*) FROM sample_mint_free_link");
     const ambiguousGroups = await scalar("SELECT count(*) FROM sample_mint_ambiguous");
     await conn.run(await readFile(`${INGEST_DIR}mint-samples.sql`, "utf8"));
+    // Counted before the file that empties it, for the same reason.
+    const standinsCorrected = await scalar("SELECT count(*) FROM sample_location_standin");
     await conn.run(await readFile(`${INGEST_DIR}promote-observations.sql`, "utf8"));
     const overlay =
       opts.sampleOverlayPath === undefined
@@ -135,6 +139,7 @@ async function promoteOnce(
          LEFT JOIN observation_location_candidate c ON c.sample_id = s.entity_id
          WHERE c.sample_id IS NULL`,
       ),
+      standinsCorrected,
       accountsLinked: (await scalar("SELECT count(*) FROM inat_account")) - accountsBefore,
       // Pairs the harvest refused: ambiguous either way, or clashing with an
       // account already on file under a different person/user id.

@@ -278,6 +278,20 @@ describe("what the store knows about a difference", () => {
     await conn.run(`UPDATE legacy_occurrence SET "recordedBy" = 'Ada Collector | Bea Trapper' WHERE "fieldNumber" = '25000005'`);
     // A one-day collection written as a range ending on its start, as the 2018 records are.
     await conn.run(`UPDATE legacy_occurrence SET year2 = "year", month2 = "month", day2 = "day" WHERE "fieldNumber" = '25000001'`);
+    // A stand-in the legacy record printed 10 km from the true point Beeline
+    // now holds, on an obscured observation (beeline-b34); and the same
+    // distance on an observation nothing hides, which is not a stand-in.
+    const point = async (fieldNumber: string, inatId: number, geoprivacy: string | null) => {
+      await conn.run(`INSERT INTO observation_field (inat_id, geoprivacy) VALUES (${inatId}, ${geoprivacy === null ? "NULL" : `'${geoprivacy}'`})`);
+      await conn.run(`UPDATE sample SET inat_observation_id = '${inatId}'
+        WHERE entity_id = (SELECT sample_id FROM specimen WHERE field_number = '${fieldNumber}')`);
+      await conn.run(`UPDATE sample_location SET source = 'inat_trusted'
+        WHERE sample_id = (SELECT sample_id FROM specimen WHERE field_number = '${fieldNumber}')`);
+      await conn.run(`UPDATE legacy_occurrence SET "decimalLatitude" = printf('%.4f', try_cast("decimalLatitude" AS DOUBLE) + 0.09)
+        WHERE "fieldNumber" = '${fieldNumber}'`);
+    };
+    await point("25000002", 9002, "obscured");
+    await point("25000005", 9005, null);
   });
 
   test("labels each difference the store can account for, and leaves the rest as changed", async () => {
@@ -295,6 +309,7 @@ describe("what the store knows about a difference", () => {
           OR (field_number = '25000005' AND "column" IN ('scientificName', 'locality', 'recordedBy'))
           OR (field_number IN ('25000002', '25000009') AND "column" = 'firstNameInitial')
           OR (field_number = '25000003' AND "column" = 'stateProvince')
+          OR (field_number IN ('25000002', '25000005') AND "column" = 'decimalLatitude')
        ORDER BY 1, 2`,
     )).getRows();
     expect(kinds).toEqual([
@@ -302,6 +317,7 @@ describe("what the store knows about a difference", () => {
       ["25000001", "lastName", "collector_alias"],
       ["25000001", "recordedBy", "collector_alias"],
       ["25000001", "specificEpithet", "taxon_alias"],
+      ["25000002", "decimalLatitude", "standin_replaced"],
       ["25000002", "firstNameInitial", "initial_from_surname"],
       ["25000002", "genusVolDet", "taxon_alias"],
       ["25000002", "locality", "changed"], // Beeline wrote neither of the values the rows disagreed between
@@ -312,6 +328,7 @@ describe("what the store knows about a difference", () => {
       ["25000003", "locality", "sample_disagreement"],
       ["25000003", "recordedBy", "collector_alias"],
       ["25000003", "stateProvince", "changed"], // another record's correction is not this one's
+      ["25000005", "decimalLatitude", "changed"], // nothing was hidden, so nothing stood in for it
       ["25000005", "genusVolDet", "changed"], // a misspelling nobody has curated
       ["25000005", "locality", "staff_correction"],
       ["25000005", "recordedBy", "collector_order_contradicted"],

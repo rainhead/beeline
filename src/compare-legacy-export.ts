@@ -310,6 +310,8 @@ const PLACE_FINDING_FIELD: Record<string, string> = {
  *   newer_determination  the specimen's newest expert determination came from
  *                        Ecdysis or Beeline, so the legacy system never received it
  *   one_day_range        an end the legacy record wrote on its start day, blank here
+ *   standin_replaced     the legacy point was a stand-in for an obscured observation's
+ *                        true point, which Beeline holds instead (beeline-b34)
  *   login_renamed        both sides carry the same iNaturalist user id
  *   sample_disagreement  promotion found the legacy rows of this specimen's sample
  *                        disagreeing about this field, and the sample keeps one value
@@ -443,6 +445,33 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
         JOIN (SELECT specimen_id, arg_max(channel, (recorded_at, entity_id)) AS channel
               FROM determination WHERE is_expert GROUP BY specimen_id) e ON e.specimen_id = sp.entity_id
         WHERE sp.field_number = d.field_number AND e.channel <> 'legacy_import')`);
+  // A stand-in point the legacy record printed, which promotion replaced with
+  // the observation's true point (sample_location_standin, beeline-b34): the
+  // point, its uncertainty and source, and the elevation read at the
+  // stand-in, which is blank until derived again at the true point and
+  // different after. A row's point counts as a stand-in where it is 100 m or
+  // more from the sample's, as the view's own test is; the elevation goes for
+  // every row of a sample that had one, since a corrected sample's rows that
+  // already held the true point lost the elevation with the rest.
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE cmp_standin_row AS
+    SELECT p."e_fieldNumber" AS field_number, s.entity_id AS sample_id
+    FROM cmp_pairs p
+    JOIN specimen sp ON sp.field_number = p."e_fieldNumber"
+    JOIN sample s ON s.entity_id = sp.sample_id
+    JOIN sample_location l ON l.sample_id = s.entity_id
+    JOIN observation_field f ON f.inat_id = s.inat_observation_id
+    WHERE l.source = 'inat_trusted'
+      AND (nullif(f.geoprivacy, 'open') IS NOT NULL OR nullif(f.taxon_geoprivacy, 'open') IS NOT NULL)
+      AND 111195 * sqrt(power(try_cast(p."l_decimalLatitude" AS DOUBLE) - l.latitude, 2)
+          + power((try_cast(p."l_decimalLongitude" AS DOUBLE) - l.longitude) * cos(radians(l.latitude)), 2)) >= 100`);
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'standin_replaced'
+    WHERE (d."column" IN ('decimalLatitude', 'decimalLongitude', 'coordinateUncertaintyInMeters', 'coordinateSource')
+           AND d.field_number IN (SELECT field_number FROM cmp_standin_row))
+       OR (d."column" = 'verbatimElevation'
+           AND EXISTS (SELECT 1 FROM specimen sp JOIN cmp_standin_row r ON r.sample_id = sp.sample_id
+                       WHERE sp.field_number = d.field_number))`);
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'login_renamed'
     WHERE d."column" = 'userLogin' AND d.kind = 'changed'

@@ -895,7 +895,7 @@ WHERE r.p_inat_obs_id IS NOT NULL
 -- export can only account for about 6 m — but the corpus disagrees far more
 -- widely than that: 23,284 samples differ by 20-200 m, which is genuine
 -- movement and far too many for anyone to look at. Above 200 m there are 310,
--- and split at season.started_on (schema/160) only SIX are in the open season.
+-- and split at season.started_on (schema/102) only SIX are in the open season.
 -- That is a worklist; the 304 settled ones are the wild west and nobody is
 -- going to work through them (Peter, 2026-08-29).
 --

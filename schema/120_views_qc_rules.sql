@@ -179,7 +179,7 @@ WHERE s.state_province IS NOT NULL
 -- nobody is able to make. So a sample is judged by the limit in force when it
 -- was collected, and records predating the change keep 250 m for good.
 --
--- Judged on date_end, for the reason settled_sample is (schema/160): a trap
+-- Judged on date_end, for the reason settled_sample is (schema/102): a trap
 -- line that ran across the boundary belongs to the season it was emptied in.
 CREATE VIEW coordinate_precision_rule AS
 SELECT 100 AS uncertainty_m,

@@ -6,6 +6,16 @@
 -- a sample immutable; a settled sample is edited exactly like any other. This
 -- is a rule about attention, and it lives with the QC views because that is
 -- where the rules about what counts live, not in a route handler.
+--
+-- It is also a rule about printing: nothing from a settled season is printed
+-- (Peter, 2026-10-14). pending_print_sample (schema/150) leaves settled
+-- samples out, so no run takes them and no dashboard asks for their labels.
+-- A full sync on the sandbox had minted 818 samples from observations the old
+-- system never recorded, 441 of them from 2018, and every one read as labels
+-- waiting: nobody pins a bee eight years later, so a sample like that is a
+-- record of what was observed, not a print job. That is why these views sit
+-- here, ahead of the printing views, where printed_sample (schema/101) sits
+-- for the same reason.
 
 -- When the current season began: 1 March of this year, or of last year until
 -- this year's 1 March arrives.
@@ -23,7 +33,7 @@ CREATE VIEW settled_sample AS
 SELECT s.entity_id AS sample_id
 FROM sample s, season
 WHERE s.date_end < season.started_on;
-COMMENT ON VIEW settled_sample IS 'Samples from a closed season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags, keep their printability, and stay editable.';
+COMMENT ON VIEW settled_sample IS 'Samples from a closed season. Settled means "no longer asking", never "no longer changeable": these samples keep their flags and stay editable. Nothing of theirs is printed any more: pending_print_sample leaves them out (Peter, 2026-10-14).';
 
 -- Which season a sample belongs to, by the same 1 March line: the year its
 -- season began. Judged on date_end, like settled_sample. Written without

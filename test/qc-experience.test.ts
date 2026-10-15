@@ -163,6 +163,24 @@ describe("the front page", () => {
     expect(body).toContain("Sample A-7");
   });
 
+  it("does not ask for labels from a settled season", async () => {
+    // Clean, three specimens, none pinned, from 2024: what a full sync mints
+    // from an old observation the old system never recorded. Nothing from a
+    // settled season is printed (Peter, 2026-10-14), so it is not on the page.
+    const { app, conn, alice } = await qcApp();
+    await insertCleanSample(conn, {
+      collector_id: String(alice),
+      sample_number: "'A-3'",
+      specimen_count: "3",
+      date_start: "DATE '2024-07-14'",
+      date_end: "DATE '2024-07-14'",
+    });
+    const body = await (await app.request("/")).text();
+    expect(body).not.toContain("Sample A-3");
+    // This season's sample waiting on labels is still there.
+    expect(body).toContain("Sample A-8");
+  });
+
   it("never shows another collector's findings", async () => {
     const { app } = await qcApp();
     const body = await (await app.request("/")).text();

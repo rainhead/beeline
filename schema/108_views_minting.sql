@@ -89,7 +89,7 @@ CREATE MACRO locality_street_suffix_pattern() AS
 -- commas ('Steigerwald NWR'), and a four-part guess whose second component is
 -- the town ('Peckham Rd, Wilder, ID, US' -> 'Wilder'). Measured over the
 -- samples a first minting pass creates, split at season.started_on
--- (schema/160): the reference rule yields a usable locality for 24% of the
+-- (schema/102): the reference rule yields a usable locality for 24% of the
 -- settled seasons and 68% of the open one; this rule yields 66% (596 of 903)
 -- and 86% (445 of 518).
 --

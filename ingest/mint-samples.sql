@@ -94,7 +94,7 @@ WHERE reg.atlas_id IS NOT NULL;
 --
 -- Taking the observer as collector is settled (Peter, 2026-08-29) and the
 -- household-login risk it carries is 94% historical — split at
--- season.started_on (schema/160), 150 of the 903 minted samples from settled
+-- season.started_on (schema/102), 150 of the 903 minted samples from settled
 -- seasons land under a shared login against 9 of the 518 from the open one,
 -- and collectors are being moved to individual iNaturalist accounts. Where that is wrong it is staff's to override, not the model's to
 -- guess (beeline-v0j).

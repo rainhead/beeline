@@ -2,7 +2,8 @@
 
 **Status:** accepted (2026-08-20) · **Revisited:** phase-4 decision resolved
 by [ADR 0005](0005-app-process-owns-the-store.md) (2026-08-22) — the app
-store stays DuckDB, owned by the app process
+store stays DuckDB, owned by the app process; the cutover decision resolved
+2026-10-16 (beeline-yfb) — DuckDB stays after Postgres was measured (Evidence since)
 
 ## Context
 
@@ -132,3 +133,10 @@ four of them (`qc_finding`, `determination_of_record`, `observation_place`,
 ahead of it, which turns a move into a decision about keeping stored rows
 current. People is slow for another reason, a join Postgres cannot hash, and
 a one-line rewrite fixed it.
+
+Peter decided on 2026-10-16 to stay on DuckDB. Keeping stored findings current
+after every sample edit is code a successor would have to understand before
+adding a QC rule, and DuckDB needs none of it; the alternatives looked at
+(pg_ivm, Feldera, leaving `qc_finding` computed on read) are in the
+write-up's [decision](../research/postgres-feasibility.md#the-decision). The
+CI check stays, so this hatch stays open for whoever revisits it.

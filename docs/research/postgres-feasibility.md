@@ -4,9 +4,10 @@ Measured 2026-10-12 (Peter, with Claude) on a copy of the dev store (2 October, 
 to `0050`): 3.03 million rows in 63 tables. Both engines ran on one workstation (Apple
 M1, 16 GB, Postgres 17.11, DuckDB 1.5.5 through `@duckdb/node-api`), which other work
 kept at a load average of about 8 throughout, so every figure is a median of three or
-five runs and the comparison between engines matters more than any single number. The
-open decision this informs is [beeline-yfb](../../.beads/): whether the store should
-leave DuckDB at cutover, when rebuilding stops being free.
+five runs and the comparison between engines matters more than any single number. It
+informed [beeline-yfb](../../.beads/): whether the store should leave DuckDB at cutover,
+when rebuilding stops being free. Peter decided to stay on DuckDB ([The
+decision](#the-decision), below).
 
 ## What it found
 
@@ -150,21 +151,41 @@ something DuckDB 1.5.5 cannot do and Postgres can:
   backup copies rows, and the main and private stores in two transactions, since one
   transaction can write to only one attached database.
 
-## What is undecided
+## The decision
 
-Whether to move at all is Peter's call, and beeline-yfb carries it. The measurements
-narrow it to three choices, none chosen:
+Peter decided on 2026-10-16 to stay on DuckDB. What decided it is that Beeline has to
+outlive the people building it, so whoever inherits it must be able to run it and change
+it. Every way found of making Postgres as fast as DuckDB adds code that DuckDB does not
+need. Stored QC findings have to be brought up to date after every sample edit, and the
+code that does it has to know which other samples an edit can affect: renumbering one
+sample can create or clear another sample's duplicate-number flag. Whoever adds a QC rule
+would have to understand that code first. DuckDB computes the findings when they are
+read, so a new rule is a new view and nothing more.
 
-1. **Stay on DuckDB**, and live with the schema-change limits once rebuilding stops.
-2. **Move to Postgres and store the derived views**, which means deciding how
-   `qc_finding` stays current when a sample is edited: recompute it whole after every
-   write (1.6 s, so the flags lag behind the save), recompute one sample's findings
-   (the rules that rank or group across samples make that more than a filter), or
-   accept that flags refresh on a schedule.
-3. **Move to Postgres and redesign the views** so that a page's filter reaches every
-   arm of the union, which keeps findings computed on read but touches every QC rule.
+Looked at after the measurements above, and set aside:
 
-Either move also means running Postgres on the 3 GB Fly machine beside the app,
+- **Storing three views and leaving `qc_finding` computed on read.** Every page that
+  shows flags still spent about 1.5 s in the database. Filtered to one sample,
+  `qc_finding` itself takes 183 ms against 1.44 s whole. Eleven of its thirteen rules
+  take 0.3 ms or less for one sample. The duplicate-number rule takes 124 ms and the
+  missing-upstream rule 56 ms, because each counts across every sample or every sync
+  run before keeping the one asked for.
+- **[pg_ivm](https://github.com/sraoss/pg_ivm)**, an extension that keeps a stored view
+  current with triggers. It can maintain none of the four views as written: three pick
+  a row with `row_number() OVER (…)`, and `qc_finding` is a `UNION ALL` of views, some
+  with `HAVING`. pg_ivm supports none of those, and reads only tables.
+- **[Feldera](https://github.com/feldera/feldera)**, a separate engine that keeps SQL
+  views current as their inputs change. Its Postgres connectors are marked
+  experimental, its stable routes in and out of Postgres go through Kafka, and
+  checkpoints are only in its paid edition, so the free edition recomputes everything
+  after each restart (October 2026).
+- **pg_duckdb**, which is no longer actively developed.
+
+Staying costs what [What a move would buy back](#what-a-move-would-buy-back) lists,
+from cutover on. The Postgres check stays in CI, so whoever revisits this starts from a
+schema that still ports.
+
+Were it revisited, a move would also mean running Postgres on the 3 GB Fly machine beside the app,
 rewriting the deploy and backup runbooks, and porting the app's queries. The
 translator already handles most of that: every query those 30 pages send, and the
 three promotion files, ran on Postgres after two more rules (`INTERVAL 30 DAY`,

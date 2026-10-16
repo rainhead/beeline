@@ -334,7 +334,12 @@ describe("the front page", () => {
     const body = await (await app.request("/")).text();
     expect(body).toContain("Some days this season skip a sample number");
     expect(body).toContain("Jun 10, 2026: no samples 3–5");
-    expect(body).toContain("https://www.inaturalist.org/observations?user_id=alice&amp;on=2026-06-10&amp;verifiable=any");
+    // Only observations carrying a sample number, wherever they were made:
+    // without place_id=any, iNaturalist narrows the list to the viewer's
+    // home place.
+    expect(body).toContain(
+      "https://www.inaturalist.org/observations?user_id=alice&amp;on=2026-06-10&amp;field%3AsampleId=&amp;place_id=any&amp;verifiable=any",
+    );
     expect(body).not.toContain("Jun 11, 2026: no");
   });
 

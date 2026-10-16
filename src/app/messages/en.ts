@@ -343,7 +343,7 @@ export const en = {
       /** `runs` is the numbers as runs ("3", "5–7"); `count` is how many numbers they hold. */
       day: (when: Date | string, runs: readonly string[], count: number) =>
         `${date(when)}: ${count === 1 ? "no sample" : "no samples"} ${list(runs)}`,
-      link: "your observations that day",
+      link: "your numbered observations that day",
     },
     /**
      * Whose sample you are looking at when it isn't only yours: the sample

@@ -72,6 +72,19 @@ describe("refreshTiles", () => {
     expect(await readdir(demDir)).toEqual([]);
   });
 
+  test("a fetch still going at the deadline stops, is reported, and leaves the run to derive", async () => {
+    await pending(1, 44, -124);
+    // A source that never answers until the request is abandoned.
+    const hanging = ((_: unknown, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+      })) as typeof fetch;
+    expect(await refreshTiles(conn, demDir, { fetchImpl: hanging, deadlineMs: 50 })).toBe(
+      "elevation tile fetch stopped after 0 minutes; deriving from the tiles on disk",
+    );
+    expect(await readdir(demDir)).toEqual([]);
+  });
+
   test("an aborted run stops rather than reporting a failed fetch", async () => {
     await pending(1, 44, -124);
     const controller = new AbortController();

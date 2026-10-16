@@ -102,6 +102,9 @@ export async function refreshPlaces(
  */
 export const NIGHTLY_TILE_LIMIT = 25;
 
+/** How long one run may spend fetching tiles, all of them together. */
+export const NIGHTLY_TILE_DEADLINE_MS = 15 * 60_000;
+
 /**
  * The DEM tiles the pending elevations need and the disk lacks, fetched just
  * before deriving (beeline-z08). Until this, the nightly only named the tiles
@@ -117,15 +120,26 @@ export const NIGHTLY_TILE_LIMIT = 25;
 export async function refreshTiles(
   conn: JobContext["conn"],
   demDir: string,
-  opts: FetchTilesOptions = {},
+  opts: FetchTilesOptions & { deadlineMs?: number } = {},
 ): Promise<string | null> {
+  // The whole fetch has a deadline as well as each request, since 25 slow
+  // downloads just inside their own ten-minute timeouts would hold the
+  // nightly for hours and push the 3am backup out of the night window
+  // (CodeRabbit). Tiles that arrived before it are kept; the rest wait.
+  const deadlineMs = opts.deadlineMs ?? NIGHTLY_TILE_DEADLINE_MS;
+  const deadline = AbortSignal.timeout(deadlineMs);
+  const signal = opts.signal ? AbortSignal.any([deadline, opts.signal]) : deadline;
   try {
-    const r = await fetchMissingTiles(conn, demDir, { limit: NIGHTLY_TILE_LIMIT, ...opts });
+    const r = await fetchMissingTiles(conn, demDir, { limit: NIGHTLY_TILE_LIMIT, ...opts, signal });
     const fetched = r.fromSrtm.length + r.fromGlo30.length;
     if (fetched === 0 && r.deferred === 0) return null;
     return `${fetched} elevation tile(s) fetched` + (r.deferred > 0 ? `, ${r.deferred} left for the next run` : "");
   } catch (err) {
+    // A shutdown stops the run, as it does at every step boundary.
     opts.signal?.throwIfAborted();
+    if (deadline.aborted) {
+      return `elevation tile fetch stopped after ${Math.round(deadlineMs / 60_000)} minutes; deriving from the tiles on disk`;
+    }
     return `elevation tile fetch failed (${(err as Error).message}); deriving from the tiles on disk`;
   }
 }

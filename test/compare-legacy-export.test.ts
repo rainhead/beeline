@@ -196,6 +196,27 @@ describe("comparing against rulings", () => {
     expect(r.rulings.map((x) => x.status)).toEqual(["retired", "matches-nothing", "explains"]);
   });
 
+  test("every kind is counted in records, under its outcome, with a record to look at", async () => {
+    const r = await compareLegacyExport(conn, exportPath, [ruling({ kind: "case", outcome: "expected" })]);
+    const byKind = (kind: string, outcome: string) => r.kinds.find((k) => k.kind === kind && k.outcome === outcome);
+    // The recapitalised sex: one record, explained, quoted with its number.
+    const sex = byKind("case", "expected")!;
+    expect(sex.open + sex.settled).toBe(1);
+    expect(sex.columns).toEqual(["sex"]);
+    expect(sex.examples).toEqual([{ column: "sex", exported: expect.any(String), legacy: expect.any(String), n: 1, fieldNumber: numbers[0] }]);
+    expect(sex.fieldNumbers).toEqual([numbers[0]]);
+    expect(byKind("case", "unexplained")?.columns ?? []).not.toContain("sex");
+    // The record dropped from staging: a record kind quotes no pair, only the number.
+    const dropped = byKind("not_in_legacy", "unexplained")!;
+    expect(dropped.columns).toEqual(["(record)"]);
+    expect(dropped.examples).toEqual([]);
+    expect(dropped.fieldNumbers).toEqual([numbers.at(-1)]);
+    // Unexplained first, then by outcome, largest first within each.
+    const order = r.kinds.map((k) => k.outcome);
+    expect(order.indexOf("unexplained")).toBe(0);
+    expect(order.lastIndexOf("unexplained")).toBeLessThan(order.indexOf("expected"));
+  });
+
   test("the same staging and export give the same answer", async () => {
     const a = await compareLegacyExport(conn, exportPath, []);
     const b = await compareLegacyExport(conn, exportPath, []);

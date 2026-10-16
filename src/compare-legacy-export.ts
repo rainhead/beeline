@@ -33,17 +33,48 @@ import { OUTCOMES, readRulings, RECORD_COLUMN, type Ruling } from "./legacy-expo
  * explained; what is left is the report.
  */
 
+/** One (exported, legacy) pair, how often it occurs, and a record it occurs on. */
+export interface Example {
+  exported: string;
+  legacy: string;
+  n: number;
+  /** The lowest field number carrying this pair: a record to look at, and the key Andony's comparison joins on. */
+  fieldNumber: string;
+}
+
 export interface ColumnDifference {
   column: string;
   open: number;
   settled: number;
-  /** The commonest (exported, legacy) pairs, to say what kind of difference it is. */
-  examples: { exported: string; legacy: string; n: number }[];
+  /** The commonest pairs, to say what kind of difference it is; empty where the column names a person or a place. */
+  examples: Example[];
+  /** A few records to look at, whatever the column: the lowest field numbers. */
+  fieldNumbers: string[];
 }
 
 /** Differences of one kind in one column that no ruling explains. */
 export interface UnexplainedGroup extends ColumnDifference {
   kind: string;
+}
+
+/**
+ * Every difference of one kind under one outcome, across the columns it
+ * touches — the answer to "what kinds of difference are there, how many
+ * records, and what do they look like" (GitHub #107). Counted in records
+ * rather than differences, since a kind that touches four columns of one
+ * record (collector_list_form) is one thing wrong with that record.
+ */
+export interface KindGroup {
+  kind: string;
+  /** The outcome of the rulings that explain the group, or `unexplained`. */
+  outcome: string;
+  /** The columns the kind touches, most affected first. */
+  columns: string[];
+  open: number;
+  settled: number;
+  /** The commonest pairs across the columns that may be quoted, each with its column. */
+  examples: (Example & { column: string })[];
+  fieldNumbers: string[];
 }
 
 export interface RulingResult {
@@ -71,6 +102,8 @@ export interface ExportComparison {
   duplicated: number;
   /** Every difference by column, explained or not. */
   columns: ColumnDifference[];
+  /** Every difference by kind and outcome, explained or not, in records. */
+  kinds: KindGroup[];
   unexplained: { open: number; settled: number; groups: UnexplainedGroup[] };
   explained: { outcome: string; open: number; settled: number }[];
   rulings: RulingResult[];
@@ -228,7 +261,8 @@ export async function compareLegacyExport(
       SELECT count(*) FILTER (WHERE open_season), count(*) FILTER (WHERE NOT open_season)
       FROM cmp_attributed WHERE "column" = ${sqlString(c)}`)).getRows()) as [[bigint, bigint]];
     if (Number(o) + Number(s) === 0) continue;
-    columns.push({ column: c, open: Number(o), settled: Number(s), examples: await examples(conn, `"column" = ${sqlString(c)}`, c) });
+    const where = `"column" = ${sqlString(c)}`;
+    columns.push({ column: c, open: Number(o), settled: Number(s), examples: await examples(conn, where, c), fieldNumbers: await fieldNumbers(conn, where) });
   }
   columns.sort((a, b) => b.open + b.settled - (a.open + a.settled) || a.column.localeCompare(b.column));
 
@@ -238,9 +272,43 @@ export async function compareLegacyExport(
   const groups: UnexplainedGroup[] = [];
   for (const [column, kind, o, s] of groupRows) {
     const where = `ruling_id IS NULL AND "column" = ${sqlString(column)} AND kind = ${sqlString(kind)}`;
-    groups.push({ column, kind, open: Number(o), settled: Number(s), examples: await examples(conn, where, column) });
+    groups.push({ column, kind, open: Number(o), settled: Number(s), examples: await examples(conn, where, column), fieldNumbers: await fieldNumbers(conn, where) });
   }
   groups.sort((a, b) => b.open - a.open || b.settled - a.settled || a.column.localeCompare(b.column) || a.kind.localeCompare(b.kind));
+
+  // By kind and outcome, in records: the outcome is the ruling's, so it is
+  // joined in from a table of the rulings rather than carried per difference.
+  await conn.run(`CREATE OR REPLACE TEMP TABLE cmp_outcome (ruling_id INTEGER, outcome TEXT)`);
+  if (rulings.length > 0) {
+    await conn.run(`INSERT INTO cmp_outcome VALUES ${rulings.map((r, i) => `(${i}, ${sqlString(r.outcome)})`).join(", ")}`);
+  }
+  await conn.run(`
+    CREATE OR REPLACE TEMP VIEW cmp_kinded AS
+    SELECT a.*, coalesce(o.outcome, 'unexplained') AS outcome
+    FROM cmp_attributed a LEFT JOIN cmp_outcome o ON o.ruling_id = a.ruling_id`);
+  const kindRows = (await (await conn.run(`
+    WITH per_column AS (SELECT kind, outcome, "column", count(*) AS n FROM cmp_kinded GROUP BY ALL)
+    SELECT k.kind, k.outcome,
+           count(DISTINCT k.field_number) FILTER (WHERE k.open_season), count(DISTINCT k.field_number) FILTER (WHERE NOT k.open_season),
+           (SELECT string_agg(c."column", ',' ORDER BY c.n DESC, c."column") FROM per_column c WHERE c.kind = k.kind AND c.outcome = k.outcome)
+    FROM cmp_kinded k GROUP BY 1, 2`)).getRows()) as [string, string, bigint, bigint, string][];
+  const kinds: KindGroup[] = [];
+  for (const [kind, outcome, o, s, colList] of kindRows) {
+    const cols = colList.split(",");
+    const where = `kind = ${sqlString(kind)} AND outcome = ${sqlString(outcome)}`;
+    const quotable = cols.filter((c) => !IDENTIFYING.has(c) && c !== RECORD_COLUMN);
+    const exampleRows = quotable.length === 0 ? [] : (await (await conn.run(`
+      SELECT "column", exported, legacy, count(*), min(field_number) FROM cmp_kinded
+      WHERE ${where} AND "column" IN (${list(quotable)})
+      GROUP BY 1, 2, 3 ORDER BY 4 DESC, 1, 2, 3 LIMIT 3`)).getRows()) as [string, string, string, bigint, string][];
+    kinds.push({
+      kind, outcome, columns: cols, open: Number(o), settled: Number(s),
+      examples: exampleRows.map(([column, exported, legacy, n, fieldNumber]) => ({ column, exported, legacy, n: Number(n), fieldNumber })),
+      fieldNumbers: await fieldNumbers(conn, where, "cmp_kinded"),
+    });
+  }
+  const outcomeOrder = (x: string) => (x === "unexplained" ? -1 : OUTCOMES.indexOf(x as (typeof OUTCOMES)[number]));
+  kinds.sort((a, b) => outcomeOrder(a.outcome) - outcomeOrder(b.outcome) || b.open + b.settled - (a.open + a.settled) || a.kind.localeCompare(b.kind));
 
   const perRuling = new Map(
     ((await (await conn.run(`
@@ -268,6 +336,7 @@ export async function compareLegacyExport(
     onlyLegacy,
     duplicated,
     columns,
+    kinds,
     unexplained: {
       open: groups.reduce((t, g) => t + g.open, 0),
       settled: groups.reduce((t, g) => t + g.settled, 0),
@@ -574,12 +643,19 @@ async function one(conn: DuckDBConnection, sql: string): Promise<number> {
 }
 
 /** The commonest (exported, legacy) pairs among differences `where` selects, unless the column names a person or a place. */
-async function examples(conn: DuckDBConnection, where: string, column: string): Promise<ColumnDifference["examples"]> {
+async function examples(conn: DuckDBConnection, where: string, column: string): Promise<Example[]> {
   if (IDENTIFYING.has(column)) return [];
   const rows = (await (await conn.run(`
-    SELECT exported, legacy, count(*) FROM cmp_attributed WHERE ${where}
-    GROUP BY 1, 2 ORDER BY 3 DESC, 1, 2 LIMIT 3`)).getRows()) as [string, string, bigint][];
-  return rows.map(([exported, legacy, n]) => ({ exported, legacy, n: Number(n) }));
+    SELECT exported, legacy, count(*), min(field_number) FROM cmp_attributed WHERE ${where}
+    GROUP BY 1, 2 ORDER BY 3 DESC, 1, 2 LIMIT 3`)).getRows()) as [string, string, bigint, string][];
+  return rows.map(([exported, legacy, n, fieldNumber]) => ({ exported, legacy, n: Number(n), fieldNumber }));
+}
+
+/** The lowest three field numbers among differences `where` selects: records to look at where no value may be quoted. */
+async function fieldNumbers(conn: DuckDBConnection, where: string, from = "cmp_attributed"): Promise<string[]> {
+  const rows = (await (await conn.run(`
+    SELECT DISTINCT field_number FROM ${from} WHERE ${where} ORDER BY 1 LIMIT 3`)).getRows()) as [string][];
+  return rows.map(([n]) => n);
 }
 
 /**
@@ -640,7 +716,17 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const written = await writeDifferences(conn, rulings, differencesPath);
   conn.closeSync();
   const pair = (o: number, s: number) => `${String(o).padStart(7)} / ${String(s).padStart(7)}`;
-  const eg = (xs: ColumnDifference["examples"]) => xs.map((e) => `'${e.exported}' ← '${e.legacy}' ×${e.n}`).join("; ");
+  // Examples as exported ← legacy, each with a record it occurs on; where no
+  // value may be quoted, a few records to look at instead.
+  const eg = (d: { examples: Example[]; fieldNumbers: string[] }) =>
+    d.examples.length > 0
+      ? d.examples.map((e) => `'${e.exported}' ← '${e.legacy}' ×${e.n} (e.g. ${e.fieldNumber})`).join("; ")
+      : `e.g. ${d.fieldNumbers.join(", ")}`;
+  const egKind = (k: KindGroup) =>
+    k.examples.length > 0
+      ? k.examples.map((e) => `${e.column}: '${e.exported}' ← '${e.legacy}' ×${e.n} (e.g. ${e.fieldNumber})`).join("; ")
+      : `e.g. ${k.fieldNumbers.join(", ")}`;
+  const cols = (k: KindGroup) => (k.columns.length > 4 ? `${k.columns.slice(0, 4).join(", ")} +${k.columns.length - 4} more` : k.columns.join(", "));
 
   console.log(`legacy staging compared against: ${r.reference.rows} rows, fingerprint ${r.reference.fingerprint}`);
   console.log(`exported ${r.exported} rows; matched on fieldNumber: ${r.matched.open} open season, ${r.matched.settled} settled`);
@@ -648,7 +734,13 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
 
   console.log(`\nunexplained (open / settled): ${pair(r.unexplained.open, r.unexplained.settled)}`);
   for (const g of r.unexplained.groups) {
-    console.log(`  ${g.column.padEnd(30)} ${g.kind.padEnd(20)} ${pair(g.open, g.settled)}  ${eg(g.examples)}`);
+    console.log(`  ${g.column.padEnd(30)} ${g.kind.padEnd(20)} ${pair(g.open, g.settled)}  ${eg(g)}`);
+  }
+
+  console.log("\nevery kind of difference, in records (open / settled), the columns it touches, and examples as column: exported ← legacy:");
+  for (const k of r.kinds) {
+    console.log(`  ${k.kind.padEnd(30)} ${k.outcome.padEnd(16)} ${pair(k.open, k.settled)}  ${cols(k)}`);
+    console.log(`  ${"".padEnd(30)} ${"".padEnd(16)} ${"".padEnd(17)}  ${egKind(k)}`);
   }
 
   const bugs = r.rulings.filter((x) => x.ruling.outcome === "beeline-wrong" && x.status === "explains");
@@ -665,7 +757,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   for (const x of r.explained) console.log(`  ${x.outcome.padEnd(30)} ${pair(x.open, x.settled)}`);
 
   console.log("\nevery difference by column, explained or not (open / settled), commonest pairs as exported ← legacy:");
-  for (const c of r.columns) console.log(`  ${c.column.padEnd(30)} ${pair(c.open, c.settled)}  ${eg(c.examples)}`);
+  for (const c of r.columns) console.log(`  ${c.column.padEnd(30)} ${pair(c.open, c.settled)}  ${eg(c)}`);
   console.error(`\n${written} differences, with the rulings that explain them, written to ${differencesPath}`);
 }
 

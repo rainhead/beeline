@@ -6,6 +6,7 @@ import { backUp, describeBackup } from "../../store-backup.js";
 import { readFile } from "node:fs/promises";
 import type { Kysely } from "kysely";
 import { deriveElevations } from "../../derive-elevation.js";
+import { fetchMissingTiles, type FetchTilesOptions } from "../../fetch-dem.js";
 import { fetchPlaces, type FetchPlacesOptions } from "../../fetch-places.js";
 import type { Database } from "../../model.js";
 import { duckdbReader, recordPersonChanges } from "../../person-change.js";
@@ -92,6 +93,57 @@ export async function refreshPlaces(
   }
 }
 
+/**
+ * How many DEM tiles one run may download. The sandbox's 123 tiles average
+ * 14 MB, so this is about 350 MB, and fetching 83 of them by hand on
+ * 2026-10-16 took a few minutes; a store that suddenly gains a continent's
+ * worth of gaps fills over several nights rather than spending one
+ * downloading (beeline-z08).
+ */
+export const NIGHTLY_TILE_LIMIT = 25;
+
+/** How long one run may spend fetching tiles, all of them together. */
+export const NIGHTLY_TILE_DEADLINE_MS = 15 * 60_000;
+
+/**
+ * The DEM tiles the pending elevations need and the disk lacks, fetched just
+ * before deriving (beeline-z08). Until this, the nightly only named the tiles
+ * it was missing, and somebody had to run `pnpm elevation:fetch` by hand in
+ * maintenance mode; a full sync on 2026-10-14 left 609 samples waiting on 83
+ * tiles, most of them in Oregon and Washington.
+ *
+ * NEVER FAILS THE RUN, for refreshPlaces's reason: an elevation is never a
+ * QC finding and never blocks printing, so derivation goes on with the tiles
+ * on disk and the detail says what went wrong. A tile neither source has is
+ * left to the derive step's list of missing tiles, as before.
+ */
+export async function refreshTiles(
+  conn: JobContext["conn"],
+  demDir: string,
+  opts: FetchTilesOptions & { deadlineMs?: number } = {},
+): Promise<string | null> {
+  // The whole fetch has a deadline as well as each request, since 25 slow
+  // downloads just inside their own ten-minute timeouts would hold the
+  // nightly for hours and push the 3am backup out of the night window
+  // (CodeRabbit). Tiles that arrived before it are kept; the rest wait.
+  const deadlineMs = opts.deadlineMs ?? NIGHTLY_TILE_DEADLINE_MS;
+  const deadline = AbortSignal.timeout(deadlineMs);
+  const signal = opts.signal ? AbortSignal.any([deadline, opts.signal]) : deadline;
+  try {
+    const r = await fetchMissingTiles(conn, demDir, { limit: NIGHTLY_TILE_LIMIT, ...opts, signal });
+    const fetched = r.fromSrtm.length + r.fromGlo30.length;
+    if (fetched === 0 && r.deferred === 0) return null;
+    return `${fetched} elevation tile(s) fetched` + (r.deferred > 0 ? `, ${r.deferred} left for the next run` : "");
+  } catch (err) {
+    // A shutdown stops the run, as it does at every step boundary.
+    opts.signal?.throwIfAborted();
+    if (deadline.aborted) {
+      return `elevation tile fetch stopped after ${Math.round(deadlineMs / 60_000)} minutes; deriving from the tiles on disk`;
+    }
+    return `elevation tile fetch failed (${(err as Error).message}); deriving from the tiles on disk`;
+  }
+}
+
 /** Fetch places, promote, and elevation, shared by both sync jobs. Exported for its test. */
 export async function pipelineTail(
   ctx: JobContext,
@@ -99,6 +151,7 @@ export async function pipelineTail(
   personChanges: string,
   samplePaths: SampleLogPaths,
   sampleOverlayPath?: string,
+  tiles: FetchTilesOptions & { demDir?: string } = {},
 ): Promise<string> {
   parts.push(await ctx.step("fetch places", () => refreshPlaces(ctx.conn, { signal: ctx.signal })));
   const promoted = await ctx.step("promote observations", () =>
@@ -137,7 +190,12 @@ export async function pipelineTail(
   );
   if (samples.baselined) parts.push("sample change log baselined");
   else if (samples.appended > 0) parts.push(`${samples.appended} sample changes recorded`);
-  const elevation = await ctx.step("derive elevations", () => deriveElevations(ctx.conn));
+  const demDir = tiles.demDir ?? "data/dem";
+  const fetched = await ctx.step("fetch elevation tiles", () =>
+    refreshTiles(ctx.conn, demDir, { signal: ctx.signal, ...tiles }),
+  );
+  if (fetched !== null) parts.push(fetched);
+  const elevation = await ctx.step("derive elevations", () => deriveElevations(ctx.conn, demDir));
   parts.push(
     `elevation ${elevation.filled}/${elevation.gaps} filled` +
       (elevation.refused > 0 ? `, ${elevation.refused} refused as too uncertain` : "") +

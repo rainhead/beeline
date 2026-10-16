@@ -135,9 +135,11 @@ the whole run rather than syncing anonymously. It cannot be minted on the
 machine — `pnpm inat:login` is a browser flow — so run that on a workstation
 and upload the file, mode 600.
 
-The DEM tiles are the exception: 4.6 GB across 213 files, from two public
-datasets that want no credential. Fetch them **on the machine** rather than
-uploading them — see below.
+The DEM tiles are the exception: 1.7 GB across 123 files on the sandbox,
+from two public datasets that want no credential. The nightly fetches the
+ones it needs by itself, up to 25 a night (beeline-z08), so a new volume fills
+over a few nights; to fill it at once, run `pnpm elevation:fetch` **on the
+machine** rather than uploading them — see below.
 
 `private.duckdb` is not copied between hosts. The app creates it at first
 boot; sessions and sign-in records are acceptable losses pre-cutover. A
@@ -556,7 +558,8 @@ private store was **not** checked rather than passing it. What it leaves in
    and `/app/data/private.duckdb`, and each `authored/*.csv` to `/app/data/`.
 4. On a new volume, also what the archive does not hold: the pipeline's
    `data/secrets/inat-oauth-token` ([One-time setup](#one-time-setup)), and
-   the DEM tiles, which are fetched on the machine. Ecdysis's archive and
+   the DEM tiles, which the nightly fetches again by itself, 25 a night, or
+   `pnpm elevation:fetch` on the machine at once. Ecdysis's archive and
    the print runs' sheets come back by themselves: the first is fetched
    again, the second re-rendered from the store.
 5. `fly machine update --env BEELINE_MAINTENANCE= <id>`. Boot applies any

@@ -32,7 +32,7 @@ pnpm taxon:fetch-sheet <sheet-id> [dir]      # a taxonomist's worksheet, every t
 pnpm taxon:decide <kind> <rank> "<name>" --by … --reason …   # record one decision (or --batch file.csv): the ITIS facts filled from the store, the row validated, the file merged
 pnpm taxon:apply [db]                        # replay ingest/taxon-curation.csv onto a store: the program's departures from ITIS, and what a new release moved from under
 pnpm legacy:export [db] [out.csv]            # every specimen as the legacy occurrences file (the app writes it nightly)
-pnpm legacy:compare-export [db] [export.csv] # how far that file is from the staged legacy records, by column and kind, by season, less what ingest/legacy-export-rulings.csv explains
+pnpm legacy:compare-export [db] [export.csv] # how far that file is from the staged legacy records, by kind and by column, in records split by season with a few examples each, less what ingest/legacy-export-rulings.csv explains
 pnpm backup:check <archive.tar.gz> [dir]     # a nightly backup downloaded from Drive: hashes against its manifest, both stores opened (BEELINE_PRIVATE_DB_KEY for the private one), left extracted for a restore
 ```
 

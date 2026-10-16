@@ -453,9 +453,10 @@ memory did not cure it, and it failed every night from 5 to 7 October; a
 "failed to pin block" from this job is that, not a budget to raise. To check how close it is
 to what the legacy system held, run `pnpm legacy:compare-export` against a
 copy of the store — it needs the staged legacy records, which a reseeded
-store carries. It reports only the differences
+store carries. It lists every kind of difference with how many records it touches and a few
+examples, and says which of them
 [`ingest/legacy-export-rulings.csv`](../../ingest/legacy-export-rulings.csv)
-does not explain.
+explains and which nobody has.
 
 ## Backups
 

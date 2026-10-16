@@ -3,7 +3,7 @@
 **Status:** accepted (2026-08-20) · **Revisited:** phase-4 decision resolved
 by [ADR 0005](0005-app-process-owns-the-store.md) (2026-08-22) — the app
 store stays DuckDB, owned by the app process; the cutover decision resolved
-2026-10-16 (beeline-yfb) — DuckDB stays after Postgres was measured (Evidence since)
+2026-10-16 (beeline-yfb): DuckDB stays, after Postgres was measured (Evidence since)
 
 ## Context
 
@@ -23,11 +23,10 @@ engine runs them owns the heart of the system.
 - **DuckDB is the engine for phases 1–3** (data model, legacy ingestion, iNat
   ingestion), and the default candidate for the app store.
 - **The DDL stays dialect-neutral by convention** so a phase-4 move of the app
-  store to PostgreSQL is a port, not a rewrite. The convention is cheap
-  because the schema is hand-written SQL. It was unenforced until 2026-10-12;
-  since then CI applies the schema to Postgres through the rewrite rules in
-  `src/postgres-port.ts` (`db:check-postgres`, beeline-l6w; see Evidence
-  since). Concretely:
+  store to PostgreSQL is a port, not a rewrite. No mechanical enforcement (no
+  Postgres CI check); the convention is cheap because the schema is
+  hand-written SQL. A check was built in October 2026 and dropped with the
+  decision to stay (Evidence since). Concretely:
   - Row ids come from `CREATE SEQUENCE` + `DEFAULT nextval(...)` — identical in
     both engines. (DuckDB has no auto-increment; Postgres identity columns are
     not portable to DuckDB.) A single global `entity_id_seq` feeds every entity
@@ -121,11 +120,9 @@ casually") is itself a DuckDB property. beeline-yfb has the reasoning.
 
 Both were measured on 2026-10-12
 ([docs/research/postgres-feasibility.md](../research/postgres-feasibility.md)).
-The syntax ports by rule: [`src/postgres-port.ts`](../../src/postgres-port.ts)
-rewrites each DuckDB-only construct, every view then answered the dev store's
-rows identically on Postgres 17, and CI applies the schema through it
-(`pnpm db:check-postgres`, beeline-l6w), so "a port, not a rewrite" is now
-checked rather than intended. The design does not port by indexes: ported as
+The syntax ports by rule: a translator, [`src/postgres-port.ts`](https://github.com/rainhead/beeline/blob/07fd0f37f6a08c6baf3bef749d84c725fd9cc1a3/src/postgres-port.ts),
+rewrote each DuckDB-only construct, and every view then answered the dev
+store's rows identically on Postgres 17. The design does not port by indexes: ported as
 written, most pages people open spent 5 to 20 times as long in the database,
 because the derived views compute their whole result on every read. Storing
 four of them (`qc_finding`, `determination_of_record`, `observation_place`,
@@ -139,4 +136,7 @@ after every sample edit is code a successor would have to understand before
 adding a QC rule, and DuckDB needs none of it; the alternatives looked at
 (pg_ivm, Feldera, leaving `qc_finding` computed on read) are in the
 write-up's [decision](../research/postgres-feasibility.md#the-decision). The
-CI check stays, so this hatch stays open for whoever revisits it.
+translator, its CI check (beeline-l6w) and the benchmarks were dropped with
+the decision, since every new DuckDB-only construct would have needed a rule
+for a move nobody plans; they are kept at [the commit before
+removal](https://github.com/rainhead/beeline/tree/07fd0f37f6a08c6baf3bef749d84c725fd9cc1a3) for whoever revisits this.

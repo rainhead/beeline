@@ -13,10 +13,10 @@ decision](#the-decision), below).
 
 **Postgres gives the same answers.** Every one of the schema's 78 views returned the
 same rows on both engines, row for row, once the SQL was rewritten by
-[`src/postgres-port.ts`](../../src/postgres-port.ts). The rewrite is mechanical. It is
-a list of rules, one for each DuckDB-only construct the SQL uses, and CI now applies
-the schema to a real Postgres through it (`pnpm db:check-postgres`, beeline-l6w), so a
-construct with no rule fails a check instead of drifting in.
+a translator, [`src/postgres-port.ts`](https://github.com/rainhead/beeline/blob/07fd0f37f6a08c6baf3bef749d84c725fd9cc1a3/src/postgres-port.ts). The rewrite is
+mechanical: a list of rules, one for each DuckDB-only construct the SQL uses. It and a
+CI check that applied the schema to Postgres through it (beeline-l6w) were removed with
+the decision to stay; [Reproducing it](#reproducing-it) says where they are kept.
 
 **A straight port is 5 to 20 times slower on most pages people open, and indexes do not
 fix it.** (The People pages are slower still, for a reason of their own, below.) The
@@ -46,7 +46,7 @@ observations (parsing every `place_guess`, then ranking the parts) before keepin
 ## Each page's share of database time
 
 The queries each page of `bench:pages` sends, recorded and replayed on both engines by
-[`bench/postgres/pages.ts`](../../bench/postgres/pages.ts). Postgres had an index on
+[`bench/postgres/pages.ts`](https://github.com/rainhead/beeline/blob/07fd0f37f6a08c6baf3bef749d84c725fd9cc1a3/bench/postgres/pages.ts). Postgres had an index on
 every foreign key, `work_mem` 64 MB, `shared_buffers` 512 MB and JIT off; with the
 defaults (4 MB, JIT on) it was slower still.
 
@@ -94,7 +94,7 @@ that is costly to compute is where it hurts.
 ## The nightly
 
 The batch half of the work, measured by
-[`bench/postgres/promotion.ts`](../../bench/postgres/promotion.ts): observation
+[`bench/postgres/promotion.ts`](https://github.com/rainhead/beeline/blob/07fd0f37f6a08c6baf3bef749d84c725fd9cc1a3/bench/postgres/promotion.ts): observation
 promotion in the order the nightly runs it, each run one transaction rolled back.
 
 | Step | DuckDB | Postgres |
@@ -182,11 +182,13 @@ Looked at after the measurements above, and set aside:
 - **pg_duckdb**, which is no longer actively developed.
 
 Staying costs what [What a move would buy back](#what-a-move-would-buy-back) lists,
-from cutover on. The Postgres check stays in CI, so whoever revisits this starts from a
-schema that still ports.
+from cutover on. The translator, its CI check and the benchmarks were removed, since
+every new DuckDB-only construct would have needed a rule for a move nobody plans; the
+silent differences below and the "never `~`" rule in ADR 0001 are what a later port
+most needs, and they stay.
 
-Were it revisited, a move would also mean running Postgres on the 3 GB Fly machine beside the app,
-rewriting the deploy and backup runbooks, and porting the app's queries. The
+Were it revisited, a move would also mean running Postgres on the 3 GB Fly machine
+beside the app, rewriting the deploy and backup runbooks, and porting the app's queries. The
 translator already handles most of that: every query those 30 pages send, and the
 three promotion files, ran on Postgres after two more rules (`INTERVAL 30 DAY`,
 `CREATE OR REPLACE TEMP TABLE`). One thing it cannot see is the case of a name. DuckDB
@@ -194,6 +196,11 @@ matches `r.userLogin` to a column `userLogin` in any case, and Postgres matches 
 only to `userlogin`, so the staging tables have to be created with unquoted names.
 
 ## Reproducing it
+
+The tools were removed with the decision. They are at commit
+[`07fd0f3`](https://github.com/rainhead/beeline/tree/07fd0f37f6a08c6baf3bef749d84c725fd9cc1a3), which the tag `postgres-port-2026-10` keeps reachable; check it out
+in a worktree, and expect the translator to need rules for whatever DuckDB-only SQL
+has been written since.
 
 ```sh
 pnpm db:migrate <copy.duckdb>
@@ -206,5 +213,5 @@ tsx bench/postgres/explain.ts <pages.json> postgres://…/<db> "<query prefix>" 
 
 The loader needs the Postgres server on the same machine, since the server reads the
 CSV files itself, and a role that may create databases, read server files and set
-`session_replication_role`, which in practice means a superuser. Results stay out of the repository: the recorded queries carry real
-people's ids as parameters.
+`session_replication_role`, which in practice means a superuser. Results stay out of
+the repository: the recorded queries carry real people's ids as parameters.

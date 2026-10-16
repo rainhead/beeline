@@ -58,27 +58,40 @@ interface RawSampleRow {
   printing_count: unknown;
   printed_count: unknown;
   printed_at: Date | null;
-  flagged: boolean;
   settled: boolean;
 }
 
-type RawPlaceholderRow = Omit<
-  RawSampleRow,
-  "sample_id" | "specimen_count" | "pending_count" | "printing_count" | "printed_count" | "printed_at" | "flagged" | "settled"
->;
-
-type RawUnnumberedRow = Omit<RawPlaceholderRow, "sample_number"> & { specimen_count: unknown; notes: string | null };
+/** An observation row on the page, before its locality and place are looked up. */
+interface RawObservationRow {
+  inat_observation_id: bigint | null;
+  date_start: Date;
+  latitude: unknown;
+  longitude: unknown;
+  coordinate_uncertainty_m: unknown;
+  geoprivacy: Geoprivacy | null;
+  taxon_geoprivacy: Geoprivacy | null;
+  host_name: string | null;
+  host_rank: string | null;
+}
 
 export async function loadDashboard(db: Kysely<Database>, personId: number): Promise<Dashboard> {
   const rules = [...DASHBOARD_RULES.keys()];
   const ruleList = sql.join(rules.map((r) => sql`${r}`));
+  // Each question is asked of the store once. The page took 2.9 s on the
+  // sandbox (beeline-m8qa) because it asked the flag views three or four
+  // times — sample_qc_finding is a union over every QC rule, computed whole
+  // whichever samples are asked about, and pending_print_sample computes it
+  // again through printable_sample — and because the locality and place of
+  // every observation in the store were derived to label the few that were
+  // this person's. So the findings come back once, settled seasons included,
+  // and the samples are joined to them in memory; and an observation's
+  // locality and place are looked up only for the rows that need one.
+  const mine = (col: string) =>
+    sql`EXISTS (SELECT 1 FROM sample_collector mine WHERE mine.sample_id = ${sql.ref(col)} AND mine.person_id = ${personId})`;
   const [samples, findings, placeholders, unnumbered, skipped, partners, sync, season, atlas] = await Promise.all([
-    // A sample is on the page when a rule the page shows fires on it, or
-    // when labels are waiting for it. The roll-up (sample_qc_finding), not
-    // qc_finding: a finding on one of a sample's specimens is something to
-    // fix about that sample (beeline-2c3.29). Settled seasons stay in this
-    // one read and are split out below: asking twice would compute the
-    // flag set twice, and that view is what the page costs (beeline-2c3.24).
+    // Every sample of theirs that is this season's, or a settled one whose
+    // labels a run already holds; which of them the page shows is decided
+    // below, against the findings. Labels are the one other question.
     sql<RawSampleRow>`
       SELECT s.entity_id AS sample_id, s.inat_observation_id, s.sample_number, s.date_start,
              s.locality, s.county, s.state_province,
@@ -88,42 +101,38 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
              s.specimen_count, coalesce(p.pending_count, 0) AS pending_count,
              coalesce(lp.printing_count, 0) AS printing_count,
              coalesce(lp.printed_count, 0) AS printed_count, lp.printed_at,
-             EXISTS (SELECT 1 FROM sample_qc_finding f
-                     WHERE f.sample_id = s.entity_id AND f.rule_name IN (${ruleList})) AS flagged,
-             EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id) AS settled
+             st.sample_id IS NOT NULL AS settled
       FROM sample s
       LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
       LEFT JOIN pending_print_sample p ON p.sample_id = s.entity_id
       LEFT JOIN sample_label_in_progress lp ON lp.sample_id = s.entity_id
-      WHERE EXISTS (SELECT 1 FROM sample_collector mine
-                    WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})
-        AND (p.sample_id IS NOT NULL
-             -- Frozen into a run is not the end of waiting: the labels are
-             -- still on their way until the run is mailed (schema/155).
-             OR lp.sample_id IS NOT NULL
-             OR EXISTS (SELECT 1 FROM sample_qc_finding f
-                        WHERE f.sample_id = s.entity_id AND f.rule_name IN (${ruleList})))
+      LEFT JOIN settled_sample st ON st.sample_id = s.entity_id
+      WHERE ${mine("s.entity_id")}
+        AND (st.sample_id IS NULL OR lp.sample_id IS NOT NULL)
       ORDER BY s.date_start DESC, length(s.sample_number) DESC, s.sample_number DESC, s.entity_id`.execute(db),
-    sql<Finding & { sample_id: number }>`
-      SELECT f.sample_id, f.rule_name, f.details, f.detail_taxon_name, f.detail_taxon_rank, r.severity
+    // The findings the page shows, on every sample of theirs, settled or not:
+    // a settled sample's are counted rather than shown (beeline-2c3.24). The
+    // roll-up (sample_qc_finding), not qc_finding: a finding on one of a
+    // sample's specimens is something to fix about that sample (beeline-2c3.29).
+    sql<Finding & { sample_id: number; settled: boolean }>`
+      SELECT f.sample_id, f.rule_name, f.details, f.detail_taxon_name, f.detail_taxon_rank, r.severity,
+             EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = f.sample_id) AS settled
       FROM sample_qc_finding f
       JOIN qc_rule r ON r.name = f.rule_name
       WHERE f.rule_name IN (${ruleList})
-        AND EXISTS (SELECT 1 FROM sample_collector mine
-                    WHERE mine.sample_id = f.sample_id AND mine.person_id = ${personId})
-        AND NOT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = f.sample_id)
+        AND ${mine("f.sample_id")}
       ORDER BY f.sample_id, f.rule_name`.execute(db),
     // The placeholders: numbered, dated, this season, still at 0, and not a
     // sample — minting refuses them (observation_sample_candidate) precisely
     // because 0 is the project's own signal that the catch is not counted
     // yet. Coordinates by the rule promotion applies: the private pair when
     // trust delivers one, the public pair when nothing obscures it, and
-    // otherwise none — a shifted pair is not a reading.
-    sql<RawPlaceholderRow>`
+    // otherwise none — a shifted pair is not a reading. Locality and place
+    // are looked up afterwards, for these rows alone.
+    sql<RawObservationRow & { sample_number: string }>`
       SELECT f.inat_id AS inat_observation_id,
              trim(f.sample_number_raw) AS sample_number,
              f.observed_on AS date_start,
-             ol.locality, op.county_name AS county, op.state_province,
              CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL THEN f.private_latitude
                   WHEN nullif(f.geoprivacy, 'open') IS NULL AND nullif(f.taxon_geoprivacy, 'open') IS NULL THEN f.latitude
              END AS latitude,
@@ -137,8 +146,6 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       FROM observation_field f
       JOIN inat_account a ON a.inat_user_id = f.user_id AND a.person_id = ${personId}
       CROSS JOIN season
-      LEFT JOIN observation_locality ol ON ol.inat_id = f.inat_id
-      LEFT JOIN observation_place op ON op.inat_id = f.inat_id
       WHERE try_cast(f.specimen_count_raw AS INTEGER) = 0
         AND nullif(trim(f.sample_number_raw), '') IS NOT NULL
         AND f.observed_on >= season.started_on
@@ -147,10 +154,9 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
     // In the project with the sample number left blank (observation_unnumbered,
     // schema/109): not a sample, and never going to be one until it is
     // numbered, so the page asks. The same coordinate rule as the placeholders.
-    sql<RawUnnumberedRow>`
+    sql<RawObservationRow & { specimen_count: unknown; notes: string | null }>`
       SELECT f.inat_id AS inat_observation_id,
              f.observed_on AS date_start,
-             ol.locality, op.county_name AS county, op.state_province,
              CASE WHEN f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL THEN f.private_latitude
                   WHEN nullif(f.geoprivacy, 'open') IS NULL AND nullif(f.taxon_geoprivacy, 'open') IS NULL THEN f.latitude
              END AS latitude,
@@ -166,8 +172,6 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       FROM observation_unnumbered u
       JOIN observation_field f ON f.inat_id = u.inat_id
       CROSS JOIN season
-      LEFT JOIN observation_locality ol ON ol.inat_id = f.inat_id
-      LEFT JOIN observation_place op ON op.inat_id = f.inat_id
       WHERE u.person_id = ${personId}
         AND u.observed_on >= season.started_on
       ORDER BY f.observed_on DESC, f.inat_id DESC`.execute(db),
@@ -206,9 +210,33 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       .executeTakeFirst(),
   ]);
 
+  // Where the observations on the page are. The two views derive every
+  // observation's locality and place however they are asked (a filter on
+  // inat_id does not reach inside them; about 300 ms on a workstation, six
+  // times that on the sandbox), so they are read only when the page has such
+  // rows, which most pages do not.
+  const observationIds = [...placeholders.rows, ...unnumbered.rows].map((r) => BigInt(r.inat_observation_id as bigint));
+  const places = new Map<string, { locality: string | null; county: string | null; state_province: string | null }>();
+  if (observationIds.length > 0) {
+    const found = await sql<{ inat_id: bigint; locality: string | null; county: string | null; state_province: string | null }>`
+      SELECT op.inat_id, ol.locality, op.county_name AS county, op.state_province
+      FROM observation_place op
+      LEFT JOIN observation_locality ol ON ol.inat_id = op.inat_id
+      WHERE op.inat_id IN (${sql.join(observationIds)})`.execute(db);
+    for (const p of found.rows) places.set(String(p.inat_id), { locality: p.locality, county: p.county, state_province: p.state_province });
+  }
+  const placeOf = (id: unknown) => places.get(String(id)) ?? { locality: null, county: null, state_province: null };
+
   const findingsBySample = new Map<number, Finding[]>();
+  const settledFlaggedIds = new Set<number>();
   for (const f of findings.rows) {
-    const list = findingsBySample.get(Number(f.sample_id)) ?? [];
+    const id = Number(f.sample_id);
+    // A settled sample asks nothing: its flags are counted, not shown.
+    if (f.settled) {
+      settledFlaggedIds.add(id);
+      continue;
+    }
+    const list = findingsBySample.get(id) ?? [];
     list.push({
       rule_name: f.rule_name,
       details: f.details,
@@ -216,22 +244,24 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       detail_taxon_rank: f.detail_taxon_rank,
       severity: f.severity as QcSeverity,
     });
-    findingsBySample.set(Number(f.sample_id), list);
+    findingsBySample.set(id, list);
   }
 
   const rows: DashboardRow[] = [];
-  let settledFlagged = 0;
+  const settledFlagged = settledFlaggedIds.size;
   for (const s of samples.rows) {
     const sampleId = Number(s.sample_id);
     const pending = Number(s.pending_count);
     const printing = Number(s.printing_count);
     const printed = Number(s.printed_count);
-    // A settled sample asks nothing: its flags are counted, and it stays on
-    // the page only while a run already holds its labels, until they are
-    // mailed. It is never pending, since nothing from a settled season is
-    // printed (schema/102), but a run prepared before 1 March still goes out.
-    if (s.settled && s.flagged) settledFlagged += 1;
-    if (s.settled && pending === 0 && printing === 0 && printed === 0) continue;
+    const findingsHere = s.settled ? [] : (findingsBySample.get(sampleId) ?? []);
+    // On the page when a rule the page shows fires on it, or when labels are
+    // waiting for it, frozen into a run included: the labels are still on
+    // their way until the run is mailed (schema/155). A settled sample stays
+    // only while a run holds its labels; it is never pending, since nothing
+    // from a settled season is printed (schema/102), but a run prepared
+    // before 1 March still goes out.
+    if (findingsHere.length === 0 && pending === 0 && printing === 0 && printed === 0) continue;
     rows.push({
       sample_id: sampleId,
       inat_observation_id: s.inat_observation_id,
@@ -252,7 +282,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       printing_count: printing,
       printed_count: printed,
       printed_at: s.printed_at === null ? null : new Date(s.printed_at),
-      findings: s.settled ? [] : (findingsBySample.get(sampleId) ?? []),
+      findings: findingsHere,
     });
   }
   for (const u of unnumbered.rows) {
@@ -261,9 +291,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       inat_observation_id: u.inat_observation_id,
       sample_number: null,
       date_start: u.date_start,
-      locality: u.locality,
-      county: u.county,
-      state_province: u.state_province,
+      ...placeOf(u.inat_observation_id),
       latitude: num(u.latitude),
       longitude: num(u.longitude),
       coordinate_uncertainty_m: num(u.coordinate_uncertainty_m),
@@ -286,9 +314,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       inat_observation_id: p.inat_observation_id,
       sample_number: p.sample_number,
       date_start: p.date_start,
-      locality: p.locality,
-      county: p.county,
-      state_province: p.state_province,
+      ...placeOf(p.inat_observation_id),
       latitude: num(p.latitude),
       longitude: num(p.longitude),
       coordinate_uncertainty_m: num(p.coordinate_uncertainty_m),

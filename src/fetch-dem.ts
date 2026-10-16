@@ -10,9 +10,11 @@ import type { DemDataset } from "./derive-elevation.js";
 import { GLO30, SRTM, locateTile, tileFileName, tileKeyFor } from "./derive-elevation.js";
 
 /**
- * Fetch the DEM tiles that elevation derivation needs into data/dem/.
- * Self-scoping: the tile set is computed from the database's current
- * elevation gaps, so a fresh dev environment fetches only what its data
+ * Fetch the DEM tiles that elevation derivation needs into data/dem/. The
+ * nightly does this itself before deriving, a limited number at a time
+ * (refreshTiles in src/app/jobs/registry.ts, beeline-z08); the CLI fetches
+ * every one at once. Self-scoping: the tile set is computed from the
+ * database's current elevation gaps, so a fresh dev environment fetches only what its data
  * needs, and a later run picks up tiles for newly cleared elevations. Tiles
  * already present are skipped.
  *
@@ -94,16 +96,6 @@ export async function neededTileKeys(conn: DuckDBConnection): Promise<string[]> 
   return [...new Set(rows.map(([lat, lon]) => tileKeyFor(lat, lon)))].sort();
 }
 
-export async function neededTiles(dbPath: string): Promise<string[]> {
-  const instance = await openDuckDb(dbPath);
-  const conn = await instance.connect();
-  try {
-    return await neededTileKeys(conn);
-  } finally {
-    conn.closeSync();
-  }
-}
-
 /** Tile keys no dataset in demDir covers yet. */
 async function absentTiles(demDir: string, keys: string[]): Promise<string[]> {
   const absent: string[] = [];
@@ -123,10 +115,13 @@ async function fetchTile(
   key: string,
   dataset: DemDataset,
   url: string,
+  opts: Pick<FetchTilesOptions, "signal" | "fetchImpl">,
 ): Promise<boolean> {
   const target = `${demDir}/${tileFileName(key, dataset)}`;
   const partial = `${target}.partial`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10 * 60_000) });
+  const timeout = AbortSignal.timeout(10 * 60_000);
+  const signal = opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout;
+  const res = await (opts.fetchImpl ?? fetch)(url, { signal });
   if (res.status === 404) {
     // Node's fetch holds the pooled connection until the body is read or
     // cancelled, and unlike a browser's it will not collect it promptly on its
@@ -147,24 +142,53 @@ async function fetchTile(
   return true;
 }
 
-// CLI: pnpm elevation:fetch [db] [demDir]
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  // BEELINE_DB before the bare default (see db:migrate): with the store on a
-  // mounted volume, a bare run would otherwise open an empty one beside the app.
-  const dbPath = process.argv[2] ?? process.env.BEELINE_DB ?? "beeline.duckdb";
-  const demDir = process.argv[3] ?? "data/dem";
+export interface FetchTilesOptions {
+  /** At most this many tiles downloaded in one call; the rest wait for the
+   * next. A tile neither source has costs two empty answers and counts for
+   * nothing, so it can never use up the allowance. */
+  limit?: number;
+  signal?: AbortSignal;
+  fetchImpl?: typeof fetch;
+  /** Told each key as it starts and each source that failed, for the CLI. */
+  log?: (line: string) => void;
+}
+
+export interface FetchTilesResult {
+  /** Tiles the pending elevations fall on, whether on disk or not. */
+  needed: number;
+  fromSrtm: string[];
+  fromGlo30: string[];
+  /** Neither source has them: open ocean, mostly. Asked again next time. */
+  unavailable: string[];
+  /** Absent and not yet asked for, because the limit was reached. */
+  deferred: number;
+}
+
+/**
+ * Fetch the tiles the pending elevations need and the disk lacks, SRTM first
+ * and GLO-30 for whatever SRTM does not have. The CLI calls it with no limit;
+ * the nightly calls it before deriving (beeline-z08), with one.
+ */
+export async function fetchMissingTiles(
+  conn: DuckDBConnection,
+  demDir: string,
+  opts: FetchTilesOptions = {},
+): Promise<FetchTilesResult> {
   await mkdir(demDir, { recursive: true });
-  const needed = await neededTiles(dbPath);
-  const toFetch = await absentTiles(demDir, needed);
-  console.error(`${needed.length} tiles needed, ${toFetch.length} to fetch`);
+  const needed = await neededTileKeys(conn);
+  const absent = await absentTiles(demDir, needed);
+  opts.log?.(`${needed.length} tiles needed, ${absent.length} to fetch`);
 
   // Per tile rather than per dataset: SRTM's absence at one key says nothing
   // about the next.
-  const fromSrtm: string[] = [];
-  const fromGlo30: string[] = [];
-  const unavailable: string[] = [];
-  for (const key of toFetch) {
-    console.error(`  ${key}`);
+  const result: FetchTilesResult = { needed: needed.length, fromSrtm: [], fromGlo30: [], unavailable: [], deferred: 0 };
+  for (const [i, key] of absent.entries()) {
+    if (opts.limit !== undefined && result.fromSrtm.length + result.fromGlo30.length >= opts.limit) {
+      result.deferred = absent.length - i;
+      break;
+    }
+    opts.signal?.throwIfAborted();
+    opts.log?.(`  ${key}`);
     // A transport failure on the first source is reported and then treated as
     // "this dataset does not have it", because an unreachable source failing
     // the whole run is precisely what left a host unable to fetch even the
@@ -172,14 +196,32 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     // throws: that is an outage, not a gap.
     let srtm = false;
     try {
-      srtm = await fetchTile(demDir, key, SRTM, srtmUrl(key));
+      srtm = await fetchTile(demDir, key, SRTM, srtmUrl(key), opts);
     } catch (err) {
-      console.error(`    SRTM unavailable: ${(err as Error).message}`);
+      opts.signal?.throwIfAborted();
+      opts.log?.(`    SRTM unavailable: ${(err as Error).message}`);
     }
-    if (srtm) fromSrtm.push(key);
-    else if (await fetchTile(demDir, key, GLO30, glo30Url(key))) fromGlo30.push(key);
-    else unavailable.push(key);
+    if (srtm) result.fromSrtm.push(key);
+    else if (await fetchTile(demDir, key, GLO30, glo30Url(key), opts)) result.fromGlo30.push(key);
+    else result.unavailable.push(key);
   }
+  return result;
+}
 
-  console.log(JSON.stringify({ needed: needed.length, fromSrtm, fromGlo30, unavailable }, null, 2));
+// CLI: pnpm elevation:fetch [db] [demDir]
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  // BEELINE_DB before the bare default (see db:migrate): with the store on a
+  // mounted volume, a bare run would otherwise open an empty one beside the app.
+  const dbPath = process.argv[2] ?? process.env.BEELINE_DB ?? "beeline.duckdb";
+  const demDir = process.argv[3] ?? "data/dem";
+  const instance = await openDuckDb(dbPath);
+  const conn = await instance.connect();
+  try {
+    const { needed, fromSrtm, fromGlo30, unavailable } = await fetchMissingTiles(conn, demDir, {
+      log: (line) => console.error(line),
+    });
+    console.log(JSON.stringify({ needed, fromSrtm, fromGlo30, unavailable }, null, 2));
+  } finally {
+    conn.closeSync();
+  }
 }

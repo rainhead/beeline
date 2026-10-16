@@ -529,6 +529,8 @@ describe("the nightly and a refused sample snapshot (beeline-hrw)", () => {
     // Elevation ran before the failure was raised: the refusal gates nothing the store needs.
     expect(steps).toContain("derive elevations");
     expect(steps.indexOf("derive elevations")).toBeGreaterThan(steps.indexOf("record sample changes"));
+    // And the tiles it needs were fetched just before it (beeline-z08).
+    expect(steps.indexOf("fetch elevation tiles")).toBe(steps.indexOf("derive elevations") - 1);
     // And the snapshot is untouched: the refusal restates nothing.
     const { readFile } = await import("node:fs/promises");
     expect(await readFile(samplePaths.state, "utf8")).toContain("name:Ada Adams");

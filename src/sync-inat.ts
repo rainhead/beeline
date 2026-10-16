@@ -79,6 +79,9 @@ export interface SyncResult {
   fetched: number;
   newLoads: number;
   unchanged: number;
+  /** Time spent waiting on iNaturalist, and refreshing observation_field; for the dashboard's check to log. */
+  requestMs: number;
+  refreshMs: number;
 }
 
 /** JSON.stringify with recursively sorted keys, so hashes are stable. */
@@ -129,7 +132,7 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
       [String(opts.projectId), !!token, opts.d1 ?? null, opts.d2 ?? null, opts.updatedSince ?? null, opts.userId ?? null],
     );
 
-    let fetched = 0, newLoads = 0, unchanged = 0, idAbove = 0;
+    let fetched = 0, newLoads = 0, unchanged = 0, idAbove = 0, requestMs = 0;
     let expectedTotal: number | undefined;
     for (;;) {
       opts.signal?.throwIfAborted();
@@ -145,6 +148,7 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
       if (opts.updatedSince) url.searchParams.set("updated_since", opts.updatedSince);
       if (opts.userId !== undefined) url.searchParams.set("user_id", String(opts.userId));
 
+      const asked = Date.now();
       const response = await fetchImpl(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         signal: AbortSignal.any([
@@ -156,6 +160,7 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
         throw new Error(`iNat API ${response.status} on ${url.pathname}?id_above=${idAbove}`);
       }
       const body = (await response.json()) as { results?: unknown; total_results?: number };
+      requestMs += Date.now() - asked;
       if (!Array.isArray(body.results)) {
         throw new Error(`iNat API returned no results array at id_above=${idAbove} — aborting the run`);
       }
@@ -213,11 +218,17 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
     // Inside the run's own transaction, so a store never holds loads whose
     // shredded form does not match them: this table is the only stored
     // derivation in the schema and its correctness is entirely that the
-    // refresh ran (schema/060, beeline-2c3.36).
-    await refreshObservationFields(conn);
+    // refresh ran (schema/060, beeline-2c3.36). A run that loaded nothing new
+    // cannot have changed it, since the projection reads observation_load
+    // alone, so it skips the refresh: on the sandbox the whole-table refresh
+    // was most of a dashboard check's 13 s of reading, three times over for
+    // three projects that had nothing new (beeline-yso).
+    const refreshing = Date.now();
+    if (newLoads > 0) await refreshObservationFields(conn);
+    const refreshMs = Date.now() - refreshing;
     await conn.run(`UPDATE sync_run SET completed_at = now() WHERE entity_id = $1`, [syncRunId]);
     await conn.run("COMMIT");
-    return { syncRunId, fetched, newLoads, unchanged };
+    return { syncRunId, fetched, newLoads, unchanged, requestMs, refreshMs };
   } catch (err) {
     await conn.run("ROLLBACK");
     throw err;

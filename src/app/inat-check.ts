@@ -80,8 +80,11 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
       await conn.run("SELECT CAST(started_on AS VARCHAR) FROM season")
     ).getRows()) as [[string]];
     const token = await opts.token();
+    const tokenMs = Date.now() - started;
     let fetched = 0;
     let changed = 0;
+    let requestMs = 0;
+    let refreshMs = 0;
     for (const projectId of opts.projects) {
       const r = await syncINat(conn, {
         projectId,
@@ -95,11 +98,15 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
       });
       fetched += r.fetched;
       changed += r.newLoads;
+      requestMs += r.requestMs;
+      refreshMs += r.refreshMs;
     }
-    const read = Date.now();
+    const placesStarted = Date.now();
     // A new observation can name a place the cache has never seen, and
     // minting it before the fetch would give it no state (registry.ts).
     await refreshPlaces(conn, { fetchImpl: opts.fetchImpl });
+    const read = Date.now();
+    const placesMs = read - placesStarted;
     // Short retries: someone is waiting, and the nightly's 1, 5 and 15 s
     // would hold the page for 21 s on a conflict with a sample edit.
     await promoteObservations(conn, {
@@ -110,7 +117,8 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
     const outcome = { fetched, changed, fetchMs: read - started, promoteMs: Date.now() - read };
     console.log(
       `[inat check] user ${opts.userId}: ${fetched} read, ${changed} changed; ` +
-        `iNaturalist ${outcome.fetchMs} ms, promotion ${outcome.promoteMs} ms`,
+        `token ${tokenMs} ms, requests ${requestMs} ms, field refresh ${refreshMs} ms, places ${placesMs} ms, ` +
+        `promotion ${outcome.promoteMs} ms`,
     );
     return outcome;
   });

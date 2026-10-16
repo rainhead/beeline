@@ -44,6 +44,21 @@ function fakeApi(pages: Array<Array<Record<string, unknown>>>): typeof fetch {
 const base = { projectId: 99706, perPage: 2, pageDelayMs: 0, token: "test-jwt" };
 
 describe("iNat sync", () => {
+  test("refreshes observation_field when it loads something, and leaves it alone when it loads nothing", async () => {
+    // The projection reads observation_load alone, so a run that added no
+    // load cannot have changed it, and the whole-table refresh is skipped:
+    // on the sandbox it was most of a dashboard check's time (beeline-yso).
+    const first = await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(1)]]) });
+    expect(first.newLoads).toBe(1);
+    expect(await rows(conn, "SELECT inat_id FROM observation_field")).toEqual([[1n]]);
+    expect(await rows(conn, "SELECT inat_id FROM observation_field_stale")).toEqual([]);
+    // A row taken away by hand shows whether the next run refreshed.
+    await conn.run("DELETE FROM observation_field");
+    const again = await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(1)]]) });
+    expect(again.newLoads).toBe(0);
+    expect(await rows(conn, "SELECT inat_id FROM observation_field")).toEqual([]);
+  });
+
   test("refuses to run silently anonymous", async () => {
     await expect(
       syncINat(conn, { projectId: 99706, token: null, fetchImpl: fakeApi([[]]) }),

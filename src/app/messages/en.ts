@@ -274,6 +274,28 @@ export const en = {
       "Beeline reads your observations from iNaturalist every morning at 2am Pacific. " +
       "A fix you make on iNaturalist shows up here the next day.",
     neverSynced: "This instance has not read anything from iNaturalist yet.",
+    /**
+     * "Check iNaturalist now" (beeline-yso): reads this season's observations
+     * again at once. Never "sync", like the note above it.
+     */
+    check: {
+      button: "Check iNaturalist now",
+      why: "Fixed something on iNaturalist? Beeline can read this season's observations again now.",
+      lastChecked: (when: Date) => `Last checked ${dateTime(when)}.`,
+      done: (fetched: number, changed: number) =>
+        `Beeline read ${n(fetched)} ${fetched === 1 ? "observation" : "observations"} from this season again. ` +
+        (changed === 0
+          ? "None had changed since it last read them."
+          : `${n(changed)} had changed, and this page shows them as they are now.`),
+      tooSoon: (seconds: number) =>
+        `Beeline checked iNaturalist moments ago. It can check again in ${n(seconds)} ${seconds === 1 ? "second" : "seconds"}.`,
+      busy: "Beeline is reading everybody's observations from iNaturalist right now. Try again after 5am Pacific.",
+      failed:
+        "Beeline couldn't reach iNaturalist just now, so nothing here has changed. " +
+        "Try again in a few minutes, or wait for tomorrow morning's read.",
+      noAccount: "Beeline can't check iNaturalist here, because no iNaturalist account is connected to this person.",
+      unavailable: "This instance of Beeline doesn't read from iNaturalist.",
+    },
     sampleTitle: (sampleNumber: string, when: Date | string) => `Sample ${sampleNumber} · ${date(when)}`,
     /** An observation whose sample number was left blank: it has no number to be titled by. */
     unnumberedTitle: (when: Date | string) => `No number · ${date(when)}`,

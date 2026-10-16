@@ -629,6 +629,8 @@ export interface SyncRunTable {
   updated_since: ColumnType<Date, Date | string, Date | string> | null;
   started_at: Timestamped;
   completed_at: ColumnType<Date, Date | string, Date | string> | null;
+  /** One observer's observations only: the dashboard's check (beeline-yso). */
+  observer_user_id: BigIntCol | null;
 }
 
 /**

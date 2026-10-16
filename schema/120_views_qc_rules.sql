@@ -374,6 +374,11 @@ JOIN sync_run r
  -- Incremental (updated_since) runs fetch only the changed subset: they can
  -- never prove an observation gone, so they are not covering runs.
  AND r.updated_since IS NULL
+ -- A run that asked for one observer's observations (the dashboard's
+ -- "Check iNaturalist now", beeline-yso) proves absence for that observer
+ -- only: it covers everyone else's observations no more than an
+ -- incremental run does.
+ AND (r.observer_user_id IS NULL OR r.observer_user_id = f.user_id)
  AND (r.window_start IS NULL OR f.observed_on >= r.window_start)
  AND (r.window_end IS NULL OR f.observed_on <= r.window_end)
 GROUP BY s.entity_id, s.inat_observation_id;

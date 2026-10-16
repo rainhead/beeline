@@ -5,6 +5,7 @@ import type { Messages } from "../messages/index.js";
 import {
   Absent,
   AtlasMark,
+  Button,
   Callout,
   Chip,
   DataTable,
@@ -29,7 +30,8 @@ import {
  * Findings are derived views: fixing the observation makes one vanish on
  * the next nightly read, so the page states the schedule instead of
  * tracking any "fixed" state. It never says "sync" — volunteers do not
- * know the word (beeline-yso will add a button for the impatient).
+ * know the word — and offers "Check iNaturalist now" for the impatient
+ * (beeline-yso, src/app/inat-check.ts).
  */
 
 /** Which column a rule is about, so the table can mark the cell. */
@@ -362,6 +364,24 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
   );
 }
 
+/** What "Check iNaturalist now" did, said at the top of the page it answers with (beeline-yso). */
+export type CheckNotice =
+  | { kind: "done"; fetched: number; changed: number }
+  | { kind: "tooSoon"; next: Date }
+  | { kind: "busy" | "failed" | "noAccount" | "unavailable" };
+
+function checkNoticeText(m: Messages, notice: CheckNotice): string {
+  const c = m.qc.check;
+  switch (notice.kind) {
+    case "done":
+      return c.done(notice.fetched, notice.changed);
+    case "tooSoon":
+      return c.tooSoon(Math.max(1, Math.ceil((notice.next.getTime() - Date.now()) / 1000)));
+    default:
+      return c[notice.kind];
+  }
+}
+
 export function QcHome(props: {
   m: Messages;
   rows: DashboardRow[];
@@ -382,6 +402,12 @@ export function QcHome(props: {
   atlas?: { code: string; name: string } | null;
   /** This season's days whose run of sample numbers skips one; advisory, below the table. */
   skipped?: SkippedDay[];
+  /**
+   * "Check iNaturalist now" (beeline-yso): absent where the instance cannot
+   * check, as on proofing surfaces; otherwise whether the person has an
+   * account to check, when it was last checked, and what a check just did.
+   */
+  check?: { hasAccount: boolean; lastChecked: Date | null; notice?: CheckNotice };
 }) {
   const { m, rows } = props;
   const withOthers: CoCollectors = props.withOthers ?? new Map();
@@ -405,6 +431,11 @@ export function QcHome(props: {
         lede={m.qc.lede}
         mark={props.atlas ? <AtlasMark code={props.atlas.code} name={props.atlas.name} /> : undefined}
       />
+      {props.check?.notice !== undefined && (
+        <Callout tone={props.check.notice.kind === "done" ? "success" : props.check.notice.kind === "failed" ? "warning" : "neutral"}>
+          <Meta block>{checkNoticeText(m, props.check.notice)}</Meta>
+        </Callout>
+      )}
       {settledFlagged > 0 && (
         <Callout>
           <Meta block>
@@ -433,6 +464,15 @@ export function QcHome(props: {
       )}
       {skipped.length > 0 && <Skipped m={m} days={skipped} />}
       <Meta block>{props.everSynced ? m.qc.refreshNote : m.qc.neverSynced}</Meta>
+      {props.check?.hasAccount && (
+        <form method="post" action="/inaturalist/check">
+          <Meta block>
+            {m.qc.check.why}
+            {props.check.lastChecked !== null && <> {m.qc.check.lastChecked(props.check.lastChecked)}</>}
+          </Meta>
+          <Button variant="tonal">{m.qc.check.button}</Button>
+        </form>
+      )}
     </>
   );
 }

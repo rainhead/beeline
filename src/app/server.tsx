@@ -95,6 +95,10 @@ import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
+import { checkObserver, lastChecked, nextCheckAt } from "./inat-check.js";
+import { forgetPipelineJwt } from "../inat-jwt.js";
+import { recordPersonChanges } from "../person-change.js";
+import type { CheckNotice } from "./views/qc.js";
 import { DESIGN_STYLESHEETS } from "./views/design/shell.js";
 import { DesignIndex } from "./views/design/index-page.js";
 import { DesignColor } from "./views/design/color.js";
@@ -147,6 +151,8 @@ export interface JobsDep {
   list: Job[];
   /** Start a job now and return once its run is recorded, while it goes on; false if unknown or busy. */
   start(name: string): Promise<boolean>;
+  /** The job running now, if any; the dashboard's check waits out the two that read iNaturalist. */
+  running?(): string | null;
 }
 
 export interface AppDeps {
@@ -188,6 +194,13 @@ export interface AppDeps {
    * Absent ⇒ the decision is saved and the nightly makes the samples.
    */
   mintConn?: DuckDBConnection;
+  /**
+   * What the dashboard's "Check iNaturalist now" reads with (beeline-yso):
+   * the synced projects and the app's own token. Absent ⇒ the button is not
+   * offered, as in tests that don't exercise it and on an instance that
+   * syncs nothing.
+   */
+  inatCheck?: { projects: readonly number[]; token: () => Promise<string>; fetchImpl?: typeof fetch; pageDelayMs?: number };
   /** Where rendered label sheets are kept (config.printRunsDir). */
   printRunsDir?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
@@ -215,6 +228,7 @@ export function createApp({
   conn,
   printConn,
   mintConn,
+  inatCheck,
   printRunsDir,
   programGovernance,
 }: AppDeps) {
@@ -575,15 +589,33 @@ export function createApp({
     }
   };
 
+  /** The iNaturalist account of the person the page is about, if they have one. */
+  const accountOf = async (personId: number) =>
+    (await db
+      .selectFrom("inat_account")
+      .select(["inat_user_id", "login"])
+      .where("person_id", "=", personId)
+      .executeTakeFirst()) ?? null;
+
   // The front page: your samples that want something this season, as one
-  // table (src/app/dashboard.ts).
-  app.get("/", async (c) => {
+  // table (src/app/dashboard.ts), and after a check of iNaturalist, what it
+  // found.
+  const dashboardPage = async (c: Context<AppEnv>, notice?: CheckNotice) => {
     const m = c.get("m");
     // The dashboard is the "mine" surface, so it follows the switch: while
     // acting for Robert it is Robert's samples that need attention, and the
     // chrome says whose they are.
     const { personId } = c.get("acting");
     const dashboard = await loadDashboard(db, personId);
+    const account = await accountOf(personId);
+    const check =
+      inatCheck === undefined || mintConn === undefined
+        ? undefined
+        : {
+            hasAccount: account !== null,
+            lastChecked: account === null ? null : await lastChecked(db, account.inat_user_id),
+            notice,
+          };
     return c.html(
       await page(
         c,
@@ -597,9 +629,61 @@ export function createApp({
           settledThrough={dashboard.settledThrough}
           atlas={dashboard.atlas}
           skipped={dashboard.skipped}
+          check={check}
         />,
       ),
     );
+  };
+  app.get("/", (c) => dashboardPage(c));
+
+  // "Check iNaturalist now" (beeline-yso, src/app/inat-check.ts): read this
+  // person's observations from this season again and promote, so a fix made
+  // on iNaturalist shows here at once. The person is whoever the page is
+  // about, so acting for someone checks theirs; impersonation only looks.
+  // The answer is the dashboard itself with a note at the top, so reloading
+  // the result re-posts and is answered by the interval, which is harmless.
+  app.post("/inaturalist/check", async (c) => {
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (inatCheck === undefined || mintConn === undefined) return dashboardPage(c, { kind: "unavailable" });
+    const account = await accountOf(c.get("acting").personId);
+    if (account === null) return dashboardPage(c, { kind: "noAccount" });
+    // Both rewrite observation_field whole, so one of them would lose a write
+    // conflict; the nightly runs 2 to 5am, so refusing costs nobody much.
+    const busy = jobsDep.running?.() ?? null;
+    if (busy === "nightly-pipeline" || busy === "weekly-sweep") return dashboardPage(c, { kind: "busy" });
+    const uid = Number(account.inat_user_id);
+    const next = nextCheckAt(uid);
+    if (next !== null) return dashboardPage(c, { kind: "tooSoon", next });
+    try {
+      const outcome = await checkObserver(mintConn, {
+        userId: uid,
+        projects: inatCheck.projects,
+        token: inatCheck.token,
+        fetchImpl: inatCheck.fetchImpl,
+        pageDelayMs: inatCheck.pageDelayMs,
+        sampleOverlayPath: sampleOverlay,
+      });
+      // As after connecting a collector: a full pass, filed as the promotion
+      // it was and with no author, since the promotion was the whole
+      // store's. Not awaited; the logs' own queues keep passes apart.
+      void recordSampleChanges(kyselyReader(db), samplePaths, { source: "observation_promotion" }).then(
+        (recorded) => {
+          if (recorded.refused != null) console.warn(`sample history not recorded: ${recorded.refused}`);
+        },
+        (err) => console.warn(`could not record the samples changed by a check: ${(err as Error).message}`),
+      );
+      void recordPersonChanges(kyselyReader(db), changesPath, { source: "observation_promotion" }).catch((err) =>
+        console.warn(`could not record the people changed by a check: ${(err as Error).message}`),
+      );
+      return dashboardPage(c, { kind: "done", fetched: outcome.fetched, changed: outcome.changed });
+    } catch (err) {
+      // A stored token replaced since the cached JWT was minted: the next
+      // check mints again.
+      if (/\b401\b/.test((err as Error).message)) forgetPipelineJwt();
+      reportAppError(err as Error, c);
+      return dashboardPage(c, { kind: "failed" });
+    }
   });
 
   // --- Browsing the collection (beeline-2c3.21). The QC home says what

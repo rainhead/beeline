@@ -313,11 +313,13 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
   });
 
   // One entry per day, its numbers in order. The link is iNaturalist's list
-  // of what the person observed that day with a sample number on it, in the
-  // project or not, which is where a sample left out of the project would turn
-  // up (field:sampleId= means the field is set, to anything). place_id=any
+  // of everything the person observed that day, in the project or not, which
+  // is where a sample left out of the project would turn up. Everything, and
+  // not only observations with the sample number field set: Peter's missing
+  // sample 1 of 6 April 2026 was a host plant outside the project with
+  // "sample 1 (scrubbed)" in its notes and no field at all. place_id=any
   // because iNaturalist otherwise narrows the list to the viewer's home place:
-  // Peter's set to Washington emptied a day he spent in Arizona.
+  // Peter's, set to Washington, emptied that day, which he spent in Arizona.
   const skippedDays = new Map<string, SkippedDay>();
   for (const g of skipped.rows) {
     const day = new Date(g.collected_on);
@@ -327,7 +329,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       const query =
         g.login === null
           ? null
-          : new URLSearchParams({ user_id: g.login, on: key, "field:sampleId": "", place_id: "any", verifiable: "any" });
+          : new URLSearchParams({ user_id: g.login, on: key, place_id: "any", verifiable: "any" });
       entry = {
         collected_on: day,
         numbers: [],

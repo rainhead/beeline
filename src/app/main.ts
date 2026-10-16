@@ -3,6 +3,7 @@ import { inatClient, loadInatCredentials } from "./auth.js";
 import { configFromEnv } from "./config.js";
 import { openAppDb, seedAdmins } from "./db.js";
 import { CURATED_OVERLAY, mergeOverlays, readOverlay } from "../person-overlay.js";
+import { cachedPipelineJwt } from "../inat-jwt.js";
 import { kyselyReader, recordPersonChanges } from "../person-change.js";
 import { recordSampleChanges } from "../sample-change.js";
 import { ensureSampleOverlayFile } from "../sample-overlay.js";
@@ -145,7 +146,7 @@ const app = createApp({
   config,
   inat,
   resolveSession,
-  jobs: { list: jobs, start: (name) => scheduler.start(name) },
+  jobs: { list: jobs, start: (name) => scheduler.start(name), running: () => scheduler.running() },
   correctionsPath: config.correctionsPath,
   personOverlayPath: config.personOverlayPath,
   sampleOverlayPath: config.sampleOverlayPath,
@@ -155,6 +156,9 @@ const app = createApp({
   conn: appConn,
   printConn,
   mintConn,
+  // The dashboard's "Check iNaturalist now" reads the projects the nightly
+  // reads, with the nightly's token (beeline-yso).
+  inatCheck: config.syncProjects.length > 0 ? { projects: config.syncProjects, token: () => cachedPipelineJwt() } : undefined,
   printRunsDir: config.printRunsDir,
 });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

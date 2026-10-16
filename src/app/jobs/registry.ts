@@ -3,10 +3,10 @@ import { budgetProblems, describeUsage, measureFlyUsage } from "../../fly-usage.
 import { commitDeterminationDrafts } from "../../commit-determinations.js";
 import { describeFetch, ECDYSIS_COLLECTIONS, fetchEcdysis } from "../../fetch-ecdysis.js";
 import { backUp, describeBackup } from "../../store-backup.js";
-import { readFile } from "node:fs/promises";
 import type { Kysely } from "kysely";
 import { deriveElevations } from "../../derive-elevation.js";
 import { fetchMissingTiles, type FetchTilesOptions } from "../../fetch-dem.js";
+import { mintPipelineJwt } from "../../inat-jwt.js";
 import { fetchPlaces, type FetchPlacesOptions } from "../../fetch-places.js";
 import type { Database } from "../../model.js";
 import { duckdbReader, recordPersonChanges } from "../../person-change.js";
@@ -18,22 +18,8 @@ import { describeManifest, writeProgramArchives } from "../program-archives.js";
 import { purgeIdleSessions } from "../session.js";
 import type { Job, JobContext } from "./framework.js";
 
-/**
- * Fresh 24h JWT from the stored pipeline access token — same source the CLI
- * uses (dev: Peter's registration; production: its own, beeline-5ep).
- * Missing token or failed mint aborts the job: never silently anonymous.
- */
-async function mintJwt(): Promise<string> {
-  const { access_token } = JSON.parse(await readFile("data/secrets/inat-oauth-token", "utf8")) as {
-    access_token: string;
-  };
-  const res = await fetch("https://www.inaturalist.org/users/api_token", {
-    headers: { Authorization: `Bearer ${access_token}` },
-    signal: AbortSignal.timeout(30_000), // a hung mint must not stall the scheduler
-  });
-  if (!res.ok) throw new Error(`JWT mint failed (${res.status}) — aborting rather than syncing anonymously`);
-  return ((await res.json()) as { api_token: string }).api_token;
-}
+/** A fresh JWT per run (src/inat-jwt.ts); a failed mint aborts the job. */
+const mintJwt = () => mintPipelineJwt();
 
 /**
  * The incremental watermark for a source: start of the most recent completed
@@ -45,7 +31,13 @@ async function mintJwt(): Promise<string> {
  * loaded, all of it inside the window.
  */
 export async function lastSyncStart(db: Kysely<Database>, source: string): Promise<Date | null> {
-  const completed = db.selectFrom("sync_run").where("source", "=", source).where("completed_at", "is not", null);
+  // A run that read one observer (the dashboard's check, beeline-yso) says
+  // nothing about anybody else's edits, so it never moves the watermark.
+  const completed = db
+    .selectFrom("sync_run")
+    .where("source", "=", source)
+    .where("completed_at", "is not", null)
+    .where("observer_user_id", "is", null);
   const incremental = await completed
     .where("updated_since", "is not", null)
     .select(({ fn }) => fn.max("started_at").as("at"))

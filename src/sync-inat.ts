@@ -45,6 +45,15 @@ export interface SyncOptions {
    * previous run by a margin: re-fetches are free (hash-dedup).
    */
   updatedSince?: string;
+  /**
+   * One iNaturalist user's observations within the project, for the
+   * dashboard's "Check iNaturalist now" (beeline-yso). The project is still
+   * named, because trust is per project: an authenticated query that names
+   * no project, or two, gets no private coordinates. Recorded on the run, so
+   * deletion detection counts it as covering this observer only and the
+   * nightly's watermark ignores it.
+   */
+  userId?: number;
   /** undefined → fall back to INAT_JWT / data/secrets/inat-jwt; null → explicitly tokenless (tests). */
   token?: string | null;
   /** Explicit dev-only escape hatch; never the silent default. */
@@ -115,9 +124,9 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
   await conn.run("BEGIN TRANSACTION");
   try {
     const syncRunId = await scalar(
-      `INSERT INTO sync_run (source, authenticated, window_start, window_end, updated_since)
-       VALUES ($1, $2, $3, $4, $5) RETURNING entity_id`,
-      [String(opts.projectId), !!token, opts.d1 ?? null, opts.d2 ?? null, opts.updatedSince ?? null],
+      `INSERT INTO sync_run (source, authenticated, window_start, window_end, updated_since, observer_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING entity_id`,
+      [String(opts.projectId), !!token, opts.d1 ?? null, opts.d2 ?? null, opts.updatedSince ?? null, opts.userId ?? null],
     );
 
     let fetched = 0, newLoads = 0, unchanged = 0, idAbove = 0;
@@ -134,6 +143,7 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
       if (opts.d1) url.searchParams.set("d1", opts.d1);
       if (opts.d2) url.searchParams.set("d2", opts.d2);
       if (opts.updatedSince) url.searchParams.set("updated_since", opts.updatedSince);
+      if (opts.userId !== undefined) url.searchParams.set("user_id", String(opts.userId));
 
       const response = await fetchImpl(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},

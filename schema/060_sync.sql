@@ -11,12 +11,14 @@ CREATE TABLE sync_run (
   window_end    DATE,
   updated_since TIMESTAMPTZ,
   started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  completed_at  TIMESTAMPTZ
+  completed_at  TIMESTAMPTZ,
+  observer_user_id BIGINT
 );
 COMMENT ON TABLE sync_run IS 'One execution of a fetch over one source+window. Runs are transactional: an incomplete run persists nothing, so a present row with null completed_at cannot occur — the column survives for the day that invariant needs loosening.';
 COMMENT ON COLUMN sync_run.source IS 'iNat project id — provenance only, never atlas assignment (that is geographic).';
 COMMENT ON COLUMN sync_run.authenticated IS 'Unauthenticated runs abort unless explicitly requested (dev only) — never silently anonymous: an anonymous fetch sees no private coordinates and must not masquerade as a trusted read.';
 COMMENT ON COLUMN sync_run.updated_since IS 'Non-null = an incremental run: only observations updated at/after this instant were requested. Such a run proves nothing about absence (not-updated is not gone), so deletion detection (qc_rule_observation_missing_upstream) ignores it as a covering run; presence rows it writes still count.';
+COMMENT ON COLUMN sync_run.observer_user_id IS 'Set on a run that asked for one iNaturalist user''s observations, as the dashboard''s "Check iNaturalist now" does (beeline-yso). Such a run covers that observer and nobody else: deletion detection counts it only for their observations, and it never sets the nightly''s incremental watermark.';
 
 CREATE TABLE observation_load (
   entity_id    INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),

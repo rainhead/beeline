@@ -1,3 +1,4 @@
+import { withPromotionLock } from "./promotion-lock.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
@@ -367,12 +368,6 @@ export interface MintOutcome {
   left: number;
 }
 
-// One promotion at a time from the app. Two binds at once would otherwise
-// race one transaction against another on the same connection, which DuckDB
-// cannot hold — the print runs' lock exists for the same reason
-// (src/print-run.ts).
-let mintQueue: Promise<unknown> = Promise.resolve();
-
 /**
  * Make an observer's records into samples now, rather than at 2am — the same
  * promotion the nightly runs, so a bound volunteer's observations link to
@@ -383,14 +378,15 @@ let mintQueue: Promise<unknown> = Promise.resolve();
  * of a promotion's cost; with it skipped a pass is ~0.7 s on the dev store.
  *
  * Runs on its own connection: promotion is one raw BEGIN/COMMIT transaction
- * and must not share a connection with the scheduler's.
+ * and must not share a connection with the scheduler's. One at a time, with
+ * the dashboard's check, behind withPromotionLock (src/app/promotion-lock.ts).
  */
 export async function mintNow(
   conn: DuckDBConnection,
   userId: number,
   opts: { sampleOverlayPath?: string },
 ): Promise<MintOutcome> {
-  const run = mintQueue.then(async () => {
+  return withPromotionLock(async () => {
     const count = async (q: string): Promise<number> => {
       const [[v]] = (await (await conn.run(q)).getRows()) as [[bigint]];
       return Number(v);
@@ -409,6 +405,4 @@ export async function mintNow(
     const all = await count(`SELECT count(*) FROM ${theirs} t`);
     return { made, linked, left: all - cited };
   });
-  mintQueue = run.catch(() => {});
-  return run;
 }

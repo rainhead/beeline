@@ -160,12 +160,12 @@ const FIXTURES: Array<{
       {
         collected_on: new Date("2026-06-10T12:00:00"),
         numbers: [3],
-        observationsHref: "https://www.inaturalist.org/observations?user_id=example&on=2026-06-10&field%3AsampleId=&place_id=any&verifiable=any",
+        observationsHref: "https://www.inaturalist.org/observations?user_id=example&on=2026-06-10&place_id=any&verifiable=any",
       },
       {
         collected_on: new Date("2026-06-02T12:00:00"),
         numbers: [2, 5, 6, 7],
-        observationsHref: "https://www.inaturalist.org/observations?user_id=example&on=2026-06-02&field%3AsampleId=&place_id=any&verifiable=any",
+        observationsHref: "https://www.inaturalist.org/observations?user_id=example&on=2026-06-02&place_id=any&verifiable=any",
       },
     ],
     everSynced: true,

@@ -77,14 +77,21 @@ async function printApp(signedInAs: "ash" | "staffer" = "staffer") {
 }
 
 /**
- * The first number a run prepared through the app minted. The app numbers by
- * its own clock, so in 2026 that is 26000001 and in 2027 27000001; reading it
- * back keeps the assertions true in any year, and the shape check keeps them
- * about the year's floor.
+ * The first number the store's first run minted, which must be the floor of
+ * the year that run was prepared in. The app numbers by its own clock, so that
+ * is 26000001 in 2026 and 27000001 in 2027; the year is read off the run's
+ * prepared_at, in Pacific time as nextFieldNumber reads it, rather than off
+ * the test's clock, which could cross New Year between the two.
  */
 async function firstFieldNumber(conn: DuckDBConnection): Promise<string> {
-  const [[first]] = (await rows(conn, "SELECT min(field_number) FROM minted_field_number")) as [[string]];
-  expect(first).toMatch(/^\d{2}000001$/);
+  const [[first, preparedAt]] = (await rows(
+    conn,
+    `SELECT (SELECT min(field_number) FROM minted_field_number), (SELECT min(prepared_at) FROM print_run)`,
+  )) as [[string, { micros: bigint }]];
+  const year = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "2-digit" }).format(
+    new Date(Number(preparedAt.micros / 1000n)),
+  );
+  expect(first).toBe(`${year}000001`);
   return first;
 }
 

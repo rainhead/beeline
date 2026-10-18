@@ -15,7 +15,9 @@ locality the observation yielded at the time. The merge is this ADR's with
 one simplification: a conflict is a view
 (`sample_locality_override_diverged`) shown on the sample page, not a QC
 finding, and nothing auto-retires — the override stands until a person
-removes it.
+removes it. **Amended** (2026-10-17, beeline-9z4): no correction
+auto-retires either; upstream arriving at the corrected value is the
+correction applying. See *Nothing retires a correction but a person* below.
 
 ## Context
 
@@ -40,7 +42,7 @@ merging.** Per (observation, field), promotion resolves:
 | upstream (theirs vs base) | result |
 |---|---|
 | unchanged | correction applies |
-| changed **to** the corrected value | correction **auto-retires** (superseded by that load); upstream is taken from here on |
+| changed **to** the corrected value | correction applies (the two agree, so nothing changes) |
 | changed to a third value | **the correction stands** — a deliberate human assertion beats an unreviewed upstream edit — and a `correction_conflict` QC finding opens showing both values |
 
 - **Field vocabulary is the typed extraction view's columns**
@@ -49,9 +51,8 @@ merging.** Per (observation, field), promotion resolves:
   thereafter a migration of corrections.
 - **Conflicts never auto-resolve.** The finding is the workflow; resolving
   means a human writes a *new* correction whose base is the current load —
-  re-asserting the value or accepting upstream. Resolution and retirement
-  are recorded, never edits: a retired correction keeps a one-way
-  `superseded_by_load_id` latch, set once by promotion.
+  re-asserting the value or accepting upstream. Resolution is recorded,
+  never an edit: the new correction replaces the old one for that field.
 - **The overlay applies at promotion**, over the latest load, before model
   entities are written — the same point where legacy corrections apply to
   staging (beeline-uuu). Downstream (QC rules, promotion) reads one
@@ -72,3 +73,35 @@ merging.** Per (observation, field), promotion resolves:
 - Legacy staging corrections (beeline-uuu) are this shape with a frozen
   upstream: base = the staged row, theirs never moves, so they simply always
   apply. One table, one rule.
+
+## Nothing retires a correction but a person (amended 2026-10-17, beeline-9z4)
+
+As accepted, the table's second row said that when upstream changed **to**
+the corrected value, the correction **auto-retired**: it was superseded by
+that load, upstream was taken from then on, and a one-way
+`superseded_by_load_id` latch, set once by promotion, recorded it. That row is gone. The correction now applies
+when upstream agrees with it, which changes nothing that day, and it goes on
+governing the field until a person writes a new correction in its place.
+
+The reason is what retirement does to the person who asserted the value. Once
+upstream happened to agree, the system stopped honouring their correction
+without anyone deciding so, and a later upstream edit would then have been
+taken silently instead of opening a conflict. A correction is a deliberate
+human assertion, and the table already says that beats an unreviewed upstream
+edit; retirement was the one place an upstream edit could end it.
+
+It also never had a case to serve. The correction table for synced iNat
+observations was never built, and the only implemented instance is the legacy
+one, whose upstream is frozen and so cannot converge. The staff locality and
+coordinate override over iNat-linked samples (beeline-649, beeline-942) had
+already chosen to do without it.
+
+What the retire branch did carry was reverting an in-app edit (beeline-eef):
+editing a field from X to Z and back to X writes a correction whose base and
+new value both equal the staged X, and that row was classified as retired. It
+now classifies as applying, which writes X over X. The rule is therefore
+that a correction applies when upstream equals either its base or its
+corrected value, and is in conflict otherwise. No status `retired` exists
+([ingest/promote-legacy.sql](../../ingest/promote-legacy.sql),
+`legacy_correction_state`), and the legacy promotion report no longer counts
+retired corrections.

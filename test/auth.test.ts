@@ -8,7 +8,7 @@ import type { InatClient } from "../src/app/auth.js";
 import { attachPrivateStore, commentsIn } from "../src/app/db.js";
 import { createApp } from "../src/app/server.js";
 import { cookieSessionResolver, endSessionsFor, purgeIdleSessions, sessionRef } from "../src/app/session.js";
-import { createFileDb, createMemoryDb } from "./helpers.js";
+import { createFileDb, createMemoryDb, scratchPaths } from "./helpers.js";
 import { readChanges } from "../src/person-change.js";
 
 const ORIGIN = "http://localhost:3054";
@@ -31,6 +31,7 @@ async function testApp(identity: FakeIdentity, feedbackEmail?: string) {
   // Never the real log: sign-in records what it learns about a person there.
   const changesPath = join(await mkdtemp(join(tmpdir(), "auth-")), "person-change.csv");
   const app = createApp({
+    ...(await scratchPaths()),
     db,
     config: { environment: "development", origin: ORIGIN, feedbackEmail },
     inat: fakeInat(identity),
@@ -139,6 +140,7 @@ describe("iNat OAuth sign-in", () => {
     await attachPrivateStore(instance, { path: ":memory:", key: null });
     const db = createKysely(instance);
     const app = createApp({
+      ...(await scratchPaths()),
       db,
       config: { environment: "development", origin: ORIGIN },
       inat: {

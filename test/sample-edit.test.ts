@@ -9,7 +9,7 @@ import { createApp } from "../src/app/server.js";
 import { parseCsv } from "../src/corrections.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
-import { createMemoryDb, FIXTURE_INPUTS, rows } from "./helpers.js";
+import { createMemoryDb, FIXTURE_INPUTS, rows, scratchPaths } from "./helpers.js";
 
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 const CORRECTIONS = new URL("./fixtures/legacy-corrections.csv", import.meta.url).pathname;
@@ -55,6 +55,7 @@ async function editApp(appCsv?: string) {
   await conn.run(`UPDATE sample SET date_start = current_date, date_end = current_date WHERE entity_id = ${beaSample}`);
   const db = createKysely(instance);
   const app = createApp({
+    ...(await scratchPaths()),
     db,
     config: { environment: "development" as const, origin: "http://localhost:3054" },
     inat: unusedInat,
@@ -150,7 +151,9 @@ describe("in-app editing of non-iNat samples", () => {
     await post(app, `/samples/${beaSample}/edit`, { locality: "Walla Walla" });
     await post(app, `/samples/${beaSample}/edit`, { locality: "5th St, Walla Walla vicinity" });
 
-    // The stale X→Z row is replaced by X→X, which the merge retires.
+    // The stale X→Z row is replaced by X→X, which the merge applies as a
+    // no-op: staged, base and new all agree, so it is neither a conflict nor
+    // an override of the staged value.
     const records = parseCsv(await readFile(correctionsPath, "utf8")).slice(1);
     const localityEvents = records.filter((r) => r[0] === "bbbb2222" && r[1] === "locality");
     expect(localityEvents).toEqual([
@@ -169,6 +172,12 @@ describe("in-app editing of non-iNat samples", () => {
       `SELECT locality FROM sample WHERE sample_number = 'OBAS-00657'`,
     )) as [[string]];
     expect(locality).toBe("5th St, Walla Walla vicinity");
+    expect(
+      await rows(
+        conn2,
+        `SELECT status FROM legacy_correction_state WHERE _id = 'bbbb2222' AND field = 'locality'`,
+      ),
+    ).toEqual([["applies"]]);
   });
 
   it("a stale tab's untouched prefills do not revert a newer save", async () => {

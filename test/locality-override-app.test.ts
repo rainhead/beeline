@@ -10,7 +10,7 @@ import { parseCsv } from "../src/corrections.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
 import { readSampleOverlay } from "../src/sample-overlay.js";
-import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows } from "./helpers.js";
+import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 /**
  * The staff locality form on /samples/:id (beeline-649): the one write a
@@ -60,6 +60,7 @@ async function inatApp(signedInAs: "alice" | "sam") {
   const db = createKysely(instance);
   const people = { alice, sam };
   const app = createApp({
+    ...(await scratchPaths()),
     db,
     config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
     inat: unusedInat,
@@ -182,6 +183,7 @@ describe("the staff locality form", () => {
       [number],
     ];
     const app = createApp({
+      ...(await scratchPaths()),
       db: createKysely(instance),
       config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
       inat: unusedInat,

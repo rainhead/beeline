@@ -24,8 +24,9 @@ describe("legacy correction overlay (ADR 0004, frozen upstream)", () => {
       samples: 4,
       specimens: 6,
       blockedRows: 0, // cccc3333's missing person + bad specimenId corrected away
-      correctionsApplied: 5, // 4 on cccc3333 + the conflicted latitude on bbbb2222
-      correctionsRetired: 1,
+      // 4 on cccc3333, the conflicted latitude on bbbb2222, and aaaa1111's,
+      // which upstream already agrees with.
+      correctionsApplied: 6,
       correctionConflicts: 1,
     });
     const promoted = await rows(
@@ -42,7 +43,13 @@ describe("legacy correction overlay (ADR 0004, frozen upstream)", () => {
     expect(promoted).toEqual([["Gretchen Pederson", "142", 1]]);
   });
 
-  test("upstream converging to the corrected value retires the correction (no-op, no finding)", async () => {
+  test("upstream converging to the corrected value: the correction still applies (no-op, no finding)", async () => {
+    // Nothing retires a correction but a person replacing it (beeline-9z4).
+    const status = await rows(
+      conn,
+      `SELECT status FROM legacy_correction_state WHERE _id = 'aaaa1111' AND field = 'sampleId'`,
+    );
+    expect(status).toEqual([["applies"]]);
     const [[sampleNumber]] = (await rows(
       conn,
       `SELECT s.sample_number FROM sample s

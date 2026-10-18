@@ -3,7 +3,7 @@ import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { noSession } from "../src/app/session.js";
-import { createMemoryDb, insertCleanSample } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 import { DESIGN_SECTIONS } from "../src/app/views/design/shell.js";
 import { en } from "../src/app/messages/en.js";
 
@@ -20,6 +20,7 @@ async function appOnMemoryDb(sessionLogin: string | null) {
   const db = createKysely(instance);
   const resolveSession = sessionLogin === null ? noSession : async () => ({ personId: 1, login: sessionLogin, iconUrl: null });
   return createApp({
+    ...(await scratchPaths()),
     db,
     config: { environment: "development" as const, origin: "http://localhost:3054" },
     inat: unusedInat,
@@ -34,6 +35,36 @@ describe("app scaffold", () => {
     expect(res.status).toBe(200);
   });
 
+  // beeline-yq65: a test that left out a path used to write into the
+  // developer's own data/ files. Each one left out is refused by name.
+  it("refuses, under a test, to fall back to the deployment's own files", async () => {
+    const { instance, conn } = await createMemoryDb();
+    await conn.run(`INSERT INTO person (display_name) VALUES ('Test Person')`);
+    const deps = {
+      db: createKysely(instance),
+      config: { environment: "development" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId: 1, login: "tester", iconUrl: null }),
+    };
+    const paths = await scratchPaths();
+    for (const [name, file] of [
+      ["correctionsPath", "data/corrections.csv"],
+      ["personOverlayPath", "data/person-overlay.csv"],
+      ["sampleOverlayPath", "data/sample-overlay.csv"],
+      ["personChangesPath", "data/person-change.csv"],
+      ["sampleChangesPath", "data/sample-change.csv"],
+      ["sampleStatePath", "data/sample-state.csv"],
+      ["printRunsDir", "data/print-runs"],
+    ] as const) {
+      expect(() => createApp({ ...deps, ...paths, [name]: undefined }), name).toThrow(`deployment's own ${file}:`);
+    }
+    // The exports are only read, so the refusal waits for a request for them.
+    const app = createApp({ ...deps, ...paths });
+    const res = await app.request("/exports");
+    expect(res.status).toBe(500);
+    expect(await res.text()).toContain("deployment&#39;s own data/exports:");
+  });
+
   // beeline-2c3.17. Fly restarts a machine whose health check fails, so this
   // has to fail exactly when a restart is the right answer — and a process
   // listening happily over a store it cannot read is that case. It used to
@@ -42,6 +73,7 @@ describe("app scaffold", () => {
     const { instance, conn } = await createMemoryDb();
     const db = createKysely(instance);
     const app = createApp({
+      ...(await scratchPaths()),
       db,
       config: { environment: "development" as const, origin: "http://localhost:3054" },
       inat: unusedInat,
@@ -71,6 +103,7 @@ describe("app scaffold", () => {
       run: async () => {},
     }];
     const app = createApp({
+      ...(await scratchPaths()),
       db,
       config: { environment: "development" as const, origin: "http://localhost:3054" },
       inat: unusedInat,
@@ -161,6 +194,7 @@ describe("app scaffold", () => {
     const { instance, conn } = await createMemoryDb();
     await conn.run(`INSERT INTO person (display_name) VALUES ('Dev Person')`);
     const stubbed = createApp({
+      ...(await scratchPaths()),
       db: createKysely(instance),
       config: { environment: "development" as const, origin: "http://localhost:3054" },
       inat: unusedInat,
@@ -289,6 +323,7 @@ describe("security headers", () => {
     expect((await dev.request("/healthz")).headers.get("strict-transport-security")).toBeNull();
     const { instance } = await createMemoryDb();
     const prod = createApp({
+      ...(await scratchPaths()),
       db: createKysely(instance),
       config: { environment: "sandbox" as const, origin: "https://beeline.fly.dev" },
       inat: unusedInat,

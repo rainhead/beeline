@@ -16,7 +16,7 @@ import { createApp } from "../src/app/server.js";
 import { attachPrivateStore } from "../src/app/db.js";
 import { promoteObservations } from "../src/promote-observations.js";
 import { syncINat } from "../src/sync-inat.js";
-import { createMemoryDb, rows } from "./helpers.js";
+import { createMemoryDb, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -94,6 +94,7 @@ async function checkApp(opts: { running?: string; signedIn?: "ada" | "carl" } = 
   let served: Record<string, unknown>[] | null = [obs(1, "OR, US"), obs(2, "Finley NWR, OR, US", BO)];
   const db = createKysely(instance);
   const app = createApp({
+    ...(await scratchPaths()),
     db,
     config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
     inat: unusedInat,

@@ -5,7 +5,7 @@ import { createApp } from "../src/app/server.js";
 import type { AppConfig } from "../src/app/config.js";
 import { en } from "../src/app/messages/en.js";
 import { staticErrorPage } from "../src/app/views/error-page.js";
-import { createMemoryDb } from "./helpers.js";
+import { createMemoryDb, scratchPaths } from "./helpers.js";
 
 /**
  * The pages a request gets when it fails or finds nothing (beeline-0kj).
@@ -32,6 +32,7 @@ async function errorApp({
   const { instance, conn } = await createMemoryDb();
   const [[ada]] = (await (await conn.run(`INSERT INTO person (display_name) VALUES ('Ada Adams') RETURNING entity_id`)).getRows()) as [[number]];
   const app = createApp({
+    ...(await scratchPaths()),
     db: createKysely(instance),
     config: { environment, origin: ORIGIN, feedbackEmail: "staff@example.org" },
     inat: unusedInat,

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
-import { createMemoryDb, insertCleanSample } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 import { en } from "../src/app/messages/en.js";
 import { ACTING_COOKIE } from "../src/app/acting.js";
 
@@ -67,6 +67,7 @@ async function household({
   }
   const db = createKysely(instance);
   const app = createApp({
+    ...(await scratchPaths()),
     db,
     config: { environment, origin: "http://localhost:3054" },
     inat: unusedInat,

@@ -150,7 +150,9 @@ describe("in-app editing of non-iNat samples", () => {
     await post(app, `/samples/${beaSample}/edit`, { locality: "Walla Walla" });
     await post(app, `/samples/${beaSample}/edit`, { locality: "5th St, Walla Walla vicinity" });
 
-    // The stale X→Z row is replaced by X→X, which the merge retires.
+    // The stale X→Z row is replaced by X→X, which the merge applies as a
+    // no-op: staged, base and new all agree, so it is neither a conflict nor
+    // an override of the staged value.
     const records = parseCsv(await readFile(correctionsPath, "utf8")).slice(1);
     const localityEvents = records.filter((r) => r[0] === "bbbb2222" && r[1] === "locality");
     expect(localityEvents).toEqual([
@@ -169,6 +171,12 @@ describe("in-app editing of non-iNat samples", () => {
       `SELECT locality FROM sample WHERE sample_number = 'OBAS-00657'`,
     )) as [[string]];
     expect(locality).toBe("5th St, Walla Walla vicinity");
+    expect(
+      await rows(
+        conn2,
+        `SELECT status FROM legacy_correction_state WHERE _id = 'bbbb2222' AND field = 'locality'`,
+      ),
+    ).toEqual([["applies"]]);
   });
 
   it("a stale tab's untouched prefills do not revert a newer save", async () => {

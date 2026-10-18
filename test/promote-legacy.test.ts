@@ -38,7 +38,6 @@ describe("legacy promotion", () => {
       taxonCurationUnplaced: [],
       collectorDuplicateLogins: 0,
       correctionsApplied: 0,
-      correctionsRetired: 0,
       correctionConflicts: 0,
       registerStaged: 4,
       registerNameConflicts: 3, // Bea's family name and full name, Ada's label initial

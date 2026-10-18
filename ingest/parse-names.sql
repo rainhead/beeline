@@ -276,15 +276,17 @@ UNION ALL SELECT 'url', 'canonical observation', count(*) FROM legacy_promotable
 UNION ALL SELECT 'url', 'observation, other scheme or host', count(*) FROM legacy_promotable
   WHERE url <> '' AND url LIKE '%/observations/%' AND NOT regexp_matches(url, '^https://www\.inaturalist\.org/observations/[0-9]+$')
 UNION ALL SELECT 'url', 'not an observation', count(*) FROM legacy_promotable WHERE url <> '' AND url NOT LIKE '%/observations/%'
--- Two more verbatim fields, both of which already answer through a worklist
--- rather than a rule — an identifiedBy the alias CSV does not cover is
+-- Fields that already answer through a worklist rather than a rule, sized
+-- here so the survey says how much there is to work through without anyone
+-- going looking. An identifiedBy the alias CSV does not cover is
 -- legacy_determiner_unresolved (promote-determinations.sql, which runs after
--- this file, so it is named rather than joined), and a date that will not
--- parse is a bad_date promotion finding. Sized here so the survey says how
--- much there is to work through without anyone going looking.
+-- this file, so it is named rather than joined). A date is parsed from the
+-- day, month and year columns, and one that will not parse is a bad_date
+-- promotion finding; verbatimEventDate is counted beside it but parsed by
+-- nothing, since no model value derives from it (beeline-tm3).
 UNION ALL SELECT 'identifiedBy', 'named', count(*) FROM legacy_promotable WHERE trim(identifiedBy) <> ''
 UNION ALL SELECT 'verbatimEventDate', 'present', count(*) FROM legacy_promotable WHERE trim(verbatimEventDate) <> ''
-UNION ALL SELECT 'verbatimEventDate', 'date did not parse',
+UNION ALL SELECT 'day/month/year', 'did not parse',
   (SELECT count(*) FROM legacy_promotion_finding WHERE rule = 'bad_date');
 
 -- Names carrying information the model has nowhere to put, so a determination

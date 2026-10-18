@@ -1,5 +1,5 @@
 person_ref,field,value,author,reason
-name:Nate Green,home_atlas,WaBA,usernames.csv,"usernames.csv stateProvince WA, matched by name"
+name:Nathaniel Green,home_atlas,WaBA,usernames.csv,"usernames.csv stateProvince WA, matched by name"
 name:Andrea Mann,home_atlas,OBA,usernames.csv,"usernames.csv stateProvince OR, matched by login"
 name:Bran Romero,home_atlas,WaBA,usernames.csv,"usernames.csv stateProvince WA, matched by login"
 name:Brian Gilbert,home_atlas,WaBA,usernames.csv,"usernames.csv stateProvince WA, matched by login"
@@ -52,7 +52,7 @@ name:Laura Taylor,home_atlas,OBA,usernames.csv,"usernames.csv stateProvince OR, 
 name:Sonya Cader,home_atlas,BC,usernames.csv,"usernames.csv stateProvince BC, matched by login"
 name:Marshal Moser,home_atlas,OBA,usernames.csv,"usernames.csv stateProvince OR, matched by name"
 name:Sarah Red-Laird,home_atlas,OBA,usernames.csv,"usernames.csv stateProvince OR, matched by login"
-name:Alex Wilkstorm,home_atlas,WaBA,usernames.csv,"usernames.csv stateProvince WA, matched by login"
+name:Alex Wikstrom,home_atlas,WaBA,usernames.csv,"usernames.csv stateProvince WA, matched by login"
 name:Alicia Graves,home_atlas,WaBA,usernames.csv,"usernames.csv stateProvince WA, matched by login"
 name:Rachael Horsley,home_atlas,WaBA,usernames.csv,"usernames.csv stateProvince WA, matched by login"
 name:Jackson MacPherson,home_atlas,BC,usernames.csv,"usernames.csv stateProvince BC, matched by name"
@@ -425,3 +425,6 @@ name:Pam Hayes,admin,yes,rainhead,"Peter 2026-09-21: granted admin rights in Bee
 name:Trista Becker,admin,yes,rainhead,"Peter 2026-09-21: granted admin rights in Beeline."
 name:Karleen Davis,admin,yes,rainhead,"Peter 2026-09-21: granted admin rights in Beeline."
 name:Juan Manuel Benitez Alvarez,label_name,J.M. Benitez Alvarez,rainhead,"Peter 2026-10-04: keep J.M., as the register and every legacy label have it; labels print it J.M.Benitez Alvarez."
+name:Savannah Bowman,family_name,Bowman,rainhead,"Peter 2026-10-18: Bowman, per her iNaturalist profile (annabobana). Every recordedBy row spells it Bowamn, so the collector alias can rename her but promotion has no row to take the family name from, and labels would print S.Bowamn."
+name:Jacob Osler,given_name,Jacob,rainhead,"Peter 2026-10-18: Jacob, per his iNaturalist profile (josler). Both recordedBy rows put his whole name in firstName, which made him Jacob Osler Osler; the collector alias renames him, and this keeps the given name from staying 'Jacob Osler'."
+name:Alex Wikstrom,family_name,Wikstrom,rainhead,"Peter 2026-10-18: his emails come from 'Alex Wikstrom', and his login is alex-wikstrom. The records spell it Wilkstorm and his iNaturalist profile Wikstorm. Labels print A.Wikstrom."

@@ -83,7 +83,19 @@ interface StagingMember {
   samplingProtocol: string | null;
 }
 
-/** The raw staging rows behind a promoted sample (correction merge bases). */
+/**
+ * The raw staging rows behind a promoted sample (correction merge bases).
+ *
+ * Read from legacy_specimen_number, the table legacy promotion writes with
+ * one row for each staging row it made a specimen of, beside the sample that
+ * specimen went into. This used to regroup the rows through legacy_promotable,
+ * a view whose windows and findings run over the whole staged corpus, so
+ * finding six rows cost about a second of CPU (beeline-cjf). Nothing changes
+ * either answer until the next legacy promotion, which rebuilds both, and on
+ * the dev store they name the same 73,275 rows for all 6,367 samples with no
+ * observation. Where they could differ, the table is the better answer: it
+ * splits a group by observation as promotion does, and the regrouping did not.
+ */
 async function stagingMembers(db: Kysely<Database>, sampleId: number): Promise<StagingMember[]> {
   const result = await sql<StagingMember>`
     SELECT o._id,
@@ -92,15 +104,9 @@ async function stagingMembers(db: Kysely<Database>, sampleId: number): Promise<S
            o."stateProvince" AS "stateProvince",
            o.county,
            o."samplingProtocol" AS "samplingProtocol"
-    FROM legacy_sample_map s
-    JOIN legacy_person_map m ON m.person_id = s.person_id
-    JOIN legacy_promotable r
-      ON r.fn IS NOT DISTINCT FROM m.fn
-     AND r.ln IS NOT DISTINCT FROM m.ln
-     AND r.sid = s.sid
-     AND r.p_date_start IS NOT DISTINCT FROM s.p_date_start
-    JOIN legacy_occurrence o ON o._id = r._id
-    WHERE s.sample_id = ${sampleId}
+    FROM legacy_specimen_number n
+    JOIN legacy_occurrence o ON o._id = n._id
+    WHERE n.sample_id = ${sampleId}
   `.execute(db);
   return result.rows;
 }

@@ -115,6 +115,7 @@ import { QcProof } from "./views/design/qc-proof.js";
 import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
 import { setStaffCoordinates, setStaffLocality } from "./locality-override.js";
 import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
+import { deploymentPath } from "../deployment-path.js";
 import { SampleEditForm } from "./views/sample-edit.js";
 import {
   atlasOptions,
@@ -233,15 +234,18 @@ export function createApp({
   programGovernance,
 }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], start: async () => false };
-  const printRunsPath = printRunsDir ?? "data/print-runs";
+  // Resolved now rather than at first use, so a test that leaves one out
+  // fails as it builds the app, whatever it goes on to request
+  // (src/deployment-path.ts).
+  const printRunsPath = printRunsDir ?? deploymentPath("data/print-runs");
   const printWriter = printConn ?? conn;
-  const corrections = correctionsPath ?? "data/corrections.csv";
-  const overlayPath = personOverlayPath ?? "data/person-overlay.csv";
-  const sampleOverlay = sampleOverlayPath ?? "data/sample-overlay.csv";
-  const changesPath = personChangesPath ?? CHANGE_LOG;
+  const corrections = correctionsPath ?? deploymentPath("data/corrections.csv");
+  const overlayPath = personOverlayPath ?? deploymentPath("data/person-overlay.csv");
+  const sampleOverlay = sampleOverlayPath ?? deploymentPath("data/sample-overlay.csv");
+  const changesPath = personChangesPath ?? deploymentPath(CHANGE_LOG);
   const samplePaths = {
-    log: sampleChangesPath ?? SAMPLE_CHANGE_LOG,
-    state: sampleStatePath ?? SAMPLE_STATE_SNAPSHOT,
+    log: sampleChangesPath ?? deploymentPath(SAMPLE_CHANGE_LOG),
+    state: sampleStatePath ?? deploymentPath(SAMPLE_STATE_SNAPSHOT),
   };
   // One person's state, as the change log describes it. The same query both
   // producers use, so what the screen records and what a rebuild records are
@@ -1197,11 +1201,15 @@ export function createApp({
   // nightly legacy-export job writes: every specimen, with names and true
   // coordinates, so admins only, like /jobs. Served from disk rather than
   // built per request — it is ~160 MB and takes a DuckDB COPY to make.
-  const exportsDir = config.exportsDir ?? "data/exports";
-  const occurrencesPath = legacyExportPath(exportsDir);
+  // Resolved per request, unlike the paths above, since the app only reads
+  // here and most tests never ask for an export; and outside each try, so a
+  // test's refusal is not mistaken for a missing file.
+  const exportsDir = () => config.exportsDir ?? deploymentPath("data/exports");
+  const occurrencesPath = () => legacyExportPath(exportsDir());
   const occurrencesFile = async () => {
+    const path = occurrencesPath();
     try {
-      const st = await stat(occurrencesPath);
+      const st = await stat(path);
       return { writtenAt: st.mtime, bytes: st.size };
     } catch {
       return null;
@@ -1219,7 +1227,7 @@ export function createApp({
           m={m}
           occurrences={await occurrencesFile()}
           programs={await programArchives(db)}
-          archives={await readArchiveManifest(exportsDir)}
+          archives={await readArchiveManifest(exportsDir())}
           governance={await readProgramGovernance(programGovernance)}
         />,
       ),
@@ -1234,13 +1242,14 @@ export function createApp({
   app.get("/exports/dwca/:file{[A-Za-z0-9]+-\\d{4}\\.zip}", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const name = c.req.param("file");
-    const entry = (await readArchiveManifest(exportsDir))?.entries.find((e) => e.file === name) ?? null;
+    const entry = (await readArchiveManifest(exportsDir()))?.entries.find((e) => e.file === name) ?? null;
     if (entry === null || !stillAllowed(await readProgramGovernance(programGovernance), entry)) {
       return errorResponse(c, "notFound");
     }
+    const path = join(archiveDir(exportsDir()), name);
     let handle;
     try {
-      handle = await open(join(archiveDir(exportsDir), name), "r");
+      handle = await open(path, "r");
     } catch {
       return errorResponse(c, "notFound");
     }
@@ -1263,9 +1272,10 @@ export function createApp({
     // One handle for the size and the bytes: the nightly job replaces the
     // file by rename, and a stat by name followed by an open by name could
     // describe one file and send another (CodeRabbit on #110).
+    const path = occurrencesPath();
     let handle;
     try {
-      handle = await open(occurrencesPath, "r");
+      handle = await open(path, "r");
     } catch {
       return errorResponse(c, "notFound", { message: c.get("m").exports.missing });
     }

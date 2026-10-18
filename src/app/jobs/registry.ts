@@ -14,6 +14,7 @@ import { recordSampleChanges, type SampleLogPaths } from "../../sample-change.js
 import { promoteObservations } from "../../promote-observations.js";
 import { syncINat } from "../../sync-inat.js";
 import type { AppConfig } from "../config.js";
+import { deploymentPath } from "../../deployment-path.js";
 import { describeManifest, writeProgramArchives } from "../program-archives.js";
 import { purgeIdleSessions } from "../session.js";
 import type { Job, JobContext } from "./framework.js";
@@ -182,7 +183,7 @@ export async function pipelineTail(
   );
   if (samples.baselined) parts.push("sample change log baselined");
   else if (samples.appended > 0) parts.push(`${samples.appended} sample changes recorded`);
-  const demDir = tiles.demDir ?? "data/dem";
+  const demDir = tiles.demDir ?? deploymentPath("data/dem");
   const fetched = await ctx.step("fetch elevation tiles", () =>
     refreshTiles(ctx.conn, demDir, { signal: ctx.signal, ...tiles }),
   );
@@ -298,13 +299,13 @@ export function buildJobs(
         }
         const [[main]] = (await (await ctx.conn.run("SELECT current_database()")).getRows()) as [[string]];
         const result = await backUp(ctx.conn, {
-          workDir: config.backupsDir ?? "data/backups",
+          workDir: config.backupsDir ?? deploymentPath("data/backups"),
           catalogs: { main, private: "private" },
           privateKey: config.privateDbKey ?? null,
           authored: [
-            config.correctionsPath ?? "data/corrections.csv",
-            config.personOverlayPath ?? "data/person-overlay.csv",
-            config.sampleOverlayPath ?? "data/sample-overlay.csv",
+            config.correctionsPath ?? deploymentPath("data/corrections.csv"),
+            config.personOverlayPath ?? deploymentPath("data/person-overlay.csv"),
+            config.sampleOverlayPath ?? deploymentPath("data/sample-overlay.csv"),
             config.personChangesPath,
             config.sampleChangesPath,
             config.sampleStatePath,
@@ -364,7 +365,7 @@ export function buildJobs(
         const parts: string[] = [];
         for (const collection of ECDYSIS_COLLECTIONS) {
           const r = await fetchEcdysis(ctx.conn, collection, {
-            dir: config.ecdysisDir ?? "data/ecdysis",
+            dir: config.ecdysisDir ?? deploymentPath("data/ecdysis"),
             credentials: config.ecdysis,
             signal: ctx.signal,
             step: ctx.step,
@@ -403,7 +404,7 @@ export function buildJobs(
       schedule: { kind: "dailyLA", hour: 4 },
       window: "night",
       async run(ctx) {
-        const path = legacyExportPath(config.exportsDir ?? "data/exports");
+        const path = legacyExportPath(config.exportsDir ?? deploymentPath("data/exports"));
         // On one thread, as writeLegacyExport always runs, for its memory.
         const { rows, staged } = await ctx.step("write the export", () => writeLegacyExport(ctx.conn, path));
         return `${rows} rows written to ${path}${staged ? "" : " (no legacy staging: legacy-only columns blank)"}`;
@@ -417,7 +418,7 @@ export function buildJobs(
       schedule: { kind: "dailyLA", hour: 4 },
       window: "night",
       async run(ctx) {
-        const manifest = await writeProgramArchives(ctx.db, config.exportsDir ?? "data/exports", { step: ctx.step });
+        const manifest = await writeProgramArchives(ctx.db, config.exportsDir ?? deploymentPath("data/exports"), { step: ctx.step });
         return describeManifest(manifest);
       },
     },

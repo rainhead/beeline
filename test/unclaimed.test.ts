@@ -12,7 +12,7 @@ import { kyselyReader } from "../src/person-change.js";
 import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import type { InatClient } from "../src/app/auth.js";
 import { attachPrivateStore } from "../src/app/db.js";
-import { createMemoryDb, rows } from "./helpers.js";
+import { createMemoryDb, rows, scratchPaths } from "./helpers.js";
 
 /**
  * Collectors Beeline does not know (beeline-e85): observations from an
@@ -94,6 +94,7 @@ async function unclaimedApp(opts: { admin?: boolean } = {}) {
   const db = createKysely(instance);
   const mintConn = await instance.connect();
   const app = createApp({
+    ...(await scratchPaths()),
     db,
     config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
     inat: unusedInat,
@@ -357,6 +358,7 @@ describe("the unknown collectors screen", () => {
     await refreshObservationFields(conn);
     const dir = await mkdtemp(join(tmpdir(), "unclaimed-"));
     const app = createApp({
+      ...(await scratchPaths()),
       db: createKysely(instance),
       config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
       inat: unusedInat,

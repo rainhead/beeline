@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, openSeasonDate, rows } from "./helpers.js";
 import { canonicalJson, syncINat } from "../src/sync-inat.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
 import { promoteObservations } from "../src/promote-observations.js";
@@ -29,7 +29,7 @@ beforeEach(async () => {
 function obs(id: number, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id,
-    observed_on: "2026-07-14",
+    observed_on: openSeasonDate(7, 14),
     geojson: { coordinates: [-123.262, 44.5646], type: "Point" },
     positional_accuracy: 30,
     geoprivacy: null,

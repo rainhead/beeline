@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, openSeasonDate, rows } from "./helpers.js";
 import { canonicalJson } from "../src/sync-inat.js";
 import { promoteObservations } from "../src/promote-observations.js";
 import { isWriteConflict, retryOnWriteConflict } from "../src/write-conflict.js";
@@ -160,7 +160,7 @@ async function stageObservation(conn: DuckDBConnection, id: number): Promise<voi
   const o = {
     id,
     uuid: `uuid-${id}`,
-    observed_on: "2026-07-14",
+    observed_on: openSeasonDate(7, 14),
     geojson: { coordinates: [-123.262, 44.5646], type: "Point" },
     positional_accuracy: 30,
     public_positional_accuracy: 30,

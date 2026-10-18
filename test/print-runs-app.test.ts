@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { DuckDBConnection } from "@duckdb/node-api";
 import { afterEach, describe, expect, it } from "vitest";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
@@ -8,7 +9,7 @@ import { createKysely } from "../src/db.js";
 import { sha256 } from "../src/label-pdf.js";
 import { runPdf } from "../src/app/print-runs.js";
 import { withPrintRunLock } from "../src/print-run.js";
-import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, OPEN_SEASON, rows, scratchPaths } from "./helpers.js";
 
 /**
  * The print-run screens end to end (beeline-1kb.2, beeline-1kb.4): prepare
@@ -77,6 +78,25 @@ async function printApp(signedInAs: "ash" | "staffer" = "staffer") {
   return { app, appFor, conn, db, post, dir, ash, birch, ashSample, birchSample };
 }
 
+/**
+ * The first number the store's first run minted, which must be the floor of
+ * the year that run was prepared in. The app numbers by its own clock, so that
+ * is 26000001 in 2026 and 27000001 in 2027; the year is read off the run's
+ * prepared_at, in Pacific time as nextFieldNumber reads it, rather than off
+ * the test's clock, which could cross New Year between the two.
+ */
+async function firstFieldNumber(conn: DuckDBConnection): Promise<string> {
+  const [[first, preparedAt]] = (await rows(
+    conn,
+    `SELECT (SELECT min(field_number) FROM minted_field_number), (SELECT min(prepared_at) FROM print_run)`,
+  )) as [[string, { micros: bigint }]];
+  const year = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "2-digit" }).format(
+    new Date(Number(preparedAt.micros / 1000n)),
+  );
+  expect(first).toBe(`${year}000001`);
+  return first;
+}
+
 describe("the print-run screens", () => {
   it("are staff tools: gated, and in the menu only for an admin", async () => {
     const volunteer = await printApp("ash");
@@ -120,7 +140,7 @@ describe("the print-run screens", () => {
     // The proofing table: the six strings, in sheet order, with the blank
     // cell between collectors visible as cell 4 following cell 2.
     expect(page).toContain("USA:OR:BentonCo Corvallis");
-    expect(page).toContain("14.VII2026-1.1");
+    expect(page).toContain(`14.VII${OPEN_SEASON}-1.1`);
     const table = page.slice(page.indexOf("Labels</h2>"));
     expect(table).toContain("A.Ash");
     expect(table).toContain("B.Birch");
@@ -192,8 +212,9 @@ describe("the print-run screens", () => {
     // And the records say where the labels are, in a volunteer's words.
     const sample = await (await app.request(`/samples/${ashSample}`)).text();
     expect(sample).toContain("Mailed ");
-    expect(sample).toContain("26000001");
-    const [[specimenId]] = (await rows(conn, `SELECT entity_id FROM specimen WHERE field_number = '26000001'`)) as [
+    const first = await firstFieldNumber(conn);
+    expect(sample).toContain(first);
+    const [[specimenId]] = (await rows(conn, `SELECT entity_id FROM specimen WHERE field_number = '${first}'`)) as [
       [number],
     ];
     const specimen = await (await app.request(`/specimens/${specimenId}`)).text();
@@ -219,7 +240,8 @@ describe("the print-run screens", () => {
     expect(page).toContain("wrong week");
     // The labels stay on the page as the record of what was prepared — but
     // there are no sheets to print: the numbers are burned.
-    expect(page).toContain("26000001");
+    const burned = await firstFieldNumber(conn);
+    expect(page).toContain(burned);
     expect(page).not.toContain("labels.pdf");
     const sheets = await app.request(`${runPath}/labels.pdf`);
     expect(sheets.status).toBe(409);
@@ -237,10 +259,10 @@ describe("the print-run screens", () => {
     // run can still be matched to its specimen.
     const [[specimenId]] = (await rows(conn, `SELECT entity_id FROM specimen WHERE sample_id = ${ashSample} ORDER BY specimen_number LIMIT 1`)) as [[number]];
     const specimen = await (await app.request(`/specimens/${specimenId}`)).text();
-    expect(specimen).toContain("26000001 was taken back when");
+    expect(specimen).toContain(`${burned} was taken back when`);
     expect(specimen).toContain("was canceled; the next run will number this specimen again.");
     expect(specimen).not.toContain("predates field numbering");
-    expect(specimen).toContain('<span class="mono">26000001</span>');
+    expect(specimen).toContain(`<span class="mono">${burned}</span>`);
     // And the listing, which cannot see the Label column, says the same.
     const listing = await (await app.request("/specimens?scope=all")).text();
     expect(listing).toContain("awaiting a number");

@@ -4,7 +4,7 @@ import type { InatClient } from "../src/app/auth.js";
 import { isDue, runJob, startScheduler, type Job, type JobContext } from "../src/app/jobs/framework.js";
 import { lastSyncStart, pipelineTail, refreshPlaces } from "../src/app/jobs/registry.js";
 import { createApp } from "../src/app/server.js";
-import { createMemoryDb } from "./helpers.js";
+import { createMemoryDb, scratchPaths } from "./helpers.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -420,6 +420,7 @@ describe("/jobs page", () => {
       identity: () => Promise.reject(new Error("not under test")),
     };
     const app = createApp({
+      ...(await scratchPaths()),
       db: deps.db,
       config: { environment: "development", origin: "http://localhost:3054" },
       inat,
@@ -458,8 +459,10 @@ describe("/jobs page", () => {
       exchangeCode: () => Promise.reject(new Error("not under test")),
       identity: () => Promise.reject(new Error("not under test")),
     };
+    const paths = await scratchPaths();
     const appFor = () =>
       createApp({
+        ...paths,
         db: deps.db,
         config: { environment: "sandbox", origin: "https://beeline.example" },
         inat,
@@ -519,7 +522,7 @@ describe("the nightly and a refused sample snapshot (beeline-hrw)", () => {
             return ctx.step(label, fn);
           },
         };
-        return pipelineTail(wrapped, [], join(dir, "person-change.csv"), samplePaths);
+        return pipelineTail(wrapped, [], join(dir, "person-change.csv"), samplePaths, undefined, { demDir: join(dir, "dem") });
       },
     };
     await runJob(deps, job);

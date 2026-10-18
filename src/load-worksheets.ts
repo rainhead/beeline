@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { resolver } from "./apply-person-overlay.js";
 import { csvCell } from "./app/listings.js";
 import { parseCsv } from "./corrections.js";
+import { deploymentPath } from "./deployment-path.js";
 import { DEFAULT_DB } from "./person-change.js";
 
 /**
@@ -323,7 +324,7 @@ async function assertChannelAdmitted(conn: DuckDBConnection): Promise<void> {
 }
 
 export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheetsOptions): Promise<LoadWorksheetsResult> {
-  const manifestPath = opts.manifestPath ?? DEFAULT_MANIFEST;
+  const manifestPath = opts.manifestPath ?? deploymentPath(DEFAULT_MANIFEST);
   const aliases = opts.taxonAliases ?? DEFAULT_TAXON_ALIASES;
   const now = opts.now ?? new Date();
   await assertChannelAdmitted(conn);

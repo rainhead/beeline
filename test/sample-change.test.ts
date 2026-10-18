@@ -3,7 +3,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, openSeasonDate, rows } from "./helpers.js";
 import { duckdbReader } from "../src/person-change.js";
 import {
   foldSampleChanges,
@@ -41,7 +41,7 @@ describe("the baseline lives in the snapshot, not the log", () => {
     expect(state).toMatchObject({
       collector: "name:Ada Collector",
       sample_number: "1",
-      date_start: "2026-07-14",
+      date_start: openSeasonDate(7, 14),
     });
     expect(state!.fields.locality).toBe("Corvallis");
   });
@@ -76,7 +76,7 @@ describe("what a pass records", () => {
     expect(entry).toMatchObject({
       collector: "name:Ada Collector",
       sample_number: "1",
-      date_start: "2026-07-14",
+      date_start: openSeasonDate(7, 14),
       field: "locality",
       old_value: "Corvallis",
       new_value: "Alsea",
@@ -145,31 +145,31 @@ describe("a corrected reference moves, and the history follows", () => {
     const history = sampleHistory(entries, {
       collector: "name:Ada Collector",
       sample_number: "9",
-      date_start: "2026-07-14",
+      date_start: openSeasonDate(7, 14),
     });
     expect(history.map((e) => e.field)).toEqual(["locality", "sample_number"]);
     // Nothing answers to the old triple any more.
     expect(
-      sampleHistory(entries, { collector: "name:Ada Collector", sample_number: "1", date_start: "2026-07-14" }),
+      sampleHistory(entries, { collector: "name:Ada Collector", sample_number: "1", date_start: openSeasonDate(7, 14) }),
     ).toEqual([]);
   });
 
   it("two movers in one pass chain: each is filed under the triple as moved so far", async () => {
     const id = await insertCleanSample(conn, { inat_observation_id: "77" });
     await record();
-    await conn.run(`UPDATE sample SET sample_number = '9', date_start = DATE '2026-07-20',
-                           date_end = DATE '2026-07-20' WHERE entity_id = ${id}`);
+    await conn.run(`UPDATE sample SET sample_number = '9', date_start = DATE '${openSeasonDate(7, 20)}',
+                           date_end = DATE '${openSeasonDate(7, 20)}' WHERE entity_id = ${id}`);
     await record();
     const entries = await readSampleChanges(paths.log);
     const bySample = Object.fromEntries(entries.map((e) => [e.field, [e.sample_number, e.date_start]]));
     // sample_number filed under the pre-pass triple; date_start under the
     // triple sample_number has already moved it to.
-    expect(bySample.sample_number).toEqual(["1", "2026-07-14"]);
-    expect(bySample.date_start).toEqual(["9", "2026-07-14"]);
+    expect(bySample.sample_number).toEqual(["1", openSeasonDate(7, 14)]);
+    expect(bySample.date_start).toEqual(["9", openSeasonDate(7, 14)]);
     const history = sampleHistory(entries, {
       collector: "name:Ada Collector",
       sample_number: "9",
-      date_start: "2026-07-20",
+      date_start: openSeasonDate(7, 20),
     });
     expect(history.map((e) => e.field).sort()).toEqual(["date_end", "date_start", "sample_number"]);
   });
@@ -236,7 +236,7 @@ describe("a corrected reference moves, and the history follows", () => {
       at: "2026-08-30T12:00:00Z",
       collector: "name:Ada Collector",
       sample_number,
-      date_start: "2026-07-14",
+      date_start: openSeasonDate(7, 14),
       field,
       old_value,
       new_value,
@@ -303,7 +303,7 @@ describe("a corrected reference moves, and the history follows", () => {
 
     const entries = await readSampleChanges(paths.log);
     const at = (sample_number: string) =>
-      sampleHistory(entries, { collector: "name:Ada Collector", sample_number, date_start: "2026-07-14" });
+      sampleHistory(entries, { collector: "name:Ada Collector", sample_number, date_start: openSeasonDate(7, 14) });
     // Sample 2 is the sample the log knew, renumbered; nothing else happened to it.
     expect(at("2").map((e) => [e.field, e.old_value, e.new_value])).toEqual([["sample_number", "1", "2"]]);
     // Sample 1 is a newcomer, and only the newcomer.
@@ -329,7 +329,7 @@ describe("a corrected reference moves, and the history follows", () => {
     expect(full.contested).toBe(0);
     const entries = await readSampleChanges(paths.log);
     expect(
-      sampleHistory(entries, { collector: "name:Ada Collector", sample_number: "2", date_start: "2026-07-14" }).map(
+      sampleHistory(entries, { collector: "name:Ada Collector", sample_number: "2", date_start: openSeasonDate(7, 14) }).map(
         (e) => e.field,
       ),
     ).toEqual(["sample_number"]);
@@ -346,7 +346,7 @@ describe("a corrected reference moves, and the history follows", () => {
     sampleHistory(await readSampleChanges(paths.log), {
       collector: "name:Ada Collector",
       sample_number,
-      date_start: "2026-07-14",
+      date_start: openSeasonDate(7, 14),
     });
 
   it.each([
@@ -486,7 +486,7 @@ describe("the authored, narrowed pass", () => {
     const history = sampleHistory(await readSampleChanges(paths.log), {
       collector: "name:Ada Collector",
       sample_number: "9",
-      date_start: "2026-07-14",
+      date_start: openSeasonDate(7, 14),
     });
     expect(history.map((e) => e.field).sort()).toEqual(["locality", "sample_number"]);
   });

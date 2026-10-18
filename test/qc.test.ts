@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, OPEN_SEASON, rows } from "./helpers.js";
 
 let conn: DuckDBConnection;
 
@@ -260,9 +260,16 @@ describe("QC findings and printability", () => {
   });
 
   test("coordinate uncertainty over the limit blocks printing", async () => {
-    // The fixture collects on 2026-07-14, before the rule changed, so this is
-    // held to the grandfathered 250 m and the flag says so.
-    const id = await insertCleanSample(conn, {}, { coordinate_uncertainty_m: "500" });
+    // Collected before the rule changed, so this is held to the grandfathered
+    // 250 m and the flag says so. The date is written out because the
+    // fixture's own date is in the open season, which falls before the change
+    // until 1 March 2027 and after it from then on.
+    const before = "DATE '2026-07-14'";
+    const id = await insertCleanSample(
+      conn,
+      { date_start: before, date_end: before },
+      { coordinate_uncertainty_m: "500" },
+    );
     expect(await findings(id)).toEqual([
       { rule: "coordinate_uncertainty", details: "500 m > 250 m" },
     ]);
@@ -518,5 +525,23 @@ describe("determination of record", () => {
     await conn.run(`INSERT INTO determination (specimen_id, animal_id, is_expert, channel, verbatim_identification, recorded_at)
                     VALUES (${specimenId}, ${caliginosus}, true, 'ecdysis_import', 'Bombus caliginosus', TIMESTAMPTZ '2026-01-15 00:00:00Z')`);
     expect(await record()).toEqual([caliginosus, true]);
+  });
+});
+
+describe("the open season the fixtures are dated in", () => {
+  // Every open-season fixture takes its year from OPEN_SEASON, which restates
+  // schema/102's 1 March rule in JavaScript so a test can name a date before
+  // it has a store to ask. If the two ever disagree, those fixtures are dated
+  // in the wrong season and the tests built on them test nothing.
+  test("is the season the store says is open", async () => {
+    expect(await rows(conn, "SELECT CAST(started_on AS VARCHAR) FROM season")).toEqual([[`${OPEN_SEASON}-03-01`]]);
+    const open = await insertCleanSample(conn);
+    const last = await insertCleanSample(conn, {
+      sample_number: "'2'",
+      date_start: `DATE '${OPEN_SEASON - 1}-07-14'`,
+      date_end: `DATE '${OPEN_SEASON - 1}-07-14'`,
+    });
+    expect(await rows(conn, "SELECT sample_id FROM settled_sample")).toEqual([[last]]);
+    expect(await rows(conn, `SELECT season FROM sample_season WHERE sample_id = ${open}`)).toEqual([[OPEN_SEASON]]);
   });
 });

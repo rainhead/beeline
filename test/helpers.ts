@@ -73,6 +73,30 @@ export const FIXTURE_INPUTS: PromotionInputs = {
 };
 
 /**
+ * The year the collecting season open today began, by the rule the store
+ * itself applies (`season`, schema/102): 1 March of this year, or of last year
+ * until this year's 1 March arrives. A fixture that should be asked about or
+ * printed is dated in this season, never in a year written into the test,
+ * because a written year becomes a settled season on the next 1 March and
+ * every test that expected it to be open fails (beeline-a0lj). The season
+ * before it is `OPEN_SEASON - 1`.
+ *
+ * Read as UTC, as the store reads `current_date` (src/db.ts). A test in
+ * qc.test.ts holds this to the store's own answer.
+ */
+export const OPEN_SEASON = ((today: Date) =>
+  today.getUTCMonth() >= 2 ? today.getUTCFullYear() : today.getUTCFullYear() - 1)(new Date());
+
+/**
+ * A day in the open season as `YYYY-MM-DD`, from its month and day. The
+ * fixtures use summer days, the middle of a collecting season. Such a day may
+ * still lie ahead of today, since in March the season has barely begun; no
+ * rule asks whether a sample was collected in the future, so nothing minds.
+ */
+export const openSeasonDate = (month: number, day: number): string =>
+  `${OPEN_SEASON}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+/**
  * Every file the app writes, in a directory of its own. Spread it into
  * createApp, then name any path the test reads back:
  *   createApp({ db, config, ...(await scratchPaths()), correctionsPath })
@@ -101,7 +125,8 @@ export async function rows(conn: DuckDBConnection, sql: string): Promise<unknown
 
 /**
  * A sample with every label-required field present and a positive count,
- * including a believed-true location row. Pass location: null to omit the
+ * including a believed-true location row, collected on 14 July of the open
+ * season (OPEN_SEASON). Pass location: null to omit the
  * location row; pass column overrides as SQL literals.
  */
 export async function insertCleanSample(
@@ -120,8 +145,8 @@ export async function insertCleanSample(
   const cols: Record<string, string> = {
     kind: "'net'",
     sample_number: "'1'",
-    date_start: "DATE '2026-07-14'",
-    date_end: "DATE '2026-07-14'",
+    date_start: `DATE '${openSeasonDate(7, 14)}'`,
+    date_end: `DATE '${openSeasonDate(7, 14)}'`,
     specimen_count: "3",
     country: "'USA'",
     state_province: "'OR'",

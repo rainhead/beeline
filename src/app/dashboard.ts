@@ -1,5 +1,6 @@
 import { sql, type Kysely } from "kysely";
 import type { Database, Geoprivacy, QcSeverity } from "../model.js";
+import { entrySeasons } from "./determine.js";
 import { DASHBOARD_RULES, type CoCollectors, type DashboardRow, type Finding, type SkippedDay } from "./views/qc.js";
 
 /**
@@ -34,6 +35,12 @@ export interface Dashboard {
   atlas: { code: string; name: string } | null;
   /** This season's days whose run of sample numbers skips one (sample_number_gap, beeline-virz). */
   skipped: SkippedDay[];
+  /**
+   * This season's specimens that no volunteer has named and the determiner has
+   * no draft name for: what /determinations calls "to name". Null when there
+   * are none, so the page says nothing.
+   */
+  toName: { season: number; unnamed: number } | null;
 }
 
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
@@ -74,7 +81,7 @@ interface RawObservationRow {
   host_rank: string | null;
 }
 
-export async function loadDashboard(db: Kysely<Database>, personId: number): Promise<Dashboard> {
+export async function loadDashboard(db: Kysely<Database>, personId: number, determinerId: number = personId): Promise<Dashboard> {
   const rules = [...DASHBOARD_RULES.keys()];
   const ruleList = sql.join(rules.map((r) => sql`${r}`));
   // Each question is asked of the store once. The page took 2.9 s on the
@@ -88,7 +95,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
   // locality and place are looked up only for the rows that need one.
   const mine = (col: string) =>
     sql`EXISTS (SELECT 1 FROM sample_collector mine WHERE mine.sample_id = ${sql.ref(col)} AND mine.person_id = ${personId})`;
-  const [samples, findings, placeholders, unnumbered, skipped, partners, sync, season, atlas] = await Promise.all([
+  const [samples, findings, placeholders, unnumbered, skipped, partners, sync, season, atlas, seasons] = await Promise.all([
     // Every sample of theirs that is this season's, or a settled one whose
     // labels a run already holds; which of them the page shows is decided
     // below, against the findings. Labels are the one other question.
@@ -201,13 +208,15 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
       .select(({ fn }) => fn.max("completed_at").as("at"))
       .executeTakeFirst(),
     // Date minus an integer is a date in both engines (ADR 0001).
-    sql<{ through: string }>`SELECT CAST(started_on - 1 AS TEXT) AS through FROM season`.execute(db),
+    sql<{ through: string; open: unknown }>`
+      SELECT CAST(started_on - 1 AS TEXT) AS through, EXTRACT(YEAR FROM started_on) AS open FROM season`.execute(db),
     db
       .selectFrom("person_membership as pm")
       .innerJoin("atlas as a", "a.entity_id", "pm.atlas_id")
       .where("pm.person_id", "=", personId)
       .select(["a.code", "a.name"])
       .executeTakeFirst(),
+    entrySeasons(db, personId, determinerId),
   ]);
 
   // Where the observations on the page are. The two views derive every
@@ -381,5 +390,10 @@ export async function loadDashboard(db: Kysely<Database>, personId: number): Pro
     everSynced: (sync?.at ?? null) !== null,
     atlas: atlas ?? null,
     skipped: [...skippedDays.values()],
+    toName: (() => {
+      const open = Number(season.rows[0]?.open);
+      const found = seasons.find((s) => s.season === open);
+      return found !== undefined && found.unnamed > 0 ? { season: open, unnamed: found.unnamed } : null;
+    })(),
   };
 }

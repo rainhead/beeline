@@ -610,7 +610,9 @@ export function createApp({
     // acting for Robert it is Robert's samples that need attention, and the
     // chrome says whose they are.
     const { personId } = c.get("acting");
-    const dashboard = await loadDashboard(db, personId);
+    // Drafts belong to whoever is signed in, so "to name" is counted against
+    // them even while acting for someone, as the identify screen does.
+    const dashboard = await loadDashboard(db, personId, c.get("session").personId);
     const account = await accountOf(personId);
     const check =
       inatCheck === undefined || mintConn === undefined
@@ -633,6 +635,7 @@ export function createApp({
           settledThrough={dashboard.settledThrough}
           atlas={dashboard.atlas}
           skipped={dashboard.skipped}
+          toName={dashboard.toName}
           check={check}
         />,
       ),

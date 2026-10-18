@@ -1,5 +1,6 @@
 import type { Child } from "hono/jsx";
 import type { Messages } from "../messages/index.js";
+import { determineHref } from "./determine.js";
 import type { SpecimenLabelRow } from "../print-runs.js";
 import type { PrintRunState } from "../../model.js";
 import type { SampleChange } from "../../sample-change.js";
@@ -782,6 +783,13 @@ export function SpecimenPage({
       {/* The history first: it is why this page exists. */}
       <Card>
         <Determinations m={m} events={events} />
+        {/* Only the person whose specimen it is can name it on that screen,
+            so staff browsing someone else's are not pointed there. */}
+        {sample.mine && !events.some((e) => !e.is_expert) && (
+          <Meta block>
+            {c.identifyPrompt} <a href={determineHref("sample", null)}>{c.identifyLink}</a>
+          </Meta>
+        )}
       </Card>
       <Card>
         <SpecimenLabels m={m} labels={labels} admin={admin} />

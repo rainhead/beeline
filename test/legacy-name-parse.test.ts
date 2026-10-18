@@ -211,6 +211,7 @@ describe("taking a verbatim scientific name apart", () => {
     expect(
       await rows(conn, "SELECT field, shape, records FROM legacy_verbatim_shape ORDER BY field, shape"),
     ).toEqual([
+      ["day/month/year", "did not parse", 0n],
       ["identifiedBy", "named", 25n],
       ["month", "roman numeral", 1n],
       ["recordedBy", "non-ASCII", 0n],
@@ -219,7 +220,6 @@ describe("taking a verbatim scientific name apart", () => {
       ["url", "canonical observation", 1n],
       ["url", "not an observation", 1n],
       ["url", "observation, other scheme or host", 1n],
-      ["verbatimEventDate", "date did not parse", 0n],
       ["verbatimEventDate", "present", 0n],
     ]);
   });

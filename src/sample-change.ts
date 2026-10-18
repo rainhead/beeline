@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, stat, writeFile, appendFile, open } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { parseCsv } from "./corrections.js";
@@ -330,30 +329,13 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
  * the last pass, which is bounded and visible; the arrivals are neither.
  */
 export async function readSnapshot(path: string): Promise<Map<string, SampleState> | null> {
-  const file = await readSnapshotFile(path);
-  return file === null ? null : parseSnapshot(path, file.text);
-}
-
-interface SnapshotFile {
-  text: string;
-  /** SHA-256 of the file's bytes: what the line cache is checked against. */
-  digest: string;
-}
-
-async function readSnapshotFile(path: string): Promise<SnapshotFile | null> {
-  let bytes: Buffer;
+  let text: string;
   try {
-    bytes = await readFile(path);
+    text = await readFile(path, "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
-  return { text: bytes.toString("utf8"), digest: digestOf(bytes) };
-}
-
-const digestOf = (content: Buffer | string) => createHash("sha256").update(content).digest("hex");
-
-function parseSnapshot(path: string, text: string): Map<string, SampleState> | null {
   const headerEnd = text.indexOf("\n");
   const header = headerEnd === -1 ? text : text.slice(0, headerEnd);
   if (header.replace(/\r$/, "") !== STATE_HEADER) {
@@ -398,16 +380,9 @@ function parseSnapshot(path: string, text: string): Map<string, SampleState> | n
 let tmpCounter = 0;
 
 export async function writeSnapshot(path: string, states: Iterable<SampleState>): Promise<void> {
-  await writeSnapshotLines(path, [...states].map((s) => [stateKey(s), snapshotLine(s)] as const));
-}
-
-/** One snapshot row as the file holds it. */
-const snapshotLine = (s: SampleState) => STATE_COLUMNS.map((c) => cell(s.fields[c as SampleField] ?? "")).join(",");
-
-async function writeSnapshotLines(path: string, keyed: (readonly [key: string, line: string])[]): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const rows = [...keyed].sort((a, b) => (a[0] < b[0] ? -1 : 1));
-  const lines = rows.map(([, line]) => line);
+  const rows = [...states].sort((a, b) => (stateKey(a) < stateKey(b) ? -1 : 1));
+  const lines = rows.map((s) => STATE_COLUMNS.map((c) => cell(s.fields[c as SampleField] ?? "")).join(","));
   // Unique per write: passes are serialized within this process, but a CLI
   // and the app pointed at one store (against ADR 0005) can still race. The
   // unique name means they can never splice two restatements into one file;
@@ -418,52 +393,8 @@ async function writeSnapshotLines(path: string, keyed: (readonly [key: string, l
   // a duplicate in a log is legible where a lost row is not (the appender's
   // own rule).
   const tmp = `${path}.${process.pid}.${tmpCounter++}.tmp`;
-  const text = `${STATE_HEADER}\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`;
-  await writeFile(tmp, text);
+  await writeFile(tmp, `${STATE_HEADER}\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`);
   await rename(tmp, path);
-  // Two rows on one triple read back as one, so a file holding them is left
-  // for the next pass to parse rather than remembered as something else.
-  const written = new Map(rows);
-  if (written.size === rows.length) rememberSnapshot(path, digestOf(text), written);
-  else snapshotCache.delete(resolve(path));
-}
-
-/**
- * The snapshot as this process last read or wrote it: each row's line in the
- * file, keyed by its triple, beside the SHA-256 of the file's bytes
- * (beeline-cjf). A sample edit's narrowed pass reads the snapshot only to
- * look up its one sample and to write the file back with that row replaced,
- * and parsing the 11 MB file to do it was most of what a volunteer waited for
- * on save. So the narrowed pass reads and hashes the bytes every time, which
- * takes milliseconds, and parses only the rows it looks up — and parses the
- * whole file only when the bytes are not the ones this process last saw.
- * Checking the content, not the file's size and modification time, means a
- * snapshot written by anything else, however quickly or at whatever size, is
- * always read afresh. It keeps lines rather than parsed rows because the
- * dev store's 68,847 rows take about 90 MB of heap parsed and 18 MB as lines,
- * and the app holds this for as long as it runs. A full pass needs every row
- * parsed anyway, so it reads the file as it always did.
- */
-const snapshotCache = new Map<string, { digest: string; lines: ReadonlyMap<string, string> }>();
-
-function rememberSnapshot(path: string, digest: string, lines: ReadonlyMap<string, string>): void {
-  snapshotCache.set(resolve(path), { digest, lines });
-}
-
-function cachedSnapshotLines(path: string, file: SnapshotFile): ReadonlyMap<string, string> | undefined {
-  const hit = snapshotCache.get(resolve(path));
-  return hit !== undefined && hit.digest === file.digest ? hit.lines : undefined;
-}
-
-/** The lines a parsed snapshot would be written back as. */
-function linesOf(snapshot: ReadonlyMap<string, SampleState>): Map<string, string> {
-  return new Map([...snapshot].map(([key, row]) => [key, snapshotLine(row)]));
-}
-
-/** Parse a few of the snapshot's rows, each the way reading the whole file would. */
-function snapshotRows(path: string, lines: ReadonlyMap<string, string>, keys: Iterable<string>): Map<string, SampleState> {
-  const text = [STATE_HEADER, ...[...keys].flatMap((key) => lines.get(key) ?? [])].join("\n");
-  return parseSnapshot(path, `${text}\n`)!;
 }
 
 // ── The log ──────────────────────────────────────────────────────────────
@@ -839,18 +770,7 @@ async function recordPass(
 ): Promise<SampleRecordResult> {
   const { states, suppressedKeys, suppressedObservations, unreferenceable, colliding } =
     await readSampleStates(read, opts.where ?? "");
-  const file = await readSnapshotFile(paths.state);
-  // A narrowed pass looks up only its own samples' triples (matchSamples
-  // reads nothing else when directOnly), so where this process already holds
-  // the file's lines it parses just those rows; see snapshotCache.
-  const cachedLines = file === null || opts.where == null ? undefined : cachedSnapshotLines(paths.state, file);
-  const snapshot =
-    file === null
-      ? null
-      : cachedLines !== undefined
-        ? snapshotRows(paths.state, cachedLines, states.keys())
-        : parseSnapshot(paths.state, file.text);
-  const snapshotSize = cachedLines?.size ?? snapshot?.size ?? 0;
+  const snapshot = await readSnapshot(paths.state);
 
   // First pass: the store as it stands is the baseline, and nothing is an
   // event. (A narrowed first pass must not write a one-sample snapshot that
@@ -859,7 +779,7 @@ async function recordPass(
   // no history for this one to continue, and diffing a corpus against it
   // would write the whole corpus into the log as arrivals — the baseline's
   // business, which is why the baseline lives beside the log and not in it.
-  if (file === null || snapshot === null || snapshotSize === 0) {
+  if (snapshot === null || snapshot.size === 0) {
     const all = opts.where == null ? states : (await readSampleStates(read)).states;
     await writeSnapshot(paths.state, all.values());
     return { appended: 0, baselined: true, unreferenceable, colliding, contested: 0, refused: null };
@@ -1007,15 +927,9 @@ async function recordPass(
     // review of PR #32).
     if (rows.length > 0 || next.size !== snapshot.size || [...next.keys()].some((k) => !snapshot.has(k))) {
       await writeSnapshot(paths.state, next.values());
-    } else if (cachedSnapshotLines(paths.state, file) === undefined) {
-      // Unchanged, so the file is what this pass read: remember it, so the
-      // next edit's pass need not parse it again.
-      rememberSnapshot(paths.state, file.digest, linesOf(snapshot));
     }
   } else {
-    // Every row's line, so the rows outside the narrowing are written back
-    // as they stand without being parsed.
-    const next = cachedLines !== undefined ? new Map(cachedLines) : linesOf(snapshot);
+    const next = new Map(snapshot);
     let touched = false;
     for (const [key, state] of states) {
       if (contested.has(key)) continue;
@@ -1026,13 +940,10 @@ async function recordPass(
       // another sample's history, which patching would overwrite.
       if (before === undefined) continue;
       if (before !== undefined) next.delete(stateKey(before));
-      next.set(key, snapshotLine(state));
+      next.set(key, state);
       touched = true;
     }
-    if (touched) await writeSnapshotLines(paths.state, [...next]);
-    // Nothing to write, but a pass that had to parse the whole file should
-    // not leave the next one to parse it again.
-    else if (cachedLines === undefined) rememberSnapshot(paths.state, file.digest, next);
+    if (touched) await writeSnapshot(paths.state, next.values());
   }
   return { appended: rows.length, baselined: false, unreferenceable, colliding, contested: contested.size, refused: null };
 }

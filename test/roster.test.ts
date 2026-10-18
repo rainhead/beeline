@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
-import { insertCleanSample } from "./helpers.js";
+import { insertCleanSample, scratchPaths } from "./helpers.js";
 import { createMemoryDb } from "./helpers.js";
 import { createApp } from "../src/app/server.js";
 import { readOverlay, type PersonOverlayRow } from "../src/person-overlay.js";
@@ -41,6 +41,7 @@ async function rosterApp(signedIn: { personId: number; admin: boolean; privateSt
   const changesPath = join(dir, "person-change.csv");
   const db = createKysely(instance);
   const app = createApp({
+    ...(await scratchPaths()),
     db,
     config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
     inat: unusedInat,

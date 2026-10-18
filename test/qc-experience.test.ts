@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
-import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -69,6 +69,7 @@ async function qcApp() {
 
   const db = createKysely(instance);
   const app = createApp({
+    ...(await scratchPaths()),
     db,
     config: { environment: "development" as const, origin: "http://localhost:3054" },
     inat: unusedInat,

@@ -9,7 +9,7 @@ import { createApp } from "../src/app/server.js";
 import { parseCsv } from "../src/corrections.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
-import { createMemoryDb, FIXTURE_INPUTS, rows } from "./helpers.js";
+import { createMemoryDb, FIXTURE_INPUTS, rows, scratchPaths } from "./helpers.js";
 
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 const CORRECTIONS = new URL("./fixtures/legacy-corrections.csv", import.meta.url).pathname;
@@ -55,6 +55,7 @@ async function editApp(appCsv?: string) {
   await conn.run(`UPDATE sample SET date_start = current_date, date_end = current_date WHERE entity_id = ${beaSample}`);
   const db = createKysely(instance);
   const app = createApp({
+    ...(await scratchPaths()),
     db,
     config: { environment: "development" as const, origin: "http://localhost:3054" },
     inat: unusedInat,

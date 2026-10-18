@@ -23,7 +23,7 @@ import { strFromU8, unzipSync } from "fflate";
 import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
 import { writeProgramArchives } from "../src/app/program-archives.js";
 import type { GovernancePaths } from "../src/program-governance.js";
-import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -171,6 +171,7 @@ async function listingApp(
   const people = { alice, bob, staffer };
   const db = createKysely(instance);
   const app = createApp({
+    ...(await scratchPaths()),
     db,
     // Sandbox, not development: development makes everyone an admin, which
     // is exactly what these tests need to tell apart (beeline-6va).

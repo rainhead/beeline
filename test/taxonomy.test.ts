@@ -7,7 +7,7 @@ import { en } from "../src/app/messages/en.js";
 import { loadItis } from "../src/load-itis.js";
 import { applyTaxonCuration, type TaxonCurationRow } from "../src/taxon-curation.js";
 import { itisReportHref, parseTaxonomyQuery, taxonHref, taxonomyHref } from "../src/app/taxonomy.js";
-import { createMemoryDb, insertCleanSample } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 
 /**
  * The taxonomy pages (beeline-45v.5).
@@ -92,6 +92,7 @@ async function taxonomyApp({ itis = true, admin = false } = {}) {
   if (itis) await loadItis(conn, ITIS);
   if (admin) await conn.run(`INSERT INTO person_admin (person_id) VALUES (1)`);
   return createApp({
+    ...(await scratchPaths()),
     db: createKysely(instance),
     config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
     inat: unusedInat,

@@ -512,6 +512,49 @@ describe("the authored, narrowed pass", () => {
     entries = await readSampleChanges(paths.log);
     expect(entries[1]).toMatchObject({ field: "locality", new_value: "Adair", author: "" });
   });
+
+  // The narrowed pass parses only the rows it looks up when this process
+  // already holds the snapshot's lines (beeline-cjf). These hold it to the
+  // answer a pass that parsed the whole file would give.
+  it("records and restates exactly what a pass that parsed the whole file would", async () => {
+    const { copyFile, mkdtemp: mk } = await import("node:fs/promises");
+    // Values that need quoting, so a line that did not survive being read
+    // back would show.
+    const edited = await insertCleanSample(conn, { locality: `'Alsea, "the bend"'` });
+    await insertCleanSample(conn, { sample_number: "'2'", locality: `'line one' || chr(10) || 'line two'` });
+    await insertCleanSample(conn, { sample_number: "'3'", locality: `'carriage' || chr(13) || chr(10) || 'return'` });
+    await record();
+    // The same files under another path, which this process has never read
+    // or written, so the pass there parses the whole snapshot.
+    const elsewhere = await mk(join(tmpdir(), "sample-change-uncached-"));
+    const uncached = { log: join(elsewhere, "sample-change.csv"), state: join(elsewhere, "sample-state.csv") };
+    await copyFile(paths.state, uncached.state);
+    await conn.run(`UPDATE sample SET locality = 'Alsea' WHERE entity_id = ${edited}`);
+    const narrowed = { source: "app", author: "ada", at: "2026-10-17T00:00:00.000Z", where: `s.entity_id = ${edited}` } as const;
+    await record(narrowed);
+    await recordSampleChanges(read(), uncached, narrowed);
+    expect(await readFile(paths.log, "utf8")).toBe(await readFile(uncached.log, "utf8"));
+    expect(await readFile(paths.state, "utf8")).toBe(await readFile(uncached.state, "utf8"));
+    expect(await readSampleChanges(paths.log)).toEqual([
+      expect.objectContaining({ field: "locality", old_value: 'Alsea, "the bend"', new_value: "Alsea", author: "ada" }),
+    ]);
+  });
+
+  it("reads a snapshot something else rewrote, even at the same size", async () => {
+    const { writeFile: wf } = await import("node:fs/promises");
+    const id = await insertCleanSample(conn);
+    await record();
+    // Same length, one letter different, written straight after the pass:
+    // a check of size and modification time could take it for the file the
+    // pass wrote. The narrowed pass must see the store disagree with it.
+    const text = await readFile(paths.state, "utf8");
+    await wf(paths.state, text.replace("Corvallis", "Corvallix"));
+    const narrowed = await record({ source: "app", author: "ada", where: `s.entity_id = ${id}` });
+    expect(narrowed.appended).toBe(1);
+    expect(await readSampleChanges(paths.log)).toEqual([
+      expect.objectContaining({ field: "locality", old_value: "Corvallix", new_value: "Corvallis" }),
+    ]);
+  });
 });
 
 describe("the file", () => {

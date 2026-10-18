@@ -14,7 +14,7 @@ import {
   UnreachableSpecimens,
 } from "../src/app/determine.js";
 import { commitDeterminationDrafts } from "../src/commit-determinations.js";
-import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
@@ -87,6 +87,7 @@ async function appFixture(as: "ada" | "gil" = "ada") {
   await f.conn.run(`INSERT INTO person_admin (person_id, granted_by) VALUES (${f.gil}, 'peter')`);
   const people = { ada: f.ada, gil: f.gil };
   const app = createApp({
+    ...(await scratchPaths()),
     db: f.db,
     // Sandbox: development makes everyone an admin.
     config: { environment: "sandbox" as const, origin: "http://localhost:3054" },

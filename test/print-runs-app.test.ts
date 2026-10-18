@@ -9,7 +9,7 @@ import { createKysely } from "../src/db.js";
 import { sha256 } from "../src/label-pdf.js";
 import { runPdf } from "../src/app/print-runs.js";
 import { withPrintRunLock } from "../src/print-run.js";
-import { createMemoryDb, insertCleanSample, OPEN_SEASON, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, OPEN_SEASON, rows, scratchPaths } from "./helpers.js";
 
 /**
  * The print-run screens end to end (beeline-1kb.2, beeline-1kb.4): prepare
@@ -60,9 +60,11 @@ async function printApp(signedInAs: "ash" | "staffer" = "staffer") {
   dirs.push(dir);
   const people = { ash, staffer };
   const db = createKysely(instance);
+  const paths = await scratchPaths();
   /** The same store, seen by somebody else. */
   const appFor = (who: "ash" | "staffer") =>
     createApp({
+      ...paths,
       db,
       config: { environment: "sandbox" as const, origin: ORIGIN },
       inat: unusedInat,

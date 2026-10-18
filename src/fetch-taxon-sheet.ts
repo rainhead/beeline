@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { deploymentPath } from "./deployment-path.js";
 import { accessToken, fileMeta, sheetTabs } from "./google-drive.js";
 
 /**
@@ -43,7 +44,7 @@ export const snapshotFileNames = (titles: readonly string[]): string[] => {
   });
 };
 
-export async function fetchTaxonSheet(sheetId: string, dir: string = DEFAULT_SNAPSHOT_DIR): Promise<{ dir: string; tabs: { title: string; file: string; rows: number }[] }> {
+export async function fetchTaxonSheet(sheetId: string, dir: string = deploymentPath(DEFAULT_SNAPSHOT_DIR)): Promise<{ dir: string; tabs: { title: string; file: string; rows: number }[] }> {
   const token = accessToken();
   const meta = await fileMeta(token, sheetId);
   const tabs = await sheetTabs(token, sheetId);

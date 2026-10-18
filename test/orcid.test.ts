@@ -13,7 +13,7 @@ import { loadOrcids, orcidRows } from "../src/load-orcids.js";
 import { orcidUrl, parseOrcid } from "../src/orcid.js";
 import { readChanges } from "../src/person-change.js";
 import { readOverlay, valueProblem, type PersonOverlayRow } from "../src/person-overlay.js";
-import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 // ORCID's own documented examples (support.orcid.org, "Structure of the ORCID
 // identifier"), and two more made with the same check digit. Synthetic: none
@@ -279,6 +279,7 @@ async function personPage() {
   const overlayPath = join(dir, "person-overlay.csv");
   await writeFile(overlayPath, "person_ref,field,value,author,reason\n");
   const app = createApp({
+    ...(await scratchPaths()),
     db,
     config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
     inat: unusedInat,

@@ -4,7 +4,7 @@ import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { ACTING_COOKIE } from "../src/app/acting.js";
 import { determinationHistory } from "../src/app/record.js";
-import { createMemoryDb, insertCleanSample } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 import { en } from "../src/app/messages/en.js";
 
 /**
@@ -118,6 +118,7 @@ async function recordApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
   const people = { alice, bob, staffer };
   const db = createKysely(instance);
   const app = createApp({
+    ...(await scratchPaths()),
     db,
     // Sandbox, not development: development makes everyone an admin, and the
     // reach gate is half of what these tests are about.

@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { LEGACY_EXPORT_COLUMNS, writeLegacyExport } from "../src/legacy-export.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
-import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows } from "./helpers.js";
+import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 import { createKysely } from "../src/db.js";
 import { createApp } from "../src/app/server.js";
 
@@ -391,6 +391,7 @@ describe("the Exports page", () => {
     await c.run(`INSERT INTO person (entity_id, display_name) VALUES (1, 'A Person')`);
     if (admin) await c.run(`INSERT INTO person_admin (person_id) VALUES (1)`);
     return createApp({
+      ...(await scratchPaths()),
       db: createKysely(instance),
       config: { environment: "sandbox", origin: "https://beeline.example", exportsDir },
       inat,

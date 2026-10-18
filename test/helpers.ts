@@ -96,6 +96,28 @@ export const OPEN_SEASON = ((today: Date) =>
 export const openSeasonDate = (month: number, day: number): string =>
   `${OPEN_SEASON}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 
+/**
+ * Every file the app writes, in a directory of its own. Spread it into
+ * createApp, then name any path the test reads back:
+ *   createApp({ db, config, ...(await scratchPaths()), correctionsPath })
+ *
+ * The defaults are the developer's own files under `data/`, and a test that
+ * fell back to one wrote fake history into them (beeline-yq65); createApp now
+ * refuses to fall back under Vitest (src/deployment-path.ts).
+ */
+export async function scratchPaths() {
+  const dir = await mkdtemp(join(tmpdir(), "beeline-app-"));
+  return {
+    correctionsPath: join(dir, "corrections.csv"),
+    personOverlayPath: join(dir, "person-overlay.csv"),
+    sampleOverlayPath: join(dir, "sample-overlay.csv"),
+    personChangesPath: join(dir, "person-change.csv"),
+    sampleChangesPath: join(dir, "sample-change.csv"),
+    sampleStatePath: join(dir, "sample-state.csv"),
+    printRunsDir: join(dir, "print-runs"),
+  };
+}
+
 export async function rows(conn: DuckDBConnection, sql: string): Promise<unknown[][]> {
   const result = await conn.run(sql);
   return result.getRows();

@@ -26,9 +26,9 @@ import { applySampleEdit, loadSampleForStaff } from "./sample-edit.js";
  * becomes a `sample_locality_override` the follow rule respects. A sample
  * with none — imported, never linked — goes through the corrections overlay
  * exactly as the collector's own edit would, keyed by its staging rows; there
- * is no override to remove on that path, since a correction is retired by
- * writing the staged value back. The screen does not show the split: staff
- * are fixing a place name, not choosing a mechanism.
+ * is no override to remove on that path, since a correction is undone by
+ * writing the staged value back as a new correction. The screen does not
+ * show the split: staff are fixing a place name, not choosing a mechanism.
  */
 
 export interface StaffLocalityDeps {

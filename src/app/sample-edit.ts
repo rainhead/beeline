@@ -154,7 +154,7 @@ export async function applySampleEdit(
       const newValue = (input.values[f.name] ?? "").trim();
       // Identity events (base === new) are written too: they replace a stale
       // app row and shadow any git-curated row for the key, so reverting to
-      // the staged value retires the correction on rebuild (beeline-eef).
+      // the staged value applies as a no-op on rebuild (beeline-eef).
       events.push({ _id: member._id, field: f.staging, base_value: base, new_value: newValue, author: input.author, reason });
     }
   }

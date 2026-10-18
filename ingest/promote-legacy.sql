@@ -19,9 +19,12 @@
 -- Staff fixes for rows whose upstream is frozen or wrong forever, keyed by
 -- Mongo _id + staging column name, curated in git (the CSV survives the
 -- blow-away era the way determiner-aliases.csv does). Three-way per ADR
--- 0004 with the staged row as "theirs": staged = base → applies; staged =
--- new (someone fixed upstream after all) → retires; staged moved elsewhere
--- → the correction stands and a finding opens. The correctable vocabulary
+-- 0004 with the staged row as "theirs": staged = base or staged = new →
+-- applies; staged moved anywhere else → the correction stands and a finding
+-- opens. Staged = new is either upstream agreeing with the correction or an
+-- in-app revert (beeline-eef), whose event has base = new = staged; both
+-- apply as a no-op, and nothing retires a correction but a person replacing
+-- it (beeline-9z4). The correctable vocabulary
 -- is the identity/parse/label columns promotion reads — extend the three
 -- lists below together when widening it.
 -- Two correction files share one vocabulary and one merge rule: the
@@ -71,8 +74,8 @@ SELECT c.*,
   CASE
     WHEN r._id IS NULL THEN 'orphaned'
     WHEN staged_value IS NULL THEN 'invalid_field'
-    WHEN staged_value = coalesce(c.new_value, '') THEN 'retired'
-    WHEN staged_value = coalesce(c.base_value, '') THEN 'applies'
+    WHEN staged_value = coalesce(c.base_value, '')
+      OR staged_value = coalesce(c.new_value, '') THEN 'applies'
     ELSE 'conflict'
   END AS status
 FROM legacy_correction c

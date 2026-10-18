@@ -53,7 +53,6 @@ export interface PromotionCounts {
   /** Logins two person records file under: one human twice, or a shared account. */
   collectorDuplicateLogins: number;
   correctionsApplied: number;
-  correctionsRetired: number;
   correctionConflicts: number;
   /**
    * Rows staged from the legacy name register. Zero means there was no
@@ -204,9 +203,6 @@ export async function promoteLegacy(
     ),
     correctionsApplied: await scalar(
       "SELECT count(*) FROM legacy_correction_state WHERE status IN ('applies', 'conflict')",
-    ),
-    correctionsRetired: await scalar(
-      "SELECT count(*) FROM legacy_correction_state WHERE status = 'retired'",
     ),
     registerStaged: await scalar("SELECT count(*) FROM legacy_username_register"),
     registerNameConflicts: await scalar("SELECT count(*) FROM legacy_register_name_conflict"),

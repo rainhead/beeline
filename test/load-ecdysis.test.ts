@@ -273,6 +273,9 @@ describe("names the tree lacks", () => {
       conn,
       `INSERT INTO specimen (sample_id, specimen_number, field_number) SELECT sample_id, 5, '2303970' FROM specimen WHERE entity_id = ${a} RETURNING entity_id`,
     )) as [[number]];
+    // Bombyliidae is in neither the tree nor, here, anything but ITIS, which
+    // is enough to say the bee fly is not a bee.
+    await conn.run(`INSERT INTO itis_taxon (tsn, rank, name, usage, itis_as_of) VALUES (130920, 'family', 'Bombyliidae', 'valid', DATE '2026-08-26')`);
 
     const result = await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(result).toMatchObject({ loaded: 4, unresolvedNames: [{ name: "Bombus (Pyrobombus)", rows: 1 }] });
@@ -314,6 +317,18 @@ describe("names the tree lacks", () => {
     );
     const result = await loadEcdysis(conn, { path: join(dir, "export.csv"), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(result).toMatchObject({ loaded: 0, filedUnder: [], unresolvedNames: [{ name: "Xeromelecta larreae", rows: 1 }] });
+  });
+
+  test("a family column that names no family is no evidence either", async () => {
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('class', 'Insecta')`);
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-unknown-family-"));
+    await writeFile(
+      join(dir, "export.csv"),
+      "id,catalogNumber,recordID,scientificName,identifiedBy,dateIdentified,identificationQualifier,identificationRemarks,modified,class,family\n" +
+        "100,WSDA_2303966,occ-a,Euodynerus,Ellen Expert,2025,,,2025-09-23 14:13:48,Insecta,unknown\n",
+    );
+    const result = await loadEcdysis(conn, { path: join(dir, "export.csv"), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(result).toMatchObject({ loaded: 0, filedUnder: [], unresolvedNames: [{ name: "Euodynerus", rows: 1 }] });
   });
 
   test("with no family to say it is not a bee, an order does not catch it", async () => {

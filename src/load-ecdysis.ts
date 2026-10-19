@@ -249,7 +249,8 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     // that names a genus the tree lacks says nothing the occurrence can be
     // trusted to classify, and waits. Falling back takes evidence that the
     // record is not a bee's: a non-bee family above the node reached, or, for
-    // the current identification, on the occurrence. A bee family on either
+    // the current identification, on the occurrence — a family the tree or
+    // ITIS knows, so that 'unknown' in the column says nothing. A bee family on either
     // side, or no family anywhere, and the record waits for its name, as
     // before. A qualifier says something about a species epithet, so a record
     // filed above species keeps it in the notes instead.
@@ -319,7 +320,9 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                      WHEN filed_id IS NOT NULL
                       AND coalesce(filed_family, '') NOT IN (${bees})
                       AND coalesce(occ_family, '') NOT IN (${bees})
-                      AND (filed_family IS NOT NULL OR (is_current AND coalesce(occ_family, '') <> ''))
+                      AND (filed_family IS NOT NULL
+                           OR (is_current AND (EXISTS (SELECT 1 FROM animal f WHERE f.rank = 'family' AND f.scientific_name = occ_family)
+                                               OR EXISTS (SELECT 1 FROM itis_taxon t WHERE t.rank = 'family' AND t.name = occ_family))))
                      THEN filed_id END AS animal_id,
                 CASE WHEN nodes = 1 THEN exact_qualifier END AS qualifier
          FROM judged

@@ -3,6 +3,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { adoptItisNames, type AdoptedName } from "./adopt-itis.js";
+import { BEE_FAMILIES } from "./bee-families.js";
 import { DEFAULT_DB } from "./person-change.js";
 
 /**
@@ -25,8 +26,15 @@ import { DEFAULT_DB } from "./person-change.js";
  * The join is the museum's catalog number: `WSDA_2303966` is Beeline's field
  * number `2303966` under the collection's prefix. Occurrences that match no
  * specimen are counted and sampled, never invented. Names resolve against the
- * curated taxonomy by spelling; one that does not is a curation task
- * (beeline-45v.1) and is reported, never minted here. Determiners resolve
+ * curated taxonomy by spelling, after taking in any ITIS accepts. A name the
+ * tree still lacks is a curation task (beeline-45v.1), never minted here,
+ * and what happens to its record meanwhile depends on what it is. Bycatch
+ * is recorded under the nearest name the tree does hold — the genus it
+ * names, else the family, order or class its occurrence names — with what
+ * Ecdysis wrote kept as the verbatim identification, because a question
+ * about a wasp must not hold a record back (Peter, 2026-10-18, beeline-wqht).
+ * A bee's record, or one whose name two nodes carry, waits and is reported:
+ * there the exact name is the point of the determination. Determiners resolve
  * through the same alias file legacy promotion uses; the verbatim name is
  * kept beside whichever person it reached.
  *
@@ -83,8 +91,10 @@ export interface LoadEcdysisResult {
   alreadyLoaded: number;
   /** Names the tree lacked and ITIS accepts, adopted into the tree with any ancestors it also lacked. */
   adopted: AdoptedName[];
-  /** Rows whose name no node carries, or two do, and ITIS could not supply; each is a curation task. */
+  /** Rows held back: a bee name no node carries, or a name two do, and ITIS could not supply; each is a curation task. */
   unresolvedNames: Array<{ name: string; rows: number }>;
+  /** Bycatch rows recorded under a broader name the tree holds, since their own is not there yet; each is a curation task too. */
+  filedUnder: Array<{ name: string; under: string; rows: number }>;
   loaded: number;
   /** The determiners seen, and whether each reached a person. */
   determiners: Array<{ name: string; rows: number; resolved: boolean }>;
@@ -97,7 +107,22 @@ const rows = async (conn: DuckDBConnection, sql: string, params: unknown[] = [])
 const scalar = async (conn: DuckDBConnection, sql: string, params: unknown[] = []) =>
   Number((await rows(conn, sql, params))[0]?.[0] ?? 0);
 
+/** How many names a load's reports list; a list this long may be longer still. */
+export const REPORTED_NAMES = 40;
+
 const sqlString = (s: string) => `'${s.replaceAll("'", "''")}'`;
+
+/**
+ * A column an export may not carry, as text, or NULL where it is absent: the
+ * archive's occurrences hold the higher classification, and a flat export or
+ * an older file need not.
+ */
+async function optionalColumn(conn: DuckDBConnection, file: string, column: string): Promise<string> {
+  const names = new Set(
+    (await rows(conn, `DESCRIBE SELECT * FROM read_csv(${sqlString(file)}, header = true, all_varchar = true)`)).map((r) => String(r[0])),
+  );
+  return names.has(column) ? `trim("${column}")` : "CAST(NULL AS VARCHAR)";
+}
 
 /** The archive's two files, or the one flat CSV. */
 function locate(path: string): { input: "archive"; occurrences: string; identifications: string } | { input: "flat"; occurrences: string } {
@@ -126,9 +151,12 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     // Everything as text: Symbiota's exports mix formats within a column
     // (a year, "s.d." and "female" in dateIdentified), and type sniffing
     // would fail the file on the first surprise.
+    const occurrenceColumn = (column: string) => optionalColumn(conn, files.occurrences, column);
     await conn.run(
       `CREATE OR REPLACE TEMP TABLE ecd_occurrence AS
-       SELECT "id" AS occ_id, trim("catalogNumber") AS catalog_number, "recordID" AS occurrence_record_id
+       SELECT "id" AS occ_id, trim("catalogNumber") AS catalog_number, "recordID" AS occurrence_record_id,
+              ${await occurrenceColumn("family")} AS family, ${await occurrenceColumn("order")} AS order_name,
+              ${await occurrenceColumn("class")} AS class_name
        FROM read_csv(${sqlString(files.occurrences)}, header = true, all_varchar = true)`,
     );
     // An occurrence row read as its current identification, keyed by the
@@ -140,7 +168,8 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                 concat('occ:', "recordID", ':', md5(concat_ws('|', trim("scientificName"), trim("identifiedBy"), trim("dateIdentified"), trim("identificationQualifier")))) AS record_id,
                 trim("identifiedBy") AS identified_by, trim("dateIdentified") AS date_identified,
                 trim("identificationQualifier") AS qualifier_text, trim("scientificName") AS scientific_name,
-                true AS is_current, trim("identificationRemarks") AS remarks, "modified" AS entered_text
+                true AS is_current, trim("identificationRemarks") AS remarks, "modified" AS entered_text,
+                ${await occurrenceColumn("genus")} AS genus_text
          FROM read_csv(${sqlString(files.occurrences)}, header = true, all_varchar = true)`;
     if (files.input === "archive") {
       await conn.run(
@@ -149,7 +178,8 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                 trim("identifiedBy") AS identified_by, trim("dateIdentified") AS date_identified,
                 trim("identificationQualifier") AS qualifier_text, trim("scientificName") AS scientific_name,
                 "identificationIsCurrent" = '1' AS is_current,
-                trim("identificationRemarks") AS remarks, "modified" AS entered_text
+                trim("identificationRemarks") AS remarks, "modified" AS entered_text,
+                ${await optionalColumn(conn, files.identifications, "genus")} AS genus_text
          FROM read_csv(${sqlString(files.identifications)}, header = true, all_varchar = true)`,
       );
       // Symbiota keeps an occurrence's current determination on the
@@ -210,10 +240,34 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     // else it said ('zonalis group', '?') goes to the notes with the remarks,
     // since it is what the determiner wrote and nowhere else would keep it.
     // 'af.' is a spelling of 'aff.' seen 55 times in one export.
+    //
+    // A name no node spells falls back, for bycatch only, to the nearest name
+    // the tree holds: the genus the identification names, else — for the
+    // current identification alone — the family, order or class of its
+    // occurrence, the first that exactly one node carries. The occurrence's
+    // classification is its current identification's, so a superseded row
+    // that names a genus the tree lacks says nothing the occurrence can be
+    // trusted to classify, and waits. Falling back takes evidence that the
+    // record is not a bee's: a non-bee family above the node reached, or, for
+    // the current identification, on the occurrence — a family the tree or
+    // ITIS knows, so that 'unknown' in the column says nothing. A bee family on either
+    // side, or no family anywhere, and the record waits for its name, as
+    // before. A qualifier says something about a species epithet, so a record
+    // filed above species keeps it in the notes instead.
+    const bees = BEE_FAMILIES.map(sqlString).join(", ");
+    await conn.run(
+      `CREATE OR REPLACE TEMP TABLE ecd_ancestry AS
+       WITH RECURSIVE up(node_id, anc_id) AS (
+         SELECT entity_id, entity_id FROM animal
+         UNION ALL
+         SELECT up.node_id, a.parent_id FROM up JOIN animal a ON a.entity_id = up.anc_id WHERE a.parent_id IS NOT NULL
+       ) SELECT * FROM up`,
+    );
     await conn.run(
       `CREATE OR REPLACE TEMP TABLE ecd_candidate AS
        WITH ident AS (
          SELECT i.*, m.specimen_id, m.occurrence_record_id,
+                o.family AS occ_family, o.order_name AS occ_order, o.class_name AS occ_class,
                 lower(i.scientific_name) IN ('', 'undetermined', 'unidentified') AS placeholder,
                 nullif(lower(i.identified_by), 'unknown') AS by_text,
                 regexp_extract(i.qualifier_text, '^(cf|aff|af|nr)\\.?\\s+(\\S+)$', 1) AS q_word,
@@ -221,14 +275,15 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                 regexp_extract(i.scientific_name, '(\\S+)$', 1) AS last_word
          FROM ecd_identification i
          JOIN ecd_match m ON m.occ_id = i.occ_id
+         JOIN ecd_occurrence o ON o.occ_id = i.occ_id
          WHERE m.specimen_id IS NOT NULL
        ),
        named AS (
          SELECT ident.*,
                 (SELECT count(*) FROM animal a WHERE a.scientific_name = ident.scientific_name) AS nodes,
-                (SELECT min(a.entity_id) FROM animal a WHERE a.scientific_name = ident.scientific_name) AS animal_id,
+                (SELECT min(a.entity_id) FROM animal a WHERE a.scientific_name = ident.scientific_name) AS exact_id,
                 CASE WHEN q_word <> '' AND lower(q_epithet) = lower(last_word)
-                     THEN CASE q_word WHEN 'cf' THEN 'cf.' WHEN 'nr' THEN 'nr.' ELSE 'aff.' END END AS qualifier,
+                     THEN CASE q_word WHEN 'cf' THEN 'cf.' WHEN 'nr' THEN 'nr.' ELSE 'aff.' END END AS exact_qualifier,
                 CASE WHEN regexp_matches(date_identified, '^\\d{4}$') THEN CAST(concat(date_identified, '-01-01') AS DATE)
                      WHEN regexp_matches(date_identified, '^\\d{4}-\\d{2}$') THEN CAST(concat(date_identified, '-01') AS DATE)
                      WHEN regexp_matches(date_identified, '^\\d{4}-\\d{2}-\\d{2}$') THEN try_cast(date_identified AS DATE) END AS determined_on,
@@ -239,9 +294,48 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                 (SELECT min(p.entity_id) FROM ecd_alias al JOIN person p ON p.display_name = al.person
                   WHERE al.alias = ident.identified_by) AS determiner_id
          FROM ident
+       ),
+       filed AS (
+         SELECT named.*,
+                CASE WHEN nodes = 0 THEN coalesce(
+                  (SELECT CASE WHEN count(*) = 1 THEN min(a.entity_id) END FROM animal a
+                    WHERE a.rank = 'genus'
+                      AND a.scientific_name = coalesce(nullif(named.genus_text, ''), split_part(named.scientific_name, ' ', 1))),
+                  CASE WHEN named.is_current THEN coalesce(
+                    (SELECT CASE WHEN count(*) = 1 THEN min(a.entity_id) END FROM animal a WHERE a.rank = 'family' AND a.scientific_name = named.occ_family),
+                    (SELECT CASE WHEN count(*) = 1 THEN min(a.entity_id) END FROM animal a WHERE a.rank = 'order' AND a.scientific_name = named.occ_order),
+                    (SELECT CASE WHEN count(*) = 1 THEN min(a.entity_id) END FROM animal a WHERE a.rank = 'class' AND a.scientific_name = named.occ_class)) END)
+                END AS filed_id
+         FROM named
+       ),
+       judged AS (
+         SELECT filed.*,
+                (SELECT min(f.scientific_name) FROM ecd_ancestry u JOIN animal f ON f.entity_id = u.anc_id
+                  WHERE u.node_id = filed.filed_id AND f.rank = 'family') AS filed_family
+         FROM filed
+       ),
+       placed AS (
+         SELECT judged.*,
+                CASE WHEN nodes = 1 THEN exact_id
+                     WHEN filed_id IS NOT NULL
+                      AND coalesce(filed_family, '') NOT IN (${bees})
+                      AND coalesce(occ_family, '') NOT IN (${bees})
+                      AND (filed_family IS NOT NULL
+                           OR (is_current AND (EXISTS (SELECT 1 FROM animal f WHERE f.rank = 'family' AND f.scientific_name = occ_family)
+                                               OR EXISTS (SELECT 1 FROM itis_taxon t WHERE t.rank = 'family' AND t.name = occ_family))))
+                     THEN filed_id END AS animal_id,
+                CASE WHEN nodes = 1 THEN exact_qualifier END AS qualifier
+         FROM judged
+       ),
+       resolved AS (
+         SELECT placed.*,
+                nullif(concat_ws('; ',
+                  CASE WHEN qualifier IS NULL AND qualifier_text <> '' THEN qualifier_text END,
+                  nullif(remarks, '')), '') AS notes
+         FROM placed
        )
        SELECT *,
-              EXISTS (SELECT 1 FROM ecdysis_identification e WHERE e.record_id = named.record_id) AS already,
+              EXISTS (SELECT 1 FROM ecdysis_identification e WHERE e.record_id = resolved.record_id) AS already,
               -- The same identification under another key. A flat export
               -- and an archive key one identification differently, so an
               -- event on this specimen with this node, qualifier and
@@ -252,18 +346,20 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
               -- does re-enter one — and is left alone. A flat row, being
               -- current by definition, may also adopt the specimen's
               -- current Ecdysis record whatever claims it, since one
-              -- current identification cannot be two events.
+              -- current identification cannot be two events. The name as
+              -- written is part of what it says, since two names filed under
+              -- one broader node are not one identification, and so, for such
+              -- a record, are the notes its qualifier moved to.
               (SELECT min(d.entity_id) FROM determination d
-                WHERE d.specimen_id = named.specimen_id AND d.channel = 'ecdysis_import'
-                  AND d.animal_id = named.animal_id
-                  AND d.qualifier IS NOT DISTINCT FROM named.qualifier
-                  AND d.determiner_name IS NOT DISTINCT FROM CASE WHEN named.by_text IS NULL OR named.by_text = '' THEN NULL ELSE named.identified_by END
+                WHERE d.specimen_id = resolved.specimen_id AND d.channel = 'ecdysis_import'
+                  AND d.animal_id = resolved.animal_id
+                  AND d.qualifier IS NOT DISTINCT FROM resolved.qualifier
+                  AND d.verbatim_identification IS NOT DISTINCT FROM resolved.scientific_name
+                  AND (resolved.nodes = 1 OR d.notes IS NOT DISTINCT FROM resolved.notes)
+                  AND d.determiner_name IS NOT DISTINCT FROM CASE WHEN resolved.by_text IS NULL OR resolved.by_text = '' THEN NULL ELSE resolved.identified_by END
                   AND (NOT EXISTS (SELECT 1 FROM ecdysis_identification e WHERE e.determination_id = d.entity_id AND e.record_id NOT LIKE 'occ:%')
-                       OR ($1 AND EXISTS (SELECT 1 FROM determination_of_record r WHERE r.entity_id = d.entity_id)))) AS adopt_id,
-              nullif(concat_ws('; ',
-                CASE WHEN qualifier IS NULL AND qualifier_text <> '' THEN qualifier_text END,
-                nullif(remarks, '')), '') AS notes
-       FROM named`,
+                       OR ($1 AND EXISTS (SELECT 1 FROM determination_of_record r WHERE r.entity_id = d.entity_id)))) AS adopt_id
+       FROM resolved`,
       [files.input === "flat"],
     );
     // Exports must arrive in the order they were taken: an older one loaded
@@ -295,9 +391,16 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       await rows(
         conn,
         `SELECT scientific_name, count(*) FROM ecd_candidate
-         WHERE NOT placeholder AND NOT already AND adopt_id IS NULL AND nodes <> 1 GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 40`,
+         WHERE NOT placeholder AND NOT already AND adopt_id IS NULL AND animal_id IS NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT ${REPORTED_NAMES}`,
       )
     ).map((r) => ({ name: String(r[0]), rows: Number(r[1]) }));
+    const filedUnder = (
+      await rows(
+        conn,
+        `SELECT c.scientific_name, a.scientific_name, count(*) FROM ecd_candidate c JOIN animal a ON a.entity_id = c.animal_id
+         WHERE NOT c.placeholder AND NOT c.already AND c.adopt_id IS NULL AND c.nodes = 0 GROUP BY 1, 2 ORDER BY 3 DESC, 1 LIMIT ${REPORTED_NAMES}`,
+      )
+    ).map((r) => ({ name: String(r[0]), under: String(r[1]), rows: Number(r[2]) }));
     const determiners = (
       await rows(
         conn,
@@ -317,7 +420,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                    ELSE coalesce(c.entered_at::TIMESTAMPTZ, $1::TIMESTAMPTZ - INTERVAL 1 SECOND) END
                 + INTERVAL (row_number() OVER (ORDER BY c.specimen_id, c.is_current, c.entered_at NULLS FIRST, c.record_id)) MICROSECOND AS recorded_at
        FROM ecd_candidate c
-       WHERE NOT c.placeholder AND NOT c.already AND c.adopt_id IS NULL AND c.nodes = 1`,
+       WHERE NOT c.placeholder AND NOT c.already AND c.adopt_id IS NULL AND c.animal_id IS NOT NULL`,
       [now.toISOString()],
     );
     // Adoptions: the recordID is linked to the event that already stands.
@@ -364,6 +467,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       alreadyLoaded,
       adopted: adoptedNames,
       unresolvedNames,
+      filedUnder,
       loaded,
       determiners,
     };

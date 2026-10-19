@@ -3,7 +3,7 @@ import { unzipSync } from "fflate";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { loadEcdysis, type LoadEcdysisResult } from "./load-ecdysis.js";
+import { loadEcdysis, REPORTED_NAMES, type LoadEcdysisResult } from "./load-ecdysis.js";
 
 /**
  * Fetch an Ecdysis collection's Darwin Core archive and load it (beeline-9ut.1),
@@ -293,6 +293,8 @@ export function describeFetch(r: FetchEcdysisResult): string {
     `${l.matched}/${l.occurrences} occurrences matched`,
   ];
   if (l.adopted.length > 0) parts.push(`${l.adopted.length} name(s) adopted from ITIS: ${l.adopted.map((a) => a.name).join(", ")}`);
-  if (l.unresolvedNames.length > 0) parts.push(`${l.unresolvedNames.length} name(s) unresolved`);
+  const count = (n: number) => (n >= REPORTED_NAMES ? `at least ${n}` : String(n));
+  if (l.filedUnder.length > 0) parts.push(`${count(l.filedUnder.length)} bycatch name(s) recorded under a broader name`);
+  if (l.unresolvedNames.length > 0) parts.push(`${count(l.unresolvedNames.length)} name(s) unresolved`);
   return parts.join("; ");
 }

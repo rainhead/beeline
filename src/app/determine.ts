@@ -1,5 +1,6 @@
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import type { Database, DraftCaste, DraftSex } from "../model.js";
+import { BEE_FAMILIES } from "../bee-families.js";
 import { NumberIndex, type NumberEntry } from "../determination-numbers.js";
 
 /**
@@ -20,8 +21,7 @@ import { NumberIndex, type NumberEntry } from "../determination-numbers.js";
  * can simply be overwritten.
  */
 
-/** Bee families. Everything else in the tree is bycatch, offered only on request. */
-export const BEE_FAMILIES: readonly string[] = ["Andrenidae", "Apidae", "Colletidae", "Halictidae", "Megachilidae", "Melittidae"];
+export { BEE_FAMILIES };
 
 export interface EntryValue {
   animalId: number | null;

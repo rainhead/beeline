@@ -264,7 +264,7 @@ export const en = {
       host: "Host plant",
       specimens: "Specimens",
     },
-    allClear: "Nothing needs your attention this season, and nothing is waiting on labels. Thank you!",
+    allClear: "None of your samples need attention this season, and none are waiting on labels. Thank you!",
     /**
      * The schedule, in words a volunteer has: never "sync", and never the
      * timestamp of the last run — which the sandbox printed in UTC as 9am
@@ -379,6 +379,12 @@ export const en = {
      * silently dropped: a flag that vanishes without explanation reads as a
      * bug, and these are still fixable.
      */
+    /** This season's specimens nobody has named yet, linking to where a volunteer names them. */
+    identify: {
+      note: (specimens: number) =>
+        `${n(specimens)} of your specimens from this season ${specimens === 1 ? "is" : "are"} waiting to be identified.`,
+      link: "Identify them",
+    },
     settled: {
       note: (samples: number) =>
         `${n(samples)} older ${samples === 1 ? "sample" : "samples"} of yours still ${samples === 1 ? "carries a flag" : "carry flags"}. ` +
@@ -838,7 +844,9 @@ export const en = {
       back: (sampleNumber: string) => `← Sample ${sampleNumber}`,
       fieldNumber: "Field number",
       /** An imported specimen: no label row at all. */
-      fieldNumberNone: "Not numbered — this specimen's label predates field numbering.",
+      identifyPrompt: "No volunteer has named this specimen yet.",
+      identifyLink: "Identify your specimens",
+      fieldNumberNone:"Not numbered — this specimen's label predates field numbering.",
       /**
        * A specimen a canceled run had numbered (beeline-1kb.21): the number
        * is burned and stays visible in the Labels table below, and the next

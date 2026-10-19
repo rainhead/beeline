@@ -361,7 +361,7 @@ describe("the front page", () => {
                     SELECT s.entity_id, 1 FROM sample s JOIN sample_collector c ON c.sample_id = s.entity_id WHERE c.person_id = ${alice}`);
     await conn.run(`UPDATE sample SET specimen_count = 1 WHERE entity_id IN (SELECT sample_id FROM sample_collector WHERE person_id = ${alice})`);
     const clean = await (await app.request("/")).text();
-    expect(clean).toContain("Nothing needs your attention this season");
+    expect(clean).toContain("None of your samples need attention this season");
     expect(clean).not.toContain("<table>");
   });
 });

@@ -13,8 +13,9 @@ import {
   UnknownTaxon,
   UnreachableSpecimens,
 } from "../src/app/determine.js";
+import { loadDashboard } from "../src/app/dashboard.js";
 import { commitDeterminationDrafts } from "../src/commit-determinations.js";
-import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, OPEN_SEASON, rows, scratchPaths } from "./helpers.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
@@ -336,5 +337,20 @@ describe("the page and its endpoints", () => {
     expect((await json("/determinations/drafts", { writes: "all of them" })).status).toBe(400);
     expect((await json("/determinations/drafts", { writes: [null] })).status).toBe(400);
     expect((await json("/determinations/drafts", { writes: [{ specimenId: "abc" }] })).status).toBe(400);
+  });
+});
+
+describe("the front page prompt", () => {
+  it("counts the open season unnamed specimens, and nobody else", async () => {
+    const { db, ada, bo } = await fixture();
+    const season = (await entrySeasons(db, ada, ada)).find((s) => s.season === OPEN_SEASON);
+    const expected = season === undefined || season.unnamed === 0 ? null : { season: OPEN_SEASON, unnamed: season.unnamed };
+    expect((await loadDashboard(db, ada)).toName).toEqual(expected);
+    expect((await loadDashboard(db, bo)).toName).toEqual({ season: OPEN_SEASON, unnamed: 1 });
+  });
+
+  it("says nothing when the person has no specimens", async () => {
+    const { db, gil } = await fixture();
+    expect((await loadDashboard(db, gil)).toName).toBeNull();
   });
 });

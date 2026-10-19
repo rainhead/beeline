@@ -297,7 +297,7 @@ describe("the print-run screens", () => {
     expect(page).not.toContain("labels printed");
     // The lede and the all-clear both say the words; the summary must not.
     expect(page).not.toContain("sample is waiting on labels");
-    expect(page).toContain("nothing is waiting on labels");
+    expect(page).toContain("none are waiting on labels");
   });
 
   it("answers a refusal with its reason, not a bare failure", async () => {

@@ -1,5 +1,6 @@
 import { EMPTY_QUERY, listingHref, MINE } from "../listings.js";
 import { sampleHref } from "../record.js";
+import { determineHref } from "./determine.js";
 import type { Geoprivacy, QcSeverity } from "../../model.js";
 import type { Messages } from "../messages/index.js";
 import {
@@ -402,6 +403,8 @@ export function QcHome(props: {
   atlas?: { code: string; name: string } | null;
   /** This season's days whose run of sample numbers skips one; advisory, below the table. */
   skipped?: SkippedDay[];
+  /** This season's specimens still to be named, with the season the identify screen should open on. */
+  toName?: { season: number; unnamed: number } | null;
   /**
    * "Check iNaturalist now" (beeline-yso): absent where the instance cannot
    * check, as on proofing surfaces; otherwise whether the person has an
@@ -434,6 +437,13 @@ export function QcHome(props: {
       {props.check?.notice !== undefined && (
         <Callout tone={props.check.notice.kind === "done" ? "success" : props.check.notice.kind === "failed" ? "warning" : "neutral"}>
           <Meta block>{checkNoticeText(m, props.check.notice)}</Meta>
+        </Callout>
+      )}
+      {props.toName != null && (
+        <Callout>
+          <Meta block>
+            {m.qc.identify.note(props.toName.unnamed)} <a href={determineHref("sample", props.toName.season)}>{m.qc.identify.link}</a>
+          </Meta>
         </Callout>
       )}
       {settledFlagged > 0 && (

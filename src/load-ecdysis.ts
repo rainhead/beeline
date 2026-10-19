@@ -107,6 +107,9 @@ const rows = async (conn: DuckDBConnection, sql: string, params: unknown[] = [])
 const scalar = async (conn: DuckDBConnection, sql: string, params: unknown[] = []) =>
   Number((await rows(conn, sql, params))[0]?.[0] ?? 0);
 
+/** How many names a load's reports list; a list this long may be longer still. */
+export const REPORTED_NAMES = 40;
+
 const sqlString = (s: string) => `'${s.replaceAll("'", "''")}'`;
 
 /**
@@ -239,14 +242,17 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     // 'af.' is a spelling of 'aff.' seen 55 times in one export.
     //
     // A name no node spells falls back, for bycatch only, to the nearest name
-    // the tree holds: the genus the identification names, else the family,
-    // order or class of its occurrence, the first that exactly one node
-    // carries. The occurrence's classification describes its current
-    // identification, which is the one a superseded row most often refines.
-    // A bee — by the family of the node reached, or by the occurrence's own —
-    // does not fall back: its record waits for the name, as before. A
-    // qualifier says something about a species epithet, so a record filed
-    // above species keeps it in the notes instead.
+    // the tree holds: the genus the identification names, else — for the
+    // current identification alone — the family, order or class of its
+    // occurrence, the first that exactly one node carries. The occurrence's
+    // classification is its current identification's, so a superseded row
+    // that names a genus the tree lacks says nothing the occurrence can be
+    // trusted to classify, and waits. Falling back takes evidence that the
+    // record is not a bee's: a non-bee family above the node reached, or, for
+    // the current identification, on the occurrence. A bee family on either
+    // side, or no family anywhere, and the record waits for its name, as
+    // before. A qualifier says something about a species epithet, so a record
+    // filed above species keeps it in the notes instead.
     const bees = BEE_FAMILIES.map(sqlString).join(", ");
     await conn.run(
       `CREATE OR REPLACE TEMP TABLE ecd_ancestry AS
@@ -294,22 +300,36 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                   (SELECT CASE WHEN count(*) = 1 THEN min(a.entity_id) END FROM animal a
                     WHERE a.rank = 'genus'
                       AND a.scientific_name = coalesce(nullif(named.genus_text, ''), split_part(named.scientific_name, ' ', 1))),
-                  (SELECT CASE WHEN count(*) = 1 THEN min(a.entity_id) END FROM animal a WHERE a.rank = 'family' AND a.scientific_name = named.occ_family),
-                  (SELECT CASE WHEN count(*) = 1 THEN min(a.entity_id) END FROM animal a WHERE a.rank = 'order' AND a.scientific_name = named.occ_order),
-                  (SELECT CASE WHEN count(*) = 1 THEN min(a.entity_id) END FROM animal a WHERE a.rank = 'class' AND a.scientific_name = named.occ_class))
+                  CASE WHEN named.is_current THEN coalesce(
+                    (SELECT CASE WHEN count(*) = 1 THEN min(a.entity_id) END FROM animal a WHERE a.rank = 'family' AND a.scientific_name = named.occ_family),
+                    (SELECT CASE WHEN count(*) = 1 THEN min(a.entity_id) END FROM animal a WHERE a.rank = 'order' AND a.scientific_name = named.occ_order),
+                    (SELECT CASE WHEN count(*) = 1 THEN min(a.entity_id) END FROM animal a WHERE a.rank = 'class' AND a.scientific_name = named.occ_class)) END)
                 END AS filed_id
          FROM named
        ),
-       resolved AS (
+       judged AS (
          SELECT filed.*,
+                (SELECT min(f.scientific_name) FROM ecd_ancestry u JOIN animal f ON f.entity_id = u.anc_id
+                  WHERE u.node_id = filed.filed_id AND f.rank = 'family') AS filed_family
+         FROM filed
+       ),
+       placed AS (
+         SELECT judged.*,
                 CASE WHEN nodes = 1 THEN exact_id
                      WHEN filed_id IS NOT NULL
-                      AND coalesce(filed.occ_family, '') NOT IN (${bees})
-                      AND NOT EXISTS (SELECT 1 FROM ecd_ancestry u JOIN animal f ON f.entity_id = u.anc_id
-                                       WHERE u.node_id = filed.filed_id AND f.rank = 'family' AND f.scientific_name IN (${bees}))
+                      AND coalesce(filed_family, '') NOT IN (${bees})
+                      AND coalesce(occ_family, '') NOT IN (${bees})
+                      AND (filed_family IS NOT NULL OR (is_current AND coalesce(occ_family, '') <> ''))
                      THEN filed_id END AS animal_id,
                 CASE WHEN nodes = 1 THEN exact_qualifier END AS qualifier
-         FROM filed
+         FROM judged
+       ),
+       resolved AS (
+         SELECT placed.*,
+                nullif(concat_ws('; ',
+                  CASE WHEN qualifier IS NULL AND qualifier_text <> '' THEN qualifier_text END,
+                  nullif(remarks, '')), '') AS notes
+         FROM placed
        )
        SELECT *,
               EXISTS (SELECT 1 FROM ecdysis_identification e WHERE e.record_id = resolved.record_id) AS already,
@@ -323,17 +343,19 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
               -- does re-enter one — and is left alone. A flat row, being
               -- current by definition, may also adopt the specimen's
               -- current Ecdysis record whatever claims it, since one
-              -- current identification cannot be two events.
+              -- current identification cannot be two events. The name as
+              -- written is part of what it says, since two names filed under
+              -- one broader node are not one identification, and so, for such
+              -- a record, are the notes its qualifier moved to.
               (SELECT min(d.entity_id) FROM determination d
                 WHERE d.specimen_id = resolved.specimen_id AND d.channel = 'ecdysis_import'
                   AND d.animal_id = resolved.animal_id
                   AND d.qualifier IS NOT DISTINCT FROM resolved.qualifier
+                  AND d.verbatim_identification IS NOT DISTINCT FROM resolved.scientific_name
+                  AND (resolved.nodes = 1 OR d.notes IS NOT DISTINCT FROM resolved.notes)
                   AND d.determiner_name IS NOT DISTINCT FROM CASE WHEN resolved.by_text IS NULL OR resolved.by_text = '' THEN NULL ELSE resolved.identified_by END
                   AND (NOT EXISTS (SELECT 1 FROM ecdysis_identification e WHERE e.determination_id = d.entity_id AND e.record_id NOT LIKE 'occ:%')
-                       OR ($1 AND EXISTS (SELECT 1 FROM determination_of_record r WHERE r.entity_id = d.entity_id)))) AS adopt_id,
-              nullif(concat_ws('; ',
-                CASE WHEN qualifier IS NULL AND qualifier_text <> '' THEN qualifier_text END,
-                nullif(remarks, '')), '') AS notes
+                       OR ($1 AND EXISTS (SELECT 1 FROM determination_of_record r WHERE r.entity_id = d.entity_id)))) AS adopt_id
        FROM resolved`,
       [files.input === "flat"],
     );
@@ -366,14 +388,14 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       await rows(
         conn,
         `SELECT scientific_name, count(*) FROM ecd_candidate
-         WHERE NOT placeholder AND NOT already AND adopt_id IS NULL AND animal_id IS NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 40`,
+         WHERE NOT placeholder AND NOT already AND adopt_id IS NULL AND animal_id IS NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT ${REPORTED_NAMES}`,
       )
     ).map((r) => ({ name: String(r[0]), rows: Number(r[1]) }));
     const filedUnder = (
       await rows(
         conn,
         `SELECT c.scientific_name, a.scientific_name, count(*) FROM ecd_candidate c JOIN animal a ON a.entity_id = c.animal_id
-         WHERE NOT c.placeholder AND NOT c.already AND c.adopt_id IS NULL AND c.nodes = 0 GROUP BY 1, 2 ORDER BY 3 DESC, 1 LIMIT 40`,
+         WHERE NOT c.placeholder AND NOT c.already AND c.adopt_id IS NULL AND c.nodes = 0 GROUP BY 1, 2 ORDER BY 3 DESC, 1 LIMIT ${REPORTED_NAMES}`,
       )
     ).map((r) => ({ name: String(r[0]), under: String(r[1]), rows: Number(r[2]) }));
     const determiners = (

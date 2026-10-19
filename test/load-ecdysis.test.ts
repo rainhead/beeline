@@ -315,6 +315,67 @@ describe("names the tree lacks", () => {
     const result = await loadEcdysis(conn, { path: join(dir, "export.csv"), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(result).toMatchObject({ loaded: 0, filedUnder: [], unresolvedNames: [{ name: "Xeromelecta larreae", rows: 1 }] });
   });
+
+  test("with no family to say it is not a bee, an order does not catch it", async () => {
+    // An export without the classification columns, and a genus the tree
+    // lacks: Hymenoptera is in the tree, but so are the bees.
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('order', 'Hymenoptera')`);
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-no-family-"));
+    await writeFile(
+      join(dir, "export.csv"),
+      "id,catalogNumber,recordID,scientificName,identifiedBy,dateIdentified,identificationQualifier,identificationRemarks,modified,order\n" +
+        "100,WSDA_2303966,occ-a,Euodynerus,Ellen Expert,2025,,,2025-09-23 14:13:48,Hymenoptera\n",
+    );
+    const result = await loadEcdysis(conn, { path: join(dir, "export.csv"), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(result).toMatchObject({ loaded: 0, filedUnder: [], unresolvedNames: [{ name: "Euodynerus", rows: 1 }] });
+  });
+
+  test("a superseded identification is not classified by what the occurrence is now", async () => {
+    // Ecdysis calls the specimen a bee fly now; an earlier row called it a
+    // potter wasp, a genus the tree lacks. The occurrence's Bombyliidae is not
+    // that row's family, so it waits; the current row is filed by it.
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('class', 'Insecta')`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) SELECT 'family', 'Bombyliidae', entity_id FROM animal WHERE scientific_name = 'Insecta'`);
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-history-"));
+    await writeFile(
+      join(dir, "occurrences.csv"),
+      "id,catalogNumber,recordID,scientificName,identifiedBy,dateIdentified,identificationQualifier,identificationRemarks,modified,class,order,family,genus\n" +
+        "100,WSDA_2303966,occ-a,Hemipenthes sinuosa,Ellen Expert,2025,,,2025-09-23 14:13:48,Insecta,Diptera,Bombyliidae,Hemipenthes\n",
+    );
+    await writeFile(
+      join(dir, "identifications.csv"),
+      "coreid,identifiedBy,dateIdentified,identificationQualifier,scientificName,identificationIsCurrent,genus,identificationRemarks,recordID,modified\n" +
+        "100,Ellen Expert,2024,,Euodynerus,0,Euodynerus,,id-a1,2024-05-01 10:00:00\n" +
+        "100,Ellen Expert,2025,,Hemipenthes sinuosa,1,Hemipenthes,,id-a2,2025-09-23 14:13:48\n",
+    );
+    const result = await loadEcdysis(conn, { path: dir, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(result).toMatchObject({
+      loaded: 1,
+      filedUnder: [{ name: "Hemipenthes sinuosa", under: "Bombyliidae", rows: 1 }],
+      unresolvedNames: [{ name: "Euodynerus", rows: 1 }],
+    });
+    expect((await record(a))![0]).toBe("Bombyliidae");
+  });
+
+  test("a revision filed under the same broader name is recorded, not taken for the earlier one", async () => {
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Vespidae')`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) SELECT 'genus', 'Polistes', entity_id FROM animal WHERE scientific_name = 'Vespidae'`);
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-revised-"));
+    const flat = async (name: string, modified: string) => {
+      const path = join(dir, `${modified.slice(0, 10)}.csv`);
+      await writeFile(
+        path,
+        "id,catalogNumber,recordID,scientificName,identifiedBy,dateIdentified,identificationQualifier,identificationRemarks,modified,family,genus\n" +
+          `100,WSDA_2303966,occ-a,${name},Ellen Expert,2025,,,${modified},Vespidae,Polistes\n`,
+      );
+      return path;
+    };
+    await loadEcdysis(conn, { path: await flat("Polistes aurifer", "2025-09-23 14:13:48"), catalogPrefix: "WSDA_", determinerAliases: ALIASES, now: new Date("2026-02-01T00:00:00Z") });
+    const revised = await loadEcdysis(conn, { path: await flat("Polistes dominula", "2026-03-02 09:00:00"), catalogPrefix: "WSDA_", determinerAliases: ALIASES, now: new Date("2026-03-03T00:00:00Z") });
+    expect(revised).toMatchObject({ loaded: 1, alreadyLoaded: 0 });
+    expect(await written(a)).toEqual(["Polistes dominula"]);
+    expect(await one(`SELECT count(*) FROM determination WHERE specimen_id = ${a}`)).toEqual([2n]);
+  });
 });
 
 describe("the CLI's arguments", () => {

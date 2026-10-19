@@ -382,7 +382,7 @@ export const en = {
     /** This season's specimens nobody has named yet, linking to where a volunteer names them. */
     identify: {
       note: (specimens: number) =>
-        `${n(specimens)} of your bees from this season ${specimens === 1 ? "is" : "are"} waiting to be identified.`,
+        `${n(specimens)} of your specimens from this season ${specimens === 1 ? "is" : "are"} waiting to be identified.`,
       link: "Identify them",
     },
     settled: {

@@ -264,7 +264,7 @@ export const en = {
       host: "Host plant",
       specimens: "Specimens",
     },
-    allClear: "Nothing needs your attention this season, and nothing is waiting on labels. Thank you!",
+    allClear: "None of your samples need attention this season, and none are waiting on labels. Thank you!",
     /**
      * The schedule, in words a volunteer has: never "sync", and never the
      * timestamp of the last run — which the sandbox printed in UTC as 9am

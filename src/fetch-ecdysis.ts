@@ -293,6 +293,7 @@ export function describeFetch(r: FetchEcdysisResult): string {
     `${l.matched}/${l.occurrences} occurrences matched`,
   ];
   if (l.adopted.length > 0) parts.push(`${l.adopted.length} name(s) adopted from ITIS: ${l.adopted.map((a) => a.name).join(", ")}`);
+  if (l.filedUnder.length > 0) parts.push(`${l.filedUnder.length} bycatch name(s) recorded under a broader name`);
   if (l.unresolvedNames.length > 0) parts.push(`${l.unresolvedNames.length} name(s) unresolved`);
   return parts.join("; ");
 }

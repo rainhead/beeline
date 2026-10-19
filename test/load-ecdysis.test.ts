@@ -234,6 +234,89 @@ describe("a flat occurrence export", () => {
   });
 });
 
+describe("names the tree lacks", () => {
+  // Shaped on the 2026-09-24 Washington archive's held-back names: the
+  // occurrence carries its classification, the identification only its genus
+  // (beeline-wqht). The people are fictional.
+  const archive = async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-bycatch-"));
+    const occurrences = [
+      ["100", "WSDA_2303966", "occ-a", "Euodynerus foraminatus", "", "Insecta", "Hymenoptera", "Vespidae", "Euodynerus"],
+      ["101", "WSDA_2303967", "occ-b", "Eumeninae", "", "Insecta", "Hymenoptera", "Vespidae", ""],
+      ["102", "WSDA_2303968", "occ-c", "Polistes aurifer", "cf. aurifer", "Insecta", "Hymenoptera", "Vespidae", "Polistes"],
+      ["103", "WSDA_2303969", "occ-d", "Bombus (Pyrobombus)", "", "Insecta", "Hymenoptera", "Apidae", "Bombus"],
+      ["104", "WSDA_2303970", "occ-e", "Hemipenthes sinuosa", "", "Insecta", "Diptera", "Bombyliidae", "Hemipenthes"],
+    ];
+    await writeFile(
+      join(dir, "occurrences.csv"),
+      "id,catalogNumber,recordID,scientificName,identificationQualifier,class,order,family,genus,identifiedBy,dateIdentified,identificationRemarks,modified\n" +
+        occurrences.map((o) => `${o.join(",")},Ellen Expert,2025,,2025-09-23 14:13:48`).join("\n") +
+        "\n",
+    );
+    await writeFile(
+      join(dir, "identifications.csv"),
+      "coreid,identifiedBy,dateIdentified,identificationQualifier,scientificName,identificationIsCurrent,genus,identificationRemarks,recordID,modified\n" +
+        occurrences.map((o) => `${o[0]},Ellen Expert,2025,${o[4]},${o[3]},1,${o[8]},,id-${o[2]},2025-09-23 14:13:48`).join("\n") +
+        "\n",
+    );
+    return dir;
+  };
+  const written = (specimenId: number) =>
+    one(`SELECT d.verbatim_identification FROM determination_of_record d WHERE d.specimen_id = ${specimenId}`);
+
+  test("bycatch is recorded under the nearest name the tree holds, as written; a bee waits for its name", async () => {
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('class', 'Insecta')`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) SELECT 'order', 'Hymenoptera', entity_id FROM animal WHERE scientific_name = 'Insecta'`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) SELECT 'family', 'Vespidae', entity_id FROM animal WHERE scientific_name = 'Hymenoptera'`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) SELECT 'genus', 'Polistes', entity_id FROM animal WHERE scientific_name = 'Vespidae'`);
+    const [[e]] = (await rows(
+      conn,
+      `INSERT INTO specimen (sample_id, specimen_number, field_number) SELECT sample_id, 5, '2303970' FROM specimen WHERE entity_id = ${a} RETURNING entity_id`,
+    )) as [[number]];
+
+    const result = await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(result).toMatchObject({ loaded: 4, unresolvedNames: [{ name: "Bombus (Pyrobombus)", rows: 1 }] });
+    expect(result.filedUnder).toEqual([
+      { name: "Eumeninae", under: "Vespidae", rows: 1 },
+      { name: "Euodynerus foraminatus", under: "Vespidae", rows: 1 },
+      { name: "Hemipenthes sinuosa", under: "Insecta", rows: 1 },
+      { name: "Polistes aurifer", under: "Polistes", rows: 1 },
+    ]);
+
+    // A genus the tree does not hold falls to the occurrence's family, and so
+    // does a subfamily, a rank the tree does not admit.
+    expect(await record(a)).toEqual(["Vespidae", null, "Ellen Expert", "2025-01-01", "year", null, "ecdysis_import"]);
+    expect(await written(a)).toEqual(["Euodynerus foraminatus"]);
+    expect((await record(b))![0]).toBe("Vespidae");
+    // A genus it does hold catches its species; the qualifier, which is about
+    // the epithet, is kept in the notes rather than on a genus.
+    expect(await record(c)).toEqual(["Polistes", null, "Ellen Expert", "2025-01-01", "year", "cf. aurifer", "ecdysis_import"]);
+    // Neither family nor order is in the tree, so the class.
+    expect((await record(Number(e)))![0]).toBe("Insecta");
+    // A bee's record waits for its name, though its genus is right there.
+    expect(await one(`SELECT count(*) FROM determination WHERE specimen_id = ${d}`)).toEqual([0n]);
+    expect(await rows(conn, `SELECT * FROM determination_misplaced_qualifier`)).toEqual([]);
+
+    // Loading again records nothing and reports nothing filed.
+    const again = await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(again).toMatchObject({ loaded: 0, filedUnder: [] });
+  });
+
+  test("an occurrence of a bee family keeps a bycatch-looking name from falling back", async () => {
+    // An identification whose genus is unknown, on an occurrence Ecdysis now
+    // files under Apidae: the name may be a bee's, so it waits.
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Apidae')`);
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-bee-family-"));
+    await writeFile(
+      join(dir, "export.csv"),
+      "id,catalogNumber,recordID,scientificName,identifiedBy,dateIdentified,identificationQualifier,identificationRemarks,modified,family,genus\n" +
+        "100,WSDA_2303966,occ-a,Xeromelecta larreae,Ellen Expert,2025,,,2025-09-23 14:13:48,Apidae,Xeromelecta\n",
+    );
+    const result = await loadEcdysis(conn, { path: join(dir, "export.csv"), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(result).toMatchObject({ loaded: 0, filedUnder: [], unresolvedNames: [{ name: "Xeromelecta larreae", rows: 1 }] });
+  });
+});
+
 describe("the CLI's arguments", () => {
   test("the path survives without --prefix, and the options come in any order", () => {
     expect(parseArgs(["export.csv"])).toEqual({ path: "export.csv", db: undefined, catalogPrefix: "WSDA_", force: false });

@@ -318,6 +318,16 @@ describe("sample listing", () => {
     expect(await get(app, "/samples?scope=all&from=2026-01-01")).toContain("5 samples");
     expect(await get(app, "/samples?scope=all&to=2025-12-31")).toContain("1 sample");
     expect(await get(app, "/samples?scope=all&place=whatcom")).toContain("1 sample");
+    // The county is stored bare and the state as its code, so a person's way
+    // of writing a county must still find it (beeline-ky5e).
+    for (const place of ["Whatcom, WA", "Whatcom county", "Whatcom Co.", "wa whatcom"]) {
+      expect(await get(app, `/samples?scope=all&place=${encodeURIComponent(place)}`), place).toContain("1 sample");
+      expect(await get(app, `/specimens?scope=all&place=${encodeURIComponent(place)}`), place).toContain("WABA0001");
+    }
+    // Every word must match: Whatcom is not in Nevada.
+    expect(await get(app, "/samples?scope=all&place=Whatcom%2C%20NV")).toContain("No samples match");
+    // A kind word alone is kept, not dropped into matching everything.
+    expect(await get(app, "/samples?scope=all&place=county")).toContain("No samples match");
     expect(await get(app, "/samples?scope=all&qc=blocking")).toContain("1 sample");
     expect(await get(app, "/samples?scope=all&qc=clean")).toContain("5 samples");
   });

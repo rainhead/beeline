@@ -598,6 +598,35 @@ const QC_COUNT_SELECTIONS = [
 /** The place columns as one haystack: a person types a place, not a column. */
 const placeHaystack = sql<string>`lower(concat_ws(' ', s.locality, s.county, s.state_province, s.country))`;
 
+/**
+ * Words that only say what kind of place the next one is. A county is stored
+ * as its bare name (`countyName` strips iNaturalist's suffix), so "King county"
+ * would otherwise find nothing. Bare "co" stays: it is also Colorado's code.
+ */
+const PLACE_KIND_WORDS = new Set(["county", "co."]);
+
+/**
+ * The place filter's words, each to be found somewhere in the haystack, so
+ * "King, WA" matches a sample whose county is King and state WA though the
+ * haystack never holds that string (beeline-ky5e). A search that is nothing
+ * but kind words is kept whole rather than matching everything.
+ */
+export function placeWords(term: string): string[] {
+  const words = term.toLowerCase().split(/[\s,]+/).filter((w) => w !== "");
+  const named = words.filter((w) => !PLACE_KIND_WORDS.has(w));
+  return named.length > 0 ? named : words;
+}
+
+function placeMatches(term: string) {
+  const words = placeWords(term);
+  // A search of only commas names no place; it narrows nothing.
+  if (words.length === 0) return sql<boolean>`TRUE`;
+  return sql<boolean>`(${sql.join(
+    words.map((w) => sql`${placeHaystack} LIKE ${like(w)}`),
+    sql` AND `,
+  )})`;
+}
+
 const blockingCount = sql<number>`coalesce(qc.blocking, 0)`;
 const warningCount = sql<number>`coalesce(qc.warning, 0)`;
 
@@ -667,7 +696,7 @@ export async function listSamples(
   // start belongs in a window that names its end.
   if (query.from !== null) base = base.where("s.date_end", ">=", asDate(query.from));
   if (query.to !== null) base = base.where("s.date_start", "<=", asDate(query.to));
-  if (query.place !== "") base = base.where(sql<boolean>`${placeHaystack} LIKE ${like(query.place)}`);
+  if (query.place !== "") base = base.where(placeMatches(query.place));
   if (query.collector !== "") base = base.where(collectedBy(query.collector));
   if (query.member !== MEMBER_ANY) base = base.where(collectedByMember(query.member));
   if (query.q !== "") {
@@ -828,7 +857,7 @@ export async function listSpecimens(
   }
   if (query.from !== null) base = base.where("s.date_end", ">=", asDate(query.from));
   if (query.to !== null) base = base.where("s.date_start", "<=", asDate(query.to));
-  if (query.place !== "") base = base.where(sql<boolean>`${placeHaystack} LIKE ${like(query.place)}`);
+  if (query.place !== "") base = base.where(placeMatches(query.place));
   if (query.collector !== "") base = base.where(collectedBy(query.collector));
   if (query.member !== MEMBER_ANY) base = base.where(collectedByMember(query.member));
   if (query.q !== "") {

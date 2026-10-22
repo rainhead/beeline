@@ -31,7 +31,7 @@ FROM atlas WHERE code = 'OBA';
 
 INSERT INTO qc_rule (name, severity, instructions) VALUES
   ('taxon_obscured_awaiting_atlas', 'blocking',
-   'iNaturalist hides where the plant on this observation grows, because of its conservation status. A label carries the true location, and the atlas where this sample was collected has not yet said whether its labels may, so Beeline will not print a label for this sample until it does. There is nothing for you to fix.');
+   'iNaturalist hides where the plant on this observation grows, because of its conservation status. A label carries the true location, and Beeline prints it only where the bee atlas for that place has agreed. No atlas has agreed for where this sample was collected, so its labels will not print for now. There is nothing for you to fix.');
 
 DROP VIEW sample_qc_finding;
 DROP VIEW qc_finding;

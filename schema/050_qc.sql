@@ -32,7 +32,7 @@ INSERT INTO qc_rule (name, severity, instructions) VALUES
   ('obscured_no_true_coordinates', 'blocking',
    'The coordinates are obscured by iNaturalist geoprivacy and Beeline does not hold the true coordinates. Join the project with trusted coordinate access, or clear the geoprivacy setting on the observation.'),
   ('taxon_obscured_awaiting_atlas', 'blocking',
-   'iNaturalist hides where the plant on this observation grows, because of its conservation status. A label carries the true location, and the atlas where this sample was collected has not yet said whether its labels may, so Beeline will not print a label for this sample until it does. There is nothing for you to fix.'),
+   'iNaturalist hides where the plant on this observation grows, because of its conservation status. A label carries the true location, and Beeline prints it only where the bee atlas for that place has agreed. No atlas has agreed for where this sample was collected, so its labels will not print for now. There is nothing for you to fix.'),
   ('locality_format', 'blocking',
    'The locality must be a short place name (18 characters or fewer) without commas, quotes, or street addresses — it is printed on a 3pt label. Example: Corvallis not 5th St, Corvallis OR.'),
   ('place_unabbreviated', 'blocking',

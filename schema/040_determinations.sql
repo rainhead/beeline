@@ -52,9 +52,10 @@ COMMENT ON COLUMN ecdysis_identification.entered_at IS 'When the identification 
 -- Ecdysis says rather than deriving WSDA_ from the field number, and the
 -- exports leave dwc:catalogNumber empty where nothing has said. The Ecdysis
 -- loader (src/load-ecdysis.ts) writes a row for every occurrence it matches
--- to a specimen, and a later load overwrites it; an occurrence missing from a
--- later export leaves the row as it was, since a flat export need not be the
--- whole collection.
+-- to exactly one specimen, and a later load overwrites it, recognising the
+-- occurrence by occurrence_id so that a number the museum changes is
+-- followed; an occurrence missing from a later export leaves the row as it
+-- was, since a flat export need not be the whole collection.
 CREATE TABLE specimen_catalog_number (
   specimen_id    INTEGER PRIMARY KEY REFERENCES specimen(entity_id),
   catalog_number TEXT NOT NULL,

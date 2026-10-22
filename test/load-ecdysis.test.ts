@@ -70,6 +70,39 @@ describe("an unpacked Darwin Core archive", () => {
     expect(await one(`SELECT count(*) FROM specimen_catalog_number`)).toEqual([4n]);
   });
 
+  test("follows a catalog number the museum changes, by the occurrence it was read from", async () => {
+    await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    const dir = await mkdtemp(join(tmpdir(), "beeline-ecdysis-"));
+    const flat = join(dir, "export.csv");
+    await writeFile(
+      flat,
+      "id,catalogNumber,recordID,scientificName,identifiedBy,dateIdentified,identificationQualifier,identificationRemarks,modified\n" +
+        "100,WSDA_7000001,occ-a,Andrena sladeni,Sam A. Staff,2025,,,2026-10-01 10:00:00\n",
+    );
+    const result = await loadEcdysis(conn, { path: flat, catalogPrefix: "WSDA_", determinerAliases: ALIASES, force: true });
+    expect(result.catalogNumbers).toBe(1);
+    expect(await one(`SELECT catalog_number FROM specimen_catalog_number WHERE specimen_id = ${a}`)).toEqual(["WSDA_7000001"]);
+  });
+
+  test("gives neither of two specimens sharing a field number the museum's number", async () => {
+    // A duplicate field number (beeline-1kb.14): at most one of them is the
+    // museum's specimen, and nothing here says which.
+    // The occurrences carry no name, so only their catalog numbers are read.
+    const sample = await insertCleanSample(conn, { sample_number: "'2'" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${sample}, 1, '2303966')`);
+    const dir = await mkdtemp(join(tmpdir(), "beeline-ecdysis-"));
+    const flat = join(dir, "export.csv");
+    await writeFile(
+      flat,
+      "id,catalogNumber,recordID,scientificName,identifiedBy,dateIdentified,identificationQualifier,identificationRemarks,modified\n" +
+        "100,WSDA_2303966,occ-a,,,,,,2026-10-01 10:00:00\n" +
+        "101,WSDA_2303967,occ-b,,,,,,2026-10-01 10:00:00\n",
+    );
+    const result = await loadEcdysis(conn, { path: flat, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(result).toMatchObject({ catalogNumbers: 1, ambiguousCatalogNumbers: 1 });
+    expect(await rows(conn, `SELECT specimen_id, catalog_number FROM specimen_catalog_number`)).toEqual([[b, "WSDA_2303967"]]);
+  });
+
   test("records the history, and the identification Ecdysis calls current is the record", async () => {
     const result = await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(result).toMatchObject({

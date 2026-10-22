@@ -82,6 +82,8 @@ export interface LoadEcdysisResult {
   occurrences: number;
   /** Occurrences whose catalog number names a specimen in the store. */
   matched: number;
+  /** Specimens whose catalog number this load recorded for the first time, or changed. */
+  catalogNumbers: number;
   unmatched: number;
   unmatchedSample: string[];
   identifications: number;
@@ -219,6 +221,26 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     const unmatchedSample = (
       await rows(conn, `SELECT catalog_number FROM ecd_match WHERE specimen_id IS NULL ORDER BY catalog_number LIMIT 5`)
     ).map((r) => String(r[0]));
+
+    // The museum's number for each matched specimen, as Ecdysis writes it:
+    // the catalog number is the museum's, so Beeline keeps what Ecdysis says
+    // rather than deriving it from the field number (gh-98). Counted before
+    // writing, so the count is what changed rather than what was seen.
+    const catalogNumbers = await scalar(
+      conn,
+      `SELECT count(*) FROM ecd_match m
+       LEFT JOIN specimen_catalog_number c ON c.specimen_id = m.specimen_id
+       WHERE m.specimen_id IS NOT NULL AND c.catalog_number IS DISTINCT FROM m.catalog_number`,
+    );
+    await conn.run(
+      `INSERT INTO specimen_catalog_number (specimen_id, catalog_number, occurrence_id, loaded_at)
+       SELECT specimen_id, catalog_number, occurrence_record_id, $1::TIMESTAMPTZ FROM ecd_match
+       WHERE specimen_id IS NOT NULL
+       QUALIFY row_number() OVER (PARTITION BY specimen_id ORDER BY catalog_number) = 1
+       ON CONFLICT (specimen_id) DO UPDATE SET catalog_number = excluded.catalog_number,
+         occurrence_id = excluded.occurrence_id, loaded_at = excluded.loaded_at`,
+      [now.toISOString()],
+    );
 
     // A name the tree does not spell, but that ITIS accepts, comes in from
     // ITIS before anything resolves (beeline-45v.1.1); what is left is
@@ -460,6 +482,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       input: files.input,
       occurrences,
       matched,
+      catalogNumbers,
       unmatched: occurrences - matched,
       unmatchedSample,
       identifications,

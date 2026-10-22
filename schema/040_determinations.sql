@@ -45,6 +45,26 @@ COMMENT ON TABLE ecdysis_identification IS 'Provenance and idempotence for deter
 COMMENT ON COLUMN ecdysis_identification.occurrence_id IS 'The Symbiota occurrence recordID the identification hangs off — dwc:occurrenceID as Ecdysis publishes it.';
 COMMENT ON COLUMN ecdysis_identification.entered_at IS 'When the identification was entered in Ecdysis (its initialTimeStamp, exported as modified). What orders the history within one load; recorded_at on the determination stays the moment it crossed into Beeline.';
 
+-- The museum's catalog number for a specimen, as the museum's own system
+-- reports it. A catalog number is the collection's, never Beeline's: Lincoln
+-- Best assigns Oregon's by hand, and Washington's and British Columbia's are
+-- read from Ecdysis (Andony, gh-98, 2026-10-21). So Beeline records what
+-- Ecdysis says rather than deriving WSDA_ from the field number, and the
+-- exports leave dwc:catalogNumber empty where nothing has said. The Ecdysis
+-- loader (src/load-ecdysis.ts) writes a row for every occurrence it matches
+-- to a specimen, and a later load overwrites it; an occurrence missing from a
+-- later export leaves the row as it was, since a flat export need not be the
+-- whole collection.
+CREATE TABLE specimen_catalog_number (
+  specimen_id    INTEGER PRIMARY KEY REFERENCES specimen(entity_id),
+  catalog_number TEXT NOT NULL,
+  occurrence_id  TEXT,
+  loaded_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE specimen_catalog_number IS 'The museum''s catalog number for a specimen (dwc:catalogNumber), as read from Ecdysis: WSDA_2303966 for Washington. Never derived from the field number, which is Beeline''s own number and goes out as dwc:fieldNumber (gh-98).';
+COMMENT ON COLUMN specimen_catalog_number.occurrence_id IS 'The Symbiota occurrence recordID the number was read from.';
+COMMENT ON COLUMN specimen_catalog_number.loaded_at IS 'When a load last wrote it.';
+
 -- Which worksheet row each imported volunteer determination came from
 -- (beeline-pbk). Until Beeline, a volunteer determined their specimens in a
 -- copy of a Google Sheet (OBA Number, Sex/Caste, Family, Genus, Species) kept

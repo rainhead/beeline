@@ -53,6 +53,23 @@ const record = (specimenId: number) =>
        WHERE r.specimen_id = ${specimenId}`);
 
 describe("an unpacked Darwin Core archive", () => {
+  test("records the museum's catalog number of every specimen it matches, as Ecdysis writes it", async () => {
+    // A catalog number is the museum's, so Beeline keeps Ecdysis's word for
+    // it rather than deriving it from the field number (gh-98).
+    const first = await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(first.catalogNumbers).toBe(4);
+    expect(await rows(conn, `SELECT specimen_id, catalog_number, occurrence_id FROM specimen_catalog_number ORDER BY specimen_id`)).toEqual([
+      [a, "WSDA_2303966", "occ-a"],
+      [b, "WSDA_2303967", "occ-b"],
+      [c, "WSDA_2303968", expect.any(String)],
+      [d, "WSDA_2303969", expect.any(String)],
+    ]);
+    // Loading again changes nothing, and says so.
+    const again = await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(again.catalogNumbers).toBe(0);
+    expect(await one(`SELECT count(*) FROM specimen_catalog_number`)).toEqual([4n]);
+  });
+
   test("records the history, and the identification Ecdysis calls current is the record", async () => {
     const result = await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(result).toMatchObject({

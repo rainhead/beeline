@@ -44,9 +44,10 @@ import type { Database, DeterminationQualifier } from "../model.js";
  *   undeclared.
  *
  * `id` is the specimen's `entity_id`, which joins the two files; neither
- * `occurrenceID` (minted only by a print run) nor `catalogNumber` (absent
+ * `occurrenceID` (minted only by a print run) nor `fieldNumber` (absent
  * before field numbering, and not unique across the identifier eras) is on
- * every row. Symbiota keeps it as the record's key in a collection, so it has
+ * every row, and `catalogNumber` is the museum's, empty until Ecdysis has
+ * reported one. Symbiota keeps it as the record's key in a collection, so it has
  * to stay put between uploads, and it does wherever an upload could come from:
  * a rebuild redraws it (ADR 0002), but only the sandbox is ever rebuilt, and no
  * archive the sandbox writes will be uploaded to GBIF or Ecdysis (Peter,

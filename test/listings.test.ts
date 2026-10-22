@@ -746,7 +746,12 @@ describe("CSV export", () => {
   });
 
   it("exports specimens with their determination", async () => {
-    const { app } = await listingApp("staffer");
+    const { app, conn } = await listingApp("staffer");
+    // The museum's number for one of them, as Ecdysis reported it.
+    await conn.run(
+      `INSERT INTO specimen_catalog_number (specimen_id, catalog_number)
+       SELECT entity_id, 'OSAC_9001' FROM specimen WHERE field_number = 'OBA00002'`,
+    );
     const csv = await (await app.request("/specimens.csv?scope=OBA")).text();
     expect(csv).toContain("OBA00001");
     expect(csv).toContain("Bombus vosnesenskii");
@@ -756,9 +761,15 @@ describe("CSV export", () => {
     // never made (beeline-tgu).
     expect(csv.split("\n")[0]).toContain("identificationQualifier,verbatimIdentification");
     expect(csv).toContain("cf.,Bombus cf. vosnesenskii");
-    // The pin's number is the collection's number for the specimen (ADR 0008).
-    expect(csv.split("\n")[0]).toContain("occurrenceID,basisOfRecord,catalogNumber,fieldNumber");
-    expect(csv).toContain("PreservedSpecimen,OBA00001,");
+    // The pin's number is Beeline's, so it is fieldNumber; catalogNumber is
+    // the museum's, empty until a museum has said, never derived (gh-98).
+    // The sample number has a column of its own.
+    const [header, ...records] = csv.split("\n");
+    expect(header).toContain("occurrenceID,basisOfRecord,catalogNumber,fieldNumber");
+    expect(header).toContain("dateIdentified,sampleNumber,specimenNumber,atlas");
+    expect(csv).toContain("PreservedSpecimen,,OBA00001,");
+    expect(csv).toContain("PreservedSpecimen,OSAC_9001,OBA00002,");
+    expect(records.find((l) => l.includes(",OBA00001,"))).toContain(",A-1,1,OBA,");
   });
 
   it("writes the whole selection, a page at a time, with nothing in the file that is not a record", async () => {
@@ -913,7 +924,7 @@ describe("Darwin Core archives, by program and season", () => {
     const [header, ...occurrences] = table(files["occurrence.txt"]!);
     expect(meta).toContain(`rowType="http://rs.tdwg.org/dwc/terms/Occurrence"`);
     expect(meta).toContain(`rowType="http://rs.tdwg.org/dwc/terms/Identification"`);
-    for (const term of ["occurrenceID", "catalogNumber", "decimalLatitude", "scientificName", "dateIdentified"]) {
+    for (const term of ["occurrenceID", "catalogNumber", "fieldNumber", "decimalLatitude", "scientificName", "dateIdentified"]) {
       expect(meta).toContain(`<field index="${header!.indexOf(term)}" term="http://rs.tdwg.org/dwc/terms/${term}"/>`);
     }
     expect(meta).toContain(
@@ -923,10 +934,12 @@ describe("Darwin Core archives, by program and season", () => {
     expect(header).toContain("geoprivacy");
     expect(meta).not.toContain("terms/geoprivacy");
 
-    // OBA's two specimens, and nothing of Washington's.
-    const catalog = header!.indexOf("catalogNumber");
-    expect(occurrences.map((r) => r[catalog]).sort()).toEqual(["OBA00001", "OBA00002"]);
-    const oba1 = occurrences.find((r) => r[catalog] === "OBA00001")!;
+    // OBA's two specimens, and nothing of Washington's. Neither has a
+    // museum's catalog number yet, so that column is empty (gh-98).
+    const field = header!.indexOf("fieldNumber");
+    expect(occurrences.map((r) => r[field]).sort()).toEqual(["OBA00001", "OBA00002"]);
+    expect(occurrences.map((r) => r[header!.indexOf("catalogNumber")])).toEqual(["", ""]);
+    const oba1 = occurrences.find((r) => r[field] === "OBA00001")!;
     expect(oba1[header!.indexOf("scientificName")]).toBe("Bombus vosnesenskii");
 
     // Both determinations of OBA00001, oldest first, joined by the core's id;

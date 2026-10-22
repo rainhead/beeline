@@ -16,7 +16,7 @@ import { orcidUrl } from "../orcid.js";
  *
  * Coordinates ride along. They are the collector's own — recorded on their
  * own observation, printed on their own labels — and CONTEXT.md's stance is
- * that anyone trusted with this store is trusted with them; the open per-atlas
+ * that anyone trusted with this store is trusted with them; the per-atlas
  * question (docs/questions.md) is about revealing taxon-obscured coordinates
  * *downstream*, on labels and in Ecdysis/GBIF exports, not about showing a
  * participant their own data. What a row carries travels with it: a record

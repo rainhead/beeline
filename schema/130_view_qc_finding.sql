@@ -2,7 +2,7 @@
 -- detail_taxon_rank are what a finding whose detail is a scientific name says
 -- instead of spelling it into `details`, so the view can set it as a name
 -- rather than as a machine value (beeline-dys, schema/120). NULL on every
--- other rule, which is why the twelve of them are wrapped rather than each
+-- other rule, which is why the thirteen of them are wrapped rather than each
 -- carrying two casts: the NULLs belong in one place, and a new prose rule
 -- stays one line.
 CREATE VIEW qc_finding AS
@@ -13,6 +13,7 @@ FROM (
   SELECT * FROM qc_rule_missing_required_field
   UNION ALL SELECT * FROM qc_rule_missing_recommended_field
   UNION ALL SELECT * FROM qc_rule_obscured_no_true_coordinates
+  UNION ALL SELECT * FROM qc_rule_taxon_obscured_awaiting_atlas
   UNION ALL SELECT * FROM qc_rule_locality_format
   UNION ALL SELECT * FROM qc_rule_place_unabbreviated
   UNION ALL SELECT * FROM qc_rule_place_unrecognised

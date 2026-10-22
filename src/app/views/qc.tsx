@@ -54,6 +54,7 @@ export const DASHBOARD_RULES: ReadonlyMap<string, FlagColumn | null> = new Map([
   ["place_unabbreviated", "place"],
   ["place_unrecognised", "place"],
   ["obscured_no_true_coordinates", "coordinates"],
+  ["taxon_obscured_awaiting_atlas", "coordinates"],
   ["coordinate_uncertainty", "coordinates"],
   ["coordinate_out_of_region", "coordinates"],
   ["non_tracheophyte_host", "host"],

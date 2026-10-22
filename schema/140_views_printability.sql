@@ -3,9 +3,9 @@
 -- blocking rules, so printable = a positive count and no blocking finding on
 -- the sample or its specimens. A print run freezes printable samples into
 -- specimens.
--- Pending the per-atlas geoprivacy answers (docs/questions.md), taxon-obscured
--- records with true coordinates still print only because no rule yet says
--- otherwise; the per-atlas policy gate lands when the answers do.
+-- Taxon-obscured records with true coordinates print only where their atlas
+-- has said they may (atlas_taxon_obscured_printing, schema/010); elsewhere
+-- qc_rule_taxon_obscured_awaiting_atlas blocks them like any other finding.
 
 -- Which samples a blocking finding lands on. Both routes a finding can take
 -- are already resolved by sample_qc_finding (schema/130), so this is one key

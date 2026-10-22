@@ -238,6 +238,9 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
        WITH known AS (
          SELECT c.specimen_id, o.catalog_number, o.occurrence_record_id
          FROM ecd_occurrence o JOIN specimen_catalog_number c ON c.occurrence_id = o.occurrence_record_id
+         -- An occurrence that comes back with no number has not been renumbered;
+         -- it keeps the one recorded.
+         WHERE nullif(o.catalog_number, '') IS NOT NULL
        ),
        first_seen AS (
          SELECT m.specimen_id, m.catalog_number, m.occurrence_record_id

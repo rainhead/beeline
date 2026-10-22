@@ -82,6 +82,16 @@ describe("an unpacked Darwin Core archive", () => {
     const result = await loadEcdysis(conn, { path: flat, catalogPrefix: "WSDA_", determinerAliases: ALIASES, force: true });
     expect(result.catalogNumbers).toBe(1);
     expect(await one(`SELECT catalog_number FROM specimen_catalog_number WHERE specimen_id = ${a}`)).toEqual(["WSDA_7000001"]);
+
+    // One that comes back with no number keeps the one recorded.
+    await writeFile(
+      flat,
+      "id,catalogNumber,recordID,scientificName,identifiedBy,dateIdentified,identificationQualifier,identificationRemarks,modified\n" +
+        "100,,occ-a,Andrena sladeni,Sam A. Staff,2025,,,2026-10-02 10:00:00\n",
+    );
+    const blank = await loadEcdysis(conn, { path: flat, catalogPrefix: "WSDA_", determinerAliases: ALIASES, force: true });
+    expect(blank.catalogNumbers).toBe(0);
+    expect(await one(`SELECT catalog_number FROM specimen_catalog_number WHERE specimen_id = ${a}`)).toEqual(["WSDA_7000001"]);
   });
 
   test("gives neither of two specimens sharing a field number the museum's number", async () => {

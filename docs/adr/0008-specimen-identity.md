@@ -1,12 +1,16 @@
 # ADR 0008: Specimen identity — occurrenceID is permanent, the field number is a label
 
-**Status:** **proposed** (2026-09-09) · awaits Arthur and Andony settling the
-one question left on [gh-17](https://github.com/rainhead/beeline/issues/17)
-together · the evidence is
-[field-number-history.md](../field-number-history.md) · only the reprint
-path of phase 5 (beeline-1kb.5) is gated on it; the rest is built as decided
-here — print runs mint the `occurrence_id` and the `minted_field_number` row
-(PR #74), as the closing paragraph of *Consequences* allows · reframed the
+**Status:** **accepted** (2026-10-21) · proposed 2026-09-09, awaiting Arthur
+and Andony settling the one question left on
+[gh-17](https://github.com/rainhead/beeline/issues/17) · accepted on
+[Arthur's answer](https://github.com/rainhead/beeline/issues/17#issuecomment-6327562233)
+that a bad-data reprint keeps its number, which is decision (2) as written,
+so nothing below changes and the reprint path of phase 5 (beeline-1kb.5) is
+no longer gated · the evidence is
+[field-number-history.md](../field-number-history.md) · the rest was built
+while proposed — print runs mint the `occurrence_id` and the
+`minted_field_number` row (PR #74), as the closing paragraph of
+*Consequences* allows · reframed the
 same day it was drafted: the first version was titled *A field number is minted once and never moves* and answered the right
 question with the wrong identifier (beeline-1kb.14, beeline-1kb.15) ·
 **reviewed 2026-09-25** (Peter): (1) overstated its own case against a URI
@@ -141,9 +145,19 @@ disagrees with the record behind it, and does not extend to every reprint.
 His wording elsewhere — *"check which label matches the information
 associated with a field number"* — only parses if two labels already carry
 one number, which is duplicate repair rather than ordinary correction, and
-on that case the two accounts agree. What is left is one question: when the
+on that case the two accounts agree. What was left was one question: when the
 data behind a printed label turns out to be wrong, is the replacement printed
 under the same number or a new one?
+
+*Answered 2026-10-21.* The same number. Arthur, on
+[gh-17](https://github.com/rainhead/beeline/issues/17#issuecomment-6327562233):
+when the data is wrong, the record is corrected and a new label for that
+record is printed with the corrected data, and afterwards both should be
+visible — the record's edit history, and the print history of the original
+label and of the reprint. That is Andony's account and decision (2) below;
+the renumbering Arthur had described is the duplicate repair of (4). He
+also answered the companion question: nobody need confirm that the old
+label came off the pin, since the case is too rare to be worth recording.
 
 The data cannot break the tie
 ([field-number-history.md](../field-number-history.md)): 545 specimen
@@ -453,25 +467,27 @@ which it reads as new records beside the existing ones. The published
 identifier is OSAC's to state, and which of the two an Oregon export carries
 is beeline-1kb.22.
 
-**If Arthur's account is the practice, this ADR changes at (2) and (4), and
-the cost is bounded.** Should gh-17 come back saying that a bad-data reprint
-does renumber, then the model needs a renumbering event beyond the duplicate
-repair in (4), the reprint screen has to offer it, `otherCatalogNumbers`
-becomes a routine export column rather than an exceptional one, and
-beeline-1kb.5 reopens on that narrower question. That is the whole cost.
-Nothing about (1), (3) or (5)–(10) moves: a superseded number is a
-non-current registry row, as it already is after a repair, not a voided one.
-This is why the status is proposed, why the confirmation has to come from
-both of them in the same conversation (*Which account of the bad-data
-reprint is right?* in [questions.md](../questions.md)), and why the reprint
-path in phase 5 should
-not be built until it lands — but it is also why the rest of phase 5 need not
-wait.
+**Had Arthur's account been the practice, this ADR would have changed at (2)
+and (4), and the cost was bounded.** Had gh-17 come back saying that a
+bad-data reprint does renumber, the model would have needed a renumbering
+event beyond the duplicate repair in (4), the reprint screen would have had
+to offer it, `otherCatalogNumbers` would have become a routine export column
+rather than an exceptional one, and beeline-1kb.5 would have reopened on
+that narrower question. Nothing about (1), (3) or (5)–(10) would have moved:
+a superseded number is a non-current registry row, as it already is after a
+repair, not a voided one. That bounded cost is why the status stayed
+proposed for six weeks while the rest of phase 5 was built, and why the
+reprint path waited. It came back the other way on 2026-10-21 (*What staff
+have said*, above), so (2) stands as written and the reprint path can be
+built on it. What the answer adds is a requirement rather than a change: a
+reprint's print history must be readable beside the original's, with the
+edit that caused it — which `printed_label`, one row per label per run,
+and the sample's change log already hold.
 
 ## Open questions
 
-Beyond gh-17, which this ADR inherits, the reframing opens three, none of
-which this project can answer alone:
+gh-17's numbering question is answered (above). The reframing opened three
+more, none of which this project can answer alone:
 
 1. **For Oregon specimens, does OSAC want its `https://osac.oregonstate.edu/OBS/OBA_`
    URI form to be the `occurrenceID`, or an alias beside a UUID?** Either

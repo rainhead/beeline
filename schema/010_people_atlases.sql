@@ -104,6 +104,34 @@ INSERT INTO atlas (code, name, inat_place_id) VALUES
   ('NM',   'New Mexico Bee Atlas',       NULL),
   ('OK',   'Oklahoma Bee Atlas',         NULL);
 
+-- Which atlases have said their labels may carry the true coordinates of a
+-- record iNaturalist obscures for its taxon: a row is the answer, the way an
+-- atlas_printing row is the flag. In this program the observation is of the
+-- host plant, so a taxon-obscured record is one whose plant iNaturalist
+-- treats as rare (gh-13). Until an atlas answers, its taxon-obscured samples
+-- do not print (Arthur, 2026-10-21), and qc_rule_taxon_obscured_awaiting_atlas
+-- (schema/120) is that default. A sample collected outside every atlas has no
+-- atlas to answer for it, so it waits too. Who answered and where is kept on
+-- the row, because the answer is a person's and a link is what lets the next
+-- reader check it.
+CREATE TABLE atlas_taxon_obscured_printing (
+  atlas_id   INTEGER PRIMARY KEY REFERENCES atlas(entity_id),
+  decided_by TEXT NOT NULL,
+  decided_on DATE NOT NULL,
+  source     TEXT NOT NULL
+);
+COMMENT ON TABLE atlas_taxon_obscured_printing IS 'Atlases whose labels may carry the true coordinates of a taxon-obscured record; presence is the answer. An atlas absent here has not answered, and its taxon-obscured samples do not print (qc_rule_taxon_obscured_awaiting_atlas).';
+COMMENT ON COLUMN atlas_taxon_obscured_printing.decided_by IS 'Who answered for the atlas, by name.';
+COMMENT ON COLUMN atlas_taxon_obscured_printing.source IS 'Where the answer was given: a link to the comment or message that holds it.';
+
+-- Oregon's answer: its labels may carry the true point, and whether a rare
+-- plant's name goes out with a record is Lincoln Best's call at upload, not
+-- a label's.
+INSERT INTO atlas_taxon_obscured_printing (atlas_id, decided_by, decided_on, source)
+SELECT entity_id, 'Arthur Schrenk', DATE '2026-10-21',
+       'https://github.com/rainhead/beeline/issues/13#issuecomment-6327141377'
+FROM atlas WHERE code = 'OBA';
+
 -- Which atlas covers a state or province — the mapping legacy promotion used
 -- to carry as a six-way CASE, moved into the schema so it can be queried and
 -- so its silences can be told apart (beeline-lcl).

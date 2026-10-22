@@ -62,6 +62,32 @@ LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
 WHERE (s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL)
   AND loc.sample_id IS NULL;
 
+-- A taxon-obscured sample whose true point Beeline holds, collected where no
+-- atlas has said its labels may carry that point (atlas_taxon_obscured_printing,
+-- schema/010). The observation is of the host plant, so the point is where a
+-- plant iNaturalist treats as rare grows, and printing it is the atlas's
+-- decision. Until it answers the sample does not print (Arthur, 2026-10-21,
+-- gh-13). Outside every atlas there is nobody to answer, so it waits too.
+--
+-- Without the true point obscured_no_true_coordinates already blocks, and
+-- firing both would flag one sample twice. A printed sample is not let off:
+-- the old system printed iNaturalist's stand-in point where it had no
+-- access to the true one, promotion has since replaced it with the true
+-- point (sample_location_standin, schema/106), and nothing in the store says
+-- afterwards which an old pin carries. So a further label could be the
+-- first to print the true point.
+CREATE VIEW qc_rule_taxon_obscured_awaiting_atlas AS
+SELECT s.entity_id AS sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'taxon_obscured_awaiting_atlas' AS rule_name,
+       concat('taxon_geoprivacy=', s.taxon_geoprivacy, ', atlas=', coalesce(a.code, 'none')) AS details
+FROM sample s
+JOIN sample_location loc ON loc.sample_id = s.entity_id
+LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
+LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
+WHERE s.taxon_geoprivacy IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM atlas_taxon_obscured_printing ok WHERE ok.atlas_id = sa.atlas_id);
+
 -- Locality must fit a 3-5pt label cell: short place name, no punctuation, no
 -- street addresses. Semantics follow the reference implementation
 -- (OccurrenceService.updateErrorFlags + includesIllegalSuffix): length > 18,

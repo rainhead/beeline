@@ -111,6 +111,14 @@ export interface AtlasPrintingTable {
   atlas_id: number;
 }
 
+/** Atlases whose labels may carry a taxon-obscured record's true point; a row is the answer. */
+export interface AtlasTaxonObscuredPrintingTable {
+  atlas_id: number;
+  decided_by: string;
+  decided_on: ColumnType<Date, Date | string, Date | string>;
+  source: string;
+}
+
 /** Null atlas_id = a region no member atlas covers, which is an answer. */
 export interface AtlasRegionTable {
   state_province: string;
@@ -1081,6 +1089,7 @@ export interface Database {
   program_lead: ProgramLeadTable;
   atlas: AtlasTable;
   atlas_printing: AtlasPrintingTable;
+  atlas_taxon_obscured_printing: AtlasTaxonObscuredPrintingTable;
   atlas_region: AtlasRegionTable;
   animal: AnimalTable;
   animal_curation: AnimalCurationTable;

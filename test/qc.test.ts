@@ -410,6 +410,45 @@ describe("QC findings and printability", () => {
     expect(await isPrintable(b)).toBe(false);
   });
 
+  test("a taxon-obscured sample prints only where its atlas has said labels may carry the true point", async () => {
+    // Arthur, 2026-10-21 (gh-13): Oregon's labels may; every other atlas's
+    // samples wait until it answers, and so does a sample outside every atlas.
+    const atlas = (code: string) => `(SELECT entity_id FROM atlas WHERE code = '${code}')`;
+    const oregon = await insertCleanSample(conn, { taxon_geoprivacy: "'obscured'", atlas_id: atlas("OBA") });
+    const washington = await insertCleanSample(conn, {
+      sample_number: "'2'", state_province: "'WA'", taxon_geoprivacy: "'obscured'", atlas_id: atlas("WaBA"),
+    });
+    const outside = await insertCleanSample(conn, { sample_number: "'3'", state_province: "'NV'", taxon_geoprivacy: "'obscured'" });
+    // The collector's own geoprivacy is not the atlas's question.
+    const chosen = await insertCleanSample(conn, { sample_number: "'4'", geoprivacy: "'obscured'", atlas_id: atlas("WaBA") });
+    expect(await findings(oregon)).toEqual([]);
+    expect(await isPrintable(oregon)).toBe(true);
+    expect(await findings(washington)).toEqual([
+      { rule: "taxon_obscured_awaiting_atlas", details: "taxon_geoprivacy=obscured, atlas=WaBA" },
+    ]);
+    expect(await isPrintable(washington)).toBe(false);
+    expect(await findings(outside)).toEqual([
+      { rule: "taxon_obscured_awaiting_atlas", details: "taxon_geoprivacy=obscured, atlas=none" },
+    ]);
+    expect(await findings(chosen)).toEqual([]);
+
+    // Once Washington answers, its sample prints.
+    await conn.run(
+      `INSERT INTO atlas_taxon_obscured_printing VALUES (${atlas("WaBA")}, 'Test', DATE '2026-10-22', 'https://example.org')`,
+    );
+    expect(await isPrintable(washington)).toBe(true);
+  });
+
+  test("a taxon-obscured sample already printed still waits for its atlas", async () => {
+    // The old system printed iNaturalist's stand-in point where it lacked the
+    // true one, and promotion has since replaced it (beeline-b34), so a
+    // further label could be the first to print the true point.
+    const id = await insertCleanSample(conn, { taxon_geoprivacy: "'obscured'", specimen_count: "2" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${id}, 1, '26000001')`);
+    expect((await findings(id)).map((f) => f.rule)).toEqual(["taxon_obscured_awaiting_atlas"]);
+    expect(await isPrintable(id)).toBe(false);
+  });
+
   test("duplicate sample numbers flag every colliding sample", async () => {
     const a = await insertCleanSample(conn);
     const b = await insertCleanSample(conn); // same collector, day, and number '1'

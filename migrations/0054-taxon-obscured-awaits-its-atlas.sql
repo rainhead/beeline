@@ -31,7 +31,7 @@ FROM atlas WHERE code = 'OBA';
 
 INSERT INTO qc_rule (name, severity, instructions) VALUES
   ('taxon_obscured_awaiting_atlas', 'blocking',
-   'iNaturalist hides where the plant on this observation grows, because of its conservation status. A label carries the true location, and the atlas where this sample was collected has not yet said whether its labels may, so the sample will not print until it does. There is nothing for you to fix.');
+   'iNaturalist hides where the plant on this observation grows, because of its conservation status. A label carries the true location, and the atlas where this sample was collected has not yet said whether its labels may, so Beeline will not print a label for this sample until it does. There is nothing for you to fix.');
 
 DROP VIEW sample_qc_finding;
 DROP VIEW qc_finding;
@@ -46,8 +46,7 @@ JOIN sample_location loc ON loc.sample_id = s.entity_id
 LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
 LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
 WHERE s.taxon_geoprivacy IS NOT NULL
-  AND NOT EXISTS (SELECT 1 FROM atlas_taxon_obscured_printing ok WHERE ok.atlas_id = sa.atlas_id)
-  AND NOT EXISTS (SELECT 1 FROM printed_sample pr WHERE pr.sample_id = s.entity_id);
+  AND NOT EXISTS (SELECT 1 FROM atlas_taxon_obscured_printing ok WHERE ok.atlas_id = sa.atlas_id);
 
 CREATE VIEW qc_finding AS
 SELECT sample_id, specimen_id, rule_name, details,

@@ -439,12 +439,14 @@ describe("QC findings and printability", () => {
     expect(await isPrintable(washington)).toBe(true);
   });
 
-  test("a taxon-obscured sample already printed is not asked about again", async () => {
-    // Its pins carry the true point already, so a further label reveals nothing.
+  test("a taxon-obscured sample already printed still waits for its atlas", async () => {
+    // The old system printed iNaturalist's stand-in point where it lacked the
+    // true one, and promotion has since replaced it (beeline-b34), so a
+    // further label could be the first to print the true point.
     const id = await insertCleanSample(conn, { taxon_geoprivacy: "'obscured'", specimen_count: "2" });
-    expect((await findings(id)).map((f) => f.rule)).toEqual(["taxon_obscured_awaiting_atlas"]);
     await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${id}, 1, '26000001')`);
-    expect(await findings(id)).toEqual([]);
+    expect((await findings(id)).map((f) => f.rule)).toEqual(["taxon_obscured_awaiting_atlas"]);
+    expect(await isPrintable(id)).toBe(false);
   });
 
   test("duplicate sample numbers flag every colliding sample", async () => {

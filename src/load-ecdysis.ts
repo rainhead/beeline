@@ -82,6 +82,10 @@ export interface LoadEcdysisResult {
   occurrences: number;
   /** Occurrences whose catalog number names a specimen in the store. */
   matched: number;
+  /** Specimens whose catalog number this load recorded for the first time, or changed. */
+  catalogNumbers: number;
+  /** Occurrences whose field number two specimens carry, so neither was given the museum's number. */
+  ambiguousCatalogNumbers: number;
   unmatched: number;
   unmatchedSample: string[];
   identifications: number;
@@ -219,6 +223,56 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     const unmatchedSample = (
       await rows(conn, `SELECT catalog_number FROM ecd_match WHERE specimen_id IS NULL ORDER BY catalog_number LIMIT 5`)
     ).map((r) => String(r[0]));
+
+    // The museum's number for each matched specimen, as Ecdysis writes it:
+    // the catalog number is the museum's, so Beeline keeps what Ecdysis says
+    // rather than deriving it from the field number (gh-98). An occurrence
+    // already recorded is recognised by its Ecdysis id, so a number the
+    // museum changes is followed even when it no longer spells the field
+    // number; the field number is how an occurrence is first recognised. An
+    // occurrence whose field number two specimens carry is a duplicate
+    // (beeline-1kb.14) and gives neither of them a number, since at most one
+    // of them is the museum's specimen, and the count says how many waited.
+    await conn.run(
+      `CREATE OR REPLACE TEMP TABLE ecd_catalog AS
+       WITH known AS (
+         SELECT c.specimen_id, o.catalog_number, o.occurrence_record_id
+         FROM ecd_occurrence o JOIN specimen_catalog_number c ON c.occurrence_id = o.occurrence_record_id
+         -- An occurrence that comes back with no number has not been renumbered;
+         -- it keeps the one recorded.
+         WHERE nullif(o.catalog_number, '') IS NOT NULL
+       ),
+       first_seen AS (
+         SELECT m.specimen_id, m.catalog_number, m.occurrence_record_id
+         FROM ecd_match m
+         WHERE m.specimen_id IS NOT NULL
+           AND m.occ_id IN (SELECT occ_id FROM ecd_match WHERE specimen_id IS NOT NULL GROUP BY occ_id HAVING count(*) = 1)
+           AND NOT EXISTS (SELECT 1 FROM known k WHERE k.specimen_id = m.specimen_id
+                                                   OR k.occurrence_record_id = m.occurrence_record_id)
+       )
+       SELECT * FROM known UNION ALL SELECT * FROM first_seen
+       QUALIFY row_number() OVER (PARTITION BY specimen_id ORDER BY catalog_number) = 1`,
+    );
+    const ambiguousCatalogNumbers = await scalar(
+      conn,
+      `SELECT count(DISTINCT occ_id) FROM ecd_match WHERE specimen_id IS NOT NULL
+       AND occ_id IN (SELECT occ_id FROM ecd_match WHERE specimen_id IS NOT NULL GROUP BY occ_id HAVING count(*) > 1)
+       AND occurrence_record_id NOT IN (SELECT occurrence_record_id FROM ecd_catalog WHERE occurrence_record_id IS NOT NULL)`,
+    );
+    // Counted before writing, so the count is what changed rather than what was seen.
+    const catalogNumbers = await scalar(
+      conn,
+      `SELECT count(*) FROM ecd_catalog e
+       LEFT JOIN specimen_catalog_number c ON c.specimen_id = e.specimen_id
+       WHERE c.catalog_number IS DISTINCT FROM e.catalog_number`,
+    );
+    await conn.run(
+      `INSERT INTO specimen_catalog_number (specimen_id, catalog_number, occurrence_id, loaded_at)
+       SELECT specimen_id, catalog_number, occurrence_record_id, $1::TIMESTAMPTZ FROM ecd_catalog
+       ON CONFLICT (specimen_id) DO UPDATE SET catalog_number = excluded.catalog_number,
+         occurrence_id = excluded.occurrence_id, loaded_at = excluded.loaded_at`,
+      [now.toISOString()],
+    );
 
     // A name the tree does not spell, but that ITIS accepts, comes in from
     // ITIS before anything resolves (beeline-45v.1.1); what is left is
@@ -460,6 +514,8 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       input: files.input,
       occurrences,
       matched,
+      catalogNumbers,
+      ambiguousCatalogNumbers,
       unmatched: occurrences - matched,
       unmatchedSample,
       identifications,

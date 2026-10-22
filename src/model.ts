@@ -554,6 +554,14 @@ export interface EcdysisIdentificationTable {
   loaded_at: Timestamped;
 }
 
+/** The museum's catalog number for a specimen, as Ecdysis reports it (gh-98). */
+export interface SpecimenCatalogNumberTable {
+  specimen_id: number;
+  catalog_number: string;
+  occurrence_id: string | null;
+  loaded_at: Timestamped;
+}
+
 /** The worksheet row an imported volunteer determination came from (beeline-pbk). */
 export interface WorksheetDeterminationTable {
   determination_id: number;
@@ -1102,6 +1110,7 @@ export interface Database {
   specimen: SpecimenTable;
   determination: DeterminationTable;
   ecdysis_identification: EcdysisIdentificationTable;
+  specimen_catalog_number: SpecimenCatalogNumberTable;
   worksheet_determination: WorksheetDeterminationTable;
   animal_caste: AnimalCasteTable;
   determination_draft: DeterminationDraftTable;

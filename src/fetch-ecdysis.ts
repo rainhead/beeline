@@ -292,6 +292,9 @@ export function describeFetch(r: FetchEcdysisResult): string {
     `${l.loaded} determination(s) recorded`,
     `${l.matched}/${l.occurrences} occurrences matched`,
   ];
+  if (l.catalogNumbers > 0) parts.push(`${l.catalogNumbers} catalog number(s) recorded or changed`);
+  if (l.ambiguousCatalogNumbers > 0)
+    parts.push(`${l.ambiguousCatalogNumbers} catalog number(s) not recorded, their field number being on two specimens`);
   if (l.adopted.length > 0) parts.push(`${l.adopted.length} name(s) adopted from ITIS: ${l.adopted.map((a) => a.name).join(", ")}`);
   const count = (n: number) => (n >= REPORTED_NAMES ? `at least ${n}` : String(n));
   if (l.filedUnder.length > 0) parts.push(`${count(l.filedUnder.length)} bycatch name(s) recorded under a broader name`);

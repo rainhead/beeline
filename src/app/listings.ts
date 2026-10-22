@@ -391,6 +391,8 @@ export interface SpecimenRow {
   protocol: string | null;
   /** The specimen's persistent identity downstream (ADR 0008); null for an imported specimen until one is minted. */
   occurrence_id: string | null;
+  /** The museum's catalog number, as Ecdysis reports it; null where no museum has said (gh-98). */
+  catalog_number: string | null;
   atlas_code: string | null;
   /** The sample's floral host, as the observation named it — a column here as on the samples listing. */
   host_name: string | null;
@@ -914,6 +916,9 @@ export async function listSpecimens(
         "s.country",
         "s.protocol",
         "sp.occurrence_id",
+        sql<string | null>`(SELECT c.catalog_number FROM specimen_catalog_number c WHERE c.specimen_id = sp.entity_id)`.as(
+          "catalog_number",
+        ),
         "a.code as atlas_code",
         "s.host_name_as_observed as host_name",
         "s.host_rank",
@@ -986,11 +991,16 @@ export async function collectorsOf(
  * Headers are Darwin Core terms wherever one exists, because these files go
  * on to taxonomists, Ecdysis and GBIF, all of which read Darwin Core (Peter,
  * 2026-09-28: adherence to Darwin Core matters more here than matching the
- * legacy system, which has its own export, src/legacy-export.ts). Two follow
- * ADR 0008: the field number printed on the pin is the collection's number
- * for the specimen, so it is `catalogNumber`; `fieldNumber` is Darwin Core's
- * identifier of the collecting event, which is our sample number. A column
- * Darwin Core has no term for keeps a plain lowerCamelCase name of our own.
+ * legacy system, which has its own export, src/legacy-export.ts). The
+ * numbers follow what the museums asked for (Andony, gh-98, 2026-10-21): the
+ * field number printed on the pin is Beeline's, so it is `fieldNumber`, and
+ * `catalogNumber` is the museum's, filled only where Ecdysis has told us one
+ * and never derived from the field number. On the samples download, one
+ * collecting event per row, `fieldNumber` is the sample number, which is what
+ * Darwin Core means by it; on the specimens download that slot holds the
+ * pin's number and the sample number is `sampleNumber`, a column of our own.
+ * A column Darwin Core has no term for keeps a plain lowerCamelCase name of
+ * our own.
  * Coordinates are in it, with their provenance and geoprivacy beside them,
  * so a row carries what a reader needs to judge it.
  *
@@ -1297,6 +1307,7 @@ export const SPECIMEN_DWC_COLUMNS = [
 
 /** Beeline's own, with no Darwin Core term. */
 export const SPECIMEN_OWN_COLUMNS = [
+  "sampleNumber",
   "specimenNumber",
   "atlas",
   "hostRank",
@@ -1311,8 +1322,8 @@ export const SPECIMEN_CSV_HEADER = [...SPECIMEN_DWC_COLUMNS, ...SPECIMEN_OWN_COL
 export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown[] => [
   r.occurrence_id,
   "PreservedSpecimen",
+  r.catalog_number,
   r.field_number,
-  r.sample_number,
   eventDate(r.date_start, r.date_end),
   r.protocol,
   recordedBy(page, r.sample_id),
@@ -1337,6 +1348,7 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.determiner,
   identifiedByID(r.determiner_orcid),
   dateIdentified(r.determined_on, r.determined_on_precision),
+  r.sample_number,
   r.specimen_number,
   r.atlas_code,
   r.host_rank,

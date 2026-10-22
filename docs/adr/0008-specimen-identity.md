@@ -17,7 +17,9 @@ question with the wrong identifier (beeline-1kb.14, beeline-1kb.15) ·
 that carries the field number — see the note under it and open question 1 ·
 **reviewed 2026-10-01**: open question 3 answered from what OSAC has
 actually published, which also undercuts the reason the corpus paragraph
-gave for keeping imported `occurrenceID`s verbatim
+gave for keeping imported `occurrenceID`s verbatim ·
+**amended 2026-10-22**: the field number goes out as `dwc:fieldNumber`, and
+`dwc:catalogNumber` is left to the museum (*Amendment*, below)
 
 Throughout, *Beeline* is this codebase. The system it replaces is *the
 reference implementation* — OBP-Server, which staff also call Beeline — and
@@ -74,9 +76,9 @@ project's own vocabulary *catalog number* means the **museum's** identifier —
 Ecdysis's `WSDA_…`, which fills `dwc:catalogNumber` in what the museum
 publishes — and ours is the field number; that is the distinction beeline-nfo
 settled, and nothing here changes it. But `dwc:catalogNumber` is also a
-*slot*, and in the exports Beeline publishes itself the field number is what
-fills it. The museum's number is the museum's business, and whether Ecdysis
-keeps shaping it from the field number is an open question below. Oregon does
+*slot*, and this ADR first had the field number fill it in the exports
+Beeline writes itself. The museums asked otherwise (*Amendment*, below): the
+slot is theirs, and the field number goes out as `dwc:fieldNumber`. Oregon does
 not use Ecdysis; its records carry an OSAC URI as their `occurrenceID`, and
 that URI is the subject of the next section. OSAC publishes Oregon's records
 to GBIF itself, from its own IPT, as the
@@ -203,9 +205,9 @@ Consequences.
 ## Decision
 
 **A specimen's identity downstream is an `occurrenceID` Beeline mints once
-and never changes. The field number is a label identifier — a
-`catalogNumber` in Darwin Core's terms — minted once, reused on every
-reprint, and replaceable at a known cost.** For the field number Beeline
+and never changes. The field number is a label identifier — published as
+`dwc:fieldNumber`, never as the museum's `catalogNumber` — minted once,
+reused on every reprint, and replaceable at a known cost.** For the field number Beeline
 proceeds on Andony's account (Peter, 2026-09-09): it is the program's stated
 policy, it is independently the rule the project had already reasoned its
 way to (beeline-1kb.5), and it is the simpler of two survivable options —
@@ -260,11 +262,12 @@ answers which label is right.
    changes, and it is a repair to a defect rather than a lifecycle step. It
    is recorded as an authored event
    ([ADR 0007](0007-authored-changes-are-events.md)) naming both numbers.
-   Downstream this is exactly the case the vocabulary provides for:
-   `catalogNumber` takes the new value, the old one goes into
-   `otherCatalogNumbers`, the `occurrenceID` does not move, and GBIF sees the
-   same record with two fields updated — no migration, no new `gbifID`, no
-   broken link.
+   Downstream this is a case the vocabulary provides for: `fieldNumber`
+   takes the new value, the old one goes into `otherCatalogNumbers` — "other
+   human-used identifiers for the same Occurrence" covers a number printed
+   on a pin, not only a museum's — the `occurrenceID` does not move, and GBIF
+   sees the same record with two fields updated — no migration, no new
+   `gbifID`, no broken link.
 
 ### The registry
 
@@ -404,6 +407,29 @@ answers which label is right.
     do with the historical corpus, all of which is printed and finished —
     when a pre-2026 label was printed is not a question anyone needs answered
     (Peter, 2026-09-09).
+
+### Amendment, 2026-10-22: `catalogNumber` is the museum's
+
+Andony answered for the museums on
+[gh-98](https://github.com/rainhead/beeline/issues/98#issuecomment-6327322699),
+on Lincoln Best's advice: Beeline must not fill in `catalogNumber`; its own
+number goes out as `fieldNumber`. Lincoln adds Oregon's catalog numbers by
+hand, and Washington's and British Columbia's can be read from Ecdysis. That
+is the reference implementation's arrangement too, whose occurrences file
+kept the minted number in `fieldNumber` and the museum's in `catalogNumber`.
+
+So in every file Beeline writes, `dwc:fieldNumber` on a specimen row is the
+field number and `dwc:catalogNumber` is the museum's number where a museum
+has reported one, and empty otherwise. Beeline records what Ecdysis says in
+`specimen_catalog_number` and never derives `WSDA_` from the field number;
+Oregon's stays empty until OSAC's numbers have a route in. Darwin Core
+means `fieldNumber` for the collecting event, which is why the specimen
+rows used it for the sample number until now. The samples download, one
+event per row, keeps that meaning, and the specimens download carries the
+sample number as `sampleNumber`, a column of Beeline's own. Nothing else
+here moves: the field number is still minted once and reused on every
+reprint, and a duplicate repair still publishes the old number in
+`otherCatalogNumbers`, under (4).
 
 ## Consequences
 

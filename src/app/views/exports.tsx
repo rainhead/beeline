@@ -1,6 +1,6 @@
 import type { Messages } from "../messages/index.js";
 import type { ProgramArchive } from "../dwc-archive.js";
-import { stillAllowed, type ArchiveEntry, type ArchiveManifest } from "../program-archives.js";
+import type { ArchiveEntry, ArchiveManifest } from "../program-archives.js";
 import { governanceFor, LICENSES, type ProgramGovernance } from "../../program-governance.js";
 import { Absent, Callout, DataTable, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
 
@@ -13,14 +13,13 @@ export interface ExportFile {
 /**
  * Files for work outside Beeline. The legacy system's occurrences format
  * (beeline-6q8), which reporting built on that file reads unchanged, and a
- * Darwin Core archive per program and season (beeline-rvun), written nightly
- * for each one whose program has a licence and a privacy policy in force.
- * Admin-gated like /jobs, since both carry names and true coordinates.
+ * Darwin Core archive per program and season (beeline-rvun), every one
+ * written nightly so staff can review it (Peter, 2026-10-23). Admin-gated like
+ * /jobs, since both carry names and true coordinates.
  *
- * The licence and policy columns read the decisions as they stand now, not as
- * the night's run found them, so a decision merged today shows at once; the
- * download follows them too, and a season whose decisions arrived today says
- * it is written tonight.
+ * The licence and policy columns are what publishing a season would need, and
+ * read the decisions as they stand now rather than as the night's run found
+ * them, so a decision merged today shows at once.
  */
 export function Exports({
   m,
@@ -127,14 +126,12 @@ function ProgramSeasons({
                   )}
                 </td>
                 <td>
-                  {stillAllowed(governance, entry) ? (
+                  {entry.file === null ? (
+                    <Meta>{e.archiveTonight}</Meta>
+                  ) : (
                     <a href={`/exports/dwca/${entry.file}`} aria-label={e.archiveDownload(program.name, entry.season)}>
                       {e.downloadSized(fileSize(entry.bytes ?? 0))}
                     </a>
-                  ) : license !== null && policy !== null ? (
-                    <Meta>{e.archiveTonight}</Meta>
-                  ) : (
-                    <Absent label={e.archiveWithheld} spelled />
                   )}
                 </td>
               </tr>

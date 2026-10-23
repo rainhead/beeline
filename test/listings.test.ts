@@ -924,7 +924,7 @@ describe("Darwin Core archives, by program and season", () => {
   const OBA_LICENSE = "OBA,2017,CC-BY-NC-4.0,Test,2026-10-10,https://example.org/oba,Published under it";
   const OBA_POLICY = "OBA,2026,https://example.org/oba-privacy,Test,2026-10-10,Agreed";
 
-  it("writes a season once its program has a licence and a privacy policy, with every determination", async () => {
+  it("writes a season with its licence, and every determination", async () => {
     const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
     const { app, db, conn } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
     // A later volunteer determination of OBA00001, beside the expert one the
@@ -939,8 +939,8 @@ describe("Darwin Core archives, by program and season", () => {
     const manifest = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     const oba = manifest.entries.find((e) => e.program === "OBA" && e.season === 2026)!;
     expect(oba).toMatchObject({ specimens: 2, license: "CC-BY-NC-4.0", policy: true, file: "OBA-2026.zip" });
-    // Washington has specimens and no licence: listed, not written.
-    expect(manifest.entries.find((e) => e.program === "WaBA")).toMatchObject({ license: null, file: null });
+    // Washington has specimens and no licence: written all the same, for review.
+    expect(manifest.entries.find((e) => e.program === "WaBA")).toMatchObject({ license: null, file: "WaBA-2026.zip" });
 
     const res = await app.request("/exports/dwca/OBA-2026.zip");
     expect(res.status).toBe(200);
@@ -996,30 +996,35 @@ describe("Darwin Core archives, by program and season", () => {
     expect(meta).not.toContain("terms/caste");
   });
 
-  it("withholds a season with a licence and no privacy policy, and says which it lacks", async () => {
-    const fx = await exportsFixture([OBA_LICENSE], []);
+  it("writes a season with no licence or privacy policy for review, and says what publishing it lacks", async () => {
+    const fx = await exportsFixture([], []);
     const { app, db } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
     const manifest = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
-    expect(manifest.entries.every((e) => e.file === null)).toBe(true);
-    expect(await readdir(join(fx.dir, "dwca"))).toEqual(["manifest.json"]);
-    expect((await app.request("/exports/dwca/OBA-2026.zip")).status).toBe(404);
+    expect(manifest.entries.find((e) => e.program === "OBA" && e.season === 2026)).toMatchObject({
+      license: null,
+      policy: false,
+      file: "OBA-2026.zip",
+    });
+    const res = await app.request("/exports/dwca/OBA-2026.zip");
+    expect(res.status).toBe(200);
+    // No licence is in force, so the archive states none.
+    expect(unpack(new Uint8Array(await res.arrayBuffer()))["meta.xml"]).not.toContain("dc/terms/license");
     const page = await get(app, "/exports");
-    expect(page).toContain("CC BY-NC 4.0");
+    expect(page).toContain("no licence");
     expect(page).toContain("none yet");
-    expect(page).toContain("withheld");
+    expect(page).toContain(`href="/exports/dwca/OBA-2026.zip"`);
+    expect(page).toContain(`href="/exports/dwca/WaBA-2026.zip"`);
   });
 
-  it("withdraws the download as soon as a decision is withdrawn, and the file at the next run", async () => {
+  it("removes an archive whose season no longer has specimens, and never serves a file the manifest does not name", async () => {
     const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
     const { app, db } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
-    expect((await app.request("/exports/dwca/OBA-2026.zip")).status).toBe(200);
-    await fx.write([OBA_LICENSE], []);
-    // The file is still on disk; the download is not.
-    expect(await readdir(join(fx.dir, "dwca"))).toContain("OBA-2026.zip");
-    expect((await app.request("/exports/dwca/OBA-2026.zip")).status).toBe(404);
+    // As a season whose specimens have all gone would leave it.
+    await writeFile(join(fx.dir, "dwca", "OBA-2019.zip"), "stale");
+    expect((await app.request("/exports/dwca/OBA-2019.zip")).status).toBe(404);
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
-    expect(await readdir(join(fx.dir, "dwca"))).not.toContain("OBA-2026.zip");
+    expect(await readdir(join(fx.dir, "dwca"))).not.toContain("OBA-2019.zip");
   });
 
   it("lists every program by season, Master Melittology's included, and none for the BLM surveys", async () => {
@@ -1048,7 +1053,7 @@ describe("Darwin Core archives, by program and season", () => {
     expect((await volunteer.request("/exports/dwca/OBA-2026.zip")).status).toBe(403);
     const { app: staff } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
     expect((await staff.request("/exports/dwca/OBA-2025.zip")).status).toBe(404);
-    expect((await staff.request("/exports/dwca/WaBA-2026.zip")).status).toBe(404);
+    expect((await staff.request("/exports/dwca/WaBA-2019.zip")).status).toBe(404);
     expect((await staff.request("/exports/dwca/manifest.json")).status).toBe(404);
   });
 

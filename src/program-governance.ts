@@ -12,7 +12,7 @@ import { parseCsv } from "./corrections.js";
  * the rule (2026-10-10) — a program continues with the licence it most
  * recently used — and it means ranges cannot overlap or leave a gap between
  * two rows. A season before a program's first row has no licence, or no
- * policy, and Beeline exports nothing for it.
+ * policy, and is not ready to publish.
  *
  * Both files are curated in git, beside the taxon decisions: they are a
  * program's decisions, written down by whoever was told them, and every row
@@ -171,7 +171,7 @@ export function inForce<T extends { program: string; fromSeason: number }>(
   return found;
 }
 
-/** What one program-season may do: exported only with both a licence and a privacy policy. */
+/** What one program-season has decided: it is published only with both a licence and a privacy policy. */
 export interface SeasonGovernance {
   license: ProgramLicense | null;
   policy: ProgramPrivacyPolicy | null;

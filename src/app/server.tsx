@@ -134,7 +134,7 @@ import {
   specimenCsvRow,
 } from "./listings.js";
 import { programArchives } from "./dwc-archive.js";
-import { archiveDir, readArchiveManifest, stillAllowed } from "./program-archives.js";
+import { archiveDir, readArchiveManifest } from "./program-archives.js";
 import { readProgramGovernance, type GovernancePaths } from "../program-governance.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
 import {
@@ -1238,17 +1238,14 @@ export function createApp({
   });
 
   // One program-season's Darwin Core archive, as the dwc-archives job wrote
-  // it (src/app/program-archives.ts). Served only while the program's licence
-  // and privacy policy for that season still stand — the decisions are read
-  // again here, so withdrawing one withdraws the download at once rather than
-  // at the next nightly run.
+  // it (src/app/program-archives.ts), whether or not its program has the
+  // licence and privacy policy publishing it would need: these are for staff
+  // to review (Peter, 2026-10-23). Only a file the manifest names is served.
   app.get("/exports/dwca/:file{[A-Za-z0-9]+-\\d{4}\\.zip}", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const name = c.req.param("file");
     const entry = (await readArchiveManifest(exportsDir()))?.entries.find((e) => e.file === name) ?? null;
-    if (entry === null || !stillAllowed(await readProgramGovernance(programGovernance), entry)) {
-      return errorResponse(c, "notFound");
-    }
+    if (entry === null) return errorResponse(c, "notFound");
     const path = join(archiveDir(exportsDir()), name);
     let handle;
     try {

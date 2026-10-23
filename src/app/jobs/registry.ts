@@ -411,9 +411,9 @@ export function buildJobs(
       },
     },
     {
-      // One Darwin Core archive per program per season, for each one whose
-      // program has a licence and a privacy policy in force (beeline-rvun).
-      // After the legacy export, so it reads the same store; on Exports.
+      // One Darwin Core archive per program per season, every one, for staff
+      // to review (beeline-rvun). After the legacy export, so it reads the
+      // same store; on Exports.
       name: "dwc-archives",
       schedule: { kind: "dailyLA", hour: 4 },
       window: "night",

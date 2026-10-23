@@ -12,7 +12,6 @@ import {
   readProgramGovernance,
   type GovernancePaths,
   type LicenseId,
-  type ProgramGovernance,
 } from "../program-governance.js";
 import { identificationsOf, programArchives, specimenArchiveStream } from "./dwc-archive.js";
 import { EMPTY_QUERY, listSpecimens, OUTSIDE } from "./listings.js";
@@ -22,13 +21,13 @@ import { EMPTY_QUERY, listSpecimens, OUTSIDE } from "./listings.js";
  * (beeline-rvun, Peter 2026-10-10) into `<exportsDir>/dwca/`, with a manifest
  * the Exports page reads.
  *
- * A program-season is written only when the program has both a licence and a
- * privacy policy in force for that season (src/program-governance.ts); every
- * other one is listed in the manifest with what it lacks, and any archive
- * written for it before is removed, so withdrawing a decision withdraws the
- * file the next night. The page and the download read the decisions again
- * rather than trusting the manifest, so a file is never served for a season
- * whose licence or policy has since gone.
+ * Every program-season with specimens is written, whatever its program has
+ * decided, so staff can download and review them (Peter, 2026-10-23). The
+ * licence and the privacy policy (src/program-governance.ts) are what a
+ * season needs before it is *published*, not before it is written: the
+ * licence in force goes into `meta.xml`, and the manifest records what the
+ * season still lacks. An archive for a program-season that no longer has
+ * specimens is removed at the next run.
  */
 
 export interface ArchiveEntry {
@@ -41,7 +40,7 @@ export interface ArchiveEntry {
   /** The privacy policy's page; null where there is no policy, or a policy with no page yet. */
   policyUrl: string | null;
   policy: boolean;
-  /** The archive's file name in the directory, where one was written. */
+  /** The archive's file name in the directory; null only in a manifest written before every season was. */
   file: string | null;
   bytes: number | null;
 }
@@ -95,7 +94,7 @@ export interface WriteArchivesOptions {
   step?: <T>(label: string, fn: () => Promise<T>) => Promise<T>;
 }
 
-/** Write every program-season the decisions allow, list every one, and remove what is no longer allowed. */
+/** Write every program-season with specimens, list each with what publishing it still lacks, and remove the rest. */
 export async function writeProgramArchives(
   db: Kysely<Database>,
   exportsDir: string,
@@ -121,30 +120,26 @@ export async function writeProgramArchives(
         license: license?.license ?? null,
         policyUrl: policy === null || policy.url === "" ? null : policy.url,
         policy: policy !== null,
-        file: null,
+        file: archiveFileName(program.code, season),
         bytes: null,
       };
-      if (license !== null && policy !== null) {
-        const file = archiveFileName(program.code, season);
-        const query = { ...EMPTY_QUERY, scope };
-        entry.bytes = await step(`${program.code} ${season}`, () =>
-          writeStream(
-            join(dir, file),
-            specimenArchiveStream(
-              async (limit, offset) => {
-                const page = await listSpecimens(db, query, 0, { limit, offset, withTotal: false, season });
-                return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
-              },
-              { license: LICENSES[license.license].url },
-            ),
+      const query = { ...EMPTY_QUERY, scope };
+      entry.bytes = await step(`${program.code} ${season}`, () =>
+        writeStream(
+          join(dir, entry.file!),
+          specimenArchiveStream(
+            async (limit, offset) => {
+              const page = await listSpecimens(db, query, 0, { limit, offset, withTotal: false, season });
+              return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
+            },
+            { license: license === null ? null : LICENSES[license.license].url },
           ),
-        );
-        entry.file = file;
-      }
+        ),
+      );
       entries.push(entry);
     }
   }
-  // Whatever is in the directory and was not written tonight is withdrawn.
+  // Whatever is in the directory and was not written tonight is removed.
   const written = new Set(entries.flatMap((e) => (e.file === null ? [] : [e.file])));
   for (const name of await readdir(dir)) {
     if (name.endsWith(".zip") && !written.has(name)) await rm(join(dir, name), { force: true });
@@ -166,20 +161,9 @@ export async function readArchiveManifest(exportsDir: string): Promise<ArchiveMa
   }
 }
 
-/**
- * Whether a written archive may be handed out now: the decisions are read
- * again, so a licence or policy withdrawn since the night's run withdraws the
- * download at once rather than at the next run.
- */
-export function stillAllowed(governance: ProgramGovernance, entry: ArchiveEntry): boolean {
-  const { license, policy } = governanceFor(governance, entry.program, entry.season);
-  return entry.file !== null && license !== null && policy !== null && license.license === entry.license;
-}
-
-/** One line for the job's detail: what was written and what was withheld, and why. */
+/** One line for the job's detail: what was written, and how much of it is not yet publishable, and why. */
 export function describeManifest(m: ArchiveManifest): string {
-  const written = m.entries.filter((e) => e.file !== null);
   const noLicense = m.entries.filter((e) => e.license === null).length;
   const noPolicy = m.entries.filter((e) => !e.policy).length;
-  return `${written.length} of ${m.entries.length} program-seasons written (${written.reduce((n, e) => n + e.specimens, 0)} specimens); ${noLicense} without a licence, ${noPolicy} without a privacy policy`;
+  return `${m.entries.length} program-seasons written (${m.entries.reduce((n, e) => n + e.specimens, 0)} specimens); ${noLicense} without a licence, ${noPolicy} without a privacy policy`;
 }

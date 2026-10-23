@@ -127,6 +127,7 @@ export const en = {
       design: "Design",
       jobs: "Jobs",
       taxonomy: "Taxonomy",
+      programs: "Programs",
       printRuns: "Print runs",
       exports: "Exports",
       identify: "Identify specimens",
@@ -1234,6 +1235,77 @@ export const en = {
       moved: "ITIS has moved since.",
     },
     notFound: "There is no such name in the taxonomy.",
+  },
+
+  /**
+   * The programs (beeline-rrit): a listing, and a page for each, read by
+   * everyone signed in. The counts link into the listings for staff only,
+   * since a volunteer's listings hold only their own records.
+   */
+  programs: {
+    title: "Programs",
+    intro:
+      "The programs Beeline keeps records for: each bee atlas, which holds the records collected on its ground; Master Melittology, which holds those collected where no atlas reaches; and the BLM surveys.",
+    colProgram: "Program",
+    colLeads: "Led by",
+    colMembers: "Members",
+    colSamples: (season: number) => `Samples in ${season}`,
+    colSpecimens: "Specimens, every season",
+    noLeads: "no lead recorded",
+    notMembership: "not recorded",
+    notFound: "There is no program with that code.",
+    /** The header line under the name. */
+    meta: (code: string, atlas: boolean) => (atlas ? `${code} · a bee atlas` : code),
+    summary: "At a glance",
+    members: "Members",
+    membersLink: (count: number) => `${n(count)} ${count === 1 ? "person" : "people"}`,
+    collectors: (season: number) => `Collectors in ${season}`,
+    samples: (season: number) => `Samples in ${season}`,
+    specimens: (season: number) => `Specimens in ${season}`,
+    specimensEver: "Specimens, every season",
+    contact: "Contact",
+    leads: "Led by",
+    contactNone: "No address recorded for the program yet.",
+    contactAdd: "Staff add one to ingest/program-contacts.csv, with where it was published.",
+    website: "Website",
+    email: "Email",
+    labels: "Labels",
+    printsOwn: "Prints its own labels, in print runs prepared for it alone.",
+    printedByProgram:
+      "Does not print its own labels: they are printed in the program's print runs, which Oregon prepares for every atlas that does not print its own.",
+    taxonObscured: {
+      answered: (by: string, on: Date | string) =>
+        `Its labels may carry the true point of a record iNaturalist hides because its host plant is rare. ${by} said so on ${date(on)}.`,
+      where: "Where it was said",
+      unanswered:
+        "Has not said whether its labels may carry the true point of a record iNaturalist hides because its host plant is rare, so those samples do not print until it does.",
+      outside:
+        "No atlas answers for records collected outside every atlas, so those whose host plant iNaturalist hides as rare do not print.",
+    },
+    seasons: "Records by season",
+    colSeason: "Season",
+    colSeasonSamples: "Samples",
+    colSeasonSpecimens: "Specimens",
+    colSeasonCollectors: "Collectors",
+    season: (year: number) => `${year} season`,
+    noRecords: "No records yet.",
+    surveys:
+      "None by where they were collected: survey samples will come in through the surveys' own field entry, and belong to them by the day they were collected on rather than by where they fell.",
+    seeSamples: "See its samples",
+    seeSpecimens: "See its specimens",
+    publishing: "Licence and privacy",
+    license: (name: string, season: number) => `${name}, from the ${season} season`,
+    recorded: (by: string, on: Date | string) => `Recorded by ${by} on ${date(on)}.`,
+    source: "Where it was seen",
+    noLicense: "No licence recorded, so no season of its records can be exported.",
+    policy: (season: number) => `A privacy policy, from the ${season} season`,
+    policyRead: "Read it",
+    policyNoPage: "Agreed, not yet published.",
+    noPolicy: "No privacy policy yet, so no season of its records can be exported.",
+    exports: "The archives are on Exports.",
+    ecdysis: "Expert determinations",
+    ecdysisDataset: (datasetId: number) =>
+      `Read back every night at 3am Pacific from Ecdysis, the museum database, dataset ${datasetId}.`,
   },
 
   exports: {

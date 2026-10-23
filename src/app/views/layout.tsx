@@ -64,6 +64,7 @@ function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
         { href: "/glossary", label: m.layout.nav.glossary, shown: true },
         { href: "/determinations", label: m.layout.nav.identify, shown: true },
         { href: "/taxonomy", label: m.layout.nav.taxonomy, shown: true },
+        { href: "/programs", label: m.layout.nav.programs, shown: true },
         // /people and /jobs are gated; /design is only unlisted — it reads no
         // records, so keeping a volunteer out of it protects nothing, and the
         // reason not to offer it to them is that it is not their tool.

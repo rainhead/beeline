@@ -26,6 +26,9 @@ import { securityHeaders } from "./security-headers.js";
 import { countListingView, listingAttributes, rosterAttributes, type Viewer } from "./usage.js";
 import { Glossary } from "./views/glossary.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
+import { ProgramIndex, ProgramPage } from "./views/programs.js";
+import { listPrograms, loadProgram } from "./programs.js";
+import { readProgramContacts } from "../program-contacts.js";
 import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomySummary } from "./taxonomy.js";
 import {
   addSpecimensToBatch,
@@ -206,6 +209,8 @@ export interface AppDeps {
   printRunsDir?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
   programGovernance?: GovernancePaths;
+  /** How to reach each program; the curated file in ingest/ unless a test says otherwise. */
+  programContactsPath?: string;
 }
 
 /**
@@ -232,6 +237,7 @@ export function createApp({
   inatCheck,
   printRunsDir,
   programGovernance,
+  programContactsPath,
 }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], start: async () => false };
   // Resolved now rather than at first use, so a test that leaves one out
@@ -1045,6 +1051,26 @@ export function createApp({
     const node = await loadTaxon(db, c.req.param("rank"), c.req.param("name"));
     if (node === null) return errorResponse(c, "notFound", { message: m.taxonomy.notFound });
     return c.html(await page(c, node.scientific_name, <TaxonPage m={m} node={node} admin={c.get("admin")} />));
+  });
+
+  // The programs (beeline-rrit). Read by everyone, like the taxonomy: totals,
+  // the program's own leads and its published addresses, and nobody's
+  // records; the links into the listings and the roster are drawn for staff
+  // only. Addressed by code, which a rebuild does not redraw. The curated
+  // files are read per request, so a decision merged in git shows at once.
+  app.get("/programs", async (c) => {
+    const m = c.get("m");
+    return c.html(await page(c, m.programs.title, <ProgramIndex m={m} programs={await listPrograms(db)} admin={c.get("admin")} />));
+  });
+
+  app.get("/programs/:code", async (c) => {
+    const m = c.get("m");
+    const program = await loadProgram(db, c.req.param("code"), {
+      governance: await readProgramGovernance(programGovernance),
+      contacts: await readProgramContacts(programContactsPath),
+    });
+    if (program === null) return errorResponse(c, "notFound", { message: m.programs.notFound });
+    return c.html(await page(c, program.name, <ProgramPage m={m} program={program} admin={c.get("admin")} />));
   });
 
   // --- Identify your specimens (beeline-bcq). Reach is "mine", following

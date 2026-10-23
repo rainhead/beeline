@@ -17,7 +17,7 @@ import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
  */
 
 const FIXTURES = new URL("./fixtures/ecdysis/archive/", import.meta.url).pathname;
-const WA: EcdysisCollection = { datasetId: 44, catalogPrefix: "WSDA_" };
+const WA: EcdysisCollection = { datasetId: 44, catalogPrefix: "WSDA_", program: "WaBA" };
 const CREDENTIALS = { username: "fetcher", password: "s3cret-never-logged" };
 
 let conn: DuckDBConnection;

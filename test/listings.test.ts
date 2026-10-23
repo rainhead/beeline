@@ -23,7 +23,7 @@ import { strFromU8, unzipSync } from "fflate";
 import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
 import { writeProgramArchives } from "../src/app/program-archives.js";
 import type { GovernancePaths } from "../src/program-governance.js";
-import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, OPEN_SEASON, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -937,15 +937,15 @@ describe("Darwin Core archives, by program and season", () => {
        WHERE sp.field_number = 'OBA00001' AND an.scientific_name = 'Bombus'`,
     );
     const manifest = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
-    const oba = manifest.entries.find((e) => e.program === "OBA" && e.season === 2026)!;
-    expect(oba).toMatchObject({ specimens: 2, license: "CC-BY-NC-4.0", policy: true, file: "OBA-2026.zip" });
+    const oba = manifest.entries.find((e) => e.program === "OBA" && e.season === OPEN_SEASON)!;
+    expect(oba).toMatchObject({ specimens: 2, license: "CC-BY-NC-4.0", policy: true, file: `OBA-${OPEN_SEASON}.zip` });
     // Washington has specimens and no licence: written all the same, for review.
-    expect(manifest.entries.find((e) => e.program === "WaBA")).toMatchObject({ license: null, file: "WaBA-2026.zip" });
+    expect(manifest.entries.find((e) => e.program === "WaBA")).toMatchObject({ license: null, file: `WaBA-${OPEN_SEASON}.zip` });
 
-    const res = await app.request("/exports/dwca/OBA-2026.zip");
+    const res = await app.request(`/exports/dwca/OBA-${OPEN_SEASON}.zip`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/zip");
-    expect(res.headers.get("content-disposition")).toContain(`filename="beeline-OBA-2026-dwca.zip"`);
+    expect(res.headers.get("content-disposition")).toContain(`filename="beeline-OBA-${OPEN_SEASON}-dwca.zip"`);
     const files = unpack(new Uint8Array(await res.arrayBuffer()));
     expect(Object.keys(files)).toEqual(["meta.xml", "occurrence.txt", "identification.txt"]);
 
@@ -1000,20 +1000,20 @@ describe("Darwin Core archives, by program and season", () => {
     const fx = await exportsFixture([], []);
     const { app, db } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
     const manifest = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
-    expect(manifest.entries.find((e) => e.program === "OBA" && e.season === 2026)).toMatchObject({
+    expect(manifest.entries.find((e) => e.program === "OBA" && e.season === OPEN_SEASON)).toMatchObject({
       license: null,
       policy: false,
-      file: "OBA-2026.zip",
+      file: `OBA-${OPEN_SEASON}.zip`,
     });
-    const res = await app.request("/exports/dwca/OBA-2026.zip");
+    const res = await app.request(`/exports/dwca/OBA-${OPEN_SEASON}.zip`);
     expect(res.status).toBe(200);
     // No licence is in force, so the archive states none.
     expect(unpack(new Uint8Array(await res.arrayBuffer()))["meta.xml"]).not.toContain("dc/terms/license");
     const page = await get(app, "/exports");
     expect(page).toContain("no licence");
     expect(page).toContain("none yet");
-    expect(page).toContain(`href="/exports/dwca/OBA-2026.zip"`);
-    expect(page).toContain(`href="/exports/dwca/WaBA-2026.zip"`);
+    expect(page).toContain(`href="/exports/dwca/OBA-${OPEN_SEASON}.zip"`);
+    expect(page).toContain(`href="/exports/dwca/WaBA-${OPEN_SEASON}.zip"`);
   });
 
   it("removes an archive whose season no longer has specimens, and never serves a file the manifest does not name", async () => {
@@ -1034,8 +1034,8 @@ describe("Darwin Core archives, by program and season", () => {
     expect(await get(app, "/exports")).toContain("Not written yet");
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     const page = await get(app, "/exports");
-    expect(page).toContain(`href="/exports/dwca/OBA-2026.zip"`);
-    expect(page).toContain("2026 season");
+    expect(page).toContain(`href="/exports/dwca/OBA-${OPEN_SEASON}.zip"`);
+    expect(page).toContain(`${OPEN_SEASON} season`);
     expect(page).toContain(`href="https://example.org/oba-privacy"`);
     expect(page).toContain("Washington Bee Atlas");
     expect(page).toContain("Master Melittology");
@@ -1050,9 +1050,9 @@ describe("Darwin Core archives, by program and season", () => {
     const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
     const { app: volunteer, db } = await listingApp("alice", { dir: fx.dir, governance: fx.governance });
     await writeProgramArchives(db, fx.dir, { governance: fx.governance });
-    expect((await volunteer.request("/exports/dwca/OBA-2026.zip")).status).toBe(403);
+    expect((await volunteer.request(`/exports/dwca/OBA-${OPEN_SEASON}.zip`)).status).toBe(403);
     const { app: staff } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
-    expect((await staff.request("/exports/dwca/OBA-2025.zip")).status).toBe(404);
+    expect((await staff.request(`/exports/dwca/OBA-${OPEN_SEASON - 1}.zip`)).status).toBe(404);
     expect((await staff.request("/exports/dwca/WaBA-2019.zip")).status).toBe(404);
     expect((await staff.request("/exports/dwca/manifest.json")).status).toBe(404);
   });

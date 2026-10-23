@@ -15,7 +15,7 @@ import type { CsvTiming } from "./request-timing.js";
 import type { Database, DeterminationQualifier } from "../model.js";
 
 /**
- * One program's specimens for a season as a Darwin Core archive
+ * One program's specimens for a calendar year as a Darwin Core archive
  * (https://dwc.tdwg.org/text/), written nightly and offered to admins on
  * /exports (src/app/program-archives.ts): the columns of the specimens CSV, zipped with
  * a `meta.xml` that maps each to its Darwin Core term, and with what a flat

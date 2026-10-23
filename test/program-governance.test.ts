@@ -7,8 +7,8 @@ import {
   readProgramGovernance,
 } from "../src/program-governance.js";
 
-const LICENSES = "program,from_season,license,decided_by,decided_on,source,reason";
-const POLICIES = "program,from_season,url,decided_by,decided_on,reason";
+const LICENSES = "program,from_year,license,decided_by,decided_on,source,reason";
+const POLICIES = "program,from_year,url,decided_by,decided_on,reason";
 const licenses = (...rows: string[]) => parseProgramLicenses([LICENSES, ...rows].join("\n"), "licenses.csv");
 const policies = (...rows: string[]) => parseProgramPrivacyPolicies([POLICIES, ...rows].join("\n"), "policies.csv");
 
@@ -20,7 +20,7 @@ describe("program licences and privacy policies", () => {
     for (const l of g.licenses) expect(l.source).not.toBe("");
   });
 
-  it("holds a row from its season until the program's next, and the latest from then on", () => {
+  it("holds a row from its year until the program's next, and the latest from then on", () => {
     const rows = licenses(
       "OBA,2018,CC-BY-4.0,Test,2026-10-10,https://example.org/2018,First",
       "OBA,2019,CC-BY-NC-4.0,Test,2026-10-10,https://example.org/2019,Changed",
@@ -59,7 +59,7 @@ describe("program licences and privacy policies", () => {
     // Only the licences GBIF accepts.
     expect(() => licenses(row("CC-BY-SA-4.0"))).toThrow(/not one GBIF accepts/);
     expect(() => licenses(row("CC-BY-NC-4.0"), row("CC-BY-4.0"))).toThrow(/OBA from 2017 is stated twice/);
-    expect(() => licenses("OBA,17,CC-BY-4.0,Test,2026-10-10,https://example.org,Why")).toThrow(/not a season/);
+    expect(() => licenses("OBA,17,CC-BY-4.0,Test,2026-10-10,https://example.org,Why")).toThrow(/not a year/);
     expect(() => licenses("OBA,2017,CC-BY-4.0,,2026-10-10,https://example.org,Why")).toThrow(/who decided/);
     expect(() => licenses("OBA,2017,CC-BY-4.0,Test,2026-10-10,,Why")).toThrow(/where it was seen/);
     expect(() => licenses("OBA,2017,CC-BY-4.0,Test,2026-10-10,https://example.org,")).toThrow(/says why/);

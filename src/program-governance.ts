@@ -4,15 +4,18 @@ import { parseCsv } from "./corrections.js";
 /**
  * What a program has said about its records leaving it: the licence they go
  * out under, and the privacy policy that governs what is shown (beeline-rvun).
- * Each is a fact about the program with a range of seasons it holds for, so a
+ * Each is a fact about the program with a range of years it holds for, so a
  * program can change its licence without restating what it published before.
+ * A year is the calendar year the specimens were collected in, the grain the
+ * archives are written at and the one the taxonomists work in (Peter,
+ * 2026-10-23) — not Beeline's season, which begins on 1 March.
  *
- * A row says "from this season on": it holds until the program's next row,
- * and the latest holds from then on. That is Peter's presumption made into
- * the rule (2026-10-10) — a program continues with the licence it most
- * recently used — and it means ranges cannot overlap or leave a gap between
- * two rows. A season before a program's first row has no licence, or no
- * policy, and Beeline exports nothing for it.
+ * A row says "from this year on": it holds until the program's next row, and
+ * the latest holds from then on. That is Peter's presumption made into the
+ * rule (2026-10-10) — a program continues with the licence it most recently
+ * used — and it means ranges cannot overlap or leave a gap between two rows.
+ * A year before a program's first row has no licence, or no policy, and is
+ * not ready to publish.
  *
  * Both files are curated in git, beside the taxon decisions: they are a
  * program's decisions, written down by whoever was told them, and every row
@@ -39,12 +42,12 @@ export const LICENSES = {
 } as const;
 export type LicenseId = keyof typeof LICENSES;
 
-const LICENSE_COLUMNS = ["program", "from_season", "license", "decided_by", "decided_on", "source", "reason"] as const;
-const POLICY_COLUMNS = ["program", "from_season", "url", "decided_by", "decided_on", "reason"] as const;
+const LICENSE_COLUMNS = ["program", "from_year", "license", "decided_by", "decided_on", "source", "reason"] as const;
+const POLICY_COLUMNS = ["program", "from_year", "url", "decided_by", "decided_on", "reason"] as const;
 
 export interface ProgramLicense {
   program: string;
-  fromSeason: number;
+  fromYear: number;
   license: LicenseId;
   decidedBy: string;
   decidedOn: string;
@@ -55,7 +58,7 @@ export interface ProgramLicense {
 
 export interface ProgramPrivacyPolicy {
   program: string;
-  fromSeason: number;
+  fromYear: number;
   /** The policy as published, where it has a page of its own; empty where it does not yet. */
   url: string;
   decidedBy: string;
@@ -68,7 +71,7 @@ const isDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Dat
 /** The fields shared by both files, checked the same way. */
 function commonProblem(row: Record<string, string>): string | null {
   if (!/^[A-Za-z0-9]+$/.test(row.program!)) return `program '${row.program}' is not a program code`;
-  if (!/^\d{4}$/.test(row.from_season!)) return `from_season '${row.from_season}' is not a season (the year it began)`;
+  if (!/^\d{4}$/.test(row.from_year!)) return `from_year '${row.from_year}' is not a year`;
   if (row.decided_by!.trim() === "") return "every row names who decided";
   if (!isDate(row.decided_on!)) return `decided_on '${row.decided_on}' is not a date (YYYY-MM-DD)`;
   if (row.reason!.trim() === "") return "every row says why";
@@ -92,7 +95,7 @@ function parseRows<C extends readonly string[]>(
     const row = Object.fromEntries(columns.map((c, j) => [c, r[j]!])) as Record<C[number], string>;
     const bad = commonProblem(row) ?? problem(row);
     if (bad !== null) throw new Error(`${where} line ${line}: ${bad}`);
-    const key = `${(row as Record<string, string>).program}/${(row as Record<string, string>).from_season}`;
+    const key = `${(row as Record<string, string>).program}/${(row as Record<string, string>).from_year}`;
     if (seen.has(key)) throw new Error(`${where} line ${line}: ${key.replace("/", " from ")} is stated twice`);
     seen.add(key);
     return row;
@@ -106,7 +109,7 @@ export function parseProgramLicenses(text: string, where: string): ProgramLicens
     return null;
   }).map((r) => ({
     program: r.program,
-    fromSeason: Number(r.from_season),
+    fromYear: Number(r.from_year),
     license: r.license as LicenseId,
     decidedBy: r.decided_by,
     decidedOn: r.decided_on,
@@ -120,7 +123,7 @@ export function parseProgramPrivacyPolicies(text: string, where: string): Progra
     r.url === "" || /^https?:\/\/\S+$/.test(r.url) ? null : `url '${r.url}' is not a web address`,
   ).map((r) => ({
     program: r.program,
-    fromSeason: Number(r.from_season),
+    fromYear: Number(r.from_year),
     url: r.url,
     decidedBy: r.decided_by,
     decidedOn: r.decided_on,
@@ -157,26 +160,26 @@ export async function readProgramGovernance(paths: GovernancePaths = {}): Promis
   };
 }
 
-/** The row in force for a program's season: its latest row from that season or before. */
-export function inForce<T extends { program: string; fromSeason: number }>(
+/** The row in force for a program's year: its latest row from that year or before. */
+export function inForce<T extends { program: string; fromYear: number }>(
   rows: readonly T[],
   program: string,
-  season: number,
+  year: number,
 ): T | null {
   let found: T | null = null;
   for (const row of rows) {
-    if (row.program !== program || row.fromSeason > season) continue;
-    if (found === null || row.fromSeason > found.fromSeason) found = row;
+    if (row.program !== program || row.fromYear > year) continue;
+    if (found === null || row.fromYear > found.fromYear) found = row;
   }
   return found;
 }
 
-/** What one program-season may do: exported only with both a licence and a privacy policy. */
-export interface SeasonGovernance {
+/** What a program has decided for one year: it is published only with both a licence and a privacy policy. */
+export interface YearGovernance {
   license: ProgramLicense | null;
   policy: ProgramPrivacyPolicy | null;
 }
 
-export function governanceFor(g: ProgramGovernance, program: string, season: number): SeasonGovernance {
-  return { license: inForce(g.licenses, program, season), policy: inForce(g.policies, program, season) };
+export function governanceFor(g: ProgramGovernance, program: string, year: number): YearGovernance {
+  return { license: inForce(g.licenses, program, year), policy: inForce(g.policies, program, year) };
 }

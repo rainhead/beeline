@@ -48,6 +48,7 @@ export function listingAttributes(
     taxon: q.taxon !== "",
     host: q.host !== "",
     det: q.det !== "any",
+    kind: q.kind !== "any",
     qc: q.qc !== "any",
   };
   const filters = Object.entries(used)
@@ -72,6 +73,7 @@ export function listingAttributes(
     // Enumerated filter values, which say which QC bucket or membership was wanted.
     qc: q.qc,
     det: q.det,
+    kind: q.kind,
     member: q.member === MEMBER_ANY ? "any" : q.member,
   };
 }

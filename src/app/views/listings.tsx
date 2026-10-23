@@ -137,6 +137,7 @@ const emptyFilters: Omit<ListingQuery, "scope" | "page" | "sort" | "dir"> = {
   taxon: "",
   host: "",
   det: "any",
+  kind: "any",
   qc: "any",
 };
 
@@ -184,6 +185,13 @@ function activeFilters(
       label: f.det,
       value: query.det === "determined" ? f.detDetermined : f.detUndetermined,
       clearHref: clear({ det: "any" }),
+    });
+  }
+  if (query.kind !== "any") {
+    out.push({
+      label: f.method,
+      value: query.kind === "net" ? f.methodNet : f.methodTrap,
+      clearHref: clear({ kind: "any" }),
     });
   }
   if (query.qc !== "any") {
@@ -523,6 +531,27 @@ export function SampleListing(props: ListingProps<SampleRow>) {
               collectorsColumn({ ...col, label: copy.colCollectors, atlases, admin }),
               placeColumn({ ...col, label: copy.colPlace }),
               hostColumn({ ...col, label: copy.colHost }),
+              // Two values, so a filter and no order: sorting would only
+              // put one kind first, which the filter does better.
+              column({
+                ...col,
+                label: copy.colMethod,
+                sort: null,
+                fields: ["kind"],
+                controls: (
+                  <SelectField
+                    id="kind"
+                    name="kind"
+                    label={f.method}
+                    value={query.kind}
+                    options={[
+                      ["any", f.methodAny],
+                      ["net", f.methodNet],
+                      ["trap", f.methodTrap],
+                    ]}
+                  />
+                ),
+              }),
               // A taxon name only ever matches something already determined,
               // so the gap needs its own control rather than a magic word in
               // the box. On samples both are about the sample's specimens.
@@ -585,6 +614,7 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                     <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} />
                   )}
                 </td>
+                <td>{row.kind === "trap" ? f.methodTrap : f.methodNet}</td>
                 <td>{m.format.number(row.specimen_count)}</td>
                 <td>
                   <StatusChip m={m} blocking={row.blocking} warning={row.warning} />

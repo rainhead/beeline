@@ -564,6 +564,37 @@ describe("the host plant column", () => {
   });
 });
 
+describe("the method column", () => {
+  it("says whether each sample was netted or trapped, and filters on it", async () => {
+    const { app, conn } = await listingApp("staffer");
+    await conn.run(`UPDATE sample SET kind = 'trap' WHERE sample_number = 'B-1'`);
+    const all = await get(app, "/samples?scope=all");
+    expect(all).toContain("<td>Trap</td>");
+    expect(all).toContain("<td>Net</td>");
+    const traps = await get(app, "/samples?scope=all&kind=trap");
+    expect(traps).toContain("1 sample");
+    expect(traps).toContain("B-1");
+    expect(traps).toContain("Method: Trap");
+    const nets = await get(app, "/samples?scope=all&kind=net");
+    expect(nets).toContain("5 samples");
+    expect(nets).not.toContain(">B-1<");
+  });
+
+  it("narrows specimens to the kind of sample they came from", async () => {
+    const { app, conn } = await listingApp("staffer");
+    await conn.run(`UPDATE sample SET kind = 'trap' WHERE sample_number = 'B-1'`);
+    const body = await get(app, "/specimens?scope=all&kind=trap");
+    expect(body).toContain("1 specimen");
+    expect(body).toContain("WABA0001");
+    expect(body).toContain("Method: Trap");
+  });
+
+  it("ignores a kind the store does not have", async () => {
+    const { app } = await listingApp("staffer");
+    expect(await get(app, "/samples?scope=all&kind=pan")).toContain("6 samples");
+  });
+});
+
 describe("the determination date column", () => {
   it("shows when the determination of record was made, and orders by it", async () => {
     const { app, conn } = await listingApp("staffer");

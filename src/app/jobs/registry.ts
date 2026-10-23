@@ -411,8 +411,9 @@ export function buildJobs(
       },
     },
     {
-      // One Darwin Core archive per program per calendar year, every one, for staff
-      // to review (beeline-rvun). After the legacy export, so it reads the
+      // One Darwin Core archive per calendar year for each atlas and for
+      // Master Melittology, for staff to review; none for the BLM surveys,
+      // whose samples are not theirs by geography (beeline-rvun). After the legacy export, so it reads the
       // same store; on Exports.
       name: "dwc-archives",
       schedule: { kind: "dailyLA", hour: 4 },

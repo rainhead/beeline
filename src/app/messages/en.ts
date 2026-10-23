@@ -1284,7 +1284,7 @@ export const en = {
       "legacy-export":
         "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
       "dwc-archives":
-        "Writes a Darwin Core archive for each program and calendar year, for staff to review, and removes any whose year no longer has specimens. Download them from Exports.",
+        "Writes a Darwin Core archive for each atlas and for Master Melittology, one per calendar year, for staff to review, and removes any whose year no longer has specimens. Download them from Exports.",
       "ecdysis-fetch":
         "Brings back the determinations made in Ecdysis, Washington's museum database. Downloads the collection only when Ecdysis says something changed, and otherwise reloads the copy it kept; names Beeline lacks are taken from ITIS where it accepts them, and the rest are listed in the run.",
       "store-backup":

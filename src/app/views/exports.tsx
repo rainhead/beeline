@@ -19,7 +19,9 @@ export interface ExportFile {
  *
  * The licence and policy columns are what publishing a year would need, and
  * read the decisions as they stand now rather than as the night's run found
- * them, so a decision merged today shows at once.
+ * them, so a decision merged today shows at once. The file beside them states
+ * the licence of the night it was written, so where the two differ the row
+ * says which licence the file carries until it is rewritten.
  */
 export function Exports({
   m,
@@ -126,12 +128,14 @@ function ProgramSeasons({
                   )}
                 </td>
                 <td>
-                  {entry.file === null ? (
-                    <Meta>{e.archiveTonight}</Meta>
-                  ) : (
-                    <a href={`/exports/dwca/${entry.file}`} aria-label={e.archiveDownload(program.name, entry.year)}>
-                      {e.downloadSized(fileSize(entry.bytes ?? 0))}
-                    </a>
+                  <a href={`/exports/dwca/${entry.file}`} aria-label={e.archiveDownload(program.name, entry.year)}>
+                    {e.downloadSized(fileSize(entry.bytes))}
+                  </a>
+                  {/* The column reads the decisions as they stand; the file states the licence of the night it was written. */}
+                  {entry.license !== (license?.license ?? null) && (
+                    <Meta block>
+                      {entry.license === null ? e.archiveLicenseNone : e.archiveLicenseWas(LICENSES[entry.license].name)}
+                    </Meta>
                   )}
                 </td>
               </tr>

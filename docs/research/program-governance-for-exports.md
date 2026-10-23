@@ -1,6 +1,6 @@
 # Program governance for exports: licences, privacy policies and datasets
 
-Research for the nightly Darwin Core archive (one per program per season, refused unless the program has a licence and a privacy policy in force for that season), and for embargoes on particular records. Gathered 2026-10-10 from GBIF's API and documentation, TDWG, Creative Commons, iNaturalist, the Symbiota documentation, Ecdysis, and each atlas's own pages.
+Research for the nightly Darwin Core archive (one per program per season, refused unless the program has a licence and a privacy policy in force for that season), and for embargoes on particular records. Since 2026-10-23 the archives are cut by calendar year and every one is written for staff to review; the licence and the privacy policy are now what a year needs before it is published. Gathered 2026-10-10 from GBIF's API and documentation, TDWG, Creative Commons, iNaturalist, the Symbiota documentation, Ecdysis, and each atlas's own pages.
 
 Each claim is marked as one of two kinds:
 

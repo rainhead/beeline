@@ -43,13 +43,14 @@ export interface ArchiveEntry {
   year: number;
   /** Specimens the program holds for the year. */
   specimens: number;
+  /** The licence in force when the archive was written, which is the one its `meta.xml` states. */
   license: LicenseId | null;
   /** The privacy policy's page; null where there is no policy, or a policy with no page yet. */
   policyUrl: string | null;
   policy: boolean;
-  /** The archive's file name in the directory; null only in a manifest written before every year was. */
-  file: string | null;
-  bytes: number | null;
+  /** The archive's file name in the directory. */
+  file: string;
+  bytes: number;
 }
 
 export interface ArchiveManifest {
@@ -120,21 +121,11 @@ export async function writeProgramArchives(
     const years = [...(counts.get(scope) ?? new Map<number, number>()).entries()].sort(([a], [b]) => a - b);
     for (const [year, specimens] of years) {
       const { license, policy } = governanceFor(governance, program.code, year);
-      const entry: ArchiveEntry = {
-        program: program.code,
-        name: program.name,
-        year,
-        specimens,
-        license: license?.license ?? null,
-        policyUrl: policy === null || policy.url === "" ? null : policy.url,
-        policy: policy !== null,
-        file: archiveFileName(program.code, year),
-        bytes: null,
-      };
+      const file = archiveFileName(program.code, year);
       const query = { ...EMPTY_QUERY, scope };
-      entry.bytes = await step(`${program.code} ${year}`, () =>
+      const bytes = await step(`${program.code} ${year}`, () =>
         writeStream(
-          join(dir, entry.file!),
+          join(dir, file),
           specimenArchiveStream(
             async (limit, offset) => {
               const page = await listSpecimens(db, query, 0, { limit, offset, withTotal: false, year });
@@ -144,11 +135,21 @@ export async function writeProgramArchives(
           ),
         ),
       );
-      entries.push(entry);
+      entries.push({
+        program: program.code,
+        name: program.name,
+        year,
+        specimens,
+        license: license?.license ?? null,
+        policyUrl: policy === null || policy.url === "" ? null : policy.url,
+        policy: policy !== null,
+        file,
+        bytes,
+      });
     }
   }
   // Whatever is in the directory and was not written tonight is removed.
-  const written = new Set(entries.flatMap((e) => (e.file === null ? [] : [e.file])));
+  const written = new Set(entries.map((e) => e.file));
   for (const name of await readdir(dir)) {
     if (name.endsWith(".zip") && !written.has(name)) await rm(join(dir, name), { force: true });
   }

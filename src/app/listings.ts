@@ -450,8 +450,8 @@ export interface ListingPageOptions {
   /** False skips counting the whole selection; `total` is then 0. */
   withTotal?: boolean;
   /**
-   * Only samples collected in this calendar year, by their first day, as
-   * Darwin Core's `year` reads an interval. Not a listing filter — the
+   * Only samples collected in this calendar year, judged on their first day
+   * (no sample on the dev store spans New Year). Not a listing filter — the
    * listings have none, by design — but the grain the program archives are
    * written at (src/app/program-archives.ts), which is the taxonomists' year
    * and not the season.

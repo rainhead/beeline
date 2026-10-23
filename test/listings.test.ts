@@ -1014,6 +1014,16 @@ describe("Darwin Core archives, by program and year", () => {
     expect(page).toContain("none yet");
     expect(page).toContain(`href="/exports/dwca/OBA-2026.zip"`);
     expect(page).toContain(`href="/exports/dwca/WaBA-${OPEN_SEASON}.zip"`);
+    expect(page).not.toContain("This file states");
+
+    // A licence merged after the night's run shows at once, and the row says
+    // the file beside it does not carry it yet.
+    await fx.write([OBA_LICENSE], []);
+    const after = await get(app, "/exports");
+    expect(after).toContain("CC BY-NC 4.0");
+    expect(after).toContain("This file states no licence; it is rewritten with this one tonight.");
+    await writeProgramArchives(db, fx.dir, { governance: fx.governance });
+    expect(await get(app, "/exports")).not.toContain("This file states");
   });
 
   it("files a sample by the calendar year it was collected in, not by the season", async () => {

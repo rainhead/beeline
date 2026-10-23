@@ -548,6 +548,14 @@ describe("the file", () => {
     await record();
     expect(await readSampleChanges(paths.log)).toEqual(await fresh());
     expect((await readSampleChanges(paths.log)).map((c) => c.new_value)).toEqual(["Adair", "Alsea", "Blodgett", "Burnt Woods"]);
+
+    // A write cut off inside a quoted value: the next append continues that
+    // value as far as a full parse is concerned, so the cache must say so too.
+    await appendFile(paths.log, '\n2026-08-30T12:00:00Z,name:Ada Collector,1,2026-07-14,locality,Burnt Woods,Alsea,,reconcile,"cut off');
+    await readSampleChanges(paths.log);
+    await conn.run(`UPDATE sample SET locality = 'Blodgett' WHERE entity_id = ${id}`);
+    await record();
+    expect(await readSampleChanges(paths.log)).toEqual(await fresh());
   });
 
   it("round-trips values that carry commas and quotes", async () => {

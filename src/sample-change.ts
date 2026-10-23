@@ -441,7 +441,14 @@ export async function readSampleChanges(path: string): Promise<SampleChange[]> {
     const hit = readCache.get(path);
     if (hit !== undefined && hit.mtimeMs === s.mtimeMs && hit.size === s.size) return hit.changes;
     const changes = await readSampleChangesUncached(path);
-    readCache.set(path, { mtimeMs: s.mtimeMs, size: s.size, changes });
+    // Cached only if nothing wrote to the file while it was read: a read that
+    // straddled an append would otherwise file the appended rows under the
+    // size from before it, and the append would then extend them a second
+    // time (CodeRabbit).
+    const after = await stat(path);
+    if (after.mtimeMs === s.mtimeMs && after.size === s.size) {
+      readCache.set(path, { mtimeMs: s.mtimeMs, size: s.size, changes });
+    }
     return changes;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -466,21 +473,23 @@ const writeQueues = new Map<string, Promise<void>>();
 
 /**
  * Carry a cached parse across this process's own append. Only when the cache
- * described the file exactly as it stood before the append, and the file grew
- * by exactly what was appended: anything else — another process writing, a
- * file replaced — drops the entry, and the next read parses the file. The new
- * rows go through the same parser a full read would use, so the cache cannot
- * differ from one.
+ * described the file exactly as it stood before the append, the file ended
+ * in a newline, and it grew by exactly what was appended: anything else —
+ * another process writing, a file replaced, a last line cut off, perhaps
+ * inside a quoted value that the appended text would then continue — drops
+ * the entry, and the next read parses the file. The new rows go through the
+ * same parser a full read would use, so the cache cannot differ from one.
  */
 async function extendReadCache(
   path: string,
   before: { mtimeMs: number; size: number },
+  terminated: boolean,
   appended: string,
   rows: readonly SampleChange[],
 ): Promise<void> {
   const hit = readCache.get(path);
   readCache.delete(path);
-  if (hit === undefined || hit.mtimeMs !== before.mtimeMs || hit.size !== before.size) return;
+  if (!terminated || hit === undefined || hit.mtimeMs !== before.mtimeMs || hit.size !== before.size) return;
   try {
     const after = await stat(path);
     if (after.size !== before.size + Buffer.byteLength(appended)) return;
@@ -517,7 +526,7 @@ export async function appendSampleChanges(path: string, rows: readonly SampleCha
     }
     const appended = `${terminated ? "" : "\n"}${formatSampleChanges(rows)}\n`;
     await appendFile(path, appended);
-    await extendReadCache(path, before, appended, rows);
+    await extendReadCache(path, before, terminated, appended, rows);
   });
   writeQueues.set(path, queued.catch(() => {}));
   return queued;

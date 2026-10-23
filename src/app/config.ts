@@ -49,6 +49,12 @@ export interface AppConfig {
    */
   sampleOverlayPath: string;
   /**
+   * App-written log of each program's contact address, as staff set it on
+   * the program's page (beeline-rrit). Outside the blow-away path like the
+   * overlays: no rebuild can reconstruct it.
+   */
+  programContactsPath: string;
+  /**
    * The append-only log of what happened to a person, and when (beeline-o22).
    * Outside the blow-away path like the two overlays, and for a sharper
    * reason: a history a rebuild erases answers "who changed this" with
@@ -233,6 +239,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     correctionsPath: env.BEELINE_CORRECTIONS ?? "data/corrections.csv",
     personOverlayPath: env.BEELINE_PERSON_OVERLAY ?? "data/person-overlay.csv",
     sampleOverlayPath: env.BEELINE_SAMPLE_OVERLAY ?? "data/sample-overlay.csv",
+    programContactsPath: env.BEELINE_PROGRAM_CONTACTS ?? "data/program-contacts.csv",
     personChangesPath: env.BEELINE_PERSON_CHANGES ?? CHANGE_LOG,
     sampleChangesPath: env.BEELINE_SAMPLE_CHANGES ?? SAMPLE_CHANGE_LOG,
     sampleStatePath: env.BEELINE_SAMPLE_STATE ?? SAMPLE_STATE_SNAPSHOT,

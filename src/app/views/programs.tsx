@@ -1,8 +1,19 @@
 import type { Messages } from "../messages/index.js";
-import { LICENSES } from "../../program-governance.js";
 import { programHref, type ProgramDetail, type ProgramLead, type ProgramSummary } from "../programs.js";
 import { EMPTY_ROSTER_QUERY, rosterHref } from "../roster.js";
-import { Absent, Breadcrumbs, DataTable, DetailList, EmptyState, Meta, PageHeader } from "./components/index.js";
+import { ATLAS_IDENTITY } from "../theme/atlas.js";
+import {
+  Absent,
+  AtlasMark,
+  Breadcrumbs,
+  Button,
+  DataTable,
+  DetailList,
+  EmptyState,
+  Meta,
+  PageHeader,
+  TextField,
+} from "./components/index.js";
 
 /**
  * The programs (beeline-rrit): a listing, and one page per program saying
@@ -10,15 +21,6 @@ import { Absent, Breadcrumbs, DataTable, DetailList, EmptyState, Meta, PageHeade
  * from the catalog; the links into the listings and the roster are drawn only
  * for staff, who are the only ones those pages would show everybody's to.
  */
-
-/**
- * A YYYY-MM-DD from the curated files as that day: `new Date` would read it
- * as midnight UTC, which is the evening before in Pacific time.
- */
-const localDate = (iso: string) => {
-  const [y, mo, day] = iso.split("-").map(Number) as [number, number, number];
-  return new Date(y, mo - 1, day);
-};
 
 /** A records listing scoped to the program, as staff reach it. */
 const scopedHref = (path: "/samples" | "/specimens", scope: string) => `${path}?${new URLSearchParams({ scope }).toString()}`;
@@ -83,30 +85,51 @@ export function ProgramIndex({ m, programs, admin }: { m: Messages; programs: Pr
   );
 }
 
+/**
+ * How to reach the program: its leads, the address it gives people for
+ * questions, and an atlas's own website (ATLAS_IDENTITY, beside its mark).
+ * Staff set the address here; the admin flag is off while impersonating, so
+ * a staffer viewing as a volunteer sees no form.
+ */
 function Contact({ m, program, admin }: { m: Messages; program: ProgramDetail; admin: boolean }) {
   const p = m.programs;
+  const website = program.atlasCode === null ? undefined : ATLAS_IDENTITY[program.atlasCode]?.url;
   return (
     <>
       <h2>{p.contact}</h2>
       <DetailList
         items={[
           { term: p.leads, value: <Leads m={m} leads={program.leads} admin={admin} /> },
-          ...program.contacts.map((c) => ({
-            term: c.label !== "" ? c.label : c.kind === "email" ? p.email : p.website,
-            value: c.kind === "email" ? <a href={`mailto:${c.value}`}>{c.value}</a> : <Source value={c.value} label={c.value} />,
-          })),
+          {
+            term: p.email,
+            value:
+              program.email === null ? (
+                <Absent label={p.emailNone} spelled />
+              ) : (
+                <a href={`mailto:${program.email.value}`}>{program.email.value}</a>
+              ),
+          },
+          // The host alone: Washington's page is a long path on a department's site.
+          website === undefined ? null : { term: p.website, value: <a href={website}>{new URL(website).host.replace(/^www\./, "")}</a> },
         ]}
       />
-      {program.contacts.length === 0 && (
-        <p>
-          {p.contactNone}
-          {admin && (
-            <>
-              {" "}
-              <Meta>{p.contactAdd}</Meta>
-            </>
-          )}
-        </p>
+      {admin && (
+        <form method="post" action={`${programHref(program.code)}/contact`} class="form-column">
+          <TextField
+            id="program-email"
+            name="email"
+            label={p.emailField}
+            value={program.email?.value ?? ""}
+            hint={
+              program.email === null
+                ? p.emailHint
+                : `${p.emailHint} ${p.emailSet(program.email.author, m.format.dateTime(program.email.recordedAt))}`
+            }
+          />
+          <p class="row">
+            <Button>{p.emailSave}</Button>
+          </p>
+        </form>
       )}
     </>
   );
@@ -168,54 +191,17 @@ function Seasons({ m, program, admin }: { m: Messages; program: ProgramDetail; a
   );
 }
 
-function Publishing({ m, program, admin }: { m: Messages; program: ProgramDetail; admin: boolean }) {
-  const p = m.programs;
-  return (
-    <>
-      <h2>{p.publishing}</h2>
-      {program.licenses.length === 0 ? (
-        <p>{p.noLicense}</p>
-      ) : (
-        <ul>
-          {program.licenses.map((l) => (
-            <li>
-              <a href={LICENSES[l.license].url}>{p.license(LICENSES[l.license].name, l.fromSeason)}</a>.{" "}
-              <Meta>
-                {p.recorded(l.decidedBy, localDate(l.decidedOn))} <Source value={l.source} label={p.source} />
-              </Meta>
-            </li>
-          ))}
-        </ul>
-      )}
-      {program.policies.length === 0 ? (
-        <p>{p.noPolicy}</p>
-      ) : (
-        <ul>
-          {program.policies.map((policy) => (
-            <li>
-              {p.policy(policy.fromSeason)}:{" "}
-              {policy.url === "" ? p.policyNoPage : <Source value={policy.url} label={p.policyRead} />}{" "}
-              <Meta>{p.recorded(policy.decidedBy, localDate(policy.decidedOn))}</Meta>
-            </li>
-          ))}
-        </ul>
-      )}
-      {admin && program.scope !== null && (
-        <p>
-          <a href="/exports">{p.exports}</a>
-        </p>
-      )}
-    </>
-  );
-}
-
 export function ProgramPage({ m, program, admin }: { m: Messages; program: ProgramDetail; admin: boolean }) {
   const p = m.programs;
   const season = program.openSeason.season;
   return (
     <>
       <Breadcrumbs label={p.title} trail={[{ href: "/programs", label: p.title }]} />
-      <PageHeader title={program.name} meta={p.meta(program.code, program.atlasCode !== null)} />
+      <PageHeader
+        title={program.name}
+        meta={p.meta(program.code, program.atlasCode !== null)}
+        mark={program.atlasCode === null ? undefined : <AtlasMark code={program.atlasCode} name={program.name} />}
+      />
       <h2>{p.summary}</h2>
       <DetailList
         items={[
@@ -233,7 +219,6 @@ export function ProgramPage({ m, program, admin }: { m: Messages; program: Progr
       <Contact m={m} program={program} admin={admin} />
       <Labels m={m} program={program} />
       <Seasons m={m} program={program} admin={admin} />
-      <Publishing m={m} program={program} admin={admin} />
       {program.ecdysis.length > 0 && (
         <>
           <h2>{p.ecdysis}</h2>

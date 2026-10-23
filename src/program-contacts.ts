@@ -1,92 +1,119 @@
-import { readFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { parseCsv } from "./corrections.js";
 
 /**
- * How to reach a program: the addresses it publishes for people to write to,
- * and its own website (beeline-rrit). Shown on the program's page.
+ * How to reach a program: the email address it gives people for questions
+ * (beeline-rrit), set by staff on the program's page.
  *
- * Curated in git beside the licence and privacy-policy decisions, because a
- * program's contact is something the program has published, written down by
- * whoever saw it, and every row says where it was seen. It holds a program's
- * own addresses and never a person's: a lead's email is personal data, and the
- * legacy register's email column is deliberately never brought into the store.
- * The leads themselves are named on the page from program_lead.
+ * Kept in a file the app writes under `data/`, beside the overlays, because a
+ * program's contact is a staff decision that no rebuild can reconstruct, and
+ * because staff set it on a screen rather than in a file. Each save is one
+ * line appended — when, which program, which field, the value, who — and the
+ * latest line for a program and field is what stands, an empty value meaning
+ * it was cleared. So the file is also the history of who set what and when,
+ * the shape ADR 0007 gives authored changes, and the nightly backup carries it.
  *
- * The loader transcribes; it never presumes. The file starts empty, and a
- * program with no row says it has none recorded.
+ * The address is the one the program publishes for questions, which may be a
+ * staff member's work address (the refuge project gives August Jackson's).
+ * Never an address taken from the legacy register, whose email column is
+ * deliberately never brought into the store.
+ *
+ * Read leniently: a line that does not parse is skipped, not fatal, since the
+ * file is only ever appended to and its order is the order things were saved.
  */
 
-export const PROGRAM_CONTACTS = "ingest/program-contacts.csv";
+export const PROGRAM_CONTACT_FIELDS = ["email"] as const;
+export type ProgramContactField = (typeof PROGRAM_CONTACT_FIELDS)[number];
 
-/** What a contact is: somewhere to write, or the program's own site. */
-export const CONTACT_KINDS = ["email", "website"] as const;
-export type ContactKind = (typeof CONTACT_KINDS)[number];
-
-const COLUMNS = ["program", "kind", "value", "label", "source", "recorded_by", "recorded_on"] as const;
+const COLUMNS = ["recorded_at", "program", "field", "value", "author"] as const;
+const HEADER = COLUMNS.join(",");
 
 export interface ProgramContact {
-  program: string;
-  kind: ContactKind;
-  /** An email address, or an http(s) URL. */
   value: string;
-  /** What it is for, where the program says ("Volunteer coordinator"); empty where it does not. */
-  label: string;
-  /** Where it was seen: the program's page, an email, a meeting. */
-  source: string;
-  recordedBy: string;
-  recordedOn: string;
+  author: string;
+  recordedAt: Date;
 }
 
-const isDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
+/** What stands for each program, by program code and field. Cleared fields are absent. */
+export type ProgramContacts = Map<string, Partial<Record<ProgramContactField, ProgramContact>>>;
 
-function problem(row: Record<(typeof COLUMNS)[number], string>): string | null {
-  if (!/^[A-Za-z0-9]+$/.test(row.program)) return `program '${row.program}' is not a program code`;
-  if (!(CONTACT_KINDS as readonly string[]).includes(row.kind)) {
-    return `kind '${row.kind}' is not one of ${CONTACT_KINDS.join(", ")}`;
-  }
-  if (row.kind === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.value)) return `'${row.value}' is not an email address`;
-  // A link drawn on a page: http(s) only, since escaping does not stop a
-  // javascript: scheme from being a scheme.
-  if (row.kind === "website" && !/^https?:\/\/\S+$/.test(row.value)) return `'${row.value}' is not a web address`;
-  if (row.source.trim() === "") return "every row says where it was seen";
-  if (row.recorded_by.trim() === "") return "every row names who recorded it";
-  if (!isDate(row.recorded_on)) return `recorded_on '${row.recorded_on}' is not a date (YYYY-MM-DD)`;
+export function programContactProblem(field: ProgramContactField, value: string): string | null {
+  if (value === "") return null;
+  if (field === "email" && !/^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/.test(value)) return `'${value}' is not an email address`;
   return null;
 }
 
-export function parseProgramContacts(text: string, where: string): ProgramContact[] {
-  const records = parseCsv(text).filter((r) => !(r.length === 1 && r[0] === ""));
-  if (records.length === 0) return [];
-  const header = COLUMNS.join(",");
-  if (records[0]!.join(",") !== header) throw new Error(`${where}: header is '${records[0]!.join(",")}', expected '${header}'`);
-  const seen = new Set<string>();
-  return records.slice(1).map((r, i) => {
-    const line = i + 2;
-    if (r.length !== COLUMNS.length) throw new Error(`${where} line ${line}: ${r.length} fields, expected ${COLUMNS.length}`);
-    const row = Object.fromEntries(COLUMNS.map((c, j) => [c, r[j]!])) as Record<(typeof COLUMNS)[number], string>;
-    const bad = problem(row);
-    if (bad !== null) throw new Error(`${where} line ${line}: ${bad}`);
-    const key = `${row.program} ${row.value}`;
-    if (seen.has(key)) throw new Error(`${where} line ${line}: ${row.value} is listed twice for ${row.program}`);
-    seen.add(key);
-    return {
-      program: row.program,
-      kind: row.kind as ContactKind,
-      value: row.value,
-      label: row.label,
-      source: row.source,
-      recordedBy: row.recorded_by,
-      recordedOn: row.recorded_on,
-    };
-  });
+/** Created at first boot, header only, so the backup finds it before anyone has saved anything. */
+export async function ensureProgramContactsFile(path: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  try {
+    await writeFile(path, `${HEADER}\n`, { flag: "wx" });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  }
 }
 
-/** The file, read fresh: a contact merged in git shows from the next read. */
-export async function readProgramContacts(path: string = PROGRAM_CONTACTS): Promise<ProgramContact[]> {
+export function parseProgramContacts(text: string): ProgramContacts {
+  const contacts: ProgramContacts = new Map();
+  const records = parseCsv(text).filter((r) => !(r.length === 1 && r[0] === ""));
+  for (const r of records.slice(records[0]?.join(",") === HEADER ? 1 : 0)) {
+    if (r.length !== COLUMNS.length) continue;
+    const [recordedAt, program, field, value, author] = r as [string, string, string, string, string];
+    const when = new Date(recordedAt);
+    if (Number.isNaN(when.getTime())) continue;
+    if (!(PROGRAM_CONTACT_FIELDS as readonly string[]).includes(field)) continue;
+    const f = field as ProgramContactField;
+    if (programContactProblem(f, value) !== null) continue;
+    const entry = contacts.get(program) ?? {};
+    if (value === "") delete entry[f];
+    else entry[f] = { value, author, recordedAt: when };
+    contacts.set(program, entry);
+  }
+  return contacts;
+}
+
+export async function readProgramContacts(path: string): Promise<ProgramContacts> {
   try {
-    return parseProgramContacts(await readFile(path, "utf8"), path);
+    return parseProgramContacts(await readFile(path, "utf8"));
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return new Map();
     throw err;
   }
+}
+
+const cell = (v: string) => (/[",\n\r]/.test(v) ? `"${v.replaceAll('"', '""')}"` : v);
+
+/** Whether the file ends in a newline, so an append starts a line of its own. */
+async function terminated(path: string): Promise<boolean> {
+  const handle = await open(path, "r");
+  try {
+    const { size } = await handle.stat();
+    if (size === 0) return true;
+    const last = Buffer.alloc(1);
+    await handle.read(last, 0, 1, size - 1);
+    return last[0] === 0x0a;
+  } finally {
+    await handle.close();
+  }
+}
+
+// One writer per path, as with the overlays: saves take their turn, so two
+// at once cannot interleave their lines.
+const queues = new Map<string, Promise<unknown>>();
+
+export async function recordProgramContact(
+  path: string,
+  entry: { program: string; field: ProgramContactField; value: string; author: string; now?: Date },
+): Promise<void> {
+  const value = entry.value.trim();
+  const problem = programContactProblem(entry.field, value);
+  if (problem !== null) throw new Error(problem);
+  const line = [(entry.now ?? new Date()).toISOString(), entry.program, entry.field, value, entry.author].map(cell).join(",");
+  const turn = (queues.get(path) ?? Promise.resolve()).then(async () => {
+    await ensureProgramContactsFile(path);
+    await appendFile(path, `${(await terminated(path)) ? "" : "\n"}${line}\n`);
+  });
+  queues.set(path, turn.catch(() => undefined));
+  await turn;
 }

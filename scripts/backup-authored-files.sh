@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copy the authored-history files off the Fly volume.
 #
-# These five are the only things on that volume a rebuild cannot reconstruct.
+# These are the only things on that volume a rebuild cannot reconstruct.
 # beeline.duckdb can be re-derived by re-ingestion and is deliberately NOT
 # copied here — it is 211 MB, and copying it would turn a cheap, frequent job
 # into an expensive, occasional one. What these hold is decisions and history:
@@ -73,7 +73,7 @@ DEST="${1:-${BEELINE_BACKUP_DIR:-$HOME/beeline-backups}}"
 KEEP="${BEELINE_BACKUP_KEEP:-30}"
 REMOTE_DIR=/app/data
 
-FILES="corrections.csv person-overlay.csv sample-overlay.csv person-change.csv sample-change.csv sample-state.csv"
+FILES="corrections.csv person-overlay.csv sample-overlay.csv program-contacts.csv person-change.csv sample-change.csv sample-state.csv"
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$DEST"

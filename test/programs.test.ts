@@ -1,13 +1,11 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { programHref } from "../src/app/programs.js";
-import { parseProgramContacts, readProgramContacts } from "../src/program-contacts.js";
+import { parseProgramContacts } from "../src/program-contacts.js";
 import { createMemoryDb, insertCleanSample, OPEN_SEASON, scratchPaths } from "./helpers.js";
 
 /**
@@ -22,8 +20,6 @@ const unusedInat: InatClient = {
   exchangeCode: () => Promise.reject(new Error("not under test")),
   identity: () => Promise.reject(new Error("not under test")),
 };
-
-const CONTACTS = "program,kind,value,label,source,recorded_by,recorded_on";
 
 let instance: DuckDBInstance;
 let conn: DuckDBConnection;
@@ -57,20 +53,21 @@ beforeEach(async () => {
     (${program("WaBA")}, 3), (${program("NM")}, 4), (${program("BLM")}, 4)`);
 });
 
-async function programsApp({ admin = false, contacts = [] as string[] } = {}) {
-  if (admin) await conn.run(`INSERT INTO person_admin (person_id) VALUES (1)`);
-  const dir = await mkdtemp(join(tmpdir(), "beeline-programs-"));
-  const programContactsPath = join(dir, "program-contacts.csv");
-  await writeFile(programContactsPath, [CONTACTS, ...contacts].join("\n"));
-  return createApp({
-    ...(await scratchPaths()),
-    programContactsPath,
+async function programsApp({ admin = false } = {}) {
+  if (admin) await conn.run(`INSERT INTO person_admin (person_id) VALUES (1) ON CONFLICT DO NOTHING`);
+  const paths = await scratchPaths();
+  const app = createApp({
+    ...paths,
     db: createKysely(instance),
     config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
     inat: unusedInat,
     resolveSession: async () => ({ personId: 1, login: "adacollects", iconUrl: null }),
   });
+  return Object.assign(app, { contactsPath: paths.programContactsPath });
 }
+
+const saveEmail = (app: Awaited<ReturnType<typeof programsApp>>, code: string, email: string) =>
+  app.request(`/programs/${code}/contact`, { method: "POST", body: new URLSearchParams({ email }) });
 
 const page = async (app: Awaited<ReturnType<typeof programsApp>>, path: string) => {
   const res = await app.request(path);
@@ -159,27 +156,58 @@ describe("a program's page", () => {
     expect(await page(app, "/programs/MM")).toContain("No atlas answers for records collected outside every atlas");
   });
 
-  it("gives the program's published addresses beside its leads, and says when it has none", async () => {
-    const app = await programsApp({
-      contacts: [
-        "WaBA,email,beeatlas@example.org,Volunteer coordinator,https://example.org/contact,Test,2026-10-23",
-        "WaBA,website,https://example.org/,,https://example.org/,Test,2026-10-23",
-      ],
-    });
-    const contact = between(await page(app, "/programs/WaBA"), "<h2>Contact</h2>", "<h2>Labels</h2>");
-    expect(contact).toContain("Karen Lead");
-    expect(contact).toContain(`<dt>Volunteer coordinator</dt><dd><a href="mailto:beeatlas@example.org">`);
-    expect(contact).toContain(`<dt>Website</dt><dd><a href="https://example.org/">`);
-    expect(await page(app, "/programs/ID")).toContain("No address recorded for the program yet.");
+  it("shows the atlas's mark beside its name, and none for a program without one", async () => {
+    const app = await programsApp();
+    expect(await page(app, "/programs/WaBA")).toContain(`<img class="atlas-mark" src="/static/atlas/WaBA.jpg" alt="Washington Bee Atlas"`);
+    expect(await page(app, "/programs/MM")).not.toContain(`class="atlas-mark"`);
   });
 
-  it("states the licence decisions with where each was seen, and that no policy means no export", async () => {
+  it("gives the leads, the address staff set, and an atlas's own website", async () => {
+    const app = await programsApp({ admin: true });
+    const before = between(await page(app, "/programs/WaBA"), "<h2>Contact</h2>", "<h2>Labels</h2>");
+    expect(before).toContain("Karen Lead");
+    expect(before).toContain(`<span class="meta absent">none recorded yet</span>`);
+    expect(before).toContain(`<dt>Website</dt><dd><a href="https://agr.wa.gov/departments/insects-pests-and-weeds/insects/apiary-pollinators/pollinator-health/bee-atlas/">agr.wa.gov</a>`);
+    const saved = await saveEmail(app, "waba", " beeatlas@example.org ");
+    expect(saved.status).toBe(302);
+    expect(saved.headers.get("location")).toBe("/programs/WaBA");
+    const after = between(await page(app, "/programs/WaBA"), "<h2>Contact</h2>", "<h2>Labels</h2>");
+    expect(after).toContain(`<dt>Email</dt><dd><a href="mailto:beeatlas@example.org">beeatlas@example.org</a>`);
+    expect(after).toContain("Set by adacollects");
+    // Master Melittology has no atlas, so no website on file.
+    expect(between(await page(app, "/programs/MM"), "<h2>Contact</h2>", "<h2>Labels</h2>")).not.toContain("<dt>Website</dt>");
+  });
+
+  it("keeps every save in the log, the latest standing, and an emptied field as removed", async () => {
+    const app = await programsApp({ admin: true });
+    await saveEmail(app, "WaBA", "first@example.org");
+    await saveEmail(app, "WaBA", "first@example.org"); // unchanged: nothing appended
+    await saveEmail(app, "WaBA", "second@example.org");
+    await saveEmail(app, "WaBA", "");
+    const log = (await readFile(app.contactsPath, "utf8")).trim().split("\n");
+    expect(log[0]).toBe("recorded_at,program,field,value,author");
+    expect(log.slice(1).map((line) => line.split(",").slice(1).join(","))).toEqual([
+      "WaBA,email,first@example.org,adacollects",
+      "WaBA,email,second@example.org,adacollects",
+      "WaBA,email,,adacollects",
+    ]);
+    expect(await page(app, "/programs/WaBA")).toContain("none recorded yet");
+  });
+
+  it("refuses an address that is not one, and refuses anyone but staff", async () => {
+    const staff = await programsApp({ admin: true });
+    expect((await saveEmail(staff, "WaBA", "not an address")).status).toBe(400);
+    expect((await saveEmail(staff, "XX", "a@example.org")).status).toBe(404);
+    await conn.run(`DELETE FROM person_admin`);
+    const volunteer = await programsApp();
+    expect((await saveEmail(volunteer, "WaBA", "a@example.org")).status).toBe(403);
+    expect(await page(volunteer, "/programs/WaBA")).not.toContain(`action="/programs/WaBA/contact"`);
+  });
+
+  it("does not show licences or privacy policies, which are the exports' business", async () => {
     const body = await page(await programsApp(), "/programs/WaBA");
-    // From the curated file in ingest/.
-    expect(body).toContain("CC BY-NC 4.0, from the 2023 season");
-    expect(body).toContain("Recorded by Peter Abrahamsen on Oct 10, 2026.");
-    expect(body).toContain(`href="https://www.gbif.org/occurrence/search?catalog_number=WSDA_2303966"`);
-    expect(body).toContain("No privacy policy yet");
+    expect(body).not.toContain("CC BY-NC");
+    expect(body).not.toContain("privacy policy");
     expect(body).toContain("dataset 44");
     expect(await page(await programsApp(), "/programs/OBA")).not.toContain("Expert determinations");
   });
@@ -199,18 +227,21 @@ describe("a program's page", () => {
   });
 });
 
-describe("program contacts", () => {
-  const parse = (...rows: string[]) => parseProgramContacts([CONTACTS, ...rows].join("\n"), "contacts.csv");
-
-  it("reads the curated file in ingest/", async () => {
-    // A malformed row must fail here rather than on a page.
-    await expect(readProgramContacts()).resolves.toBeInstanceOf(Array);
-  });
-
-  it("refuses a row that does not say where it was seen, or is not an address", () => {
-    expect(() => parse("WaBA,email,x@example.org,,,Test,2026-10-23")).toThrow("where it was seen");
-    expect(() => parse("WaBA,email,not-an-address,,https://example.org,Test,2026-10-23")).toThrow("not an email address");
-    expect(() => parse("WaBA,website,javascript:alert(1),,https://example.org,Test,2026-10-23")).toThrow("not a web address");
-    expect(() => parse("WaBA,phone,555,,https://example.org,Test,2026-10-23")).toThrow("kind 'phone'");
+describe("the program contact log", () => {
+  it("is read leniently: a line that does not parse is skipped, and the latest line stands", () => {
+    const contacts = parseProgramContacts(
+      [
+        "recorded_at,program,field,value,author",
+        "2026-10-23T10:00:00.000Z,WaBA,email,old@example.org,a",
+        "garbage",
+        "2026-10-23T11:00:00.000Z,WaBA,phone,555,a",
+        "2026-10-23T12:00:00.000Z,WaBA,email,new@example.org,b",
+        "2026-10-23T13:00:00.000Z,OBA,email,x@example.org,a",
+        "2026-10-23T14:00:00.000Z,OBA,email,,a",
+      ].join("\n"),
+    );
+    expect(contacts.get("WaBA")?.email?.value).toBe("new@example.org");
+    expect(contacts.get("WaBA")?.email?.author).toBe("b");
+    expect(contacts.get("OBA")?.email).toBeUndefined();
   });
 });

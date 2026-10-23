@@ -2,8 +2,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { PROGRAM_MEMBERSHIP } from "../model.js";
 import { ECDYSIS_COLLECTIONS, type EcdysisCollection } from "../fetch-ecdysis.js";
-import type { ProgramContact } from "../program-contacts.js";
-import type { ProgramGovernance, ProgramLicense, ProgramPrivacyPolicy } from "../program-governance.js";
+import type { ProgramContact, ProgramContacts } from "../program-contacts.js";
 import { OUTSIDE } from "./listings.js";
 import { personHandle } from "./roster.js";
 
@@ -11,9 +10,8 @@ import { personHandle } from "./roster.js";
  * The programs, as a listing and a page each (beeline-rrit): what Beeline
  * knows about a program, which until now was said in a dozen places — its
  * leads, how many people belong to it, its records by season, who prints its
- * labels, its answer on taxon-obscured coordinates, the licence and privacy
- * policy its records leave under, where its expert determinations come back
- * from, and how to reach it.
+ * labels, its answer on taxon-obscured coordinates, where its expert
+ * determinations come back from, and how to reach it.
  *
  * Read by everyone signed in, like the taxonomy: it shows totals, the names
  * of the program's own leads, and nobody's records. The links into records
@@ -84,9 +82,8 @@ export interface ProgramDetail extends ProgramSummary {
    * the surveys have none by geography.
    */
   taxonObscured: TaxonObscuredAnswer | "unanswered" | "none";
-  contacts: ProgramContact[];
-  licenses: ProgramLicense[];
-  policies: ProgramPrivacyPolicy[];
+  /** The address it gives people for questions, as staff last set it; null where none is set. */
+  email: ProgramContact | null;
   /** The Ecdysis collections its expert determinations are read back from. */
   ecdysis: EcdysisCollection[];
 }
@@ -223,7 +220,7 @@ export async function listPrograms(db: Kysely<Database>): Promise<ProgramSummary
 export async function loadProgram(
   db: Kysely<Database>,
   code: string,
-  { governance, contacts }: { governance: ProgramGovernance; contacts: readonly ProgramContact[] },
+  { contacts }: { contacts: ProgramContacts },
 ): Promise<ProgramDetail | null> {
   const [p] = await programRows(db, code);
   if (p === undefined) return null;
@@ -246,14 +243,11 @@ export async function loadProgram(
     // program's own runs print.
     printing = "program";
   }
-  const byProgram = <T extends { program: string }>(rows: readonly T[]) => rows.filter((r) => r.program === p.code);
   return {
     ...summary,
     printing,
     taxonObscured,
-    contacts: byProgram(contacts),
-    licenses: byProgram(governance.licenses).sort((a, b) => a.fromSeason - b.fromSeason),
-    policies: byProgram(governance.policies).sort((a, b) => a.fromSeason - b.fromSeason),
+    email: contacts.get(p.code)?.email ?? null,
     ecdysis: ECDYSIS_COLLECTIONS.filter((c) => c.program === p.code),
   };
 }

@@ -229,6 +229,7 @@ export function buildJobs(
         | "release"
         | "correctionsPath"
         | "personOverlayPath"
+        | "programContactsPath"
       >
     >,
 ): Job[] {
@@ -306,6 +307,7 @@ export function buildJobs(
             config.correctionsPath ?? deploymentPath("data/corrections.csv"),
             config.personOverlayPath ?? deploymentPath("data/person-overlay.csv"),
             config.sampleOverlayPath ?? deploymentPath("data/sample-overlay.csv"),
+            config.programContactsPath ?? deploymentPath("data/program-contacts.csv"),
             config.personChangesPath,
             config.sampleChangesPath,
             config.sampleStatePath,

@@ -27,8 +27,8 @@ import { countListingView, listingAttributes, rosterAttributes, type Viewer } fr
 import { Glossary } from "./views/glossary.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { ProgramIndex, ProgramPage } from "./views/programs.js";
-import { listPrograms, loadProgram } from "./programs.js";
-import { readProgramContacts } from "../program-contacts.js";
+import { listPrograms, loadProgram, programHref } from "./programs.js";
+import { readProgramContacts, recordProgramContact, programContactProblem } from "../program-contacts.js";
 import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomySummary } from "./taxonomy.js";
 import {
   addSpecimensToBatch,
@@ -209,7 +209,7 @@ export interface AppDeps {
   printRunsDir?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
   programGovernance?: GovernancePaths;
-  /** How to reach each program; the curated file in ingest/ unless a test says otherwise. */
+  /** App-written log of each program's contact address, as staff set it on the program's page (beeline-rrit). */
   programContactsPath?: string;
 }
 
@@ -248,6 +248,7 @@ export function createApp({
   const corrections = correctionsPath ?? deploymentPath("data/corrections.csv");
   const overlayPath = personOverlayPath ?? deploymentPath("data/person-overlay.csv");
   const sampleOverlay = sampleOverlayPath ?? deploymentPath("data/sample-overlay.csv");
+  const programContacts = programContactsPath ?? deploymentPath("data/program-contacts.csv");
   const changesPath = personChangesPath ?? deploymentPath(CHANGE_LOG);
   const samplePaths = {
     log: sampleChangesPath ?? deploymentPath(SAMPLE_CHANGE_LOG),
@@ -1054,10 +1055,9 @@ export function createApp({
   });
 
   // The programs (beeline-rrit). Read by everyone, like the taxonomy: totals,
-  // the program's own leads and its published addresses, and nobody's
-  // records; the links into the listings and the roster are drawn for staff
-  // only. Addressed by code, which a rebuild does not redraw. The curated
-  // files are read per request, so a decision merged in git shows at once.
+  // the program's own leads and the address it gives for questions, and
+  // nobody's records; the links into the listings and the roster are drawn
+  // for staff only. Addressed by code, which a rebuild does not redraw.
   app.get("/programs", async (c) => {
     const m = c.get("m");
     return c.html(await page(c, m.programs.title, <ProgramIndex m={m} programs={await listPrograms(db)} admin={c.get("admin")} />));
@@ -1065,12 +1065,30 @@ export function createApp({
 
   app.get("/programs/:code", async (c) => {
     const m = c.get("m");
-    const program = await loadProgram(db, c.req.param("code"), {
-      governance: await readProgramGovernance(programGovernance),
-      contacts: await readProgramContacts(programContactsPath),
-    });
+    const program = await loadProgram(db, c.req.param("code"), { contacts: await readProgramContacts(programContacts) });
     if (program === null) return errorResponse(c, "notFound", { message: m.programs.notFound });
     return c.html(await page(c, program.name, <ProgramPage m={m} program={program} admin={c.get("admin")} />));
+  });
+
+  // Staff set the address a program gives for questions. Admin-gated, and
+  // refused while impersonating — stated first, since the admin flag is off
+  // then and the gate would otherwise answer for it. Appended to the log
+  // under the program's code, so it outlives a rebuild.
+  app.post("/programs/:code/contact", async (c) => {
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const program = await loadProgram(db, c.req.param("code"), { contacts: new Map() });
+    if (program === null) return errorResponse(c, "notFound", { message: m.programs.notFound });
+    const body = await c.req.parseBody();
+    const email = typeof body.email === "string" ? body.email.trim() : "";
+    const problem = programContactProblem("email", email);
+    if (problem !== null) return c.text(problem, 400);
+    const current = (await readProgramContacts(programContacts)).get(program.code)?.email?.value ?? "";
+    if (email !== current) {
+      await recordProgramContact(programContacts, { program: program.code, field: "email", value: email, author: c.get("session").login });
+    }
+    return c.redirect(programHref(program.code));
   });
 
   // --- Identify your specimens (beeline-bcq). Reach is "mine", following

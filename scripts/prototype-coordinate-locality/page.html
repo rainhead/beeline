@@ -1,14 +1,16 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PROTOTYPE: Coordinate Localities</title>
+<title>Coordinate Locality Prototype</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&display=swap">
 <style>
-  :root { --fg:#1d1f21; --muted:#6a6f75; --line:#d9dce0; --bg:#fff; --soft:#f4f5f7; --accent:#2f6f4e; --warn:#a35200; --bad:#a3222b; }
-  @media (prefers-color-scheme: dark) { :root { --fg:#e6e7e9; --muted:#9aa0a6; --line:#3a3d42; --bg:#16181b; --soft:#202327; --accent:#6fc79a; --warn:#f0a050; --bad:#ff7b84; } }
-  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
-  main { max-width:1200px; margin:0 auto; padding:16px; }
+  /* One working column: question, settings, results, cases. Sage accent for public land; warm amber and red only for state. */
+  :root { --fg:#1c211e; --muted:#5f6a63; --line:#d6ddd8; --bg:#fbfcfb; --soft:#eef2ef; --accent:#2f6f4e; --on-accent:#fbfcfb; --warn:#9a4d00; --bad:#a3222b;
+          --font-body:"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --fg:#e4e9e5; --muted:#9aa69e; --line:#36403a; --bg:#141815; --soft:#1e2420; --accent:#74c79b; --on-accent:#141815; --warn:#f0a050; --bad:#ff7b84; color-scheme:dark; } }
+  :root[data-theme="dark"] { --fg:#e4e9e5; --muted:#9aa69e; --line:#36403a; --bg:#141815; --soft:#1e2420; --accent:#74c79b; --on-accent:#141815; --warn:#f0a050; --bad:#ff7b84; color-scheme:dark; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 var(--font-body); }
+  main { max-width:1200px; margin:0 auto; padding-block:16px 32px; padding-left:max(16px, env(safe-area-inset-left, 0px)); padding-right:max(16px, env(safe-area-inset-right, 0px)); }
+  h1, h2 { text-wrap:balance; }
+  button:focus-visible, input:focus-visible, select:focus-visible, tr.row:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   h1 { font-size:20px; margin:0 0 4px; } h2 { font-size:15px; margin:24px 0 8px; }
   .lede { color:var(--muted); max-width:75ch; }
   .banner { background:var(--soft); border-left:3px solid var(--warn); padding:8px 12px; margin:12px 0; max-width:75ch; }
@@ -22,7 +24,7 @@
   td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
   .tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
   .tabs button, .pager button { font:inherit; border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:14px; padding:3px 12px; cursor:pointer; }
-  .tabs button.on { background:var(--accent); color:var(--bg); border-color:var(--accent); }
+  .tabs button.on { background:var(--accent); color:var(--on-accent); border-color:var(--accent); }
   .scenario { max-width:80ch; margin:0 0 10px; }
   .gen { font-weight:600; } .why { color:var(--muted); font-size:12px; }
   .bad { color:var(--bad); } .warn { color:var(--warn); } .ok { color:var(--accent); } .muted { color:var(--muted); }
@@ -32,12 +34,10 @@
   .filters { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:8px 0; }
   code { font-size:12px; }
 </style>
-</head>
-<body>
 <main>
-<h1>PROTOTYPE: localities from coordinates</h1>
+<h1>Localities from coordinates: a prototype</h1>
 <p class="lede">The question: can Beeline name a sample's locality from its coordinates well enough that volunteers stop having to fix iNaturalist's? A volunteer reads the locality to remember where they collected, or to find a specimen by its label, so it should name a town or peak they would know, in the same county as the point, and fit on the label (18 characters, no street address). A point inside a national wildlife refuge, or a WDFW wildlife area unit, is named for it. Change the settings and every number and row below is worked out again.</p>
-<p class="banner">Throwaway (beeline-7i6). Towns and peaks come from GeoNames, counties from the 2023 Census boundaries, BC regional districts from the province's current boundaries (ABMS), refuges from USFWS, wildlife area units from WDFW. The rows are samples from the sandbox store, with obscured and private observations left out. This page holds sample coordinates, so keep it off the web.</p>
+<p class="banner">Throwaway (beeline-7i6). Towns and peaks come from GeoNames, counties from the 2023 Census boundaries, BC regional districts from the province's current boundaries (ABMS), refuges from USFWS, wildlife area units from WDFW. The rows are samples from the sandbox store, with obscured and private observations left out. /*PRIVACY*/</p>
 
 <h2>Settings</h2>
 <div class="controls" id="controls"></div>
@@ -170,6 +170,9 @@ const Locality = (() => {
 
 // ── The page: a thin shell over Locality. ──────────────────────────────────
 const DATA = /*DATA*/null;
+// The sandbox app, whose store these samples were read from; a sample page
+// opens for whoever has a Beeline sign-in that reaches it.
+const BEELINE = "https://beeline.fly.dev";
 const gaz = { places: new Map(DATA.places.map((p) => [p.id, p])), regions: new Map(DATA.regions.map((r) => [r.region_id, r])) };
 const samples = DATA.samples;
 
@@ -277,14 +280,14 @@ function render() {
       const { s, r } = x;
       const present = s.loc ? esc(s.loc) : `<span class="muted">none</span>`;
       const gen = r.name ? `<span class="gen ${x.agree ? "ok" : ""}">${esc(r.name)}</span>` : `<span class="muted">no name</span>`;
-      const row = `<tr class="row" data-i="${s.i}"><td>${s.i}${s.printed ? "" : ' <span class="muted">unprinted</span>'}</td><td>${s.season}</td>
+      const row = `<tr class="row" data-i="${s.i}"><td><a href="${BEELINE}/samples/${s.i}" target="_blank" rel="noreferrer">in Beeline</a>${s.printed ? "" : '<div class="why">not printed yet</div>'}</td><td>${s.season}</td>
         <td>${present}${s.flag ? `<div class="why bad">${esc(s.flag)}</div>` : ""}</td>
         <td class="${regionDiffers(s) ? "warn" : ""}">${esc(storeRegion(s))}</td>
         <td>${gen}<div class="why${r.crossCounty ? " warn" : ""}">${esc(r.why)}</div></td>
         <td>${esc(regionText(s.reg))}</td><td class="num">${r.name ? r.name.length : ""}</td></tr>`;
       return row + (openRow === s.i ? detail(s, r) : "");
     }).join("");
-  t.querySelectorAll("tr.row").forEach((tr) => tr.addEventListener("click", () => { const i = Number(tr.dataset.i); openRow = openRow === i ? null : i; render(); }));
+  t.querySelectorAll("tr.row").forEach((tr) => tr.addEventListener("click", (e) => { if (e.target.closest("a")) return; const i = Number(tr.dataset.i); openRow = openRow === i ? null : i; render(); }));
   const pages = Math.ceil(shown.length / PER), pg = document.getElementById("pager");
   pg.innerHTML = pages > 1 ? `<button ${page === 0 ? "disabled" : ""} id="prev">Previous</button> page ${page + 1} of ${pages} <button ${page >= pages - 1 ? "disabled" : ""} id="next">Next</button>` : "";
   pg.querySelector("#prev")?.addEventListener("click", () => { page--; render(); });
@@ -308,5 +311,3 @@ function detail(s, r) {
 
 recompute();
 </script>
-</body>
-</html>

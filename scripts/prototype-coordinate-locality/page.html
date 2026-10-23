@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE: Coordinate Localities</title>
+<style>
+  :root { --fg:#1d1f21; --muted:#6a6f75; --line:#d9dce0; --bg:#fff; --soft:#f4f5f7; --accent:#2f6f4e; --warn:#a35200; --bad:#a3222b; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e6e7e9; --muted:#9aa0a6; --line:#3a3d42; --bg:#16181b; --soft:#202327; --accent:#6fc79a; --warn:#f0a050; --bad:#ff7b84; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
+  main { max-width:1200px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:0 0 4px; } h2 { font-size:15px; margin:24px 0 8px; }
+  .lede { color:var(--muted); max-width:75ch; }
+  .banner { background:var(--soft); border-left:3px solid var(--warn); padding:8px 12px; margin:12px 0; max-width:75ch; }
+  .controls { display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:10px 20px; background:var(--soft); padding:12px; border-radius:6px; }
+  .controls label { display:flex; flex-direction:column; gap:3px; font-size:13px; }
+  .controls small { color:var(--muted); }
+  input[type=number], select, input[type=search] { font:inherit; padding:3px 6px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-weight:600; font-size:12px; color:var(--muted); }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+  .tabs button, .pager button { font:inherit; border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:14px; padding:3px 12px; cursor:pointer; }
+  .tabs button.on { background:var(--accent); color:var(--bg); border-color:var(--accent); }
+  .scenario { max-width:80ch; margin:0 0 10px; }
+  .gen { font-weight:600; } .why { color:var(--muted); font-size:12px; }
+  .bad { color:var(--bad); } .warn { color:var(--warn); } .ok { color:var(--accent); } .muted { color:var(--muted); }
+  tr.row { cursor:pointer; } tr.row:hover { background:var(--soft); }
+  tr.detail td { background:var(--soft); }
+  .wrap { overflow-x:auto; }
+  .filters { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:8px 0; }
+  code { font-size:12px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PROTOTYPE: localities from coordinates</h1>
+<p class="lede">The question: can Beeline name a sample's locality from its coordinates well enough that volunteers stop having to fix iNaturalist's? A volunteer reads the locality to remember where they collected, or to find a specimen by its label, so it should name a town or peak they would know, in the same county as the point, and fit on the label (18 characters, no street address). A point inside a national wildlife refuge is named for the refuge. Change the settings and every number and row below is worked out again.</p>
+<p class="banner">Throwaway (beeline-7i6). Towns and peaks come from GeoNames, counties from the 2023 Census boundaries, BC regional districts from the province's current boundaries (ABMS), refuges from USFWS. The rows are samples from the sandbox store, with obscured and private observations left out. This page holds sample coordinates, so keep it off the web.</p>
+
+<h2>Settings</h2>
+<div class="controls" id="controls"></div>
+
+<h2>How it does, by season</h2>
+<div class="wrap"><table id="stats"></table></div>
+<p class="muted" style="font-size:12px">"Agrees" means the generated name and the sample's present locality contain each other once spelling is folded (Mount/Mt, punctuation). The present locality is mostly iNaturalist's place guess, accepted onto a label, so agreement is a rough check against what staff have printed, not a measure of correctness.</p>
+
+<h2>Cases to look at</h2>
+<div class="tabs" id="tabs"></div>
+<p class="scenario" id="scenario"></p>
+<div class="filters">
+  <label><input type="checkbox" id="onlyDiff"> only where the generated name differs</label>
+  <label>Season <select id="season"><option value="">both</option><option value="open">open</option><option value="settled">settled</option></select></label>
+  <input type="search" id="q" placeholder="search present locality or generated name">
+  <span id="count" class="muted"></span>
+</div>
+<div class="wrap"><table id="rows"></table></div>
+<div class="pager" id="pager" style="margin:10px 0"></div>
+</main>
+
+<script>
+// ── The logic: pure functions, no DOM. This is the part worth lifting. ──────
+const Locality = (() => {
+  const STREET = / (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county)( +((ne|nw|se|sw|n|s|e|w)|[^ ]*[0-9][^ ]*))* *(,|$)/;
+  // The same test as locality_street_suffix_pattern (schema/108), normalised as qc_rule_locality_format does.
+  const looksLikeStreet = (s) => STREET.test(` ${s.toLowerCase().replaceAll(".", " ").replaceAll(",", " , ")} `);
+  const titleCase = (s) => s.toLowerCase().replace(/(^|[\s\-(])([a-z])/g, (m, a, b) => a + b.toUpperCase()).replace(/\bMc([a-z])/g, (m, a) => "Mc" + a.toUpperCase());
+  const ABBREV = [[/\bMount\b/g, "Mt"], [/\bMountain\b/g, "Mt"], [/\bSaint\b/g, "St"], [/\bFort\b/g, "Ft"], [/\bJunction\b/g, "Jct"], [/\bSprings\b/g, "Spgs"]];
+  const fits = (s, p) => s.length <= p.maxLen && !s.includes(",") && !s.includes('"') && !looksLikeStreet(s);
+
+  // A town or peak name, shortened only as far as it must be.
+  function shortName(name, p) {
+    if (fits(name, p)) return name;
+    let s = name;
+    for (const [re, to] of ABBREV) { s = s.replace(re, to); if (fits(s, p)) return s; }
+    return null;
+  }
+
+  // 'HART MOUNTAIN NATIONAL ANTELOPE REFUGE' → 'Hart Mt NWR', the way staff
+  // already write them: Finley NWR, Pend Oreille NWR, Steigerwald NWR.
+  const REFUGE_NAMES = { "SADDLE MOUNTAIN NATIONAL WILDLIFE REFUGE": "Hanford Reach NWR" };
+  function refugeName(org, p) {
+    if (p.refugeOverrides && REFUGE_NAMES[org]) return REFUGE_NAMES[org];
+    let s = titleCase(org).replace(/ National (Wildlife|Antelope|Bison|Elk) Refuge$/, " NWR").replace(/ National Wildlife Range$/, " NWR");
+    if (fits(s, p)) return s;
+    s = s.replace(/\bMountain\b/, "Mt");
+    if (fits(s, p)) return s;
+    const generic = s.replace(/ (Lake|River|Creek|Slough|Marsh|Bay|Island|Islands) NWR$/, " NWR");
+    if (fits(generic, p)) return generic;
+    // Bosque del Apache: the name people use, without the NWR.
+    const bare = s.replace(/ NWR$/, "");
+    if (fits(bare, p)) return bare;
+    const words = s.split(" ");
+    while (words.length > 2) { words.shift(); while (words.length > 2 && /^[A-Z]\.$|^Jr\.$/.test(words[0])) words.shift(); const t = words.join(" "); if (fits(t, p)) return t; }
+    return null;
+  }
+
+  const DIRS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  const compass = (deg) => DIRS[Math.round(deg / 45) % 8];
+
+  function withOffset(name, km, brg, p) {
+    if (p.offset === "none" || km < p.offsetKm) return name;
+    const t = `${Math.round(km)}km ${compass(brg)} ${name}`;
+    return fits(t, p) ? t : name;
+  }
+
+  // sample: { lat, lon, ref, reg, c: [[placeId, km, bearing]] }; gaz: { places, regions }.
+  // Returns { name, why, place?, km?, crossCounty } or { name: null, why }.
+  function pick(sample, p, gaz) {
+    if (p.refuges && sample.ref) {
+      const name = refugeName(sample.ref, p);
+      if (name) return { name, why: "inside the refuge", kind: "refuge", crossCounty: false };
+    }
+    const cands = sample.c.map(([id, km, brg]) => ({ pl: gaz.places.get(id), km, brg }))
+      .filter((c) => c.pl).map((c) => ({ ...c, short: shortName(c.pl.name, p), same: c.pl.region_id === sample.reg }))
+      .filter((c) => c.short);
+    // Inside a town's limits: the town, however big and whatever is nearer.
+    if (p.townLimits && sample.tl && (sample.tlk === "city" || p.cdps)) {
+      const name = shortName(sample.tl, p);
+      if (name) return { name, why: sample.tlk === "city" ? "inside the town's limits" : "inside a census-designated place", kind: "town", crossCounty: false, km: 0, place: { name: sample.tl, pop: (sample.c.map(([id]) => gaz.places.get(id)).find((pl) => pl && pl.kind === "town" && pl.name === sample.tl) ?? {}).pop ?? 0 } };
+    }
+    const inLimits = p.townLimits && !!sample.tl;
+    const countyOk = (c) => p.county === "ignore" || c.same;
+    const choose = (pool) => {
+      // Inside or right beside a named place: name it whatever its size.
+      // Not inside a town's limits, where a hamlet so close is a neighbourhood.
+      const at = inLimits ? null : pool.find((c) => c.pl.kind === "town" && c.km <= p.atKm);
+      if (at) return { c: at, why: `within ${p.atKm} km of it` };
+      const towns = pool.filter((c) => c.pl.kind === "town" && c.pl.pop >= p.minPop && c.km <= p.maxKm);
+      const score = (c) => c.km / Math.pow(Math.max(c.pl.pop, 1), p.sizeWeight);
+      const town = towns.reduce((best, c) => (!best || score(c) < score(best) ? c : best), null);
+      if (p.peaks) {
+        const peak = pool.find((c) => c.pl.kind === "peak" && c.km <= p.peakKm);
+        if (peak && (!town || town.km >= p.peakWhenTownKm)) return { c: peak, why: town ? `peak within ${p.peakKm} km, town ${town.km.toFixed(0)} km away` : `peak within ${p.peakKm} km, no town` };
+      }
+      if (town) return { c: town, why: `town of ${town.pl.pop.toLocaleString()} at ${town.km.toFixed(1)} km` };
+      return null;
+    };
+    let r = choose(cands.filter(countyOk));
+    if (!r && p.county === "prefer") { r = choose(cands); if (r) r.why += ", in another county"; }
+    if (!r) return { name: null, why: `nothing within ${p.maxKm} km${p.county === "ignore" ? "" : " in the same county"}` };
+    const name = r.c.pl.kind === "town" ? withOffset(r.c.short, r.c.km, r.c.brg, p) : r.c.short;
+    return { name, why: r.why, kind: r.c.pl.kind, place: r.c.pl, km: r.c.km, crossCounty: !r.c.same };
+  }
+
+  const fold = (s) => (s || "").toLowerCase().replace(/\bmount\b|\bmountain\b|\bmtn\b/g, "mt").replace(/\bsaint\b/g, "st").replace(/\bfort\b/g, "ft").replace(/[^a-z0-9]/g, "");
+  const bareName = (s) => s.replace(/^\d+km [NSEW]{1,2} /, "");
+  function agrees(generated, present) {
+    if (!generated || !present) return false;
+    const a = fold(bareName(generated)), b = fold(present);
+    return a.length > 0 && b.length > 0 && (a.includes(b) || b.includes(a));
+  }
+
+  return { pick, agrees, fits, refugeName, shortName };
+})();
+
+// ── The page: a thin shell over Locality. ──────────────────────────────────
+const DATA = /*DATA*/null;
+const gaz = { places: new Map(DATA.places.map((p) => [p.id, p])), regions: new Map(DATA.regions.map((r) => [r.region_id, r])) };
+const samples = DATA.samples;
+
+const DEFAULTS = { townLimits: true, cdps: true, minPop: 0, sizeWeight: 0.25, maxKm: 30, atKm: 1.5, county: "prefer", peaks: true, peakKm: 3, peakWhenTownKm: 12, refuges: true, refugeOverrides: true, offset: "none", offsetKm: 3, maxLen: 18 };
+const params = { ...DEFAULTS };
+const CONTROLS = [
+  ["townLimits", "Inside a town's limits, name the town", "bool", "Census places; BC municipalities"],
+  ["cdps", "…counting census-designated places", "bool", "unincorporated: Mount Hood Village, Sandia Heights"],
+  ["minPop", "Smallest town worth naming", "number", "population; GeoNames gives none for most hamlets, and a place with none is only named within 10 km"],
+  ["sizeWeight", "Prefer bigger towns", "number", "0 = nearest qualifying town; 0.5 = a town 10× bigger may be ~3× farther"],
+  ["maxKm", "Farthest town (km)", "number", "beyond this, no name is offered"],
+  ["atKm", "Name any place this close (km)", "number", "outside town limits: a point beside a hamlet takes the hamlet's name"],
+  ["county", "Same county", ["prefer", "require", "ignore"], "prefer: another county only when none is in this one"],
+  ["peaks", "Name notable peaks", "bool", "notable = GeoNames knows a name for it in another language"],
+  ["peakKm", "Peak within (km)", "number", ""],
+  ["peakWhenTownKm", "…only when the town is at least (km)", "number", "so a peak wins only out of town"],
+  ["refuges", "Name the wildlife refuge a point is in", "bool", ""],
+  ["refugeOverrides", "Use curated refuge names", "bool", "Saddle Mountain NWR → Hanford Reach NWR"],
+  ["offset", "Distance and direction", ["none", "beyond"], "\"12km NE Burns\" when it fits"],
+  ["offsetKm", "…from this far (km)", "number", ""],
+  ["maxLen", "Longest locality", "number", "the label allows 18"],
+];
+
+const ctl = document.getElementById("controls");
+for (const [key, label, type, hint] of CONTROLS) {
+  const wrap = document.createElement("label");
+  let input;
+  if (Array.isArray(type)) { input = document.createElement("select"); for (const o of type) input.add(new Option(o, o)); input.value = params[key]; }
+  else if (type === "bool") { input = document.createElement("input"); input.type = "checkbox"; input.checked = params[key]; }
+  else { input = document.createElement("input"); input.type = "number"; input.step = "any"; input.value = params[key]; }
+  input.addEventListener("change", () => { params[key] = type === "bool" ? input.checked : type === "number" ? Number(input.value) : input.value; recompute(); });
+  wrap.append(label, input); if (hint) { const s = document.createElement("small"); s.textContent = hint; wrap.append(s); }
+  ctl.append(wrap);
+}
+
+const SCENARIOS = [
+  { key: "all", label: "Everything", text: "Every sample on the page.", test: () => true },
+  { key: "flagged", label: "Localities flagged now", text: "Samples whose present locality fails the label check: too long, a street address, a comma. These are what volunteers are asked to fix on iNaturalist today. Does the generated name make the fix unnecessary?", test: (s) => !!s.flag },
+  { key: "refuge", label: "Wildlife refuges", text: "Points inside a national wildlife refuge, named the way staff already write them (Malheur NWR, Hart Mt NWR). Watch for refuges whose official name is not the one people use, and for points on a refuge's edge.", test: (s) => !!s.ref },
+  { key: "cross", label: "Named from another county", text: "The generated name is a town in a different county from the point, because none in its own county qualified. On a label this reads USA:OR:LinnCo Corvallis — is that acceptable, or should these get no name?", test: (s, r) => r.crossCounty },
+  { key: "none", label: "No name found", text: "Nothing qualifying within reach. Remote country, mostly; the peak and distance settings matter here.", test: (s, r) => !r.name },
+  { key: "peak", label: "Named for a peak", text: "Points named for a nearby notable peak rather than a town. Is 'notable' right?", test: (s, r) => r.kind === "peak" },
+  { key: "bc", label: "BC districts", text: "British Columbia, where the 'county' is a regional district. The present one comes from iNaturalist and the old system, the generated one from the province's current boundaries. Bonnie reports iNaturalist's are out of date: CxSRD is Comox-Strathcona, split in 2008.", test: (s) => s.ss === "BC" },
+  { key: "urban", label: "Cities", text: "Points within a town of 50,000 or more. A city name is accurate, but is 'Portland' enough for a volunteer to find the spot again?", test: (s, r) => r.place && r.place.pop >= 50000 && r.km <= 8 },
+];
+let scenario = SCENARIOS[0], page = 0, results = [], openRow = null;
+const tabs = document.getElementById("tabs");
+for (const sc of SCENARIOS) {
+  const b = document.createElement("button"); b.textContent = sc.label;
+  b.addEventListener("click", () => { scenario = sc; page = 0; render(); }); sc.btn = b; tabs.append(b);
+}
+for (const id of ["onlyDiff", "season", "q"]) document.getElementById(id).addEventListener("input", () => { page = 0; render(); });
+
+function regionText(reg) {
+  const r = gaz.regions.get(reg); if (!r) return "";
+  return `${r.country}:${r.state}:${r.county}${r.country === "USA" ? "Co" : ""}`;
+}
+const storeRegion = (s) => s.sc ? `${s.ss}:${s.sc}` : (s.ss ?? "");
+const regionDiffers = (s) => { const r = gaz.regions.get(s.reg); return r && s.sc && r.county.toLowerCase() !== String(s.sc).toLowerCase().replace(/ county$/, ""); };
+
+function recompute() {
+  results = samples.map((s) => { const r = Locality.pick(s, params, gaz); return { s, r, agree: Locality.agrees(r.name, s.loc) }; });
+  renderStats(); render();
+}
+
+function renderStats() {
+  const groups = [["Open season", (x) => x.s.open], ["Settled seasons (4,000 random, plus refuges)", (x) => !x.s.open]];
+  const pct = (n, d) => d ? `${(100 * n / d).toFixed(1)}%` : "—";
+  const rows = [
+    ["Samples", (xs) => xs.length.toLocaleString()],
+    ["Given a name", (xs) => pct(xs.filter((x) => x.r.name).length, xs.length)],
+    ["…a refuge", (xs) => pct(xs.filter((x) => x.r.kind === "refuge").length, xs.length)],
+    ["…a town whose limits it is inside", (xs) => pct(xs.filter((x) => x.r.km === 0).length, xs.length)],
+    ["…a peak", (xs) => pct(xs.filter((x) => x.r.kind === "peak").length, xs.length)],
+    ["…a town in another county", (xs) => pct(xs.filter((x) => x.r.crossCounty).length, xs.length)],
+    ["Agrees with the present locality", (xs) => pct(xs.filter((x) => x.agree).length, xs.length)],
+    ["Present locality flagged now", (xs) => pct(xs.filter((x) => x.s.flag).length, xs.length)],
+    ["…of those, given a name", (xs) => { const f = xs.filter((x) => x.s.flag); return pct(f.filter((x) => x.r.name).length, f.length); }],
+    ["County or district differs from the store's", (xs) => pct(xs.filter((x) => regionDiffers(x.s)).length, xs.length)],
+  ];
+  const t = document.getElementById("stats");
+  t.innerHTML = `<tr><th></th>${groups.map(([g]) => `<th class="num">${g}</th>`).join("")}</tr>` +
+    rows.map(([label, f]) => `<tr><td>${label}</td>${groups.map(([, g]) => `<td class="num">${f(results.filter(g))}</td>`).join("")}</tr>`).join("");
+}
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const PER = 100;
+function render() {
+  for (const sc of SCENARIOS) sc.btn.classList.toggle("on", sc === scenario);
+  document.getElementById("scenario").textContent = scenario.text;
+  const onlyDiff = document.getElementById("onlyDiff").checked, season = document.getElementById("season").value, q = document.getElementById("q").value.toLowerCase();
+  const shown = results.filter((x) => scenario.test(x.s, x.r) && (!onlyDiff || !x.agree)
+    && (!season || (season === "open") === x.s.open)
+    && (!q || (x.s.loc ?? "").toLowerCase().includes(q) || (x.r.name ?? "").toLowerCase().includes(q)));
+  document.getElementById("count").textContent = `${shown.length.toLocaleString()} samples`;
+  const slice = shown.slice(page * PER, page * PER + PER);
+  const t = document.getElementById("rows");
+  t.innerHTML = `<tr><th>Sample</th><th>Season</th><th>Present locality</th><th>Present county</th><th>Generated</th><th>Generated county</th><th class="num">Length</th></tr>` +
+    slice.map((x) => {
+      const { s, r } = x;
+      const present = s.loc ? esc(s.loc) : `<span class="muted">none</span>`;
+      const gen = r.name ? `<span class="gen ${x.agree ? "ok" : ""}">${esc(r.name)}</span>` : `<span class="muted">no name</span>`;
+      const row = `<tr class="row" data-i="${s.i}"><td>${s.i}${s.printed ? "" : ' <span class="muted">unprinted</span>'}</td><td>${s.season}</td>
+        <td>${present}${s.flag ? `<div class="why bad">${esc(s.flag)}</div>` : ""}</td>
+        <td class="${regionDiffers(s) ? "warn" : ""}">${esc(storeRegion(s))}</td>
+        <td>${gen}<div class="why${r.crossCounty ? " warn" : ""}">${esc(r.why)}</div></td>
+        <td>${esc(regionText(s.reg))}</td><td class="num">${r.name ? r.name.length : ""}</td></tr>`;
+      return row + (openRow === s.i ? detail(s, r) : "");
+    }).join("");
+  t.querySelectorAll("tr.row").forEach((tr) => tr.addEventListener("click", () => { const i = Number(tr.dataset.i); openRow = openRow === i ? null : i; render(); }));
+  const pages = Math.ceil(shown.length / PER), pg = document.getElementById("pager");
+  pg.innerHTML = pages > 1 ? `<button ${page === 0 ? "disabled" : ""} id="prev">Previous</button> page ${page + 1} of ${pages} <button ${page >= pages - 1 ? "disabled" : ""} id="next">Next</button>` : "";
+  pg.querySelector("#prev")?.addEventListener("click", () => { page--; render(); });
+  pg.querySelector("#next")?.addEventListener("click", () => { page++; render(); });
+}
+
+function detail(s, r) {
+  const map = `https://www.openstreetmap.org/?mlat=${s.lat}&mlon=${s.lon}#map=13/${s.lat}/${s.lon}`;
+  const cands = s.c.slice(0, 15).map(([id, km, brg]) => {
+    const pl = gaz.places.get(id); if (!pl) return "";
+    const chosen = r.place && r.place.id === id;
+    const other = pl.region_id !== s.reg;
+    return `<tr><td>${chosen ? "▶ " : ""}${esc(pl.name)}</td><td>${pl.kind}${pl.kind === "peak" && pl.elev ? ` ${pl.elev} m` : ""}</td><td class="num">${pl.pop ? pl.pop.toLocaleString() : ""}</td>
+      <td class="num">${km.toFixed(1)} km</td><td class="${other ? "warn" : ""}">${esc(regionText(pl.region_id))}</td><td>${Locality.shortName(pl.name, params) ?? '<span class="bad">does not fit</span>'}</td></tr>`;
+  }).join("");
+  return `<tr class="detail"><td colspan="7">
+    <div>${s.lat}, ${s.lon}${s.unc ? ` ±${s.unc} m` : ""} · <a href="${map}" target="_blank" rel="noreferrer">map</a>${s.ref ? ` · in ${esc(s.ref)}` : ""}</div>
+    <table style="margin-top:6px"><tr><th>Nearby</th><th>Kind</th><th class="num">Population</th><th class="num">Distance</th><th>County</th><th>As written</th></tr>${cands}</table>
+  </td></tr>`;
+}
+
+recompute();
+</script>
+</body>
+</html>

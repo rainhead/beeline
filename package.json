@@ -40,7 +40,8 @@
     "person:orcids": "tsx src/load-orcids.ts",
     "sample:apply": "tsx src/apply-sample-overlay.ts",
     "bench:pages": "tsx bench/pages.ts",
-    "bench:contention": "tsx bench/contention.ts"
+    "bench:contention": "tsx bench/contention.ts",
+    "prototype:locality": "scripts/prototype-coordinate-locality/build.sh"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

@@ -1237,7 +1237,7 @@ export function createApp({
     );
   });
 
-  // One program-season's Darwin Core archive, as the dwc-archives job wrote
+  // One program-year's Darwin Core archive, as the dwc-archives job wrote
   // it (src/app/program-archives.ts), whether or not its program has the
   // licence and privacy policy publishing it would need: these are for staff
   // to review (Peter, 2026-10-23). Only a file the manifest names is served.
@@ -1263,7 +1263,7 @@ export function createApp({
     return c.body(Readable.toWeb(handle.createReadStream({ autoClose: true })) as ReadableStream, 200, {
       "content-type": "application/zip",
       "content-length": String(st.size),
-      "content-disposition": `attachment; filename="beeline-${entry.program}-${entry.season}-dwca.zip"`,
+      "content-disposition": `attachment; filename="beeline-${entry.program}-${entry.year}-dwca.zip"`,
     });
   });
 

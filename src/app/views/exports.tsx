@@ -13,11 +13,11 @@ export interface ExportFile {
 /**
  * Files for work outside Beeline. The legacy system's occurrences format
  * (beeline-6q8), which reporting built on that file reads unchanged, and a
- * Darwin Core archive per program and season (beeline-rvun), every one
+ * Darwin Core archive per program and calendar year (beeline-rvun), every one
  * written nightly so staff can review it (Peter, 2026-10-23). Admin-gated like
  * /jobs, since both carry names and true coordinates.
  *
- * The licence and policy columns are what publishing a season would need, and
+ * The licence and policy columns are what publishing a year would need, and
  * read the decisions as they stand now rather than as the night's run found
  * them, so a decision merged today shows at once.
  */
@@ -100,14 +100,14 @@ function ProgramSeasons({
   return (
     <section>
       <h3>{program.name}</h3>
-      <DataTable columns={[e.colSeason, e.colSpecimens, e.colLicense, e.colPolicy, e.colArchive]}>
+      <DataTable columns={[e.colYear, e.colSpecimens, e.colLicense, e.colPolicy, e.colArchive]}>
         {[...entries]
-          .sort((a, b) => b.season - a.season)
+          .sort((a, b) => b.year - a.year)
           .map((entry) => {
-            const { license, policy } = governanceFor(governance, entry.program, entry.season);
+            const { license, policy } = governanceFor(governance, entry.program, entry.year);
             return (
               <tr>
-                <td>{e.season(entry.season)}</td>
+                <td>{entry.year}</td>
                 <td>{m.format.number(entry.specimens)}</td>
                 <td>
                   {license === null ? (
@@ -129,7 +129,7 @@ function ProgramSeasons({
                   {entry.file === null ? (
                     <Meta>{e.archiveTonight}</Meta>
                   ) : (
-                    <a href={`/exports/dwca/${entry.file}`} aria-label={e.archiveDownload(program.name, entry.season)}>
+                    <a href={`/exports/dwca/${entry.file}`} aria-label={e.archiveDownload(program.name, entry.year)}>
                       {e.downloadSized(fileSize(entry.bytes ?? 0))}
                     </a>
                   )}

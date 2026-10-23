@@ -1246,9 +1246,9 @@ export const en = {
     size: (megabytes: string) => `${megabytes} MB`,
     download: "Download",
     missing: "Not written yet. It appears after the next nightly run, or after running the legacy-export job on Jobs.",
-    archives: "Darwin Core archives, by program and season",
+    archives: "Darwin Core archives, by program and year",
     archivesIntro:
-      "Each program's specimens for a season, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every season is written every night at 4am Pacific, so you can download and review it. Before a season is published, its program has to say under which licence its records leave it and have a privacy policy for that season; the Licence and Privacy policy columns say how far each has got.",
+      "Each program's specimens collected in a calendar year, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, so a sample emptied in February is in that year's archive even though Beeline counts it in the previous season. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got.",
     archivesCaution:
       "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including taxon-obscured ones.",
     archivesMissing:
@@ -1256,19 +1256,18 @@ export const en = {
     archiveNone:
       "No archives: survey samples will come in through the surveys' own field entry, and belong to them by the day they were collected on rather than by where they fell.",
     noSpecimens: "No specimens yet.",
-    colSeason: "Season",
+    colYear: "Year",
     colSpecimens: "Specimens",
     colLicense: "Licence",
     colPolicy: "Privacy policy",
     colArchive: "Archive",
-    season: (year: number) => `${year} season`,
     noLicense: "no licence",
     noPolicy: "none yet",
     policyNoPage: "Agreed, not yet published",
     policyLink: "Read it",
     archiveTonight: "Written tonight",
     downloadSized: (size: string) => `Download (${size})`,
-    archiveDownload: (program: string, season: number) => `Download the ${program} archive for the ${season} season`,
+    archiveDownload: (program: string, year: number) => `Download the ${program} archive for ${year}`,
   },
   jobs: {
     title: "Jobs",
@@ -1284,7 +1283,7 @@ export const en = {
       "legacy-export":
         "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
       "dwc-archives":
-        "Writes a Darwin Core archive for each program and season, for staff to review, and removes any whose season no longer has specimens. Download them from Exports.",
+        "Writes a Darwin Core archive for each program and calendar year, for staff to review, and removes any whose year no longer has specimens. Download them from Exports.",
       "ecdysis-fetch":
         "Brings back the determinations made in Ecdysis, Washington's museum database. Downloads the collection only when Ecdysis says something changed, and otherwise reloads the copy it kept; names Beeline lacks are taken from ITIS where it accepts them, and the rest are listed in the run.",
       "store-backup":

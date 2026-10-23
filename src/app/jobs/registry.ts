@@ -411,7 +411,7 @@ export function buildJobs(
       },
     },
     {
-      // One Darwin Core archive per program per season, every one, for staff
+      // One Darwin Core archive per program per calendar year, every one, for staff
       // to review (beeline-rvun). After the legacy export, so it reads the
       // same store; on Exports.
       name: "dwc-archives",

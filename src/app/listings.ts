@@ -450,11 +450,13 @@ export interface ListingPageOptions {
   /** False skips counting the whole selection; `total` is then 0. */
   withTotal?: boolean;
   /**
-   * Only samples of this season (`sample_season`, the 1 March line). Not a
-   * listing filter — the listings have none, by design — but the grain the
-   * program archives are written at (src/app/dwc-archive.ts).
+   * Only samples collected in this calendar year, by their first day, as
+   * Darwin Core's `year` reads an interval. Not a listing filter — the
+   * listings have none, by design — but the grain the program archives are
+   * written at (src/app/program-archives.ts), which is the taxonomists' year
+   * and not the season.
    */
-  season?: number;
+  year?: number;
 }
 
 export interface Page<Row> {
@@ -896,17 +898,7 @@ export async function listSpecimens(
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
-  if (opts.season !== undefined) {
-    const season = opts.season;
-    base = base.where(({ exists, selectFrom }) =>
-      exists(
-        selectFrom("sample_season as ss")
-          .select("ss.sample_id")
-          .whereRef("ss.sample_id", "=", "s.entity_id")
-          .where("ss.season", "=", season),
-      ),
-    );
-  }
+  if (opts.year !== undefined) base = base.where(sql<number>`extract(year from s.date_start)`, "=", opts.year);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;

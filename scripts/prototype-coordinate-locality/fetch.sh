@@ -23,6 +23,8 @@ FWS="https://services.arcgis.com/QVENGdaPbd4LUkLV/ArcGIS/rest/services/FWSIntere
 for o in 0 500 1000; do
   get "$FWS?where=RSL_TYPE%3D%27NWR%27&outFields=ORGNAME,INTTYPE1&outSR=4326&f=geojson&resultOffset=$o&resultRecordCount=500&orderByFields=OBJECTID&maxAllowableOffset=0.0003&geometryPrecision=5" nwr_$o.geojson
 done
+# WDFW wildlife area units.
+get "https://geodataservices.wdfw.wa.gov/arcgis/rest/services/MapServices/WildlifeAreas/MapServer/0/query?where=1%3D1&outFields=WLA_Name,WLAU_Name,AccessTypeIDDesc&outSR=4326&f=geojson&maxAllowableOffset=0.0003&geometryPrecision=5" wdfw_units.geojson
 [ -d us ] || unzip -oq US.zip -d us
 [ -d ca ] || unzip -oq CA.zip -d ca
 [ -d counties ] || unzip -oq cb_2023_us_county_500k.zip -d counties

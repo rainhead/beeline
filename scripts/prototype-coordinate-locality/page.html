@@ -36,8 +36,8 @@
 <body>
 <main>
 <h1>PROTOTYPE: localities from coordinates</h1>
-<p class="lede">The question: can Beeline name a sample's locality from its coordinates well enough that volunteers stop having to fix iNaturalist's? A volunteer reads the locality to remember where they collected, or to find a specimen by its label, so it should name a town or peak they would know, in the same county as the point, and fit on the label (18 characters, no street address). A point inside a national wildlife refuge is named for the refuge. Change the settings and every number and row below is worked out again.</p>
-<p class="banner">Throwaway (beeline-7i6). Towns and peaks come from GeoNames, counties from the 2023 Census boundaries, BC regional districts from the province's current boundaries (ABMS), refuges from USFWS. The rows are samples from the sandbox store, with obscured and private observations left out. This page holds sample coordinates, so keep it off the web.</p>
+<p class="lede">The question: can Beeline name a sample's locality from its coordinates well enough that volunteers stop having to fix iNaturalist's? A volunteer reads the locality to remember where they collected, or to find a specimen by its label, so it should name a town or peak they would know, in the same county as the point, and fit on the label (18 characters, no street address). A point inside a national wildlife refuge, or a WDFW wildlife area unit, is named for it. Change the settings and every number and row below is worked out again.</p>
+<p class="banner">Throwaway (beeline-7i6). Towns and peaks come from GeoNames, counties from the 2023 Census boundaries, BC regional districts from the province's current boundaries (ABMS), refuges from USFWS, wildlife area units from WDFW. The rows are samples from the sandbox store, with obscured and private observations left out. This page holds sample coordinates, so keep it off the web.</p>
 
 <h2>Settings</h2>
 <div class="controls" id="controls"></div>
@@ -96,6 +96,15 @@ const Locality = (() => {
     return null;
   }
 
+  // 'Whiskey Dick' (a unit of L.T. Murray) → 'Whiskey Dick WLA', as the
+  // suffix setting says; dropped when it would not fit.
+  function unitName(unit, area, p) {
+    const base = p.wlaName === "area" ? area : unit;
+    const suffixed = p.wlaSuffix ? `${base} ${p.wlaSuffix}` : base;
+    if (fits(suffixed, p)) return suffixed;
+    return shortName(base, p);
+  }
+
   const DIRS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
   const compass = (deg) => DIRS[Math.round(deg / 45) % 8];
 
@@ -115,6 +124,10 @@ const Locality = (() => {
     const cands = sample.c.map(([id, km, brg]) => ({ pl: gaz.places.get(id), km, brg }))
       .filter((c) => c.pl).map((c) => ({ ...c, short: shortName(c.pl.name, p), same: c.pl.region_id === sample.reg }))
       .filter((c) => c.short);
+    if (p.wildlifeAreas && sample.wla) {
+      const name = unitName(sample.wla, sample.wla_area, p);
+      if (name) return { name, why: sample.wla === sample.wla_area ? "inside the WDFW wildlife area" : `inside the WDFW unit, part of ${sample.wla_area}`, kind: "wildlife area", crossCounty: false };
+    }
     // Inside a town's limits: the town, however big and whatever is nearer.
     if (p.townLimits && sample.tl && (sample.tlk === "city" || p.cdps)) {
       const name = shortName(sample.tl, p);
@@ -160,7 +173,7 @@ const DATA = /*DATA*/null;
 const gaz = { places: new Map(DATA.places.map((p) => [p.id, p])), regions: new Map(DATA.regions.map((r) => [r.region_id, r])) };
 const samples = DATA.samples;
 
-const DEFAULTS = { townLimits: true, cdps: true, minPop: 0, sizeWeight: 0.25, maxKm: 30, atKm: 1.5, county: "prefer", peaks: true, peakKm: 3, peakWhenTownKm: 12, refuges: true, refugeOverrides: true, offset: "none", offsetKm: 3, maxLen: 18 };
+const DEFAULTS = { townLimits: true, cdps: true, minPop: 0, sizeWeight: 0.25, maxKm: 30, atKm: 1.5, county: "prefer", peaks: true, peakKm: 3, peakWhenTownKm: 12, refuges: true, refugeOverrides: true, wildlifeAreas: true, wlaName: "unit", wlaSuffix: "WLA", offset: "none", offsetKm: 3, maxLen: 18 };
 const params = { ...DEFAULTS };
 const CONTROLS = [
   ["townLimits", "Inside a town's limits, name the town", "bool", "Census places; BC municipalities"],
@@ -175,6 +188,9 @@ const CONTROLS = [
   ["peakWhenTownKm", "…only when the town is at least (km)", "number", "so a peak wins only out of town"],
   ["refuges", "Name the wildlife refuge a point is in", "bool", ""],
   ["refugeOverrides", "Use curated refuge names", "bool", "Saddle Mountain NWR → Hanford Reach NWR"],
+  ["wildlifeAreas", "Name the WDFW wildlife area a point is in", "bool", "after refuges, which win where the two overlap"],
+  ["wlaName", "…by its", ["unit", "area"], "unit: Whiskey Dick; area: L.T. Murray"],
+  ["wlaSuffix", "…followed by", ["WLA", "Unit", "WA", ""], "dropped when the name would not fit; blank = the bare name"],
   ["offset", "Distance and direction", ["none", "beyond"], "\"12km NE Burns\" when it fits"],
   ["offsetKm", "…from this far (km)", "number", ""],
   ["maxLen", "Longest locality", "number", "the label allows 18"],
@@ -196,6 +212,7 @@ const SCENARIOS = [
   { key: "all", label: "Everything", text: "Every sample on the page.", test: () => true },
   { key: "flagged", label: "Localities flagged now", text: "Samples whose present locality fails the label check: too long, a street address, a comma. These are what volunteers are asked to fix on iNaturalist today. Does the generated name make the fix unnecessary?", test: (s) => !!s.flag },
   { key: "refuge", label: "Wildlife refuges", text: "Points inside a national wildlife refuge, named the way staff already write them (Malheur NWR, Hart Mt NWR). Watch for refuges whose official name is not the one people use, and for points on a refuge's edge.", test: (s) => !!s.ref },
+  { key: "wla", label: "WDFW wildlife areas", text: "Points inside a WDFW wildlife area unit. Volunteers mostly wrote the nearest town here (Wenas is 'Ellensburg' in 14 spellings), so naming the unit changes what these labels say. Is 'Desert WLA' or 'Methow WLA' something a volunteer would recognise?", test: (s) => !!s.wla },
   { key: "cross", label: "Named from another county", text: "The generated name is a town in a different county from the point, because none in its own county qualified. On a label this reads USA:OR:LinnCo Corvallis — is that acceptable, or should these get no name?", test: (s, r) => r.crossCounty },
   { key: "none", label: "No name found", text: "Nothing qualifying within reach. Remote country, mostly; the peak and distance settings matter here.", test: (s, r) => !r.name },
   { key: "peak", label: "Named for a peak", text: "Points named for a nearby notable peak rather than a town. Is 'notable' right?", test: (s, r) => r.kind === "peak" },
@@ -223,12 +240,13 @@ function recompute() {
 }
 
 function renderStats() {
-  const groups = [["Open season", (x) => x.s.open], ["Settled seasons (4,000 random, plus refuges)", (x) => !x.s.open]];
+  const groups = [["Open season", (x) => x.s.open], ["Settled seasons (4,000 random, plus refuges and wildlife areas)", (x) => !x.s.open]];
   const pct = (n, d) => d ? `${(100 * n / d).toFixed(1)}%` : "—";
   const rows = [
     ["Samples", (xs) => xs.length.toLocaleString()],
     ["Given a name", (xs) => pct(xs.filter((x) => x.r.name).length, xs.length)],
     ["…a refuge", (xs) => pct(xs.filter((x) => x.r.kind === "refuge").length, xs.length)],
+    ["…a WDFW wildlife area", (xs) => pct(xs.filter((x) => x.r.kind === "wildlife area").length, xs.length)],
     ["…a town whose limits it is inside", (xs) => pct(xs.filter((x) => x.r.km === 0).length, xs.length)],
     ["…a peak", (xs) => pct(xs.filter((x) => x.r.kind === "peak").length, xs.length)],
     ["…a town in another county", (xs) => pct(xs.filter((x) => x.r.crossCounty).length, xs.length)],
@@ -283,7 +301,7 @@ function detail(s, r) {
       <td class="num">${km.toFixed(1)} km</td><td class="${other ? "warn" : ""}">${esc(regionText(pl.region_id))}</td><td>${Locality.shortName(pl.name, params) ?? '<span class="bad">does not fit</span>'}</td></tr>`;
   }).join("");
   return `<tr class="detail"><td colspan="7">
-    <div>${s.lat}, ${s.lon}${s.unc ? ` ±${s.unc} m` : ""} · <a href="${map}" target="_blank" rel="noreferrer">map</a>${s.ref ? ` · in ${esc(s.ref)}` : ""}</div>
+    <div>${s.lat}, ${s.lon}${s.unc ? ` ±${s.unc} m` : ""} · <a href="${map}" target="_blank" rel="noreferrer">map</a>${s.ref ? ` · in ${esc(s.ref)}` : ""}${s.wla ? ` · in WDFW ${esc(s.wla_area)} wildlife area, ${esc(s.wla)} unit` : ""}</div>
     <table style="margin-top:6px"><tr><th>Nearby</th><th>Kind</th><th class="num">Population</th><th class="num">Distance</th><th>County</th><th>As written</th></tr>${cands}</table>
   </td></tr>`;
 }

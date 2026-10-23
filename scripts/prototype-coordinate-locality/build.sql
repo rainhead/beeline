@@ -36,6 +36,11 @@ FROM (SELECT * FROM ST_Read('__DL__/nwr_0.geojson')
       UNION ALL BY NAME SELECT * FROM ST_Read('__DL__/nwr_1000.geojson'))
 WHERE INTTYPE1 <> 'E';
 
+-- WDFW wildlife area units: Wenas, Whiskey Dick (part of L.T. Murray).
+CREATE TABLE wildlife_area_unit AS
+SELECT WLAU_Name AS unit, WLA_Name AS area, ST_MakeValid(geom::GEOMETRY) AS geom
+FROM ST_Read('__DL__/wdfw_units.geojson');
+
 -- Town limits: a point inside one is in that town, whatever is nearest.
 -- Census-designated places are kept apart, since they are unincorporated
 -- names a volunteer may or may not know. Northern Rockies is a municipality
@@ -88,12 +93,17 @@ CREATE TABLE base_refuge AS
 SELECT b.sample_id, any_value(r.org) AS org
 FROM base b JOIN refuge r ON ST_Contains(r.geom, ST_Point(b.lon, b.lat)) GROUP BY b.sample_id;
 
--- The whole open season, every sample in a refuge, and a fixed random
+CREATE TABLE base_wla AS
+SELECT b.sample_id, any_value(w.unit) AS unit, any_value(w.area) AS area
+FROM base b JOIN wildlife_area_unit w ON ST_Contains(w.geom, ST_Point(b.lon, b.lat)) GROUP BY b.sample_id;
+
+-- The whole open season, every sample in a refuge or a wildlife area, and a fixed random
 -- 4,000 of the settled seasons.
 SELECT setseed(0.7);
 CREATE TABLE sel AS
-SELECT b.*, br.org AS refuge FROM base b LEFT JOIN base_refuge br USING (sample_id)
-WHERE b.open_season OR br.org IS NOT NULL
+SELECT b.*, br.org AS refuge, bw.unit AS wla, bw.area AS wla_area
+FROM base b LEFT JOIN base_refuge br USING (sample_id) LEFT JOIN base_wla bw USING (sample_id)
+WHERE b.open_season OR br.org IS NOT NULL OR bw.unit IS NOT NULL
    OR b.sample_id IN (SELECT sample_id FROM base WHERE NOT open_season ORDER BY random() LIMIT 4000);
 
 CREATE TABLE sel_region AS
@@ -133,7 +143,7 @@ COPY (
 COPY (
   SELECT s.sample_id AS i, round(s.lat, 4) AS lat, round(s.lon, 4) AS lon, s.unc, s.locality AS loc,
          s.store_county AS sc, s.store_state AS ss, s.season, s.open_season AS open, s.printed,
-         s.flag, s.refuge AS ref, sr.region_id AS reg, tl.name AS tl, tl.kind AS tlk,
+         s.flag, s.refuge AS ref, s.wla, s.wla_area, sr.region_id AS reg, tl.name AS tl, tl.kind AS tlk,
          coalesce((SELECT list([c.place_id, c.km, c.brg] ORDER BY c.km) FROM cand c WHERE c.sample_id = s.sample_id), []) AS c
   FROM sel s LEFT JOIN sel_region sr USING (sample_id) LEFT JOIN sel_limits tl USING (sample_id)
   ORDER BY s.sample_id

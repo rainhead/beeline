@@ -372,31 +372,44 @@ WHERE try_cast(f.specimen_count_raw AS INTEGER) IS NOT NULL
 -- observation_seen: loads are hash-deduped, so absence of a load row cannot
 -- distinguish unchanged from gone. A later run that sees the observation
 -- again clears the finding by advancing last_seen_at.
+--
+-- Every condition on the run is in the one join, so a pair of observation and
+-- run is judged once. Joined in stages, as this was until migrations/0056,
+-- each observation met every covering run of its source before its date was
+-- known: 858,688 pairs on the sandbox's store, nearly all of them an old
+-- observation against a weekly sweep whose year-long window never reached
+-- it, carried through two more joins before the window threw them out. That
+-- was 91 ms of every listing page; this is 21.
 CREATE VIEW qc_rule_observation_missing_upstream AS
-WITH last_seen AS (
-  SELECT sn.inat_id, max(r.started_at) AS last_seen_at
+WITH seen AS (
+  -- When each observation was last returned, by each source that returned it.
+  SELECT sn.inat_id, r.source, max(r.started_at) AS last_seen_at
   FROM observation_seen sn
   JOIN sync_run r ON r.entity_id = sn.sync_run_id
-  GROUP BY sn.inat_id
-), seen_source AS (
-  SELECT DISTINCT sn.inat_id, r.source
-  FROM observation_seen sn
-  JOIN sync_run r ON r.entity_id = sn.sync_run_id
+  GROUP BY sn.inat_id, r.source
+), last_seen AS (
+  SELECT inat_id, max(last_seen_at) AS last_seen_at FROM seen GROUP BY inat_id
+), linked AS (
+  -- A sample's observation, once per source that has returned it, with the
+  -- last time any source did.
+  SELECT s.entity_id AS sample_id, s.inat_observation_id, f.user_id, f.observed_on,
+         ss.source, ls.last_seen_at
+  FROM sample s
+  JOIN observation_field f ON f.inat_id = s.inat_observation_id
+  JOIN last_seen ls ON ls.inat_id = f.inat_id
+  JOIN seen ss ON ss.inat_id = f.inat_id
 )
-SELECT s.entity_id AS sample_id,
+SELECT l.sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'observation_missing_upstream' AS rule_name,
-       concat('observation ', s.inat_observation_id, ' missing from ',
+       concat('observation ', l.inat_observation_id, ' missing from ',
               count(*), ' completed covering run(s), latest started ',
               max(r.started_at)) AS details
-FROM sample s
-JOIN observation_field f ON f.inat_id = s.inat_observation_id
-JOIN last_seen ls ON ls.inat_id = f.inat_id
-JOIN seen_source ss ON ss.inat_id = f.inat_id
+FROM linked l
 JOIN sync_run r
-  ON r.source = ss.source
+  ON r.source = l.source
  AND r.completed_at IS NOT NULL
- AND r.started_at > ls.last_seen_at
+ AND r.started_at > l.last_seen_at
  -- Incremental (updated_since) runs fetch only the changed subset: they can
  -- never prove an observation gone, so they are not covering runs.
  AND r.updated_since IS NULL
@@ -404,10 +417,10 @@ JOIN sync_run r
  -- "Check iNaturalist now", beeline-yso) proves absence for that observer
  -- only: it covers everyone else's observations no more than an
  -- incremental run does.
- AND (r.observer_user_id IS NULL OR r.observer_user_id = f.user_id)
- AND (r.window_start IS NULL OR f.observed_on >= r.window_start)
- AND (r.window_end IS NULL OR f.observed_on <= r.window_end)
-GROUP BY s.entity_id, s.inat_observation_id;
+ AND (r.observer_user_id IS NULL OR r.observer_user_id = l.user_id)
+ AND (r.window_start IS NULL OR l.observed_on >= r.window_start)
+ AND (r.window_end IS NULL OR l.observed_on <= r.window_end)
+GROUP BY l.sample_id, l.inat_observation_id;
 
 -- Post-print trouble: count fell below the number of specimens already frozen
 -- — individuated ones (schema/117), so a canceled run's leftovers do not

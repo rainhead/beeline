@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemoryDb, insertCleanSample, openSeasonDate, rows } from "./helpers.js";
@@ -525,6 +525,49 @@ describe("the file", () => {
     const { changes, malformed } = parseSampleChanges(text);
     expect(changes).toHaveLength(1);
     expect(malformed).toBe(2);
+  });
+
+  it("reads, through its cache, exactly what a fresh parse of the file says, whoever appended", async () => {
+    const fresh = async () => parseSampleChanges(await readFile(paths.log, "utf8")).changes;
+    const id = await insertCleanSample(conn);
+    await record();
+    await conn.run(`UPDATE sample SET locality = 'Adair' WHERE entity_id = ${id}`);
+    await record();
+    await readSampleChanges(paths.log); // the cache now holds the file
+
+    // This process's own append extends the cache.
+    await conn.run(`UPDATE sample SET locality = 'Alsea' WHERE entity_id = ${id}`);
+    await record();
+    expect(await readSampleChanges(paths.log)).toEqual(await fresh());
+    expect((await readSampleChanges(paths.log)).map((c) => c.new_value)).toEqual(["Adair", "Alsea"]);
+
+    // Somebody else's append, and an unterminated last line, are read from the file.
+    await appendFile(paths.log, "2026-08-30T12:00:00Z,name:Ada Collector,1,2026-07-14,locality,Alsea,Blodgett,,reconcile,");
+    expect(await readSampleChanges(paths.log)).toEqual(await fresh());
+    await conn.run(`UPDATE sample SET locality = 'Burnt Woods' WHERE entity_id = ${id}`);
+    await record();
+    expect(await readSampleChanges(paths.log)).toEqual(await fresh());
+    expect((await readSampleChanges(paths.log)).map((c) => c.new_value)).toEqual(["Adair", "Alsea", "Blodgett", "Burnt Woods"]);
+
+    // A write cut off inside a quoted value: the next append continues that
+    // value as far as a full parse is concerned, so the cache must say so too.
+    await appendFile(paths.log, '\n2026-08-30T12:00:00Z,name:Ada Collector,1,2026-07-14,locality,Burnt Woods,Alsea,,reconcile,"cut off');
+    await readSampleChanges(paths.log);
+    await conn.run(`UPDATE sample SET locality = 'Blodgett' WHERE entity_id = ${id}`);
+    await record();
+    expect(await readSampleChanges(paths.log)).toEqual(await fresh());
+  });
+
+  it("drops its cache rather than extend a record cut off after a line break inside a quoted value", async () => {
+    const id = await insertCleanSample(conn);
+    await record();
+    await conn.run(`UPDATE sample SET locality = 'Adair' WHERE entity_id = ${id}`);
+    await record();
+    await appendFile(paths.log, '2026-08-30T12:00:00Z,name:Ada Collector,1,2026-07-14,locality,Adair,Alsea,,reconcile,"first line\n');
+    await readSampleChanges(paths.log);
+    await conn.run(`UPDATE sample SET locality = 'Blodgett' WHERE entity_id = ${id}`);
+    await record();
+    expect(await readSampleChanges(paths.log)).toEqual(parseSampleChanges(await readFile(paths.log, "utf8")).changes);
   });
 
   it("round-trips values that carry commas and quotes", async () => {

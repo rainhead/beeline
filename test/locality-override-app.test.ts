@@ -129,6 +129,17 @@ describe("the staff locality form", () => {
     expect(entry).toContain("samstaff");
   });
 
+  it("says what iNaturalist now yields where the observation has moved on, and nothing where it has not", async () => {
+    const { app, conn, sampleId } = await inatApp("sam");
+    await post(app, `/samples/${sampleId}/locality`, { locality: "Bald Hill", note: "" });
+    expect(await (await app.request(`/samples/${sampleId}`)).text()).not.toContain("iNaturalist now yields");
+
+    await conn.run(`INSERT INTO observation_field (inat_id, place_guess) VALUES (998877, 'Philomath, OR, US')`);
+    const page = await (await app.request(`/samples/${sampleId}`)).text();
+    expect(page).toContain("iNaturalist now yields “Philomath”");
+    expect(page).toContain("Locality set here by Sam Staff.");
+  });
+
   it("removes the override on request", async () => {
     const { app, conn, sampleId, sampleOverlayPath } = await inatApp("sam");
     await post(app, `/samples/${sampleId}/locality`, { locality: "Bald Hill", note: "" });

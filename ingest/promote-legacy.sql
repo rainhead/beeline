@@ -167,6 +167,18 @@ SELECT *,
   try_cast(regexp_extract(url, '([0-9]+)$', 1) AS BIGINT) AS p_inat_obs_id
 FROM legacy_occurrence_corrected;
 
+-- How a record was collected, as far as splitting a sample needs to know:
+-- 'net' for "net" and "aerial net", 'trap' for every kind of trap the corpus
+-- names (vane, pan, bottle, trap nest), and NULL for anything else (vacuum, a
+-- blank). Read from the protocol the record states rather than from whether
+-- it has an end date, which is how a sample's kind is otherwise decided: in
+-- the groups that hold both, 13 netted records carry an end date and 70
+-- trapped ones lack one, and seven groups whose records all name one method
+-- differ only in that (sandbox store, 2026-10-23).
+CREATE OR REPLACE MACRO legacy_method(protocol) AS
+  CASE WHEN lower(trim(protocol)) LIKE '%net' THEN 'net'
+       WHEN lower(protocol) LIKE '%trap%' THEN 'trap' END;
+
 -- ── Deduplication ───────────────────────────────────────────────────────
 -- The hash-id bug duplicated specimens: same (person, date, sample,
 -- specimen) printed under two fieldNumbers on two dates. Keep the latest
@@ -174,29 +186,37 @@ FROM legacy_occurrence_corrected;
 --
 -- Except across observations. Where a (person, date, sample) group names
 -- more than one observation, each observation is its own sample
--- (legacy_row_observation, below) numbering its own specimens from 1, so
+-- (legacy_row_split, below) numbering its own specimens from 1, so
 -- specimen 1 of one and specimen 1 of the other are two pins, not one pin
 -- printed twice. Ranking them together refused 2,467 real specimens on the
 -- 2026-10-04 corpus, 701 of them from the open season (beeline-bib1); the
 -- 435 it still refuses all date from before 2025. The key is the
--- observation only in such a group, as legacy_row_observation keys samples,
+-- observation only in such a group, as legacy_row_split keys samples,
 -- so a group with one observation and some unlinked rows — the 2019–2021
 -- reprints whose older copy carries no link — still ranks as one specimen.
 -- A window rather than a join to the groups that split: promotion reads this
 -- view a dozen times over, and the join made each read six times slower,
 -- enough to spill 6.4 GiB on the sandbox's machine (2026-10-04).
+--
+-- The same holds across methods, and for the same reason: where a group holds
+-- both netted and trapped records, each is its own sample numbering its own
+-- specimens (legacy_row_split, below), so a net's specimen 1 and a trap's
+-- specimen 1 are two pins.
 CREATE OR REPLACE VIEW legacy_ranked AS
-SELECT * EXCLUDE (obs_link, split),
+SELECT * EXCLUDE (obs_link, split, method, mixed),
   row_number() OVER (
     PARTITION BY fn, ln, sid, p_date_start, p_specimen_number,
-                 CASE WHEN split THEN obs_link END
+                 CASE WHEN split THEN obs_link END,
+                 CASE WHEN mixed THEN method END
     ORDER BY try_strptime(dateLabelPrint, '%d-%b-%y') DESC NULLS LAST,
              fieldNumber DESC, _id
   ) AS dup_rank
 FROM (
-  SELECT *, min(obs_link) OVER g <> max(obs_link) OVER g AS split
+  SELECT *, min(obs_link) OVER g <> max(obs_link) OVER g AS split,
+         min(method) OVER g <> max(method) OVER g AS mixed
   FROM (
-    SELECT *, CASE WHEN regexp_matches(url, '/observations/[0-9]+$') THEN p_inat_obs_id END AS obs_link
+    SELECT *, CASE WHEN regexp_matches(url, '/observations/[0-9]+$') THEN p_inat_obs_id END AS obs_link,
+           legacy_method(samplingProtocol) AS method
     FROM legacy_parsed
   ) linked
   WINDOW g AS (PARTITION BY fn, ln, sid, p_date_start)
@@ -642,10 +662,19 @@ QUALIFY row_number() OVER (PARTITION BY person_id ORDER BY records DESC, login) 
 -- the 2026-10-04 corpus 434 groups split, every row of them carrying a link.
 -- Each observation numbers its own specimens from 1, which is why
 -- legacy_ranked keys reprints on the observation in exactly these groups.
-CREATE TABLE legacy_row_observation AS
+--
+-- And per method, where a group holds both netted and trapped records: a net
+-- sample and a pan trap the collector gave the same number on the same day
+-- are two collecting events, with their own place, host and observation, and
+-- merging them made a trap sample carry a net's host flower (Peter,
+-- 2026-10-23). method_key is NULL outside those groups, so every other sample
+-- stays as it was. On the sandbox's store 60 groups split, all from settled
+-- seasons, none holding a record whose method is unknown.
+CREATE TABLE legacy_row_split AS
 WITH linked AS (
   SELECT r._id, m.person_id, r.sid, r.p_date_start,
-         CASE WHEN regexp_matches(r.url, '/observations/[0-9]+$') THEN r.p_inat_obs_id END AS obs
+         CASE WHEN regexp_matches(r.url, '/observations/[0-9]+$') THEN r.p_inat_obs_id END AS obs,
+         legacy_method(r.samplingProtocol) AS method
   FROM legacy_promotable r
   JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
 ), several AS (
@@ -653,22 +682,34 @@ WITH linked AS (
   FROM linked
   GROUP BY person_id, sid, p_date_start
   HAVING count(DISTINCT obs) > 1
+), mixed AS (
+  SELECT person_id, sid, p_date_start
+  FROM linked
+  GROUP BY person_id, sid, p_date_start
+  HAVING count(DISTINCT method) > 1
 )
 SELECT l._id,
-       CASE WHEN sv.person_id IS NOT NULL THEN l.obs END AS obs_key
+       CASE WHEN sv.person_id IS NOT NULL THEN l.obs END AS obs_key,
+       CASE WHEN mx.person_id IS NOT NULL THEN l.method END AS method_key
 FROM linked l
 LEFT JOIN several sv
   ON sv.person_id = l.person_id AND sv.sid IS NOT DISTINCT FROM l.sid
- AND sv.p_date_start IS NOT DISTINCT FROM l.p_date_start;
+ AND sv.p_date_start IS NOT DISTINCT FROM l.p_date_start
+LEFT JOIN mixed mx
+  ON mx.person_id = l.person_id AND mx.sid IS NOT DISTINCT FROM l.sid
+ AND mx.p_date_start IS NOT DISTINCT FROM l.p_date_start;
 
 -- Descriptive fields take the representative row (min _id); within-group
 -- disagreement becomes a sample_promotion_finding below.
 CREATE TABLE legacy_sample_map AS
 SELECT
   m.person_id,
-  r.sid, r.p_date_start, k.obs_key,
+  r.sid, r.p_date_start, k.obs_key, k.method_key,
   coalesce(max(r.p_date_end), r.p_date_start)      AS date_end,
-  CASE WHEN max(r.p_date_end) IS NOT NULL THEN 'trap' ELSE 'net' END AS kind,
+  -- A split group's halves are a net and a trap by what their records say;
+  -- every other sample's kind is whether any record has an end date.
+  coalesce(k.method_key,
+           CASE WHEN max(r.p_date_end) IS NOT NULL THEN 'trap' ELSE 'net' END) AS kind,
   count(*)                                          AS specimen_count,
   arg_min(r.country, r._id)                         AS country,
   arg_min(r.stateProvince, r._id)                   AS state_province,
@@ -698,8 +739,8 @@ SELECT
   nextval('entity_id_seq')                          AS sample_id
 FROM legacy_promotable r
 JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
-JOIN legacy_row_observation k ON k._id = r._id
-GROUP BY m.person_id, r.sid, r.p_date_start, k.obs_key;
+JOIN legacy_row_split k ON k._id = r._id
+GROUP BY m.person_id, r.sid, r.p_date_start, k.obs_key, k.method_key;
 
 INSERT INTO sample (entity_id, kind, sample_number,
                     date_start, date_end, specimen_count, inat_observation_id,
@@ -756,10 +797,11 @@ FROM (
            CASE WHEN n.person_id = s.person_id THEN 1 ELSE 0 END AS is_primary
     FROM legacy_promotable r
     JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
-    JOIN legacy_row_observation k ON k._id = r._id
+    JOIN legacy_row_split k ON k._id = r._id
     JOIN legacy_sample_map s
       ON s.person_id = m.person_id AND s.sid IS NOT DISTINCT FROM r.sid AND s.p_date_start = r.p_date_start
      AND s.obs_key IS NOT DISTINCT FROM k.obs_key
+     AND s.method_key IS NOT DISTINCT FROM k.method_key
     JOIN legacy_row_collector c ON c._id = r._id
     JOIN legacy_person_name n ON n.name = c.name
     UNION ALL
@@ -817,11 +859,12 @@ SELECT r._id,
                                ORDER BY r.p_specimen_number, r._id) AS INTEGER) AS specimen_number
 FROM legacy_promotable r
 JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
-JOIN legacy_row_observation k ON k._id = r._id
+JOIN legacy_row_split k ON k._id = r._id
 JOIN legacy_sample_map s
   ON s.person_id = m.person_id AND s.sid = r.sid
  AND s.p_date_start IS NOT DISTINCT FROM r.p_date_start
- AND s.obs_key IS NOT DISTINCT FROM k.obs_key;
+ AND s.obs_key IS NOT DISTINCT FROM k.obs_key
+ AND s.method_key IS NOT DISTINCT FROM k.method_key;
 
 INSERT INTO specimen (sample_id, specimen_number, field_number)
 SELECT n.sample_id, n.specimen_number, nullif(r.fieldNumber, '')
@@ -842,11 +885,12 @@ WITH member AS (
          r.samplingProtocol, r.p_lat, r.p_lon
   FROM legacy_promotable r
   JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
-  JOIN legacy_row_observation k ON k._id = r._id
+  JOIN legacy_row_split k ON k._id = r._id
   JOIN legacy_sample_map s
     ON s.person_id = m.person_id AND s.sid = r.sid
    AND s.p_date_start IS NOT DISTINCT FROM r.p_date_start
    AND s.obs_key IS NOT DISTINCT FROM k.obs_key
+   AND s.method_key IS NOT DISTINCT FROM k.method_key
 ), field_value AS (
   SELECT sample_id, 'country' AS field, nullif(country, '') AS value FROM member
   UNION ALL SELECT sample_id, 'state_province', nullif(stateProvince, '') FROM member
@@ -875,11 +919,12 @@ INSERT INTO sample_legacy_observation (sample_id, inat_observation_id)
 SELECT DISTINCT s.sample_id, r.p_inat_obs_id
 FROM legacy_promotable r
 JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM r.fn AND m.ln IS NOT DISTINCT FROM r.ln
-JOIN legacy_row_observation k ON k._id = r._id
+JOIN legacy_row_split k ON k._id = r._id
 JOIN legacy_sample_map s
   ON s.person_id = m.person_id AND s.sid = r.sid
  AND s.p_date_start IS NOT DISTINCT FROM r.p_date_start
  AND s.obs_key IS NOT DISTINCT FROM k.obs_key
+ AND s.method_key IS NOT DISTINCT FROM k.method_key
 WHERE r.p_inat_obs_id IS NOT NULL
   AND regexp_matches(r.url, '/observations/[0-9]+$');
 

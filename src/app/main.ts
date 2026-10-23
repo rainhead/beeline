@@ -5,7 +5,7 @@ import { openAppDb, seedAdmins } from "./db.js";
 import { CURATED_OVERLAY, mergeOverlays, readOverlay } from "../person-overlay.js";
 import { cachedPipelineJwt } from "../inat-jwt.js";
 import { kyselyReader, recordPersonChanges } from "../person-change.js";
-import { recordSampleChanges } from "../sample-change.js";
+import { readSampleChanges, recordSampleChanges } from "../sample-change.js";
 import { ensureSampleOverlayFile } from "../sample-overlay.js";
 import { startScheduler } from "./jobs/framework.js";
 import { buildJobs } from "./jobs/registry.js";
@@ -101,6 +101,12 @@ try {
 } catch (err) {
   console.warn(`could not reconcile the sample change log: ${(err as Error).message}`);
 }
+// Parse the log now rather than on the first sample page after a deploy,
+// which paid for it (~1.5 s on the sandbox). The nightly's appends then
+// extend this parse instead of discarding it (readSampleChanges).
+await readSampleChanges(config.sampleChangesPath).catch((err: Error) =>
+  console.warn(`could not read the sample change log: ${err.message}`),
+);
 
 if (config.privateDbKey === null) {
   console.warn("BEELINE_PRIVATE_DB_KEY unset: private store is UNENCRYPTED (development only)");

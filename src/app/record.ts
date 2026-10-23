@@ -51,12 +51,15 @@ import { readSampleChanges, sampleHistory, SAMPLE_STATE_SQL, type SampleChange }
  *
  * Cost. `recordFindings` reads `sample_qc_finding`, whose filter does not
  * push through the union underneath it, so a record page scans the whole
- * thing whatever the sample — ~25 ms on the dev store, down from ~440 before
- * the observation projection was stored (beeline-2c3.36) and the locality
- * rule stopped being nineteen LIKE passes (beeline-2c3.37). That is the same
- * scan the QC home and both listings already pay per page, and reading
- * anything else would be a second definition of "what is wrong with this
- * sample", which is exactly what beeline-2c3.29 collapsed into one.
+ * thing whatever the sample, every finding's details included. That was ~25
+ * ms on the dev store once the observation projection was stored
+ * (beeline-2c3.36) and the locality rule stopped being nineteen LIKE passes
+ * (beeline-2c3.37); on the sandbox's store in October 2026 it is ~240 ms at
+ * the sandbox's two threads, after migrations/0056 took two rules from 125 ms
+ * to 30. That is the same scan the QC home and both listings already pay per
+ * page, and reading anything else would be a second definition of "what is
+ * wrong with this sample", which is exactly what beeline-2c3.29 collapsed
+ * into one.
  */
 
 /** Rows of the sample page's specimen list. The largest trap sample in the
@@ -249,7 +252,6 @@ const sampleColumns = (personId: number) => sql`
   EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id) AS printed,
   o.locality AS override_locality, o.observed_locality AS override_observed,
   ob.display_name AS override_set_by, o.reason AS override_reason,
-  dv.observation_locality AS override_observation_now,
   lo.sample_id IS NOT NULL AS location_overridden,
   lob.display_name AS location_set_by, lo.reason AS location_reason,
   ldv.observation_latitude AS location_observation_latitude, ldv.observation_longitude AS location_observation_longitude,
@@ -264,7 +266,6 @@ const SAMPLE_JOINS = sql`
   LEFT JOIN observation_field f ON f.inat_id = s.inat_observation_id
   LEFT JOIN sample_locality_override o ON o.sample_id = s.entity_id
   LEFT JOIN person ob ON ob.entity_id = o.set_by
-  LEFT JOIN sample_locality_override_diverged dv ON dv.sample_id = s.entity_id
   LEFT JOIN sample_location_override lo ON lo.sample_id = s.entity_id
   LEFT JOIN person lob ON lob.entity_id = lo.set_by
   LEFT JOIN sample_location_override_diverged ldv ON ldv.sample_id = s.entity_id`;
@@ -277,7 +278,6 @@ type RawSample = Omit<SampleDetail, "collectors" | "locality_override" | "locati
   override_observed: string | null;
   override_set_by: string | null;
   override_reason: string | null;
-  override_observation_now: string | null;
   location_overridden: boolean;
   location_set_by: string | null;
   location_reason: string | null;
@@ -285,13 +285,27 @@ type RawSample = Omit<SampleDetail, "collectors" | "locality_override" | "locati
   location_observation_longitude: number | null;
 };
 
+/**
+ * What the observation now says, where it has moved on from both the override
+ * and what it said when the override was set. Asked only of a sample that has
+ * an override, because the view works out every observation's locality before
+ * it can narrow to one (`observation_locality` unnests each place_guess, and
+ * DuckDB pushes no filter through that): joined into every sample page, it
+ * was ~250 ms of a page that, on the sandbox, has no overrides at all.
+ */
+async function localityObservationNow(db: Kysely<Database>, sampleId: number): Promise<string | null> {
+  const found = await sql<{ observation_locality: string | null }>`
+    SELECT observation_locality FROM sample_locality_override_diverged
+    WHERE sample_id = ${sampleId}`.execute(db);
+  return found.rows[0]?.observation_locality ?? null;
+}
+
 async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDetail> {
   const {
     override_locality,
     override_observed,
     override_set_by,
     override_reason,
-    override_observation_now,
     location_overridden,
     location_set_by,
     location_reason,
@@ -319,7 +333,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
             observed_locality: override_observed,
             set_by: override_set_by,
             reason: override_reason,
-            observation_now: override_observation_now,
+            observation_now: await localityObservationNow(db, Number(row.sample_id)),
           },
     printed: Boolean(row.printed),
     sample_id: Number(row.sample_id),

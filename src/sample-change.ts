@@ -428,7 +428,11 @@ export function parseSampleChanges(text: string): { changes: SampleChange[]; mal
 
 // The record page folds the whole log per request, which the person page's
 // precedent licensed at 248 KB and this log will outgrow. Cache the parse and
-// fold on the file's identity; appends change both mtime and size.
+// fold on the file's identity; appends change both mtime and size. An append
+// made by this process extends the cache instead of invalidating it (below),
+// because the nightly appends every night and the log is 15 MB on the
+// sandbox: re-parsing it fell to whoever opened the first sample page of the
+// day, at about 1.5 s.
 const readCache = new Map<string, { mtimeMs: number; size: number; changes: SampleChange[] }>();
 
 export async function readSampleChanges(path: string): Promise<SampleChange[]> {
@@ -460,6 +464,33 @@ async function readSampleChangesUncached(path: string): Promise<SampleChange[]> 
 
 const writeQueues = new Map<string, Promise<void>>();
 
+/**
+ * Carry a cached parse across this process's own append. Only when the cache
+ * described the file exactly as it stood before the append, and the file grew
+ * by exactly what was appended: anything else — another process writing, a
+ * file replaced — drops the entry, and the next read parses the file. The new
+ * rows go through the same parser a full read would use, so the cache cannot
+ * differ from one.
+ */
+async function extendReadCache(
+  path: string,
+  before: { mtimeMs: number; size: number },
+  appended: string,
+  rows: readonly SampleChange[],
+): Promise<void> {
+  const hit = readCache.get(path);
+  readCache.delete(path);
+  if (hit === undefined || hit.mtimeMs !== before.mtimeMs || hit.size !== before.size) return;
+  try {
+    const after = await stat(path);
+    if (after.size !== before.size + Buffer.byteLength(appended)) return;
+    const { changes } = parseSampleChanges(`${LOG_HEADER}\n${formatSampleChanges(rows)}\n`);
+    readCache.set(path, { mtimeMs: after.mtimeMs, size: after.size, changes: hit.changes.concat(changes) });
+  } catch {
+    // The entry is already gone; the next read parses the file.
+  }
+}
+
 /** Append, never restate — repairing an unterminated last line first, as the
  * person log does and for its reason. */
 export async function appendSampleChanges(path: string, rows: readonly SampleChange[]): Promise<void> {
@@ -471,7 +502,8 @@ export async function appendSampleChanges(path: string, rows: readonly SampleCha
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
-    const { size } = await stat(path);
+    const before = await stat(path);
+    const { size } = before;
     let terminated = true;
     if (size > 0) {
       const handle = await open(path, "r");
@@ -483,7 +515,9 @@ export async function appendSampleChanges(path: string, rows: readonly SampleCha
         await handle.close();
       }
     }
-    await appendFile(path, `${terminated ? "" : "\n"}${formatSampleChanges(rows)}\n`);
+    const appended = `${terminated ? "" : "\n"}${formatSampleChanges(rows)}\n`;
+    await appendFile(path, appended);
+    await extendReadCache(path, before, appended, rows);
   });
   writeQueues.set(path, queued.catch(() => {}));
   return queued;

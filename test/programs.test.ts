@@ -197,6 +197,8 @@ describe("a program's page", () => {
   it("refuses an address that is not one, and refuses anyone but staff", async () => {
     const staff = await programsApp({ admin: true });
     expect((await saveEmail(staff, "WaBA", "not an address")).status).toBe(400);
+    // The page makes a mailto: link of it, where a query would add recipients.
+    expect((await saveEmail(staff, "WaBA", "a@example.org?bcc=x@example.org")).status).toBe(400);
     expect((await saveEmail(staff, "XX", "a@example.org")).status).toBe(404);
     await conn.run(`DELETE FROM person_admin`);
     const volunteer = await programsApp();

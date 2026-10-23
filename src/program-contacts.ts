@@ -40,7 +40,12 @@ export type ProgramContacts = Map<string, Partial<Record<ProgramContactField, Pr
 
 export function programContactProblem(field: ProgramContactField, value: string): string | null {
   if (value === "") return null;
-  if (field === "email" && !/^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/.test(value)) return `'${value}' is not an email address`;
+  // No ? # or &, as BEELINE_FEEDBACK_EMAIL refuses them: the page builds a
+  // mailto: link from the value, and `a@b.org?bcc=x@y.org` would add a
+  // recipient nobody sees.
+  if (field === "email" && !/^[^\s@,;<>"?#&]+@[^\s@,;<>"?#&]+\.[^\s@,;<>"?#&]+$/.test(value)) {
+    return `'${value}' is not an email address`;
+  }
   return null;
 }
 

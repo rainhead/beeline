@@ -21,6 +21,7 @@ const everyFilter: ListingQuery = {
   taxon: "Bombus vosnesenskii",
   host: "Ericameria nauseosa",
   det: "undetermined",
+  kind: "trap",
   qc: "blocking",
   sort: "host",
   dir: "asc",
@@ -55,11 +56,12 @@ describe("listingAttributes", () => {
       dir: "asc",
       sort_changed: true,
       page: "6+",
-      filter_count: 10,
-      filters: "search+from+to+place+collector+member+taxon+host+det+qc",
+      filter_count: 11,
+      filters: "search+from+to+place+collector+member+taxon+host+det+kind+qc",
       "filter.taxon": true,
       qc: "blocking",
       det: "undetermined",
+      kind: "trap",
       member: "unrecorded",
     });
     const sent = JSON.stringify(attrs);

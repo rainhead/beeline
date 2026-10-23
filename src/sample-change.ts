@@ -433,21 +433,35 @@ export function parseSampleChanges(text: string): { changes: SampleChange[]; mal
 // because the nightly appends every night and the log is 15 MB on the
 // sandbox: re-parsing it fell to whoever opened the first sample page of the
 // day, at about 1.5 s.
-const readCache = new Map<string, { mtimeMs: number; size: number; changes: SampleChange[] }>();
+const readCache = new Map<string, { mtimeMs: number; size: number; changes: SampleChange[]; whole: boolean }>();
+
+/**
+ * Whether the text ends between two records: on a newline, and outside any
+ * quoted value. CSV escapes a quote inside a value by doubling it, so an even
+ * count of quotes means every quoted value closed. A file that does not end
+ * this way was cut off mid-record, and whatever is appended continues that
+ * record in a full parse.
+ */
+const endsWhole = (text: string): boolean => {
+  if (text !== "" && !text.endsWith("\n")) return false;
+  let quotes = 0;
+  for (let i = text.indexOf('"'); i !== -1; i = text.indexOf('"', i + 1)) quotes++;
+  return quotes % 2 === 0;
+};
 
 export async function readSampleChanges(path: string): Promise<SampleChange[]> {
   try {
     const s = await stat(path);
     const hit = readCache.get(path);
     if (hit !== undefined && hit.mtimeMs === s.mtimeMs && hit.size === s.size) return hit.changes;
-    const changes = await readSampleChangesUncached(path);
+    const { changes, whole } = await readSampleChangesUncached(path);
     // Cached only if nothing wrote to the file while it was read: a read that
     // straddled an append would otherwise file the appended rows under the
     // size from before it, and the append would then extend them a second
     // time (CodeRabbit).
     const after = await stat(path);
     if (after.mtimeMs === s.mtimeMs && after.size === s.size) {
-      readCache.set(path, { mtimeMs: s.mtimeMs, size: s.size, changes });
+      readCache.set(path, { mtimeMs: s.mtimeMs, size: s.size, changes, whole });
     }
     return changes;
   } catch (err) {
@@ -456,45 +470,44 @@ export async function readSampleChanges(path: string): Promise<SampleChange[]> {
   }
 }
 
-async function readSampleChangesUncached(path: string): Promise<SampleChange[]> {
+async function readSampleChangesUncached(path: string): Promise<{ changes: SampleChange[]; whole: boolean }> {
   let text: string;
   try {
     text = await readFile(path, "utf8");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { changes: [], whole: true };
     throw err;
   }
   const { changes, malformed } = parseSampleChanges(text);
   if (malformed > 0) console.warn(`${path}: skipped ${malformed} unreadable row(s)`);
-  return changes;
+  return { changes, whole: endsWhole(text) };
 }
 
 const writeQueues = new Map<string, Promise<void>>();
 
 /**
  * Carry a cached parse across this process's own append. Only when the cache
- * described the file exactly as it stood before the append, the file ended
- * in a newline, and it grew by exactly what was appended: anything else —
- * another process writing, a file replaced, a last line cut off, perhaps
- * inside a quoted value that the appended text would then continue — drops
- * the entry, and the next read parses the file. The new rows go through the
- * same parser a full read would use, so the cache cannot differ from one.
+ * described the file exactly as it stood before the append, that file ended
+ * between two records (endsWhole), and it grew by exactly what was appended:
+ * anything else — another process writing, a file replaced, a last record
+ * cut off, which the appended text would continue — drops the entry, and the
+ * next read parses the file. The new rows go through the same parser a full
+ * read would use, so the cache cannot differ from one.
  */
 async function extendReadCache(
   path: string,
   before: { mtimeMs: number; size: number },
-  terminated: boolean,
   appended: string,
   rows: readonly SampleChange[],
 ): Promise<void> {
   const hit = readCache.get(path);
   readCache.delete(path);
-  if (!terminated || hit === undefined || hit.mtimeMs !== before.mtimeMs || hit.size !== before.size) return;
+  if (hit === undefined || !hit.whole || hit.mtimeMs !== before.mtimeMs || hit.size !== before.size) return;
   try {
     const after = await stat(path);
     if (after.size !== before.size + Buffer.byteLength(appended)) return;
     const { changes } = parseSampleChanges(`${LOG_HEADER}\n${formatSampleChanges(rows)}\n`);
-    readCache.set(path, { mtimeMs: after.mtimeMs, size: after.size, changes: hit.changes.concat(changes) });
+    readCache.set(path, { mtimeMs: after.mtimeMs, size: after.size, changes: hit.changes.concat(changes), whole: true });
   } catch {
     // The entry is already gone; the next read parses the file.
   }
@@ -526,7 +539,7 @@ export async function appendSampleChanges(path: string, rows: readonly SampleCha
     }
     const appended = `${terminated ? "" : "\n"}${formatSampleChanges(rows)}\n`;
     await appendFile(path, appended);
-    await extendReadCache(path, before, terminated, appended, rows);
+    await extendReadCache(path, before, appended, rows);
   });
   writeQueues.set(path, queued.catch(() => {}));
   return queued;

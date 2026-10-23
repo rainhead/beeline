@@ -558,6 +558,18 @@ describe("the file", () => {
     expect(await readSampleChanges(paths.log)).toEqual(await fresh());
   });
 
+  it("drops its cache rather than extend a record cut off after a line break inside a quoted value", async () => {
+    const id = await insertCleanSample(conn);
+    await record();
+    await conn.run(`UPDATE sample SET locality = 'Adair' WHERE entity_id = ${id}`);
+    await record();
+    await appendFile(paths.log, '2026-08-30T12:00:00Z,name:Ada Collector,1,2026-07-14,locality,Adair,Alsea,,reconcile,"first line\n');
+    await readSampleChanges(paths.log);
+    await conn.run(`UPDATE sample SET locality = 'Blodgett' WHERE entity_id = ${id}`);
+    await record();
+    expect(await readSampleChanges(paths.log)).toEqual(parseSampleChanges(await readFile(paths.log, "utf8")).changes);
+  });
+
   it("round-trips values that carry commas and quotes", async () => {
     const id = await insertCleanSample(conn);
     await record();

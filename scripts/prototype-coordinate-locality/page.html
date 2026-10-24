@@ -128,12 +128,13 @@ const Locality = (() => {
     return shortName(s, p);
   }
 
-  // Too long: 'Regional Park' becomes RP, as BC writes it; a nature reserve,
-  // conservation area or wilderness keeps its bare name (Fanny Bay, Steens
-  // Mountain), since no short form of those reads as one.
+  // Too long: 'Regional Park' becomes RP, as BC writes it, and 'Conservation
+  // Area' Cons Area (Pine Crk Cons Area, so it does not read as a creek);
+  // failing that, a reserve, conservation area or wilderness keeps its bare
+  // name (Fanny Bay, Steens Mountain).
   function osmParkName(raw, p) {
     let name = shortName(raw, p);
-    for (const [re, to] of [[/ Regional Park$/, " RP"], [/ (Nature Reserve|Conservation Area|Wilderness|Preserve)$/, ""], [/ Park$/, " Pk"]]) {
+    for (const [re, to] of [[/ Regional Park$/, " RP"], [/ Conservation Area$/, " Cons Area"], [/ (Nature Reserve|Conservation Area|Wilderness|Preserve)$/, ""], [/ Park$/, " Pk"]]) {
       if (name) break; name = shortName(raw.replace(re, to), p);
     }
     return name;

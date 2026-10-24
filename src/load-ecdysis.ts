@@ -2,7 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { adoptItisNames, type AdoptedName } from "./adopt-itis.js";
+import { adoptEcdysisNames, type AdoptedName } from "./adopt-ecdysis.js";
 import { BEE_FAMILIES } from "./bee-families.js";
 import { DEFAULT_DB } from "./person-change.js";
 
@@ -26,7 +26,7 @@ import { DEFAULT_DB } from "./person-change.js";
  * The join is the museum's catalog number: `WSDA_2303966` is Beeline's field
  * number `2303966` under the collection's prefix. Occurrences that match no
  * specimen are counted and sampled, never invented. Names resolve against the
- * curated taxonomy by spelling, after taking in any ITIS accepts. A name the
+ * curated taxonomy by spelling, after taking in any Ecdysis accepts. A name the
  * tree still lacks is a curation task (beeline-45v.1), never minted here,
  * and what happens to its record meanwhile depends on what it is. Bycatch
  * is recorded under the nearest name the tree does hold — the genus it
@@ -93,9 +93,9 @@ export interface LoadEcdysisResult {
   placeholders: number;
   /** Rows already recorded: by recordID, or adopted as an event recorded under another key. */
   alreadyLoaded: number;
-  /** Names the tree lacked and ITIS accepts, adopted into the tree with any ancestors it also lacked. */
+  /** Names the tree lacked and Ecdysis's thesaurus accepts, adopted into the tree with any ancestors it also lacked. */
   adopted: AdoptedName[];
-  /** Rows held back: a bee name no node carries, or a name two do, and ITIS could not supply; each is a curation task. */
+  /** Rows held back: a bee name no node carries, or a name two do, and the thesaurus could not supply; each is a curation task. */
   unresolvedNames: Array<{ name: string; rows: number }>;
   /** Bycatch rows recorded under a broader name the tree holds, since their own is not there yet; each is a curation task too. */
   filedUnder: Array<{ name: string; under: string; rows: number }>;
@@ -274,8 +274,8 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       [now.toISOString()],
     );
 
-    // A name the tree does not spell, but that ITIS accepts, comes in from
-    // ITIS before anything resolves (beeline-45v.1.1); what is left is
+    // A name the tree does not spell, but that Ecdysis's thesaurus accepts,
+    // comes in from it before anything resolves (beeline-45v.1.1); what is left is
     // reported below as before, for a taxonomist.
     const unplaced = (
       await rows(
@@ -285,7 +285,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
            AND NOT EXISTS (SELECT 1 FROM animal a WHERE a.scientific_name = i.scientific_name)`,
       )
     ).map((r) => String(r[0]));
-    const adoptedNames = await adoptItisNames(conn, unplaced);
+    const adoptedNames = await adoptEcdysisNames(conn, unplaced);
 
     // Each identification, resolved as far as it goes. Placeholders — no
     // name, or Symbiota's 'undetermined' — assert nothing and are not
@@ -304,7 +304,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     // trusted to classify, and waits. Falling back takes evidence that the
     // record is not a bee's: a non-bee family above the node reached, or, for
     // the current identification, on the occurrence — a family the tree or
-    // ITIS knows, so that 'unknown' in the column says nothing. A bee family on either
+    // Ecdysis's thesaurus knows, so that 'unknown' in the column says nothing. A bee family on either
     // side, or no family anywhere, and the record waits for its name, as
     // before. A qualifier says something about a species epithet, so a record
     // filed above species keeps it in the notes instead.
@@ -376,7 +376,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                       AND coalesce(occ_family, '') NOT IN (${bees})
                       AND (filed_family IS NOT NULL
                            OR (is_current AND (EXISTS (SELECT 1 FROM animal f WHERE f.rank = 'family' AND f.scientific_name = occ_family)
-                                               OR EXISTS (SELECT 1 FROM itis_taxon t WHERE t.rank = 'family' AND t.name = occ_family))))
+                                               OR EXISTS (SELECT 1 FROM ecdysis_taxon t WHERE t.rank = 'family' AND t.name = occ_family))))
                      THEN filed_id END AS animal_id,
                 CASE WHEN nodes = 1 THEN exact_qualifier END AS qualifier
          FROM judged

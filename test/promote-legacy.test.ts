@@ -32,7 +32,7 @@ describe("legacy promotion", () => {
       unresolvedDeterminerNames: 0,
       unusedCollectorAliases: 0,
       unusedTaxonAliases: 0,
-      animalsMatchedToItis: 0, // no ITIS loaded into this store
+      animalsMatchedToEcdysis: 0, // no thesaurus loaded into this store
       taxonCurationApplied: 0, // the fixture file decides nothing
       taxonCurationCreated: 0,
       taxonCurationUnplaced: [],

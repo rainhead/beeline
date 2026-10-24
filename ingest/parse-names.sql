@@ -52,7 +52,7 @@ CREATE OR REPLACE MACRO name_epithet(s) AS
 -- meant. A genus alias matches a genus column as written; a species alias
 -- matches the genus and epithet as written, once case and brackets are
 -- settled, and replaces both. `basis` says what a mapping rests on, as in
--- collector-aliases.csv. Spelling only: a gender ending or a name ITIS lacks
+-- collector-aliases.csv. Spelling only: a gender ending or a name Ecdysis lacks
 -- is a taxonomic choice, which belongs to beeline-45v.1 and not to this file.
 -- One row per (rank, alias), because two lines claiming one spelling are a
 -- mistake in the file, not a choice to make here.

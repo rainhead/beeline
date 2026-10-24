@@ -20,7 +20,7 @@ import { accessToken, fileMeta, sheetTabs } from "./google-drive.js";
  * confidence is exactly what a reviewer of a forty-row diff will not catch
  * (Peter, 2026-10-03). So the reading is a person's or a model's, from this
  * snapshot, and what gets recorded goes through `pnpm taxon:decide`, which
- * fills in the ITIS facts and validates every row. The snapshot is the
+ * fills in Ecdysis's facts and validates every row. The snapshot is the
  * record of what was actually said, dated, for the diff later.
  *
  * Reads through the Sheets API with the same gcloud token the worksheet

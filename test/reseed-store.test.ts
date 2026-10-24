@@ -69,14 +69,14 @@ beforeAll(async () => {
     `INSERT INTO inat_user_orcid (inat_user_id, orcid, fetched_at)
      VALUES (429964, '0000-0002-1825-0097', TIMESTAMPTZ '2026-08-01 12:00:00+00')`,
   );
-  // ITIS, on inat_place's terms: filled from outside the store, keyed by
-  // ITIS's own id, and not something promotion can recompute (beeline-45v.4).
+  // Ecdysis's thesaurus, on inat_place's terms: filled from outside the
+  // store, keyed by Ecdysis's own id, and not something promotion can
+  // recompute (beeline-7gob). Real rows of the fetch of 2026-10-24.
   await seed.run(
-    `INSERT INTO itis_taxon (tsn, rank, name, usage, author, parent_tsn, itis_as_of) VALUES
-       (1252729, 'species', 'Lasioglossum zonulus', 'valid', '(Smith, 1848)', 154357, DATE '2026-08-26'),
-       (759593, 'species', 'Lasioglossum zonulum', 'invalid', '(Smith, 1848)', NULL, DATE '2026-08-26')`,
+    `INSERT INTO ecdysis_taxon (tid, rank, name, author, status, accepted_tid, parent_tid, admitted_parent_tid, fetched_on) VALUES
+       (265407, 'species', 'Brachymelecta californica', '(Cresson, 1878)', 'accepted', 265407, 173747, 173747, DATE '2026-10-24'),
+       (1645055, 'species', 'Xeromelecta californica', '(Cresson, 1879)', 'synonym', 265407, 204170, NULL, DATE '2026-10-24')`,
   );
-  await seed.run(`INSERT INTO itis_synonym (tsn, accepted_tsn) VALUES (759593, 1252729)`);
   // Model rows, of the kind promotion derives and this tool must not carry.
   await seed.run(`INSERT INTO person (entity_id, display_name) VALUES (nextval('entity_id_seq'), 'Stale Person')`);
   // A rehearsal print run and the number it minted: neither is carried, and
@@ -125,8 +125,7 @@ describe("reseeding a store that cannot be blown away", () => {
       inat_place: 1,
       inat_place_absent: 1,
       inat_user_orcid: 1,
-      itis_taxon: 2,
-      itis_synonym: 1,
+      ecdysis_taxon: 2,
     });
     // The place cache comes across whole, keeping the instant iNat was
     // actually asked: now() would claim a freshness the reseed did not earn.
@@ -218,8 +217,7 @@ describe("reseeding a store that cannot be blown away", () => {
       inat_place: 0,
       inat_place_absent: 0,
       inat_user_orcid: 0,
-      itis_taxon: 0,
-      itis_synonym: 0,
+      ecdysis_taxon: 0,
     });
     const bareInstance = await DuckDBInstance.create(out);
     const bareConn = await bareInstance.connect();

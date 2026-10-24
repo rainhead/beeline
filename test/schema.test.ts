@@ -237,7 +237,7 @@ describe("schema application", () => {
   });
 
   test("a determination keeps the name as written, on every channel but legacy import", async () => {
-    // Not every name will resolve to an ITIS taxon, so the words are the one
+    // Not every name will resolve to a name Ecdysis has, so the words are the one
     // record of what was said (beeline-45v). Legacy import is exempt: most of
     // it arrives as parted columns with no whole name to keep, and promotion
     // invents none.

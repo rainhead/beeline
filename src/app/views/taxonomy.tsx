@@ -2,11 +2,11 @@ import type { Messages } from "../messages/index.js";
 import {
   DECIDED_FILTERS,
   STANDING_FILTERS,
-  itisReportHref,
+  ecdysisTaxonHref,
   taxonHref,
   taxonomyHref,
   taxonSpecimensHref,
-  type CurrentName,
+  type AcceptedName,
   type TaxonDecision,
   type TaxonList,
   type TaxonNode,
@@ -38,8 +38,8 @@ import {
  * a list of names by standing, and one page per name.
  *
  * Read by everyone, like the glossary, so every word comes from the catalog.
- * A row says something about ITIS only when the name is not simply current
- * there: a chip reading "current" down 3,357 rows is a column about the
+ * A row says something about Ecdysis only when the name is not simply
+ * accepted there: a chip reading "accepted" down 3,476 rows is a column about the
  * checking rather than about the names — the roster's reasoning, for the same
  * reason.
  */
@@ -65,24 +65,15 @@ function LinkedName({ taxon }: { taxon: TaxonRef }) {
   );
 }
 
-/** What ITIS calls an outdated name now, linked where the tree holds that name too. */
-function CurrentNames({ names }: { names: readonly CurrentName[] }) {
-  return (
-    <>
-      {names.map((name, i) => (
-        <>
-          {i > 0 && ", "}
-          {name.held ? <LinkedName taxon={name} /> : <Name taxon={name} />}
-        </>
-      ))}
-    </>
-  );
+/** The name Ecdysis files an outdated one under, linked where the tree holds that name too. */
+function AcceptedNameOf({ name }: { name: AcceptedName }) {
+  return name.held ? <LinkedName taxon={name} /> : <Name taxon={name} />;
 }
 
 /**
- * A row's ITIS cell: nothing, unless there is something to say. A name a
+ * A row's Ecdysis cell: nothing, unless there is something to say. A name a
  * taxonomist has decided about says that first, in the decision's words, and
- * keeps the ITIS fact beneath it — the warning tone is for a disagreement
+ * keeps the Ecdysis fact beneath it — the warning tone is for a disagreement
  * nobody has ruled on.
  */
 function StandingCell({ m, row }: { m: Messages; row: TaxonRow }) {
@@ -91,9 +82,9 @@ function StandingCell({ m, row }: { m: Messages; row: TaxonRow }) {
     return (
       <>
         <Chip>{t.chip.decided[row.decision.kind]}</Chip>
-        {row.standing === "synonym" && row.current.length > 0 && (
+        {row.standing === "synonym" && row.accepted !== null && (
           <Meta block>
-            {t.nowCalled} <CurrentNames names={row.current} />
+            {t.nowCalled} <AcceptedNameOf name={row.accepted} />
           </Meta>
         )}
       </>
@@ -104,9 +95,9 @@ function StandingCell({ m, row }: { m: Messages; row: TaxonRow }) {
       return (
         <>
           <Chip tone="warning">{t.chip.synonym}</Chip>
-          {row.current.length > 0 && (
+          {row.accepted !== null && (
             <Meta block>
-              {t.nowCalled} <CurrentNames names={row.current} />
+              {t.nowCalled} <AcceptedNameOf name={row.accepted} />
             </Meta>
           )}
         </>
@@ -115,14 +106,14 @@ function StandingCell({ m, row }: { m: Messages; row: TaxonRow }) {
       return <Chip tone="warning">{t.chip.homonym}</Chip>;
     case "absent":
       return <Chip>{t.chip.absent}</Chip>;
-    case "valid":
-      // A row speaks about ITIS only when the name is not simply current
-      // there — which is most rows, so a dash rather than a column of
-      // "Current". Quiet to the eye is not blank: the dash still says what
-      // it means, where an empty cell could as well have failed to load.
-      return <Absent label={t.standingOptions.valid} />;
+    case "accepted":
+      // A row speaks about Ecdysis only when the name is not simply
+      // accepted there — which is most rows, so a dash rather than a column
+      // of "Accepted". Quiet to the eye is not blank: the dash still says
+      // what it means, where an empty cell could as well have failed to load.
+      return <Absent label={t.standingOptions.accepted} />;
     default:
-      // A store without ITIS says so once, above the table; the cell says
+      // A store without the thesaurus says so once, above the table; the cell says
       // only that there is nothing here.
       return <Absent label={m.absence.none} />;
   }
@@ -141,8 +132,8 @@ function TaxonTable({
 }) {
   const t = m.taxonomy;
   const columns = filedUnder
-    ? [t.colName, t.colRank, t.colFiledUnder, t.colItis, t.colSpecimens]
-    : [t.colName, t.colRank, t.colItis, t.colSpecimens];
+    ? [t.colName, t.colRank, t.colFiledUnder, t.colEcdysis, t.colSpecimens]
+    : [t.colName, t.colRank, t.colEcdysis, t.colSpecimens];
   return (
     <DataTable columns={columns}>
       {rows.map((row) => (
@@ -192,7 +183,7 @@ export function TaxonomyIndex({
   admin: boolean;
 }) {
   const t = m.taxonomy;
-  const loaded = summary.itisAsOf !== null;
+  const loaded = summary.ecdysisFetchedOn !== null;
   return (
     <>
       <PageHeader
@@ -200,17 +191,17 @@ export function TaxonomyIndex({
         lede={
           <>
             {t.intro}{" "}
-            <Term m={m} slug="itis">
-              {t.aboutItis}
+            <Term m={m} slug="ecdysis">
+              {t.aboutEcdysis}
             </Term>
           </>
         }
-        meta={summary.itisAsOf !== null ? t.release(summary.itisAsOf) : undefined}
+        meta={summary.ecdysisFetchedOn !== null ? t.fetched(summary.ecdysisFetchedOn) : undefined}
       />
       {!loaded && <Callout>{t.notLoaded}</Callout>}
       {loaded && (
         <Meta block>
-          {(["valid", "synonym", "homonym", "absent"] as const).map((standing, i) => (
+          {(["accepted", "synonym", "homonym", "absent"] as const).map((standing, i) => (
             <>
               {i > 0 && " · "}
               <a href={taxonomyHref({ search: "", standing, decided: "any", page: 1 })}>{t.summary[standing](summary.standings[standing])}</a>
@@ -241,7 +232,7 @@ export function TaxonomyIndex({
         }
       >
         <TextField id="q" name="q" label={t.search} value={query.search} hint={t.searchHint} />
-        {/* Standing means nothing until ITIS is loaded, so there is nothing to filter by. */}
+        {/* Standing means nothing until the thesaurus is loaded, so there is nothing to filter by. */}
         {loaded && (
           <SelectField
             id="standing"
@@ -292,26 +283,26 @@ export function TaxonomyIndex({
   );
 }
 
-/** What ITIS says about this one name, said once and in full. */
-function ItisStanding({ m, node }: { m: Messages; node: TaxonNode }) {
+/** What Ecdysis says about this one name, said once and in full. */
+function EcdysisStanding({ m, node }: { m: Messages; node: TaxonNode }) {
   const s = m.taxonomy.standing;
-  const report = (tsn: bigint) => <a href={itisReportHref(tsn)}>{s.report(String(tsn))}</a>;
+  const report = (tid: bigint) => <a href={ecdysisTaxonHref(tid)}>{s.report(String(tid))}</a>;
   switch (node.standing) {
     case "not loaded":
       return <Callout>{m.taxonomy.notLoaded}</Callout>;
-    case "valid":
+    case "accepted":
       return (
         <Meta block>
-          {s.valid} {node.itis_tsn !== null && report(node.itis_tsn)}
+          {s.accepted} {node.ecdysis_tid !== null && report(node.ecdysis_tid)}
         </Meta>
       );
     case "synonym":
       return (
         <Callout tone="warning">
           <p>
-            {s.synonym} <CurrentNames names={node.current} />
+            {s.synonym} {node.accepted !== null && <AcceptedNameOf name={node.accepted} />}
           </p>
-          {node.itis_tsn !== null && <p>{report(node.itis_tsn)}</p>}
+          {node.ecdysis_tid !== null && <p>{report(node.ecdysis_tid)}</p>}
         </Callout>
       );
     case "homonym":
@@ -321,7 +312,7 @@ function ItisStanding({ m, node }: { m: Messages; node: TaxonNode }) {
           <ul>
             {node.homonyms.map((h) => (
               <li>
-                <Name taxon={node} authorship={h.author} /> · {report(h.tsn)}
+                <Name taxon={node} authorship={h.author} /> · {report(h.tid)}
               </li>
             ))}
           </ul>
@@ -333,10 +324,10 @@ function ItisStanding({ m, node }: { m: Messages; node: TaxonNode }) {
 }
 
 /**
- * What the program has decided about this name against ITIS, and on whose
+ * What the program has decided about this name against Ecdysis, and on whose
  * word (beeline-45v.1): the kind of decision in words, who and when, the
- * reason, the paper where there is one, and — when the ITIS release now
- * loaded has moved since — what moved, so the page is also where a taxonomist
+ * reason, the paper where there is one, and — when the thesaurus now loaded
+ * has moved since — what moved, so the page is also where a taxonomist
  * sees that a decision wants another look.
  */
 function Decision({ m, node, decision }: { m: Messages; node: TaxonNode; decision: TaxonDecision }) {
@@ -347,12 +338,12 @@ function Decision({ m, node, decision }: { m: Messages; node: TaxonNode; decisio
         {decision.kind === "addition" && d.addition}
         {decision.kind === "departure" && (
           <>
-            {d.departure} <CurrentNames names={node.current} />
+            {d.departure} {node.accepted !== null && <AcceptedNameOf name={node.accepted} />}
           </>
         )}
         {decision.kind === "homonym" && d.homonym(decision.author)}
       </p>
-      <p>{d.by(decision.taxonomist, decision.decided_on, decision.itis_release)}</p>
+      <p>{d.by(decision.taxonomist, decision.decided_on, decision.ecdysis_fetched_on)}</p>
       <p>{decision.reason}</p>
       {decision.reference !== null && (
         <p>
@@ -393,7 +384,7 @@ export function TaxonPage({ m, node, admin }: { m: Messages; node: TaxonNode; ad
           </>
         }
       />
-      <ItisStanding m={m} node={node} />
+      <EcdysisStanding m={m} node={node} />
       {node.decision !== null && <Decision m={m} node={node} decision={node.decision} />}
       {node.specimens > 0 && (
         <p>

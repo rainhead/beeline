@@ -233,48 +233,45 @@ export interface AnimalTable {
   rank: string;
   scientific_name: string;
   authorship: string | null;
-  /** The ITIS TSN of the name this node matches, or null (animal_itis says why). Derived by ingest/match-itis.sql. */
-  itis_tsn: BigIntCol | null;
+  /** The Ecdysis taxon id of the name this node matches, or null (animal_ecdysis says why). Derived by ingest/match-ecdysis.sql. */
+  ecdysis_tid: BigIntCol | null;
 }
 
 // schema/022_animal_curation.sql
 
 export type CurationKind = "addition" | "departure" | "homonym";
 
-/** The program's stated departures from ITIS, one per node, each on a taxonomist's word (beeline-45v.1). Replayed from ingest/taxon-curation.csv. */
+/** The program's stated departures from Ecdysis's thesaurus, one per node, each on a taxonomist's word (beeline-45v.1). Replayed from ingest/taxon-curation.csv. */
 export interface AnimalCurationTable {
   animal_id: number;
   kind: CurationKind;
-  /** Departure: the TSN of the program's name in ITIS. Homonym: the TSN chosen. Null for an addition. */
-  itis_tsn: BigIntCol | null;
-  /** Departure only: what ITIS accepted instead when the decision was made. */
-  itis_current_name: string | null;
-  itis_release: ColumnType<Date, Date | string, Date | string>;
+  /** Departure: Ecdysis's id for the program's name. Homonym: the id chosen. Null for an addition. */
+  ecdysis_tid: BigIntCol | null;
+  /** Departure only: what Ecdysis accepted instead when the decision was made. */
+  ecdysis_accepted_name: string | null;
+  ecdysis_fetched_on: ColumnType<Date, Date | string, Date | string>;
   taxonomist: string;
   decided_on: ColumnType<Date, Date | string, Date | string>;
   reference: string | null;
   reason: string;
 }
 
-// schema/025_itis.sql
+// schema/025_ecdysis_taxonomy.sql
 
-/** ITIS insects at the ranks animal_rank admits, from one release (beeline-45v.4). */
-export interface ItisTaxonTable {
-  tsn: BigIntCol;
+/** Ecdysis's thesaurus for the insects, at the ranks animal_rank admits, from one fetch (beeline-7gob). */
+export interface EcdysisTaxonTable {
+  tid: BigIntCol;
   rank: string;
   name: string;
-  /** valid is a current ITIS name; invalid an outdated one, with its current names in itis_synonym. */
-  usage: "valid" | "invalid";
   author: string | null;
-  parent_tsn: BigIntCol | null;
-  itis_as_of: ColumnType<Date, Date | string, Date | string>;
-  /** A current name's nearest ancestor at an admitted rank; what adopting an ITIS name walks. */
-  admitted_parent_tsn: BigIntCol | null;
-}
-
-export interface ItisSynonymTable {
-  tsn: BigIntCol;
-  accepted_tsn: BigIntCol;
+  /** accepted is a current name in Ecdysis; synonym one filed under accepted_tid. */
+  status: "accepted" | "synonym";
+  /** The row itself for an accepted name. */
+  accepted_tid: BigIntCol;
+  parent_tid: BigIntCol | null;
+  /** An accepted name's nearest ancestor at an admitted rank; what adopting a name walks. */
+  admitted_parent_tid: BigIntCol | null;
+  fetched_on: ColumnType<Date, Date | string, Date | string>;
 }
 
 // schema/030_samples_specimens.sql
@@ -1044,44 +1041,44 @@ export interface MintedFieldNumberCollisionView {
   also_on: number;
 }
 
-// schema/118_views_animal_itis.sql
+// schema/118_views_animal_ecdysis.sql
 
-export type AnimalItisStanding = "valid" | "synonym" | "homonym" | "absent" | "not loaded";
+export type AnimalEcdysisStanding = "accepted" | "synonym" | "homonym" | "absent" | "not loaded";
 
-export interface AnimalItisMatchView {
+export interface AnimalEcdysisMatchView {
   entity_id: number;
-  usage: "valid" | "invalid";
+  status: "accepted" | "synonym";
   candidates: bigint;
-  tsn: bigint | null;
+  tid: bigint | null;
 }
 
-export interface AnimalItisView {
+export interface AnimalEcdysisView {
   entity_id: number;
   rank: string;
   scientific_name: string;
-  itis_tsn: bigint | null;
-  standing: AnimalItisStanding;
-  /** What ITIS calls a synonym now; '; '-separated where it names more than one. */
-  current_name: string | null;
+  ecdysis_tid: bigint | null;
+  standing: AnimalEcdysisStanding;
+  /** For a synonym, the name Ecdysis files it under. */
+  accepted_name: string | null;
 }
 
-/** Curation rows the loaded ITIS release has moved from under (schema/118). */
+/** Curation rows the loaded thesaurus has moved from under (schema/118). */
 export interface AnimalCurationStaleView {
   animal_id: number;
   rank: string;
   scientific_name: string;
   kind: CurationKind;
-  itis_release: Date;
-  itis_as_of: Date;
+  ecdysis_fetched_on: Date;
+  fetched_on: Date;
   problem: string;
 }
 
-export interface AnimalItisStaleView {
+export interface AnimalEcdysisStaleView {
   entity_id: number;
   rank: string;
   scientific_name: string;
-  itis_tsn: bigint | null;
-  matched_tsn: bigint | null;
+  ecdysis_tid: bigint | null;
+  matched_tid: bigint | null;
 }
 
 export interface Database {
@@ -1103,8 +1100,7 @@ export interface Database {
   atlas_region: AtlasRegionTable;
   animal: AnimalTable;
   animal_curation: AnimalCurationTable;
-  itis_taxon: ItisTaxonTable;
-  itis_synonym: ItisSynonymTable;
+  ecdysis_taxon: EcdysisTaxonTable;
   sample: SampleTable;
   elevation_source: ElevationSourceTable;
   sample_location: SampleLocationTable;
@@ -1185,9 +1181,9 @@ export interface Database {
   observation_place: ObservationPlaceView;
   observation_place_ambiguous: ObservationPlaceAmbiguousView;
   inat_place_uncached: InatPlaceUncachedView;
-  animal_itis: AnimalItisView;
-  animal_itis_match: AnimalItisMatchView;
-  animal_itis_stale: AnimalItisStaleView;
+  animal_ecdysis: AnimalEcdysisView;
+  animal_ecdysis_match: AnimalEcdysisMatchView;
+  animal_ecdysis_stale: AnimalEcdysisStaleView;
   animal_curation_stale: AnimalCurationStaleView;
   // Attached private store (ADR 0003), catalog-qualified:
   "private.inat_sign_in": InatSignInTable;

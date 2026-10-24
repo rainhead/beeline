@@ -5,7 +5,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadEcdysis, parseArgs } from "../src/load-ecdysis.js";
-import { loadItis } from "../src/load-itis.js";
+import { loadEcdysisTaxonomy } from "../src/load-ecdysis-taxonomy.js";
 
 /**
  * Determinations from Ecdysis (beeline-9ut). The fixture is the shape of a
@@ -252,22 +252,26 @@ describe("a flat occurrence export", () => {
     expect(await record(a)).toEqual(["Andrena sladeni", null, "Sam Staff", "2025-01-01", "year", null, "ecdysis_import"]);
   });
 
-  test("a name the tree lacks and ITIS accepts is adopted, and its rows load", async () => {
-    // Nomada, which the archive's current row for C names, as the 2026-09-21
-    // ITIS release files it: a genus under Apidae (beeline-45v.1.1).
-    const dir = await mkdtemp(join(tmpdir(), "ecdysis-itis-"));
+  test("a name the tree lacks and Ecdysis accepts is adopted, and its rows load", async () => {
+    // Nomada, which the archive's current row for C names, as Ecdysis's
+    // thesaurus files it in the fetch of 2026-10-24: a genus under a tribe
+    // and a subfamily the store does not admit, and so under Apidae
+    // (beeline-45v.1.1).
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-taxonomy-"));
     await writeFile(
-      join(dir, "itis-taxon.csv"),
-      "tsn,rank,name,usage,author,parent_tsn,itis_as_of,admitted_parent_tsn\n" +
-        "154394,family,Apidae,valid,,154344,2026-09-21,154344\n" +
-        '154382,genus,Nomada,valid,"Scopoli, 1770",633972,2026-09-21,154394\n',
+      join(dir, "ecdysis-taxa.csv"),
+      "tid,name,author,rank_id,parent_tid,status,accepted_tid\n" +
+        "86587,Apidae,,140,83534,accepted,86587\n" +
+        "113341,Nomadinae,,150,86587,accepted,113341\n" +
+        "152575,Nomadini,,160,113341,accepted,152575\n" +
+        '192089,Nomada,"Scopoli, 1770",180,152575,accepted,192089\n',
     );
-    await writeFile(join(dir, "itis-synonym.csv"), "tsn,accepted_tsn\n");
+    await writeFile(join(dir, "manifest.json"), '{"fetchedAt": "2026-10-24T05:12:21.489Z"}\n');
     await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Apidae')`);
-    await loadItis(conn, { taxonCsv: join(dir, "itis-taxon.csv"), synonymCsv: join(dir, "itis-synonym.csv") });
+    await loadEcdysisTaxonomy(conn, dir);
 
     const result = await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
-    expect(result.adopted).toEqual([{ name: "Nomada", rank: "genus", tsn: 154382, ancestors: [] }]);
+    expect(result.adopted).toEqual([{ name: "Nomada", rank: "genus", tid: 192089, ancestors: [] }]);
     expect(result.unresolvedNames).toEqual([]);
     expect(await record(c)).toEqual(["Nomada", null, "Ellen Expert", "2024-01-01", "year", "zonalis group", "ecdysis_import"]);
   });
@@ -333,9 +337,10 @@ describe("names the tree lacks", () => {
       conn,
       `INSERT INTO specimen (sample_id, specimen_number, field_number) SELECT sample_id, 5, '2303970' FROM specimen WHERE entity_id = ${a} RETURNING entity_id`,
     )) as [[number]];
-    // Bombyliidae is in neither the tree nor, here, anything but ITIS, which
-    // is enough to say the bee fly is not a bee.
-    await conn.run(`INSERT INTO itis_taxon (tsn, rank, name, usage, itis_as_of) VALUES (130920, 'family', 'Bombyliidae', 'valid', DATE '2026-08-26')`);
+    // Bombyliidae is in neither the tree nor, here, anything but Ecdysis's
+    // thesaurus, which is enough to say the bee fly is not a bee.
+    await conn.run(`INSERT INTO ecdysis_taxon (tid, rank, name, status, accepted_tid, fetched_on)
+                    VALUES (83620, 'family', 'Bombyliidae', 'accepted', 83620, DATE '2026-10-24')`);
 
     const result = await loadEcdysis(conn, { path: await archive(), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(result).toMatchObject({ loaded: 4, unresolvedNames: [{ name: "Bombus (Pyrobombus)", rows: 1 }] });

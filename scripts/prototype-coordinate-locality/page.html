@@ -37,21 +37,21 @@
 <main>
 <h1>Localities from coordinates: a prototype</h1>
 <p class="lede">The question: can Beeline name a sample's locality from its coordinates well enough that volunteers stop having to fix iNaturalist's? A volunteer reads the locality to remember where they collected, or to find a specimen by its label, so it should name a town or peak they would know, in the same county as the point, and fit on the label (18 characters, no street address). A point inside a national wildlife refuge, or a WDFW wildlife area unit, is named for it. Change the settings and every number and row below is worked out again.</p>
-<p class="banner">Throwaway (beeline-7i6). Towns and peaks come from GeoNames, counties from the 2023 Census boundaries, BC regional districts from the province's current boundaries (ABMS), refuges from USFWS, wildlife area units from WDFW. The rows are samples from the sandbox store, with obscured and private observations left out. /*PRIVACY*/</p>
+<p class="banner">Throwaway (beeline-7i6). Towns, peaks and landmarks come from GeoNames (CC BY 4.0); counties and town limits from the 2023 Census boundaries; BC regional districts, municipalities and provincial parks from the province (ABMS, BC Parks); refuges from USFWS; national park units from the National Park Service; wildlife area units from WDFW; Washington state parks from WA State Parks; other parks and reserves from OpenStreetMap, © OpenStreetMap contributors, under the ODbL. The rows are samples from the sandbox store, with obscured and private observations left out. /*PRIVACY*/</p>
 
 <h2>Settings</h2>
 <div class="controls" id="controls"></div>
 
 <h2>How it does, by season</h2>
 <div class="wrap"><table id="stats"></table></div>
-<p class="muted" style="font-size:12px">"Agrees" means the generated name and the sample's present locality contain each other once spelling is folded (Mount/Mt, punctuation). The present locality is mostly iNaturalist's place guess, accepted onto a label, so agreement is a rough check against what staff have printed, not a measure of correctness.</p>
+<p class="muted" style="font-size:12px">The current season is every sample since 1 March 2026. The past seasons are 4,000 samples at random, plus every one in a refuge, wildlife area unit, state or provincial park, or national park unit. "Agrees" means the generated name and the sample's present locality contain each other once spelling is folded (Mount/Mt, punctuation). The present locality is mostly iNaturalist's place guess, accepted onto a label, so agreement is a rough check against what staff have printed, not a measure of correctness.</p>
 
 <h2>Cases to look at</h2>
 <div class="tabs" id="tabs"></div>
 <p class="scenario" id="scenario"></p>
 <div class="filters">
   <label><input type="checkbox" id="onlyDiff"> only where the generated name differs</label>
-  <label>Season <select id="season"><option value="">both</option><option value="open">open</option><option value="settled">settled</option></select></label>
+  <label>Season <select id="season"><option value="">both</option><option value="open">current</option><option value="settled">past</option></select></label>
   <input type="search" id="q" placeholder="search localities${COLLECTORS}">
   <span id="count" class="muted"></span>
 </div>
@@ -360,7 +360,7 @@ function recompute() {
 }
 
 function renderStats() {
-  const groups = [["Open season", (x) => x.s.open && !x.s.extra], ["Settled seasons (4,000 random, plus refuges and wildlife areas)", (x) => !x.s.open && !x.s.extra]];
+  const groups = [["Current season", (x) => x.s.open && !x.s.extra], ["Past seasons", (x) => !x.s.open && !x.s.extra]];
   const pct = (n, d) => d ? `${(100 * n / d).toFixed(1)}%` : "—";
   const rows = [
     ["Samples", (xs) => xs.length.toLocaleString()],

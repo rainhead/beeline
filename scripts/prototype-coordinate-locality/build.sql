@@ -51,9 +51,16 @@ WHERE UNIT_TYPE NOT IN ('National Memorials', 'Other Designations');
 -- for the town it passes (Palouse to Cascades runs through Easton), and an
 -- unnamed "State Park Property" is no place anybody would recognise.
 CREATE TABLE state_park AS
-SELECT ParkName AS park, ST_MakeValid(geom::GEOMETRY) AS geom
+SELECT ParkName AS park, 'SP' AS suffix, ST_MakeValid(geom::GEOMETRY) AS geom
 FROM ST_Read('__DL__/wa_state_parks.geojson')
-WHERE Category NOT IN ('State Park Trail', 'State Park Property');
+WHERE Category NOT IN ('State Park Trail', 'State Park Property')
+UNION ALL
+-- BC's, which the province names 'ELK FALLS PARK': 'Elk Falls PP'.
+SELECT regexp_replace(PROTECTED_LANDS_NAME, ' (PARK|PROTECTED AREA|ECOLOGICAL RESERVE|RECREATION AREA)$', ''),
+       CASE PROTECTED_LANDS_DESIGNATION WHEN 'PROVINCIAL PARK' THEN 'PP' WHEN 'PROTECTED AREA' THEN 'PA'
+            WHEN 'ECOLOGICAL RESERVE' THEN 'ER' ELSE 'RA' END,
+       ST_MakeValid(geom::GEOMETRY)
+FROM ST_Read('__DL__/bc_parks.geojson');
 
 -- Town limits: a point inside one is in that town, whatever is nearest.
 -- Census-designated places are kept apart, since they are unincorporated
@@ -124,7 +131,7 @@ SELECT b.sample_id, any_value(n.unit) AS unit
 FROM base b JOIN nps_unit n ON ST_Contains(n.geom, ST_Point(b.lon, b.lat)) GROUP BY b.sample_id;
 
 CREATE TABLE base_sp AS
-SELECT b.sample_id, any_value(p.park) AS park
+SELECT b.sample_id, any_value(concat(p.park, '|', p.suffix)) AS park
 FROM base b JOIN state_park p ON ST_Contains(p.geom, ST_Point(b.lon, b.lat)) GROUP BY b.sample_id;
 
 -- Features that are not towns (a lake, a pass, a landmark) whose name a
@@ -140,7 +147,12 @@ FROM read_csv('__DL__/us/US.txt', delim = '\t', header = false, quote = '', esca
              'lon': 'VARCHAR', 'fclass': 'VARCHAR', 'fcode': 'VARCHAR', 'cc': 'VARCHAR', 'cc2': 'VARCHAR',
              'a1': 'VARCHAR', 'a2': 'VARCHAR', 'a3': 'VARCHAR', 'a4': 'VARCHAR', 'pop': 'VARCHAR',
              'elev': 'VARCHAR', 'dem': 'VARCHAR', 'tz': 'VARCHAR', 'mod': 'VARCHAR'})
-WHERE a1 IN ('WA', 'OR', 'ID') AND fclass <> 'P';
+WHERE a1 IN ('WA', 'OR', 'ID') AND fclass <> 'P'
+  -- Rivers, creeks, valleys, ridges, ranges, plains, canals and trails are
+  -- long, and GeoNames places each at one point (a stream at its mouth), so
+  -- being near that point says little: "Deschutes River" is no landmark.
+  AND concat(fclass, '.', fcode) NOT IN ('H.STM', 'H.STMI', 'H.STMS', 'H.STMX', 'H.CNL', 'T.VAL', 'T.VALS',
+                                         'T.RDGE', 'T.MTS', 'T.PLN', 'R.TRL');
 CREATE TABLE used_feature AS
 SELECT g.id, any_value(g.name) AS name, any_value(concat(g.fclass, '.', coalesce(g.fcode, ''))) AS code, any_value(g.state) AS state,
        any_value(g.lat) AS lat, any_value(g.lon) AS lon,
@@ -195,10 +207,21 @@ WHERE (kind = 'town' AND pop > 0 AND km <= 50) OR (kind IN ('town', 'locality') 
 QUALIFY row_number() OVER (PARTITION BY sample_id, kind = 'town' AND pop > 0, kind ORDER BY km)
         <= CASE WHEN kind = 'town' AND pop > 0 THEN 20 ELSE 8 END;
 
+-- The nearest town with people in it, however far, for a point nothing
+-- nearer names: a locality must exist for the label to print.
+CREATE TABLE far_town AS
+SELECT s.sample_id, p.id AS place_id, round(hav_km(s.lat, s.lon, p.lat, p.lon), 1) AS km,
+       round(bearing_deg(p.lat, p.lon, s.lat, s.lon)) AS brg
+FROM sel s JOIN place p ON p.kind = 'town' AND p.pop > 0
+  AND p.lat BETWEEN s.lat - 1.5 AND s.lat + 1.5 AND p.lon BETWEEN s.lon - 2 AND s.lon + 2
+WHERE NOT EXISTS (SELECT 1 FROM cand c JOIN place q ON q.id = c.place_id
+                  WHERE c.sample_id = s.sample_id AND q.kind = 'town' AND q.pop > 0 AND c.km <= 30)
+QUALIFY row_number() OVER (PARTITION BY s.sample_id ORDER BY km) <= 3;
+
 COPY (
   SELECT p.id, p.name, p.kind, p.fcode, p.pop, p.elev, pr.region_id
   FROM place p LEFT JOIN place_region pr USING (id)
-  WHERE p.id IN (SELECT place_id FROM cand)
+  WHERE p.id IN (SELECT place_id FROM cand UNION SELECT place_id FROM far_town)
 ) TO '__OUT__/places.json' (FORMAT json, ARRAY true);
 
 COPY (SELECT id, name, code, samples, collectors FROM used_feature) TO '__OUT__/features.json' (FORMAT json, ARRAY true);
@@ -206,13 +229,14 @@ COPY (SELECT id, name, code, samples, collectors FROM used_feature) TO '__OUT__/
 COPY (
   SELECT region_id, country, state, county FROM region
   WHERE region_id IN (SELECT region_id FROM sel_region UNION SELECT region_id FROM place_region
-                      WHERE id IN (SELECT place_id FROM cand))
+                      WHERE id IN (SELECT place_id FROM cand UNION SELECT place_id FROM far_town))
 ) TO '__OUT__/regions.json' (FORMAT json, ARRAY true);
 
 COPY (
   SELECT s.sample_id AS i, round(s.lat, 4) AS lat, round(s.lon, 4) AS lon, s.unc, s.locality AS loc,
          s.store_county AS sc, s.store_state AS ss, s.season, s.open_season AS open, s.printed,
          s.flag, s.collector AS who, s.extra, s.refuge AS ref, s.state_park AS sp, s.nps,
+         (SELECT list([ft.place_id, ft.km, ft.brg] ORDER BY ft.km) FROM far_town ft WHERE ft.sample_id = s.sample_id) AS nt,
          (SELECT list([u.id, round(hav_km(s.lat, s.lon, u.lat, u.lon), 2)] ORDER BY hav_km(s.lat, s.lon, u.lat, u.lon))
           FROM used_feature u WHERE abs(u.lat - s.lat) < 0.05 AND abs(u.lon - s.lon) < 0.07
             AND hav_km(s.lat, s.lon, u.lat, u.lon) <= 5) AS f, s.wla, s.wla_area, sr.region_id AS reg, tl.name AS tl, tl.kind AS tlk,

@@ -18,6 +18,8 @@ WFS="https://openmaps.gov.bc.ca/geo/pub/wfs?service=WFS&version=2.0.0&request=Ge
 get "$WFS&typeName=pub:WHSE_LEGAL_ADMIN_BOUNDARIES.ABMS_REGIONAL_DISTRICTS_SP" bc_rd.geojson
 get "$WFS&typeName=pub:WHSE_LEGAL_ADMIN_BOUNDARIES.ABMS_MUNICIPALITIES_SP&CQL_FILTER=ADMIN_AREA_NAME%20LIKE%20%27%25Northern%20Rockies%25%27" bc_nrrm.geojson
 get "$WFS&typeName=pub:WHSE_LEGAL_ADMIN_BOUNDARIES.ABMS_MUNICIPALITIES_SP" bc_muni.geojson
+# BC provincial parks, ecological reserves and protected areas.
+get "$WFS&typeName=pub:WHSE_TANTALIS.TA_PARK_ECORES_PA_SVW" bc_parks.geojson
 # National wildlife refuges: USFWS interest boundaries, simplified to ~30 m.
 FWS="https://services.arcgis.com/QVENGdaPbd4LUkLV/ArcGIS/rest/services/FWSInterest_Simplified_Authoritative/FeatureServer/0/query"
 for o in 0 500 1000; do

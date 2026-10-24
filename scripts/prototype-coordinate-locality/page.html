@@ -161,8 +161,11 @@ const Locality = (() => {
     }
     // Inside a town's limits: the town, however big and whatever is nearer.
     if (p.osmParks && sample.op && sample.oph >= p.osmParkHa) {
+      // Too long: 'Regional Park' becomes RP, as BC writes it; a nature reserve
+      // or conservation area keeps its bare name (Fanny Bay), since no short
+      // form of those reads as one.
       let name = shortName(sample.op, p);
-      for (const [re, to] of [[/ Regional Park$/, " RP"], [/ Nature Reserve$/, " NR"], [/ Conservation Area$/, " CA"], [/ Park$/, " Pk"]]) {
+      for (const [re, to] of [[/ Regional Park$/, " RP"], [/ (Nature Reserve|Conservation Area)$/, ""], [/ Park$/, " Pk"]]) {
         if (name) break; const t = sample.op.replace(re, to); name = shortName(t, p);
       }
       if (name) return { name, why: `inside a park OpenStreetMap names, ${sample.oph} ha`, kind: "local park", crossCounty: false, km: 0 };

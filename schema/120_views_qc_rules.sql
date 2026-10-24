@@ -418,6 +418,9 @@ JOIN sync_run r
  -- only: it covers everyone else's observations no more than an
  -- incremental run does.
  AND (r.observer_user_id IS NULL OR r.observer_user_id = l.user_id)
+ -- A run that asked for particular observations by id (beeline-7vsw) is
+ -- silent about every observation it did not ask for.
+ AND NOT coalesce(r.fetched_by_id, false)
  AND (r.window_start IS NULL OR l.observed_on >= r.window_start)
  AND (r.window_end IS NULL OR l.observed_on <= r.window_end)
 GROUP BY l.sample_id, l.inat_observation_id;

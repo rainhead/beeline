@@ -647,6 +647,8 @@ export interface SyncRunTable {
   completed_at: ColumnType<Date, Date | string, Date | string> | null;
   /** One observer's observations only: the dashboard's check (beeline-yso). */
   observer_user_id: BigIntCol | null;
+  /** Particular observations by id, covering nothing for deletion detection (beeline-7vsw). */
+  fetched_by_id: ColumnType<boolean | null, boolean | undefined, boolean>;
 }
 
 /**

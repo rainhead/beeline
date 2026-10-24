@@ -12,7 +12,7 @@ import type { Database } from "../../model.js";
 import { duckdbReader, recordPersonChanges } from "../../person-change.js";
 import { recordSampleChanges, type SampleLogPaths } from "../../sample-change.js";
 import { promoteObservations } from "../../promote-observations.js";
-import { syncINat } from "../../sync-inat.js";
+import { fetchObservationsById, syncINat, type FetchByIdOptions } from "../../sync-inat.js";
 import type { AppConfig } from "../config.js";
 import { deploymentPath } from "../../deployment-path.js";
 import { describeManifest, writeProgramArchives } from "../program-archives.js";
@@ -83,6 +83,46 @@ export async function refreshPlaces(
     );
   } catch (err) {
     return `places fetch failed (${(err as Error).message}); promoting with the cache as it stands`;
+  }
+}
+
+/** How many cited observations one night may ask iNaturalist for: ten requests. */
+export const NIGHTLY_CITED_LIMIT = 2_000;
+
+/**
+ * The observations samples cite that no sync has read (beeline-7vsw), asked
+ * for by id. A project sweep only returns observations in its project, and
+ * 1,537 samples on the dev store cite one in none of them — legacy links, the
+ * old system's — so their geoprivacy was never read, and the listings
+ * withhold their location from other volunteers for want of knowing
+ * (src/app/listings.ts `withheld`, which defines "unread" the same way). The
+ * ones iNaturalist no longer has stay unread and are asked about again each
+ * night: a few hundred ids, two requests.
+ *
+ * NEVER FAILS THE RUN, for refreshPlaces's reason: a location withheld one
+ * more night is no harm, and a skipped promotion is.
+ */
+export async function refreshCitedObservations(
+  conn: JobContext["conn"],
+  opts: Omit<FetchByIdOptions, "ids"> & { limit?: number } = {},
+): Promise<string> {
+  try {
+    const rows = (await (
+      await conn.run(
+        `SELECT DISTINCT s.inat_observation_id
+         FROM sample s
+         LEFT JOIN observation_field f ON f.inat_id = s.inat_observation_id
+         WHERE s.inat_observation_id IS NOT NULL AND f.inat_id IS NULL
+         ORDER BY 1
+         LIMIT ${Math.trunc(opts.limit ?? NIGHTLY_CITED_LIMIT)}`,
+      )
+    ).getRows()) as [bigint | number][];
+    if (rows.length === 0) return "every cited observation read";
+    const r = await fetchObservationsById(conn, { ...opts, ids: rows.map(([id]) => Number(id)) });
+    return `${r.fetched} of ${r.asked} cited observations read by id (${r.newLoads} new)` +
+      (r.asked > r.fetched ? `, ${r.asked - r.fetched} gone from iNaturalist` : "");
+  } catch (err) {
+    return `cited observations not read (${(err as Error).message}); promoting without them`;
   }
 }
 
@@ -268,6 +308,8 @@ export function buildJobs(
             parts.push(`project ${projectId} (updated since ${updatedSince.slice(0, 16)}Z): ${r.fetched} fetched, ${r.newLoads} new`);
           }
         }
+        // Before promotion, which writes what they say onto their samples.
+        parts.push(await ctx.step("read cited observations", () => refreshCitedObservations(ctx.conn, { token, signal: ctx.signal })));
         return pipelineTail(ctx, parts, config.personChangesPath, samplePaths, config.sampleOverlayPath);
       },
     },

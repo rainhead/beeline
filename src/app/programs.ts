@@ -10,8 +10,8 @@ import { personHandle } from "./roster.js";
  * The programs, as a listing and a page each (beeline-rrit): what Beeline
  * knows about a program, which until now was said in a dozen places — its
  * leads, how many people belong to it, its records by season, who prints its
- * labels, its answer on taxon-obscured coordinates, where its expert
- * determinations come back from, and how to reach it.
+ * labels, where its expert determinations come back from, and how to reach
+ * it.
  *
  * Read by everyone signed in, like the taxonomy: it shows totals, the names
  * of the program's own leads, and nobody's records. The links into records
@@ -64,24 +64,11 @@ export interface ProgramSummary {
   specimens: number;
 }
 
-export interface TaxonObscuredAnswer {
-  decidedBy: string;
-  decidedOn: Date;
-  source: string;
-}
-
 export interface ProgramDetail extends ProgramSummary {
   /** Every season it has records in, newest first. */
   seasons: SeasonCounts[];
   /** Who prints its labels: itself, in runs scoped to it, or the program's runs; null where it has no records to print. */
   printing: "own" | "program" | null;
-  /**
-   * Its answer on printing a taxon-obscured record's true point: the answer,
-   * `unanswered` for an atlas that has not given one, or `none` where no atlas
-   * can answer — Master Melittology's records fall outside every atlas, and
-   * the surveys have none by geography.
-   */
-  taxonObscured: TaxonObscuredAnswer | "unanswered" | "none";
   /** The address it gives people for questions, as staff last set it; null where none is set. */
   email: ProgramContact | null;
   /** The Ecdysis collections its expert determinations are read back from. */
@@ -227,17 +214,9 @@ export async function loadProgram(
   const [season, counts, members, leads] = await Promise.all([openSeason(db), seasonCounts(db), memberCounts(db), leadsByProgram(db)]);
   const summary = summarize(p, season, counts, members, leads);
   let printing: ProgramDetail["printing"] = null;
-  let taxonObscured: ProgramDetail["taxonObscured"] = "none";
   if (p.atlas_id !== null) {
     const { rows: own } = await sql<{ n: number }>`SELECT count(*) AS n FROM atlas_printing WHERE atlas_id = ${p.atlas_id}`.execute(db);
     printing = Number(own[0]!.n) > 0 ? "own" : "program";
-    const { rows: answers } = await sql<{ decided_by: string; decided_on: Date; source: string }>`
-      SELECT decided_by, decided_on, source FROM atlas_taxon_obscured_printing WHERE atlas_id = ${p.atlas_id}`.execute(db);
-    const answer = answers[0];
-    taxonObscured =
-      answer === undefined
-        ? "unanswered"
-        : { decidedBy: answer.decided_by, decidedOn: new Date(answer.decided_on), source: answer.source };
   } else if (summary.scope !== null) {
     // Master Melittology's are the samples outside every atlas, which the
     // program's own runs print.
@@ -246,7 +225,6 @@ export async function loadProgram(
   return {
     ...summary,
     printing,
-    taxonObscured,
     email: contacts.get(p.code)?.email ?? null,
     ecdysis: ECDYSIS_COLLECTIONS.filter((c) => c.program === p.code),
   };

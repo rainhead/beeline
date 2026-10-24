@@ -1277,15 +1277,6 @@ export const en = {
     printsOwn: "Prints its own labels, in print runs prepared for it alone.",
     printedByProgram:
       "Does not print its own labels: they are printed in the program's print runs, which Oregon prepares for every atlas that does not print its own.",
-    taxonObscured: {
-      answered: (by: string, on: Date | string) =>
-        `Its labels may carry the true point of a record iNaturalist hides because its host plant is rare. ${by} said so on ${date(on)}.`,
-      where: "Where it was said",
-      unanswered:
-        "Has not said whether its labels may carry the true point of a record iNaturalist hides because its host plant is rare, so those samples do not print until it does.",
-      outside:
-        "No atlas answers for records collected outside every atlas, so those whose host plant iNaturalist hides as rare do not print.",
-    },
     seasons: "Records by season",
     colSeason: "Season",
     colSeasonSamples: "Samples",

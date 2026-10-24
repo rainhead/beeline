@@ -25,15 +25,6 @@ import {
 /** A records listing scoped to the program, as staff reach it. */
 const scopedHref = (path: "/samples" | "/specimens", scope: string) => `${path}?${new URLSearchParams({ scope }).toString()}`;
 
-/**
- * A link that may safely be one: http(s) as written, anything else as text.
- * The values arrive from curated files and the store, and escaping does not
- * stop a `javascript:` scheme from being a scheme.
- */
-function Source({ value, label }: { value: string; label: string }) {
-  return /^https?:\/\//i.test(value) ? <a href={value}>{label}</a> : <>{value}</>;
-}
-
 function Leads({ m, leads, admin }: { m: Messages; leads: ProgramLead[]; admin: boolean }) {
   if (leads.length === 0) return <Absent label={m.programs.noLeads} spelled />;
   return (
@@ -138,22 +129,10 @@ function Contact({ m, program, admin }: { m: Messages; program: ProgramDetail; a
 function Labels({ m, program }: { m: Messages; program: ProgramDetail }) {
   const p = m.programs;
   if (program.printing === null) return null;
-  const answer = program.taxonObscured;
   return (
     <>
       <h2>{p.labels}</h2>
       <p>{program.printing === "own" ? p.printsOwn : p.printedByProgram}</p>
-      <p>
-        {answer === "unanswered" ? (
-          p.taxonObscured.unanswered
-        ) : answer === "none" ? (
-          p.taxonObscured.outside
-        ) : (
-          <>
-            {p.taxonObscured.answered(answer.decidedBy, answer.decidedOn)} <Source value={answer.source} label={p.taxonObscured.where} />
-          </>
-        )}
-      </p>
     </>
   );
 }

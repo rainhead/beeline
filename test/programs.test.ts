@@ -142,18 +142,15 @@ describe("a program's page", () => {
     expect(body).not.toMatch(EMPTY_VALUE_CELL);
   });
 
-  it("says whether the atlas prints its own labels, and its answer on taxon-obscured records", async () => {
+  it("says whether the atlas prints its own labels", async () => {
     const app = await programsApp();
-    const waba = await page(app, "/programs/WaBA");
-    expect(waba).toContain("Does not print its own labels");
-    expect(waba).toContain("Has not said whether its labels may carry the true point");
-    // Oregon's answer is seeded by the schema, with where it was given.
-    const oba = await page(app, "/programs/OBA");
-    expect(oba).toContain("Arthur Schrenk said so on Oct 21, 2026.");
-    expect(oba).toContain(`href="https://github.com/rainhead/beeline/issues/13#issuecomment-6327141377"`);
+    expect(await page(app, "/programs/WaBA")).toContain("Does not print its own labels");
+    expect(await page(app, "/programs/MM")).toContain("Does not print its own labels");
     await conn.run(`INSERT INTO atlas_printing (atlas_id) VALUES (${atlas("WaBA")})`);
-    expect(await page(app, "/programs/WaBA")).toContain("Prints its own labels");
-    expect(await page(app, "/programs/MM")).toContain("No atlas answers for records collected outside every atlas");
+    const waba = await page(app, "/programs/WaBA");
+    expect(waba).toContain("Prints its own labels");
+    // A label holds the true point or none, so the page says nothing about obscured records.
+    expect(waba).not.toContain("true point");
   });
 
   it("shows the atlas's mark beside its name, and none for a program without one", async () => {

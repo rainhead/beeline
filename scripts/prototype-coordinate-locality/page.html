@@ -52,7 +52,7 @@
 <div class="filters">
   <label><input type="checkbox" id="onlyDiff"> only where the generated name differs</label>
   <label>Season <select id="season"><option value="">both</option><option value="open">current</option><option value="settled">past</option></select></label>
-  <input type="search" id="q" placeholder="search localities${COLLECTORS}">
+  <input type="search" id="q" placeholder="search localities, or an iNaturalist login${COLLECTORS}">
   <span id="count" class="muted"></span>
 </div>
 <div class="wrap"><table id="rows"></table></div>
@@ -395,7 +395,8 @@ function render() {
   const onlyDiff = document.getElementById("onlyDiff").checked, season = document.getElementById("season").value, q = document.getElementById("q").value.toLowerCase();
   const shown = results.filter((x) => scenario.test(x.s, x.r) && (!onlyDiff || !x.agree)
     && (!season || (season === "open") === x.s.open)
-    && (!q || (x.s.loc ?? "").toLowerCase().includes(q) || (x.r.name ?? "").toLowerCase().includes(q) || (x.s.who ?? "").toLowerCase().includes(q)));
+    && (!q || (x.s.loc ?? "").toLowerCase().includes(q) || (x.r.name ?? "").toLowerCase().includes(q) || (x.s.who ?? "").toLowerCase().includes(q)
+       || (x.s.inat ?? "").toLowerCase().split(" ").some((l) => l.includes(q.replace(/^@/, "")))));
   document.getElementById("count").textContent = `${shown.length.toLocaleString()} samples`;
   const slice = shown.slice(page * PER, page * PER + PER);
   const t = document.getElementById("rows");
@@ -404,7 +405,7 @@ function render() {
       const { s, r } = x;
       const present = s.loc ? esc(s.loc) : `<span class="muted">none</span>`;
       const gen = r.name ? `<span class="gen ${x.agree ? "ok" : ""}">${esc(r.name)}</span>` : `<span class="muted">no name</span>`;
-      const row = `<tr class="row" data-i="${s.i}"><td><a href="${BEELINE}/samples/${s.i}" target="_blank" rel="noreferrer">in Beeline</a>${s.who ? `<div class="why">${esc(s.who)}</div>` : ""}${s.printed ? "" : '<div class="why">not printed yet</div>'}</td><td>${s.season}</td>
+      const row = `<tr class="row" data-i="${s.i}"><td><a href="${BEELINE}/samples/${s.i}" target="_blank" rel="noreferrer">in Beeline</a>${s.who ? `<div class="why">${esc(s.who)}</div>` : ""}${s.inat ? `<div class="why">${s.inat.split(" ").map((l) => `@${esc(l)}`).join(" ")}</div>` : ""}${s.printed ? "" : '<div class="why">not printed yet</div>'}</td><td>${s.season}</td>
         <td>${present}${s.flag ? `<div class="why bad">${esc(s.flag)}</div>` : ""}</td>
         <td class="${regionDiffers(s) ? "warn" : ""}">${esc(storeRegion(s))}</td>
         <td>${gen}<div class="why${r.crossCounty ? " warn" : ""}">${esc(r.why)}</div></td>

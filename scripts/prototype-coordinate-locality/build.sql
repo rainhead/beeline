@@ -107,7 +107,12 @@ SELECT s.entity_id AS sample_id, l.latitude AS lat, l.longitude AS lon,
        l.coordinate_uncertainty_m AS unc, s.locality, s.county AS store_county,
        s.state_province AS store_state, ss.season, st.sample_id IS NULL AS open_season,
        ps.sample_id IS NOT NULL AS printed, q.sample_id IS NOT NULL AS flagged, q.details AS flag,
-       pc_person.display_name AS collector
+       pc_person.display_name AS collector,
+       -- Every collector's iNaturalist login, in collecting order, so the
+       -- partner in a pair finds the sample too. Logins are public on
+       -- iNaturalist beside the same observations.
+       (SELECT string_agg(a.login, ' ' ORDER BY sc.position) FROM b.sample_collector sc
+        JOIN b.inat_account a ON a.person_id = sc.person_id WHERE sc.sample_id = s.entity_id) AS logins
 FROM b.sample s
 LEFT JOIN b.sample_primary_collector pc ON pc.sample_id = s.entity_id
 LEFT JOIN b.person pc_person ON pc_person.entity_id = pc.person_id
@@ -247,7 +252,7 @@ COPY (
 COPY (
   SELECT s.sample_id AS i, round(s.lat, 4) AS lat, round(s.lon, 4) AS lon, s.unc, s.locality AS loc,
          s.store_county AS sc, s.store_state AS ss, s.season, s.open_season AS open, s.printed,
-         s.flag, s.collector AS who, s.extra, s.refuge AS ref, s.state_park AS sp, s.nps, s.osm_parks AS op,
+         s.flag, s.collector AS who, s.logins AS inat, s.extra, s.refuge AS ref, s.state_park AS sp, s.nps, s.osm_parks AS op,
          (SELECT list([ft.place_id, ft.km, ft.brg] ORDER BY ft.km) FROM far_town ft WHERE ft.sample_id = s.sample_id) AS nt,
          (SELECT list([u.id, round(hav_km(s.lat, s.lon, u.lat, u.lon), 2)] ORDER BY hav_km(s.lat, s.lon, u.lat, u.lon))
           FROM used_feature u WHERE abs(u.lat - s.lat) < 0.05 AND abs(u.lon - s.lon) < 0.07

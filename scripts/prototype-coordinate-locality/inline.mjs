@@ -21,13 +21,13 @@ const pack = (rows) => { const k = Object.keys(rows[0]); return { k, r: rows.map
 const template = readFileSync(page, "utf8");
 const render = (rows, privacy, collectors) => template
   .replace("/*PRIVACY*/", () => privacy)
-  .replace("${COLLECTORS}", collectors ? " or collector" : "")
+  .replace("${COLLECTORS}", collectors ? " or name" : "")
   .replace("/*DATA*/null", () => JSON.stringify({ places, features, regions, samples: pack(rows) }).replaceAll("</", "<\\/"));
 const head = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n';
 writeFileSync(`${out}/PROTOTYPE-coordinate-locality.html`,
   head + render(samples, "This copy holds exact coordinates and collectors' names: keep it local.", true) + "\n</html>\n");
 writeFileSync(`${out}/coordinate-locality-prototype.html`,
-  render(shared, `Coordinates are rounded to three decimals, as a label prints them, and ${shared.filter((s) => s.loc === "(street address withheld)").length.toLocaleString("en")} present localities that read as street addresses are withheld.`));
+  render(shared, `Coordinates are rounded to three decimals, as a label prints them, and ${shared.filter((s) => s.loc === "(street address withheld)").length.toLocaleString("en")} present localities that read as street addresses are withheld. Collectors appear only by their iNaturalist login, as on iNaturalist.`));
 if (process.env.LIST_WITHHELD) {
   const w = new Map();
   for (const s of samples) if (!s.extra && addressy(s.loc)) w.set(s.loc, (w.get(s.loc) ?? 0) + 1);

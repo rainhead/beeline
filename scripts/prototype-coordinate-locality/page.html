@@ -160,6 +160,13 @@ const Locality = (() => {
       if (name) return { name, why: sample.sp.endsWith("|SP") ? "inside the state park" : "inside the provincial park or protected area", kind: "state park", crossCounty: false };
     }
     // Inside a town's limits: the town, however big and whatever is nearer.
+    if (p.osmParks && sample.op && sample.oph >= p.osmParkHa) {
+      let name = shortName(sample.op, p);
+      for (const [re, to] of [[/ Regional Park$/, " RP"], [/ Nature Reserve$/, " NR"], [/ Conservation Area$/, " CA"], [/ Park$/, " Pk"]]) {
+        if (name) break; const t = sample.op.replace(re, to); name = shortName(t, p);
+      }
+      if (name) return { name, why: `inside a park OpenStreetMap names, ${sample.oph} ha`, kind: "local park", crossCounty: false, km: 0 };
+    }
     // Inside a city a volunteer lives in, the city's name says too little:
     // the park, else the neighbourhood (Jefferson Park, not Seattle).
     if (p.townLimits && sample.tl && sample.tlk === "city") {
@@ -251,7 +258,7 @@ const BEELINE = "https://beeline.fly.dev";
 const gaz = { places: new Map(DATA.places.map((p) => [p.id, p])), features: new Map(DATA.features.map((f) => [f.id, f])), regions: new Map(DATA.regions.map((r) => [r.region_id, r])) };
 const samples = DATA.samples.r.map((r) => Object.fromEntries(DATA.samples.k.map((k, i) => [k, r[i]])));
 
-const DEFAULTS = { townLimits: true, cdps: true, minPop: 0, sizeWeight: 0.25, maxKm: 30, atKm: 1.5, unpopulatedKm: 20, farTown: true, county: "prefer", peaks: true, peakKm: 3, peakWhenTownKm: 12, refuges: true, refugeOverrides: true, stateParks: true, nationalParks: true, cityDetailPop: 50000, parkKm: 0.6, hoodKm: 1.5, usedFeatures: true, featureKm: 5, featureKmOne: 2, wildlifeAreas: true, wlaName: "unit", wlaSuffix: "WLA", offset: "none", offsetKm: 3, maxLen: 18 };
+const DEFAULTS = { townLimits: true, cdps: true, minPop: 0, sizeWeight: 0.25, maxKm: 30, atKm: 1.5, unpopulatedKm: 20, farTown: true, county: "prefer", peaks: true, peakKm: 3, peakWhenTownKm: 12, refuges: true, refugeOverrides: true, stateParks: true, nationalParks: true, osmParks: true, osmParkHa: 0.5, cityDetailPop: 50000, parkKm: 0.6, hoodKm: 1.5, usedFeatures: true, featureKm: 5, featureKmOne: 2, wildlifeAreas: true, wlaName: "unit", wlaSuffix: "WLA", offset: "none", offsetKm: 3, maxLen: 18 };
 const params = { ...DEFAULTS };
 const CONTROLS = [
   ["townLimits", "Inside a town's limits, name the town", "bool", "Census places; BC municipalities"],
@@ -269,6 +276,8 @@ const CONTROLS = [
   ["refuges", "Name the wildlife refuge a point is in", "bool", ""],
   ["refugeOverrides", "Use curated refuge names", "bool", "Saddle Mountain NWR → Hanford Reach NWR"],
   ["nationalParks", "Name the national park, monument or recreation area a point is in", "bool", "after refuges: Olympic NP, Lake Chelan NRA"],
+  ["osmParks", "Name the regional or municipal park a point is in, from OpenStreetMap", "bool", "BC only, so far: Uplands Park, Thetis Lake; after state and provincial parks"],
+  ["osmParkHa", "…if the park is at least (hectares)", "number", "keeps out a playground or a boulevard's strip of grass"],
   ["cityDetailPop", "In a city of at least this many people, name the park or neighbourhood", "number", "Jefferson Park, not Seattle; a very large number turns this off"],
   ["parkKm", "…a park within (km)", "number", "GeoNames has parks as points, so this stands in for being inside one; 1.5 at most"],
   ["hoodKm", "…else a neighbourhood within (km)", "number", ""],
@@ -302,6 +311,7 @@ const SCENARIOS = [
   { key: "refuge", label: "Wildlife refuges", text: "Points inside a national wildlife refuge, named the way staff already write them (Malheur NWR, Hart Mt NWR). Watch for refuges whose official name is not the one people use, and for points on a refuge's edge.", test: (s) => !!s.ref },
   { key: "wla", label: "WDFW wildlife areas", text: "Points inside a WDFW wildlife area unit. Volunteers mostly wrote the nearest town here (Wenas is 'Ellensburg' in 14 spellings), so naming the unit changes what these labels say. Is 'Desert WLA' or 'Methow WLA' something a volunteer would recognise?", test: (s) => !!s.wla },
   { key: "nps", label: "National parks", text: "Points inside a National Park Service unit, named as staff write them: Olympic NP, Mt Rainier NP, Lake Chelan NRA.", test: (s) => !!s.nps },
+  { key: "osmpark", label: "Regional and city parks", text: "Points inside a park or nature reserve OpenStreetMap names, BC only for now: the regional and municipal parks no government layer gathers. Where parks are nested, the smallest wins.", test: (s, r) => r.kind === "local park" },
   { key: "citydetail", label: "Parks and neighbourhoods in cities", text: "Points inside a city of 50,000 or more, named for the park they are in or beside, else the neighbourhood. A volunteer who lives in Seattle needs 'Jefferson Park', not 'Seattle'. GeoNames knows parks only as points, so a large park's edge may miss.", test: (s, r) => r.kind === "city park" || r.kind === "neighbourhood" },
   { key: "park", label: "State and provincial parks", text: "Points inside a Washington state park, named '<park> SP' as staff already write Ginkgo SP and Potholes SP, or a BC provincial park, protected area or ecological reserve (Elk Falls PP). Elsewhere volunteers wrote the town: Steamboat Rock is usually 'Electric City'.", test: (s) => !!s.sp },
   { key: "feature", label: "Lakes, passes, landmarks", text: "Points near a feature that is not a town, whose name a volunteer has already written for a sample nearby: Takhlakh Lake, Cayuse Pass. These are the seed of a curated gazetteer. Watch for names a single volunteer used that nobody else would.", test: (s, r) => r.kind === "feature" },
@@ -341,6 +351,7 @@ function renderStats() {
     ["…a refuge", (xs) => pct(xs.filter((x) => x.r.kind === "refuge").length, xs.length)],
     ["…a WDFW wildlife area", (xs) => pct(xs.filter((x) => x.r.kind === "wildlife area").length, xs.length)],
     ["…a national park unit", (xs) => pct(xs.filter((x) => x.r.kind === "national park").length, xs.length)],
+    ["…a park OpenStreetMap names", (xs) => pct(xs.filter((x) => x.r.kind === "local park").length, xs.length)],
     ["…a park or neighbourhood in a city", (xs) => pct(xs.filter((x) => x.r.kind === "city park" || x.r.kind === "neighbourhood").length, xs.length)],
     ["…a WA state or BC provincial park", (xs) => pct(xs.filter((x) => x.r.kind === "state park").length, xs.length)],
     ["…a lake, pass or landmark volunteers use", (xs) => pct(xs.filter((x) => x.r.kind === "feature").length, xs.length)],
@@ -398,7 +409,7 @@ function detail(s, r) {
       <td class="num">${km.toFixed(1)} km</td><td class="${other ? "warn" : ""}">${esc(regionText(pl.region_id))}</td><td>${Locality.shortName(pl.name, params) ?? '<span class="bad">does not fit</span>'}</td></tr>`;
   }).join("");
   return `<tr class="detail"><td colspan="7">
-    <div>${s.lat}, ${s.lon}${s.unc ? ` ±${s.unc} m` : ""} · <a href="${map}" target="_blank" rel="noreferrer">map</a>${s.ref ? ` · in ${esc(s.ref)}` : ""}${s.nps ? ` · in ${esc(s.nps)}` : ""}${s.sp ? ` · in ${esc(s.sp.replace("|", " "))}` : ""}${s.wla ? ` · in WDFW ${esc(s.wla_area)} wildlife area, ${esc(s.wla)} unit` : ""}</div>
+    <div>${s.lat}, ${s.lon}${s.unc ? ` ±${s.unc} m` : ""} · <a href="${map}" target="_blank" rel="noreferrer">map</a>${s.ref ? ` · in ${esc(s.ref)}` : ""}${s.nps ? ` · in ${esc(s.nps)}` : ""}${s.op ? ` · in ${esc(s.op)} (${s.oph} ha, OpenStreetMap)` : ""}${s.sp ? ` · in ${esc(s.sp.replace("|", " "))}` : ""}${s.wla ? ` · in WDFW ${esc(s.wla_area)} wildlife area, ${esc(s.wla)} unit` : ""}</div>
     <table style="margin-top:6px"><tr><th>Nearby</th><th>Kind</th><th class="num">Population</th><th class="num">Distance</th><th>County</th><th>As written</th></tr>${cands}</table>
   </td></tr>`;
 }

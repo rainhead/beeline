@@ -9,12 +9,22 @@ STORE=$(realpath "${1:-data/sandbox/beeline.duckdb}")
 OUT=$(realpath -m data/prototype-locality)
 mkdir -p "$OUT"
 "$HERE/fetch.sh" "$OUT/downloads"
+# OpenStreetMap parks, from whatever Geofabrik extracts are in downloads
+# (british-columbia-latest.osm.pbf); slow, so done once per extract.
+for PBF in "$OUT"/downloads/*-latest.osm.pbf; do
+  [ -e "$PBF" ] || continue
+  REGION=$(basename "$PBF" -latest.osm.pbf)
+  if ! duckdb "$OUT/osm-parks.duckdb" -noheader -list -c "SELECT 1 FROM osm_park WHERE region = '$REGION' LIMIT 1" 2>/dev/null | grep -q 1; then
+    sed -e "s#__PBF__#$PBF#g" -e "s#__REGION__#$REGION#g" "$HERE/osm.sql" | duckdb "$OUT/osm-parks.duckdb"
+  fi
+done
+duckdb "$OUT/osm-parks.duckdb" -c "CREATE TABLE IF NOT EXISTS osm_park (region TEXT, osm_id TEXT, name TEXT, leisure TEXT, boundary TEXT, area_ha DOUBLE, geom GEOMETRY)" >/dev/null
 rm -f "$OUT/gazetteer.duckdb"
 # BEELINE_PROTOTYPE_COLLECTOR="Peter Abrahamsen" adds every sample of that
 # collector to the local page.
 COLLECTOR=${BEELINE_PROTOTYPE_COLLECTOR:-}
 COLLECTOR=${COLLECTOR//\'/\'\'}
-sed -e "s#__STORE__#$STORE#g" -e "s#__COLLECTOR__#$COLLECTOR#g" -e "s#__DL__#$OUT/downloads#g" -e "s#__OUT__#$OUT#g" "$HERE/build.sql" \
+sed -e "s#__STORE__#$STORE#g" -e "s#__OSM__#$OUT/osm-parks.duckdb#g" -e "s#__COLLECTOR__#$COLLECTOR#g" -e "s#__DL__#$OUT/downloads#g" -e "s#__OUT__#$OUT#g" "$HERE/build.sql" \
   | duckdb "$OUT/gazetteer.duckdb" 2>&1 | grep -v -e 'CRS will not be persisted' -e 'WARNING' || true
 node "$HERE/inline.mjs" "$HERE/page.html" "$OUT"
 echo "$OUT/PROTOTYPE-coordinate-locality.html"

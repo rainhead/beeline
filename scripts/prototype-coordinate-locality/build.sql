@@ -6,6 +6,7 @@
 -- substituted by build.sh.
 LOAD spatial;
 ATTACH '__STORE__' AS b (READ_ONLY);
+ATTACH '__OSM__' AS osm (READ_ONLY);
 
 CREATE MACRO hav_km(lat1, lon1, lat2, lon2) AS
   2 * 6371 * asin(sqrt(pow(sin(radians(lat2 - lat1) / 2), 2)
@@ -130,6 +131,12 @@ CREATE TABLE base_nps AS
 SELECT b.sample_id, any_value(n.unit) AS unit
 FROM base b JOIN nps_unit n ON ST_Contains(n.geom, ST_Point(b.lon, b.lat)) GROUP BY b.sample_id;
 
+-- The smallest named OpenStreetMap park or reserve a point is in, so a city
+-- park inside a regional park keeps its own name.
+CREATE TABLE base_osm AS
+SELECT b.sample_id, arg_min(o.name, o.area_ha) AS name, round(min(o.area_ha), 1) AS area_ha
+FROM base b JOIN osm.osm_park o ON ST_Contains(o.geom, ST_Point(b.lon, b.lat)) GROUP BY b.sample_id;
+
 CREATE TABLE base_sp AS
 SELECT b.sample_id, any_value(concat(p.park, '|', p.suffix)) AS park
 FROM base b JOIN state_park p ON ST_Contains(p.geom, ST_Point(b.lon, b.lat)) GROUP BY b.sample_id;
@@ -174,11 +181,13 @@ SELECT setseed(0.7);
 CREATE TABLE settled_pick AS SELECT sample_id FROM base WHERE NOT open_season ORDER BY random() LIMIT 4000;
 CREATE TABLE sel AS
 SELECT * FROM (
-  SELECT b.*, br.org AS refuge, bw.unit AS wla, bw.area AS wla_area, bs.park AS state_park, bn.unit AS nps,
+  SELECT b.*, br.org AS refuge, bw.unit AS wla, bw.area AS wla_area, bs.park AS state_park, bn.unit AS nps, bo.name AS osm_park, bo.area_ha AS osm_park_ha,
          NOT (b.open_season OR br.org IS NOT NULL OR bw.unit IS NOT NULL OR bs.park IS NOT NULL OR bn.unit IS NOT NULL
+              OR bo.name IS NOT NULL
               OR b.sample_id IN (SELECT sample_id FROM settled_pick)) AS extra
   FROM base b LEFT JOIN base_refuge br USING (sample_id) LEFT JOIN base_wla bw USING (sample_id) LEFT JOIN base_sp bs USING (sample_id)
   LEFT JOIN base_nps bn USING (sample_id)
+  LEFT JOIN base_osm bo USING (sample_id)
 )
 WHERE NOT extra OR collector = '__COLLECTOR__';
 
@@ -235,7 +244,7 @@ COPY (
 COPY (
   SELECT s.sample_id AS i, round(s.lat, 4) AS lat, round(s.lon, 4) AS lon, s.unc, s.locality AS loc,
          s.store_county AS sc, s.store_state AS ss, s.season, s.open_season AS open, s.printed,
-         s.flag, s.collector AS who, s.extra, s.refuge AS ref, s.state_park AS sp, s.nps,
+         s.flag, s.collector AS who, s.extra, s.refuge AS ref, s.state_park AS sp, s.nps, s.osm_park AS op, s.osm_park_ha AS oph,
          (SELECT list([ft.place_id, ft.km, ft.brg] ORDER BY ft.km) FROM far_town ft WHERE ft.sample_id = s.sample_id) AS nt,
          (SELECT list([u.id, round(hav_km(s.lat, s.lon, u.lat, u.lon), 2)] ORDER BY hav_km(s.lat, s.lon, u.lat, u.lon))
           FROM used_feature u WHERE abs(u.lat - s.lat) < 0.05 AND abs(u.lon - s.lon) < 0.07

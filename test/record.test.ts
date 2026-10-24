@@ -437,6 +437,15 @@ describe("a location iNaturalist keeps from everyone but its observer", () => {
     }
   });
 
+  it("withholds the observer's notes, where the spot is usually written", async () => {
+    for (const [who, shown] of [["bob", false], ["alice", true]] as const) {
+      const { app, conn, aliceSample } = await recordApp(who);
+      await conn.run(`INSERT INTO observation_field (inat_id, notes) VALUES (998877, 'along Gumboot Creek')`);
+      const body = await get(app, `/samples/${aliceSample}`);
+      expect(body.includes("Gumboot"), who).toBe(shown);
+    }
+  });
+
   it("hides the county too where the observation is private", async () => {
     const { app, conn, aliceSample } = await recordApp("bob");
     await conn.run(`UPDATE sample SET geoprivacy = 'private', taxon_geoprivacy = NULL WHERE entity_id = ${aliceSample}`);

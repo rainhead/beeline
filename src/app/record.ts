@@ -36,8 +36,9 @@ import { readSampleChanges, sampleHistory, SAMPLE_STATE_SQL, type SampleChange }
  * and what a page leaves out is the listings' rule: where a sample's
  * observation is obscured or private on iNaturalist and the reader is neither
  * staff nor one of its collectors, its location is withheld — coordinates,
- * elevation, locality, what the observation's place guess says, any staff
- * override of them, and for a private observation the county
+ * elevation, locality, what the observation's place guess says, the
+ * observer's notes, any staff override of them, and for a private
+ * observation the county
  * (src/app/listings.ts `withheld`). "One of its collectors" follows the
  * acting-for switch because the caller passes the reader (src/app/acting.ts).
  */
@@ -116,7 +117,8 @@ export interface SampleDetail {
   /**
    * The location is somebody else's to see, so everything that says where it
    * was collected below the county (or, for a private observation, the
-   * state) is null here, whatever the store holds.
+   * state) is null here, whatever the store holds — the observer's notes
+   * included, since that is where a volunteer writes the spot.
    */
   location_withheld: boolean;
   /** At least one label on paper (schema/155): the locality no longer follows upstream. */
@@ -353,6 +355,10 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
           elevation_source: null,
           elevation_file: null,
           elevation_stale: false,
+          // iNaturalist shows the description to everyone, but it is where
+          // a volunteer writes the spot `place_guess` never had ("along
+          // Gumboot Creek"), and the observation link is still there.
+          observation_notes: null,
         }
       : {
           latitude: num(row.latitude),

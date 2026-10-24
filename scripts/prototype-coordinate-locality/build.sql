@@ -54,7 +54,7 @@ WHERE ADMIN_AREA_NAME NOT LIKE '%Northern Rockies%';
 
 CREATE TABLE place AS
 SELECT id::INTEGER AS id, name, lat::DOUBLE AS lat, lon::DOUBLE AS lon,
-       CASE WHEN fclass = 'P' THEN 'town' ELSE 'peak' END AS kind, fcode,
+       CASE WHEN fclass = 'P' THEN 'town' WHEN fclass = 'L' THEN 'locality' ELSE 'peak' END AS kind, fcode,
        coalesce(try_cast(pop AS BIGINT), 0) AS pop,
        coalesce(try_cast(elev AS INTEGER), try_cast(dem AS INTEGER)) AS elev,
        ST_Point(lon::DOUBLE, lat::DOUBLE) AS pt
@@ -68,7 +68,10 @@ FROM read_csv(['__DL__/us/US.txt', '__DL__/ca/CA.txt'], delim = '\t', header = f
 WHERE (fclass = 'P' AND fcode IN ('PPL', 'PPLA', 'PPLA2', 'PPLA3', 'PPLA4', 'PPLC', 'PPLL', 'PPLS'))
    -- A peak with a name in some other language is a stand-in for "notable":
    -- GeoNames carries no prominence.
-   OR (fclass = 'T' AND fcode IN ('MT', 'PK', 'PKS', 'MTS', 'BUTE', 'HLL') AND coalesce(alt, '') <> '');
+   OR (fclass = 'T' AND fcode IN ('MT', 'PK', 'PKS', 'MTS', 'BUTE', 'HLL') AND coalesce(alt, '') <> '')
+   -- A named area or locality with nobody counted in it: Galena, BC, which
+   -- is where its collector says he was.
+   OR (fclass = 'L' AND fcode IN ('AREA', 'LCTY'));
 
 CREATE TABLE place_region AS
 SELECT p.id, any_value(r.region_id) AS region_id
@@ -79,8 +82,11 @@ CREATE TABLE base AS
 SELECT s.entity_id AS sample_id, l.latitude AS lat, l.longitude AS lon,
        l.coordinate_uncertainty_m AS unc, s.locality, s.county AS store_county,
        s.state_province AS store_state, ss.season, st.sample_id IS NULL AS open_season,
-       ps.sample_id IS NOT NULL AS printed, q.sample_id IS NOT NULL AS flagged, q.details AS flag
+       ps.sample_id IS NOT NULL AS printed, q.sample_id IS NOT NULL AS flagged, q.details AS flag,
+       pc_person.display_name AS collector
 FROM b.sample s
+LEFT JOIN b.sample_primary_collector pc ON pc.sample_id = s.entity_id
+LEFT JOIN b.person pc_person ON pc_person.entity_id = pc.person_id
 JOIN b.sample_location l ON l.sample_id = s.entity_id
 JOIN b.sample_season ss ON ss.sample_id = s.entity_id
 LEFT JOIN b.settled_sample st ON st.sample_id = s.entity_id
@@ -98,13 +104,19 @@ SELECT b.sample_id, any_value(w.unit) AS unit, any_value(w.area) AS area
 FROM base b JOIN wildlife_area_unit w ON ST_Contains(w.geom, ST_Point(b.lon, b.lat)) GROUP BY b.sample_id;
 
 -- The whole open season, every sample in a refuge or a wildlife area, and a fixed random
--- 4,000 of the settled seasons.
+-- 4,000 of the settled seasons; and, for a local review, every sample of the
+-- collector named in __COLLECTOR__, marked as extra so the shared copy leaves
+-- them out.
 SELECT setseed(0.7);
+CREATE TABLE settled_pick AS SELECT sample_id FROM base WHERE NOT open_season ORDER BY random() LIMIT 4000;
 CREATE TABLE sel AS
-SELECT b.*, br.org AS refuge, bw.unit AS wla, bw.area AS wla_area
-FROM base b LEFT JOIN base_refuge br USING (sample_id) LEFT JOIN base_wla bw USING (sample_id)
-WHERE b.open_season OR br.org IS NOT NULL OR bw.unit IS NOT NULL
-   OR b.sample_id IN (SELECT sample_id FROM base WHERE NOT open_season ORDER BY random() LIMIT 4000);
+SELECT * FROM (
+  SELECT b.*, br.org AS refuge, bw.unit AS wla, bw.area AS wla_area,
+         NOT (b.open_season OR br.org IS NOT NULL OR bw.unit IS NOT NULL
+              OR b.sample_id IN (SELECT sample_id FROM settled_pick)) AS extra
+  FROM base b LEFT JOIN base_refuge br USING (sample_id) LEFT JOIN base_wla bw USING (sample_id)
+)
+WHERE NOT extra OR collector = '__COLLECTOR__';
 
 CREATE TABLE sel_region AS
 SELECT s.sample_id, any_value(r.region_id) AS region_id
@@ -115,8 +127,9 @@ SELECT s.sample_id, arg_min(t.name, CASE t.kind WHEN 'city' THEN 0 ELSE 1 END) A
        min(t.kind) AS kind
 FROM sel s JOIN town_limits t ON ST_Intersects(t.geom, ST_Point(s.lon, s.lat)) GROUP BY s.sample_id;
 
--- Towns with a population within 50 km, any town within 10 km, notable
--- peaks within 20 km; the nearest 30 of them.
+-- Towns with a population within 50 km, unpopulated towns and named
+-- localities within 20 km, notable peaks within 20 km: the nearest 20 of
+-- each, so hamlets cannot crowd out the towns.
 CREATE TABLE cand AS
 SELECT sample_id, id AS place_id, round(km, 2) AS km, round(brg) AS brg
 FROM (
@@ -125,8 +138,8 @@ FROM (
   FROM sel s JOIN place p
     ON p.lat BETWEEN s.lat - 0.46 AND s.lat + 0.46 AND p.lon BETWEEN s.lon - 0.7 AND s.lon + 0.7
 )
-WHERE (kind = 'town' AND pop > 0 AND km <= 50) OR (kind = 'town' AND km <= 10) OR (kind = 'peak' AND km <= 20)
-QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY km) <= 30;
+WHERE (kind = 'town' AND pop > 0 AND km <= 50) OR (kind IN ('town', 'locality') AND km <= 20) OR (kind = 'peak' AND km <= 20)
+QUALIFY row_number() OVER (PARTITION BY sample_id, kind = 'town' AND pop > 0, kind = 'peak' ORDER BY km) <= 20;
 
 COPY (
   SELECT p.id, p.name, p.kind, p.fcode, p.pop, p.elev, pr.region_id
@@ -143,7 +156,7 @@ COPY (
 COPY (
   SELECT s.sample_id AS i, round(s.lat, 4) AS lat, round(s.lon, 4) AS lon, s.unc, s.locality AS loc,
          s.store_county AS sc, s.store_state AS ss, s.season, s.open_season AS open, s.printed,
-         s.flag, s.refuge AS ref, s.wla, s.wla_area, sr.region_id AS reg, tl.name AS tl, tl.kind AS tlk,
+         s.flag, s.collector AS who, s.extra, s.refuge AS ref, s.wla, s.wla_area, sr.region_id AS reg, tl.name AS tl, tl.kind AS tlk,
          coalesce((SELECT list([c.place_id, c.km, c.brg] ORDER BY c.km) FROM cand c WHERE c.sample_id = s.sample_id), []) AS c
   FROM sel s LEFT JOIN sel_region sr USING (sample_id) LEFT JOIN sel_limits tl USING (sample_id)
   ORDER BY s.sample_id

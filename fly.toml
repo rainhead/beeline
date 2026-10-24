@@ -1,6 +1,6 @@
 # Beeline on Fly — the sandbox, and production after cutover.
 #
-# TEMPORARY hosting in the same sense maderas was (infra/maderas/): the
+# TEMPORARY hosting, as maderas was before it (until 2026-09): the
 # hosting decision is re-made with Andony at cutover, December 2026.
 #
 # One machine, one volume, one region, forever. That is not a sandbox

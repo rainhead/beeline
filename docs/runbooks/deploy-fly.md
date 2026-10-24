@@ -213,13 +213,9 @@ fly machine update --env BEELINE_MAINTENANCE= <id>    # back to serving
 This is where `pnpm db:reseed`, `pnpm person:apply`,
 `pnpm person:orcids`, `pnpm inat:fetch-orcids` and
 `pnpm elevation:fetch` run. A list of confirmed ORCID iDs names people, so it
-goes up with `fly ssh sftp put` into `data/` and never into git. The re-derivation procedure itself — what to run
-after a change under `ingest/`, and why re-fetching is not the fix — is the
-one in [deploy-maderas.md](deploy-maderas.md#re-deriving-the-model-after-a-promotion-change),
-and only the way you get a shell differs here. The machine already sets
-`BEELINE_DB` to the live store, which is what keeps the promotions from
-recording into the change logs while the new store is half built — leave it
-set as it is, and let the next boot record the difference (beeline-6cr).
+goes up with `fly ssh sftp put` into `data/` and never into git. What to run
+after a change under `ingest/`, and why re-fetching is not the fix, is
+[below](#re-deriving-the-model-after-a-promotion-change).
 
 The CLIs do not read `BEELINE_DB` for the store they open: `inat:sync` takes
 `--db <path>`, and `inat:promote`, `inat:fetch-places` and `legacy:promote`
@@ -239,6 +235,95 @@ pnpm inat:fetch-places data/beeline.duckdb
 pnpm inat:promote data/beeline.duckdb
 wc -l data/sample-change.csv
 ```
+
+## Re-deriving the model after a promotion change
+
+Migrations carry a change to the **schema**. They cannot carry a change to
+**promotion**, the rules that derive the model from staged rows, so after one
+the store is shaped right and derived wrong, and `pnpm db:migrate --check`
+sees nothing, because no table has drifted. Check after any change under
+`ingest/`. The same procedure is the answer to a schema change that cannot be
+migrated at all, such as dropping a column from `person`, which nine tables
+reference ([ADR 0006](../adr/0006-migrations-for-deployed-stores.md)).
+
+Re-promoting is the fix and re-fetching is not, because the staged sources are
+already in the store: `legacy_occurrence`, and the `observation_*` rows whose
+presence proof deletion detection reads (beeline-3hj). `pnpm db:reseed` builds
+a fresh store from `schema/*.sql` and carries exactly those across,
+renumbered, with the tables promotion cannot recompute (`inat_place`, the
+Ecdysis thesaurus). Then the promotions run over the new store.
+
+Deploy the code first, since the reseed runs the new rules. Then, in
+maintenance mode ([above](#running-a-cli-against-the-store)), write the steps
+as a script in `data/`, named for the day, and run it with `nohup` so that a
+dropped SSH session does not stop it, its log beside it:
+
+```sh
+nohup sh data/reseed-<date>.sh > data/reseed-<date>.log 2>&1 &
+```
+
+The script builds `data/beeline-new.duckdb` from the live store and never
+writes the live one. The usual steps, in order: `pnpm db:reseed
+data/beeline.duckdb data/beeline-new.duckdb`, `legacy:promote`,
+`inat:fetch-places`, `inat:promote`, `inat:backfill-accounts`,
+`elevation:derive`, then the loads a reseed does not carry —
+`ecdysis:load data/ecdysis/44 <new> --prefix WSDA_` and `worksheets:load
+data/worksheets <new>` — each naming `data/beeline-new.duckdb`, and finally
+`chown -R node:node` over what it wrote, since the shell is root and the app
+is not. Loading a new legacy pull adds `legacy:load` after the reseed
+([Legacy pulls](#legacy-pulls)). The scripts already on the volume
+(`data/reseed-*.sh`) are the worked examples, with the reasons for each step in
+their comments; copy the latest.
+
+**Leave `BEELINE_DB` set to the live store.** A change log belongs to one
+store, and each promotion records into the change logs only when its target
+is that store. Pointed at the half-built new one, every step would record its
+intermediate state as changes nobody made, which on 2026-09-15 appended 70,380
+false sample entries (beeline-6cr). Left alone, each step says it is not
+recording, and the app's first boot on the new store records the net
+difference once, as `reconcile`. Read the boot log for `recorded N sample
+change(s) made while the app was down`: a large N is either the promotion
+change that was the point of the rebuild, or a derivation that went wrong.
+
+Once the counts look right, swap, keeping the old store until the app has been
+checked against the new one:
+
+```sh
+ls data/beeline.duckdb.wal       # must not exist: a WAL left beside a store is replayed onto it
+mv -f data/beeline.duckdb data/beeline-prev-<date>.duckdb
+mv -f data/beeline-new.duckdb data/beeline.duckdb
+```
+
+Then leave maintenance mode. `private.duckdb` is untouched, and sessions
+survive, since they are keyed by the iNaturalist user, not by the person
+number a reseed redraws (beeline-ten). The overlays in `data/` replay onto the
+new store during promotion, which is what they are for. Delete old
+`beeline-prev-*` stores when the volume needs the room. Rehearse on a copy of
+the store first when the change is large: comparing the two side by side is
+how 1,019 new findings turned out to be the sandbox catching up rather than a
+regression.
+
+## Admitting a person who has no records
+
+Promotion makes people from the records, so somebody who collects nothing,
+such as an intern or a coordinator, is in no store and cannot sign in: what
+lets a person in is an iNaturalist account bound to a person. The unknown
+collectors' screen admits only somebody with records (beeline-2c3.33), so
+this goes through
+[`ingest/person-overlay.csv`](../../ingest/person-overlay.csv): `create` first,
+then the account and whatever else is true of them.
+
+```csv
+name:Nora Jacobi,create,yes,rainhead,"why they belong in the store"
+name:Nora Jacobi,inat_user_id,10206031 njacobi,rainhead,"verified against the iNat API"
+name:Nora Jacobi,admin,yes,rainhead,"why"
+```
+
+Check the iNaturalist id first (`curl -s https://api.inaturalist.org/v1/users/<login>`),
+because the id is the binding and a lookalike account has survived review
+before. Deploy, then run `pnpm person:apply` in maintenance mode. It prints
+what it applied and every row it could not resolve, it is idempotent, and the
+same rows rebuild the person after the next reseed.
 
 ## The taxonomy's reference
 
@@ -613,11 +698,9 @@ fly ssh sftp shell --app beeline
   put data/legacy/usernames.csv /app/data/legacy-<date>/usernames.csv
 ```
 
-Then rebuild from it in maintenance mode ([above](#running-a-cli-against-the-store)):
-a script in `data/` run with `nohup`, its log beside it, that copies the two
-CSVs into `data/legacy/`, runs `pnpm db:reseed` from the live store into a new
-one, and loads the pull into the new store with `pnpm legacy:load <new>
-data/legacy-<date>/occurrences.jsonl.gz` before the promotions.
-`data/reseed-2026-10-24b.sh` on the volume is the latest, with the order of
-every step and why. The whole procedure moves into this runbook with
-beeline-htcw.4.
+Then rebuild from it as in
+[re-deriving the model](#re-deriving-the-model-after-a-promotion-change), with
+two more steps in the script: copy the two CSVs into `data/legacy/` before the
+reseed, and load the pull into the new store with `pnpm legacy:load <new>
+data/legacy-<date>/occurrences.jsonl.gz` straight after it.
+`data/reseed-2026-10-24b.sh` on the volume did exactly this.

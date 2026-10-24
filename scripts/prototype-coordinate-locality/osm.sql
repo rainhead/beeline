@@ -5,12 +5,12 @@
 -- OSM reader stops early inside DuckDB. __PBF__ and __REGION__ are
 -- substituted by build.sh, once per extract.
 LOAD spatial;
-CREATE TABLE IF NOT EXISTS osm_park (region TEXT, osm_id TEXT, name TEXT, leisure TEXT, boundary TEXT, area_ha DOUBLE, geom GEOMETRY);
+CREATE TABLE IF NOT EXISTS osm_park (region TEXT, osm_id TEXT, name TEXT, leisure TEXT, boundary TEXT, area_ha DOUBLE, geom GEOMETRY, protect_class TEXT);
 DELETE FROM osm_park WHERE region = '__REGION__';
 
 CREATE TEMP TABLE want AS
 SELECT kind, id, element_at(tags, 'name')[1] AS name, element_at(tags, 'leisure')[1] AS leisure,
-       element_at(tags, 'boundary')[1] AS boundary, refs, ref_roles, ref_types
+       element_at(tags, 'boundary')[1] AS boundary, element_at(tags, 'protect_class')[1] AS protect_class, refs, ref_roles, ref_types
 FROM ST_ReadOSM('__PBF__')
 WHERE kind IN ('way', 'relation') AND element_at(tags, 'name')[1] IS NOT NULL
   AND (element_at(tags, 'leisure')[1] IN ('park', 'nature_reserve')
@@ -44,10 +44,10 @@ GROUP BY wn.way_id HAVING count(*) >= 2;
 
 INSERT INTO osm_park
 SELECT '__REGION__', concat(owner_kind, '/', owner_id), name, leisure, boundary,
-       ST_Area_Spheroid(ST_FlipCoordinates(g)) / 10000, g
+       ST_Area_Spheroid(ST_FlipCoordinates(g)) / 10000, g, protect_class
 FROM (
   SELECT p.owner_kind, p.owner_id, any_value(w.name) AS name, any_value(w.leisure) AS leisure,
-         any_value(w.boundary) AS boundary, ST_BuildArea(ST_Collect(list(l.geom))) AS g
+         any_value(w.boundary) AS boundary, any_value(w.protect_class) AS protect_class, ST_BuildArea(ST_Collect(list(l.geom))) AS g
   FROM part p
   JOIN want w ON w.kind = p.owner_kind AND w.id = p.owner_id
   JOIN way_line l ON l.way_id = p.way_id

@@ -42,9 +42,10 @@ deltas that bring an already-deployed database up to it.**
   a migration?", which the duplication above makes possible to get wrong. It
   judges only what the schema declares: a real store also holds the ingestion
   pipeline's staging tables (`ingest/*.sql`), which are nobody's drift.
-- Deployment ([the runbook](../runbooks/deploy-maderas.md),
-  `scripts/deploy-maderas.sh`) stops the service to migrate: one process owns
-  the store (ADR 0005), so there is no other moment when the file is free.
+- Deployment stops the service to migrate: one process owns the store (ADR
+  0005), so there is no other moment when the file is free. (On maderas a
+  deploy script did that; on Fly the entrypoint migrates before the app
+  starts — [the runbook](../runbooks/deploy-fly.md).)
 
 ## Consequences
 
@@ -63,7 +64,7 @@ deltas that bring an already-deployed database up to it.**
   The store already has a tool for this: `pnpm db:reseed` builds a fresh
   database from `schema/*.sql` and carries the staged sources across, so the
   model is re-derived without the column. It is the same procedure a change to
-  `ingest/` needs ([the runbook](../runbooks/deploy-maderas.md)), and it is
+  `ingest/` needs ([the runbook](../runbooks/deploy-fly.md#re-deriving-the-model-after-a-promotion-change)), and it is
   minutes of downtime rather than a migration. So: write the change in
   `schema/`, write no migration, and reseed on deploy. `--check` will report
   the extra column until then, correctly — the store really has drifted.

@@ -23,8 +23,10 @@ whether to migrate. It was not always: it used to migrate first and diff
 after, and on a store that already carried a later change by another route
 it applied two migrations and stopped at the third (beeline-736).
 
-Nothing else may hold the database open (ADR 0005), so stop the app first —
-`scripts/deploy-maderas.sh` does that around the migrate step.
+Nothing else may hold the database open (ADR 0005), so the app must not be
+running. On Fly the entrypoint migrates before it starts the app
+([`infra/fly/entrypoint.sh`](../infra/fly/entrypoint.sh)), so a deploy needs no
+step of its own.
 
 **0001–0023 are the pre-reseed epoch.** beeline-6e9 rebuilt `sample` —
 collector and atlas off the table, `sample_atlas` and
@@ -37,4 +39,4 @@ views that read `sample.collector_id`); no store will run them again — fresh
 builds and reseeded stores stamp them. A store still shaped before the epoch
 shows up in `db:migrate --check` as drift naming the sample rework, and the
 answer is the reseed recipe in
-[deploy-maderas.md](../docs/runbooks/deploy-maderas.md), not a migration.
+[deploy-fly.md](../docs/runbooks/deploy-fly.md#re-deriving-the-model-after-a-promotion-change), not a migration.

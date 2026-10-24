@@ -7,7 +7,7 @@
 # Exactly one process may hold beeline.duckdb (ADR 0005), and Fly replaces the
 # machine in place, so the store is free for the whole of this script and
 # there is no window in which a second process could open it — the thing
-# scripts/deploy-maderas.sh has to stop the service to achieve.
+# the deploy script for maderas had to stop the service to achieve.
 #
 # NOTHING HERE MAY INVOKE pnpm. corepack ships shims, not pnpm itself, so the
 # first `pnpm` in a container that has not run one downloads it from

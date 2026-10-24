@@ -10,7 +10,7 @@ import type { DeterminedOnPrecision,
   SampleKind,
 } from "../model.js";
 import { labelName } from "../person-name.js";
-import type { ListedCollector } from "./listings.js";
+import { ownSamplesSql, placeColumns, withheld, type ListedCollector, type Reader } from "./listings.js";
 import { readSampleChanges, sampleHistory, SAMPLE_STATE_SQL, type SampleChange } from "../sample-change.js";
 
 /**
@@ -32,12 +32,15 @@ import { readSampleChanges, sampleHistory, SAMPLE_STATE_SQL, type SampleChange }
  * the other to be read alone — a specimen without where and when it was
  * collected is not a record of anything.
  *
- * Reachability is the listings' rule with no filters left: a volunteer
- * reaches their own records and nothing else, staff reach everything, and
- * "their own" follows the acting-for switch because the caller passes the
- * effective person (src/app/acting.ts). Unreachable and non-existent are the
- * same answer — null, rendered as a 404 — so a URL cannot be probed to learn
- * that a record exists.
+ * Everyone signed in reaches every record (Peter, 2026-10-23, beeline-20w3),
+ * and what a page leaves out is the listings' rule: where a sample's
+ * observation is obscured or private on iNaturalist and the reader is neither
+ * staff nor one of its collectors, its location is withheld — coordinates,
+ * elevation, locality, what the observation's place guess says, any staff
+ * override of them, and for a private observation the county; not the
+ * observer's notes, which iNaturalist shows to everyone
+ * (src/app/listings.ts `withheld`). "One of its collectors" follows the
+ * acting-for switch because the caller passes the reader (src/app/acting.ts).
  */
 
 /**
@@ -111,6 +114,13 @@ export interface SampleDetail {
   elevation_stale: boolean;
   /** Whether the viewer is one of this sample's collectors. */
   mine: boolean;
+  /**
+   * The location is somebody else's to see, so everything that says where it
+   * was collected below the county (or, for a private observation, the
+   * state) is null here, whatever the store holds. The observer's notes
+   * are not: iNaturalist shows them to everyone.
+   */
+  location_withheld: boolean;
   /** At least one label on paper (schema/155): the locality no longer follows upstream. */
   printed: boolean;
   /**
@@ -203,20 +213,6 @@ export interface SampleSpecimenRow {
   is_expert: boolean | null;
 }
 
-/**
- * The reachability gate, spelled once. A volunteer reaches a sample they
- * collected — any position on the list, not only the numbering it files
- * under (beeline-77j) — and staff reach every sample, which is the scope
- * control's `all` with nothing else to choose. Applied in the query rather
- * than after it, so an unreachable sample is indistinguishable from one that
- * does not exist.
- */
-const reachable = (personId: number, admin: boolean) =>
-  admin
-    ? sql<boolean>`TRUE`
-    : sql<boolean>`EXISTS (SELECT 1 FROM sample_collector rc
-                           WHERE rc.sample_id = s.entity_id AND rc.person_id = ${personId})`;
-
 /** Whether the viewer collected it — the gate for editing, asked separately
  * because an admin reaches a sample without being on it. */
 const isMine = (personId: number) => sql<boolean>`EXISTS (
@@ -224,10 +220,11 @@ const isMine = (personId: number) => sql<boolean>`EXISTS (
   WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})`;
 
 /** The columns every sample block shows, at either grain. */
-const sampleColumns = (personId: number) => sql`
+const sampleColumns = (personId: number, reader: Reader) => sql`
   s.entity_id AS sample_id,
   s.kind, s.sample_number, s.date_start, s.date_end, s.specimen_count,
-  s.locality, s.county, s.state_province, s.country,
+  ${placeColumns(reader).locality} AS locality, ${placeColumns(reader).county} AS county,
+  s.state_province, s.country,
   s.protocol, s.sampling_effort,
   s.inat_observation_id, s.host_inat_taxon_id, s.host_name_as_observed, s.host_rank,
   s.geoprivacy, s.taxon_geoprivacy,
@@ -241,7 +238,8 @@ const sampleColumns = (personId: number) => sql`
   -- their record was derived from — and where a locality was refused for
   -- being too coarse, it is the string they have to go and fix. Private
   -- first, as everything that reads a place_guess does.
-  coalesce(nullif(trim(f.private_place_guess), ''), nullif(trim(f.place_guess), '')) AS observation_place_guess,
+  CASE WHEN ${withheld(reader)} THEN NULL
+       ELSE coalesce(nullif(trim(f.private_place_guess), ''), nullif(trim(f.place_guess), '')) END AS observation_place_guess,
   -- The observer's own notes, where no observation field held what they had
   -- to say. Read through the observation link rather than copied onto the
   -- sample: they are not on a label, so the post-print lock has nothing to
@@ -255,12 +253,20 @@ const sampleColumns = (personId: number) => sql`
   lo.sample_id IS NOT NULL AS location_overridden,
   lob.display_name AS location_set_by, lo.reason AS location_reason,
   ldv.observation_latitude AS location_observation_latitude, ldv.observation_longitude AS location_observation_longitude,
-  ${isMine(personId)} AS mine`;
+  ${isMine(personId)} AS mine,
+  ${withheld(reader)} AS location_withheld`;
 
-const SAMPLE_JOINS = sql`
+/**
+ * Joins `own` and `seen` for the location rule. The location row is joined whole and
+ * blanked in `hydrate`: a condition in its ON that reads `own` made the
+ * specimen page take 8.6 s on the dev store.
+ */
+const sampleJoins = (reader: Reader) => sql`
   FROM sample s
   LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
   LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
+  LEFT JOIN ${ownSamplesSql(reader)} own ON own.sample_id = s.entity_id
+  LEFT JOIN observation_field seen ON seen.inat_id = s.inat_observation_id
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
   LEFT JOIN elevation_source es ON es.entity_id = loc.elevation_source_id
   LEFT JOIN observation_field f ON f.inat_id = s.inat_observation_id
@@ -301,6 +307,7 @@ async function localityObservationNow(db: Kysely<Database>, sampleId: number): P
 }
 
 async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDetail> {
+  const hidden = Boolean(raw.location_withheld);
   const {
     override_locality,
     override_observed,
@@ -315,7 +322,8 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
   } = raw;
   return {
     ...row,
-    location_override: !location_overridden
+    // The overrides say where too: staff set them to a point or a place name.
+    location_override: hidden || !location_overridden
       ? null
       : {
           set_by: location_set_by,
@@ -326,7 +334,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
               : { latitude: Number(location_observation_latitude), longitude: Number(location_observation_longitude) },
         },
     locality_override:
-      override_locality === null
+      hidden || override_locality === null
         ? null
         : {
             locality: override_locality,
@@ -338,12 +346,30 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
     printed: Boolean(row.printed),
     sample_id: Number(row.sample_id),
     specimen_count: Number(row.specimen_count),
-    latitude: num(row.latitude),
-    longitude: num(row.longitude),
-    coordinate_uncertainty_m: num(row.coordinate_uncertainty_m),
-    elevation_m: num(row.elevation_m),
-    elevation_stale: Boolean(row.elevation_stale),
+    ...(hidden
+      ? {
+          latitude: null,
+          longitude: null,
+          coordinate_uncertainty_m: null,
+          location_source: null,
+          elevation_m: null,
+          elevation_source: null,
+          elevation_file: null,
+          elevation_stale: false,
+          // Not the observer's notes: iNaturalist shows the description to
+          // everyone, and though it is where a volunteer writes the spot
+          // `place_guess` never had, nobody has a better rule (Peter,
+          // 2026-10-23).
+        }
+      : {
+          latitude: num(row.latitude),
+          longitude: num(row.longitude),
+          coordinate_uncertainty_m: num(row.coordinate_uncertainty_m),
+          elevation_m: num(row.elevation_m),
+          elevation_stale: Boolean(row.elevation_stale),
+        }),
     mine: Boolean(row.mine),
+    location_withheld: hidden,
     collectors: await collectorsOfSample(db, Number(row.sample_id)),
   };
 }
@@ -361,35 +387,35 @@ async function collectorsOfSample(db: Kysely<Database>, sampleId: number): Promi
   return rows.map((r) => ({ display: r.display_name, label: labelName(r), orcid: r.orcid }));
 }
 
-/** One sample, or null when this person cannot reach it (or it isn't there). */
+/** One sample, as this reader may see it, or null when there is no such sample. */
 export async function loadSample(
   db: Kysely<Database>,
   sampleId: number,
   personId: number,
-  admin: boolean,
+  reader: Reader,
 ): Promise<SampleDetail | null> {
   if (!Number.isSafeInteger(sampleId) || sampleId <= 0) return null;
   const found = await sql<RawSample>`
-    SELECT ${sampleColumns(personId)} ${SAMPLE_JOINS}
-    WHERE s.entity_id = ${sampleId} AND ${reachable(personId, admin)}`.execute(db);
+    SELECT ${sampleColumns(personId, reader)} ${sampleJoins(reader)}
+    WHERE s.entity_id = ${sampleId}`.execute(db);
   const row = found.rows[0];
   return row === undefined ? null : hydrate(db, row);
 }
 
-/** One specimen and the sample it came out of, under the same gate. */
+/** One specimen and the sample it came out of, under the same rule. */
 export async function loadSpecimen(
   db: Kysely<Database>,
   specimenId: number,
   personId: number,
-  admin: boolean,
+  reader: Reader,
 ): Promise<SpecimenDetail | null> {
   if (!Number.isSafeInteger(specimenId) || specimenId <= 0) return null;
   const found = await sql<RawSample & { specimen_id: number; specimen_number: number; field_number: string | null }>`
     SELECT sp.entity_id AS specimen_id, sp.specimen_number, sp.field_number,
-           ${sampleColumns(personId)}
-    ${SAMPLE_JOINS}
+           ${sampleColumns(personId, reader)}
+    ${sampleJoins(reader)}
     JOIN specimen sp ON sp.sample_id = s.entity_id
-    WHERE sp.entity_id = ${specimenId} AND ${reachable(personId, admin)}`.execute(db);
+    WHERE sp.entity_id = ${specimenId}`.execute(db);
   const row = found.rows[0];
   if (row === undefined) return null;
   return {
@@ -585,4 +611,21 @@ export async function sampleChangeHistory(
     console.warn(`could not read the sample change log: ${(err as Error).message}`);
     return [];
   }
+}
+
+/**
+ * A finding's details quote the values it is about — a locality too long
+ * for a label, a point outside its state — so on a sample whose location is
+ * withheld the rule and its advice stay and the quotation goes.
+ */
+export function visibleFindings(findings: RecordFinding[], sample: SampleDetail): RecordFinding[] {
+  return sample.location_withheld ? findings.map((f) => ({ ...f, details: null })) : findings;
+}
+
+/** The history of where a sample was is part of where it was. */
+export function visibleHistory(changes: SampleChange[], sample: SampleDetail): SampleChange[] {
+  if (!sample.location_withheld) return changes;
+  const hidden = new Set<string>(["location", "location_source", "locality"]);
+  if (sample.geoprivacy === "private" || sample.taxon_geoprivacy === "private") hidden.add("county");
+  return changes.filter((c) => !hidden.has(c.field));
 }

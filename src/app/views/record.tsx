@@ -53,7 +53,7 @@ const orUnknown = (m: Messages, value: string | null): Child => (value === null 
 
 /** The staff note, on a record the viewer did not collect. */
 export function RecordScopeNote({ m, mine }: { m: Messages; mine: boolean }) {
-  return mine ? null : <Meta block>{m.record.staffNote}</Meta>;
+  return mine ? null : <Meta block>{m.record.notYours}</Meta>;
 }
 
 /**
@@ -161,6 +161,16 @@ export function WhereCollected({ m, sample, admin = false }: { m: Messages; samp
   // and cannot print, and only a person can put the true point in
   // (beeline-942). A sample with no observation is not offered it.
   const staff = admin && sample.inat_observation_id !== null ? <StaffCoordinates m={m} sample={sample} /> : null;
+  // Staff never reach this: a withheld location is a volunteer reading
+  // somebody else's protected sample (src/app/listings.ts `withheld`).
+  if (sample.location_withheld) {
+    return (
+      <>
+        <h2>{w.heading}</h2>
+        <Meta block>{w.withheld({ geoprivacy: sample.geoprivacy, taxonGeoprivacy: sample.taxon_geoprivacy })}</Meta>
+      </>
+    );
+  }
   if (sample.latitude === null || sample.longitude === null) {
     return (
       <>

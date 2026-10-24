@@ -76,15 +76,13 @@ export const taxonHref = (taxon: TaxonRef): string =>
   `/taxonomy/${encodeURIComponent(taxon.rank)}/${encodeURIComponent(taxon.scientific_name)}`;
 
 /**
- * The specimens under a node, on the specimen listing. For staff it names
- * every record, as the count beside it does: left to itself the listing
- * falls back to the scope a staff member last chose, so a link from a count of
- * everyone's specimens could land on "my records" and show a different
- * number. A volunteer can only ever see their own, so their link names
- * nothing and the listing's own scope applies.
+ * The specimens under a node, on the specimen listing. It names every
+ * record, as the count beside it does: left to itself the listing falls back
+ * to the scope its reader last chose, so a link from a count of everyone's
+ * specimens could land on "my records" and show a different number.
  */
-export const taxonSpecimensHref = (taxon: TaxonRef, { all = false }: { all?: boolean } = {}): string =>
-  `/specimens?${new URLSearchParams({ taxon: taxon.scientific_name, ...(all ? { scope: ALL } : {}) }).toString()}`;
+export const taxonSpecimensHref = (taxon: TaxonRef): string =>
+  `/specimens?${new URLSearchParams({ taxon: taxon.scientific_name, scope: ALL }).toString()}`;
 
 /** ITIS's own report for a TSN. */
 export const itisReportHref = (tsn: bigint | number): string =>

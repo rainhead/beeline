@@ -1,4 +1,4 @@
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type RawBuilder } from "kysely";
 import { reportError } from "./error-reporting.js";
 import type { CsvTiming } from "./request-timing.js";
 import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
@@ -9,22 +9,25 @@ import { orcidUrl } from "../orcid.js";
  * Browsing the collection: the query layer behind /samples and /specimens.
  *
  * The QC home answers "what needs my attention"; these listings answer
- * "what is there" — for a volunteer, everything they collected; for staff
- * helping someone, an atlas or the whole program. Scope, filters, and page
- * all live in the query string, so a filtered listing is a URL a staff
- * member can paste into an email (beeline-2c3.21).
+ * "what is there" — their own collecting by default, and an atlas or the
+ * whole program for anyone who asks, volunteers included: a volunteer can
+ * see every record, at minimum what iNaturalist already shows them (Peter,
+ * 2026-10-23, beeline-20w3). Scope, filters, and page all live in the query
+ * string, so a filtered listing is a URL anyone can paste into an email
+ * (beeline-2c3.21).
  *
- * Coordinates ride along. They are the collector's own — recorded on their
- * own observation, printed on their own labels — and CONTEXT.md's stance is
- * that anyone trusted with this store is trusted with them; the per-atlas
- * question (docs/questions.md) is about revealing taxon-obscured coordinates
- * *downstream*, on labels and in Ecdysis/GBIF exports, not about showing a
- * participant their own data. What a row carries travels with it: a record
- * whose coordinates are obscured upstream says so in its own columns, so
- * nothing is republished in ignorance.
- *
- * The one thing this module does not do is decide who may use which scope —
- * that gate is the caller's, applied at parse time.
+ * Coordinates ride along, with one exception, which is what iNaturalist
+ * itself withholds. Where a sample's observation is obscured or private
+ * there — the observer's own geoprivacy, or a host plant iNaturalist treats
+ * as rare — somebody who is neither staff nor one of its collectors gets no
+ * location for it: no coordinates, uncertainty or elevation, no locality,
+ * and for a private observation no county. iNaturalist's own shifted point
+ * is not offered in their place; nobody has a use for it yet. The rule is
+ * applied in the query (`withheld`), not in the view, so the place filter
+ * and the place sort read the hidden values too and a search cannot find a
+ * record by a locality it would not show. What a row carries otherwise
+ * travels with it: a record whose coordinates are obscured upstream says so
+ * in its own columns, so nothing is republished in ignorance.
  */
 
 /** Rows per page. Big enough to scan, small enough to render fast. */
@@ -60,9 +63,9 @@ export function exportFilename(base: string, at: Date, extension = "csv"): strin
   return `${base}-${p.year}-${p.month}-${p.day}-${p.hour}${p.minute}${p.second}.${extension}`;
 }
 
-/** The scope every volunteer has, and the only one they have. */
+/** The viewer's own collecting: where a listing starts. */
 export const MINE = "mine";
-/** Every atlas at once — the staff escape hatch for cross-atlas questions. */
+/** Every atlas at once. */
 export const ALL = "all";
 /**
  * Collected somewhere no member atlas covers: Nevada, Kansas, the Yukon —
@@ -76,7 +79,7 @@ export const OUTSIDE = "outside";
  * Whose records, by where their collector belongs — the other axis, and it
  * genuinely is a second one. Scope asks where a sample was collected; this
  * asks who collected it, and the two disagree for every OBA volunteer's
- * Nevada trip. Staff-only, like the collector box, and for the same reason.
+ * Nevada trip.
  */
 export type MemberFilter = string;
 /** Nobody has recorded where this collector belongs — not "no atlas applies". */
@@ -154,9 +157,8 @@ export interface ListingQuery {
   /** Matches any of locality, county, state/province, country. */
   place: string;
   /**
-   * A collector's name or iNat login — staff only, because a volunteer's
-   * listing is already one collector's. Matches anyone on the sample, not
-   * just its primary (beeline-77j).
+   * A collector's name or iNat login. Matches anyone on the sample, not just
+   * its primary (beeline-77j).
    */
   collector: string;
   /**
@@ -213,22 +215,20 @@ function isoDay(value: string): string | null {
 const text = (value: string | null) => (value ?? "").trim().slice(0, 100);
 
 /**
- * Query string → a query, with the scope gate applied here rather than in
- * the route: a parsed query is already one this session is allowed to run.
- * `preferred` is the scope this person last chose (remembered in a cookie),
- * used only when the URL doesn't say.
+ * Query string → a query. Every scope is open to everyone; what a scope
+ * cannot show somebody is decided row by row, by `withheld`. `preferred` is
+ * the scope this person last chose (remembered in a cookie), used only when
+ * the URL doesn't say.
  */
 export function parseListingQuery(
   params: URLSearchParams,
-  opts: { admin: boolean; atlasCodes: readonly string[]; preferred?: string | null },
+  opts: { atlasCodes: readonly string[]; preferred?: string | null },
 ): ListingQuery {
   const requested = params.get("scope") ?? opts.preferred ?? MINE;
-  const permitted =
-    opts.admin && (requested === ALL || requested === OUTSIDE || opts.atlasCodes.includes(requested));
+  const permitted = requested === ALL || requested === OUTSIDE || opts.atlasCodes.includes(requested);
   const member = params.get("member") ?? "";
   const memberPermitted =
-    opts.admin &&
-    (member === PROGRAM_MEMBERSHIP || member === MEMBER_UNRECORDED || opts.atlasCodes.includes(member));
+    member === PROGRAM_MEMBERSHIP || member === MEMBER_UNRECORDED || opts.atlasCodes.includes(member);
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
   const qc = params.get("qc") ?? "";
@@ -244,8 +244,7 @@ export function parseListingQuery(
     from: isoDay(from),
     to: isoDay(to),
     place: text(params.get("place")),
-    // Scoped like the scope control: only staff read beyond themselves.
-    collector: opts.admin ? text(params.get("collector")) : "",
+    collector: text(params.get("collector")),
     member: memberPermitted ? member : MEMBER_ANY,
     taxon: text(params.get("taxon")),
     host: text(params.get("host")),
@@ -269,7 +268,7 @@ export function listingParams(query: ListingQuery, overrides: Partial<ListingQue
   const params = new URLSearchParams();
   // Defaults stay out of the URL, so the plain path is the plain listing —
   // with one exception, because scope has no single default. MINE is the
-  // default for a volunteer, who cannot reach anything else; for staff,
+  // default for somebody who has never chosen; after that,
   // parseListingQuery falls back to the remembered scope cookie, so a link
   // that omits scope resolves to whatever that person last browsed. Dropping
   // an explicitly requested MINE therefore turned the QC home's "1 older
@@ -374,6 +373,8 @@ export interface SampleRow {
   location_source: string | null;
   geoprivacy: string | null;
   taxon_geoprivacy: string | null;
+  /** The location is somebody else's to see (`withheld`): the place and coordinates here are what is left. */
+  location_withheld: boolean;
   blocking: number;
   warning: number;
   /** Whether the viewer is one of this sample's collectors. */
@@ -429,6 +430,8 @@ export interface SpecimenRow {
   location_source: string | null;
   geoprivacy: string | null;
   taxon_geoprivacy: string | null;
+  /** As on SampleRow. */
+  location_withheld: boolean;
 }
 
 /**
@@ -499,7 +502,7 @@ const PRIMARY_COLLECTOR_SORT = sql`(SELECT concat_ws(' ', p.family_name, p.given
  * stable across equal values, and a key a listing does not have falls back
  * to the default rather than erroring — the URL is typed by hand sometimes.
  */
-export function sampleOrder(query: ListingQuery) {
+export function sampleOrder(query: ListingQuery, p: PlaceColumns) {
   const dir = query.dir === "desc" ? sql`DESC` : sql`ASC`;
   const nulls = sql`NULLS LAST`;
   const byDate = sql`s.date_start ${dir}, ${sampleNumber(query.dir)}`;
@@ -509,7 +512,7 @@ export function sampleOrder(query: ListingQuery) {
     case "collector":
       return sql`${PRIMARY_COLLECTOR_SORT} ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     case "place":
-      return sql`lower(s.locality) ${dir} ${nulls}, lower(s.county) ${dir} ${nulls}, s.state_province ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+      return sql`lower(${p.locality}) ${dir} ${nulls}, lower(${p.county}) ${dir} ${nulls}, s.state_province ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     case "host":
       return sql`lower(s.host_name_as_observed) ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     case "specimens":
@@ -524,7 +527,7 @@ export function sampleOrder(query: ListingQuery) {
   }
 }
 
-export function specimenOrder(query: ListingQuery) {
+export function specimenOrder(query: ListingQuery, p: PlaceColumns) {
   const dir = query.dir === "desc" ? sql`DESC` : sql`ASC`;
   const nulls = sql`NULLS LAST`;
   const byDate = sql`s.date_start ${dir}, ${sampleNumber(query.dir)}`;
@@ -536,7 +539,7 @@ export function specimenOrder(query: ListingQuery) {
     case "collector":
       return sql`${PRIMARY_COLLECTOR_SORT} ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     case "place":
-      return sql`lower(s.locality) ${dir} ${nulls}, lower(s.county) ${dir} ${nulls}, s.state_province ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+      return sql`lower(${p.locality}) ${dir} ${nulls}, lower(${p.county}) ${dir} ${nulls}, s.state_province ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     case "host":
       return sql`lower(s.host_name_as_observed) ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     case "determination":
@@ -611,7 +614,82 @@ const QC_COUNT_SELECTIONS = [
 ] as const;
 
 /** The place columns as one haystack: a person types a place, not a column. */
-const placeHaystack = sql<string>`lower(concat_ws(' ', s.locality, s.county, s.state_province, s.country))`;
+/**
+ * Who is reading, as far as the location rule cares: staff, or whose
+ * collecting is theirs — the signed-in person, and the person they act for
+ * when the switch is on, since a delegate reads a household's records as the
+ * household does. Impersonation passes only the person impersonated, so the
+ * view stays theirs.
+ */
+export interface Reader {
+  staff: boolean;
+  personIds: readonly number[];
+}
+
+/** Staff: everything, every location. For the program archives and the jobs, which are staff's. */
+export const STAFF_READER: Reader = { staff: true, personIds: [] };
+
+/**
+ * Whether this sample's location is not the reader's to see: iNaturalist
+ * obscures or hides it from everyone but its observer — or it cites an
+ * observation Beeline has never read, so nobody here knows whether it does —
+ * and the reader is neither staff nor one of its collectors. The second case
+ * is the legacy import's: 1,537 samples on the dev store cite an observation
+ * no sync has fetched, their geoprivacy columns blank because nothing wrote
+ * them, and at the corpus's rate a dozen or more of them are protected on
+ * iNaturalist. A sample citing no observation has no setting to know.
+ *
+ * Reads `own`, the reader's own samples, and `seen`, the observation's
+ * stored projection, which every query that uses it joins first
+ * (`ownSamples`, and `observation_field` as `seen`).
+ */
+export function withheld(reader: Reader) {
+  return reader.staff
+    ? sql<boolean>`FALSE`
+    : sql<boolean>`((s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL
+                     OR (s.inat_observation_id IS NOT NULL AND seen.inat_id IS NULL))
+                    AND own.sample_id IS NULL)`;
+}
+
+/** The reader's own samples, as SQL to join as `own`, for a query written in SQL. */
+export const ownSamplesSql = (reader: Reader) =>
+  sql`(SELECT DISTINCT oc.sample_id FROM sample_collector oc
+       WHERE oc.person_id IN (${sql.join((reader.personIds.length === 0 ? [-1] : reader.personIds).map((id) => sql`${id}`))}))`;
+
+/** The reader's own samples, one row each, joined as `own`. */
+const ownSamples = (db: Kysely<Database>, reader: Reader) =>
+  db
+    .selectFrom("sample_collector as oc")
+    .where("oc.person_id", "in", reader.personIds.length === 0 ? [-1] : [...reader.personIds])
+    .select("oc.sample_id")
+    .distinct()
+    .as("own");
+
+/**
+ * The place a reader may see: a withheld sample keeps its state and country,
+ * as iNaturalist's public view of an obscured observation does, and its
+ * county unless the observation is private, where iNaturalist shows nothing.
+ */
+export interface PlaceColumns {
+  locality: RawBuilder<string | null>;
+  county: RawBuilder<string | null>;
+}
+
+export function placeColumns(reader: Reader): PlaceColumns {
+  const hidden = withheld(reader);
+  return {
+    locality: sql<string | null>`CASE WHEN ${hidden} THEN NULL ELSE s.locality END`,
+    county: sql<string | null>`CASE WHEN ${hidden} AND (s.geoprivacy = 'private' OR s.taxon_geoprivacy = 'private')
+                                    THEN NULL ELSE s.county END`,
+  };
+}
+
+/** A location column as the reader may see it: nothing, where the location is withheld. */
+const located = <T>(hidden: RawBuilder<boolean>, column: RawBuilder<T>) =>
+  sql<T | null>`CASE WHEN ${hidden} THEN NULL ELSE ${column} END`;
+
+const placeHaystack = (p: PlaceColumns) =>
+  sql<string>`lower(concat_ws(' ', ${p.locality}, ${p.county}, s.state_province, s.country))`;
 
 /**
  * Words that only say what kind of place the next one is. A county is stored
@@ -632,12 +710,12 @@ export function placeWords(term: string): string[] {
   return named.length > 0 ? named : words;
 }
 
-function placeMatches(term: string) {
+function placeMatches(term: string, p: PlaceColumns) {
   const words = placeWords(term);
   // A search of only commas names no place; it narrows nothing.
   if (words.length === 0) return sql<boolean>`TRUE`;
   return sql<boolean>`(${sql.join(
-    words.map((w) => sql`${placeHaystack} LIKE ${like(w)}`),
+    words.map((w) => sql`${placeHaystack(p)} LIKE ${like(w)}`),
     sql` AND `,
   )})`;
 }
@@ -670,14 +748,25 @@ export async function listSamples(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,
+  reader: Reader,
   opts: ListingPageOptions = {},
 ): Promise<Page<SampleRow>> {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
+  const hidden = withheld(reader);
+  const place = placeColumns(reader);
   let base = db
     .selectFrom("sample as s")
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("atlas as a", "a.entity_id", "sa.atlas_id")
+    // Only `withheld` reads these, and for staff it reads nothing.
+    .$if(!reader.staff, (qb) =>
+      qb
+        .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
+        .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+    )
     // One row per sample (it is the PK), so this cannot fan the listing out.
+    // Joined whole and blanked in the select (`located`): a condition in the
+    // ON that reads `own` cost a volunteer's listing 7.5 s against 0.1 s.
     .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
     .leftJoin(
       (eb) =>
@@ -711,7 +800,7 @@ export async function listSamples(
   // start belongs in a window that names its end.
   if (query.from !== null) base = base.where("s.date_end", ">=", asDate(query.from));
   if (query.to !== null) base = base.where("s.date_start", "<=", asDate(query.to));
-  if (query.place !== "") base = base.where(placeMatches(query.place));
+  if (query.place !== "") base = base.where(placeMatches(query.place, place));
   if (query.collector !== "") base = base.where(collectedBy(query.collector));
   if (query.member !== MEMBER_ANY) base = base.where(collectedByMember(query.member));
   if (query.q !== "") {
@@ -788,8 +877,8 @@ export async function listSamples(
         "s.kind",
         "s.date_start",
         "s.date_end",
-        "s.locality",
-        "s.county",
+        place.locality.as("locality"),
+        place.county.as("county"),
         "s.state_province",
         "s.country",
         "s.protocol",
@@ -798,19 +887,20 @@ export async function listSamples(
         "a.code as atlas_code",
         "s.host_name_as_observed as host_name",
         "s.host_rank",
-        "loc.latitude",
-        "loc.longitude",
-        "loc.coordinate_uncertainty_m",
-        "loc.elevation_m",
-        "loc.source as location_source",
+        located(hidden, sql<number | null>`loc.latitude`).as("latitude"),
+        located(hidden, sql<number | null>`loc.longitude`).as("longitude"),
+        located(hidden, sql<number | null>`loc.coordinate_uncertainty_m`).as("coordinate_uncertainty_m"),
+        located(hidden, sql<number | null>`loc.elevation_m`).as("elevation_m"),
+        located(hidden, sql<string | null>`loc.source`).as("location_source"),
         "s.geoprivacy",
         "s.taxon_geoprivacy",
+        hidden.as("location_withheld"),
         blockingCount.as("blocking"),
         warningCount.as("warning"),
         sql<boolean>`EXISTS (SELECT 1 FROM sample_collector mine
                              WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})`.as("mine"),
       ])
-      .orderBy(sampleOrder(query))
+      .orderBy(sampleOrder(query, place))
       .orderBy("s.entity_id")
       .limit(limit)
       .offset(offset)
@@ -830,14 +920,23 @@ export async function listSpecimens(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,
+  reader: Reader,
   opts: ListingPageOptions = {},
 ): Promise<Page<SpecimenRow>> {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
+  const hidden = withheld(reader);
+  const place = placeColumns(reader);
   let base = db
     .selectFrom("specimen as sp")
     .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("atlas as a", "a.entity_id", "sa.atlas_id")
+    // Only `withheld` reads these, and for staff it reads nothing.
+    .$if(!reader.staff, (qb) =>
+      qb
+        .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
+        .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+    )
     .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
     .leftJoin(
       (eb) =>
@@ -873,7 +972,7 @@ export async function listSpecimens(
   }
   if (query.from !== null) base = base.where("s.date_end", ">=", asDate(query.from));
   if (query.to !== null) base = base.where("s.date_start", "<=", asDate(query.to));
-  if (query.place !== "") base = base.where(placeMatches(query.place));
+  if (query.place !== "") base = base.where(placeMatches(query.place, place));
   if (query.collector !== "") base = base.where(collectedBy(query.collector));
   if (query.member !== MEMBER_ANY) base = base.where(collectedByMember(query.member));
   if (query.q !== "") {
@@ -915,8 +1014,8 @@ export async function listSpecimens(
         "s.sample_number",
         "s.date_start",
         "s.date_end",
-        "s.locality",
-        "s.county",
+        place.locality.as("locality"),
+        place.county.as("county"),
         "s.state_province",
         "s.country",
         "s.protocol",
@@ -936,17 +1035,18 @@ export async function listSpecimens(
         "d.is_expert",
         "d.determined_on",
         "d.determined_on_precision",
-        "loc.latitude",
-        "loc.longitude",
-        "loc.coordinate_uncertainty_m",
-        "loc.elevation_m",
-        "loc.source as location_source",
+        located(hidden, sql<number | null>`loc.latitude`).as("latitude"),
+        located(hidden, sql<number | null>`loc.longitude`).as("longitude"),
+        located(hidden, sql<number | null>`loc.coordinate_uncertainty_m`).as("coordinate_uncertainty_m"),
+        located(hidden, sql<number | null>`loc.elevation_m`).as("elevation_m"),
+        located(hidden, sql<string | null>`loc.source`).as("location_source"),
         "s.geoprivacy",
         "s.taxon_geoprivacy",
+        hidden.as("location_withheld"),
         sql<string | null>`coalesce(det.display_name, d.determiner_name)`.as("determiner"),
         "det_orcid.orcid as determiner_orcid",
       ])
-      .orderBy(specimenOrder(query))
+      .orderBy(specimenOrder(query, place))
       .orderBy("sp.sample_id")
       .orderBy("sp.specimen_number")
       .limit(limit)

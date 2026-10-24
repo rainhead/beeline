@@ -461,26 +461,26 @@ export const en = {
     },
 
     /**
-     * Whose records a listing shows: a three-way toggle for staff — mine, my
-     * atlas, everything (Peter, 2026-09-16) — and nothing for a volunteer,
-     * whose listing is their own.
+     * Whose records a listing shows: a three-way toggle — mine, my atlas,
+     * everything (Peter, 2026-09-16) — for everyone since volunteers could
+     * see every record (2026-10-23).
      */
     scope: {
       label: "Show",
       mine: "My records",
       atlasRecords: (atlas: string) => `${atlas} records`,
       all: "All records",
-      /** Says plainly that this is more than the viewer's own collecting. */
-      staffNote: (what: string) => `Staff view: ${what}. Volunteers only ever see their own records here.`,
       /**
        * Collecting outside the six is ordinary, not an error, and the label
        * has to sound like it (beeline-lcl).
        */
       outside: "Outside the atlases",
-      staffNoteAll: "every atlas",
-      staffNoteOutside: "everywhere no member atlas reaches",
-      staffNoteAtlas: (atlas: string) => `the ${atlas}`,
+      /** Above a listing of other people's records, for anyone but staff. */
+      withheldNote:
+        "Where somebody's observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected, as on iNaturalist — and the same where Beeline has not yet read the observation, so cannot tell.",
     },
+    /** In a Place cell whose locality, and perhaps county, is somebody else's to see. */
+    locationHidden: "location hidden",
 
     filters: {
       search: "Search",
@@ -563,8 +563,8 @@ export const en = {
     csv: {
       download: "Download CSV",
       note:
-        "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns. " +
-        "Where iNaturalist obscures a record, its own columns say so — worth a look before anything is republished.",
+        "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns, " +
+        "less any location hidden here. Where iNaturalist obscures a record, its own columns say so — worth a look before anything is republished.",
     },
   },
 
@@ -648,7 +648,7 @@ export const en = {
         reconcile: "found at startup",
       },
     },
-    staffNote: "Staff view: this is not one of your own records.",
+    notYours: "This is not one of your own records.",
 
     sample: {
       title: (sampleNumber: string) => `Sample ${sampleNumber}`,
@@ -754,6 +754,18 @@ export const en = {
 
       where: {
         heading: "Where it was collected",
+        /**
+         * Said instead of the coordinates, the elevation and the locality on
+         * somebody else's sample whose observation iNaturalist keeps from
+         * everyone but its observer — and which of the two kept it, since
+         * one is the collector's choice and the other is about a rare plant.
+         */
+        withheld: (why: { geoprivacy: string | null; taxonGeoprivacy: string | null }) =>
+          why.geoprivacy === null && why.taxonGeoprivacy === null
+            ? "Beeline has not read this sample's observation from iNaturalist, so it cannot tell whether the collector keeps its location private there. Until it can, only its collectors and staff see where it was collected."
+            : why.geoprivacy !== null
+            ? `The collector keeps this observation's location ${why.geoprivacy === "private" ? "private" : "obscured"} on iNaturalist, so only its collectors and staff see where it was collected.`
+            : `iNaturalist ${why.taxonGeoprivacy === "private" ? "hides" : "obscures"} this observation's location because its host plant is rare, so only its collectors and staff see where it was collected.`,
         coordinates: "Coordinates",
         /**
          * Absence is a statement here, not a blank: shifted coordinates are
@@ -1207,7 +1219,6 @@ export const en = {
     determinedHere: (count: number, rank: string) =>
       `Counted by determination of record, including everything filed below. ${n(count)} ${count === 1 ? "is" : "are"} determined to this ${rank} and no finer.`,
     seeSpecimens: "See these specimens",
-    seeYourSpecimens: "See your specimens",
     below: "Filed below",
     nothingBelow: "Nothing is filed below this name.",
     /** One name's standing, said in full on its own page. */

@@ -58,6 +58,22 @@ import {
  * off ten controls' states.
  */
 
+/**
+ * A row's place, and where its locality is somebody else's to see, a word
+ * saying so — so a county standing alone reads as hidden, not as all that
+ * was recorded.
+ */
+function PlaceCell({ m, row }: { m: Messages; row: SampleRow | SpecimenRow }) {
+  const place = m.format.place([row.locality, row.county, row.state_province]);
+  if (!row.location_withheld) return <OrAbsent value={place} label={m.absence.notRecorded} />;
+  if (place === "") return <Absent label={m.listings.locationHidden} spelled />;
+  return (
+    <>
+      {place} · <Meta>{m.listings.locationHidden}</Meta>
+    </>
+  );
+}
+
 /** How a listing describes itself, given who is looking and at what. */
 function lede(
   copy: { ledeMine: string; ledeAtlas: (atlas: string) => string; ledeAll: string; ledeOutside: string },
@@ -71,9 +87,8 @@ function lede(
 }
 
 /**
- * Whose records: mine, my atlas's, everybody's. Staff only — a volunteer's
- * listing is their own and offers no way out of it — and two-way for a
- * staff member who belongs to no atlas. Other atlases, and the ground
+ * Whose records: mine, my atlas's, everybody's — for everyone, and two-way
+ * for somebody who belongs to no atlas. Other atlases, and the ground
  * outside all of them, are reached through the Atlas column's menu; a scope
  * chosen that way shows as a pill instead of a position here.
  */
@@ -106,16 +121,13 @@ function ScopeToggle({
   );
 }
 
-/** The staff note: this page is showing more than your own collecting. */
-function ScopeNote({ m, query, atlases }: { m: Messages; query: ListingQuery; atlases: readonly AtlasOption[] }) {
-  if (query.scope === MINE) return null;
-  const what =
-    query.scope === ALL
-      ? m.listings.scope.staffNoteAll
-      : query.scope === OUTSIDE
-        ? m.listings.scope.staffNoteOutside
-        : m.listings.scope.staffNoteAtlas(atlases.find((a) => a.code === query.scope)?.name ?? query.scope);
-  return <Meta block>{m.listings.scope.staffNote(what)}</Meta>;
+/**
+ * Above other people's records, for anyone but staff: why some of them say
+ * where less precisely than their own do. The lede already says whose.
+ */
+function ScopeNote({ m, query, admin }: { m: Messages; query: ListingQuery; admin: boolean }) {
+  if (query.scope === MINE || admin) return null;
+  return <Meta block>{m.listings.scope.withheldNote}</Meta>;
 }
 
 /**
@@ -334,7 +346,7 @@ export interface ListingProps<Row> {
   query: ListingQuery;
   page: Page<Row>;
   atlases: readonly AtlasOption[];
-  /** Whether this session may change scope (config.adminLogins, beeline-6va). */
+  /** Whether a staff member is looking: staff see every location, so the note about hidden ones is not theirs. */
   admin: boolean;
   /** The atlas the viewer belongs to, for the scope toggle; null when none is recorded. */
   homeAtlas?: AtlasOption | null;
@@ -352,12 +364,12 @@ function Toolbar<Row>({
 }) {
   const { m, query, atlases, admin } = props;
   const homeAtlas = props.homeAtlas ?? null;
-  const filters = activeFilters(m, path, query, atlases, admin ? homeAtlas : null);
+  const filters = activeFilters(m, path, query, atlases, homeAtlas);
   return (
     <>
-      <ScopeNote m={m} query={query} atlases={atlases} />
+      <ScopeNote m={m} query={query} admin={admin} />
       <div class="listing-toolbar">
-        {admin && <ScopeToggle m={m} path={path} query={query} homeAtlas={homeAtlas} />}
+        <ScopeToggle m={m} path={path} query={query} homeAtlas={homeAtlas} />
         <SearchForm
           action={path}
           params={listingParams(query)}
@@ -402,20 +414,18 @@ function dateColumn({ m, path, query, label }: Shared): TableColumn {
   });
 }
 
-type Staffed = Shared & { atlases: readonly AtlasOption[]; admin: boolean };
+type WithAtlases = Shared & { atlases: readonly AtlasOption[] };
 
-function collectorsColumn({ m, path, query, label, atlases, admin }: Staffed): TableColumn {
+function collectorsColumn({ m, path, query, label, atlases }: WithAtlases): TableColumn {
   const f = m.listings.filters;
-  // Staff only: a volunteer's listing is already one collector's, so their
-  // column sorts and does not filter.
   return column({
     m,
     path,
     query,
     label,
     sort: "collector",
-    fields: admin ? ["collector", "member"] : [],
-    controls: admin && (
+    fields: ["collector", "member"],
+    controls: (
       <>
         <TextField id="collector" name="collector" label={f.collector} value={query.collector} hint={f.collectorHint} />
         {/* The axis scope cannot answer: whose records, not whose ground. */}
@@ -463,20 +473,16 @@ function hostColumn({ m, path, query, label }: Shared): TableColumn {
   });
 }
 
-/**
- * The atlas column narrows by setting scope — an atlas, or the ground
- * outside every one — which is why it is staff-only as a filter: scope is
- * the gate, and a volunteer's is fixed.
- */
-function atlasColumn({ m, path, query, label, atlases, admin }: Staffed): TableColumn {
+/** The atlas column narrows by setting scope: an atlas, or the ground outside every one. */
+function atlasColumn({ m, path, query, label, atlases }: WithAtlases): TableColumn {
   return column({
     m,
     path,
     query,
     label,
     sort: "atlas",
-    fields: admin ? ["scope"] : [],
-    controls: admin && (
+    fields: ["scope"],
+    controls: (
       <SelectField
         id="scope"
         name="scope"
@@ -511,7 +517,7 @@ function DetSelect({ m, query }: { m: Messages; query: ListingQuery }) {
 }
 
 export function SampleListing(props: ListingProps<SampleRow>) {
-  const { m, query, page, atlases, admin } = props;
+  const { m, query, page, atlases } = props;
   const copy = m.listings.samples;
   const f = m.listings.filters;
   const path = "/samples";
@@ -528,7 +534,7 @@ export function SampleListing(props: ListingProps<SampleRow>) {
             columns={[
               column({ ...col, label: copy.colSample, sort: "number", kind: "number" }),
               dateColumn({ ...col, label: copy.colDate }),
-              collectorsColumn({ ...col, label: copy.colCollectors, atlases, admin }),
+              collectorsColumn({ ...col, label: copy.colCollectors, atlases }),
               placeColumn({ ...col, label: copy.colPlace }),
               hostColumn({ ...col, label: copy.colHost }),
               // Two values, so a filter and no order: sorting would only
@@ -590,7 +596,7 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                   />
                 ),
               }),
-              atlasColumn({ ...col, label: copy.colAtlas, atlases, admin }),
+              atlasColumn({ ...col, label: copy.colAtlas, atlases }),
               // Read aloud, never drawn: the column of links out.
               { label: copy.colLinks, hidden: true },
             ]}
@@ -605,7 +611,7 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                     collector is whose name will be printed (/design/names). */}
                 <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
                 <td>
-                  <OrAbsent value={m.format.place([row.locality, row.county, row.state_province])} label={m.absence.notRecorded} />
+                  <PlaceCell m={m} row={row} />
                 </td>
                 <td>
                   {row.host_name === null ? (
@@ -650,7 +656,7 @@ export function SampleListing(props: ListingProps<SampleRow>) {
 }
 
 export function SpecimenListing(props: ListingProps<SpecimenRow>) {
-  const { m, query, page, atlases, admin } = props;
+  const { m, query, page, atlases } = props;
   const copy = m.listings.specimens;
   const f = m.listings.filters;
   const path = "/specimens";
@@ -668,7 +674,7 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
               column({ ...col, label: copy.colFieldNumber, sort: "field", kind: "number" }),
               column({ ...col, label: copy.colSample, sort: "number", kind: "number" }),
               dateColumn({ ...col, label: copy.colDate }),
-              collectorsColumn({ ...col, label: copy.colCollectors, atlases, admin }),
+              collectorsColumn({ ...col, label: copy.colCollectors, atlases }),
               placeColumn({ ...col, label: copy.colPlace }),
               hostColumn({ ...col, label: copy.colHost }),
               // On a specimen listing the taxon filter is about *this*
@@ -690,7 +696,7 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
               // question it answers — what came back from the taxonomist
               // this winter — is asked by sorting, not by a window.
               column({ ...col, label: copy.colDetermined, sort: "determined", kind: "date" }),
-              atlasColumn({ ...col, label: copy.colAtlas, atlases, admin }),
+              atlasColumn({ ...col, label: copy.colAtlas, atlases }),
             ]}
           >
             {page.rows.map((row) => (
@@ -710,7 +716,7 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
                 <td class="nowrap">{m.format.date(row.date_start)}</td>
                 <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
                 <td>
-                  <OrAbsent value={m.format.place([row.locality, row.county, row.state_province])} label={m.absence.notRecorded} />
+                  <PlaceCell m={m} row={row} />
                 </td>
                 <td>
                   {/* As on the samples listing: a bee off no flower has no

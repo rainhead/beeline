@@ -14,7 +14,7 @@ import {
   type LicenseId,
 } from "../program-governance.js";
 import { identificationsOf, programArchives, specimenArchiveStream } from "./dwc-archive.js";
-import { EMPTY_QUERY, listSpecimens, OUTSIDE } from "./listings.js";
+import { EMPTY_QUERY, listSpecimens, OUTSIDE, STAFF_READER } from "./listings.js";
 
 /**
  * The program archives, one per program per year, written nightly
@@ -128,7 +128,7 @@ export async function writeProgramArchives(
           join(dir, file),
           specimenArchiveStream(
             async (limit, offset) => {
-              const page = await listSpecimens(db, query, 0, { limit, offset, withTotal: false, year });
+              const page = await listSpecimens(db, query, 0, STAFF_READER, { limit, offset, withTotal: false, year });
               return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
             },
             { license: license === null ? null : LICENSES[license.license].url },

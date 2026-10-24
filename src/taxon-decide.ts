@@ -22,11 +22,11 @@ import {
  * The decision is said in words — which name, which kind of claim, who, why,
  * the paper — by whoever read the taxonomist's answer: a person, or a model
  * reading the snapshot `pnpm taxon:fetch-sheet` wrote. What this fills in is
- * everything that reader should not be trusted to type: the ITIS TSN, what
- * ITIS calls the name instead, and the release those facts are from, looked
- * up in the store; and it refuses a decision the ITIS tables contradict — an
- * addition of a name ITIS has, a departure from a name ITIS still accepts, a
- * homonym choice that is not one of the candidates. The row then goes
+ * everything that reader should not be trusted to type: Ecdysis's id for the
+ * name, what Ecdysis files it under instead, and the fetch those facts are
+ * from, looked up in the store; and it refuses a decision Ecdysis's thesaurus
+ * contradicts — an addition of a name Ecdysis has, a departure from a name
+ * Ecdysis still accepts, a homonym choice that is not one of the candidates. The row then goes
  * through the same strict reader as the file itself, and the file is
  * merged: a later decision about the same name supersedes.
  *
@@ -43,62 +43,64 @@ export interface DecisionInput {
   taxonomist: string;
   reason: string;
   reference?: string;
-  /** Homonym only: the TSN of the name meant. */
-  tsn?: string;
+  /** Homonym only: Ecdysis's id for the name meant. */
+  tid?: string;
   /** For a genus or family being added: where it files. */
   parent?: { rank: string; name: string };
   /** ISO date; today when omitted. */
   decidedOn?: string;
 }
 
-export interface ItisAnswer {
-  /** By the ITIS tables alone, so a name not yet in the tree still answers. */
-  standing: "absent" | "valid" | "synonym" | "homonym";
-  /** The one TSN, where there is one. */
-  tsn: string | null;
-  /** For a synonym, what ITIS accepts instead ('; '-joined). */
-  currentName: string | null;
-  /** Every ITIS name at this rank and spelling. */
-  candidates: { tsn: string; author: string | null; usage: string }[];
+export interface EcdysisAnswer {
+  /** By the thesaurus alone, so a name not yet in the tree still answers. */
+  standing: "absent" | "accepted" | "synonym" | "homonym";
+  /** The one id, where there is one. */
+  tid: string | null;
+  /** For a synonym, the name Ecdysis files it under. */
+  acceptedName: string | null;
+  /** Every Ecdysis name at this rank and spelling. */
+  candidates: { tid: string; author: string | null; status: string }[];
 }
 
 const lit = (s: string) => `'${s.replaceAll("'", "''")}'`;
 
-/** ITIS as the store holds it, asked by rank and spelling. */
-export function itisFromStore(conn: DuckDBConnection): (rank: string, name: string) => Promise<ItisAnswer> {
+/** Ecdysis's thesaurus as the store holds it, asked by rank and spelling. */
+export function ecdysisFromStore(conn: DuckDBConnection): (rank: string, name: string) => Promise<EcdysisAnswer> {
   return async (rank, name) => {
     const rows = (await (
       await conn.run(
-        `SELECT t.tsn, t.author, t.usage,
-                (SELECT string_agg(cur.name, '; ' ORDER BY cur.name) FROM itis_synonym s JOIN itis_taxon cur ON cur.tsn = s.accepted_tsn WHERE s.tsn = t.tsn)
-         FROM itis_taxon t WHERE t.rank = ${lit(rank)} AND t.name = ${lit(name)} ORDER BY t.tsn`,
+        `SELECT t.tid, t.author, t.status, acc.name
+         FROM ecdysis_taxon t LEFT JOIN ecdysis_taxon acc ON acc.tid = t.accepted_tid AND t.status = 'synonym'
+         WHERE t.rank = ${lit(rank)} AND t.name = ${lit(name)} ORDER BY t.tid`,
       )
     ).getRows()) as [bigint, string | null, string, string | null][];
-    const candidates = rows.map(([tsn, author, usage]) => ({ tsn: String(tsn), author, usage }));
-    const valid = rows.filter((r) => r[2] === "valid");
-    if (rows.length === 0) return { standing: "absent", tsn: null, currentName: null, candidates };
-    if (valid.length > 1) return { standing: "homonym", tsn: null, currentName: null, candidates };
-    if (valid.length === 1) return { standing: "valid", tsn: String(valid[0]![0]), currentName: null, candidates };
-    const [tsn, , , current] = rows[0]!;
-    return { standing: "synonym", tsn: rows.length === 1 ? String(tsn) : null, currentName: current, candidates };
+    const candidates = rows.map(([tid, author, status]) => ({ tid: String(tid), author, status }));
+    const accepted = rows.filter((r) => r[2] === "accepted");
+    if (rows.length === 0) return { standing: "absent", tid: null, acceptedName: null, candidates };
+    if (accepted.length > 1) return { standing: "homonym", tid: null, acceptedName: null, candidates };
+    if (accepted.length === 1) return { standing: "accepted", tid: String(accepted[0]![0]), acceptedName: null, candidates };
+    const [tid, , , acceptedName] = rows[0]!;
+    return { standing: "synonym", tid: rows.length === 1 ? String(tid) : null, acceptedName, candidates };
   };
 }
 
-export async function itisRelease(conn: DuckDBConnection): Promise<string> {
-  const [[d]] = (await (await conn.run("SELECT max(itis_as_of)::VARCHAR FROM itis_taxon")).getRows()) as [[string | null]];
-  if (d === null) throw new Error("ITIS is not loaded in this store: run pnpm itis:load first, since a decision records the release it was made against");
+export async function ecdysisFetchedOn(conn: DuckDBConnection): Promise<string> {
+  const [[d]] = (await (await conn.run("SELECT max(fetched_on)::VARCHAR FROM ecdysis_taxon")).getRows()) as [[string | null]];
+  if (d === null) {
+    throw new Error("Ecdysis's thesaurus is not loaded in this store: run pnpm ecdysis:taxonomy first, since a decision records the fetch it was made against");
+  }
   return d;
 }
 
 export interface DecideContext {
-  itisRelease: string;
+  ecdysisFetchedOn: string;
   today: string;
-  itis: (rank: string, name: string) => Promise<ItisAnswer>;
+  ecdysis: (rank: string, name: string) => Promise<EcdysisAnswer>;
 }
 
-const describe = (c: ItisAnswer["candidates"]) => c.map((x) => `${x.author ?? "no author"} [TSN ${x.tsn}, ${x.usage}]`).join(" | ");
+const describe = (c: EcdysisAnswer["candidates"]) => c.map((x) => `${x.author ?? "no author"} [taxon ${x.tid}, ${x.status}]`).join(" | ");
 
-/** One decision as a row the file accepts, or an error saying why ITIS does not agree with the kind claimed. */
+/** One decision as a row the file accepts, or an error saying why Ecdysis does not agree with the kind claimed. */
 export async function decide(input: DecisionInput, ctx: DecideContext): Promise<TaxonCurationRow> {
   const row: TaxonCurationRow = {
     kind: input.kind,
@@ -106,38 +108,38 @@ export async function decide(input: DecisionInput, ctx: DecideContext): Promise<
     name: input.name,
     parent_rank: input.parent?.rank ?? "",
     parent_name: input.parent?.name ?? "",
-    itis_tsn: "",
-    itis_current_name: "",
-    itis_release: ctx.itisRelease,
+    ecdysis_tid: "",
+    ecdysis_accepted_name: "",
+    ecdysis_fetched_on: ctx.ecdysisFetchedOn,
     taxonomist: input.taxonomist,
     decided_on: input.decidedOn ?? ctx.today,
     reference: input.reference ?? "",
     reason: input.reason,
   };
   const where = `${input.name} (${input.rank})`;
-  const itis = await ctx.itis(input.rank, input.name);
+  const ecdysis = await ctx.ecdysis(input.rank, input.name);
   switch (input.kind) {
     case "addition":
-      if (itis.standing !== "absent") {
-        throw new Error(`${where}: ITIS has this name (${itis.standing}: ${describe(itis.candidates)}), so it is not an addition`);
+      if (ecdysis.standing !== "absent") {
+        throw new Error(`${where}: Ecdysis has this name (${ecdysis.standing}: ${describe(ecdysis.candidates)}), so it is not an addition`);
       }
       break;
     case "departure":
-      if (itis.standing !== "synonym" || itis.tsn === null) {
-        throw new Error(`${where}: ITIS does not call this name outdated (${itis.standing}${itis.candidates.length > 0 ? `: ${describe(itis.candidates)}` : ""}), so there is nothing to depart from`);
+      if (ecdysis.standing !== "synonym" || ecdysis.tid === null) {
+        throw new Error(`${where}: Ecdysis does not call this name a synonym (${ecdysis.standing}${ecdysis.candidates.length > 0 ? `: ${describe(ecdysis.candidates)}` : ""}), so there is nothing to depart from`);
       }
-      row.itis_tsn = itis.tsn;
-      row.itis_current_name = itis.currentName ?? "";
+      row.ecdysis_tid = ecdysis.tid;
+      row.ecdysis_accepted_name = ecdysis.acceptedName ?? "";
       break;
     case "homonym": {
-      const current = itis.candidates.filter((c) => c.usage === "valid");
-      if (current.length < 2) {
-        throw new Error(`${where}: ITIS has ${current.length} current name${current.length === 1 ? "" : "s"} at this spelling, so there is no choice to make`);
+      const accepted = ecdysis.candidates.filter((c) => c.status === "accepted");
+      if (accepted.length < 2) {
+        throw new Error(`${where}: Ecdysis has ${accepted.length} accepted name${accepted.length === 1 ? "" : "s"} at this spelling, so there is no choice to make`);
       }
-      if (input.tsn === undefined || !current.some((c) => c.tsn === input.tsn)) {
-        throw new Error(`${where}: say which with --tsn, one of: ${describe(current)}`);
+      if (input.tid === undefined || !accepted.some((c) => c.tid === input.tid)) {
+        throw new Error(`${where}: say which with --tid, one of: ${describe(accepted)}`);
       }
-      row.itis_tsn = input.tsn;
+      row.ecdysis_tid = input.tid;
       break;
     }
   }
@@ -167,9 +169,9 @@ export function mergeDecisions(existing: readonly TaxonCurationRow[], incoming: 
 /**
  * A batch: one decision per line, sharing the taxonomist and the date —
  * "every proposal on the sheet, as confirmed by email" is forty rows with one
- * signature. Columns: kind,rank,name,reason[,reference[,tsn[,parent_rank,parent_name]]].
+ * signature. Columns: kind,rank,name,reason[,reference[,tid[,parent_rank,parent_name]]].
  */
-export const BATCH_COLUMNS = ["kind", "rank", "name", "reason", "reference", "tsn", "parent_rank", "parent_name"] as const;
+export const BATCH_COLUMNS = ["kind", "rank", "name", "reason", "reference", "tid", "parent_rank", "parent_name"] as const;
 
 export function parseBatch(text: string, where: string): Omit<DecisionInput, "taxonomist" | "decidedOn">[] {
   const records = parseCsv(text).filter((r) => !(r.length === 1 && r[0] === ""));
@@ -189,13 +191,13 @@ export function parseBatch(text: string, where: string): Omit<DecisionInput, "ta
       name: at(r, "name"),
       reason: at(r, "reason"),
       reference: at(r, "reference") || undefined,
-      tsn: at(r, "tsn") || undefined,
+      tid: at(r, "tid") || undefined,
       parent: parentRank !== "" || parentName !== "" ? { rank: parentRank, name: parentName } : undefined,
     };
   });
 }
 
-// CLI: pnpm taxon:decide <kind> <rank> "<name>" --by "L. Best" --reason "…" [--reference …] [--tsn …] [--parent "family Andrenidae"] [--on YYYY-MM-DD] [--db …] [--file …]
+// CLI: pnpm taxon:decide <kind> <rank> "<name>" --by "L. Best" --reason "…" [--reference …] [--tid …] [--parent "family Andrenidae"] [--on YYYY-MM-DD] [--db …] [--file …]
 //      pnpm taxon:decide --batch decisions.csv --by "L. Best" [--on …] [--db …] [--file …]
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const { values, positionals } = parseArgs({
@@ -204,7 +206,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       by: { type: "string" },
       reason: { type: "string" },
       reference: { type: "string" },
-      tsn: { type: "string" },
+      tid: { type: "string" },
       parent: { type: "string" },
       on: { type: "string" },
       batch: { type: "string" },
@@ -214,7 +216,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   });
   const usage = () => {
     console.error(
-      'usage: pnpm taxon:decide <addition|departure|homonym> <rank> "<name>" --by "<taxonomist>" --reason "<their words, and where from>" [--reference <doi or url>] [--tsn <n>] [--parent "<rank> <name>"] [--on YYYY-MM-DD]\n' +
+      'usage: pnpm taxon:decide <addition|departure|homonym> <rank> "<name>" --by "<taxonomist>" --reason "<their words, and where from>" [--reference <doi or url>] [--tid <n>] [--parent "<rank> <name>"] [--on YYYY-MM-DD]\n' +
         '       pnpm taxon:decide --batch <csv> --by "<taxonomist>" [--on YYYY-MM-DD]',
     );
     process.exit(2);
@@ -235,14 +237,18 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       if (space < 1) usage();
       parent = { rank: values.parent.slice(0, space), name: values.parent.slice(space + 1) };
     }
-    inputs = [{ kind: kind as CurationKind, rank: rank!, name: name!, reason: values.reason!, reference: values.reference, tsn: values.tsn, parent, ...shared }];
+    inputs = [{ kind: kind as CurationKind, rank: rank!, name: name!, reason: values.reason!, reference: values.reference, tid: values.tid, parent, ...shared }];
   }
 
   const instance = await openDuckDb(values.db ?? DEFAULT_DB);
   const conn = await instance.connect();
   let rows: TaxonCurationRow[];
   try {
-    const ctx: DecideContext = { itisRelease: await itisRelease(conn), today: new Date().toISOString().slice(0, 10), itis: itisFromStore(conn) };
+    const ctx: DecideContext = {
+      ecdysisFetchedOn: await ecdysisFetchedOn(conn),
+      today: new Date().toISOString().slice(0, 10),
+      ecdysis: ecdysisFromStore(conn),
+    };
     // Every decision is checked before any is written, so a batch with one
     // bad line writes nothing.
     rows = [];
@@ -257,7 +263,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   console.log(
     JSON.stringify(
       {
-        recorded: rows.map((r) => `${r.kind}: ${r.name} (${r.rank})${r.itis_tsn !== "" ? ` TSN ${r.itis_tsn}` : ""}`),
+        recorded: rows.map((r) => `${r.kind}: ${r.name} (${r.rank})${r.ecdysis_tid !== "" ? ` taxon ${r.ecdysis_tid}` : ""}`),
         superseded: before.length + rows.length - merged.length,
         file,
         rowsInFile: merged.length,

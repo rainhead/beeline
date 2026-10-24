@@ -240,29 +240,30 @@ pnpm inat:promote data/beeline.duckdb
 wc -l data/sample-change.csv
 ```
 
-## ITIS
+## The taxonomy's reference
 
-The curated taxonomy is matched against ITIS (beeline-45v): `itis_taxon` and
-`itis_synonym` hold every insect from one ITIS release, and `animal.itis_tsn`
-is read against them. The download is 224 MB zipped and 925 MB unpacked; fetch
-and extract it on a workstation (about a minute on a fast connection), and send
-only the extract — two CSVs, about 27 MB — to the machine:
+The curated taxonomy is matched against the taxonomic thesaurus of Ecdysis
+(beeline-7gob): `ecdysis_taxon` holds every insect name Ecdysis has at the
+ranks the tree admits, and `animal.ecdysis_tid` is read against it. The
+machine fetches it itself — Symbiota exports it without a sign-in, about three
+minutes of requests and a 72 MB CSV in `/app/data/ecdysis-taxonomy/` — so
+fetch while the app runs and stop it only for the load, which writes the store:
 
 ```sh
-pnpm itis:fetch                                        # on a workstation → data/itis/
-fly ssh console --app beeline -C "mkdir -p /app/data/itis"
-fly ssh sftp put --app beeline data/itis/itis-taxon.csv /app/data/itis/itis-taxon.csv
-fly ssh sftp put --app beeline data/itis/itis-synonym.csv /app/data/itis/itis-synonym.csv
+fly ssh console --app beeline -C "sh -c 'cd /app && pnpm ecdysis:taxonomy --fetch-only'"
 fly machine update --env BEELINE_MAINTENANCE=1 <id>    # the load writes the store
-fly ssh console --app beeline -C "sh -c 'cd /app && pnpm itis:load'"
+fly ssh console --app beeline -C "sh -c 'cd /app && pnpm ecdysis:taxonomy --cached'"
 fly machine update --env BEELINE_MAINTENANCE= <id>
 ```
 
-`itis:load` reads the machine's `BEELINE_DB`, replaces both tables and
-re-matches every node in one transaction, and refuses an empty extract. It
-takes seconds. A reseed carries both tables and legacy promotion re-matches the
-tree it rebuilds, so this is once per ITIS release rather than once per
-rebuild. Until it has run, `animal_itis` answers `not loaded` for every node.
+`--cached` loads the last fetch into the machine's `BEELINE_DB`, replaces the
+table and re-matches every node in one transaction, in about three seconds,
+and refuses a fetch with no name at a rank the tree admits. A reseed carries
+the table and legacy promotion re-matches the tree it rebuilds, so this is
+needed only when Ecdysis's names should be read again — they change name by
+name, with no releases. Until it has run, `animal_ecdysis` answers
+`not loaded` for every node. A store migrated past 0058 keeps the old
+`animal.itis_tsn` column, unread, until its next reseed.
 
 ## The pre-migrate copy
 
@@ -435,7 +436,7 @@ back by the next morning. The archive and the probe's baseline live in
 `data/ecdysis/` (config `ecdysisDir`, `BEELINE_ECDYSIS`) as `44.zip` and
 `44.probe.json`; deleting the baseline forces the next run to download. The
 run's detail on `/jobs` says what it did and why, and names any names it
-adopted from ITIS or could not place. Without the login (above) the job
+adopted from Ecdysis's thesaurus or could not place. Without the login (above) the job
 reports that it has nothing to fetch.
 
 ## The legacy-format export

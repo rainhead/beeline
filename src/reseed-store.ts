@@ -59,11 +59,13 @@ import { applySchema } from "./schema.js";
  * still a verdict, and asking again is not free of consequence, since it is
  * what makes inat_place_uncached non-empty until the answer comes back.
  *
- * itis_taxon and itis_synonym come across on the same terms as inat_place:
- * ITIS is loaded from an extract of a network download (src/load-itis.ts,
- * beeline-45v.4), keyed by ITIS's own TSN, and nothing in the store could
- * rebuild it — a reseed that dropped them would leave every animal node
- * reading "not loaded" until somebody fetched and loaded ITIS again.
+ * ecdysis_taxon comes across on the same terms as inat_place: Ecdysis's
+ * thesaurus is loaded from a fetch of somebody else's server
+ * (src/load-ecdysis-taxonomy.ts, beeline-7gob), keyed by Ecdysis's own id,
+ * and nothing in the store could rebuild it — a reseed that dropped it would
+ * leave every animal node reading "not loaded" until somebody fetched it
+ * again. A store from before beeline-7gob holds ITIS instead, which is not
+ * carried: nothing reads it any more.
  *
  * This list is DECLARATIVE — carryStaging copies each table by hand, because
  * three of them need their ids or their sync_run reference rewritten and no
@@ -82,8 +84,7 @@ export const CARRIED_TABLES = [
   "inat_place",
   "inat_place_absent",
   "inat_user_orcid",
-  "itis_taxon",
-  "itis_synonym",
+  "ecdysis_taxon",
 ] as const;
 
 export interface ReseedCounts {
@@ -217,16 +218,13 @@ export async function carryStaging(
       await conn.run(`INSERT INTO inat_user_orcid BY NAME SELECT * FROM old.inat_user_orcid`);
       await count("inat_user_orcid");
     }
-    // ITIS, whole and on inat_place's terms: keyed by ITIS's TSN, loaded from
-    // outside the store, and not something promotion can recompute. Legacy
-    // promotion then matches the rebuilt tree against it (beeline-45v.4).
-    if (await has("itis_taxon")) {
-      await conn.run(`INSERT INTO itis_taxon BY NAME SELECT * FROM old.itis_taxon`);
-      await count("itis_taxon");
-    }
-    if (await has("itis_synonym")) {
-      await conn.run(`INSERT INTO itis_synonym BY NAME SELECT * FROM old.itis_synonym`);
-      await count("itis_synonym");
+    // Ecdysis's thesaurus, whole and on inat_place's terms: keyed by
+    // Ecdysis's id, fetched from outside the store, and not something
+    // promotion can recompute. Legacy promotion then matches the rebuilt tree
+    // against it (beeline-7gob).
+    if (await has("ecdysis_taxon")) {
+      await conn.run(`INSERT INTO ecdysis_taxon BY NAME SELECT * FROM old.ecdysis_taxon`);
+      await count("ecdysis_taxon");
     }
 
     const leftBehind = {

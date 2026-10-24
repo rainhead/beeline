@@ -1,0 +1,4 @@
+﻿taxonID,scientificName,scientificNameAuthorship,unitName1,unitName2,unitInd3,unitName3,cultivarEpithet,tradeName,rankID,kingdomName,family,parentTaxonID,parentScientificName,acceptance,acceptedTaxonID,acceptedScientificName
+1,Animalia,"Linnaeus, 1758",Animalia,,,,,,10,Animalia,,1,Animalia,1,1,Animalia
+864345,Hozbeka,"Ãâ\"zdikmen, 2009",Hozbeka,,,,,,180,Animalia,Oecophoridae,83102,Oecophoridae,1,864345,Hozbeka
+499160,"Anarsia achresella","""Shah Patel Patel,"" 1988",Anarsia,achresella,,,,,220,Animalia,Gelechiidae,276625,Anarsia,1,499160,"Anarsia achresella"

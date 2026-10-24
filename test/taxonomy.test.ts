@@ -4,28 +4,26 @@ import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { en } from "../src/app/messages/en.js";
-import { loadItis } from "../src/load-itis.js";
+import { loadEcdysisTaxonomy } from "../src/load-ecdysis-taxonomy.js";
 import { applyTaxonCuration, type TaxonCurationRow } from "../src/taxon-curation.js";
-import { itisReportHref, parseTaxonomyQuery, taxonHref, taxonomyHref } from "../src/app/taxonomy.js";
+import { ecdysisTaxonHref, parseTaxonomyQuery, taxonHref, taxonomyHref } from "../src/app/taxonomy.js";
 import { createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 
 /**
  * The taxonomy pages (beeline-45v.5).
  *
  * The tree is a slice of the dev store's — the real chain down from Animalia,
- * and a name for each standing animal_itis distinguishes — and the ITIS rows
- * are the ones test/itis.test.ts lifted from the 2026-08-26 release. Megachilidae
- * and Brachymelecta are absent only because that extract is small; the point
- * is the answer the page gives, not the fact about ITIS.
+ * and a name for each standing animal_ecdysis distinguishes — and the
+ * thesaurus rows are the real ones in test/fixtures/ecdysis-taxonomy/ (fetched
+ * 2026-10-24). Andrenidae is absent only because that fixture is small;
+ * Lasioglossum aspilurum is absent from Ecdysis itself. The point is the
+ * answer the page gives, not the fact about Ecdysis.
  *
  * Sandbox rather than development, because development makes everyone an
  * admin and this page is for people who are not.
  */
 
-const ITIS = {
-  taxonCsv: new URL("./fixtures/itis-taxon.csv", import.meta.url).pathname,
-  synonymCsv: new URL("./fixtures/itis-synonym.csv", import.meta.url).pathname,
-};
+const ECDYSIS_TAXONOMY = new URL("./fixtures/ecdysis-taxonomy/", import.meta.url).pathname;
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -60,18 +58,20 @@ beforeEach(async () => {
   await node("order", "Hymenoptera", "Insecta");
   await node("family", "Halictidae", "Hymenoptera");
   await node("family", "Apidae", "Hymenoptera");
-  await node("family", "Megachilidae", "Hymenoptera");
+  await node("family", "Andrenidae", "Hymenoptera");
+  await node("family", "Eurytomidae", "Hymenoptera");
   await node("genus", "Lasioglossum", "Halictidae");
   await node("subgenus", "Lasioglossum (Dialictus)", "Lasioglossum");
   await node("species", "Lasioglossum tenax", "Lasioglossum");
   await node("species", "Lasioglossum zonulum", "Lasioglossum");
-  await node("species", "Lasioglossum zonulus", "Lasioglossum");
+  await node("species", "Lasioglossum aspilurum", "Lasioglossum");
   await node("genus", "Bombus", "Apidae");
   await node("species", "Bombus vosnesenskii", "Bombus");
   await node("genus", "Brachymelecta", "Apidae");
   await node("species", "Brachymelecta californica", "Brachymelecta");
-  await node("genus", "Hoplitis", "Megachilidae");
-  await node("species", "Hoplitis truncata", "Hoplitis");
+  await node("genus", "Xeromelecta", "Apidae");
+  await node("species", "Xeromelecta californica", "Xeromelecta");
+  await node("genus", "Rileya", "Eurytomidae");
 
   await conn.run(`INSERT INTO person (entity_id, display_name) VALUES (1, 'Ada Collector')`);
   const sample = await insertCleanSample(conn);
@@ -88,8 +88,8 @@ beforeEach(async () => {
   await determine(three!, "Bombus vosnesenskii", "2024-07-01 12:00:00+00");
 });
 
-async function taxonomyApp({ itis = true, admin = false } = {}) {
-  if (itis) await loadItis(conn, ITIS);
+async function taxonomyApp({ thesaurus = true, admin = false } = {}) {
+  if (thesaurus) await loadEcdysisTaxonomy(conn, ECDYSIS_TAXONOMY);
   if (admin) await conn.run(`INSERT INTO person_admin (person_id) VALUES (1)`);
   return createApp({
     ...(await scratchPaths()),
@@ -174,14 +174,15 @@ describe("the taxonomy pages", () => {
     }
     expect(rowFor(body, "family", "Halictidae")).toContain(">2</a></td>");
     expect(rowFor(body, "family", "Apidae")).toContain(">1</a></td>");
-    // Current in ITIS is quiet — no chip — but quiet is not blank: the cell
-    // draws a dash that says what it means, since an empty one could as
+    // Accepted in Ecdysis is quiet — no chip — but quiet is not blank: the
+    // cell draws a dash that says what it means, since an empty one could as
     // well have failed to load (Nora, 2026-09-17). Absent says so outright.
     expect(rowFor(body, "family", "Halictidae")).not.toContain(`class="chip`);
-    expect(rowFor(body, "family", "Halictidae")).toContain(`<span class="visually-hidden">${en.taxonomy.standingOptions.valid}</span>`);
+    expect(rowFor(body, "family", "Halictidae")).toContain(`<span class="visually-hidden">${en.taxonomy.standingOptions.accepted}</span>`);
     expect(body).not.toMatch(/<td><\/td>/);
-    expect(rowFor(body, "family", "Megachilidae")).toContain(en.taxonomy.chip.absent);
-    expect(body).toContain(en.taxonomy.summary.synonym(1));
+    expect(rowFor(body, "family", "Andrenidae")).toContain(en.taxonomy.chip.absent);
+    // Xeromelecta and Xeromelecta californica, both filed under Brachymelecta's names.
+    expect(body).toContain(en.taxonomy.summary.synonym(2));
   });
 
   it("links staff from a count to every record it counts, whatever scope they last browsed", async () => {
@@ -192,7 +193,7 @@ describe("the taxonomy pages", () => {
     expect(rowFor(index, "family", "Halictidae")).toContain(`<a href="${all("Halictidae")}">2</a>`);
     expect(rowFor(index, "family", "Apidae")).toContain(`<a href="${all("Apidae")}">1</a>`);
     // Nothing to open behind a zero.
-    expect(rowFor(index, "family", "Megachilidae")).toContain("<td>0</td>");
+    expect(rowFor(index, "family", "Andrenidae")).toContain("<td>0</td>");
 
     const genus = await page(app, taxonHref({ rank: "genus", scientific_name: "Lasioglossum" }));
     expect(genus).toContain(`href="${all("Lasioglossum")}"`);
@@ -227,71 +228,72 @@ describe("the taxonomy pages", () => {
     expect(rowFor(body, "subgenus", "Lasioglossum (Dialictus)")).toContain("<i>Lasioglossum</i> (<i>Dialictus</i>)");
   });
 
-  it("says how a name stands against ITIS, in full on its own page and briefly in a row", async () => {
+  it("says how a name stands in Ecdysis, in full on its own page and briefly in a row", async () => {
     const app = await taxonomyApp();
 
-    const valid = await page(app, taxonHref({ rank: "species", scientific_name: "Lasioglossum tenax" }));
-    expect(valid).toContain(en.taxonomy.standing.valid);
-    expect(valid).toContain(html(itisReportHref(759441)));
+    const accepted = await page(app, taxonHref({ rank: "species", scientific_name: "Lasioglossum tenax" }));
+    expect(accepted).toContain(en.taxonomy.standing.accepted);
+    expect(accepted).toContain(html(ecdysisTaxonHref(248008)));
 
-    // Outdated, and ITIS's current name is in the tree too, so it links there.
-    const synonym = await page(app, taxonHref({ rank: "species", scientific_name: "Lasioglossum zonulum" }));
+    // Outdated, and the name Ecdysis files it under is in the tree too, so it links there.
+    const synonym = await page(app, taxonHref({ rank: "species", scientific_name: "Xeromelecta californica" }));
     expect(synonym).toContain(en.taxonomy.standing.synonym);
-    expect(synonym).toContain(`href="${taxonHref({ rank: "species", scientific_name: "Lasioglossum zonulus" })}"`);
-    expect(synonym).toContain(html(itisReportHref(759593)));
+    expect(synonym).toContain(`href="${taxonHref({ rank: "species", scientific_name: "Brachymelecta californica" })}"`);
+    expect(synonym).toContain(html(ecdysisTaxonHref(1645055)));
 
-    // Two current ITIS names share the spelling, and the page shows both rather than choosing.
-    const homonym = await page(app, taxonHref({ rank: "species", scientific_name: "Hoplitis truncata" }));
+    // Two accepted Ecdysis names share the spelling, and the page shows both rather than choosing.
+    const homonym = await page(app, taxonHref({ rank: "genus", scientific_name: "Rileya" }));
     expect(homonym).toContain(en.taxonomy.standing.homonym);
-    expect(homonym).toContain("(Cresson, 1878)");
-    expect(homonym).toContain("Wu, 1992");
-    expect(homonym).toContain(html(itisReportHref(715497)));
-    expect(homonym).toContain(html(itisReportHref(756786)));
+    expect(homonym).toContain("Ashmead, 1888");
+    expect(homonym).toContain("Brauer and Bergenstamm, 1893");
+    expect(homonym).toContain(html(ecdysisTaxonHref(1645743)));
+    expect(homonym).toContain(html(ecdysisTaxonHref(95505)));
 
-    const absent = await page(app, taxonHref({ rank: "species", scientific_name: "Brachymelecta californica" }));
+    const absent = await page(app, taxonHref({ rank: "species", scientific_name: "Lasioglossum aspilurum" }));
     expect(absent).toContain(en.taxonomy.standing.absent("species"));
 
-    const genus = await page(app, taxonHref({ rank: "genus", scientific_name: "Lasioglossum" }));
-    expect(rowFor(genus, "species", "Lasioglossum zonulum")).toContain(en.taxonomy.chip.synonym);
-    expect(rowFor(genus, "species", "Lasioglossum tenax")).not.toContain(`class="chip`);
+    const genus = await page(app, taxonHref({ rank: "genus", scientific_name: "Xeromelecta" }));
+    expect(rowFor(genus, "species", "Xeromelecta californica")).toContain(en.taxonomy.chip.synonym);
+    const lasioglossum = await page(app, taxonHref({ rank: "genus", scientific_name: "Lasioglossum" }));
+    expect(rowFor(lasioglossum, "species", "Lasioglossum tenax")).not.toContain(`class="chip`);
   });
 
   it("says what a taxonomist decided about a name, on its page, in its row, and as a list", async () => {
     const decided = (over: Partial<TaxonCurationRow>): TaxonCurationRow => ({
-      kind: "addition", rank: "species", name: "Brachymelecta californica", parent_rank: "", parent_name: "",
-      itis_tsn: "", itis_current_name: "", itis_release: "2026-08-26", taxonomist: "L. Best", decided_on: "2026-10-09",
-      reference: "", reason: "ITIS has only Xeromelecta californica and has not reviewed the move", ...over,
+      kind: "addition", rank: "species", name: "Lasioglossum aspilurum", parent_rank: "", parent_name: "",
+      ecdysis_tid: "", ecdysis_accepted_name: "", ecdysis_fetched_on: "2026-10-24", taxonomist: "L. Best", decided_on: "2026-10-09",
+      reference: "", reason: "Ecdysis does not have it yet", ...over,
     });
-    await loadItis(conn, ITIS);
+    await loadEcdysisTaxonomy(conn, ECDYSIS_TAXONOMY);
     await applyTaxonCuration(conn, [
       decided({}),
-      decided({ kind: "departure", name: "Lasioglossum zonulum", itis_tsn: "759593", itis_current_name: "Lasioglossum zonulus", reference: "https://doi.org/10.0000/zonulum", reason: "the neuter ending, pending Gibbs" }),
-      decided({ kind: "homonym", name: "Hoplitis truncata", itis_tsn: "715497", reason: "the Nearctic one" }),
+      decided({ kind: "departure", name: "Xeromelecta californica", ecdysis_tid: "1645055", ecdysis_accepted_name: "Brachymelecta californica", reference: "https://doi.org/10.0000/xeromelecta", reason: "kept pending a review of the move" }),
+      decided({ kind: "homonym", rank: "genus", name: "Rileya", ecdysis_tid: "1645743", reason: "the chalcid wasp" }),
     ]);
-    const app = await taxonomyApp({ itis: false });
+    const app = await taxonomyApp({ thesaurus: false });
 
-    // The departure: the decision in words, who and when, the reason, the paper, and ITIS's view kept beneath.
-    const departure = await page(app, taxonHref({ rank: "species", scientific_name: "Lasioglossum zonulum" }));
+    // The departure: the decision in words, who and when, the reason, the paper, and Ecdysis's view kept beneath.
+    const departure = await page(app, taxonHref({ rank: "species", scientific_name: "Xeromelecta californica" }));
     expect(departure).toContain(en.taxonomy.decision.departure);
     // Local midnights, as a DATE column arrives; a UTC midnight would read as the day before west of Greenwich.
-    expect(departure).toContain(en.taxonomy.decision.by("L. Best", new Date(2026, 9, 9), new Date(2026, 7, 26)));
-    expect(departure).toContain("the neuter ending, pending Gibbs");
-    expect(departure).toContain('href="https://doi.org/10.0000/zonulum"');
+    expect(departure).toContain(en.taxonomy.decision.by("L. Best", new Date(2026, 9, 9), new Date(2026, 9, 24)).replaceAll("'", "&#39;"));
+    expect(departure).toContain("kept pending a review of the move");
+    expect(departure).toContain('href="https://doi.org/10.0000/xeromelecta"');
 
     expect(departure).toContain(en.taxonomy.standing.synonym);
     expect(departure).not.toContain(en.taxonomy.decision.moved);
 
-    // The resolved homonym now reads as current, and names the author chosen.
-    const homonym = await page(app, taxonHref({ rank: "species", scientific_name: "Hoplitis truncata" }));
-    expect(homonym).toContain(en.taxonomy.standing.valid);
-    expect(homonym).toContain(en.taxonomy.decision.homonym("(Cresson, 1878)").replaceAll("'", "&#39;"));
-    expect(homonym).toContain(html(itisReportHref(715497)));
+    // The resolved homonym now reads as accepted, and names the author chosen.
+    const homonym = await page(app, taxonHref({ rank: "genus", scientific_name: "Rileya" }));
+    expect(homonym).toContain(en.taxonomy.standing.accepted);
+    expect(homonym).toContain(en.taxonomy.decision.homonym("Ashmead, 1888").replaceAll("'", "&#39;"));
+    expect(homonym).toContain(html(ecdysisTaxonHref(1645743)));
 
     // In a row, the chip speaks in the decision's words rather than as a warning.
-    const genus = await page(app, taxonHref({ rank: "genus", scientific_name: "Lasioglossum" }));
-    expect(rowFor(genus, "species", "Lasioglossum zonulum")).toContain(en.taxonomy.chip.decided.departure);
-    expect(rowFor(genus, "species", "Lasioglossum zonulum")).not.toContain(en.taxonomy.chip.synonym);
-    expect(rowFor(genus, "species", "Lasioglossum zonulum")).toContain(en.taxonomy.nowCalled);
+    const genus = await page(app, taxonHref({ rank: "genus", scientific_name: "Xeromelecta" }));
+    expect(rowFor(genus, "species", "Xeromelecta californica")).toContain(en.taxonomy.chip.decided.departure);
+    expect(rowFor(genus, "species", "Xeromelecta californica")).not.toContain(en.taxonomy.chip.synonym);
+    expect(rowFor(genus, "species", "Xeromelecta californica")).toContain(en.taxonomy.nowCalled);
 
     // The index counts them and lists them; nothing has moved yet.
     const index = await page(app, "/taxonomy");
@@ -301,9 +303,9 @@ describe("the taxonomy pages", () => {
     expect(list).toContain(en.taxonomy.found(3));
     expect(await page(app, "/taxonomy?decided=moved")).toContain(en.taxonomy.found(0));
 
-    // A later release accepts zonulum again: the page says so where the decision is, and the worklist has it.
-    await conn.run("UPDATE itis_taxon SET usage = 'valid' WHERE tsn = 759593");
-    const moved = await page(app, taxonHref({ rank: "species", scientific_name: "Lasioglossum zonulum" }));
+    // A later fetch accepts Xeromelecta californica again: the page says so where the decision is, and the worklist has it.
+    await conn.run("UPDATE ecdysis_taxon SET status = 'accepted', accepted_tid = tid WHERE tid = 1645055");
+    const moved = await page(app, taxonHref({ rank: "species", scientific_name: "Xeromelecta californica" }));
     expect(moved).toContain(en.taxonomy.decision.moved);
     expect(moved).toContain("the departure can be retired");
     expect(await page(app, "/taxonomy?decided=moved")).toContain(en.taxonomy.found(1));
@@ -311,33 +313,33 @@ describe("the taxonomy pages", () => {
     // Restated wholesale, so this comes last. A bare DOI links through doi.org; anything that is not http(s) or a DOI is text, not a link.
     await applyTaxonCuration(conn, [
       decided({ reference: "10.11646/zootaxa.3073.1.1" }),
-      decided({ kind: "homonym", name: "Hoplitis truncata", itis_tsn: "715497", reference: "javascript:alert(1)", reason: "the Nearctic one" }),
+      decided({ kind: "homonym", rank: "genus", name: "Rileya", ecdysis_tid: "1645743", reference: "javascript:alert(1)", reason: "the chalcid wasp" }),
     ]);
-    expect(await page(app, taxonHref({ rank: "species", scientific_name: "Brachymelecta californica" }))).toContain(
+    expect(await page(app, taxonHref({ rank: "species", scientific_name: "Lasioglossum aspilurum" }))).toContain(
       'href="https://doi.org/10.11646/zootaxa.3073.1.1"',
     );
-    const unsafe = await page(app, taxonHref({ rank: "species", scientific_name: "Hoplitis truncata" }));
+    const unsafe = await page(app, taxonHref({ rank: "genus", scientific_name: "Rileya" }));
     expect(unsafe).toContain("javascript:alert(1)");
     expect(unsafe).not.toContain('href="javascript:');
   });
 
-  it("says ITIS is not loaded rather than calling every name absent", async () => {
-    const app = await taxonomyApp({ itis: false });
+  it("says the thesaurus is not loaded rather than calling every name absent", async () => {
+    const app = await taxonomyApp({ thesaurus: false });
     const body = await page(app, "/taxonomy");
-    expect(body).toContain(en.taxonomy.notLoaded);
+    expect(body).toContain(en.taxonomy.notLoaded.replaceAll("'", "&#39;"));
     expect(body).not.toContain(en.taxonomy.chip.absent);
     expect(body).not.toContain(`name="standing"`);
     const genus = await page(app, taxonHref({ rank: "genus", scientific_name: "Lasioglossum" }));
-    expect(genus).toContain(en.taxonomy.notLoaded);
+    expect(genus).toContain(en.taxonomy.notLoaded.replaceAll("'", "&#39;"));
   });
 
   it("turns the index into a list when a name or a standing is asked for", async () => {
     const app = await taxonomyApp();
 
     const outdated = await page(app, "/taxonomy?standing=synonym");
-    expect(outdated).toContain(en.taxonomy.found(1));
-    expect(rowFor(outdated, "species", "Lasioglossum zonulum")).toContain(
-      `href="${taxonHref({ rank: "genus", scientific_name: "Lasioglossum" })}"`,
+    expect(outdated).toContain(en.taxonomy.found(2));
+    expect(rowFor(outdated, "species", "Xeromelecta californica")).toContain(
+      `href="${taxonHref({ rank: "genus", scientific_name: "Xeromelecta" })}"`,
     );
     expect(outdated).not.toContain(`href="${taxonHref({ rank: "species", scientific_name: "Lasioglossum tenax" })}"`);
 

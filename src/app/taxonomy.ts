@@ -1,12 +1,13 @@
 import { sql, type Kysely } from "kysely";
-import type { AnimalItisStanding, Database, CurationKind } from "../model.js";
+import type { AnimalEcdysisStanding, Database, CurationKind } from "../model.js";
 import { ALL } from "./listings.js";
 
 /**
  * The curated taxonomy, as a page anyone signed in can read (beeline-45v.5).
  *
- * `animal` is the tree every determination points into, and animal_itis
- * (schema/118) says how each node stands against ITIS. Two screens read them:
+ * `animal` is the tree every determination points into, and animal_ecdysis
+ * (schema/118) says how each node stands against Ecdysis's thesaurus
+ * (beeline-7gob; ITIS until 2026-10-23). Two screens read them:
  * one node — where it is filed, how it stands, what is filed below it — and a
  * flat list of the nodes matching a name or a standing, which is the worklist
  * the curation layer (beeline-45v.1) grows into.
@@ -20,12 +21,12 @@ import { ALL } from "./listings.js";
 export const PAGE_SIZE = 50;
 
 /** The standings a list can be narrowed to. `not loaded` is a state of the store, not something to filter on. */
-export const STANDING_FILTERS = ["any", "valid", "synonym", "homonym", "absent"] as const;
+export const STANDING_FILTERS = ["any", "accepted", "synonym", "homonym", "absent"] as const;
 export type StandingFilter = (typeof STANDING_FILTERS)[number];
 
 /**
  * The taxonomists' decisions a list can be narrowed to (beeline-45v.1):
- * every name somebody has decided about, or only those the ITIS release now
+ * every name somebody has decided about, or only those the thesaurus now
  * loaded has moved from under — which is the curation worklist.
  */
 export const DECIDED_FILTERS = ["any", "decided", "moved"] as const;
@@ -84,12 +85,11 @@ export const taxonHref = (taxon: TaxonRef): string =>
 export const taxonSpecimensHref = (taxon: TaxonRef): string =>
   `/specimens?${new URLSearchParams({ taxon: taxon.scientific_name, scope: ALL }).toString()}`;
 
-/** ITIS's own report for a TSN. */
-export const itisReportHref = (tsn: bigint | number): string =>
-  `https://www.itis.gov/servlet/SingleRpt/SingleRpt?search_topic=TSN&search_value=${String(tsn)}`;
+/** Ecdysis's own page for a taxon id. */
+export const ecdysisTaxonHref = (tid: bigint | number): string => `https://ecdysis.org/taxa/index.php?taxon=${String(tid)}`;
 
-/** A current ITIS name an outdated one now goes by. */
-export interface CurrentName extends TaxonRef {
+/** The accepted Ecdysis name a synonym is filed under. */
+export interface AcceptedName extends TaxonRef {
   /** Whether the tree holds it too, so the page can link to it. */
   held: boolean;
 }
@@ -97,15 +97,15 @@ export interface CurrentName extends TaxonRef {
 export interface TaxonRow extends TaxonRef {
   entity_id: number;
   authorship: string | null;
-  itis_tsn: bigint | null;
-  standing: AnimalItisStanding;
-  /** What ITIS calls an outdated name now. Usually one name; empty unless the standing is `synonym`. */
-  current: CurrentName[];
+  ecdysis_tid: bigint | null;
+  standing: AnimalEcdysisStanding;
+  /** The name Ecdysis files a synonym under; null unless the standing is `synonym`. */
+  accepted: AcceptedName | null;
   /** Specimens whose determination of record is this node or anything filed below it. */
   specimens: number;
   /** Where it is filed; null at a root. */
   parent: TaxonRef | null;
-  /** A taxonomist's decision about this name against ITIS, where there is one (animal_curation). */
+  /** A taxonomist's decision about this name against Ecdysis, where there is one (animal_curation). */
   decision: { kind: CurationKind; taxonomist: string } | null;
 }
 
@@ -114,7 +114,7 @@ export interface TaxonDecision {
   kind: CurationKind;
   taxonomist: string;
   decided_on: Date;
-  itis_release: Date;
+  ecdysis_fetched_on: Date;
   reason: string;
   reference: string | null;
   /** For a homonym resolution, the author of the name chosen, which is what tells the two apart. */
@@ -126,10 +126,10 @@ export interface TaxonNode extends TaxonRow {
   lineage: TaxonRef[];
   /** Specimens determined to this node and no finer. */
   determinedHere: number;
-  /** For a homonym: the current ITIS names that share its spelling, which nothing on the node can choose between. */
-  homonyms: { tsn: bigint; author: string | null }[];
+  /** For a homonym: the accepted Ecdysis names that share its spelling, which nothing on the node can choose between. */
+  homonyms: { tid: bigint; author: string | null }[];
   decision: TaxonDecision | null;
-  /** How the ITIS release now loaded has moved from under the decision (animal_curation_stale), or null. */
+  /** How the thesaurus now loaded has moved from under the decision (animal_curation_stale), or null. */
   moved: string | null;
   children: TaxonRow[];
 }
@@ -137,7 +137,7 @@ export interface TaxonNode extends TaxonRow {
 const rows = (db: Kysely<Database>) =>
   db
     .selectFrom("animal as a")
-    .innerJoin("animal_itis as i", "i.entity_id", "a.entity_id")
+    .innerJoin("animal_ecdysis as i", "i.entity_id", "a.entity_id")
     .innerJoin("animal_rank as r", "r.rank", "a.rank")
     .leftJoin("animal as p", "p.entity_id", "a.parent_id")
     .leftJoin("animal_curation as c", "c.animal_id", "a.entity_id")
@@ -146,7 +146,7 @@ const rows = (db: Kysely<Database>) =>
       "a.rank",
       "a.scientific_name",
       "a.authorship",
-      "a.itis_tsn",
+      "a.ecdysis_tid",
       "i.standing",
       "p.rank as parent_rank",
       "p.scientific_name as parent_name",
@@ -177,45 +177,41 @@ async function specimensUnder(db: Kysely<Database>, ids: readonly number[]): Pro
   return new Map(result.rows.map((row) => [Number(row.entity_id), Number(row.specimens)]));
 }
 
-/** The current names each outdated TSN points at, keyed by the TSN as a string. */
-async function currentNames(db: Kysely<Database>, tsns: readonly bigint[]): Promise<Map<string, CurrentName[]>> {
-  const byTsn = new Map<string, CurrentName[]>();
-  if (tsns.length === 0) return byTsn;
-  const result = await sql<{ tsn: number | bigint; rank: string; name: string; held: boolean }>`
-    SELECT s.tsn, cur.rank, cur.name,
-           EXISTS (SELECT 1 FROM animal a WHERE a.rank = cur.rank AND a.scientific_name = cur.name) AS held
-    FROM itis_synonym s
-    JOIN itis_taxon cur ON cur.tsn = s.accepted_tsn
-    WHERE s.tsn IN (${sql.join(tsns.map(Number))})
-    ORDER BY cur.name
+/** The accepted name each synonym's id is filed under, keyed by the id as a string. */
+async function acceptedNames(db: Kysely<Database>, tids: readonly bigint[]): Promise<Map<string, AcceptedName>> {
+  const byTid = new Map<string, AcceptedName>();
+  if (tids.length === 0) return byTid;
+  const result = await sql<{ tid: number | bigint; rank: string; name: string; held: boolean }>`
+    SELECT t.tid, acc.rank, acc.name,
+           EXISTS (SELECT 1 FROM animal a WHERE a.rank = acc.rank AND a.scientific_name = acc.name) AS held
+    FROM ecdysis_taxon t
+    JOIN ecdysis_taxon acc ON acc.tid = t.accepted_tid
+    WHERE t.tid IN (${sql.join(tids.map(Number))}) AND t.status = 'synonym'
   `.execute(db);
   for (const row of result.rows) {
-    const key = String(row.tsn);
-    const list = byTsn.get(key) ?? [];
-    list.push({ rank: row.rank, scientific_name: row.name, held: Boolean(row.held) });
-    byTsn.set(key, list);
+    byTid.set(String(row.tid), { rank: row.rank, scientific_name: row.name, held: Boolean(row.held) });
   }
-  return byTsn;
+  return byTid;
 }
 
-/** Base rows → rows with their counts and current names, in two queries however many rows there are. */
+/** Base rows → rows with their counts and accepted names, in two queries however many rows there are. */
 async function decorate(db: Kysely<Database>, base: readonly BaseRow[]): Promise<TaxonRow[]> {
   const counts = await specimensUnder(
     db,
     base.map((row) => row.entity_id),
   );
-  const current = await currentNames(
+  const accepted = await acceptedNames(
     db,
-    base.filter((row) => row.standing === "synonym" && row.itis_tsn !== null).map((row) => row.itis_tsn!),
+    base.filter((row) => row.standing === "synonym" && row.ecdysis_tid !== null).map((row) => row.ecdysis_tid!),
   );
   return base.map((row) => ({
     entity_id: row.entity_id,
     rank: row.rank,
     scientific_name: row.scientific_name,
     authorship: row.authorship,
-    itis_tsn: row.itis_tsn === null ? null : BigInt(row.itis_tsn),
+    ecdysis_tid: row.ecdysis_tid === null ? null : BigInt(row.ecdysis_tid),
     standing: row.standing,
-    current: row.itis_tsn === null ? [] : (current.get(String(row.itis_tsn)) ?? []),
+    accepted: row.ecdysis_tid === null ? null : (accepted.get(String(row.ecdysis_tid)) ?? null),
     specimens: counts.get(row.entity_id) ?? 0,
     decision:
       row.decision_kind === null || row.decision_by === null ? null : { kind: row.decision_kind, taxonomist: row.decision_by },
@@ -261,19 +257,19 @@ export async function loadTaxon(db: Kysely<Database>, rank: string, name: string
   const homonyms =
     found.standing === "homonym"
       ? await db
-          .selectFrom("itis_taxon")
-          .select(["tsn", "author"])
+          .selectFrom("ecdysis_taxon")
+          .select(["tid", "author"])
           .where("rank", "=", rank)
           .where("name", "=", name)
-          .where("usage", "=", "valid")
-          .orderBy("tsn")
+          .where("status", "=", "accepted")
+          .orderBy("tid")
           .execute()
       : [];
 
   const curation = await db
     .selectFrom("animal_curation as c")
-    .leftJoin("itis_taxon as t", "t.tsn", "c.itis_tsn")
-    .select(["c.kind", "c.taxonomist", "c.decided_on", "c.itis_release", "c.reason", "c.reference", "t.author"])
+    .leftJoin("ecdysis_taxon as t", "t.tid", "c.ecdysis_tid")
+    .select(["c.kind", "c.taxonomist", "c.decided_on", "c.ecdysis_fetched_on", "c.reason", "c.reference", "t.author"])
     .where("c.animal_id", "=", id)
     .executeTakeFirst();
   const moved =
@@ -285,7 +281,7 @@ export async function loadTaxon(db: Kysely<Database>, rank: string, name: string
     ...self!,
     lineage: lineage.rows.map(({ rank, scientific_name }) => ({ rank, scientific_name })),
     determinedHere: Number(here?.n ?? 0),
-    homonyms: homonyms.map((h) => ({ tsn: BigInt(h.tsn), author: h.author })),
+    homonyms: homonyms.map((h) => ({ tid: BigInt(h.tid), author: h.author })),
     decision:
       curation === undefined
         ? null
@@ -293,7 +289,7 @@ export async function loadTaxon(db: Kysely<Database>, rank: string, name: string
             kind: curation.kind,
             taxonomist: curation.taxonomist,
             decided_on: new Date(curation.decided_on),
-            itis_release: new Date(curation.itis_release),
+            ecdysis_fetched_on: new Date(curation.ecdysis_fetched_on),
             reason: curation.reason,
             reference: curation.reference,
             author: curation.kind === "homonym" ? curation.author : null,
@@ -359,30 +355,30 @@ export async function searchTaxa(db: Kysely<Database>, query: TaxonomyQuery): Pr
 }
 
 export interface TaxonomySummary {
-  /** The ITIS release loaded, as the newest change it records; null when none is. */
-  itisAsOf: Date | null;
+  /** The day the loaded thesaurus was fetched from Ecdysis; null when none is loaded. */
+  ecdysisFetchedOn: Date | null;
   /** How many nodes stand each way. */
-  standings: Record<Exclude<AnimalItisStanding, "not loaded">, number>;
-  /** Names a taxonomist has decided about, and how many of those the loaded release has moved from under. */
+  standings: Record<Exclude<AnimalEcdysisStanding, "not loaded">, number>;
+  /** Names a taxonomist has decided about, and how many of those the loaded thesaurus has moved from under. */
   decided: number;
   moved: number;
 }
 
 export async function taxonomySummary(db: Kysely<Database>): Promise<TaxonomySummary> {
   const counted = await db
-    .selectFrom("animal_itis")
+    .selectFrom("animal_ecdysis")
     .select((eb) => ["standing", eb.fn.countAll<number | bigint>().as("n")])
     .groupBy("standing")
     .execute();
-  const standings = { valid: 0, synonym: 0, homonym: 0, absent: 0 };
+  const standings = { accepted: 0, synonym: 0, homonym: 0, absent: 0 };
   for (const row of counted) {
     if (row.standing !== "not loaded") standings[row.standing] = Number(row.n);
   }
-  const release = await db
-    .selectFrom("itis_taxon")
-    .select((eb) => eb.fn.max("itis_as_of").as("as_of"))
+  const fetch = await db
+    .selectFrom("ecdysis_taxon")
+    .select((eb) => eb.fn.max("fetched_on").as("fetched_on"))
     .executeTakeFirst();
-  const asOf = release?.as_of ?? null;
+  const fetchedOn = fetch?.fetched_on ?? null;
   const decided = await db
     .selectFrom("animal_curation")
     .select((eb) => eb.fn.countAll<number | bigint>().as("n"))
@@ -392,7 +388,7 @@ export async function taxonomySummary(db: Kysely<Database>): Promise<TaxonomySum
     .select((eb) => eb.fn.countAll<number | bigint>().as("n"))
     .executeTakeFirst();
   return {
-    itisAsOf: asOf === null ? null : new Date(asOf),
+    ecdysisFetchedOn: fetchedOn === null ? null : new Date(fetchedOn),
     standings,
     decided: Number(decided?.n ?? 0),
     moved: Number(moved?.n ?? 0),

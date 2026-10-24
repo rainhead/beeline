@@ -1,0 +1,61 @@
+tid,name,author,rank_id,parent_tid,status,accepted_tid
+1,Animalia,"Linnaeus, 1758",10,1,accepted,1
+2,Arthropoda,"Latreille, 1829",30,1,accepted,2
+4,Hexapoda,"Latreille, 1825",40,2,accepted,4
+6,Insecta,"Linnaeus, 1758",60,4,accepted,6
+7,Pterygota,,70,6,accepted,7
+35,Neoptera,,80,7,accepted,35
+82673,Diptera,,100,35,accepted,82673
+82681,Hymenoptera,"Linnaeus, 1758",100,35,accepted,82681
+82762,Apocrita,,110,82681,accepted,82762
+82771,Brachycera,,110,82673,accepted,82771
+82884,Aculeata,,120,82762,accepted,82884
+83080,Muscomorpha,,120,82771,accepted,83080
+83193,Terebrantes,,120,82762,accepted,83193
+83534,Apoidea,,130,82884,accepted,83534
+83708,Chalcidoidea,,130,83193,accepted,83708
+83737,Chrysidoidea,,130,82884,accepted,83737
+85028,Vespoidea,,130,82884,accepted,85028
+86587,Apidae,,140,83534,accepted,86587
+87753,Chrysididae,,140,83737,accepted,87753
+89432,Eurytomidae,,140,83708,accepted,89432
+89805,Halictidae,,140,83534,accepted,89805
+91998,Megachilidae,,140,83534,accepted,91998
+84916,Tachinidae,,140,83080,accepted,84916
+96610,Vespidae,"Latreille, 1802",140,85028,accepted,96610
+104093,Apinae,,150,86587,accepted,104093
+109804,Halictinae,,150,89805,accepted,109804
+112135,Megachilinae,,150,91998,accepted,112135
+113341,Nomadinae,,150,86587,accepted,113341
+1643736,Rileyinae,,150,89432,accepted,1643736
+139007,Bombini,,160,104093,accepted,139007
+146298,Halictini,,160,109804,accepted,146298
+150519,Melectini,,160,113341,accepted,150519
+154255,Osmiini,,160,112135,accepted,154255
+173433,Bombus,"Latreille, 1802",180,139007,accepted,173433
+173747,Brachymelecta,"Linsley, 1939",180,150519,accepted,173747
+106248,Chrysis,"Linnaeus, 1761",180,87753,accepted,106248
+287425,Euodynerus,"Dalla Torre, 1904",180,96610,accepted,287425
+183988,Hoplitis,"Klug, 1807",180,154255,accepted,183988
+186125,Lasioglossum,"Curtis, 1833",180,146298,accepted,186125
+1640620,Lasioglossum (Eickwortia),,180,89805,accepted,1640620
+189579,Melecta,"Latreille, 1802",180,150519,accepted,189579
+95505,Rileya,"Brauer and Bergenstamm, 1893",180,84916,accepted,95505
+1645743,Rileya,"Ashmead, 1888",180,1643736,accepted,1645743
+204170,Xeromelecta,"Linsley, 1939",180,150519,synonym,173747
+487834,Lasioglossum (Dialictus),,190,186125,accepted,487834
+1640780,Lasioglossum (Lasioglossum),,190,186125,accepted,1640780
+1640789,Lasioglossum (Leuchalictus),,190,186125,accepted,1640789
+236821,Bombus caliginosus,"(Frison, 1927)",220,173433,accepted,236821
+237038,Bombus vosnesenskii,"Radoszkowski, 1862",220,173433,accepted,237038
+265407,Brachymelecta californica,"(Cresson, 1878)",220,173747,accepted,265407
+245760,Hoplitis truncata,"(Cresson, 1878)",220,183988,accepted,245760
+246481,Lasioglossum alexanderi,"(McGinley, 1999)",220,1640620,accepted,246481
+248008,Lasioglossum tenax,"(Sandhouse, 1924)",220,487834,accepted,248008
+248033,Lasioglossum titusi,"(Crawford, 1902)",220,1640780,accepted,248033
+1641418,Lasioglossum zonulum,"(Smith, 1848)",220,186125,accepted,1641418
+290546,Lasioglossum zonulus,"(Smith, 1848))",220,1640789,accepted,290546
+251489,Melecta pacifica,"Cresson, 1878",220,189579,accepted,251489
+1645055,Xeromelecta californica,"(Cresson, 1879)",220,204170,synonym,265407
+1646716,Xeromelecta larreae,"(Cockerell, 1900)",220,204170,accepted,1646716
+269140,Melecta pacifica fulvida,"Cresson, 1878",230,251489,accepted,269140

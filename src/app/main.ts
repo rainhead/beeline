@@ -7,6 +7,7 @@ import { cachedPipelineJwt } from "../inat-jwt.js";
 import { kyselyReader, recordPersonChanges } from "../person-change.js";
 import { readSampleChanges, recordSampleChanges } from "../sample-change.js";
 import { ensureSampleOverlayFile } from "../sample-overlay.js";
+import { ensureProgramContactsFile } from "../program-contacts.js";
 import { startScheduler } from "./jobs/framework.js";
 import { buildJobs } from "./jobs/registry.js";
 import { createApp } from "./server.js";
@@ -25,6 +26,7 @@ const { db, instance, close } = await openAppDb(config);
 // authored files a rebuild cannot reconstruct, and a file that is simply not
 // there yet would read to it as a file that failed to transfer (beeline-649).
 await ensureSampleOverlayFile(config.sampleOverlayPath);
+await ensureProgramContactsFile(config.programContactsPath);
 
 // Both overlays, merged as promotion merges them: the guard's job is to spot
 // a decision a person made, and half the decisions are curated in git.
@@ -156,6 +158,7 @@ const app = createApp({
   correctionsPath: config.correctionsPath,
   personOverlayPath: config.personOverlayPath,
   sampleOverlayPath: config.sampleOverlayPath,
+  programContactsPath: config.programContactsPath,
   personChangesPath: config.personChangesPath,
   sampleChangesPath: config.sampleChangesPath,
   sampleStatePath: config.sampleStatePath,

@@ -158,6 +158,7 @@ describe("the taxonomy pages", () => {
       "/jobs",
       "/people",
       "/print-runs",
+      "/programs",
       "/taxonomy",
       "/unclaimed",
     ]);

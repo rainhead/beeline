@@ -127,6 +127,7 @@ export const en = {
       design: "Design",
       jobs: "Jobs",
       taxonomy: "Taxonomy",
+      programs: "Programs",
       printRuns: "Print runs",
       exports: "Exports",
       identify: "Identify specimens",
@@ -1234,6 +1235,62 @@ export const en = {
       moved: "ITIS has moved since.",
     },
     notFound: "There is no such name in the taxonomy.",
+  },
+
+  /**
+   * The programs (beeline-rrit): a listing, and a page for each, read by
+   * everyone signed in. The counts link into the listings for staff only,
+   * since a volunteer's listings hold only their own records.
+   */
+  programs: {
+    title: "Programs",
+    intro:
+      "The programs Beeline keeps records for: each bee atlas, which holds the records collected on its ground; Master Melittology, which holds those collected where no atlas reaches; and the BLM surveys.",
+    colProgram: "Program",
+    colLeads: "Led by",
+    colMembers: "Members",
+    colSamples: (season: number) => `Samples in ${season}`,
+    colSpecimens: "Specimens, every season",
+    noLeads: "no lead recorded",
+    notMembership: "not recorded",
+    notFound: "There is no program with that code.",
+    /** The header line under the name. */
+    meta: (code: string, atlas: boolean) => (atlas ? `${code} · a bee atlas` : code),
+    summary: "At a glance",
+    members: "Members",
+    membersLink: (count: number) => `${n(count)} ${count === 1 ? "person" : "people"}`,
+    collectors: (season: number) => `Collectors in ${season}`,
+    samples: (season: number) => `Samples in ${season}`,
+    specimens: (season: number) => `Specimens in ${season}`,
+    specimensEver: "Specimens, every season",
+    contact: "Contact",
+    leads: "Led by",
+    website: "Website",
+    email: "Email",
+    emailNone: "none recorded yet",
+    /** The staff form under the contact details. */
+    emailField: "The program's email address",
+    emailHint: "The address the program gives people for questions. Leave it empty to remove it.",
+    emailSet: (login: string, when: string) => `Set by ${login}, ${when}.`,
+    emailSave: "Save address",
+    labels: "Labels",
+    printsOwn: "Prints its own labels, in print runs prepared for it alone.",
+    printedByProgram:
+      "Does not print its own labels: they are printed in the program's print runs, which Oregon prepares for every atlas that does not print its own.",
+    seasons: "Records by season",
+    colSeason: "Season",
+    colSeasonSamples: "Samples",
+    colSeasonSpecimens: "Specimens",
+    colSeasonCollectors: "Collectors",
+    season: (year: number) => `${year} season`,
+    noRecords: "No records yet.",
+    surveys:
+      "None by where they were collected: survey samples will come in through the surveys' own field entry, and belong to them by the day they were collected on rather than by where they fell.",
+    seeSamples: "See its samples",
+    seeSpecimens: "See its specimens",
+    ecdysis: "Expert determinations",
+    ecdysisDataset: (datasetId: number) =>
+      `Read back every night at 3am Pacific from Ecdysis, the museum database, dataset ${datasetId}.`,
   },
 
   exports: {

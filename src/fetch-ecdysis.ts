@@ -36,6 +36,8 @@ export interface EcdysisCollection {
   datasetId: number;
   /** What precedes Beeline's field number in the catalog number. */
   catalogPrefix: string;
+  /** The program whose determinations the collection holds, by code: what its page says it reads from. */
+  program: string;
 }
 
 /**
@@ -43,7 +45,7 @@ export interface EcdysisCollection {
  * until which collections the other atlases keep is answered (beeline-9ut.2,
  * where this becomes reference data beside atlas_printing).
  */
-export const ECDYSIS_COLLECTIONS: readonly EcdysisCollection[] = [{ datasetId: 44, catalogPrefix: "WSDA_" }];
+export const ECDYSIS_COLLECTIONS: readonly EcdysisCollection[] = [{ datasetId: 44, catalogPrefix: "WSDA_", program: "WaBA" }];
 
 export interface EcdysisCredentials {
   username: string;

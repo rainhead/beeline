@@ -27,7 +27,7 @@ export const ATLAS_IDENTITY: Readonly<Record<string, AtlasIdentity>> = {
     logo: "/static/atlas/OBA.jpg",
   },
   WaBA: {
-    url: "https://agr.wa.gov/beeatlas",
+    url: "https://agr.wa.gov/departments/insects-pests-and-weeds/insects/apiary-pollinators/pollinator-health/bee-atlas/",
     disc: "#fcbd4a",
     ring: "#262162",
     logo: "/static/atlas/WaBA.jpg",

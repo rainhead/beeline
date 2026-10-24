@@ -97,6 +97,27 @@ export function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/**
+ * One observation as a run returned it: seen by this run, and a new load
+ * where its projection differs from the current one. True when it was new.
+ */
+async function recordObservation(conn: DuckDBConnection, syncRunId: number, obs: Record<string, unknown>): Promise<boolean> {
+  // Presence first, unconditionally: unchanged observations leave no load
+  // row, and deletion detection needs "this run saw it".
+  await conn.run(`INSERT INTO observation_seen (sync_run_id, inat_id) VALUES ($1, $2)`, [syncRunId, Number(obs.id)]);
+  const content = canonicalJson(obs);
+  const hash = createHash("sha256").update(content).digest("hex");
+  const [[seen]] = (await (
+    await conn.run(`SELECT count(*) FROM observation_current WHERE inat_id = $1 AND content_hash = $2`, [Number(obs.id), hash])
+  ).getRows()) as [[bigint | number]];
+  if (Number(seen) > 0) return false;
+  await conn.run(
+    `INSERT INTO observation_load (inat_id, sync_run_id, content, content_hash) VALUES ($1, $2, $3, $4)`,
+    [Number(obs.id), syncRunId, content, hash],
+  );
+  return true;
+}
+
 async function readTokenFallback(): Promise<string | undefined> {
   if (process.env.INAT_JWT) return process.env.INAT_JWT.trim();
   try {
@@ -169,28 +190,8 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
 
       for (const obs of results) {
         fetched += 1;
-        // Presence first, unconditionally: unchanged observations leave no
-        // load row, and deletion detection needs "this run saw it".
-        await conn.run(
-          `INSERT INTO observation_seen (sync_run_id, inat_id) VALUES ($1, $2)`,
-          [syncRunId, Number(obs.id)],
-        );
-        const content = canonicalJson(obs);
-        const hash = createHash("sha256").update(content).digest("hex");
-        const seen = await scalar(
-          `SELECT count(*) FROM observation_current WHERE inat_id = $1 AND content_hash = $2`,
-          [Number(obs.id), hash],
-        );
-        if (seen > 0) {
-          unchanged += 1;
-        } else {
-          await conn.run(
-            `INSERT INTO observation_load (inat_id, sync_run_id, content, content_hash)
-             VALUES ($1, $2, $3, $4)`,
-            [Number(obs.id), syncRunId, content, hash],
-          );
-          newLoads += 1;
-        }
+        if (await recordObservation(conn, syncRunId, obs)) newLoads += 1;
+        else unchanged += 1;
       }
 
       if (results.length < perPage) break; // short page is terminal
@@ -229,6 +230,95 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
     await conn.run(`UPDATE sync_run SET completed_at = now() WHERE entity_id = $1`, [syncRunId]);
     await conn.run("COMMIT");
     return { syncRunId, fetched, newLoads, unchanged, requestMs, refreshMs };
+  } catch (err) {
+    await conn.run("ROLLBACK");
+    throw err;
+  }
+}
+
+/** The source a by-id run records: it is no project's (schema/060 `fetched_by_id`). */
+export const BY_ID_SOURCE = "observation-ids";
+
+export interface FetchByIdOptions
+  extends Pick<SyncOptions, "token" | "anonymous" | "fetchImpl" | "pageDelayMs" | "requestTimeoutMs" | "signal" | "apiBase"> {
+  ids: readonly number[];
+}
+
+export interface FetchByIdResult {
+  syncRunId: number;
+  /** Observations asked for, and how many iNaturalist returned: the rest are gone upstream, or hidden from this token. */
+  asked: number;
+  fetched: number;
+  newLoads: number;
+  unchanged: number;
+}
+
+/**
+ * Particular observations, by id (beeline-7vsw): the ones samples cite that no
+ * project sweep returns, because the observation is in none of the synced
+ * projects. Same projection, same loads, same transaction as a sweep, and
+ * recorded as a run of its own kind — `fetched_by_id` — because a run that
+ * asked for two hundred observations proves nothing about the absence of any
+ * other, and deletion detection would otherwise read it as one that did. It
+ * names no project, so an authenticated read gets no private coordinates:
+ * trust is per project. What it is for is the observation's geoprivacy, which
+ * decides whether another volunteer sees the sample's location.
+ */
+export async function fetchObservationsById(conn: DuckDBConnection, opts: FetchByIdOptions): Promise<FetchByIdResult> {
+  const token = opts.token === null ? undefined : (opts.token ?? (await readTokenFallback()));
+  if (!token && !opts.anonymous) {
+    throw new Error("no iNaturalist token — refusing to run silently anonymous");
+  }
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const apiBase = opts.apiBase ?? "https://api.inaturalist.org/v2";
+  const ids = [...new Set(opts.ids.map(Number))];
+  // The endpoint returns at most 200 a request, and a list of ids is one
+  // page: chunked at that, nothing needs paging.
+  const CHUNK = 200;
+  await conn.run("BEGIN TRANSACTION");
+  try {
+    const [[runId]] = (await (
+      await conn.run(
+        `INSERT INTO sync_run (source, authenticated, fetched_by_id) VALUES ($1, $2, true) RETURNING entity_id`,
+        [BY_ID_SOURCE, !!token],
+      )
+    ).getRows()) as [[number]];
+    const syncRunId = Number(runId);
+    let fetched = 0, newLoads = 0, unchanged = 0;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      opts.signal?.throwIfAborted();
+      const chunk = ids.slice(i, i + CHUNK);
+      const url = new URL(`${apiBase}/observations`);
+      url.searchParams.set("id", chunk.join(","));
+      url.searchParams.set("per_page", String(CHUNK));
+      url.searchParams.set("fields", FIELDS);
+      const response = await fetchImpl(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        signal: AbortSignal.any([
+          AbortSignal.timeout(opts.requestTimeoutMs ?? 60_000),
+          ...(opts.signal ? [opts.signal] : []),
+        ]),
+      });
+      if (!response.ok) throw new Error(`iNat API ${response.status} on ${url.pathname} (by id)`);
+      const body = (await response.json()) as { results?: unknown };
+      if (!Array.isArray(body.results)) throw new Error("iNat API returned no results array for a by-id request — aborting the run");
+      const asked = new Set(chunk);
+      for (const obs of body.results as Array<Record<string, unknown>>) {
+        // Only what was asked: anything else would be recorded as seen by a
+        // run that never asked about it.
+        if (!asked.has(Number(obs.id))) continue;
+        fetched += 1;
+        if (await recordObservation(conn, syncRunId, obs)) newLoads += 1;
+        else unchanged += 1;
+      }
+      if (i + CHUNK < ids.length && opts.pageDelayMs !== 0) {
+        await new Promise((r) => setTimeout(r, opts.pageDelayMs ?? 1100));
+      }
+    }
+    if (newLoads > 0) await refreshObservationFields(conn);
+    await conn.run(`UPDATE sync_run SET completed_at = now() WHERE entity_id = $1`, [syncRunId]);
+    await conn.run("COMMIT");
+    return { syncRunId, asked: ids.length, fetched, newLoads, unchanged };
   } catch (err) {
     await conn.run("ROLLBACK");
     throw err;

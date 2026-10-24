@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
-import { canonicalJson, syncINat } from "../src/sync-inat.js";
+import { BY_ID_SOURCE, canonicalJson, fetchObservationsById, syncINat } from "../src/sync-inat.js";
+import { refreshCitedObservations } from "../src/app/jobs/registry.js";
 
 let conn: DuckDBConnection;
 
@@ -270,6 +271,72 @@ describe("iNat sync", () => {
       `SELECT rule_name FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'observation_missing_upstream'`,
     );
     expect(after).toEqual([["observation_missing_upstream"]]);
+  });
+
+  test("reads particular observations by id, as a run of its own kind, recording only what it asked for", async () => {
+    const urls: string[] = [];
+    const api: typeof fetch = async (input) => {
+      urls.push(String(input));
+      // 43 is gone upstream; 77 was never asked for and must not be recorded.
+      return new Response(JSON.stringify({ results: [obs(42, { geoprivacy: "private" }), obs(77)] }), { status: 200 });
+    };
+    const r = await fetchObservationsById(conn, { ids: [42, 43, 42], token: "test-jwt", fetchImpl: api, pageDelayMs: 0 });
+    expect(r).toMatchObject({ asked: 2, fetched: 1, newLoads: 1, unchanged: 0 });
+    expect(new URL(urls[0]!).searchParams.get("id")).toBe("42,43");
+    expect(new URL(urls[0]!).searchParams.has("project_id")).toBe(false);
+    expect(await rows(conn, `SELECT source, fetched_by_id, completed_at IS NOT NULL FROM sync_run`)).toEqual([[BY_ID_SOURCE, true, true]]);
+    expect(await rows(conn, `SELECT inat_id FROM observation_seen ORDER BY 1`)).toEqual([[42n]]);
+    // And the shredded form is there for promotion to read.
+    expect(await rows(conn, `SELECT inat_id, geoprivacy FROM observation_field`)).toEqual([[42n, "private"]]);
+  });
+
+  test("asks in requests of two hundred ids", async () => {
+    const asked: number[] = [];
+    const api: typeof fetch = async (input) => {
+      asked.push(new URL(String(input)).searchParams.get("id")!.split(",").length);
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    };
+    const ids = Array.from({ length: 450 }, (_, i) => i + 1);
+    await fetchObservationsById(conn, { ids, token: "test-jwt", fetchImpl: api, pageDelayMs: 0 });
+    expect(asked).toEqual([200, 200, 50]);
+  });
+
+  test("a by-id run never claims coverage of an observation it did not ask for", async () => {
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    const swept = await insertCleanSample(conn, { inat_observation_id: "42" });
+    const cited = await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "55" });
+    await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(42)]]) });
+    await fetchObservationsById(conn, { ids: [55], token: "test-jwt", fetchImpl: fakeApi([[obs(55)]]), pageDelayMs: 0 });
+    // A later by-id run that asks about neither.
+    await fetchObservationsById(conn, { ids: [99], token: "test-jwt", fetchImpl: fakeApi([[]]), pageDelayMs: 0 });
+    const missing = await rows(
+      conn,
+      `SELECT sample_id FROM qc_finding WHERE sample_id IN (${swept}, ${cited}) AND rule_name = 'observation_missing_upstream'`,
+    );
+    expect(missing).toEqual([]);
+  });
+
+  test("the nightly asks only for the observations samples cite that no sync has read, and never fails the run", async () => {
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    await insertCleanSample(conn, { inat_observation_id: "42" });
+    await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "55" });
+    await insertCleanSample(conn, { sample_number: "'3'" });
+    await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(42)]]) });
+    const asked: string[] = [];
+    const api: typeof fetch = async (input) => {
+      asked.push(new URL(String(input)).searchParams.get("id")!);
+      return new Response(JSON.stringify({ results: [obs(55, { taxon_geoprivacy: "obscured" })] }), { status: 200 });
+    };
+    expect(await refreshCitedObservations(conn, { token: "test-jwt", fetchImpl: api, pageDelayMs: 0 })).toBe(
+      "1 of 1 cited observations read by id (1 new)",
+    );
+    expect(asked).toEqual(["55"]);
+    expect(await refreshCitedObservations(conn, { token: "test-jwt", fetchImpl: api })).toBe("every cited observation read");
+    // iNaturalist failing is a line in the run's detail, not a failed run.
+    await insertCleanSample(conn, { sample_number: "'4'", inat_observation_id: "66" });
+    const down: typeof fetch = async () => new Response("", { status: 503 });
+    expect(await refreshCitedObservations(conn, { token: "test-jwt", fetchImpl: down })).toMatch(/^cited observations not read \(iNat API 503/);
+    expect(await rows(conn, `SELECT count(*) FROM sync_run WHERE fetched_by_id`)).toEqual([[1n]]);
   });
 
   test("canonical json is order-insensitive", () => {

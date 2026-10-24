@@ -313,13 +313,31 @@ the environment and the Fly deployment as the release:
   completed, failed or was abandoned — with its own slow line past a second.
   It leaves out the client's connection, so a slow download over a slow link
   is not a slow server.
-- **Job check-ins.** Each job is a cron monitor named after it, created on its
-  first run from the schedule the scheduler already uses. Sentry opens an issue
-  when a run fails, and when the nightly has not started by the end of the
-  night window.
+- **Job check-ins.** Every job sends its runs as check-ins to a cron monitor
+  named after it, which Sentry creates on the first run from the schedule the
+  scheduler already uses. **Only `nightly-pipeline`'s is active**: Sentry's
+  free plan includes [one cron monitor](https://docs.sentry.io/pricing/quotas/manage-cron-monitors/),
+  and more need a pay-as-you-go budget, so when the organisation's trial of
+  the Business plan ended on 2026-10-12 Sentry disabled the other eight, and
+  it drops their check-ins. So Sentry says when the nightly fails
+  or has not started by the end of the night window, and about any other job
+  only through the error a failed run reports and through the uptime monitor
+  below. Which monitor holds the one slot is set on Sentry's Crons page.
 
-A Sentry uptime monitor also polls `/healthz` every five minutes and alerts
-after two failures in a row. It lives in Sentry's settings, not in this repo.
+A Sentry uptime monitor polls [`/healthz/jobs`](#knowing-the-nightly-is-running)
+every five minutes and alerts after two failures in a row. It is the plan's
+one uptime monitor, which is why it watches `/healthz/jobs` rather than
+`/healthz`: `/healthz/jobs` reads the store, so it fails when the app is down
+or the store cannot be read as well as when a job is failing or overdue,
+while Fly already restarts the machine on `/healthz` itself. A monitor alerts
+only through an alert it is connected to, and until 2026-10-24 neither was, so
+neither had ever told anybody anything. Both are now connected to the alert
+"Monitors: the sandbox or its jobs are down, or the nightly failed", which
+emails Peter when a monitor's issue first appears, comes back after being
+resolved, or recurs. A new monitor needs connecting to it too. **No email has
+arrived yet**: tested on 2026-10-24, the alert fired twice and nothing reached
+Gmail, so until beeline-997i is fixed an outage shows in Sentry and reaches
+nobody. All of this lives in Sentry's settings, not in this repo.
 
 **What never leaves the machine.** An error from DuckDB quotes the value it
 choked on, and a stack frame's locals hold the row being read. So the SDK
@@ -370,9 +388,6 @@ says the machine is a hundred times busier than it is.
 
 ## Knowing the nightly is running
 
-The Sentry check-ins above now alert on a failed or missing run. What follows
-predates them and still runs.
-
 `/healthz` proves the store is readable, and Fly restarts the machine when it
 fails — which is why job staleness is **not** on it. Restarting is the wrong
 answer to a job that failed, and on a bad night it would loop.
@@ -385,32 +400,17 @@ the suspect) and `never-run` (registered but never scheduled, which is a
 half-finished deployment rather than a breakage). Unauthenticated: job names
 are already public in this repo and no record data passes through it.
 
-Polled from maderas beside the backup, so a silent stall reaches somebody:
-
-```cron
-*/20 * * * * out=$(curl -sS --fail-with-body --connect-timeout 10 --max-time 30 https://beeline.fly.dev/healthz/jobs) || echo "$out"
-```
-
-`echo`, not `printf "%s\n"`: in a crontab a `%` is a newline and what follows it
-is stdin, so the `printf` version ran as an unterminated string and never
-polled anything. It mailed a shell syntax error to a local mailbox every
-twenty minutes for a week — 1,400 of them — which is a second way for the
-one alarm that mattered to go unread (beeline-vl4).
-
-`--fail-with-body` rather than `-f`, because plain `-f` throws the body away
-and the body is the whole message — you would be mailed that something failed
-without being told which job. The timeouts bound the poll: without them a
-stalled connection leaves `curl` running until something else kills it, and at
-three runs an hour those accumulate.
-
-The capture is what makes the mail worth reading. The endpoint prints `ok` on
-success, and cron mails anything a job writes to stdout — so the obvious
-version of this line mails `ok` every twenty minutes, which is how somebody
-learns to filter it, which is how the one that mattered goes unread. Holding
-the body in a variable and printing it only when `curl` exits non-zero means
-**silence is the healthy state**. Errors curl writes to stderr — a refused
-connection, a DNS failure, a timeout — are mailed either way, which is right:
-being unable to ask is also an answer.
+Sentry's uptime monitor polls it every five minutes and alerts after two
+failures in a row ([above](#errors-logs-and-job-check-ins)), so a silent stall
+reaches somebody — once its email does (beeline-997i). It replaced a cron
+line on maderas that polled every twenty minutes until 2026-10-24
+(beeline-htcw.1), whose mail went to a mailbox on maderas that nobody read:
+the polls that failed, `legacy-export` on every one from 5 to 8 October
+among them, were all found there unread that day. The monitor has response capture
+turned on, so Sentry keeps a failed check's response, whose lines name the
+jobs; `/healthz/jobs` itself says the same thing to anyone who asks. A job that keeps failing keeps the endpoint at 503 until its next
+success, which for a nightly job is a day, and that is one issue, not one per
+check.
 
 The response says which job and what kind of wrong — `failing`, `overdue`,
 `never-run` — and deliberately not why. `job_run.detail` holds whatever a
@@ -513,8 +513,9 @@ to the drive's bin, which empties itself after 30 days: every night's copy is
 kept for two weeks, and the first copy of each month for a year (Peter,
 2026-10-12). A shared drive's Content manager cannot delete outright, which is
 why it is the bin. Anything that fails, fails the run, so a missing backup
-shows on `/jobs`, on `/healthz/jobs` and as a missed Sentry check-in like any
-other nightly job, with the step that failed named in the run's detail.
+shows on `/jobs` and on `/healthz/jobs`, which Sentry polls, with the step
+that failed named in the run's detail. Its own Sentry cron monitor is one of
+the eight the plan keeps disabled.
 Outside development it also fails rather than succeeding at nothing when the
 folder or the Drive key is not set, and rather than upload the private store
 unencrypted when the store's key is not. A run killed partway, by memory or a
@@ -584,25 +585,36 @@ before cutover, not after something has gone wrong. **First run, 2026-10-12**
 passed `backup:check` with both stores opened, and the scratch app served
 every main page from it, the orphaned run above included.
 
-### The pull from maderas, until the Drive copies have a record
+### The pull from maderas, retired
 
-Before the nightly copy existed, the authored files alone were pulled off the
-volume by [`scripts/backup-authored-files.sh`](../../scripts/backup-authored-files.sh)
-on maderas, nightly at 02:30, with
-[`scripts/check-backup-age.sh`](../../scripts/check-backup-age.sh) mailing
-when the newest archive was more than two days old. It stays until the Drive
-copies have run cleanly for a few weeks and the drill has passed, and it
-cannot outlive its token, which was minted to expire on 1 December 2026; it is
-then retired rather than renewed (beeline-elf). Its token is scoped to SSH on
-this one app (`fly tokens create ssh --app beeline`), sourced from a mode-600
-file on maderas with its expiry recorded beside it
-(`BEELINE_FLY_TOKEN_EXPIRES`), and the script warns from two weeks out. The
-script and its comments say the rest.
+Before the nightly copy existed, maderas pulled the authored files alone off
+the volume every night. That pull stopped on 2026-10-24, after twelve nights
+of Drive copies without a miss and a passed drill (beeline-elf), and its
+scripts are in git history before that date.
 
-## What stays on maderas
+## Legacy pulls
 
 `pnpm legacy:fetch` pulls the Mongo export, the taxonomy CSV and the usernames
-register from production over SSH (`beeline` in `~/.ssh/config`). A Fly machine
-does not have that key and should not be given it. So legacy pull, load and
-promote stay a maderas or workstation job, and the rebuilt store is shipped to
-Fly. Fly hosts the app; maderas is where legacy ingestion runs.
+register from the legacy production host over SSH, as `beeline` in
+`~/.ssh/config`. The Fly machine does not hold that key and must not be given
+it, so the pull is made on Peter's workstation (`desktop-wsl`), whose key the
+production host accepts, and the files are uploaded to the volume. Legacy
+pulls end at cutover, when the legacy system freezes.
+
+```sh
+pnpm legacy:fetch                          # data/legacy/: occurrences.jsonl.gz, taxonomy.csv, usernames.csv
+fly ssh sftp shell --app beeline
+  mkdir /app/data/legacy-<date>
+  put data/legacy/occurrences.jsonl.gz /app/data/legacy-<date>/occurrences.jsonl.gz
+  put data/legacy/taxonomy.csv /app/data/legacy-<date>/taxonomy.csv
+  put data/legacy/usernames.csv /app/data/legacy-<date>/usernames.csv
+```
+
+Then rebuild from it in maintenance mode ([above](#running-a-cli-against-the-store)):
+a script in `data/` run with `nohup`, its log beside it, that copies the two
+CSVs into `data/legacy/`, runs `pnpm db:reseed` from the live store into a new
+one, and loads the pull into the new store with `pnpm legacy:load <new>
+data/legacy-<date>/occurrences.jsonl.gz` before the promotions.
+`data/reseed-2026-10-24b.sh` on the volume is the latest, with the order of
+every step and why. The whole procedure moves into this runbook with
+beeline-htcw.4.

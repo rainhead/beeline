@@ -257,7 +257,7 @@ const sampleColumns = (personId: number, reader: Reader) => sql`
   ${withheld(reader)} AS location_withheld`;
 
 /**
- * Joins `own` for the location rule. The location row is joined whole and
+ * Joins `own` and `seen` for the location rule. The location row is joined whole and
  * blanked in `hydrate`: a condition in its ON that reads `own` made the
  * specimen page take 8.6 s on the dev store.
  */
@@ -266,6 +266,7 @@ const sampleJoins = (reader: Reader) => sql`
   LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
   LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
   LEFT JOIN ${ownSamplesSql(reader)} own ON own.sample_id = s.entity_id
+  LEFT JOIN observation_field seen ON seen.inat_id = s.inat_observation_id
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
   LEFT JOIN elevation_source es ON es.entity_id = loc.elevation_source_id
   LEFT JOIN observation_field f ON f.inat_id = s.inat_observation_id

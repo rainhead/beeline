@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
@@ -166,6 +167,18 @@ describe("viewing Beeline as somebody else", () => {
     const all = await (await get("/samples?scope=all", cookie(ROBERT))).text();
     expect(all).toContain("S-1");
     expect(all).toContain(en.listings.scope.withheldNote.replaceAll("'", "&#39;"));
+  });
+
+  it("withholds what the volunteer may not see, even the staff member's own protected sample", async () => {
+    // The view is the volunteer's: S-1 is the staff member's, and Robert did
+    // not collect it, so its location is not his to see.
+    const { get, db } = await fixture({ admin: true });
+    await sql`UPDATE sample SET geoprivacy = 'obscured' WHERE sample_number = 'S-1'`.execute(db);
+    const { id } = (await sql<{ id: number }>`SELECT entity_id AS id FROM sample WHERE sample_number = 'S-1'`.execute(db)).rows[0]!;
+    expect(await (await get(`/samples/${id}`)).text()).toContain("44.5646");
+    const asRobert = await (await get(`/samples/${id}`, cookie(ROBERT))).text();
+    expect(asRobert).not.toContain("44.5646");
+    expect(asRobert).not.toContain("Corvallis");
   });
 
   it("is read-only: the volunteer's edit form renders, and a save is refused", async () => {

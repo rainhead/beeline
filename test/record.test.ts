@@ -446,6 +446,32 @@ describe("a location iNaturalist keeps from everyone but its observer", () => {
     }
   });
 
+  it("is withheld where Beeline has never read the observation, so cannot tell", async () => {
+    // A-1 cites observation 998877 and carries no setting of its own.
+    const { app, conn, aliceSample } = await recordApp("bob");
+    await conn.run(`UPDATE sample SET taxon_geoprivacy = NULL WHERE entity_id = ${aliceSample}`);
+    const unread = await get(app, `/samples/${aliceSample}`);
+    expect(unread).not.toContain(COORDINATES);
+    expect(unread).toContain(en.record.sample.where.withheld({ geoprivacy: null, taxonGeoprivacy: null }).replaceAll("'", "&#39;"));
+    // Once a sync has read it and it is open, it is open.
+    await conn.run(`INSERT INTO observation_field (inat_id, place_guess) VALUES (998877, 'Verlot, WA, US')`);
+    expect(await get(app, `/samples/${aliceSample}`)).toContain(COORDINATES);
+  });
+
+  it("withholds the observation's own place guess", async () => {
+    for (const [who, shown] of [["bob", false], ["alice", true]] as const) {
+      const { app, conn, aliceSample } = await recordApp(who);
+      await conn.run(`INSERT INTO observation_field (inat_id, place_guess) VALUES (998877, 'Gumboot Creek trailhead')`);
+      expect((await get(app, `/samples/${aliceSample}`)).includes("Gumboot"), who).toBe(shown);
+    }
+  });
+
+  it("hides the county where iNaturalist itself keeps the observation private for a rare plant", async () => {
+    const { app, conn, aliceSample } = await recordApp("bob");
+    await conn.run(`UPDATE sample SET taxon_geoprivacy = 'private' WHERE entity_id = ${aliceSample}`);
+    expect(await get(app, `/samples/${aliceSample}`)).not.toContain("BentonCo");
+  });
+
   it("hides the county too where the observation is private", async () => {
     const { app, conn, aliceSample } = await recordApp("bob");
     await conn.run(`UPDATE sample SET geoprivacy = 'private', taxon_geoprivacy = NULL WHERE entity_id = ${aliceSample}`);

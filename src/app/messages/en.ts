@@ -476,7 +476,7 @@ export const en = {
       outside: "Outside the atlases",
       /** Above a listing of other people's records, for anyone but staff. */
       withheldNote:
-        "Where somebody's observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected, as on iNaturalist.",
+        "Where somebody's observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected, as on iNaturalist — and the same where Beeline has not yet read the observation, so cannot tell.",
     },
     /** In a Place cell whose locality, and perhaps county, is somebody else's to see. */
     locationHidden: "location hidden",
@@ -760,7 +760,9 @@ export const en = {
          * one is the collector's choice and the other is about a rare plant.
          */
         withheld: (why: { geoprivacy: string | null; taxonGeoprivacy: string | null }) =>
-          why.geoprivacy !== null
+          why.geoprivacy === null && why.taxonGeoprivacy === null
+            ? "Beeline has not read this sample's observation from iNaturalist, so it cannot tell whether the collector keeps its location private there. Until it can, only its collectors and staff see where it was collected."
+            : why.geoprivacy !== null
             ? `The collector keeps this observation's location ${why.geoprivacy === "private" ? "private" : "obscured"} on iNaturalist, so only its collectors and staff see where it was collected.`
             : `iNaturalist ${why.taxonGeoprivacy === "private" ? "hides" : "obscures"} this observation's location because its host plant is rare, so only its collectors and staff see where it was collected.`,
         coordinates: "Coordinates",

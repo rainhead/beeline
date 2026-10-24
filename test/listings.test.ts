@@ -1186,6 +1186,23 @@ describe("a location iNaturalist keeps from everyone but its observer, on the li
     expect(b1[header.indexOf("decimalLatitude")]).not.toBe("");
   });
 
+  it("is left out of the specimens download and listing too", async () => {
+    const { app, conn } = await listingApp("bob");
+    // Alice's A-1, with its two specimens, made obscured by Alice.
+    await conn.run(`UPDATE sample SET geoprivacy = 'obscured' WHERE sample_number = 'A-1'`);
+    const csv = await (await app.request("/specimens.csv?scope=all")).text();
+    const lines = csv.replace(/^\uFEFF/, "").split("\n");
+    const header = lines[0]!.split(",");
+    const fieldNumber = header.indexOf("fieldNumber");
+    const oba1 = lines.map((l) => l.split(",")).find((r) => r[fieldNumber] === "OBA00001")!;
+    expect(oba1[header.indexOf("locality")]).toBe("");
+    expect(oba1[header.indexOf("decimalLatitude")]).toBe("");
+    expect(oba1[header.indexOf("minimumElevationInMeters")] ?? "").toBe("");
+    const listing = await get(app, "/specimens?scope=all");
+    expect(listing).not.toContain("Corvallis");
+    expect(listing).toContain(en.listings.locationHidden);
+  });
+
   it("is shown to its collector and to staff", async () => {
     for (const who of ["bob", "staffer"] as const) {
       const { app } = await protectedApp(who);

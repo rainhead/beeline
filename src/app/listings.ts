@@ -631,14 +631,24 @@ export const STAFF_READER: Reader = { staff: true, personIds: [] };
 
 /**
  * Whether this sample's location is not the reader's to see: iNaturalist
- * obscures or hides it from everyone but its observer, and the reader is
- * neither staff nor one of its collectors. Reads `own`, the reader's own
- * samples, which every query that uses it joins first (`ownSamples`).
+ * obscures or hides it from everyone but its observer — or it cites an
+ * observation Beeline has never read, so nobody here knows whether it does —
+ * and the reader is neither staff nor one of its collectors. The second case
+ * is the legacy import's: 1,537 samples on the dev store cite an observation
+ * no sync has fetched, their geoprivacy columns blank because nothing wrote
+ * them, and at the corpus's rate a dozen or more of them are protected on
+ * iNaturalist. A sample citing no observation has no setting to know.
+ *
+ * Reads `own`, the reader's own samples, and `seen`, the observation's
+ * stored projection, which every query that uses it joins first
+ * (`ownSamples`, and `observation_field` as `seen`).
  */
 export function withheld(reader: Reader) {
   return reader.staff
     ? sql<boolean>`FALSE`
-    : sql<boolean>`((s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL) AND own.sample_id IS NULL)`;
+    : sql<boolean>`((s.geoprivacy IS NOT NULL OR s.taxon_geoprivacy IS NOT NULL
+                     OR (s.inat_observation_id IS NOT NULL AND seen.inat_id IS NULL))
+                    AND own.sample_id IS NULL)`;
 }
 
 /** The reader's own samples, as SQL to join as `own`, for a query written in SQL. */
@@ -748,8 +758,12 @@ export async function listSamples(
     .selectFrom("sample as s")
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("atlas as a", "a.entity_id", "sa.atlas_id")
-    // Only `withheld` reads it, and for staff it reads nothing.
-    .$if(!reader.staff, (qb) => qb.leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")))
+    // Only `withheld` reads these, and for staff it reads nothing.
+    .$if(!reader.staff, (qb) =>
+      qb
+        .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
+        .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+    )
     // One row per sample (it is the PK), so this cannot fan the listing out.
     // Joined whole and blanked in the select (`located`): a condition in the
     // ON that reads `own` cost a volunteer's listing 7.5 s against 0.1 s.
@@ -917,8 +931,12 @@ export async function listSpecimens(
     .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("atlas as a", "a.entity_id", "sa.atlas_id")
-    // Only `withheld` reads it, and for staff it reads nothing.
-    .$if(!reader.staff, (qb) => qb.leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id")))
+    // Only `withheld` reads these, and for staff it reads nothing.
+    .$if(!reader.staff, (qb) =>
+      qb
+        .leftJoin(ownSamples(db, reader), (join) => join.onRef("own.sample_id", "=", "s.entity_id"))
+        .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
+    )
     .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
     .leftJoin(
       (eb) =>

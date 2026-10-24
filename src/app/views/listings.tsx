@@ -69,7 +69,7 @@ function PlaceCell({ m, row }: { m: Messages; row: SampleRow | SpecimenRow }) {
   if (place === "") return <Absent label={m.listings.locationHidden} spelled />;
   return (
     <>
-      {place} <Meta>{m.listings.locationHidden}</Meta>
+      {place} · <Meta>{m.listings.locationHidden}</Meta>
     </>
   );
 }

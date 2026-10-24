@@ -562,8 +562,8 @@ export const en = {
     csv: {
       download: "Download CSV",
       note:
-        "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns. " +
-        "Where iNaturalist obscures a record, its own columns say so — worth a look before anything is republished.",
+        "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns, " +
+        "less any location hidden here. Where iNaturalist obscures a record, its own columns say so — worth a look before anything is republished.",
     },
   },
 

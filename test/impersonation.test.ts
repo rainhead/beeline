@@ -157,10 +157,15 @@ describe("viewing Beeline as somebody else", () => {
     expect(home).not.toContain('href="/jobs"');
     expect((await get("/people", cookie(ROBERT))).status).toBe(403);
     expect((await get("/jobs", cookie(ROBERT))).status).toBe(403);
-    // Scope is forced to mine: staff-only filters are gone from the listing.
-    const listing = await (await get("/samples?scope=all", cookie(ROBERT))).text();
-    expect(listing).toContain("R-1");
-    expect(listing).not.toContain("S-1");
+    // Their records are theirs, as the listing's own scope says.
+    const mine = await (await get("/samples?scope=mine", cookie(ROBERT))).text();
+    expect(mine).toContain("R-1");
+    expect(mine).not.toContain("S-1");
+    // Everybody's are open to them too, read as a volunteer reads them: the
+    // note about hidden locations is not shown to staff.
+    const all = await (await get("/samples?scope=all", cookie(ROBERT))).text();
+    expect(all).toContain("S-1");
+    expect(all).toContain(en.listings.scope.withheldNote.replaceAll("'", "&#39;"));
   });
 
   it("is read-only: the volunteer's edit form renders, and a save is refused", async () => {

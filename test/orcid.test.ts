@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { InatClient } from "../src/app/auth.js";
 import { identificationsOf } from "../src/app/dwc-archive.js";
-import { EMPTY_QUERY, ALL, listSpecimens, specimenCsvRow, SPECIMEN_CSV_HEADER } from "../src/app/listings.js";
+import { EMPTY_QUERY, ALL, listSpecimens, STAFF_READER, specimenCsvRow, SPECIMEN_CSV_HEADER } from "../src/app/listings.js";
 import { createApp } from "../src/app/server.js";
 import { applyPersonOverlay } from "../src/apply-person-overlay.js";
 import { createKysely } from "../src/db.js";
@@ -136,7 +136,7 @@ describe("the records an ORCID iD credits", () => {
     await conn.run(`INSERT INTO inat_user_orcid (inat_user_id, orcid) VALUES (111, '${SECOND}')`);
     await applyPersonOverlay(conn, [decision("name:Bo Netter", CARBERRY)]);
 
-    const page = await listSpecimens(db, { ...EMPTY_QUERY, scope: ALL }, 1);
+    const page = await listSpecimens(db, { ...EMPTY_QUERY, scope: ALL }, 1, STAFF_READER);
     const csv = Object.fromEntries(SPECIMEN_CSV_HEADER.map((h, i) => [h, specimenCsvRow(page.rows[0]!, page)[i]]));
     expect(csv.recordedBy).toBe("Ada Collector | Bo Netter | Cy Keyer");
     expect(csv.recordedByID).toBe(`https://orcid.org/${SECOND} | https://orcid.org/${CARBERRY}`);

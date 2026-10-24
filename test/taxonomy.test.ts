@@ -171,8 +171,8 @@ describe("the taxonomy pages", () => {
     for (const [rank, name] of [["kingdom", "Animalia"], ["class", "Insecta"], ["order", "Hymenoptera"]] as const) {
       expect(between(body, 'class="breadcrumbs"', "</nav>")).toContain(`href="${taxonHref({ rank, scientific_name: name })}"`);
     }
-    expect(rowFor(body, "family", "Halictidae")).toContain("<td>2</td>");
-    expect(rowFor(body, "family", "Apidae")).toContain("<td>1</td>");
+    expect(rowFor(body, "family", "Halictidae")).toContain(">2</a></td>");
+    expect(rowFor(body, "family", "Apidae")).toContain(">1</a></td>");
     // Current in ITIS is quiet — no chip — but quiet is not blank: the cell
     // draws a dash that says what it means, since an empty one could as
     // well have failed to load (Nora, 2026-09-17). Absent says so outright.
@@ -203,11 +203,10 @@ describe("the taxonomy pages", () => {
     expect(listing.status).toBe(200);
   });
 
-  it("shows a volunteer counts, not links to a listing that holds only their own", async () => {
+  it("links a volunteer's counts to every record counted, since they can see them all", async () => {
     const app = await taxonomyApp();
     const index = await page(app, "/taxonomy");
-    expect(rowFor(index, "family", "Halictidae")).toContain("<td>2</td>");
-    expect(rowFor(index, "family", "Halictidae")).not.toContain("/specimens?");
+    expect(rowFor(index, "family", "Halictidae")).toContain(`href="/specimens?taxon=Halictidae&amp;scope=all"`);
   });
 
   it("shows a name where it is filed, what is filed below it, and what is determined to it alone", async () => {
@@ -218,11 +217,11 @@ describe("the taxonomy pages", () => {
     expect(trail).toContain(`href="${taxonHref({ rank: "family", scientific_name: "Halictidae" })}"`);
     expect(body).toContain(en.taxonomy.specimens(2));
     expect(body).toContain(en.taxonomy.determinedHere(1, "genus"));
-    expect(body).toContain(`href="/specimens?taxon=Lasioglossum"`);
-    expect(body).toContain(en.taxonomy.seeYourSpecimens);
+    expect(body).toContain(`href="/specimens?taxon=Lasioglossum&amp;scope=all"`);
+    expect(body).toContain(en.taxonomy.seeSpecimens);
     // The superseded volunteer determination counts for nothing.
     expect(rowFor(body, "species", "Lasioglossum tenax")).toContain("<td>0</td>");
-    expect(rowFor(body, "species", "Lasioglossum zonulum")).toContain("<td>1</td>");
+    expect(rowFor(body, "species", "Lasioglossum zonulum")).toContain(">1</a></td>");
     // A subgenus is bracketed by construction, not by its stored spelling.
     expect(rowFor(body, "subgenus", "Lasioglossum (Dialictus)")).toContain("<i>Lasioglossum</i> (<i>Dialictus</i>)");
   });

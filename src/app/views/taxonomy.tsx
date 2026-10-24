@@ -158,11 +158,9 @@ function TaxonTable({
             <StandingCell m={m} row={row} />
           </td>
           <td>
-            {/* Everyone's specimens, counted; staff can open exactly those.
-                A volunteer's listing holds only their own, so for them the
-                count is a number rather than a link to a different one. */}
-            {admin && row.specimens > 0 ? (
-              <a href={taxonSpecimensHref(row, { all: true })}>{m.format.number(row.specimens)}</a>
+            {/* Everyone's specimens, counted, and a link to exactly those. */}
+            {row.specimens > 0 ? (
+              <a href={taxonSpecimensHref(row)}>{m.format.number(row.specimens)}</a>
             ) : (
               m.format.number(row.specimens)
             )}
@@ -402,9 +400,7 @@ export function TaxonPage({ m, node, admin }: { m: Messages; node: TaxonNode; ad
           {/* Said only when something below was counted: on a name with nothing
               below it, both halves are the same number. */}
           {node.determinedHere < node.specimens ? t.determinedHere(node.determinedHere, node.rank) : t.counted}{" "}
-          {/* Staff go to every record, as counted here; a volunteer, whose
-              listing holds only their own, to theirs. */}
-          <a href={taxonSpecimensHref(node, { all: admin })}>{admin ? t.seeSpecimens : t.seeYourSpecimens}</a>
+          <a href={taxonSpecimensHref(node)}>{t.seeSpecimens}</a>
         </p>
       )}
       <h2>{t.below}</h2>

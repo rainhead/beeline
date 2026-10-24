@@ -1,3 +1,4 @@
+import { en } from "../src/app/messages/en.js";
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
@@ -212,14 +213,17 @@ describe("sample listing", () => {
     expect(body).toContain("clean");
   });
 
-  it("offers a volunteer no way out of their own records", async () => {
+  it("starts a volunteer at their own records, and lets them see everybody's", async () => {
     const { app } = await listingApp();
-    // No scope control at all…
-    expect(await get(app, "/samples")).not.toContain(`name="scope"`);
-    // …and typing one changes nothing.
-    const forced = await get(app, "/samples?scope=all");
-    expect(forced).not.toContain("B-2");
-    expect(forced).toContain("3 samples");
+    const mine = await get(app, "/samples");
+    expect(mine).toContain("3 samples");
+    expect(mine).toContain(`name="scope"`);
+    // Every record is open to everyone signed in (beeline-20w3).
+    const all = await get(app, "/samples?scope=all");
+    expect(all).toContain("6 samples");
+    expect(all).toContain("B-2");
+    // And they are told why some of them say less about where.
+    expect(all).toContain(en.listings.scope.withheldNote.replaceAll("'", "&#39;"));
   });
 
   it("lets staff scope to an atlas, or to all of them", async () => {
@@ -231,11 +235,11 @@ describe("sample listing", () => {
     expect(wa).toContain("B-1");
     expect(wa).toContain("B-2");
     expect(wa).not.toContain("A-1");
-    expect(wa).toContain("Staff view: the Washington Bee Atlas");
 
     const all = await get(app, "/samples?scope=all");
     expect(all).toContain("6 samples");
-    expect(all).toContain("Staff view: every atlas");
+    // Staff see every location, so the note about hidden ones is not theirs.
+    expect(all).not.toContain(en.listings.scope.withheldNote.replaceAll("'", "&#39;"));
   });
 
   // The two axes, and the point is that they disagree: B-3 is outside every
@@ -248,7 +252,6 @@ describe("sample listing", () => {
     expect(outside).toContain("B-3");
     expect(outside).toContain("C-1");
     expect(outside).not.toContain("B-2");
-    expect(outside).toContain("Staff view: everywhere no member atlas reaches");
   });
 
   it("filters by where the collector belongs, which is not where they collected", async () => {
@@ -285,11 +288,13 @@ describe("sample listing", () => {
     expect(clear).toContain("scope=all");
   });
 
-  it("gives a volunteer neither control, and ignores them when typed", async () => {
+  it("gives a volunteer the same two axes staff have", async () => {
     const { app } = await listingApp();
     const body = await get(app, "/samples?scope=outside&member=program");
-    expect(body).not.toContain(`name="member"`);
-    expect(body).toContain("3 samples"); // still only Alice's own
+    expect(body).toContain(`name="member"`);
+    // Collected outside every atlas, by somebody who belongs to the program.
+    expect(body).toContain("1 sample");
+    expect(body).toContain("C-1");
   });
 
   it("remembers a staff member's chosen scope for the next visit", async () => {
@@ -378,13 +383,14 @@ describe("sample listing", () => {
     expect(await get(app, "/specimens?scope=all&collector=adams")).toContain("OBA00001");
   });
 
-  it("keeps the collector filter to staff", async () => {
+  it("gives a volunteer the collector filter too", async () => {
     const { app } = await listingApp();
-    const body = await get(app, "/samples?collector=barnes");
-    // A volunteer's listing is already one collector's: the parameter is
-    // dropped rather than obeyed, so this is still Alice's three samples.
-    expect(body).toContain("3 samples");
-    expect(body).not.toContain(`name="collector"`);
+    expect(await get(app, "/samples?scope=all&collector=barnes")).toContain("3 samples");
+    // Within their own, it finds what they collected with somebody.
+    const together = await get(app, "/samples?collector=barnes");
+    expect(together).toContain("1 sample");
+    expect(together).toContain("B-1");
+    expect(together).toContain(`name="collector"`);
   });
 
   it("filters by taxon, descending the taxonomy", async () => {
@@ -663,14 +669,16 @@ describe("the toolbar", () => {
     expect(body).toContain(">All records</a>");
   });
 
-  it("is two-way for a staff member with no atlas, and absent for a volunteer", async () => {
+  it("is two-way for somebody with no atlas, and three-way for a volunteer who belongs to one", async () => {
+    const toggle = (body: string) => /<nav class="segmented"[^>]*>(.*?)<\/nav>/s.exec(body)?.[1] ?? "";
     const staff = await listingApp("staffer");
-    const body = await get(staff.app, "/samples?scope=all");
-    const toggle = /<nav class="segmented"[^>]*>(.*?)<\/nav>/s.exec(body)?.[1] ?? "";
-    expect(toggle).toContain(">My records</a>");
-    expect(toggle.match(/<a /g)).toHaveLength(2);
-    const volunteer = await listingApp();
-    expect(await get(volunteer.app, "/samples")).not.toContain("My records");
+    const body = toggle(await get(staff.app, "/samples?scope=all"));
+    expect(body).toContain(">My records</a>");
+    expect(body.match(/<a /g)).toHaveLength(2);
+    // Bob belongs to Washington.
+    const volunteer = toggle(await get((await listingApp("bob")).app, "/samples"));
+    expect(volunteer).toContain(">Washington Bee Atlas records</a>");
+    expect(volunteer.match(/<a /g)).toHaveLength(3);
   });
 
   it("shows the filters in force as pills, each dismissable", async () => {
@@ -1127,21 +1135,89 @@ describe("Darwin Core archives, by program and year", () => {
   });
 });
 
-describe("listing queries", () => {
-  const parse = (search: string, admin: boolean) =>
-    parseListingQuery(new URLSearchParams(search), { admin, atlasCodes: ["OBA", "WaBA"] });
+describe("a location iNaturalist keeps from everyone but its observer, on the listings", () => {
+  /** Bob's B-2, Bob alone, made obscured (or private) on iNaturalist by Bob. */
+  async function protectedApp(signedInAs: "alice" | "bob" | "staffer", geoprivacy = "obscured") {
+    const fx = await listingApp(signedInAs);
+    await fx.conn.run(`UPDATE sample SET geoprivacy = '${geoprivacy}' WHERE sample_number = 'B-2'`);
+    return fx;
+  }
+  const rowOf = (body: string, sample: string) =>
+    new RegExp(`<tr><td><a href="/samples/\\d+" class="pill">${sample}</a>.*?</tr>`, "s").exec(body)?.[0] ?? "";
 
-  it("gives a volunteer exactly one scope, whatever they ask for", () => {
-    expect(parse("scope=all", false).scope).toBe("mine");
-    expect(parse("scope=OBA", false).scope).toBe("mine");
-    expect(parse("", true).scope).toBe("mine");
-    expect(parse("scope=OBA", true).scope).toBe("OBA");
+  it("withholds another volunteer's locality, keeping the county and state, and says so", async () => {
+    const { app } = await protectedApp("alice");
+    const row = rowOf(await get(app, "/samples?scope=all"), "B-2");
+    expect(row).not.toBe("");
+    expect(row).not.toContain("Anacortes");
+    expect(row).toContain("BentonCo, WA");
+    expect(row).toContain(en.listings.locationHidden);
+  });
+
+  it("withholds the county too where the observation is private", async () => {
+    const { app } = await protectedApp("alice", "private");
+    const row = rowOf(await get(app, "/samples?scope=all"), "B-2");
+    expect(row).not.toContain("BentonCo");
+    expect(row).toContain("WA");
+  });
+
+  it("cannot be found by the place it withholds", async () => {
+    // The filter reads what the row shows, or a search for the trailhead
+    // would say which sample was collected there.
+    const { app } = await protectedApp("alice");
+    expect(await get(app, "/samples?scope=all&place=Anacortes")).not.toContain("B-2");
+    expect(await get(app, "/specimens?scope=all&place=Anacortes")).not.toContain("B-2");
+    const staff = await protectedApp("staffer");
+    expect(await get(staff.app, "/samples?scope=all&place=Anacortes")).toContain("B-2");
+  });
+
+  it("is left out of the download, coordinates and all", async () => {
+    const { app } = await protectedApp("alice");
+    const csv = await (await app.request("/samples.csv?scope=all")).text();
+    const lines = csv.replace(/^\uFEFF/, "").split("\n");
+    const header = lines[0]!.split(",");
+    const b2 = lines.find((l) => l.startsWith("B-2,"))!.split(",");
+    expect(b2[header.indexOf("locality")]).toBe("");
+    expect(b2[header.indexOf("decimalLatitude")]).toBe("");
+    expect(b2[header.indexOf("decimalLongitude")]).toBe("");
+    expect(b2[header.indexOf("geoprivacy")]).toBe("obscured");
+    // Unprotected records keep theirs.
+    const b1 = lines.find((l) => l.startsWith("B-1,"))!.split(",");
+    expect(b1[header.indexOf("decimalLatitude")]).not.toBe("");
+  });
+
+  it("is shown to its collector and to staff", async () => {
+    for (const who of ["bob", "staffer"] as const) {
+      const { app } = await protectedApp(who);
+      const row = rowOf(await get(app, "/samples?scope=all"), "B-2");
+      expect(row, who).toContain("Anacortes");
+      expect(row, who).not.toContain(en.listings.locationHidden);
+    }
+  });
+
+  it("is shown to a co-collector, who was there", async () => {
+    // B-1 is Bob's numbering with Alice at position 2 (beeline-77j).
+    const { app, conn } = await listingApp("alice");
+    await conn.run(`UPDATE sample SET taxon_geoprivacy = 'obscured' WHERE sample_number = 'B-1'`);
+    expect(rowOf(await get(app, "/samples?scope=all"), "B-1")).toContain("Bellingham");
+  });
+});
+
+describe("listing queries", () => {
+  const parse = (search: string) => parseListingQuery(new URLSearchParams(search), { atlasCodes: ["OBA", "WaBA"] });
+
+  it("opens every scope to everyone, and starts at mine", () => {
+    expect(parse("").scope).toBe("mine");
+    expect(parse("scope=all").scope).toBe("all");
+    expect(parse("scope=OBA").scope).toBe("OBA");
+    expect(parse("scope=outside").scope).toBe("outside");
+    expect(parse("collector=bob&member=WaBA")).toMatchObject({ collector: "bob", member: "WaBA" });
     // An atlas that doesn't exist is not a scope.
-    expect(parse("scope=ZZ", true).scope).toBe("mine");
+    expect(parse("scope=ZZ").scope).toBe("mine");
   });
 
   it("ignores junk rather than failing on it", () => {
-    const q = parse("from=yesterday&to=2026-13-99&qc=whatever&page=-3", true);
+    const q = parse("from=yesterday&to=2026-13-99&qc=whatever&page=-3");
     expect(q.from).toBeNull();
     expect(q.to).toBeNull();
     expect(q.qc).toBe("any");
@@ -1154,7 +1230,7 @@ describe("listing queries", () => {
     expect(href).toBe("/samples?scope=OBA&taxon=Bombus&page=3");
     expect(listingHref("/samples", EMPTY_QUERY)).toBe("/samples");
     const [, search] = href.split("?");
-    expect(parse(search!, true)).toEqual(query);
+    expect(parse(search!)).toEqual(query);
   });
 
   it("names mine when a caller asks for it, because scope has no single default", () => {
@@ -1169,7 +1245,6 @@ describe("listing queries", () => {
     // The round trip is the property that actually matters: what the link
     // says has to survive a staff member whose cookie says otherwise.
     const preferred = parseListingQuery(new URLSearchParams("scope=mine&to=2026-02-28&qc=flagged"), {
-      admin: true,
       atlasCodes: ["OBA", "WaBA"],
       preferred: "all",
     });
@@ -1178,7 +1253,6 @@ describe("listing queries", () => {
     // bare listing and is exactly why the link has to name it.
     expect(
       parseListingQuery(new URLSearchParams("to=2026-02-28&qc=flagged"), {
-        admin: true,
         atlasCodes: ["OBA", "WaBA"],
         preferred: "all",
       }).scope,
@@ -1187,10 +1261,10 @@ describe("listing queries", () => {
 
   it("counts everything the filters select, not just the page", async () => {
     const { db, alice } = await listingApp();
-    const page = await listSamples(db, { ...EMPTY_QUERY }, alice, { limit: 2, offset: 0 });
+    const page = await listSamples(db, { ...EMPTY_QUERY }, alice, { staff: false, personIds: [alice] }, { limit: 2, offset: 0 });
     expect(page.rows).toHaveLength(2);
     expect(page.total).toBe(3);
-    const second = await listSamples(db, { ...EMPTY_QUERY }, alice, { limit: 2, offset: 2 });
+    const second = await listSamples(db, { ...EMPTY_QUERY }, alice, { staff: false, personIds: [alice] }, { limit: 2, offset: 2 });
     expect(second.rows).toHaveLength(1);
   });
 });

@@ -125,7 +125,9 @@ import {
   exportFilename,
   listSamples,
   listSpecimens,
+  type Reader,
   OUTSIDE,
+  STAFF_READER,
   parseListingQuery,
   csvStream,
   SAMPLE_CSV_HEADER,
@@ -145,6 +147,8 @@ import {
   parsePage,
   recordFindings,
   sampleChangeHistory,
+  visibleFindings,
+  visibleHistory,
 } from "./record.js";
 import { SamplePage, SpecimenPage } from "./views/record.js";
 
@@ -698,14 +702,25 @@ export function createApp({
   // in the query string, so a staff member helping a volunteer can send
   // them the exact listing they are looking at. ---
 
-  /** The cookie that remembers a staff member's last scope, so nav lands where they left off. */
+  /** The cookie that remembers somebody's last scope, so nav lands where they left off. */
   const SCOPE_COOKIE = "beeline_scope";
 
   /**
-   * Parse a listing request. The scope gate is here and nowhere else:
-   * parseListingQuery forces MINE for anyone not on the admin allowlist, so
-   * a volunteer cannot reach another atlas by typing a query string.
+   * Who is reading, for the location rule (src/app/listings.ts `withheld`):
+   * staff, or whose collecting is theirs. A delegate reads the household's
+   * records as the household does, so both people count; impersonation is
+   * the volunteer's view, so only the volunteer does.
    */
+  const readerOf = (c: Context<AppEnv>): Reader => {
+    const acting = c.get("acting");
+    const signedIn = c.get("session").personId;
+    return {
+      staff: c.get("admin"),
+      personIds: acting.impersonating || acting.personId === signedIn ? [acting.personId] : [acting.personId, signedIn],
+    };
+  };
+
+  /** Parse a listing request: every scope is open, and the reader decides which locations it shows. */
   const listingRequest = async (c: Context<AppEnv>) => {
     // The effective person, not the signed-in one: MINE scope means the
     // person being acted for while the switch is on (beeline-oyl).
@@ -713,26 +728,23 @@ export function createApp({
     const admin = c.get("admin");
     const atlases = await atlasOptions(db);
     const query = parseListingQuery(new URL(c.req.url).searchParams, {
-      admin,
       atlasCodes: atlases.map((a) => a.code),
       preferred: getCookie(c, SCOPE_COOKIE),
     });
     // Remember an explicit choice only — a bare /samples keeps the cookie.
-    if (admin && c.req.query("scope") !== undefined) {
+    if (c.req.query("scope") !== undefined) {
       setCookie(c, SCOPE_COOKIE, query.scope, { path: "/", sameSite: "Lax", httpOnly: true });
     }
     // The atlas this person belongs to, for the scope toggle's middle
     // position: mine, my atlas, everything. Nobody's for a program member
     // or somebody nobody has asked about, and the toggle is then two-way.
-    const home = admin
-      ? await db
-          .selectFrom("person_membership as pm")
-          .innerJoin("atlas as a", "a.entity_id", "pm.atlas_id")
-          .where("pm.person_id", "=", personId)
-          .select(["a.code", "a.name"])
-          .executeTakeFirst()
-      : undefined;
-    return { personId, admin, atlases, query, homeAtlas: home ?? null };
+    const home = await db
+      .selectFrom("person_membership as pm")
+      .innerJoin("atlas as a", "a.entity_id", "pm.atlas_id")
+      .where("pm.person_id", "=", personId)
+      .select(["a.code", "a.name"])
+      .executeTakeFirst();
+    return { personId, admin, reader: readerOf(c), atlases, query, homeAtlas: home ?? null };
   };
 
   /** Who is browsing, as the usage counts see it: a role, never a person. */
@@ -753,9 +765,9 @@ export function createApp({
 
   app.get("/samples", async (c) => {
     const m = c.get("m");
-    const { personId, admin, atlases, query, homeAtlas } = await listingRequest(c);
+    const { personId, admin, reader, atlases, query, homeAtlas } = await listingRequest(c);
     countListingView(listingAttributes("samples", "page", query, viewer(c)));
-    const results = await listSamples(db, query, personId);
+    const results = await listSamples(db, query, personId, reader);
     return c.html(
       await page(
         c,
@@ -766,12 +778,12 @@ export function createApp({
   });
 
   app.get("/samples.csv", async (c) => {
-    const { personId, query } = await listingRequest(c);
+    const { personId, reader, query } = await listingRequest(c);
     countListingView(listingAttributes("samples", "csv", query, viewer(c)));
     // The whole selection, a page at a time: no cap, no truncation line.
     const body = csvStream(
       SAMPLE_CSV_HEADER,
-      (limit, offset) => listSamples(db, query, personId, { limit, offset, withTotal: false }),
+      (limit, offset) => listSamples(db, query, personId, reader, { limit, offset, withTotal: false }),
       sampleCsvRow,
       csvGenerationTiming("samples"),
     );
@@ -780,9 +792,9 @@ export function createApp({
 
   app.get("/specimens", async (c) => {
     const m = c.get("m");
-    const { personId, admin, atlases, query, homeAtlas } = await listingRequest(c);
+    const { personId, admin, reader, atlases, query, homeAtlas } = await listingRequest(c);
     countListingView(listingAttributes("specimens", "page", query, viewer(c)));
-    const results = await listSpecimens(db, query, personId);
+    const results = await listSpecimens(db, query, personId, reader);
     return c.html(
       await page(
         c,
@@ -793,11 +805,11 @@ export function createApp({
   });
 
   app.get("/specimens.csv", async (c) => {
-    const { personId, query } = await listingRequest(c);
+    const { personId, reader, query } = await listingRequest(c);
     countListingView(listingAttributes("specimens", "csv", query, viewer(c)));
     const body = csvStream(
       SPECIMEN_CSV_HEADER,
-      (limit, offset) => listSpecimens(db, query, personId, { limit, offset, withTotal: false }),
+      (limit, offset) => listSpecimens(db, query, personId, reader, { limit, offset, withTotal: false }),
       specimenCsvRow,
       csvGenerationTiming("specimens"),
     );
@@ -807,19 +819,17 @@ export function createApp({
   // --- One record (beeline-2c3.34). The listings answer "what is there";
   // these answer everything about one, which is where the determination
   // history — append-only events, not a flattened current name — is finally
-  // readable. Gating is the listings' with no filters left: the effective
-  // person reaches their own records, staff reach every one, and a record
-  // they cannot reach is a 404 rather than a 403, so a URL cannot be probed
-  // to learn that it exists. ---
+  // readable. Everyone reaches every record; what a reader may not see of
+  // one is the listings' location rule (beeline-20w3). ---
 
   app.get("/samples/:id", async (c) => {
     const m = c.get("m");
-    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, c.get("admin"));
+    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
     if (sample === null) return errorResponse(c, "notFound");
     const [findings, specimens, history] = await Promise.all([
-      recordFindings(db, sample.sample_id),
+      recordFindings(db, sample.sample_id).then((f) => visibleFindings(f, sample)),
       listSampleSpecimens(db, sample.sample_id, parsePage(c.req.query("page"))),
-      sampleChangeHistory(db, samplePaths.log, sample.sample_id),
+      sampleChangeHistory(db, samplePaths.log, sample.sample_id).then((h) => visibleHistory(h, sample)),
     ]);
     return c.html(
       await page(
@@ -839,11 +849,11 @@ export function createApp({
 
   app.get("/specimens/:id", async (c) => {
     const m = c.get("m");
-    const specimen = await loadSpecimen(db, Number(c.req.param("id")), c.get("acting").personId, c.get("admin"));
+    const specimen = await loadSpecimen(db, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
     if (specimen === null) return errorResponse(c, "notFound");
     const [events, findings, labels] = await Promise.all([
       determinationHistory(db, specimen.specimen_id),
-      recordFindings(db, specimen.sample.sample_id),
+      recordFindings(db, specimen.sample.sample_id).then((f) => visibleFindings(f, specimen.sample)),
       specimenLabels(db, specimen.specimen_id),
     ]);
     const title =
@@ -944,7 +954,7 @@ export function createApp({
     if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const session = c.get("session");
-    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, true);
+    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, STAFF_READER);
     if (sample === null) return errorResponse(c, "notFound");
     const body = await c.req.parseBody();
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
@@ -983,7 +993,7 @@ export function createApp({
     if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const session = c.get("session");
-    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, true);
+    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, STAFF_READER);
     if (sample === null) return errorResponse(c, "notFound");
     if (sample.inat_observation_id === null) return c.text(m.record.sample.staffCoordinates.noObservation, 409);
     const body = await c.req.parseBody();

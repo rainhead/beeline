@@ -3,7 +3,8 @@ import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { ACTING_COOKIE } from "../src/app/acting.js";
-import { determinationHistory } from "../src/app/record.js";
+import { determinationHistory, visibleFindings, visibleHistory, type RecordFinding, type SampleDetail } from "../src/app/record.js";
+import type { SampleChange } from "../src/sample-change.js";
 import { createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 import { en } from "../src/app/messages/en.js";
 
@@ -72,7 +73,7 @@ async function recordApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
     taxon_geoprivacy: "'obscured'",
     protocol: "'net'",
   });
-  // Bob's, with nothing of Alice's in it — the sample she must not reach.
+  // Bob's, with nothing of Alice's in it: somebody else's record, to her.
   const bobSample = await insertCleanSample(conn, {
     collector_id: String(bob),
     sample_number: "'B-1'",
@@ -368,18 +369,24 @@ describe("reaching a record", () => {
     expect(await get(app, `/specimens/${specimen}`)).toContain("Specimen OBA00001");
   });
 
-  it("gives somebody else's record the same answer as one that does not exist", async () => {
+  it("lets a volunteer open somebody else's, and says whose it is not", async () => {
+    // Every record is open to everyone signed in (beeline-20w3).
     const { app, bobSample, bobSpecimen } = await recordApp();
-    // One page whichever it was — so a URL cannot be used to learn whether
-    // somebody else's record exists (beeline-0kj). Identical but for the
-    // feedback link, whose email records the address asked for and the
-    // minute: the requester's own input, so it tells them nothing.
+    const body = await get(app, `/samples/${bobSample}`);
+    expect(body).toContain("Sample B-1");
+    expect(body).toContain(en.record.notYours);
+    expect(await get(app, `/specimens/${bobSpecimen}`)).toContain("Specimen WABA0001");
+  });
+
+  it("gives one answer for a record that does not exist, however it is asked", async () => {
+    const { app } = await recordApp();
+    // Identical but for the feedback link, whose email records the address
+    // asked for and the minute: the requester's own input.
     const bodies = new Set<string>();
-    for (const path of [`/samples/${bobSample}`, `/specimens/${bobSpecimen}`, "/samples/999999", "/specimens/abc"]) {
+    for (const path of ["/samples/999999", "/specimens/999999", "/specimens/abc"]) {
       const res = await app.request(path);
       expect(res.status, path).toBe(404);
       const body = await res.text();
-      expect(body).not.toContain("B-1");
       expect(body).toContain("mailto:staff@example.org");
       bodies.add(body.replace(/href="mailto:[^"]*"/g, 'href="mailto:…"'));
     }
@@ -391,21 +398,74 @@ describe("reaching a record", () => {
     const { app, bobSample } = await recordApp("staffer");
     const body = await get(app, `/samples/${bobSample}`);
     expect(body).toContain("Sample B-1");
-    expect(body).toContain("Staff view: this is not one of your own records");
+    expect(body).toContain(en.record.notYours);
   });
 
   it("does not say that to the person who collected it", async () => {
     const { app, aliceSample } = await recordApp();
-    expect(await get(app, `/samples/${aliceSample}`)).not.toContain("Staff view");
+    expect(await get(app, `/samples/${aliceSample}`)).not.toContain(en.record.notYours);
+  });
+});
+
+describe("a location iNaturalist keeps from everyone but its observer", () => {
+  // Alice's A-1 is taxon-obscured upstream: a rare host plant.
+  const COORDINATES = "44.5646";
+
+  it("is shown to the sample's own collector", async () => {
+    const { app, aliceSample } = await recordApp("alice");
+    const body = await get(app, `/samples/${aliceSample}`);
+    expect(body).toContain(COORDINATES);
+    expect(body).toContain("Corvallis");
   });
 
-  it("follows the acting-for switch, because reaching a specimen is reaching its sample", async () => {
-    const { app, conn, alice, bob, bobSample } = await recordApp("alice");
-    // Bob cannot sign in — a household shares one login (beeline-oyl) — so
-    // Alice is granted reach over his records.
-    await conn.run(`INSERT INTO person_delegate (person_id, acts_for_id) VALUES (${alice}, ${bob})`);
-    const acting = { headers: { cookie: `${ACTING_COOKIE}=${encodeURIComponent("Bob Barnes")}` } };
-    expect((await app.request(`/samples/${bobSample}`)).status).toBe(404);
-    expect(await get(app, `/samples/${bobSample}`, acting)).toContain("Sample B-1");
+  it("is shown to staff", async () => {
+    const { app, aliceSample } = await recordApp("staffer");
+    expect(await get(app, `/samples/${aliceSample}`)).toContain(COORDINATES);
+  });
+
+  it("is withheld from another volunteer, at either grain, with why", async () => {
+    const { app, aliceSample, specimen } = await recordApp("bob");
+    for (const path of [`/samples/${aliceSample}`, `/specimens/${specimen}`]) {
+      const body = await get(app, path);
+      expect(body, path).not.toContain(COORDINATES);
+      expect(body, path).not.toContain("Corvallis");
+      // The county stays, as iNaturalist's public view keeps it.
+      expect(body, path).toContain("BentonCo");
+      expect(body, path).toContain(
+        en.record.sample.where.withheld({ geoprivacy: null, taxonGeoprivacy: "obscured" }).replaceAll("'", "&#39;"),
+      );
+    }
+  });
+
+  it("hides the county too where the observation is private", async () => {
+    const { app, conn, aliceSample } = await recordApp("bob");
+    await conn.run(`UPDATE sample SET geoprivacy = 'private', taxon_geoprivacy = NULL WHERE entity_id = ${aliceSample}`);
+    const body = await get(app, `/samples/${aliceSample}`);
+    expect(body).not.toContain("BentonCo");
+    expect(body).toContain(en.record.sample.where.withheld({ geoprivacy: "private", taxonGeoprivacy: null }).replaceAll("'", "&#39;"));
+  });
+
+  it("leaves out the history of where it was, and what its flags quote", () => {
+    const change = (field: string) => ({ field, old_value: "a", new_value: "b" }) as unknown as SampleChange;
+    const history = ["location", "location_source", "locality", "county", "specimen_count"].map(change);
+    const sample = (geoprivacy: string | null, withheld: boolean) =>
+      ({ location_withheld: withheld, geoprivacy, taxon_geoprivacy: null }) as unknown as SampleDetail;
+    const fields = (s: SampleDetail) => visibleHistory(history, s).map((c) => c.field);
+    expect(fields(sample("obscured", false))).toHaveLength(5);
+    expect(fields(sample("obscured", true))).toEqual(["county", "specimen_count"]);
+    expect(fields(sample("private", true))).toEqual(["specimen_count"]);
+    const finding = { rule_name: "locality_format", details: "Gumboot Creek trailhead" } as RecordFinding;
+    expect(visibleFindings([finding], sample("obscured", true))[0]).toMatchObject({ rule_name: "locality_format", details: null });
+    expect(visibleFindings([finding], sample("obscured", false))[0]!.details).toBe("Gumboot Creek trailhead");
+  });
+
+  it("follows the acting-for switch: a delegate reads the household's records as the household does", async () => {
+    const { app, conn, alice, bob, aliceSample } = await recordApp("bob");
+    // Alice cannot sign in — a household shares one login (beeline-oyl) — so
+    // Bob is granted reach over her records.
+    await conn.run(`INSERT INTO person_delegate (person_id, acts_for_id) VALUES (${bob}, ${alice})`);
+    const acting = { headers: { cookie: `${ACTING_COOKIE}=${encodeURIComponent("Alice Adams")}` } };
+    expect(await get(app, `/samples/${aliceSample}`)).not.toContain(COORDINATES);
+    expect(await get(app, `/samples/${aliceSample}`, acting)).toContain(COORDINATES);
   });
 });

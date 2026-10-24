@@ -334,10 +334,13 @@ only through an alert it is connected to, and until 2026-10-24 neither was, so
 neither had ever told anybody anything. Both are now connected to the alert
 "Monitors: the sandbox or its jobs are down, or the nightly failed", which
 emails Peter when a monitor's issue first appears, comes back after being
-resolved, or recurs. A new monitor needs connecting to it too. **No email has
-arrived yet**: tested on 2026-10-24, the alert fired twice and nothing reached
-Gmail, so until beeline-997i is fixed an outage shows in Sentry and reaches
-nobody. All of this lives in Sentry's settings, not in this repo.
+resolved, or recurs. A new monitor needs connecting to it too. Tested on
+2026-10-24 by pointing the monitor at an address that answers 401: the email
+arrived within a minute of the second failed check, once Peter had turned on
+alert emails in his own Sentry notification settings, which were off and
+which an alert's own settings do not override (beeline-997i). Anyone else to
+be told needs the same setting, and adding to the alert's actions. All of this
+lives in Sentry's settings, not in this repo.
 
 **What never leaves the machine.** An error from DuckDB quotes the value it
 choked on, and a stack frame's locals hold the row being read. So the SDK
@@ -402,7 +405,7 @@ are already public in this repo and no record data passes through it.
 
 Sentry's uptime monitor polls it every five minutes and alerts after two
 failures in a row ([above](#errors-logs-and-job-check-ins)), so a silent stall
-reaches somebody — once its email does (beeline-997i). It replaced a cron
+reaches somebody. It replaced a cron
 line on maderas that polled every twenty minutes until 2026-10-24
 (beeline-htcw.1), whose mail went to a mailbox on maderas that nobody read:
 the polls that failed, `legacy-export` on every one from 5 to 8 October

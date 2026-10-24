@@ -437,13 +437,13 @@ describe("a location iNaturalist keeps from everyone but its observer", () => {
     }
   });
 
-  it("withholds the observer's notes, where the spot is usually written", async () => {
-    for (const [who, shown] of [["bob", false], ["alice", true]] as const) {
-      const { app, conn, aliceSample } = await recordApp(who);
-      await conn.run(`INSERT INTO observation_field (inat_id, notes) VALUES (998877, 'along Gumboot Creek')`);
-      const body = await get(app, `/samples/${aliceSample}`);
-      expect(body.includes("Gumboot"), who).toBe(shown);
-    }
+  it("still shows the observer's notes, as iNaturalist does", async () => {
+    const { app, conn, aliceSample } = await recordApp("bob");
+    await conn.run(`INSERT INTO observation_field (inat_id, notes) VALUES (998877, 'along Gumboot Creek')`);
+    const body = await get(app, `/samples/${aliceSample}`);
+    expect(body).toContain("Gumboot");
+    // ...while the location itself stays withheld.
+    expect(body).not.toContain(COORDINATES);
   });
 
   it("is withheld where Beeline has never read the observation, so cannot tell", async () => {

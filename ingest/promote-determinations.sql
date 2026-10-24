@@ -67,7 +67,7 @@ GROUP BY 1;
 
 -- `written` is the name as the source spelled it, which differs from `name`
 -- only where a curated decision moved the determination to another node — a
--- spelling alias today, an adopted ITIS name next (beeline-bph). Genus and
+-- spelling alias today, an adopted Ecdysis name next (beeline-bph). Genus and
 -- species are the ranks such a decision can reach, so nothing else is built
 -- here; a row whose parts are absent has nothing that was written.
 --

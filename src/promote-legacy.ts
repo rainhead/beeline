@@ -42,8 +42,8 @@ export interface PromotionCounts {
   unusedCollectorAliases: number;
   /** Taxon alias lines naming a spelling no staged row carries (beeline-45v.2). */
   unusedTaxonAliases: number;
-  /** Animal nodes carrying an ITIS TSN — zero until ITIS has been loaded (beeline-45v.4). */
-  animalsMatchedToItis: number;
+  /** Animal nodes carrying an Ecdysis taxon id — zero until the thesaurus has been loaded (beeline-7gob). */
+  animalsMatchedToEcdysis: number;
   /** Taxonomists' decisions replayed from ingest/taxon-curation.csv (beeline-45v.1). */
   taxonCurationApplied: number;
   /** Nodes the curation file brought into existence. */
@@ -98,7 +98,7 @@ export interface PromotionInputs {
   collectorAliases: string;
   /** Misspelt taxon names and the name each writer meant (beeline-45v.2). */
   taxonAliases: string;
-  /** The program's stated departures from ITIS, each on a taxonomist's word (beeline-45v.1). */
+  /** The program's stated departures from Ecdysis's thesaurus, each on a taxonomist's word (beeline-45v.1). */
   taxonCuration: string;
   /** The legacy name register (beeline-8t8); absent reads as empty. */
   usernameRegister: string;
@@ -156,10 +156,10 @@ export async function promoteLegacy(
   await conn.run(seedSql.replaceAll("{{TAXONOMY_CSV}}", taxonomyCsv.replaceAll("'", "''")));
   // The taxonomists' decisions, after the seed so their nodes are there to be
   // decided about, and before the match so a homonym resolution is honoured
-  // by it. applyTaxonCuration ends by matching, against whatever ITIS the
-  // store carries (beeline-45v.4): itis_taxon is loaded on its own schedule
-  // and survives a reseed, so a rebuilt tree is matched here rather than
-  // waiting for the next ITIS load.
+  // by it. applyTaxonCuration ends by matching, against whatever thesaurus
+  // the store carries (beeline-7gob): ecdysis_taxon is loaded on its own
+  // schedule and survives a reseed, so a rebuilt tree is matched here rather
+  // than waiting for the next fetch.
   const curation = await applyTaxonCuration(conn, await readTaxonCuration(taxonCuration));
   const detSql = await readFile(`${INGEST_DIR}promote-determinations.sql`, "utf8");
   await conn.run(
@@ -194,7 +194,7 @@ export async function promoteLegacy(
     unresolvedDeterminerNames: await scalar("SELECT count(*) FROM legacy_determiner_unresolved"),
     unusedCollectorAliases: await scalar("SELECT count(*) FROM legacy_collector_alias_unused"),
     unusedTaxonAliases: await scalar("SELECT count(*) FROM legacy_taxon_alias_unused"),
-    animalsMatchedToItis: await scalar("SELECT count(itis_tsn) FROM animal"),
+    animalsMatchedToEcdysis: await scalar("SELECT count(ecdysis_tid) FROM animal"),
     taxonCurationApplied: curation.applied,
     taxonCurationCreated: curation.created,
     taxonCurationUnplaced: curation.unplaced,

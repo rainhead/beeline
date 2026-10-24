@@ -1146,36 +1146,37 @@ export const en = {
 
   /**
    * The taxonomy (/taxonomy, beeline-45v.5): the names specimens are
-   * determined to, and how each stands against ITIS. Read by everyone, like
-   * the glossary, so written for a volunteer who has never heard of ITIS.
+   * determined to, and how each stands in Ecdysis's list of names
+   * (beeline-7gob; ITIS until 2026-10-23). Read by everyone, like the
+   * glossary, so written for a volunteer who has never opened Ecdysis.
    * Curation will land on these same pages.
    */
   taxonomy: {
     title: "Taxonomy",
     intro:
-      "The names specimens are determined to, filed the way the program files them, and how each one stands against ITIS, the published list of names determinations here are made against.",
-    aboutItis: "More about ITIS.",
-    release: (asOf: Date | string) => `Checked against the ITIS release of ${date(asOf)}.`,
-    notLoaded: "ITIS has not been loaded here, so nothing on these pages says how a name stands against it.",
+      "The names specimens are determined to, filed the way the program files them, and how each one stands in Ecdysis, the museum database where the program's taxonomists record their determinations.",
+    aboutEcdysis: "More about Ecdysis.",
+    fetched: (on: Date | string) => `Checked against Ecdysis's names as of ${date(on)}.`,
+    notLoaded: "Ecdysis's names have not been loaded here, so nothing on these pages says how a name stands there.",
     /** The counts above the filter, each linking to the list it counts. */
     summary: {
-      valid: (count: number) => `${n(count)} current in ITIS`,
+      accepted: (count: number) => `${n(count)} accepted in Ecdysis`,
       synonym: (count: number) => `${n(count)} outdated`,
       homonym: (count: number) => `${n(count)} ambiguous`,
-      absent: (count: number) => `${n(count)} not in ITIS`,
-      /** Names a taxonomist has decided about, and the ones the loaded release has moved from under. */
+      absent: (count: number) => `${n(count)} not in Ecdysis`,
+      /** Names a taxonomist has decided about, and the ones Ecdysis has since moved from under. */
       decided: (count: number) => `${n(count)} decided by a taxonomist`,
       moved: (count: number) => `${n(count)} to look at again`,
     },
     search: "Name",
     searchHint: "Any part of a scientific name.",
-    standingLabel: "In ITIS",
+    standingLabel: "In Ecdysis",
     standingOptions: {
       any: "Any",
-      valid: "Current",
+      accepted: "Accepted",
       synonym: "Outdated",
       homonym: "Ambiguous",
-      absent: "Not in ITIS",
+      absent: "Not in Ecdysis",
     },
     decidedLabel: "Taxonomist's decision",
     decidedOptions: {
@@ -1197,21 +1198,21 @@ export const en = {
     colName: "Name",
     colRank: "Rank",
     colFiledUnder: "Filed under",
-    colItis: "ITIS",
+    colEcdysis: "Ecdysis",
     colSpecimens: "Specimens",
-    /** A row speaks about ITIS only when the name is not simply current there. */
+    /** A row speaks about Ecdysis only when the name is not simply accepted there. */
     chip: {
       synonym: "Outdated",
       homonym: "Ambiguous",
-      absent: "Not in ITIS",
+      absent: "Not in Ecdysis",
       /** A name a taxonomist has decided about says so instead, in the decision's words. */
       decided: {
-        addition: "Kept beyond ITIS",
-        departure: "Kept against ITIS",
+        addition: "Kept beyond Ecdysis",
+        departure: "Kept against Ecdysis",
         homonym: "Chosen",
       },
     },
-    nowCalled: "ITIS now:",
+    nowCalled: "Ecdysis uses:",
     specimens: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"}`,
     /** Under a name's count, when nothing below it was counted. */
     counted: "Counted by determination of record.",
@@ -1223,27 +1224,27 @@ export const en = {
     nothingBelow: "Nothing is filed below this name.",
     /** One name's standing, said in full on its own page. */
     standing: {
-      valid: "A current name in ITIS.",
-      synonym: "ITIS lists this name as outdated. The name it uses now:",
+      accepted: "An accepted name in Ecdysis.",
+      synonym: "Ecdysis lists this name as outdated. The name it uses instead:",
       homonym:
-        "ITIS has more than one current name spelled this way, from different authors, and nothing recorded here says which one this is:",
+        "Ecdysis has more than one accepted name spelled this way, from different authors, and nothing recorded here says which one this is:",
       absent: (rank: string) =>
-        `ITIS has no ${rank} spelled this way. A name newer than ITIS, a subgenus ITIS does not carry, and a misspelling all look like this.`,
-      report: (tsn: string) => `ITIS record ${tsn}`,
+        `Ecdysis has no ${rank} spelled this way. A name too new for Ecdysis, a name the program spells differently, and a misspelling all look like this.`,
+      report: (tid: string) => `Ecdysis taxon ${tid}`,
     },
-    /** What the program has decided about a name against ITIS, and on whose word (beeline-45v.1). */
+    /** What the program has decided about a name against Ecdysis, and on whose word (beeline-45v.1). */
     decision: {
-      addition: "The program keeps this name, which ITIS does not have.",
-      departure: "The program keeps this name under its own treatment. ITIS calls it:",
+      addition: "The program keeps this name, which Ecdysis does not have.",
+      departure: "The program keeps this name under its own treatment. Ecdysis files it under:",
       homonym: (author: string | null) =>
         author === null
-          ? "Of ITIS's names spelled this way, the program has said which one it means."
-          : `Of ITIS's names spelled this way, the program means the one by ${author}.`,
-      by: (taxonomist: string, decidedOn: Date | string, release: Date | string) =>
-        `Decided by ${taxonomist}, ${date(decidedOn)}, against the ITIS release of ${date(release)}.`,
+          ? "Of Ecdysis's names spelled this way, the program has said which one it means."
+          : `Of Ecdysis's names spelled this way, the program means the one by ${author}.`,
+      by: (taxonomist: string, decidedOn: Date | string, fetchedOn: Date | string) =>
+        `Decided by ${taxonomist}, ${date(decidedOn)}, against Ecdysis's names as of ${date(fetchedOn)}.`,
       reference: "Reference:",
       /** Before what animal_curation_stale says has moved since the decision. */
-      moved: "ITIS has moved since.",
+      moved: "Ecdysis has changed since.",
     },
     notFound: "There is no such name in the taxonomy.",
   },
@@ -1354,7 +1355,7 @@ export const en = {
       "dwc-archives":
         "Writes a Darwin Core archive for each atlas and for Master Melittology, one per calendar year, for staff to review, and removes any whose year no longer has specimens. Download them from Exports.",
       "ecdysis-fetch":
-        "Brings back the determinations made in Ecdysis, Washington's museum database. Downloads the collection only when Ecdysis says something changed, and otherwise reloads the copy it kept; names Beeline lacks are taken from ITIS where it accepts them, and the rest are listed in the run.",
+        "Brings back the determinations made in Ecdysis, Washington's museum database. Downloads the collection only when Ecdysis says something changed, and otherwise reloads the copy it kept; names Beeline lacks are taken from Ecdysis's own list of names where it accepts them, and the rest are listed in the run.",
       "store-backup":
         "Copies the whole store, the private store (still encrypted) and the staff decisions and change histories into one file in the Bee Line folder on the OSU shared drive, for recovery only. It checks that the copies open and that the file Drive holds is the one sent, and keeps every night's copy for two weeks and the first of each month for a year.",
       "commit-determinations":
@@ -1971,6 +1972,11 @@ export const en = {
         definition:
           "Someone asserting what a specimen is. Determinations are a record of who said what and when, so a later identification never erases an earlier one — and an expert's determination is never overwritten by a volunteer's.",
       },
+      ecdysis: {
+        term: "Ecdysis",
+        definition:
+          "The online museum database where Washington's bee specimens are catalogued and where the program's taxonomists record their determinations. Its list of scientific names is what the names here are checked against. Where the program keeps a name Ecdysis does not have, or one Ecdysis calls outdated, a taxonomist has said so.",
+      },
       "field-number": {
         term: "Field number",
         definition:
@@ -1990,11 +1996,6 @@ export const en = {
         term: "Heads-up",
         definition:
           "A flag worth fixing that does not stop labels being printed. Improving it makes the record better; leaving it does not hold anything up.",
-      },
-      itis: {
-        term: "ITIS",
-        definition:
-          "The Integrated Taxonomic Information System: a published list of scientific names, kept by a partnership of North American government agencies, that determinations here are made against. It lags behind bee taxonomy in places, so a few names the program uses are newer than ITIS, and a few ITIS still calls current have since been revised.",
       },
       label: {
         term: "Label",

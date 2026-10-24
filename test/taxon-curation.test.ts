@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { readFile } from "node:fs/promises";
 import { createMemoryDb, rows } from "./helpers.js";
-import { loadItis } from "../src/load-itis.js";
-import { decide, itisFromStore, mergeDecisions, parseBatch, type DecideContext } from "../src/taxon-decide.js";
+import { loadEcdysisTaxonomy } from "../src/load-ecdysis-taxonomy.js";
+import { decide, ecdysisFromStore, mergeDecisions, parseBatch, type DecideContext } from "../src/taxon-decide.js";
 import {
   applyTaxonCuration,
   CURATED_TAXON_CURATION,
@@ -14,51 +14,49 @@ import {
 } from "../src/taxon-curation.js";
 
 /**
- * The curation layer over ITIS (beeline-45v.1): a file of taxonomists'
- * decisions, replayed onto the tree, honoured by the ITIS match, and checked
- * against each release. The ITIS rows are the real ones from
- * test/fixtures/itis-taxon.csv (release of 2026-08-26): Lasioglossum zonulum
- * is outdated there for zonulus, Hoplitis truncata is two current names, and
- * no bee subgenus exists.
+ * The curation layer over Ecdysis's thesaurus (beeline-45v.1, over ITIS until
+ * beeline-7gob): a file of taxonomists' decisions, replayed onto the tree,
+ * honoured by the match, and checked against each fetch. The thesaurus rows
+ * are the real ones in test/fixtures/ecdysis-taxonomy/ (fetched 2026-10-24):
+ * Xeromelecta californica is a synonym there of Brachymelecta californica,
+ * Rileya is two accepted genera, and Lasioglossum aspilurum is absent. The
+ * decisions themselves are invented: nobody has made these.
  */
 
-const FILES = {
-  taxonCsv: new URL("./fixtures/itis-taxon.csv", import.meta.url).pathname,
-  synonymCsv: new URL("./fixtures/itis-synonym.csv", import.meta.url).pathname,
-};
+const ECDYSIS_TAXONOMY = new URL("./fixtures/ecdysis-taxonomy/", import.meta.url).pathname;
 
 const row = (over: Partial<TaxonCurationRow>): TaxonCurationRow => ({
   kind: "addition",
-  rank: "subgenus",
-  name: "Lasioglossum (Dialictus)",
+  rank: "species",
+  name: "Lasioglossum aspilurum",
   parent_rank: "",
   parent_name: "",
-  itis_tsn: "",
-  itis_current_name: "",
-  itis_release: "2026-08-26",
+  ecdysis_tid: "",
+  ecdysis_accepted_name: "",
+  ecdysis_fetched_on: "2026-10-24",
   taxonomist: "L. Best",
-  decided_on: "2026-10-09",
+  decided_on: "2026-10-24",
   reference: "",
-  reason: "ITIS carries no subgenera for Halictidae",
+  reason: "Ecdysis lacks it",
   ...over,
 });
 
 const DEPARTURE = row({
   kind: "departure",
   rank: "species",
-  name: "Lasioglossum zonulum",
-  itis_tsn: "759593",
-  itis_current_name: "Lasioglossum zonulus",
+  name: "Xeromelecta californica",
+  ecdysis_tid: "1645055",
+  ecdysis_accepted_name: "Brachymelecta californica",
   reference: "https://doi.org/10.0000/example",
-  reason: "the program keeps the neuter ending pending Gibbs",
+  reason: "the program keeps Xeromelecta pending a review",
 });
 
 const HOMONYM = row({
   kind: "homonym",
-  rank: "species",
-  name: "Hoplitis truncata",
-  itis_tsn: "715497",
-  reason: "Cresson's: the Nearctic species",
+  rank: "genus",
+  name: "Rileya",
+  ecdysis_tid: "1645743",
+  reason: "Ashmead's: the chalcid wasp",
 });
 
 describe("the curation file", () => {
@@ -69,7 +67,7 @@ describe("the curation file", () => {
   });
 
   test("round-trips through its own writer, quotes and all", () => {
-    const rows = [row({}), DEPARTURE, row({ kind: "homonym", rank: "species", name: "Hoplitis truncata", itis_tsn: "715497", reason: 'Cresson, 1878 — the "western" one' })];
+    const rows = [row({}), DEPARTURE, row({ kind: "homonym", rank: "genus", name: "Rileya", ecdysis_tid: "1645743", reason: 'Ashmead, 1888 — the "wasp" one' })];
     expect(parseTaxonCuration(formatTaxonCuration(rows), "mem")).toEqual(rows);
   });
 
@@ -77,13 +75,13 @@ describe("the curation file", () => {
     ["names the taxonomist", { taxonomist: " " }],
     ["says why", { reason: "" }],
     ["is not a kind", { kind: "adopt" as never }],
-    ["an addition has no ITIS TSN", { itis_tsn: "12" }],
-    ["a departure needs the ITIS TSN", { kind: "departure", itis_current_name: "X" }],
-    ["a departure says what ITIS calls the name", { kind: "departure", itis_tsn: "12" }],
-    ["a homonym resolution has no ITIS current name", { kind: "homonym", itis_tsn: "12", itis_current_name: "X" }],
+    ["an addition has no Ecdysis id", { ecdysis_tid: "12" }],
+    ["a departure needs the Ecdysis id", { kind: "departure", ecdysis_accepted_name: "X" }],
+    ["a departure says what Ecdysis files the name under", { kind: "departure", ecdysis_tid: "12" }],
+    ["a homonym resolution has no Ecdysis accepted name", { kind: "homonym", ecdysis_tid: "12", ecdysis_accepted_name: "X" }],
     ["go together", { parent_rank: "genus" }],
     ["is not a date", { decided_on: "Oct 9" }],
-    ["is not a date", { itis_release: "2026-13-45" }],
+    ["is not a date", { ecdysis_fetched_on: "2026-13-45" }],
   ])("refuses a row that %s", (_, over) => {
     expect(() => parseTaxonCuration(formatTaxonCuration([row(over)]), "mem")).toThrow(/line 2/);
   });
@@ -109,17 +107,17 @@ describe("replaying decisions onto a store", () => {
   beforeEach(async () => {
     ({ conn } = await createMemoryDb());
     await node("genus", "Lasioglossum");
-    await node("species", "Lasioglossum zonulum");
-    await node("species", "Hoplitis truncata");
-    await loadItis(conn, FILES);
+    await node("species", "Xeromelecta californica");
+    await node("genus", "Rileya");
+    await loadEcdysisTaxonomy(conn, ECDYSIS_TAXONOMY);
   });
 
   test("creates a missing node under the parent its name implies, and places nothing it cannot", async () => {
     const result = await applyTaxonCuration(conn, [
       row({}),
-      row({ rank: "species", name: "Agapostemon subtilior", reason: "ITIS lags" }),
-      row({ rank: "genus", name: "Brachymelecta", reason: "ITIS has only Xeromelecta" }),
-      row({ rank: "genus", name: "Protandrena", parent_rank: "family", parent_name: "Andrenidae", reason: "not in ITIS at all" }),
+      row({ rank: "species", name: "Agapostemon subtilior", reason: "kept" }),
+      row({ rank: "genus", name: "Brachymelecta", reason: "kept" }),
+      row({ rank: "genus", name: "Protandrena", parent_rank: "family", parent_name: "Andrenidae", reason: "kept" }),
     ]);
     expect(result).toMatchObject({ applied: 1, created: 1 });
     expect(result.unplaced.map((u) => [u.name, u.problem])).toEqual([
@@ -128,43 +126,43 @@ describe("replaying decisions onto a store", () => {
       ["Protandrena", "its family 'Andrenidae' is not in the tree"],
     ]);
     expect(
-      await rows(conn, "SELECT p.scientific_name FROM animal a JOIN animal p ON p.entity_id = a.parent_id WHERE a.scientific_name = 'Lasioglossum (Dialictus)'"),
+      await rows(conn, "SELECT p.scientific_name FROM animal a JOIN animal p ON p.entity_id = a.parent_id WHERE a.scientific_name = 'Lasioglossum aspilurum'"),
     ).toEqual([["Lasioglossum"]]);
-    expect(await rows(conn, "SELECT standing FROM animal_itis WHERE scientific_name = 'Lasioglossum (Dialictus)'")).toEqual([["absent"]]);
+    expect(await rows(conn, "SELECT standing FROM animal_ecdysis WHERE scientific_name = 'Lasioglossum aspilurum'")).toEqual([["absent"]]);
   });
 
-  test("a homonym resolution is what the node matches; a departure leaves ITIS's view of the name alone", async () => {
-    expect(await rows(conn, "SELECT standing, itis_tsn FROM animal_itis WHERE scientific_name = 'Hoplitis truncata'")).toEqual([["homonym", null]]);
+  test("a homonym resolution is what the node matches; a departure leaves Ecdysis's view of the name alone", async () => {
+    expect(await rows(conn, "SELECT standing, ecdysis_tid FROM animal_ecdysis WHERE scientific_name = 'Rileya'")).toEqual([["homonym", null]]);
     const result = await applyTaxonCuration(conn, [DEPARTURE, HOMONYM]);
     expect(result).toMatchObject({ applied: 2, created: 0, unplaced: [] });
-    expect(await rows(conn, "SELECT standing, itis_tsn FROM animal_itis WHERE scientific_name = 'Hoplitis truncata'")).toEqual([["valid", 715497n]]);
-    expect(await rows(conn, "SELECT standing, itis_tsn, current_name FROM animal_itis WHERE scientific_name = 'Lasioglossum zonulum'")).toEqual([
-      ["synonym", 759593n, "Lasioglossum zonulus"],
+    expect(await rows(conn, "SELECT standing, ecdysis_tid FROM animal_ecdysis WHERE scientific_name = 'Rileya'")).toEqual([["accepted", 1645743n]]);
+    expect(await rows(conn, "SELECT standing, ecdysis_tid, accepted_name FROM animal_ecdysis WHERE scientific_name = 'Xeromelecta californica'")).toEqual([
+      ["synonym", 1645055n, "Brachymelecta californica"],
     ]);
-    expect(await rows(conn, "SELECT entity_id FROM animal_itis_stale")).toEqual([]);
+    expect(await rows(conn, "SELECT entity_id FROM animal_ecdysis_stale")).toEqual([]);
     expect(await rows(conn, "SELECT animal_id FROM animal_curation_stale")).toEqual([]);
   });
 
-  test("a choice ITIS no longer offers is not honoured, and is named", async () => {
-    await applyTaxonCuration(conn, [row({ ...HOMONYM, itis_tsn: "999" })]);
-    expect(await rows(conn, "SELECT standing, itis_tsn FROM animal_itis WHERE scientific_name = 'Hoplitis truncata'")).toEqual([["homonym", null]]);
-    expect(await rows(conn, "SELECT problem FROM animal_curation_stale")).toEqual([["ITIS no longer carries the chosen TSN 999"]]);
+  test("a choice Ecdysis no longer offers is not honoured, and is named", async () => {
+    await applyTaxonCuration(conn, [row({ ...HOMONYM, ecdysis_tid: "999" })]);
+    expect(await rows(conn, "SELECT standing, ecdysis_tid FROM animal_ecdysis WHERE scientific_name = 'Rileya'")).toEqual([["homonym", null]]);
+    expect(await rows(conn, "SELECT problem FROM animal_curation_stale")).toEqual([["Ecdysis no longer carries the chosen taxon 999"]]);
   });
 
-  test("a choice that is a current name for something else is not honoured, and says what it names", async () => {
-    // 759441 is Lasioglossum tenax, current — and not Hoplitis truncata.
-    await applyTaxonCuration(conn, [row({ ...HOMONYM, itis_tsn: "759441" })]);
-    expect(await rows(conn, "SELECT standing, itis_tsn FROM animal_itis WHERE scientific_name = 'Hoplitis truncata'")).toEqual([["homonym", null]]);
+  test("a choice that is an accepted name for something else is not honoured, and says what it names", async () => {
+    // 248008 is Lasioglossum tenax, accepted — and not Rileya.
+    await applyTaxonCuration(conn, [row({ ...HOMONYM, ecdysis_tid: "248008" })]);
+    expect(await rows(conn, "SELECT standing, ecdysis_tid FROM animal_ecdysis WHERE scientific_name = 'Rileya'")).toEqual([["homonym", null]]);
     expect(await rows(conn, "SELECT problem FROM animal_curation_stale")).toEqual([
-      ["the chosen TSN 759441 is Lasioglossum tenax (species), not a name at this rank and spelling"],
+      ["the chosen taxon 248008 is Lasioglossum tenax (species), not a name at this rank and spelling"],
     ]);
   });
 
-  test("with ITIS not loaded there is nothing to compare, so nothing is stale", async () => {
-    await conn.run("DELETE FROM itis_synonym; DELETE FROM itis_taxon");
+  test("with the thesaurus not loaded there is nothing to compare, so nothing is stale", async () => {
+    await conn.run("DELETE FROM ecdysis_taxon");
     await applyTaxonCuration(conn, [row({}), DEPARTURE, HOMONYM]);
     expect(await rows(conn, "SELECT animal_id FROM animal_curation_stale")).toEqual([]);
-    expect(await rows(conn, "SELECT DISTINCT standing FROM animal_itis")).toEqual([["not loaded"]]);
+    expect(await rows(conn, "SELECT DISTINCT standing FROM animal_ecdysis")).toEqual([["not loaded"]]);
   });
 
   test("restates the table wholesale, so a row dropped from the file leaves the store", async () => {
@@ -173,95 +171,99 @@ describe("replaying decisions onto a store", () => {
     expect(await rows(conn, "SELECT kind FROM animal_curation")).toEqual([["homonym"]]);
   });
 
-  test("a later release moving from under a decision is reported, per kind", async () => {
+  test("a later fetch moving from under a decision is reported, per kind", async () => {
     await applyTaxonCuration(conn, [row({}), DEPARTURE, HOMONYM]);
-    // ITIS gains the subgenus, accepts zonulum again, and drops Wu's truncata.
-    await conn.run(`INSERT INTO itis_taxon (tsn, rank, name, usage, author, parent_tsn, itis_as_of)
-                    VALUES (9000001, 'subgenus', 'Lasioglossum (Dialictus)', 'valid', 'Robertson, 1902', 154357, DATE '2026-11-30')`);
-    await conn.run(`UPDATE itis_taxon SET usage = 'valid', itis_as_of = DATE '2026-11-30' WHERE tsn = 759593`);
-    await conn.run(`DELETE FROM itis_taxon WHERE tsn = 756786`);
-    expect(await rows(conn, "SELECT scientific_name, kind, itis_as_of::VARCHAR, problem FROM animal_curation_stale ORDER BY scientific_name")).toEqual([
-      ["Hoplitis truncata", "homonym", "2026-11-30", "ITIS now has one current name at this spelling: the choice is no longer needed"],
-      ["Lasioglossum (Dialictus)", "addition", "2026-11-30", "ITIS now has this name as current (TSN 9000001)"],
-      ["Lasioglossum zonulum", "departure", "2026-11-30", "ITIS now accepts this name: the departure can be retired"],
+    // Ecdysis gains aspilurum, accepts Xeromelecta californica again, and
+    // drops the fly Rileya — all of it invented, on the fixture's real rows.
+    await conn.run(`UPDATE ecdysis_taxon SET fetched_on = DATE '2026-11-30'`);
+    await conn.run(`INSERT INTO ecdysis_taxon (tid, rank, name, status, accepted_tid, parent_tid, fetched_on)
+                    VALUES (9000001, 'species', 'Lasioglossum aspilurum', 'accepted', 9000001, 186125, DATE '2026-11-30')`);
+    await conn.run(`UPDATE ecdysis_taxon SET status = 'accepted', accepted_tid = tid WHERE tid = 1645055`);
+    await conn.run(`DELETE FROM ecdysis_taxon WHERE tid = 95505`);
+    expect(await rows(conn, "SELECT scientific_name, kind, fetched_on::VARCHAR, problem FROM animal_curation_stale ORDER BY scientific_name")).toEqual([
+      ["Lasioglossum aspilurum", "addition", "2026-11-30", "Ecdysis now has this name as accepted (taxon 9000001)"],
+      ["Rileya", "homonym", "2026-11-30", "Ecdysis now has one accepted name at this spelling: the choice is no longer needed"],
+      ["Xeromelecta californica", "departure", "2026-11-30", "Ecdysis now accepts this name: the departure can be retired"],
     ]);
   });
 
-  test("a departure ITIS has renamed again says what it calls it now", async () => {
+  test("a departure Ecdysis has filed under yet another name says which", async () => {
     await applyTaxonCuration(conn, [DEPARTURE]);
-    await conn.run(`UPDATE itis_taxon SET name = 'Lasioglossum zonulatum' WHERE tsn = 1252729`);
+    await conn.run(`UPDATE ecdysis_taxon SET name = 'Brachymelecta californicus' WHERE tid = 265407`);
     expect(await rows(conn, "SELECT problem FROM animal_curation_stale")).toEqual([
-      ["ITIS now calls it Lasioglossum zonulatum, not Lasioglossum zonulus"],
+      ["Ecdysis now files it under Brachymelecta californicus, not Brachymelecta californica"],
     ]);
   });
 });
 
 describe("recording a decision", () => {
-  const itis: DecideContext["itis"] = async (rank, name) => {
-    if (name === "Lasioglossum zonulum") return { standing: "synonym", tsn: "759593", currentName: "Lasioglossum zonulus", candidates: [{ tsn: "759593", author: "(Smith, 1848)", usage: "invalid" }] };
-    if (name === "Hoplitis truncata")
+  // The answers are the fixture's real rows, as ecdysisFromStore gives them (tested below).
+  const ecdysis: DecideContext["ecdysis"] = async (rank, name) => {
+    if (name === "Xeromelecta californica")
+      return { standing: "synonym", tid: "1645055", acceptedName: "Brachymelecta californica", candidates: [{ tid: "1645055", author: "(Cresson, 1879)", status: "synonym" }] };
+    if (name === "Rileya")
       return {
-        standing: "homonym", tsn: null, currentName: null,
-        candidates: [{ tsn: "715497", author: "(Cresson, 1878)", usage: "valid" }, { tsn: "756786", author: "Wu, 1992", usage: "valid" }],
+        standing: "homonym", tid: null, acceptedName: null,
+        candidates: [{ tid: "95505", author: "Brauer and Bergenstamm, 1893", status: "accepted" }, { tid: "1645743", author: "Ashmead, 1888", status: "accepted" }],
       };
-    if (name === "Lasioglossum tenax") return { standing: "valid", tsn: "759441", currentName: null, candidates: [{ tsn: "759441", author: "(Sandhouse, 1924)", usage: "valid" }] };
-    return { standing: "absent", tsn: null, currentName: null, candidates: [] };
+    if (name === "Lasioglossum tenax") return { standing: "accepted", tid: "248008", acceptedName: null, candidates: [{ tid: "248008", author: "(Sandhouse, 1924)", status: "accepted" }] };
+    return { standing: "absent", tid: null, acceptedName: null, candidates: [] };
   };
-  const ctx: DecideContext = { itisRelease: "2026-08-26", today: "2026-10-09", itis };
+  const ctx: DecideContext = { ecdysisFetchedOn: "2026-10-24", today: "2026-10-24", ecdysis };
   const said = { taxonomist: "L. Best", reason: "keep, pending Gibbs 2011 (by email, 2026-10-07)" };
 
-  test("fills in what ITIS said, and nothing the reader typed", async () => {
-    expect(await decide({ kind: "addition", rank: "subgenus", name: "Lasioglossum (Dialictus)", ...said }, ctx)).toEqual(
+  test("fills in what Ecdysis said, and nothing the reader typed", async () => {
+    expect(await decide({ kind: "addition", rank: "species", name: "Lasioglossum aspilurum", ...said }, ctx)).toEqual(
       row({ reason: said.reason }),
     );
-    expect(await decide({ kind: "departure", rank: "species", name: "Lasioglossum zonulum", ...said, reference: "10.11646/zootaxa.3073.1.1" }, ctx)).toEqual(
-      row({ kind: "departure", rank: "species", name: "Lasioglossum zonulum", itis_tsn: "759593", itis_current_name: "Lasioglossum zonulus", reference: "10.11646/zootaxa.3073.1.1", reason: said.reason }),
+    expect(await decide({ kind: "departure", rank: "species", name: "Xeromelecta californica", ...said, reference: "10.11646/zootaxa.3073.1.1" }, ctx)).toEqual(
+      row({ kind: "departure", rank: "species", name: "Xeromelecta californica", ecdysis_tid: "1645055", ecdysis_accepted_name: "Brachymelecta californica", reference: "10.11646/zootaxa.3073.1.1", reason: said.reason }),
     );
-    expect(await decide({ kind: "homonym", rank: "species", name: "Hoplitis truncata", tsn: "715497", ...said, decidedOn: "2026-10-12" }, ctx)).toEqual(
-      row({ kind: "homonym", rank: "species", name: "Hoplitis truncata", itis_tsn: "715497", reason: said.reason, decided_on: "2026-10-12" }),
+    expect(await decide({ kind: "homonym", rank: "genus", name: "Rileya", tid: "1645743", ...said, decidedOn: "2026-10-25" }, ctx)).toEqual(
+      row({ kind: "homonym", rank: "genus", name: "Rileya", ecdysis_tid: "1645743", reason: said.reason, decided_on: "2026-10-25" }),
     );
     expect(await decide({ kind: "addition", rank: "genus", name: "Brachymelecta", parent: { rank: "family", name: "Apidae" }, ...said }, ctx)).toMatchObject({
       parent_rank: "family", parent_name: "Apidae",
     });
   });
 
-  test("refuses a decision the ITIS tables contradict, saying what they hold", async () => {
-    await expect(decide({ kind: "addition", rank: "species", name: "Lasioglossum tenax", ...said }, ctx)).rejects.toThrow(/ITIS has this name \(valid: \(Sandhouse, 1924\) \[TSN 759441, valid\]\), so it is not an addition/);
-    await expect(decide({ kind: "departure", rank: "species", name: "Lasioglossum tenax", ...said }, ctx)).rejects.toThrow(/does not call this name outdated \(valid/);
-    await expect(decide({ kind: "departure", rank: "subgenus", name: "Lasioglossum (Dialictus)", ...said }, ctx)).rejects.toThrow(/\(absent\), so there is nothing to depart from/);
-    await expect(decide({ kind: "homonym", rank: "species", name: "Lasioglossum tenax", tsn: "759441", ...said }, ctx)).rejects.toThrow(/1 current name at this spelling, so there is no choice/);
-    await expect(decide({ kind: "homonym", rank: "species", name: "Hoplitis truncata", ...said }, ctx)).rejects.toThrow(/say which with --tsn, one of: \(Cresson, 1878\) \[TSN 715497, valid\] \| Wu, 1992 \[TSN 756786, valid\]/);
-    await expect(decide({ kind: "homonym", rank: "species", name: "Hoplitis truncata", tsn: "759441", ...said }, ctx)).rejects.toThrow(/say which with --tsn/);
+  test("refuses a decision Ecdysis's thesaurus contradicts, saying what it holds", async () => {
+    await expect(decide({ kind: "addition", rank: "species", name: "Lasioglossum tenax", ...said }, ctx)).rejects.toThrow(/Ecdysis has this name \(accepted: \(Sandhouse, 1924\) \[taxon 248008, accepted\]\), so it is not an addition/);
+    await expect(decide({ kind: "departure", rank: "species", name: "Lasioglossum tenax", ...said }, ctx)).rejects.toThrow(/does not call this name a synonym \(accepted/);
+    await expect(decide({ kind: "departure", rank: "species", name: "Lasioglossum aspilurum", ...said }, ctx)).rejects.toThrow(/\(absent\), so there is nothing to depart from/);
+    await expect(decide({ kind: "homonym", rank: "species", name: "Lasioglossum tenax", tid: "248008", ...said }, ctx)).rejects.toThrow(/1 accepted name at this spelling, so there is no choice/);
+    await expect(decide({ kind: "homonym", rank: "genus", name: "Rileya", ...said }, ctx)).rejects.toThrow(/say which with --tid, one of: Brauer and Bergenstamm, 1893 \[taxon 95505, accepted\] \| Ashmead, 1888 \[taxon 1645743, accepted\]/);
+    await expect(decide({ kind: "homonym", rank: "genus", name: "Rileya", tid: "248008", ...said }, ctx)).rejects.toThrow(/say which with --tid/);
   });
 
   test("and a row the file would refuse: no reason, no taxonomist", async () => {
-    await expect(decide({ kind: "addition", rank: "subgenus", name: "Lasioglossum (Dialictus)", taxonomist: "L. Best", reason: " " }, ctx)).rejects.toThrow(/every row says why/);
-    await expect(decide({ kind: "addition", rank: "subgenus", name: "Lasioglossum (Dialictus)", taxonomist: "", reason: "x" }, ctx)).rejects.toThrow(/names the taxonomist/);
+    await expect(decide({ kind: "addition", rank: "species", name: "Lasioglossum aspilurum", taxonomist: "L. Best", reason: " " }, ctx)).rejects.toThrow(/every row says why/);
+    await expect(decide({ kind: "addition", rank: "species", name: "Lasioglossum aspilurum", taxonomist: "", reason: "x" }, ctx)).rejects.toThrow(/names the taxonomist/);
   });
 
-  test("the ITIS answer a decision is checked against comes from the store, by the tables alone", async () => {
+  test("the Ecdysis answer a decision is checked against comes from the store, by the thesaurus alone", async () => {
     const { conn } = await createMemoryDb();
-    await loadItis(conn, FILES);
-    const fromStore = itisFromStore(conn);
-    expect(await fromStore("species", "Lasioglossum zonulum")).toMatchObject({ standing: "synonym", tsn: "759593", currentName: "Lasioglossum zonulus" });
-    expect(await fromStore("species", "Hoplitis truncata")).toMatchObject({ standing: "homonym", tsn: null });
-    expect((await fromStore("species", "Hoplitis truncata")).candidates.map((c) => c.author)).toEqual(["(Cresson, 1878)", "Wu, 1992"]);
-    expect(await fromStore("subgenus", "Lasioglossum (Dialictus)")).toMatchObject({ standing: "absent", candidates: [] });
-    expect(await fromStore("species", "Lasioglossum tenax")).toMatchObject({ standing: "valid", tsn: "759441" });
+    await loadEcdysisTaxonomy(conn, ECDYSIS_TAXONOMY);
+    const fromStore = ecdysisFromStore(conn);
+    expect(await fromStore("species", "Xeromelecta californica")).toMatchObject({ standing: "synonym", tid: "1645055", acceptedName: "Brachymelecta californica" });
+    expect(await fromStore("genus", "Rileya")).toMatchObject({ standing: "homonym", tid: null });
+    expect((await fromStore("genus", "Rileya")).candidates.map((c) => c.author)).toEqual(["Brauer and Bergenstamm, 1893", "Ashmead, 1888"]);
+    expect(await fromStore("species", "Lasioglossum aspilurum")).toMatchObject({ standing: "absent", candidates: [] });
+    expect(await fromStore("species", "Lasioglossum tenax")).toMatchObject({ standing: "accepted", tid: "248008" });
   });
 
   test("a batch is one signature over many lines, and a bad line is a bad batch", () => {
     const batch = parseBatch(
       [
         "kind,rank,name,reason,reference",
-        'addition,subgenus,Lasioglossum (Dialictus),"as proposed; confirmed by email 2026-10-07",',
-        "departure,species,Lasioglossum zonulum,as proposed,10.11646/zootaxa.3073.1.1",
+        'addition,species,Lasioglossum aspilurum,"as proposed; confirmed by email 2026-10-07",',
+        "departure,species,Xeromelecta californica,as proposed,10.11646/zootaxa.3073.1.1",
       ].join("\n"),
       "mem",
     );
     expect(batch).toEqual([
-      { kind: "addition", rank: "subgenus", name: "Lasioglossum (Dialictus)", reason: "as proposed; confirmed by email 2026-10-07", reference: undefined, tsn: undefined, parent: undefined },
-      { kind: "departure", rank: "species", name: "Lasioglossum zonulum", reason: "as proposed", reference: "10.11646/zootaxa.3073.1.1", tsn: undefined, parent: undefined },
+      { kind: "addition", rank: "species", name: "Lasioglossum aspilurum", reason: "as proposed; confirmed by email 2026-10-07", reference: undefined, tid: undefined, parent: undefined },
+      { kind: "departure", rank: "species", name: "Xeromelecta californica", reason: "as proposed", reference: "10.11646/zootaxa.3073.1.1", tid: undefined, parent: undefined },
     ]);
     expect(() => parseBatch("kind,rank,name\naddition,species,X y", "mem")).toThrow(/no column 'reason'/);
     expect(() => parseBatch("kind,rank,name,reason,taxonomist\n", "mem")).toThrow(/'taxonomist' is not a column/);
@@ -271,11 +273,11 @@ describe("recording a decision", () => {
   test("merging supersedes a decision about the same name and keeps the rest; one batch deciding a name twice is refused", () => {
     const merged = mergeDecisions([row({}), DEPARTURE], [row({ reason: "revised" }), HOMONYM]);
     expect(merged.map((r) => [r.name, r.reason])).toEqual([
-      ["Lasioglossum (Dialictus)", "revised"],
-      ["Lasioglossum zonulum", DEPARTURE.reason],
-      ["Hoplitis truncata", HOMONYM.reason],
+      ["Lasioglossum aspilurum", "revised"],
+      ["Xeromelecta californica", DEPARTURE.reason],
+      ["Rileya", HOMONYM.reason],
     ]);
-    expect(() => mergeDecisions([], [row({}), row({ reason: "again" })])).toThrow(/Lasioglossum \(Dialictus\) \(subgenus\): decided twice in one batch/);
+    expect(() => mergeDecisions([], [row({}), row({ reason: "again" })])).toThrow(/Lasioglossum aspilurum \(species\): decided twice in one batch/);
   });
 
   test("a snapshot names each tab's file apart, however the titles sanitise", async () => {

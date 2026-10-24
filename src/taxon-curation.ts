@@ -4,28 +4,30 @@ import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseCsv } from "./corrections.js";
 import { openDuckDb } from "./db.js";
-import { matchAnimalsToItis } from "./load-itis.js";
+import { matchAnimalsToEcdysis } from "./load-ecdysis-taxonomy.js";
 import { DEFAULT_DB } from "./person-change.js";
 
 /**
- * The program's stated departures from ITIS (beeline-45v.1), as a curated
- * file replayed onto every rebuild the way ingest/person-overlay.csv is.
+ * The program's stated departures from Ecdysis's thesaurus (beeline-45v.1;
+ * from ITIS until beeline-7gob), as a curated file replayed onto every
+ * rebuild the way ingest/person-overlay.csv is.
  *
- * ITIS is the basis (Andony, 2026-09-11), so the file holds only the claims:
+ * Ecdysis is the basis, so the file holds only the claims:
  *
- *   addition    a name ITIS has not got, which the program keeps — the bee
- *               subgenera, Agapostemon subtilior
- *   departure   a name ITIS calls outdated, kept under the program's own
- *               treatment — Protandrena where ITIS says Pseudopanurgus
- *   homonym     two current ITIS names share the spelling; this says which
- *               one the program means, by TSN
+ *   addition    a name Ecdysis has not got, which the program keeps —
+ *               Lasioglossum aspilurum, Sphecodes (Arctosphecodes)
+ *   departure   a name Ecdysis calls a synonym, kept under the program's own
+ *               treatment — Peponapis pruinosa where Ecdysis says Xenoglossa
+ *   homonym     two accepted Ecdysis names share the spelling; this says
+ *               which one the program means, by Ecdysis's id
  *
- * A name that matches a current ITIS name needs no row, and a synonym with
- * no departure row is ITIS's to rename. Every row is a taxonomist's decision
- * — `taxonomist` and `reason` are required, `reference` carries the DOI or
- * link where a paper is behind it — and records what ITIS said at the time
- * (`itis_tsn`, `itis_current_name`, `itis_release`), which is what
- * animal_curation_stale (schema/118) checks each later release against.
+ * A name that matches an accepted Ecdysis name needs no row, and a synonym
+ * with no departure row is Ecdysis's to rename. Every row is a taxonomist's
+ * decision — `taxonomist` and `reason` are required, `reference` carries the
+ * DOI or link where a paper is behind it — and records what Ecdysis said at
+ * the time (`ecdysis_tid`, `ecdysis_accepted_name`, `ecdysis_fetched_on`),
+ * which is what animal_curation_stale (schema/118) checks each later fetch
+ * against.
  *
  * A row names its node by rank and name, the table's own key, and never by
  * entity_id, which a rebuild redraws. Where the node does not exist yet the
@@ -33,7 +35,7 @@ import { DEFAULT_DB } from "./person-change.js";
  * its genus, a subgenus under its genus, a subspecies under its species —
  * or under `parent_rank`/`parent_name` for a rank whose name says nothing
  * about where it goes. That is what lets the seed stop minting a node for
- * every spelling it meets (Peter, 2026-10-02): a name ITIS lacks exists
+ * every spelling it meets (Peter, 2026-10-02): a name Ecdysis lacks exists
  * because a row here says so.
  *
  * Read strictly and refused rather than repaired, like the overlays: the
@@ -51,12 +53,12 @@ export interface TaxonCurationRow {
   /** Both or neither; for a rank whose name does not say where it goes. */
   parent_rank: string;
   parent_name: string;
-  /** Departure: the TSN of the program's name in ITIS. Homonym: the TSN chosen. Addition: empty. */
-  itis_tsn: string;
-  /** Departure only: what ITIS accepted instead, at the time. */
-  itis_current_name: string;
-  /** ISO date of the ITIS release the decision was made against. */
-  itis_release: string;
+  /** Departure: Ecdysis's id for the program's name. Homonym: the id chosen. Addition: empty. */
+  ecdysis_tid: string;
+  /** Departure only: what Ecdysis accepted instead, at the time. */
+  ecdysis_accepted_name: string;
+  /** ISO date of the fetch of Ecdysis's thesaurus the decision was made against. */
+  ecdysis_fetched_on: string;
   taxonomist: string;
   decided_on: string;
   /** A DOI or URL, or empty. */
@@ -72,9 +74,9 @@ export const CURATION_COLUMNS = [
   "name",
   "parent_rank",
   "parent_name",
-  "itis_tsn",
-  "itis_current_name",
-  "itis_release",
+  "ecdysis_tid",
+  "ecdysis_accepted_name",
+  "ecdysis_fetched_on",
   "taxonomist",
   "decided_on",
   "reference",
@@ -98,14 +100,14 @@ export function rowProblem(row: TaxonCurationRow): string | null {
   if (row.rank === "" || row.name === "") return "rank and name are required";
   if ((row.parent_rank === "") !== (row.parent_name === "")) return "parent_rank and parent_name go together";
   if (row.kind === "addition") {
-    if (row.itis_tsn !== "") return "an addition has no ITIS TSN: ITIS does not have the name";
-    if (row.itis_current_name !== "") return "an addition has no ITIS current name";
+    if (row.ecdysis_tid !== "") return "an addition has no Ecdysis id: Ecdysis does not have the name";
+    if (row.ecdysis_accepted_name !== "") return "an addition has no Ecdysis accepted name";
   } else {
-    if (!/^\d+$/.test(row.itis_tsn)) return `a ${row.kind} needs the ITIS TSN it is about`;
-    if (row.kind === "departure" && row.itis_current_name === "") return "a departure says what ITIS calls the name instead";
-    if (row.kind === "homonym" && row.itis_current_name !== "") return "a homonym resolution has no ITIS current name";
+    if (!/^\d+$/.test(row.ecdysis_tid)) return `a ${row.kind} needs the Ecdysis id it is about`;
+    if (row.kind === "departure" && row.ecdysis_accepted_name === "") return "a departure says what Ecdysis files the name under instead";
+    if (row.kind === "homonym" && row.ecdysis_accepted_name !== "") return "a homonym resolution has no Ecdysis accepted name";
   }
-  if (!isDate(row.itis_release)) return `itis_release '${row.itis_release}' is not a date (YYYY-MM-DD)`;
+  if (!isDate(row.ecdysis_fetched_on)) return `ecdysis_fetched_on '${row.ecdysis_fetched_on}' is not a date (YYYY-MM-DD)`;
   if (!isDate(row.decided_on)) return `decided_on '${row.decided_on}' is not a date (YYYY-MM-DD)`;
   if (row.taxonomist.trim() === "") return "every row names the taxonomist who decided";
   if (row.reason.trim() === "") return "every row says why";
@@ -201,11 +203,11 @@ const lit = (s: string) => `'${s.replaceAll("'", "''")}'`;
 
 /**
  * Replay the file onto the store: the table is restated wholesale, so a row
- * removed from the file — a departure ITIS has since adopted — is gone from
+ * removed from the file — a departure Ecdysis has since adopted — is gone from
  * the store too. Missing nodes are created under their parent; a row whose
  * parent is not in the tree is reported and skipped rather than guessed at,
 * since minting a chain of ancestors from one row would invent placements
- * nobody decided. Ends by restating animal.itis_tsn, because a homonym
+ * nobody decided. Ends by restating animal.ecdysis_tid, because a homonym
  * resolution changes what its node matches.
  *
  * Opens no transaction of its own: legacy promotion runs it as one step of
@@ -243,14 +245,14 @@ export async function applyTaxonCuration(conn: DuckDBConnection, rows: readonly 
       result.created += 1;
     }
     await conn.run(
-      `INSERT INTO animal_curation (animal_id, kind, itis_tsn, itis_current_name, itis_release, taxonomist, decided_on, reference, reason)
-       VALUES (${id}, ${lit(row.kind)}, ${row.itis_tsn === "" ? "NULL" : row.itis_tsn},
-               ${row.itis_current_name === "" ? "NULL" : lit(row.itis_current_name)}, DATE ${lit(row.itis_release)},
+      `INSERT INTO animal_curation (animal_id, kind, ecdysis_tid, ecdysis_accepted_name, ecdysis_fetched_on, taxonomist, decided_on, reference, reason)
+       VALUES (${id}, ${lit(row.kind)}, ${row.ecdysis_tid === "" ? "NULL" : row.ecdysis_tid},
+               ${row.ecdysis_accepted_name === "" ? "NULL" : lit(row.ecdysis_accepted_name)}, DATE ${lit(row.ecdysis_fetched_on)},
                ${lit(row.taxonomist)}, DATE ${lit(row.decided_on)}, ${row.reference === "" ? "NULL" : lit(row.reference)}, ${lit(row.reason)})`,
     );
     result.applied += 1;
   }
-  await matchAnimalsToItis(conn);
+  await matchAnimalsToEcdysis(conn);
   return result;
 }
 

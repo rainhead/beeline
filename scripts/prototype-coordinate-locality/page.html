@@ -67,6 +67,7 @@ const Locality = (() => {
   const looksLikeStreet = (s) => STREET.test(` ${s.toLowerCase().replaceAll(".", " ").replaceAll(",", " , ")} `);
   const titleCase = (s) => s.toLowerCase().replace(/(^|[\s\-(])([a-z])/g, (m, a, b) => a + b.toUpperCase()).replace(/\bMc([a-z])/g, (m, a) => "Mc" + a.toUpperCase());
   const ABBREV = [[/\bMount\b/g, "Mt"], [/\bMountain\b/g, "Mt"], [/\bSaint\b/g, "St"], [/\bFort\b/g, "Ft"], [/\bJunction\b/g, "Jct"], [/\bSprings\b/g, "Spgs"]];
+  const FEATURE_KINDS = { H: "lake or stream", T: "peak, pass or ridge", L: "named area", S: "landmark", V: "forest" };
   const fits = (s, p) => s.length <= p.maxLen && !s.includes(",") && !s.includes('"') && !looksLikeStreet(s);
 
   // A town or peak name, shortened only as far as it must be.
@@ -105,6 +106,24 @@ const Locality = (() => {
     return shortName(base, p);
   }
 
+  // 'Ginkgo Petrified Forest' → 'Ginkgo SP'; 'Sun Lakes-Dry Falls' → 'Sun Lakes SP'.
+  function parkName(park, p) {
+    const tries = [`${park} SP`, `${park.split("-")[0].trim()} SP`];
+    const words = park.split(" ");
+    while (words.length > 1) { words.pop(); tries.push(`${words.join(" ")} SP`); }
+    return tries.find((t) => fits(t, p)) ?? null;
+  }
+
+  // 'Olympic National Park' → 'Olympic NP', the way staff write it.
+  const NPS_SHORT = [[/ National Park$/, " NP"], [/ National Monument( and Preserve)?$/, " NM"], [/ National Recreation Area$/, " NRA"],
+    [/ National Historical Park$/, " NHP"], [/ National Historic Site$/, " NHS"], [/ National Preserve$/, " NPres"], [/ National Reserve$/, " NRes"],
+    [/ National Historical Reserve$/, " NHR"], [/ National Seashore$/, " NS"], [/ National Battlefield$/, " NB"]];
+  function npsName(unit, p) {
+    let s = unit;
+    for (const [re, to] of NPS_SHORT) s = s.replace(re, to);
+    return shortName(s, p);
+  }
+
   const DIRS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
   const compass = (deg) => DIRS[Math.round(deg / 45) % 8];
 
@@ -128,31 +147,69 @@ const Locality = (() => {
       const name = unitName(sample.wla, sample.wla_area, p);
       if (name) return { name, why: sample.wla === sample.wla_area ? "inside the WDFW wildlife area" : `inside the WDFW unit, part of ${sample.wla_area}`, kind: "wildlife area", crossCounty: false };
     }
+    if (p.nationalParks && sample.nps) {
+      const name = npsName(sample.nps, p);
+      if (name) return { name, why: "inside the national park unit", kind: "national park", crossCounty: false };
+    }
+    if (p.stateParks && sample.sp) {
+      const name = parkName(sample.sp, p);
+      if (name) return { name, why: "inside the state park", kind: "state park", crossCounty: false };
+    }
     // Inside a town's limits: the town, however big and whatever is nearer.
+    // Inside a city a volunteer lives in, the city's name says too little:
+    // the park, else the neighbourhood (Jefferson Park, not Seattle).
+    if (p.townLimits && sample.tl && sample.tlk === "city") {
+      const cityPop = (sample.c.map(([id]) => gaz.places.get(id)).find((pl) => pl && pl.kind === "town" && pl.name === sample.tl) ?? {}).pop ?? 0;
+      if (cityPop >= p.cityDetailPop) {
+        const near = sample.c.map(([id, km]) => ({ pl: gaz.places.get(id), km })).filter((c) => c.pl);
+        const park = near.find((c) => c.pl.kind === "park" && c.km <= p.parkKm && shortName(c.pl.name, p));
+        if (park) return { name: shortName(park.pl.name, p), why: `park at ${park.km.toFixed(1)} km, in ${sample.tl}`, kind: "city park", crossCounty: false, km: 0 };
+        const hood = near.find((c) => c.pl.kind === "town" && c.pl.pop === 0 && c.km <= p.hoodKm && shortName(c.pl.name, p));
+        if (hood) return { name: shortName(hood.pl.name, p), why: `neighbourhood at ${hood.km.toFixed(1)} km, in ${sample.tl}`, kind: "neighbourhood", crossCounty: false, km: 0 };
+      }
+    }
     if (p.townLimits && sample.tl && (sample.tlk === "city" || p.cdps)) {
       const name = shortName(sample.tl, p);
       if (name) return { name, why: sample.tlk === "city" ? "inside the town's limits" : "inside a census-designated place", kind: "town", crossCounty: false, km: 0, place: { name: sample.tl, pop: (sample.c.map(([id]) => gaz.places.get(id)).find((pl) => pl && pl.kind === "town" && pl.name === sample.tl) ?? {}).pop ?? 0 } };
     }
     const inLimits = p.townLimits && !!sample.tl;
+    // Beside a lake, pass or landmark a volunteer has already named nearby.
+    if (p.usedFeatures && sample.f) {
+      // The most used of those in reach: distance over the square root of how
+      // many samples carry its name, so Crystal Mountain at 3.6 km can beat a
+      // pass at 2.9 km that one sample names.
+      const score = (x) => x.km / Math.sqrt(Math.max(x.ft.samples, 1));
+      const hit = sample.f.map(([id, km]) => ({ ft: gaz.features.get(id), km }))
+        // A name only one collector has used reaches less far: it may be theirs alone.
+        .filter((x) => x.ft && x.km <= (x.ft.collectors >= 2 ? p.featureKm : p.featureKmOne) && shortName(x.ft.name, p))
+        .reduce((best, x) => (!best || score(x) < score(best) ? x : best), null);
+      if (hit) return { name: shortName(hit.ft.name, p), why: `${FEATURE_KINDS[hit.ft.code.split(".")[0]] ?? "feature"} at ${hit.km.toFixed(1)} km, the name of ${hit.ft.samples} sample${hit.ft.samples === 1 ? "" : "s"} by ${hit.ft.collectors} collector${hit.ft.collectors === 1 ? "" : "s"}`, kind: "feature", crossCounty: false, km: hit.km };
+    }
     const countyOk = (c) => p.county === "ignore" || c.same;
     const choose = (pool) => {
       // Inside or right beside a named place: name it whatever its size.
       // Not inside a town's limits, where a hamlet so close is a neighbourhood.
       const unpopulated = (c) => c.pl.kind === "locality" || (c.pl.kind === "town" && c.pl.pop === 0);
-      const at = inLimits ? null : pool.find((c) => (c.pl.kind === "town" || c.pl.kind === "locality") && c.km <= p.atKm);
+      const at = inLimits ? null : pool.find((c) => c.pl.kind === "town" && c.pl.pop > 0 && c.km <= p.atKm);
       if (at) return { c: at, why: `within ${p.atKm} km of it` };
-      const towns = pool.filter((c) => (unpopulated(c) ? c.km <= p.unpopulatedKm && p.minPop === 0 : c.pl.kind === "town" && c.pl.pop >= p.minPop && c.km <= p.maxKm));
+      const towns = pool.filter((c) => c.pl.kind === "town" && c.pl.pop > 0 && c.pl.pop >= p.minPop && c.km <= p.maxKm);
       const score = (c) => c.km / Math.pow(Math.max(c.pl.pop, 1), p.sizeWeight);
       const town = towns.reduce((best, c) => (!best || score(c) < score(best) ? c : best), null);
       if (p.peaks) {
         const peak = pool.find((c) => c.pl.kind === "peak" && c.km <= p.peakKm);
         if (peak && (!town || town.km >= p.peakWhenTownKm)) return { c: peak, why: town ? `peak within ${p.peakKm} km, town ${town.km.toFixed(0)} km away` : `peak within ${p.peakKm} km, no town` };
       }
-      if (town) return { c: town, why: town.pl.pop ? `town of ${town.pl.pop.toLocaleString()} at ${town.km.toFixed(1)} km` : `${town.pl.kind === "locality" ? "named locality" : "hamlet"}, nobody counted, at ${town.km.toFixed(1)} km` };
+      if (town) return { c: town, why: `town of ${town.pl.pop.toLocaleString()} at ${town.km.toFixed(1)} km` };
       return null;
     };
     let r = choose(cands.filter(countyOk));
     if (!r && p.county === "prefer") { r = choose(cands); if (r) r.why += ", in another county"; }
+    if (!r) {
+      // Last resort: the nearest hamlet or named locality nobody is counted in.
+      const near = cands.filter(countyOk).concat(p.county === "prefer" ? cands : [])
+        .find((c) => (c.pl.kind === "locality" || (c.pl.kind === "town" && c.pl.pop === 0)) && c.km <= p.unpopulatedKm);
+      if (near) r = { c: near, why: `last resort: ${near.pl.kind === "locality" ? "named locality" : "hamlet"} at ${near.km.toFixed(1)} km, nobody counted` };
+    }
     if (!r) return { name: null, why: `nothing within ${p.maxKm} km${p.county === "ignore" ? "" : " in the same county"}` };
     const name = r.c.pl.kind !== "peak" ? withOffset(r.c.short, r.c.km, r.c.brg, p) : r.c.short;
     return { name, why: r.why, kind: r.c.pl.kind, place: r.c.pl, km: r.c.km, crossCounty: !r.c.same };
@@ -174,25 +231,33 @@ const DATA = /*DATA*/null;
 // The sandbox app, whose store these samples were read from; a sample page
 // opens for whoever has a Beeline sign-in that reaches it.
 const BEELINE = "https://beeline.fly.dev";
-const gaz = { places: new Map(DATA.places.map((p) => [p.id, p])), regions: new Map(DATA.regions.map((r) => [r.region_id, r])) };
-const samples = DATA.samples;
+const gaz = { places: new Map(DATA.places.map((p) => [p.id, p])), features: new Map(DATA.features.map((f) => [f.id, f])), regions: new Map(DATA.regions.map((r) => [r.region_id, r])) };
+const samples = DATA.samples.r.map((r) => Object.fromEntries(DATA.samples.k.map((k, i) => [k, r[i]])));
 
-const DEFAULTS = { townLimits: true, cdps: true, minPop: 0, sizeWeight: 0.25, maxKm: 30, atKm: 1.5, unpopulatedKm: 20, county: "prefer", peaks: true, peakKm: 3, peakWhenTownKm: 12, refuges: true, refugeOverrides: true, wildlifeAreas: true, wlaName: "unit", wlaSuffix: "WLA", offset: "none", offsetKm: 3, maxLen: 18 };
+const DEFAULTS = { townLimits: true, cdps: true, minPop: 0, sizeWeight: 0.25, maxKm: 30, atKm: 1.5, unpopulatedKm: 20, county: "prefer", peaks: true, peakKm: 3, peakWhenTownKm: 12, refuges: true, refugeOverrides: true, stateParks: true, nationalParks: true, cityDetailPop: 50000, parkKm: 0.6, hoodKm: 1.5, usedFeatures: true, featureKm: 5, featureKmOne: 2, wildlifeAreas: true, wlaName: "unit", wlaSuffix: "WLA", offset: "none", offsetKm: 3, maxLen: 18 };
 const params = { ...DEFAULTS };
 const CONTROLS = [
   ["townLimits", "Inside a town's limits, name the town", "bool", "Census places; BC municipalities"],
   ["cdps", "…counting census-designated places", "bool", "unincorporated: Mount Hood Village, Sandia Heights"],
-  ["minPop", "Smallest town worth naming", "number", "population; GeoNames gives none for most hamlets, and a place with none is only named within 10 km"],
+  ["minPop", "Smallest town worth naming", "number", "population; a place with none counted is a hamlet, and only a last resort"],
   ["sizeWeight", "Prefer bigger towns", "number", "0 = nearest qualifying town; 0.5 = a town 10× bigger may be ~3× farther"],
   ["maxKm", "Farthest town (km)", "number", "beyond this, no name is offered"],
-  ["atKm", "Name any place this close (km)", "number", "outside town limits: a point beside a hamlet takes the hamlet's name"],
-  ["unpopulatedKm", "Places with nobody counted, within (km)", "number", "hamlets and named localities (Galena, BC); 20 at most; they compete with towns as if their population were 1"],
+  ["atKm", "Name any town this close (km)", "number", "outside town limits: a point beside a small town takes its name over a bigger one farther off"],
+  ["unpopulatedKm", "Last resort: a hamlet or named locality within (km)", "number", "Galena, BC; only when no town, peak or used feature qualifies; 20 at most"],
   ["county", "Same county", ["prefer", "require", "ignore"], "prefer: another county only when none is in this one"],
   ["peaks", "Name notable peaks", "bool", "notable = GeoNames knows a name for it in another language"],
   ["peakKm", "Peak within (km)", "number", ""],
   ["peakWhenTownKm", "…only when the town is at least (km)", "number", "so a peak wins only out of town"],
   ["refuges", "Name the wildlife refuge a point is in", "bool", ""],
   ["refugeOverrides", "Use curated refuge names", "bool", "Saddle Mountain NWR → Hanford Reach NWR"],
+  ["nationalParks", "Name the national park, monument or recreation area a point is in", "bool", "after refuges: Olympic NP, Lake Chelan NRA"],
+  ["cityDetailPop", "In a city of at least this many people, name the park or neighbourhood", "number", "Jefferson Park, not Seattle; a very large number turns this off"],
+  ["parkKm", "…a park within (km)", "number", "GeoNames has parks as points, so this stands in for being inside one; 1.5 at most"],
+  ["hoodKm", "…else a neighbourhood within (km)", "number", ""],
+  ["stateParks", "Name the Washington state park a point is in", "bool", "after refuges and wildlife areas; trails and unnamed properties left out"],
+  ["usedFeatures", "Name a lake, pass or landmark volunteers already use", "bool", "a feature in GeoNames whose name a volunteer wrote within 10 km of it"],
+  ["featureKm", "…when the point is within (km)", "number", "5 at most"],
+  ["featureKmOne", "…or, for a name only one collector has used, within (km)", "number", "Takhlakh Lake, written by one collector, 1.2 km away"],
   ["wildlifeAreas", "Name the WDFW wildlife area a point is in", "bool", "after refuges, which win where the two overlap"],
   ["wlaName", "…by its", ["unit", "area"], "unit: Whiskey Dick; area: L.T. Murray"],
   ["wlaSuffix", "…followed by", ["WLA", "Unit", "WA", ""], "dropped when the name would not fit; blank = the bare name"],
@@ -218,6 +283,10 @@ const SCENARIOS = [
   { key: "flagged", label: "Localities flagged now", text: "Samples whose present locality fails the label check: too long, a street address, a comma. These are what volunteers are asked to fix on iNaturalist today. Does the generated name make the fix unnecessary?", test: (s) => !!s.flag },
   { key: "refuge", label: "Wildlife refuges", text: "Points inside a national wildlife refuge, named the way staff already write them (Malheur NWR, Hart Mt NWR). Watch for refuges whose official name is not the one people use, and for points on a refuge's edge.", test: (s) => !!s.ref },
   { key: "wla", label: "WDFW wildlife areas", text: "Points inside a WDFW wildlife area unit. Volunteers mostly wrote the nearest town here (Wenas is 'Ellensburg' in 14 spellings), so naming the unit changes what these labels say. Is 'Desert WLA' or 'Methow WLA' something a volunteer would recognise?", test: (s) => !!s.wla },
+  { key: "nps", label: "National parks", text: "Points inside a National Park Service unit, named as staff write them: Olympic NP, Mt Rainier NP, Lake Chelan NRA.", test: (s) => !!s.nps },
+  { key: "citydetail", label: "Parks and neighbourhoods in cities", text: "Points inside a city of 50,000 or more, named for the park they are in or beside, else the neighbourhood. A volunteer who lives in Seattle needs 'Jefferson Park', not 'Seattle'. GeoNames knows parks only as points, so a large park's edge may miss.", test: (s, r) => r.kind === "city park" || r.kind === "neighbourhood" },
+  { key: "park", label: "State parks", text: "Points inside a Washington state park, named '<park> SP' as staff already write Ginkgo SP and Potholes SP. Elsewhere volunteers wrote the town: Steamboat Rock is usually 'Electric City'.", test: (s) => !!s.sp },
+  { key: "feature", label: "Lakes, passes, landmarks", text: "Points near a feature that is not a town, whose name a volunteer has already written for a sample nearby: Takhlakh Lake, Cayuse Pass. These are the seed of a curated gazetteer. Watch for names a single volunteer used that nobody else would.", test: (s, r) => r.kind === "feature" },
   { key: "cross", label: "Named from another county", text: "The generated name is a town in a different county from the point, because none in its own county qualified. On a label this reads USA:OR:LinnCo Corvallis — is that acceptable, or should these get no name?", test: (s, r) => r.crossCounty },
   { key: "none", label: "No name found", text: "Nothing qualifying within reach. Remote country, mostly; the peak and distance settings matter here.", test: (s, r) => !r.name },
   { key: "peak", label: "Named for a peak", text: "Points named for a nearby notable peak rather than a town. Is 'notable' right?", test: (s, r) => r.kind === "peak" },
@@ -252,6 +321,10 @@ function renderStats() {
     ["Given a name", (xs) => pct(xs.filter((x) => x.r.name).length, xs.length)],
     ["…a refuge", (xs) => pct(xs.filter((x) => x.r.kind === "refuge").length, xs.length)],
     ["…a WDFW wildlife area", (xs) => pct(xs.filter((x) => x.r.kind === "wildlife area").length, xs.length)],
+    ["…a national park unit", (xs) => pct(xs.filter((x) => x.r.kind === "national park").length, xs.length)],
+    ["…a park or neighbourhood in a city", (xs) => pct(xs.filter((x) => x.r.kind === "city park" || x.r.kind === "neighbourhood").length, xs.length)],
+    ["…a Washington state park", (xs) => pct(xs.filter((x) => x.r.kind === "state park").length, xs.length)],
+    ["…a lake, pass or landmark volunteers use", (xs) => pct(xs.filter((x) => x.r.kind === "feature").length, xs.length)],
     ["…a town whose limits it is inside", (xs) => pct(xs.filter((x) => x.r.km === 0).length, xs.length)],
     ["…a peak", (xs) => pct(xs.filter((x) => x.r.kind === "peak").length, xs.length)],
     ["…a town in another county", (xs) => pct(xs.filter((x) => x.r.crossCounty).length, xs.length)],
@@ -306,7 +379,7 @@ function detail(s, r) {
       <td class="num">${km.toFixed(1)} km</td><td class="${other ? "warn" : ""}">${esc(regionText(pl.region_id))}</td><td>${Locality.shortName(pl.name, params) ?? '<span class="bad">does not fit</span>'}</td></tr>`;
   }).join("");
   return `<tr class="detail"><td colspan="7">
-    <div>${s.lat}, ${s.lon}${s.unc ? ` ±${s.unc} m` : ""} · <a href="${map}" target="_blank" rel="noreferrer">map</a>${s.ref ? ` · in ${esc(s.ref)}` : ""}${s.wla ? ` · in WDFW ${esc(s.wla_area)} wildlife area, ${esc(s.wla)} unit` : ""}</div>
+    <div>${s.lat}, ${s.lon}${s.unc ? ` ±${s.unc} m` : ""} · <a href="${map}" target="_blank" rel="noreferrer">map</a>${s.ref ? ` · in ${esc(s.ref)}` : ""}${s.nps ? ` · in ${esc(s.nps)}` : ""}${s.sp ? ` · in ${esc(s.sp)} state park` : ""}${s.wla ? ` · in WDFW ${esc(s.wla_area)} wildlife area, ${esc(s.wla)} unit` : ""}</div>
     <table style="margin-top:6px"><tr><th>Nearby</th><th>Kind</th><th class="num">Population</th><th class="num">Distance</th><th>County</th><th>As written</th></tr>${cands}</table>
   </td></tr>`;
 }

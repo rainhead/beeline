@@ -25,6 +25,10 @@ for o in 0 500 1000; do
 done
 # WDFW wildlife area units.
 get "https://geodataservices.wdfw.wa.gov/arcgis/rest/services/MapServices/WildlifeAreas/MapServer/0/query?where=1%3D1&outFields=WLA_Name,WLAU_Name,AccessTypeIDDesc&outSR=4326&f=geojson&maxAllowableOffset=0.0003&geometryPrecision=5" wdfw_units.geojson
+# Washington state parks, as WA State Parks publishes them.
+get "https://services5.arcgis.com/4LKAHwqnBooVDUlX/arcgis/rest/services/WA_State_Park_Boundaries/FeatureServer/0/query?where=1%3D1&outFields=ParkName,Category&outSR=4326&f=geojson&maxAllowableOffset=0.0002&geometryPrecision=5" wa_state_parks.geojson
+# National Park Service units: parks, monuments, recreation areas.
+get "https://services1.arcgis.com/fBc8EJBxQRMcHlei/arcgis/rest/services/NPS_Land_Resources_Division_Boundary_and_Tract_Data_Service/FeatureServer/2/query?where=1%3D1&outFields=UNIT_NAME,UNIT_TYPE&outSR=4326&f=geojson&maxAllowableOffset=0.0005&geometryPrecision=5" nps_units.geojson
 [ -d us ] || unzip -oq US.zip -d us
 [ -d ca ] || unzip -oq CA.zip -d ca
 [ -d counties ] || unzip -oq cb_2023_us_county_500k.zip -d counties

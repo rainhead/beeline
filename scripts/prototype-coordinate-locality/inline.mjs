@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 const [page, out] = process.argv.slice(2);
 const read = (f) => JSON.parse(readFileSync(`${out}/${f}.json`, "utf8"));
-const places = read("places"), regions = read("regions"), samples = read("samples");
+const places = read("places"), features = read("features"), regions = read("regions"), samples = read("samples");
 const STREET = / (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county)( +((ne|nw|se|sw|n|s|e|w)|[^ ]*[0-9][^ ]*))* *(,|$)/;
 const addressy = (loc) => !!loc && (/^\s*\d/.test(loc) || /\d{5}/.test(loc) || /(^|[\s,])\d{3,6}\s+[A-Za-z]/.test(loc)
   || STREET.test(` ${loc.toLowerCase().replaceAll(".", " ").replaceAll(",", " , ")} `));
@@ -14,11 +14,13 @@ const shared = samples.filter((s) => !s.extra).map(({ who, ...s }) => ({
   ...s, lat: Math.round(s.lat * 1000) / 1000, lon: Math.round(s.lon * 1000) / 1000,
   loc: addressy(s.loc) ? "(street address withheld)" : s.loc,
 }));
+// Rows as arrays under one list of keys: the same data in two thirds the bytes.
+const pack = (rows) => { const k = Object.keys(rows[0]); return { k, r: rows.map((o) => k.map((key) => o[key])) }; };
 const template = readFileSync(page, "utf8");
 const render = (rows, privacy, collectors) => template
   .replace("/*PRIVACY*/", () => privacy)
   .replace("${COLLECTORS}", collectors ? " or collector" : "")
-  .replace("/*DATA*/null", () => JSON.stringify({ places, regions, samples: rows }).replaceAll("</", "<\\/"));
+  .replace("/*DATA*/null", () => JSON.stringify({ places, features, regions, samples: pack(rows) }).replaceAll("</", "<\\/"));
 const head = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n';
 writeFileSync(`${out}/PROTOTYPE-coordinate-locality.html`,
   head + render(samples, "This copy holds exact coordinates and collectors' names: keep it local.", true) + "\n</html>\n");

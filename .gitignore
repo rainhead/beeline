@@ -10,6 +10,9 @@ data/
 .beads-credential-key
 .beads/proxieddb/
 .beads.gate.lock
+# bd's JSONL export and audit log: the issues sync through refs/dolt/data, and a
+# tracked export only conflicted on merge.
+.beads/*.jsonl
 
 # Build output
 dist/

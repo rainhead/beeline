@@ -208,11 +208,13 @@ needed to open one, or to merge a green one — the review, not the asking, is
 the point. **Do not commit or push to `main` directly**: nothing gets reviewed
 on the way in that way, which is the whole reason for the branch.
 
-**Beads are the exception** (Peter, 2026-08-28). Issue work syncs with `bd
-dolt push`, and the `.beads/*.jsonl` exports it changes are committed straight
-to `main`. They are a passive export of a store that has already been synced —
-there is nothing in them for a reviewer to read, and wrapping them in a pull
-request spends a review cycle on a machine-written file.
+**Beads make no commits at all** (Peter, 2026-10-23). Issue work syncs with
+`bd dolt push`, which carries the Dolt store over `refs/dolt/data` on the git
+remote, and nothing in the working tree changes when an issue does. The JSONL
+export used to be tracked and committed straight to `main`; it is now ignored,
+because it held nothing the Dolt ref does not and every branch that carried a
+copy of it conflicted with the next one on merge. `bd export -o <file>` writes
+one when something needs it.
 
 This is the "repository profile" the Beads block below defers to, and it
 overrides that block's conservative default — stated here, outside the managed

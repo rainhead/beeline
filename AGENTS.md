@@ -209,8 +209,10 @@ the point. **Do not commit or push to `main` directly**: nothing gets reviewed
 on the way in that way, which is the whole reason for the branch.
 
 **Beads make no commits at all** (Peter, 2026-10-23). Issue work syncs with
-`bd dolt push`, which carries the Dolt store over `refs/dolt/data` on the git
-remote, and nothing in the working tree changes when an issue does. The JSONL
+`bd sync`, which pulls, checks for conflicts and pushes the Dolt store over
+`refs/dolt/data` on the git remote, and nothing in the working tree changes when
+an issue does. Run it without asking, after filing or changing issues and before
+ending a session; the SessionStart hook runs it too. The JSONL
 export used to be tracked and committed straight to `main`; it is now ignored,
 because it held nothing the Dolt ref does not and every branch that carried a
 copy of it conflicted with the next one on merge. `bd export -o <file>` writes
@@ -285,7 +287,7 @@ bd close <id>         # Complete work
 
 - Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
 - Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+- Don't use `bd remember`: this repo is public, so everything in beads, memories included, can be read by anyone from `refs/dolt/data`. Keep persistent knowledge in Claude's file memory.
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
 
@@ -311,7 +313,7 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
    # Team-maintainer opt-in only, unless current instructions forbid it:
    git pull --rebase
-   bd dolt push
+   bd sync
    git push
    git status
    ```
@@ -342,7 +344,7 @@ bd prime                # Refresh Beads context
 
 - Use `bd` for all task tracking; do not create markdown TODO lists.
 - Run `bd prime` when Beads context is missing or stale. Codex 0.129.0+ can load Beads context automatically through native hooks; use `/hooks` to inspect or toggle them.
-- Keep persistent project memory in Beads via `bd remember`; do not create ad hoc memory files.
+- Don't keep project memory in `bd remember`: this repo is public, and so is everything in beads. Use Claude's file memory.
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->

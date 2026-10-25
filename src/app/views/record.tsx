@@ -400,14 +400,11 @@ export function SampleFlags({
             {waivers.map((w) => (
               <li>
                 {m.qcInstructions[w.rule_name] ?? w.rule_name}
-                {!withheld && w.finding !== "" && (
-                  <>
-                    {" "}
-                    <FindingDetail details={w.finding} taxonName={null} taxonRank={null} taxonLead={m.qc.identifiedAs} />
-                  </>
-                )}
+                {!withheld && w.finding !== "" && <Meta block>{t.flagSaid(w.finding)}</Meta>}
                 <Meta block>
-                  {w.waived_by === null ? t.waivedByStaff : t.waivedBy(w.waived_by)} {t.because(w.reason)}
+                  {w.waived_by === null ? t.waivedByStaff : t.waivedBy(w.waived_by)}
+                  {/* A staff note can say where, so it goes where the location does. */}
+                  {!withheld && <> {t.because(w.reason)}</>}
                 </Meta>
                 {!w.in_force && <Meta block>{t.noLongerApplies}</Meta>}
                 {canDecide && (
@@ -878,6 +875,7 @@ export function SpecimenPage({
   specimen,
   events,
   findings,
+  waivers = [],
   labels,
   admin,
 }: {
@@ -885,6 +883,8 @@ export function SpecimenPage({
   specimen: SpecimenDetail;
   events: readonly DeterminationEvent[];
   findings: readonly RecordFinding[];
+  /** The sample's waivers: a waived flag is not among the findings, so it is said here. */
+  waivers?: readonly RecordWaiver[];
   labels: readonly SpecimenLabelRow[];
   admin: boolean;
 }) {
@@ -947,7 +947,7 @@ export function SpecimenPage({
         <WhereCollected m={m} sample={sample} />
       </Card>
       <Card>
-        <SampleFlags m={m} findings={findings} />
+        <SampleFlags m={m} findings={findings} waivers={waivers} withheld={sample.location_withheld} />
       </Card>
     </>
   );

@@ -6,7 +6,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
-import { applySampleOverlay } from "../src/apply-sample-overlay.js";
+import { applySampleOverlay, refreshWaivers } from "../src/apply-sample-overlay.js";
 import { prepareRun } from "../src/print-run.js";
 import { parseSampleOverlay, readSampleOverlay, type SampleOverlayRow } from "../src/sample-overlay.js";
 import { createMemoryDb, CURRENT_SEASON, insertCleanSample, rows, scratchPaths } from "./helpers.js";
@@ -78,7 +78,7 @@ describe("a hold", () => {
     const sampleId = await insertCleanSample(conn, { collector_id: String(alice), inat_observation_id: "998877" });
     await applySampleOverlay(conn, [row({ field: "hold", value: "held", reason: "wrong county" })]);
     // A row for it reaches the table only if written by hand; the roll-up still ignores it.
-    await conn.run(`INSERT INTO sample_qc_waiver (sample_id, rule_name, finding, reason) VALUES (${sampleId}, 'staff_hold', 'wrong county', 'x')`);
+    await conn.run(`INSERT INTO sample_qc_waiver (sample_id, rule_name, finding, reason, in_force) VALUES (${sampleId}, 'staff_hold', 'wrong county', 'x', true)`);
     expect(await printable(conn, sampleId)).toBe(false);
   });
 });
@@ -104,8 +104,10 @@ describe("a waiver", () => {
     expect(await flags(conn, sampleId)).toEqual([]);
     expect(await printable(conn, sampleId)).toBe(true);
 
-    // The record changes and the flag's wording with it: the finding is back.
+    // The record changes and the flag's wording with it: the finding is back
+    // once the waivers are next checked, as every promotion does.
     await conn.run(`UPDATE sample SET locality = 'FS Rd 2, past the gate' WHERE entity_id = ${sampleId}`);
+    await refreshWaivers(conn);
     expect((await flags(conn, sampleId)).map((f) => f[0])).toEqual(["locality_format"]);
     expect(await printable(conn, sampleId)).toBe(false);
   });
@@ -134,8 +136,20 @@ describe("a waiver", () => {
       `SELECT rule_name, concat_ws(' ', details, detail_taxon_name) FROM sample_qc_finding WHERE sample_id = ${sampleId}`,
     )) as [[string, string]];
     expect(rule).toBe("missing_required_field");
-    await conn.run(`INSERT INTO sample_qc_waiver (sample_id, rule_name, finding, reason) VALUES (${sampleId}, '${rule}', '${finding}', 'x')`);
+    await conn.run(`INSERT INTO sample_qc_waiver (sample_id, rule_name, finding, reason, in_force) VALUES (${sampleId}, '${rule}', '${finding}', 'x', true)`);
     expect(await printable(conn, sampleId)).toBe(false);
+  });
+});
+
+describe("the applier", () => {
+  it("refuses a field it does not know rather than treating it as a locality", async () => {
+    const { conn } = await createMemoryDb();
+    const alice = await person(conn, "Alice Adams", "alice", 1);
+    const sampleId = await insertCleanSample(conn, { collector_id: String(alice), inat_observation_id: "998877" });
+    await applySampleOverlay(conn, [row({ field: "locality", value: "Bald Hill", base_value: "Corvallis" })]);
+    const result = await applySampleOverlay(conn, [row({ field: "waiver:" as never, value: "" })]);
+    expect(result.unresolved).toEqual([{ sample_ref: "inat:998877", field: "waiver:", reason: "not a field this applier knows" }]);
+    expect(await rows(conn, `SELECT locality FROM sample_locality_override WHERE sample_id = ${sampleId}`)).toEqual([["Bald Hill"]]);
   });
 });
 
@@ -242,6 +256,15 @@ describe("the sample page's staff forms", () => {
     const page = await (await a.request(`/samples/${sampleId}`)).text();
     expect(page).toContain("Waived by Sam Staff. Reason: a forest road");
     expect(page).not.toContain("Remove the waiver");
+  });
+
+  it("refuse a malformed flag name on removal too, leaving the file readable", async () => {
+    const { post, sampleId, sampleOverlayPath } = await app("sam", "'FS Rd 2'");
+    await post(`/samples/${sampleId}/hold`, { note: "check the county" });
+    for (const rule of ["", "Locality", "locality_format,x"]) {
+      expect((await post(`/samples/${sampleId}/waiver`, { rule, remove: "1" })).status).toBe(400);
+    }
+    expect((await readSampleOverlay(sampleOverlayPath)).map((r) => r.field)).toEqual(["hold"]);
   });
 
   it("are not offered to the collector, and refuse them", async () => {

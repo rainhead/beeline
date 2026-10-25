@@ -838,6 +838,7 @@ export const en = {
         waivedHeading: "Waived flags",
         waivedBy: (name: string) => `Waived by ${name}.`,
         waivedByStaff: "Waived by staff.",
+        flagSaid: (text: string) => `When it was waived, the flag said “${text}”.`,
         because: (reason: string) => `Reason: ${reason}`,
         noLongerApplies:
           "This waiver no longer applies: the flag does not say what it said when it was waived. If the flag still fires, it is listed above.",
@@ -849,7 +850,7 @@ export const en = {
         removeWaiver: "Remove the waiver",
         holdHeading: "Hold back from printing",
         holdHint:
-          "For staff. A held sample does not print until an admin lifts the hold, and the collector fixing the record does not lift it. Your note is shown to the collector and to whoever prints.",
+          "For staff. A held sample is left out of every print run prepared from now on, until an admin lifts the hold; the collector fixing the record does not lift it. If it is already in a prepared run, the run page names it. Your note is shown to the collector and to whoever prints.",
         holdPrinted: "Its labels have already printed, so a hold stops nothing unless its count rises.",
         heldBy: (name: string) => `Held by ${name}.`,
         heldByStaff: "Held by staff.",

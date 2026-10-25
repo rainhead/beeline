@@ -402,9 +402,12 @@ WITH seen AS (
 SELECT l.sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'observation_missing_upstream' AS rule_name,
-       concat('observation ', l.inat_observation_id, ' missing from ',
-              count(*), ' completed covering run(s), latest started ',
-              max(r.started_at)) AS details
+       -- Says when the observation was last returned, which stays put until
+       -- a sync returns it again and the flag clears: a waiver is tied to
+       -- what the flag says (schema/050), and a count of the runs that
+       -- missed it changed with every sync.
+       concat('observation ', l.inat_observation_id, ' not returned by a sync since ',
+              CAST(CAST(max(l.last_seen_at) AS DATE) AS VARCHAR)) AS details
 FROM linked l
 JOIN sync_run r
   ON r.source = l.source

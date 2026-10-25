@@ -642,6 +642,8 @@ export interface SampleQcWaiverTable {
   finding: string;
   reason: string;
   waived_by: number | null;
+  /** Whether the flag still says `finding`, as of the last time the overlay was applied. */
+  in_force: boolean;
 }
 
 // schema/030_samples_specimens.sql — written by legacy promotion (beeline-0199)

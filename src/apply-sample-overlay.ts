@@ -157,7 +157,10 @@ export async function applySampleOverlay(
   overlay: readonly SampleOverlayRow[],
 ): Promise<ApplySampleResult> {
   const result: ApplySampleResult = { applied: 0, unresolved: [] };
-  if (overlay.length === 0) return result;
+  if (overlay.length === 0) {
+    await refreshWaivers(conn);
+    return result;
+  }
 
   // Logins the way the roster resolves them: case-insensitively, since
   // iNaturalist logins are.
@@ -208,8 +211,10 @@ export async function applySampleOverlay(
           result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: problem });
           continue;
         }
+        // in_force is settled by refreshWaivers once every row is applied.
         await conn.run(
-          `INSERT INTO sample_qc_waiver (sample_id, rule_name, finding, reason, waived_by) VALUES ($1, $2, $3, $4, $5)`,
+          `INSERT INTO sample_qc_waiver (sample_id, rule_name, finding, reason, waived_by, in_force)
+           VALUES ($1, $2, $3, $4, $5, false)`,
           [sampleId, rule, row.base_value, row.reason, setBy] as never,
         );
       }
@@ -268,6 +273,13 @@ export async function applySampleOverlay(
       continue;
     }
 
+    if (row.field !== "locality") {
+      // A field this applier does not know must not fall through to the
+      // locality branch, whose removal would drop the sample's override.
+      result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: "not a field this applier knows" });
+      continue;
+    }
+
     if (row.value === "") {
       // Removal: the observation is the only writer again. Hand the sample
       // back what the follow rule would give it — now, rather than at the
@@ -308,7 +320,32 @@ export async function applySampleOverlay(
     ] as never);
     result.applied++;
   }
+  await refreshWaivers(conn);
   return result;
+}
+
+/**
+ * Settle whether each waiver still applies (schema/050): the flag fires on
+ * the sample and says what it said when it was waived. Run after every
+ * application of the overlay, which follows every promotion and every staff
+ * decision, so a change to a sample's data that changes the flag lapses the
+ * waiver. One pass over qc_finding, and only where a waiver exists.
+ */
+export async function refreshWaivers(conn: DuckDBConnection): Promise<void> {
+  if ((await rows(conn, `SELECT 1 FROM sample_qc_waiver LIMIT 1`)).length === 0) return;
+  await conn.run(
+    `UPDATE sample_qc_waiver SET in_force = checked.in_force
+     FROM (SELECT w.sample_id, w.rule_name,
+                  EXISTS (SELECT 1 FROM qc_finding f
+                          LEFT JOIN specimen sp ON sp.entity_id = f.specimen_id
+                          WHERE coalesce(f.sample_id, sp.sample_id) = w.sample_id
+                            AND f.rule_name = w.rule_name
+                            AND concat_ws(' ', f.details, f.detail_taxon_name) = w.finding) AS in_force
+           FROM sample_qc_waiver w) checked
+     WHERE sample_qc_waiver.sample_id = checked.sample_id
+       AND sample_qc_waiver.rule_name = checked.rule_name
+       AND sample_qc_waiver.in_force IS DISTINCT FROM checked.in_force`,
+  );
 }
 
 // CLI: pnpm sample:apply [db] [overlay] — replay the overlay onto a store

@@ -519,15 +519,11 @@ export async function recordQcDecisions(
       FROM sample_hold h LEFT JOIN person p ON p.entity_id = h.held_by
       WHERE h.sample_id = ${sampleId}`.execute(db),
     // In force exactly when sample_qc_finding leaves the finding out
-    // (schema/130): the flag fires, says what was waived, and is waivable.
+    // (schema/130): the applier found the flag saying what was waived, and
+    // the flag is waivable.
     sql<RecordWaiver>`
       SELECT w.rule_name, w.finding, w.reason, p.display_name AS waived_by,
-             NOT EXISTS (SELECT 1 FROM qc_rule_unwaivable u WHERE u.name = w.rule_name)
-               AND EXISTS (SELECT 1 FROM qc_finding f
-                           LEFT JOIN specimen sp ON sp.entity_id = f.specimen_id
-                           WHERE coalesce(f.sample_id, sp.sample_id) = w.sample_id
-                             AND f.rule_name = w.rule_name
-                             AND concat_ws(' ', f.details, f.detail_taxon_name) = w.finding) AS in_force
+             w.in_force AND NOT EXISTS (SELECT 1 FROM qc_rule_unwaivable u WHERE u.name = w.rule_name) AS in_force
       FROM sample_qc_waiver w LEFT JOIN person p ON p.entity_id = w.waived_by
       WHERE w.sample_id = ${sampleId}
       ORDER BY w.rule_name`.execute(db),
@@ -683,7 +679,8 @@ export function visibleFindings(findings: RecordFinding[], sample: SampleDetail)
 /** The history of where a sample was is part of where it was. */
 export function visibleHistory(changes: SampleChange[], sample: SampleDetail): SampleChange[] {
   if (!sample.location_withheld) return changes;
-  const hidden = new Set<string>(["location", "location_source", "locality"]);
+  // A staff note on a hold or waiver can say where, as an override's can.
+  const hidden = new Set<string>(["location", "location_source", "locality", "hold", "waivers"]);
   if (sample.geoprivacy === "private" || sample.taxon_geoprivacy === "private") hidden.add("county");
   return changes.filter((c) => !hidden.has(c.field));
 }

@@ -863,9 +863,10 @@ export function createApp({
     const m = c.get("m");
     const specimen = await loadSpecimen(db, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
     if (specimen === null) return errorResponse(c, "notFound");
-    const [events, findings, labels] = await Promise.all([
+    const [events, findings, decisions, labels] = await Promise.all([
       determinationHistory(db, specimen.specimen_id),
       recordFindings(db, specimen.sample.sample_id).then((f) => visibleFindings(f, specimen.sample)),
+      recordQcDecisions(db, specimen.sample.sample_id),
       specimenLabels(db, specimen.specimen_id),
     ]);
     const title =
@@ -876,7 +877,8 @@ export function createApp({
       await page(
         c,
         title,
-        <SpecimenPage m={m} specimen={specimen} events={events} findings={findings} labels={labels} admin={c.get("admin")} />,
+        <SpecimenPage m={m} specimen={specimen} events={events} findings={findings}
+          waivers={decisions.waivers} labels={labels} admin={c.get("admin")} />,
       ),
     );
   });

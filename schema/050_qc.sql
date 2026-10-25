@@ -74,6 +74,14 @@ INSERT INTO qc_rule (name, severity, instructions) VALUES
 -- one finding out of sample_qc_finding (schema/130), and only while the flag
 -- still says what it said when it was waived: if the record changes and the
 -- flag's wording with it, the finding is back.
+--
+-- Whether a waiver still applies is STORED (in_force), not compared in the
+-- view. Comparing in sample_qc_finding made every finding build its text —
+-- qc_rule_sample_number's above all — and printability 80% slower on the
+-- dev store with no waivers at all (63 ms to 115 ms, review of the branch).
+-- The applier rechecks every waiver each time it runs, which is the end of
+-- every observation promotion and every staff decision: the two ways a
+-- waivable flag's text changes on a sample that has an observation.
 
 INSERT INTO qc_rule (name, severity, instructions) VALUES
   ('staff_hold', 'blocking',
@@ -113,8 +121,10 @@ CREATE TABLE sample_qc_waiver (
   finding   TEXT NOT NULL,
   reason    TEXT NOT NULL CHECK (reason <> ''),
   waived_by INTEGER REFERENCES person(entity_id),
+  in_force  BOOLEAN NOT NULL,
   PRIMARY KEY (sample_id, rule_name)
 );
 COMMENT ON TABLE sample_qc_waiver IS 'A blocking flag staff have judged fine on one sample, so it prints (beeline-1kb.9). Re-derived at the end of observation promotion from data/sample-overlay.csv. In force only while the flag still says `finding`; ignored for the rules in qc_rule_unwaivable.';
+COMMENT ON COLUMN sample_qc_waiver.in_force IS 'Whether the flag still fires on this sample and says `finding`, as of the last time the overlay was applied (every promotion, every staff decision). sample_qc_finding reads this rather than comparing text, which would cost every finding its text.';
 COMMENT ON COLUMN sample_qc_waiver.finding IS 'What the flag said when it was waived: concat_ws('' '', details, detail_taxon_name), the comparison sample_qc_finding makes.';
 COMMENT ON COLUMN sample_qc_waiver.waived_by IS 'Whoever waived it, resolved from the overlay row''s author login through inat_account at apply time; null where the login no longer resolves.';

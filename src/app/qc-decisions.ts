@@ -1,6 +1,6 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { applySampleOverlay, resolveObservationSample, waiverProblem } from "../apply-sample-overlay.js";
-import { HELD, observationRef, upsertSampleOverlay, WAIVED, waiverField, type SampleOverlayRow } from "../sample-overlay.js";
+import { HELD, observationRef, upsertSampleOverlay, WAIVED, waivedRule, waiverField, type SampleOverlayRow } from "../sample-overlay.js";
 
 /**
  * Staff holding a sample back from printing (beeline-plu) and waiving a
@@ -95,6 +95,9 @@ export async function setWaiver(
   input: { rule: string; remove: boolean; note: string; author: string },
 ): Promise<QcDecisionResult> {
   const reason = input.note.trim();
+  // Before anything reaches the file: a malformed name would be a field the
+  // overlay cannot parse, and every later save would fail on it.
+  if (waivedRule(waiverField(input.rule)) === null) return { outcome: "invalid", problem: `'${input.rule}' is not a flag` };
   let finding = "";
   if (!input.remove) {
     const problem = await waiverProblem(deps.conn, input.rule, reason);

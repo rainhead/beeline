@@ -1,7 +1,8 @@
 -- Print runs (beeline-1kb.2, ADR 0008). A run is the batch act of printing:
 -- the printer says "I'm ready to print now", and that moment FREEZES the set
 -- of printable samples — the run creates their specimen rows, mints their
--- field numbers and occurrenceIDs, and snapshots what each label will say.
+-- field numbers, and snapshots what each label will say. It mints no
+-- occurrenceID: the museum database assigns that (ADR 0008, second amendment).
 -- From then on the run moves prepared → approved → printed → mailed, or is
 -- canceled before it prints. Nothing here is recomputable: a rebuild must
 -- not remint (CONTEXT.md, Data handling), and a deployed store is migrated,
@@ -42,7 +43,7 @@ CREATE TABLE print_run (
   CHECK (printed_at IS NULL OR printed_at >= approved_at),
   CHECK (mailed_at IS NULL OR mailed_at >= printed_at)
 );
-COMMENT ON TABLE print_run IS 'One batch act of printing labels (CONTEXT.md, Print run). Preparing it is the freeze: the run creates specimen rows for every pending printable sample in its scope, mints their field numbers and occurrenceIDs, and snapshots each label in printed_label. State is derived from which timestamps are set (print_run_state): prepared → approved → printed → mailed, or canceled while unprinted. Once printed, the samples it covers stop following iNaturalist for date, locality and coordinates (printed_sample).';
+COMMENT ON TABLE print_run IS 'One batch act of printing labels (CONTEXT.md, Print run). Preparing it is the freeze: the run creates specimen rows for every pending printable sample in its scope, mints their field numbers (no occurrenceID: the museum database assigns that, ADR 0008), and snapshots each label in printed_label. State is derived from which timestamps are set (print_run_state): prepared → approved → printed → mailed, or canceled while unprinted. Once printed, the samples it covers stop following iNaturalist for date, locality and coordinates (printed_sample).';
 COMMENT ON COLUMN print_run.atlas_id IS 'The run''s scope. NULL is the ordinary run today: every atlas that does not print its own labels (absent from atlas_printing), plus samples collected outside any atlas (print_scope_sample). Set, the run covers that atlas only, whether or not it prints its own — which is how an atlas that does runs one.';
 COMMENT ON COLUMN print_run.prepared_by IS 'Who froze it. The one author column that is a foreign key, because it is written at INSERT, before any label references the run.';
 COMMENT ON COLUMN print_run.approved_by IS 'Who proofed it and said print. A person entity_id, not a foreign key — see the note above the table.';

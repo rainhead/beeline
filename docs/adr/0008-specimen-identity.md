@@ -207,6 +207,10 @@ Consequences.
 
 ## Decision
 
+*The first sentence below was replaced on 2026-10-23 by the second
+amendment: Beeline mints no `occurrenceID`, and a specimen's identity
+downstream is the one the museum database assigns. The rest stands.*
+
 **A specimen's identity downstream is an `occurrenceID` Beeline mints once
 and never changes. The field number is a label identifier — published as
 `dwc:fieldNumber`, never as the museum's `catalogNumber` — minted once,
@@ -459,17 +463,31 @@ has it: the catalog number, then Symbiota's record id once a match is made.
 
 What changed in the code: the freeze (`src/print-run.ts`) mints only the
 field number; `specimen.occurrence_id` and its unique index are gone from
-`schema/030`, and migration 0060 empties the column on a deployed store,
-which cannot drop it until a reseed; the specimens CSV and the Darwin Core
-archives write `occurrenceID` blank, and the legacy-format export carries the
-legacy row's value where there is one and nothing otherwise. The UUIDs minted
-from 2026-09-17 to now were all from rehearsal runs on the sandbox and none
-was published.
+`schema/030`, and migrations 0060 and 0061 drop the index and then empty the
+column on a deployed store, which cannot drop the column until a reseed; the
+specimens CSV and the Darwin Core archives write `occurrenceID` blank, and the
+legacy-format export carries the legacy row's value where there is one and
+nothing otherwise. The UUIDs minted from 2026-09-17 to now were all from
+rehearsal runs on the sandbox and none was published.
 
-What still stands: (2)–(7) and (10) are about the field number and are
-untouched. (8) keeps its rule for the field number. (9) keeps its rule that
-nothing reads meaning out of an identifier; its last sentence, that the join
-is by `occurrenceID`, is replaced as above. Under the open questions, (1)
+That last point is a real difference from the reference implementation,
+which filled `occurrenceID` and `resourceID` with
+`https://osac.oregonstate.edu/OBS/OBA_<field number>` for every Oregon
+specimen it numbered. So an Oregon specimen Beeline prints reaches the
+legacy-format file with neither, where the old file had the URI. Whether
+Beeline should write OSAC's form for Oregon — minted once at the freeze and
+never re-derived, which the review note under (1) found admissible — is
+beeline-1kb.22, and OSAC's to answer.
+
+What still stands: (2), (3) and (5)–(7) are about the field number and are
+untouched, and so is (10). (4) still repairs a duplicate by minting forward
+and publishing the old number in `otherCatalogNumbers`, but its promise that
+no published link breaks now rests on the museum's identifier being
+independent of the field number: true of Ecdysis's UUIDs, and for Oregon
+only if OSAC's identifier stops embedding the number (beeline-1kb.22). (8)
+keeps its rule for the field number. (9) keeps its rule that nothing reads
+meaning out of an identifier; its last sentence, that the join is by
+`occurrenceID`, is replaced as above. Under the open questions, (1)
 mostly falls away — what Oregon's export carries is beeline-1kb.22, about
 OSAC's identifier rather than one of Beeline's — and so does (2), since
 Ecdysis keeps the UUID it mints.
@@ -487,12 +505,21 @@ in the duplicate repair of (4) it is answered by the vocabulary itself rather
 than by an
 obligation this project has to design.
 
+*Since the second amendment (2026-10-23), the record is found by its catalog
+number and then by Symbiota's record id, and keeping the identifier stable
+downstream is the museum's to do. The paragraph holds wherever the museum's
+`occurrenceID` is independent of the field number, which Ecdysis's UUIDs are;
+for Oregon it waits on beeline-1kb.22.*
+
 **The Oregon URI form has to be decided with OSAC, not inherited.** Beeline
 cannot keep emitting `https://osac.oregonstate.edu/OBS/OBA_<field number>` as
 an `occurrenceID` and satisfy (1), because that form *is* the field number.
 Either OSAC keeps that URI as a catalog-number-like alias and Beeline's own
 identifier is the `occurrenceID`, or OSAC's URI takes an opaque stem, or the
 program controls a domain of its own. Open question below.
+
+*Since the second amendment this is OSAC's question alone (beeline-1kb.22):
+Beeline emits no `occurrenceID`, for Oregon or anywhere else.*
 
 **Which label is right is a question for the print history, not the number.**
 The latest print event for a specimen carries the intended label. That is a

@@ -264,7 +264,9 @@ rows AS (
                ELSE lo."dateLabelPrint" END`)} AS "dateLabelPrint",
     ${t("sp.field_number")} AS "fieldNumber",
     ${t(`lo."catalogNumber"`)} AS "catalogNumber",
-    ${t(orStaged("occurrenceID", "sp.occurrence_id"))} AS "occurrenceID",
+    -- Beeline mints no occurrenceID (ADR 0008, amended 2026-10-23), so a
+    -- specimen with no legacy row has none, and the legacy row's own is kept.
+    ${t(`lo."occurrenceID"`)} AS "occurrenceID",
     ${t(`coalesce(CAST(ia.inat_user_id AS VARCHAR), nullif(lo."userId", ''))`)} AS "userId",
     ${t(`coalesce(ia.login, nullif(lo."userLogin", ''))`)} AS "userLogin",
     ${t("CASE WHEN c.n > 1 THEN c.given_names ELSE p.given_name END")} AS "firstName",
@@ -305,7 +307,7 @@ rows AS (
                WHEN loc.source = 'inat_public' THEN 'public' END`)} AS "coordinateSource",
     ${t(ownRow('"samplingProtocol"', "samplingProtocol", "s.protocol"))} AS "samplingProtocol",
     ${t(orStaged("relationshipOfResource", `CASE WHEN nullif(s.host_name_as_observed, '') IS NOT NULL THEN 'visits flowers of' END`))} AS "relationshipOfResource",
-    ${t(orStaged("resourceID", "sp.occurrence_id"))} AS "resourceID",
+    ${t(`lo."resourceID"`)} AS "resourceID",
     ${t(`lo."relatedResourceID"`)} AS "relatedResourceID",
     ${t(`lo."relationshipRemarks"`)} AS "relationshipRemarks",
     ${t(`lo."phylumPlant"`)} AS "phylumPlant",

@@ -304,8 +304,8 @@ describe("the legacy-format export", () => {
       protocol: "'aerial net'",
     }, { latitude: "44.123456789", longitude: "-123.987654321", coordinate_uncertainty_m: "8", source: "'inat_trusted'" });
     await fresh.run(
-      `INSERT INTO specimen (sample_id, specimen_number, field_number, occurrence_id)
-       VALUES (${sampleId}, 1, '26090001', '0192f2a0-0000-7000-8000-000000000001')`,
+      `INSERT INTO specimen (sample_id, specimen_number, field_number)
+       VALUES (${sampleId}, 1, '26090001')`,
     );
     const out = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
     const { staged } = await writeLegacyExport(fresh, out);
@@ -315,8 +315,9 @@ describe("the legacy-format export", () => {
     ).getRowObjectsJson() as Record<string, string | null>[];
     expect(row).toMatchObject({
       fieldNumber: "26090001",
-      occurrenceID: "0192f2a0-0000-7000-8000-000000000001",
-      resourceID: "0192f2a0-0000-7000-8000-000000000001",
+      // Beeline mints no occurrenceID (ADR 0008, amended 2026-10-23).
+      occurrenceID: null,
+      resourceID: null,
       specimenId: "1",
       firstName: "Cy",
       lastName: "Newcomer",

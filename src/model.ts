@@ -453,8 +453,6 @@ export interface SpecimenTable {
   sample_id: number;
   specimen_number: number;
   field_number: string | null;
-  /** dwc:occurrenceID, a UUID v7 minted once by a print run; null on imported specimens (ADR 0008). */
-  occurrence_id: string | null;
   created_at: Timestamped;
 }
 

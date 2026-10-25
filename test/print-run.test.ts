@@ -68,7 +68,8 @@ describe("preparing a run", () => {
     ]);
     expect(await count("SELECT count(*) FROM pending_print_sample")).toBe(0);
     expect(await count("SELECT count(*) FROM minted_field_number")).toBe(4);
-    expect(await count("SELECT count(*) FROM specimen WHERE occurrence_id IS NULL")).toBe(0);
+    // No occurrenceID is minted: the museum database assigns it (ADR 0008, amended 2026-10-23).
+    expect(await rows(conn, "SELECT column_name FROM information_schema.columns WHERE table_name = 'specimen' AND column_name = 'occurrence_id'")).toEqual([]);
     expect(await rows(conn, "SELECT * FROM specimen_field_number_stale")).toEqual([]);
     expect(await rows(conn, "SELECT * FROM minted_field_number_collision")).toEqual([]);
     expect(await rows(conn, `SELECT state, label_count, sample_count, collector_count, sheet_count FROM print_run_state`)).toEqual([
@@ -258,14 +259,11 @@ describe("moving a run through its states", () => {
   });
 
   it("cancels an unprinted run: numbers burned, samples pending again, nothing deleted, rows re-adopted", async () => {
-    const before = (await rows(conn, `SELECT entity_id, occurrence_id FROM specimen ORDER BY specimen_number`)) as [
-      number,
-      string,
-    ][];
+    const before = (await rows(conn, `SELECT entity_id FROM specimen ORDER BY specimen_number`)) as [number][];
     await cancelRun(conn, runId, { personId: birch, now: LATER, note: "wrong week" });
     expect(await state()).toEqual([["canceled"]]);
     // Nothing destroyed: the labels are the record of what was prepared, the
-    // specimens keep their rows and their occurrenceIDs, only the number goes.
+    // specimens keep their rows, only the number goes.
     expect(await count("SELECT count(*) FROM printed_label")).toBe(2);
     expect(await rows(conn, `SELECT field_number FROM specimen`)).toEqual([[null], [null]]);
     expect(await rows(conn, `SELECT field_number, specimen_id FROM minted_field_number ORDER BY 1`)).toEqual([
@@ -282,7 +280,7 @@ describe("moving a run through its states", () => {
     const again = await prepareRun(conn, { atlasId: null, personId: ash, now: LATER });
     expect(again).toMatchObject({ labels: 2, samples: 1 });
     expect(await count("SELECT count(*) FROM specimen")).toBe(2);
-    expect(await rows(conn, `SELECT entity_id, occurrence_id FROM specimen ORDER BY specimen_number`)).toEqual(before);
+    expect(await rows(conn, `SELECT entity_id FROM specimen ORDER BY specimen_number`)).toEqual(before);
     expect(await rows(conn, `SELECT field_number FROM specimen ORDER BY specimen_number`)).toEqual([
       ["26000003"],
       ["26000004"],

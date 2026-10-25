@@ -1,10 +1,10 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { appliedMigrations, baseline, migrate, migrationFiles, pendingMigrations, runCli, schemaDrift } from "../src/migrate.js";
-import { createMemoryDb, rows } from "./helpers.js";
+import { appliedMigrations, baseline, migrate, MIGRATIONS_DIR, migrationFiles, pendingMigrations, runCli, schemaDrift } from "../src/migrate.js";
+import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 let conn: DuckDBConnection;
 let dir: string;
@@ -157,5 +157,30 @@ describe("the CLI's flags (beeline-736)", () => {
     const b = io();
     expect(await runCli(conn, new Set(["--chekc"]), "x.duckdb", b.io, dir)).toBe(2);
     expect(b.err[0]).toMatch(/unknown flag/);
+  });
+});
+
+// Migrations that touch a referenced table, run against the shape they were
+// written for rather than trusted to it. DuckDB will not update an indexed
+// column on a row a foreign key references, and until a DROP INDEX commits it
+// still treats the column as indexed (duckdb/duckdb#20246), so 0060 and 0061
+// are two migrations; as one, this failed on every printed specimen.
+describe("emptying specimen.occurrence_id (0060, 0061)", () => {
+  test("runs on a store whose minted specimens determinations reference", async () => {
+    await conn.run("ALTER TABLE specimen ADD COLUMN occurrence_id TEXT");
+    await conn.run("CREATE UNIQUE INDEX specimen_occurrence_id_idx ON specimen (occurrence_id)");
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    const sampleId = await insertCleanSample(conn);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number, occurrence_id)
+                    VALUES (${sampleId}, 1, '26000001', '0192f2a0-0000-7000-8000-000000000001')`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('genus', 'Bombus')`);
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, is_expert, channel, verbatim_identification)
+                    SELECT sp.entity_id, a.entity_id, false, 'in_app', 'Bombus' FROM specimen sp, animal a WHERE a.scientific_name = 'Bombus'`);
+    for (const name of ["0060-no-minted-occurrence-id.sql", "0061-empty-occurrence-id.sql"]) {
+      await copyFile(join(MIGRATIONS_DIR, name), join(dir, name));
+    }
+    expect(await migrate(conn, { dir })).toEqual(["0060-no-minted-occurrence-id.sql", "0061-empty-occurrence-id.sql"]);
+    expect(await rows(conn, "SELECT occurrence_id FROM specimen")).toEqual([[null]]);
+    expect(await schemaDrift(conn)).toEqual(["not in the schema: specimen.occurrence_id"]);
   });
 });

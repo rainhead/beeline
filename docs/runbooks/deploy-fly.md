@@ -213,7 +213,9 @@ fly machine update --env BEELINE_MAINTENANCE= <id>    # back to serving
 This is where `pnpm db:reseed`, `pnpm person:apply`,
 `pnpm person:orcids`, `pnpm inat:fetch-orcids` and
 `pnpm elevation:fetch` run. A list of confirmed ORCID iDs names people, so it
-goes up with `fly ssh sftp put` into `data/` and never into git. What to run
+goes up with `fly ssh sftp put` into `data/` and never into git. The image
+has `curl`, for asking iNaturalist or Ecdysis something from the machine
+itself with its own secrets. What to run
 after a change under `ingest/`, and why re-fetching is not the fix, is
 [below](#re-deriving-the-model-after-a-promotion-change).
 

@@ -36,6 +36,14 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 FROM base AS runtime
 
+# curl, for the maintenance-mode shell (docs/runbooks/deploy-fly.md): asking
+# iNaturalist or Ecdysis something from the machine itself, with the
+# machine's own secrets, without writing a Node one-liner. Nothing in the app
+# or the entrypoint calls it.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && rm -rf /var/lib/apt/lists/*
+
 # Every path below is read at runtime, and each for its own reason:
 #   src/        the server itself, and src/app/static, which it serves
 #   schema/     private-store DDL applied at boot, and db:migrate --check's

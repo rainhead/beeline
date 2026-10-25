@@ -24,7 +24,7 @@ import { strFromU8, unzipSync } from "fflate";
 import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
 import { writeProgramArchives } from "../src/app/program-archives.js";
 import type { GovernancePaths } from "../src/program-governance.js";
-import { createMemoryDb, insertCleanSample, OPEN_SEASON, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -505,9 +505,9 @@ describe("seasons", () => {
     // The dashboard promises "older samples of yours that still carry flags";
     // this is that set, and nothing wider. The listing has no season filter
     // (Peter, 2026-09-16), so the link names the last day of the settled
-    // seasons — the day before this one started.
+    // seasons — the day before the oldest active one began.
     const { app, conn } = await listingApp();
-    const [[through]] = (await rows(conn, "SELECT CAST(started_on - 1 AS TEXT) FROM season")) as [[string]];
+    const [[through]] = (await rows(conn, "SELECT CAST(active_since - 1 AS TEXT) FROM season")) as [[string]];
     const body = await get(app, `/samples?qc=flagged&to=${through}`);
     expect(body).toContain("A-2");
     expect(body).toContain("1 sample");
@@ -948,7 +948,7 @@ describe("Darwin Core archives, by program and year", () => {
     const oba = manifest.entries.find((e) => e.program === "OBA" && e.year === 2026)!;
     expect(oba).toMatchObject({ specimens: 2, license: "CC-BY-NC-4.0", policy: true, file: "OBA-2026.zip" });
     // Washington has specimens and no licence: written all the same, for review.
-    expect(manifest.entries.find((e) => e.program === "WaBA")).toMatchObject({ license: null, file: `WaBA-${OPEN_SEASON}.zip` });
+    expect(manifest.entries.find((e) => e.program === "WaBA")).toMatchObject({ license: null, file: `WaBA-${CURRENT_SEASON}.zip` });
 
     const res = await app.request("/exports/dwca/OBA-2026.zip");
     expect(res.status).toBe(200);
@@ -1021,7 +1021,7 @@ describe("Darwin Core archives, by program and year", () => {
     expect(page).toContain("no licence");
     expect(page).toContain("none yet");
     expect(page).toContain(`href="/exports/dwca/OBA-2026.zip"`);
-    expect(page).toContain(`href="/exports/dwca/WaBA-${OPEN_SEASON}.zip"`);
+    expect(page).toContain(`href="/exports/dwca/WaBA-${CURRENT_SEASON}.zip"`);
     expect(page).not.toContain("This file states");
 
     // A licence merged after the night's run shows at once, and the row says
@@ -1034,11 +1034,11 @@ describe("Darwin Core archives, by program and year", () => {
     expect(await get(app, "/exports")).not.toContain("This file states");
   });
 
-  it("files a sample by the calendar year it was collected in, not by the season", async () => {
+  it("files a sample by the calendar year of its first day, which is its season", async () => {
     const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
     const { app, db, conn, alice } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
-    // Emptied in February 2026: the 2025 season by Beeline's 1 March line,
-    // and 2026 to a taxonomist.
+    // Collected in February 2026: 2026 to a taxonomist, and so to Beeline.
+    // Until beeline-rxn8 Beeline's season ran from 1 March and called it 2025.
     const feb = await insertCleanSample(conn, {
       collector_id: String(alice),
       atlas_id: "(SELECT entity_id FROM atlas WHERE code = 'OBA')",
@@ -1048,7 +1048,7 @@ describe("Darwin Core archives, by program and year", () => {
       date_end: "DATE '2026-02-10'",
     });
     await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${feb}, 1, 'OBA00003')`);
-    expect(await rows(conn, `SELECT season FROM sample_season WHERE sample_id = ${feb}`)).toEqual([[2025]]);
+    expect(await rows(conn, `SELECT season FROM sample_season WHERE sample_id = ${feb}`)).toEqual([[2026]]);
 
     const manifest = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     expect(manifest.entries.filter((e) => e.program === "OBA").map((e) => [e.year, e.specimens])).toEqual([[2026, 3]]);

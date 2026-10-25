@@ -25,9 +25,9 @@ import { OUTCOMES, readRulings, RECORD_COLUMN, type Ruling } from "./legacy-expo
  * honestly to either row. For every matched pair, each of the 63 columns is
  * compared as text, and each difference is given a kind (a blank filled,
  * Roman numerals, a country code, …; VALUE_KINDS) and split by season as
- * every check in this repo is (CLAUDE.md): the open season against the
- * settled ones, on the record's own collecting date (its end, where it has
- * one), using the store's own line (`season.started_on`). A number only one side holds is a difference
+ * every check in this repo is (CLAUDE.md): the active seasons against the
+ * settled ones, on the record's own collecting date (its first day), using
+ * the store's own line (`season.active_since`). A number only one side holds is a difference
  * about the whole record, kinded by why. The rulings
  * (`ingest/legacy-export-rulings.csv`) then say which differences are
  * explained; what is left is the report.
@@ -44,7 +44,7 @@ export interface Example {
 
 export interface ColumnDifference {
   column: string;
-  open: number;
+  active: number;
   settled: number;
   /** The commonest pairs, to say what kind of difference it is; empty where the column names a person or a place. */
   examples: Example[];
@@ -70,7 +70,7 @@ export interface KindGroup {
   outcome: string;
   /** The columns the kind touches, most affected first. */
   columns: string[];
-  open: number;
+  active: number;
   settled: number;
   /** The commonest pairs across the columns that may be quoted, each with its column. */
   examples: (Example & { column: string })[];
@@ -79,7 +79,7 @@ export interface KindGroup {
 
 export interface RulingResult {
   ruling: Ruling;
-  open: number;
+  active: number;
   settled: number;
   /**
    * `explains` while it matches something; a `beeline-wrong` ruling that
@@ -95,7 +95,7 @@ export interface ExportComparison {
   legacy: number;
   /** The staged pull compared against: its row count and a hash of its rows. */
   reference: { rows: number; fingerprint: string };
-  matched: { open: number; settled: number };
+  matched: { active: number; settled: number };
   onlyExported: number;
   onlyLegacy: number;
   /** Numbers held more than once on either side, left out of the match. */
@@ -104,8 +104,8 @@ export interface ExportComparison {
   columns: ColumnDifference[];
   /** Every difference by kind and outcome, explained or not, in records. */
   kinds: KindGroup[];
-  unexplained: { open: number; settled: number; groups: UnexplainedGroup[] };
-  explained: { outcome: string; open: number; settled: number }[];
+  unexplained: { active: number; settled: number; groups: UnexplainedGroup[] };
+  explained: { outcome: string; active: number; settled: number }[];
   rulings: RulingResult[];
 }
 
@@ -133,14 +133,15 @@ const deRoman = (x: string) => ROMAN.reduce((acc, r, i) => `replace(${acc}, '-${
 /** The same for a leading month in M/D/Y: VIII/25/2024 → 8/25/2024. */
 const deRomanMdy = (x: string) => ROMAN.reduce((acc, r, i) => `regexp_replace(${acc}, '^${r}/', '${i + 1}/')`, x);
 /**
- * The date a record's season is judged on: its collecting end where it has
- * one, its start otherwise, as the store judges a sample on `date_end`
- * (CLAUDE.md), so a trap set in February and emptied in March is the open
- * season's. `t` is the alias of a table with the template's date columns.
+ * The date a record's season is judged on: its first collecting day, as the
+ * store judges a sample on `date_start` (schema/102), so a trap set in
+ * December and emptied in January is December's season. A record whose first
+ * day does not parse falls back to its last. `t` is the alias of a table with
+ * the template's date columns.
  */
 export const seasonDate = (t: string) => `coalesce(
-    try_cast(concat(${t}."year2", '-', ${monthNumber(`${t}."month2"`)}, '-', ${t}."day2") AS DATE),
-    try_cast(concat(${t}."year", '-', ${monthNumber(`${t}."month"`)}, '-', ${t}."day") AS DATE))`;
+    try_cast(concat(${t}."year", '-', ${monthNumber(`${t}."month"`)}, '-', ${t}."day") AS DATE),
+    try_cast(concat(${t}."year2", '-', ${monthNumber(`${t}."month2"`)}, '-', ${t}."day2") AS DATE))`;
 const isoDay = (x: string, format: string) => `strftime(try_strptime(${x}, '${format}'), '%Y-%m-%d')`;
 /** A date or a date range, as `start/end` in ISO; NULL when it is neither. */
 const dateRange = (raw: string) => {
@@ -233,13 +234,13 @@ export async function compareLegacyExport(
                SELECT "fieldNumber" FROM legacy_occurrence WHERE nullif("fieldNumber", '') IS NOT NULL
                GROUP BY 1 HAVING count(*) = 1))
     SELECT ${LEGACY_EXPORT_COLUMNS.map((c) => `coalesce(e."${c}", '') AS "e_${c}", ${legacyValue(c)} AS "l_${c}"`).join(", ")},
-           ${seasonDate("e")} >= (SELECT started_on FROM season) AS open_season
+           ${seasonDate("e")} >= (SELECT active_since FROM season) AS active_season
     FROM e JOIN l ON l."fieldNumber" = e."fieldNumber"`);
   const one = async (sql: string) => Number(((await (await conn.run(sql)).getRows()) as [[bigint]])[0]![0]);
   const exported = await one("SELECT count(*) FROM cmp_export");
   const legacy = await one("SELECT count(*) FROM legacy_occurrence");
-  const open = await one("SELECT count(*) FROM cmp_pairs WHERE open_season");
-  const settled = await one("SELECT count(*) FROM cmp_pairs WHERE NOT coalesce(open_season, false)");
+  const active = await one("SELECT count(*) FROM cmp_pairs WHERE active_season");
+  const settled = await one("SELECT count(*) FROM cmp_pairs WHERE NOT coalesce(active_season, false)");
   const onlyExported = await one(`SELECT count(*) FROM cmp_export e WHERE NOT EXISTS
                                     (SELECT 1 FROM legacy_occurrence l WHERE l."fieldNumber" = e."fieldNumber")`);
   const onlyLegacy = await one(`SELECT count(*) FROM legacy_occurrence l WHERE nullif(l."fieldNumber", '') IS NOT NULL
@@ -258,23 +259,23 @@ export async function compareLegacyExport(
   const columns: ColumnDifference[] = [];
   for (const c of LEGACY_EXPORT_COLUMNS) {
     const [[o, s]] = (await (await conn.run(`
-      SELECT count(*) FILTER (WHERE open_season), count(*) FILTER (WHERE NOT open_season)
+      SELECT count(*) FILTER (WHERE active_season), count(*) FILTER (WHERE NOT active_season)
       FROM cmp_attributed WHERE "column" = ${sqlString(c)}`)).getRows()) as [[bigint, bigint]];
     if (Number(o) + Number(s) === 0) continue;
     const where = `"column" = ${sqlString(c)}`;
-    columns.push({ column: c, open: Number(o), settled: Number(s), examples: await examples(conn, where, c), fieldNumbers: await fieldNumbers(conn, where) });
+    columns.push({ column: c, active: Number(o), settled: Number(s), examples: await examples(conn, where, c), fieldNumbers: await fieldNumbers(conn, where) });
   }
-  columns.sort((a, b) => b.open + b.settled - (a.open + a.settled) || a.column.localeCompare(b.column));
+  columns.sort((a, b) => b.active + b.settled - (a.active + a.settled) || a.column.localeCompare(b.column));
 
   const groupRows = (await (await conn.run(`
-    SELECT "column", kind, count(*) FILTER (WHERE open_season), count(*) FILTER (WHERE NOT open_season)
+    SELECT "column", kind, count(*) FILTER (WHERE active_season), count(*) FILTER (WHERE NOT active_season)
     FROM cmp_attributed WHERE ruling_id IS NULL GROUP BY 1, 2`)).getRows()) as [string, string, bigint, bigint][];
   const groups: UnexplainedGroup[] = [];
   for (const [column, kind, o, s] of groupRows) {
     const where = `ruling_id IS NULL AND "column" = ${sqlString(column)} AND kind = ${sqlString(kind)}`;
-    groups.push({ column, kind, open: Number(o), settled: Number(s), examples: await examples(conn, where, column), fieldNumbers: await fieldNumbers(conn, where) });
+    groups.push({ column, kind, active: Number(o), settled: Number(s), examples: await examples(conn, where, column), fieldNumbers: await fieldNumbers(conn, where) });
   }
-  groups.sort((a, b) => b.open - a.open || b.settled - a.settled || a.column.localeCompare(b.column) || a.kind.localeCompare(b.kind));
+  groups.sort((a, b) => b.active - a.active || b.settled - a.settled || a.column.localeCompare(b.column) || a.kind.localeCompare(b.kind));
 
   // By kind and outcome, in records: the outcome is the ruling's, so it is
   // joined in from a table of the rulings rather than carried per difference.
@@ -289,7 +290,7 @@ export async function compareLegacyExport(
   const kindRows = (await (await conn.run(`
     WITH per_column AS (SELECT kind, outcome, "column", count(*) AS n FROM cmp_kinded GROUP BY ALL)
     SELECT k.kind, k.outcome,
-           count(DISTINCT k.field_number) FILTER (WHERE k.open_season), count(DISTINCT k.field_number) FILTER (WHERE NOT k.open_season),
+           count(DISTINCT k.field_number) FILTER (WHERE k.active_season), count(DISTINCT k.field_number) FILTER (WHERE NOT k.active_season),
            (SELECT string_agg(c."column", ',' ORDER BY c.n DESC, c."column") FROM per_column c WHERE c.kind = k.kind AND c.outcome = k.outcome)
     FROM cmp_kinded k GROUP BY 1, 2`)).getRows()) as [string, string, bigint, bigint, string][];
   const kinds: KindGroup[] = [];
@@ -302,43 +303,43 @@ export async function compareLegacyExport(
       WHERE ${where} AND "column" IN (${list(quotable)})
       GROUP BY 1, 2, 3 ORDER BY 4 DESC, 1, 2, 3 LIMIT 3`)).getRows()) as [string, string, string, bigint, string][];
     kinds.push({
-      kind, outcome, columns: cols, open: Number(o), settled: Number(s),
+      kind, outcome, columns: cols, active: Number(o), settled: Number(s),
       examples: exampleRows.map(([column, exported, legacy, n, fieldNumber]) => ({ column, exported, legacy, n: Number(n), fieldNumber })),
       fieldNumbers: await fieldNumbers(conn, where, "cmp_kinded"),
     });
   }
   const outcomeOrder = (x: string) => (x === "unexplained" ? -1 : OUTCOMES.indexOf(x as (typeof OUTCOMES)[number]));
-  kinds.sort((a, b) => outcomeOrder(a.outcome) - outcomeOrder(b.outcome) || b.open + b.settled - (a.open + a.settled) || a.kind.localeCompare(b.kind));
+  kinds.sort((a, b) => outcomeOrder(a.outcome) - outcomeOrder(b.outcome) || b.active + b.settled - (a.active + a.settled) || a.kind.localeCompare(b.kind));
 
   const perRuling = new Map(
     ((await (await conn.run(`
-      SELECT ruling_id, count(*) FILTER (WHERE open_season), count(*) FILTER (WHERE NOT open_season)
+      SELECT ruling_id, count(*) FILTER (WHERE active_season), count(*) FILTER (WHERE NOT active_season)
       FROM cmp_attributed WHERE ruling_id IS NOT NULL GROUP BY 1`)).getRows()) as [number, bigint, bigint][]).map(
-      ([id, o, s]) => [Number(id), { open: Number(o), settled: Number(s) }],
+      ([id, o, s]) => [Number(id), { active: Number(o), settled: Number(s) }],
     ),
   );
   const results: RulingResult[] = rulings.map((ruling, i) => {
-    const n = perRuling.get(i) ?? { open: 0, settled: 0 };
-    const status = n.open + n.settled > 0 ? "explains" : ruling.outcome === "beeline-wrong" ? "retired" : "matches-nothing";
+    const n = perRuling.get(i) ?? { active: 0, settled: 0 };
+    const status = n.active + n.settled > 0 ? "explains" : ruling.outcome === "beeline-wrong" ? "retired" : "matches-nothing";
     return { ruling, ...n, status };
   });
   const explained = OUTCOMES.map((outcome) => {
     const mine = results.filter((r) => r.ruling.outcome === outcome);
-    return { outcome, open: mine.reduce((t, r) => t + r.open, 0), settled: mine.reduce((t, r) => t + r.settled, 0) };
-  }).filter((x) => x.open + x.settled > 0);
+    return { outcome, active: mine.reduce((t, r) => t + r.active, 0), settled: mine.reduce((t, r) => t + r.settled, 0) };
+  }).filter((x) => x.active + x.settled > 0);
 
   return {
     exported,
     legacy,
     reference: { rows: legacy, fingerprint },
-    matched: { open, settled },
+    matched: { active, settled },
     onlyExported,
     onlyLegacy,
     duplicated,
     columns,
     kinds,
     unexplained: {
-      open: groups.reduce((t, g) => t + g.open, 0),
+      active: groups.reduce((t, g) => t + g.active, 0),
       settled: groups.reduce((t, g) => t + g.settled, 0),
       groups,
     },
@@ -567,22 +568,22 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
 async function buildDifferences(conn: DuckDBConnection): Promise<void> {
   const perColumn = LEGACY_EXPORT_COLUMNS.map(
     (c) => `SELECT "e_fieldNumber" AS field_number, ${sqlString(c)} AS "column", "e_${c}" AS exported, "l_${c}" AS legacy,
-                   coalesce(open_season, false) AS open_season
+                   coalesce(active_season, false) AS active_season
             FROM cmp_pairs WHERE "e_${c}" <> "l_${c}"`,
   ).join("\nUNION ALL\n");
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE cmp_value_difference AS
-    SELECT field_number, "column", exported, legacy, open_season, ${DIFFERENCE_KIND_SQL} AS kind
+    SELECT field_number, "column", exported, legacy, active_season, ${DIFFERENCE_KIND_SQL} AS kind
     FROM (${perColumn})`);
   await kindFromStore(conn);
 
   // Why a staged record has no exported counterpart: the blocking finding
   // that kept it from promotion, where the store has promoted at all.
   const promoted = await one(conn, `SELECT count(*) FROM duckdb_views() WHERE view_name = 'legacy_promotion_finding'`);
-  const startedOn = `(SELECT started_on FROM season)`;
+  const activeSince = `(SELECT active_since FROM season)`;
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE cmp_only_legacy AS
-    SELECT l._id, l."fieldNumber" AS field_number, coalesce(${seasonDate("l")} >= ${startedOn}, false) AS open_season
+    SELECT l._id, l."fieldNumber" AS field_number, coalesce(${seasonDate("l")} >= ${activeSince}, false) AS active_season
     FROM legacy_occurrence l
     WHERE nullif(l."fieldNumber", '') IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM cmp_export e WHERE e."fieldNumber" = l."fieldNumber")`);
@@ -598,13 +599,13 @@ async function buildDifferences(conn: DuckDBConnection): Promise<void> {
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE cmp_difference AS
     SELECT row_number() OVER (ORDER BY field_number, "column") AS difference_id, * FROM (
-      SELECT field_number, "column", exported, legacy, open_season, kind FROM cmp_value_difference
+      SELECT field_number, "column", exported, legacy, active_season, kind FROM cmp_value_difference
       UNION ALL
-      SELECT o.field_number, '${RECORD_COLUMN}', '', 'present', o.open_season, ${why}
+      SELECT o.field_number, '${RECORD_COLUMN}', '', 'present', o.active_season, ${why}
       FROM cmp_only_legacy o
       UNION ALL
       SELECT e."fieldNumber", '${RECORD_COLUMN}', 'present', '',
-             coalesce(${seasonDate("e")} >= ${startedOn}, false),
+             coalesce(${seasonDate("e")} >= ${activeSince}, false),
              ${mintedKind}
       FROM cmp_export e
       WHERE nullif(e."fieldNumber", '') IS NOT NULL
@@ -674,7 +675,7 @@ export async function writeDifferences(conn: DuckDBConnection, rulings: readonly
   await conn.run(`
     COPY (
       SELECT a.field_number, a."column", a.kind,
-             CASE WHEN a.open_season THEN 'open' ELSE 'settled' END AS season,
+             CASE WHEN a.active_season THEN 'active' ELSE 'settled' END AS season,
              a.exported, a.legacy,
              coalesce(t.outcome, '') AS outcome, coalesce(t.reason, '') AS reason, coalesce(t.source, '') AS source
       FROM cmp_attributed a LEFT JOIN cmp_ruling_text t ON t.ruling_id = a.ruling_id
@@ -729,35 +730,35 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const cols = (k: KindGroup) => (k.columns.length > 4 ? `${k.columns.slice(0, 4).join(", ")} +${k.columns.length - 4} more` : k.columns.join(", "));
 
   console.log(`legacy staging compared against: ${r.reference.rows} rows, fingerprint ${r.reference.fingerprint}`);
-  console.log(`exported ${r.exported} rows; matched on fieldNumber: ${r.matched.open} open season, ${r.matched.settled} settled`);
+  console.log(`exported ${r.exported} rows; matched on fieldNumber: ${r.matched.active} active, ${r.matched.settled} settled`);
   console.log(`only in the export: ${r.onlyExported}; only in legacy: ${r.onlyLegacy}; numbers held twice, left out: ${r.duplicated}`);
 
-  console.log(`\nunexplained (open / settled): ${pair(r.unexplained.open, r.unexplained.settled)}`);
+  console.log(`\nunexplained (active / settled): ${pair(r.unexplained.active, r.unexplained.settled)}`);
   for (const g of r.unexplained.groups) {
-    console.log(`  ${g.column.padEnd(30)} ${g.kind.padEnd(20)} ${pair(g.open, g.settled)}  ${eg(g)}`);
+    console.log(`  ${g.column.padEnd(30)} ${g.kind.padEnd(20)} ${pair(g.active, g.settled)}  ${eg(g)}`);
   }
 
-  console.log("\nevery kind of difference, in records (open / settled), the columns it touches, and examples as column: exported ← legacy:");
+  console.log("\nevery kind of difference, in records (active / settled), the columns it touches, and examples as column: exported ← legacy:");
   for (const k of r.kinds) {
-    console.log(`  ${k.kind.padEnd(30)} ${k.outcome.padEnd(16)} ${pair(k.open, k.settled)}  ${cols(k)}`);
+    console.log(`  ${k.kind.padEnd(30)} ${k.outcome.padEnd(16)} ${pair(k.active, k.settled)}  ${cols(k)}`);
     console.log(`  ${"".padEnd(30)} ${"".padEnd(16)} ${"".padEnd(17)}  ${egKind(k)}`);
   }
 
   const bugs = r.rulings.filter((x) => x.ruling.outcome === "beeline-wrong" && x.status === "explains");
   if (bugs.length > 0) {
-    console.log("\nknown Beeline defects, still present (open / settled):");
-    for (const b of bugs) console.log(`  ${describe(b.ruling).padEnd(52)} ${pair(b.open, b.settled)}  ${b.ruling.source}`);
+    console.log("\nknown Beeline defects, still present (active / settled):");
+    for (const b of bugs) console.log(`  ${describe(b.ruling).padEnd(52)} ${pair(b.active, b.settled)}  ${b.ruling.source}`);
   }
   const idle = r.rulings.filter((x) => x.status !== "explains");
   if (idle.length > 0) {
     console.log("\nrulings that match nothing now:");
     for (const x of idle) console.log(`  ${describe(x.ruling).padEnd(52)} ${x.status === "retired" ? "retired: the defect is gone" : "matches nothing"}`);
   }
-  console.log("\nexplained, by outcome (open / settled):");
-  for (const x of r.explained) console.log(`  ${x.outcome.padEnd(30)} ${pair(x.open, x.settled)}`);
+  console.log("\nexplained, by outcome (active / settled):");
+  for (const x of r.explained) console.log(`  ${x.outcome.padEnd(30)} ${pair(x.active, x.settled)}`);
 
-  console.log("\nevery difference by column, explained or not (open / settled), commonest pairs as exported ← legacy:");
-  for (const c of r.columns) console.log(`  ${c.column.padEnd(30)} ${pair(c.open, c.settled)}  ${eg(c)}`);
+  console.log("\nevery difference by column, explained or not (active / settled), commonest pairs as exported ← legacy:");
+  for (const c of r.columns) console.log(`  ${c.column.padEnd(30)} ${pair(c.active, c.settled)}  ${eg(c)}`);
   console.error(`\n${written} differences, with the rulings that explain them, written to ${differencesPath}`);
 }
 

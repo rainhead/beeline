@@ -69,7 +69,7 @@ function fakeInat(served: () => Record<string, unknown>[] | null, asked: URL[]):
 async function checkApp(opts: { running?: string; signedIn?: "ada" | "carl" } = {}) {
   const { instance, conn } = await createMemoryDb();
   await attachPrivateStore(instance, { path: ":memory:", key: null });
-  [[seasonDay]] = (await rows(conn, "SELECT CAST(started_on + 30 AS VARCHAR) FROM season")) as [[string]];
+  [[seasonDay]] = (await rows(conn, "SELECT CAST(active_since + 30 AS VARCHAR) FROM season")) as [[string]];
   for (const [id, name, level] of [
     [1, "United States", 0],
     [10, "Oregon", 10],
@@ -143,7 +143,7 @@ const missingLocality = (conn: DuckDBConnection) =>
 beforeEach(() => resetCheckAttempts());
 
 describe("Check iNaturalist now", () => {
-  it("reads this season's observations again, so a fix made on iNaturalist clears its flag at once", async () => {
+  it("reads the active seasons' observations again, so a fix made on iNaturalist clears its flag at once", async () => {
     const { app, conn, asked, serve } = await checkApp();
     expect(await missingLocality(conn)).toBe(1);
     expect(await (await app.request("/")).text()).toContain("Check iNaturalist now");
@@ -151,14 +151,14 @@ describe("Check iNaturalist now", () => {
     serve([obs(1, "Finley NWR, OR, US"), obs(2, "Finley NWR, OR, US", BO)]);
     const body = await (await check(app)).text();
     // Ada's observation, once from each project's answer.
-    expect(body).toContain("Beeline read 2 observations from this season again. 1 had changed");
+    expect(body).toContain("Beeline read 2 of your recent observations again. 1 had changed");
     expect(await missingLocality(conn)).toBe(0);
     expect(await count(conn, "SELECT count(*) FROM sample WHERE locality = 'Finley NWR'")).toBe(2);
     expect(body).toContain("Last checked");
 
     // One request per project, each naming that project and Ada, for the whole
     // season rather than what iNaturalist says changed.
-    const [[seasonStart]] = (await rows(conn, "SELECT CAST(started_on AS VARCHAR) FROM season")) as [[string]];
+    const [[seasonStart]] = (await rows(conn, "SELECT CAST(active_since AS VARCHAR) FROM season")) as [[string]];
     expect(
       asked.map((u) => [u.searchParams.get("project_id"), u.searchParams.get("user_id"), u.searchParams.get("d1"), u.searchParams.get("updated_since")]),
     ).toEqual([

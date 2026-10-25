@@ -45,8 +45,8 @@ export interface UnclaimedObserver {
   /** The name on their iNaturalist profile, where they gave one. */
   inat_name: string | null;
   records: number;
-  /** Records in the open season (season.started_on) — split, per the project's rule. */
-  open_records: number;
+  /** Records in the active seasons (season.active_since) — split, per the project's rule. */
+  active_records: number;
   first_observed: Date;
   last_observed: Date;
   /** Codes of every program their records fall in, most records first. */
@@ -76,7 +76,7 @@ export interface UnclaimedListing {
   programs: UnclaimedProgram[];
   observers: number;
   records: number;
-  open_records: number;
+  active_records: number;
 }
 
 
@@ -196,7 +196,7 @@ async function observers(db: Kysely<Database>, userId?: number): Promise<Unclaim
     user_id: number | bigint;
     login: string;
     records: number | bigint;
-    open_records: number | bigint;
+    active_records: number | bigint;
     first_observed: Date;
     last_observed: Date;
     programs: string[];
@@ -204,7 +204,7 @@ async function observers(db: Kysely<Database>, userId?: number): Promise<Unclaim
     SELECT u.user_id,
            arg_max(u.user_login, u.inat_id) AS login,
            count(*) AS records,
-           count(*) FILTER (WHERE u.observed_on >= (SELECT started_on FROM season)) AS open_records,
+           count(*) FILTER (WHERE u.observed_on >= (SELECT active_since FROM season)) AS active_records,
            min(u.observed_on) AS first_observed,
            max(u.observed_on) AS last_observed,
            (SELECT list(code ORDER BY n DESC, code) FROM (
@@ -225,7 +225,7 @@ async function observers(db: Kysely<Database>, userId?: number): Promise<Unclaim
   return found.rows.map((r, i) => ({
     ...base[i]!,
     records: Number(r.records),
-    open_records: Number(r.open_records),
+    active_records: Number(r.active_records),
     first_observed: r.first_observed,
     last_observed: r.last_observed,
     programs: [...r.programs],
@@ -270,13 +270,13 @@ export async function listUnclaimed(db: Kysely<Database>): Promise<UnclaimedList
     user_id: number | bigint;
     program_code: string;
     records: number | bigint;
-    open_records: number | bigint;
+    active_records: number | bigint;
     first_observed: Date;
     last_observed: Date;
   }>`
     SELECT user_id, program_code,
            count(*) AS records,
-           count(*) FILTER (WHERE observed_on >= (SELECT started_on FROM season)) AS open_records,
+           count(*) FILTER (WHERE observed_on >= (SELECT active_since FROM season)) AS active_records,
            min(observed_on) AS first_observed,
            max(observed_on) AS last_observed
     FROM unclaimed_record
@@ -291,7 +291,7 @@ export async function listUnclaimed(db: Kysely<Database>): Promise<UnclaimedList
             {
               ...o,
               records: Number(h.records),
-              open_records: Number(h.open_records),
+              active_records: Number(h.active_records),
               first_observed: h.first_observed,
               last_observed: h.last_observed,
             },
@@ -308,7 +308,7 @@ export async function listUnclaimed(db: Kysely<Database>): Promise<UnclaimedList
       .filter((p) => p.observers.length > 0),
     observers: all.length,
     records: all.reduce((n, o) => n + o.records, 0),
-    open_records: all.reduce((n, o) => n + o.open_records, 0),
+    active_records: all.reduce((n, o) => n + o.active_records, 0),
   };
 }
 

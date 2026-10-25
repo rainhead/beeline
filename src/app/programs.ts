@@ -26,7 +26,9 @@ import { personHandle } from "./roster.js";
  * ground, Master Melittology's those no atlas covers, and the BLM surveys
  * have none by geography — their samples will arrive through their own field
  * entry and belong to them by the collecting event, never by where they
- * fell. A season is sample_season's, which turns on 1 March.
+ * fell. A season is sample_season's: the calendar year of a sample's first
+ * day. The page's glance is the current season, so in January it starts
+ * again from nothing; last season stays in the table of every season.
  */
 
 /** The program whose records are those no atlas covers (CONTEXT.md). */
@@ -58,8 +60,8 @@ export interface ProgramSummary {
   members: number | null;
   /** The roster's `member` filter for those people, where there is one. */
   memberFilter: string | null;
-  /** The open season, and the program's records in it (zeros where it has none yet). */
-  openSeason: SeasonCounts;
+  /** The current season, and the program's records in it (zeros where it has none yet). */
+  currentSeason: SeasonCounts;
   /** Every season's specimens together. */
   specimens: number;
 }
@@ -99,8 +101,8 @@ async function programRows(db: Kysely<Database>, code?: string): Promise<Program
   return rows;
 }
 
-async function openSeason(db: Kysely<Database>): Promise<number> {
-  const { rows } = await sql<{ year: number }>`SELECT CAST(EXTRACT(YEAR FROM started_on) AS INTEGER) AS year FROM season`.execute(db);
+async function currentSeason(db: Kysely<Database>): Promise<number> {
+  const { rows } = await sql<{ year: number }>`SELECT current_season AS year FROM season`.execute(db);
   return Number(rows[0]!.year);
 }
 
@@ -183,7 +185,7 @@ function summarize(
     leads: leads.get(p.program_id) ?? [],
     members: isMember ? (members.get(p.atlas_code ?? CATCH_ALL_PROGRAM) ?? 0) : null,
     memberFilter: p.atlas_code ?? (p.code === CATCH_ALL_PROGRAM ? PROGRAM_MEMBERSHIP : null),
-    openSeason: seasons.find((s) => s.season === season) ?? emptySeason(season),
+    currentSeason: seasons.find((s) => s.season === season) ?? emptySeason(season),
     specimens: seasons.reduce((total, s) => total + s.specimens, 0),
     seasons,
   };
@@ -192,7 +194,7 @@ function summarize(
 export async function listPrograms(db: Kysely<Database>): Promise<ProgramSummary[]> {
   const [programs, season, counts, members, leads] = await Promise.all([
     programRows(db),
-    openSeason(db),
+    currentSeason(db),
     seasonCounts(db),
     memberCounts(db),
     leadsByProgram(db),
@@ -211,7 +213,7 @@ export async function loadProgram(
 ): Promise<ProgramDetail | null> {
   const [p] = await programRows(db, code);
   if (p === undefined) return null;
-  const [season, counts, members, leads] = await Promise.all([openSeason(db), seasonCounts(db), memberCounts(db), leadsByProgram(db)]);
+  const [season, counts, members, leads] = await Promise.all([currentSeason(db), seasonCounts(db), memberCounts(db), leadsByProgram(db)]);
   const summary = summarize(p, season, counts, members, leads);
   let printing: ProgramDetail["printing"] = null;
   if (p.atlas_id !== null) {

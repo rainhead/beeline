@@ -227,7 +227,8 @@ export const en = {
     lede:
       "Beeline follows the bees you collect for your atlas. Each iNaturalist observation you make becomes a sample here, " +
       "its specimens get labels, and what the experts determine them to be comes back to it. " +
-      "This page is your samples from this season that need something from you, or are waiting on labels.",
+      "This page is your samples from this season that need something from you, or are waiting on labels — " +
+      "and from last season too, until 1 March.",
     /** Positional so the proofing page can call it with placeholders (messages-proof.tsx). */
     summary: (flagged: number, blocking: number, waiting: number, placeholders: number, unnumbered = 0) => {
       const parts: string[] = [];
@@ -265,7 +266,7 @@ export const en = {
       host: "Host plant",
       specimens: "Specimens",
     },
-    allClear: "None of your samples need attention this season, and none are waiting on labels. Thank you!",
+    allClear: "None of your recent samples need attention, and none are waiting on labels. Thank you!",
     /**
      * The schedule, in words a volunteer has: never "sync", and never the
      * timestamp of the last run — which the sandbox printed in UTC as 9am
@@ -276,15 +277,16 @@ export const en = {
       "A fix you make on iNaturalist shows up here the next day.",
     neverSynced: "This instance has not read anything from iNaturalist yet.",
     /**
-     * "Check iNaturalist now" (beeline-yso): reads this season's observations
-     * again at once. Never "sync", like the note above it.
+     * "Check iNaturalist now" (beeline-yso): reads the active seasons'
+     * observations again at once — this season's, and last season's until
+     * 1 March. Never "sync", like the note above it.
      */
     check: {
       button: "Check iNaturalist now",
-      why: "Fixed something on iNaturalist? Beeline can read this season's observations again now.",
+      why: "Fixed something on iNaturalist? Beeline can read your recent observations again now.",
       lastChecked: (when: Date) => `Last checked ${dateTime(when)}.`,
       done: (fetched: number, changed: number) =>
-        `Beeline read ${n(fetched)} ${fetched === 1 ? "observation" : "observations"} from this season again. ` +
+        `Beeline read ${n(fetched)} of your recent ${fetched === 1 ? "observation" : "observations"} again. ` +
         (changed === 0
           ? "None had changed since it last read them."
           : `${n(changed)} had changed, and this page shows them as they are now.`),
@@ -360,7 +362,7 @@ export const en = {
      */
     skipped: {
       note:
-        "Some days this season skip a sample number. A skipped number is fine. " +
+        "Some recent days skip a sample number. A skipped number is fine. " +
         "But if you collected a sample under one of these, its observation is missing from your atlas's iNaturalist project, " +
         "or is in it without its number.",
       /** `runs` is the numbers as runs ("3", "5–7"); `count` is how many numbers they hold. */
@@ -376,20 +378,24 @@ export const en = {
     collectedWith: (people: string) => `collected with ${people}`,
 
     /**
-     * Closed seasons stop asking (beeline-2c3.24). Said out loud rather than
+     * Specimens from the newest active season with any that nobody has named
+     * yet, linking to where a volunteer names them. The year is named, since
+     * in January and February it is usually last season's.
+     */
+    identify: {
+      note: (specimens: number, season: number) =>
+        `${n(specimens)} of your specimens from ${season} ${specimens === 1 ? "is" : "are"} waiting to be identified.`,
+      link: "Identify them",
+    },
+    /**
+     * Settled seasons stop asking (beeline-2c3.24). Said out loud rather than
      * silently dropped: a flag that vanishes without explanation reads as a
      * bug, and these are still fixable.
      */
-    /** This season's specimens nobody has named yet, linking to where a volunteer names them. */
-    identify: {
-      note: (specimens: number) =>
-        `${n(specimens)} of your specimens from this season ${specimens === 1 ? "is" : "are"} waiting to be identified.`,
-      link: "Identify them",
-    },
     settled: {
       note: (samples: number) =>
         `${n(samples)} older ${samples === 1 ? "sample" : "samples"} of yours still ${samples === 1 ? "carries a flag" : "carry flags"}. ` +
-        `Seasons settle on 1 March, so earlier ones no longer wait for you here — fixing them is welcome, not expected.`,
+        `Each season settles on 1 March of the next year and no longer waits for you here — fixing them is welcome, not expected.`,
       link: "Show them",
     },
   },
@@ -1317,7 +1323,7 @@ export const en = {
     missing: "Not written yet. It appears after the next nightly run, or after running the legacy-export job on Jobs.",
     archives: "Darwin Core archives, by program and year",
     archivesIntro:
-      "Each program's specimens collected in a calendar year, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, so a sample collected in February is in that year's archive even though Beeline counts it in the previous season. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got.",
+      "Each program's specimens collected in a calendar year, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got.",
     archivesCaution:
       "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including taxon-obscured ones.",
     archivesMissing:
@@ -1777,15 +1783,15 @@ export const en = {
     heading: "Collectors Beeline doesn't know",
     intro:
       "These people put collection records in the projects on iNaturalist, and nobody in Beeline is connected to their iNaturalist account. Until somebody says who they are, their records don't become samples and they can't sign in.",
-    summary: (records: number, people: number, open: number) =>
-      `${n(records)} ${records === 1 ? "record" : "records"} from ${n(people)} ${people === 1 ? "person" : "people"}, ${n(open)} of them this season.`,
+    summary: (records: number, people: number, active: number) =>
+      `${n(records)} ${records === 1 ? "record" : "records"} from ${n(people)} ${people === 1 ? "person" : "people"}, ${n(active)} of them from active seasons.`,
     empty: "Everyone who has put a collection record on iNaturalist is somebody Beeline knows.",
     emptyHeading: "Nobody waiting",
     ledBy: "Led by",
     noLead: "No lead recorded",
     colAccount: "iNaturalist account",
     colRecords: "Records",
-    colThisSeason: "This season",
+    colActiveSeasons: "Active seasons",
     colCollected: "Collected",
     colMightBe: "Might be",
     colWhy: "Why",
@@ -2047,6 +2053,11 @@ export const en = {
         definition:
           "The formal Latin name of an organism. Genus names and everything below them are written in italics; family names and above are not.",
         example: { rank: "species", scientificName: "Bombus vosnesenskii" },
+      },
+      season: {
+        term: "Season",
+        definition:
+          "A calendar year of collecting. A sample belongs to the season of the day it was collected, or for a trap, the day it was set. Your front page asks about this season's samples, and about last season's until 1 March, when specimens are due at the conference. After that, last season is settled: its flags stay and it can still be edited, but it no longer waits for you — fixing it is welcome, not expected. Nothing from a settled season is printed.",
       },
       sp: {
         term: "sp. and spp.",

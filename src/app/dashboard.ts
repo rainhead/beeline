@@ -4,8 +4,8 @@ import { entrySeasons } from "./determine.js";
 import { DASHBOARD_RULES, type CoCollectors, type DashboardRow, type Finding, type SkippedDay } from "./views/qc.js";
 
 /**
- * What the front page reads: the person's samples that want something this
- * season, the observations they numbered but left at zero, the ones they put
+ * What the front page reads: the person's samples from the active seasons
+ * that want something, the observations they numbered but left at zero, the ones they put
  * in the project with no number at all, and the days their numbers skip one. The queries
  * are here rather than in the route so the page's membership rule can be
  * tested as a function of the store, the way the listings' are.
@@ -33,12 +33,12 @@ export interface Dashboard {
    * with no atlas to act on behalf of, the program acts as itself.
    */
   atlas: { code: string; name: string } | null;
-  /** This season's days whose run of sample numbers skips one (sample_number_gap, beeline-virz). */
+  /** The active seasons' days whose run of sample numbers skips one (sample_number_gap, beeline-virz). */
   skipped: SkippedDay[];
   /**
-   * This season's specimens that no volunteer has named and the determiner has
-   * no draft name for: what /determinations calls "to name". Null when there
-   * are none, so the page says nothing.
+   * Specimens from the newest active season that has any which no volunteer
+   * has named and the determiner has no draft name for: what /determinations
+   * calls "to name". Null when there are none, so the page says nothing.
    */
   toName: { season: number; unnamed: number } | null;
 }
@@ -96,7 +96,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
   const mine = (col: string) =>
     sql`EXISTS (SELECT 1 FROM sample_collector mine WHERE mine.sample_id = ${sql.ref(col)} AND mine.person_id = ${personId})`;
   const [samples, findings, placeholders, unnumbered, skipped, partners, sync, season, atlas, seasons] = await Promise.all([
-    // Every sample of theirs that is this season's, or a settled one whose
+    // Every sample of theirs from an active season, or a settled one whose
     // labels a run already holds; which of them the page shows is decided
     // below, against the findings. Labels are the one other question.
     sql<RawSampleRow>`
@@ -129,7 +129,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       WHERE f.rule_name IN (${ruleList})
         AND ${mine("f.sample_id")}
       ORDER BY f.sample_id, f.rule_name`.execute(db),
-    // The placeholders: numbered, dated, this season, still at 0, and not a
+    // The placeholders: numbered, dated in an active season, still at 0, and not a
     // sample — minting refuses them (observation_sample_candidate) precisely
     // because 0 is the project's own signal that the catch is not counted
     // yet. Coordinates by the rule promotion applies: the private pair when
@@ -155,7 +155,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       CROSS JOIN season
       WHERE try_cast(f.specimen_count_raw AS INTEGER) = 0
         AND nullif(trim(f.sample_number_raw), '') IS NOT NULL
-        AND f.observed_on >= season.started_on
+        AND f.observed_on >= season.active_since
         AND NOT EXISTS (SELECT 1 FROM sample s WHERE s.inat_observation_id = f.inat_id)
       ORDER BY f.observed_on DESC, length(trim(f.sample_number_raw)) DESC, trim(f.sample_number_raw) DESC`.execute(db),
     // In the project with the sample number left blank (observation_unnumbered,
@@ -180,17 +180,17 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       JOIN observation_field f ON f.inat_id = u.inat_id
       CROSS JOIN season
       WHERE u.person_id = ${personId}
-        AND u.observed_on >= season.started_on
+        AND u.observed_on >= season.active_since
       ORDER BY f.observed_on DESC, f.inat_id DESC`.execute(db),
-    // The days this season whose run skips a number. A season is named by
-    // the year it began, so this one is the year of season.started_on.
+    // The days in an active season whose run skips a number. A season is a
+    // calendar year, so the oldest active one is the year of active_since.
     sql<{ collected_on: Date; sample_number: number; login: string | null }>`
       SELECT g.collected_on, g.sample_number, a.login
       FROM sample_number_gap g
       CROSS JOIN season
       LEFT JOIN inat_account a ON a.person_id = g.person_id
       WHERE g.person_id = ${personId}
-        AND g.season = EXTRACT(YEAR FROM season.started_on)
+        AND g.season >= EXTRACT(YEAR FROM season.active_since)
       ORDER BY g.collected_on DESC, g.sample_number`.execute(db),
     // Who else collected those samples, so a row can say whose numbering
     // it is you are looking at.
@@ -208,8 +208,8 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       .select(({ fn }) => fn.max("completed_at").as("at"))
       .executeTakeFirst(),
     // Date minus an integer is a date in both engines (ADR 0001).
-    sql<{ through: string; open: unknown }>`
-      SELECT CAST(started_on - 1 AS TEXT) AS through, EXTRACT(YEAR FROM started_on) AS open FROM season`.execute(db),
+    sql<{ through: string; oldest_active: unknown }>`
+      SELECT CAST(active_since - 1 AS TEXT) AS through, EXTRACT(YEAR FROM active_since) AS oldest_active FROM season`.execute(db),
     db
       .selectFrom("person_membership as pm")
       .innerJoin("atlas as a", "a.entity_id", "pm.atlas_id")
@@ -269,7 +269,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
     // their way until the run is mailed (schema/155). A settled sample stays
     // only while a run holds its labels; it is never pending, since nothing
     // from a settled season is printed (schema/102), but a run prepared
-    // before 1 March still goes out.
+    // before its season settled still goes out.
     if (findingsHere.length === 0 && pending === 0 && printing === 0 && printed === 0) continue;
     rows.push({
       sample_id: sampleId,
@@ -390,10 +390,20 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
     everSynced: (sync?.at ?? null) !== null,
     atlas: atlas ?? null,
     skipped: [...skippedDays.values()],
-    toName: (() => {
-      const open = Number(season.rows[0]?.open);
-      const found = seasons.find((s) => s.season === open);
-      return found !== undefined && found.unnamed > 0 ? { season: open, unnamed: found.unnamed } : null;
-    })(),
+    toName: seasonToName(seasons, Number(season.rows[0]?.oldest_active)),
   };
+}
+
+/**
+ * Which season the front page's "to name" note is about: the newest active
+ * one with specimens still to name. In January and February that is usually
+ * last season, the current one being empty. Apart from the store so that the
+ * January rule can be tested in any month.
+ */
+export function seasonToName(
+  seasons: ReadonlyArray<{ season: number; unnamed: number }>,
+  oldestActive: number,
+): { season: number; unnamed: number } | null {
+  const found = seasons.filter((s) => s.season >= oldestActive && s.unnamed > 0).sort((a, b) => b.season - a.season)[0];
+  return found === undefined ? null : { season: found.season, unnamed: found.unnamed };
 }

@@ -11,7 +11,8 @@ import { withPromotionLock } from "./promotion-lock.js";
  * just fixed an observation on iNaturalist reads it back at once instead of at
  * 2am. Peter and Nora asked for it reviewing the dashboard on 2026-09-16.
  *
- * What it reads: every observation the person made this season, in each
+ * What it reads: every observation the person made in the active seasons
+ * (this one, and last season until 1 March; schema/102), in each
  * synced project, whatever iNaturalist says changed — Peter does not trust
  * iNaturalist's updated_at to catch every edit (2026-10-16), so this is not
  * the nightly's "updated since" read narrowed to one person. A fix to a
@@ -77,7 +78,7 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
   return withPromotionLock(async () => {
     const started = Date.now();
     const [[seasonStart]] = (await (
-      await conn.run("SELECT CAST(started_on AS VARCHAR) FROM season")
+      await conn.run("SELECT CAST(active_since AS VARCHAR) FROM season")
     ).getRows()) as [[string]];
     const token = await opts.token();
     const tokenMs = Date.now() - started;

@@ -10,13 +10,13 @@ import {
   PrintRunRefused,
   PrintRunTransitionError,
 } from "../src/print-run.js";
-import { createMemoryDb, insertCleanSample, OPEN_SEASON, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows } from "./helpers.js";
 
 // A run prepared in the 2026 season: the year floor is 26000001, and the
 // fixtures below carry no imported numbers, so that is where minting starts.
 // A field number takes its year from the moment the run is prepared, never
 // from the samples, so this clock stays fixed while the samples are dated in
-// whichever season is open (OPEN_SEASON) and their label dates move with it.
+// whichever season is open (CURRENT_SEASON) and their label dates move with it.
 const NOW = new Date("2026-09-21T16:00:00Z");
 const LATER = new Date("2026-09-21T17:00:00Z");
 
@@ -60,11 +60,11 @@ describe("preparing a run", () => {
        WHERE pl.print_run_id = ${result!.printRunId} ORDER BY pl.cell`,
     );
     expect(labels).toEqual([
-      [ashSample, 1, "26000001", 1, 0, "A.Ash", `14.VII${OPEN_SEASON}-1.1`],
-      [ashSample, 2, "26000002", 1, 1, "A.Ash", `14.VII${OPEN_SEASON}-1.2`],
-      [ashSample, 3, "26000003", 1, 2, "A.Ash", `14.VII${OPEN_SEASON}-1.3`],
+      [ashSample, 1, "26000001", 1, 0, "A.Ash", `14.VII${CURRENT_SEASON}-1.1`],
+      [ashSample, 2, "26000002", 1, 1, "A.Ash", `14.VII${CURRENT_SEASON}-1.2`],
+      [ashSample, 3, "26000003", 1, 2, "A.Ash", `14.VII${CURRENT_SEASON}-1.3`],
       // Cell 3 is the blank between collectors.
-      [birchSample, 1, "26000004", 1, 4, "B.Birch", `14.VII${OPEN_SEASON}-2.1`],
+      [birchSample, 1, "26000004", 1, 4, "B.Birch", `14.VII${CURRENT_SEASON}-2.1`],
     ]);
     expect(await count("SELECT count(*) FROM pending_print_sample")).toBe(0);
     expect(await count("SELECT count(*) FROM minted_field_number")).toBe(4);

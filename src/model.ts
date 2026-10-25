@@ -951,12 +951,17 @@ export interface SampleQcFindingView {
   detail_taxon_rank: string | null;
 }
 
-/** One row: when the current collecting season began (1 March). */
+/**
+ * One row, about today in Oregon: the current season (this calendar year), and
+ * the first day of the oldest active season — last season stays active until
+ * 1 March.
+ */
 export interface SeasonView {
-  started_on: Date;
+  current_season: number;
+  active_since: Date;
 }
 
-/** Samples from a closed season — still flagged and still editable, just not asking. */
+/** Samples from a settled season — still flagged and still editable, just not asking. */
 export interface SettledSampleView {
   sample_id: number;
 }

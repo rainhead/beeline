@@ -121,8 +121,8 @@ describe("a file nobody has decided about", () => {
     expect(result).toMatchObject({ files: 1, undecided: 1, recorded: 0, rows: 0 });
     // Held whole, so the held list is everything that did not load.
     expect(result.statuses).toEqual([
+      { status: "undecided", season: "active", rows: 7 },
       { status: "undecided", season: "none", rows: 1 },
-      { status: "undecided", season: "open", rows: 7 },
     ]);
     expect(await determinations()).toEqual([]);
     const written = (await readFile(manifest, "utf8")).split("\n");
@@ -152,9 +152,9 @@ describe("a decided file", () => {
     expect(result.unresolvedNames).toEqual([{ name: "Bombus flavifrons/centralis", rows: 1 }]);
     expect(result.statuses).toEqual([
       { status: "no_specimen", season: "none", rows: 1 },
-      { status: "not_theirs", season: "open", rows: 1 },
-      { status: "recorded", season: "open", rows: 5 },
-      { status: "unresolved_name", season: "open", rows: 1 },
+      { status: "not_theirs", season: "active", rows: 1 },
+      { status: "recorded", season: "active", rows: 5 },
+      { status: "unresolved_name", season: "active", rows: 1 },
     ]);
     // Held rows, with the numbers either side of them in the sheet.
     expect((await readFile(join(dir, "held.csv"), "utf8")).split("\n")).toEqual([
@@ -234,7 +234,7 @@ describe("copies of one person's worksheet", () => {
       ["26000002", "Bombus", "Bombus", "female", null, null, "Ada Collector", "worksheet_import", false],
       ["26000003", "Bombus", "Bombus", "male", null, null, "Ada Collector", "worksheet_import", false],
     ]);
-    expect(result.statuses.find((s) => s.status === "versions_disagree")).toEqual({ status: "versions_disagree", season: "open", rows: 2 });
+    expect(result.statuses.find((s) => s.status === "versions_disagree")).toEqual({ status: "versions_disagree", season: "active", rows: 2 });
     expect((await readFile(join(dir, "held.csv"), "utf8")).split("\n").slice(1, 3)).toEqual([
       "Collector,USE THIS SHEET,2,26000001,versions_disagree,Lasioglossum,female,26000002 26000003,Collector 2025: Halictus confusus female",
       "Collector 2025,USE THIS SHEET,2,26000001,versions_disagree,Halictus confusus,female,26000002,Collector: Lasioglossum female",
@@ -279,7 +279,7 @@ describe("loading again", () => {
     await decide({ f1: { determiner: "name:Ada Collector" } });
     expect((await load()).recorded).toBe(1);
     expect((await load()).recorded).toBe(0);
-    expect((await load()).statuses).toEqual([{ status: "already_loaded", season: "open", rows: 1 }]);
+    expect((await load()).statuses).toEqual([{ status: "already_loaded", season: "active", rows: 1 }]);
 
     await exportOf([first, { id: "f2", name: "Collector 2025 (2)", modified: "2026-03-01T10:00:00Z", rows: [[26000001, "female", "Apidae", "Bombus", "vosnesenskii"]] }]);
     await decide({ f1: { determiner: "name:Ada Collector" }, f2: { determiner: "name:Ada Collector" } });
@@ -312,8 +312,8 @@ describe("loading again", () => {
     const result = await load();
     expect(result.recorded).toBe(0);
     expect(result.statuses).toEqual([
-      { status: "already_recorded", season: "open", rows: 1 },
-      { status: "newer_in_beeline", season: "open", rows: 1 },
+      { status: "already_recorded", season: "active", rows: 1 },
+      { status: "newer_in_beeline", season: "active", rows: 1 },
     ]);
   });
 
@@ -355,7 +355,7 @@ describe("loading again", () => {
     expect((await determinations()).filter((r) => r[7] === "worksheet_import").map((r) => [r[0], r[1]])).toEqual([
       ["26000001", "Bombus vosnesenskii"],
     ]);
-    expect(result.statuses.find((s) => s.status === "old_system_disagrees")).toEqual({ status: "old_system_disagrees", season: "open", rows: 4 });
+    expect(result.statuses.find((s) => s.status === "old_system_disagrees")).toEqual({ status: "old_system_disagrees", season: "active", rows: 4 });
     // Each held row names what the old system says.
     expect((await readFile(join(dir, "held.csv"), "utf8")).split("\n").slice(1, 5).map((l) => l.split(",").slice(3).join(","))).toEqual([
       "26000002,old_system_disagrees,Halictidae,female,26000001 26000003 26000004,old system: Lasioglossum female",

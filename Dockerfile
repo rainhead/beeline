@@ -36,6 +36,17 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 FROM base AS runtime
 
+# Tools for the maintenance-mode shell (docs/runbooks/deploy-fly.md), each one
+# a procedure there already needed: curl and jq to ask iNaturalist or Ecdysis
+# something with the machine's own secrets; unzip for Ecdysis's archive, which
+# took a Node script to unpack without it; procps (ps, top, free) to see
+# whether a reseed run under nohup is still going and what memory it holds;
+# less for the logs beside them. Nothing in the app or the entrypoint calls
+# any of them.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl jq less procps unzip \
+  && rm -rf /var/lib/apt/lists/*
+
 # Every path below is read at runtime, and each for its own reason:
 #   src/        the server itself, and src/app/static, which it serves
 #   schema/     private-store DDL applied at boot, and db:migrate --check's

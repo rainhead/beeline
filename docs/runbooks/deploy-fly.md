@@ -213,7 +213,11 @@ fly machine update --env BEELINE_MAINTENANCE= <id>    # back to serving
 This is where `pnpm db:reseed`, `pnpm person:apply`,
 `pnpm person:orcids`, `pnpm inat:fetch-orcids` and
 `pnpm elevation:fetch` run. A list of confirmed ORCID iDs names people, so it
-goes up with `fly ssh sftp put` into `data/` and never into git. What to run
+goes up with `fly ssh sftp put` into `data/` and never into git. The image
+has `curl` and `jq` for asking iNaturalist or Ecdysis something with the
+machine's own secrets, `unzip`, `ps`/`top`/`free` for watching a long run, and
+`less`. It has no editor, and no `duckdb` command, which would have to stay
+on the same version as `@duckdb/node-api` to be safe on the store. What to run
 after a change under `ingest/`, and why re-fetching is not the fix, is
 [below](#re-deriving-the-model-after-a-promotion-change).
 

@@ -117,6 +117,7 @@ import { MessagesProof } from "./views/design/messages-proof.js";
 import { QcProof } from "./views/design/qc-proof.js";
 import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
 import { setStaffCoordinates, setStaffLocality } from "./locality-override.js";
+import { setHold, setWaiver, type QcDecisionResult } from "./qc-decisions.js";
 import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
 import { deploymentPath } from "../deployment-path.js";
 import { SampleEditForm } from "./views/sample-edit.js";
@@ -149,6 +150,7 @@ import {
   loadSpecimen,
   parsePage,
   recordFindings,
+  recordQcDecisions,
   sampleChangeHistory,
   visibleFindings,
   visibleHistory,
@@ -833,8 +835,9 @@ export function createApp({
     const m = c.get("m");
     const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
     if (sample === null) return errorResponse(c, "notFound");
-    const [findings, specimens, history] = await Promise.all([
+    const [findings, decisions, specimens, history] = await Promise.all([
       recordFindings(db, sample.sample_id).then((f) => visibleFindings(f, sample)),
+      recordQcDecisions(db, sample.sample_id),
       listSampleSpecimens(db, sample.sample_id, parsePage(c.req.query("page"))),
       sampleChangeHistory(db, samplePaths.log, sample.sample_id).then((h) => visibleHistory(h, sample)),
     ]);
@@ -846,6 +849,8 @@ export function createApp({
           m={m}
           sample={sample}
           findings={findings}
+          waivers={decisions.waivers}
+          hold={decisions.hold}
           specimens={specimens}
           history={history}
           admin={c.get("admin")}
@@ -858,9 +863,10 @@ export function createApp({
     const m = c.get("m");
     const specimen = await loadSpecimen(db, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
     if (specimen === null) return errorResponse(c, "notFound");
-    const [events, findings, labels] = await Promise.all([
+    const [events, findings, decisions, labels] = await Promise.all([
       determinationHistory(db, specimen.specimen_id),
       recordFindings(db, specimen.sample.sample_id).then((f) => visibleFindings(f, specimen.sample)),
+      recordQcDecisions(db, specimen.sample.sample_id),
       specimenLabels(db, specimen.specimen_id),
     ]);
     const title =
@@ -871,7 +877,8 @@ export function createApp({
       await page(
         c,
         title,
-        <SpecimenPage m={m} specimen={specimen} events={events} findings={findings} labels={labels} admin={c.get("admin")} />,
+        <SpecimenPage m={m} specimen={specimen} events={events} findings={findings}
+          waivers={decisions.waivers} labels={labels} admin={c.get("admin")} />,
       ),
     );
   });
@@ -1033,6 +1040,67 @@ export function createApp({
     }
     return c.redirect(`/samples/${sample.sample_id}`);
   });
+
+  // Staff hold a sample back from printing, or waive a blocking flag they
+  // judge fine (beeline-plu, beeline-1kb.9). The locality form's terms:
+  // admin-gated, refused while impersonating, kept in the sample overlay and
+  // applied at once, and recorded in the sample's history under whoever did it.
+  const qcDecision = async (
+    c: Context<AppEnv>,
+    decide: (
+      deps: { conn: DuckDBConnection; sampleOverlayPath: string },
+      sample: { entity_id: number; inat_observation_id: bigint | null },
+      field: (name: string) => string,
+      author: string,
+    ) => Promise<QcDecisionResult>,
+  ) => {
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    if (conn === undefined) return c.text("This instance cannot record staff decisions.", 503);
+    const session = c.get("session");
+    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, STAFF_READER);
+    if (sample === null) return errorResponse(c, "notFound");
+    const body = await c.req.parseBody();
+    const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+    const result = await decide(
+      { conn, sampleOverlayPath: sampleOverlay },
+      { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id },
+      field,
+      session.login,
+    );
+    if (result.outcome === "invalid") return c.text(result.problem, 400);
+    if (result.outcome === "no_observation") return c.text(m.record.sample.qcDecisions.noObservation, 409);
+    if (result.outcome === "unresolved") return c.text(result.reason, 409);
+    try {
+      await recordSampleChanges(kyselyReader(db), samplePaths, {
+        source: "app",
+        author: session.login,
+        reason: field("note").trim() || undefined,
+        where: `s.entity_id = ${sample.sample_id}`,
+      });
+    } catch (err) {
+      console.warn(`could not record the change to sample ${sample.sample_id}: ${(err as Error).message}`);
+    }
+    return c.redirect(`/samples/${sample.sample_id}`);
+  };
+
+  app.post("/samples/:id/hold", (c) =>
+    qcDecision(c, (deps, sample, field, author) =>
+      setHold(deps, sample, { lift: field("lift") !== "", note: field("note"), author }),
+    ),
+  );
+
+  app.post("/samples/:id/waiver", (c) =>
+    qcDecision(c, (deps, sample, field, author) =>
+      setWaiver(deps, sample, {
+        rule: field("rule"),
+        remove: field("remove") !== "",
+        note: field("note"),
+        author,
+      }),
+    ),
+  );
 
   // The glossary is volunteer-facing: in the nav for everyone, and the one
   // page whose entire content is message-catalog copy.

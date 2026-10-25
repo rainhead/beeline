@@ -106,6 +106,19 @@ export interface RunDetail extends RunListRow {
   split_samples: number;
   /** Labels the proofer should look at. */
   warned: number;
+  /**
+   * Samples in this unprinted run that staff have since held back
+   * (beeline-plu), for the printer to decide on. Empty once it prints.
+   */
+  held: HeldInRun[];
+}
+
+export interface HeldInRun {
+  sample_id: number;
+  sample_number: string;
+  /** Whose numbering it is: a run covers many collectors. */
+  collector: string;
+  reason: string;
 }
 
 export async function loadRun(db: Kysely<Database>, printRunId: number): Promise<RunDetail | null> {
@@ -151,11 +164,34 @@ export async function loadRun(db: Kysely<Database>, printRunId: number): Promise
     ])
     .executeTakeFirst();
   if (row === undefined) return null;
+  // A hold placed after the freeze does not change the run: it is named
+  // here and the printer decides whether to cancel and prepare again, which
+  // leaves the held sample out (Peter, 2026-10-25). A past season's labels
+  // print with the run regardless, so they are not named.
+  const held =
+    row.state === "prepared" || row.state === "approved"
+      ? (
+          await sql<HeldInRun>`
+            SELECT DISTINCT s.entity_id AS sample_id, s.sample_number, p.display_name AS collector, h.reason
+            FROM printed_label pl
+            JOIN specimen sp ON sp.entity_id = pl.specimen_id
+            JOIN sample s ON s.entity_id = sp.sample_id
+            JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+            JOIN person p ON p.entity_id = pc.person_id
+            JOIN sample_hold h ON h.sample_id = s.entity_id
+            JOIN sample_season ss ON ss.sample_id = s.entity_id
+            CROSS JOIN season
+            WHERE pl.print_run_id = ${printRunId}
+              AND ss.season >= season.current_season
+            ORDER BY s.sample_number, s.entity_id`.execute(db)
+        ).rows.map((h) => ({ ...h, sample_id: Number(h.sample_id) }))
+      : [];
   return {
     ...row,
     print_run_id: Number(row.print_run_id),
     warned: Number(row.warned),
     split_samples: Number(row.split_samples),
+    held,
   } as RunDetail;
 }
 

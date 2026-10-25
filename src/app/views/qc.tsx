@@ -60,6 +60,8 @@ export const DASHBOARD_RULES: ReadonlyMap<string, FlagColumn | null> = new Map([
   ["non_tracheophyte_host", "host"],
   ["missing_required_field", null],
   ["observation_missing_upstream", null],
+  // A staff hold names no column: its note says what is wrong (beeline-plu).
+  ["staff_hold", null],
 ]);
 
 export interface Finding {
@@ -349,6 +351,7 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
                     taxonName={f.detail_taxon_name}
                     taxonRank={f.detail_taxon_rank}
                     taxonLead={m.qc.identifiedAs}
+                    ruleName={f.rule_name}
                   />
                 </>
               )}

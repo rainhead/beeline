@@ -1,4 +1,5 @@
 import { DuckDBConnection } from "@duckdb/node-api";
+import { refreshWaivers } from "./apply-sample-overlay.js";
 import { openDuckDb } from "./db.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -228,6 +229,9 @@ export async function syncINat(conn: DuckDBConnection, opts: SyncOptions): Promi
     if (newLoads > 0) await refreshObservationFields(conn);
     const refreshMs = Date.now() - refreshing;
     await conn.run(`UPDATE sync_run SET completed_at = now() WHERE entity_id = $1`, [syncRunId]);
+    // A completed run can change what a waived flag says (schema/050), and
+    // promotion, which rechecks waivers too, may fail after this commits.
+    await refreshWaivers(conn);
     await conn.run("COMMIT");
     return { syncRunId, fetched, newLoads, unchanged, requestMs, refreshMs };
   } catch (err) {
@@ -317,6 +321,9 @@ export async function fetchObservationsById(conn: DuckDBConnection, opts: FetchB
     }
     if (newLoads > 0) await refreshObservationFields(conn);
     await conn.run(`UPDATE sync_run SET completed_at = now() WHERE entity_id = $1`, [syncRunId]);
+    // A completed run can change what a waived flag says (schema/050), and
+    // promotion, which rechecks waivers too, may fail after this commits.
+    await refreshWaivers(conn);
     await conn.run("COMMIT");
     return { syncRunId, asked: ids.length, fetched, newLoads, unchanged };
   } catch (err) {

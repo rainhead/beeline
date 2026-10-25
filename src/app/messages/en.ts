@@ -643,6 +643,8 @@ export const en = {
         atlas: "Atlas",
         atlas_assigned_by: "Atlas assigned by",
         co_collectors: "Co-collectors",
+        hold: "Held back from printing",
+        waivers: "Waived flags",
         collector: "Collector",
         sample_number: "Sample number",
         date_start: "Start date",
@@ -825,6 +827,37 @@ export const en = {
         clean: "Nothing is flagged on this sample.",
         onSpecimen: (fieldNumber: string) => `on specimen ${fieldNumber}`,
         onOneSpecimen: "on one of its specimens",
+      },
+      /**
+       * Staff decisions over the flags (beeline-plu, beeline-1kb.9). A hold
+       * keeps a sample from printing; a waiver lets a blocking flag staff
+       * judged fine print anyway. Waivers are shown to everyone who sees the
+       * flags, so the collector knows why a flag stopped asking.
+       */
+      qcDecisions: {
+        waivedHeading: "Waived flags",
+        waivedBy: (name: string) => `Waived by ${name}.`,
+        waivedByStaff: "Waived by staff.",
+        flagSaid: (text: string) => `When it was waived, the flag said “${text}”.`,
+        because: (reason: string) => `Reason: ${reason}`,
+        noLongerApplies:
+          "This waiver no longer applies: the flag does not say what it said when it was waived. If the flag still fires, it is listed above.",
+        waive: "Waive this flag",
+        waiveHint:
+          "For staff. The flag stops blocking printing for as long as it says what it says now. Say why: the collector and whoever prints will read it.",
+        reason: "Why",
+        waiveSave: "Waive",
+        removeWaiver: "Remove the waiver",
+        holdHeading: "Hold back from printing",
+        holdHint:
+          "For staff. A held sample is left out of every print run prepared from now on, until an admin lifts the hold; the collector fixing the record does not lift it. If it is already in a prepared run, the run page names it. Your note is shown to the collector and to whoever prints.",
+        holdPrinted: "Its labels have already printed, so a hold stops nothing unless its count rises.",
+        heldBy: (name: string) => `Held by ${name}.`,
+        heldByStaff: "Held by staff.",
+        hold: "Hold",
+        liftNote: "Note (optional)",
+        lift: "Lift the hold",
+        noObservation: "This sample has no iNaturalist observation, so it cannot be held, or have a flag waived, here.",
       },
 
       specimens: {
@@ -1490,6 +1523,11 @@ export const en = {
       warningsNone: "Every label fits.",
       splitSamples: (count: number) =>
         `${n(count)} ${count === 1 ? "sample" : "samples"} in this run also ${count === 1 ? "has" : "have"} labels in another open run, so its labels will arrive in two envelopes.`,
+      /** A sample staff held back after this run was prepared (beeline-plu); the printer decides. */
+      held: (count: number) =>
+        `Staff have held ${count === 1 ? "a sample" : `${n(count)} samples`} in this run back from printing since it was prepared. ` +
+        `The run still includes ${count === 1 ? "it" : "them"}. To leave ${count === 1 ? "it" : "them"} out, cancel the run and prepare it again.`,
+      heldSample: (collector: string, sampleNumber: string) => `${collector}'s sample ${sampleNumber}`,
       labels: "Labels",
       colSheet: "Sheet",
       colCell: "Cell",
@@ -1904,6 +1942,8 @@ export const en = {
       "The legacy records merged into this sample disagreed about a field; the earliest record's value was kept. Review the alternatives listed and correct the sample if the kept value is wrong.",
     observation_missing_upstream:
       "The iNaturalist observation backing this sample was not returned by a sync that should have included it. It may have been deleted, removed from the project, or had its observation date changed. Staff investigate before any further printing for this sample.",
+    staff_hold:
+      "Staff are holding this sample back from printing. Their note says why. If it asks you to change something, change it; staff will lift the hold once they are satisfied, since fixing the record does not lift it by itself.",
   } as Record<string, string>,
 
   /**

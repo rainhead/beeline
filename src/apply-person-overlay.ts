@@ -1,4 +1,5 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
+import { refreshWaivers } from "./apply-sample-overlay.js";
 import { pathToFileURL } from "node:url";
 import { PROGRAM_MEMBERSHIP } from "./model.js";
 import { splitCodes, splitRefs, parseRef, type OverlayField, type PersonOverlayRow } from "./person-overlay.js";
@@ -159,6 +160,9 @@ export async function applyPersonOverlay(
     if (problem !== null) fail(row, problem);
     else result.applied++;
   }
+  // An account bound or moved changes which observations claim a sample, so
+  // what a waived duplicate-number flag says (schema/050).
+  await refreshWaivers(conn);
   return result;
 }
 

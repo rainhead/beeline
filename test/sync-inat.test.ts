@@ -236,6 +236,14 @@ describe("iNat sync", () => {
     const printable = await rows(conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${sampleId}`);
     expect(printable).toHaveLength(0); // blocking
 
+    // What it says stays put through further runs that miss it, so a waiver
+    // staff place on it (schema/050) does not lapse at the next sync.
+    const said = async () =>
+      rows(conn, `SELECT details FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'observation_missing_upstream'`);
+    const before = await said();
+    await syncINat(conn, { ...base, fetchImpl: fakeApi([[]]) });
+    expect(await said()).toEqual(before);
+
     // Seen again (even unchanged, no new load) — the finding clears.
     await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(42)]]) });
     expect(await missing()).toHaveLength(0);

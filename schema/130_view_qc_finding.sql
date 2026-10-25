@@ -23,6 +23,7 @@ FROM (
   UNION ALL SELECT * FROM qc_rule_count_mismatch
   UNION ALL SELECT * FROM qc_rule_count_below_printed
   UNION ALL SELECT * FROM qc_rule_observation_missing_upstream
+  UNION ALL SELECT * FROM qc_rule_staff_hold
   -- Stored ingestion-time findings join the derived ones (schema/050).
   UNION ALL SELECT sample_id, CAST(NULL AS INTEGER) AS specimen_id, rule_name, details
   FROM sample_promotion_finding
@@ -37,6 +38,14 @@ UNION ALL SELECT * FROM qc_rule_non_tracheophyte_host;
 -- (beeline-2c3.29). The LEFT JOIN, rather than a UNION of the two routes,
 -- scans the qc_finding union once instead of twice: half the work of the shape
 -- it replaces, on a view that already costs most of a second (beeline-2c3.23).
+--
+-- A finding staff have waived is not here (beeline-1kb.9, schema/050): not
+-- on the front page, not in a listing's chips, and not blocking printing.
+-- Only while the waiver is in force — the flag still says what it said when
+-- it was waived, as the applier last checked — and never for a rule in
+-- qc_rule_unwaivable. Matched on the sample and the rule alone, so no reader
+-- pays for a finding's text. The waiver itself is shown on the sample page,
+-- read from sample_qc_waiver.
 CREATE VIEW sample_qc_finding AS
 SELECT coalesce(f.sample_id, sp.sample_id) AS sample_id,
        f.specimen_id,
@@ -45,4 +54,10 @@ SELECT coalesce(f.sample_id, sp.sample_id) AS sample_id,
        f.detail_taxon_name,
        f.detail_taxon_rank
 FROM qc_finding f
-LEFT JOIN specimen sp ON sp.entity_id = f.specimen_id;
+LEFT JOIN specimen sp ON sp.entity_id = f.specimen_id
+WHERE NOT EXISTS (
+  SELECT 1 FROM sample_qc_waiver w
+  WHERE w.sample_id = coalesce(f.sample_id, sp.sample_id)
+    AND w.rule_name = f.rule_name
+    AND w.in_force
+    AND NOT EXISTS (SELECT 1 FROM qc_rule_unwaivable u WHERE u.name = w.rule_name));

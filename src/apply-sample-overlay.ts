@@ -1,6 +1,6 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { pathToFileURL } from "node:url";
-import { formatPoint, parsePoint, parseSampleRef, type OverlayPoint, type SampleOverlayRow } from "./sample-overlay.js";
+import { formatPoint, parsePoint, parseSampleRef, waivedRule, type OverlayPoint, type SampleOverlayRow } from "./sample-overlay.js";
 
 /**
  * Apply staff decisions about samples to the store (src/sample-overlay.ts).
@@ -131,12 +131,36 @@ async function writeLocation(conn: DuckDBConnection, sampleId: number, p: Overla
   }
 }
 
+/**
+ * Why a waiver on this flag cannot stand, or null if it can: the flag must be
+ * a blocking rule, not one of the unwaivable (schema/050), and the waiver
+ * needs a reason. The route asks this before writing the file, and the
+ * applier again for rows that reach the file some other way.
+ */
+export async function waiverProblem(conn: DuckDBConnection, ruleName: string, reason: string): Promise<string | null> {
+  const found = await rows(
+    conn,
+    `SELECT r.severity, EXISTS (SELECT 1 FROM qc_rule_unwaivable u WHERE u.name = r.name)
+     FROM qc_rule r WHERE r.name = $1`,
+    [ruleName],
+  );
+  const r = found[0];
+  if (r === undefined) return `'${ruleName}' is not a flag`;
+  if (r[0] !== "blocking") return `'${ruleName}' does not block printing, so there is nothing to waive`;
+  if (r[1] === true) return `'${ruleName}' cannot be waived`;
+  if (reason.trim() === "") return "a waiver needs a reason";
+  return null;
+}
+
 export async function applySampleOverlay(
   conn: DuckDBConnection,
   overlay: readonly SampleOverlayRow[],
 ): Promise<ApplySampleResult> {
   const result: ApplySampleResult = { applied: 0, unresolved: [] };
-  if (overlay.length === 0) return result;
+  if (overlay.length === 0) {
+    await refreshWaivers(conn);
+    return result;
+  }
 
   // Logins the way the roster resolves them: case-insensitively, since
   // iNaturalist logins are.
@@ -158,6 +182,45 @@ export async function applySampleOverlay(
     }
     const { sampleId } = found;
     const setBy = byLogin.get(row.author.toLowerCase()) ?? null;
+
+    // Holds and waivers (beeline-plu, beeline-1kb.9). Delete-then-insert, as
+    // below; a standing one with no reason is refused rather than inserted,
+    // since the CHECK would fail the whole promotion transaction around it.
+    if (row.field === "hold") {
+      await conn.run(`DELETE FROM sample_hold WHERE sample_id = $1`, [sampleId] as never);
+      if (row.value !== "") {
+        if (row.reason.trim() === "") {
+          result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: "a hold needs a reason" });
+          continue;
+        }
+        await conn.run(`INSERT INTO sample_hold (sample_id, reason, held_by) VALUES ($1, $2, $3)`, [
+          sampleId,
+          row.reason,
+          setBy,
+        ] as never);
+      }
+      result.applied++;
+      continue;
+    }
+    const rule = waivedRule(row.field);
+    if (rule !== null) {
+      await conn.run(`DELETE FROM sample_qc_waiver WHERE sample_id = $1 AND rule_name = $2`, [sampleId, rule] as never);
+      if (row.value !== "") {
+        const problem = await waiverProblem(conn, rule, row.reason);
+        if (problem !== null) {
+          result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: problem });
+          continue;
+        }
+        // in_force is settled by refreshWaivers once every row is applied.
+        await conn.run(
+          `INSERT INTO sample_qc_waiver (sample_id, rule_name, finding, reason, waived_by, in_force)
+           VALUES ($1, $2, $3, $4, $5, false)`,
+          [sampleId, rule, row.base_value, row.reason, setBy] as never,
+        );
+      }
+      result.applied++;
+      continue;
+    }
 
     if (row.field === "coordinates") {
       if (row.value === "") {
@@ -210,6 +273,13 @@ export async function applySampleOverlay(
       continue;
     }
 
+    if (row.field !== "locality") {
+      // A field this applier does not know must not fall through to the
+      // locality branch, whose removal would drop the sample's override.
+      result.unresolved.push({ sample_ref: row.sample_ref, field: row.field, reason: "not a field this applier knows" });
+      continue;
+    }
+
     if (row.value === "") {
       // Removal: the observation is the only writer again. Hand the sample
       // back what the follow rule would give it — now, rather than at the
@@ -250,7 +320,32 @@ export async function applySampleOverlay(
     ] as never);
     result.applied++;
   }
+  await refreshWaivers(conn);
   return result;
+}
+
+/**
+ * Settle whether each waiver still applies (schema/050): the flag fires on
+ * the sample and says what it said when it was waived. Run after every
+ * application of the overlay, which follows every promotion and every staff
+ * decision, so a change to a sample's data that changes the flag lapses the
+ * waiver. One pass over qc_finding, and only where a waiver exists.
+ */
+export async function refreshWaivers(conn: DuckDBConnection): Promise<void> {
+  if ((await rows(conn, `SELECT 1 FROM sample_qc_waiver LIMIT 1`)).length === 0) return;
+  await conn.run(
+    `UPDATE sample_qc_waiver SET in_force = checked.in_force
+     FROM (SELECT w.sample_id, w.rule_name,
+                  EXISTS (SELECT 1 FROM qc_finding f
+                          LEFT JOIN specimen sp ON sp.entity_id = f.specimen_id
+                          WHERE coalesce(f.sample_id, sp.sample_id) = w.sample_id
+                            AND f.rule_name = w.rule_name
+                            AND concat_ws(' ', f.details, f.detail_taxon_name) = w.finding) AS in_force
+           FROM sample_qc_waiver w) checked
+     WHERE sample_qc_waiver.sample_id = checked.sample_id
+       AND sample_qc_waiver.rule_name = checked.rule_name
+       AND sample_qc_waiver.in_force IS DISTINCT FROM checked.in_force`,
+  );
 }
 
 // CLI: pnpm sample:apply [db] [overlay] — replay the overlay onto a store

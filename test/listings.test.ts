@@ -978,6 +978,8 @@ describe("Darwin Core archives, by program and year", () => {
     const field = header!.indexOf("fieldNumber");
     expect(occurrences.map((r) => r[field]).sort()).toEqual(["OBA00001", "OBA00002"]);
     expect(occurrences.map((r) => r[header!.indexOf("catalogNumber")])).toEqual(["", ""]);
+    // Nor an occurrenceID: Beeline mints none (ADR 0008, second amendment).
+    expect(occurrences.map((r) => r[header!.indexOf("occurrenceID")])).toEqual(["", ""]);
     const oba1 = occurrences.find((r) => r[field] === "OBA00001")!;
     expect(oba1[header!.indexOf("scientificName")]).toBe("Bombus vosnesenskii");
 

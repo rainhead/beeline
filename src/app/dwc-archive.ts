@@ -26,9 +26,7 @@ import type { Database, DeterminationQualifier } from "../model.js";
  *
  * It is for operations and for validating against GBIF's and Symbiota's
  * readers, and the page says not to upload it anywhere: what each program
- * publishes is undecided — which `occurrenceID` an imported specimen carries
- * (ADR 0008, beeline-1kb.14, beeline-1kb.22), the catalog-number prefix
- * Ecdysis matches on, the dataset metadata, and each atlas's answer
+ * publishes is undecided — the dataset metadata, and each atlas's answer
  * on taxon-obscured coordinates (beeline-1kb.7.1). Which
  * volunteer determinations go downstream is the atlas staff's call after
  * downloading (beeline-pyr), so every determination is in the file.
@@ -43,11 +41,12 @@ import type { Database, DeterminationQualifier } from "../model.js";
  *   current one; its sex and caste, and whether an expert made it, follow
  *   undeclared.
  *
- * `id` is the specimen's `entity_id`, which joins the two files; neither
- * `occurrenceID` (minted only by a print run) nor `fieldNumber` (absent
- * before field numbering, and not unique across the identifier eras) is on
- * every row, and `catalogNumber` is the museum's, empty until Ecdysis has
- * reported one. Symbiota keeps it as the record's key in a collection, so it has
+ * `id` is the specimen's `entity_id`, which joins the two files.
+ * `occurrenceID` is blank: Beeline mints none, and a specimen gets one from
+ * the museum database its record reaches (ADR 0008, amended 2026-10-23).
+ * `fieldNumber` is absent before field numbering and not unique across the
+ * identifier eras, and `catalogNumber` is the museum's, empty until Ecdysis
+ * has reported one. Symbiota keeps it as the record's key in a collection, so it has
  * to stay put between uploads, and it does wherever an upload could come from:
  * a rebuild redraws it (ADR 0002), but only the sandbox is ever rebuilt, and no
  * archive the sandbox writes will be uploaded to GBIF or Ecdysis (Peter,

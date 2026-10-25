@@ -401,8 +401,6 @@ export interface SpecimenRow {
   state_province: string | null;
   country: string | null;
   protocol: string | null;
-  /** The specimen's persistent identity downstream (ADR 0008); null for an imported specimen until one is minted. */
-  occurrence_id: string | null;
   /** The museum's catalog number, as Ecdysis reports it; null where no museum has said (gh-98). */
   catalog_number: string | null;
   atlas_code: string | null;
@@ -1019,7 +1017,6 @@ export async function listSpecimens(
         "s.state_province",
         "s.country",
         "s.protocol",
-        "sp.occurrence_id",
         sql<string | null>`(SELECT c.catalog_number FROM specimen_catalog_number c WHERE c.specimen_id = sp.entity_id)`.as(
           "catalog_number",
         ),
@@ -1425,7 +1422,10 @@ export const SPECIMEN_OWN_COLUMNS = [
 export const SPECIMEN_CSV_HEADER = [...SPECIMEN_DWC_COLUMNS, ...SPECIMEN_OWN_COLUMNS] as const;
 
 export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown[] => [
-  r.occurrence_id,
+  // occurrenceID: blank. Beeline mints none; a specimen gets one from the
+  // museum database its record reaches, and reading it back is optional
+  // (ADR 0008, amended 2026-10-23; beeline-9ut.8).
+  null,
   "PreservedSpecimen",
   r.catalog_number,
   r.field_number,

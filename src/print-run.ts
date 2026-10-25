@@ -1,14 +1,14 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { v7 as uuidv7 } from "uuid";
 import { composeLabel, layoutSheets, type LabelInput } from "./label-text.js";
 import type { PersonNameParts } from "./person-name.js";
 
 /**
  * Print runs (beeline-1kb.2; the tables are schema/035, their meaning
  * schema/155). Preparing a run is the freeze: it creates specimen rows for
- * every pending printable sample in scope, mints their field numbers and
- * occurrenceIDs, and snapshots what each label will say. Everything after
- * that is a guarded timestamp.
+ * every pending printable sample in scope, mints their field numbers, and
+ * snapshots what each label will say. Everything after that is a guarded
+ * timestamp. It mints no occurrenceID: a specimen gets that from the museum
+ * database its record reaches (ADR 0008, amended 2026-10-23).
  *
  * Every writer here runs behind one in-process lock, and the caller gives the
  * freeze a connection of its own. The app shares a single connection whose
@@ -249,8 +249,8 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
     }
     // The specimen rows these samples already have: individuated ones keep
     // their place in 1..N and are skipped; the rest were left behind by a
-    // canceled run and are re-adopted — same row, same occurrence_id, a
-    // fresh number — rather than inserted beside (schema/117 says why
+    // canceled run and are re-adopted — same row, a fresh number — rather
+    // than inserted beside (schema/117 says why
     // nothing is deleted).
     const existing = await rows<{ sample_id: number; specimen_id: number; specimen_number: number; individuated: boolean }>(
       conn,
@@ -376,7 +376,7 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
       let specimenId: number;
       if (label.specimen_id === null) {
         specimenId = drawn.shift()!;
-        specimenRows.push([specimenId, label.sample.sample_id, label.specimen_number, fieldNumber, uuidv7(), nowSql]);
+        specimenRows.push([specimenId, label.sample.sample_id, label.specimen_number, fieldNumber, nowSql]);
       } else {
         specimenId = label.specimen_id;
         adoptRows.push([specimenId, fieldNumber]);
@@ -409,8 +409,8 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
     }
     await insertMany(
       conn,
-      `INSERT INTO specimen (entity_id, sample_id, specimen_number, field_number, occurrence_id, created_at)`,
-      ["", "", "", "", "", "TIMESTAMPTZ"],
+      `INSERT INTO specimen (entity_id, sample_id, specimen_number, field_number, created_at)`,
+      ["", "", "", "", "TIMESTAMPTZ"],
       specimenRows,
     );
     if (adoptRows.length > 0) {

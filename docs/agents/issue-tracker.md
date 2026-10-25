@@ -44,8 +44,8 @@ Run `bd prime` for the full workflow context before starting.
   `bd dep list <id>`, `bd dep tree <id>`.
 
 IDs are prefixed `beeline-` and are stable. The Dolt store is the source of truth, and
-`bd dolt pull` / `bd dolt push` sync it over `refs/dolt/data` on the git remote — that is the
-whole of syncing, with nothing to commit. `.beads/*.jsonl` is ignored (2026-10-23): a tracked
+`bd sync` syncs it over `refs/dolt/data` on the git remote: it pulls, stops on a conflict it
+can't settle, and pushes. That is the whole of syncing, with nothing to commit. `.beads/*.jsonl` is ignored (2026-10-23): a tracked
 export conflicted on every merge and duplicated the Dolt ref. `bd export -o <file>` writes one
 on demand.
 

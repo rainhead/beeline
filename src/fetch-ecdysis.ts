@@ -23,7 +23,7 @@ import { loadEcdysis, REPORTED_NAMES, type LoadEcdysisResult } from "./load-ecdy
  * once the download has loaded.
  *
  * Unchanged upstream does not mean skip the load: a reseed drops every
- * Ecdysis determination (CLAUDE.md, Determinations from Ecdysis), so the job
+ * Ecdysis determination (docs/architecture/determinations-from-ecdysis.md), so the job
  * loads the cached archive instead. The loader is idempotent — on an ordinary
  * night that records nothing — and a reseeded store is whole again by the next
  * morning without anyone remembering to reload it.

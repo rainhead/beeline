@@ -7,9 +7,11 @@ import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { applySampleOverlay, refreshWaivers } from "../src/apply-sample-overlay.js";
+import { applyPersonOverlay } from "../src/apply-person-overlay.js";
+import { findingText } from "../src/app/qc-decisions.js";
 import { prepareRun } from "../src/print-run.js";
 import { parseSampleOverlay, readSampleOverlay, type SampleOverlayRow } from "../src/sample-overlay.js";
-import { createMemoryDb, CURRENT_SEASON, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, CURRENT_SEASON, currentSeasonDate, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 /**
  * Staff holds and waivers (beeline-plu, beeline-1kb.9). A hold keeps a sample
@@ -137,6 +139,58 @@ describe("a waiver", () => {
     )) as [[string, string]];
     expect(rule).toBe("missing_required_field");
     await conn.run(`INSERT INTO sample_qc_waiver (sample_id, rule_name, finding, reason, in_force) VALUES (${sampleId}, '${rule}', '${finding}', 'x', true)`);
+    expect(await printable(conn, sampleId)).toBe(false);
+  });
+});
+
+describe("a waiver on the duplicate-number flag", () => {
+  // A sample can be a duplicate both ways at once: another sample of hers
+  // has its number that day, and two observations claim it. Found by a
+  // review of the branch, where a waiver on one of the two findings hid both.
+  async function doubled() {
+    const { conn } = await createMemoryDb();
+    const alice = await person(conn, "Alice Adams", "alice", 1);
+    const day = currentSeasonDate(7, 14);
+    const sampleId = await insertCleanSample(conn, { collector_id: String(alice), inat_observation_id: "100", sample_number: "'7'" });
+    await insertCleanSample(conn, { collector_id: String(alice), sample_number: "'7'" });
+    const obs = (id: number, user: number) =>
+      conn.run(`INSERT INTO observation_field (inat_id, user_id, sample_number_raw, specimen_count_raw, observed_on)
+                VALUES (${id}, ${user}, '7', '3', DATE '${day}')`);
+    await obs(100, 1);
+    await obs(101, 1);
+    return { conn, sampleId, alice, obs };
+  }
+  const dupFlags = (conn: DuckDBConnection, sampleId: number) =>
+    rows(conn, `SELECT details FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'duplicate_sample_number'`);
+
+  it("is one finding that says both, and the waiver covers exactly what it said", async () => {
+    const { conn, sampleId, obs } = await doubled();
+    const said = await dupFlags(conn, sampleId);
+    expect(said).toHaveLength(1);
+    expect(String(said[0]![0])).toMatch(/is on 2 observations: 100, 101; sample number 7 used 2 times/);
+
+    const text = await findingText(conn, sampleId, "duplicate_sample_number");
+    await applySampleOverlay(conn, [row({ sample_ref: "inat:100", field: "waiver:duplicate_sample_number", value: "waived", base_value: text!, reason: "two vials" })]);
+    expect(await printable(conn, sampleId)).toBe(true);
+
+    // A third observation changes what the flag says; the next check lapses the waiver.
+    await obs(102, 1);
+    await refreshWaivers(conn);
+    expect(await printable(conn, sampleId)).toBe(false);
+  });
+
+  it("is rechecked when a person's account is moved, which changes the observations that claim a sample", async () => {
+    const { conn, sampleId, obs } = await doubled();
+    const text = await findingText(conn, sampleId, "duplicate_sample_number");
+    await applySampleOverlay(conn, [row({ sample_ref: "inat:100", field: "waiver:duplicate_sample_number", value: "waived", base_value: text!, reason: "two vials" })]);
+    expect(await printable(conn, sampleId)).toBe(true);
+
+    await obs(200, 2);
+    await obs(201, 2);
+    await obs(202, 2);
+    await applyPersonOverlay(conn, [
+      { person_ref: "name:Alice Adams", field: "inat_user_id", value: "2 alice2", author: "samstaff", reason: "the other login" },
+    ]);
     expect(await printable(conn, sampleId)).toBe(false);
   });
 });

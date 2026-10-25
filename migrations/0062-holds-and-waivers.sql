@@ -8,6 +8,8 @@
 -- qc_rule_observation_missing_upstream is replaced too: its text now says
 -- when the observation was last returned rather than counting the runs that
 -- missed it, which changed with every sync and would lapse a waiver on it.
+-- So is qc_rule_sample_number, which now joins its two cases into one finding
+-- per sample, since a waiver names a flag by its sample and rule.
 
 INSERT INTO qc_rule (name, severity, instructions) VALUES
   ('staff_hold', 'blocking',
@@ -38,7 +40,9 @@ INSERT INTO qc_rule_unwaivable (name) VALUES
   ('staff_hold');
 
 -- One waiver per flag per sample: none of the waivable blocking rules fires
--- twice on one sample (schema/120), so (sample, rule) names the finding, and
+-- twice on one sample (schema/120; qc_rule_sample_number joins its two cases
+-- into one finding for this reason, and a test holds every waivable rule to
+-- it), so (sample, rule) names the finding, and
 -- `finding` is what it said — its details, and the taxon where a finding
 -- names one, joined as sample_qc_finding compares them.
 CREATE TABLE sample_qc_waiver (
@@ -102,6 +106,15 @@ JOIN sync_run r
  AND (r.window_start IS NULL OR l.observed_on >= r.window_start)
  AND (r.window_end IS NULL OR l.observed_on <= r.window_end)
 GROUP BY l.sample_id, l.inat_observation_id;
+
+CREATE OR REPLACE VIEW qc_rule_sample_number AS
+SELECT c.sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'duplicate_sample_number' AS rule_name,
+       string_agg(c.details, '; ' ORDER BY c.details) AS details
+FROM sample_number_conflict c
+WHERE NOT EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = c.sample_id)
+GROUP BY c.sample_id;
 
 CREATE VIEW qc_rule_staff_hold AS
 SELECT h.sample_id,

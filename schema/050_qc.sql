@@ -112,7 +112,9 @@ INSERT INTO qc_rule_unwaivable (name) VALUES
   ('staff_hold');
 
 -- One waiver per flag per sample: none of the waivable blocking rules fires
--- twice on one sample (schema/120), so (sample, rule) names the finding, and
+-- twice on one sample (schema/120; qc_rule_sample_number joins its two cases
+-- into one finding for this reason, and a test holds every waivable rule to
+-- it), so (sample, rule) names the finding, and
 -- `finding` is what it said — its details, and the taxon where a finding
 -- names one, joined as sample_qc_finding compares them.
 CREATE TABLE sample_qc_waiver (

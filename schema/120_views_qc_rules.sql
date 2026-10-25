@@ -313,13 +313,18 @@ COMMENT ON VIEW sample_number_conflict IS 'A sample whose number its collector u
 -- 2026-10-04): its pins carry the number for good and there is nothing left
 -- to do — legacy promotion already splits a merged sample by observation —
 -- so sample_number_conflict still names it, for reporting, and nothing asks.
+--
+-- One finding per sample, its two cases joined: a waiver names a flag by its
+-- sample and rule (schema/050), and two findings under one rule would let a
+-- waiver on one hide the other.
 CREATE VIEW qc_rule_sample_number AS
 SELECT c.sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'duplicate_sample_number' AS rule_name,
-       c.details
+       string_agg(c.details, '; ' ORDER BY c.details) AS details
 FROM sample_number_conflict c
-WHERE NOT EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = c.sample_id);
+WHERE NOT EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = c.sample_id)
+GROUP BY c.sample_id;
 
 -- The evidencing observation's taxon is the floral host in this protocol,
 -- and a host must be a vascular plant: anything else — a moss, a fungus, or

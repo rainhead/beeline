@@ -390,14 +390,20 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
     everSynced: (sync?.at ?? null) !== null,
     atlas: atlas ?? null,
     skipped: [...skippedDays.values()],
-    // The newest active season with specimens still to name: in January and
-    // February that is usually last season, the current one being empty.
-    toName: (() => {
-      const oldestActive = Number(season.rows[0]?.oldest_active);
-      const found = seasons
-        .filter((s) => s.season >= oldestActive && s.unnamed > 0)
-        .sort((a, b) => b.season - a.season)[0];
-      return found === undefined ? null : { season: found.season, unnamed: found.unnamed };
-    })(),
+    toName: seasonToName(seasons, Number(season.rows[0]?.oldest_active)),
   };
+}
+
+/**
+ * Which season the front page's "to name" note is about: the newest active
+ * one with specimens still to name. In January and February that is usually
+ * last season, the current one being empty. Apart from the store so that the
+ * January rule can be tested in any month.
+ */
+export function seasonToName(
+  seasons: ReadonlyArray<{ season: number; unnamed: number }>,
+  oldestActive: number,
+): { season: number; unnamed: number } | null {
+  const found = seasons.filter((s) => s.season >= oldestActive && s.unnamed > 0).sort((a, b) => b.season - a.season)[0];
+  return found === undefined ? null : { season: found.season, unnamed: found.unnamed };
 }

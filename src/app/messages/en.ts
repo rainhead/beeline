@@ -266,7 +266,7 @@ export const en = {
       host: "Host plant",
       specimens: "Specimens",
     },
-    allClear: "None of your samples need attention this season, and none are waiting on labels. Thank you!",
+    allClear: "None of your recent samples need attention, and none are waiting on labels. Thank you!",
     /**
      * The schedule, in words a volunteer has: never "sync", and never the
      * timestamp of the last run — which the sandbox printed in UTC as 9am
@@ -277,15 +277,16 @@ export const en = {
       "A fix you make on iNaturalist shows up here the next day.",
     neverSynced: "This instance has not read anything from iNaturalist yet.",
     /**
-     * "Check iNaturalist now" (beeline-yso): reads this season's observations
-     * again at once. Never "sync", like the note above it.
+     * "Check iNaturalist now" (beeline-yso): reads the active seasons'
+     * observations again at once — this season's, and last season's until
+     * 1 March. Never "sync", like the note above it.
      */
     check: {
       button: "Check iNaturalist now",
-      why: "Fixed something on iNaturalist? Beeline can read this season's observations again now.",
+      why: "Fixed something on iNaturalist? Beeline can read your recent observations again now.",
       lastChecked: (when: Date) => `Last checked ${dateTime(when)}.`,
       done: (fetched: number, changed: number) =>
-        `Beeline read ${n(fetched)} ${fetched === 1 ? "observation" : "observations"} from this season again. ` +
+        `Beeline read ${n(fetched)} of your recent ${fetched === 1 ? "observation" : "observations"} again. ` +
         (changed === 0
           ? "None had changed since it last read them."
           : `${n(changed)} had changed, and this page shows them as they are now.`),
@@ -361,7 +362,7 @@ export const en = {
      */
     skipped: {
       note:
-        "Some days this season skip a sample number. A skipped number is fine. " +
+        "Some recent days skip a sample number. A skipped number is fine. " +
         "But if you collected a sample under one of these, its observation is missing from your atlas's iNaturalist project, " +
         "or is in it without its number.",
       /** `runs` is the numbers as runs ("3", "5–7"); `count` is how many numbers they hold. */
@@ -1322,7 +1323,7 @@ export const en = {
     missing: "Not written yet. It appears after the next nightly run, or after running the legacy-export job on Jobs.",
     archives: "Darwin Core archives, by program and year",
     archivesIntro:
-      "Each program's specimens collected in a calendar year, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day.An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got.",
+      "Each program's specimens collected in a calendar year, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got.",
     archivesCaution:
       "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including taxon-obscured ones.",
     archivesMissing:

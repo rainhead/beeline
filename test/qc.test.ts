@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { SCHEMA_DIR } from "../src/schema.js";
 import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, SETTLED_SEASON } from "./helpers.js";
 
 let conn: DuckDBConnection;
@@ -577,6 +580,25 @@ describe("seasons", () => {
     expect(await rows(conn, "SELECT current_season, CAST(active_since AS VARCHAR) FROM season")).toEqual([
       [CURRENT_SEASON, `${SETTLED_SEASON + 1}-01-01`],
     ]);
+  });
+
+  // The view reads the real clock, so its January branch and its time zone
+  // would otherwise only be exercised by running the suite on the right day.
+  // This runs schema/102's own SQL with the clock replaced by fixed instants,
+  // in a session pinned to UTC as every store is (src/db.ts).
+  test.each([
+    ["2026-12-31 23:59:00+00", 2026, "2026-01-01"], // 3:59 p.m. in Oregon, still 2026
+    ["2027-01-01 07:59:00+00", 2026, "2026-01-01"], // 11:59 p.m. on New Year's Eve in Oregon
+    ["2027-01-01 08:00:00+00", 2027, "2026-01-01"], // New Year in Oregon: 2026 is past but still active
+    ["2027-03-01 07:59:00+00", 2027, "2026-01-01"], // 11:59 p.m. on 28 February in Oregon
+    ["2027-03-01 08:00:00+00", 2027, "2027-01-01"], // 1 March in Oregon: 2026 settles
+    ["2027-07-14 12:00:00+00", 2027, "2027-01-01"],
+  ])("at %s the current season is %i and the active ones began on %s", async (instant, current, activeSince) => {
+    const schema = await readFile(join(SCHEMA_DIR, "102_view_settled_sample.sql"), "utf8");
+    const view = /CREATE VIEW season AS\n([\s\S]*?);/.exec(schema)![1]!;
+    const at = view.replaceAll("current_timestamp", `TIMESTAMPTZ '${instant}'`);
+    expect(at).not.toBe(view);
+    expect(await rows(conn, `SELECT current_season, CAST(active_since AS VARCHAR) FROM (${at})`)).toEqual([[current, activeSince]]);
   });
 
   test("the current season is active and the newest settled one is settled", async () => {

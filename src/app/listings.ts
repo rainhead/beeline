@@ -457,7 +457,7 @@ export interface ListingPageOptions {
    * (no sample on the dev store spans New Year). Not a listing filter — the
    * listings have none, by design — but the grain the program archives are
    * written at (src/app/program-archives.ts), which is the taxonomists' year
-   * and not the season.
+   * and, since beeline-rxn8, the season.
    */
   year?: number;
 }

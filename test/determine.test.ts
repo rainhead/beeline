@@ -13,9 +13,9 @@ import {
   UnknownTaxon,
   UnreachableSpecimens,
 } from "../src/app/determine.js";
-import { loadDashboard } from "../src/app/dashboard.js";
+import { loadDashboard, seasonToName } from "../src/app/dashboard.js";
 import { commitDeterminationDrafts } from "../src/commit-determinations.js";
-import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
@@ -342,12 +342,26 @@ describe("the page and its endpoints", () => {
 });
 
 describe("the front page prompt", () => {
-  it("counts the open season unnamed specimens, and nobody else", async () => {
+  it("counts an active season's unnamed specimens, and nobody else's", async () => {
     const { db, ada, bo } = await fixture();
-    const season = (await entrySeasons(db, ada, ada)).find((s) => s.season === CURRENT_SEASON);
-    const expected = season === undefined || season.unnamed === 0 ? null : { season: CURRENT_SEASON, unnamed: season.unnamed };
-    expect((await loadDashboard(db, ada)).toName).toEqual(expected);
+    // Ada's samples are dated 2026 and 2024, so which of hers is active
+    // depends on today; the rule itself is held down below, in any month.
+    expect((await loadDashboard(db, ada)).toName).toEqual(seasonToName(await entrySeasons(db, ada, ada), SETTLED_SEASON + 1));
     expect((await loadDashboard(db, bo)).toName).toEqual({ season: CURRENT_SEASON, unnamed: 1 });
+  });
+
+  it("is about the newest active season with anything to name, so last season's until 1 March", () => {
+    const seasons = [
+      { season: 2027, specimens: 2, unnamed: 0 },
+      { season: 2026, specimens: 9, unnamed: 4 },
+      { season: 2025, specimens: 3, unnamed: 3 },
+    ];
+    // February 2027: 2026 is still active, and the current season is all named.
+    expect(seasonToName(seasons, 2026)).toEqual({ season: 2026, unnamed: 4 });
+    // March 2027: 2026 has settled.
+    expect(seasonToName(seasons, 2027)).toBeNull();
+    // A current season with something to name comes first.
+    expect(seasonToName([{ season: 2027, specimens: 1, unnamed: 1 }, ...seasons.slice(1)], 2026)).toEqual({ season: 2027, unnamed: 1 });
   });
 
   it("says nothing when the person has no specimens", async () => {

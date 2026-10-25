@@ -143,7 +143,7 @@ const missingLocality = (conn: DuckDBConnection) =>
 beforeEach(() => resetCheckAttempts());
 
 describe("Check iNaturalist now", () => {
-  it("reads this season's observations again, so a fix made on iNaturalist clears its flag at once", async () => {
+  it("reads the active seasons' observations again, so a fix made on iNaturalist clears its flag at once", async () => {
     const { app, conn, asked, serve } = await checkApp();
     expect(await missingLocality(conn)).toBe(1);
     expect(await (await app.request("/")).text()).toContain("Check iNaturalist now");
@@ -151,7 +151,7 @@ describe("Check iNaturalist now", () => {
     serve([obs(1, "Finley NWR, OR, US"), obs(2, "Finley NWR, OR, US", BO)]);
     const body = await (await check(app)).text();
     // Ada's observation, once from each project's answer.
-    expect(body).toContain("Beeline read 2 observations from this season again. 1 had changed");
+    expect(body).toContain("Beeline read 2 of your recent observations again. 1 had changed");
     expect(await missingLocality(conn)).toBe(0);
     expect(await count(conn, "SELECT count(*) FROM sample WHERE locality = 'Finley NWR'")).toBe(2);
     expect(body).toContain("Last checked");

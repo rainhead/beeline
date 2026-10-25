@@ -228,6 +228,19 @@ export function PrintRun({ m, run, labels }: { m: Messages; run: RunDetail; labe
 
       {run.split_samples > 0 && <Callout tone="warning">{r.splitSamples(run.split_samples)}</Callout>}
 
+      {run.held.length > 0 && (
+        <Callout tone="warning">
+          {r.held(run.held.length)}
+          <ul>
+            {run.held.map((h) => (
+              <li>
+                <a href={`/samples/${h.sample_id}`}>{r.heldSample(h.sample_number)}</a>: {h.reason}
+              </li>
+            ))}
+          </ul>
+        </Callout>
+      )}
+
       {/* Not in a card: only a table that is a direct child of the page gets
           the full-bleed width, and a card boxed this one in beside a
           full-width table of the same columns just below it (Peter,

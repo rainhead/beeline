@@ -7,7 +7,10 @@ import { parseCsv } from "./corrections.js";
  * (src/person-overlay.ts): app-written rows outside the blow-away path, one
  * current row per (sample_ref, field), latest wins, replayed onto a rebuilt
  * store at the end of observation promotion (src/apply-sample-overlay.ts).
- * Two fields: `locality` (beeline-649) and `coordinates` (beeline-942).
+ * Fields: `locality` (beeline-649) and `coordinates` (beeline-942), which
+ * stand over what the observation says; `hold` (beeline-plu), which keeps the
+ * sample from printing; and `waiver:<rule>` (beeline-1kb.9), one per flag,
+ * which lets a blocking flag staff judged fine print anyway.
  *
  * The key is the design problem again. A sample's `entity_id` is a per-store
  * draw a rebuild redraws (beeline-ten), and the legacy corrections' Mongo
@@ -31,14 +34,34 @@ import { parseCsv } from "./corrections.js";
  * sample, or two, is reported and never guessed at.
  */
 
-export const SAMPLE_OVERLAY_FIELDS = ["locality", "coordinates"] as const;
-export type SampleOverlayField = (typeof SAMPLE_OVERLAY_FIELDS)[number];
+export const SAMPLE_OVERLAY_FIELDS = ["locality", "coordinates", "hold"] as const;
+/** A waiver's field names the flag it waives: `waiver:locality_format`. */
+export type WaiverField = `waiver:${string}`;
+export type SampleOverlayField = (typeof SAMPLE_OVERLAY_FIELDS)[number] | WaiverField;
+
+export const waiverField = (ruleName: string): WaiverField => `waiver:${ruleName}`;
+
+/** The flag a waiver field names; null for any other field. */
+export function waivedRule(field: string): string | null {
+  const m = /^waiver:([a-z_]+)$/.exec(field);
+  return m === null ? null : m[1]!;
+}
+
+export const isSampleOverlayField = (field: string): field is SampleOverlayField =>
+  (SAMPLE_OVERLAY_FIELDS as readonly string[]).includes(field) || waivedRule(field) !== null;
+
+/** The value a standing hold or waiver is written with; empty lifts it. */
+export const HELD = "held";
+export const WAIVED = "waived";
 
 export interface SampleOverlayRow {
   /** `inat:<observation id>`. */
   sample_ref: string;
   field: SampleOverlayField;
-  /** What the observation yielded when the decision was made. */
+  /**
+   * What the observation yielded when the decision was made; for a waiver,
+   * what the flag said, which is what the waiver is tied to. Empty for a hold.
+   */
   base_value: string;
   /** Empty string removes the override: the field follows upstream again. */
   value: string;
@@ -108,6 +131,8 @@ export function formatPoint(p: OverlayPoint): string {
 
 /** Why this value cannot be stored for this field, or null if it can. */
 export function sampleValueProblem(field: SampleOverlayField, value: string): string | null {
+  if (field === "hold") return value === "" || value === HELD ? null : `a hold is '${HELD}' or empty`;
+  if (waivedRule(field) !== null) return value === "" || value === WAIVED ? null : `a waiver is '${WAIVED}' or empty`;
   if (field === "coordinates") {
     if (value === "") return null;
     const p = parsePoint(value);
@@ -143,7 +168,7 @@ export function parseSampleOverlay(text: string, where: string): SampleOverlayRo
     if (parseSampleRef(row.sample_ref) === null) {
       throw new Error(`${where} line ${line}: '${row.sample_ref}' is not a sample reference (inat:…)`);
     }
-    if (!(SAMPLE_OVERLAY_FIELDS as readonly string[]).includes(row.field)) {
+    if (!isSampleOverlayField(row.field)) {
       throw new Error(`${where} line ${line}: '${row.field}' is not a sample overlay field`);
     }
     const bad = sampleValueProblem(row.field, row.value);

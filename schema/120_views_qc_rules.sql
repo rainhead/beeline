@@ -438,3 +438,13 @@ JOIN (
   SELECT sample_id, count(*) AS n FROM individuated_specimen GROUP BY sample_id
 ) printed ON printed.sample_id = s.entity_id
 WHERE printed.n > s.specimen_count;
+
+-- A sample staff are holding back from printing (beeline-plu, schema/050).
+-- The reason is the details, because it is what both readers need: the
+-- collector, who may have something to fix, and the printer.
+CREATE VIEW qc_rule_staff_hold AS
+SELECT h.sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'staff_hold' AS rule_name,
+       h.reason AS details
+FROM sample_hold h;

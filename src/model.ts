@@ -623,6 +623,27 @@ export interface SamplePromotionFindingTable {
   details: string;
 }
 
+/** A sample staff are holding back from printing (beeline-plu); applied from the sample overlay. */
+export interface SampleHoldTable {
+  sample_id: number;
+  reason: string;
+  held_by: number | null;
+}
+
+/** The blocking rules no waiver can set aside (beeline-1kb.9). */
+export interface QcRuleUnwaivableTable {
+  name: string;
+}
+
+/** A blocking flag staff judged fine on one sample, in force while the flag still says `finding` (beeline-1kb.9). */
+export interface SampleQcWaiverTable {
+  sample_id: number;
+  rule_name: string;
+  finding: string;
+  reason: string;
+  waived_by: number | null;
+}
+
 // schema/030_samples_specimens.sql — written by legacy promotion (beeline-0199)
 export interface SampleLegacyObservationTable {
   sample_id: number;
@@ -1120,6 +1141,9 @@ export interface Database {
   sample_season: SampleSeasonView;
   qc_rule: QcRuleTable;
   sample_promotion_finding: SamplePromotionFindingTable;
+  sample_hold: SampleHoldTable;
+  qc_rule_unwaivable: QcRuleUnwaivableTable;
+  sample_qc_waiver: SampleQcWaiverTable;
   sample_legacy_observation: SampleLegacyObservationTable;
   sync_run: SyncRunTable;
   observation_field: ObservationFieldTable;

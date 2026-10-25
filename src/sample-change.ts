@@ -60,6 +60,8 @@ export const SAMPLE_FIELDS = [
   "atlas",
   "atlas_assigned_by",
   "co_collectors",
+  "hold",
+  "waivers",
   "collector",
   "sample_number",
   "date_start",
@@ -221,7 +223,10 @@ export const SAMPLE_STATE_SQL = `
                    FROM sample_collector sc
                    LEFT JOIN person_ref cpr ON cpr.entity_id = sc.person_id
                    WHERE sc.sample_id = s.entity_id AND sc.position > 1), '') AS co_collectors,
-         concat_ws(' ', CAST(s.host_inat_taxon_id AS VARCHAR), s.host_name_as_observed) AS host
+         concat_ws(' ', CAST(s.host_inat_taxon_id AS VARCHAR), s.host_name_as_observed) AS host,
+         coalesce((SELECT h.reason FROM sample_hold h WHERE h.sample_id = s.entity_id), '') AS hold,
+         coalesce((SELECT string_agg(w.rule_name, ', ' ORDER BY w.rule_name)
+                   FROM sample_qc_waiver w WHERE w.sample_id = s.entity_id), '') AS waivers
   FROM sample s
   JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
   JOIN person_ref pr ON pr.entity_id = pc.person_id

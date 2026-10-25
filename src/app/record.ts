@@ -163,6 +163,29 @@ export interface RecordFinding {
   /** Set when the finding is about one specimen rather than the sample. */
   specimen_id: number | null;
   field_number: string | null;
+  /** A blocking flag staff may waive: not one of qc_rule_unwaivable (beeline-1kb.9). */
+  waivable: boolean;
+}
+
+/** A sample's hold, if staff are holding it back from printing (beeline-plu). */
+export interface RecordHold {
+  reason: string;
+  /** Null where the author's login no longer resolves to a person. */
+  held_by: string | null;
+}
+
+/** A blocking flag staff waived on this sample (beeline-1kb.9). */
+export interface RecordWaiver {
+  rule_name: string;
+  /** What the flag said when it was waived. */
+  finding: string;
+  reason: string;
+  waived_by: string | null;
+  /**
+   * Whether the waiver still applies: the flag still fires and says what it
+   * said. A waiver that no longer applies is shown, so staff can remove it.
+   */
+  in_force: boolean;
 }
 
 /** One determination event, as recorded — never a flattened current state. */
@@ -471,13 +494,48 @@ export async function determinationHistory(
  */
 export async function recordFindings(db: Kysely<Database>, sampleId: number): Promise<RecordFinding[]> {
   const found = await sql<RecordFinding>`
-    SELECT f.rule_name, f.details, f.detail_taxon_name, f.detail_taxon_rank, r.severity, f.specimen_id, sp.field_number
+    SELECT f.rule_name, f.details, f.detail_taxon_name, f.detail_taxon_rank, r.severity, f.specimen_id, sp.field_number,
+           r.severity = 'blocking' AND NOT EXISTS (SELECT 1 FROM qc_rule_unwaivable u WHERE u.name = r.name) AS waivable
     FROM sample_qc_finding f
     JOIN qc_rule r ON r.name = f.rule_name
     LEFT JOIN specimen sp ON sp.entity_id = f.specimen_id
     WHERE f.sample_id = ${sampleId}
     ORDER BY r.severity, f.rule_name`.execute(db);
-  return found.rows.map((r) => ({ ...r, specimen_id: num(r.specimen_id) }));
+  return found.rows.map((r) => ({ ...r, specimen_id: num(r.specimen_id), waivable: r.waivable === true }));
+}
+
+/**
+ * The staff decisions over this sample's flags: the hold that stands, if
+ * any, and every waiver, with whether each still applies. A waived finding
+ * is not among recordFindings, so this is where the page shows it.
+ */
+export async function recordQcDecisions(
+  db: Kysely<Database>,
+  sampleId: number,
+): Promise<{ hold: RecordHold | null; waivers: RecordWaiver[] }> {
+  const [hold, waivers] = await Promise.all([
+    sql<RecordHold>`
+      SELECT h.reason, p.display_name AS held_by
+      FROM sample_hold h LEFT JOIN person p ON p.entity_id = h.held_by
+      WHERE h.sample_id = ${sampleId}`.execute(db),
+    // In force exactly when sample_qc_finding leaves the finding out
+    // (schema/130): the flag fires, says what was waived, and is waivable.
+    sql<RecordWaiver>`
+      SELECT w.rule_name, w.finding, w.reason, p.display_name AS waived_by,
+             NOT EXISTS (SELECT 1 FROM qc_rule_unwaivable u WHERE u.name = w.rule_name)
+               AND EXISTS (SELECT 1 FROM qc_finding f
+                           LEFT JOIN specimen sp ON sp.entity_id = f.specimen_id
+                           WHERE coalesce(f.sample_id, sp.sample_id) = w.sample_id
+                             AND f.rule_name = w.rule_name
+                             AND concat_ws(' ', f.details, f.detail_taxon_name) = w.finding) AS in_force
+      FROM sample_qc_waiver w LEFT JOIN person p ON p.entity_id = w.waived_by
+      WHERE w.sample_id = ${sampleId}
+      ORDER BY w.rule_name`.execute(db),
+  ]);
+  return {
+    hold: hold.rows[0] ?? null,
+    waivers: waivers.rows.map((w) => ({ ...w, in_force: w.in_force === true })),
+  };
 }
 
 export interface SampleSpecimenPage {

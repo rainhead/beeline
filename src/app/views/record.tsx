@@ -9,6 +9,8 @@ import {
   specimenHref,
   type DeterminationEvent,
   type RecordFinding,
+  type RecordHold,
+  type RecordWaiver,
   type SampleDetail,
   type SampleSpecimenPage,
   type SpecimenDetail,
@@ -303,13 +305,40 @@ function StaffCoordinates({ m, sample }: { m: Messages; sample: SampleDetail }) 
   );
 }
 
+/** What the staff forms over a sample's flags need; null for everyone else. */
+export interface StaffQc {
+  sampleId: number;
+  printed: boolean;
+  /** Holds and waivers are kept by observation, so a sample without one takes neither. */
+  hasObservation: boolean;
+}
+
 /**
  * What is flagged on this sample, in the words the QC home uses — read
  * through the same roll-up, so a chip in a listing and this page cannot
- * disagree about a sample (schema/130).
+ * disagree about a sample (schema/130). Then the flags staff have waived,
+ * which the roll-up leaves out, and for staff the forms to hold the sample
+ * or waive a flag (beeline-plu, beeline-1kb.9).
  */
-export function SampleFlags({ m, findings }: { m: Messages; findings: readonly RecordFinding[] }) {
+export function SampleFlags({
+  m,
+  findings,
+  waivers = [],
+  hold = null,
+  withheld = false,
+  staff = null,
+}: {
+  m: Messages;
+  findings: readonly RecordFinding[];
+  waivers?: readonly RecordWaiver[];
+  hold?: RecordHold | null;
+  /** Where the page withholds the location, a waiver's recorded flag text is withheld too. */
+  withheld?: boolean;
+  staff?: StaffQc | null;
+}) {
   const f = m.record.sample.flags;
+  const t = m.record.sample.qcDecisions;
+  const canDecide = staff !== null && staff.hasObservation;
   return (
     <>
       <h2>{f.heading}</h2>
@@ -345,10 +374,96 @@ export function SampleFlags({ m, findings }: { m: Messages; findings: readonly R
                     </a>
                   </>
                 )}
+                {canDecide && row.waivable && (
+                  <details>
+                    <summary>{t.waive}</summary>
+                    <form method="post" action={`/samples/${staff.sampleId}/waiver`} class="form-column">
+                      <input type="hidden" name="rule" value={row.rule_name} />
+                      <Meta block>{t.waiveHint}</Meta>
+                      <TextField id={`waive-${row.rule_name}`} name="note" label={t.reason} />
+                      <p class="row">
+                        <Button>{t.waiveSave}</Button>
+                      </p>
+                    </form>
+                  </details>
+                )}
               </li>
             ))}
           </ul>
           <Meta block>{m.qc.refreshNote}</Meta>
+        </>
+      )}
+      {waivers.length > 0 && (
+        <>
+          <h3>{t.waivedHeading}</h3>
+          <ul class="stack plain">
+            {waivers.map((w) => (
+              <li>
+                {m.qcInstructions[w.rule_name] ?? w.rule_name}
+                {!withheld && w.finding !== "" && (
+                  <>
+                    {" "}
+                    <FindingDetail details={w.finding} taxonName={null} taxonRank={null} taxonLead={m.qc.identifiedAs} />
+                  </>
+                )}
+                <Meta block>
+                  {w.waived_by === null ? t.waivedByStaff : t.waivedBy(w.waived_by)} {t.because(w.reason)}
+                </Meta>
+                {!w.in_force && <Meta block>{t.noLongerApplies}</Meta>}
+                {canDecide && (
+                  <form method="post" action={`/samples/${staff.sampleId}/waiver`}>
+                    <input type="hidden" name="rule" value={w.rule_name} />
+                    <input type="hidden" name="remove" value="1" />
+                    <Button variant="outlined">{t.removeWaiver}</Button>
+                  </form>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {staff !== null && <StaffHold m={m} staff={staff} hold={hold} />}
+    </>
+  );
+}
+
+/**
+ * Holding a sample back from printing, or lifting the hold (beeline-plu).
+ * The hold itself shows above as a flag, with its note, to everyone; this
+ * says who placed it and offers the one action. Admin only, like every
+ * staff form here.
+ */
+function StaffHold({ m, staff, hold }: { m: Messages; staff: StaffQc; hold: RecordHold | null }) {
+  const t = m.record.sample.qcDecisions;
+  const action = `/samples/${staff.sampleId}/hold`;
+  return (
+    <>
+      <h3>{t.holdHeading}</h3>
+      {!staff.hasObservation ? (
+        <Meta block>{t.noObservation}</Meta>
+      ) : hold !== null ? (
+        <>
+          <Meta block>
+            {hold.held_by === null ? t.heldByStaff : t.heldBy(hold.held_by)} {t.because(hold.reason)}
+          </Meta>
+          <form method="post" action={action} class="form-column">
+            <input type="hidden" name="lift" value="1" />
+            <TextField id="lift-note" name="note" label={t.liftNote} />
+            <p class="row">
+              <Button variant="outlined">{t.lift}</Button>
+            </p>
+          </form>
+        </>
+      ) : (
+        <>
+          <Meta block>{t.holdHint}</Meta>
+          {staff.printed && <Meta block>{t.holdPrinted}</Meta>}
+          <form method="post" action={action} class="form-column">
+            <TextField id="hold-note" name="note" label={t.reason} />
+            <p class="row">
+              <Button>{t.hold}</Button>
+            </p>
+          </form>
         </>
       )}
     </>
@@ -511,6 +626,8 @@ export function SamplePage({
   m,
   sample,
   findings,
+  waivers = [],
+  hold = null,
   specimens,
   history,
   admin = false,
@@ -518,6 +635,8 @@ export function SamplePage({
   m: Messages;
   sample: SampleDetail;
   findings: readonly RecordFinding[];
+  waivers?: readonly RecordWaiver[];
+  hold?: RecordHold | null;
   specimens: SampleSpecimenPage;
   history: readonly SampleChange[];
   /** Staff see the locality form; off while impersonating, like every admin surface. */
@@ -546,7 +665,18 @@ export function SamplePage({
         <WhereCollected m={m} sample={sample} admin={admin} />
       </Card>
       <Card>
-        <SampleFlags m={m} findings={findings} />
+        <SampleFlags
+          m={m}
+          findings={findings}
+          waivers={waivers}
+          hold={hold}
+          withheld={sample.location_withheld}
+          staff={
+            admin
+              ? { sampleId: sample.sample_id, printed: sample.printed, hasObservation: sample.inat_observation_id !== null }
+              : null
+          }
+        />
       </Card>
       <Card>
         <SampleSpecimens m={m} sample={sample} page={specimens} />

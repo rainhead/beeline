@@ -104,8 +104,8 @@ COMMENT ON VIEW observation_unnumbered IS 'Observations in a sampling project wi
 -- which the projection does not carry.
 --
 -- The day is the observation's date, and a sample's date_end, the date its
--- observation carries (schema/108). The season is the year it began on 1
--- March, as sample_season (schema/102) states it — restated rather than read,
+-- observation carries (schema/108). The season is the day's calendar year,
+-- as sample_season (schema/102) states it — restated rather than read,
 -- since that view is about samples.
 CREATE VIEW sample_number_gap AS
 WITH used AS (
@@ -122,8 +122,7 @@ WITH used AS (
 numbered AS (
   SELECT person_id, collected_on, sample_number,
          try_cast(sample_number AS INTEGER) AS n,
-         CAST(EXTRACT(YEAR FROM collected_on) AS INTEGER)
-           - CASE WHEN EXTRACT(MONTH FROM collected_on) < 3 THEN 1 ELSE 0 END AS season
+         CAST(EXTRACT(YEAR FROM collected_on) AS INTEGER) AS season
   FROM used
 ),
 collecting_day AS (

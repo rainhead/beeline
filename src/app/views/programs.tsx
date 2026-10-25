@@ -51,7 +51,7 @@ function Members({ m, program, admin }: { m: Messages; program: ProgramSummary; 
 
 export function ProgramIndex({ m, programs, admin }: { m: Messages; programs: ProgramSummary[]; admin: boolean }) {
   const p = m.programs;
-  const season = programs[0]?.openSeason.season ?? new Date().getFullYear();
+  const season = programs[0]?.currentSeason.season ?? new Date().getFullYear();
   return (
     <>
       <PageHeader title={p.title} lede={p.intro} />
@@ -67,7 +67,7 @@ export function ProgramIndex({ m, programs, admin }: { m: Messages; programs: Pr
             <td>
               <Members m={m} program={program} admin={admin} />
             </td>
-            <td>{program.scope === null ? <Absent label={p.notMembership} /> : m.format.number(program.openSeason.samples)}</td>
+            <td>{program.scope === null ? <Absent label={p.notMembership} /> : m.format.number(program.currentSeason.samples)}</td>
             <td>{program.scope === null ? <Absent label={p.notMembership} /> : m.format.number(program.specimens)}</td>
           </tr>
         ))}
@@ -172,7 +172,7 @@ function Seasons({ m, program, admin }: { m: Messages; program: ProgramDetail; a
 
 export function ProgramPage({ m, program, admin }: { m: Messages; program: ProgramDetail; admin: boolean }) {
   const p = m.programs;
-  const season = program.openSeason.season;
+  const season = program.currentSeason.season;
   return (
     <>
       <Breadcrumbs label={p.title} trail={[{ href: "/programs", label: p.title }]} />
@@ -188,9 +188,9 @@ export function ProgramPage({ m, program, admin }: { m: Messages; program: Progr
           ...(program.scope === null
             ? []
             : [
-                { term: p.collectors(season), value: m.format.number(program.openSeason.collectors) },
-                { term: p.samples(season), value: m.format.number(program.openSeason.samples) },
-                { term: p.specimens(season), value: m.format.number(program.openSeason.specimens) },
+                { term: p.collectors(season), value: m.format.number(program.currentSeason.collectors) },
+                { term: p.samples(season), value: m.format.number(program.currentSeason.samples) },
+                { term: p.specimens(season), value: m.format.number(program.currentSeason.specimens) },
                 { term: p.specimensEver, value: m.format.number(program.specimens) },
               ]),
         ]}

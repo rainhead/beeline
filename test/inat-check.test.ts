@@ -69,7 +69,7 @@ function fakeInat(served: () => Record<string, unknown>[] | null, asked: URL[]):
 async function checkApp(opts: { running?: string; signedIn?: "ada" | "carl" } = {}) {
   const { instance, conn } = await createMemoryDb();
   await attachPrivateStore(instance, { path: ":memory:", key: null });
-  [[seasonDay]] = (await rows(conn, "SELECT CAST(started_on + 30 AS VARCHAR) FROM season")) as [[string]];
+  [[seasonDay]] = (await rows(conn, "SELECT CAST(active_since + 30 AS VARCHAR) FROM season")) as [[string]];
   for (const [id, name, level] of [
     [1, "United States", 0],
     [10, "Oregon", 10],
@@ -158,7 +158,7 @@ describe("Check iNaturalist now", () => {
 
     // One request per project, each naming that project and Ada, for the whole
     // season rather than what iNaturalist says changed.
-    const [[seasonStart]] = (await rows(conn, "SELECT CAST(started_on AS VARCHAR) FROM season")) as [[string]];
+    const [[seasonStart]] = (await rows(conn, "SELECT CAST(active_since AS VARCHAR) FROM season")) as [[string]];
     expect(
       asked.map((u) => [u.searchParams.get("project_id"), u.searchParams.get("user_id"), u.searchParams.get("d1"), u.searchParams.get("updated_since")]),
     ).toEqual([

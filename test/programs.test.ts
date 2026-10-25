@@ -6,7 +6,7 @@ import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { programHref } from "../src/app/programs.js";
 import { parseProgramContacts } from "../src/program-contacts.js";
-import { createMemoryDb, insertCleanSample, OPEN_SEASON, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, CURRENT_SEASON, scratchPaths } from "./helpers.js";
 
 /**
  * The programs pages (beeline-rrit).
@@ -37,7 +37,7 @@ beforeEach(async () => {
   const pair = await insertCleanSample(conn, { atlas_id: atlas("WaBA"), state_province: "'WA'" });
   await conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${pair}, 2, 2)`);
   await insertCleanSample(conn, { atlas_id: atlas("WaBA"), state_province: "'WA'", sample_number: "'2'" });
-  const lastSeason = `DATE '${OPEN_SEASON - 1}-07-14'`;
+  const lastSeason = `DATE '${CURRENT_SEASON - 1}-07-14'`;
   await insertCleanSample(conn, {
     atlas_id: atlas("WaBA"),
     state_province: "'WA'",
@@ -134,11 +134,11 @@ describe("a program's page", () => {
   it("gives this season's numbers and every season's records, a pair counting as two collectors", async () => {
     const body = await page(await programsApp(), "/programs/WaBA");
     const glance = between(body, "At a glance", "</dl>");
-    expect(glance).toContain(`Collectors in ${OPEN_SEASON}</dt><dd>2</dd>`);
-    expect(glance).toContain(`Samples in ${OPEN_SEASON}</dt><dd>2</dd>`);
-    expect(glance).toContain(`Specimens in ${OPEN_SEASON}</dt><dd>2</dd>`);
+    expect(glance).toContain(`Collectors in ${CURRENT_SEASON}</dt><dd>2</dd>`);
+    expect(glance).toContain(`Samples in ${CURRENT_SEASON}</dt><dd>2</dd>`);
+    expect(glance).toContain(`Specimens in ${CURRENT_SEASON}</dt><dd>2</dd>`);
     const seasons = between(body, "Records by season", "</table>");
-    expect(seasons.indexOf(`${OPEN_SEASON} season`)).toBeLessThan(seasons.indexOf(`${OPEN_SEASON - 1} season`));
+    expect(seasons.indexOf(`${CURRENT_SEASON} season`)).toBeLessThan(seasons.indexOf(`${CURRENT_SEASON - 1} season`));
     expect(body).not.toMatch(EMPTY_VALUE_CELL);
   });
 

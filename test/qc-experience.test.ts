@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
-import { createMemoryDb, insertCleanSample, OPEN_SEASON, openSeasonDate, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, CURRENT_SEASON, currentSeasonDate, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -44,8 +44,8 @@ async function qcApp() {
     collector_id: String(alice),
     sample_number: "'A-2'",
     locality: "NULL",
-    date_start: `DATE '${OPEN_SEASON - 2}-07-14'`,
-    date_end: `DATE '${OPEN_SEASON - 2}-07-14'`,
+    date_start: `DATE '${CURRENT_SEASON - 2}-07-14'`,
+    date_end: `DATE '${CURRENT_SEASON - 2}-07-14'`,
   });
   // Bob's trap line, which Alice ran with him: his numbering, her sample too
   // (beeline-77j). One clean, one with a finding.
@@ -157,8 +157,9 @@ describe("the front page", () => {
     // flagged samples while the sentence above it said "of yours"
     // (beeline-3kl).
     // A date rather than a season, since the listing has no season control
-    // (Peter, 2026-09-16): the last day before this season started.
-    const [[through]] = (await rows(conn, "SELECT CAST(started_on - 1 AS TEXT) FROM season")) as [[string]];
+    // (Peter, 2026-09-16): the last day of the newest settled season.
+    const [[through]] = (await rows(conn, "SELECT CAST(active_since - 1 AS TEXT) FROM season")) as [[string]];
+    expect(through).toBe(`${SETTLED_SEASON}-12-31`);
     expect(body).toContain(`href="/samples?scope=mine&amp;to=${through}&amp;qc=flagged"`);
     // And the current season is untouched.
     expect(body).toContain("Sample A-7");
@@ -173,8 +174,8 @@ describe("the front page", () => {
       collector_id: String(alice),
       sample_number: "'A-3'",
       specimen_count: "3",
-      date_start: `DATE '${OPEN_SEASON - 2}-07-14'`,
-      date_end: `DATE '${OPEN_SEASON - 2}-07-14'`,
+      date_start: `DATE '${CURRENT_SEASON - 2}-07-14'`,
+      date_end: `DATE '${CURRENT_SEASON - 2}-07-14'`,
     });
     const body = await (await app.request("/")).text();
     expect(body).not.toContain("Sample A-3");
@@ -257,17 +258,17 @@ describe("the front page", () => {
     await conn.run(
       `INSERT INTO observation_field (inat_id, observed_on, latitude, longitude, positional_accuracy, user_id, user_login,
                                       place_guess, sample_number_raw, specimen_count_raw)
-       VALUES (777001, DATE '${openSeasonDate(8, 30)}', 44.5646, -123.262, 8, 501, 'alice', 'Finley NWR, Benton County, OR', '12', '0')`,
+       VALUES (777001, DATE '${currentSeasonDate(8, 30)}', 44.5646, -123.262, 8, 501, 'alice', 'Finley NWR, Benton County, OR', '12', '0')`,
     );
     // Somebody else's zero stays theirs.
     await conn.run(
       `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, sample_number_raw, specimen_count_raw)
-       VALUES (777002, DATE '${openSeasonDate(8, 30)}', 502, 'bob', '99', '0')`,
+       VALUES (777002, DATE '${currentSeasonDate(8, 30)}', 502, 'bob', '99', '0')`,
     );
-    // Last season's zero has settled.
+    // A settled season's zero is not asked about.
     await conn.run(
       `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, sample_number_raw, specimen_count_raw)
-       VALUES (777003, DATE '${OPEN_SEASON - 1}-08-30', 501, 'alice', '4', '0')`,
+       VALUES (777003, DATE '${SETTLED_SEASON}-08-30', 501, 'alice', '4', '0')`,
     );
     const body = await (await app.request("/")).text();
     expect(body).toContain("Sample 12");
@@ -288,20 +289,20 @@ describe("the front page", () => {
     // blank too, and the number in the notes in the collector's own words.
     await conn.run(
       `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, notes, sample_number_field_attached)
-       VALUES (778001, DATE '${openSeasonDate(5, 23)}', 501, 'alice', '1C red cuckoo', true)`,
+       VALUES (778001, DATE '${currentSeasonDate(5, 23)}', 501, 'alice', '1C red cuckoo', true)`,
     );
     // No sample-number field at all: not a collection record, not asked about.
     await conn.run(
       `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, notes, sample_number_field_attached)
-       VALUES (778002, DATE '${openSeasonDate(5, 23)}', 501, 'alice', 'Sample 9', false)`,
+       VALUES (778002, DATE '${currentSeasonDate(5, 23)}', 501, 'alice', 'Sample 9', false)`,
     );
-    // Last season's has settled, like every other row here.
+    // A settled season's is not asked about, like every other row here.
     await conn.run(
       `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, sample_number_field_attached)
-       VALUES (778003, DATE '${OPEN_SEASON - 1}-05-23', 501, 'alice', true)`,
+       VALUES (778003, DATE '${SETTLED_SEASON}-05-23', 501, 'alice', true)`,
     );
     const body = await (await app.request("/")).text();
-    expect(body).toContain(`No number · May 23, ${OPEN_SEASON}`);
+    expect(body).toContain(`No number · May 23, ${CURRENT_SEASON}`);
     expect(body).toContain("https://www.inaturalist.org/observations/778001");
     expect(body).toContain("its sample number left blank");
     expect(body).toContain("Your notes say: “1C red cuckoo”.");
@@ -320,11 +321,11 @@ describe("the front page", () => {
     // 1, 2 and 6 on one day: 3 to 5 skipped. A day of 1 and 2 is whole.
     let id = 779000;
     for (const [on, n] of [
-      [openSeasonDate(6, 10), "1"],
-      [openSeasonDate(6, 10), "2"],
-      [openSeasonDate(6, 10), "6"],
-      [openSeasonDate(6, 11), "1"],
-      [openSeasonDate(6, 11), "2"],
+      [currentSeasonDate(6, 10), "1"],
+      [currentSeasonDate(6, 10), "2"],
+      [currentSeasonDate(6, 10), "6"],
+      [currentSeasonDate(6, 11), "1"],
+      [currentSeasonDate(6, 11), "2"],
     ]) {
       await conn.run(
         `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, sample_number_raw, specimen_count_raw,
@@ -334,13 +335,13 @@ describe("the front page", () => {
     }
     const body = await (await app.request("/")).text();
     expect(body).toContain("Some days this season skip a sample number");
-    expect(body).toContain(`Jun 10, ${OPEN_SEASON}: no samples 3–5`);
+    expect(body).toContain(`Jun 10, ${CURRENT_SEASON}: no samples 3–5`);
     // Everything observed that day, wherever: without place_id=any,
     // iNaturalist narrows the list to the viewer's home place.
     expect(body).toContain(
-      `https://www.inaturalist.org/observations?user_id=alice&amp;on=${openSeasonDate(6, 10)}&amp;place_id=any&amp;verifiable=any`,
+      `https://www.inaturalist.org/observations?user_id=alice&amp;on=${currentSeasonDate(6, 10)}&amp;place_id=any&amp;verifiable=any`,
     );
-    expect(body).not.toContain(`Jun 11, ${OPEN_SEASON}: no`);
+    expect(body).not.toContain(`Jun 11, ${CURRENT_SEASON}: no`);
   });
 
   it("thanks a clean record and still links onward", async () => {

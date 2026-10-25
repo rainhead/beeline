@@ -15,7 +15,7 @@ import {
 } from "../src/app/determine.js";
 import { loadDashboard } from "../src/app/dashboard.js";
 import { commitDeterminationDrafts } from "../src/commit-determinations.js";
-import { createMemoryDb, insertCleanSample, OPEN_SEASON, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, scratchPaths } from "./helpers.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
@@ -56,7 +56,7 @@ async function fixture() {
   const animal = async (name: string) => one(conn, `SELECT entity_id FROM animal WHERE scientific_name = '${name}'`);
 
   // Ada's 2026 sample, her 2024 one (seven-digit numbers, as they were),
-  // a February sample that belongs to 2025's season, and Bo's.
+  // a February sample that belongs to 2026's season like the summer one, and Bo's.
   const ada26 = await insertCleanSample(conn, { collector_id: String(ada), sample_number: "'1'", date_start: "DATE '2026-07-14'", date_end: "DATE '2026-07-14'" });
   const ada24 = await insertCleanSample(conn, { collector_id: String(ada), sample_number: "'7'", date_start: "DATE '2024-06-01'", date_end: "DATE '2024-06-01'" });
   const adaFeb = await insertCleanSample(conn, { collector_id: String(ada), sample_number: "'2'", date_start: "DATE '2026-02-10'", date_end: "DATE '2026-02-10'" });
@@ -124,11 +124,12 @@ describe("which taxa have castes", () => {
 });
 
 describe("seasons", () => {
-  it("count a February sample in the previous season, and count only volunteer names as named", async () => {
+  // A season is the calendar year (schema/102). Until beeline-rxn8 it ran
+  // from 1 March, and the February sample was 2025's.
+  it("count a February sample in its own year, and count only volunteer names as named", async () => {
     const { db, ada } = await fixture();
     expect(await entrySeasons(db, ada, ada)).toEqual([
-      { season: 2026, specimens: 3, unnamed: 2 },
-      { season: 2025, specimens: 1, unnamed: 1 },
+      { season: 2026, specimens: 4, unnamed: 3 },
       { season: 2024, specimens: 1, unnamed: 1 },
     ]);
   });
@@ -138,8 +139,8 @@ describe("the rows", () => {
   it("are the person's own, in collecting order, with their earlier name and never the expert's", async () => {
     const { db, ada, animal } = await fixture();
     const season = await seasonRows(db, ada, ada, 2026);
-    expect(season.map((r) => r.fieldNumber)).toEqual(["26000101", "26000102", "26000103"]);
-    expect(season[1]!.prior).toMatchObject({ animalId: await animal("Bombus"), sex: "female", channel: "in_app" });
+    expect(season.map((r) => r.fieldNumber)).toEqual(["25000900", "26000101", "26000102", "26000103"]);
+    expect(season[2]!.prior).toMatchObject({ animalId: await animal("Bombus"), sex: "female", channel: "in_app" });
   });
 });
 
@@ -293,7 +294,7 @@ describe("the page and its endpoints", () => {
     expect(body).toContain("<determine-grid");
     expect(body).toContain("26000101");
     expect(body).not.toContain("26000201"); // Bo's
-    expect(body).toContain(en.determine.seasonOption(2026, 2));
+    expect(body).toContain(en.determine.seasonOption(2026, 3));
     // 26000102's expert species must not reach the screen, by name or by id.
     expect(body).not.toContain("Bombus vosnesenskii");
   });
@@ -343,10 +344,10 @@ describe("the page and its endpoints", () => {
 describe("the front page prompt", () => {
   it("counts the open season unnamed specimens, and nobody else", async () => {
     const { db, ada, bo } = await fixture();
-    const season = (await entrySeasons(db, ada, ada)).find((s) => s.season === OPEN_SEASON);
-    const expected = season === undefined || season.unnamed === 0 ? null : { season: OPEN_SEASON, unnamed: season.unnamed };
+    const season = (await entrySeasons(db, ada, ada)).find((s) => s.season === CURRENT_SEASON);
+    const expected = season === undefined || season.unnamed === 0 ? null : { season: CURRENT_SEASON, unnamed: season.unnamed };
     expect((await loadDashboard(db, ada)).toName).toEqual(expected);
-    expect((await loadDashboard(db, bo)).toName).toEqual({ season: OPEN_SEASON, unnamed: 1 });
+    expect((await loadDashboard(db, bo)).toName).toEqual({ season: CURRENT_SEASON, unnamed: 1 });
   });
 
   it("says nothing when the person has no specimens", async () => {

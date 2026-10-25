@@ -164,7 +164,7 @@ export interface LoadWorksheetsResult {
   /** Rows with a number and nothing else: numbers filled in ahead and never determined. */
   undetermined: number;
   /** Each status, split by the season the specimen's sample belongs to. */
-  statuses: Array<{ status: WorksheetStatus; season: "open" | "settled" | "none"; rows: number }>;
+  statuses: Array<{ status: WorksheetStatus; season: "active" | "settled" | "none"; rows: number }>;
   unresolvedNames: Array<{ name: string; rows: number }>;
   recorded: number;
   held: number;
@@ -562,11 +562,11 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
     const statuses = (
       await rows(
         conn,
-        `SELECT c.status, CASE WHEN c.sample_id IS NULL THEN 'none' WHEN st.sample_id IS NULL THEN 'open' ELSE 'settled' END, count(*)
+        `SELECT c.status, CASE WHEN c.sample_id IS NULL THEN 'none' WHEN st.sample_id IS NULL THEN 'active' ELSE 'settled' END, count(*)
          FROM ws_candidate c LEFT JOIN settled_sample st ON st.sample_id = c.sample_id
          WHERE c.status <> 'duplicate' GROUP BY ALL ORDER BY 1, 2`,
       )
-    ).map(([status, season, n]) => ({ status: status as WorksheetStatus, season: season as "open" | "settled" | "none", rows: Number(n) }));
+    ).map(([status, season, n]) => ({ status: status as WorksheetStatus, season: season as "active" | "settled" | "none", rows: Number(n) }));
     const unresolvedNames = (
       await rows(
         conn,

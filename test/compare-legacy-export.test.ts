@@ -14,13 +14,15 @@ import { createMemoryDb, FIXTURE_INPUTS } from "./helpers.js";
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 
 describe("the date a record's season is judged on", () => {
-  // The end where there is one, as a sample is judged on date_end: a trap
-  // set before 1 March and emptied after it is the open season's. Roman
-  // months are the legacy file's own (2022-VI-26/2022-VII-29 in the corpus).
+  // The first day, as a sample is judged on date_start: a trap set in
+  // December and emptied in January is December's season. The last day only
+  // where the first does not parse. Roman months are the legacy file's own
+  // (2022-VI-26/2022-VII-29 in the corpus).
   test.each([
-    [["2026", "II", "20", "2026", "III", "5"], "2026-03-05"],
+    [["2025", "XII", "28", "2026", "I", "3"], "2025-12-28"],
     [["2026", "2", "20", "", "", ""], "2026-02-20"],
-    [["2022", "VI", "26", "2022", "VII", "29"], "2022-07-29"],
+    [["2022", "VI", "26", "2022", "VII", "29"], "2022-06-26"],
+    [["", "", "", "2026", "III", "5"], "2026-03-05"],
   ])("%j is judged on %s", async ([year, month, day, year2, month2, day2], expected) => {
     const conn = await (await DuckDBInstance.create(":memory:")).connect();
     const reader = await conn.runAndReadAll(
@@ -184,7 +186,7 @@ describe("comparing against rulings", () => {
   test("the most specific ruling is the one that explains", async () => {
     const rulings = [ruling({ outcome: "expected" }), ruling({ field_number: numbers[0]!, outcome: "beeline-wrong" })];
     const r = await compareLegacyExport(conn, exportPath, rulings);
-    expect(r.rulings.map((x) => [x.ruling.outcome, x.open + x.settled])).toEqual([["expected", 0], ["beeline-wrong", 1]]);
+    expect(r.rulings.map((x) => [x.ruling.outcome, x.active + x.settled])).toEqual([["expected", 0], ["beeline-wrong", 1]]);
   });
 
   test("a beeline-wrong ruling that matches nothing is retired, any other matches nothing", async () => {
@@ -201,7 +203,7 @@ describe("comparing against rulings", () => {
     const byKind = (kind: string, outcome: string) => r.kinds.find((k) => k.kind === kind && k.outcome === outcome);
     // The recapitalised sex: one record, explained, quoted with its number.
     const sex = byKind("case", "expected")!;
-    expect(sex.open + sex.settled).toBe(1);
+    expect(sex.active + sex.settled).toBe(1);
     expect(sex.columns).toEqual(["sex"]);
     expect(sex.examples).toEqual([{ column: "sex", exported: expect.any(String), legacy: expect.any(String), n: 1, fieldNumber: numbers[0] }]);
     expect(sex.fieldNumbers).toEqual([numbers[0]]);

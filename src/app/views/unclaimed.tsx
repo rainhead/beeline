@@ -70,7 +70,7 @@ export function UnclaimedPage({
       <PageHeader
         title={u.heading}
         lede={u.intro}
-        meta={listing.observers > 0 ? u.summary(listing.records, listing.observers, listing.open_records) : undefined}
+        meta={listing.observers > 0 ? u.summary(listing.records, listing.observers, listing.active_records) : undefined}
       />
       {problem !== undefined && <Callout tone="blocking">{u.problem(problem)}</Callout>}
       {notice !== undefined && (
@@ -85,7 +85,7 @@ export function UnclaimedPage({
           <Meta block>
             <Leads m={m} leads={p.leads} />
           </Meta>
-          <DataTable columns={[u.colAccount, u.colRecords, u.colThisSeason, u.colCollected, u.colMightBe]}>
+          <DataTable columns={[u.colAccount, u.colRecords, u.colActiveSeasons, u.colCollected, u.colMightBe]}>
             {p.observers.map((o) => (
               <tr>
                 <td>
@@ -94,7 +94,7 @@ export function UnclaimedPage({
                   </a>
                 </td>
                 <td>{m.format.number(o.records)}</td>
-                <td>{m.format.number(o.open_records)}</td>
+                <td>{m.format.number(o.active_records)}</td>
                 <td>{m.format.dateRange(o.first_observed, o.last_observed)}</td>
                 <td>
                   {o.suggestions.length === 0 ? (

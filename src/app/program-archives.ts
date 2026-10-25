@@ -23,9 +23,8 @@ import { EMPTY_QUERY, listSpecimens, OUTSIDE, STAFF_READER } from "./listings.js
  *
  * A year is the calendar year a sample was collected in, by its first day,
  * because that is how the taxonomists who receive these records count
- * (Peter, 2026-10-23). It is not Beeline's season, which runs from 1 March so
- * that a volunteer's late trap samples stay with their summer: a specimen
- * collected in February is in that year's archive and the previous season.
+ * (Peter, 2026-10-23). That is also what a season is (sample_season,
+ * schema/102, since beeline-rxn8), so an archive holds one season.
  *
  * Every program-year with specimens is written, whatever its program has
  * decided, so staff can download and review them (Peter, 2026-10-23). The

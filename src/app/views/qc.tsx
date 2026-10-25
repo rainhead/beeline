@@ -19,7 +19,7 @@ import {
 } from "./components/index.js";
 
 /**
- * The front page: one table of this season's samples that want something —
+ * The front page: one table of the active seasons' samples that want something —
  * a flag to fix, labels still to print, or a count still at zero — and a
  * link to the rest. Reimagined as a table with Peter and Nora on the sandbox
  * (2026-09-16): the cards said the same things at three times the length,
@@ -121,7 +121,7 @@ export function isUnnumbered(row: DashboardRow): boolean {
 }
 
 /**
- * The days this season whose run of sample numbers skips one (beeline-virz),
+ * The days in the active seasons whose run of sample numbers skips one (beeline-virz),
  * with where on iNaturalist that day's observations are.
  */
 export interface SkippedDay {
@@ -392,9 +392,9 @@ export function QcHome(props: {
   /** Whether this store has ever read from iNaturalist — a fresh instance says so instead of promising a schedule it has never kept. */
   everSynced: boolean;
   /**
-   * How many of this person's samples from closed seasons still carry flags.
+   * How many of this person's samples from settled seasons still carry flags.
    * They are deliberately not in `rows` — settling is what keeps the list
-   * about this season — so the page says the number out loud instead of
+   * about the active seasons — so the page says the number out loud instead of
    * letting them vanish (beeline-2c3.24).
    */
   settledFlagged?: number;
@@ -402,9 +402,9 @@ export function QcHome(props: {
   settledThrough?: string;
   /** The atlas whose mark the page carries; absent or null, the program acts as itself. */
   atlas?: { code: string; name: string } | null;
-  /** This season's days whose run of sample numbers skips one; advisory, below the table. */
+  /** The active seasons' days whose run of sample numbers skips one; advisory, below the table. */
   skipped?: SkippedDay[];
-  /** This season's specimens still to be named, with the season the identify screen should open on. */
+  /** The newest active season's specimens still to be named, with the season the identify screen should open on. */
   toName?: { season: number; unnamed: number } | null;
   /**
    * "Check iNaturalist now" (beeline-yso): absent where the instance cannot
@@ -443,7 +443,7 @@ export function QcHome(props: {
       {props.toName != null && (
         <Callout>
           <Meta block>
-            {m.qc.identify.note(props.toName.unnamed)} <a href={determineHref("sample", props.toName.season)}>{m.qc.identify.link}</a>
+            {m.qc.identify.note(props.toName.unnamed, props.toName.season)} <a href={determineHref("sample", props.toName.season)}>{m.qc.identify.link}</a>
           </Meta>
         </Callout>
       )}

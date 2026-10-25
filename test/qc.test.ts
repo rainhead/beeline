@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { createMemoryDb, insertCleanSample, OPEN_SEASON, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, SETTLED_SEASON } from "./helpers.js";
 
 let conn: DuckDBConnection;
 
@@ -262,8 +262,8 @@ describe("QC findings and printability", () => {
   test("coordinate uncertainty over the limit blocks printing", async () => {
     // Collected before the rule changed, so this is held to the grandfathered
     // 250 m and the flag says so. The date is written out because the
-    // fixture's own date is in the open season, which falls before the change
-    // until 1 March 2027 and after it from then on.
+    // fixture's own date is 14 July of the current season, which falls before
+    // the change in 2026 and after it from 2027 on.
     const before = "DATE '2026-07-14'";
     const id = await insertCleanSample(
       conn,
@@ -319,8 +319,8 @@ describe("QC findings and printability", () => {
       }
     });
 
-    // Judged on date_end for the reason settled_sample is (schema/102): a trap
-    // line that ran across the boundary belongs to the day it was emptied.
+    // Judged on date_end (schema/120): a trap line that ran across the
+    // boundary is held to the limit in force when it was emptied.
     test("a trap line spanning the change is judged by when it was emptied", async () => {
       const id = await insertCleanSample(
         conn,
@@ -567,20 +567,50 @@ describe("determination of record", () => {
   });
 });
 
-describe("the open season the fixtures are dated in", () => {
-  // Every open-season fixture takes its year from OPEN_SEASON, which restates
-  // schema/102's 1 March rule in JavaScript so a test can name a date before
-  // it has a store to ask. If the two ever disagree, those fixtures are dated
-  // in the wrong season and the tests built on them test nothing.
-  test("is the season the store says is open", async () => {
-    expect(await rows(conn, "SELECT CAST(started_on AS VARCHAR) FROM season")).toEqual([[`${OPEN_SEASON}-03-01`]]);
-    const open = await insertCleanSample(conn);
-    const last = await insertCleanSample(conn, {
+describe("seasons", () => {
+  // Every current-season fixture takes its year from CURRENT_SEASON, and every
+  // settled one from SETTLED_SEASON, which restate schema/102's rules in
+  // JavaScript so a test can name a date before it has a store to ask. If the
+  // two ever disagree, those fixtures are dated in the wrong season and the
+  // tests built on them test nothing.
+  test("the store's current season and settling line are the fixtures'", async () => {
+    expect(await rows(conn, "SELECT current_season, CAST(active_since AS VARCHAR) FROM season")).toEqual([
+      [CURRENT_SEASON, `${SETTLED_SEASON + 1}-01-01`],
+    ]);
+  });
+
+  test("the current season is active and the newest settled one is settled", async () => {
+    const current = await insertCleanSample(conn);
+    const settled = await insertCleanSample(conn, {
       sample_number: "'2'",
-      date_start: `DATE '${OPEN_SEASON - 1}-07-14'`,
-      date_end: `DATE '${OPEN_SEASON - 1}-07-14'`,
+      date_start: `DATE '${SETTLED_SEASON}-07-14'`,
+      date_end: `DATE '${SETTLED_SEASON}-07-14'`,
     });
-    expect(await rows(conn, "SELECT sample_id FROM settled_sample")).toEqual([[last]]);
-    expect(await rows(conn, `SELECT season FROM sample_season WHERE sample_id = ${open}`)).toEqual([[OPEN_SEASON]]);
+    expect(await rows(conn, "SELECT sample_id FROM settled_sample")).toEqual([[settled]]);
+    expect(await rows(conn, `SELECT season FROM sample_season WHERE sample_id = ${current}`)).toEqual([[CURRENT_SEASON]]);
+  });
+
+  // A season is a calendar year, by the sample's first day, as the
+  // taxonomists count (Peter, 2026-10-23). Until beeline-rxn8 the year ran
+  // from 1 March and was judged by the last day, so both of these counted in
+  // the season before.
+  test("is the calendar year of a sample's first day", async () => {
+    const february = await insertCleanSample(conn, {
+      sample_number: "'3'",
+      date_start: "DATE '2026-02-20'",
+      date_end: "DATE '2026-02-27'",
+    });
+    const acrossNewYear = await insertCleanSample(conn, {
+      kind: "'trap'",
+      sample_number: "'4'",
+      date_start: "DATE '2025-12-28'",
+      date_end: "DATE '2026-01-03'",
+    });
+    expect(
+      await rows(conn, `SELECT sample_id, season FROM sample_season WHERE sample_id IN (${february}, ${acrossNewYear}) ORDER BY sample_id`),
+    ).toEqual([
+      [february, 2026],
+      [acrossNewYear, 2025],
+    ]);
   });
 });

@@ -9,7 +9,7 @@ import { createKysely } from "../src/db.js";
 import { sha256 } from "../src/label-pdf.js";
 import { runPdf } from "../src/app/print-runs.js";
 import { withPrintRunLock } from "../src/print-run.js";
-import { createMemoryDb, insertCleanSample, OPEN_SEASON, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, scratchPaths } from "./helpers.js";
 
 /**
  * The print-run screens end to end (beeline-1kb.2, beeline-1kb.4): prepare
@@ -140,7 +140,7 @@ describe("the print-run screens", () => {
     // The proofing table: the six strings, in sheet order, with the blank
     // cell between collectors visible as cell 4 following cell 2.
     expect(page).toContain("USA:OR:BentonCo Corvallis");
-    expect(page).toContain(`14.VII${OPEN_SEASON}-1.1`);
+    expect(page).toContain(`14.VII${CURRENT_SEASON}-1.1`);
     const table = page.slice(page.indexOf("Labels</h2>"));
     expect(table).toContain("A.Ash");
     expect(table).toContain("B.Birch");

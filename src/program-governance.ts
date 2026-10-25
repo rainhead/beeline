@@ -8,7 +8,7 @@ import { parseCsv } from "./corrections.js";
  * program can change its licence without restating what it published before.
  * A year is the calendar year the specimens were collected in, the grain the
  * archives are written at and the one the taxonomists work in (Peter,
- * 2026-10-23) — not Beeline's season, which begins on 1 March.
+ * 2026-10-23), which is also what a season is (schema/102).
  *
  * A row says "from this year on": it holds until the program's next row, and
  * the latest holds from then on. That is Peter's presumption made into the

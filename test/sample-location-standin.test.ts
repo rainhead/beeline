@@ -4,7 +4,7 @@
 // Fable's review of the change. None of the coordinates come from a real store.
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { createMemoryDb, insertCleanSample, openSeasonDate, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, currentSeasonDate, rows } from "./helpers.js";
 import { canonicalJson } from "../src/sync-inat.js";
 import { promoteObservations } from "../src/promote-observations.js";
 
@@ -24,7 +24,7 @@ function obs(id: number, extra: Record<string, unknown> = {}): Record<string, un
   return {
     id,
     uuid: `uuid-${id}`,
-    observed_on: openSeasonDate(7, 14),
+    observed_on: currentSeasonDate(7, 14),
     geojson: point(0),
     positional_accuracy: 30,
     public_positional_accuracy: 30,

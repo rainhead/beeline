@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { createMemoryDb, insertCleanSample, openSeasonDate, rows } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, currentSeasonDate, rows } from "./helpers.js";
 import { canonicalJson } from "../src/sync-inat.js";
 import { promoteObservations } from "../src/promote-observations.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
@@ -47,7 +47,7 @@ function obs(id: number, extra: Record<string, unknown> = {}): Record<string, un
   return {
     id,
     uuid: `uuid-${id}`,
-    observed_on: openSeasonDate(7, 14),
+    observed_on: currentSeasonDate(7, 14),
     geojson: { coordinates: [-123.262, 44.5646], type: "Point" },
     positional_accuracy: 30,
     public_positional_accuracy: 30,
@@ -100,8 +100,8 @@ describe("minting a sample from an observation", () => {
       "net",
       ada,
       "7",
-      openSeasonDate(7, 14),
-      openSeasonDate(7, 14),
+      currentSeasonDate(7, 14),
+      currentSeasonDate(7, 14),
       3,
       7n,
       // Constant, never derived from OBA Collection Method: an iNat-backed
@@ -153,7 +153,7 @@ describe("minting a sample from an observation", () => {
     // that already cites an observation of theirs.
     await insertCleanSample(conn, { collector_id: String(bo), inat_observation_id: "8", sample_number: "'1'" });
     await stage(obs(8, { user: { id: 200, login: "bonew" }, ofvs: ofvs("1", "3") }));
-    await stage(obs(9, { user: { id: 200, login: "bonew" }, observed_on: openSeasonDate(7, 20), ofvs: ofvs("2", "5") }));
+    await stage(obs(9, { user: { id: 200, login: "bonew" }, observed_on: currentSeasonDate(7, 20), ofvs: ofvs("2", "5") }));
 
     const counts = await promoteObservations(conn);
     expect(counts.accountsLinked).toBe(1);
@@ -220,8 +220,8 @@ describe("reconciling against samples the store already holds", () => {
     const sampleId = await insertCleanSample(conn, {
       kind: "'trap'",
       sample_number: "'7'",
-      date_start: `DATE '${openSeasonDate(7, 10)}'`,
-      date_end: `DATE '${openSeasonDate(7, 14)}'`,
+      date_start: `DATE '${currentSeasonDate(7, 10)}'`,
+      date_end: `DATE '${currentSeasonDate(7, 14)}'`,
     });
     await stage(obs(7));
     const counts = await promoteObservations(conn);
@@ -229,22 +229,22 @@ describe("reconciling against samples the store already holds", () => {
     expect(await count("SELECT count(*) FROM sample")).toBe(1);
     expect(await one(`SELECT inat_observation_id, kind, CAST(date_start AS VARCHAR), CAST(date_end AS VARCHAR)
                       FROM sample WHERE entity_id = ${sampleId}`))
-      .toEqual([7n, "trap", openSeasonDate(7, 10), openSeasonDate(7, 14)]);
+      .toEqual([7n, "trap", currentSeasonDate(7, 10), currentSeasonDate(7, 14)]);
   });
 
   test("a free link never rewrites the sample's own number, date or count", async () => {
     const sampleId = await insertCleanSample(conn, {
       kind: "'trap'",
       sample_number: "'7'",
-      date_start: `DATE '${openSeasonDate(7, 10)}'`,
-      date_end: `DATE '${openSeasonDate(7, 14)}'`,
+      date_start: `DATE '${currentSeasonDate(7, 10)}'`,
+      date_end: `DATE '${currentSeasonDate(7, 14)}'`,
       specimen_count: "11",
     });
     await stage(obs(7));
     await promoteObservations(conn);
     expect(await one(`SELECT sample_number, CAST(date_start AS VARCHAR), CAST(date_end AS VARCHAR), specimen_count
                       FROM sample WHERE entity_id = ${sampleId}`))
-      .toEqual(["7", openSeasonDate(7, 10), openSeasonDate(7, 14), 11]);
+      .toEqual(["7", currentSeasonDate(7, 10), currentSeasonDate(7, 14), 11]);
   });
 
   test("a group matching two existing samples is neither linked nor minted", async () => {
@@ -253,10 +253,10 @@ describe("reconciling against samples the store already holds", () => {
     // the store already held. Picking one silently would be worse than saying
     // so, and minting a third would manufacture the duplicate.
     const a = await insertCleanSample(conn, {
-      kind: "'trap'", sample_number: "'7'", date_start: `DATE '${openSeasonDate(7, 13)}'`, date_end: `DATE '${openSeasonDate(7, 14)}'`,
+      kind: "'trap'", sample_number: "'7'", date_start: `DATE '${currentSeasonDate(7, 13)}'`, date_end: `DATE '${currentSeasonDate(7, 14)}'`,
     });
     const b = await insertCleanSample(conn, {
-      kind: "'trap'", sample_number: "'7'", date_start: `DATE '${openSeasonDate(7, 14)}'`, date_end: `DATE '${openSeasonDate(7, 16)}'`,
+      kind: "'trap'", sample_number: "'7'", date_start: `DATE '${currentSeasonDate(7, 14)}'`, date_end: `DATE '${currentSeasonDate(7, 16)}'`,
     });
     await stage(obs(7));
     const counts = await promoteObservations(conn);
@@ -300,13 +300,13 @@ describe("reconciling against samples the store already holds", () => {
     const sampleId = await insertCleanSample(conn, {
       kind: "'trap'",
       sample_number: "'7'",
-      date_start: `DATE '${openSeasonDate(7, 10)}'`,
-      date_end: `DATE '${openSeasonDate(7, 14)}'`,
+      date_start: `DATE '${currentSeasonDate(7, 10)}'`,
+      date_end: `DATE '${currentSeasonDate(7, 14)}'`,
     });
     // Printed, as the dev store's two are: imported, their labels on pins.
     await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${sampleId}, 1, '19000001')`);
-    await stage(obs(30587701, { observed_on: openSeasonDate(7, 14) }));
-    await stage(obs(30494816, { observed_on: openSeasonDate(7, 10) }));
+    await stage(obs(30587701, { observed_on: currentSeasonDate(7, 14) }));
+    await stage(obs(30494816, { observed_on: currentSeasonDate(7, 10) }));
 
     // One row, not two — the count is samples linked, not matches found.
     // (Refreshed by hand because the view reads the stored projection, which
@@ -366,12 +366,12 @@ describe("reconciling against samples the store already holds", () => {
     // which the same collector numbered a net sample the same. The link is
     // the identity, so these are two samples, not one claimed twice.
     const trap = await insertCleanSample(conn, {
-      kind: "'trap'", sample_number: "'9'", date_start: `DATE '${openSeasonDate(7, 15)}'`, date_end: `DATE '${openSeasonDate(7, 25)}'`,
+      kind: "'trap'", sample_number: "'9'", date_start: `DATE '${currentSeasonDate(7, 15)}'`, date_end: `DATE '${currentSeasonDate(7, 25)}'`,
       inat_observation_id: "21",
     });
-    await insertCleanSample(conn, { sample_number: "'9'", date_start: `DATE '${openSeasonDate(7, 20)}'`, date_end: `DATE '${openSeasonDate(7, 20)}'`, inat_observation_id: "20" });
-    await stage(obs(21, { observed_on: openSeasonDate(7, 25), ofvs: ofvs("9", "3") }));
-    await stage(obs(20, { observed_on: openSeasonDate(7, 20), ofvs: ofvs("9", "2") }));
+    await insertCleanSample(conn, { sample_number: "'9'", date_start: `DATE '${currentSeasonDate(7, 20)}'`, date_end: `DATE '${currentSeasonDate(7, 20)}'`, inat_observation_id: "20" });
+    await stage(obs(21, { observed_on: currentSeasonDate(7, 25), ofvs: ofvs("9", "3") }));
+    await stage(obs(20, { observed_on: currentSeasonDate(7, 20), ofvs: ofvs("9", "2") }));
     await refreshObservationFields(conn);
     expect(await rows(conn, `SELECT rule_name FROM qc_finding WHERE rule_name LIKE '%sample_number%'`)).toEqual([]);
     expect(await rows(conn, `SELECT inat_id FROM sample_claiming_observation WHERE sample_id = ${trap}`)).toEqual([[21n]]);

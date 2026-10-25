@@ -77,7 +77,7 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
   return withPromotionLock(async () => {
     const started = Date.now();
     const [[seasonStart]] = (await (
-      await conn.run("SELECT CAST(started_on AS VARCHAR) FROM season")
+      await conn.run("SELECT CAST(active_since AS VARCHAR) FROM season")
     ).getRows()) as [[string]];
     const token = await opts.token();
     const tokenMs = Date.now() - started;

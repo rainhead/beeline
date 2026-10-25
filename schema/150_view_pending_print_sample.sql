@@ -12,7 +12,7 @@
 -- Membership follows printable_sample, so the waiver clause and the
 -- per-atlas geoprivacy policy reach this view without the app knowing. A
 -- run with no atlas freezes the subset print_scope_sample names (schema/155).
--- A settled sample (schema/102) is never pending: nothing from a closed
+-- A settled sample (schema/102) is never pending: nothing from a settled
 -- season is printed (Peter, 2026-10-14), whether it was minted late from an
 -- old observation or had its count raised after the season ended.
 CREATE VIEW pending_print_sample AS

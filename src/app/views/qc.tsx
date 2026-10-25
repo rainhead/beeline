@@ -351,6 +351,7 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
                     taxonName={f.detail_taxon_name}
                     taxonRank={f.detail_taxon_rank}
                     taxonLead={m.qc.identifiedAs}
+                    ruleName={f.rule_name}
                   />
                 </>
               )}

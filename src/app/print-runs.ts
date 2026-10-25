@@ -116,6 +116,8 @@ export interface RunDetail extends RunListRow {
 export interface HeldInRun {
   sample_id: number;
   sample_number: string;
+  /** Whose numbering it is: a run covers many collectors. */
+  collector: string;
   reason: string;
 }
 
@@ -170,10 +172,12 @@ export async function loadRun(db: Kysely<Database>, printRunId: number): Promise
     row.state === "prepared" || row.state === "approved"
       ? (
           await sql<HeldInRun>`
-            SELECT DISTINCT s.entity_id AS sample_id, s.sample_number, h.reason
+            SELECT DISTINCT s.entity_id AS sample_id, s.sample_number, p.display_name AS collector, h.reason
             FROM printed_label pl
             JOIN specimen sp ON sp.entity_id = pl.specimen_id
             JOIN sample s ON s.entity_id = sp.sample_id
+            JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
+            JOIN person p ON p.entity_id = pc.person_id
             JOIN sample_hold h ON h.sample_id = s.entity_id
             JOIN sample_season ss ON ss.sample_id = s.entity_id
             CROSS JOIN season

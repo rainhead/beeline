@@ -16,12 +16,19 @@ import { TaxonName } from "./taxon.js";
  * distinguish Homo sapiens from Insecta are lost. So that rule reports its
  * taxon in its own columns (schema/120) and this renders it through
  * TaxonName, which knows from the rank what to italicise.
+ *
+ * A staff hold (beeline-plu) breaks it the other way: its detail is a
+ * staffer's note, words from a person rather than from the record, so it
+ * is set as a quotation.
  */
+const NOTE_RULES: ReadonlySet<string> = new Set(["staff_hold"]);
+
 export function FindingDetail({
   details,
   taxonName,
   taxonRank,
   taxonLead,
+  ruleName,
 }: {
   details: string | null;
   taxonName?: string | null;
@@ -32,6 +39,8 @@ export function FindingDetail({
    * a short clause rather than dangling after the instruction's full stop.
    */
   taxonLead?: string;
+  /** The finding's rule, which says whether `details` is a person's note (see above). */
+  ruleName?: string;
 }) {
   // The projection occasionally has a taxon id and no name; the rule falls
   // back to prose there, so the two are never both set and never both empty.
@@ -39,6 +48,7 @@ export function FindingDetail({
     const name = <TaxonName rank={taxonRank ?? ""} scientificName={taxonName} />;
     return taxonLead === undefined ? name : <>{taxonLead} {name}.</>;
   }
+  if (details && ruleName !== undefined && NOTE_RULES.has(ruleName)) return <q>{details}</q>;
   if (details) return <code>{details}</code>;
   return <></>;
 }

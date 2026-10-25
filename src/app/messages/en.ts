@@ -1527,7 +1527,7 @@ export const en = {
       held: (count: number) =>
         `Staff have held ${count === 1 ? "a sample" : `${n(count)} samples`} in this run back from printing since it was prepared. ` +
         `The run still includes ${count === 1 ? "it" : "them"}. To leave ${count === 1 ? "it" : "them"} out, cancel the run and prepare it again.`,
-      heldSample: (sampleNumber: string) => `Sample ${sampleNumber}`,
+      heldSample: (collector: string, sampleNumber: string) => `${collector}'s sample ${sampleNumber}`,
       labels: "Labels",
       colSheet: "Sheet",
       colCell: "Cell",

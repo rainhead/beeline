@@ -361,6 +361,7 @@ export function SampleFlags({
                       taxonName={row.detail_taxon_name}
                       taxonRank={row.detail_taxon_rank}
                       taxonLead={m.qc.identifiedAs}
+                      ruleName={row.rule_name}
                     />
                   </>
                 )}

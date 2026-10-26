@@ -354,6 +354,35 @@ name, with no releases. Until it has run, `animal_ecdysis` answers
 `not loaded` for every node. A store migrated past 0058 keeps the old
 `animal.itis_tsn` column, unread, until its next reseed.
 
+## The gazetteer
+
+The nightly names each sample's locality from its coordinates, out of a
+gazetteer of public place names and outlines
+([Localities from coordinates](../architecture/localities-from-coordinates.md),
+beeline-7i6). Unlike the DEM tiles, the machine cannot fetch it itself: it is
+built from about 2 GB of downloads, most of them OpenStreetMap extracts. So
+build it on a workstation and put the file up. It is read only while the
+nightly's "name localities" step runs, so it can be replaced while the app
+serves; put it beside its place and move it in, so no run ever opens half a
+file:
+
+```sh
+pnpm locality:fetch                      # once; later runs keep what is there
+pnpm locality:gazetteer                  # about a minute → data/gazetteer.duckdb
+fly ssh sftp shell --app beeline
+#   put data/gazetteer.duckdb  -> /app/data/gazetteer.duckdb.new
+fly ssh console --app beeline -C "mv -f /app/data/gazetteer.duckdb.new /app/data/gazetteer.duckdb"
+```
+
+Each build has its own id, so the next nightly names every sample again,
+about 70,000 on the sandbox. Until a gazetteer is there, the nightly's detail
+reads "localities: no gazetteer on this machine" and nothing else changes. To
+see the names straight away, run `pnpm locality:derive data/beeline.duckdb`
+in maintenance mode, as for any CLI that writes the store. Rebuild when a
+source changes enough to matter: a new Census vintage, BC's boundaries, a
+refuge added. Delete the files in `data/gazetteer-sources/` to fetch them
+again.
+
 ## The pre-migrate copy
 
 When a boot finds pending migrations it copies the store to

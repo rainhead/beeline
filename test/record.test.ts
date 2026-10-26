@@ -264,6 +264,23 @@ describe("the sample page", () => {
     expect(await get(legacy, `/samples/${a2}`)).not.toContain("Recorded in iNaturalist as");
   });
 
+  it("offers a locality named from the coordinates, with a button to copy it (beeline-7i6)", async () => {
+    const { app, conn, aliceSample } = await recordApp();
+    await conn.run(
+      `INSERT INTO sample_locality_suggestion (sample_id, locality, basis, latitude, longitude, gazetteer_build, derived_at)
+       SELECT sample_id, 'Finley NWR', 'refuge', latitude, longitude, 'test', current_timestamp
+       FROM sample_location WHERE sample_id = ${aliceSample}`,
+    );
+    const body = await get(app, `/samples/${aliceSample}`);
+    expect(body).toContain(en.suggestedLocality.lead);
+    expect(body).toContain("Finley NWR");
+    expect(body).toContain(en.suggestedLocality.basis.refuge);
+    expect(body).toContain(`data-copy="Finley NWR"`);
+    // Named for a point the sample no longer has: not shown.
+    await conn.run(`UPDATE sample_location SET latitude = latitude + 0.01 WHERE sample_id = ${aliceSample}`);
+    expect(await get(app, `/samples/${aliceSample}`)).not.toContain("Finley NWR");
+  });
+
   it("shows the observer's own notes, as text and never as markup", async () => {
     // Where no observation field held what the collector had to say: the
     // plant's condition, the weather, why a count is odd (beeline-hza). The
@@ -435,6 +452,18 @@ describe("a location iNaturalist keeps from everyone but its observer", () => {
         en.record.sample.where.withheld({ geoprivacy: null, taxonGeoprivacy: "obscured" }).replaceAll("'", "&#39;"),
       );
     }
+  });
+
+  it("withholds the locality named from the coordinates, which says where too", async () => {
+    const { app, conn, aliceSample } = await recordApp("bob");
+    await conn.run(
+      `INSERT INTO sample_locality_suggestion (sample_id, locality, basis, latitude, longitude, gazetteer_build, derived_at)
+       SELECT sample_id, 'Finley NWR', 'refuge', latitude, longitude, 'test', current_timestamp
+       FROM sample_location WHERE sample_id = ${aliceSample}`,
+    );
+    const body = await get(app, `/samples/${aliceSample}`);
+    expect(body).not.toContain("Finley NWR");
+    expect(body).not.toContain(en.suggestedLocality.lead);
   });
 
   it("still shows the observer's notes, as iNaturalist does", async () => {

@@ -2,6 +2,7 @@ import { EMPTY_QUERY, listingHref, MINE } from "../listings.js";
 import { sampleHref } from "../record.js";
 import { determineHref } from "./determine.js";
 import type { Geoprivacy, QcSeverity } from "../../model.js";
+import type { LocalityBasis } from "../../locality-rule.js";
 import type { Messages } from "../messages/index.js";
 import {
   Absent,
@@ -15,6 +16,7 @@ import {
   Meta,
   OrAbsent,
   PageHeader,
+  SuggestedLocality,
   TaxonName,
 } from "./components/index.js";
 
@@ -109,6 +111,16 @@ export interface DashboardRow {
   printed_count: number;
   printed_at: Date | null;
   findings: Finding[];
+  /** A locality named from the coordinates (beeline-7i6), offered on the row's locality flags; samples only. */
+  locality_suggestion?: { locality: string; basis: LocalityBasis } | null;
+}
+
+/** Whether a finding is about the locality, so the row's suggested locality belongs on its line. */
+function aboutLocality(f: Finding): boolean {
+  return (
+    f.rule_name === "locality_format" ||
+    (f.rule_name === "missing_required_field" && (f.details ?? "").split(", ").includes("locality"))
+  );
 }
 
 /** sample_id → the other people who collected it, in recordedBy order. */
@@ -352,6 +364,16 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
                     taxonRank={f.detail_taxon_rank}
                     taxonLead={m.qc.identifiedAs}
                     ruleName={f.rule_name}
+                  />
+                </>
+              )}
+              {row.locality_suggestion != null && aboutLocality(f) && (
+                <>
+                  {" "}
+                  <SuggestedLocality
+                    m={m}
+                    locality={row.locality_suggestion.locality}
+                    basis={row.locality_suggestion.basis}
                   />
                 </>
               )}

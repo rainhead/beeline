@@ -6,6 +6,7 @@
  */
 
 import type { TaxonQualifier } from "../views/components/taxon.js";
+import type { LocalityBasis } from "../../locality-rule.js";
 
 /**
  * One glossary entry. `example` is a taxon name as data — rank and parts,
@@ -115,6 +116,36 @@ export const en = {
 
   /** Locale-aware value formatters, for views composing values into markup. */
   format: { date, datePrecise, day, dateTime, dateRange, number: n, list, place },
+
+  /**
+   * A locality named from the sample's coordinates (beeline-7i6), offered on
+   * the sample page and on the front page's locality flags. It is only a
+   * suggestion: the volunteer pastes it into the observation on iNaturalist,
+   * which stays where the locality comes from. `basis` says in a few words
+   * why the name was chosen, so a reader can tell "inside the refuge" from
+   * "the nearest town" without knowing the rule (src/locality-rule.ts).
+   */
+  suggestedLocality: {
+    lead: "Suggested from the coordinates:",
+    copy: "Copy",
+    copied: "Copied",
+    basis: {
+      refuge: "inside a national wildlife refuge",
+      wildlife_area: "inside a WDFW wildlife area unit",
+      national_park: "inside a national park or monument",
+      state_park: "inside a state or provincial park",
+      local_park: "inside a park or reserve",
+      neighbourhood: "the neighbourhood",
+      town_limits: "inside the town's limits",
+      island: "on the island",
+      feature: "a place other volunteers have named nearby",
+      peak: "a peak nearby",
+      town: "a town nearby",
+      hamlet: "a named place nearby",
+      large_reserve: "inside a wilderness or large reserve",
+      distance: "distance and direction from the nearest town",
+    } satisfies Record<LocalityBasis, string>,
+  },
 
   layout: {
     /** Any instance that is not production says so (beeline-2u8). */

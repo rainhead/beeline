@@ -233,6 +233,8 @@ describe("app scaffold", () => {
     expect(body).toContain("OBAS-00657");
     expect(body).toContain("blocks printing");
     expect(body).toContain("https://www.inaturalist.org/observations/123456789");
+    // A locality flag carries the name the coordinates give, ready to copy (beeline-7i6).
+    expect(body).toContain(`data-copy="Corvallis"`);
   });
 
   it("every design section is reachable, so none can be orphaned", async () => {

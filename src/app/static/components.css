@@ -126,6 +126,13 @@ button:hover, .button:hover { filter: brightness(1.08); }
   color: var(--md-sys-color-primary);
   border: 1px solid var(--md-sys-color-outline);
 }
+/* Copying a suggested locality: a button that sits inside a line of text,
+   so it is no taller than the line. */
+button.copy-button {
+  padding: 0 var(--space-2);
+  vertical-align: baseline;
+}
+button.copy-button[hidden] { display: none; }
 
 /* Tables. Wide tables scroll horizontally inside the wrapper, independent
    of the page; the min-width keeps columns readable instead of crushed.

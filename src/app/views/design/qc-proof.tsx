@@ -189,6 +189,8 @@ const FIXTURES: Array<{
         findings: [
           finding("locality_format", "contains comma; street address", "blocking"),
         ],
+        // The locality named from the coordinates, offered on the flag's line (beeline-7i6).
+        locality_suggestion: { locality: "Corvallis", basis: "town_limits" },
       }),
       row({
         sample_id: 5,

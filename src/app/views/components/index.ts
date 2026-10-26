@@ -28,6 +28,7 @@ export {
   type ColumnSort,
   type FilterPill,
 } from "./listing.js";
+export { SuggestedLocality } from "./suggested-locality.js";
 export { DataTable, type TableColumn } from "./table.js";
 export {
   TaxonName,

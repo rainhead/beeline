@@ -5,6 +5,7 @@ import { describeFetch, ECDYSIS_COLLECTIONS, fetchEcdysis } from "../../fetch-ec
 import { backUp, describeBackup } from "../../store-backup.js";
 import type { Kysely } from "kysely";
 import { deriveElevations } from "../../derive-elevation.js";
+import { deriveLocalities, describeLocalities } from "../../derive-locality.js";
 import { fetchMissingTiles, type FetchTilesOptions } from "../../fetch-dem.js";
 import { mintPipelineJwt } from "../../inat-jwt.js";
 import { fetchPlaces, type FetchPlacesOptions } from "../../fetch-places.js";
@@ -177,14 +178,36 @@ export async function refreshTiles(
   }
 }
 
-/** Fetch places, promote, and elevation, shared by both sync jobs. Exported for its test. */
+/** Where the gazetteer goes on the machine (docs/runbooks/deploy-fly.md); built on a workstation. */
+export const GAZETTEER_PATH = "data/gazetteer.duckdb";
+
+/**
+ * A locality named from each sample's coordinates (beeline-7i6), after
+ * elevations. NEVER FAILS THE RUN, for refreshTiles's reason: a suggested
+ * locality is never a QC finding and never blocks printing, so a failure is
+ * said in the run's detail and the rest of the night goes on.
+ */
+export async function refreshLocalities(
+  conn: JobContext["conn"],
+  gazetteerPath: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  try {
+    return describeLocalities(await deriveLocalities(conn, gazetteerPath, { signal }));
+  } catch (err) {
+    signal?.throwIfAborted();
+    return `naming localities failed (${(err as Error).message})`;
+  }
+}
+
+/** Fetch places, promote, elevation and localities, shared by both sync jobs. Exported for its test. */
 export async function pipelineTail(
   ctx: JobContext,
   parts: string[],
   personChanges: string,
   samplePaths: SampleLogPaths,
   sampleOverlayPath?: string,
-  tiles: FetchTilesOptions & { demDir?: string } = {},
+  tiles: FetchTilesOptions & { demDir?: string; gazetteerPath?: string } = {},
 ): Promise<string> {
   parts.push(await ctx.step("fetch places", () => refreshPlaces(ctx.conn, { signal: ctx.signal })));
   const promoted = await ctx.step("promote observations", () =>
@@ -234,6 +257,10 @@ export async function pipelineTail(
       (elevation.refused > 0 ? `, ${elevation.refused} refused as too uncertain` : "") +
       (elevation.missingTiles.length > 0 ? ` (missing tiles: ${elevation.missingTiles.join(", ")})` : ""),
   );
+  const localities = await ctx.step("name localities", () =>
+    refreshLocalities(ctx.conn, tiles.gazetteerPath ?? deploymentPath(GAZETTEER_PATH), ctx.signal),
+  );
+  if (localities !== null) parts.push(localities);
   // A refused snapshot (beeline-hrw) fails the run — after every store step
   // has done its work, so nothing the nightly is for waits on it — because a
   // refusal is a standing condition that needs a person, and a run marked

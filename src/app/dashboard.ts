@@ -1,4 +1,5 @@
 import { sql, type Kysely } from "kysely";
+import type { LocalityBasis } from "../locality-rule.js";
 import type { Database, Geoprivacy, QcSeverity } from "../model.js";
 import { entrySeasons } from "./determine.js";
 import { DASHBOARD_RULES, type CoCollectors, type DashboardRow, type Finding, type SkippedDay } from "./views/qc.js";
@@ -66,6 +67,8 @@ interface RawSampleRow {
   printed_count: unknown;
   printed_at: Date | null;
   settled: boolean;
+  suggested_locality: string | null;
+  suggested_basis: LocalityBasis | null;
 }
 
 /** An observation row on the page, before its locality and place are looked up. */
@@ -108,9 +111,11 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
              s.specimen_count, coalesce(p.pending_count, 0) AS pending_count,
              coalesce(lp.printing_count, 0) AS printing_count,
              coalesce(lp.printed_count, 0) AS printed_count, lp.printed_at,
-             st.sample_id IS NOT NULL AS settled
+             st.sample_id IS NOT NULL AS settled,
+             lsg.locality AS suggested_locality, lsg.basis AS suggested_basis
       FROM sample s
       LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
+      LEFT JOIN sample_locality_suggestion_current lsg ON lsg.sample_id = s.entity_id
       LEFT JOIN pending_print_sample p ON p.sample_id = s.entity_id
       LEFT JOIN sample_label_in_progress lp ON lp.sample_id = s.entity_id
       LEFT JOIN settled_sample st ON st.sample_id = s.entity_id
@@ -292,6 +297,10 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       printed_count: printed,
       printed_at: s.printed_at === null ? null : new Date(s.printed_at),
       findings: findingsHere,
+      locality_suggestion:
+        s.suggested_locality === null || s.suggested_basis === null
+          ? null
+          : { locality: s.suggested_locality, basis: s.suggested_basis },
     });
   }
   for (const u of unnumbered.rows) {

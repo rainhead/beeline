@@ -16,6 +16,7 @@ import {
   CheckboxField,
   SelectField,
   Meta,
+  SuggestedLocality,
   TONES,
   TaxonName,
   Term,
@@ -35,7 +36,9 @@ export function DesignComponents({ m }: { m: Messages }) {
         Everything on this page is a plain server-rendered function — none of them needs client-side behaviour, so none
         of them is an island. An island is for behaviour a page genuinely cannot have without scripting, and the
         product currently has exactly one: dismissal for the header dropdowns, which work without it. Reach for a
-        component first, semantic HTML second, and an island only when neither will do.
+        component first, semantic HTML second, and an island only when neither will do. The copy button beside a
+        suggested locality is the same kind of script: the button stays hidden until the script finds it, and the
+        name it copies can be selected without it.
       </p>
 
       <h2>Page header</h2>
@@ -55,6 +58,21 @@ export function DesignComponents({ m }: { m: Messages }) {
           Sample 4 · Jul 15, 2026 <Meta>Alsea Falls, BentonCo, OR · 12 specimens</Meta>
         </h3>
         <Meta block>Data last synced from iNaturalist Aug 21, 2026, 2:50 AM.</Meta>
+      </Specimen>
+
+      <h2>Suggested locality</h2>
+      <p>
+        A locality named from the sample's coordinates, with why it was chosen and a button that copies it, so a
+        volunteer pastes it into the observation on iNaturalist. It sits under the place on a sample page and on the
+        front page's locality flags. The button appears only where the browser lets a page copy.
+      </p>
+      <Specimen>
+        <p>
+          <SuggestedLocality m={m} locality="Finley NWR" basis="refuge" />
+        </p>
+        <p>
+          <SuggestedLocality m={m} locality="51km W Hines" basis="distance" />
+        </p>
       </Specimen>
 
       <h2>Absence</h2>

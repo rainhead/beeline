@@ -29,6 +29,7 @@ import {
   OrAbsent,
   PageHeader,
   Pager,
+  SuggestedLocality,
   TaxonName,
   Term,
   TextField,
@@ -83,6 +84,14 @@ export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }
               missing this is the string that has to change upstream. */}
           {sample.observation_place_guess === null ? null : (
             <Meta block>{s.asRecorded(sample.observation_place_guess)}</Meta>
+          )}
+          {/* A locality named from the coordinates (beeline-7i6), on every
+              sample that has one, so it can be judged against the locality
+              the sample carries. */}
+          {sample.locality_suggestion === null ? null : (
+            <p>
+              <SuggestedLocality m={m} locality={sample.locality_suggestion.locality} basis={sample.locality_suggestion.basis} />
+            </p>
           )}
           {/* A staff-set locality carries its provenance beside it, as the
               coordinates carry theirs (beeline-649): who, why, and what

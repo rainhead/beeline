@@ -69,3 +69,20 @@ export function openDuckDb(path: string): Promise<DuckDBInstance> {
 export function openMemoryDuckDb(): Promise<DuckDBInstance> {
   return DuckDBInstance.create(":memory:", { ...duckDbConfig(), ...STORE_TIME_ZONE });
 }
+
+/**
+ * Load DuckDB's spatial extension on a connection, for the two things that
+ * read outlines: building the gazetteer and naming a sample's locality from
+ * its coordinates (beeline-7i6). The store holds no geometry, so it is loaded
+ * where it is used rather than at every open. The image installs it at build
+ * time beside httpfs (Dockerfile), so the machine needs no network here; a
+ * workstation or CI fetches it into ~/.duckdb on first use.
+ */
+export async function loadSpatial(conn: { run(sql: string): Promise<unknown> }): Promise<void> {
+  try {
+    await conn.run("LOAD spatial");
+  } catch {
+    await conn.run("INSTALL spatial");
+    await conn.run("LOAD spatial");
+  }
+}

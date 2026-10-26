@@ -4,6 +4,7 @@
  * (read-only: never insert into a view type).
  */
 import type { ColumnType, Generated } from "kysely";
+import type { LocalityBasis } from "./locality-rule.js";
 
 /** BIGINT columns: DuckDB returns bigint; number is accepted on write. */
 type BigIntCol = ColumnType<bigint, bigint | number, bigint | number>;
@@ -363,6 +364,27 @@ export interface SampleElevationPendingView {
   sample_id: number;
   latitude: number;
   longitude: number;
+}
+
+/** schema/037: a locality named from the sample's coordinates (beeline-7i6), a proposal never written into the sample. */
+export interface SampleLocalitySuggestionTable {
+  sample_id: number;
+  locality: string;
+  basis: LocalityBasis;
+  /** The point it was named at. */
+  latitude: number;
+  longitude: number;
+  gazetteer_build: string;
+  derived_at: Date;
+}
+
+/** schema/172: the suggestion, where it is still about the sample's point. */
+export interface SampleLocalitySuggestionCurrentView {
+  sample_id: number;
+  locality: string;
+  basis: LocalityBasis;
+  gazetteer_build: string;
+  derived_at: Date;
 }
 
 export interface SampleCollectorTable {
@@ -1130,6 +1152,7 @@ export interface Database {
   sample: SampleTable;
   elevation_source: ElevationSourceTable;
   sample_location: SampleLocationTable;
+  sample_locality_suggestion: SampleLocalitySuggestionTable;
   sample_collector: SampleCollectorTable;
   specimen: SpecimenTable;
   determination: DeterminationTable;
@@ -1190,6 +1213,7 @@ export interface Database {
   sample_elevation_unsupportable: SampleElevationUnsupportableView;
   sample_elevation_stale: SampleElevationStaleView;
   sample_elevation_pending: SampleElevationPendingView;
+  sample_locality_suggestion_current: SampleLocalitySuggestionCurrentView;
   printable_sample: PrintableSampleView;
   pending_print_sample: PendingPrintSampleView;
   print_run: PrintRunTable;

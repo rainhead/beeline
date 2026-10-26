@@ -522,7 +522,10 @@ describe("the nightly and a refused sample snapshot (beeline-hrw)", () => {
             return ctx.step(label, fn);
           },
         };
-        return pipelineTail(wrapped, [], join(dir, "person-change.csv"), samplePaths, undefined, { demDir: join(dir, "dem") });
+        return pipelineTail(wrapped, [], join(dir, "person-change.csv"), samplePaths, undefined, {
+          demDir: join(dir, "dem"),
+          gazetteerPath: join(dir, "gazetteer.duckdb"),
+        });
       },
     };
     await runJob(deps, job);
@@ -534,6 +537,9 @@ describe("the nightly and a refused sample snapshot (beeline-hrw)", () => {
     expect(steps.indexOf("derive elevations")).toBeGreaterThan(steps.indexOf("record sample changes"));
     // And the tiles it needs were fetched just before it (beeline-z08).
     expect(steps.indexOf("fetch elevation tiles")).toBe(steps.indexOf("derive elevations") - 1);
+    // Localities are named after elevations, and a machine with no gazetteer says so (beeline-7i6).
+    expect(steps.indexOf("name localities")).toBe(steps.indexOf("derive elevations") + 1);
+    expect(run.detail).toContain("localities: no gazetteer on this machine");
     // And the snapshot is untouched: the refusal restates nothing.
     const { readFile } = await import("node:fs/promises");
     expect(await readFile(samplePaths.state, "utf8")).toContain("name:Ada Adams");

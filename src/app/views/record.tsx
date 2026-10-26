@@ -7,6 +7,7 @@ import type { SampleChange } from "../../sample-change.js";
 import {
   sampleHref,
   specimenHref,
+  suggestedLocalityHref,
   type DeterminationEvent,
   type RecordFinding,
   type RecordHold,
@@ -29,10 +30,12 @@ import {
   OrAbsent,
   PageHeader,
   Pager,
+  SuggestedLocality,
   TaxonName,
   Term,
   TextField,
   type Detail,
+  type SuggestedLocalityAction,
 } from "./components/index.js";
 
 /**
@@ -53,6 +56,20 @@ const Unknown = ({ m }: { m: Messages }) => <Absent label={m.record.sample.unkno
 /** Text, or the "not recorded" line where there is none. */
 const orUnknown = (m: Messages, value: string | null): Child => (value === null || value === "" ? <Unknown m={m} /> : value);
 
+/**
+ * What the reader may do with a sample's suggested locality: nothing where
+ * it is the locality already or labels have printed, and a button only for
+ * someone who may change the sample.
+ */
+export function suggestionAction(sample: SampleDetail, allowed: boolean): SuggestedLocalityAction {
+  if (sample.locality_suggestion !== null && sample.locality === sample.locality_suggestion.locality) {
+    return { kind: "inUse" };
+  }
+  if (sample.printed) return { kind: "printed" };
+  if (!allowed) return { kind: "none" };
+  return { kind: "use", action: suggestedLocalityHref(sample.sample_id), returnTo: "sample" };
+}
+
 /** The staff note, on a record the viewer did not collect. */
 export function RecordScopeNote({ m, mine }: { m: Messages; mine: boolean }) {
   return mine ? null : <Meta block>{m.record.notYours}</Meta>;
@@ -64,7 +81,20 @@ export function RecordScopeNote({ m, mine }: { m: Messages; mine: boolean }) {
  * different claims, one about a label's text and one about a point on the
  * ground, and only the second carries provenance.
  */
-export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }) {
+export function SampleFacts({
+  m,
+  sample,
+  locality = { adopt: false, undo: false },
+}: {
+  m: Messages;
+  sample: SampleDetail;
+  /**
+   * Whether the reader may make the suggested locality the sample's
+   * (its collector, or staff), and take back one they adopted (beeline-7i6).
+   * Off on the specimen page, which repeats these facts for reading.
+   */
+  locality?: { adopt: boolean; undo: boolean };
+}) {
   const s = m.record.sample;
   const items: Array<Detail | null> = [
     { term: <Term m={m} slug="collector">{s.collectors}</Term>, value: m.format.list(sample.collectors.map((c) => c.display)) },
@@ -84,6 +114,19 @@ export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }
           {sample.observation_place_guess === null ? null : (
             <Meta block>{s.asRecorded(sample.observation_place_guess)}</Meta>
           )}
+          {/* A locality named from the coordinates (beeline-7i6), on every
+              sample that has one, so it can be judged against the locality
+              the sample carries. */}
+          {sample.locality_suggestion === null ? null : (
+            <div class="suggested-locality-line">
+              <SuggestedLocality
+                m={m}
+                locality={sample.locality_suggestion.locality}
+                basis={sample.locality_suggestion.basis}
+                action={suggestionAction(sample, locality.adopt)}
+              />
+            </div>
+          )}
           {/* A staff-set locality carries its provenance beside it, as the
               coordinates carry theirs (beeline-649): who, why, and what
               iNaturalist says now where the observation has moved on. */}
@@ -100,6 +143,14 @@ export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }
           {sample.locality_override?.observation_now == null ? null : (
             <Meta block>{s.staffLocality.observationNow(sample.locality_override.observation_now)}</Meta>
           )}
+          {locality.undo ? (
+            <form method="post" action={suggestedLocalityHref(sample.sample_id)}>
+              <input type="hidden" name="undo" value="1" />
+              <button type="submit" class="outlined compact-button">
+                {m.suggestedLocality.undo}
+              </button>
+            </form>
+          ) : null}
         </>
       ),
     },
@@ -629,6 +680,7 @@ export function SamplePage({
   specimens,
   history,
   admin = false,
+  ownsLocality = false,
 }: {
   m: Messages;
   sample: SampleDetail;
@@ -639,6 +691,8 @@ export function SamplePage({
   history: readonly SampleChange[];
   /** Staff see the locality form; off while impersonating, like every admin surface. */
   admin?: boolean;
+  /** Whether the reader adopted the locality standing over the observation, and so may take it back (beeline-7i6). */
+  ownsLocality?: boolean;
 }) {
   return (
     <>
@@ -655,7 +709,16 @@ export function SamplePage({
       />
       <RecordScopeNote m={m} mine={sample.mine} />
       <Card>
-        <SampleFacts m={m} sample={sample} />
+        <SampleFacts
+          m={m}
+          sample={sample}
+          // A locality someone else set stands until they change it: a
+          // collector may adopt only where none stands or it is their own.
+          locality={{
+            adopt: admin || (sample.mine && (sample.locality_override === null || ownsLocality)),
+            undo: ownsLocality && !sample.printed,
+          }}
+        />
         <SampleActions m={m} sample={sample} />
         {admin ? <StaffLocality m={m} sample={sample} /> : null}
       </Card>

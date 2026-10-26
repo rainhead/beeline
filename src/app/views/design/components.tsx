@@ -16,6 +16,7 @@ import {
   CheckboxField,
   SelectField,
   Meta,
+  SuggestedLocality,
   TONES,
   TaxonName,
   Term,
@@ -55,6 +56,34 @@ export function DesignComponents({ m }: { m: Messages }) {
           Sample 4 · Jul 15, 2026 <Meta>Alsea Falls, BentonCo, OR · 12 specimens</Meta>
         </h3>
         <Meta block>Data last synced from iNaturalist Aug 21, 2026, 2:50 AM.</Meta>
+      </Specimen>
+
+      <h2>Suggested locality</h2>
+      <p>
+        A locality named from the sample's coordinates, with why it was chosen and, for the sample's collector, a
+        button that makes it the sample's locality. It sits under the place on a sample page and on the front page's
+        locality flags. In order: offered, already in use, on a sample whose labels have printed, and shown to someone
+        who may not change the sample. Each sits in a <code>div</code>, since a paragraph cannot hold the button's
+        form.
+      </p>
+      <Specimen>
+        <div class="suggested-locality-line">
+          <SuggestedLocality
+            m={m}
+            locality="Finley NWR"
+            basis="refuge"
+            action={{ kind: "use", action: "/design/components", returnTo: "sample" }}
+          />
+        </div>
+        <div class="suggested-locality-line">
+          <SuggestedLocality m={m} locality="Corvallis" basis="town_limits" action={{ kind: "inUse" }} />
+        </div>
+        <div class="suggested-locality-line">
+          <SuggestedLocality m={m} locality="51km W Hines" basis="distance" action={{ kind: "printed" }} />
+        </div>
+        <div class="suggested-locality-line">
+          <SuggestedLocality m={m} locality="Takhlakh Lake" basis="feature" action={{ kind: "none" }} />
+        </div>
       </Specimen>
 
       <h2>Absence</h2>

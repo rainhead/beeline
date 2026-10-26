@@ -88,12 +88,17 @@ COPY --from=build --chown=node:node /app/dist ./dist
 # NOTE: the extension is per-platform, so this must be built for the machine
 # it runs on. `fly deploy` builds on Fly's amd64 builders; building locally on
 # an arm64 Mac to push needs --platform linux/amd64.
+#
+# The spatial extension is baked in beside it, for the same reason: the
+# nightly names each sample's locality from its coordinates by reading
+# outlines from the gazetteer (src/derive-locality.ts, beeline-7i6).
 USER node
 RUN node --input-type=module -e "\
 import { DuckDBInstance } from '@duckdb/node-api'; \
 const i = await DuckDBInstance.create(':memory:'); \
 const c = await i.connect(); \
 await c.run('INSTALL httpfs'); \
+await c.run('INSTALL spatial'); \
 c.closeSync();"
 USER root
 

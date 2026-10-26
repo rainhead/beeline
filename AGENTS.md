@@ -27,6 +27,8 @@ pnpm inat:sync <projectId> [d1] [d2]        # observation window → append-only
 pnpm inat:promote                           # current observation state → samples
 pnpm inat:backfill-accounts                 # resolve legacy logins → iNat accounts
 pnpm elevation:fetch && pnpm elevation:derive  # DEM tiles (SRTM 1-arc-second, Copernicus GLO-30 where SRTM does not reach) → missing elevations
+pnpm locality:fetch && pnpm locality:gazetteer  # public place names and outlines (about 2 GB) → data/gazetteer.duckdb, on a workstation
+pnpm locality:derive [db] [gazetteer]          # a locality named from each sample's coordinates, offered beside its own (the nightly runs it)
 pnpm ecdysis:taxonomy [db] [--cached]        # Ecdysis's thesaurus, every insect (about 3 minutes) → data/ecdysis-taxonomy/ → ecdysis_taxon, every animal node matched
 pnpm taxon:fetch-sheet <sheet-id> [dir]      # a taxonomist's worksheet, every tab as CSV, to data/taxon-decisions/<modified instant>/ — to be read, not parsed
 pnpm taxon:decide <kind> <rank> "<name>" --by … --reason …   # record one decision (or --batch file.csv): Ecdysis's facts filled from the store, the row validated, the file merged
@@ -67,6 +69,7 @@ How each part of Beeline works, one file per area in [`docs/architecture/`](docs
 - [Errors and logs](docs/architecture/errors-and-logs.md) — `src/app/error-reporting.ts`, `src/app/usage.ts`
 - [Backups](docs/architecture/backups.md) — `src/store-backup.ts`, `src/store-snapshot.ts`
 - [Ingestion, jobs, and elevation](docs/architecture/ingestion-jobs-and-elevation.md) — `src/app/jobs/`, `src/write-conflict.ts`
+- [Localities from coordinates](docs/architecture/localities-from-coordinates.md) — `src/locality-rule.ts`, `src/derive-locality.ts`, `ingest/gazetteer.sql`
 
 ## Conventions & Patterns
 

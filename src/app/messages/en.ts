@@ -6,6 +6,7 @@
  */
 
 import type { TaxonQualifier } from "../views/components/taxon.js";
+import type { LocalityBasis } from "../../locality-rule.js";
 
 /**
  * One glossary entry. `example` is a taxon name as data — rank and parts,
@@ -115,6 +116,50 @@ export const en = {
 
   /** Locale-aware value formatters, for views composing values into markup. */
   format: { date, datePrecise, day, dateTime, dateRange, number: n, list, place },
+
+  /**
+   * A locality named from the sample's coordinates (beeline-7i6), offered on
+   * the sample page and on the front page's locality flags. One click makes
+   * it the sample's locality, set here over the observation's (Peter,
+   * 2026-10-26), and the volunteer who did it can go back. `basis` says in a
+   * few words why the name was chosen, so a reader can tell "inside the
+   * refuge" from "the nearest town" without knowing the rule
+   * (src/locality-rule.ts).
+   */
+  suggestedLocality: {
+    lead: "Suggested from the coordinates:",
+    use: "Use this locality",
+    /** The sample's locality already is the suggestion. */
+    inUse: "This is the sample's locality.",
+    /** Recorded as the reason beside the locality set here, so the sample page says where it came from. */
+    reason: (basis: string) => `Suggested from the coordinates: ${basis}.`,
+    /** Takes back a locality the volunteer adopted, so the observation's applies again. */
+    undo: "Go back to iNaturalist's locality",
+    /** Somebody else set the locality standing on the sample: theirs to take back, not this person's. */
+    notYours: "Only whoever set this locality can take it back. Ask staff if it is wrong.",
+    /** Somebody else's locality stands on the sample, and is theirs to change. */
+    setByOther: "Somebody else set this sample's locality, so it stays until they change it. Ask staff if it is wrong.",
+    /** The suggestion moved between drawing the page and the click: nothing was saved. */
+    changed: "The suggested locality has changed since the page was shown. Look at it again before using it.",
+    /** A printed sample's locality no longer follows anything (CONTEXT.md, Upstream). The name is still shown, for judging it. */
+    printed: "Its labels have already printed, so its locality stays as printed.",
+    basis: {
+      refuge: "inside a national wildlife refuge",
+      wildlife_area: "inside a WDFW wildlife area unit",
+      national_park: "inside a national park or monument",
+      state_park: "inside a state or provincial park",
+      local_park: "inside a park or reserve",
+      neighbourhood: "the neighbourhood",
+      town_limits: "inside the town's limits",
+      island: "on the island",
+      feature: "a place other volunteers have named nearby",
+      peak: "a peak nearby",
+      town: "a town nearby",
+      hamlet: "a named place nearby",
+      large_reserve: "inside a wilderness or large reserve",
+      distance: "distance and direction from the nearest town",
+    } satisfies Record<LocalityBasis, string>,
+  },
 
   layout: {
     /** Any instance that is not production says so (beeline-2u8). */

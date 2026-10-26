@@ -10,6 +10,7 @@ import type { DeterminedOnPrecision,
   SampleKind,
 } from "../model.js";
 import { labelName } from "../person-name.js";
+import type { LocalityBasis } from "../locality-rule.js";
 import { ownSamplesSql, placeColumns, withheld, type ListedCollector, type Reader } from "./listings.js";
 import { readSampleChanges, sampleHistory, SAMPLE_STATE_SQL, type SampleChange } from "../sample-change.js";
 
@@ -132,8 +133,20 @@ export interface SampleDetail {
   locality_override: LocalityOverride | null;
   /** Coordinates staff set over the observation's (beeline-942), same shape. */
   location_override: LocationOverride | null;
+  /**
+   * A locality named from the coordinates (beeline-7i6), offered beside the
+   * sample's own and never written into it. Null where there is none for the
+   * point the sample has now, or where the location is withheld.
+   */
+  locality_suggestion: LocalitySuggestion | null;
   /** Everyone who collected it, in recordedBy order (beeline-77j). */
   collectors: ListedCollector[];
+}
+
+export interface LocalitySuggestion {
+  locality: string;
+  /** Which step of the rule named it (src/locality-rule.ts); the page says it in words. */
+  basis: LocalityBasis;
 }
 
 export interface LocationOverride {
@@ -269,6 +282,9 @@ const sampleColumns = (personId: number, reader: Reader) => sql`
   -- say about them, and a column on sample would need a rule about whether
   -- it follows upstream when nothing would ever want it not to.
   f.notes AS observation_notes,
+  -- A locality named from the coordinates (beeline-7i6): it says where the
+  -- point is, so it is withheld wherever the point is (hydrate).
+  lsg.locality AS suggested_locality, lsg.basis AS suggested_basis,
   EXISTS (SELECT 1 FROM sample_elevation_stale st WHERE st.sample_id = s.entity_id) AS elevation_stale,
   EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id) AS printed,
   o.locality AS override_locality, o.observed_locality AS override_observed,
@@ -292,6 +308,7 @@ const sampleJoins = (reader: Reader) => sql`
   LEFT JOIN observation_field seen ON seen.inat_id = s.inat_observation_id
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
   LEFT JOIN elevation_source es ON es.entity_id = loc.elevation_source_id
+  LEFT JOIN sample_locality_suggestion_current lsg ON lsg.sample_id = s.entity_id
   LEFT JOIN observation_field f ON f.inat_id = s.inat_observation_id
   LEFT JOIN sample_locality_override o ON o.sample_id = s.entity_id
   LEFT JOIN person ob ON ob.entity_id = o.set_by
@@ -302,7 +319,9 @@ const sampleJoins = (reader: Reader) => sql`
 /** Numbers arrive from DuckDB as bigint or string depending on the column. */
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
-type RawSample = Omit<SampleDetail, "collectors" | "locality_override" | "location_override"> & {
+type RawSample = Omit<SampleDetail, "collectors" | "locality_override" | "location_override" | "locality_suggestion"> & {
+  suggested_locality: string | null;
+  suggested_basis: LocalityBasis | null;
   override_locality: string | null;
   override_observed: string | null;
   override_set_by: string | null;
@@ -332,6 +351,8 @@ async function localityObservationNow(db: Kysely<Database>, sampleId: number): P
 async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDetail> {
   const hidden = Boolean(raw.location_withheld);
   const {
+    suggested_locality,
+    suggested_basis,
     override_locality,
     override_observed,
     override_set_by,
@@ -345,6 +366,10 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
   } = raw;
   return {
     ...row,
+    locality_suggestion:
+      hidden || suggested_locality === null || suggested_basis === null
+        ? null
+        : { locality: suggested_locality, basis: suggested_basis },
     // The overrides say where too: staff set them to a point or a place name.
     location_override: hidden || !location_overridden
       ? null
@@ -620,6 +645,8 @@ export function parsePage(raw: string | undefined): number {
 export const sampleHref = (sampleId: number, page = 1) =>
   page > 1 ? `/samples/${sampleId}?page=${page}` : `/samples/${sampleId}`;
 export const specimenHref = (specimenId: number) => `/specimens/${specimenId}`;
+/** Where "Use this locality" posts, and its undo (beeline-7i6). */
+export const suggestedLocalityHref = (sampleId: number) => `/samples/${sampleId}/suggested-locality`;
 
 /**
  * What happened to this sample, newest first (beeline-ewl). Addressed by the

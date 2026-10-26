@@ -126,6 +126,16 @@ button:hover, .button:hover { filter: brightness(1.08); }
   color: var(--md-sys-color-primary);
   border: 1px solid var(--md-sys-color-outline);
 }
+/* A one-button form that sits inside a line of text (Use this locality,
+   beeline-7i6), with a button no taller than the line. */
+form.inline-form { display: inline; margin: 0; }
+/* The suggestion's own line under a sample's place: a div, since a <p>
+   cannot hold the form. */
+.suggested-locality-line { margin: var(--space-2) 0; }
+button.compact-button {
+  padding: 0 var(--space-2);
+  vertical-align: baseline;
+}
 
 /* Tables. Wide tables scroll horizontally inside the wrapper, independent
    of the page; the min-width keeps columns readable instead of crushed.

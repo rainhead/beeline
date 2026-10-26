@@ -8,7 +8,9 @@ import { parseCsv } from "./corrections.js";
  * current row per (sample_ref, field), latest wins, replayed onto a rebuilt
  * store at the end of observation promotion (src/apply-sample-overlay.ts).
  * Fields: `locality` (beeline-649) and `coordinates` (beeline-942), which
- * stand over what the observation says; `hold` (beeline-plu), which keeps the
+ * stand over what the observation says — a locality is also written here
+ * when a collector adopts the one Beeline names from the coordinates
+ * (beeline-7i6), with their login as the author; `hold` (beeline-plu), which keeps the
  * sample from printing; and `waiver:<rule>` (beeline-1kb.9), one per flag,
  * which lets a blocking flag staff judged fine print anyway.
  *

@@ -138,6 +138,20 @@ describe("app scaffold", () => {
     expect((await app.request("/healthz")).status).toBe(200);
   });
 
+  it("credits the outside data sources in the footer, signed in or not (beeline-7i6)", async () => {
+    // The licences of GeoNames, OpenStreetMap, BC and the Copernicus DEM ask
+    // for credit wherever their data appears; a footer on every page gives it.
+    for (const login of ["testuser", null]) {
+      const res = await (await appOnMemoryDb(login)).request(login === null ? "/auth/login" : "/");
+      const body = await res.text();
+      expect(body, String(login)).toContain(`class="site-footer"`);
+      expect(body, String(login)).toContain("© OpenStreetMap contributors");
+      expect(body, String(login)).toContain("Copernicus DEM GLO-30");
+      expect(body, String(login)).toContain("Ecdysis and the collections that publish through it");
+      expect(body, String(login)).toContain(`href="https://github.com/rainhead/beeline"`);
+    }
+  });
+
   it("tokens stylesheet is public and carries MD3 color roles", async () => {
     const app = await appOnMemoryDb(null);
     const res = await app.request("/tokens.css");

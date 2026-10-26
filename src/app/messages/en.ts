@@ -8,6 +8,14 @@
 import type { TaxonQualifier } from "../views/components/taxon.js";
 import type { LocalityBasis } from "../../locality-rule.js";
 
+/** An outside data source the site footer credits, with the licence or terms it asks credit under, where it names some. */
+export interface CreditedSource {
+  name: string;
+  href: string;
+  terms?: string;
+  termsHref?: string;
+}
+
 /**
  * One glossary entry. `example` is a taxon name as data — rank and parts,
  * never markup — so the page can set it correctly through TaxonName
@@ -162,6 +170,76 @@ export const en = {
   },
 
   layout: {
+    /**
+     * The site footer's credit for the outside data the pages show (Peter,
+     * 2026-10-26): the observations and determinations the records come
+     * from, and the places and elevations derived for them. The suggested
+     * locality is named from these places
+     * (beeline-7i6) and the elevations are read from these models, and
+     * several of the licences require the credit wherever the data appears:
+     * GeoNames (CC BY 4.0), OpenStreetMap (ODbL), BC's Open Government
+     * Licence, and the Copernicus DEM's own wording. The US agencies' data is
+     * public domain and credited as a courtesy. Proper names stay as their
+     * owners write them.
+     */
+    credits: {
+      /** The repository is public (Peter, 2026-10-26: the footer might as well link it). */
+      source: { lead: "Beeline's source code is on", label: "GitHub", href: "https://github.com/rainhead/beeline" },
+      /**
+       * Ecdysis asks to be cited, and for its occurrence data the collections
+       * that published it (its Data Usage Guidelines): Beeline reads its
+       * taxonomic thesaurus and adopts the determinations the collections
+       * publish through it. iNaturalist's observers made every sample since
+       * 2019 an observation.
+       */
+      records: "Taxonomy and determinations",
+      recordSources: [
+        {
+          name: "Ecdysis and the collections that publish through it",
+          href: "https://ecdysis.org/index.php",
+          terms: "Data Usage Guidelines",
+          termsHref: "https://ecdysis.org/includes/usagepolicy.php",
+        },
+      ],
+      observations: "Observations",
+      observationSources: [{ name: "iNaturalist and its observers", href: "https://www.inaturalist.org/" }],
+      places: "Place names and boundaries",
+      elevations: "Elevations",
+      placeSources: [
+        { name: "GeoNames", href: "https://www.geonames.org/", terms: "CC BY 4.0", termsHref: "https://creativecommons.org/licenses/by/4.0/" },
+        { name: "© OpenStreetMap contributors", href: "https://www.openstreetmap.org/copyright", terms: "ODbL", termsHref: "https://www.openstreetmap.org/copyright" },
+        {
+          name: "Province of British Columbia",
+          href: "https://catalogue.data.gov.bc.ca/",
+          terms: "Open Government Licence – British Columbia",
+          termsHref: "https://www2.gov.bc.ca/gov/content/data/policy-standards/open-data/open-government-licence-bc",
+        },
+        { name: "US Census Bureau", href: "https://www.census.gov/geographies/mapping-files/time-series/geo/cartographic-boundary.html" },
+        { name: "US Fish and Wildlife Service", href: "https://www.fws.gov/program/national-wildlife-refuge-system" },
+        { name: "National Park Service", href: "https://www.nps.gov/" },
+        { name: "Washington Department of Fish and Wildlife", href: "https://wdfw.wa.gov/places-to-go/wildlife-areas" },
+        { name: "Washington State Parks", href: "https://parks.wa.gov/" },
+      ],
+      elevationSources: [
+        { name: "NASA SRTM", href: "https://www.earthdata.nasa.gov/data/instruments/srtm" },
+        {
+          name: "Copernicus DEM GLO-30",
+          href: "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM",
+          terms:
+            "© DLR e.V. 2010–2014 and © Airbus Defence and Space GmbH 2014–2018, provided under COPERNICUS by the European Union and ESA",
+        },
+      ],
+    } satisfies {
+      source: { lead: string; label: string; href: string };
+      records: string;
+      recordSources: CreditedSource[];
+      observations: string;
+      observationSources: CreditedSource[];
+      places: string;
+      elevations: string;
+      placeSources: CreditedSource[];
+      elevationSources: CreditedSource[];
+    },
     /** Any instance that is not production says so (beeline-2u8). */
     envBanner: (environment: string) => `${environment} instance — data here may be blown away and rebuilt at any time`,
     nav: {

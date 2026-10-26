@@ -66,7 +66,10 @@ function fakeInat(served: () => Record<string, unknown>[] | null, asked: URL[]):
   }) as typeof fetch;
 }
 
-async function checkApp(opts: { running?: string; signedIn?: "ada" | "carl"; gazetteerPath?: string } = {}) {
+async function checkApp(
+  opts: { running?: string; signedIn?: "ada" | "carl"; gazetteerPath?: string; demDir?: string; onFetch?: () => void } = {},
+) {
+  let running = opts.running ?? null;
   const { instance, conn } = await createMemoryDb();
   await attachPrivateStore(instance, { path: ":memory:", key: null });
   [[seasonDay]] = (await rows(conn, "SELECT CAST(active_since + 30 AS VARCHAR) FROM season")) as [[string]];
@@ -102,7 +105,7 @@ async function checkApp(opts: { running?: string; signedIn?: "ada" | "carl"; gaz
       opts.signedIn === "carl"
         ? { personId: carl, login: "carlstaff", iconUrl: null }
         : { personId: ada, login: "adacollects", iconUrl: null },
-    jobs: { list: [], start: async () => false, running: () => opts.running ?? null },
+    jobs: { list: [], start: async () => false, running: () => running },
     personChangesPath: join(dir, "person-change.csv"),
     sampleOverlayPath: join(dir, "sample-overlay.csv"),
     sampleChangesPath: join(dir, "sample-change.csv"),
@@ -112,9 +115,13 @@ async function checkApp(opts: { running?: string; signedIn?: "ada" | "carl"; gaz
     inatCheck: {
       projects: [18521, 166376],
       token: async () => "jwt",
-      fetchImpl: fakeInat(() => served, asked),
+      fetchImpl: fakeInat(() => {
+        opts.onFetch?.();
+        return served;
+      }, asked),
       pageDelayMs: 0,
       gazetteerPath: opts.gazetteerPath,
+      demDir: opts.demDir,
     },
   });
   // What the nightly already made of the observations: Ada's sample 1 with no
@@ -124,7 +131,10 @@ async function checkApp(opts: { running?: string; signedIn?: "ada" | "carl"; gaz
   const serve = (o: Record<string, unknown>[] | null) => {
     served = o;
   };
-  return { app, conn, db, asked, serve };
+  const setRunning = (job: string | null) => {
+    running = job;
+  };
+  return { app, conn, db, asked, serve, setRunning };
 }
 
 const check = (app: Awaited<ReturnType<typeof checkApp>>["app"], cookie?: string) =>
@@ -169,9 +179,11 @@ describe("Check iNaturalist now", () => {
   });
 
   it("names the checked person's localities from their coordinates, as the nightly would, and only theirs (beeline-7i6)", async () => {
-    const path = join(await mkdtemp(join(tmpdir(), "inat-check-gazetteer-")), "gazetteer.duckdb");
+    const dir = await mkdtemp(join(tmpdir(), "inat-check-gazetteer-"));
+    const path = join(dir, "gazetteer.duckdb");
     await buildTestGazetteer(path, "build-check");
-    const { app, conn } = await checkApp({ gazetteerPath: path });
+    // No tiles on disk: deriving elevations finds none and must not fail the check.
+    const { app, conn } = await checkApp({ gazetteerPath: path, demDir: join(dir, "dem") });
     expect(await count(conn, "SELECT count(*) FROM sample_locality_suggestion")).toBe(0);
     await check(app);
     // Ada's sample is named (Philomath, the test gazetteer's town nearby);
@@ -185,6 +197,17 @@ describe("Check iNaturalist now", () => {
       ),
     ).toEqual([["Philomath"]]);
     expect(await (await app.request("/")).text()).toContain(en.suggestedLocality.use);
+  });
+
+  it("leaves the deriving to a nightly that started while the check was reading", async () => {
+    const path = join(await mkdtemp(join(tmpdir(), "inat-check-gazetteer-")), "gazetteer.duckdb");
+    await buildTestGazetteer(path, "build-race");
+    let setRunning: (job: string | null) => void = () => {};
+    const made = await checkApp({ gazetteerPath: path, onFetch: () => setRunning("nightly-pipeline") });
+    setRunning = made.setRunning;
+    setRunning(null);
+    await check(made.app);
+    expect(await count(made.conn, "SELECT count(*) FROM sample_locality_suggestion")).toBe(0);
   });
 
   it("refuses a second check within the minute, and any check while the nightly reads iNaturalist", async () => {

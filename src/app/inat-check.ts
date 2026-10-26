@@ -79,6 +79,13 @@ export interface CheckOptions {
   demDir?: string;
   /** The gazetteer localities are named from; absent, none are named. */
   gazetteerPath?: string;
+  /**
+   * Whether the nightly or the weekly sweep is running now. They derive the
+   * same rows, and the check writing them meanwhile would make the job's own
+   * derive step lose a write conflict and fail the run, so the check leaves
+   * them to it.
+   */
+  jobRunning?: () => boolean;
 }
 
 export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions): Promise<CheckOutcome> {
@@ -145,6 +152,8 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
  * fail the check: a failure is logged and the nightly tries again.
  */
 async function deriveAfterCheck(conn: DuckDBConnection, opts: CheckOptions): Promise<void> {
+  // A nightly that started while this check waited for the lock does it all.
+  if (opts.jobRunning?.()) return;
   if (opts.demDir !== undefined) {
     try {
       await deriveElevations(conn, opts.demDir);

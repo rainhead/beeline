@@ -31,6 +31,13 @@ FWS="https://services.arcgis.com/QVENGdaPbd4LUkLV/ArcGIS/rest/services/FWSIntere
 for o in 0 500 1000; do
   get "$FWS?where=RSL_TYPE%3D%27NWR%27&outFields=ORGNAME,INTTYPE1&outSR=4326&f=geojson&resultOffset=$o&resultRecordCount=500&orderByFields=OBJECTID&maxAllowableOffset=0.0003&geometryPrecision=5" "nwr_$o.geojson"
 done
+# The layer held 1,455 refuge features in October 2026. Three pages cover it
+# only while the first two are full and the last is not; otherwise refuges
+# would be missing without a word, so stop and say so.
+for page in nwr_0 nwr_500; do
+  [ "$(jq '.features | length' "$page.geojson")" -eq 500 ] || { echo "$page.geojson is not a full page of 500: the service pages differently now" >&2; exit 1; }
+done
+[ "$(jq '.features | length' nwr_1000.geojson)" -lt 500 ] || { echo "more than 1,500 refuge features: add a page to this script and to ingest/gazetteer.sql" >&2; exit 1; }
 # WDFW wildlife area units.
 get "https://geodataservices.wdfw.wa.gov/arcgis/rest/services/MapServices/WildlifeAreas/MapServer/0/query?where=1%3D1&outFields=WLA_Name,WLAU_Name,AccessTypeIDDesc&outSR=4326&f=geojson&maxAllowableOffset=0.0003&geometryPrecision=5" wdfw_units.geojson
 # Washington state parks, as WA State Parks publishes them.

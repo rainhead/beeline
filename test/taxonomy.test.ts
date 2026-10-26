@@ -362,6 +362,56 @@ describe("the taxonomy pages", () => {
     expect((await app.request("/taxonomy/species/Lasioglossum")).status).toBe(404);
   });
 
+  it("downloads the whole tree as CSV, in the order the pages browse it (beeline-7dve)", async () => {
+    const app = await taxonomyApp();
+    expect(await page(app, "/taxonomy")).toContain(`<a href="/taxonomy.csv">${en.taxonomy.csv}</a>`);
+    const res = await app.request("/taxonomy.csv");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/csv");
+    expect(res.headers.get("content-disposition")).toMatch(/filename="beeline-taxonomy/);
+    const [header, ...lines] = (await res.text()).replace(/^﻿/, "").trimEnd().split("\n");
+    const columns = header!.split(",");
+    expect(columns).toEqual([
+      "taxonRank", "scientificName", "scientificNameAuthorship", "parentNameUsage",
+      "kingdom", "phylum", "class", "order", "family", "genus",
+      "acceptedNameUsage", "ecdysisTaxonID", "ecdysisStanding", "specimens", "decision", "decidedBy",
+    ]);
+    const records = lines.map((line) => Object.fromEntries(line.split(",").map((value, i) => [columns[i], value])));
+    // Every name, once, each followed by what is filed below it: ranks before
+    // names among siblings (the subgenus before the species), names A to Z.
+    expect(records.map((r) => r.scientificName)).toEqual([
+      "Animalia", "Arthropoda", "Insecta", "Hymenoptera",
+      "Andrenidae",
+      "Apidae", "Bombus", "Bombus vosnesenskii", "Brachymelecta", "Brachymelecta californica", "Xeromelecta", "Xeromelecta californica",
+      "Eurytomidae", "Rileya",
+      "Halictidae", "Lasioglossum", "Lasioglossum (Dialictus)", "Lasioglossum aspilurum", "Lasioglossum tenax", "Lasioglossum zonulum",
+    ]);
+    const byName = new Map(records.map((r) => [r.scientificName, r]));
+    // The ancestors at the main ranks, spelled out on the row.
+    expect(byName.get("Lasioglossum tenax")).toMatchObject({
+      taxonRank: "species",
+      parentNameUsage: "Lasioglossum",
+      kingdom: "Animalia",
+      order: "Hymenoptera",
+      family: "Halictidae",
+      genus: "Lasioglossum",
+      ecdysisTaxonID: "248008",
+      ecdysisStanding: "accepted",
+      // The volunteer's tenax was overruled, so nothing is determined to it.
+      specimens: "0",
+    });
+    // Counted at and below, by determination of record, as the pages count.
+    expect(byName.get("Lasioglossum")!.specimens).toBe("2");
+    expect(byName.get("Animalia")!.specimens).toBe("3");
+    expect(byName.get("Animalia")!.parentNameUsage).toBe("");
+    // A synonym names what Ecdysis files it under.
+    expect(byName.get("Xeromelecta californica")).toMatchObject({
+      ecdysisStanding: "synonym",
+      acceptedNameUsage: "Brachymelecta californica",
+    });
+    expect(byName.get("Lasioglossum aspilurum")!.ecdysisStanding).toBe("absent");
+  });
+
   it("keeps its filters in the URL", () => {
     const query = { search: "zon", standing: "synonym", decided: "moved", page: 2 } as const;
     expect(parseTaxonomyQuery(new URL(taxonomyHref(query), "http://x").searchParams)).toEqual(query);

@@ -1197,6 +1197,8 @@ export const en = {
     aboutEcdysis: "More about Ecdysis.",
     fetched: (on: Date | string) => `Checked against Ecdysis's names as of ${date(on)}.`,
     notLoaded: "Ecdysis's names have not been loaded here, so nothing on these pages says how a name stands there.",
+    /** Every name in the tree, one row each, in the order the pages browse it. */
+    csv: "Download CSV",
     /** The counts above the filter, each linking to the list it counts. */
     summary: {
       accepted: (count: number) => `${n(count)} accepted in Ecdysis`,

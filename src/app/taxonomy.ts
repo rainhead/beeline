@@ -1,6 +1,6 @@
 import { sql, type Kysely } from "kysely";
 import type { AnimalEcdysisStanding, Database, CurationKind } from "../model.js";
-import { ALL } from "./listings.js";
+import { ALL, toCsv } from "./listings.js";
 
 /**
  * The curated taxonomy, as a page anyone signed in can read (beeline-45v.5).
@@ -393,4 +393,72 @@ export async function taxonomySummary(db: Kysely<Database>): Promise<TaxonomySum
     decided: Number(decided?.n ?? 0),
     moved: Number(moved?.n ?? 0),
   };
+}
+
+/** The ranks a row of the CSV names its ancestor at, Darwin Core's higher classification. */
+const CLASSIFICATION = ["kingdom", "phylum", "class", "order", "family", "genus"] as const;
+
+/**
+ * The whole tree as CSV (beeline-7dve), for reading in a spreadsheet: one row
+ * per name, in the order the pages browse it — each name followed by what is
+ * filed below it, ranks before names among siblings, as a name's page lists
+ * its children. Darwin Core's Taxon terms where one fits, and the ancestors
+ * at the main ranks spelled out, so a spreadsheet can sort or filter by
+ * family without walking parents; Beeline's own columns follow. A name the
+ * walk down from a root never reaches — only a cycle, which nothing
+ * constrains against — is left out rather than looping.
+ */
+export async function taxonomyCsv(db: Kysely<Database>): Promise<string> {
+  const placed = await sql<{ entity_id: number; path: string } & Record<(typeof CLASSIFICATION)[number], string | null>>`
+    WITH RECURSIVE down(entity_id, path, depth, ${sql.join(CLASSIFICATION.map((rank) => sql.id(rank)))}) AS (
+      SELECT a.entity_id, concat(lpad(CAST(r.ordinal AS TEXT), 3, '0'), ' ', a.scientific_name), 0,
+             ${sql.join(CLASSIFICATION.map((rank) => sql`CASE WHEN a.rank = ${rank} THEN a.scientific_name END`))}
+      FROM animal a JOIN animal_rank r ON r.rank = a.rank
+      WHERE a.parent_id IS NULL
+      UNION ALL
+      -- chr(1) sorts below every character a name holds, so a name's children
+      -- follow it before a sibling that merely starts with the same letters.
+      SELECT a.entity_id, concat(down.path, chr(1), lpad(CAST(r.ordinal AS TEXT), 3, '0'), ' ', a.scientific_name), down.depth + 1,
+             ${sql.join(CLASSIFICATION.map((rank) => sql`CASE WHEN a.rank = ${rank} THEN a.scientific_name ELSE down.${sql.id(rank)} END`))}
+      FROM animal a JOIN animal_rank r ON r.rank = a.rank JOIN down ON a.parent_id = down.entity_id
+      WHERE down.depth < 32
+    )
+    SELECT entity_id, path, ${sql.join(CLASSIFICATION.map((rank) => sql.id(rank)))} FROM down
+  `.execute(db);
+  const decorated = new Map((await decorate(db, await rows(db).execute())).map((row) => [row.entity_id, row]));
+  const ordered = [...placed.rows].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return toCsv(
+    [
+      "taxonRank",
+      "scientificName",
+      "scientificNameAuthorship",
+      "parentNameUsage",
+      ...CLASSIFICATION,
+      "acceptedNameUsage",
+      "ecdysisTaxonID",
+      "ecdysisStanding",
+      "specimens",
+      "decision",
+      "decidedBy",
+    ],
+    ordered.flatMap((place) => {
+      const row = decorated.get(place.entity_id);
+      if (row === undefined) return [];
+      return [
+        [
+          row.rank,
+          row.scientific_name,
+          row.authorship,
+          row.parent?.scientific_name ?? null,
+          ...CLASSIFICATION.map((rank) => place[rank]),
+          row.accepted?.scientific_name ?? null,
+          row.ecdysis_tid,
+          row.standing,
+          row.specimens,
+          row.decision?.kind ?? null,
+          row.decision?.taxonomist ?? null,
+        ],
+      ];
+    }),
+  );
 }

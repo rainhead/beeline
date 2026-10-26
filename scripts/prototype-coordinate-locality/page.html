@@ -193,7 +193,10 @@ const Locality = (() => {
       const cityPop = (sample.c.map(([id]) => gaz.places.get(id)).find((pl) => pl && pl.kind === "town" && pl.name === sample.tl) ?? {}).pop ?? 0;
       if (cityPop >= p.cityDetailPop) {
         const near = sample.c.map(([id, km]) => ({ pl: gaz.places.get(id), km })).filter((c) => c.pl);
-        const hood = near.find((c) => c.pl.kind === "town" && c.pl.pop === 0 && c.km <= p.hoodKm && shortName(c.pl.name, p));
+        // GeoNames lists a neighbourhood as a section of a city (PPLX), with a
+        // population in Vancouver (Fairview, 33,620) and none in Seattle.
+        const hood = near.find((c) => c.pl.kind === "town" && (c.pl.fcode === "PPLX" || c.pl.pop === 0) && c.pl.name !== sample.tl
+          && c.km <= p.hoodKm && shortName(c.pl.name, p));
         if (hood) return { name: shortName(hood.pl.name, p), why: `neighbourhood at ${hood.km.toFixed(1)} km, in ${sample.tl}`, kind: "neighbourhood", crossCounty: false, km: 0 };
       }
     }
@@ -304,7 +307,7 @@ const BEELINE = "https://beeline.fly.dev";
 const gaz = { places: new Map(DATA.places.map((p) => [p.id, p])), features: new Map(DATA.features.map((f) => [f.id, f])), regions: new Map(DATA.regions.map((r) => [r.region_id, r])) };
 const samples = DATA.samples.r.map((r) => Object.fromEntries(DATA.samples.k.map((k, i) => [k, r[i]])));
 
-const DEFAULTS = { townLimits: true, cdps: true, minPop: 0, sizeWeight: 0.25, maxKm: 30, atKm: 1.5, unpopulatedKm: 20, farTown: true, county: "prefer", peaks: true, peakKm: 3, peakWhenTownKm: 12, refuges: true, refugeOverrides: true, stateParks: true, nationalParks: true, osmParks: true, osmParkHa: 0.5, osmParkMaxHa: 20000, cityDetailPop: 50000, hoodKm: 1.5, islands: true, smallIslandHa: 25000, usedFeatures: true, featureKm: 5, featureKmOne: 2, wildlifeAreas: true, wlaName: "unit", wlaSuffix: "WLA", offset: "none", offsetKm: 3, maxLen: 18 };
+const DEFAULTS = { townLimits: true, cdps: true, minPop: 0, sizeWeight: 0.25, maxKm: 30, atKm: 1.5, unpopulatedKm: 10, farTown: true, county: "prefer", peaks: true, peakKm: 3, peakWhenTownKm: 12, refuges: true, refugeOverrides: true, stateParks: true, nationalParks: true, osmParks: true, osmParkHa: 0.5, osmParkMaxHa: 20000, cityDetailPop: 50000, hoodKm: 1.5, islands: true, smallIslandHa: 25000, usedFeatures: true, featureKm: 5, featureKmOne: 2, wildlifeAreas: true, wlaName: "unit", wlaSuffix: "WLA", offset: "none", offsetKm: 3, maxLen: 18 };
 const params = { ...DEFAULTS };
 const CONTROLS = [
   ["townLimits", "Inside a town's limits, name the town", "bool", "Census places; BC municipalities"],
@@ -313,7 +316,7 @@ const CONTROLS = [
   ["sizeWeight", "Prefer bigger towns", "number", "0 = nearest qualifying town; 0.5 = a town 10× bigger may be ~3× farther"],
   ["maxKm", "Farthest town (km)", "number", "beyond this, no name is offered"],
   ["atKm", "Name any town this close (km)", "number", "outside town limits: a point beside a small town takes its name over a bigger one farther off"],
-  ["unpopulatedKm", "Last resort: a hamlet or named locality within (km)", "number", "Galena, BC; only when no town, peak or used feature qualifies; 20 at most"],
+  ["unpopulatedKm", "Last resort: a hamlet or named locality within (km)", "number", "Galena, BC, at 5.7 km; farther than this, a distance and direction from a real town says more (19km S Carcross, not Pennington); 20 at most"],
   ["farTown", "Failing all that, distance and direction from the nearest town, however far", "bool", "\"41km SE Silver Lk\": every sample gets a locality that prints"],
   ["county", "Same county", ["prefer", "require", "ignore"], "prefer: another county only when none is in this one"],
   ["peaks", "Name notable peaks", "bool", "notable = GeoNames knows a name for it in another language"],
@@ -353,6 +356,7 @@ for (const [key, label, type, hint] of CONTROLS) {
   ctl.append(wrap);
 }
 
+const REVIEW_IDS = new Set([44164, 45471, 90567, 111701, 45483, 76735, 79494, 49033, 50077, 50718, 54930, 51020, 55087, 92626, 108058]);
 const SCENARIOS = [
   { key: "all", label: "Everything", text: "Every sample on the page.", test: () => true },
   { key: "flagged", label: "Localities flagged now", text: "Samples whose present locality fails the label check: too long, a street address, a comma. These are what volunteers are asked to fix on iNaturalist today. Does the generated name make the fix unnecessary?", test: (s) => !!s.flag },
@@ -364,6 +368,7 @@ const SCENARIOS = [
   { key: "island", label: "Islands", text: "Points on an island, named only from places on the same island, else for the island itself: Galiano Island, never Ganges on Salt Spring. Island outlines are OpenStreetMap's, and a point within 300 m of the shore counts as on the island.", test: (s) => !!s.isl },
   { key: "park", label: "State and provincial parks", text: "Points inside a Washington state park, named '<park> SP' as staff already write Ginkgo SP and Potholes SP, or a BC provincial park, protected area or ecological reserve (Elk Falls PP). Elsewhere volunteers wrote the town: Steamboat Rock is usually 'Electric City'.", test: (s) => !!s.sp },
   { key: "feature", label: "Lakes, passes, landmarks", text: "Points near a feature that is not a town, whose name a volunteer has already written for a sample nearby: Takhlakh Lake, Cayuse Pass. These are the seed of a curated gazetteer. Watch for names a single volunteer used that nobody else would.", test: (s, r) => r.kind === "feature" },
+  { key: "review", label: "Called out in review", text: "The samples Bonnie Zand's screenshots showed (2026-10-26), with what the rule now gives each. Several are duplicates at one point, so every sample at that point is listed: Oliver; Atlin, named Carcross in another territory; Campbell River, inside Elk Falls PP; Galiano Island, named Ganges on another island; Vancouver.", test: (s) => REVIEW_IDS.has(s.i) },
   { key: "cross", label: "Named from another county", text: "The generated name is a town in a different county from the point, because none in its own county qualified. On a label this reads USA:OR:LinnCo Corvallis — is that acceptable, or should these get no name?", test: (s, r) => r.crossCounty },
   { key: "none", label: "Far from anything", text: "Nothing qualifying within reach, so the locality gives distance and direction from the nearest town with people in it, however far, so that every sample can print. Remote country, mostly: Sycan Marsh, the Pueblo Mountains, Atlin. A curated place (a preserve, a provincial park) would name most of these better.", test: (s, r) => !r.name || r.kind === "far town" },
   { key: "peak", label: "Named for a peak", text: "Points named for a nearby notable peak rather than a town. Is 'notable' right?", test: (s, r) => r.kind === "peak" },

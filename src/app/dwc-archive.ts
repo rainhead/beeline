@@ -1,5 +1,5 @@
 import { Zip, ZipDeflate } from "fflate";
-import { sql, type Kysely } from "kysely";
+import type { Kysely } from "kysely";
 import {
   dateIdentified,
   identifiedByID,
@@ -85,13 +85,12 @@ export interface ProgramArchive {
 /** Master Melittology: the program a sample belongs to when no atlas and no event claims it. */
 const CATCH_ALL_PROGRAM = "MM";
 
-/** Every program, atlases first, with the scope its archive reads. */
+/** Every program, by name (Peter, 2026-10-26), with the scope its archive reads. */
 export async function programArchives(db: Kysely<Database>): Promise<ProgramArchive[]> {
   const rows = await db
     .selectFrom("program as p")
     .leftJoin("atlas as a", "a.entity_id", "p.atlas_id")
     .select(["p.code", "p.name", "a.code as atlas_code"])
-    .orderBy(sql`p.atlas_id IS NULL`)
     .orderBy("p.name")
     .execute();
   return rows.map((r) => ({

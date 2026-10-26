@@ -1104,6 +1104,18 @@ describe("Darwin Core archives, by program and year", () => {
     expect(page).toContain("Master Melittology");
     expect(page).toContain("BLM surveys");
     expect(page).toContain("belong to them by the day they were collected on");
+    // By name, atlases and the rest together (Peter, 2026-10-26).
+    const programs = [...page.matchAll(/<h3>([^<]+)<\/h3>/g)].map(([, name]) => name);
+    expect(programs).toEqual([
+      "BLM surveys",
+      "British Columbia Bee Atlas",
+      "Idaho Bee Atlas",
+      "Master Melittology",
+      "New Mexico Bee Atlas",
+      "Oklahoma Bee Atlas",
+      "Oregon Bee Atlas",
+      "Washington Bee Atlas",
+    ]);
     // And says what it is for, and what it is not.
     expect(page).toContain("Do not upload them");
     expect(await get(app, "/specimens?scope=OBA")).not.toContain(".zip");

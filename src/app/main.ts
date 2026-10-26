@@ -9,7 +9,7 @@ import { readSampleChanges, recordSampleChanges } from "../sample-change.js";
 import { ensureSampleOverlayFile } from "../sample-overlay.js";
 import { ensureProgramContactsFile } from "../program-contacts.js";
 import { startScheduler } from "./jobs/framework.js";
-import { buildJobs } from "./jobs/registry.js";
+import { buildJobs, DEM_DIR, GAZETTEER_PATH } from "./jobs/registry.js";
 import { createApp } from "./server.js";
 import { flushErrorReporting, initErrorReporting, jobCheckIns } from "./error-reporting.js";
 import { cookieSessionResolver, type SessionResolver } from "./session.js";
@@ -166,8 +166,17 @@ const app = createApp({
   printConn,
   mintConn,
   // The dashboard's "Check iNaturalist now" reads the projects the nightly
-  // reads, with the nightly's token (beeline-yso).
-  inatCheck: config.syncProjects.length > 0 ? { projects: config.syncProjects, token: () => cachedPipelineJwt() } : undefined,
+  // reads, with the nightly's token (beeline-yso), and derives elevations and
+  // localities from the files the nightly reads (beeline-7i6).
+  inatCheck:
+    config.syncProjects.length > 0
+      ? {
+          projects: config.syncProjects,
+          token: () => cachedPipelineJwt(),
+          demDir: DEM_DIR,
+          gazetteerPath: GAZETTEER_PATH,
+        }
+      : undefined,
   printRunsDir: config.printRunsDir,
 });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

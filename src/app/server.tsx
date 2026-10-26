@@ -216,7 +216,15 @@ export interface AppDeps {
    * offered, as in tests that don't exercise it and on an instance that
    * syncs nothing.
    */
-  inatCheck?: { projects: readonly number[]; token: () => Promise<string>; fetchImpl?: typeof fetch; pageDelayMs?: number };
+  inatCheck?: {
+    projects: readonly number[];
+    token: () => Promise<string>;
+    fetchImpl?: typeof fetch;
+    pageDelayMs?: number;
+    /** Where the DEM tiles and the gazetteer are, so a check derives what the nightly would (beeline-7i6). */
+    demDir?: string;
+    gazetteerPath?: string;
+  };
   /** Where rendered label sheets are kept (config.printRunsDir). */
   printRunsDir?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
@@ -689,6 +697,8 @@ export function createApp({
         fetchImpl: inatCheck.fetchImpl,
         pageDelayMs: inatCheck.pageDelayMs,
         sampleOverlayPath: sampleOverlay,
+        demDir: inatCheck.demDir,
+        gazetteerPath: inatCheck.gazetteerPath,
       });
       // As after connecting a collector: a full pass, filed as the promotion
       // it was and with no author, since the promotion was the whole

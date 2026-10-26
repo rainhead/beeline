@@ -181,6 +181,9 @@ export async function refreshTiles(
 /** Where the gazetteer goes on the machine (docs/runbooks/deploy-fly.md); built on a workstation. */
 export const GAZETTEER_PATH = "data/gazetteer.duckdb";
 
+/** Where the DEM tiles are kept; the nightly fetches the ones it lacks (beeline-z08). */
+export const DEM_DIR = "data/dem";
+
 /**
  * A locality named from each sample's coordinates (beeline-7i6), after
  * elevations. NEVER FAILS THE RUN, for refreshTiles's reason: a suggested
@@ -246,7 +249,7 @@ export async function pipelineTail(
   );
   if (samples.baselined) parts.push("sample change log baselined");
   else if (samples.appended > 0) parts.push(`${samples.appended} sample changes recorded`);
-  const demDir = tiles.demDir ?? deploymentPath("data/dem");
+  const demDir = tiles.demDir ?? deploymentPath(DEM_DIR);
   const fetched = await ctx.step("fetch elevation tiles", () =>
     refreshTiles(ctx.conn, demDir, { signal: ctx.signal, ...tiles }),
   );

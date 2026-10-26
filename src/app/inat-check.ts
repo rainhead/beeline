@@ -1,6 +1,8 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
+import { deriveElevations } from "../derive-elevation.js";
+import { deriveLocalities } from "../derive-locality.js";
 import { promoteObservations } from "../promote-observations.js";
 import { syncINat } from "../sync-inat.js";
 import { refreshPlaces } from "./jobs/registry.js";
@@ -23,7 +25,9 @@ import { withPromotionLock } from "./promotion-lock.js";
  * Then the nightly's own promotion, whole-store, on the app's promotion
  * connection behind the lock the unclaimed screen uses, so the two never
  * share a transaction. Skips the observation_field refresh, since each sync
- * refreshed it inside its own transaction.
+ * refreshed it inside its own transaction. Then, as the nightly does next,
+ * elevations from the tiles on disk and localities named from the
+ * coordinates, for this person's samples (deriveAfterCheck).
  *
  * Each run records whose observations it read (sync_run.observer_user_id),
  * which is what keeps it from moving the nightly's watermark or proving
@@ -71,6 +75,10 @@ export interface CheckOptions {
   /** Between pages of one project; the sync's own default otherwise. */
   pageDelayMs?: number;
   now?: () => number;
+  /** The DEM tiles on disk, to derive elevations from; absent, none are derived. */
+  demDir?: string;
+  /** The gazetteer localities are named from; absent, none are named. */
+  gazetteerPath?: string;
 }
 
 export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions): Promise<CheckOutcome> {
@@ -116,13 +124,41 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
       retry: { delaysMs: [1_000, 3_000] },
     });
     const outcome = { fetched, changed, fetchMs: read - started, promoteMs: Date.now() - read };
+    const derived = Date.now();
+    await deriveAfterCheck(conn, opts);
     console.log(
       `[inat check] user ${opts.userId}: ${fetched} read, ${changed} changed; ` +
         `token ${tokenMs} ms, requests ${requestMs} ms, field refresh ${refreshMs} ms, places ${placesMs} ms, ` +
-        `promotion ${outcome.promoteMs} ms`,
+        `promotion ${outcome.promoteMs} ms, elevations and localities ${Date.now() - derived} ms`,
     );
     return outcome;
   });
+}
+
+/**
+ * What the nightly does next for a new or moved point, done here too so a
+ * sample the check just made is whole when the page comes back: an elevation
+ * from the tiles already on disk (fetching tiles stays the nightly's, being
+ * network-bound), and a locality named from the coordinates, for this
+ * person's samples only, so "Use this locality" is there at once
+ * (beeline-7i6). Neither is a QC finding or blocks printing, so neither may
+ * fail the check: a failure is logged and the nightly tries again.
+ */
+async function deriveAfterCheck(conn: DuckDBConnection, opts: CheckOptions): Promise<void> {
+  if (opts.demDir !== undefined) {
+    try {
+      await deriveElevations(conn, opts.demDir);
+    } catch (err) {
+      console.warn(`[inat check] elevations not derived: ${(err as Error).message}`);
+    }
+  }
+  if (opts.gazetteerPath !== undefined) {
+    try {
+      await deriveLocalities(conn, opts.gazetteerPath, { observerUserId: opts.userId });
+    } catch (err) {
+      console.warn(`[inat check] localities not named: ${(err as Error).message}`);
+    }
+  }
 }
 
 /** When this observer was last checked from the dashboard, if ever. */

@@ -27,7 +27,11 @@ import {
  * so a run stopped part-way keeps what it did.
  */
 
-export const GAZETTEER_ALIAS = "gazetteer";
+// The gazetteer is attached under a name of its own for each run. ATTACH
+// and DETACH act on the whole database instance, which the nightly and
+// "Check iNaturalist now" share, so with one fixed name a check finishing
+// could detach the gazetteer from under a nightly that had just started.
+let attachments = 0;
 
 export interface LocalityResult {
   /** Null when there was no gazetteer to read. */
@@ -42,6 +46,12 @@ export interface LocalityResult {
 export interface DeriveLocalityOptions {
   signal?: AbortSignal;
   batchSize?: number;
+  /**
+   * Name only the samples this iNaturalist user collected, as "Check
+   * iNaturalist now" does for the person who clicked: someone is waiting, and
+   * the rest of the store is the nightly's.
+   */
+  observerUserId?: number;
 }
 
 type Conn = DuckDBConnection;
@@ -63,9 +73,10 @@ export async function deriveLocalities(
     return result;
   }
   await loadSpatial(conn);
-  await conn.run(`ATTACH '${gazetteerPath.replaceAll("'", "''")}' AS ${GAZETTEER_ALIAS} (READ_ONLY)`);
+  const G = `gazetteer_${++attachments}`;
+  await conn.run(`ATTACH '${gazetteerPath.replaceAll("'", "''")}' AS ${G} (READ_ONLY)`);
   try {
-    const [build] = await rows<{ build_id: string }>(conn, `SELECT build_id FROM ${GAZETTEER_ALIAS}.gazetteer_build`);
+    const [build] = await rows<{ build_id: string }>(conn, `SELECT build_id FROM ${G}.gazetteer_build`);
     if (build === undefined) throw new Error(`${gazetteerPath} has no gazetteer_build row: rebuild it`);
     result.gazetteerBuild = build.build_id;
     await createMacros(conn);
@@ -74,19 +85,23 @@ export async function deriveLocalities(
       `SELECT l.sample_id, l.latitude AS lat, l.longitude AS lon
          FROM sample_location l
          LEFT JOIN sample_locality_suggestion g ON g.sample_id = l.sample_id
-        WHERE g.sample_id IS NULL OR g.gazetteer_build <> $1
-           OR abs(g.latitude - l.latitude) > 5e-5 OR abs(g.longitude - l.longitude) > 5e-5
+        WHERE (g.sample_id IS NULL OR g.gazetteer_build <> $1
+               OR abs(g.latitude - l.latitude) > 5e-5 OR abs(g.longitude - l.longitude) > 5e-5)
+          AND ($2::BIGINT IS NULL OR l.sample_id IN (
+                SELECT sc.sample_id FROM sample_collector sc
+                JOIN inat_account a ON a.person_id = sc.person_id
+                WHERE a.inat_user_id = $2::BIGINT))
         ORDER BY l.sample_id`,
-      [build.build_id],
+      [build.build_id, opts.observerUserId ?? null],
     );
     result.pending = pending.length;
     if (pending.length === 0) return result;
-    await usedFeatures(conn);
+    await usedFeatures(conn, G);
     const size = opts.batchSize ?? 5000;
     for (let i = 0; i < pending.length; i += size) {
       opts.signal?.throwIfAborted();
       const batch = pending.slice(i, i + size);
-      const evidence = await gather(conn, batch);
+      const evidence = await gather(conn, batch, G);
       const now = new Date().toISOString();
       const named: unknown[][] = [];
       for (const p of batch) {
@@ -103,7 +118,7 @@ export async function deriveLocalities(
     }
     return result;
   } finally {
-    await conn.run(`DETACH ${GAZETTEER_ALIAS}`);
+    await conn.run(`DETACH ${G}`);
   }
 }
 
@@ -135,7 +150,7 @@ async function createMacros(conn: Conn): Promise<void> {
  * of it, with how many samples and how many collectors: Takhlakh Lake. Read
  * from the whole store once a run, since any sample's locality counts.
  */
-async function usedFeatures(conn: Conn): Promise<void> {
+async function usedFeatures(conn: Conn, G: string): Promise<void> {
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE locality_used_feature AS
     SELECT f.id, any_value(f.name) AS name, any_value(f.code) AS code, any_value(f.lat) AS lat,
@@ -144,7 +159,7 @@ async function usedFeatures(conn: Conn): Promise<void> {
     FROM sample s
     JOIN sample_location l ON l.sample_id = s.entity_id
     LEFT JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
-    JOIN ${GAZETTEER_ALIAS}.feature f ON f.fold = fold_locality_name(s.locality)
+    JOIN ${G}.feature f ON f.fold = fold_locality_name(s.locality)
       AND abs(f.lat - l.latitude) < 0.1 AND abs(f.lon - l.longitude) < lon_deg(11, l.latitude)
     WHERE s.locality IS NOT NULL AND hav_km(l.latitude, l.longitude, f.lat, f.lon) <= 10
     GROUP BY f.id`);
@@ -173,6 +188,7 @@ const near = (r: PlaceRow): Near<GazetteerPlace> => ({
 async function gather(
   conn: Conn,
   batch: Array<{ sample_id: number; lat: number; lon: number }>,
+  G: string,
 ): Promise<Map<number, LocalityEvidence>> {
   await conn.run(`CREATE OR REPLACE TEMP TABLE locality_batch (sample_id INTEGER, lat DOUBLE, lon DOUBLE)`);
   const appender = await conn.createAppender("locality_batch", "main", "temp");
@@ -183,7 +199,6 @@ async function gather(
     appender.endRow();
   }
   appender.closeSync();
-  const G = GAZETTEER_ALIAS;
   const ev = new Map<number, LocalityEvidence>();
   for (const p of batch) {
     ev.set(p.sample_id, {

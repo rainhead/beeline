@@ -16,7 +16,7 @@ import { createApp } from "../src/app/server.js";
 import { attachPrivateStore } from "../src/app/db.js";
 import { promoteObservations } from "../src/promote-observations.js";
 import { syncINat } from "../src/sync-inat.js";
-import { createMemoryDb, rows, scratchPaths } from "./helpers.js";
+import { buildTestGazetteer, createMemoryDb, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -66,7 +66,7 @@ function fakeInat(served: () => Record<string, unknown>[] | null, asked: URL[]):
   }) as typeof fetch;
 }
 
-async function checkApp(opts: { running?: string; signedIn?: "ada" | "carl" } = {}) {
+async function checkApp(opts: { running?: string; signedIn?: "ada" | "carl"; gazetteerPath?: string } = {}) {
   const { instance, conn } = await createMemoryDb();
   await attachPrivateStore(instance, { path: ":memory:", key: null });
   [[seasonDay]] = (await rows(conn, "SELECT CAST(active_since + 30 AS VARCHAR) FROM season")) as [[string]];
@@ -114,6 +114,7 @@ async function checkApp(opts: { running?: string; signedIn?: "ada" | "carl" } = 
       token: async () => "jwt",
       fetchImpl: fakeInat(() => served, asked),
       pageDelayMs: 0,
+      gazetteerPath: opts.gazetteerPath,
     },
   });
   // What the nightly already made of the observations: Ada's sample 1 with no
@@ -165,6 +166,25 @@ describe("Check iNaturalist now", () => {
       ["18521", String(ADA), seasonStart, null],
       ["166376", String(ADA), seasonStart, null],
     ]);
+  });
+
+  it("names the checked person's localities from their coordinates, as the nightly would, and only theirs (beeline-7i6)", async () => {
+    const path = join(await mkdtemp(join(tmpdir(), "inat-check-gazetteer-")), "gazetteer.duckdb");
+    await buildTestGazetteer(path, "build-check");
+    const { app, conn } = await checkApp({ gazetteerPath: path });
+    expect(await count(conn, "SELECT count(*) FROM sample_locality_suggestion")).toBe(0);
+    await check(app);
+    // Ada's sample is named (Philomath, the test gazetteer's town nearby);
+    // Bo's, at the same point, waits for the nightly.
+    expect(
+      await rows(
+        conn,
+        `SELECT g.locality FROM sample_locality_suggestion g
+         JOIN sample_collector sc ON sc.sample_id = g.sample_id
+         JOIN inat_account a ON a.person_id = sc.person_id ORDER BY a.inat_user_id`,
+      ),
+    ).toEqual([["Philomath"]]);
+    expect(await (await app.request("/")).text()).toContain(en.suggestedLocality.use);
   });
 
   it("refuses a second check within the minute, and any check while the nightly reads iNaturalist", async () => {

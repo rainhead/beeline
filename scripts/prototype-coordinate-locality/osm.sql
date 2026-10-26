@@ -1,20 +1,24 @@
 -- PROTOTYPE (beeline-7i6) — throwaway. Named parks and nature reserves from
 -- an OpenStreetMap extract (data under the ODbL), for the regional and
--- municipal parks no government layer gathers: Uplands Park, Thetis Lake.
+-- municipal parks no government layer gathers: Uplands Park, Thetis Lake;
+-- and named islands (place=island or islet), so a point on Galiano Island is
+-- not named for Ganges, a town on another island.
 -- Outlines are assembled here from the raw ways and relations, since GDAL's
 -- OSM reader stops early inside DuckDB. __PBF__ and __REGION__ are
 -- substituted by build.sh, once per extract.
 LOAD spatial;
-CREATE TABLE IF NOT EXISTS osm_park (region TEXT, osm_id TEXT, name TEXT, leisure TEXT, boundary TEXT, area_ha DOUBLE, geom GEOMETRY, protect_class TEXT);
+CREATE TABLE IF NOT EXISTS osm_park (region TEXT, osm_id TEXT, name TEXT, leisure TEXT, boundary TEXT, area_ha DOUBLE, geom GEOMETRY, protect_class TEXT, place TEXT);
 DELETE FROM osm_park WHERE region = '__REGION__';
 
 CREATE TEMP TABLE want AS
 SELECT kind, id, element_at(tags, 'name')[1] AS name, element_at(tags, 'leisure')[1] AS leisure,
-       element_at(tags, 'boundary')[1] AS boundary, element_at(tags, 'protect_class')[1] AS protect_class, refs, ref_roles, ref_types
+       element_at(tags, 'boundary')[1] AS boundary, element_at(tags, 'protect_class')[1] AS protect_class,
+       element_at(tags, 'place')[1] AS place, refs, ref_roles, ref_types
 FROM ST_ReadOSM('__PBF__')
 WHERE kind IN ('way', 'relation') AND element_at(tags, 'name')[1] IS NOT NULL
   AND (element_at(tags, 'leisure')[1] IN ('park', 'nature_reserve')
-       OR element_at(tags, 'boundary')[1] IN ('protected_area', 'national_park'))
+       OR element_at(tags, 'boundary')[1] IN ('protected_area', 'national_park')
+       OR element_at(tags, 'place')[1] IN ('island', 'islet'))
   -- OpenStreetMap tags First Nations reserves as protected areas (class 24),
   -- and an Indian reserve is no park to name on a label.
   AND coalesce(element_at(tags, 'protect_class')[1], '') <> '24'
@@ -44,10 +48,10 @@ GROUP BY wn.way_id HAVING count(*) >= 2;
 
 INSERT INTO osm_park
 SELECT '__REGION__', concat(owner_kind, '/', owner_id), name, leisure, boundary,
-       ST_Area_Spheroid(ST_FlipCoordinates(g)) / 10000, g, protect_class
+       ST_Area_Spheroid(ST_FlipCoordinates(g)) / 10000, g, protect_class, place
 FROM (
   SELECT p.owner_kind, p.owner_id, any_value(w.name) AS name, any_value(w.leisure) AS leisure,
-         any_value(w.boundary) AS boundary, any_value(w.protect_class) AS protect_class, ST_BuildArea(ST_Collect(list(l.geom))) AS g
+         any_value(w.boundary) AS boundary, any_value(w.protect_class) AS protect_class, any_value(w.place) AS place, ST_BuildArea(ST_Collect(list(l.geom))) AS g
   FROM part p
   JOIN want w ON w.kind = p.owner_kind AND w.id = p.owner_id
   JOIN way_line l ON l.way_id = p.way_id

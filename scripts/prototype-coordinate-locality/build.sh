@@ -18,7 +18,7 @@ for PBF in "$OUT"/downloads/*-latest.osm.pbf; do
     sed -e "s#__PBF__#$PBF#g" -e "s#__REGION__#$REGION#g" "$HERE/osm.sql" | duckdb "$OUT/osm-parks.duckdb"
   fi
 done
-duckdb "$OUT/osm-parks.duckdb" -c "CREATE TABLE IF NOT EXISTS osm_park (region TEXT, osm_id TEXT, name TEXT, leisure TEXT, boundary TEXT, area_ha DOUBLE, geom GEOMETRY, protect_class TEXT)" >/dev/null
+duckdb "$OUT/osm-parks.duckdb" -c "CREATE TABLE IF NOT EXISTS osm_park (region TEXT, osm_id TEXT, name TEXT, leisure TEXT, boundary TEXT, area_ha DOUBLE, geom GEOMETRY, protect_class TEXT, place TEXT)" >/dev/null
 rm -f "$OUT/gazetteer.duckdb"
 # BEELINE_PROTOTYPE_COLLECTOR="Peter Abrahamsen" adds every sample of that
 # collector to the local page.

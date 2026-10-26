@@ -88,8 +88,7 @@ FROM read_csv(['__DL__/us/US.txt', '__DL__/ca/CA.txt'], delim = '\t', header = f
              'elev': 'VARCHAR', 'dem': 'VARCHAR', 'tz': 'VARCHAR', 'mod': 'VARCHAR'})
 -- Abandoned, historical, religious and neighbourhood entries left out.
 WHERE (fclass = 'P' AND fcode IN ('PPL', 'PPLA', 'PPLA2', 'PPLA3', 'PPLA4', 'PPLC', 'PPLL', 'PPLS', 'PPLX'))
-   -- City parks, for points inside a city: Jefferson Park, Seattle.
-   OR (fclass = 'L' AND fcode = 'PRK')
+
    -- A peak with a name in some other language is a stand-in for "notable":
    -- GeoNames carries no prominence.
    OR (fclass = 'T' AND fcode IN ('MT', 'PK', 'PKS', 'MTS', 'BUTE', 'HLL') AND coalesce(alt, '') <> '')
@@ -136,6 +135,32 @@ CREATE TABLE base_nps AS
 SELECT b.sample_id, any_value(n.unit) AS unit
 FROM base b JOIN nps_unit n ON ST_Contains(n.geom, ST_Point(b.lon, b.lat)) GROUP BY b.sample_id;
 
+-- Islands, from OpenStreetMap's outlines: a point on one is named only from
+-- places on the same island (Galiano Island, not Ganges on Salt Spring). A
+-- point on a beach can fall just outside its island's outline, so the
+-- nearest within about 300 m counts, as the Salish Sea basemap found for
+-- Cattle Point (its decision 018).
+-- Islets under 100 ha are left out: most are in rivers (Norwood Island in
+-- the Willamette, Lava Island in the Deschutes), where a point on the bank
+-- would otherwise be given to them.
+CREATE TABLE island AS
+SELECT osm_id, name, area_ha, geom FROM osm.osm_park WHERE place IS NOT NULL AND area_ha >= 100;
+
+-- The island a point is inside (the smallest, for an islet in a lake on an
+-- island), else the nearest whose shore is within the allowance, so a point
+-- on Lopez's beach is not given to an islet just offshore.
+CREATE TABLE base_island AS
+SELECT sample_id,
+       arg_min(osm_id, CASE WHEN inside THEN area_ha ELSE 1e12 + dist END) AS island_id,
+       arg_min(name, CASE WHEN inside THEN area_ha ELSE 1e12 + dist END) AS island_name,
+       arg_min(area_ha, CASE WHEN inside THEN area_ha ELSE 1e12 + dist END) AS island_ha
+FROM (
+  SELECT b.sample_id, i.osm_id, i.name, i.area_ha, ST_Contains(i.geom, ST_Point(b.lon, b.lat)) AS inside,
+         ST_Distance(i.geom, ST_Point(b.lon, b.lat)) AS dist
+  FROM base b JOIN island i ON ST_DWithin(i.geom, ST_Point(b.lon, b.lat), 0.003)
+)
+GROUP BY sample_id;
+
 -- The named OpenStreetMap parks and reserves a point is in, smallest first,
 -- so a city park inside a regional park keeps its own name. National forests
 -- and grasslands (protection class 6) are left out: they cover most of the
@@ -143,7 +168,7 @@ FROM base b JOIN nps_unit n ON ST_Contains(n.geom, ST_Point(b.lon, b.lat)) GROUP
 CREATE TABLE base_osm AS
 SELECT b.sample_id, list([o.name, round(o.area_ha, 1)::VARCHAR] ORDER BY o.area_ha)[1:3] AS parks
 FROM base b JOIN osm.osm_park o ON ST_Contains(o.geom, ST_Point(b.lon, b.lat))
-WHERE coalesce(o.protect_class, '') <> '6'
+WHERE coalesce(o.protect_class, '') <> '6' AND o.place IS NULL
 GROUP BY b.sample_id;
 
 CREATE TABLE base_sp AS
@@ -168,7 +193,11 @@ WHERE a1 IN ('WA', 'OR', 'ID') AND fclass <> 'P'
   -- long, and GeoNames places each at one point (a stream at its mouth), so
   -- being near that point says little: "Deschutes River" is no landmark.
   AND concat(fclass, '.', fcode) NOT IN ('H.STM', 'H.STMI', 'H.STMS', 'H.STMX', 'H.CNL', 'T.VAL', 'T.VALS',
-                                         'T.RDGE', 'T.MTS', 'T.PLN', 'R.TRL');
+                                         'T.RDGE', 'T.MTS', 'T.PLN', 'R.TRL',
+  -- A park or reserve is named only when a point is inside it (Bonnie Zand,
+  -- 2026-10-26: volunteers collect beside parks they have no permit for),
+  -- which its outline says and a point near its middle cannot.
+                                         'L.PRK', 'L.RES', 'L.RESN', 'L.RESW', 'L.RESF');
 CREATE TABLE used_feature AS
 SELECT g.id, any_value(g.name) AS name, any_value(concat(g.fclass, '.', coalesce(g.fcode, ''))) AS code, any_value(g.state) AS state,
        any_value(g.lat) AS lat, any_value(g.lon) AS lon,
@@ -224,24 +253,47 @@ WHERE (kind = 'town' AND pop > 0 AND km <= 50) OR (kind IN ('town', 'locality') 
 QUALIFY row_number() OVER (PARTITION BY sample_id, kind = 'town' AND pop > 0, kind ORDER BY km)
         <= CASE WHEN kind = 'town' AND pop > 0 THEN 20 ELSE 8 END;
 
--- The nearest town with people in it, however far, for a point nothing
--- nearer names: a locality must exist for the label to print.
+-- The nearest towns with people in them, however far, for a point nothing
+-- nearer names: a locality must exist for the label to print. Kept for every
+-- sample, since a town within reach may be across a state or provincial line
+-- the rule will not name it over (McDermitt, Nevada, beside Oregon).
 CREATE TABLE far_town AS
 SELECT s.sample_id, p.id AS place_id, round(hav_km(s.lat, s.lon, p.lat, p.lon), 1) AS km,
        round(bearing_deg(p.lat, p.lon, s.lat, s.lon)) AS brg
 FROM sel s JOIN place p ON p.kind = 'town' AND p.pop > 0
   AND p.lat BETWEEN s.lat - 1.5 AND s.lat + 1.5 AND p.lon BETWEEN s.lon - 2 AND s.lon + 2
-WHERE NOT EXISTS (SELECT 1 FROM cand c JOIN place q ON q.id = c.place_id
-                  WHERE c.sample_id = s.sample_id AND q.kind = 'town' AND q.pop > 0 AND c.km <= 30)
-QUALIFY row_number() OVER (PARTITION BY s.sample_id ORDER BY km) <= 3;
+QUALIFY row_number() OVER (PARTITION BY s.sample_id ORDER BY km) <= 3
+UNION
+-- and the nearest in the point's own state or province, however far, which
+-- the three nearest may all fail to include (Atlin's are in Alaska).
+SELECT s.sample_id, p.id, round(hav_km(s.lat, s.lon, p.lat, p.lon), 1), round(bearing_deg(p.lat, p.lon, s.lat, s.lon))
+FROM sel s
+JOIN sel_region sr ON sr.sample_id = s.sample_id
+JOIN place p ON p.kind = 'town' AND p.pop > 0
+  AND p.lat BETWEEN s.lat - 3 AND s.lat + 3 AND p.lon BETWEEN s.lon - 4 AND s.lon + 4
+JOIN place_region pr ON pr.id = p.id
+  AND split_part(pr.region_id, '-', 1) = split_part(sr.region_id, '-', 1)
+  AND split_part(pr.region_id, '-', 2) = split_part(sr.region_id, '-', 2)
+QUALIFY row_number() OVER (PARTITION BY s.sample_id ORDER BY hav_km(s.lat, s.lon, p.lat, p.lon)) = 1;
+
+CREATE TABLE place_island AS
+SELECT p.id, arg_min(i.osm_id, i.area_ha) AS island_id
+FROM place p JOIN island i ON ST_DWithin(i.geom, p.pt, 0.003)
+WHERE p.id IN (SELECT place_id FROM cand UNION SELECT place_id FROM far_town)
+GROUP BY p.id;
+CREATE TABLE feature_island AS
+SELECT u.id, arg_min(i.osm_id, i.area_ha) AS island_id
+FROM used_feature u JOIN island i ON ST_DWithin(i.geom, ST_Point(u.lon, u.lat), 0.003)
+GROUP BY u.id;
 
 COPY (
-  SELECT p.id, p.name, p.kind, p.fcode, p.pop, p.elev, pr.region_id
-  FROM place p LEFT JOIN place_region pr USING (id)
+  SELECT p.id, p.name, p.kind, p.fcode, p.pop, p.elev, pr.region_id, pi.island_id AS island
+  FROM place p LEFT JOIN place_region pr USING (id) LEFT JOIN place_island pi USING (id)
   WHERE p.id IN (SELECT place_id FROM cand UNION SELECT place_id FROM far_town)
 ) TO '__OUT__/places.json' (FORMAT json, ARRAY true);
 
-COPY (SELECT id, name, code, samples, collectors FROM used_feature) TO '__OUT__/features.json' (FORMAT json, ARRAY true);
+COPY (SELECT u.id, u.name, u.code, u.samples, u.collectors, fi.island_id AS island
+      FROM used_feature u LEFT JOIN feature_island fi USING (id)) TO '__OUT__/features.json' (FORMAT json, ARRAY true);
 
 COPY (
   SELECT region_id, country, state, county FROM region
@@ -253,6 +305,7 @@ COPY (
   SELECT s.sample_id AS i, round(s.lat, 4) AS lat, round(s.lon, 4) AS lon, s.unc, s.locality AS loc,
          s.store_county AS sc, s.store_state AS ss, s.season, s.open_season AS open, s.printed,
          s.flag, s.collector AS who, s.logins AS inat, s.extra, s.refuge AS ref, s.state_park AS sp, s.nps, s.osm_parks AS op,
+         (SELECT [bi.island_id, bi.island_name, round(bi.island_ha)::VARCHAR] FROM base_island bi WHERE bi.sample_id = s.sample_id) AS isl,
          (SELECT list([ft.place_id, ft.km, ft.brg] ORDER BY ft.km) FROM far_town ft WHERE ft.sample_id = s.sample_id) AS nt,
          (SELECT list([u.id, round(hav_km(s.lat, s.lon, u.lat, u.lon), 2)] ORDER BY hav_km(s.lat, s.lon, u.lat, u.lon))
           FROM used_feature u WHERE abs(u.lat - s.lat) < 0.05 AND abs(u.lon - s.lon) < 0.07

@@ -14,6 +14,7 @@ import {
   type LicenseId,
 } from "../program-governance.js";
 import { identificationsOf, programArchives, specimenArchiveStream } from "./dwc-archive.js";
+import { checklistArchive, programChecklist } from "./dwc-checklist.js";
 import { EMPTY_QUERY, listSpecimens, OUTSIDE, STAFF_READER } from "./listings.js";
 
 /**
@@ -33,6 +34,9 @@ import { EMPTY_QUERY, listSpecimens, OUTSIDE, STAFF_READER } from "./listings.js
  * force goes into `meta.xml`, and the manifest records what the year still
  * lacks. An archive for a program-year that no longer has specimens is
  * removed at the next run.
+ *
+ * Beside them, each program with specimens gets one checklist covering every
+ * year (src/app/dwc-checklist.ts, beeline-024a).
  */
 
 export interface ArchiveEntry {
@@ -52,13 +56,25 @@ export interface ArchiveEntry {
   bytes: number;
 }
 
+/** A program's checklist, every year at once. */
+export interface ChecklistEntry {
+  program: string;
+  /** Names on it, ancestors included. */
+  taxa: number;
+  file: string;
+  bytes: number;
+}
+
 export interface ArchiveManifest {
   writtenAt: string;
   entries: ArchiveEntry[];
+  /** Absent from a manifest written before there were checklists. */
+  checklists?: ChecklistEntry[];
 }
 
 export const archiveDir = (exportsDir: string) => join(exportsDir, "dwca");
 export const archiveFileName = (program: string, year: number) => `${program}-${year}.zip`;
+export const checklistFileName = (program: string) => `${program}-checklist.zip`;
 const MANIFEST = "manifest.json";
 
 /** Specimens per program and year, by the same scopes and the same year the archives read. */
@@ -114,10 +130,27 @@ export async function writeProgramArchives(
   const counts = await countsByYear(db);
   const step = opts.step ?? ((_label, fn) => fn());
   const entries: ArchiveEntry[] = [];
+  const checklists: ChecklistEntry[] = [];
   for (const program of await programArchives(db)) {
     if (program.scope === null) continue;
     const scope = program.scope;
     const years = [...(counts.get(scope) ?? new Map<number, number>()).entries()].sort(([a], [b]) => a - b);
+    if (years.length > 0) {
+      const file = checklistFileName(program.code);
+      const taxa = await step(`${program.code} checklist`, async () => {
+        const rows = await programChecklist(db, scope);
+        const tmp = join(dir, `${file}.tmp`);
+        try {
+          await writeFile(tmp, checklistArchive(rows));
+          await rename(tmp, join(dir, file));
+        } catch (err) {
+          await rm(tmp, { force: true });
+          throw err;
+        }
+        return rows.length;
+      });
+      checklists.push({ program: program.code, taxa, file, bytes: (await stat(join(dir, file))).size });
+    }
     for (const [year, specimens] of years) {
       const { license, policy } = governanceFor(governance, program.code, year);
       const file = archiveFileName(program.code, year);
@@ -148,11 +181,11 @@ export async function writeProgramArchives(
     }
   }
   // Whatever is in the directory and was not written tonight is removed.
-  const written = new Set(entries.map((e) => e.file));
+  const written = new Set([...entries, ...checklists].map((e) => e.file));
   for (const name of await readdir(dir)) {
     if (name.endsWith(".zip") && !written.has(name)) await rm(join(dir, name), { force: true });
   }
-  const manifest: ArchiveManifest = { writtenAt: (opts.now ?? new Date()).toISOString(), entries };
+  const manifest: ArchiveManifest = { writtenAt: (opts.now ?? new Date()).toISOString(), entries, checklists };
   const tmp = join(dir, `${MANIFEST}.tmp`);
   await writeFile(tmp, JSON.stringify(manifest, null, 2));
   await rename(tmp, join(dir, MANIFEST));
@@ -178,5 +211,5 @@ export async function readArchiveManifest(exportsDir: string): Promise<ArchiveMa
 export function describeManifest(m: ArchiveManifest): string {
   const noLicense = m.entries.filter((e) => e.license === null).length;
   const noPolicy = m.entries.filter((e) => !e.policy).length;
-  return `${m.entries.length} program-years written (${m.entries.reduce((n, e) => n + e.specimens, 0)} specimens); ${noLicense} without a licence, ${noPolicy} without a privacy policy`;
+  return `${m.entries.length} program-years written (${m.entries.reduce((n, e) => n + e.specimens, 0)} specimens) and ${(m.checklists ?? []).length} checklists; ${noLicense} without a licence, ${noPolicy} without a privacy policy`;
 }

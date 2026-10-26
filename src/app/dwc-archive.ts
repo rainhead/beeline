@@ -100,7 +100,7 @@ export async function programArchives(db: Kysely<Database>): Promise<ProgramArch
   }));
 }
 
-const DWC = "http://rs.tdwg.org/dwc/terms/";
+export const DWC = "http://rs.tdwg.org/dwc/terms/";
 
 /** One determination, as the Identification extension carries it. */
 export interface IdentificationRow {
@@ -215,9 +215,9 @@ export function tabCell(value: unknown): string {
   return text.replace(/[\t\r\n]+/g, " ");
 }
 
-const tabLine = (row: readonly unknown[]) => `${row.map(tabCell).join("\t")}\n`;
+export const tabLine = (row: readonly unknown[]) => `${row.map(tabCell).join("\t")}\n`;
 
-const fields = (terms: readonly string[]) =>
+export const fields = (terms: readonly string[]) =>
   terms.map((term, i) => `    <field index="${i + 1}" term="${term}"/>`).join("\n");
 
 const xmlAttr = (v: string) => v.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");

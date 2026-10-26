@@ -1121,6 +1121,71 @@ describe("Darwin Core archives, by program and year", () => {
     expect(await get(app, "/specimens?scope=OBA")).not.toContain(".zip");
   });
 
+  it("writes each program a checklist of the names its specimens are identified to (beeline-024a)", async () => {
+    const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
+    const { app, db, conn } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
+    // OBA00002 had no identification; a volunteer names it Andrena, so the
+    // Oregon list holds a name no expert has given there.
+    await conn.run(
+      `INSERT INTO determination (specimen_id, animal_id, is_expert, channel, determiner_name, verbatim_identification)
+       SELECT sp.entity_id, an.entity_id, false, 'in_app', 'A Volunteer', 'Andrena'
+       FROM specimen sp, animal an
+       WHERE sp.field_number = 'OBA00002' AND an.scientific_name = 'Andrena'`,
+    );
+    const manifest = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
+    expect(manifest.checklists).toContainEqual(expect.objectContaining({ program: "OBA", taxa: 4, file: "OBA-checklist.zip" }));
+    // A program with no specimens — Master Melittology, here — has nothing to
+    // list, and the surveys have no scope at all.
+    expect(manifest.checklists!.map((c) => c.program).sort()).toEqual(["OBA", "WaBA"]);
+
+    const res = await app.request("/exports/dwca/OBA-checklist.zip");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain(`filename="beeline-OBA-checklist-dwca.zip"`);
+    const files = unpack(new Uint8Array(await res.arrayBuffer()));
+    expect(Object.keys(files)).toEqual(["meta.xml", "taxon.txt"]);
+    const meta = files["meta.xml"]!;
+    expect(meta).toContain(`rowType="http://rs.tdwg.org/dwc/terms/Taxon"`);
+    expect(meta).not.toContain("terms/Occurrence");
+    const [header, ...lines] = table(files["taxon.txt"]!);
+    for (const term of ["taxonID", "parentNameUsageID", "scientificName", "taxonRank", "family", "genus"]) {
+      expect(meta).toContain(`<field index="${header!.indexOf(term)}" term="http://rs.tdwg.org/dwc/terms/${term}"/>`);
+    }
+    // Beeline's own columns are in the file and declared as nothing.
+    expect(header).toContain("specimensByExperts");
+    expect(meta).not.toContain("terms/specimensByExperts");
+
+    const rows = lines.map((l) => Object.fromEntries(l.map((v, i) => [header![i], v])));
+    // Each name with its ancestors, in tree order: Bombus vosnesenskii under
+    // Apidae and Bombus, then Andrena, a root in this fixture and a genus,
+    // which ranks after a family.
+    expect(rows.map((r) => r.scientificName)).toEqual(["Apidae", "Bombus", "Bombus vosnesenskii", "Andrena"]);
+    const byName = new Map(rows.map((r) => [r.scientificName, r]));
+    // A parent is named by the id its own row carries.
+    expect(byName.get("Bombus vosnesenskii")!.parentNameUsageID).toBe(byName.get("Bombus")!.taxonID);
+    expect(byName.get("Apidae")!.parentNameUsageID).toBe("");
+    expect(byName.get("Bombus vosnesenskii")).toMatchObject({
+      scientificNameAuthorship: "Radoszkowski, 1862",
+      taxonRank: "species",
+      family: "Apidae",
+      genus: "Bombus",
+      specimens: "1",
+      specimensByExperts: "1",
+      firstYear: "2026",
+      lastYear: "2026",
+    });
+    expect(byName.get("Andrena")).toMatchObject({ specimens: "1", specimensByExperts: "0" });
+    // Washington's list is its own specimens' names, not Oregon's.
+    const waba = table(unpack(new Uint8Array(await (await app.request("/exports/dwca/WaBA-checklist.zip")).arrayBuffer()))["taxon.txt"]!);
+    expect(waba.slice(1).map((r) => r[header!.indexOf("scientificName")])).toEqual(["Andrena"]);
+
+    // On the page, with each program's years.
+    const page = await get(app, "/exports");
+    expect(page).toContain(en.exports.checklist(4));
+    expect(page).toContain(`href="/exports/dwca/OBA-checklist.zip"`);
+    // Only a file the manifest names is served.
+    expect((await app.request("/exports/dwca/BLM-checklist.zip")).status).toBe(404);
+  });
+
   it("is refused to a volunteer, and an archive nobody wrote is not found", async () => {
     const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
     const { app: volunteer, db } = await listingApp("alice", { dir: fx.dir, governance: fx.governance });

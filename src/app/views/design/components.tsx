@@ -36,9 +36,7 @@ export function DesignComponents({ m }: { m: Messages }) {
         Everything on this page is a plain server-rendered function — none of them needs client-side behaviour, so none
         of them is an island. An island is for behaviour a page genuinely cannot have without scripting, and the
         product currently has exactly one: dismissal for the header dropdowns, which work without it. Reach for a
-        component first, semantic HTML second, and an island only when neither will do. The copy button beside a
-        suggested locality is the same kind of script: the button stays hidden until the script finds it, and the
-        name it copies can be selected without it.
+        component first, semantic HTML second, and an island only when neither will do.
       </p>
 
       <h2>Page header</h2>
@@ -62,17 +60,30 @@ export function DesignComponents({ m }: { m: Messages }) {
 
       <h2>Suggested locality</h2>
       <p>
-        A locality named from the sample's coordinates, with why it was chosen and a button that copies it, so a
-        volunteer pastes it into the observation on iNaturalist. It sits under the place on a sample page and on the
-        front page's locality flags. The button appears only where the browser lets a page copy.
+        A locality named from the sample's coordinates, with why it was chosen and, for the sample's collector, a
+        button that makes it the sample's locality. It sits under the place on a sample page and on the front page's
+        locality flags. In order: offered, already in use, on a sample whose labels have printed, and shown to someone
+        who may not change the sample. Each sits in a <code>div</code>, since a paragraph cannot hold the button's
+        form.
       </p>
       <Specimen>
-        <p>
-          <SuggestedLocality m={m} locality="Finley NWR" basis="refuge" />
-        </p>
-        <p>
-          <SuggestedLocality m={m} locality="51km W Hines" basis="distance" />
-        </p>
+        <div class="suggested-locality-line">
+          <SuggestedLocality
+            m={m}
+            locality="Finley NWR"
+            basis="refuge"
+            action={{ kind: "use", action: "/design/components", returnTo: "sample" }}
+          />
+        </div>
+        <div class="suggested-locality-line">
+          <SuggestedLocality m={m} locality="Corvallis" basis="town_limits" action={{ kind: "inUse" }} />
+        </div>
+        <div class="suggested-locality-line">
+          <SuggestedLocality m={m} locality="51km W Hines" basis="distance" action={{ kind: "printed" }} />
+        </div>
+        <div class="suggested-locality-line">
+          <SuggestedLocality m={m} locality="Takhlakh Lake" basis="feature" action={{ kind: "none" }} />
+        </div>
       </Specimen>
 
       <h2>Absence</h2>

@@ -11,6 +11,7 @@ import {
   formatPoint,
   observationRef,
   parsePoint,
+  readSampleOverlay,
   sampleValueProblem,
   upsertSampleOverlay,
   type SampleOverlayRow,
@@ -185,4 +186,32 @@ export async function setStaffCoordinates(
     if (first !== undefined) return { outcome: "unresolved", reason: first.reason };
   }
   return { outcome: input.remove ? "removed" : "saved" };
+}
+
+/**
+ * A collector adopting the locality Beeline names from the sample's
+ * coordinates (beeline-7i6), in one click: the staff locality write above,
+ * credited to the volunteer, with the suggestion as the value. So it lands
+ * where a staff-set locality does and behaves the same way: applied at once,
+ * standing over the observation on every sync until removed, and replayed
+ * onto a rebuilt store. The name is fixed once adopted; a later gazetteer
+ * that names the point differently changes the suggestion, not this.
+ */
+export async function adoptSuggestedLocality(
+  deps: StaffLocalityDeps,
+  sample: StaffLocalityTarget,
+  input: { suggestion: string; reason: string; author: string },
+): Promise<StaffLocalityResult> {
+  return setStaffLocality(deps, sample, { value: input.suggestion, remove: false, note: input.reason, author: input.author });
+}
+
+/**
+ * Who set the locality standing over this observation, by iNat login, or
+ * null where none stands. A volunteer may take back a locality they adopted
+ * themselves, and only that one: one a staff member set is a staff decision.
+ */
+export async function standingLocalityAuthor(sampleOverlayPath: string, inatObservationId: bigint): Promise<string | null> {
+  const ref = observationRef(inatObservationId);
+  const row = (await readSampleOverlay(sampleOverlayPath)).find((r) => r.sample_ref === ref && r.field === "locality");
+  return row === undefined || row.value === "" ? null : row.author;
 }

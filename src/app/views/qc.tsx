@@ -1,5 +1,5 @@
 import { EMPTY_QUERY, listingHref, MINE } from "../listings.js";
-import { sampleHref } from "../record.js";
+import { sampleHref, suggestedLocalityHref } from "../record.js";
 import { determineHref } from "./determine.js";
 import type { Geoprivacy, QcSeverity } from "../../model.js";
 import type { LocalityBasis } from "../../locality-rule.js";
@@ -374,6 +374,11 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
                     m={m}
                     locality={row.locality_suggestion.locality}
                     basis={row.locality_suggestion.basis}
+                    action={
+                      row.sample_id === null
+                        ? { kind: "none" }
+                        : { kind: "use", action: suggestedLocalityHref(row.sample_id), returnTo: "home" }
+                    }
                   />
                 </>
               )}

@@ -6,4 +6,4 @@ Part of Beeline's architecture notes; the index is in [AGENTS.md](../../AGENTS.m
 
 A staff hold (beeline-plu) is one more flag on the page, `staff_hold`, with no column of its own: its note says what is wrong. A flag staff have waived (beeline-1kb.9) is not on the page at all, because the page reads `sample_qc_finding`, which leaves it out while it says what it said when waived.
 
-A locality flag — `locality_format`, or a required field missing that is the locality — carries on its line the locality Beeline names from the sample's coordinates, with a button that copies it, so the volunteer pastes that into the observation rather than guessing ([Localities from coordinates](localities-from-coordinates.md), beeline-7i6).
+A locality flag — `locality_format`, or a required field missing that is the locality — carries on its line the locality Beeline names from the sample's coordinates, with a button that makes it the sample's locality in one click, rather than the volunteer guessing at a name on iNaturalist ([Localities from coordinates](localities-from-coordinates.md), beeline-7i6).

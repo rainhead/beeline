@@ -116,7 +116,12 @@ import { DesignImagery } from "./views/design/imagery.js";
 import { MessagesProof } from "./views/design/messages-proof.js";
 import { QcProof } from "./views/design/qc-proof.js";
 import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
-import { setStaffCoordinates, setStaffLocality } from "./locality-override.js";
+import {
+  adoptSuggestedLocality,
+  setStaffCoordinates,
+  setStaffLocality,
+  standingLocalityAuthor,
+} from "./locality-override.js";
 import { setHold, setWaiver, type QcDecisionResult } from "./qc-decisions.js";
 import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
 import { deploymentPath } from "../deployment-path.js";
@@ -152,6 +157,7 @@ import {
   recordFindings,
   recordQcDecisions,
   sampleChangeHistory,
+  sampleHref,
   visibleFindings,
   visibleHistory,
 } from "./record.js";
@@ -841,6 +847,11 @@ export function createApp({
       listSampleSpecimens(db, sample.sample_id, parsePage(c.req.query("page"))),
       sampleChangeHistory(db, samplePaths.log, sample.sample_id).then((h) => visibleHistory(h, sample)),
     ]);
+    // A locality this person adopted is theirs to take back (beeline-7i6).
+    const ownsLocality =
+      sample.locality_override !== null &&
+      sample.inat_observation_id !== null &&
+      (await standingLocalityAuthor(sampleOverlay, sample.inat_observation_id)) === c.get("session").login;
     return c.html(
       await page(
         c,
@@ -854,6 +865,7 @@ export function createApp({
           specimens={specimens}
           history={history}
           admin={c.get("admin")}
+          ownsLocality={ownsLocality}
         />,
       ),
     );
@@ -996,6 +1008,58 @@ export function createApp({
       }
     }
     return c.redirect(`/samples/${sample.sample_id}`);
+  });
+
+  // A collector makes the locality Beeline names from the coordinates the
+  // sample's own in one click, or takes back one they made (beeline-7i6).
+  // The write is the staff locality's, credited to whoever clicked. Open to
+  // the sample's collectors, through whoever they act for, and to staff;
+  // refused while impersonating, and on a printed sample, whose locality no
+  // longer changes. The value comes from the store, never from the form:
+  // the form's copy of the name only proves the reader saw what is adopted.
+  app.post("/samples/:id/suggested-locality", async (c) => {
+    const m = c.get("m");
+    const t = m.suggestedLocality;
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    const session = c.get("session");
+    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
+    if (sample === null || (!sample.mine && !c.get("admin"))) return errorResponse(c, "notFound");
+    if (sample.printed) return c.text(t.printed, 409);
+    const body = await c.req.parseBody();
+    const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+    const deps = { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections };
+    const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
+    let result;
+    if (field("undo") !== "") {
+      // Only a locality this person adopted: one staff set is a staff decision.
+      const author =
+        sample.inat_observation_id === null ? null : await standingLocalityAuthor(sampleOverlay, sample.inat_observation_id);
+      if (author !== session.login) return c.text(t.notYours, 403);
+      result = await setStaffLocality(deps, target, { value: "", remove: true, note: "", author: session.login });
+    } else {
+      const suggestion = sample.locality_suggestion;
+      if (suggestion === null || suggestion.locality !== field("locality")) return c.text(t.changed, 409);
+      result = await adoptSuggestedLocality(deps, target, {
+        suggestion: suggestion.locality,
+        reason: t.reason(t.basis[suggestion.basis]),
+        author: session.login,
+      });
+    }
+    if (result.outcome === "invalid") return c.text(result.problem, 400);
+    if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
+    if (result.outcome === "unresolved") return c.text(result.reason, 409);
+    if (result.outcome === "saved" || result.outcome === "removed") {
+      try {
+        await recordSampleChanges(kyselyReader(db), samplePaths, {
+          source: "app",
+          author: session.login,
+          where: `s.entity_id = ${sample.sample_id}`,
+        });
+      } catch (err) {
+        console.warn(`could not record the locality change: ${(err as Error).message}`);
+      }
+    }
+    return c.redirect(field("return") === "home" ? "/" : sampleHref(sample.sample_id));
   });
 
   // The coordinates, on the same terms (beeline-942). The one case a

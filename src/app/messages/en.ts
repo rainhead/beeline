@@ -119,23 +119,27 @@ export const en = {
 
   /**
    * A locality named from the sample's coordinates (beeline-7i6), offered on
-   * the sample page and on the front page's locality flags. It is only a
-   * suggestion: the volunteer pastes it into the observation on iNaturalist,
-   * which stays where the locality comes from. `basis` says in a few words
-   * why the name was chosen, so a reader can tell "inside the refuge" from
-   * "the nearest town" without knowing the rule (src/locality-rule.ts).
+   * the sample page and on the front page's locality flags. One click makes
+   * it the sample's locality, set here over the observation's (Peter,
+   * 2026-10-26), and the volunteer who did it can go back. `basis` says in a
+   * few words why the name was chosen, so a reader can tell "inside the
+   * refuge" from "the nearest town" without knowing the rule
+   * (src/locality-rule.ts).
    */
   suggestedLocality: {
     lead: "Suggested from the coordinates:",
-    copy: "Copy",
-    copied: "Copied",
-    /** The browser refused the copy: the name is on the page to select by hand. */
-    copyFailed: "Select the name to copy it",
-    /**
-     * A printed sample's locality no longer follows iNaturalist (CONTEXT.md,
-     * Upstream), so pasting the name there would only make the observation
-     * disagree with the label. The name is still shown, for judging it.
-     */
+    use: "Use this locality",
+    /** The sample's locality already is the suggestion. */
+    inUse: "This is the sample's locality.",
+    /** Recorded as the reason beside the locality set here, so the sample page says where it came from. */
+    reason: (basis: string) => `Suggested from the coordinates: ${basis}.`,
+    /** Takes back a locality the volunteer adopted, so the observation's applies again. */
+    undo: "Go back to iNaturalist's locality",
+    /** Somebody else set the locality standing on the sample: theirs to take back, not this person's. */
+    notYours: "Only whoever set this locality can take it back. Ask staff if it is wrong.",
+    /** The suggestion moved between drawing the page and the click: nothing was saved. */
+    changed: "The suggested locality has changed since the page was shown. Look at it again before using it.",
+    /** A printed sample's locality no longer follows anything (CONTEXT.md, Upstream). The name is still shown, for judging it. */
     printed: "Its labels have already printed, so its locality stays as printed.",
     basis: {
       refuge: "inside a national wildlife refuge",

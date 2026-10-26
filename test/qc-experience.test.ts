@@ -134,13 +134,13 @@ describe("the front page", () => {
        SELECT l.sample_id, 'Corvallis', 'town_limits', l.latitude, l.longitude, 'test', current_timestamp
        FROM sample_location l JOIN sample s ON s.entity_id = l.sample_id WHERE s.sample_number = 'A-8'`,
     );
-    expect(await (await app.request("/")).text()).toContain(`data-copy="Corvallis"`);
+    expect(await (await app.request("/")).text()).toContain("/suggested-locality");
     // Once a label is on paper the locality stops following iNaturalist, so
-    // the page no longer suggests pasting anything there.
+    // the page no longer offers to change it.
     await conn.run(
       `INSERT INTO specimen (sample_id, specimen_number) SELECT entity_id, 1 FROM sample WHERE sample_number = 'A-8'`,
     );
-    expect(await (await app.request("/")).text()).not.toContain(`data-copy="Corvallis"`);
+    expect(await (await app.request("/")).text()).not.toContain("/suggested-locality");
   });
 
   it("never leaves a value cell empty", async () => {

@@ -645,6 +645,8 @@ export function parsePage(raw: string | undefined): number {
 export const sampleHref = (sampleId: number, page = 1) =>
   page > 1 ? `/samples/${sampleId}?page=${page}` : `/samples/${sampleId}`;
 export const specimenHref = (specimenId: number) => `/specimens/${specimenId}`;
+/** Where "Use this locality" posts, and its undo (beeline-7i6). */
+export const suggestedLocalityHref = (sampleId: number) => `/samples/${sampleId}/suggested-locality`;
 
 /**
  * What happened to this sample, newest first (beeline-ewl). Addressed by the

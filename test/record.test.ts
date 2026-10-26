@@ -277,7 +277,7 @@ describe("the sample page", () => {
     expect(body).toContain(en.suggestedLocality.lead);
     expect(body).toContain("Finley NWR");
     expect(body).toContain(en.suggestedLocality.basis.refuge);
-    expect(body).toContain(`data-copy="Finley NWR"`);
+    expect(body).toContain(en.suggestedLocality.use);
     // Named for a point the sample no longer has: not shown.
     await conn.run(`UPDATE sample_location SET latitude = latitude + 0.01 WHERE sample_id = ${unprinted}`);
     expect(await get(app, `/samples/${unprinted}`)).not.toContain("Finley NWR");
@@ -295,7 +295,7 @@ describe("the sample page", () => {
     const body = await get(app, `/samples/${aliceSample}`);
     expect(body).toContain("Finley NWR");
     expect(body).toContain(en.suggestedLocality.printed);
-    expect(body).not.toContain(`data-copy="Finley NWR"`);
+    expect(body).not.toContain(en.suggestedLocality.use);
   });
 
   it("shows the observer's own notes, as text and never as markup", async () => {

@@ -132,8 +132,13 @@ const RULE = {
 
 // The test locality_street_suffix_pattern makes (schema/108), normalised as
 // qc_rule_locality_format normalises a locality, so a name this rule writes
-// is never one that rule flags.
-const STREET = / (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county)( +((ne|nw|se|sw|n|s|e|w)|[^ ]*[0-9][^ ]*))* *(,|$)/;
+// is never one that rule flags. A word with a digit in it is written
+// `[^ 0-9]*[0-9][^ ]*` rather than the macro's `[^ ]*[0-9][^ ]*`: the same
+// words, but the digit the pattern pins is always the first, so JavaScript's
+// backtracking engine has one way to match each word rather than one per
+// digit, which CodeQL found exponential over many such words. DuckDB's RE2
+// does not backtrack, so the macro needs no change.
+const STREET = / (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county)( +((ne|nw|se|sw|n|s|e|w)|[^ 0-9]*[0-9][^ ]*))* *(,|$)/;
 const looksLikeStreet = (s: string) =>
   STREET.test(` ${s.toLowerCase().replaceAll(".", " ").replaceAll(",", " , ")} `);
 

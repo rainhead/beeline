@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,8 @@ import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { en } from "../src/app/messages/en.js";
 import { readSampleOverlay } from "../src/sample-overlay.js";
+import { duckdbReader } from "../src/person-change.js";
+import { recordSampleChanges } from "../src/sample-change.js";
 import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 /**
@@ -114,16 +116,34 @@ describe("Use this locality", () => {
     expect(await localityOf(conn, sampleId)).toBe("26208 Finley Refuge Rd");
   });
 
-  it("lets the volunteer who adopted it go back, and nobody else", async () => {
-    const { appFor, sampleId, sampleOverlayPath } = await setup();
-    // Staff adopted it: a staff decision, not Alice's to take back.
-    await post(appFor("sam"), `/samples/${sampleId}/suggested-locality`, { locality: "Finley NWR" });
-    expect(await (await appFor("alice").request(`/samples/${sampleId}`)).text()).not.toContain(en.suggestedLocality.undo.replaceAll("'", "&#39;"));
-    expect((await post(appFor("alice"), `/samples/${sampleId}/suggested-locality`, { undo: "1" })).status).toBe(403);
-    // Alice adopts it herself, and takes it back.
-    await post(appFor("alice"), `/samples/${sampleId}/suggested-locality`, { locality: "Finley NWR" });
-    expect((await post(appFor("alice"), `/samples/${sampleId}/suggested-locality`, { undo: "1" })).status).toBe(302);
+  it("lets the volunteer who adopted it go back, with the reason in the sample's history", async () => {
+    const { appFor, conn, sampleId, sampleOverlayPath, sampleChangesPath, sampleStatePath } = await setup();
+    // The history's baseline, as a running deployment has one: the first pass only writes it.
+    await recordSampleChanges(duckdbReader(conn), { log: sampleChangesPath, state: sampleStatePath }, { source: "observation_promotion" });
+    const alice = appFor("alice");
+    await post(alice, `/samples/${sampleId}/suggested-locality`, { locality: "Finley NWR" });
+    expect(await readFile(sampleChangesPath, "utf8")).toContain(en.suggestedLocality.reason(en.suggestedLocality.basis.refuge));
+    expect((await post(alice, `/samples/${sampleId}/suggested-locality`, { undo: "1" })).status).toBe(302);
     const [row] = await readSampleOverlay(sampleOverlayPath);
     expect(row).toMatchObject({ field: "locality", value: "", author: "alice" });
+  });
+
+  it("leaves a locality somebody else set alone: no replacing it, no taking it back (Fable's review)", async () => {
+    const { appFor, conn, sampleId, sampleOverlayPath } = await setup();
+    // Staff set a locality of their own on the sample.
+    const staffSet = await post(appFor("sam"), `/samples/${sampleId}/locality`, { locality: "Finley NWR N unit", note: "north unit" });
+    expect(staffSet.status).toBe(302);
+    const alice = appFor("alice");
+    const page = await (await alice.request(`/samples/${sampleId}`)).text();
+    expect(page).not.toContain(en.suggestedLocality.use);
+    expect(page).not.toContain(en.suggestedLocality.undo.replaceAll("'", "&#39;"));
+    expect((await post(alice, `/samples/${sampleId}/suggested-locality`, { locality: "Finley NWR" })).status).toBe(403);
+    expect((await post(alice, `/samples/${sampleId}/suggested-locality`, { undo: "1" })).status).toBe(403);
+    expect(await localityOf(conn, sampleId)).toBe("Finley NWR N unit");
+    const [row] = await readSampleOverlay(sampleOverlayPath);
+    expect(row).toMatchObject({ value: "Finley NWR N unit", author: "samstaff", reason: "north unit" });
+    // Staff may still replace it with the suggestion.
+    expect((await post(appFor("sam"), `/samples/${sampleId}/suggested-locality`, { locality: "Finley NWR" })).status).toBe(302);
+    expect(await localityOf(conn, sampleId)).toBe("Finley NWR");
   });
 });

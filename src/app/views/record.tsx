@@ -712,7 +712,12 @@ export function SamplePage({
         <SampleFacts
           m={m}
           sample={sample}
-          locality={{ adopt: sample.mine || admin, undo: ownsLocality && !sample.printed }}
+          // A locality someone else set stands until they change it: a
+          // collector may adopt only where none stands or it is their own.
+          locality={{
+            adopt: admin || (sample.mine && (sample.locality_override === null || ownsLocality)),
+            undo: ownsLocality && !sample.printed,
+          }}
         />
         <SampleActions m={m} sample={sample} />
         {admin ? <StaffLocality m={m} sample={sample} /> : null}

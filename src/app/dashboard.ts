@@ -112,15 +112,16 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
              coalesce(lp.printing_count, 0) AS printing_count,
              coalesce(lp.printed_count, 0) AS printed_count, lp.printed_at,
              st.sample_id IS NOT NULL AS settled,
-             -- Not on a printed sample: its locality no longer follows the
-             -- observation, so pasting the name there would only make the
-             -- observation disagree with the label (beeline-7i6).
-             CASE WHEN ps.sample_id IS NULL THEN lsg.locality END AS suggested_locality,
-             CASE WHEN ps.sample_id IS NULL THEN lsg.basis END AS suggested_basis
+             -- Offered to adopt (beeline-7i6) only where the locality can
+             -- still change and nobody set it: a printed sample's is what its
+             -- labels say, and one somebody set stands until they change it.
+             CASE WHEN ps.sample_id IS NULL AND lo.sample_id IS NULL THEN lsg.locality END AS suggested_locality,
+             CASE WHEN ps.sample_id IS NULL AND lo.sample_id IS NULL THEN lsg.basis END AS suggested_basis
       FROM sample s
       LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
       LEFT JOIN sample_locality_suggestion_current lsg ON lsg.sample_id = s.entity_id
       LEFT JOIN printed_sample ps ON ps.sample_id = s.entity_id
+      LEFT JOIN sample_locality_override lo ON lo.sample_id = s.entity_id
       LEFT JOIN pending_print_sample p ON p.sample_id = s.entity_id
       LEFT JOIN sample_label_in_progress lp ON lp.sample_id = s.entity_id
       LEFT JOIN settled_sample st ON st.sample_id = s.entity_id

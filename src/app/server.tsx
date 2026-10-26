@@ -1029,21 +1029,22 @@ export function createApp({
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
     const deps = { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections };
     const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
+    // Who set the locality standing over the observation, if anyone: a
+    // locality someone else set stands until they change it, so a collector
+    // may neither replace it nor take it back. Staff may replace any.
+    const standing =
+      sample.inat_observation_id === null ? null : await standingLocalityAuthor(sampleOverlay, sample.inat_observation_id);
     let result;
+    let reason: string | undefined;
     if (field("undo") !== "") {
-      // Only a locality this person adopted: one staff set is a staff decision.
-      const author =
-        sample.inat_observation_id === null ? null : await standingLocalityAuthor(sampleOverlay, sample.inat_observation_id);
-      if (author !== session.login) return c.text(t.notYours, 403);
+      if (standing !== session.login) return c.text(t.notYours, 403);
       result = await setStaffLocality(deps, target, { value: "", remove: true, note: "", author: session.login });
     } else {
+      if (standing !== null && standing !== session.login && !c.get("admin")) return c.text(t.setByOther, 403);
       const suggestion = sample.locality_suggestion;
       if (suggestion === null || suggestion.locality !== field("locality")) return c.text(t.changed, 409);
-      result = await adoptSuggestedLocality(deps, target, {
-        suggestion: suggestion.locality,
-        reason: t.reason(t.basis[suggestion.basis]),
-        author: session.login,
-      });
+      reason = t.reason(t.basis[suggestion.basis]);
+      result = await adoptSuggestedLocality(deps, target, { suggestion: suggestion.locality, reason, author: session.login });
     }
     if (result.outcome === "invalid") return c.text(result.problem, 400);
     if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
@@ -1053,6 +1054,7 @@ export function createApp({
         await recordSampleChanges(kyselyReader(db), samplePaths, {
           source: "app",
           author: session.login,
+          reason,
           where: `s.entity_id = ${sample.sample_id}`,
         });
       } catch (err) {

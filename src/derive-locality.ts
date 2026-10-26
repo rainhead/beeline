@@ -117,6 +117,12 @@ async function createMacros(conn: Conn): Promise<void> {
       (degrees(atan2(sin(radians(lon2 - lon1)) * cos(radians(lat2)),
         cos(radians(lat1)) * sin(radians(lat2))
           - sin(radians(lat1)) * cos(radians(lat2)) * cos(radians(lon2 - lon1)))) + 360) % 360;
+    -- How many degrees of longitude make km at this latitude, for the boxes
+    -- that pre-filter a distance. A degree of latitude is about 111 km
+    -- everywhere and a degree of longitude only that times cos(latitude):
+    -- 79 km at Atlin, so a box in fixed degrees there reached a town 39 km
+    -- east and not one 45 km east (Fable's review).
+    CREATE OR REPLACE TEMP MACRO lon_deg(km, lat) AS km / (111.32 * cos(radians(lat)));
     -- A locality folded as ingest/gazetteer.sql folds a feature's name.
     CREATE OR REPLACE TEMP MACRO fold_locality_name(s) AS
       regexp_replace(replace(replace(lower(s), 'mount ', 'mt '), 'mountain', 'mt'), '[^a-z0-9]', '', 'g');
@@ -139,7 +145,7 @@ async function usedFeatures(conn: Conn): Promise<void> {
     JOIN sample_location l ON l.sample_id = s.entity_id
     LEFT JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
     JOIN ${GAZETTEER_ALIAS}.feature f ON f.fold = fold_locality_name(s.locality)
-      AND abs(f.lat - l.latitude) < 0.1 AND abs(f.lon - l.longitude) < 0.14
+      AND abs(f.lat - l.latitude) < 0.1 AND abs(f.lon - l.longitude) < lon_deg(11, l.latitude)
     WHERE s.locality IS NOT NULL AND hav_km(l.latitude, l.longitude, f.lat, f.lon) <= 10
     GROUP BY f.id`);
 }
@@ -269,7 +275,7 @@ async function gather(
        SELECT b.sample_id, ${placeCols}, hav_km(b.lat, b.lon, p.lat, p.lon) AS km,
               bearing_deg(p.lat, p.lon, b.lat, b.lon) AS brg
          FROM locality_batch b JOIN ${G}.place p
-           ON p.lat BETWEEN b.lat - 0.46 AND b.lat + 0.46 AND p.lon BETWEEN b.lon - 0.7 AND b.lon + 0.7)
+           ON p.lat BETWEEN b.lat - 0.46 AND b.lat + 0.46 AND p.lon BETWEEN b.lon - lon_deg(51, b.lat) AND b.lon + lon_deg(51, b.lat))
       WHERE (kind = 'town' AND pop > 0 AND km <= 50) OR ((kind <> 'town' OR pop = 0) AND km <= 20)
       QUALIFY row_number() OVER (PARTITION BY sample_id, kind = 'town' AND pop > 0, kind ORDER BY km, id)
               <= CASE WHEN kind = 'town' AND pop > 0 THEN 20 ELSE 8 END
@@ -290,7 +296,7 @@ async function gather(
        (SELECT b.sample_id, ${placeCols}, hav_km(b.lat, b.lon, p.lat, p.lon) AS km,
                bearing_deg(p.lat, p.lon, b.lat, b.lon) AS brg
           FROM locality_batch b JOIN ${G}.place p ON p.kind = 'town' AND p.pop > 0
-           AND p.lat BETWEEN b.lat - 1.5 AND b.lat + 1.5 AND p.lon BETWEEN b.lon - 2 AND b.lon + 2
+           AND p.lat BETWEEN b.lat - 1.5 AND b.lat + 1.5 AND p.lon BETWEEN b.lon - lon_deg(170, b.lat) AND b.lon + lon_deg(170, b.lat)
         QUALIFY row_number() OVER (PARTITION BY b.sample_id ORDER BY km, p.id) <= 10)
        UNION ALL
        (SELECT b.sample_id, ${placeCols}, hav_km(b.lat, b.lon, p.lat, p.lon) AS km,
@@ -298,7 +304,7 @@ async function gather(
           FROM locality_batch b
           JOIN locality_batch_region br ON br.sample_id = b.sample_id
           JOIN ${G}.place p ON p.kind = 'town' AND p.pop > 0
-           AND p.lat BETWEEN b.lat - 3 AND b.lat + 3 AND p.lon BETWEEN b.lon - 4 AND b.lon + 4
+           AND p.lat BETWEEN b.lat - 3 AND b.lat + 3 AND p.lon BETWEEN b.lon - lon_deg(340, b.lat) AND b.lon + lon_deg(340, b.lat)
            AND split_part(p.region_id, '-', 1) = split_part(br.region_id, '-', 1)
            AND split_part(p.region_id, '-', 2) = split_part(br.region_id, '-', 2)
         QUALIFY row_number() OVER (PARTITION BY b.sample_id ORDER BY km, p.id) <= 3))
@@ -320,7 +326,7 @@ async function gather(
     `SELECT b.sample_id, u.id, u.name, u.code, u.samples, u.collectors, u.island_id,
             hav_km(b.lat, b.lon, u.lat, u.lon) AS km
        FROM locality_batch b JOIN locality_used_feature u
-         ON abs(u.lat - b.lat) < 0.05 AND abs(u.lon - b.lon) < 0.07
+         ON abs(u.lat - b.lat) < 0.05 AND abs(u.lon - b.lon) < lon_deg(5.6, b.lat)
       WHERE hav_km(b.lat, b.lon, u.lat, u.lon) <= 5
       ORDER BY b.sample_id, km, u.id`,
   )) {

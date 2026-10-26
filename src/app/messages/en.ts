@@ -137,6 +137,8 @@ export const en = {
     undo: "Go back to iNaturalist's locality",
     /** Somebody else set the locality standing on the sample: theirs to take back, not this person's. */
     notYours: "Only whoever set this locality can take it back. Ask staff if it is wrong.",
+    /** Somebody else's locality stands on the sample, and is theirs to change. */
+    setByOther: "Somebody else set this sample's locality, so it stays until they change it. Ask staff if it is wrong.",
     /** The suggestion moved between drawing the page and the click: nothing was saved. */
     changed: "The suggested locality has changed since the page was shown. Look at it again before using it.",
     /** A printed sample's locality no longer follows anything (CONTEXT.md, Upstream). The name is still shown, for judging it. */

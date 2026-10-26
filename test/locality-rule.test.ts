@@ -191,9 +191,11 @@ describe("the rule, in order", () => {
     expect(
       nameLocality({ ...nothing, regionId: "CA-BC-RDKB", nearby: [at(galena, 4)], farTowns: [at(hines, 80)] }),
     ).toEqual({ locality: "Galena", basis: "hamlet" });
-    const steens = { ...nothing, regionId: "US-OR-Harney", parks: [{ name: "Steens Mountain Wilderness", ha: 69_000 }], farTowns: [at(hines, 80, 135)] };
-    expect(nameLocality(steens)).toEqual({ locality: "Steens Mountain", basis: "large_reserve" });
-    expect(nameLocality({ ...steens, parks: [] })).toEqual({ locality: "80km SE Hines", basis: "distance" });
+    // A wilderness never reaches the rule (src/derive-locality.ts leaves it
+    // out); a large preserve does. The preserve's name here is made up.
+    const reserve = { ...nothing, regionId: "US-OR-Harney", parks: [{ name: "Alvord Basin Preserve", ha: 69_000 }], farTowns: [at(hines, 80, 135)] };
+    expect(nameLocality(reserve)).toEqual({ locality: "Alvord Basin", basis: "large_reserve" });
+    expect(nameLocality({ ...reserve, parks: [] })).toEqual({ locality: "80km SE Hines", basis: "distance" });
   });
 
   test("far from anywhere, the nearest town whose distance and name fit", () => {

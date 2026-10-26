@@ -156,7 +156,7 @@ export const en = {
       peak: "a peak nearby",
       town: "a town nearby",
       hamlet: "a named place nearby",
-      large_reserve: "inside a wilderness or large reserve",
+      large_reserve: "inside a large reserve",
       distance: "distance and direction from the nearest town",
     } satisfies Record<LocalityBasis, string>,
   },

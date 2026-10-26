@@ -24,7 +24,8 @@
  *  8. a town with people in it within 30 km, from the point's own county if
  *     one qualifies, else from the same state or province, never across it;
  *  9. a hamlet or named locality within 10 km;
- * 10. a wilderness or reserve over 20,000 ha the point is inside;
+ * 10. a reserve over 20,000 ha the point is inside (never a federal
+ *     wilderness, which is never a locality: src/derive-locality.ts);
  * 11. distance and direction from the nearest town with people in it.
  *
  * On an island every candidate must be on the same island (Bonnie Zand: a
@@ -259,7 +260,7 @@ function npsName(unit: string): string | null {
 /**
  * Too long: 'Regional Park' becomes RP, as BC writes it, and 'Conservation
  * Area' Cons Area (Pine Crk Cons Area, so it does not read as a creek);
- * failing that, a reserve, conservation area or wilderness keeps its bare
+ * failing that, a reserve or conservation area keeps its bare
  * name (Fanny Bay, Steens Mountain).
  */
 function osmParkName(raw: string): string | null {
@@ -267,7 +268,7 @@ function osmParkName(raw: string): string | null {
   for (const [re, to] of [
     [/ Regional Park$/, " RP"],
     [/ Conservation Area$/, " Cons Area"],
-    [/ (Nature Reserve|Conservation Area|Wilderness|Preserve)$/, ""],
+    [/ (Nature Reserve|Conservation Area|Preserve)$/, ""],
     [/ Park$/, " Pk"],
   ] as Array<[RegExp, string]>) {
     if (name) break;
@@ -400,7 +401,7 @@ export function nameLocality(e: LocalityEvidence): NamedLocality | null {
     if (near) return { locality: near.short, basis: "hamlet" };
   }
   {
-    // Back country inside a wilderness or a large preserve: its name beats
+    // Back country inside a large preserve: its name beats
     // a distance from a town.
     const big = e.parks.find((x) => x.ha > RULE.parkMaxHa);
     const name = big && osmParkName(big.name);

@@ -70,6 +70,17 @@ describe("deriveLocalities", () => {
     expect(await deriveLocalities(conn, path)).toMatchObject({ gazetteerBuild: "build-b2", pending: 1, named: 1 });
   });
 
+  test("never names a sample for the wilderness it is inside (Peter, 2026-10-26)", async () => {
+    const path = join(dir, "w.duckdb");
+    await buildTestGazetteer(path, "build-w");
+    const conn = await storeWithPerson();
+    const id = await insertCleanSample(conn, {}, { latitude: "44.50", longitude: "-123.60" });
+    await deriveLocalities(conn, path);
+    const [[, locality]] = (await suggestions(conn)) as [[number, string, string]];
+    expect(locality).not.toContain("Wilderness");
+    expect(id).toBeGreaterThan(0);
+  });
+
   test("named for one observer, it leaves everyone else's samples for the nightly", async () => {
     const path = join(dir, "d.duckdb");
     await buildTestGazetteer(path, "build-d");

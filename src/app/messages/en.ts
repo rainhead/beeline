@@ -129,6 +129,14 @@ export const en = {
     lead: "Suggested from the coordinates:",
     copy: "Copy",
     copied: "Copied",
+    /** The browser refused the copy: the name is on the page to select by hand. */
+    copyFailed: "Select the name to copy it",
+    /**
+     * A printed sample's locality no longer follows iNaturalist (CONTEXT.md,
+     * Upstream), so pasting the name there would only make the observation
+     * disagree with the label. The name is still shown, for judging it.
+     */
+    printed: "Its labels have already printed, so its locality stays as printed.",
     basis: {
       refuge: "inside a national wildlife refuge",
       wildlife_area: "inside a WDFW wildlife area unit",

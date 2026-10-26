@@ -90,7 +90,12 @@ export function SampleFacts({ m, sample }: { m: Messages; sample: SampleDetail }
               the sample carries. */}
           {sample.locality_suggestion === null ? null : (
             <p>
-              <SuggestedLocality m={m} locality={sample.locality_suggestion.locality} basis={sample.locality_suggestion.basis} />
+              <SuggestedLocality
+                m={m}
+                locality={sample.locality_suggestion.locality}
+                basis={sample.locality_suggestion.basis}
+                printed={sample.printed}
+              />
             </p>
           )}
           {/* A staff-set locality carries its provenance beside it, as the

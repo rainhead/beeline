@@ -366,7 +366,14 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const instance = await openDuckDb(process.argv[2] ?? "beeline.duckdb");
   const conn = await instance.connect();
   const started = Date.now();
-  const result = await deriveLocalities(conn, process.argv[3] ?? "data/gazetteer.duckdb");
-  conn.closeSync();
-  console.log(JSON.stringify({ ...result, seconds: Math.round((Date.now() - started) / 1000) }, null, 2));
+  // Checkpointed before closing: an unreplayed WAL is the state DuckDB 1.5.5
+  // can fail to open (beeline-c1b), and the runbook runs this on the store.
+  try {
+    const result = await deriveLocalities(conn, process.argv[3] ?? "data/gazetteer.duckdb");
+    await conn.run("CHECKPOINT");
+    console.log(JSON.stringify({ ...result, seconds: Math.round((Date.now() - started) / 1000) }, null, 2));
+  } finally {
+    conn.closeSync();
+    instance.closeSync();
+  }
 }

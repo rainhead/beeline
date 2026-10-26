@@ -1,8 +1,10 @@
 /**
- * Copy buttons: `<button data-copy="text" data-copied="Copied" hidden>`.
- * The server renders them hidden, because without script they would do
- * nothing; this reveals the ones the browser can serve and copies on click,
- * saying so on the button for a moment (SuggestedLocality, beeline-7i6).
+ * Copy buttons: `<button data-copy="text" data-copied="Copied"
+ * data-copy-failed="…" hidden>`. The server renders them hidden, because
+ * without script they would do nothing; this reveals the ones the browser
+ * can serve and copies on click, saying on the button for a moment whether
+ * it worked (SuggestedLocality, beeline-7i6). Both messages come from the
+ * catalog through the attributes.
  */
 
 if (navigator.clipboard !== undefined) {
@@ -15,13 +17,14 @@ document.addEventListener("click", (e) => {
   const button = e.target instanceof Element ? e.target.closest<HTMLButtonElement>("button[data-copy]") : null;
   if (button === null) return;
   const label = button.textContent;
+  const say = (text: string | undefined, ms: number) => {
+    button.textContent = text ?? label;
+    setTimeout(() => (button.textContent = label), ms);
+  };
+  // Refused (no permission, or an insecure page): the name beside the
+  // button can still be selected by hand, so say that.
   navigator.clipboard.writeText(button.dataset.copy ?? "").then(
-    () => {
-      button.textContent = button.dataset.copied ?? label;
-      setTimeout(() => (button.textContent = label), 1500);
-    },
-    () => {
-      // Refused (no permission, or an insecure page): leave the button as it was.
-    },
+    () => say(button.dataset.copied, 1500),
+    () => say(button.dataset.copyFailed, 4000),
   );
 });

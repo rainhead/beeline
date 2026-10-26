@@ -265,6 +265,27 @@ describe("the sample page", () => {
   });
 
   it("offers a locality named from the coordinates, with a button to copy it (beeline-7i6)", async () => {
+    const { app, conn, alice } = await recordApp();
+    // Nothing printed yet: no specimen rows.
+    const unprinted = await insertCleanSample(conn, { collector_id: String(alice), sample_number: "'A-2'" });
+    await conn.run(
+      `INSERT INTO sample_locality_suggestion (sample_id, locality, basis, latitude, longitude, gazetteer_build, derived_at)
+       SELECT sample_id, 'Finley NWR', 'refuge', latitude, longitude, 'test', current_timestamp
+       FROM sample_location WHERE sample_id = ${unprinted}`,
+    );
+    const body = await get(app, `/samples/${unprinted}`);
+    expect(body).toContain(en.suggestedLocality.lead);
+    expect(body).toContain("Finley NWR");
+    expect(body).toContain(en.suggestedLocality.basis.refuge);
+    expect(body).toContain(`data-copy="Finley NWR"`);
+    // Named for a point the sample no longer has: not shown.
+    await conn.run(`UPDATE sample_location SET latitude = latitude + 0.01 WHERE sample_id = ${unprinted}`);
+    expect(await get(app, `/samples/${unprinted}`)).not.toContain("Finley NWR");
+  });
+
+  it("shows a printed sample's suggested locality without offering to copy it", async () => {
+    // A-1 has specimen rows from the legacy import, so its labels are on paper
+    // and its locality no longer follows iNaturalist.
     const { app, conn, aliceSample } = await recordApp();
     await conn.run(
       `INSERT INTO sample_locality_suggestion (sample_id, locality, basis, latitude, longitude, gazetteer_build, derived_at)
@@ -272,13 +293,9 @@ describe("the sample page", () => {
        FROM sample_location WHERE sample_id = ${aliceSample}`,
     );
     const body = await get(app, `/samples/${aliceSample}`);
-    expect(body).toContain(en.suggestedLocality.lead);
     expect(body).toContain("Finley NWR");
-    expect(body).toContain(en.suggestedLocality.basis.refuge);
-    expect(body).toContain(`data-copy="Finley NWR"`);
-    // Named for a point the sample no longer has: not shown.
-    await conn.run(`UPDATE sample_location SET latitude = latitude + 0.01 WHERE sample_id = ${aliceSample}`);
-    expect(await get(app, `/samples/${aliceSample}`)).not.toContain("Finley NWR");
+    expect(body).toContain(en.suggestedLocality.printed);
+    expect(body).not.toContain(`data-copy="Finley NWR"`);
   });
 
   it("shows the observer's own notes, as text and never as markup", async () => {

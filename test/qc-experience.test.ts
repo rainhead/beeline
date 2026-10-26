@@ -126,6 +126,23 @@ describe("the front page", () => {
     expect(body).toContain("The locality must be a short place name");
   });
 
+  it("offers the locality named from the coordinates on a locality flag, until labels print (beeline-7i6)", async () => {
+    const { app, conn } = await qcApp();
+    await conn.run(`UPDATE sample SET locality = '5th St, Corvallis' WHERE sample_number = 'A-8'`);
+    await conn.run(
+      `INSERT INTO sample_locality_suggestion (sample_id, locality, basis, latitude, longitude, gazetteer_build, derived_at)
+       SELECT l.sample_id, 'Corvallis', 'town_limits', l.latitude, l.longitude, 'test', current_timestamp
+       FROM sample_location l JOIN sample s ON s.entity_id = l.sample_id WHERE s.sample_number = 'A-8'`,
+    );
+    expect(await (await app.request("/")).text()).toContain(`data-copy="Corvallis"`);
+    // Once a label is on paper the locality stops following iNaturalist, so
+    // the page no longer suggests pasting anything there.
+    await conn.run(
+      `INSERT INTO specimen (sample_id, specimen_number) SELECT entity_id, 1 FROM sample WHERE sample_number = 'A-8'`,
+    );
+    expect(await (await app.request("/")).text()).not.toContain(`data-copy="Corvallis"`);
+  });
+
   it("never leaves a value cell empty", async () => {
     const { app, conn } = await qcApp();
     await conn.run(`UPDATE sample SET locality = NULL, county = NULL, state_province = NULL`);

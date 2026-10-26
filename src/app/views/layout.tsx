@@ -1,5 +1,6 @@
 import type { Child } from "hono/jsx";
 import type { Messages } from "../messages/index.js";
+import type { CreditedSource } from "../messages/en.js";
 import type { Session } from "../session.js";
 import type { Acting } from "../acting.js";
 import { FeedbackIcon, MenuIcon, PersonIcon } from "./icons.js";
@@ -87,6 +88,48 @@ function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
 }
 
 /**
+ * The site footer: where Beeline's code is, and credit for the outside data
+ * the pages show, on every page, as several of the licences ask wherever the
+ * data appears.
+ */
+function SiteFooter({ m }: { m: Messages }) {
+  const c = m.layout.credits;
+  const list = (sources: readonly CreditedSource[]) =>
+    sources.map((s, i) => (
+      <>
+        {i > 0 ? ", " : ""}
+        <a href={s.href}>{s.name}</a>
+        {s.terms === undefined ? null : (
+          <>
+            {" ("}
+            {s.termsHref === undefined ? s.terms : <a href={s.termsHref}>{s.terms}</a>}
+            {")"}
+          </>
+        )}
+      </>
+    ));
+  return (
+    <footer class="site-footer">
+      <p>
+        {c.source.lead} <a href={c.source.href}>{c.source.label}</a>.
+      </p>
+      <p>
+        {c.observations}: {list(c.observationSources)}.
+      </p>
+      <p>
+        {c.records}: {list(c.recordSources)}.
+      </p>
+      <p>
+        {c.places}: {list(c.placeSources)}.
+      </p>
+      <p>
+        {c.elevations}: {list(c.elevationSources)}.
+      </p>
+    </footer>
+  );
+}
+
+/**
  * The pages that exist before a session does — the sign-in door and the
  * pending-approval holding page. Same head and same environment banner as
  * the app proper (beeline-2u8 asks for the banner on the front door
@@ -118,6 +161,7 @@ export function PublicPage(props: {
           <div class="env-banner">{m.layout.envBanner(props.environment)}</div>
         )}
         <main>{props.children}</main>
+        <SiteFooter m={m} />
       </body>
     </html>
   );
@@ -229,6 +273,7 @@ export function Layout(props: {
           </details>
         </header>
         <main>{props.children}</main>
+        <SiteFooter m={m} />
       </body>
     </html>
   );

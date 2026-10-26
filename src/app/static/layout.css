@@ -142,6 +142,21 @@ main > * {
   main > .table-scroll { padding-inline: var(--space-4); }
 }
 
+/* The site footer: credit for the outside data the pages show. Quiet, small,
+   on the content column's measure, and below everything. */
+.site-footer {
+  max-width: 64rem;
+  margin: var(--space-8) auto 0;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-label);
+}
+.site-footer p { margin: 0 0 var(--space-1); }
+@media (max-width: 640px) {
+  .site-footer { padding-inline: var(--space-4); }
+}
+
 /* Environment banner: any instance that is not production says so
    (sandbox-until-launch, beeline-2u8). */
 .env-banner {

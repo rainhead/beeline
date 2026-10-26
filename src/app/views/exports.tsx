@@ -1,6 +1,6 @@
 import type { Messages } from "../messages/index.js";
 import type { ProgramArchive } from "../dwc-archive.js";
-import type { ArchiveEntry, ArchiveManifest } from "../program-archives.js";
+import type { ArchiveEntry, ArchiveManifest, ChecklistEntry } from "../program-archives.js";
 import { governanceFor, LICENSES, type ProgramGovernance } from "../../program-governance.js";
 import { Absent, Callout, DataTable, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
 
@@ -64,6 +64,7 @@ export function Exports({
               m={m}
               program={p}
               entries={archives.entries.filter((a) => a.program === p.code)}
+              checklist={archives.checklists?.find((c) => c.program === p.code) ?? null}
               governance={governance}
             />
           ))}
@@ -81,11 +82,14 @@ function ProgramSeasons({
   m,
   program,
   entries,
+  checklist,
   governance,
 }: {
   m: Messages;
   program: ProgramArchive;
   entries: ArchiveEntry[];
+  /** Null before the first night that wrote checklists. */
+  checklist: ChecklistEntry | null;
   governance: ProgramGovernance;
 }) {
   const e = m.exports;
@@ -102,6 +106,14 @@ function ProgramSeasons({
   return (
     <section>
       <h3>{program.name}</h3>
+      {checklist !== null && (
+        <p>
+          {e.checklist(checklist.taxa)}{" "}
+          <a href={`/exports/dwca/${checklist.file}`} aria-label={e.checklistDownload(program.name)}>
+            {e.downloadSized(fileSize(checklist.bytes))}
+          </a>
+        </p>
+      )}
       <DataTable columns={[e.colYear, e.colSpecimens, e.colLicense, e.colPolicy, e.colArchive]}>
         {[...entries]
           .sort((a, b) => b.year - a.year)

@@ -1403,7 +1403,7 @@ export const en = {
     missing: "Not written yet. It appears after the next nightly run, or after running the legacy-export job on Jobs.",
     archives: "Darwin Core archives, by program and year",
     archivesIntro:
-      "Each program's specimens collected in a calendar year, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got.",
+      "Each program's specimens collected in a calendar year, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got. Each program also has a checklist covering every year: the names its specimens are identified to, with the ranks above them, how many specimens each has and in which years, as a Darwin Core checklist.",
     archivesCaution:
       "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including taxon-obscured ones.",
     archivesMissing:
@@ -1424,6 +1424,9 @@ export const en = {
     archiveLicenseWas: (license: string) => `This file states ${license}; it is rewritten with this licence tonight.`,
     downloadSized: (size: string) => `Download (${size})`,
     archiveDownload: (program: string, year: number) => `Download the ${program} archive for ${year}`,
+    /** A program's checklist, above its years. */
+    checklist: (taxa: number) => `Checklist: ${n(taxa)} ${taxa === 1 ? "name" : "names"}, every year together.`,
+    checklistDownload: (program: string) => `Download the ${program} checklist`,
   },
   jobs: {
     title: "Jobs",

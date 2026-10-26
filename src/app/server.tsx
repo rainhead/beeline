@@ -1433,11 +1433,16 @@ export function createApp({
   // it (src/app/program-archives.ts), whether or not its program has the
   // licence and privacy policy publishing it would need: these are for staff
   // to review (Peter, 2026-10-23). Only a file the manifest names is served.
-  app.get("/exports/dwca/:file{[A-Za-z0-9]+-\\d{4}\\.zip}", async (c) => {
+  // A program's checklist (beeline-024a) is served the same way, by its own name.
+  app.get("/exports/dwca/:file{[A-Za-z0-9]+-(\\d{4}|checklist)\\.zip}", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const name = c.req.param("file");
-    const entry = (await readArchiveManifest(exportsDir()))?.entries.find((e) => e.file === name) ?? null;
-    if (entry === null) return errorResponse(c, "notFound");
+    const manifest = await readArchiveManifest(exportsDir());
+    const year = manifest?.entries.find((e) => e.file === name);
+    const checklist = manifest?.checklists?.find((e) => e.file === name);
+    const download =
+      year !== undefined ? `${year.program}-${year.year}` : checklist !== undefined ? `${checklist.program}-checklist` : null;
+    if (download === null) return errorResponse(c, "notFound");
     const path = join(archiveDir(exportsDir()), name);
     let handle;
     try {
@@ -1455,7 +1460,7 @@ export function createApp({
     return c.body(Readable.toWeb(handle.createReadStream({ autoClose: true })) as ReadableStream, 200, {
       "content-type": "application/zip",
       "content-length": String(st.size),
-      "content-disposition": `attachment; filename="beeline-${entry.program}-${entry.year}-dwca.zip"`,
+      "content-disposition": `attachment; filename="beeline-${download}-dwca.zip"`,
     });
   });
 

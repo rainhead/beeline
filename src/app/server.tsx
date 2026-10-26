@@ -29,7 +29,7 @@ import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { ProgramIndex, ProgramPage } from "./views/programs.js";
 import { listPrograms, loadProgram, programHref } from "./programs.js";
 import { readProgramContacts, recordProgramContact, programContactProblem } from "../program-contacts.js";
-import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomySummary } from "./taxonomy.js";
+import { browseStart, isFiltering, loadTaxon, parseTaxonomyQuery, searchTaxa, taxonomyCsv, taxonomySummary } from "./taxonomy.js";
 import {
   addSpecimensToBatch,
   addToBatch,
@@ -1124,6 +1124,10 @@ export function createApp({
       await page(c, m.taxonomy.title, <TaxonomyIndex m={m} query={query} summary={summary} list={list} start={start} admin={c.get("admin")} />),
     );
   });
+
+  // The whole tree as a file (beeline-7dve), read by everyone like the page:
+  // names and totals, nobody's records.
+  app.get("/taxonomy.csv", async (c) => csv(c, await taxonomyCsv(db), "beeline-taxonomy"));
 
   app.get("/taxonomy/:rank/:name", async (c) => {
     const m = c.get("m");

@@ -219,6 +219,9 @@ export function TaxonomyIndex({
           )}
         </Meta>
       )}
+      <Meta block>
+        <a href="/taxonomy.csv">{t.csv}</a>
+      </Meta>
 
       <FilterBar
         action="/taxonomy"

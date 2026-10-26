@@ -74,11 +74,14 @@ describe("deriveLocalities", () => {
     const path = join(dir, "w.duckdb");
     await buildTestGazetteer(path, "build-w");
     const conn = await storeWithPerson();
-    const id = await insertCleanSample(conn, {}, { latitude: "44.50", longitude: "-123.60" });
+    // One inside "Alsea Wilderness", one inside "Ox Wilderness Area": both
+    // short enough to be named, were they not left out.
+    await insertCleanSample(conn, {}, { latitude: "44.50", longitude: "-123.60" });
+    await insertCleanSample(conn, { sample_number: "'2'" }, { latitude: "44.50", longitude: "-123.75" });
     await deriveLocalities(conn, path);
-    const [[, locality]] = (await suggestions(conn)) as [[number, string, string]];
-    expect(locality).not.toContain("Wilderness");
-    expect(id).toBeGreaterThan(0);
+    const named = (await suggestions(conn)) as Array<[number, string, string]>;
+    expect(named).toHaveLength(2);
+    for (const [, locality] of named) expect(locality).not.toContain("Wilderness");
   });
 
   test("named for one observer, it leaves everyone else's samples for the nightly", async () => {

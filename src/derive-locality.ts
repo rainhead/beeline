@@ -255,14 +255,17 @@ async function gather(
   // wilderness: collecting there is forbidden except where it overlaps a
   // national park the program has a permit for (only Olympic, 2026-10-26),
   // so a wilderness is never a label's locality (Peter, 2026-10-26).
-  // OpenStreetMap names every one "... Wilderness", and its protection
-  // class alone would also catch wilderness study areas and others.
+  // OpenStreetMap names every one "... Wilderness", now and then with "Area"
+  // or a unit after it ("North Fork John Day Wilderness - Baldy Unit"); its
+  // protection class alone would also catch wilderness study areas and
+  // others. BC's "... Wilderness Provincial Park"s, the BLM's "... Wilderness
+  // Study Area"s and a city's "Wilderness Park" are not matched.
   for (const r of await rows<{ sample_id: number; name: string; ha: number }>(
     conn,
     `SELECT b.sample_id, o.name, o.area_ha AS ha
        FROM locality_batch b JOIN ${G}.osm_area o
          ON NOT o.is_island AND ST_Contains(o.geom, ST_Point(b.lon, b.lat))
-      WHERE NOT regexp_matches(o.name, ' Wilderness$')
+      WHERE NOT regexp_matches(o.name, ' Wilderness( Area)?( - [^,]+ Unit)?$')
       ORDER BY b.sample_id, o.area_ha, o.osm_id`,
   )) {
     of(r.sample_id).parks.push({ name: r.name, ha: r.ha });

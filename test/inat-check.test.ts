@@ -206,7 +206,8 @@ describe("Check iNaturalist now", () => {
     const made = await checkApp({ gazetteerPath: path, onFetch: () => setRunning("nightly-pipeline") });
     setRunning = made.setRunning;
     setRunning(null);
-    await check(made.app);
+    // The check itself ran and said so; only the deriving was left to the nightly.
+    expect(await (await check(made.app)).text()).toContain("Beeline read");
     expect(await count(made.conn, "SELECT count(*) FROM sample_locality_suggestion")).toBe(0);
   });
 

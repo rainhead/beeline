@@ -216,7 +216,15 @@ export interface AppDeps {
    * offered, as in tests that don't exercise it and on an instance that
    * syncs nothing.
    */
-  inatCheck?: { projects: readonly number[]; token: () => Promise<string>; fetchImpl?: typeof fetch; pageDelayMs?: number };
+  inatCheck?: {
+    projects: readonly number[];
+    token: () => Promise<string>;
+    fetchImpl?: typeof fetch;
+    pageDelayMs?: number;
+    /** Where the DEM tiles and the gazetteer are, so a check derives what the nightly would (beeline-7i6). */
+    demDir?: string;
+    gazetteerPath?: string;
+  };
   /** Where rendered label sheets are kept (config.printRunsDir). */
   printRunsDir?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
@@ -676,8 +684,11 @@ export function createApp({
     if (account === null) return dashboardPage(c, { kind: "noAccount" });
     // Both rewrite observation_field whole, so one of them would lose a write
     // conflict; the nightly runs 2 to 5am, so refusing costs nobody much.
-    const busy = jobsDep.running?.() ?? null;
-    if (busy === "nightly-pipeline" || busy === "weekly-sweep") return dashboardPage(c, { kind: "busy" });
+    const syncing = () => {
+      const running = jobsDep.running?.() ?? null;
+      return running === "nightly-pipeline" || running === "weekly-sweep";
+    };
+    if (syncing()) return dashboardPage(c, { kind: "busy" });
     const uid = Number(account.inat_user_id);
     const next = nextCheckAt(uid);
     if (next !== null) return dashboardPage(c, { kind: "tooSoon", next });
@@ -689,6 +700,10 @@ export function createApp({
         fetchImpl: inatCheck.fetchImpl,
         pageDelayMs: inatCheck.pageDelayMs,
         sampleOverlayPath: sampleOverlay,
+        demDir: inatCheck.demDir,
+        gazetteerPath: inatCheck.gazetteerPath,
+        // Asked again after the promotion: the job may have started meanwhile.
+        jobRunning: syncing,
       });
       // As after connecting a collector: a full pass, filed as the promotion
       // it was and with no author, since the promotion was the whole

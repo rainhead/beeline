@@ -1,8 +1,9 @@
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applySchema, createMemoryDb } from "../src/build-db.js";
+import { loadSpatial, openDuckDb } from "../src/db.js";
 import type { PromotionInputs } from "../src/promote-legacy.js";
 
 export { createMemoryDb };
@@ -211,4 +212,41 @@ export async function insertCleanSample(
     );
   }
   return id;
+}
+
+/**
+ * A gazetteer of a few hand-drawn shapes, with the tables and columns
+ * ingest/gazetteer.sql builds: synthetic, since the real one is built from
+ * downloads no test should make. One refuge square west of Corvallis, a
+ * county around everything, two towns, and a lake volunteers have named.
+ * Shared by the derive step's tests and the iNaturalist check's (beeline-7i6).
+ */
+export async function buildTestGazetteer(path: string, buildId: string): Promise<void> {
+  await rm(path, { force: true });
+  const instance = await openDuckDb(path);
+  const conn = await instance.connect();
+  await loadSpatial(conn);
+  const box = (w: number, s: number, e: number, n: number) => `ST_MakeEnvelope(${w}, ${s}, ${e}, ${n})`;
+  await conn.run(`
+    CREATE TABLE gazetteer_build AS SELECT '${buildId}' AS build_id, current_timestamp AS built_at;
+    CREATE TABLE region AS SELECT 'US-OR-Benton' AS region_id, 'USA' AS country, 'OR' AS state, 'Benton' AS county,
+      ${box(-124, 44, -122, 45)} AS geom;
+    CREATE TABLE refuge AS SELECT 'WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE' AS name, ${box(-123.35, 44.38, -123.25, 44.45)} AS geom;
+    CREATE TABLE wildlife_area_unit (unit TEXT, area TEXT, geom GEOMETRY);
+    CREATE TABLE nps_unit (unit TEXT, geom GEOMETRY);
+    CREATE TABLE state_park (park TEXT, suffix TEXT, geom GEOMETRY);
+    CREATE TABLE town_limits (name TEXT, kind TEXT, geom GEOMETRY);
+    CREATE TABLE osm_area (osm_id TEXT, name TEXT, area_ha DOUBLE, is_island BOOLEAN, geom GEOMETRY);
+    -- A made-up federal wilderness, which is never a locality.
+    INSERT INTO osm_area VALUES ('way/1', 'Alsea Wilderness', 4000, false, ${box(-123.65, 44.48, -123.55, 44.53)}),
+      ('way/2', 'Ox Wilderness Area', 3000, false, ${box(-123.80, 44.48, -123.70, 44.53)});
+    CREATE TABLE place AS SELECT * FROM (VALUES
+      (1, 'Philomath', 44.54, -123.37, 'town', 'PPL', 5000, 'US-OR-Benton', NULL),
+      (2, 'Alsea', 44.38, -123.60, 'town', 'PPL', 164, 'US-OR-Benton', NULL))
+      t(id, name, lat, lon, kind, fcode, pop, region_id, island_id);
+    CREATE TABLE feature AS SELECT 10 AS id, 'Marys Peak Lake' AS name, 44.70 AS lat, -123.60 AS lon,
+      'H.LK' AS code, 'OR' AS state, NULL::TEXT AS island_id, 'maryspeaklake' AS fold;
+  `);
+  conn.closeSync();
+  instance.closeSync();
 }

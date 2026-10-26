@@ -512,6 +512,26 @@ describe("seasons", () => {
     expect(body).toContain("A-2");
     expect(body).toContain("1 sample");
   });
+
+  it("keeps every other filter when the flag filter is any flag", async () => {
+    // "Any flag" is an OR of the two severities. Unbracketed, the other
+    // filters bound only to its first half, so a heads-up flag on anybody's
+    // sample, in any season, came through: Lincoln Best's 58 older flagged
+    // samples listed as 2,195, led by someone else's from this season
+    // (beeline-ryd2). B-4 is Bob's, current, and carries only a heads-up.
+    const { app, conn, bob } = await listingApp();
+    const b4 = await insertCleanSample(conn, { collector_id: String(bob), sample_number: "'B-4'", county: "NULL" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${b4}, 1, 'WABA0004')`);
+    const [[through]] = (await rows(conn, "SELECT CAST(active_since - 1 AS TEXT) FROM season")) as [[string]];
+    const everyone = await get(app, "/samples?scope=all&qc=warning");
+    expect(everyone).toContain("B-4");
+    const samples = await get(app, `/samples?scope=mine&qc=flagged&to=${through}`);
+    expect(samples).toContain("A-2");
+    expect(samples).not.toContain("B-4");
+    expect(samples).toContain("1 sample");
+    const specimens = await get(app, "/specimens?scope=mine&qc=flagged");
+    expect(specimens).not.toContain("WABA0004");
+  });
 });
 
 describe("sorting", () => {

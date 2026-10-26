@@ -729,8 +729,11 @@ function qcPredicate(status: QcStatus) {
   switch (status) {
     // Everything carrying a flag of either severity — where the dashboard
     // sends you for the seasons it has stopped asking about (beeline-2c3.24).
+    // Bracketed: Kysely ANDs a raw predicate onto the other filters as it
+    // stands, so a bare OR let any heads-up anywhere past scope and dates
+    // (beeline-ryd2).
     case "flagged":
-      return sql<boolean>`${blockingCount} > 0 OR ${warningCount} > 0`;
+      return sql<boolean>`(${blockingCount} > 0 OR ${warningCount} > 0)`;
     case "blocking":
       return sql<boolean>`${blockingCount} > 0`;
     case "warning":

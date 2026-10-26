@@ -16,7 +16,9 @@ if (navigator.clipboard !== undefined) {
 document.addEventListener("click", (e) => {
   const button = e.target instanceof Element ? e.target.closest<HTMLButtonElement>("button[data-copy]") : null;
   if (button === null) return;
-  const label = button.textContent;
+  // Kept on the button the first time, so a second click while it still
+  // says "Copied" does not take that for its label.
+  const label = (button.dataset.label ??= button.textContent ?? "");
   const say = (text: string | undefined, ms: number) => {
     button.textContent = text ?? label;
     setTimeout(() => (button.textContent = label), ms);

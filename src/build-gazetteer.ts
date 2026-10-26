@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -63,15 +64,18 @@ export async function buildGazetteer(out: string, sources: string): Promise<Gaze
  * Each OpenStreetMap extract in the sources, read into a Parquet file beside
  * it unless one newer than the extract is there already: British Columbia's
  * takes minutes, and an extract changes only when somebody fetches it again.
+ * The file is named for the extraction SQL as well, so changing what it
+ * reads makes a fresh one rather than reusing the old.
  */
 async function stageOsm(conn: { run(sql: string): Promise<unknown> }, sources: string): Promise<string[]> {
   const pbfs = (await readdir(sources)).filter((f) => f.endsWith("-latest.osm.pbf")).sort();
   if (pbfs.length === 0) throw new Error(`no OpenStreetMap extracts in ${sources}: run pnpm locality:fetch`);
   const template = await readFile(`${INGEST_DIR}gazetteer-osm.sql`, "utf8");
+  const version = createHash("sha256").update(template).digest("hex").slice(0, 8);
   const staged: string[] = [];
   for (const pbf of pbfs) {
     const path = `${sources}/${pbf}`;
-    const parquet = `${sources}/osm-${basename(pbf, "-latest.osm.pbf")}.parquet`;
+    const parquet = `${sources}/osm-${basename(pbf, "-latest.osm.pbf")}-${version}.parquet`;
     const fresh = await stat(parquet).then(
       async (p) => p.mtimeMs > (await stat(path)).mtimeMs,
       () => false,

@@ -42,7 +42,7 @@ export async function buildGazetteer(out: string, sources: string): Promise<Gaze
       `CREATE TABLE gazetteer_build AS SELECT gen_random_uuid()::TEXT AS build_id, current_timestamp AS built_at`,
     );
     const tables: Record<string, number> = {};
-    for (const t of ["region", "refuge", "wildlife_area_unit", "nps_unit", "state_park", "town_limits", "osm_area", "place", "feature"]) {
+    for (const t of ["region", "refuge", "wildlife_area_unit", "nps_unit", "wilderness", "state_park", "town_limits", "osm_area", "place", "feature"]) {
       const [[n]] = (await (await conn.run(`SELECT count(*) FROM ${t}`)).getRows()) as [[bigint]];
       tables[t] = Number(n);
     }

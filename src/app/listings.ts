@@ -154,7 +154,7 @@ export interface ListingQuery {
   /** Inclusive ISO dates bounding the collecting window; null = unbounded. */
   from: string | null;
   to: string | null;
-  /** Matches any of locality, county, state/province, country. */
+  /** Matches any of locality, county, state/province, country, or an area the point lies inside (a wilderness). */
   place: string;
   /**
    * A collector's name or iNat login. Matches anyone on the sample, not just
@@ -671,6 +671,13 @@ const ownSamples = (db: Kysely<Database>, reader: Reader) =>
 export interface PlaceColumns {
   locality: RawBuilder<string | null>;
   county: RawBuilder<string | null>;
+  /**
+   * The names of the areas the point lies inside (beeline-9jd4), so the place
+   * filter finds a sample by the wilderness it was collected in (Peter,
+   * 2026-10-26). Withheld with the locality, since a name says where the
+   * point is.
+   */
+  areas: RawBuilder<string | null>;
 }
 
 export function placeColumns(reader: Reader): PlaceColumns {
@@ -679,6 +686,8 @@ export function placeColumns(reader: Reader): PlaceColumns {
     locality: sql<string | null>`CASE WHEN ${hidden} THEN NULL ELSE s.locality END`,
     county: sql<string | null>`CASE WHEN ${hidden} AND (s.geoprivacy = 'private' OR s.taxon_geoprivacy = 'private')
                                     THEN NULL ELSE s.county END`,
+    areas: sql<string | null>`CASE WHEN ${hidden} THEN NULL ELSE
+      (SELECT string_agg(sac.name, ' ') FROM sample_area_current sac WHERE sac.sample_id = s.entity_id) END`,
   };
 }
 
@@ -687,7 +696,7 @@ const located = <T>(hidden: RawBuilder<boolean>, column: RawBuilder<T>) =>
   sql<T | null>`CASE WHEN ${hidden} THEN NULL ELSE ${column} END`;
 
 const placeHaystack = (p: PlaceColumns) =>
-  sql<string>`lower(concat_ws(' ', ${p.locality}, ${p.county}, s.state_province, s.country))`;
+  sql<string>`lower(concat_ws(' ', ${p.locality}, ${p.county}, s.state_province, s.country, ${p.areas}))`;
 
 /**
  * Words that only say what kind of place the next one is. A county is stored

@@ -139,6 +139,13 @@ export interface SampleDetail {
    * point the sample has now, or where the location is withheld.
    */
   locality_suggestion: LocalitySuggestion | null;
+  /**
+   * The federal wildernesses the point lies inside (beeline-zdfz), by name.
+   * Collecting there is forbidden but for a permit, so the page notes it,
+   * though it blocks nothing (Peter, 2026-10-26). Empty where the location is
+   * withheld: the name says where the point is.
+   */
+  wildernesses: string[];
   /** Everyone who collected it, in recordedBy order (beeline-77j). */
   collectors: ListedCollector[];
 }
@@ -285,6 +292,10 @@ const sampleColumns = (personId: number, reader: Reader) => sql`
   -- A locality named from the coordinates (beeline-7i6): it says where the
   -- point is, so it is withheld wherever the point is (hydrate).
   lsg.locality AS suggested_locality, lsg.basis AS suggested_basis,
+  -- The wildernesses the point lies inside (beeline-zdfz), one name a line;
+  -- withheld where the point is, as the suggestion is (hydrate).
+  (SELECT string_agg(sac.name, chr(10) ORDER BY sac.name) FROM sample_area_current sac
+    WHERE sac.sample_id = s.entity_id AND sac.kind = 'wilderness') AS wilderness_names,
   EXISTS (SELECT 1 FROM sample_elevation_stale st WHERE st.sample_id = s.entity_id) AS elevation_stale,
   EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id) AS printed,
   o.locality AS override_locality, o.observed_locality AS override_observed,
@@ -319,8 +330,12 @@ const sampleJoins = (reader: Reader) => sql`
 /** Numbers arrive from DuckDB as bigint or string depending on the column. */
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
-type RawSample = Omit<SampleDetail, "collectors" | "locality_override" | "location_override" | "locality_suggestion"> & {
+type RawSample = Omit<
+  SampleDetail,
+  "collectors" | "locality_override" | "location_override" | "locality_suggestion" | "wildernesses"
+> & {
   suggested_locality: string | null;
+  wilderness_names: string | null;
   suggested_basis: LocalityBasis | null;
   override_locality: string | null;
   override_observed: string | null;
@@ -353,6 +368,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
   const {
     suggested_locality,
     suggested_basis,
+    wilderness_names,
     override_locality,
     override_observed,
     override_set_by,
@@ -370,6 +386,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
       hidden || suggested_locality === null || suggested_basis === null
         ? null
         : { locality: suggested_locality, basis: suggested_basis },
+    wildernesses: hidden || wilderness_names === null ? [] : wilderness_names.split("\n"),
     // The overrides say where too: staff set them to a point or a place name.
     location_override: hidden || !location_overridden
       ? null

@@ -387,6 +387,47 @@ export interface SampleLocalitySuggestionCurrentView {
   derived_at: Date;
 }
 
+/** schema/038: what kind of area (beeline-9jd4). Wildernesses only, so far. */
+export type AreaKind = "wilderness";
+
+/**
+ * schema/038: a named place with an outline, keyed by its source's own id.
+ * Reference data, not an entity. Its geometry is left out: nothing in the app
+ * reads it, and the driver has no type for it without the spatial extension.
+ */
+export interface AreaTable {
+  source: "wilderness.net";
+  source_id: string;
+  kind: AreaKind;
+  name: string;
+  gazetteer_build: string;
+}
+
+/** schema/038: the point and build a sample's areas were worked out at. */
+export interface SampleAreaDerivationTable {
+  sample_id: number;
+  latitude: number;
+  longitude: number;
+  gazetteer_build: string;
+  derived_at: Date;
+}
+
+/** schema/038: an area a sample's point lies inside. */
+export interface SampleAreaTable {
+  sample_id: number;
+  area_source: string;
+  area_source_id: string;
+}
+
+/** schema/173: the areas, where they were found at the point the sample has now. */
+export interface SampleAreaCurrentView {
+  sample_id: number;
+  source: string;
+  source_id: string;
+  kind: AreaKind;
+  name: string;
+}
+
 export interface SampleCollectorTable {
   sample_id: number;
   person_id: number;
@@ -1153,6 +1194,9 @@ export interface Database {
   elevation_source: ElevationSourceTable;
   sample_location: SampleLocationTable;
   sample_locality_suggestion: SampleLocalitySuggestionTable;
+  area: AreaTable;
+  sample_area_derivation: SampleAreaDerivationTable;
+  sample_area: SampleAreaTable;
   sample_collector: SampleCollectorTable;
   specimen: SpecimenTable;
   determination: DeterminationTable;
@@ -1214,6 +1258,7 @@ export interface Database {
   sample_elevation_stale: SampleElevationStaleView;
   sample_elevation_pending: SampleElevationPendingView;
   sample_locality_suggestion_current: SampleLocalitySuggestionCurrentView;
+  sample_area_current: SampleAreaCurrentView;
   printable_sample: PrintableSampleView;
   pending_print_sample: PendingPrintSampleView;
   print_run: PrintRunTable;

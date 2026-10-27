@@ -36,6 +36,10 @@ engine runs them owns the heart of the system.
   - No partial unique indexes (Postgres-only) — the `minted_field_number`
     two-table design exists partly for this reason.
   - Known seam, accepted: `JSON` columns (Postgres would want `JSONB`).
+  - Known seam, accepted: `GEOMETRY` columns (`area.geom`, `schema/038`,
+    beeline-9jd4). A core type in DuckDB 1.5, so the store opens without the
+    spatial extension; Postgres has the same type only with PostGIS, and the
+    `ST_` functions that read it need the extension in both.
   - **Named exceptions, taken deliberately and measured first.** Three so
     far, all DuckDB-only and all because the dialect-neutral spelling was the
     dominant cost of a page: the view that shreds iNaturalist responses

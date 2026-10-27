@@ -537,8 +537,11 @@ describe("the nightly and a refused sample snapshot (beeline-hrw)", () => {
     expect(steps.indexOf("derive elevations")).toBeGreaterThan(steps.indexOf("record sample changes"));
     // And the tiles it needs were fetched just before it (beeline-z08).
     expect(steps.indexOf("fetch elevation tiles")).toBe(steps.indexOf("derive elevations") - 1);
-    // Localities are named after elevations, and a machine with no gazetteer says so (beeline-7i6).
-    expect(steps.indexOf("name localities")).toBe(steps.indexOf("derive elevations") + 1);
+    // Areas are found after elevations, then localities are named, and a
+    // machine with no gazetteer says so for each (beeline-9jd4, beeline-7i6).
+    expect(steps.indexOf("find areas")).toBe(steps.indexOf("derive elevations") + 1);
+    expect(steps.indexOf("name localities")).toBe(steps.indexOf("find areas") + 1);
+    expect(run.detail).toContain("areas: no gazetteer on this machine");
     expect(run.detail).toContain("localities: no gazetteer on this machine");
     // And the snapshot is untouched: the refusal restates nothing.
     const { readFile } = await import("node:fs/promises");

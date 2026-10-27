@@ -23,7 +23,13 @@ async function storeWithPerson(): Promise<DuckDBConnection> {
 }
 
 const inside = (conn: DuckDBConnection) =>
-  rows(conn, `SELECT sample_id, source, source_id, kind, name FROM sample_area_current ORDER BY sample_id, source_id`);
+  rows(
+    conn,
+    `SELECT sample_id, source, source_id, kind, name FROM sample_area_current
+     WHERE kind = 'wilderness' ORDER BY sample_id, source_id`,
+  );
+const counties = (conn: DuckDBConnection) =>
+  rows(conn, `SELECT sample_id, source, source_id, name FROM sample_area_current WHERE kind = 'county' ORDER BY sample_id`);
 const areas = (conn: DuckDBConnection) => rows(conn, `SELECT source_id, name FROM area ORDER BY source_id`);
 
 // Inside the test gazetteer's Alsea Wilderness, inside its Ox Wilderness, and
@@ -37,23 +43,26 @@ describe("deriveAreas", () => {
     const conn = await storeWithPerson();
     await insertCleanSample(conn);
     expect(await deriveAreas(conn, join(dir, "absent.duckdb"))).toEqual({
-      gazetteerBuild: null, pending: 0, inside: 0, outdated: false,
+      gazetteerBuild: null, pending: 0, inWilderness: 0, inCounty: 0, outdated: false,
     });
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_area_derivation`)).toEqual([[0]]);
   });
 
-  test("a gazetteer built before areas is left for localities, and says it needs rebuilding", async () => {
-    const path = join(dir, "old.duckdb");
+  test.each([
+    ["without wildernesses", `DROP TABLE wilderness`],
+    ["without its regions' own ids", `ALTER TABLE region DROP COLUMN source_id`],
+  ])("a gazetteer built before areas (%s) is left for localities, and says it needs rebuilding", async (_, change) => {
+    const path = join(dir, `old-${Math.random().toString(36).slice(2)}.duckdb`);
     await buildTestGazetteer(path, "build-old");
     const instance = await openDuckDb(path);
     const g = await instance.connect();
-    await g.run(`DROP TABLE wilderness`);
+    await g.run(change);
     g.closeSync();
     instance.closeSync();
     const conn = await storeWithPerson();
     await insertCleanSample(conn, {}, ALSEA);
     const r = await deriveAreas(conn, path);
-    expect(r).toEqual({ gazetteerBuild: "build-old", pending: 0, inside: 0, outdated: true });
+    expect(r).toEqual({ gazetteerBuild: "build-old", pending: 0, inWilderness: 0, inCounty: 0, outdated: true });
     expect(describeAreas(r)).toBe("areas: the gazetteer predates them; rebuild it");
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_area_derivation`)).toEqual([[0]]);
   });
@@ -64,10 +73,17 @@ describe("deriveAreas", () => {
     const conn = await storeWithPerson();
     const inAlsea = await insertCleanSample(conn, {}, ALSEA);
     const outside = await insertCleanSample(conn, { sample_number: "'2'" }, REFUGE);
-    expect(await deriveAreas(conn, path)).toEqual({ gazetteerBuild: "build-a", pending: 2, inside: 1, outdated: false });
+    expect(await deriveAreas(conn, path)).toEqual({
+      gazetteerBuild: "build-a", pending: 2, inWilderness: 1, inCounty: 2, outdated: false,
+    });
     expect(await inside(conn)).toEqual([[inAlsea, "wilderness.net", "9001", "wilderness", "Alsea Wilderness"]]);
+    // Both are in Benton County, by its Census GEOID.
+    expect(await counties(conn)).toEqual([
+      [inAlsea, "census", "41003", "Benton County"],
+      [outside, "census", "41003", "Benton County"],
+    ]);
     // Ox Wilderness has nobody in it, so the store does not hold it.
-    expect(await areas(conn)).toEqual([["9001", "Alsea Wilderness"]]);
+    expect(await areas(conn)).toEqual([["41003", "Benton County"], ["9001", "Alsea Wilderness"]]);
     // Both were tested, the one outside every area too, at their own points.
     expect(
       await rows(conn, `SELECT sample_id, latitude, longitude, gazetteer_build FROM sample_area_derivation ORDER BY 1`),
@@ -87,7 +103,7 @@ describe("deriveAreas", () => {
     // and 167 m north of it, well inside it east to west.
     await insertCleanSample(conn, {}, { latitude: "44.4805", longitude: "-123.60" });
     const deeper = await insertCleanSample(conn, { sample_number: "'2'" }, { latitude: "44.4815", longitude: "-123.60" });
-    expect(await deriveAreas(conn, path)).toMatchObject({ pending: 2, inside: 1 });
+    expect(await deriveAreas(conn, path)).toMatchObject({ pending: 2, inWilderness: 1, inCounty: 2 });
     expect((await inside(conn)).map(([id]) => id)).toEqual([deeper]);
   });
 
@@ -99,9 +115,9 @@ describe("deriveAreas", () => {
     await deriveAreas(conn, path);
     await conn.run(`UPDATE sample_location SET latitude = 44.50, longitude = -123.75 WHERE sample_id = ${id}`);
     expect(await inside(conn)).toEqual([]);
-    expect(await deriveAreas(conn, path)).toMatchObject({ pending: 1, inside: 1 });
+    expect(await deriveAreas(conn, path)).toMatchObject({ pending: 1, inWilderness: 1 });
     expect(await inside(conn)).toEqual([[id, "wilderness.net", "9002", "wilderness", "Ox Wilderness"]]);
-    expect(await areas(conn)).toEqual([["9002", "Ox Wilderness"]]);
+    expect(await areas(conn)).toEqual([["41003", "Benton County"], ["9002", "Ox Wilderness"]]);
   });
 
   test("a new gazetteer build tests every sample again and brings its areas up to that build", async () => {
@@ -112,8 +128,13 @@ describe("deriveAreas", () => {
     await insertCleanSample(conn, { sample_number: "'2'" }, ALSEA);
     await deriveAreas(conn, path);
     await buildTestGazetteer(path, "build-c2");
-    expect(await deriveAreas(conn, path, { batchSize: 1 })).toEqual({ gazetteerBuild: "build-c2", pending: 2, inside: 2, outdated: false });
-    expect(await rows(conn, `SELECT source_id, gazetteer_build FROM area`)).toEqual([["9001", "build-c2"]]);
+    expect(await deriveAreas(conn, path, { batchSize: 1 })).toEqual({
+      gazetteerBuild: "build-c2", pending: 2, inWilderness: 2, inCounty: 2, outdated: false,
+    });
+    expect(await rows(conn, `SELECT source_id, gazetteer_build FROM area ORDER BY 1`)).toEqual([
+      ["41003", "build-c2"],
+      ["9001", "build-c2"],
+    ]);
   });
 
   test("tested for one observer, it leaves everyone else's samples for the nightly", async () => {
@@ -128,9 +149,9 @@ describe("deriveAreas", () => {
       { collector_id: "(SELECT max(entity_id) FROM person)", sample_number: "'2'" },
       OX,
     );
-    expect(await deriveAreas(conn, path, { observerUserId: 100 })).toMatchObject({ pending: 1, inside: 1 });
+    expect(await deriveAreas(conn, path, { observerUserId: 100 })).toMatchObject({ pending: 1, inWilderness: 1 });
     expect((await inside(conn)).map(([id]) => id)).toEqual([ada]);
-    expect(await deriveAreas(conn, path)).toMatchObject({ pending: 1, inside: 1 });
+    expect(await deriveAreas(conn, path)).toMatchObject({ pending: 1, inWilderness: 1 });
     expect((await inside(conn)).map(([id]) => id)).toEqual([ada, bo]);
   });
 });

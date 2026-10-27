@@ -8,8 +8,9 @@ import { loadSpatial, openDuckDb } from "./db.js";
  * (beeline-9jd4), into sample_area (schema/038), copying each area a sample
  * lands in from the gazetteer into the store. The nightly runs it before
  * naming localities; "Check iNaturalist now" runs it for the checked
- * person's samples; `pnpm area:derive` runs it by hand. The only kind so far
- * is the federal wilderness (beeline-zdfz).
+ * person's samples; `pnpm area:derive` runs it by hand. Two kinds so far:
+ * the federal wilderness (beeline-zdfz), and the county or BC regional
+ * district (beeline-313x), which is simply the one the point is in.
  *
  * As with localities (src/derive-locality.ts), a sample is tested when it
  * has not been yet, when its coordinates have moved from the point it was
@@ -38,8 +39,10 @@ export interface AreaResult {
   /** Null when there was no gazetteer to read. */
   gazetteerBuild: string | null;
   pending: number;
-  /** Of the samples tested, how many lie inside at least one area. */
-  inside: number;
+  /** Of the samples tested, how many lie inside a wilderness. */
+  inWilderness: number;
+  /** Of the samples tested, how many lie inside a county or regional district. */
+  inCounty: number;
   /** The gazetteer was built before it held any areas: nothing was tested. */
   outdated: boolean;
 }
@@ -59,7 +62,7 @@ async function rows<T>(conn: Conn, sql: string, params?: unknown[]): Promise<T[]
 }
 
 export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: DeriveAreaOptions = {}): Promise<AreaResult> {
-  const result: AreaResult = { gazetteerBuild: null, pending: 0, inside: 0, outdated: false };
+  const result: AreaResult = { gazetteerBuild: null, pending: 0, inWilderness: 0, inCounty: 0, outdated: false };
   try {
     await access(gazetteerPath);
   } catch {
@@ -72,14 +75,17 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
     const [build] = await rows<{ build_id: string }>(conn, `SELECT build_id FROM ${G}.gazetteer_build`);
     if (build === undefined) throw new Error(`${gazetteerPath} has no gazetteer_build row: rebuild it`);
     result.gazetteerBuild = build.build_id;
-    // A gazetteer from before the wildernesses were added (beeline-9jd4) is
-    // still good for localities; it only has no areas to test against.
-    const [{ n: tables } = { n: 0 }] = await rows<{ n: number }>(
+    // A gazetteer from before areas (beeline-9jd4), without the wildernesses
+    // or without its regions' own ids, is still good for localities; it only
+    // has no areas to test against.
+    const [{ n: found } = { n: 0 }] = await rows<{ n: number }>(
       conn,
-      `SELECT count(*)::INTEGER AS n FROM duckdb_tables() WHERE database_name = $1 AND table_name = 'wilderness'`,
+      `SELECT count(*)::INTEGER AS n FROM duckdb_columns() WHERE database_name = $1
+         AND ((table_name = 'wilderness' AND column_name = 'wid')
+              OR (table_name = 'region' AND column_name = 'source_id'))`,
       [G],
     );
-    if (tables === 0) {
+    if (found < 2) {
       result.outdated = true;
       return result;
     }
@@ -101,7 +107,9 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
     const size = opts.batchSize ?? 5000;
     for (let i = 0; i < pending.length; i += size) {
       opts.signal?.throwIfAborted();
-      result.inside += await testBatch(conn, pending.slice(i, i + size), G, build.build_id);
+      const found = await testBatch(conn, pending.slice(i, i + size), G, build.build_id);
+      result.inWilderness += found.wilderness;
+      result.inCounty += found.county;
     }
     // An area no sample lies inside any more goes: the store keeps only the
     // areas somebody collected in.
@@ -113,13 +121,19 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
   }
 }
 
-/** Replace one batch's areas; returns how many of its samples lie inside one. */
+/** Every area the gazetteer holds, in the store's terms. */
+const gazetteerAreas = (G: string) => `
+  SELECT 'wilderness.net' AS source, wid AS source_id, 'wilderness' AS kind, name, geom FROM ${G}.wilderness
+  UNION ALL
+  SELECT source, source_id, 'county' AS kind, name, geom FROM ${G}.region`;
+
+/** Replace one batch's areas; returns how many of its samples lie inside an area of each kind. */
 async function testBatch(
   conn: Conn,
   batch: Array<{ sample_id: number; lat: number; lon: number }>,
   G: string,
   buildId: string,
-): Promise<number> {
+): Promise<{ wilderness: number; county: number }> {
   await conn.run(`CREATE OR REPLACE TEMP TABLE area_batch (sample_id INTEGER, lat DOUBLE, lon DOUBLE)`);
   const appender = await conn.createAppender("area_batch", "main", "temp");
   for (const p of batch) {
@@ -131,7 +145,7 @@ async function testBatch(
   appender.closeSync();
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE area_batch_hit AS
-    SELECT DISTINCT sample_id, 'wilderness.net' AS source, wid AS source_id
+    SELECT DISTINCT sample_id, 'wilderness.net' AS source, wid AS source_id, 'wilderness' AS kind
     FROM (SELECT b.sample_id, b.lat, b.lon, w.wid,
                  ST_ClosestPoint(ST_Boundary(w.geom), ST_Point(b.lon, b.lat)) AS edge
           FROM area_batch b JOIN ${G}.wilderness w ON ST_Contains(w.geom, ST_Point(b.lon, b.lat)))
@@ -139,7 +153,13 @@ async function testBatch(
     -- own coordinates, so no function's guess at axis order is involved.
     WHERE 2 * 6371000 * asin(sqrt(pow(sin(radians(ST_Y(edge) - lat) / 2), 2)
             + cos(radians(lat)) * cos(radians(ST_Y(edge))) * pow(sin(radians(ST_X(edge) - lon) / 2), 2)))
-          > ${WILDERNESS_EDGE_M}`);
+          > ${WILDERNESS_EDGE_M}
+    UNION ALL
+    -- The county or regional district the point is in, with no allowance:
+    -- a point is in one county or another, and which is beeline-313x's
+    -- question to judge, not this step's.
+    SELECT DISTINCT b.sample_id, r.source, r.source_id, 'county'
+    FROM area_batch b JOIN ${G}.region r ON ST_Contains(r.geom, ST_Point(b.lon, b.lat))`);
   const now = new Date().toISOString();
   await conn.run("BEGIN TRANSACTION");
   try {
@@ -148,11 +168,11 @@ async function testBatch(
     // its outline is written once a build rather than once a batch.
     await conn.run(
       `INSERT INTO area (source, source_id, kind, name, geom, gazetteer_build)
-       SELECT 'wilderness.net', w.wid, 'wilderness', w.name, w.geom, $1
-       FROM ${G}.wilderness w
-       WHERE w.wid IN (SELECT source_id FROM area_batch_hit WHERE source = 'wilderness.net')
+       SELECT g.source, g.source_id, g.kind, g.name, g.geom, $1
+       FROM (${gazetteerAreas(G)}) g
+       WHERE EXISTS (SELECT 1 FROM area_batch_hit h WHERE h.source = g.source AND h.source_id = g.source_id)
          AND NOT EXISTS (SELECT 1 FROM area a
-                         WHERE a.source = 'wilderness.net' AND a.source_id = w.wid AND a.gazetteer_build = $1)
+                         WHERE a.source = g.source AND a.source_id = g.source_id AND a.gazetteer_build = $1)
        ON CONFLICT (source, source_id) DO UPDATE
          SET name = excluded.name, geom = excluded.geom, gazetteer_build = excluded.gazetteer_build`,
       [buildId],
@@ -173,8 +193,13 @@ async function testBatch(
     await conn.run("ROLLBACK");
     throw err;
   }
-  const [found] = await rows<{ n: number }>(conn, `SELECT count(DISTINCT sample_id)::INTEGER AS n FROM area_batch_hit`);
-  return found?.n ?? 0;
+  const [found] = await rows<{ wilderness: number; county: number }>(
+    conn,
+    `SELECT count(DISTINCT sample_id) FILTER (WHERE kind = 'wilderness')::INTEGER AS wilderness,
+            count(DISTINCT sample_id) FILTER (WHERE kind = 'county')::INTEGER AS county
+     FROM area_batch_hit`,
+  );
+  return { wilderness: found?.wilderness ?? 0, county: found?.county ?? 0 };
 }
 
 /** One line for the job's detail. */
@@ -182,7 +207,7 @@ export function describeAreas(r: AreaResult): string | null {
   if (r.gazetteerBuild === null) return "areas: no gazetteer on this machine";
   if (r.outdated) return "areas: the gazetteer predates them; rebuild it";
   if (r.pending === 0) return null;
-  return `areas: ${r.pending} sample(s) tested, ${r.inside} inside a wilderness`;
+  return `areas: ${r.pending} sample(s) tested, ${r.inWilderness} inside a wilderness, ${r.inCounty} in a county`;
 }
 
 // CLI: pnpm area:derive [db] [gazetteer]

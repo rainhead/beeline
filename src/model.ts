@@ -387,8 +387,8 @@ export interface SampleLocalitySuggestionCurrentView {
   derived_at: Date;
 }
 
-/** schema/038: what kind of area (beeline-9jd4). Wildernesses only, so far. */
-export type AreaKind = "wilderness";
+/** schema/038: what kind of area (beeline-9jd4). A county includes a BC regional district. */
+export type AreaKind = "wilderness" | "county";
 
 /**
  * schema/038: a named place with an outline, keyed by its source's own id.
@@ -396,7 +396,7 @@ export type AreaKind = "wilderness";
  * reads it, and the driver has no type for it without the spatial extension.
  */
 export interface AreaTable {
-  source: "wilderness.net";
+  source: "wilderness.net" | "census" | "bc-abms";
   source_id: string;
   kind: AreaKind;
   name: string;

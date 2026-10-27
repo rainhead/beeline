@@ -1,7 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
-import { isDue, runJob, startScheduler, type Job, type JobContext } from "../src/app/jobs/framework.js";
+import {
+  describeStep,
+  formatDuration,
+  isDue,
+  runJob,
+  startScheduler,
+  stolenMs,
+  type Job,
+  type JobContext,
+} from "../src/app/jobs/framework.js";
 import { lastSyncStart, pipelineTail, refreshPlaces } from "../src/app/jobs/registry.js";
 import { createApp } from "../src/app/server.js";
 import { buildTestGazetteer, createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
@@ -117,6 +126,53 @@ describe("runJob", () => {
     const runs = await deps.db.selectFrom("job_run").select(["job_name", "sla_breaches"]).execute();
     expect(runs.find((r) => r.job_name === "slow-interactive")?.sla_breaches).toBe(1);
     expect(runs.find((r) => r.job_name === "slow-night")?.sla_breaches).toBe(0);
+  });
+});
+
+describe("where a night job's time goes (beeline-6hud)", () => {
+  it("logs every step of a night job with its time, CPU and stolen time, and the run's length", async () => {
+    const deps = await jobDeps();
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => void lines.push(line));
+    try {
+      const job = (name: string, window: "interactive" | "night"): Job => ({
+        name,
+        schedule: { kind: "everyMinutes", minutes: 1 },
+        window,
+        run: async (ctx) => {
+          await ctx.step("first chunk", () => sleep(5));
+          await ctx.step("second chunk", () => sleep(5));
+          return "done";
+        },
+      });
+      await runJob(deps, job("timed-night", "night"));
+      await runJob(deps, job("quiet-interactive", "interactive"));
+    } finally {
+      spy.mockRestore();
+    }
+    const stolen = (await stolenMs()) === null ? "" : ", [0-9.]+(ms|s) stolen";
+    expect(lines).toEqual(expect.arrayContaining([
+      expect.stringMatching(new RegExp(`^\\[job timed-night\\] step 'first chunk' took [0-9.]+ms: [0-9.]+ms CPU${stolen}$`)),
+      expect.stringMatching(/^\[job timed-night\] step 'second chunk' took /),
+      expect.stringMatching(/^\[job timed-night\] succeeded in [0-9.]+ms: done$/),
+    ]));
+    // An interactive job's steps are timed against its budget instead, and
+    // say nothing unless they break it.
+    expect(lines.filter((l) => l.startsWith("[job quiet-interactive] step"))).toEqual([]);
+  });
+
+  it("says a duration the way a person reads one", () => {
+    expect(formatDuration(850)).toBe("850ms");
+    expect(formatDuration(12_340)).toBe("12.3s");
+    expect(formatDuration(845_000)).toBe("14m 05s");
+  });
+
+  it("leaves stolen time out where the machine cannot say", () => {
+    const cpu = { user: 4_000_000, system: 1_000_000 };
+    expect(describeStep("name localities", 840_000, cpu, null, null)).toBe("step 'name localities' took 14m 00s: 5.0s CPU");
+    expect(describeStep("name localities", 840_000, cpu, 1_000, 601_000)).toBe(
+      "step 'name localities' took 14m 00s: 5.0s CPU, 10m 00s stolen",
+    );
   });
 });
 

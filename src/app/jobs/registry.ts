@@ -343,9 +343,13 @@ export function buildJobs(
   const samplePaths: SampleLogPaths = { log: config.sampleChangesPath, state: config.sampleStatePath };
   return [
     {
+      // Once a night, at midnight, ahead of the other night jobs (Peter,
+      // 2026-10-27): an idle session already stops resolving at the cutoff
+      // (src/app/session.ts), so the purge only tidies rows nothing can use,
+      // and hourly runs bought nothing.
       name: "session-purge",
-      schedule: { kind: "everyMinutes", minutes: 60 },
-      window: "interactive",
+      schedule: { kind: "dailyLA", hour: 0 },
+      window: "night",
       async run(ctx) {
         await ctx.step("purge idle sessions", () => purgeIdleSessions(ctx.db));
       },

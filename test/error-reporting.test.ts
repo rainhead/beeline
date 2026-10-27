@@ -124,9 +124,9 @@ describe("monitorConfig", () => {
     });
   });
 
-  it("expects the sweep on Sunday mornings and the session purge every hour", () => {
+  it("expects the sweep on Sunday mornings and the session purge at midnight", () => {
     expect(config("weekly-sweep")).toMatchObject({ schedule: { type: "crontab", value: "0 3 * * 0" } });
-    expect(config("session-purge")).toMatchObject({ schedule: { type: "interval", value: 60, unit: "minute" } });
+    expect(config("session-purge")).toMatchObject({ schedule: { type: "crontab", value: "0 0 * * *" } });
   });
 });
 

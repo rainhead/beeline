@@ -92,6 +92,16 @@ describe("an unpacked Darwin Core archive", () => {
     const blank = await loadEcdysis(conn, { path: flat, catalogPrefix: "WSDA_", determinerAliases: ALIASES, force: true });
     expect(blank.catalogNumbers).toBe(0);
     expect(await one(`SELECT catalog_number FROM specimen_catalog_number WHERE specimen_id = ${a}`)).toEqual(["WSDA_7000001"]);
+
+    // And a revised identification under the new number, which spells no
+    // field number, is still A's, by the occurrence its number was read from.
+    await writeFile(
+      flat,
+      "id,catalogNumber,recordID,scientificName,identifiedBy,dateIdentified,identificationQualifier,identificationRemarks,modified\n" +
+        "100,WSDA_7000001,occ-a,Ceratina acantha,Sam A. Staff,2026,,,2026-10-03 10:00:00\n",
+    );
+    await loadEcdysis(conn, { path: flat, catalogPrefix: "WSDA_", determinerAliases: ALIASES, force: true });
+    expect((await record(a))?.[0]).toBe("Ceratina acantha");
   });
 
   test("gives neither of two specimens sharing a field number the museum's number", async () => {

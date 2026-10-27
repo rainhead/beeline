@@ -280,27 +280,31 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       [now.toISOString()],
     );
 
-    // The one specimen each matched occurrence's identifications are about:
-    // the one its catalog number is recorded against, by an earlier load or
-    // just above, else the only specimen carrying its field number. An
-    // occurrence whose field number two specimens carry, with no catalog
-    // number to say which is the museum's, gets none, and its
-    // identifications wait as its catalog number does (beeline-n1sz). Joining
-    // every match instead recorded one identification on both specimens,
-    // which its Symbiota id refused, and rolled the whole load back.
+    // The one specimen each occurrence's identifications are about: the one
+    // its catalog number is recorded against, by an earlier load or just
+    // above, so an occurrence the museum renumbered keeps its specimen though
+    // its number no longer spells the field number; else the only specimen
+    // carrying its field number. An occurrence whose field number two
+    // specimens carry, with no catalog number to say which is the museum's,
+    // gets none, and its identifications wait as its catalog number does
+    // (beeline-n1sz). Joining every match instead recorded one
+    // identification on both specimens, which its Symbiota id refused, and
+    // rolled the whole load back.
     await conn.run(
       `CREATE OR REPLACE TEMP TABLE ecd_specimen AS
-       SELECT m.occ_id,
+       SELECT o.occ_id,
               coalesce(any_value(c.specimen_id),
-                       CASE WHEN count(DISTINCT m.specimen_id) = 1 THEN any_value(m.specimen_id) END) AS specimen_id
-       FROM ecd_match m
-       LEFT JOIN specimen_catalog_number c ON c.occurrence_id = m.occurrence_record_id
-       WHERE m.specimen_id IS NOT NULL
-       GROUP BY m.occ_id`,
+                       CASE WHEN count(DISTINCT m.specimen_id) = 1 THEN any_value(m.specimen_id) END) AS specimen_id,
+              count(DISTINCT m.specimen_id) > 1 AS shared
+       FROM ecd_occurrence o
+       LEFT JOIN specimen_catalog_number c ON c.occurrence_id = o.occurrence_record_id
+       LEFT JOIN ecd_match m ON m.occ_id = o.occ_id AND m.specimen_id IS NOT NULL
+       GROUP BY o.occ_id`,
     );
     const ambiguousIdentifications = await scalar(
       conn,
-      `SELECT count(*) FROM ecd_identification i JOIN ecd_specimen s ON s.occ_id = i.occ_id WHERE s.specimen_id IS NULL`,
+      `SELECT count(*) FROM ecd_identification i JOIN ecd_specimen s ON s.occ_id = i.occ_id
+       WHERE s.specimen_id IS NULL AND s.shared`,
     );
 
     // A name the tree does not spell, but that Ecdysis's thesaurus accepts,

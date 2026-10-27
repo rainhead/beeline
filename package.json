@@ -30,6 +30,7 @@
     "locality:fetch": "scripts/fetch-gazetteer.sh",
     "locality:gazetteer": "tsx src/build-gazetteer.ts",
     "locality:derive": "tsx src/derive-locality.ts",
+    "area:derive": "tsx src/derive-area.ts",
     "ecdysis:taxonomy":"tsx src/load-ecdysis-taxonomy.ts",
     "taxon:apply": "tsx src/taxon-curation.ts",
     "taxon:fetch-sheet": "tsx src/fetch-taxon-sheet.ts",

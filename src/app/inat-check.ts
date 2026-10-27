@@ -3,6 +3,7 @@ import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { deriveElevations } from "../derive-elevation.js";
 import { deriveLocalities } from "../derive-locality.js";
+import { deriveAreas } from "../derive-area.js";
 import { promoteObservations } from "../promote-observations.js";
 import { syncINat } from "../sync-inat.js";
 import { refreshPlaces } from "./jobs/registry.js";
@@ -146,10 +147,11 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
  * What the nightly does next for a new or moved point, done here too so a
  * sample the check just made is whole when the page comes back: an elevation
  * from the tiles already on disk (fetching tiles stays the nightly's, being
- * network-bound), and a locality named from the coordinates, for this
- * person's samples only, so "Use this locality" is there at once
- * (beeline-7i6). Neither is a QC finding or blocks printing, so neither may
- * fail the check: a failure is logged and the nightly tries again.
+ * network-bound), the areas the point lies inside (beeline-9jd4), and a
+ * locality named from the coordinates, for this person's samples only, so
+ * "Use this locality" is there at once (beeline-7i6). None is a QC finding
+ * or blocks printing, so none may fail the check: a failure is logged and
+ * the nightly tries again.
  */
 async function deriveAfterCheck(conn: DuckDBConnection, opts: CheckOptions): Promise<void> {
   // A nightly that started while this check waited for the lock does it all.
@@ -162,6 +164,11 @@ async function deriveAfterCheck(conn: DuckDBConnection, opts: CheckOptions): Pro
     }
   }
   if (opts.gazetteerPath !== undefined) {
+    try {
+      await deriveAreas(conn, opts.gazetteerPath, { observerUserId: opts.userId });
+    } catch (err) {
+      console.warn(`[inat check] areas not found: ${(err as Error).message}`);
+    }
     try {
       await deriveLocalities(conn, opts.gazetteerPath, { observerUserId: opts.userId });
     } catch (err) {

@@ -375,10 +375,15 @@ fly ssh console --app beeline -C "mv -f /app/data/gazetteer.duckdb.new /app/data
 ```
 
 Each build has its own id, so the next nightly names every sample again,
-about 70,000 on the sandbox. Until a gazetteer is there, the nightly's detail
-reads "localities: no gazetteer on this machine" and nothing else changes. To
-see the names straight away, run `pnpm locality:derive data/beeline.duckdb`
-in maintenance mode, as for any CLI that writes the store. Rebuild when a
+about 70,000 on the sandbox, and tests every sample again for the areas it
+lies inside ([Areas](../architecture/areas.md)). Until a gazetteer is there,
+the nightly's detail reads "localities: no gazetteer on this machine" and
+nothing else changes; a gazetteer built before the wildernesses were added
+still names localities, and the detail reads "areas: the gazetteer predates
+them; rebuild it" until it is replaced. To see the names straight away, run
+`pnpm area:derive data/beeline.duckdb` and `pnpm locality:derive
+data/beeline.duckdb` in maintenance mode, as for any CLI that writes the
+store. Rebuild when a
 source changes enough to matter: a new Census vintage, BC's boundaries, a
 refuge added. Delete the files in `data/gazetteer-sources/` to fetch them
 again.

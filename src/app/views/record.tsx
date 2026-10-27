@@ -127,6 +127,10 @@ export function SampleFacts({
               />
             </div>
           )}
+          {/* Inside a federal wilderness (beeline-zdfz): said, never blocking. */}
+          {sample.wildernesses.length === 0 ? null : (
+            <Meta block>{s.inWilderness(m.format.list(sample.wildernesses))}</Meta>
+          )}
           {/* A staff-set locality carries its provenance beside it, as the
               coordinates carry theirs (beeline-649): who, why, and what
               iNaturalist says now where the observation has moved on. */}

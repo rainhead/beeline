@@ -6,6 +6,7 @@ import { backUp, describeBackup } from "../../store-backup.js";
 import type { Kysely } from "kysely";
 import { deriveElevations } from "../../derive-elevation.js";
 import { deriveLocalities, describeLocalities } from "../../derive-locality.js";
+import { deriveAreas, describeAreas } from "../../derive-area.js";
 import { fetchMissingTiles, type FetchTilesOptions } from "../../fetch-dem.js";
 import { mintPipelineJwt } from "../../inat-jwt.js";
 import { fetchPlaces, type FetchPlacesOptions } from "../../fetch-places.js";
@@ -203,7 +204,26 @@ export async function refreshLocalities(
   }
 }
 
-/** Fetch places, promote, elevation and localities, shared by both sync jobs. Exported for its test. */
+/**
+ * Which areas each sample lies inside (beeline-9jd4), before localities.
+ * NEVER FAILS THE RUN, for refreshLocalities's reason: being inside a
+ * wilderness is a note on the sample, not a QC finding, and never blocks
+ * printing (Peter, 2026-10-26).
+ */
+export async function refreshAreas(
+  conn: JobContext["conn"],
+  gazetteerPath: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  try {
+    return describeAreas(await deriveAreas(conn, gazetteerPath, { signal }));
+  } catch (err) {
+    signal?.throwIfAborted();
+    return `finding areas failed (${(err as Error).message})`;
+  }
+}
+
+/** Fetch places, promote, elevation, areas and localities, shared by both sync jobs. Exported for its test. */
 export async function pipelineTail(
   ctx: JobContext,
   parts: string[],
@@ -260,9 +280,10 @@ export async function pipelineTail(
       (elevation.refused > 0 ? `, ${elevation.refused} refused as too uncertain` : "") +
       (elevation.missingTiles.length > 0 ? ` (missing tiles: ${elevation.missingTiles.join(", ")})` : ""),
   );
-  const localities = await ctx.step("name localities", () =>
-    refreshLocalities(ctx.conn, tiles.gazetteerPath ?? deploymentPath(GAZETTEER_PATH), ctx.signal),
-  );
+  const gazetteerPath = tiles.gazetteerPath ?? deploymentPath(GAZETTEER_PATH);
+  const areas = await ctx.step("find areas", () => refreshAreas(ctx.conn, gazetteerPath, ctx.signal));
+  if (areas !== null) parts.push(areas);
+  const localities = await ctx.step("name localities", () => refreshLocalities(ctx.conn, gazetteerPath, ctx.signal));
   if (localities !== null) parts.push(localities);
   // A refused snapshot (beeline-hrw) fails the run — after every store step
   // has done its work, so nothing the nightly is for waits on it — because a

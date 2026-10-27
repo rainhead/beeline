@@ -219,6 +219,7 @@ export const en = {
         { name: "National Park Service", href: "https://www.nps.gov/" },
         { name: "Washington Department of Fish and Wildlife", href: "https://wdfw.wa.gov/places-to-go/wildlife-areas" },
         { name: "Washington State Parks", href: "https://parks.wa.gov/" },
+        { name: "Wilderness Connect", href: "https://wilderness.net/" },
       ],
       elevationSources: [
         { name: "NASA SRTM", href: "https://www.earthdata.nasa.gov/data/instruments/srtm" },
@@ -617,7 +618,7 @@ export const en = {
       from: "Collected from",
       to: "Collected to",
       place: "Place",
-      placeHint: "Locality, county, state, or country",
+      placeHint: "Locality, county, state, country, or wilderness",
       collector: "Collector",
       collectorHint: "Name or iNaturalist login — anyone on the sample",
       /**
@@ -813,6 +814,13 @@ export const en = {
        * step that was asked for, and this row is the evidence for it.
        */
       asRecorded: (text: string) => `Recorded in iNaturalist as “${text}”.`,
+      /**
+       * The coordinates lie inside a federal wilderness (beeline-zdfz). A
+       * note, not a flag: it blocks nothing (Peter, 2026-10-26). Permits are
+       * not tracked, so it says that one is needed and not whether the
+       * program had one: inside Olympic it did. `names` is already a list.
+       */
+      inWilderness: (names: string) => `Inside the ${names}. Collecting in a federal wilderness needs a permit.`,
       atlas: "Atlas",
       /** Collecting outside the member atlases is ordinary (beeline-lcl). */
       atlasOutside: "None — collected where no member atlas reaches",

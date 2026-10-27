@@ -218,8 +218,10 @@ export async function insertCleanSample(
  * A gazetteer of a few hand-drawn shapes, with the tables and columns
  * ingest/gazetteer.sql builds: synthetic, since the real one is built from
  * downloads no test should make. One refuge square west of Corvallis, a
- * county around everything, two towns, and a lake volunteers have named.
- * Shared by the derive step's tests and the iNaturalist check's (beeline-7i6).
+ * county around everything, two towns, a lake volunteers have named, and a
+ * made-up wilderness that both OpenStreetMap and Wilderness.net outline.
+ * Shared by the derive steps' tests and the iNaturalist check's (beeline-7i6,
+ * beeline-9jd4).
  */
 export async function buildTestGazetteer(path: string, buildId: string): Promise<void> {
   await rm(path, { force: true });
@@ -240,6 +242,10 @@ export async function buildTestGazetteer(path: string, buildId: string): Promise
     -- A made-up federal wilderness, which is never a locality.
     INSERT INTO osm_area VALUES ('way/1', 'Alsea Wilderness', 4000, false, ${box(-123.65, 44.48, -123.55, 44.53)}),
       ('way/2', 'Ox Wilderness Area', 3000, false, ${box(-123.80, 44.48, -123.70, 44.53)});
+    CREATE TABLE wilderness AS SELECT * FROM (VALUES
+      ('9001', 'Alsea Wilderness', 'FS', ${box(-123.65, 44.48, -123.55, 44.53)}),
+      ('9002', 'Ox Wilderness', 'BLM', ${box(-123.80, 44.48, -123.70, 44.53)}))
+      t(wid, name, agency, geom);
     CREATE TABLE place AS SELECT * FROM (VALUES
       (1, 'Philomath', 44.54, -123.37, 'town', 'PPL', 5000, 'US-OR-Benton', NULL),
       (2, 'Alsea', 44.38, -123.60, 'town', 'PPL', 164, 'US-OR-Benton', NULL))

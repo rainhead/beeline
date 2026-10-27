@@ -11,7 +11,9 @@
 --
 -- Licences, which follow the data: GeoNames is CC BY 4.0, OpenStreetMap is
 -- the ODbL, so this file is ODbL too; the government layers are public
--- domain (US) or the Open Government Licence – British Columbia.
+-- domain (US) or the Open Government Licence – British Columbia; the
+-- wildernesses are Wilderness.net's compilation of the agencies' boundaries,
+-- credited in the site footer.
 
 -- Counties, and BC's regional districts as the province defines them now
 -- (beeline-313x). A region id is country-state-name: US-OR-Benton, CA-BC-CRD.
@@ -49,6 +51,19 @@ CREATE TABLE nps_unit AS
 SELECT UNIT_NAME AS unit, ST_MakeValid(geom::GEOMETRY) AS geom
 FROM ST_Read('__SOURCES__/nps_units.geojson')
 WHERE UNIT_TYPE NOT IN ('National Memorials', 'Other Designations');
+
+-- Federal wildernesses, every agency's (Wilderness.net; beeline-9jd4), one
+-- row per wilderness: the layer splits one that two agencies manage into a
+-- feature each (Mount Jefferson, Forest Service and BLM), which share the
+-- WID. Never a locality; the derive step copies the ones samples lie inside
+-- into the store as areas (src/derive-area.ts).
+CREATE TABLE wilderness AS
+SELECT WID::TEXT AS wid, min(NAME) AS name, string_agg(DISTINCT Agency, ',' ORDER BY Agency) AS agency,
+       ST_MakeValid(ST_Union_Agg(ST_MakeValid(geom::GEOMETRY))) AS geom
+FROM (SELECT * FROM ST_Read('__SOURCES__/wilderness_0.geojson')
+      UNION ALL BY NAME SELECT * FROM ST_Read('__SOURCES__/wilderness_300.geojson')
+      UNION ALL BY NAME SELECT * FROM ST_Read('__SOURCES__/wilderness_600.geojson'))
+GROUP BY WID;
 
 -- Washington state parks, and BC's provincial parks, protected areas,
 -- ecological reserves and recreation areas, each with the suffix its label

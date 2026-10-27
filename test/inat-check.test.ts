@@ -197,6 +197,8 @@ describe("Check iNaturalist now", () => {
       ),
     ).toEqual([["Philomath"]]);
     expect(await (await app.request("/")).text()).toContain(en.suggestedLocality.use);
+    // Its areas are worked out too, and only Ada's (beeline-9jd4).
+    expect(await count(conn, "SELECT count(*) FROM sample_area_derivation")).toBe(1);
   });
 
   it("leaves the deriving to a nightly that started while the check was reading", async () => {
@@ -209,6 +211,7 @@ describe("Check iNaturalist now", () => {
     // The check itself ran and said so; only the deriving was left to the nightly.
     expect(await (await check(made.app)).text()).toContain("Beeline read");
     expect(await count(made.conn, "SELECT count(*) FROM sample_locality_suggestion")).toBe(0);
+    expect(await count(made.conn, "SELECT count(*) FROM sample_area_derivation")).toBe(0);
   });
 
   it("refuses a second check within the minute, and any check while the nightly reads iNaturalist", async () => {

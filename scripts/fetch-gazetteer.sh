@@ -44,6 +44,19 @@ get "https://geodataservices.wdfw.wa.gov/arcgis/rest/services/MapServices/Wildli
 get "https://services5.arcgis.com/4LKAHwqnBooVDUlX/arcgis/rest/services/WA_State_Park_Boundaries/FeatureServer/0/query?where=1%3D1&outFields=ParkName,Category&outSR=4326&f=geojson&maxAllowableOffset=0.0002&geometryPrecision=5" wa_state_parks.geojson
 # National Park Service units: parks, monuments, recreation areas.
 get "https://services1.arcgis.com/fBc8EJBxQRMcHlei/arcgis/rest/services/NPS_Land_Resources_Division_Boundary_and_Tract_Data_Service/FeatureServer/2/query?where=1%3D1&outFields=UNIT_NAME,UNIT_TYPE&outSR=4326&f=geojson&maxAllowableOffset=0.0005&geometryPrecision=5" nps_units.geojson
+# Federal wildernesses, every agency's, as Wilderness.net publishes the
+# National Wilderness Preservation System (beeline-9jd4), simplified to about
+# 30 m, in pages of 300: a single request of all of them takes minutes.
+NWPS="https://services1.arcgis.com/ERdCHt0sNM6dENSD/arcgis/rest/services/Wilderness_Areas_in_the_United_States/FeatureServer/0/query"
+for o in 0 300 600; do
+  get "$NWPS?where=1%3D1&outFields=WID,NAME,Agency&outSR=4326&f=geojson&resultOffset=$o&resultRecordCount=300&orderByFields=OBJECTID_1&maxAllowableOffset=0.0003&geometryPrecision=5" "wilderness_$o.geojson"
+done
+# The layer held 843 features in October 2026; as for the refuges, three
+# pages cover it only while the first two are full and the last is not.
+for page in wilderness_0 wilderness_300; do
+  [ "$(jq '.features | length' "$page.geojson")" -eq 300 ] || { echo "$page.geojson is not a full page of 300: the service pages differently now" >&2; exit 1; }
+done
+[ "$(jq '.features | length' wilderness_600.geojson)" -lt 300 ] || { echo "more than 900 wilderness features: add a page to this script and to ingest/gazetteer.sql" >&2; exit 1; }
 # Park, reserve and island outlines from OpenStreetMap (ODbL), for the
 # regional and city parks no government layer gathers, and for islands.
 # Geofabrik's extracts, one per state or province the atlases collect in.

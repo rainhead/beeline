@@ -21,6 +21,10 @@
 -- since Virginia has a Richmond County and a Richmond city. Each region also
 -- carries its source's own id (source, source_id) and its full name, which is
 -- how the derive step copies it into the store as an area (beeline-9jd4).
+-- county is what a sample's county is written as (src/derive-area.ts): the
+-- Census's name, or a district's name as iNaturalist writes it, Capital or
+-- Comox Valley, which a label turns into the province's abbreviation
+-- (src/label-text.ts, Peter, 2026-10-27).
 -- Northern Rockies is a regional municipality outside every district, so it
 -- stands in for one.
 CREATE TABLE region AS
@@ -28,11 +32,12 @@ SELECT concat('US-', STUSPS, '-', GEOID) AS region_id, 'USA' AS country, STUSPS 
        "NAME" AS county, 'census' AS source, GEOID AS source_id, NAMELSAD AS name, geom::GEOMETRY AS geom
 FROM ST_Read('__SOURCES__/counties/cb_2023_us_county_500k.shp')
 UNION ALL
-SELECT concat('CA-BC-', ADMIN_AREA_ABBREVIATION), 'CAN', 'BC', ADMIN_AREA_ABBREVIATION,
+SELECT concat('CA-BC-', ADMIN_AREA_ABBREVIATION), 'CAN', 'BC',
+       regexp_replace(ADMIN_AREA_NAME, '^Regional District of | Regional District$| \(Unincorporated\)$', '', 'g'),
        'bc-abms', LGL_ADMIN_AREA_ID::TEXT, ADMIN_AREA_NAME, geom::GEOMETRY
 FROM ST_Read('__SOURCES__/bc_rd.geojson')
 UNION ALL
-SELECT 'CA-BC-NRRM', 'CAN', 'BC', 'NRRM', 'bc-abms', LGL_ADMIN_AREA_ID::TEXT, ADMIN_AREA_NAME, geom::GEOMETRY
+SELECT 'CA-BC-NRRM', 'CAN', 'BC', 'Northern Rockies', 'bc-abms', LGL_ADMIN_AREA_ID::TEXT, ADMIN_AREA_NAME, geom::GEOMETRY
 FROM ST_Read('__SOURCES__/bc_muni.geojson') WHERE ADMIN_AREA_NAME LIKE '%Northern Rockies%';
 
 -- National wildlife refuges. Fee, agreement and other refuge land;

@@ -111,7 +111,7 @@ export interface SampleChange {
  * sources that can appear here, and a person-only source cannot be recorded
  * against a sample by a typo.
  */
-export const SAMPLE_CHANGE_SOURCES = ["app", "legacy_promotion", "observation_promotion", "reconcile"] as const;
+export const SAMPLE_CHANGE_SOURCES = ["app", "legacy_promotion", "observation_promotion", "reconcile", "coordinates"] as const;
 export type SampleChangeSource = (typeof SAMPLE_CHANGE_SOURCES)[number];
 
 const LOG_COLUMNS = [

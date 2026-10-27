@@ -50,41 +50,55 @@ export interface LabelText {
 export const LABEL_LIMITS = { location: 38, collector: 22, method: 5 } as const;
 
 /**
- * How a county prints. British Columbia's regional districts by their usual
- * abbreviations; everything else prints as it is (the geocoder artefacts the
- * reference's table also listed are handled by countyName, for every county
- * rather than the two it knew about). From the reference
- * implementation's constants.ts, kept as a Map rather than a table because
- * it is a rendering convention and not a fact about places.
+ * How a county prints. A BC regional district prints as the province itself
+ * abbreviates it in its legally defined administrative areas (ABMS), the
+ * layer the gazetteer reads (Peter, 2026-10-27, beeline-313x): CAPRD for
+ * Capital, whose CRD the old system used is the province's Cariboo. A sample
+ * holds a district's name, whether Beeline wrote it from the coordinates
+ * (src/derive-area.ts, by the province's name less "Regional District") or
+ * iNaturalist gave it, and this table turns the name into the abbreviation,
+ * including the names iNaturalist still uses for renamed districts
+ * (Skeena-Queen Charlotte became North Coast in 2016, Powell River became
+ * qathet in 2018). Comox-Strathcona, split in 2008,
+ * has no abbreviation of the province's, so it keeps the old system's. A
+ * rendering convention and not a fact about places, so a Map and not a
+ * table; everything else prints as it is (the geocoder artefacts are
+ * countyName's, for every county).
  */
 const COUNTY_ABBREVIATIONS = new Map<string, string>([
-  ["Alberni-Clayoquot", "ACRD"],
+  ["Alberni-Clayoquot", "RDAC"],
   ["Bulkley-Nechako", "RDBN"],
-  ["Capital", "CRD"],
-  ["Cariboo", "Cariboo"],
+  ["Capital", "CAPRD"],
+  ["Cariboo", "CRD"],
   ["Central Coast", "CCRD"],
   ["Central Kootenay", "RDCK"],
   ["Central Okanagan", "RDCO"],
   ["Columbia-Shuswap", "CSRD"],
+  ["Columbia Shuswap", "CSRD"],
+  ["Comox Valley", "CMXRD"],
   ["Comox-Strathcona", "CxSRD"],
-  ["Cowichan Valley", "CwVRD"],
+  ["Cowichan Valley", "CVRD"],
   ["East Kootenay", "RDEK"],
   ["Fraser Valley", "FVRD"],
-  ["Fraser-Fort George", "RDFS"],
+  ["Fraser-Fort George", "RDFFG"],
   ["Greater Vancouver", "MVRD"],
+  ["Metro Vancouver", "MVRD"],
   ["Kitimat-Stikine", "RDKS"],
   ["Kootenay Boundary", "RDKB"],
   ["Mount Waddington", "RDMW"],
   ["Nanaimo", "RDN"],
-  ["North Coast", "RDNC"],
+  ["North Coast", "NCRD"],
+  ["Skeena-Queen Charlotte", "NCRD"],
   ["North Okanagan", "RDNO"],
   ["Northern Rockies", "NRRM"],
   ["Okanagan-Similkameen", "RDOS"],
-  ["Peace River", "Peace River"],
-  ["Skeena-Queen Charlotte", "NCRD"],
+  ["Peace River", "PRRD"],
+  ["qathet", "qRD"],
+  ["Powell River", "qRD"],
   ["Squamish-Lillooet", "SLRD"],
-  ["Stikine Region", "Stikine"],
-  ["Strathcona", "SRD"],
+  ["Stikine", "Stikine Region"],
+  ["Stikine Region", "Stikine Region"],
+  ["Strathcona", "STRD"],
   ["Sunshine Coast", "SCRD"],
   ["Thompson-Nicola", "TNRD"],
   ["Doña Ana", "Dona Ana"],

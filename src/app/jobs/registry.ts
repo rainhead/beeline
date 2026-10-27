@@ -205,21 +205,24 @@ export async function refreshLocalities(
 }
 
 /**
- * Which areas each sample lies inside (beeline-9jd4), before localities.
+ * Which areas each sample lies inside (beeline-9jd4), before localities, and
+ * the county of each sample still to print written from them (beeline-313x).
  * NEVER FAILS THE RUN, for refreshLocalities's reason: being inside a
  * wilderness is a note on the sample, not a QC finding, and never blocks
- * printing (Peter, 2026-10-26).
+ * printing (Peter, 2026-10-26); a county not written tonight keeps the one
+ * it has.
  */
 export async function refreshAreas(
   conn: JobContext["conn"],
   gazetteerPath: string,
   signal?: AbortSignal,
-): Promise<string | null> {
+): Promise<{ detail: string | null; countiesStamped: number }> {
   try {
-    return describeAreas(await deriveAreas(conn, gazetteerPath, { signal }));
+    const result = await deriveAreas(conn, gazetteerPath, { signal, stampCounties: true });
+    return { detail: describeAreas(result), countiesStamped: result.countiesStamped };
   } catch (err) {
     signal?.throwIfAborted();
-    return `finding areas failed (${(err as Error).message})`;
+    return { detail: `finding areas failed (${(err as Error).message})`, countiesStamped: 0 };
   }
 }
 
@@ -282,7 +285,20 @@ export async function pipelineTail(
   );
   const gazetteerPath = tiles.gazetteerPath ?? deploymentPath(GAZETTEER_PATH);
   const areas = await ctx.step("find areas", () => refreshAreas(ctx.conn, gazetteerPath, ctx.signal));
-  if (areas !== null) parts.push(areas);
+  if (areas.detail !== null) parts.push(areas.detail);
+  // The counties it wrote are recorded as the coordinates' doing, in a pass
+  // of their own, so the next promotion's pass does not credit them to an
+  // iNaturalist sync. Not where the pass above was refused: this one would
+  // be refused for the same reason, which the end of the run reports. A
+  // refusal of this pass alone is reported the same way.
+  let refused = samples.refused;
+  if (areas.countiesStamped > 0 && refused === null) {
+    const stamped = await ctx.step("record county changes", () =>
+      recordSampleChanges(duckdbReader(ctx.conn), samplePaths, { source: "coordinates" }),
+    );
+    if (stamped.appended > 0) parts.push(`${stamped.appended} county change(s) recorded`);
+    refused = stamped.refused;
+  }
   const localities = await ctx.step("name localities", () => refreshLocalities(ctx.conn, gazetteerPath, ctx.signal));
   if (localities !== null) parts.push(localities);
   // A refused snapshot (beeline-hrw) fails the run — after every store step
@@ -294,8 +310,8 @@ export async function pipelineTail(
   // carve-out, an incremental sync and a promotion each time, bounded by
   // the carve-out's end; `failing` is what the health check then says, with
   // this message as the detail.
-  if (samples.refused !== null) {
-    throw new Error(`sample history not recorded: ${samples.refused} (${parts.join("; ")})`);
+  if (refused !== null) {
+    throw new Error(`sample history not recorded: ${refused} (${parts.join("; ")})`);
   }
   return parts.join("; ");
 }

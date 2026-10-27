@@ -191,8 +191,13 @@ async function testBatch(
     FROM area_batch b JOIN ${G}.region r ON ST_Contains(r.geom, ST_Point(b.lon, b.lat))
     UNION ALL
     -- A point in no county at all, on a beach outside boundaries that stop
-    -- at the shoreline, takes the nearest within COUNTY_SHORE_M.
-    SELECT sample_id, arg_min(source, m), arg_min(source_id, m), 'county'
+    -- at the shoreline, takes the nearest within COUNTY_SHORE_M: one row, so
+    -- a tie (a point exactly on a line, which ST_Contains gives to neither)
+    -- cannot take its source from one county and its id from the other.
+    -- Not refused across a border the gazetteer does not cover: a point just
+    -- inside Alberta is recorded in the BC district beside it, and only the
+    -- stamp's state check keeps that off the sample's county.
+    SELECT sample_id, source, source_id, 'county'
     FROM (SELECT b.sample_id, r.source, r.source_id,
                  ST_ClosestPoint(r.geom, ST_Point(b.lon, b.lat)) AS edge, b.lat, b.lon
           FROM area_batch b JOIN ${G}.region r ON ST_DWithin(r.geom, ST_Point(b.lon, b.lat), 0.03)
@@ -200,7 +205,7 @@ async function testBatch(
          LATERAL (SELECT 2 * 6371000 * asin(sqrt(pow(sin(radians(ST_Y(edge) - lat) / 2), 2)
                     + cos(radians(lat)) * cos(radians(ST_Y(edge))) * pow(sin(radians(ST_X(edge) - lon) / 2), 2))) AS m)
     WHERE m <= ${COUNTY_SHORE_M}
-    GROUP BY sample_id`);
+    QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY m, source, source_id) = 1`);
   const now = new Date().toISOString();
   await conn.run("BEGIN TRANSACTION");
   try {
@@ -312,7 +317,9 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     // The counties it wrote go into the sample log as the coordinates' doing,
     // where this is the store whose log this environment keeps.
     const paths = sampleLogFor(dbPath, process.env);
-    const recorded = paths === null
+    // Only when it wrote some: the pass credits every difference since the
+    // last one, so with nothing stamped it would credit another writer's.
+    const recorded = paths === null || result.countiesStamped === 0
       ? null
       : await recordSampleChanges(duckdbReader(conn), paths, { source: "coordinates" });
     if (recorded?.refused != null) console.warn(`sample history not recorded: ${recorded.refused}`);

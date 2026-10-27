@@ -4,7 +4,7 @@ import type { InatClient } from "../src/app/auth.js";
 import { isDue, runJob, startScheduler, type Job, type JobContext } from "../src/app/jobs/framework.js";
 import { lastSyncStart, pipelineTail, refreshPlaces } from "../src/app/jobs/registry.js";
 import { createApp } from "../src/app/server.js";
-import { createMemoryDb, scratchPaths } from "./helpers.js";
+import { buildTestGazetteer, createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -546,5 +546,45 @@ describe("the nightly and a refused sample snapshot (beeline-hrw)", () => {
     // And the snapshot is untouched: the refusal restates nothing.
     const { readFile } = await import("node:fs/promises");
     expect(await readFile(samplePaths.state, "utf8")).toContain("name:Ada Adams");
+  });
+});
+
+describe("the nightly and a county from the coordinates (beeline-313x)", () => {
+  it("writes the county and records it in the sample log as the coordinates' doing", async () => {
+    const deps = await jobDeps();
+    const { mkdtemp, readFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "nightly-county-"));
+    const samplePaths = { log: join(dir, "sample-change.csv"), state: join(dir, "sample-state.csv") };
+    const gazetteerPath = join(dir, "gazetteer.duckdb");
+    await buildTestGazetteer(gazetteerPath, "build-county");
+    await deps.conn.run(`INSERT INTO person (display_name) VALUES ('Ada Adams')`);
+    // An active sample still to print, in Benton County by its point, which
+    // carries the fixture's "BentonCo".
+    const id = await insertCleanSample(deps.conn, { inat_observation_id: "1001" }, { latitude: "44.50", longitude: "-123.60" });
+    const steps: string[] = [];
+    const job: Job = {
+      name: "nightly-pipeline",
+      schedule: { kind: "dailyLA", hour: 2 },
+      window: "night",
+      run: (ctx: JobContext) =>
+        pipelineTail(
+          { ...ctx, step: (label, fn) => (steps.push(label), ctx.step(label, fn)) },
+          [], join(dir, "person-change.csv"), samplePaths, undefined,
+          { demDir: join(dir, "dem"), gazetteerPath },
+        ),
+    };
+    await runJob(deps, job);
+    const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+    expect(run.outcome).toBe("succeeded");
+    expect(run.detail).toContain("1 county(ies) written from the coordinates");
+    expect(steps.indexOf("record county changes")).toBe(steps.indexOf("find areas") + 1);
+    const sample = await deps.db.selectFrom("sample").select("county").where("entity_id", "=", id).executeTakeFirstOrThrow();
+    expect(sample.county).toBe("Benton");
+    // The first pass baselined the log; the county is the second pass's, and
+    // says where it came from.
+    const log = await readFile(samplePaths.log, "utf8");
+    expect(log).toMatch(/,county,BentonCo,Benton,,coordinates,/);
   });
 });

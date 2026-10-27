@@ -45,9 +45,21 @@ describe("the six label fields", () => {
     });
   });
 
-  it("appends Co to a county only in the US, and abbreviates BC's regional districts", () => {
+  it("appends Co to a county only in the US, and abbreviates BC's regional districts as the province does", () => {
+    // Capital is CAPRD to the province, whose CRD is Cariboo (beeline-313x).
     expect(locationText({ country: "CAN", state_province: "BC", county: "Capital", locality: "Victoria" })).toBe(
-      "CAN:BC:CRD Victoria",
+      "CAN:BC:CAPRD Victoria",
+    );
+    expect(locationText({ country: "CAN", state_province: "BC", county: "Cariboo", locality: "Likely" })).toBe(
+      "CAN:BC:CRD Likely",
+    );
+    // A county Beeline wrote from the coordinates is already the abbreviation.
+    expect(locationText({ country: "CAN", state_province: "BC", county: "CMXRD", locality: "Cumberland" })).toBe(
+      "CAN:BC:CMXRD Cumberland",
+    );
+    // A district renamed since iNaturalist named it prints as it is called now.
+    expect(locationText({ country: "CAN", state_province: "BC", county: "Powell River", locality: "Lund" })).toBe(
+      "CAN:BC:qRD Lund",
     );
     expect(locationText({ country: "CAN", state_province: "BC", county: "Nanaimo", locality: "Nanaimo" })).toBe(
       "CAN:BC:RDN Nanaimo",

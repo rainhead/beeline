@@ -778,6 +778,8 @@ export const en = {
         legacy_promotion: "a rebuild",
         observation_promotion: "an iNaturalist sync",
         reconcile: "found at startup",
+        /** The county written from the sample's coordinates (beeline-313x). */
+        coordinates: "its coordinates",
       },
     },
     notYours: "This is not one of your own records.",

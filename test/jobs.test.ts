@@ -150,11 +150,13 @@ describe("where a night job's time goes (beeline-6hud)", () => {
     } finally {
       spy.mockRestore();
     }
-    const stolen = (await stolenMs()) === null ? "" : ", [0-9.]+(ms|s) stolen";
+    // Any duration formatDuration writes: a busy machine can push 5ms past a second.
+    const D = String.raw`(\d+ms|\d+\.\ds|\d+m \d\ds)`;
+    const stolen = (await stolenMs()) === null ? "" : `, ${D} stolen`;
     expect(lines).toEqual(expect.arrayContaining([
-      expect.stringMatching(new RegExp(`^\\[job timed-night\\] step 'first chunk' took [0-9.]+ms: [0-9.]+ms CPU${stolen}$`)),
+      expect.stringMatching(new RegExp(String.raw`^\[job timed-night\] step 'first chunk' took ${D}: ${D} CPU${stolen}$`)),
       expect.stringMatching(/^\[job timed-night\] step 'second chunk' took /),
-      expect.stringMatching(/^\[job timed-night\] succeeded in [0-9.]+ms: done$/),
+      expect.stringMatching(new RegExp(String.raw`^\[job timed-night\] succeeded in ${D}: done$`)),
     ]));
     // An interactive job's steps are timed against its budget instead, and
     // say nothing unless they break it.

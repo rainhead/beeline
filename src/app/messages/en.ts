@@ -1524,7 +1524,7 @@ export const en = {
     recentRuns: "Recent runs",
     /** What each job does, keyed by Job.name (a test pins the key sets together). */
     descriptions: {
-      "session-purge": "Deletes sign-in sessions idle for more than 30 days; their cookies stop working.",
+      "session-purge": "Each night, deletes the sign-in sessions idle for more than 30 days, which have already stopped working.",
       "nightly-pipeline":
         "Pulls every observation changed since the last run (edits and new records, however old the observation), promotes into samples, and fills missing elevations from the DEM tiles on disk.",
       "legacy-export":

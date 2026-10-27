@@ -1,4 +1,5 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
+import { readFile } from "node:fs/promises";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../../model.js";
 
@@ -7,7 +8,8 @@ import type { Database } from "../../model.js";
  * that owns the database, one at a time; run history lives in job_run.
  * Interactive-window jobs chunk their work into step() calls that are timed
  * against the 1-second write budget; night-window jobs (00:00–05:00
- * America/Los_Angeles) are exempt and may run long.
+ * America/Los_Angeles) are exempt and may run long, and log every step's
+ * time instead, so a slow night says where it went (beeline-6hud).
  */
 
 export type JobWindow = "interactive" | "night";
@@ -217,6 +219,53 @@ export interface SchedulerDeps {
   now?: () => Date;
 }
 
+/**
+ * The machine's stolen CPU time so far, summed over its CPUs, in
+ * milliseconds: time the host gave to someone else while this machine had
+ * work to do. On Fly a shared CPU that has spent its burst balance is held to
+ * its baseline, and the difference shows here (beeline-6hud). Null where
+ * /proc/stat cannot be read, as on a Mac.
+ */
+export async function stolenMs(): Promise<number | null> {
+  try {
+    const first = (await readFile("/proc/stat", "utf8")).split("\n", 1)[0] ?? "";
+    // cpu  user nice system idle iowait irq softirq steal …, in USER_HZ,
+    // which Linux fixes at 100 a second for this file.
+    const fields = first.trim().split(/\s+/);
+    const steal = Number(fields[8]);
+    return fields[0] === "cpu" && Number.isFinite(steal) ? steal * 10 : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 850ms, 12.3s, 14m 05s. */
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+/**
+ * One log line for a night job's step (beeline-6hud): how long it took, how
+ * much CPU the process used meanwhile (every thread, DuckDB's included, and
+ * any requests served at the same time), and how much the host stole. A
+ * step that took long on little CPU with much stolen was throttled; one that
+ * took long on as much CPU as it took time was working.
+ */
+export function describeStep(
+  label: string,
+  ms: number,
+  cpu: NodeJS.CpuUsage,
+  stolenBefore: number | null,
+  stolenAfter: number | null,
+): string {
+  const cpuMs = (cpu.user + cpu.system) / 1000;
+  const stolen = stolenBefore === null || stolenAfter === null ? "" : `, ${formatDuration(stolenAfter - stolenBefore)} stolen`;
+  return `step '${label}' took ${formatDuration(ms)}: ${formatDuration(cpuMs)} CPU${stolen}`;
+}
+
 /** What a step throws when shutdown reaches it first; job_run.detail says which step. */
 export class JobInterrupted extends Error {
   constructor(label: string) {
@@ -252,6 +301,8 @@ export async function runJob(
       // cheapest place to stop.
       if (signal.aborted) throw new JobInterrupted(label);
       const t0 = performance.now();
+      const cpu0 = process.cpuUsage();
+      const stolen0 = job.window === "night" ? await stolenMs() : null;
       try {
         return await fn();
       } finally {
@@ -259,6 +310,9 @@ export async function runJob(
         if (job.window === "interactive" && ms > budget) {
           breaches += 1;
           console.warn(`[job ${job.name}] SLA breach: step '${label}' took ${Math.round(ms)}ms (budget ${budget}ms)`);
+        }
+        if (job.window === "night") {
+          console.log(`[job ${job.name}] ${describeStep(label, ms, process.cpuUsage(cpu0), stolen0, await stolenMs())}`);
         }
       }
     },
@@ -290,13 +344,15 @@ export async function runJob(
     told = true;
     guarded("at the end", () => observed(outcome, err));
   };
+  const started = performance.now();
+  const took = () => formatDuration(performance.now() - started);
   try {
     const detail = await job.run(ctx);
-    ctx.log(`succeeded${detail ? `: ${detail}` : ""}`);
+    ctx.log(`succeeded in ${took()}${detail ? `: ${detail}` : ""}`);
     await finish("succeeded", detail ?? null);
     ended("succeeded");
   } catch (err) {
-    console.error(`[job ${job.name}] failed: ${(err as Error).stack ?? String(err)}`);
+    console.error(`[job ${job.name}] failed after ${took()}: ${(err as Error).stack ?? String(err)}`);
     ended("failed", err);
     await finish("failed", (err as Error).message);
   }

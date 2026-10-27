@@ -28,7 +28,7 @@ pnpm inat:promote                           # current observation state → samp
 pnpm inat:backfill-accounts                 # resolve legacy logins → iNat accounts
 pnpm elevation:fetch && pnpm elevation:derive  # DEM tiles (SRTM 1-arc-second, Copernicus GLO-30 where SRTM does not reach) → missing elevations
 pnpm locality:fetch && pnpm locality:gazetteer  # public place names and outlines (about 2 GB) → data/gazetteer.duckdb, on a workstation
-pnpm area:derive [db] [gazetteer]              # the areas (federal wildernesses, so far) each sample's coordinates lie inside (the nightly runs it)
+pnpm area:derive [db] [gazetteer]              # the areas (federal wildernesses, counties and BC districts) each sample's coordinates lie inside (the nightly runs it)
 pnpm locality:derive [db] [gazetteer]          # a locality named from each sample's coordinates, offered beside its own (the nightly runs it)
 pnpm ecdysis:taxonomy [db] [--cached]        # Ecdysis's thesaurus, every insect (about 3 minutes) → data/ecdysis-taxonomy/ → ecdysis_taxon, every animal node matched
 pnpm taxon:fetch-sheet <sheet-id> [dir]      # a taxonomist's worksheet, every tab as CSV, to data/taxon-decisions/<modified instant>/ — to be read, not parsed

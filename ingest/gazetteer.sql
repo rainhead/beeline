@@ -16,18 +16,23 @@
 -- credited in the site footer.
 
 -- Counties, and BC's regional districts as the province defines them now
--- (beeline-313x). A region id is country-state-name: US-OR-Benton, CA-BC-CRD.
+-- (beeline-313x). A region id is country-state-code, US-OR-41003 (Benton
+-- County, by its Census GEOID) or CA-BC-CAPRD: unique, which a name is not,
+-- since Virginia has a Richmond County and a Richmond city. Each region also
+-- carries its source's own id (source, source_id) and its full name, which is
+-- how the derive step copies it into the store as an area (beeline-9jd4).
 -- Northern Rockies is a regional municipality outside every district, so it
 -- stands in for one.
 CREATE TABLE region AS
-SELECT concat('US-', STUSPS, '-', "NAME") AS region_id, 'USA' AS country, STUSPS AS state,
-       "NAME" AS county, geom::GEOMETRY AS geom
+SELECT concat('US-', STUSPS, '-', GEOID) AS region_id, 'USA' AS country, STUSPS AS state,
+       "NAME" AS county, 'census' AS source, GEOID AS source_id, NAMELSAD AS name, geom::GEOMETRY AS geom
 FROM ST_Read('__SOURCES__/counties/cb_2023_us_county_500k.shp')
 UNION ALL
-SELECT concat('CA-BC-', ADMIN_AREA_ABBREVIATION), 'CAN', 'BC', ADMIN_AREA_ABBREVIATION, geom::GEOMETRY
+SELECT concat('CA-BC-', ADMIN_AREA_ABBREVIATION), 'CAN', 'BC', ADMIN_AREA_ABBREVIATION,
+       'bc-abms', LGL_ADMIN_AREA_ID::TEXT, ADMIN_AREA_NAME, geom::GEOMETRY
 FROM ST_Read('__SOURCES__/bc_rd.geojson')
 UNION ALL
-SELECT 'CA-BC-NRRM', 'CAN', 'BC', 'NRRM', geom::GEOMETRY
+SELECT 'CA-BC-NRRM', 'CAN', 'BC', 'NRRM', 'bc-abms', LGL_ADMIN_AREA_ID::TEXT, ADMIN_AREA_NAME, geom::GEOMETRY
 FROM ST_Read('__SOURCES__/bc_muni.geojson') WHERE ADMIN_AREA_NAME LIKE '%Northern Rockies%';
 
 -- National wildlife refuges. Fee, agreement and other refuge land;

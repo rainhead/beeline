@@ -218,8 +218,9 @@ export async function insertCleanSample(
  * A gazetteer of a few hand-drawn shapes, with the tables and columns
  * ingest/gazetteer.sql builds: synthetic, since the real one is built from
  * downloads no test should make. One refuge square west of Corvallis, a
- * county around everything, two towns, a lake volunteers have named, and a
- * made-up wilderness that both OpenStreetMap and Wilderness.net outline.
+ * county (Benton, by its Census GEOID) around everything, two towns, a lake
+ * volunteers have named, and two made-up wildernesses that both OpenStreetMap
+ * and Wilderness.net outline.
  * Shared by the derive steps' tests and the iNaturalist check's (beeline-7i6,
  * beeline-9jd4).
  */
@@ -231,8 +232,8 @@ export async function buildTestGazetteer(path: string, buildId: string): Promise
   const box = (w: number, s: number, e: number, n: number) => `ST_MakeEnvelope(${w}, ${s}, ${e}, ${n})`;
   await conn.run(`
     CREATE TABLE gazetteer_build AS SELECT '${buildId}' AS build_id, current_timestamp AS built_at;
-    CREATE TABLE region AS SELECT 'US-OR-Benton' AS region_id, 'USA' AS country, 'OR' AS state, 'Benton' AS county,
-      ${box(-124, 44, -122, 45)} AS geom;
+    CREATE TABLE region AS SELECT 'US-OR-41003' AS region_id, 'USA' AS country, 'OR' AS state, 'Benton' AS county,
+      'census' AS source, '41003' AS source_id, 'Benton County' AS name, ${box(-124, 44, -122, 45)} AS geom;
     CREATE TABLE refuge AS SELECT 'WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE' AS name, ${box(-123.35, 44.38, -123.25, 44.45)} AS geom;
     CREATE TABLE wildlife_area_unit (unit TEXT, area TEXT, geom GEOMETRY);
     CREATE TABLE nps_unit (unit TEXT, geom GEOMETRY);
@@ -247,8 +248,8 @@ export async function buildTestGazetteer(path: string, buildId: string): Promise
       ('9002', 'Ox Wilderness', 'BLM', ${box(-123.80, 44.48, -123.70, 44.53)}))
       t(wid, name, agency, geom);
     CREATE TABLE place AS SELECT * FROM (VALUES
-      (1, 'Philomath', 44.54, -123.37, 'town', 'PPL', 5000, 'US-OR-Benton', NULL),
-      (2, 'Alsea', 44.38, -123.60, 'town', 'PPL', 164, 'US-OR-Benton', NULL))
+      (1, 'Philomath', 44.54, -123.37, 'town', 'PPL', 5000, 'US-OR-41003', NULL),
+      (2, 'Alsea', 44.38, -123.60, 'town', 'PPL', 164, 'US-OR-41003', NULL))
       t(id, name, lat, lon, kind, fcode, pop, region_id, island_id);
     CREATE TABLE feature AS SELECT 10 AS id, 'Marys Peak Lake' AS name, 44.70 AS lat, -123.60 AS lon,
       'H.LK' AS code, 'OR' AS state, NULL::TEXT AS island_id, 'maryspeaklake' AS fold;

@@ -65,7 +65,7 @@ export interface Near<T> {
 
 /** Everything the gazetteer says about one point. */
 export interface LocalityEvidence {
-  /** The county or regional district the point is in, as a gazetteer region id (US-OR-Benton). */
+  /** The county or regional district the point is in, as a gazetteer region id (US-OR-41003, Benton County). */
   regionId: string | null;
   refuge: string | null;
   wildlifeArea: { unit: string; area: string } | null;
@@ -280,7 +280,7 @@ function osmParkName(raw: string): string | null {
 const DIRS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
 const compass = (deg: number) => DIRS[Math.round(deg / 45) % 8]!;
 
-/** US-OR-Benton → US-OR: the state or province a region is in. */
+/** US-OR-41003 → US-OR: the state or province a region is in. */
 const stateOf = (regionId: string | null) => (regionId ? regionId.split("-").slice(0, 2).join("-") : null);
 
 interface Candidate extends Near<GazetteerPlace> {

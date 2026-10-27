@@ -293,7 +293,9 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     await conn.run(
       `CREATE OR REPLACE TEMP TABLE ecd_specimen AS
        SELECT o.occ_id,
-              coalesce(any_value(c.specimen_id),
+              -- Each source only where it names one specimen: an occurrence id
+              -- recorded against two would otherwise pick one arbitrarily.
+              coalesce(CASE WHEN count(DISTINCT c.specimen_id) = 1 THEN any_value(c.specimen_id) END,
                        CASE WHEN count(DISTINCT m.specimen_id) = 1 THEN any_value(m.specimen_id) END) AS specimen_id,
               count(DISTINCT m.specimen_id) > 1 AS shared
        FROM ecd_occurrence o

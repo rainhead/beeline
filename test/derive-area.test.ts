@@ -206,6 +206,20 @@ describe("stamping a sample's county from its coordinates (beeline-313x, Peter, 
     expect((await deriveAreas(conn, path, { stampCounties: true })).countiesStamped).toBe(0);
   });
 
+  test("never writes a county the gazetteer does not name over one the sample has", async () => {
+    const path = join(dir, "nameless.duckdb");
+    await buildTestGazetteer(path, "build-nameless");
+    const instance = await openDuckDb(path);
+    const g = await instance.connect();
+    await g.run(`UPDATE region SET county = NULL`);
+    g.closeSync();
+    instance.closeSync();
+    const conn = await storeWithPerson();
+    const id = await insertCleanSample(conn, { inat_observation_id: "1001" }, ALSEA);
+    expect((await deriveAreas(conn, path, { stampCounties: true })).countiesStamped).toBe(0);
+    expect(await countyOf(conn, id)).toBe("BentonCo");
+  });
+
   test("leaves every county alone unless asked, as Check iNaturalist now does", async () => {
     const path = join(dir, "nostamp.duckdb");
     await buildTestGazetteer(path, "build-nostamp");

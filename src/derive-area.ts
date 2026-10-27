@@ -284,6 +284,7 @@ async function stampCounties(conn: Conn, G: string): Promise<number> {
       AND s.state_province = point.state
       AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
       AND NOT EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = s.entity_id)
+      AND point.county IS NOT NULL
       AND s.county IS DISTINCT FROM point.county`);
   await conn.run(`UPDATE sample SET county = t.county FROM county_stamp t WHERE sample.entity_id = t.sample_id`);
   const [stamped] = await rows<{ n: number }>(conn, `SELECT count(*)::INTEGER AS n FROM county_stamp`);

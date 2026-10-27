@@ -53,8 +53,8 @@ describe("the six label fields", () => {
     expect(locationText({ country: "CAN", state_province: "BC", county: "Cariboo", locality: "Likely" })).toBe(
       "CAN:BC:CRD Likely",
     );
-    // A county Beeline wrote from the coordinates is already the abbreviation.
-    expect(locationText({ country: "CAN", state_province: "BC", county: "CMXRD", locality: "Cumberland" })).toBe(
+    // Comox Valley, as Beeline writes it from the coordinates since the 2008 split.
+    expect(locationText({ country: "CAN", state_province: "BC", county: "Comox Valley", locality: "Cumberland" })).toBe(
       "CAN:BC:CMXRD Cumberland",
     );
     // A district renamed since iNaturalist named it prints as it is called now.
@@ -67,6 +67,26 @@ describe("the six label fields", () => {
     expect(locationText({ country: "USA", state_province: "NM", county: "Doña Ana", locality: "Las Cruces" })).toBe(
       "USA:NM:Dona AnaCo Las Cruces",
     );
+  });
+
+  it("prints every district the province lists as the province abbreviates it (beeline-313x)", () => {
+    // BC's legally defined administrative areas (ABMS), October 2026: each
+    // district's name as Beeline writes it from the coordinates (the
+    // province's, less "Regional District"), and the province's abbreviation.
+    const province: Array<[string, string]> = [
+      ["Alberni-Clayoquot", "RDAC"], ["Bulkley-Nechako", "RDBN"], ["Capital", "CAPRD"], ["Cariboo", "CRD"],
+      ["Central Coast", "CCRD"], ["Central Kootenay", "RDCK"], ["Central Okanagan", "RDCO"],
+      ["Columbia Shuswap", "CSRD"], ["Comox Valley", "CMXRD"], ["Cowichan Valley", "CVRD"],
+      ["East Kootenay", "RDEK"], ["Fraser Valley", "FVRD"], ["Fraser-Fort George", "RDFFG"],
+      ["Kitimat-Stikine", "RDKS"], ["Kootenay Boundary", "RDKB"], ["Metro Vancouver", "MVRD"],
+      ["Mount Waddington", "RDMW"], ["Nanaimo", "RDN"], ["North Coast", "NCRD"], ["North Okanagan", "RDNO"],
+      ["Okanagan-Similkameen", "RDOS"], ["Peace River", "PRRD"], ["Squamish-Lillooet", "SLRD"],
+      ["Stikine Region", "Stikine Region"], ["Strathcona", "STRD"], ["Sunshine Coast", "SCRD"],
+      ["Thompson-Nicola", "TNRD"], ["qathet", "qRD"], ["Northern Rockies", "NRRM"],
+    ];
+    for (const [county, abbreviation] of province) {
+      expect(locationText({ country: "CAN", state_province: "BC", county, locality: "X" })).toBe(`CAN:BC:${abbreviation} X`);
+    }
   });
 
   it("never prints iNaturalist's or the geocoder's disambiguating suffix on a county", () => {

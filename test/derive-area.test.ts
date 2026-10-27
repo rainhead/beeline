@@ -197,11 +197,25 @@ describe("stamping a sample's county from its coordinates (beeline-313x, Peter, 
       { inat_observation_id: "1005", sample_number: "'5'", state_province: "'WA'" },
       ALSEA,
     );
+    // Frozen into a run that has not printed: the run already holds its
+    // label text, so the record keeps the county the labels will carry.
+    const frozen = await insertCleanSample(conn, { inat_observation_id: "1006", sample_number: "'6'" }, ALSEA);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${frozen}, 1)`);
+    await conn.run(`INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person`);
+    await conn.run(
+      `INSERT INTO printed_label (print_run_id, specimen_id, sheet, cell, location_text, coordinates_text, date_text,
+                                  collector_text, method_text, number_text, latitude, longitude, date_start, date_end)
+       SELECT (SELECT max(entity_id) FROM print_run), sp.entity_id, 1, 0, 'USA:OR:BentonCo', '44.5 -123.6', 'd',
+              'c', 'net', 'n', 44.5, -123.6, s.date_start, s.date_end
+       FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id WHERE sp.sample_id = ${frozen}`,
+    );
     const r = await deriveAreas(conn, path, { stampCounties: true });
     expect(r.countiesStamped).toBe(1);
     expect(describeAreas(r)).toContain("1 county(ies) written from the coordinates");
     expect(await countyOf(conn, stamped)).toBe("Benton");
-    for (const id of [noObservation, settled, printed, otherState]) expect(await countyOf(conn, id)).toBe("BentonCo");
+    for (const id of [noObservation, settled, printed, otherState, frozen]) {
+      expect(await countyOf(conn, id)).toBe("BentonCo");
+    }
     // A second run finds nothing to change.
     expect((await deriveAreas(conn, path, { stampCounties: true })).countiesStamped).toBe(0);
   });

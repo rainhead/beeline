@@ -251,9 +251,10 @@ async function testBatch(
 /**
  * Write each sample's county from the county area its point is in
  * (beeline-313x, Peter, 2026-10-27), as the gazetteer writes it: the
- * Census's name in the US (Benton, Doña Ana) and the province's own
- * abbreviation in BC (CAPRD, CMXRD), which is how a label prints it
- * (src/label-text.ts). Only where all of these hold, and nowhere else:
+ * Census's name in the US (Benton, Doña Ana), and in BC the district's name
+ * as iNaturalist writes it (Capital, Comox Valley), which a label prints as
+ * the province abbreviates it (src/label-text.ts). Only where all of these
+ * hold, and nowhere else:
  *
  * - the sample has an observation. Every sample still to print does; the rest are
  *   the old system's records, whose county is what the record or a staff
@@ -263,6 +264,9 @@ async function testBatch(
  *   (CONTEXT.md, Upstream); and a settled sample with no print recorded was
  *   most likely printed before Beeline kept the record, and will not print
  *   again either way (Peter, 2026-10-27).
+ * - it is not frozen into a print run that has not printed. The run holds
+ *   its label text from the freeze, so the record keeps the county the
+ *   labels will carry (Peter, 2026-10-27).
  * - the sample's state or province is the point's. Where they disagree the
  *   sample is wrong in a way no county can fix, and a BC district on an
  *   Alberta sample would only make it worse.
@@ -289,6 +293,8 @@ async function stampCounties(conn: Conn, G: string): Promise<number> {
       AND s.state_province = point.state
       AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
       AND NOT EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = s.entity_id)
+      AND NOT EXISTS (SELECT 1 FROM sample_label_in_progress lp
+                      WHERE lp.sample_id = s.entity_id AND lp.printing_count > 0)
       AND point.county IS NOT NULL
       AND s.county IS DISTINCT FROM point.county`);
   await conn.run(`UPDATE sample SET county = t.county FROM county_stamp t WHERE sample.entity_id = t.sample_id`);

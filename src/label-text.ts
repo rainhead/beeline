@@ -54,11 +54,12 @@ export const LABEL_LIMITS = { location: 38, collector: 22, method: 5 } as const;
  * abbreviates it in its legally defined administrative areas (ABMS), the
  * layer the gazetteer reads (Peter, 2026-10-27, beeline-313x): CAPRD for
  * Capital, whose CRD the old system used is the province's Cariboo. A sample
- * whose county Beeline wrote from its coordinates already holds that
- * abbreviation and prints it as it is; this table is for the names
- * iNaturalist gives a sample with no true point, including the two it still
- * uses for renamed districts (Skeena-Queen Charlotte became North Coast in
- * 2016, Powell River became qathet in 2018). Comox-Strathcona, split in 2008,
+ * holds a district's name, whether Beeline wrote it from the coordinates
+ * (src/derive-area.ts, by the province's name less "Regional District") or
+ * iNaturalist gave it, and this table turns the name into the abbreviation,
+ * including the names iNaturalist still uses for renamed districts
+ * (Skeena-Queen Charlotte became North Coast in 2016, Powell River became
+ * qathet in 2018). Comox-Strathcona, split in 2008,
  * has no abbreviation of the province's, so it keeps the old system's. A
  * rendering convention and not a fact about places, so a Map and not a
  * table; everything else prints as it is (the geocoder artefacts are
@@ -73,6 +74,7 @@ const COUNTY_ABBREVIATIONS = new Map<string, string>([
   ["Central Kootenay", "RDCK"],
   ["Central Okanagan", "RDCO"],
   ["Columbia-Shuswap", "CSRD"],
+  ["Columbia Shuswap", "CSRD"],
   ["Comox Valley", "CMXRD"],
   ["Comox-Strathcona", "CxSRD"],
   ["Cowichan Valley", "CVRD"],
@@ -95,6 +97,7 @@ const COUNTY_ABBREVIATIONS = new Map<string, string>([
   ["Powell River", "qRD"],
   ["Squamish-Lillooet", "SLRD"],
   ["Stikine", "Stikine Region"],
+  ["Stikine Region", "Stikine Region"],
   ["Strathcona", "STRD"],
   ["Sunshine Coast", "SCRD"],
   ["Thompson-Nicola", "TNRD"],

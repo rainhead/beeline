@@ -113,6 +113,33 @@ describe("an unpacked Darwin Core archive", () => {
     expect(await rows(conn, `SELECT specimen_id, catalog_number FROM specimen_catalog_number`)).toEqual([[b, "WSDA_2303967"]]);
   });
 
+  test("a field number on two specimens holds back that occurrence's identifications rather than failing the load (beeline-n1sz)", async () => {
+    // A second specimen carrying A's field number (beeline-1kb.14): at most
+    // one of the two is the museum's specimen, and nothing here says which.
+    const sample = await insertCleanSample(conn, { sample_number: "'2'" });
+    const twin = Number(
+      ((await rows(
+        conn,
+        `INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${sample}, 1, '2303966') RETURNING entity_id`,
+      )) as [[number]])[0][0],
+    );
+    const result = await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    // occ-a's three identifications wait: neither specimen is given them.
+    expect(result).toMatchObject({ ambiguousCatalogNumbers: 1, ambiguousIdentifications: 3, loaded: 4 });
+    expect(await one(`SELECT count(*) FROM determination WHERE specimen_id IN (${a}, ${twin})`)).toEqual([0n]);
+    expect(await record(b)).toEqual(["Lasioglossum cooleyi", "cf.", "Ellen Expert", "2025-04-28", null, "Dialictus", "ecdysis_import"]);
+  });
+
+  test("an occurrence whose catalog number is already recorded keeps its specimen when a second one takes the field number", async () => {
+    await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    const sample = await insertCleanSample(conn, { sample_number: "'2'" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${sample}, 1, '2303966')`);
+    // The museum's number is A's from the first load, so the occurrence is A's.
+    const again = await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(again).toMatchObject({ ambiguousIdentifications: 0, loaded: 0 });
+    expect(await record(a)).toEqual(["Andrena sladeni", null, "Sam Staff", "2025-01-01", "year", null, "ecdysis_import"]);
+  });
+
   test("records the history, and the identification Ecdysis calls current is the record", async () => {
     const result = await loadEcdysis(conn, { path: `${FIXTURES}archive`, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(result).toMatchObject({

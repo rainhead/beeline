@@ -86,6 +86,12 @@ export interface LoadEcdysisResult {
   catalogNumbers: number;
   /** Occurrences whose field number two specimens carry, so neither was given the museum's number. */
   ambiguousCatalogNumbers: number;
+  /**
+   * Identifications held back because their occurrence's field number is on
+   * two specimens and no catalog number recorded says which is the museum's
+   * (beeline-n1sz): one expert's identification is not recorded on both.
+   */
+  ambiguousIdentifications: number;
   unmatched: number;
   unmatchedSample: string[];
   identifications: number;
@@ -274,13 +280,36 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       [now.toISOString()],
     );
 
+    // The one specimen each matched occurrence's identifications are about:
+    // the one its catalog number is recorded against, by an earlier load or
+    // just above, else the only specimen carrying its field number. An
+    // occurrence whose field number two specimens carry, with no catalog
+    // number to say which is the museum's, gets none, and its
+    // identifications wait as its catalog number does (beeline-n1sz). Joining
+    // every match instead recorded one identification on both specimens,
+    // which its Symbiota id refused, and rolled the whole load back.
+    await conn.run(
+      `CREATE OR REPLACE TEMP TABLE ecd_specimen AS
+       SELECT m.occ_id,
+              coalesce(any_value(c.specimen_id),
+                       CASE WHEN count(DISTINCT m.specimen_id) = 1 THEN any_value(m.specimen_id) END) AS specimen_id
+       FROM ecd_match m
+       LEFT JOIN specimen_catalog_number c ON c.occurrence_id = m.occurrence_record_id
+       WHERE m.specimen_id IS NOT NULL
+       GROUP BY m.occ_id`,
+    );
+    const ambiguousIdentifications = await scalar(
+      conn,
+      `SELECT count(*) FROM ecd_identification i JOIN ecd_specimen s ON s.occ_id = i.occ_id WHERE s.specimen_id IS NULL`,
+    );
+
     // A name the tree does not spell, but that Ecdysis's thesaurus accepts,
     // comes in from it before anything resolves (beeline-45v.1.1); what is left is
     // reported below as before, for a taxonomist.
     const unplaced = (
       await rows(
         conn,
-        `SELECT DISTINCT i.scientific_name FROM ecd_identification i JOIN ecd_match m ON m.occ_id = i.occ_id
+        `SELECT DISTINCT i.scientific_name FROM ecd_identification i JOIN ecd_specimen m ON m.occ_id = i.occ_id
          WHERE m.specimen_id IS NOT NULL AND coalesce(i.scientific_name, '') <> ''
            AND NOT EXISTS (SELECT 1 FROM animal a WHERE a.scientific_name = i.scientific_name)`,
       )
@@ -320,7 +349,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     await conn.run(
       `CREATE OR REPLACE TEMP TABLE ecd_candidate AS
        WITH ident AS (
-         SELECT i.*, m.specimen_id, m.occurrence_record_id,
+         SELECT i.*, m.specimen_id, o.occurrence_record_id,
                 o.family AS occ_family, o.order_name AS occ_order, o.class_name AS occ_class,
                 lower(i.scientific_name) IN ('', 'undetermined', 'unidentified') AS placeholder,
                 nullif(lower(i.identified_by), 'unknown') AS by_text,
@@ -328,7 +357,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                 regexp_extract(i.qualifier_text, '^(cf|aff|af|nr)\\.?\\s+(\\S+)$', 2) AS q_epithet,
                 regexp_extract(i.scientific_name, '(\\S+)$', 1) AS last_word
          FROM ecd_identification i
-         JOIN ecd_match m ON m.occ_id = i.occ_id
+         JOIN ecd_specimen m ON m.occ_id = i.occ_id
          JOIN ecd_occurrence o ON o.occ_id = i.occ_id
          WHERE m.specimen_id IS NOT NULL
        ),
@@ -516,6 +545,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       matched,
       catalogNumbers,
       ambiguousCatalogNumbers,
+      ambiguousIdentifications,
       unmatched: occurrences - matched,
       unmatchedSample,
       identifications,

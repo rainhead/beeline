@@ -289,12 +289,15 @@ export async function pipelineTail(
   // The counties it wrote are recorded as the coordinates' doing, in a pass
   // of their own, so the next promotion's pass does not credit them to an
   // iNaturalist sync. Not where the pass above was refused: this one would
-  // be refused for the same reason, which the end of the run reports.
-  if (areas.countiesStamped > 0 && samples.refused === null) {
+  // be refused for the same reason, which the end of the run reports. A
+  // refusal of this pass alone is reported the same way.
+  let refused = samples.refused;
+  if (areas.countiesStamped > 0 && refused === null) {
     const stamped = await ctx.step("record county changes", () =>
       recordSampleChanges(duckdbReader(ctx.conn), samplePaths, { source: "coordinates" }),
     );
     if (stamped.appended > 0) parts.push(`${stamped.appended} county change(s) recorded`);
+    refused = stamped.refused;
   }
   const localities = await ctx.step("name localities", () => refreshLocalities(ctx.conn, gazetteerPath, ctx.signal));
   if (localities !== null) parts.push(localities);
@@ -307,8 +310,8 @@ export async function pipelineTail(
   // carve-out, an incremental sync and a promotion each time, bounded by
   // the carve-out's end; `failing` is what the health check then says, with
   // this message as the detail.
-  if (samples.refused !== null) {
-    throw new Error(`sample history not recorded: ${samples.refused} (${parts.join("; ")})`);
+  if (refused !== null) {
+    throw new Error(`sample history not recorded: ${refused} (${parts.join("; ")})`);
   }
   return parts.join("; ");
 }

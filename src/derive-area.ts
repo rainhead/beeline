@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { loadSpatial, openDuckDb } from "./db.js";
 import { duckdbReader } from "./person-change.js";
+import { withPrintRunLock } from "./print-run.js";
 import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
 
 /**
@@ -276,7 +277,15 @@ async function testBatch(
  * and the next stamp replaces it: so a sample is never without a county
  * waiting for the nightly. Returns how many samples changed.
  */
-async function stampCounties(conn: Conn, G: string): Promise<number> {
+function stampCounties(conn: Conn, G: string): Promise<number> {
+  // Behind the print runs' lock, so a run cannot be prepared between working
+  // out which samples are not frozen and writing their counties: the freeze
+  // would compose a label with the old county and the record take the new
+  // one (CodeRabbit).
+  return withPrintRunLock(() => stampCountiesUnlocked(conn, G));
+}
+
+async function stampCountiesUnlocked(conn: Conn, G: string): Promise<number> {
   // The changes are worked out first and written after, as promotion writes
   // the sample (ingest/mint-samples.sql). DuckDB refused the one-statement
   // form, an UPDATE with these conditions on sample in its WHERE and a

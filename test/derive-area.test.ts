@@ -79,6 +79,18 @@ describe("deriveAreas", () => {
     expect((await deriveAreas(conn, path)).pending).toBe(0);
   });
 
+  test("a point within 100 m of a wilderness's edge is not inside it: that is GPS error (Peter, 2026-10-26)", async () => {
+    const path = join(dir, "edge.duckdb");
+    await buildTestGazetteer(path, "build-edge");
+    const conn = await storeWithPerson();
+    // Alsea Wilderness's south edge is latitude 44.48: these are about 55 m
+    // and 167 m north of it, well inside it east to west.
+    await insertCleanSample(conn, {}, { latitude: "44.4805", longitude: "-123.60" });
+    const deeper = await insertCleanSample(conn, { sample_number: "'2'" }, { latitude: "44.4815", longitude: "-123.60" });
+    expect(await deriveAreas(conn, path)).toMatchObject({ pending: 2, inside: 1 });
+    expect((await inside(conn)).map(([id]) => id)).toEqual([deeper]);
+  });
+
   test("a moved point is not shown, and is tested again; an area nobody is in any more goes", async () => {
     const path = join(dir, "b.duckdb");
     await buildTestGazetteer(path, "build-b");

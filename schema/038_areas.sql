@@ -58,4 +58,4 @@ CREATE TABLE sample_area (
   area_source_id TEXT NOT NULL,
   PRIMARY KEY (sample_id, area_source, area_source_id)
 );
-COMMENT ON TABLE sample_area IS 'Each area a sample''s believed-true point lies inside, whatever its kind: the point only, not its uncertainty. Worked out at the point and build in sample_area_derivation.';
+COMMENT ON TABLE sample_area IS 'Each area a sample''s believed-true point lies inside, whatever its kind. Inside a wilderness means more than 100 m inside its outline, the program''s allowance for GPS error (Peter, 2026-10-26). Worked out at the point and build in sample_area_derivation.';

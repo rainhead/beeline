@@ -24,6 +24,16 @@ import { loadSpatial, openDuckDb } from "./db.js";
 // iNaturalist now" share.
 let attachments = 0;
 
+/**
+ * How far inside a wilderness's outline a point must be to count as inside
+ * it: the program allows 100 m for GPS error (Peter, 2026-10-26). Measured to
+ * the nearest edge, the edges of a cut-out road corridor included, so a
+ * sample taken beside the Steens Mountain Loop Road is not inside the
+ * wilderness the road runs through. The outline is itself simplified to
+ * about 30 m (scripts/fetch-gazetteer.sh), well within this.
+ */
+export const WILDERNESS_EDGE_M = 100;
+
 export interface AreaResult {
   /** Null when there was no gazetteer to read. */
   gazetteerBuild: string | null;
@@ -121,8 +131,15 @@ async function testBatch(
   appender.closeSync();
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE area_batch_hit AS
-    SELECT DISTINCT b.sample_id, 'wilderness.net' AS source, w.wid AS source_id
-    FROM area_batch b JOIN ${G}.wilderness w ON ST_Contains(w.geom, ST_Point(b.lon, b.lat))`);
+    SELECT DISTINCT sample_id, 'wilderness.net' AS source, wid AS source_id
+    FROM (SELECT b.sample_id, b.lat, b.lon, w.wid,
+                 ST_ClosestPoint(ST_Boundary(w.geom), ST_Point(b.lon, b.lat)) AS edge
+          FROM area_batch b JOIN ${G}.wilderness w ON ST_Contains(w.geom, ST_Point(b.lon, b.lat)))
+    -- Metres to the nearest edge, by the haversine formula on the points'
+    -- own coordinates, so no function's guess at axis order is involved.
+    WHERE 2 * 6371000 * asin(sqrt(pow(sin(radians(ST_Y(edge) - lat) / 2), 2)
+            + cos(radians(lat)) * cos(radians(ST_Y(edge))) * pow(sin(radians(ST_X(edge) - lon) / 2), 2)))
+          > ${WILDERNESS_EDGE_M}`);
   const now = new Date().toISOString();
   await conn.run("BEGIN TRANSACTION");
   try {

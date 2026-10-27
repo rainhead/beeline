@@ -5,13 +5,20 @@ export function DesignImagery() {
     <DesignPage
       current="/design/imagery"
       title="Imagery"
-      lede="Almost none, so far — and the photographs that are coming belong to other people."
+      lede="Very little, so far — and most of the photographs that are coming belong to other people."
     >
       <h2>What the product shows today</h2>
       <p>
-        One thing: a volunteer's iNaturalist avatar in the account menu, at 1.75rem, circular, cropped to fill, and
-        with an empty <code>alt</code> because the button beside it already says whose account it is. When there is no
-        avatar, an outline person icon takes its place rather than initials or a generated shape.
+        A volunteer's iNaturalist avatar in the account menu, at 1.75rem, circular, cropped to fill, and with an empty{" "}
+        <code>alt</code> because the button beside it already says whose account it is. When there is no avatar, an
+        outline person icon takes its place rather than initials or a generated shape.
+      </p>
+      <p>
+        A program's own photographs, on its page and nowhere else: its people in the field, its bees, its ground. A
+        program page is where someone learns what the program is, so there they say something; they are drawn as a{" "}
+        <a href="/design/components">photo carousel</a>, each with its credit and licence, and added the way an atlas
+        mark is, as files with a table entry (<code>src/app/program-photos.ts</code>). Before a photograph goes in, its
+        metadata is stripped, since a phone records where every photo was taken and the repository is public.
       </p>
       <p>
         There is no photography in the design otherwise — no hero images, no illustration, no stock. This is a working
@@ -47,7 +54,7 @@ export function DesignImagery() {
           "Settle licence and attribution before design.",
         ]}
         donts={[
-          "Don't add photography for atmosphere.",
+          "Don't add photography for atmosphere to a page whose job is work; a program's page is the one place for it.",
           "Don't crop a specimen or a host to a decorative aspect ratio.",
           "Don't show a photograph you cannot attribute.",
         ]}

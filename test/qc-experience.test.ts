@@ -97,7 +97,10 @@ describe("the front page", () => {
     );
     // Belonging is what counts, not where her samples fell (they are in Oregon).
     const body = await (await app.request("/")).text();
-    expect(body).toContain('<img class="atlas-mark" src="/static/atlas/WaBA.jpg" alt="Washington Bee Atlas"');
+    // It links to her program's page (beeline-8n7r).
+    expect(body).toContain(
+      '<a class="atlas-mark-link" href="/programs/WaBA"><img class="atlas-mark" src="/static/atlas/WaBA.jpg" alt="Washington Bee Atlas"',
+    );
     await conn.run(`UPDATE person_membership SET kind = 'program', atlas_id = NULL WHERE person_id = ${alice}`);
     expect(await (await app.request("/")).text()).not.toContain('class="atlas-mark"');
   });

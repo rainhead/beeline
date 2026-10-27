@@ -5,6 +5,7 @@ import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { programHref } from "../src/app/programs.js";
+import { PROGRAM_PHOTOS } from "../src/app/program-photos.js";
 import { parseProgramContacts } from "../src/program-contacts.js";
 import { createMemoryDb, insertCleanSample, CURRENT_SEASON, scratchPaths } from "./helpers.js";
 
@@ -84,7 +85,35 @@ const between = (body: string, start: string, end: string) => {
 const rowFor = (body: string, code: string) =>
   body.split("<tr>").find((row) => row.includes(`href="${programHref(code)}"`)) ?? "";
 
-const EMPTY_VALUE_CELL = /<td><\/td>|<td class="nowrap"><\/td>/;
+/**
+ * A WebP file's size and the names of its chunks, read from the RIFF
+ * container: the dimensions from whichever of the three image chunks it
+ * opens with (lossy VP8, lossless VP8L, extended VP8X), the chunk names so a
+ * test can see whether EXIF or XMP metadata came along.
+ */
+function readWebp(file: Buffer): { width: number; height: number; chunks: string[] } {
+  expect(file.toString("ascii", 0, 4)).toBe("RIFF");
+  expect(file.toString("ascii", 8, 12)).toBe("WEBP");
+  const chunks: string[] = [];
+  for (let at = 12; at + 8 <= file.length; at += 8 + file.readUInt32LE(at + 4) + (file.readUInt32LE(at + 4) % 2)) {
+    chunks.push(file.toString("ascii", at, at + 4));
+  }
+  const data = 20;
+  switch (chunks[0]) {
+    case "VP8 ":
+      return { width: file.readUInt16LE(data + 6) & 0x3fff, height: file.readUInt16LE(data + 8) & 0x3fff, chunks };
+    case "VP8L": {
+      const bits = file.readUInt32LE(data + 1);
+      return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1, chunks };
+    }
+    case "VP8X":
+      return { width: file.readUIntLE(data + 4, 3) + 1, height: file.readUIntLE(data + 7, 3) + 1, chunks };
+    default:
+      throw new Error(`not an image chunk: ${chunks[0]}`);
+  }
+}
+
+const EMPTY_VALUE_CELL =/<td><\/td>|<td class="nowrap"><\/td>/;
 
 describe("the programs listing", () => {
   it("is read by everyone signed in, and is in the menu beside the brand", async () => {
@@ -155,8 +184,34 @@ describe("a program's page", () => {
 
   it("shows the atlas's mark beside its name, and none for a program without one", async () => {
     const app = await programsApp();
-    expect(await page(app, "/programs/WaBA")).toContain(`<img class="atlas-mark" src="/static/atlas/WaBA.jpg" alt="Washington Bee Atlas"`);
+    const waba = await page(app, "/programs/WaBA");
+    expect(waba).toContain(`<img class="atlas-mark" src="/static/atlas/WaBA.jpg" alt="Washington Bee Atlas"`);
+    // Everywhere else the mark links here; on its own page a link would only reload it.
+    expect(waba).not.toContain(`class="atlas-mark-link"`);
     expect(await page(app, "/programs/MM")).not.toContain(`class="atlas-mark"`);
+  });
+
+  it("shows the program's photos, each credited with its licence, and nothing for a program with none", async () => {
+    const app = await programsApp();
+    const waba = between(await page(app, "/programs/WaBA"), `<section class="carousel"`, "</section>");
+    const photos = PROGRAM_PHOTOS.WaBA!;
+    expect(photos.length).toBeGreaterThan(1);
+    for (const photo of photos) {
+      expect(waba).toContain(`src="${photo.src}" alt="${photo.alt}" width="${photo.width}" height="${photo.height}"`);
+      expect(waba).toContain(`Photo: ${photo.credit}, <a href="${photo.licence.url}">${photo.licence.name}</a>`);
+    }
+    // Previous and Next are drawn hidden, for the script to reveal.
+    expect(waba).toContain(`<div class="carousel-controls" hidden="">`);
+    expect(await page(app, "/programs/MM")).not.toContain(`class="carousel"`);
+  });
+
+  it("has a WebP file for every photo, at the size the table gives it, with no metadata to say where it was taken", async () => {
+    for (const photo of Object.values(PROGRAM_PHOTOS).flat()) {
+      const webp = readWebp(await readFile(`src/app${photo.src}`));
+      expect([webp.width, webp.height], photo.src).toEqual([photo.width, photo.height]);
+      expect(webp.chunks, photo.src).not.toContain("EXIF");
+      expect(webp.chunks, photo.src).not.toContain("XMP ");
+    }
   });
 
   it("gives the leads, the address staff set, and an atlas's own website", async () => {

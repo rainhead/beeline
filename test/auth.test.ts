@@ -190,10 +190,14 @@ describe("iNat OAuth sign-in", () => {
       ["Idaho Bee Atlas", "https://sites.google.com/view/idahobeeatlas/home"],
       ["New Mexico Bee Atlas", "https://www.inaturalist.org/projects/new-mexico-bee-atlas"],
       ["Oklahoma Bee Atlas", "https://www.inaturalist.org/projects/oklahoma-bee-atlas"],
-    ]) {
+    ] as const) {
       expect(page).toContain(`<a href="${href}">${name}</a>`);
-      expect(page).toContain(`alt="${name}"`);
+      // The mark links there too, since the program pages are behind sign-in.
+      const link = page.indexOf(`<a class="atlas-mark-link" href="${href}"><img `);
+      expect(link, name).toBeGreaterThanOrEqual(0);
+      expect(page.slice(link, page.indexOf("</a>", link))).toContain(`alt="${name}"`);
     }
+    expect(page).not.toContain(`href="/programs/`);
   });
 
   it("sign-in comes back to the page that was asked for", async () => {

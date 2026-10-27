@@ -5,4 +5,5 @@
  */
 import "./demo-counter.js";
 import "./menus.js";
+import "./carousel.js";
 import "./determine/grid.js";

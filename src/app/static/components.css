@@ -28,6 +28,9 @@
 .page-header-marked { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
 .page-header-marked > div > :last-child { margin-bottom: 0; }
 .atlas-mark { flex: none; width: 4.5rem; height: 4.5rem; border-radius: 50%; object-fit: cover; }
+/* The member atlases on the signed-out page, each mark beside its name. */
+.atlas-links { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: var(--space-4); }
+.atlas-links li { display: flex; align-items: center; gap: var(--space-3); }
 
 /* Breadcrumbs: where a page sits in a hierarchy, above its header. The
    separator is drawn here rather than typed, with empty alternative text, so

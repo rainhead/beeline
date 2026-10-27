@@ -177,6 +177,25 @@ describe("iNat OAuth sign-in", () => {
     expect(home.status).toBe(401);
   });
 
+  it("the signed-out page says what Beeline is and links every member atlas (beeline-2c3.16)", async () => {
+    const { app } = await testApp({ inatUserId: 501, login: "memberbee" });
+    const page = await (await app.request("/")).text();
+    expect(page).toContain("Beeline keeps the records of the bee specimens");
+    expect(page).toContain(`<a href="https://extension.oregonstate.edu/master-melittologist">Master Melittologist</a>`);
+    // All six, by the store's names, each to its own site with its mark.
+    for (const [name, href] of [
+      ["Oregon Bee Atlas", "https://extension.oregonstate.edu/bee-atlas"],
+      ["Washington Bee Atlas", "https://agr.wa.gov/departments/insects-pests-and-weeds/insects/apiary-pollinators/pollinator-health/bee-atlas/"],
+      ["British Columbia Bee Atlas", "https://www.bcnativebees.org/bc-bee-atlas"],
+      ["Idaho Bee Atlas", "https://sites.google.com/view/idahobeeatlas/home"],
+      ["New Mexico Bee Atlas", "https://www.inaturalist.org/projects/new-mexico-bee-atlas"],
+      ["Oklahoma Bee Atlas", "https://www.inaturalist.org/projects/oklahoma-bee-atlas"],
+    ]) {
+      expect(page).toContain(`<a href="${href}">${name}</a>`);
+      expect(page).toContain(`alt="${name}"`);
+    }
+  });
+
   it("sign-in comes back to the page that was asked for", async () => {
     const { app } = await testApp({ inatUserId: 501, login: "memberbee" });
 

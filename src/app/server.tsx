@@ -162,6 +162,8 @@ import {
   visibleHistory,
 } from "./record.js";
 import { SamplePage, SpecimenPage } from "./views/record.js";
+import { AtlasMark } from "./views/components/atlas-mark.js";
+import { ATLAS_IDENTITY } from "./theme/atlas.js";
 
 export interface JobsDep {
   list: Job[];
@@ -428,6 +430,10 @@ export function createApp({
       // sender lands home and does it again (beeline-2c3.31).
       const url = new URL(c.req.url);
       const wanted = c.req.method === "GET" ? `${url.pathname}${url.search}` : null;
+      // The member atlases, so someone with no account can find their own
+      // program (beeline-2c3.16): the names are the store's, the links and
+      // marks the atlases' identity (src/app/theme/atlas.ts).
+      const atlases = await db.selectFrom("atlas").select(["code", "name"]).orderBy("entity_id").execute();
       return c.html(
         html`<!doctype html>${(
           <PublicPage
@@ -443,6 +449,19 @@ export function createApp({
                 {m.signIn.button}
               </a>
             </p>
+            <p>
+              {m.signIn.about.lead} <a href={m.signIn.about.program.href}>{m.signIn.about.program.label}</a>{" "}
+              {m.signIn.about.tail}
+            </p>
+            <p>{m.signIn.joinLead}</p>
+            <ul class="atlas-links">
+              {atlases.map((a) => (
+                <li>
+                  <AtlasMark code={a.code} name={a.name} />
+                  {ATLAS_IDENTITY[a.code] === undefined ? a.name : <a href={ATLAS_IDENTITY[a.code]!.url}>{a.name}</a>}
+                </li>
+              ))}
+            </ul>
           </PublicPage>
         )}`,
         401,

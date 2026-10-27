@@ -329,6 +329,18 @@ export const en = {
     heading: "Beeline",
     nothingPublic: "Nothing here is public — sign in with iNaturalist to continue.",
     button: "Sign in with iNaturalist",
+    /**
+     * For someone who lands here with no account (beeline-2c3.16): what this
+     * is, and where a would-be volunteer goes instead. Each atlas runs its own
+     * volunteers, so the way in is the atlas's own site.
+     */
+    about: {
+      lead: "Beeline keeps the records of the bee specimens that",
+      /** The program's own page at OSU Extension (Peter, 2026-10-27). */
+      program: { label: "Master Melittologist", href: "https://extension.oregonstate.edu/master-melittologist" },
+      tail: "volunteers collect.",
+    },
+    joinLead: "To become a volunteer, start with your atlas:",
     failed: "Sign-in failed (state mismatch or missing code) — try again from the sign-in page.",
   },
 

@@ -181,6 +181,7 @@ describe("iNat OAuth sign-in", () => {
     const { app } = await testApp({ inatUserId: 501, login: "memberbee" });
     const page = await (await app.request("/")).text();
     expect(page).toContain("Beeline keeps the records of the bee specimens");
+    expect(page).toContain(`<a href="https://extension.oregonstate.edu/master-melittologist">Master Melittologist</a>`);
     // All six, by the store's names, each to its own site with its mark.
     for (const [name, href] of [
       ["Oregon Bee Atlas", "https://extension.oregonstate.edu/bee-atlas"],

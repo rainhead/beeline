@@ -449,7 +449,10 @@ export function createApp({
                 {m.signIn.button}
               </a>
             </p>
-            <p>{m.signIn.about}</p>
+            <p>
+              {m.signIn.about.lead} <a href={m.signIn.about.program.href}>{m.signIn.about.program.label}</a>{" "}
+              {m.signIn.about.tail}
+            </p>
             <p>{m.signIn.joinLead}</p>
             <ul class="atlas-links">
               {atlases.map((a) => (

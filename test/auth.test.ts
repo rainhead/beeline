@@ -193,7 +193,9 @@ describe("iNat OAuth sign-in", () => {
     ] as const) {
       expect(page).toContain(`<a href="${href}">${name}</a>`);
       // The mark links there too, since the program pages are behind sign-in.
-      expect(page).toMatch(new RegExp(`<a class="atlas-mark-link" href="${href.replace(/[.?]/g, "\\$&")}"><img [^>]*alt="${name}"`));
+      const link = page.indexOf(`<a class="atlas-mark-link" href="${href}"><img `);
+      expect(link, name).toBeGreaterThanOrEqual(0);
+      expect(page.slice(link, page.indexOf("</a>", link))).toContain(`alt="${name}"`);
     }
     expect(page).not.toContain(`href="/programs/`);
   });

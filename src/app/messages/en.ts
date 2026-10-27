@@ -1435,6 +1435,14 @@ export const en = {
     notFound: "There is no such name in the taxonomy.",
   },
 
+  /** Photographs in a row (PhotoCarousel), as a program's page shows them. */
+  photos: {
+    label: "Photos",
+    credit: (name: string) => `Photo: ${name}`,
+    previous: "Previous photo",
+    next: "Next photo",
+  },
+
   /**
    * The programs (beeline-rrit): a listing, and a page for each, read by
    * everyone signed in. The counts link into the listings for staff only,

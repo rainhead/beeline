@@ -432,7 +432,9 @@ export function createApp({
       const wanted = c.req.method === "GET" ? `${url.pathname}${url.search}` : null;
       // The member atlases, so someone with no account can find their own
       // program (beeline-2c3.16): the names are the store's, the links and
-      // marks the atlases' identity (src/app/theme/atlas.ts).
+      // marks the atlases' identity (src/app/theme/atlas.ts). The program
+      // pages are behind sign-in, so here a mark links to the atlas's own
+      // website, as its name does.
       const atlases = await db.selectFrom("atlas").select(["code", "name"]).orderBy("entity_id").execute();
       return c.html(
         html`<!doctype html>${(
@@ -457,7 +459,7 @@ export function createApp({
             <ul class="atlas-links">
               {atlases.map((a) => (
                 <li>
-                  <AtlasMark code={a.code} name={a.name} />
+                  <AtlasMark code={a.code} name={a.name} href={ATLAS_IDENTITY[a.code]?.url} />
                   {ATLAS_IDENTITY[a.code] === undefined ? a.name : <a href={ATLAS_IDENTITY[a.code]!.url}>{a.name}</a>}
                 </li>
               ))}

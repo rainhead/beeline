@@ -28,6 +28,31 @@
 .page-header-marked { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
 .page-header-marked > div > :last-child { margin-bottom: 0; }
 .atlas-mark { flex: none; width: 4.5rem; height: 4.5rem; border-radius: 50%; object-fit: cover; }
+/* A mark that links to its program: the link takes the mark's place in the
+   row, and its focus ring follows the circle. */
+.atlas-mark-link { flex: none; display: block; line-height: 0; border-radius: 50%; }
+
+/* Photographs in a row (PhotoCarousel): one height, each photo its own
+   width, so nothing is cropped; the row scrolls and stops on each. */
+.carousel { margin-bottom: var(--space-6); }
+.carousel-track {
+  list-style: none; margin: 0; padding: 0 0 var(--space-2);
+  position: relative; /* the photos' offsetParent, for islands/carousel.ts */
+  display: flex; gap: var(--space-3);
+  overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
+}
+.carousel-track > li { flex: none; scroll-snap-align: start; }
+/* min-content, so a caption wraps to its photo's width rather than widening it. */
+.carousel-track figure { margin: 0; width: min-content; }
+.carousel-track img {
+  display: block; height: clamp(14rem, 45vw, 24rem); width: auto; max-width: calc(100vw - 2rem);
+  object-fit: contain; border-radius: var(--radius-md);
+}
+.carousel-track figcaption { margin-top: var(--space-1); }
+.carousel-controls { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+.carousel-controls[hidden] { display: none; }
+/* At its end of the row, as the determination grid draws a button that cannot act. */
+.carousel-controls button[disabled] { opacity: 0.45; cursor: not-allowed; filter: none; }
 /* The member atlases on the signed-out page, each mark beside its name. */
 .atlas-links { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: var(--space-4); }
 .atlas-links li { display: flex; align-items: center; gap: var(--space-3); }

@@ -1,4 +1,5 @@
 import type { Messages } from "../messages/index.js";
+import { PROGRAM_PHOTOS } from "../program-photos.js";
 import { programHref, type ProgramDetail, type ProgramLead, type ProgramSummary } from "../programs.js";
 import { EMPTY_ROSTER_QUERY, rosterHref } from "../roster.js";
 import { ATLAS_IDENTITY } from "../theme/atlas.js";
@@ -12,6 +13,7 @@ import {
   EmptyState,
   Meta,
   PageHeader,
+  PhotoCarousel,
   TextField,
 } from "./components/index.js";
 
@@ -179,8 +181,9 @@ export function ProgramPage({ m, program, admin }: { m: Messages; program: Progr
       <PageHeader
         title={program.name}
         meta={p.meta(program.code, program.atlasCode !== null)}
-        mark={program.atlasCode === null ? undefined : <AtlasMark code={program.atlasCode} name={program.name} />}
+        mark={program.atlasCode === null ? undefined : <AtlasMark code={program.atlasCode} name={program.name} href={null} />}
       />
+      <PhotoCarousel m={m} photos={PROGRAM_PHOTOS[program.code] ?? []} />
       <h2>{p.summary}</h2>
       <DetailList
         items={[

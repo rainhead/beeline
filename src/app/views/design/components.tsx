@@ -16,12 +16,14 @@ import {
   CheckboxField,
   SelectField,
   Meta,
+  PhotoCarousel,
   SuggestedLocality,
   TONES,
   TaxonName,
   Term,
   TextField,
 } from "../components/index.js";
+import { PROGRAM_PHOTOS } from "../../program-photos.js";
 import { DesignPage, DoDont, Specimen } from "./shell.js";
 
 export function DesignComponents({ m }: { m: Messages }) {
@@ -34,8 +36,9 @@ export function DesignComponents({ m }: { m: Messages }) {
       <h2>What is and isn't a component</h2>
       <p>
         Everything on this page is a plain server-rendered function — none of them needs client-side behaviour, so none
-        of them is an island. An island is for behaviour a page genuinely cannot have without scripting, and the
-        product currently has exactly one: dismissal for the header dropdowns, which work without it. Reach for a
+        of them is an island. An island is for behaviour a page genuinely cannot have without scripting, and most of
+        what the bundle adds is a convenience on something that works without it: dismissal for the header dropdowns,
+        and Previous and Next on a photo carousel. Reach for a
         component first, semantic HTML second, and an island only when neither will do.
       </p>
 
@@ -209,6 +212,21 @@ export function DesignComponents({ m }: { m: Messages }) {
           <h3>Sample 7 — Corvallis</h3>
           <p>The second card sets its own top margin, so no caller ever passes one.</p>
         </Card>
+      </Specimen>
+
+      <h2>Photo carousel</h2>
+      <p>
+        A program's photographs, in a row the reader scrolls through. Every photo is drawn at one height and its own
+        width, so a portrait is never cropped to a landscape frame, and each carries its credit and licence. The row
+        scrolls and stops on each photo with no script at all; the islands bundle adds Previous and Next, which are
+        drawn hidden until it does, and disables each at its end of the row. One photo gets no buttons, and no photos
+        draws nothing.
+      </p>
+      <Specimen>
+        <PhotoCarousel m={m} photos={PROGRAM_PHOTOS.WaBA ?? []} />
+      </Specimen>
+      <Specimen>
+        <PhotoCarousel m={m} photos={(PROGRAM_PHOTOS.WaBA ?? []).slice(1, 2)} />
       </Specimen>
 
       <h2>Detail lists</h2>

@@ -489,8 +489,11 @@ minutes on each of the three days it happened, and most likely why the
 2026-10-01 reseed took 38 minutes where the 09-28 one took 23. Memory peaked
 at 1.4 GB during those runs.
 
-The `resource-budget` job reads the last 24 hours at 4am Pacific
-([`src/fly-usage.ts`](../../src/fly-usage.ts)) and **fails** when a limit in
+The `resource-budget` job reads the last 25 hours at 4am Pacific
+([`src/fly-usage.ts`](../../src/fly-usage.ts)) — a day and an hour, because
+it starts just before the legacy export, so the previous morning's export
+peak sits at the very start of its window and an exact day let a few seconds
+decide whether it counted — and **fails** when a limit in
 `BUDGET` was crossed — memory past 85%, swap past 256 MB, any OOM kill, the
 volume past 70% (short of the 80% that costs money), or the burst balance empty
 for an hour — so `/healthz/jobs` and its Sentry check-in say so. Otherwise its

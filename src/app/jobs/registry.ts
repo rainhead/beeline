@@ -1,5 +1,5 @@
 import { legacyExportPath, writeLegacyExport } from "../../legacy-export.js";
-import { budgetProblems, describeUsage, measureFlyUsage } from "../../fly-usage.js";
+import { BUDGET_WINDOW_HOURS, budgetProblems, describeUsage, measureFlyUsage } from "../../fly-usage.js";
 import { commitDeterminationDrafts } from "../../commit-determinations.js";
 import { describeFetch, ECDYSIS_COLLECTIONS, fetchEcdysis } from "../../fetch-ecdysis.js";
 import { backUp, describeBackup } from "../../store-backup.js";
@@ -496,14 +496,14 @@ export function buildJobs(
       // what puts it on /healthz/jobs and fails its Sentry check-in. Ahead of
       // the export in this list, so it starts first at 4am — due jobs run in
       // list order, and an export running past 5 would otherwise leave the
-      // day unchecked (CodeRabbit on #120). It takes seconds, and the 24
-      // hours it reads still hold yesterday's export.
+      // day unchecked (CodeRabbit on #120). It takes seconds, and the 25
+      // hours it reads hold yesterday's export (BUDGET_WINDOW_HOURS).
       name: "resource-budget",
       schedule: { kind: "dailyLA", hour: 4 },
       window: "night",
       async run(ctx) {
         if (!config.flyMetrics) return "not on Fly (no FLY_METRICS_TOKEN / FLY_APP_NAME) — nothing to measure";
-        const usage = await measureFlyUsage(config.flyMetrics, { step: ctx.step, signal: ctx.signal });
+        const usage = await measureFlyUsage(config.flyMetrics, { hours: BUDGET_WINDOW_HOURS, step: ctx.step, signal: ctx.signal });
         const problems = budgetProblems(usage);
         if (problems.length > 0) throw new Error(`${problems.join("; ")} — ${describeUsage(usage)}`);
         return describeUsage(usage);

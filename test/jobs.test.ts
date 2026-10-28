@@ -154,7 +154,9 @@ describe("where a night job's time goes (beeline-6hud)", () => {
     const D = String.raw`(\d+ms|\d+\.\ds|\d+m \d\ds)`;
     const stolen = (await stolenMs()) === null ? "" : `, ${D} stolen`;
     expect(lines).toEqual(expect.arrayContaining([
-      expect.stringMatching(new RegExp(String.raw`^\[job timed-night\] step 'first chunk' took ${D}: ${D} CPU${stolen}$`)),
+      expect.stringMatching(
+        new RegExp(String.raw`^\[job timed-night\] step 'first chunk' took ${D}: ${D} CPU${stolen}; memory \d+ MB, most since start \d+ MB( \(\+\d+ MB in this step\))?$`),
+      ),
       expect.stringMatching(/^\[job timed-night\] step 'second chunk' took /),
       expect.stringMatching(new RegExp(String.raw`^\[job timed-night\] succeeded in ${D}: done$`)),
     ]));
@@ -174,6 +176,19 @@ describe("where a night job's time goes (beeline-6hud)", () => {
     expect(describeStep("name localities", 840_000, cpu, null, null)).toBe("step 'name localities' took 14m 00s: 5.0s CPU");
     expect(describeStep("name localities", 840_000, cpu, 1_000, 601_000)).toBe(
       "step 'name localities' took 14m 00s: 5.0s CPU, 10m 00s stolen",
+    );
+  });
+
+  it("says the process's memory, and how far the step raised its peak", () => {
+    const cpu = { user: 4_000_000, system: 1_000_000 };
+    const MB = 1024 * 1024;
+    // Synthetic: 932 MB is the process before the 2026-10-28 export; the peak is invented.
+    expect(describeStep("write the export", 20_700, cpu, null, null, { rss: 1_050 * MB, peakBefore: 932 * MB, peakAfter: 2_400 * MB })).toBe(
+      "step 'write the export' took 20.7s: 5.0s CPU; memory 1050 MB, most since start 2400 MB (+1468 MB in this step)",
+    );
+    // Under an earlier peak, the step shows no rise of its own.
+    expect(describeStep("write the export", 20_700, cpu, null, null, { rss: 1_050 * MB, peakBefore: 2_400 * MB, peakAfter: 2_400 * MB })).toBe(
+      "step 'write the export' took 20.7s: 5.0s CPU; memory 1050 MB, most since start 2400 MB",
     );
   });
 });

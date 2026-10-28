@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { BUDGET, budgetProblems, describeUsage, measureFlyUsage, type UsageSummary } from "../src/fly-usage.js";
+import { BUDGET, BUDGET_WINDOW_HOURS, budgetProblems, describeUsage, measureFlyUsage, type UsageSummary } from "../src/fly-usage.js";
 import { buildJobs } from "../src/app/jobs/registry.js";
 import { configFromEnv } from "../src/app/config.js";
 
@@ -121,8 +121,12 @@ describe("the resource-budget job", () => {
   });
 
   test("says what the day used, and fails when a limit was crossed", async () => {
-    vi.stubGlobal("fetch", fakeFly(RESEED_DAY).fetchImpl);
-    expect(await job(target).run(ctx)).toBe(describeUsage(await measureFlyUsage(target, { fetchImpl: fakeFly(RESEED_DAY).fetchImpl })));
+    const fly = fakeFly(RESEED_DAY);
+    vi.stubGlobal("fetch", fly.fetchImpl);
+    const expected = describeUsage(await measureFlyUsage(target, { hours: BUDGET_WINDOW_HOURS, fetchImpl: fakeFly(RESEED_DAY).fetchImpl }));
+    expect(await job(target).run(ctx)).toBe(expected);
+    expect(expected).toMatch(/^last 25h:/);
+    expect(fly.asked).toContain('max(max_over_time(fly_instance_exit_oom{app="beeline"}[25h]))');
     const full: Array<[RegExp, Series]> = RESEED_DAY.map(([re, s]) => [re, /blocks_avail/.test(re.source) ? [over([2e9, 8e9, 2e9])] : s]);
     vi.stubGlobal("fetch", fakeFly(full).fetchImpl);
     await expect(job(target).run(ctx)).rejects.toThrow(/^the volume reached 77% full/);

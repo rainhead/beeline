@@ -54,6 +54,20 @@ export const BUDGET = {
 } as const;
 
 /**
+ * The window the daily job reads: a day and an hour, so the previous
+ * morning's 4am jobs are always inside it. The job starts seconds before the
+ * legacy export, so with exactly 24 hours that export's memory peak fell 20–40
+ * seconds inside the window's start, and whether it counted came down to
+ * when each night's job began: on 2026-10-28 the 4am check failed on a
+ * 2,568 MB peak from the 10-27 export and its retry at 4:15 passed, its window
+ * having slid past that peak (beeline-chfo). The extra hour also covers a
+ * check that starts late behind a long 3am job. The price is that the 3am
+ * hour — the backup, the Ecdysis fetch, Sunday's sweep — is read by two
+ * nights' checks, so a limit crossed then fails two mornings rather than one.
+ */
+export const BUDGET_WINDOW_HOURS = 25;
+
+/**
  * Below this the balance is spent. It bottoms out at 1, not 0, and on a day
  * it is never spent its minimum is in the thousands (cap 100,000).
  */

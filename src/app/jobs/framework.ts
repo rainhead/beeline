@@ -248,11 +248,31 @@ export function formatDuration(ms: number): string {
 }
 
 /**
+ * The process's memory after a step, in bytes: what it holds now, and the
+ * most it has held since it started, before and after the step. Linux keeps
+ * only the high-water mark since start, so a step that stayed under an
+ * earlier peak shows no rise rather than its own peak.
+ */
+export interface StepMemory {
+  rss: number;
+  peakBefore: number;
+  peakAfter: number;
+}
+
+/** The process's high-water mark since start, in bytes (Node reports kilobytes). */
+export const peakRss = () => process.resourceUsage().maxRSS * 1024;
+
+/**
  * One log line for a night job's step (beeline-6hud): how long it took, how
  * much CPU the process used meanwhile (every thread, DuckDB's included, and
  * any requests served at the same time), and how much the host stole. A
  * step that took long on little CPU with much stolen was throttled; one that
  * took long on as much CPU as it took time was working.
+ *
+ * Then the process's memory (beeline-bav5). The resource-budget job reads
+ * the whole machine's, which saw 2.5 GB during the legacy export where the
+ * process held under 1 GB before it; the process's own peak says whether that
+ * was the app, DuckDB included, or the kernel's cache of the files it wrote.
  */
 export function describeStep(
   label: string,
@@ -260,10 +280,17 @@ export function describeStep(
   cpu: NodeJS.CpuUsage,
   stolenBefore: number | null,
   stolenAfter: number | null,
+  memory?: StepMemory,
 ): string {
   const cpuMs = (cpu.user + cpu.system) / 1000;
   const stolen = stolenBefore === null || stolenAfter === null ? "" : `, ${formatDuration(stolenAfter - stolenBefore)} stolen`;
-  return `step '${label}' took ${formatDuration(ms)}: ${formatDuration(cpuMs)} CPU${stolen}`;
+  const mb = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`;
+  const rise = memory === undefined ? 0 : memory.peakAfter - memory.peakBefore;
+  const mem =
+    memory === undefined
+      ? ""
+      : `; memory ${mb(memory.rss)}, most since start ${mb(memory.peakAfter)}${rise > 0 ? ` (+${mb(rise)} in this step)` : ""}`;
+  return `step '${label}' took ${formatDuration(ms)}: ${formatDuration(cpuMs)} CPU${stolen}${mem}`;
 }
 
 /** What a step throws when shutdown reaches it first; job_run.detail says which step. */
@@ -303,6 +330,7 @@ export async function runJob(
       const t0 = performance.now();
       const cpu0 = process.cpuUsage();
       const stolen0 = job.window === "night" ? await stolenMs() : null;
+      const peak0 = peakRss();
       try {
         return await fn();
       } finally {
@@ -312,7 +340,8 @@ export async function runJob(
           console.warn(`[job ${job.name}] SLA breach: step '${label}' took ${Math.round(ms)}ms (budget ${budget}ms)`);
         }
         if (job.window === "night") {
-          console.log(`[job ${job.name}] ${describeStep(label, ms, process.cpuUsage(cpu0), stolen0, await stolenMs())}`);
+          const memory = { rss: process.memoryUsage.rss(), peakBefore: peak0, peakAfter: peakRss() };
+          console.log(`[job ${job.name}] ${describeStep(label, ms, process.cpuUsage(cpu0), stolen0, await stolenMs(), memory)}`);
         }
       }
     },

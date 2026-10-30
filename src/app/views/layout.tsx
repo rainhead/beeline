@@ -228,12 +228,17 @@ export function Layout(props: {
               <MoreLinks m={m} admin={env.admin} />
             </div>
           </details>
-          <a href="/" class="brand">
-            {m.brand}
-          </a>
-          <nav class="nav-inline">
-            <NavLinks m={m} />
-          </nav>
+          {/* The brand and the nav share a baseline: the header centres its
+              items, and centring a title-sized word beside label-sized links
+              puts their baselines at different heights. */}
+          <div class="header-title">
+            <a href="/" class="brand">
+              {m.brand}
+            </a>
+            <nav class="nav-inline">
+              <NavLinks m={m} />
+            </nav>
+          </div>
           {/* In the header itself, never in a menu: the one thing a person
               who has hit something wrong must not have to hunt for. */}
           {env.feedbackHref !== null && (

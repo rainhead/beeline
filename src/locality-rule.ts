@@ -318,17 +318,36 @@ function osmParkName(raw: string): string | null {
  * on its maps; 'Camp Sherman Campground' fits as it stands.
  */
 export function campgroundName(raw: string): string | null {
+  // OpenStreetMap also maps single pitches inside a campground as campgrounds,
+  // named only by their number: '#41', '17', 'Site 10', 'Campsite 3', 'C6', a
+  // river camp's '60.7L'. About 160 of the 6,114 in October 2026's extracts
+  // are like this. Such a name says nothing about where the point is, so a
+  // name is refused unless it has a word of three letters or more besides
+  // 'campsite', 'site' and 'pitch'.
+  if (!/[a-z]{3}/i.test(raw.replace(/\b(camp ?site|tent ?site|site|pitch)\b/gi, ""))) return null;
   if (fits(raw)) return raw;
+  // Brackets at the end of a name usually hold a note for mappers, not part
+  // of the name: 'Cabin Bay Campsite (BCMT)' (BC Marine Trails), '[CLOSED]'.
+  // Those are dropped. Brackets that tell one campground from its neighbour,
+  // as in 'Johnny Creek Campground (Upper)' and '(Lower)', are kept, because
+  // dropping them would give both campgrounds the same name.
+  const name = /[([]\s*(Upper|Lower|Middle|North|South|East|West|[NSEW])\s*[)\]]$/i.test(raw)
+    ? raw
+    : raw.replace(/(\s*[([][^)\]]*[)\]])+$/, "");
   // "CG" before any other shortening, so it is Lost Lake CG and not
-  // Lost Lk Campground.
+  // Lost Lk Campground. 'Recreation Site', BC's name for its forest
+  // campgrounds, becomes 'Rec Site'. A word saying what kind of campground it
+  // is (Group, Backcountry, Dispersed, Primitive, Provincial) is dropped along
+  // with 'Campground': Honeymoon Bay Group Campground is Honeymoon Bay CG.
   for (const [re, to] of [
-    [/ (Campground|Campsite|Camp Site|Camping Area|RV Park|RV Resort)$/i, " CG"],
-    [/ (Campground|Campsite|Camp Site|Camping Area)$/i, ""],
+    [/(?: (?:Group|Backcountry|Dispersed|Primitive|Provincial))? (Campground|Campsite|Camp Site|Camping Area|Camping|RV Park|RV Resort)$/i, " CG"],
+    [/ Recreation Site$/i, " Rec Site"],
+    [/(?: (?:Group|Backcountry|Dispersed|Primitive|Provincial))? (Campground|Campsite|Camp Site|Camping Area|Camping|Recreation Site|Group Site)$/i, ""],
   ] as Array<[RegExp, string]>) {
-    const t = shortName(raw.replace(re, to));
+    const t = shortName(name.replace(re, to));
     if (t) return t;
   }
-  return shortName(raw);
+  return shortName(name);
 }
 
 /** A federal wilderness is never a locality (Peter, 2026-10-26), whoever wrote it. */

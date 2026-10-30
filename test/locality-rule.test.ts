@@ -286,4 +286,31 @@ describe("candidates (beeline-4hxe)", () => {
     expect(campgroundName("Cold Springs")).toBe("Cold Springs");
     expect(campgroundName("Lower Bridge Camping Area")).toBe("Lower Bridge CG");
   });
+
+  test("campground names as OpenStreetMap writes them", () => {
+    // From the gazetteer built 2026-10-30.
+    expect(campgroundName("Three Isle Lake Backcountry Campground")).toBe("Three Isle Lake CG");
+    expect(campgroundName("Shoreline Group Campground")).toBe("Shoreline CG");
+    expect(campgroundName("Colchuck Lake Backcountry Camping")).toBe("Colchuck Lake CG");
+    expect(campgroundName("Holmes Lake Recreation Site")).toBe("Holmes Lk Rec Site");
+    expect(campgroundName("Surprise Lake Recreation Site")).toBe("Surprise Lake");
+    expect(campgroundName("Cabin Bay Campsite (BCMT)")).toBe("Cabin Bay CG");
+    expect(campgroundName("Cabbage Island Campsite (BCMT) [CLOSED]")).toBe("Cabbage Island CG");
+    expect(campgroundName("Silvertip Campground (closed)")).toBe("Silvertip CG");
+    // "(Upper)" is what tells it from Johnny Creek's lower campground, so it is
+    // kept rather than dropped as a note, and the name is then too long for a
+    // label: offering nothing is better than offering the other campground.
+    expect(campgroundName("Johnny Creek Campground (Upper)")).toBeNull();
+  });
+
+  test("a single pitch, named only by its number, is no campground", () => {
+    // From the gazetteer built 2026-10-30: OpenStreetMap's tourism=camp_site
+    // points that are one pitch inside a campground.
+    for (const pitch of ["#41", "17", "Site 10", "Campsite 3", "Campsite No. 1", "Campsite", "C6", "SU8", "60.7L", "B"]) {
+      expect(campgroundName(pitch)).toBeNull();
+    }
+    expect(campgroundName("Loop Camp")).toBe("Loop Camp");
+    const pitch = { ...nothing, nearby: [at(town, 4)], campgrounds: [{ name: "#41", km: 0.05 }] };
+    expect(localityCandidates(pitch)[0]).toEqual({ locality: "Philomath", basis: "town" });
+  });
 });

@@ -18,7 +18,7 @@ for t in ts:
     if not t.get('plant'): continue
     g = t['plant'].split()[0]
     if not g[0].isupper(): continue
-    for r in (t.get('regions') or list(PLACES)): pairs.add((g, r))
+    for r in [x for x in (t.get('regions') or []) if x in PLACES] or list(PLACES): pairs.add((g, r))
 out = json.load(open('inat.json')) if os.path.exists('inat.json') else {'taxa': {}, 'flowering': {}, 'all': {}}
 for g in sorted({g for g, _ in pairs}):
     if g in out['taxa']: continue

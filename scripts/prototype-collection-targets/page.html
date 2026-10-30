@@ -1,0 +1,379 @@
+<title>Collection Targets</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* PROTOTYPE, throwaway. Three structurally different answers to "where should volunteers collect next?",
+   switched from the bar at the bottom. Layout: a narrow control strip over one working surface per variant.
+   Colours are Beeline's own Material 3 roles from seed #b26a00 (src/app/theme/tokens.ts); type is its system stack. */
+:root {
+  --primary: #8a5100; --on-primary: #ffffff; --primary-container: #ffdcbd; --on-primary-container: #2c1600;
+  --secondary-container: #feddbe; --tertiary: #57633a; --tertiary-container: #dbe8b5;
+  --surface: #fffbff; --surface-low: #fbf2ea; --surface-high: #f2e6dc; --on-surface: #201b16; --on-surface-variant: #50453a;
+  --outline: #837568; --outline-variant: #d5c3b5; --warning: #8d4f00; --success: #426900; --error: #ba1a1a;
+  --map-0: #f6ece3; --map-1: #f3d3ae; --map-2: #e6a865; --map-3: #c47a22; --map-4: #8a5100;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --primary: #ffb86e; --on-primary: #492900; --primary-container: #693c00; --on-primary-container: #ffdcbd;
+  --secondary-container: #59422c; --tertiary: #bfcc9b; --tertiary-container: #404b25;
+  --surface: #201b16; --surface-low: #28221c; --surface-high: #332c25; --on-surface: #ebe0d9; --on-surface-variant: #d5c3b5;
+  --outline: #9d8e81; --outline-variant: #50453a; --warning: #ffb876; --success: #a7d567; --error: #ffb4ab;
+  --map-0: #2c251f; --map-1: #4a3520; --map-2: #7a4f1f; --map-3: #b2721f; --map-4: #ffb86e; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --primary: #ffb86e; --on-primary: #492900; --primary-container: #693c00; --on-primary-container: #ffdcbd;
+  --secondary-container: #59422c; --tertiary: #bfcc9b; --tertiary-container: #404b25;
+  --surface: #201b16; --surface-low: #28221c; --surface-high: #332c25; --on-surface: #ebe0d9; --on-surface-variant: #d5c3b5;
+  --outline: #9d8e81; --outline-variant: #50453a; --warning: #ffb876; --success: #a7d567; --error: #ffb4ab;
+  --map-0: #2c251f; --map-1: #4a3520; --map-2: #7a4f1f; --map-3: #b2721f; --map-4: #ffb86e; color-scheme: dark; }
+
+*, *::before, *::after { box-sizing: border-box; }
+body { background: var(--surface); color: var(--on-surface); font: 400 15px/1.45 var(--font); }
+.page { max-width: 1240px; margin: 0 auto; padding-block: 16px 96px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1 { font: 400 1.6rem/2rem var(--font); margin: 0; text-wrap: balance; }
+h2 { font: 500 1.1rem/1.5rem var(--font); margin: 0; text-wrap: balance; }
+h3 { font: 500 .95rem/1.3rem var(--font); margin: 0; }
+a { color: var(--primary); }
+i.sci, .sci { font-style: italic; }
+.muted { color: var(--on-surface-variant); }
+.small { font-size: .82rem; }
+.num { font-variant-numeric: tabular-nums; }
+header.top { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+.proto-note { font-size: .8rem; color: var(--on-surface-variant); max-width: 62ch; }
+.controls { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; padding: 10px 0 14px; border-bottom: 1px solid var(--outline-variant); margin-bottom: 18px; }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--outline); border-radius: 8px; overflow: hidden; }
+.seg button { font: 500 .82rem/1 var(--font); padding: 7px 10px; border: 0; background: transparent; color: var(--on-surface); cursor: pointer; border-right: 1px solid var(--outline-variant); }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--secondary-container); font-weight: 650; }
+.seg button:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ctl-label { font: 500 .75rem/1 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--on-surface-variant); margin-right: 6px; }
+.chip { display: inline-flex; gap: 4px; align-items: baseline; padding: 2px 8px; border-radius: 999px; font-size: .8rem; background: var(--surface-high); color: var(--on-surface); white-space: nowrap; }
+.chip.want { background: var(--tertiary-container); }
+.chip.never { background: var(--primary-container); color: var(--on-primary-container); font-weight: 600; }
+.chip.cur { background: var(--secondary-container); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+button.act { font: 500 .82rem/1 var(--font); border: 1px solid var(--outline); background: transparent; color: var(--primary); border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+button.act[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+
+/* phenology strip */
+.phen { display: grid; grid-template-columns: repeat(12, 1fr); gap: 2px; align-items: end; height: 34px; }
+.phen span { background: var(--map-2); border-radius: 2px 2px 0 0; min-height: 1px; position: relative; }
+.phen span.on { background: var(--primary); }
+.phen-ax { display: grid; grid-template-columns: repeat(12, 1fr); gap: 2px; font-size: .62rem; color: var(--on-surface-variant); text-align: center; }
+.phen-ax b { color: var(--primary); }
+
+/* maps */
+svg.map { width: 100%; height: auto; display: block; }
+svg.map path { stroke: var(--surface); stroke-width: .6; vector-effect: non-scaling-stroke; }
+svg.map path.sel { stroke: var(--on-surface); stroke-width: 2; }
+svg.map path.click { cursor: pointer; }
+svg.map path.click:hover { stroke: var(--primary); stroke-width: 1.5; }
+svg.map circle.bee { fill: var(--tertiary); stroke: var(--surface); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: .75rem; color: var(--on-surface-variant); }
+.legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 3px; }
+.legend i.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--tertiary); }
+
+/* Variant A: the board */
+.board { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 16px; }
+.tcard { display: grid; gap: 10px; padding: 14px 16px 16px; border: 1px solid var(--outline-variant); border-radius: 12px; background: var(--surface-low); min-width: 0; }
+.tcard .kind { font: 500 .7rem/1 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--tertiary); }
+.tcard blockquote { margin: 0; padding-left: 10px; border-left: 2px solid var(--outline-variant); font-size: .88rem; }
+.tcard .att { font-size: .78rem; color: var(--on-surface-variant); }
+.tcard .row2 { display: grid; grid-template-columns: 1fr 120px; gap: 12px; align-items: end; }
+.tcard .stat { font-size: .82rem; }
+.tcard .foot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.empty { padding: 32px; border: 1px dashed var(--outline-variant); border-radius: 12px; color: var(--on-surface-variant); }
+.board-head { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; margin-bottom: 12px; }
+
+/* Variant B: map + county panel */
+.mapgrid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.panel { display: grid; gap: 14px; min-width: 0; }
+.panel section { display: grid; gap: 6px; }
+.plist { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.plist li { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--outline-variant); font-size: .88rem; }
+.plist li .why { grid-column: 1 / -1; font-size: .78rem; color: var(--on-surface-variant); }
+.bignum { font: 400 1.9rem/1 var(--font); font-variant-numeric: tabular-nums; }
+.stats3 { display: flex; gap: 22px; flex-wrap: wrap; }
+.stats3 div { display: grid; gap: 2px; }
+
+/* Variant C: ranked table */
+.tablewrap { overflow-x: auto; }
+table.rank { border-collapse: collapse; width: 100%; font-size: .86rem; }
+table.rank th { text-align: left; font: 500 .72rem/1.2 var(--font); letter-spacing: .05em; text-transform: uppercase; color: var(--on-surface-variant); padding: 6px 8px; border-bottom: 1px solid var(--outline); white-space: nowrap; }
+table.rank td { padding: 8px; border-bottom: 1px solid var(--outline-variant); vertical-align: top; }
+table.rank td.n { text-align: right; font-variant-numeric: tabular-nums; }
+table.rank tr.main { cursor: pointer; }
+table.rank tr.main:hover td { background: var(--surface-low); }
+table.rank tr.open td { background: var(--surface-low); }
+table.rank .spark { width: 96px; }
+.detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 260px); gap: 18px; padding: 6px 0 10px; }
+.bars { display: grid; gap: 3px; }
+.bars div { display: grid; grid-template-columns: 190px 1fr 40px; gap: 8px; align-items: center; font-size: .82rem; }
+.bars .b { height: 8px; background: var(--map-2); border-radius: 2px; }
+.bars .b.spec { background: var(--tertiary); }
+.score { display: inline-block; min-width: 2.2em; text-align: center; padding: 2px 6px; border-radius: 6px; background: var(--primary-container); color: var(--on-primary-container); font-weight: 600; }
+.score.z { background: transparent; color: var(--on-surface-variant); font-weight: 400; }
+
+footer.src { margin-top: 28px; padding-top: 12px; border-top: 1px solid var(--outline-variant); font-size: .78rem; color: var(--on-surface-variant); display: grid; gap: 4px; max-width: 90ch; }
+
+/* switcher: deliberately not part of the design */
+.switcher { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); z-index: 20;
+  display: flex; align-items: center; gap: 6px; padding: 6px; border-radius: 999px; background: #111; color: #fff; box-shadow: 0 6px 24px rgba(0,0,0,.35); font: 500 .82rem/1 var(--font); }
+.switcher button { background: #333; color: #fff; border: 0; border-radius: 999px; width: 32px; height: 32px; cursor: pointer; font-size: 1rem; }
+.switcher span { padding: 0 10px; white-space: nowrap; }
+
+@media (max-width: 760px) {
+  .mapgrid, .detail { grid-template-columns: 1fr; }
+  .bars div { grid-template-columns: 130px 1fr 34px; }
+  .tcard .row2 { grid-template-columns: 1fr 90px; }
+}
+@media (prefers-reduced-motion: no-preference) { .tcard, .panel { transition: background .15s; } }
+</style>
+
+<div class="page">
+  <header class="top">
+    <div>
+      <h1>Collection targets</h1>
+      <div class="proto-note">Prototype. Three ways of telling a volunteer where to collect next, built on the old system's specimen records and on the targets the 2026 communiques named. Nothing here is saved.</div>
+    </div>
+  </header>
+  <div class="controls">
+    <div><span class="ctl-label">Atlas</span><span class="seg" id="atlasSeg"></span></div>
+    <div><span class="ctl-label">Month</span><span class="seg" id="monthSeg"></span></div>
+  </div>
+  <main id="view"></main>
+  <footer class="src">
+    <div><b>Where the numbers come from.</b> Specimen records in the old system as pulled on 24 October 2026 (396,877 records, 2017–2026), placed in counties and BC regional districts by their coordinates. A sample here is one collector, one day, one place, one host plant.</div>
+    <div>Species names are the taxonomists' determinations, which so far are mostly Oregon's; Washington, Idaho, BC and New Mexico have far fewer, and 2026's are largely not back yet. So "never recorded in Idaho" often means "never determined in Idaho".</div>
+    <div>"Mostly on" means at least 60% of a bee species' records with a host plant came from one plant genus, out of at least 8 records. It suggests a specialist but does not prove one.</div>
+  </footer>
+</div>
+<div class="switcher" role="group" aria-label="Prototype variant">
+  <button id="prevV" aria-label="Previous variant">‹</button><span id="vLabel"></span><button id="nextV" aria-label="Next variant">›</button>
+</div>
+
+<script>
+const DATA = /*DATA*/null;
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONTHS_LONG = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const ATLASES = [["OR","Oregon"],["WA","Washington"],["ID","Idaho"],["BC","British Columbia"],["NM","New Mexico"]];
+const ATLAS_NAME = Object.fromEntries(ATLASES);
+const VARIANTS = [["a","Target board"],["b","Map of gaps"],["c","Plants ranked"]];
+
+const state = { atlas: "OR", month: 6, variant: "a", county: null, open: null, going: new Set() };
+try { const s = JSON.parse(localStorage.getItem("targets-proto") || "{}"); if (s.atlas) state.atlas = s.atlas; if (s.month) state.month = s.month; } catch (e) {}
+const h = (location.hash || "").slice(1); if (VARIANTS.some(v => v[0] === h)) state.variant = h;
+
+// ---- derived indexes ----
+const REG = new Map(DATA.regions.map(r => [r.id, r]));
+const atlasOf = id => id.split("-")[1];
+const regionName = id => { const r = REG.get(id); if (!r) return id; return r.st === "BC" ? (BC_NAMES[r.name] || r.name) : r.name + " Co."; };
+const BC_NAMES = {CAPRD:"Capital",CCRD:"Central Coast",CMXRD:"Comox Valley",CRD:"Cariboo",CSRD:"Columbia-Shuswap",CVRD:"Cowichan Valley",FVRD:"Fraser Valley",MVRD:"Metro Vancouver",NCRD:"North Coast",NRRM:"Northern Rockies",PRRD:"Peace River",RDAC:"Alberni-Clayoquot",RDBN:"Bulkley-Nechako",RDCK:"Central Kootenay",RDCO:"Central Okanagan",RDEK:"East Kootenay",RDFFG:"Fraser-Fort George",RDKB:"Kootenay Boundary",RDKS:"Kitimat-Stikine",RDMW:"Mount Waddington",RDN:"Nanaimo",RDNO:"North Okanagan",RDOS:"Okanagan-Similkameen",SCRD:"Sunshine Coast",SLRD:"Squamish-Lillooet",STRD:"Strathcona",TNRD:"Thompson-Nicola",qRD:"qathet"};
+const PLANT = new Map(DATA.plants.map(p => [p.g, p]));
+const BEE = new Map(DATA.bees.map(b => [b.sp, b]));
+const EFF = new Map(DATA.effort.map(e => [e.r, e]));
+// county x plant x month: [r, g, m, s, s26]
+const CPM = DATA.cpm;
+const byRegionMonth = new Map(); // r|m -> [[g,s,s26]]
+const plantAtlasMonth = new Map(); // g|atlas -> [12] samples
+const plantAtlas26 = new Map(); // g|atlas -> samples in 2026
+for (const [r, g, m, s, s26] of CPM) {
+  const k = r + "|" + m; (byRegionMonth.get(k) || byRegionMonth.set(k, []).get(k)).push([g, s, s26]);
+  for (const a of [atlasOf(r), "ALL"]) {
+    const ka = g + "|" + a; const arr = plantAtlasMonth.get(ka) || plantAtlasMonth.set(ka, new Array(12).fill(0)).get(ka); arr[m - 1] += s;
+    plantAtlas26.set(ka, (plantAtlas26.get(ka) || 0) + s26);
+  }
+}
+// specialists: >= 8 host records, >= 60% on one plant genus
+const SPEC_BY_PLANT = new Map();
+for (const b of DATA.bees) {
+  if (b.withhost >= 8 && b.plants.length && b.plants[0].n / b.withhost >= 0.6) {
+    b.host = b.plants[0].g; b.hostShare = b.plants[0].n / b.withhost;
+    (SPEC_BY_PLANT.get(b.host) || SPEC_BY_PLANT.set(b.host, []).get(b.host)).push(b);
+  }
+}
+const GENUS = new Map(); // genus -> pseudo-bee summing its species, so "Hylaeus" in a target can be counted
+for (const b of DATA.bees) { const g = b.sp.split(" ")[0]; const x = GENUS.get(g) || GENUS.set(g, { sp: g, regs: new Map() }).get(g);
+  for (const r of b.regs) { const y = x.regs.get(r.r) || { r: r.r, n: 0, last: 0 }; y.n += r.n; y.last = Math.max(y.last, r.last); x.regs.set(r.r, y); } }
+for (const x of GENUS.values()) x.regs = [...x.regs.values()];
+const beeOrGenus = name => BEE.get(name) || (name.includes(" ") ? null : GENUS.get(name));
+const inAtlas = (b, a) => { let n = 0, last = 0, regs = 0; for (const r of b.regs) if (a === "ALL" || atlasOf(r.r) === a) { n += r.n; regs++; last = Math.max(last, r.last); } return { n, last, regs }; };
+const beeRegions = b => new Set(b.regs.map(r => r.r));
+
+// ---- small renderers ----
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = n => n.toLocaleString("en-US");
+function phen(arr, month) {
+  const max = Math.max(1, ...arr);
+  return `<div class="phen" aria-label="Samples by month">${arr.map((v, i) => `<span class="${i + 1 === month ? "on" : ""}" style="height:${v ? Math.max(6, 100 * v / max) : 0}%" title="${MONTHS[i]}: ${v} samples"></span>`).join("")}</div>
+  <div class="phen-ax">${MONTHS.map((m, i) => i + 1 === month ? `<b>${m[0]}</b>` : m[0]).join("").split("").map(c => `<span>${c}</span>`).join("")}</div>`;
+}
+function phenAx(month) { return `<div class="phen-ax">${MONTHS.map((m, i) => `<span>${i + 1 === month ? `<b>${m[0]}</b>` : m[0]}</span>`).join("")}</div>`; }
+function phenStrip(arr, month) {
+  const max = Math.max(1, ...arr);
+  return `<div class="phen" role="img" aria-label="Samples by month">${arr.map((v, i) => `<span class="${i + 1 === month ? "on" : ""}" style="height:${v ? Math.max(6, 100 * v / max) : 0}%" title="${MONTHS[i]}: ${v} samples"></span>`).join("")}</div>${phenAx(month)}`;
+}
+function sparkSvg(arr, month) {
+  const max = Math.max(1, ...arr), w = 96, hgt = 22, bw = w / 12;
+  return `<svg class="spark" viewBox="0 0 ${w} ${hgt}" role="img" aria-label="Samples by month">${arr.map((v, i) => { const hh = v ? Math.max(2, (hgt - 2) * v / max) : 0; return `<rect x="${i * bw + .5}" y="${hgt - hh}" width="${bw - 1}" height="${hh}" fill="var(${i + 1 === month ? "--primary" : "--map-2"})"></rect>`; }).join("")}<line x1="0" x2="${w}" y1="${hgt - .5}" y2="${hgt - .5}" stroke="var(--outline-variant)"></line></svg>`;
+}
+
+// projection: equirectangular scaled by cos(mid-latitude), fitted to the regions passed in
+function project(regions) {
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  const each = (g, f) => { const polys = g.type === "Polygon" ? [g.coordinates] : g.type === "MultiPolygon" ? g.coordinates : []; for (const p of polys) for (const ring of p) for (const pt of ring) f(pt); };
+  for (const r of regions) each(r.geom, ([x, y]) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); });
+  const k = Math.cos((y0 + y1) / 2 * Math.PI / 180), W = 1000, sc = W / ((x1 - x0) * k), H = (y1 - y0) * sc;
+  const P = ([x, y]) => [((x - x0) * k * sc).toFixed(1), ((y1 - y) * sc).toFixed(1)];
+  const path = g => { const polys = g.type === "Polygon" ? [g.coordinates] : g.type === "MultiPolygon" ? g.coordinates : []; return polys.map(p => p.map(ring => "M" + ring.map(pt => P(pt).join(",")).join("L") + "Z").join("")).join(""); };
+  const centroid = g => { let sx = 0, sy = 0, n = 0; each(g, pt => { const [a, b] = P(pt); sx += +a; sy += +b; n++; }); return [sx / n, sy / n]; };
+  return { W, H: Math.ceil(H), path, centroid };
+}
+const projCache = new Map();
+function regionsFor(a) { return DATA.regions.filter(r => a === "ALL" ? true : r.st === a); }
+function proj(a) { if (!projCache.has(a)) { const rs = regionsFor(a); projCache.set(a, { rs, p: project(rs) }); } return projCache.get(a); }
+function shade(v, max) { if (!v) return "var(--map-0)"; const t = Math.log1p(v) / Math.log1p(max); return `var(--map-${t > .75 ? 4 : t > .5 ? 3 : t > .25 ? 2 : 1})`; }
+function mapSvg(a, valueOf, { dots = new Set(), sel = null, clickable = false, label = "" } = {}) {
+  const { rs, p } = proj(a); let max = 1; const vals = new Map(rs.map(r => { const v = valueOf(r.id) || 0; max = Math.max(max, v); return [r.id, v]; }));
+  const paths = rs.map(r => `<path d="${p.path(r.geom)}" fill="${shade(vals.get(r.id), max)}" class="${clickable ? "click" : ""} ${r.id === sel ? "sel" : ""}" data-r="${r.id}"><title>${esc(regionName(r.id))}: ${fmt(vals.get(r.id))}</title></path>`).join("");
+  const circles = rs.filter(r => dots.has(r.id)).map(r => { const [cx, cy] = p.centroid(r.geom); return `<circle class="bee" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${a === "ALL" ? 5 : 9}"></circle>`; }).join("");
+  return `<svg class="map" viewBox="0 0 ${p.W} ${p.H}" role="img" aria-label="${esc(label)}">${paths}${circles}</svg>`;
+}
+
+// ---- curated targets, joined to the data ----
+function targetsFor(a, m) {
+  return DATA.targets.filter(t => (a === "ALL" || !t.regions.length || t.regions.includes(a)) && (t.months.length ? t.months.includes(m) : Math.abs(+t.date.slice(5, 7) - m) <= 0));
+}
+function plantGenusOf(t) { return t.plant ? t.plant.split(/\s+/)[0] : null; }
+
+// ---- Variant A: the board, a living version of the communique's targets ----
+function variantA() {
+  const a = state.atlas, m = state.month, ts = targetsFor(a, m);
+  const head = `<div class="board-head"><h2>Wanted in ${a === "ALL" ? "every atlas" : ATLAS_NAME[a]}, ${MONTHS_LONG[m - 1]}</h2>
+    <span class="muted small">${ts.length} target${ts.length === 1 ? "" : "s"} posted by staff and taxonomists. Each card adds what the records say: when the plant is collected from, where, and how often the bees sought have been found.</span></div>`;
+  if (!ts.length) return head + `<div class="empty">No targets were posted for ${ATLAS_NAME[a] || "any atlas"} in ${MONTHS_LONG[m - 1]}. The communiques named targets from April to September; try June.</div>`;
+  const cards = ts.map((t, i) => {
+    const g = plantGenusOf(t), key = g + "|" + a, arr = g ? (plantAtlasMonth.get(key) || new Array(12).fill(0)) : null;
+    const s26 = g ? (plantAtlas26.get(key) || 0) : 0, total = arr ? arr.reduce((x, y) => x + y, 0) : 0;
+    const bees = t.bees.map(sp => { const b = beeOrGenus(sp); const ia = b ? inAtlas(b, a) : { n: 0, last: 0 };
+      return `<span class="chip ${ia.n ? "want" : "never"}"><i class="sci">${esc(sp)}</i> <span class="num">${ia.n ? `${fmt(ia.n)} · last ${ia.last}` : `never in ${a === "ALL" ? "the records" : a}`}</span></span>`; }).join("");
+    const dots = new Set(); for (const sp of t.bees) { const b = beeOrGenus(sp); if (b) for (const r of b.regs) dots.add(r.r); }
+    const map = g ? mapSvg(a, r => { let v = 0; for (let mm = 1; mm <= 12; mm++) for (const [gg, s] of (byRegionMonth.get(r + "|" + mm) || [])) if (gg === g) v += s; return v; }, { dots, label: `Counties where ${g} has been sampled` }) : "";
+    const id = "t" + i;
+    const going = state.going.has(id);
+    return `<article class="tcard">
+      <div class="kind">${t.kind === "bee-target" ? "Bee wanted" : t.kind === "place-gap" ? "Place to visit" : "Plant to work"}${t.regions.length ? " · " + t.regions.join(", ") : ""}</div>
+      <h2>${g ? `<i class="sci">${esc(t.plant)}</i>${t.plant_common ? ` <span class="muted">(${esc(t.plant_common)})</span>` : ""}` : `Look for <i class="sci">${esc(t.bees[0] || "")}</i>`}</h2>
+      ${t.bees.length ? `<div class="chips">${bees}</div>` : ""}
+      <blockquote>${esc(t.why)}</blockquote>
+      <div class="att">${esc(t.source || "Staff")} · ${t.dates.length > 1 ? "communiques of " : "communique of "}${t.dates.map(d => new Date(d + "T12:00:00").toLocaleDateString("en-US", { day: "numeric", month: "short" })).join(", ")}</div>
+      ${g ? `<div class="row2"><div class="stat"><div class="small muted">Samples from <i class="sci">${esc(g)}</i>${a === "ALL" ? "" : " in " + a}, by month, all years</div>${phenStrip(arr, m)}
+        <div class="small"><span class="num">${fmt(s26)}</span> this season, <span class="num">${fmt(total)}</span> since 2017</div></div>${map}</div>` : ""}
+      <div class="foot"><div class="small">${t.links.slice(0, 3).map((u, j) => `<a href="${esc(u)}" target="_blank" rel="noopener">${/observations\/\d+$/.test(u) ? "past record" : "iNat map"} ${j + 1}</a>`).join(" · ")}</div>
+        <button class="act" data-going="${id}" aria-pressed="${going}">${going ? "You're going" : "I'll look for it"}</button></div>
+    </article>`;
+  }).join("");
+  return head + `<div class="legend" style="margin-bottom:10px"><span><i style="background:var(--map-3)"></i>samples from the plant</span><span><i class="dot"></i>target bee recorded in the county</span><span class="chip never">never in ${a}</span><span class="chip want">recorded</span></div><div class="board">${cards}</div>`;
+}
+
+// ---- Variant B: the map of gaps ----
+function variantB() {
+  const a = state.atlas === "ALL" ? "OR" : state.atlas, m = state.month;
+  const rs = regionsFor(a);
+  if (!state.county || atlasOf(state.county) !== a) state.county = (rs.find(r => r.name === "Wallowa") || rs.slice().sort((x, y) => (EFF.get(y.id)?.s || 0) - (EFF.get(x.id)?.s || 0))[0]).id;
+  const c = state.county, eff = EFF.get(c) || { s: 0, s26: 0, bymo: new Array(12).fill(0), people: 0, nsp: 0 };
+  const map = mapSvg(a, r => (EFF.get(r)?.bymo || [])[m - 1] || 0, { sel: c, clickable: true, label: `Samples in ${MONTHS_LONG[m - 1]} by county` });
+  const here = (byRegionMonth.get(c + "|" + m) || []).slice().sort((x, y) => y[1] - x[1]);
+  // plants collected from in neighbouring months too, so a thin county still gets suggestions
+  const atlasPlants = new Map(); for (const r of rs) for (const [g, s] of (byRegionMonth.get(r.id + "|" + m) || [])) atlasPlants.set(g, (atlasPlants.get(g) || 0) + s);
+  const beesHere = new Set(DATA.bees.filter(b => b.regs.some(r => r.r === c)).map(b => b.sp));
+  const candidates = [];
+  for (const [g, s] of [...atlasPlants].sort((x, y) => y[1] - x[1]).slice(0, 40)) for (const b of (SPEC_BY_PLANT.get(g) || [])) {
+    if (beesHere.has(b.sp)) continue; const ia = inAtlas(b, a); if (!ia.n) continue;
+    if (b.bymo[m - 1] === 0) continue;
+    candidates.push({ b, g, ia, hereS: (here.find(x => x[0] === g) || [0, 0])[1] });
+  }
+  candidates.sort((x, y) => (y.hereS > 0) - (x.hereS > 0) || x.ia.n - y.ia.n);
+  const curated = targetsFor(a, m);
+  return `<div class="board-head"><h2>Where ${ATLAS_NAME[a]} has been collected in ${MONTHS_LONG[m - 1]}</h2><span class="muted small">Pick a county. Pale counties have had few samples in this month in any year.${state.atlas === "ALL" ? " The map shows one atlas at a time; Oregon is shown." : ""}</span></div>
+  <div class="mapgrid"><div>${map}<div class="legend"><span><i style="background:var(--map-0)"></i>none</span><span><i style="background:var(--map-1)"></i></span><span><i style="background:var(--map-2)"></i></span><span><i style="background:var(--map-3)"></i></span><span><i style="background:var(--map-4)"></i>most samples in ${MONTHS[m - 1]}</span></div></div>
+  <div class="panel">
+    <h2>${esc(regionName(c))}</h2>
+    <div class="stats3"><div><span class="bignum">${fmt(eff.bymo[m - 1] || 0)}</span><span class="small muted">samples in ${MONTHS[m - 1]}, all years</span></div><div><span class="bignum">${fmt(eff.s26)}</span><span class="small muted">samples this season</span></div><div><span class="bignum">${fmt(eff.nsp)}</span><span class="small muted">bee species recorded</span></div></div>
+    <div><div class="small muted">Samples in ${esc(regionName(c))} by month, all years</div>${phenStrip(eff.bymo, m)}</div>
+    <section><h3>Collected from here in ${MONTHS_LONG[m - 1]}</h3>
+      ${here.length ? `<ul class="plist">${here.slice(0, 8).map(([g, s, s26]) => `<li><span><i class="sci">${esc(g)}</i></span><span class="num small">${s} sample${s === 1 ? "" : "s"}${s26 ? `, ${s26} this season` : ""}</span></li>`).join("")}</ul>` : `<div class="small muted">Nobody has collected here in ${MONTHS_LONG[m - 1]}. That is the gap.</div>`}</section>
+    <section><h3>Specialists to look for here</h3><div class="small muted">Bees found mostly on one plant genus, recorded elsewhere in ${ATLAS_NAME[a]} in ${MONTHS_LONG[m - 1]} but never in this county.</div>
+      ${candidates.length ? `<ul class="plist">${candidates.slice(0, 10).map(({ b, g, ia, hereS }) => `<li><span><i class="sci">${esc(b.sp)}</i></span><span class="num small">${ia.n} in ${a}, ${ia.regs} count${ia.regs === 1 ? "y" : "ies"}</span><span class="why">on <i class="sci">${esc(g)}</i> (${Math.round(b.hostShare * 100)}% of its records)${hereS ? `, which has been collected from here in ${MONTHS[m - 1]}` : ""}</span></li>`).join("")}</ul>` : `<div class="small muted">None this month.</div>`}</section>
+    ${curated.length ? `<section><h3>Posted targets for ${ATLAS_NAME[a]} this month</h3><div class="chips">${curated.map(t => `<span class="chip cur">${t.plant ? `<i class="sci">${esc(plantGenusOf(t))}</i>` : `<i class="sci">${esc(t.bees[0])}</i>`}</span>`).join("")}</div></section>` : ""}
+  </div></div>`;
+}
+
+// ---- Variant C: plants ranked by what is still wanted from them ----
+function variantC() {
+  const a = state.atlas, m = state.month;
+  const curatedPlants = new Set(targetsFor(a, m).map(plantGenusOf).filter(Boolean));
+  const rows = [];
+  for (const p of DATA.plants) {
+    const arr = plantAtlasMonth.get(p.g + "|" + a); if (!arr || !arr[m - 1]) continue;
+    const specs = (SPEC_BY_PLANT.get(p.g) || []).map(b => ({ b, ia: inAtlas(b, a) })).sort((x, y) => x.ia.n - y.ia.n);
+    const wanted = specs.filter(x => x.ia.n < 10);
+    const score = wanted.length + (curatedPlants.has(p.g) ? 2 : 0);
+    rows.push({ p, arr, s26: plantAtlas26.get(p.g + "|" + a) || 0, specs, wanted, score });
+  }
+  rows.sort((x, y) => y.score - x.score || y.arr[m - 1] - x.arr[m - 1]);
+  const top = rows.slice(0, 40);
+  const body = top.map(r => {
+    const open = state.open === r.p.g;
+    const main = `<tr class="main ${open ? "open" : ""}" data-open="${esc(r.p.g)}" tabindex="0">
+      <td><i class="sci">${esc(r.p.g)}</i>${curatedPlants.has(r.p.g) ? ` <span class="chip cur">posted</span>` : ""}<div class="small muted">${esc(r.p.fam || "")}</div></td>
+      <td class="n">${fmt(r.arr[m - 1])}</td><td class="n">${fmt(r.s26)}</td><td>${sparkSvg(r.arr, m)}</td>
+      <td class="n">${fmt(r.p.nsp)}</td>
+      <td><div class="chips">${r.specs.slice(0, 4).map(({ b, ia }) => `<span class="chip ${ia.n ? (ia.n < 10 ? "want" : "") : "never"}"><i class="sci">${esc(b.sp)}</i> <span class="num">${ia.n}</span></span>`).join("")}${r.specs.length > 4 ? `<span class="chip">+${r.specs.length - 4}</span>` : ""}</div></td>
+      <td class="n"><span class="score ${r.score ? "" : "z"}">${r.score}</span></td></tr>`;
+    if (!open) return main;
+    const bees = r.p.bees.slice(0, 14), mx = Math.max(1, ...bees.map(b => b.n));
+    const specSet = new Set(r.specs.map(x => x.b.sp));
+    const dots = new Set(); for (const { b } of r.wanted) for (const rr of b.regs) dots.add(rr.r);
+    const map = mapSvg(a, rid => { let v = 0; for (const [gg, s] of (byRegionMonth.get(rid + "|" + m) || [])) if (gg === r.p.g) v += s; return v; }, { dots, label: `Where ${r.p.g} was sampled in ${MONTHS_LONG[m - 1]}` });
+    return main + `<tr class="open"><td colspan="7"><div class="detail"><div><h3>Bees taken from <i class="sci">${esc(r.p.g)}</i>, every atlas</h3><div class="bars">${bees.map(b => `<div><span><i class="sci">${esc(b.sp)}</i></span><span class="b ${specSet.has(b.sp) ? "spec" : ""}" style="width:${100 * b.n / mx}%"></span><span class="num small">${b.n}</span></div>`).join("")}</div>
+      <div class="legend" style="margin-top:6px"><span><i style="background:var(--tertiary)"></i>found mostly on this plant</span><span><i style="background:var(--map-2)"></i>generalist or unknown</span></div></div>
+      <div>${map}<div class="legend"><span><i style="background:var(--map-3)"></i>sampled in ${MONTHS[m - 1]}</span><span><i class="dot"></i>a wanted specialist recorded</span></div></div></div></td></tr>`;
+  }).join("");
+  return `<div class="board-head"><h2>Plants to work in ${a === "ALL" ? "every atlas" : ATLAS_NAME[a]}, ${MONTHS_LONG[m - 1]}</h2><span class="muted small">Plant genera collected from in this month, ranked by how many of their specialists still have fewer than 10 records here, plus 2 if staff posted the plant as a target. Open a row for its bees and map.</span></div>
+  <div class="tablewrap"><table class="rank"><thead><tr><th>Plant genus</th><th class="n">Samples in ${MONTHS[m - 1]}</th><th class="n">This season</th><th>By month</th><th class="n">Bee species</th><th>Mostly-on-this-plant bees, records here</th><th class="n">Score</th></tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+// ---- chrome ----
+function renderControls() {
+  document.getElementById("atlasSeg").innerHTML = [...ATLASES, ["ALL", "All"]].map(([k, n]) => `<button data-atlas="${k}" aria-pressed="${state.atlas === k}" title="${n}">${k === "ALL" ? "All" : k}</button>`).join("");
+  document.getElementById("monthSeg").innerHTML = MONTHS.map((n, i) => `<button data-month="${i + 1}" aria-pressed="${state.month === i + 1}">${n}</button>`).join("");
+  const vi = VARIANTS.findIndex(v => v[0] === state.variant);
+  document.getElementById("vLabel").textContent = `${state.variant.toUpperCase()} · ${VARIANTS[vi][1]}`;
+}
+function render() {
+  renderControls();
+  const v = document.getElementById("view");
+  v.innerHTML = state.variant === "a" ? variantA() : state.variant === "b" ? variantB() : variantC();
+  try { localStorage.setItem("targets-proto", JSON.stringify({ atlas: state.atlas, month: state.month })); } catch (e) {}
+}
+function cycle(d) { const i = VARIANTS.findIndex(v => v[0] === state.variant); state.variant = VARIANTS[(i + d + VARIANTS.length) % VARIANTS.length][0]; try { history.replaceState(null, "", "#" + state.variant); } catch (e) {} render(); }
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-atlas],[data-month],[data-r],[data-open],[data-going]"); if (!t) return;
+  if (t.dataset.atlas) state.atlas = t.dataset.atlas;
+  else if (t.dataset.month) state.month = +t.dataset.month;
+  else if (t.dataset.r) state.county = t.dataset.r;
+  else if (t.dataset.open) state.open = state.open === t.dataset.open ? null : t.dataset.open;
+  else if (t.dataset.going) { const id = t.dataset.going; state.going.has(id) ? state.going.delete(id) : state.going.add(id); }
+  render();
+});
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input,textarea,[contenteditable]")) return;
+  if (e.key === "Enter" && e.target.dataset && e.target.dataset.open) { state.open = state.open === e.target.dataset.open ? null : e.target.dataset.open; render(); }
+  if (e.key === "ArrowLeft") cycle(-1); if (e.key === "ArrowRight") cycle(1);
+});
+document.getElementById("prevV").onclick = () => cycle(-1);
+document.getElementById("nextV").onclick = () => cycle(1);
+window.addEventListener("hashchange", () => { const k = location.hash.slice(1); if (VARIANTS.some(v => v[0] === k)) { state.variant = k; render(); } });
+render();
+</script>

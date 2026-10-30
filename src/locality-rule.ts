@@ -325,7 +325,6 @@ export function campgroundName(raw: string): string | null {
   // name is refused unless it has a word of three letters or more besides
   // 'campsite', 'site' and 'pitch'.
   if (!/[a-z]{3}/i.test(raw.replace(/\b(camp ?site|tent ?site|site|pitch)\b/gi, ""))) return null;
-  if (fits(raw)) return raw;
   // Brackets at the end of a name usually hold a note for mappers, not part
   // of the name: 'Cabin Bay Campsite (BCMT)' (BC Marine Trails), '[CLOSED]'.
   // Those are dropped. Brackets that tell one campground from its neighbour,
@@ -334,6 +333,7 @@ export function campgroundName(raw: string): string | null {
   const name = /[([]\s*(Upper|Lower|Middle|North|South|East|West|[NSEW])\s*[)\]]$/i.test(raw)
     ? raw
     : raw.replace(/(\s*[([][^)\]]*[)\]])+$/, "");
+  if (fits(name)) return name;
   // "CG" before any other shortening, so it is Lost Lake CG and not
   // Lost Lk Campground. 'Recreation Site', BC's name for its forest
   // campgrounds, becomes 'Rec Site'. A word saying what kind of campground it

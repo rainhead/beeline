@@ -294,9 +294,10 @@ describe("candidates (beeline-4hxe)", () => {
     expect(campgroundName("Colchuck Lake Backcountry Camping")).toBe("Colchuck Lake CG");
     expect(campgroundName("Holmes Lake Recreation Site")).toBe("Holmes Lk Rec Site");
     expect(campgroundName("Surprise Lake Recreation Site")).toBe("Surprise Lake");
-    expect(campgroundName("Cabin Bay Campsite (BCMT)")).toBe("Cabin Bay CG");
+    expect(campgroundName("Cabin Bay Campsite (BCMT)")).toBe("Cabin Bay Campsite");
     expect(campgroundName("Cabbage Island Campsite (BCMT) [CLOSED]")).toBe("Cabbage Island CG");
     expect(campgroundName("Silvertip Campground (closed)")).toBe("Silvertip CG");
+    expect(campgroundName("Camp Gray (OMSI)")).toBe("Camp Gray");
     // "(Upper)" is what tells it from Johnny Creek's lower campground, so it is
     // kept rather than dropped as a note, and the name is then too long for a
     // label: offering nothing is better than offering the other campground.

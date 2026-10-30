@@ -29,7 +29,7 @@ export {
   type ColumnSort,
   type FilterPill,
 } from "./listing.js";
-export { SuggestedLocality, type SuggestedLocalityAction } from "./suggested-locality.js";
+export { LocalityAlternatives, SuggestedLocality, type SuggestedLocalityAction } from "./suggested-locality.js";
 export { DataTable, type TableColumn } from "./table.js";
 export {
   TaxonName,

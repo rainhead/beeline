@@ -30,6 +30,7 @@ import {
   OrAbsent,
   PageHeader,
   Pager,
+  LocalityAlternatives,
   SuggestedLocality,
   TaxonName,
   Term,
@@ -65,6 +66,13 @@ export function suggestionAction(sample: SampleDetail, allowed: boolean): Sugges
   if (sample.locality_suggestion !== null && sample.locality === sample.locality_suggestion.locality) {
     return { kind: "inUse" };
   }
+  if (sample.printed) return { kind: "printed" };
+  if (!allowed) return { kind: "none" };
+  return { kind: "use", action: suggestedLocalityHref(sample.sample_id), returnTo: "sample" };
+}
+
+/** The same for the alternatives: a button each, where the reader may change the sample and labels have not printed. */
+export function alternativesAction(sample: SampleDetail, allowed: boolean): SuggestedLocalityAction {
   if (sample.printed) return { kind: "printed" };
   if (!allowed) return { kind: "none" };
   return { kind: "use", action: suggestedLocalityHref(sample.sample_id), returnTo: "sample" };
@@ -124,6 +132,16 @@ export function SampleFacts({
                 locality={sample.locality_suggestion.locality}
                 basis={sample.locality_suggestion.basis}
                 action={suggestionAction(sample, locality.adopt)}
+              />
+            </div>
+          )}
+          {sample.locality_alternatives.length === 0 ? null : (
+            <div class="suggested-locality-line">
+              <LocalityAlternatives
+                m={m}
+                alternatives={sample.locality_alternatives}
+                current={sample.locality}
+                action={alternativesAction(sample, locality.adopt)}
               />
             </div>
           )}

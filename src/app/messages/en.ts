@@ -139,6 +139,12 @@ export const en = {
     use: "Use this locality",
     /** The sample's locality already is the suggestion. */
     inUse: "This is the sample's locality.",
+    /** Before the other names offered for the point (beeline-4hxe). */
+    alternativesLead: "Or:",
+    /** On an alternative: make it the sample's locality. */
+    useShort: "Use",
+    /** On an alternative that is the sample's locality already. */
+    inUseShort: "in use",
     /** Recorded as the reason beside the locality set here, so the sample page says where it came from. */
     reason: (basis: string) => `Suggested from the coordinates: ${basis}.`,
     /** Takes back a locality the volunteer adopted, so the observation's applies again. */
@@ -152,6 +158,9 @@ export const en = {
     /** A printed sample's locality no longer follows anything (CONTEXT.md, Upstream). The name is still shown, for judging it. */
     printed: "Its labels have already printed, so its locality stays as printed.",
     basis: {
+      used_own: "the locality of the collector's other samples here",
+      used: "the locality of other samples here",
+      campground: "a campground beside it",
       refuge: "inside a national wildlife refuge",
       wildlife_area: "inside a WDFW wildlife area unit",
       national_park: "inside a national park or monument",

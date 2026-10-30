@@ -31,18 +31,23 @@ export async function buildGazetteer(out: string, sources: string): Promise<Gaze
   const conn = await instance.connect();
   try {
     await loadSpatial(conn);
-    const staged = await stageOsm(conn, sources);
+    const staged = await stageOsm(conn, sources, "gazetteer-osm.sql", "osm");
     await conn.run(
       `CREATE TEMP TABLE osm_area_staged AS SELECT * FROM read_parquet([${staged.map(quote).join(", ")}])`,
+    );
+    const camps = await stageOsm(conn, sources, "gazetteer-osm-campground.sql", "osm-campground");
+    await conn.run(
+      `CREATE TEMP TABLE osm_campground_staged AS SELECT * FROM read_parquet([${camps.map(quote).join(", ")}])`,
     );
     const sql = (await readFile(`${INGEST_DIR}gazetteer.sql`, "utf8")).replaceAll("__SOURCES__", sources);
     await conn.run(sql);
     await conn.run(`DROP TABLE osm_area_staged`);
+    await conn.run(`DROP TABLE osm_campground_staged`);
     await conn.run(
       `CREATE TABLE gazetteer_build AS SELECT gen_random_uuid()::TEXT AS build_id, current_timestamp AS built_at`,
     );
     const tables: Record<string, number> = {};
-    for (const t of ["region", "refuge", "wildlife_area_unit", "nps_unit", "wilderness", "state_park", "town_limits", "osm_area", "place", "feature"]) {
+    for (const t of ["region", "refuge", "wildlife_area_unit", "nps_unit", "wilderness", "state_park", "town_limits", "osm_area", "campground", "place", "feature"]) {
       const [[n]] = (await (await conn.run(`SELECT count(*) FROM ${t}`)).getRows()) as [[bigint]];
       tables[t] = Number(n);
     }
@@ -61,27 +66,35 @@ export async function buildGazetteer(out: string, sources: string): Promise<Gaze
 }
 
 /**
- * Each OpenStreetMap extract in the sources, read into a Parquet file beside
- * it unless one newer than the extract is there already: British Columbia's
- * takes minutes, and an extract changes only when somebody fetches it again.
- * The file is named for the extraction SQL as well, so changing what it
- * reads makes a fresh one rather than reusing the old.
+ * Each OpenStreetMap extract in the sources, read by one extraction SQL into
+ * a Parquet file beside it unless one newer than the extract is there
+ * already: British Columbia's takes minutes, and an extract changes only when
+ * somebody fetches it again. The file is named for the extraction SQL as
+ * well, so changing what it reads makes a fresh one rather than reusing the
+ * old. The outlines (gazetteer-osm.sql) and the campgrounds
+ * (gazetteer-osm-campground.sql) are read separately, so adding the second
+ * did not make every builder read the outlines again.
  */
-async function stageOsm(conn: { run(sql: string): Promise<unknown> }, sources: string): Promise<string[]> {
+async function stageOsm(
+  conn: { run(sql: string): Promise<unknown> },
+  sources: string,
+  extraction: string,
+  prefix: string,
+): Promise<string[]> {
   const pbfs = (await readdir(sources)).filter((f) => f.endsWith("-latest.osm.pbf")).sort();
   if (pbfs.length === 0) throw new Error(`no OpenStreetMap extracts in ${sources}: run pnpm locality:fetch`);
-  const template = await readFile(`${INGEST_DIR}gazetteer-osm.sql`, "utf8");
+  const template = await readFile(`${INGEST_DIR}${extraction}`, "utf8");
   const version = createHash("sha256").update(template).digest("hex").slice(0, 8);
   const staged: string[] = [];
   for (const pbf of pbfs) {
     const path = `${sources}/${pbf}`;
-    const parquet = `${sources}/osm-${basename(pbf, "-latest.osm.pbf")}-${version}.parquet`;
+    const parquet = `${sources}/${prefix}-${basename(pbf, "-latest.osm.pbf")}-${version}.parquet`;
     const fresh = await stat(parquet).then(
       async (p) => p.mtimeMs > (await stat(path)).mtimeMs,
       () => false,
     );
     if (!fresh) {
-      console.error(`reading ${pbf}`);
+      console.error(`reading ${pbf} (${extraction})`);
       await conn.run(template.replaceAll("__PBF__", path).replaceAll("__OUT__", parquet));
     }
     staged.push(parquet);

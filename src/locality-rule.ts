@@ -403,9 +403,10 @@ export function nameLocality(e: LocalityEvidence): NamedLocality | null {
     const name = park && osmParkName(park.name);
     if (name) return { locality: name, basis: "local_park" };
   }
-  {
-    const camp = e.campgrounds.find((x) => x.km <= RULE.campgroundKm);
-    const name = camp && campgroundName(camp.name);
+  // The nearest campground with a name that fits: a pitch named only by its
+  // number is often the nearest point, inside the campground it belongs to.
+  for (const camp of e.campgrounds) {
+    const name = camp.km <= RULE.campgroundKm && campgroundName(camp.name);
     if (name) return { locality: name, basis: "campground" };
   }
   const tl = e.townLimits;

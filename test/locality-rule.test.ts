@@ -312,5 +312,8 @@ describe("candidates (beeline-4hxe)", () => {
     expect(campgroundName("Loop Camp")).toBe("Loop Camp");
     const pitch = { ...nothing, nearby: [at(town, 4)], campgrounds: [{ name: "#41", km: 0.05 }] };
     expect(localityCandidates(pitch)[0]).toEqual({ locality: "Philomath", basis: "town" });
+    // A pitch nearer the point than the campground it is in does not hide it.
+    const inside = { ...pitch, campgrounds: [{ name: "#41", km: 0.05 }, { name: "Lost Lake Campground", km: 0.1 }] };
+    expect(localityCandidates(inside)[0]).toEqual({ locality: "Lost Lake CG", basis: "campground" });
   });
 });

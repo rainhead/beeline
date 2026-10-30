@@ -326,8 +326,9 @@ export function campgroundName(raw: string): string | null {
   // 'campsite', 'site' and 'pitch'.
   if (!/[a-z]{3}/i.test(raw.replace(/\b(camp ?site|tent ?site|site|pitch)\b/gi, ""))) return null;
   // Brackets at the end of a name usually hold a note for mappers, not part
-  // of the name: 'Cabin Bay Campsite (BCMT)' (BC Marine Trails), '[CLOSED]'.
-  // Those are dropped. Brackets that tell one campground from its neighbour,
+  // of the name: 'Cabin Bay Campsite (BCMT)' (BC Marine Trails), '(Special
+  // Use Permit Required)'. Those are dropped. (A closed campground never
+  // reaches here: ingest/gazetteer-osm-campground.sql leaves it out.) Brackets that tell one campground from its neighbour,
   // as in 'Johnny Creek Campground (Upper)' and '(Lower)', are kept, because
   // dropping them would give both campgrounds the same name.
   const name = /[([]\s*(Upper|Lower|Middle|North|South|East|West|[NSEW])\s*[)\]]$/i.test(raw)

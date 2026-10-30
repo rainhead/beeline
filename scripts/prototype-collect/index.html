@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collect · Beeline (prototype)</title>
+<!-- PROTOTYPE, throwaway (beeline-2zej.4): a "Collect" tab for planning the next four weeks.
+     Beeline's own stylesheets (tokens, elements, layout, components) with the header copied from
+     src/app/views/layout.tsx; everything specific to this page is in the <style> below. -->
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="elements.css">
+<link rel="stylesheet" href="layout.css">
+<link rel="stylesheet" href="components.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+body > header .nav-inline a[aria-current="page"] { color: var(--md-sys-color-on-surface); box-shadow: inset 0 -2px 0 var(--md-sys-color-primary); padding-bottom: 2px; }
+.proto-banner { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); font: var(--md-sys-typescale-label); padding: var(--space-1-5) var(--space-6); }
+
+/* The Collect page uses the whole window: a toolbar, then lists beside a map. */
+main.collect { display: grid; grid-template-columns: minmax(0, 1fr); padding: 0; }
+main.collect > * { grid-column: 1; }
+.collect-bar { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-3) var(--space-6); padding: var(--space-4) var(--space-6) var(--space-3); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+.collect-bar h1 { margin: 0; font: var(--md-sys-typescale-headline); }
+.collect-bar .window { color: var(--md-sys-color-on-surface-variant); font: var(--md-sys-typescale-label); }
+.collect-bar label { display: grid; gap: var(--space-1); font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant); }
+.collect-bar input, .collect-bar select { font: var(--md-sys-typescale-body); padding: var(--space-1) var(--space-2); border: 1px solid var(--md-sys-color-outline); border-radius: var(--space-1); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); }
+.collect-bar .search { display: flex; gap: var(--space-1); align-items: end; }
+.collect-bar button, .plant-row button.more { font: var(--md-sys-typescale-label); padding: var(--space-1-5) var(--space-3); border-radius: 999px; border: 1px solid var(--md-sys-color-outline); background: transparent; color: var(--md-sys-color-primary); cursor: pointer; }
+.collect-split { display: grid; grid-template-columns: minmax(300px, 400px) minmax(0, 1fr); height: calc(100vh - 150px); min-height: 520px; }
+.collect-side { overflow-y: auto; border-right: 1px solid var(--md-sys-color-outline-variant); padding: var(--space-3) var(--space-4) var(--space-8) var(--space-6); }
+#map { height: 100%; min-height: 360px; background: var(--md-sys-color-surface-variant); }
+.collect-side h2 { font: var(--md-sys-typescale-title); margin: var(--space-4) 0 var(--space-1); display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2); }
+.collect-side h2 small, .sub { font: var(--md-sys-typescale-label); font-weight: 400; color: var(--md-sys-color-on-surface-variant); }
+.sub { margin: 0 0 var(--space-2); }
+
+.plant-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-1) var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+.plant-row input[type=checkbox] { width: 18px; height: 18px; margin: 3px 0 0; accent-color: var(--swatch, var(--md-sys-color-primary)); }
+.plant-row .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--swatch); margin-right: var(--space-1); vertical-align: 1px; }
+.plant-row .name { font-weight: 600; } .plant-row .name i { font-weight: 600; }
+.plant-row .common { color: var(--md-sys-color-on-surface-variant); }
+.plant-row .state { font: var(--md-sys-typescale-label); font-weight: 500; padding: 0 var(--space-2); border-radius: 999px; white-space: nowrap; }
+.state.on { background: var(--md-sys-color-success-container); color: var(--md-sys-color-on-success-container); }
+.state.start { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+.state.end { background: var(--md-sys-color-surface-variant); color: var(--md-sys-color-on-surface-variant); }
+.plant-row .line1 { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); align-items: baseline; justify-content: space-between; }
+.plant-row .bees { font-size: .85rem; color: var(--md-sys-color-on-surface-variant); }
+.plant-row .detail { grid-column: 2; display: grid; gap: var(--space-2); font-size: .9rem; }
+.plant-row .note { margin: 0; padding-left: var(--space-2); border-left: 2px solid var(--md-sys-color-outline-variant); }
+.plant-row .note cite { display: block; font: var(--md-sys-typescale-label); font-weight: 400; color: var(--md-sys-color-on-surface-variant); font-style: normal; }
+.phen { display: block; width: 100%; height: 34px; }
+.phen-legend { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); font-size: .72rem; color: var(--md-sys-color-on-surface-variant); }
+.phen-legend i { display: inline-block; width: 10px; height: 8px; vertical-align: 0; margin-right: 3px; }
+details.later summary { cursor: pointer; font: var(--md-sys-typescale-label); color: var(--md-sys-color-primary); padding: var(--space-2) 0; }
+
+.event { display: grid; grid-template-columns: 3.2rem minmax(0, 1fr); gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); cursor: pointer; }
+.event .date { font: var(--md-sys-typescale-label); text-align: center; line-height: 1.1; padding-top: 2px; }
+.event .date b { display: block; font: var(--md-sys-typescale-title); }
+.event .kind { font: var(--md-sys-typescale-label); font-weight: 500; letter-spacing: .03em; }
+.event .kind.collecting { color: var(--md-sys-color-tertiary); }
+.event .kind.training { color: var(--md-sys-color-primary); }
+.event .kind.other { color: var(--md-sys-color-on-surface-variant); }
+.event .where { font-size: .85rem; color: var(--md-sys-color-on-surface-variant); }
+.event.cancelled .title { text-decoration: line-through; }
+
+.layers { display: grid; gap: var(--space-1); font-size: .88rem; margin-top: var(--space-2); }
+.layers label { display: flex; gap: var(--space-2); align-items: center; }
+.layers label.disabled { color: var(--md-sys-color-on-surface-variant); }
+.leaflet-popup-content { font: var(--md-sys-typescale-body); font-size: .88rem; }
+.leaflet-popup-content ul { margin: var(--space-1) 0 0; padding-left: 1.1em; }
+.loading { font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant); }
+
+@media (max-width: 760px) {
+  .collect-bar { padding-inline: var(--space-4); }
+  .collect-split { grid-template-columns: 1fr; height: auto; }
+  #map { height: 60vh; order: -1; }
+  .collect-side { border-right: 0; padding-inline: var(--space-4); overflow: visible; }
+}
+</style>
+</head>
+<body>
+<div class="proto-banner">Prototype of a Collect tab. Plants and events come from the 2026 communiques; nothing is saved.</div>
+<header>
+  <details class="menu nav-menu"><summary aria-label="Menu" title="Menu"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24" class="icon" aria-hidden="true"><path stroke-linecap="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5"/></svg></summary>
+    <div class="menu-panel"><nav class="menu-section nav-records"><a href="#">Samples</a><a href="#">Specimens</a><a href="#" aria-current="page">Collect</a></nav></div></details>
+  <a href="#" class="brand">Beeline</a>
+  <nav class="nav-inline"><a href="#">Samples</a><a href="#">Specimens</a><a href="#" aria-current="page">Collect</a></nav>
+  <details class="menu account-menu"><summary aria-label="Account" title="Account"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24" class="icon" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></svg></summary></details>
+</header>
+<main class="collect">
+  <div class="collect-bar">
+    <div><h1>Collect</h1><div class="window" id="windowText"></div></div>
+    <label>Starting<input type="date" id="from"></label>
+    <label>Atlas<select id="atlas"></select></label>
+    <div class="search"><label>Go to a place<input type="search" id="q" placeholder="Town, park, refuge"></label><button id="go">Go</button></div>
+    <button id="near">Near me</button>
+  </div>
+  <div class="collect-split">
+    <aside class="collect-side">
+      <h2>Plants to work <small id="plantCount"></small></h2>
+      <p class="sub">Chosen by staff and the taxonomists. Shown when the plant is usually flowering in these four weeks. Tick a plant to map where it has been seen at this time of year.</p>
+      <div id="plants"></div>
+      <h2>Events <small id="eventCount"></small></h2>
+      <p class="sub">Collecting events and trainings in these four weeks, in the part of the map you are looking at. Pick one to find it on the map.</p>
+      <div id="events"></div>
+      <h2>Map</h2>
+      <div class="layers">
+        <label><input type="radio" name="src" value="all" checked> Every iNaturalist observation of the plant</label>
+        <label><input type="radio" name="src" value="flowering"> Only observations marked flowering</label>
+        <label><input type="radio" name="src" value="atlas"> Only bee atlas samples on the plant</label>
+        <label class="disabled"><input type="checkbox" disabled> Federal wilderness, where collecting needs a permit (later)</label>
+      </div>
+      <p class="sub" style="margin-top:var(--space-3)">Click the map to list the nearest observations of the ticked plants.</p>
+    </aside>
+    <div id="map"></div>
+  </div>
+</main>
+<footer class="site-footer"><p>Plant observations and phenology from <a href="https://www.inaturalist.org">iNaturalist</a>. Map tiles © Esri, OpenStreetMap contributors and OpenTopoMap (CC-BY-SA). Our sample counts are the old system's records, pulled 24 October 2026.</p></footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="data.js"></script>
+<script>
+const P = window.PLAN;
+const ATLAS = { OR: ["Oregon", 10, [[41.99, -124.6], [46.3, -116.4]]], WA: ["Washington", 46, [[45.5, -124.8], [49.0, -116.9]]], ID: ["Idaho", 22, [[42.0, -117.3], [49.0, -111.0]]], BC: ["British Columbia", 7085, [[48.3, -125.5], [51.5, -114.0]]], NM: ["New Mexico", 9, [[31.3, -109.1], [37.0, -103.0]]] };
+const PROJECTS = "18521,166376,99706"; // the atlas projects Beeline syncs (fly.toml)
+const COLORS = ["#c2410c", "#1d4ed8", "#7e22ce", "#047857", "#b91c1c", "#0e7490"];
+const state = { from: "2026-06-01", atlas: "OR", picked: new Map(), open: new Set(), src: "all" };
+try { const s = JSON.parse(localStorage.getItem("collect-proto") || "{}"); Object.assign(state, { from: s.from || state.from, atlas: s.atlas || state.atlas }); } catch (e) {}
+
+// ---- dates and weeks ----
+const day = s => new Date(s + "T12:00:00");
+const addDays = (d, n) => new Date(d.getTime() + n * 864e5);
+const iso = d => d.toISOString().slice(0, 10);
+const weekOf = d => Math.min(53, Math.max(1, Math.ceil(((d - new Date(d.getFullYear(), 0, 1)) / 864e5 + 1) / 7)));
+const windowWeeks = () => { const a = day(state.from); return [0, 7, 14, 21].map(n => weekOf(addDays(a, n))); };
+const windowMonths = () => { const a = day(state.from), b = addDays(a, 27); return [...new Set([a.getMonth() + 1, addDays(a, 14).getMonth() + 1, b.getMonth() + 1])]; };
+const fmtDay = d => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+// ---- phenology: iNat's flowering-annotated observations where there are enough, else all observations ----
+function series(g, a) {
+  const k = g + "|" + a, fl = P.inat.flowering[k] || {}, all = P.inat.all[k] || {};
+  const flTotal = Object.values(fl).reduce((x, y) => x + y, 0);
+  const src = flTotal >= 25 ? fl : all, label = flTotal >= 25 ? "flowering on iNat" : "seen on iNat";
+  const raw = Array.from({ length: 53 }, (_, i) => src[i + 1] || 0);
+  const sm = raw.map((v, i) => (raw[i - 1] || 0) * .25 + v * .5 + (raw[i + 1] || 0) * .25);
+  const ours = Array.from({ length: 53 }, (_, i) => (P.ours[k] || {})[i + 1] || 0);
+  return { sm, ours, label, n: Object.values(src).reduce((x, y) => x + y, 0) };
+}
+function bloomState(s, weeks) {
+  const peak = Math.max(...s.sm); if (!peak || s.n < 8) return null;
+  const inWin = Math.max(...weeks.map(w => s.sm[w - 1]));
+  const frac = inWin / peak; if (frac < 0.2) return null;
+  const peakWeek = s.sm.indexOf(peak) + 1;
+  if (frac >= 0.55) return { cls: "on", text: "In flower", frac };
+  return peakWeek > weeks[3] ? { cls: "start", text: "Coming into flower", frac } : { cls: "end", text: "Finishing", frac };
+}
+function phenSvg(s, weeks) {
+  const W = 260, H = 34, bw = W / 53, max = Math.max(1, ...s.sm), omax = Math.max(1, ...s.ours);
+  const win = `<rect x="${(weeks[0] - 1) * bw}" y="0" width="${(weeks[3] - weeks[0] + 1) * bw}" height="${H}" fill="var(--md-sys-color-primary-container)"></rect>`;
+  const bars = s.sm.map((v, i) => { const h = v ? Math.max(1.5, (H - 6) * v / max) : 0; return `<rect x="${i * bw + .3}" y="${H - 4 - h}" width="${bw - .6}" height="${h}" fill="var(--md-sys-color-primary)"></rect>`; }).join("");
+  const ticks = s.ours.map((v, i) => v ? `<rect x="${i * bw + .3}" y="${H - 3}" width="${bw - .6}" height="3" fill="var(--md-sys-color-tertiary)" opacity="${.35 + .65 * v / omax}"></rect>` : "").join("");
+  const months = [1, 5, 9, 14, 18, 22, 27, 31, 36, 40, 44, 48].map((w, i) => `<text x="${(w - 1) * bw}" y="8" font-size="7" fill="var(--md-sys-color-on-surface-variant)">${"JFMAMJJASOND"[i]}</text>`).join("");
+  return `<svg class="phen" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="When it flowers">${win}${months}${bars}${ticks}</svg>`;
+}
+
+// ---- the plants list ----
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function plantsFor() {
+  const weeks = windowWeeks(), rows = [], later = [];
+  for (const p of P.plants) {
+    if (!p.atlases.includes(state.atlas) || !p.taxon) continue;
+    const s = series(p.g, state.atlas), st = bloomState(s, weeks);
+    (st ? rows : later).push({ p, s, st });
+  }
+  rows.sort((x, y) => y.st.frac - x.st.frac || y.p.notes.length - x.p.notes.length);
+  return { rows, later, weeks };
+}
+function plantRow({ p, s, st }, weeks) {
+  const pick = state.picked.get(p.g), open = state.open.has(p.g);
+  const notes = p.notes.filter(n => !n.atlases.length || n.atlases.includes(state.atlas));
+  return `<div class="plant-row" style="--swatch:${pick || "var(--md-sys-color-primary)"}">
+    <input type="checkbox" data-pick="${esc(p.g)}" ${pick ? "checked" : ""} aria-label="Show ${esc(p.g)} on the map">
+    <div>
+      <div class="line1"><span>${pick ? `<span class="swatch"></span>` : ""}<span class="name"><i>${esc(p.g)}</i></span> ${p.common ? `<span class="common">${esc(p.common)}</span>` : ""}</span>${st ? `<span class="state ${st.cls}">${st.text}</span>` : ""}</div>
+      ${p.bees.length ? `<div class="bees">Look for <i>${p.bees.slice(0, 4).map(esc).join("</i>, <i>")}</i>${p.bees.length > 4 ? ` and ${p.bees.length - 4} more` : ""}</div>` : ""}
+      ${phenSvg(s, weeks)}
+      <button class="more" data-open="${esc(p.g)}" aria-expanded="${open}">${open ? "Less" : `Why${notes.length > 1 ? ` (${notes.length} notes)` : ""}`}</button>
+    </div>
+    ${open ? `<div class="detail">
+      <div class="phen-legend"><span><i style="background:var(--md-sys-color-primary)"></i>${s.label}, ${ATLAS[state.atlas][0]}</span><span><i style="background:var(--md-sys-color-tertiary)"></i>our samples</span><span><i style="background:var(--md-sys-color-primary-container)"></i>these four weeks</span></div>
+      ${notes.map(n => `<p class="note">${n.plant !== p.g ? `<i>${esc(n.plant)}</i>: ` : ""}${esc(n.why)}<cite>${esc(n.by || "Staff")}, ${fmtDay(day(n.date))}${n.bees.length ? ` · for <i>${n.bees.map(esc).join("</i>, <i>")}</i>` : ""}</cite></p>`).join("")}
+      <a href="https://www.inaturalist.org/taxa/${p.taxon}" target="_blank" rel="noopener">${esc(p.g)} on iNaturalist</a>
+    </div>` : ""}
+  </div>`;
+}
+function renderPlants() {
+  const { rows, later, weeks } = plantsFor();
+  document.getElementById("plantCount").textContent = `${rows.length} flowering`;
+  document.getElementById("plants").innerHTML = rows.map(r => plantRow(r, weeks)).join("") +
+    (later.length ? `<details class="later"><summary>${later.length} more on the list, not flowering in these weeks</summary>${later.map(r => plantRow(r, weeks)).join("")}</details>` : "");
+}
+
+// ---- events ----
+const KIND = { "collecting": ["Collecting", "collecting"], "collecting+training": ["Collecting and training", "collecting"], "field-training": ["Field training", "training"], "microscope": ["Microscope training", "training"], "course": ["Course", "training"], "conference": ["Conference", "other"], "talk": ["Talk", "other"], "meeting": ["Meeting", "other"], "outreach": ["Outreach", "other"], "deadline": ["Deadline", "other"], "other": ["Event", "other"] };
+const KEEP = new Set(["collecting", "collecting+training", "field-training", "microscope", "course", "conference"]);
+function eventsFor() {
+  const a = day(state.from), b = addDays(a, 27);
+  const view = map.getBounds().pad(0.1);
+  return P.events.filter(e => e.start && KEEP.has(e.kind) && day(e.end || e.start) >= a && day(e.start) <= b &&
+      (e.lat != null && !e.online ? view.contains([e.lat, e.lon]) : (!e.atlas || e.atlas === state.atlas)))
+    .sort((x, y) => x.start.localeCompare(y.start));
+}
+function renderEvents() {
+  const evs = eventsFor();
+  document.getElementById("eventCount").textContent = evs.length ? `${evs.length}` : "";
+  document.getElementById("events").innerHTML = evs.length ? evs.map((e, i) => {
+    const d = day(e.start), [kt, kc] = KIND[e.kind] || KIND.other;
+    const span = e.end && e.end !== e.start ? `–${fmtDay(day(e.end))}` : "";
+    return `<div class="event ${e.status === "cancelled" ? "cancelled" : ""}" data-ev="${i}" tabindex="0">
+      <div class="date">${d.toLocaleDateString("en-US", { month: "short" })}<b>${d.getDate()}</b></div>
+      <div><div class="kind ${kc}">${kt}${e.atlas ? ` · ${e.atlas}` : ""}${e.status === "cancelled" ? " · cancelled" : e.status === "moved" ? " · new date" : ""}</div>
+      <div class="title">${esc(e.title)}${span ? ` <span class="where">${d.getDate() ? fmtDay(d) + span : ""}</span>` : ""}</div>
+      <div class="where">${e.online ? "Online" : esc(e.place || "")}${e.lat == null && !e.online ? " · not on the map" : ""}</div></div></div>`;
+  }).join("") : `<p class="sub">None in these weeks within the map. Zoom out or move the map to see more.</p>`;
+  drawEvents(evs);
+}
+
+// ---- the map ----
+const map = L.map("map", { zoomControl: true, worldCopyJump: true });
+const topo = L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", { maxZoom: 17, attribution: "© OpenStreetMap contributors, SRTM | © OpenTopoMap (CC-BY-SA)" });
+const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributors" });
+const light = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", { maxZoom: 16, attribution: "Tiles © Esri — Esri, HERE, Garmin, © OpenStreetMap contributors" });
+const lightRef = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}", { maxZoom: 16, pane: "shadowPane" });
+light.addTo(map); lightRef.addTo(map);
+map.on("baselayerchange", e => { if (e.layer === light) lightRef.addTo(map); else map.removeLayer(lightRef); });
+L.control.layers({ "Plain": light, "Streets": osm, "Terrain": topo }, null, { position: "topright" }).addTo(map);
+const plantLayers = L.layerGroup().addTo(map), eventLayer = L.layerGroup().addTo(map);
+let eventMarkers = [];
+function inatParams(taxon, color) {
+  const q = new URLSearchParams({ taxon_id: taxon, color, month: windowMonths().join(","), verifiable: "true" });
+  if (state.src === "flowering") { q.set("term_id", "12"); q.set("term_value_id", "13"); }
+  if (state.src === "atlas") q.set("project_id", PROJECTS);
+  return q.toString();
+}
+function drawPlants() {
+  plantLayers.clearLayers();
+  for (const [g, color] of state.picked) {
+    const p = P.plants.find(x => x.g === g); if (!p) continue;
+    const qs = inatParams(p.taxon, color);
+    plantLayers.addLayer(L.tileLayer(`https://api.inaturalist.org/v1/grid/{z}/{x}/{y}.png?${qs}`, { maxZoom: 9, opacity: .6, attribution: "iNaturalist" }));
+    plantLayers.addLayer(L.tileLayer(`https://api.inaturalist.org/v1/points/{z}/{x}/{y}.png?${qs}`, { minZoom: 10, maxZoom: 19, attribution: "iNaturalist" }));
+  }
+}
+function drawEvents(evs) {
+  eventLayer.clearLayers(); eventMarkers = [];
+  evs.forEach((e, i) => {
+    if (e.lat == null || e.online) { eventMarkers[i] = null; return; }
+    const [kt, kc] = KIND[e.kind] || KIND.other;
+    const m = L.circleMarker([e.lat, e.lon], { radius: 9, weight: 3, color: kc === "collecting" ? "#3f6212" : "#8a5100", fillColor: "#fff", fillOpacity: 1 })
+      .bindPopup(`<b>${esc(e.title)}</b><br>${kt}${e.atlas ? ", " + e.atlas : ""} · ${fmtDay(day(e.start))}${e.end && e.end !== e.start ? "–" + fmtDay(day(e.end)) : ""}${e.status === "cancelled" ? " · cancelled" : ""}<br>${esc(e.place || "")}${e.geo === "approximate" ? " (placed roughly)" : ""}${e.note ? `<br><span style="color:var(--md-sys-color-on-surface-variant)">${esc(e.note)}</span>` : ""}${e.link ? `<br><a href="${esc(e.link)}" target="_blank" rel="noopener">Details</a>` : ""}`);
+    eventLayer.addLayer(m); eventMarkers[i] = m;
+  });
+}
+// clicking the map lists the nearest observations of the ticked plants at this time of year
+map.on("click", async ev => {
+  if (!state.picked.size) { L.popup().setLatLng(ev.latlng).setContent("Tick a plant to see its observations near here.").openOn(map); return; }
+  const taxa = [...state.picked.keys()].map(g => P.plants.find(x => x.g === g).taxon).join(",");
+  const radius = Math.max(1, Math.round(40000 / 2 ** map.getZoom() * 3));
+  const q = new URLSearchParams({ taxon_id: taxa, lat: ev.latlng.lat.toFixed(4), lng: ev.latlng.lng.toFixed(4), radius, month: windowMonths().join(","), verifiable: "true", per_page: "8", order_by: "observed_on" });
+  if (state.src === "flowering") { q.set("term_id", "12"); q.set("term_value_id", "13"); }
+  if (state.src === "atlas") q.set("project_id", PROJECTS);
+  const pop = L.popup().setLatLng(ev.latlng).setContent(`<span class="loading">Looking within ${radius} km…</span>`).openOn(map);
+  try {
+    const r = await (await fetch("https://api.inaturalist.org/v1/observations?" + q)).json();
+    pop.setContent(r.results.length ? `<b>${r.total_results} within ${radius} km</b>, newest first<ul>${r.results.map(o => `<li><a href="${o.uri}" target="_blank" rel="noopener"><i>${esc(o.taxon?.name)}</i></a>, ${esc(o.observed_on || "")}<br><span style="color:var(--md-sys-color-on-surface-variant)">${esc(o.place_guess || "")}</span></li>`).join("")}</ul>` : `None within ${radius} km in these months.`);
+  } catch (e) { pop.setContent("iNaturalist did not answer. Try again in a moment."); }
+});
+
+// ---- controls ----
+function render() {
+  const a = day(state.from), b = addDays(a, 27);
+  document.getElementById("windowText").textContent = `${fmtDay(a)} to ${fmtDay(b)}, ${b.getFullYear()}`;
+  renderPlants(); renderEvents(); drawPlants();
+  try { localStorage.setItem("collect-proto", JSON.stringify({ from: state.from, atlas: state.atlas })); } catch (e) {}
+}
+function autoPick() {
+  state.picked.clear();
+  plantsFor().rows.slice(0, 3).forEach((r, i) => state.picked.set(r.p.g, COLORS[i]));
+}
+const atlasSel = document.getElementById("atlas");
+atlasSel.innerHTML = Object.entries(ATLAS).map(([k, v]) => `<option value="${k}">${v[0]}</option>`).join("");
+atlasSel.value = state.atlas;
+atlasSel.onchange = () => { state.atlas = atlasSel.value; map.fitBounds(ATLAS[state.atlas][2]); autoPick(); render(); };
+const fromIn = document.getElementById("from"); fromIn.value = state.from;
+fromIn.onchange = () => { if (fromIn.value) { state.from = fromIn.value; autoPick(); render(); } };
+document.querySelectorAll("input[name=src]").forEach(r => r.onchange = () => { state.src = r.value; drawPlants(); });
+document.addEventListener("change", e => {
+  const g = e.target.dataset?.pick; if (!g) return;
+  if (e.target.checked) { const used = new Set(state.picked.values()); const c = COLORS.find(x => !used.has(x)); if (!c) { e.target.checked = false; alertMsg("Six plants at once is the most the map can tell apart."); return; } state.picked.set(g, c); }
+  else state.picked.delete(g);
+  renderPlants(); drawPlants();
+});
+function alertMsg(t) { L.popup().setLatLng(map.getCenter()).setContent(t).openOn(map); }
+document.addEventListener("click", e => {
+  const o = e.target.closest("[data-open]"); if (o) { const g = o.dataset.open; state.open.has(g) ? state.open.delete(g) : state.open.add(g); renderPlants(); return; }
+  const ev = e.target.closest("[data-ev]"); if (ev) { const m = eventMarkers[+ev.dataset.ev]; if (m) { map.setView(m.getLatLng(), Math.max(map.getZoom(), 9)); m.openPopup(); } }
+});
+document.getElementById("near").onclick = () => map.locate({ setView: true, maxZoom: 10 });
+map.on("locationerror", () => alertMsg("Your browser did not share a location."));
+async function search() {
+  const q = document.getElementById("q").value.trim(); if (!q) return;
+  try {
+    const r = await (await fetch("https://nominatim.openstreetmap.org/search?" + new URLSearchParams({ q, format: "json", limit: "1", countrycodes: "us,ca" }))).json();
+    if (r[0]) map.fitBounds([[+r[0].boundingbox[0], +r[0].boundingbox[2]], [+r[0].boundingbox[1], +r[0].boundingbox[3]]], { maxZoom: 11 });
+    else alertMsg(`Nothing found for "${esc(q)}".`);
+  } catch (e) { alertMsg("The place search did not answer."); }
+}
+document.getElementById("go").onclick = search;
+document.getElementById("q").onkeydown = e => { if (e.key === "Enter") search(); };
+map.fitBounds(ATLAS[state.atlas][2]);
+map.on("moveend", renderEvents);
+autoPick(); render();
+</script>
+</body>
+</html>

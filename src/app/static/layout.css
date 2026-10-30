@@ -15,7 +15,10 @@ body > header .brand {
   color: var(--md-sys-color-on-surface);
   text-decoration: none;
 }
-body > header .nav-inline { display: flex; gap: var(--space-4); }
+/* The brand and the inline nav, aligned on their baseline as one item that
+   the header then centres beside the menu buttons. */
+body > header .header-title { display: flex; align-items: baseline; gap: var(--space-4); }
+body > header .nav-inline { display: flex; align-items: baseline; gap: var(--space-4); }
 body > header .nav-inline a { font: var(--md-sys-typescale-label); text-decoration: none; }
 body > header .account-menu { margin-left: auto; }
 /* The feedback link takes over pushing right, so it and the avatar sit

@@ -518,6 +518,24 @@ export function nameLocality(e: LocalityEvidence): NamedLocality | null {
 }
 
 /**
+ * Whether a locality somebody wrote is only the name of the county the point
+ * is in: "Curry", "King County", "Cariboo". The county prints on the label in
+ * its own place, so as a locality it says nothing; 384 samples on the sandbox
+ * store would have been offered one first (2026-10-30). Written bare, the
+ * name of a town nearby (Hood River, Yakima) is the town's, and stays;
+ * "Hood River County" is still the county's.
+ */
+function namesOnlyCounty(locality: string, e: LocalityEvidence): boolean {
+  if (e.county === null) return false;
+  // BC's unincorporated "Stikine Region" is written "Stikine".
+  const bare = (s: string) => s.replace(/ (County|Co\.?|Regional District|RD|Region)$/i, "").toLowerCase();
+  const name = bare(locality);
+  if (name !== bare(e.county)) return false;
+  const town = locality.toLowerCase() === name && e.nearby.some((c) => c.at.name.toLowerCase() === name);
+  return !town;
+}
+
+/**
  * The names a person chooses a sample's locality among (beeline-4hxe): the
  * best first, then up to three alternatives, none repeated and every one fit
  * for a label.
@@ -532,22 +550,6 @@ export function nameLocality(e: LocalityEvidence): NamedLocality | null {
  * whose limits it is in, the island, a feature, a peak, the nearest towns, a
  * hamlet, a large reserve, a distance.
  */
-/**
- * Whether a locality somebody wrote is only the name of the county the point
- * is in: "Curry", "King County", "Cariboo". The county prints on the label in
- * its own place, so as a locality it says nothing; 384 samples on the sandbox
- * store would have been offered one first (2026-10-30). A town of the same
- * name nearby (Hood River, Yakima) makes it a town's name, which stays.
- */
-function namesOnlyCounty(locality: string, e: LocalityEvidence): boolean {
-  if (e.county === null) return false;
-  // BC's unincorporated "Stikine Region" is written "Stikine".
-  const bare = (s: string) => s.replace(/ (County|Co\.?|Regional District|RD|Region)$/i, "").toLowerCase();
-  const name = bare(locality);
-  if (name !== bare(e.county)) return false;
-  return !e.nearby.some((c) => c.at.name.toLowerCase() === name);
-}
-
 export function localityCandidates(e: LocalityEvidence, max: number = RULE.candidates): NamedLocality[] {
   const out: NamedLocality[] = [];
   const add = (locality: string | null | undefined, basis: LocalityBasis) => {

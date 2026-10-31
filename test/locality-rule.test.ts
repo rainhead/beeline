@@ -276,6 +276,9 @@ describe("candidates (beeline-4hxe)", () => {
     // Hood River is a town as well as the county it is in.
     const hoodRiver = { ...nothing, county: "Hood River", nearby: [at(place("Hood River"), 8)], used: [used("Hood River", 5, 5, 0.1)] };
     expect(localityCandidates(hoodRiver)[0]).toEqual({ locality: "Hood River", basis: "used_own" });
+    // Written as the county, it is the county's name, town or no town.
+    const hoodRiverCounty = { ...hoodRiver, used: [used("Hood River County", 5, 5, 0.1)] };
+    expect(localityCandidates(hoodRiverCounty).map((c) => c.locality)).not.toContain("Hood River County");
   });
 
   test("never more than four, and no name twice whatever its basis", () => {

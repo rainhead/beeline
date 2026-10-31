@@ -292,6 +292,29 @@ describe("staff coordinates stand over the observation's (beeline-942)", () => {
     expect(await location()).toEqual([44.5646, -123.262, 30, "inat_public"]);
   });
 
+  test("a removal the nightly replays with no override standing leaves the point alone", async () => {
+    // The app records a removal as a row with an empty value, and the file
+    // keeps that row for good, so every later promotion replays it. On the
+    // first replay there is an override to take away and a base to hand
+    // back. On every replay after that there is no override, and the
+    // applier read "no override" as "no base" and deleted the sample's
+    // point, the one promotion had just written from the observation. So
+    // an unprinted sample whose staff point had been removed lost its
+    // coordinates again every night. Found by test/prop-minting.test.ts.
+    await stage(obs(7));
+    await promoteObservations(conn);
+    await upsertSampleOverlay(overlayPath, [point("44.6 -123.3 15")]);
+    await promoteObservations(conn, { sampleOverlayPath: overlayPath });
+    expect(await location()).toEqual([44.6, -123.3, 15, "staff_entry"]);
+    await upsertSampleOverlay(overlayPath, [point("")]);
+    await promoteObservations(conn, { sampleOverlayPath: overlayPath });
+    expect(await location()).toEqual([44.5646, -123.262, 30, "inat_public"]);
+    // The next nightly replays the same file.
+    await promoteObservations(conn, { sampleOverlayPath: overlayPath });
+    expect(await location()).toEqual([44.5646, -123.262, 30, "inat_public"]);
+    expect(await count("SELECT count(*) FROM sample_location_override")).toBe(0);
+  });
+
   test("an obscured observation with no trust: the override is the only point, and removal takes it away again", async () => {
     // No candidate, no row — the case that cannot print and that only a
     // person can fix.

@@ -54,49 +54,57 @@ COMMENT ON COLUMN inat_user_orcid.inat_user_id IS 'The account. Not a foreign ke
 COMMENT ON COLUMN inat_user_orcid.orcid IS 'The bare iD, as person_orcid.orcid; iNaturalist reports it as a URL.';
 COMMENT ON COLUMN inat_user_orcid.fetched_at IS 'When iNaturalist last reported it.';
 
-CREATE TABLE atlas (
-  entity_id     INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
-  code          TEXT UNIQUE NOT NULL,
-  name          TEXT NOT NULL
+-- Programs (beeline-7c1; atlas folded in 2026-10-31, beeline-ni5m.2). A
+-- program is a body people take part in that governs what they collect
+-- through it (CONTEXT.md): each atlas, Master Melittology itself, and the
+-- BLM surveys. AN ATLAS IS A PROGRAM WITH A REGION: the six member atlases
+-- are the programs atlas_region names, and the view `atlas` (schema/104) is
+-- that definition in SQL. So every atlas-shaped fact — the region, who
+-- prints, the taxon-obscured answer, a sample's atlas, a person's
+-- membership, a print run's scope — REFERENCES program and READS atlas; the
+-- columns keep the name atlas_id, because the word still means a program
+-- with a region, and the view is what says which programs those are.
+--
+-- Until 2026-10-31 atlas was a table of its own and program sat beside it
+-- pointing at the atlas it was, "the generalisation arriving one fact at a
+-- time". The fold was done while the production store could still be built
+-- fresh: DuckDB cannot restructure a referenced table by migration (ADR
+-- 0006), and the two-table shape would otherwise have been permanent.
+CREATE TABLE program (
+  entity_id INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
+  code      TEXT UNIQUE NOT NULL,
+  name      TEXT NOT NULL
 );
-COMMENT ON TABLE atlas IS 'A member program of the Master Melittologist umbrella: OBA, WaBA, BC, ID, NM, OK. Samples are assigned to atlases by geography, never by pipeline or iNat project: an atlas''s iNaturalist place is on its atlas_region row, with every other region''s. An inat_place_id column sat here until cutover, read by nothing and filled for Washington alone; dropped before the production store was built (beeline-ni5m.4).';
+COMMENT ON TABLE program IS 'A program people take part in: each atlas, Master Melittology itself, and the BLM surveys. An atlas is a program with a region (atlas_region; the view atlas lists them). Samples are assigned to atlases by geography, never by pipeline or iNat project. The overlay names a program by its code.';
+COMMENT ON COLUMN program.code IS 'How the person overlay names the program (fields home_atlas and leads), the listings scope an atlas''s records fall under, and the key of the atlas identity in src/app/theme/atlas.ts, and so stable: an atlas''s is its atlas code, then MM and BLM. Letters and digits only, which is what lets a set of them be written joined with semicolons.';
+COMMENT ON COLUMN program.name IS 'The name staff see.';
+
+-- The six atlases first, then the two programs that are not one (Peter,
+-- 2026-10-09). Master Melittology was known only by its iNaturalist
+-- project's name, "Master Melittologist (outside of Oregon)".
+INSERT INTO program (code, name) VALUES
+  ('OBA',  'Oregon Bee Atlas'),
+  ('WaBA', 'Washington Bee Atlas'),
+  ('BC',   'British Columbia Bee Atlas'),
+  ('ID',   'Idaho Bee Atlas'),
+  ('NM',   'New Mexico Bee Atlas'),
+  ('OK',   'Oklahoma Bee Atlas'),
+  ('MM',   'Master Melittology'),
+  ('BLM',  'BLM surveys');
 
 -- Which atlases print their own labels: a row is the flag, the way a
 -- person_admin row is. None today — Oregon prints for the whole program, so
 -- a print run with no atlas covers every atlas absent from this table, plus
 -- samples outside any atlas (print_scope_sample, schema/155); add an atlas
 -- here and its samples wait for a run scoped to it. A satellite rather than
--- a column on atlas because DuckDB cannot add a NOT NULL column to a table
--- other tables reference (atlas_region does), so a migration could not have
--- put the column there without leaving a nullable one that a fresh build
--- would not have.
+-- a column on program because DuckDB cannot add a NOT NULL column to a table
+-- other tables reference, so a migration could not have put the column there
+-- without leaving a nullable one that a fresh build would not have.
 CREATE TABLE atlas_printing (
-  atlas_id INTEGER PRIMARY KEY REFERENCES atlas(entity_id)
+  atlas_id INTEGER PRIMARY KEY REFERENCES program(entity_id)
 );
 COMMENT ON TABLE atlas_printing IS 'Atlases that print their own labels; presence is the flag. Empty today: Oregon prints for every atlas. An unscoped print run freezes the samples of every atlas NOT here (print_scope_sample), and an atlas here gets labels only from a run scoped to it. Only an atlas here can be a run''s scope: the rest are the program''s to print, and src/print-run.ts refuses a run scoped to one.';
-
--- The six member atlases. Their iNaturalist place ids are on atlas_region,
--- where every region's is (beeline-2yt).
---
--- Why there is no place id here: nothing read one — not a query, view, or
--- page — and atlas_region's is what observation_place joins on, so a value
--- here duplicated a fact to no reader. It could not have been filled on a
--- deployed store either: DuckDB 1.5.5 refuses to write an INDEXED column of
--- a row an incoming foreign key references, the column was UNIQUE and so
--- indexed, and atlas_region.atlas_id references every row here. The same
--- holds of `code` now, which is why test/schema.test.ts pins the rule on it:
--- the index is the discriminator and the inbound reference alone is not,
--- since UPDATE atlas SET name succeeds on the very same row. The column was
--- dropped before cutover (beeline-ni5m.4), while the production store could
--- still be built fresh; a referenced table cannot lose a column by migration
--- (ADR 0006).
-INSERT INTO atlas (code, name) VALUES
-  ('OBA',  'Oregon Bee Atlas'),
-  ('WaBA', 'Washington Bee Atlas'),
-  ('BC',   'British Columbia Bee Atlas'),
-  ('ID',   'Idaho Bee Atlas'),
-  ('NM',   'New Mexico Bee Atlas'),
-  ('OK',   'Oklahoma Bee Atlas');
+COMMENT ON COLUMN atlas_printing.atlas_id IS 'A program with a region (the view atlas).';
 
 -- Which atlases have said their labels may carry the true coordinates of a
 -- record iNaturalist obscures for its taxon: a row is the answer, the way an
@@ -109,12 +117,13 @@ INSERT INTO atlas (code, name) VALUES
 -- the row, because the answer is a person's and a link is what lets the next
 -- reader check it.
 CREATE TABLE atlas_taxon_obscured_printing (
-  atlas_id   INTEGER PRIMARY KEY REFERENCES atlas(entity_id),
+  atlas_id   INTEGER PRIMARY KEY REFERENCES program(entity_id),
   decided_by TEXT NOT NULL,
   decided_on DATE NOT NULL,
   source     TEXT NOT NULL
 );
 COMMENT ON TABLE atlas_taxon_obscured_printing IS 'Atlases whose labels may carry the true coordinates of a taxon-obscured record; presence is the answer. An atlas absent here has not answered, and its taxon-obscured samples do not print (qc_rule_taxon_obscured_awaiting_atlas).';
+COMMENT ON COLUMN atlas_taxon_obscured_printing.atlas_id IS 'A program with a region (the view atlas).';
 COMMENT ON COLUMN atlas_taxon_obscured_printing.decided_by IS 'Who answered for the atlas, by name.';
 COMMENT ON COLUMN atlas_taxon_obscured_printing.source IS 'Where the answer was given: a link to the comment or message that holds it.';
 
@@ -124,11 +133,12 @@ COMMENT ON COLUMN atlas_taxon_obscured_printing.source IS 'Where the answer was 
 INSERT INTO atlas_taxon_obscured_printing (atlas_id, decided_by, decided_on, source)
 SELECT entity_id, 'Arthur Schrenk', DATE '2026-10-21',
        'https://github.com/rainhead/beeline/issues/13#issuecomment-6327141377'
-FROM atlas WHERE code = 'OBA';
+FROM program WHERE code = 'OBA';
 
 -- Which atlas covers a state or province — the mapping legacy promotion used
 -- to carry as a six-way CASE, moved into the schema so it can be queried and
--- so its silences can be told apart (beeline-lcl).
+-- so its silences can be told apart (beeline-lcl). This table is also what
+-- makes a program an atlas: a program some row here names has a region.
 --
 -- A row with a NULL atlas_id is the point of the table: it says "we know this
 -- region and no member atlas covers it", which is what 632 samples in Nevada,
@@ -145,7 +155,7 @@ FROM atlas WHERE code = 'OBA';
 CREATE TABLE atlas_region (
   state_province TEXT PRIMARY KEY,
   country        TEXT NOT NULL,
-  atlas_id       INTEGER REFERENCES atlas(entity_id),
+  atlas_id       INTEGER REFERENCES program(entity_id),
   inat_place_id  BIGINT
 );
 -- Uniqueness as a named index rather than an inline UNIQUE, so that a store
@@ -154,10 +164,10 @@ CREATE TABLE atlas_region (
 -- ALTER TABLE ADD CONSTRAINT), and two stores that differ in how they spell
 -- the same rule are exactly what ADR 0006 exists to prevent.
 CREATE UNIQUE INDEX atlas_region_inat_place_id_key ON atlas_region (inat_place_id);
-COMMENT ON TABLE atlas_region IS 'State/province → the member atlas covering it, for the US and Canada. Geography assigns samples to atlases (schema/030); this is the lookup it does. Deliberately complete rather than data-shaped: a region absent from this table means "unrecognised", so listing only the six would make every other real place look like a typo.';
+COMMENT ON TABLE atlas_region IS 'State/province → the member atlas covering it, for the US and Canada. Geography assigns samples to atlases (schema/030); this is the lookup it does, and the programs it names are the atlases (the view atlas). Deliberately complete rather than data-shaped: a region absent from this table means "unrecognised", so listing only the six would make every other real place look like a typo.';
 COMMENT ON COLUMN atlas_region.state_province IS 'The two-letter USPS or Canada Post code, exactly as a sample carries it — this is the join key, so the format is load-bearing: qc_rule_place_unrecognised fires on anything that does not match a row here.';
 COMMENT ON COLUMN atlas_region.country IS 'ISO 3166-1 alpha-3, matching the ''USA'' the records already carry. Not part of the key — see the note above — but the truth a sample''s own country is checked against.';
-COMMENT ON COLUMN atlas_region.atlas_id IS 'Null ⇒ no member atlas covers this region. That is an answer, not a gap: these are the records that belong to the umbrella program itself.';
+COMMENT ON COLUMN atlas_region.atlas_id IS 'The program whose region this is, which makes that program an atlas. Null ⇒ no member atlas covers this region. That is an answer, not a gap: these are the records that belong to the umbrella program itself.';
 COMMENT ON COLUMN atlas_region.inat_place_id IS 'This region''s iNaturalist place, so a sample minted from an observation can be given a state at all: iNat stamps observations with place ids and place_guess is free text ("Leach Botanical Garden"), so the two-letter code has to be reached through here (beeline-2yt). The one place id in the store for a region, the six atlases'' included.';
 
 -- Place ids were derived twice and agreed: iNaturalist's own autocomplete
@@ -191,7 +201,7 @@ FROM (VALUES
   ('NS', 'CAN', NULL, 6853), ('NT', 'CAN', NULL, 9079), ('NU', 'CAN', NULL, 13335), ('ON', 'CAN', NULL, 6883),
   ('PE', 'CAN', NULL, 9116), ('QC', 'CAN', NULL, 13336), ('SK', 'CAN', NULL, 7953), ('YT', 'CAN', NULL, 13337)
 ) AS r(state_province, country, atlas_code, inat_place_id)
-LEFT JOIN atlas a ON a.code = r.atlas_code;
+LEFT JOIN program a ON a.code = r.atlas_code;
 
 -- Where a person belongs in the program, as distinct from where their samples
 -- fall. Geography assigns a sample; it cannot assign a person, who may collect
@@ -200,26 +210,28 @@ LEFT JOIN atlas a ON a.code = r.atlas_code;
 -- it, promotion never guesses it — and because it carries the atlas colorway
 -- the volunteer's own pages are branded with.
 --
--- Membership has two shapes, and the reason this is not just a nullable
--- atlas_id is that a *missing row* has to keep meaning one thing. Master
--- Melittology membership without a member atlas is real (beeline-lcl): a
--- Nevada volunteer works under OBA staff's auspices without being an Oregon
--- Bee Atlas volunteer, and writing OBA here would make them indistinguishable
--- from a Corvallis regular in every listing, export, and atlas-branded page.
--- So kind says which case it is, and absence is reserved for "not asked yet".
+-- The program a person belongs to: a member atlas, or Master Melittology
+-- itself (code MM) for the volunteer who works under OBA staff's auspices
+-- without being an Oregon Bee Atlas volunteer, which is real (beeline-lcl)
+-- and must not read as OBA in any listing, export or atlas-branded page. A
+-- MISSING ROW keeps one meaning, "nobody has asked", which is why this is a
+-- row per answer and never a nullable column on person. Until 2026-10-31 the
+-- row carried a kind ('atlas' or 'program') beside a nullable atlas id; with
+-- atlases folded into programs the kind IS the program: an atlas's row
+-- names a program with a region, and the program-only member's names MM.
+-- The person overlay still spells the second as `program` (field
+-- home_atlas), and the roster and the change log still read the two shapes
+-- off whether the program has a region.
 --
 -- Who administers a program-only member is a separate fact, deliberately not
 -- modelled: OBA staff do, and there is no second administering body to tell
 -- them apart from until per-atlas staff roles exist (beeline-lcl).
 CREATE TABLE person_membership (
-  person_id INTEGER PRIMARY KEY REFERENCES person(entity_id),
-  kind      TEXT NOT NULL CHECK (kind IN ('atlas', 'program')),
-  atlas_id  INTEGER REFERENCES atlas(entity_id),
-  CHECK ((kind = 'atlas') = (atlas_id IS NOT NULL))
+  person_id  INTEGER PRIMARY KEY REFERENCES person(entity_id),
+  program_id INTEGER NOT NULL REFERENCES program(entity_id)
 );
-COMMENT ON TABLE person_membership IS 'Where a person belongs: a member atlas, or the umbrella program with no atlas. A row is an answer somebody gave; absent = never asked, which is the honest default — no row is not the same as OBA, and it is not the same as "no atlas applies" either.';
-COMMENT ON COLUMN person_membership.kind IS '''atlas'' ⇒ a member atlas, named by atlas_id. ''program'' ⇒ Master Melittology itself, under OBA staff''s auspices, with no member atlas. iNat project 99706 (''outside of Oregon'') is this state''s operational expression, and is already administered that way upstream.';
-COMMENT ON COLUMN person_membership.atlas_id IS 'Set by staff, never inferred from where their samples landed — a Washington volunteer collecting in Oregon is still WaBA. Null exactly when kind is ''program''.';
+COMMENT ON TABLE person_membership IS 'Where a person belongs: a member atlas, or Master Melittology itself (program MM) with no atlas. A row is an answer somebody gave; absent = never asked, which is the honest default — no row is not the same as OBA, and it is not the same as "no atlas applies" either.';
+COMMENT ON COLUMN person_membership.program_id IS 'The program: an atlas (a program with a region) or MM. Set by staff, never inferred from where their samples landed — a Washington volunteer collecting in Oregon is still WaBA. Taking part in a program that is neither (the BLM surveys) is beeline-85m.4''s to shape, and this column is where it would land.';
 
 -- Who may use the admin surface. A table rather than a config array so the
 -- roster is editable by the people who own it (beeline-eft added five names
@@ -261,36 +273,6 @@ COMMENT ON TABLE person_delegate IS 'person_id may see and act on acts_for_id''s
 COMMENT ON COLUMN person_delegate.person_id IS 'The delegate — the one who signs in, so in practice the holder of the household''s iNat account. Not enforced: a grant to someone with no account is inert rather than refused, because the same overlay pass may bind their account after this row is applied.';
 COMMENT ON COLUMN person_delegate.acts_for_id IS 'The person acted for, typically the household partner who does not hold the shared login. Usually has no inat_account at all, which is the state this table exists to make workable.';
 COMMENT ON COLUMN person_delegate.granted_by IS 'iNat login of the staff member who granted it. Not a foreign key: the granter may be gone — same stance as person_admin.granted_by.';
-
--- Programs (beeline-7c1). A program is a body people take part in that
--- governs what they collect through it (CONTEXT.md): each atlas, Master
--- Melittology itself, and the BLM surveys. "An atlas is the program that
--- also has a region", which is the arrow here: a program names the atlas it
--- is, and a program with no region names none.
---
--- A table beside atlas rather than a rework of it. Everything atlas-shaped
--- today (regions, printing, membership, the mark) is a program's in
--- principle, but atlas is referenced from five tables and DuckDB cannot
--- restructure a referenced table, so the generalisation arrives one fact at a
--- time, starting with the first fact that is not an atlas's: who leads it.
-CREATE TABLE program (
-  entity_id INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
-  code      TEXT UNIQUE NOT NULL,
-  name      TEXT NOT NULL,
-  atlas_id  INTEGER UNIQUE REFERENCES atlas(entity_id)
-);
-COMMENT ON TABLE program IS 'A program people take part in: each atlas, Master Melittology itself, and the BLM surveys. The overlay names a program by its code.';
-COMMENT ON COLUMN program.atlas_id IS 'The atlas this program is, for a program with a region. Null for one without: Master Melittology, the BLM surveys.';
-COMMENT ON COLUMN program.code IS 'How the person overlay names the program (field leads), and so stable: an atlas''s is its atlas code, then MM and BLM. Letters and digits only, which is what lets a set of them be written joined with semicolons.';
-COMMENT ON COLUMN program.name IS 'The name staff see. An atlas''s is its atlas name.';
-
--- Each atlas is a program under its own code and name; then the two that are
--- not atlases (Peter, 2026-10-09). Master Melittology was known only by its
--- iNaturalist project's name, "Master Melittologist (outside of Oregon)".
-INSERT INTO program (code, name, atlas_id) SELECT code, name, entity_id FROM atlas ORDER BY entity_id;
-INSERT INTO program (code, name, atlas_id) VALUES
-  ('MM',  'Master Melittology', NULL),
-  ('BLM', 'BLM surveys',        NULL);
 
 -- Who leads each program: whose work it is, and who to raise its questions
 -- with (beeline-7c1). Responsibility, not permission — admin rights stay one

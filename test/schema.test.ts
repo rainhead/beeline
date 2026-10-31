@@ -17,13 +17,15 @@ describe("schema application", () => {
     // The next entity, whatever its table, continues the same sequence.
     const [[c]] = (await rows(
       conn,
-      "INSERT INTO atlas (code, name) VALUES ('XX', 'Test Atlas') RETURNING entity_id",
+      "INSERT INTO program (code, name) VALUES ('XX', 'Test Program') RETURNING entity_id",
     )) as [[number]];
     expect(c).toBe(b + 1);
   });
 
   test("the six member atlases are seeded", async () => {
-    const codes = await rows(conn, "SELECT code FROM atlas WHERE code <> 'XX' ORDER BY code");
+    // A program with no region is not an atlas, so the one inserted above
+    // does not appear here.
+    const codes = await rows(conn, "SELECT code FROM atlas ORDER BY code");
     expect(codes.flat()).toEqual(["BC", "ID", "NM", "OBA", "OK", "WaBA"]);
   });
 
@@ -40,20 +42,40 @@ describe("schema application", () => {
     expect(await rows(conn, "SELECT count(*) FROM atlas_region WHERE state_province = 'Waikato'")).toEqual([[0n]]);
   });
 
-  test("membership cannot say 'atlas' without one, or name one while saying 'program'", async () => {
+  test("membership names a program, and nothing else", async () => {
+    // Since the fold of 2026-10-31 the row is the program: an atlas or
+    // Master Melittology (MM). The two shapes the old kind column told
+    // apart are now whether that program has a region, which the view
+    // atlas answers.
     const [[person]] = (await rows(
       conn,
       "INSERT INTO person (display_name) VALUES ('Eve Outsider') RETURNING entity_id",
     )) as [[number]];
-    const oba = "(SELECT entity_id FROM atlas WHERE code = 'OBA')";
     await expect(
-      conn.run(`INSERT INTO person_membership (person_id, kind, atlas_id) VALUES (${person}, 'atlas', NULL)`),
-    ).rejects.toThrow(/CHECK/i);
+      conn.run(`INSERT INTO person_membership (person_id, program_id) VALUES (${person}, NULL)`),
+    ).rejects.toThrow(/NOT NULL/i);
     await expect(
-      conn.run(`INSERT INTO person_membership (person_id, kind, atlas_id) VALUES (${person}, 'program', ${oba})`),
-    ).rejects.toThrow(/CHECK/i);
-    await conn.run(`INSERT INTO person_membership (person_id, kind, atlas_id) VALUES (${person}, 'program', NULL)`);
-    expect(await rows(conn, `SELECT kind FROM person_membership WHERE person_id = ${person}`)).toEqual([["program"]]);
+      conn.run(`INSERT INTO person_membership (person_id, program_id) VALUES (${person}, 999999)`),
+    ).rejects.toThrow(/foreign key|Constraint/i);
+    await conn.run(
+      `INSERT INTO person_membership (person_id, program_id) VALUES (${person}, (SELECT entity_id FROM program WHERE code = 'MM'))`,
+    );
+    expect(
+      await rows(
+        conn,
+        `SELECT pr.code, EXISTS (SELECT 1 FROM atlas a WHERE a.entity_id = pr.entity_id) AS is_atlas
+         FROM person_membership m JOIN program pr ON pr.entity_id = m.program_id WHERE m.person_id = ${person}`,
+      ),
+    ).toEqual([["MM", false]]);
+  });
+
+  test("the atlases are exactly the programs with a region", async () => {
+    expect(await rows(conn, "SELECT code FROM atlas ORDER BY entity_id")).toEqual([["OBA"], ["WaBA"], ["BC"], ["ID"], ["NM"], ["OK"]]);
+    // XX is the program the sequence test above inserted.
+    expect(await rows(conn, "SELECT code FROM program WHERE entity_id NOT IN (SELECT entity_id FROM atlas) AND code <> 'XX' ORDER BY code")).toEqual([
+      ["BLM"],
+      ["MM"],
+    ]);
   });
 
   test("enum-ish CHECK constraints reject unknown values", async () => {
@@ -307,9 +329,9 @@ describe("schema application", () => {
  * referenced row — the atlas moved to the sample_atlas satellite and the
  * collector is sample_collector position 1, neither of which anything
  * references — so the pin now runs on a scratch pair shaped like the old
- * problem. It still matters live in one place: atlas.code is UNIQUE and
- * atlas_region references every atlas row, which the last test keeps
- * honest.
+ * problem. It still matters live in one place: program.code is UNIQUE and
+ * atlas_region references every atlas's program row, which the last test
+ * keeps honest.
  */
 describe("updating a row an incoming foreign key references", () => {
   let db: DuckDBConnection;
@@ -400,14 +422,16 @@ describe("updating a row an incoming foreign key references", () => {
     expect(await ownerOf(free)).toEqual([["Ada Collector"]]);
   });
 
-  test("atlas is the live pair this still constrains", async () => {
-    // atlas_region.atlas_id references every atlas row, and code is UNIQUE
-    // where name is not — so the name is writable and the code is frozen.
-    // (The pin ran on inat_place_id until beeline-ni5m.4 dropped that
-    // column; it was the same shape, UNIQUE on a referenced row.)
-    await db.run("UPDATE atlas SET name = 'Oregon Bee Atlas (renamed)' WHERE code = 'OBA'");
+  test("program is the live pair this still constrains", async () => {
+    // atlas_region.atlas_id references every atlas's program row, and code
+    // is UNIQUE where name is not — so the name is writable and the code is
+    // frozen. (The pin ran on the atlas table until it was folded into
+    // program on 2026-10-31, and on its inat_place_id before beeline-ni5m.4
+    // dropped that column; the same shape each time, UNIQUE on a referenced
+    // row.)
+    await db.run("UPDATE program SET name = 'Oregon Bee Atlas (renamed)' WHERE code = 'OBA'");
     expect(await rows(db, "SELECT name FROM atlas WHERE code = 'OBA'")).toEqual([["Oregon Bee Atlas (renamed)"]]);
-    await expect(db.run("UPDATE atlas SET code = 'ORBA' WHERE code = 'OBA'")).rejects.toThrow(violation);
+    await expect(db.run("UPDATE program SET code = 'ORBA' WHERE code = 'OBA'")).rejects.toThrow(violation);
   });
 
   test("deleting the child rows first does not help inside a transaction", async () => {

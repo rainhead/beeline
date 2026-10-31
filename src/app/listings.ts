@@ -586,12 +586,13 @@ const collectedByMember = (member: MemberFilter) =>
       ? sql<boolean>`EXISTS (
           SELECT 1 FROM sample_collector mc
           JOIN person_membership mm ON mm.person_id = mc.person_id
-          WHERE mc.sample_id = s.entity_id AND mm.kind = 'program'
+          WHERE mc.sample_id = s.entity_id
+            AND NOT EXISTS (SELECT 1 FROM atlas ma WHERE ma.entity_id = mm.program_id)
         )`
       : sql<boolean>`EXISTS (
           SELECT 1 FROM sample_collector mc
           JOIN person_membership mm ON mm.person_id = mc.person_id
-          JOIN atlas ma ON ma.entity_id = mm.atlas_id
+          JOIN atlas ma ON ma.entity_id = mm.program_id
           WHERE mc.sample_id = s.entity_id AND ma.code = ${member}
         )`;
 

@@ -48,8 +48,8 @@ beforeEach(async () => {
   });
   const outside = await insertCleanSample(conn, { state_province: "'NV'", sample_number: "'4'" });
   await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${pair}, 1), (${pair}, 2), (${outside}, 1)`);
-  await conn.run(`INSERT INTO person_membership (person_id, kind, atlas_id) VALUES
-    (1, 'atlas', ${atlas("WaBA")}), (2, 'atlas', ${atlas("WaBA")}), (3, 'program', NULL)`);
+  await conn.run(`INSERT INTO person_membership (person_id, program_id) VALUES
+    (1, ${atlas("WaBA")}), (2, ${atlas("WaBA")}), (3, ${program("MM")})`);
   await conn.run(`INSERT INTO program_lead (program_id, person_id) VALUES
     (${program("WaBA")}, 3), (${program("NM")}, 4), (${program("BLM")}, 4)`);
 });

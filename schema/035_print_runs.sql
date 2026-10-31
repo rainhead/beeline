@@ -19,7 +19,7 @@
 -- is written at INSERT and can stay a reference.
 CREATE TABLE print_run (
   entity_id    INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
-  atlas_id     INTEGER REFERENCES atlas(entity_id),
+  atlas_id     INTEGER REFERENCES program(entity_id),
   prepared_by  INTEGER NOT NULL REFERENCES person(entity_id),
   prepared_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   approved_by  INTEGER,

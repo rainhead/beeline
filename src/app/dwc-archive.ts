@@ -89,7 +89,8 @@ const CATCH_ALL_PROGRAM = "MM";
 export async function programArchives(db: Kysely<Database>): Promise<ProgramArchive[]> {
   const rows = await db
     .selectFrom("program as p")
-    .leftJoin("atlas as a", "a.entity_id", "p.atlas_id")
+    // An atlas is a program with a region (the view atlas, schema/104).
+    .leftJoin("atlas as a", "a.entity_id", "p.entity_id")
     .select(["p.code", "p.name", "a.code as atlas_code"])
     .orderBy("p.name")
     .execute();

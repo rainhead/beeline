@@ -187,8 +187,8 @@ describe("the roster screen", () => {
   });
 
   it("filters by where they belong, and to the admins", async () => {
-    await ctx.conn.run(`INSERT INTO person_membership (person_id, kind, atlas_id)
-                        VALUES (1, 'atlas', (SELECT entity_id FROM atlas WHERE code = 'OBA')), (2, 'program', NULL)`);
+    await ctx.conn.run(`INSERT INTO person_membership (person_id, program_id)
+                        VALUES (1, (SELECT entity_id FROM atlas WHERE code = 'OBA')), (2, (SELECT entity_id FROM program WHERE code = 'MM'))`);
     const oba = await (await ctx.app.request("/people?member=OBA")).text();
     expect(oba).toContain("Ada Collector");
     expect(oba).not.toContain("Bo Netter");
@@ -583,8 +583,13 @@ describe("the roster screen", () => {
   it("sets a home atlas, and refuses a code no atlas has", async () => {
     expect(await (await ctx.app.request("/people/1")).text()).not.toContain('class="atlas-mark"');
     await post(ctx.app, "/people/1/membership", { home_atlas: "WaBA", reason: "" });
-    const home = await ctx.db.selectFrom("person_membership").where("person_id", "=", 1).selectAll().executeTakeFirst();
-    expect(home?.kind).toBe("atlas");
+    const home = await ctx.db
+      .selectFrom("person_membership as pm")
+      .innerJoin("atlas as a", "a.entity_id", "pm.program_id")
+      .where("pm.person_id", "=", 1)
+      .select("a.code")
+      .executeTakeFirst();
+    expect(home?.code).toBe("WaBA");
     // Their page carries the mark of the atlas they now belong to.
     expect(await (await ctx.app.request("/people/1")).text()).toContain(
       '<img class="atlas-mark" src="/static/atlas/WaBA.jpg" alt="Washington Bee Atlas"',
@@ -597,8 +602,14 @@ describe("the roster screen", () => {
   // and the program is somebody saying "no member atlas" (beeline-lcl).
   it("records belonging to the program itself, which is not the same as clearing it", async () => {
     await post(ctx.app, "/people/1/membership", { home_atlas: "program", reason: "collects in Nevada" });
-    const row = await ctx.db.selectFrom("person_membership").where("person_id", "=", 1).selectAll().executeTakeFirst();
-    expect(row).toMatchObject({ kind: "program", atlas_id: null });
+    // Membership names the program: Master Melittology itself, code MM.
+    const row = await ctx.db
+      .selectFrom("person_membership as pm")
+      .innerJoin("program as pr", "pr.entity_id", "pm.program_id")
+      .where("pm.person_id", "=", 1)
+      .select("pr.code")
+      .executeTakeFirst();
+    expect(row).toEqual({ code: "MM" });
 
     await post(ctx.app, "/people/1/membership", { home_atlas: "", reason: "asked too soon" });
     expect(
@@ -809,7 +820,10 @@ describe("recording who leads a program", () => {
     ).flat();
 
   it("knows every atlas as a program, and the two programs that are not atlases", async () => {
-    const programs = await (await ctx.conn.run(`SELECT code, atlas_id IS NOT NULL FROM program ORDER BY code`)).getRows();
+    // An atlas is a program with a region, which the view atlas lists.
+    const programs = await (
+      await ctx.conn.run(`SELECT code, EXISTS (SELECT 1 FROM atlas a WHERE a.entity_id = program.entity_id) FROM program ORDER BY code`)
+    ).getRows();
     expect(programs).toEqual([
       ["BC", true],
       ["BLM", false],

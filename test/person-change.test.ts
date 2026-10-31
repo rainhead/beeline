@@ -391,8 +391,8 @@ describe("recording what a pass over the store found", () => {
 
   it("records membership and admin in the vocabulary the screen shows", async () => {
     await add(`INSERT INTO person (entity_id, display_name) VALUES (1, 'Ada Collector')`);
-    await add(`INSERT INTO person_membership (person_id, kind, atlas_id)
-               VALUES (1, 'atlas', (SELECT entity_id FROM atlas WHERE code = 'OBA'))`);
+    await add(`INSERT INTO person_membership (person_id, program_id)
+               VALUES (1, (SELECT entity_id FROM atlas WHERE code = 'OBA'))`);
     await add(`INSERT INTO person_admin (person_id) VALUES (1)`);
     await record(promotion);
 

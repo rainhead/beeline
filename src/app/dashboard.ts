@@ -223,7 +223,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       SELECT CAST(active_since - 1 AS TEXT) AS through, EXTRACT(YEAR FROM active_since) AS oldest_active FROM season`.execute(db),
     db
       .selectFrom("person_membership as pm")
-      .innerJoin("atlas as a", "a.entity_id", "pm.atlas_id")
+      .innerJoin("atlas as a", "a.entity_id", "pm.program_id")
       .where("pm.person_id", "=", personId)
       .select(["a.code", "a.name"])
       .executeTakeFirst(),

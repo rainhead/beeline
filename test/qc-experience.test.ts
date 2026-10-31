@@ -92,8 +92,8 @@ describe("the front page", () => {
     // Nobody has asked where Alice belongs: the program acts as itself.
     expect(await (await app.request("/")).text()).not.toContain('class="atlas-mark"');
     await conn.run(
-      `INSERT INTO person_membership (person_id, kind, atlas_id)
-       SELECT ${alice}, 'atlas', entity_id FROM atlas WHERE code = 'WaBA'`,
+      `INSERT INTO person_membership (person_id, program_id)
+       SELECT ${alice}, entity_id FROM atlas WHERE code = 'WaBA'`,
     );
     // Belonging is what counts, not where her samples fell (they are in Oregon).
     const body = await (await app.request("/")).text();
@@ -101,7 +101,9 @@ describe("the front page", () => {
     expect(body).toContain(
       '<a class="atlas-mark-link" href="/programs/WaBA"><img class="atlas-mark" src="/static/atlas/WaBA.jpg" alt="Washington Bee Atlas"',
     );
-    await conn.run(`UPDATE person_membership SET kind = 'program', atlas_id = NULL WHERE person_id = ${alice}`);
+    await conn.run(
+      `UPDATE person_membership SET program_id = (SELECT entity_id FROM program WHERE code = 'MM') WHERE person_id = ${alice}`,
+    );
     expect(await (await app.request("/")).text()).not.toContain('class="atlas-mark"');
   });
 

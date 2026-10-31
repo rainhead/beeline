@@ -253,7 +253,7 @@ describe("applying the overlay", () => {
 
   it("sets a home atlas by code, and refuses a code no atlas has", async () => {
     await apply([row({ person_ref: "name:Ada Collector", field: "home_atlas", value: "WaBA" })]);
-    expect(await one(`SELECT a.code FROM person_membership h JOIN atlas a ON a.entity_id = h.atlas_id`)).toEqual([
+    expect(await one(`SELECT a.code FROM person_membership h JOIN atlas a ON a.entity_id = h.program_id`)).toEqual([
       "WaBA",
     ]);
     const bad = await apply([row({ person_ref: "name:Ada Collector", field: "home_atlas", value: "ZZ" })]);
@@ -262,10 +262,13 @@ describe("applying the overlay", () => {
 
   it("moves between an atlas and the program itself, in both directions", async () => {
     await apply([row({ person_ref: "name:Ada Collector", field: "home_atlas", value: "WaBA" })]);
+    // Membership is a program: the overlay's `program` is Master Melittology
+    // itself, code MM (schema/010, the fold of 2026-10-31).
+    const member = `SELECT pr.code FROM person_membership m JOIN program pr ON pr.entity_id = m.program_id`;
     await apply([row({ person_ref: "name:Ada Collector", field: "home_atlas", value: "program" })]);
-    expect(await one(`SELECT kind, atlas_id FROM person_membership`)).toEqual(["program", null]);
+    expect(await one(member)).toEqual(["MM"]);
     await apply([row({ person_ref: "name:Ada Collector", field: "home_atlas", value: "OBA" })]);
-    expect(await one(`SELECT kind FROM person_membership`)).toEqual(["atlas"]);
+    expect(await one(member)).toEqual(["OBA"]);
   });
 
   it("edits names, and clears a label override with a blank", async () => {

@@ -93,7 +93,7 @@ import {
   RECENT_CHANGES,
   resolvePersonHandle,
 } from "./roster.js";
-import { readOverlay, rowKey, type OverlayField, type PersonOverlayRow, upsertOverlay, valueProblem } from "../person-overlay.js";
+import { readOverlay, removeOverlayKeys, rowKey, type OverlayField, type PersonOverlayRow, upsertOverlay, valueProblem } from "../person-overlay.js";
 import {
   appendChanges,
   CHANGE_LOG,
@@ -1934,6 +1934,11 @@ export function createApp({
       const refused = new Set(applied.unresolved.map(rowKey));
       const restore = stood.filter((r) => refused.has(rowKey(r)));
       if (restore.length > 0) await upsertOverlay(overlayPath, restore);
+      // A refused decision with no earlier row to put back comes out of the
+      // file altogether, or every rebuild would replay and refuse it again
+      // (CodeRabbit, this branch).
+      const hadRow = new Set(stood.map(rowKey));
+      await removeOverlayKeys(overlayPath, [...refused].filter((k) => !hadRow.has(k)));
       return { applied: true, problem: applied.unresolved.map((u) => u.reason).join("; "), personId: afterId };
     }
     // Whatever this account was, it stops being it now: a session issued under

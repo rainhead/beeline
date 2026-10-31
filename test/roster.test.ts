@@ -726,6 +726,16 @@ describe("granting one person reach over another", () => {
     ]);
   });
 
+  it("leaves nothing in the file when a first grant is refused, so no rebuild replays the refusal", async () => {
+    const res = await post(ctx.app, "/people/adacollects/delegate", { acts_for: "name:Nobody At All", reason: "" });
+    expect(await res.text()).toContain("no person named");
+    const grants = await (await ctx.conn.run(`SELECT count(*) FROM person_delegate WHERE person_id = 1`)).getRows();
+    expect(grants).toEqual([[0n]]);
+    // With no earlier row to put back, the refused row itself has to go, or
+    // every rebuild would replay and refuse it again (CodeRabbit, this branch).
+    expect((await readOverlay(ctx.overlayPath)).filter((r) => r.field === "acts_for")).toEqual([]);
+  });
+
   it("records the grant in the overlay and applies it to the store", async () => {
     const res = await post(ctx.app, "/people/adacollects/delegate", {
       acts_for: "name:Bo Netter",

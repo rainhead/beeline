@@ -483,14 +483,16 @@ COMMENT ON VIEW sample_atlas_unfilled IS 'A sample in a member atlas''s region w
 -- not a collecting event recorded twice: several observations claiming one
 -- sample number is one (Peter, 2026-10-04, beeline-0199), and
 -- duplicate_sample_number now says so through sample_several_observations
--- below. What this view explains is still true: it cites one of them, and
--- its specimen_count is the total over all of them, so
+-- below. What this view explains is still true of a PRINTED sample: it cites
+-- one of them, and its specimen_count is the total over all of them, so
 -- qc_rule_count_mismatch — which compares against the ONE cited observation
--- — reports a disagreement in which both sides are right. 33 minted samples
--- are born flagged this way, 12 of them in the open season and 21 settled. The finding is a warning, not a block, and this
--- is what explains it; teaching the rule to sum would take count_mismatch
--- from 1,121 findings to 1,959 across the existing corpus, which is a change
--- to a live rule and not this step's to make.
+-- — reports a disagreement in which both sides are right. The finding is a
+-- warning, not a block, and this is what explains it; teaching the rule to
+-- sum would have taken count_mismatch from 1,121 findings to 1,959 across
+-- the corpus as it stood before beeline-0199, which is a change to a live
+-- rule and not this step's to make. An unprinted sample cannot be born this
+-- way any more: minting makes one sample per observation, and its count
+-- follows the one it cites (ingest/mint-samples.sql, beeline-ni5m.1).
 CREATE VIEW sample_multi_observation AS
 SELECT s.entity_id AS sample_id, s.inat_observation_id AS cited_inat_id,
        CAST(count(*) AS INTEGER) AS other_observations,

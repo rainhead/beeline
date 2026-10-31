@@ -15,16 +15,19 @@
 -- reconcile it writes from is stated as views in schema/108, so beeline-e85's
 -- unclaimed screen and the alarms read the same definitions this does.
 --
--- WHAT IT NEVER DOES: rewrite an existing sample's date or specimen count, or
--- a printed sample's number. sample.inat_observation_id stays scalar and
+-- WHAT IT NEVER DOES: rewrite an existing sample's date, or a printed
+-- sample's number or count. sample.inat_observation_id stays scalar and
 -- there is no sample_observation list, which is what makes that guarantee
 -- cheap — and what protects a staff edit to any field minting writes.
 -- sample_observation_number_mismatch and sample_multi_observation (schema/108)
 -- are the cost of it, named rather than argued away. An UNPRINTED sample's
--- number does follow its observation, as its locality does (below): one
+-- number and specimen count do follow its observation, as its locality does
+-- (below): until the labels print the observation is the record, one
 -- observation is one sample, and renumbering on iNaturalist is how a
--- volunteer clears a duplicate number (beeline-0199). Nobody can edit an
--- iNat-linked sample in the app, so no staff edit is at risk there.
+-- volunteer clears a duplicate number (beeline-0199), as correcting the
+-- count there is how they get the right number of labels (beeline-ni5m.1).
+-- Nobody can edit an iNat-linked sample in the app, so no staff edit is at
+-- risk there.
 
 -- ── Free links ───────────────────────────────────────────────────────────
 -- An existing sample that cites no observation, and an unlinked observation
@@ -162,6 +165,31 @@ FROM (
 ) followed
 WHERE sample.entity_id = followed.sample_id
   AND sample.sample_number IS DISTINCT FROM followed.sample_number;
+
+-- ── And its specimen count (beeline-ni5m.1) ──────────────────────────────
+-- On the number's terms exactly. The count decides how many labels a run
+-- prints (pending_print_sample, schema/150), and nobody can edit an
+-- iNat-linked sample in the app, so until this followed a volunteer who
+-- corrected the count on iNaturalist before the run got labels for the old
+-- count and a count_mismatch warning that nothing could clear. Only a count
+-- the observation still carries as a collection record — a positive whole
+-- number, which is what makes it a candidate — so an observation whose count
+-- goes to zero or to junk is count_mismatch's to name, not this file's to
+-- follow. Once a label is on paper the count stays what the labels were
+-- printed for: a later change upstream is count_mismatch's to name, and a
+-- decrease below what was frozen is count_below_printed's. A sample frozen
+-- into a run that has not printed still follows, as its locality does, and
+-- a count falling below the frozen specimens then raises
+-- count_below_printed, which is the proofer's signal (schema/120).
+UPDATE sample SET specimen_count = followed.specimen_count
+FROM (
+  SELECT s.entity_id AS sample_id, c.specimen_count
+  FROM sample s
+  JOIN observation_sample_candidate c ON c.inat_id = s.inat_observation_id
+  WHERE NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+) followed
+WHERE sample.entity_id = followed.sample_id
+  AND sample.specimen_count IS DISTINCT FROM followed.specimen_count;
 
 -- ── Descriptive fields: a fill-only refresh ──────────────────────────────
 -- Write-once is right for number, date and count and WRONG for everything

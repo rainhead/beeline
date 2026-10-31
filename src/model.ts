@@ -941,7 +941,8 @@ export interface SampleAtlasUnfilledView {
 }
 
 /** A sample iNaturalist records in several observations. It cites one; this
- *  is what explains a count_mismatch on a sample whose count is right. */
+ *  is what explains a count_mismatch on a printed sample whose count is
+ *  right. An unprinted sample's count follows the observation it cites. */
 export interface SampleMultiObservationView {
   sample_id: number;
   cited_inat_id: BigIntCol;

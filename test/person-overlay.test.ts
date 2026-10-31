@@ -311,6 +311,20 @@ describe("applying the overlay", () => {
     expect(await one(`SELECT person_id <> ${people["Ada Collector"]} FROM inat_account WHERE inat_user_id = 222`)).toEqual([true]);
   });
 
+  it("follows a rename keyed on an account, which is how a person with a shared name is renamed", async () => {
+    // Two Bo Netters: the roster can name the one with the account only by
+    // it. Once renamed to a name of their own, every later decision is keyed
+    // on that name, and has to reach them on a fresh store that knows only
+    // the shared one.
+    await conn.run(`INSERT INTO person (display_name) VALUES ('Bo Netter')`);
+    const r = await apply([
+      row({ person_ref: "inat:111", field: "display_name", value: "Bo Netter-Smith" }),
+      row({ person_ref: "name:Bo Netter-Smith", field: "admin", value: "yes" }),
+    ]);
+    expect(r.unresolved).toEqual([]);
+    expect(await one(`SELECT person_id FROM person_admin`)).toEqual([people["Bo Netter"]]);
+  });
+
   it("replays a file written after a rename, whichever name a row was keyed on", async () => {
     // This is the shape a rebuild replays: the rename was recorded under the
     // old name, and every decision made afterwards under the new one. Against

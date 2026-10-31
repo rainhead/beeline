@@ -85,14 +85,18 @@ export async function resolver(conn: DuckDBConnection, overlay: readonly PersonO
   // name a previous row changed; backward covers the commoner case, a row the
   // app wrote after a rename and so keyed on the NEW name, replayed against a
   // freshly promoted store that only knows the old one.
+  // Backward is keyed on the reference the rename row used, not on a name:
+  // the roster renames somebody through `inat:` whenever their old name was
+  // shared, and a rename it could not follow orphaned every later row about
+  // the person under their new, now unique, name.
   const renamedTo = new Map<string, string>();
   const renamedFrom = new Map<string, string>();
   for (const r of overlay) {
     if (r.field !== "display_name") continue;
     const parsed = parseRef(r.person_ref);
-    if (parsed?.kind !== "name") continue;
-    renamedTo.set(parsed.key, r.value);
-    renamedFrom.set(r.value, parsed.key);
+    if (parsed === null) continue;
+    if (parsed.kind === "name") renamedTo.set(parsed.key, r.value);
+    renamedFrom.set(r.value, r.person_ref);
   }
   // A name a `create` row claims is a person of its own, never the name
   // somebody else is renamed to in the same file: admitting Nan Staffer and
@@ -114,12 +118,21 @@ export async function resolver(conn: DuckDBConnection, overlay: readonly PersonO
       return { id: ids[0]! };
     }
     if (claimed.has(key)) return { problem: `no person named '${key}'`, missing: true };
-    for (const next of [renamedTo.get(key), renamedFrom.get(key)]) {
-      if (next !== undefined && !seen.has(next)) {
-        seen.add(next);
-        const found = lookup(next, seen);
-        if ("id" in found) return found;
+    const to = renamedTo.get(key);
+    const from = renamedFrom.get(key);
+    for (const ref of [to === undefined ? undefined : `name:${to}`, from]) {
+      if (ref === undefined) continue;
+      const parsed = parseRef(ref);
+      if (parsed === null) continue;
+      if (parsed.kind === "inat") {
+        const id = byInat.get(parsed.key);
+        if (id !== undefined) return { id };
+        continue;
       }
+      if (seen.has(parsed.key)) continue;
+      seen.add(parsed.key);
+      const found = lookup(parsed.key, seen);
+      if ("id" in found) return found;
     }
     // `missing` rather than just a reason: `create` may act on nobody-of-that-
     // name, and must not act on a name two people share. Only this branch

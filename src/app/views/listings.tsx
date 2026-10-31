@@ -840,9 +840,11 @@ export function SpecimenListing(
             ))}
           </DataTable>
           <ListingPager m={m} path={path} query={query} total={page.total} />
-          {admin && <BulkReprint m={m} back={listingHref(path, query)} owner={bulkOwner} />}
         </>
       )}
+      {/* Drawn on an empty listing too: ticks kept from other pages can
+          still be marked or cleared from a filter that matches nothing. */}
+      {admin && <BulkReprint m={m} back={listingHref(path, query)} owner={bulkOwner} />}
     </>
   );
 }

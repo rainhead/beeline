@@ -36,8 +36,16 @@ if (form !== null) {
     }
   };
 
-  let ticked = new URLSearchParams(location.search).has("reprinted") ? new Set<string>() : load();
+  // Back from a marking: the ticks it took are done with. The marker is then
+  // taken out of the address, so a reload later on keeps ticks made since.
+  const url = new URL(location.href);
+  let ticked = url.searchParams.has("reprinted") ? new Set<string>() : load();
   save(ticked);
+  if (url.searchParams.has("reprinted")) {
+    url.searchParams.delete("reprinted");
+    url.searchParams.delete("of");
+    history.replaceState(history.state, "", url);
+  }
   const rows = Array.from(document.querySelectorAll<HTMLInputElement>(`input[data-bulk-row][form="${form.id}"]`));
   const pageBox = document.querySelector<HTMLInputElement>("input[data-bulk-page]");
   const count = form.querySelector<HTMLElement>("[data-bulk-count]");

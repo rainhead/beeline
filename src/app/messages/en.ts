@@ -611,6 +611,30 @@ export const en = {
       awaitingNumber: "awaiting a number",
       undetermined: "not determined",
       expert: "expert",
+      /** Beside the number: asked for again, and no run has taken it yet (gh-218). */
+      reprintRequested: "reprint requested",
+      /**
+       * Ticking specimens and marking their labels for reprint (beeline-1kb.23).
+       * Staff only. The selection is kept while the person pages and filters,
+       * in this browser tab only.
+       */
+      bulk: {
+        /** The heading cell's box, for a screen reader: it has no visible words. */
+        tickPage: "Tick every specimen on this page",
+        tickOne: (fieldNumber: string) => `Tick ${fieldNumber}`,
+        /** Counts, with {n} replaced in the browser as the ticks change. */
+        countOne: "1 specimen ticked",
+        countOther: "{n} specimens ticked",
+        hint:
+          "Their labels go into the next print run under the field numbers they already have, after that run's new labels. Ticks stay while you page and filter, in this tab. A reason is optional.",
+        button: "Mark for reprint",
+        clear: "Untick all",
+        /** After the marking, back on the listing. */
+        done: (requested: number, of: number) =>
+          requested === of
+            ? `Marked ${n(requested)} ${requested === 1 ? "label" : "labels"} for reprint.`
+            : `Marked ${n(requested)} of ${n(of)} ${of === 1 ? "label" : "labels"} for reprint. The rest were already waiting, are in a run that has not printed, or have no field number.`,
+      },
     },
 
     /**

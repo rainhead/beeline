@@ -104,7 +104,6 @@ export interface AtlasTable {
   entity_id: Generated<number>;
   code: string;
   name: string;
-  inat_place_id: BigIntCol | null;
 }
 
 /** Atlases that print their own labels; a row is the flag. Empty today. */
@@ -702,10 +701,10 @@ export interface AnimalCastesView {
 
 export type QcSeverity = "blocking" | "warning";
 
+/** Rule metadata; the copy shown with a finding is `qcInstructions` in the message catalog. */
 export interface QcRuleTable {
   name: string;
   severity: QcSeverity;
-  instructions: string;
 }
 
 export interface SamplePromotionFindingTable {

@@ -307,8 +307,8 @@ describe("schema application", () => {
  * referenced row — the atlas moved to the sample_atlas satellite and the
  * collector is sample_collector position 1, neither of which anything
  * references — so the pin now runs on a scratch pair shaped like the old
- * problem. It still matters live in one place: atlas.inat_place_id is UNIQUE
- * and atlas_region references every atlas row, which the last test keeps
+ * problem. It still matters live in one place: atlas.code is UNIQUE and
+ * atlas_region references every atlas row, which the last test keeps
  * honest.
  */
 describe("updating a row an incoming foreign key references", () => {
@@ -401,12 +401,13 @@ describe("updating a row an incoming foreign key references", () => {
   });
 
   test("atlas is the live pair this still constrains", async () => {
-    // atlas_region.atlas_id references every atlas row, and inat_place_id is
-    // BIGINT UNIQUE where name is not — so the name is writable and the place
-    // id is frozen, which is why schema/010 leaves it null.
+    // atlas_region.atlas_id references every atlas row, and code is UNIQUE
+    // where name is not — so the name is writable and the code is frozen.
+    // (The pin ran on inat_place_id until beeline-ni5m.4 dropped that
+    // column; it was the same shape, UNIQUE on a referenced row.)
     await db.run("UPDATE atlas SET name = 'Oregon Bee Atlas (renamed)' WHERE code = 'OBA'");
     expect(await rows(db, "SELECT name FROM atlas WHERE code = 'OBA'")).toEqual([["Oregon Bee Atlas (renamed)"]]);
-    await expect(db.run("UPDATE atlas SET inat_place_id = 10 WHERE code = 'OBA'")).rejects.toThrow(violation);
+    await expect(db.run("UPDATE atlas SET code = 'ORBA' WHERE code = 'OBA'")).rejects.toThrow(violation);
   });
 
   test("deleting the child rows first does not help inside a transaction", async () => {

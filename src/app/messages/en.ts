@@ -143,6 +143,8 @@ export const en = {
     alternativesLead: "Or:",
     /** On an alternative: make it the sample's locality. */
     useShort: "Use",
+    /** What a screen reader says for that button, so the alternatives' buttons are not all just "Use". */
+    useShortLabel: (locality: string) => `Use ${locality}`,
     /** On an alternative that is the sample's locality already. */
     inUseShort: "in use",
     /** Recorded as the reason beside the locality set here, so the sample page says where it came from. */

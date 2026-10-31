@@ -82,7 +82,7 @@ export function LocalityAlternatives({
             <form method="post" action={action.action} class="inline-form">
               <input type="hidden" name="locality" value={a.locality} />
               <input type="hidden" name="return" value={action.returnTo} />
-              <button type="submit" class="outlined compact-button">
+              <button type="submit" class="outlined compact-button" aria-label={t.useShortLabel(a.locality)}>
                 {t.useShort}
               </button>
             </form>

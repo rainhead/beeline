@@ -112,6 +112,7 @@ describe("Use this locality", () => {
     const page = await (await alice.request(`/samples/${sampleId}`)).text();
     expect(page).toContain("Muddy Creek CG");
     expect(page).toContain(en.suggestedLocality.basis.campground);
+    expect(page).toContain(`aria-label="${en.suggestedLocality.useShortLabel("Muddy Creek CG")}"`);
     const res = await post(alice, `/samples/${sampleId}/suggested-locality`, { locality: "Muddy Creek CG" });
     expect(res.status).toBe(302);
     expect(await localityOf(conn, sampleId)).toBe("Muddy Creek CG");

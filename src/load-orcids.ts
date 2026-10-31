@@ -103,7 +103,7 @@ export async function loadOrcids(
   const read = duckdbReader(conn);
   const stateOf = async (personId: number) => {
     const states = await readPersonStates(read, `p.entity_id = ${personId}`);
-    return { state: [...states.states.values()][0], names: states.names };
+    return { state: [...states.states.values()][0], names: states.names, shared: states.shared, holders: states.holders };
   };
   const unresolved: string[] = [];
   let changes = 0;
@@ -113,10 +113,10 @@ export async function loadOrcids(
     const applied = await applyPersonOverlay(conn, [row]);
     unresolved.push(...applied.unresolved.map((u) => `${u.person_ref}: ${u.reason}`));
     if (paths.changeLog === null) continue;
-    const { state: after, names } = await stateOf(personId);
+    const { state: after, ...store } = await stateOf(personId);
     if (after === undefined) continue;
     // Filed under the reference the log knows them by, as the page files it.
-    const seen = knownPerson({ known: lastKnown(await readChanges(paths.changeLog)), names }, before ?? after);
+    const seen = knownPerson({ known: lastKnown(await readChanges(paths.changeLog)), ...store }, before ?? after);
     const entries = diffPerson(seen?.ref ?? before?.ref ?? after.ref, before, after, {
       source: "app",
       author: row.author,

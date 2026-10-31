@@ -361,23 +361,67 @@ export interface PersonState {
   fields: Record<ChangeField, string>;
 }
 
-export interface PersonStates {
+/**
+ * What a matcher must know about the WHOLE store, whatever `where` narrowed
+ * the states to — because whether a claim is safe depends on the other people
+ * in the store, and a pass over one person has to answer as a pass over
+ * everybody would.
+ */
+export interface StoreFacts {
+  /**
+   * Every display name in the store, including the people no reference
+   * names. What it answers is "is somebody still called this?", which is how
+   * an account changing hands is told from a name being respelled.
+   */
+  names: ReadonlySet<string>;
+  /**
+   * The display names carried by more than one person. A name two people
+   * answer to cannot say which of them a history belongs to — and one of
+   * them may hold no account, so that nothing names them and they cannot
+   * contest the claim themselves.
+   */
+  shared: ReadonlySet<string>;
+  /**
+   * Who holds each iNat account now, by the reference that names them. Asked
+   * of the store rather than of the log, because the log keeps whatever a
+   * person last held forever — it never records a silence — so a history
+   * abandoned years ago goes on naming an account somebody else has since
+   * been given.
+   */
+  holders: ReadonlyMap<string, string>;
+}
+
+export interface PersonStates extends StoreFacts {
   /** Keyed by primary reference. */
   states: Map<string, PersonState>;
-  /**
-   * Every display name in the store — the whole store, whatever `where`
-   * narrowed the states to, and including the people no reference names.
-   * What it answers is "is somebody still called this?", which is how an
-   * account changing hands is told from a name being respelled.
-   */
-  names: Set<string>;
   /** People with a shared display name and no account: unnameable, so unrecorded. */
   unreferenceable: number;
 }
 
+/** The whole store's names and accounts, which StoreFacts are built from. */
+export const STORE_FACTS_SQL = `
+  SELECT p.display_name AS display_name, coalesce(CAST(a.inat_user_id AS VARCHAR), '') AS inat_user_id
+  FROM person p
+  LEFT JOIN inat_account a ON a.person_id = p.entity_id`;
+
 /** Every person in the store, keyed by reference. */
 export async function readPersonStates(read: StateReader, where = ""): Promise<PersonStates> {
-  const names = new Set((await read(`SELECT display_name FROM person`)).map((r) => String(r.display_name ?? "")));
+  const everyone = (await read(STORE_FACTS_SQL)).map((r) => ({
+    display_name: String(r.display_name ?? ""),
+    inat_user_id: String(r.inat_user_id ?? ""),
+  }));
+  const names = new Set<string>();
+  const shared = new Set<string>();
+  for (const p of everyone) {
+    if (names.has(p.display_name)) shared.add(p.display_name);
+    names.add(p.display_name);
+  }
+  const holders = new Map<string, string>();
+  for (const p of everyone) {
+    if (p.inat_user_id === "") continue;
+    const ref = stateRef({ ...p, namesakes: shared.has(p.display_name) ? 2 : 1 });
+    if (ref !== null) holders.set(p.inat_user_id, ref);
+  }
   const rows = await read(where === "" ? PERSON_STATE_SQL : `${PERSON_STATE_SQL} WHERE ${where}`);
   const states = new Map<string, PersonState>();
   let unreferenceable = 0;
@@ -397,7 +441,7 @@ export async function readPersonStates(read: StateReader, where = ""): Promise<P
     // the history of whoever was called that first.
     states.set(ref, { ref, altRef: ref === account ? `name:${identity.display_name}` : account, fields });
   }
-  return { states, names, unreferenceable };
+  return { states, names, shared, holders, unreferenceable };
 }
 
 export interface KnownPerson {
@@ -507,11 +551,9 @@ function valueIndex(people: Iterable<KnownPerson>, field: ChangeField): Map<stri
   return by;
 }
 
-/** What the log holds, and who the store still has names for. */
-export interface MatchContext {
+/** What the log holds, and what the whole store says — readPersonStates(). */
+export interface MatchContext extends StoreFacts {
   known: LastKnown;
-  /** Every display name in the store — readPersonStates().names. */
-  names: ReadonlySet<string>;
 }
 
 /**
@@ -574,28 +616,41 @@ export interface Matching {
 }
 
 export function proposeMatches(ctx: MatchContext, states: Iterable<PersonState>): Matching {
-  const { known, names } = ctx;
+  const { known, names, shared, holders } = ctx;
   const all = [...states];
   const people = [...known.people.values()];
   const byName = valueIndex(people, "display_name");
   const byAccount = valueIndex(people, "inat_user_id");
-  // Who in the STORE holds each account now. Asked of the store rather than
-  // of the log, because the log keeps whatever a person last held forever —
-  // it never records a silence — so a history abandoned years ago goes on
-  // naming an account somebody else has since been given.
-  const holder = new Map<string, PersonState>();
-  for (const state of all) {
-    if (state.fields.inat_user_id !== "") holder.set(state.fields.inat_user_id, state);
-  }
 
   // What each person in the store reaches, and how. Nothing is granted here.
   const proposed = new Map<PersonState, KnownPerson>();
+  // Reached, and refused on the spot: recorded as nothing, like a contest.
+  const refused = new Set<PersonState>();
   for (const state of all) {
-    const found =
-      referenced(known, names, state) ??
-      byName.get(state.fields.display_name) ??
-      account(byAccount, names, state);
+    let found: KnownPerson | null | undefined = referenced(known, names, state);
+    if (found == null) {
+      const named = byName.get(state.fields.display_name);
+      // A name two people in the store answer to cannot say which of them
+      // a history is about. One of them may hold no account, so that
+      // nothing names them and they cannot reach the history to contest it
+      // — and awarding it to the one who can records a binding that never
+      // happened to the one who cannot. Refused whether the log holds one
+      // history under the name or two (`null`): the answer must not change
+      // when a pass records a rename onto the shared name.
+      if (byName.has(state.fields.display_name) && shared.has(state.fields.display_name)) {
+        refused.add(state);
+        continue;
+      }
+      found = named ?? account(byAccount, names, state);
+    }
     if (found != null) proposed.set(state, found);
+    // Nothing reached, but the log holds a history under this very reference
+    // and the exact hit was refused above. A new person cannot be recorded
+    // under it: the reader folds everything under one reference into one
+    // history, so an arrival filed here is the refused claim granted after
+    // all, with its account "bound from nothing" beside the entry that bound
+    // it. What cannot be attributed is recorded as nothing.
+    else if (known.people.has(state.ref)) refused.add(state);
   }
 
   const claimants = new Map<KnownPerson, PersonState[]>();
@@ -604,6 +659,7 @@ export function proposeMatches(ctx: MatchContext, states: Iterable<PersonState>)
   }
   const matched = new Map<string, KnownPerson>();
   const contested = new Set<string>();
+  for (const state of refused) contested.add(state.ref);
   for (const [state, person] of proposed) {
     if ((claimants.get(person) ?? []).length > 1) {
       contested.add(state.ref);
@@ -626,8 +682,12 @@ export function proposeMatches(ctx: MatchContext, states: Iterable<PersonState>)
     // rebindings and stays silent about the other. Silence in an audit log is
     // a gap somebody can go and look into. A fabricated rebinding is a lie
     // about the one thing this log exists to make visible (beeline-eft).
-    const heldBy = holder.get(person.fields.get("inat_user_id") ?? "");
-    if (heldBy !== undefined && heldBy !== state) {
+    //
+    // Asked of the whole store (StoreFacts), not of the states this pass was
+    // handed: a pass narrowed to one person has nobody else to find holding
+    // the account, and granted here what a full pass refuses.
+    const heldBy = holders.get(person.fields.get("inat_user_id") ?? "");
+    if (heldBy !== undefined && heldBy !== state.ref) {
       contested.add(state.ref);
       continue;
     }
@@ -700,7 +760,7 @@ export async function recordPersonChanges(
   path: string,
   opts: RecordOptions,
 ): Promise<RecordResult> {
-  const { states, names, unreferenceable } = await readPersonStates(read);
+  const { states, unreferenceable, ...facts } = await readPersonStates(read);
 
   const changes = await readChanges(path);
   const known = lastKnown(changes);
@@ -716,7 +776,7 @@ export async function recordPersonChanges(
     reason: opts.reason ?? "",
   });
 
-  const { matched, contested } = proposeMatches({ known, names }, states.values());
+  const { matched, contested } = proposeMatches({ known, ...facts }, states.values());
 
   const rows: PersonChange[] = [];
   for (const state of states.values()) {
@@ -784,7 +844,7 @@ export function diffPerson(
  */
 export function historyFor(
   changes: readonly PersonChange[],
-  names: ReadonlySet<string>,
+  store: StoreFacts,
   person: PersonState | undefined,
 ): PersonChange[] {
   if (person === undefined) return [];
@@ -792,7 +852,8 @@ export function historyFor(
   // ungated alternate showed a household's incoming partner the login
   // holder's whole history the moment the account moved, before any pass had
   // recorded anything at all.
-  const found = knownPerson({ known: lastKnown(changes), names }, person);
+  const { names, shared, holders } = store;
+  const found = knownPerson({ known: lastKnown(changes), names, shared, holders }, person);
   return found === undefined ? [] : [...found.entries].sort(byNewest);
 }
 

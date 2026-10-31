@@ -559,12 +559,20 @@ describe("the roster screen", () => {
   });
 
   it("refuses a binding another person holds, and says why instead of failing quietly", async () => {
+    // A binding already recorded, which the refused one must not replace.
+    await post(ctx.app, "/people/1/account", { inat_user_id: "111", login: "adacollects", reason: "confirmed" });
     const res = await post(ctx.app, "/people/1/account", { inat_user_id: "333", login: "staffer", reason: "" });
     expect(res.status).toBe(200);
     expect(await res.text()).toContain("already bound");
     // Person 1 keeps the account they had.
     const account = await ctx.db.selectFrom("inat_account").where("person_id", "=", 1).selectAll().executeTakeFirst();
     expect(Number(account!.inat_user_id)).toBe(111);
+    // And so does the file: the decision is written before it is applied,
+    // and a refused one used to replace the good row for good, so the next
+    // rebuild unbound them.
+    expect((await readOverlay(ctx.overlayPath)).filter((r) => r.field === "inat_user_id").map((r) => r.value)).toEqual([
+      "111 adacollects",
+    ]);
   });
 
   it("unbinds, which is how someone stops being able to sign in", async () => {

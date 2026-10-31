@@ -1949,6 +1949,7 @@ export const en = {
     orcidInvalid: (value: string) =>
       `'${value}' is not an ORCID iD — it should be sixteen digits in four groups, like 0000-0002-1825-0097, and the last one is a check digit`,
     orcidTaken: (orcid: string, name: string) => `${orcid} is already recorded for ${name}`,
+    accountTaken: (uid: number, name: string) => `iNat account ${uid} is already bound to ${name}`,
     saveOrcid: "Save ORCID",
     removeOrcid: "Remove",
     adminRights: "Admin rights",

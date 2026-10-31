@@ -1979,6 +1979,23 @@ export function createApp({
       if (problem !== null) return showPerson(c, undefined, problem);
       rows.push({ person_ref: ref, field, value, author, reason });
     }
+    // An account another person holds is refused before the file is
+    // written, as an ORCID is below: the applier refuses the row anyway, but
+    // by then it has replaced this person's current binding in the file,
+    // and the next rebuild would leave them with no account at all.
+    for (const r of rows) {
+      if (r.field !== "inat_user_id" || r.value === "") continue;
+      const uid = Number(r.value.split(" ")[0]);
+      const holder = await db
+        .selectFrom("inat_account")
+        .innerJoin("person", "person.entity_id", "inat_account.person_id")
+        .select(["inat_account.person_id", "person.display_name"])
+        .where("inat_account.inat_user_id", "=", BigInt(uid))
+        .executeTakeFirst();
+      if (holder !== undefined && holder.person_id !== person.person_id) {
+        return showPerson(c, undefined, m.people.accountTaken(uid, holder.display_name));
+      }
+    }
     // Back to the URL as it was asked for: rebinding an account can change
     // the handle underneath us, and redirecting to the new one would 404 a
     // form post that succeeded.

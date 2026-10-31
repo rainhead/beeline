@@ -335,6 +335,31 @@ describe("a corrected reference moves, and the history follows", () => {
     ).toEqual(["sample_number"]);
   });
 
+  it("a narrowed pass records nothing for a sample renumbered onto a triple another sample holds", async () => {
+    // Ada's samples 1 and 2 on one day. Staff renumber 2 to 1, which the
+    // store allows and flags as a duplicate. The edit screen's one-sample
+    // pass cannot see sample 1 beside it, so it matched the edited sample
+    // directly to sample 1's row and recorded the edit as changes to sample
+    // 1's history — then restated that row with the other sample's state,
+    // so the pass after the duplicate is resolved reports sample 1 changing
+    // back to what it always was. A duplicate is recorded as nothing.
+    const one = await insertCleanSample(conn, { locality: "'Corvallis'" });
+    const two = await insertCleanSample(conn, { sample_number: "'2'", locality: "'Alsea'" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '1' WHERE entity_id = ${two}`);
+    const narrowed = await record({ source: "app", author: "ada", where: `s.entity_id = ${two}` });
+    expect(narrowed.appended).toBe(0);
+    expect(narrowed.colliding).toBeGreaterThan(0);
+    const row = (await readSnapshot(paths.state))!.get(
+      `name:Ada Collector\u001f1\u001f${currentSeasonDate(7, 14)}`,
+    );
+    expect(row?.fields.locality).toBe("Corvallis");
+    // Resolving the duplicate leaves sample 1's history as it was.
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${two}`);
+    expect(await record()).toMatchObject({ appended: 0, colliding: 0 });
+    void one;
+  });
+
   const inOrder = (reverse: boolean) => {
     const reader = read();
     return (async (sql: string) => {

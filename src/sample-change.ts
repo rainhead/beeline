@@ -236,6 +236,20 @@ export const SAMPLE_STATE_SQL = `
   LEFT JOIN atlas atl ON atl.entity_id = sa.atlas_id
   LEFT JOIN person_ref apr ON apr.entity_id = sa.assigned_by`;
 
+/**
+ * How many samples the store derives one triple for. A pass narrowed to one
+ * sample sees one row and cannot tell a live duplicate_sample_number from an
+ * ordinary sample, so it asks this of the whole store before matching; two
+ * samples one reference names are recorded as nothing (SampleStates.colliding).
+ */
+export const tripleCountSql = (t: { collector: string; sample_number: string; date_start: string }): string => {
+  const quoted = (v: string) => `'${v.replaceAll("'", "''")}'`;
+  return (
+    `SELECT count(*) AS n FROM (${SAMPLE_STATE_SQL}) t\n` +
+    `  WHERE t.collector = ${quoted(t.collector)} AND t.sample_number = ${quoted(t.sample_number)} AND t.date_start = ${quoted(t.date_start)}`
+  );
+};
+
 export interface SampleStates {
   /** Keyed by triple. */
   states: Map<string, SampleState>;
@@ -846,8 +860,26 @@ async function recordPass(
   paths: SampleLogPaths,
   opts: SampleRecordOptions,
 ): Promise<SampleRecordResult> {
-  const { states, suppressedKeys, suppressedObservations, liveCollectors, unreferenceable, colliding } =
-    await readSampleStates(read, opts.where ?? "");
+  const found = await readSampleStates(read, opts.where ?? "");
+  const { states, suppressedKeys, suppressedObservations, liveCollectors, unreferenceable } = found;
+  let { colliding } = found;
+  // A narrowed pass holds one sample and cannot see a second one on the same
+  // triple. Granted the direct hit, it would file this sample's edit as
+  // changes to the other's history and restate the row with this sample's
+  // state, so that resolving the duplicate later reports the other sample
+  // changing back to what it always was. Ask the store, and suppress the
+  // sample as a full pass would.
+  if (opts.where != null) {
+    for (const [key, state] of [...states]) {
+      const [row] = await read(tripleCountSql(state));
+      const n = Number(row?.n ?? 1);
+      if (n <= 1) continue;
+      states.delete(key);
+      suppressedKeys.add(key);
+      if (state.fields.observation !== "") suppressedObservations.add(state.fields.observation);
+      colliding += n;
+    }
+  }
   const snapshot = await readSnapshot(paths.state);
 
   // First pass: the store as it stands is the baseline, and nothing is an

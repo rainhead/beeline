@@ -712,6 +712,20 @@ describe("granting one person reach over another", () => {
     ctx = await rosterApp({ personId: 3, admin: true });
   });
 
+  it("keeps the grant that stood, in the store and in the file, when a later one is refused", async () => {
+    await post(ctx.app, "/people/adacollects/delegate", { acts_for: "name:Bo Netter", reason: "one household" });
+    const res = await post(ctx.app, "/people/adacollects/delegate", { acts_for: "name:Nobody At All", reason: "" });
+    expect(await res.text()).toContain("no person named");
+    const grants = await (await ctx.conn.run(`SELECT count(*) FROM person_delegate WHERE person_id = 1`)).getRows();
+    expect(grants).toEqual([[1n]]);
+    // The decision is written before it is applied, and the refused row used
+    // to replace the one that stood under the same key, so the next rebuild
+    // replayed the refusal and the grant was gone.
+    expect((await readOverlay(ctx.overlayPath)).filter((r) => r.field === "acts_for").map((r) => r.value)).toEqual([
+      "name:Bo Netter",
+    ]);
+  });
+
   it("records the grant in the overlay and applies it to the store", async () => {
     const res = await post(ctx.app, "/people/adacollects/delegate", {
       acts_for: "name:Bo Netter",

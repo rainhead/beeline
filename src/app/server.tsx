@@ -93,7 +93,7 @@ import {
   RECENT_CHANGES,
   resolvePersonHandle,
 } from "./roster.js";
-import { upsertOverlay, valueProblem, type OverlayField, type PersonOverlayRow } from "../person-overlay.js";
+import { readOverlay, rowKey, type OverlayField, type PersonOverlayRow, upsertOverlay, valueProblem } from "../person-overlay.js";
 import {
   appendChanges,
   CHANGE_LOG,
@@ -1884,6 +1884,12 @@ export function createApp({
     /** Who it is about afterwards: the same person, or the one `create` made. */
     findAfter: () => Promise<number | null>;
   }): Promise<{ applied: boolean; problem: string | null; personId: number | null }> => {
+    // What the file said for these keys before, so a decision the applier
+    // refuses can be taken back: written first, a refused row replaces the
+    // row it was keyed over, and the next rebuild then replays the refusal
+    // in place of the decision that stood.
+    const keys = new Set(d.rows.map(rowKey));
+    const stood = (await readOverlay(overlayPath)).filter((r) => keys.has(rowKey(r)));
     await upsertOverlay(overlayPath, d.rows);
     if (conn === undefined) return { applied: false, problem: null, personId: d.personId };
     // What the person looks like now, so the log can say what they looked
@@ -1925,6 +1931,9 @@ export function createApp({
       );
     }
     if (applied.unresolved.length > 0) {
+      const refused = new Set(applied.unresolved.map(rowKey));
+      const restore = stood.filter((r) => refused.has(rowKey(r)));
+      if (restore.length > 0) await upsertOverlay(overlayPath, restore);
       return { applied: true, problem: applied.unresolved.map((u) => u.reason).join("; "), personId: afterId };
     }
     // Whatever this account was, it stops being it now: a session issued under

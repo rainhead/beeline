@@ -168,6 +168,19 @@ describe("deriveLocalities", () => {
     expect(offered[0]).toBe("Philomath");
   });
 
+  test("a name used nearby that is only the county the point is in is not offered", async () => {
+    const path = join(dir, "g2.duckdb");
+    await buildTestGazetteer(path, "build-g2");
+    const conn = await storeWithPerson();
+    // The test gazetteer's one region is Benton County.
+    await insertCleanSample(conn, { locality: "'Benton Co.'" }, { latitude: "44.5501", longitude: "-123.38" });
+    const fresh = await insertCleanSample(conn, { sample_number: "'2'" }, { latitude: "44.55", longitude: "-123.38" });
+    await deriveLocalities(conn, path);
+    const offered = ((await candidates(conn, fresh)) as Array<[string, string]>).map(([l]) => l);
+    expect(offered).not.toContain("Benton Co.");
+    expect(offered[0]).toBe("Philomath");
+  });
+
   test("a campground beside the point names it, shortened to fit (beeline-4hxe)", async () => {
     const path = join(dir, "h.duckdb");
     await buildTestGazetteer(path, "build-h");

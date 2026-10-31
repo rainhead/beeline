@@ -78,6 +78,8 @@ export interface Near<T> {
 export interface LocalityEvidence {
   /** The county or regional district the point is in, as a gazetteer region id (US-OR-41003, Benton County). */
   regionId: string | null;
+  /** That region's short name, as a label's county reads (Benton; Cariboo). */
+  county: string | null;
   refuge: string | null;
   wildlifeArea: { unit: string; area: string } | null;
   nationalPark: string | null;
@@ -530,6 +532,22 @@ export function nameLocality(e: LocalityEvidence): NamedLocality | null {
  * whose limits it is in, the island, a feature, a peak, the nearest towns, a
  * hamlet, a large reserve, a distance.
  */
+/**
+ * Whether a locality somebody wrote is only the name of the county the point
+ * is in: "Curry", "King County", "Cariboo". The county prints on the label in
+ * its own place, so as a locality it says nothing; 384 samples on the sandbox
+ * store would have been offered one first (2026-10-30). A town of the same
+ * name nearby (Hood River, Yakima) makes it a town's name, which stays.
+ */
+function namesOnlyCounty(locality: string, e: LocalityEvidence): boolean {
+  if (e.county === null) return false;
+  // BC's unincorporated "Stikine Region" is written "Stikine".
+  const bare = (s: string) => s.replace(/ (County|Co\.?|Regional District|RD|Region)$/i, "").toLowerCase();
+  const name = bare(locality);
+  if (name !== bare(e.county)) return false;
+  return !e.nearby.some((c) => c.at.name.toLowerCase() === name);
+}
+
 export function localityCandidates(e: LocalityEvidence, max: number = RULE.candidates): NamedLocality[] {
   const out: NamedLocality[] = [];
   const add = (locality: string | null | undefined, basis: LocalityBasis) => {
@@ -539,7 +557,7 @@ export function localityCandidates(e: LocalityEvidence, max: number = RULE.candi
     out.push({ locality, basis });
   };
   if (e.refuge !== null) add(refugeName(e.refuge), "refuge");
-  const used = e.used.filter((u) => u.km <= RULE.usedKm && u.locality === u.locality.trim());
+  const used = e.used.filter((u) => u.km <= RULE.usedKm && u.locality === u.locality.trim() && !namesOnlyCounty(u.locality, e));
   const usedScore = (u: UsedLocality, n: number) => u.km / Math.sqrt(Math.max(n, 1));
   for (const u of used.filter((x) => x.own > 0).sort((a, b) => usedScore(a, a.own) - usedScore(b, b.own))) {
     add(u.locality, "used_own");

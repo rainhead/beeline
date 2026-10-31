@@ -294,7 +294,7 @@ async function gather(
   const ev = new Map<number, LocalityEvidence>();
   for (const p of batch) {
     ev.set(p.sample_id, {
-      regionId: null, refuge: null, wildlifeArea: null, nationalPark: null, statePark: null, parks: [],
+      regionId: null, county: null, refuge: null, wildlifeArea: null, nationalPark: null, statePark: null, parks: [],
       island: null, townLimits: null, nearby: [], farTowns: [], features: [], campgrounds: [], used: [],
     });
   }
@@ -302,11 +302,12 @@ async function gather(
 
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE locality_batch_region AS
-    SELECT b.sample_id, any_value(r.region_id) AS region_id
+    SELECT b.sample_id, arg_min(r.region_id, r.region_id) AS region_id, arg_min(r.county, r.region_id) AS county
     FROM locality_batch b JOIN ${G}.region r ON ST_Intersects(r.geom, ST_Point(b.lon, b.lat))
     GROUP BY b.sample_id`);
-  for (const r of await rows<{ sample_id: number; region_id: string }>(conn, `SELECT * FROM locality_batch_region`)) {
+  for (const r of await rows<{ sample_id: number; region_id: string; county: string | null }>(conn, `SELECT * FROM locality_batch_region`)) {
     of(r.sample_id).regionId = r.region_id;
+    of(r.sample_id).county = r.county;
   }
 
   const inside = (table: string, cols: string) => `

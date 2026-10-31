@@ -18,7 +18,10 @@
 -- lowercase epithet. Four rules ask about it — what authorship is left over,
 -- and three of the survey's categories — so it is written once. Macros are
 -- how the pipeline layer already shares SQL (legacy_month, legacy_date).
-CREATE OR REPLACE MACRO binomial_prefix() AS '^[A-Za-z]+( \([A-Za-z]+\))? [a-z-]+';
+-- The epithet ends at a word boundary: regexp_matches finds the pattern
+-- anywhere, so without one 'Bombus vosneSenskii' (a shifted finger) was a
+-- binomial 'Bombus vosne' followed by the authorship 'Senskii'.
+CREATE OR REPLACE MACRO binomial_prefix() AS '^[A-Za-z]+( \([A-Za-z]+\))? [a-z-]+\b';
 
 -- ── Parts of a name, from whichever column wrote them ───────────────────
 -- Three sources write names in columns rather than as one string: the expert

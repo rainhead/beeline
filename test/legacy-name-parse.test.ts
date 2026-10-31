@@ -79,6 +79,13 @@ const SYNTHETIC_QUALIFIERS: Row[] = [
   { sci: "Bombus cf. occidentalis Greene, 1858", genus: "Bombus" },
 ];
 
+/**
+ * A capital letter inside the epithet, a shifted finger. Synthetic: the
+ * corpus has none, and the parser must read nothing out of one rather than
+ * an authorship.
+ */
+const SYNTHETIC_TYPOS: Row[] = [{ sci: "Bombus vosneSenskii", genus: "Bombus", epithet: "vosneSenskii" }];
+
 /** The other verbatim fields, in the shapes the corpus actually holds. */
 const OTHER_FIELDS: Row[] = [
   { sci: "Apis mellifera", genus: "Apis", epithet: "mellifera", recordedBy: "Bea Trapper | Ada Collector",
@@ -103,7 +110,7 @@ beforeAll(async () => {
   // legacy_verbatim_shape also sizes the two fields that answer through a
   // worklist rather than a rule; the findings view is promote-legacy's.
   await conn.run(`CREATE VIEW legacy_promotion_finding AS SELECT '' AS _id, '' AS rule WHERE false`);
-  for (const [i, r] of [...CORPUS, ...SYNTHETIC_QUALIFIERS, ...OTHER_FIELDS].entries()) {
+  for (const [i, r] of [...CORPUS, ...SYNTHETIC_QUALIFIERS, ...SYNTHETIC_TYPOS, ...OTHER_FIELDS].entries()) {
     await conn.run(
       `INSERT INTO legacy_promotable (_id, "order", family, genus, subgenus,
          specificEpithet, scientificName, taxonRank, recordedBy, month, url,
@@ -141,7 +148,7 @@ describe("taking a verbatim scientific name apart", () => {
       ["subgenus", 2n],
       ["trinomial", 5n],
       ["uninomial", 1n],
-      ["unparsed", 3n], // "Not a bee", the qualifier with no genus, and the authored one
+      ["unparsed", 4n], // "Not a bee", the qualifier with no genus, the authored one, and the typo
     ]);
   });
 
@@ -194,6 +201,16 @@ describe("taking a verbatim scientific name apart", () => {
     expect(await parse("Not a bee")).toEqual([["unparsed"]]);
   });
 
+  test("a capital inside the epithet is not the start of an authorship", async () => {
+    // The binomial shape was matched as a prefix with no boundary after the
+    // epithet, so 'Bombus vosneSenskii' read as the binomial 'Bombus vosne'
+    // with the authorship 'Senskii', which seed-animals.sql would have put on
+    // the species node Bombus vosnesenskii. The epithet itself still comes
+    // from its column, lowercased.
+    expect(await parsed("Bombus vosneSenskii")).toEqual([["Bombus", null, "vosnesenskii", null, null, null, null]]);
+    expect(await parse("Bombus vosneSenskii")).toEqual([["unparsed"]]);
+  });
+
   test("an authored binomial is not mistaken for a trinomial", async () => {
     expect(await parsed("Bombus vosnesenskii Radoszkowski, 1862")).toEqual([
       ["Bombus", null, "vosnesenskii", "Radoszkowski, 1862", null, null, null],
@@ -216,7 +233,7 @@ describe("taking a verbatim scientific name apart", () => {
       await rows(conn, "SELECT field, shape, records FROM legacy_verbatim_shape ORDER BY field, shape"),
     ).toEqual([
       ["day/month/year", "did not parse", 0n],
-      ["identifiedBy", "named", 26n],
+      ["identifiedBy", "named", 27n],
       ["month", "roman numeral", 1n],
       ["recordedBy", "non-ASCII", 0n],
       ["recordedBy", "other separator (& , ; and)", 0n],
@@ -279,6 +296,7 @@ describe("taking a verbatim scientific name apart", () => {
     expect(await rows(conn, "SELECT sci, parse, lands_on FROM legacy_name_flattened ORDER BY sci")).toEqual([
       ["Bombus cf. occidentalis Greene, 1858", "unparsed", "Bombus"], // synthetic: nothing to attach the qualifier to
       ["Bombus nr. mixtus", "unparsed", ""], // synthetic: no genus, so nothing to attach
+      ["Bombus vosneSenskii", "unparsed", "Bombus vosnesenskii"], // synthetic: the typo, landing where the columns say
       ["Lasioglossum  sp.1", "morphospecies", "Lasioglossum"],
       ["Melissodes sp.1", "morphospecies", "Melissodes"],
       ["Not a bee", "unparsed", ""],

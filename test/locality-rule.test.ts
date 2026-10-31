@@ -69,7 +69,10 @@ describe("names", () => {
   // writes is never one the flag would raise. The two must not drift: these
   // are the localities test/qc.test.ts pins the flag with, lifted from
   // production staging, put to both.
-  test("fits() agrees with qc_rule_locality_format", async () => {
+  // Beeline never offers a name the locality check would flag. It refuses
+  // more: a volunteer's street address is their call (Peter, 2026-10-31),
+  // but Beeline does not choose one for them.
+  test("fits() refuses every name qc_rule_locality_format flags, and streets besides", async () => {
     const localities = [
       "Sisters, Road 1018", "Bend Twin Bridges Rd", "Alice Street", "Eugene Olive St", "Corvallis SW Orchard Ave",
       "Rdmnd Flcn Cr Drive", "McMinnville NE Elaine Dr", "Corvallis NE Circle Blvd", "Thunderbird Ct",
@@ -92,7 +95,16 @@ describe("names", () => {
         ([l]) => l,
       ),
     );
-    for (const locality of localities) expect(fits(locality), locality).toBe(!flagged.has(locality));
+    for (const locality of localities) if (flagged.has(locality)) expect(fits(locality), locality).toBe(false);
+    for (const street of ["Alice Street", "Eugene Olive St", "Thunderbird Ct"]) {
+      expect(flagged.has(street), street).toBe(false);
+      expect(fits(street), street).toBe(false);
+    }
+    // And the two still agree on a Saint or a State, which neither refuses.
+    for (const place of ["St Helens", "Mosier St Park", "Buell County Park"]) {
+      expect(flagged.has(place), place).toBe(false);
+      expect(fits(place), place).toBe(true);
+    }
   });
 });
 

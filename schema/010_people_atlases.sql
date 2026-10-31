@@ -57,11 +57,9 @@ COMMENT ON COLUMN inat_user_orcid.fetched_at IS 'When iNaturalist last reported 
 CREATE TABLE atlas (
   entity_id     INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
   code          TEXT UNIQUE NOT NULL,
-  name          TEXT NOT NULL,
-  inat_place_id BIGINT UNIQUE
+  name          TEXT NOT NULL
 );
-COMMENT ON TABLE atlas IS 'A member program of the Master Melittologist umbrella: OBA, WaBA, BC, ID, NM, OK. Samples are assigned to atlases by geography, never by pipeline or iNat project.';
-COMMENT ON COLUMN atlas.inat_place_id IS 'The atlas''s iNaturalist place (Washington = 46). iNat stamps observations with place ids, so geographic assignment is a lookup, never a computation.';
+COMMENT ON TABLE atlas IS 'A member program of the Master Melittologist umbrella: OBA, WaBA, BC, ID, NM, OK. Samples are assigned to atlases by geography, never by pipeline or iNat project: an atlas''s iNaturalist place is on its atlas_region row, with every other region''s. An inat_place_id column sat here until cutover, read by nothing and filled for Washington alone; dropped before the production store was built (beeline-ni5m.4).';
 
 -- Which atlases print their own labels: a row is the flag, the way a
 -- person_admin row is. None today — Oregon prints for the whole program, so
@@ -77,32 +75,28 @@ CREATE TABLE atlas_printing (
 );
 COMMENT ON TABLE atlas_printing IS 'Atlases that print their own labels; presence is the flag. Empty today: Oregon prints for every atlas. An unscoped print run freezes the samples of every atlas NOT here (print_scope_sample), and an atlas here gets labels only from a run scoped to it. Only an atlas here can be a run''s scope: the rest are the program''s to print, and src/print-run.ts refuses a run scoped to one.';
 
--- The six member atlases. Place ids are filled in as they are verified
--- against iNat (only Washington's is documented so far).
+-- The six member atlases. Their iNaturalist place ids are on atlas_region,
+-- where every region's is (beeline-2yt).
 --
--- Deliberately left alone by beeline-2yt, which gave every atlas_region a
--- verified place id including these six. Nothing reads this column — not a
--- query, view, or page — and atlas_region's is what observation_place joins
--- on, so filling these in would duplicate a fact to no reader. It would also
--- have to be an UPDATE on a deployed store, and DuckDB 1.5.5 refuses to write
--- an INDEXED column of a row an incoming foreign key references: inat_place_id
--- is UNIQUE and so indexed, and atlas_region.atlas_id references every row
--- here. That is a fight worth having only for a value somebody wants.
---
--- The index is the discriminator and the inbound reference alone is not:
--- UPDATE atlas SET name succeeds on the very same row. This comment used to
--- state only the second half, which also predicts that a sample's locality
--- cannot be refreshed — it can, and minting depends on it (beeline-6e9).
--- Both halves are pinned by test in test/schema.test.ts, so the day DuckDB
--- changes is a day something says so. A test also asserts the one id here
--- agrees with atlas_region's, so the two cannot drift apart while both exist.
-INSERT INTO atlas (code, name, inat_place_id) VALUES
-  ('OBA',  'Oregon Bee Atlas',           NULL),
-  ('WaBA', 'Washington Bee Atlas',       46),
-  ('BC',   'British Columbia Bee Atlas', NULL),
-  ('ID',   'Idaho Bee Atlas',            NULL),
-  ('NM',   'New Mexico Bee Atlas',       NULL),
-  ('OK',   'Oklahoma Bee Atlas',         NULL);
+-- Why there is no place id here: nothing read one — not a query, view, or
+-- page — and atlas_region's is what observation_place joins on, so a value
+-- here duplicated a fact to no reader. It could not have been filled on a
+-- deployed store either: DuckDB 1.5.5 refuses to write an INDEXED column of
+-- a row an incoming foreign key references, the column was UNIQUE and so
+-- indexed, and atlas_region.atlas_id references every row here. The same
+-- holds of `code` now, which is why test/schema.test.ts pins the rule on it:
+-- the index is the discriminator and the inbound reference alone is not,
+-- since UPDATE atlas SET name succeeds on the very same row. The column was
+-- dropped before cutover (beeline-ni5m.4), while the production store could
+-- still be built fresh; a referenced table cannot lose a column by migration
+-- (ADR 0006).
+INSERT INTO atlas (code, name) VALUES
+  ('OBA',  'Oregon Bee Atlas'),
+  ('WaBA', 'Washington Bee Atlas'),
+  ('BC',   'British Columbia Bee Atlas'),
+  ('ID',   'Idaho Bee Atlas'),
+  ('NM',   'New Mexico Bee Atlas'),
+  ('OK',   'Oklahoma Bee Atlas');
 
 -- Which atlases have said their labels may carry the true coordinates of a
 -- record iNaturalist obscures for its taxon: a row is the answer, the way an
@@ -164,7 +158,7 @@ COMMENT ON TABLE atlas_region IS 'State/province → the member atlas covering i
 COMMENT ON COLUMN atlas_region.state_province IS 'The two-letter USPS or Canada Post code, exactly as a sample carries it — this is the join key, so the format is load-bearing: qc_rule_place_unrecognised fires on anything that does not match a row here.';
 COMMENT ON COLUMN atlas_region.country IS 'ISO 3166-1 alpha-3, matching the ''USA'' the records already carry. Not part of the key — see the note above — but the truth a sample''s own country is checked against.';
 COMMENT ON COLUMN atlas_region.atlas_id IS 'Null ⇒ no member atlas covers this region. That is an answer, not a gap: these are the records that belong to the umbrella program itself.';
-COMMENT ON COLUMN atlas_region.inat_place_id IS 'This region''s iNaturalist place, so a sample minted from an observation can be given a state at all: iNat stamps observations with place ids and place_guess is free text ("Leach Botanical Garden"), so the two-letter code has to be reached through here (beeline-2yt). atlas.inat_place_id answers the same question for the six atlases only; every region needs one, and a test pins the six to agree.';
+COMMENT ON COLUMN atlas_region.inat_place_id IS 'This region''s iNaturalist place, so a sample minted from an observation can be given a state at all: iNat stamps observations with place ids and place_guess is free text ("Leach Botanical Garden"), so the two-letter code has to be reached through here (beeline-2yt). The one place id in the store for a region, the six atlases'' included.';
 
 -- Place ids were derived twice and agreed: iNaturalist's own autocomplete
 -- filtered to admin_level 10 under the right country, and — independently —
@@ -172,7 +166,8 @@ COMMENT ON COLUMN atlas_region.inat_place_id IS 'This region''s iNaturalist plac
 -- already filed under each code. The second reaches only the 22 regions the
 -- corpus has records for, which is exactly why it is worth having: it is what
 -- would catch a plausible-but-wrong name match. Oregon 10, Washington 46
--- (agreeing with atlas.inat_place_id, the one id documented before this).
+-- (agreeing with the one id documented before this, Washington's on the
+-- atlas table of the time).
 INSERT INTO atlas_region (state_province, country, atlas_id, inat_place_id)
 SELECT r.state_province, r.country, a.entity_id, r.inat_place_id
 FROM (VALUES

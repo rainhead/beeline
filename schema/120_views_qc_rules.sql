@@ -1,7 +1,7 @@
 -- QC rule definitions: one view per rule, each producing
 -- (sample_id, specimen_id, rule_name, details). Findings are derived, never
--- stored. Metadata (severity, instructions) lives in qc_rule (schema/050);
--- the union in schema/130. These views see only rows that made it past the
+-- stored. Metadata (severity) lives in qc_rule (schema/050) and the copy
+-- shown with a finding in the message catalog; the union in schema/130. These views see only rows that made it past the
 -- ingestion boundary — findings about source records that failed to become
 -- samples (unparseable specimen counts, missing identity fields) hang on the
 -- ingestion staging layer, designed with phase 2.

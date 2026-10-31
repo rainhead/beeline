@@ -28,6 +28,13 @@ running. On Fly the entrypoint migrates before it starts the app
 ([`infra/fly/entrypoint.sh`](../infra/fly/entrypoint.sh)), so a deploy needs no
 step of its own.
 
+**Two columns were dropped before cutover with no migration** (beeline-ni5m.4,
+after 0067): `atlas.inat_place_id` and `qc_rule.instructions`, both read by
+nothing. Both tables are referenced, so DuckDB cannot drop the column on a
+deployed store; the production store is built fresh from `schema/` at
+cutover and never carries them, and a sandbox store built earlier shows the
+two extra columns as drift in `--check` until it is reseeded, correctly.
+
 **0001–0023 are the pre-reseed epoch.** beeline-6e9 rebuilt `sample` —
 collector and atlas off the table, `sample_atlas` and
 `sample_primary_collector` in — which is ADR 0006's "not migratable at all"

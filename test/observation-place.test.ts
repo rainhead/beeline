@@ -134,25 +134,18 @@ describe("observation_place_ambiguous", () => {
 
 describe("atlas_region place ids", () => {
   test("every region has one, and they are distinct", async () => {
+    // The one home of a region's place id: the atlas table carried a second
+    // copy for Washington until beeline-ni5m.4 dropped it, with a test here
+    // holding the two to agree.
     expect(await count("SELECT count(*) FROM atlas_region WHERE inat_place_id IS NULL")).toBe(0);
     expect(await count("SELECT count(DISTINCT inat_place_id) FROM atlas_region")).toBe(
       await count("SELECT count(*) FROM atlas_region"),
     );
   });
 
-  test("where an atlas carries a place id, it agrees with its region's", async () => {
-    // Only Washington's was ever documented (schema/010 leaves the other five
-    // null on purpose). This is what stops the two copies drifting apart.
-    expect(
-      await rows(
-        conn,
-        `SELECT a.code, a.inat_place_id, r.inat_place_id
-         FROM atlas a JOIN atlas_region r ON r.atlas_id = a.entity_id
-         WHERE a.inat_place_id IS NOT NULL AND a.inat_place_id IS DISTINCT FROM r.inat_place_id`,
-      ),
-    ).toEqual([]);
-    // …and that the join above is not vacuously empty.
-    expect(await count("SELECT count(*) FROM atlas WHERE inat_place_id IS NOT NULL")).toBe(1);
+  test("every atlas has a region, and Washington's is place 46", async () => {
+    expect(await count("SELECT count(*) FROM atlas a WHERE NOT EXISTS (SELECT 1 FROM atlas_region r WHERE r.atlas_id = a.entity_id)")).toBe(0);
+    expect(await rows(conn, "SELECT r.inat_place_id FROM atlas_region r JOIN atlas a ON a.entity_id = r.atlas_id WHERE a.code = 'WaBA'")).toEqual([[46n]]);
   });
 });
 

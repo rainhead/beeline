@@ -92,7 +92,7 @@ const emptySeason = (season: number): SeasonCounts => ({ season, samples: 0, spe
 
 async function programRows(db: Kysely<Database>, code?: string): Promise<ProgramRow[]> {
   const where = code === undefined ? sql`` : sql`WHERE lower(p.code) = lower(${code})`;
-  // An atlas is a program with a region: the view atlas says which programs
+  // An atlas is a program with states assigned: the view atlas says which programs
   // those are (schema/104), so a program that joins it is an atlas and the
   // joined row is its own.
   const { rows } = await sql<ProgramRow>`

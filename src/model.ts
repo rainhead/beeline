@@ -84,7 +84,7 @@ export interface PersonDelegateTable {
 }
 
 /** schema/010: a program — each atlas, Master Melittology, the BLM surveys (beeline-7c1). */
-/** schema/010: a program people take part in. An atlas is a program with a region: the view `atlas` lists those. */
+/** schema/010: a program people take part in. An atlas is a program with states or provinces assigned (atlas_region): the view `atlas` lists those. Owning places does not make a program an atlas. */
 export interface ProgramTable {
   entity_id: Generated<number>;
   code: string;
@@ -99,7 +99,7 @@ export interface ProgramLeadTable {
   granted_by: string | null;
 }
 
-/** schema/104: the view of the programs that have a region. Read, never written; the row is the program's. */
+/** schema/104: the view of the programs with states or provinces assigned, which is what being an atlas is. Read, never written; the row is the program's. */
 export interface AtlasView {
   entity_id: number;
   code: string;

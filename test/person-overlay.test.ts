@@ -325,6 +325,30 @@ describe("applying the overlay", () => {
     expect(await one(`SELECT person_id FROM person_admin`)).toEqual([people["Bo Netter"]]);
   });
 
+  it("still reaches a renamed person after a later save of the names form, which renames them to the name they already have", async () => {
+    // The names form writes display_name on every save, so fixing the family
+    // name after a rename writes a row renaming the person to their current
+    // name. That row used to replace the real rename in the backward chase,
+    // and every decision keyed on the new name was refused on rebuild.
+    const r = await apply([
+      row({ person_ref: "name:Ada Collector", field: "display_name", value: "Ada Collector-Smith" }),
+      row({ person_ref: "name:Ada Collector-Smith", field: "display_name", value: "Ada Collector-Smith" }),
+      row({ person_ref: "name:Ada Collector-Smith", field: "family_name", value: "Collector-Smith" }),
+    ]);
+    expect(r.unresolved).toEqual([]);
+    expect(await one(`SELECT family_name FROM person WHERE entity_id = ${people["Ada Collector"]}`)).toEqual(["Collector-Smith"]);
+  });
+
+  it("refuses a name two different people are renamed to, rather than picking the later rename", async () => {
+    const r = await apply([
+      row({ person_ref: "name:Ada Collector", field: "display_name", value: "Dee Dee" }),
+      row({ person_ref: "name:Bo Netter", field: "display_name", value: "Dee Dee" }),
+      row({ person_ref: "name:Dee Dee", field: "admin", value: "yes" }),
+    ]);
+    expect(r.unresolved.map((u) => u.reason)).toEqual(["'Dee Dee' names 2 people"]);
+    expect(await one(`SELECT count(*) FROM person_admin`)).toEqual([0n]);
+  });
+
   it("replays a file written after a rename, whichever name a row was keyed on", async () => {
     // This is the shape a rebuild replays: the rename was recorded under the
     // old name, and every decision made afterwards under the new one. Against

@@ -89,14 +89,19 @@ export async function resolver(conn: DuckDBConnection, overlay: readonly PersonO
   // the roster renames somebody through `inat:` whenever their old name was
   // shared, and a rename it could not follow orphaned every later row about
   // the person under their new, now unique, name.
+  // Every rename onto a name, not the last: the names form writes a
+  // display_name row on every save, so a person renamed and then edited
+  // again carries a row renaming them to the name they already have, which
+  // must not hide the rename that reaches them. Two different people renamed
+  // onto one name are an ambiguity, reported below like any other.
   const renamedTo = new Map<string, string>();
-  const renamedFrom = new Map<string, string>();
+  const renamedFrom = new Map<string, string[]>();
   for (const r of overlay) {
     if (r.field !== "display_name") continue;
     const parsed = parseRef(r.person_ref);
     if (parsed === null) continue;
     if (parsed.kind === "name") renamedTo.set(parsed.key, r.value);
-    renamedFrom.set(r.value, r.person_ref);
+    renamedFrom.set(r.value, [...(renamedFrom.get(r.value) ?? []), r.person_ref]);
   }
   // A name a `create` row claims is a person of its own, never the name
   // somebody else is renamed to in the same file: admitting Nan Staffer and
@@ -119,21 +124,22 @@ export async function resolver(conn: DuckDBConnection, overlay: readonly PersonO
     }
     if (claimed.has(key)) return { problem: `no person named '${key}'`, missing: true };
     const to = renamedTo.get(key);
-    const from = renamedFrom.get(key);
-    for (const ref of [to === undefined ? undefined : `name:${to}`, from]) {
-      if (ref === undefined) continue;
+    const reached = new Set<number>();
+    for (const ref of [...(to === undefined ? [] : [`name:${to}`]), ...(renamedFrom.get(key) ?? [])]) {
       const parsed = parseRef(ref);
       if (parsed === null) continue;
       if (parsed.kind === "inat") {
         const id = byInat.get(parsed.key);
-        if (id !== undefined) return { id };
+        if (id !== undefined) reached.add(id);
         continue;
       }
       if (seen.has(parsed.key)) continue;
       seen.add(parsed.key);
       const found = lookup(parsed.key, seen);
-      if ("id" in found) return found;
+      if ("id" in found) reached.add(found.id);
     }
+    if (reached.size > 1) return { problem: `'${key}' names ${reached.size} people` };
+    if (reached.size === 1) return { id: [...reached][0]! };
     // `missing` rather than just a reason: `create` may act on nobody-of-that-
     // name, and must not act on a name two people share. Only this branch
     // says the store has room for a new person.

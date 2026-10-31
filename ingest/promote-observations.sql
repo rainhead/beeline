@@ -20,14 +20,15 @@
 -- every pass cost 3.6 s of a 6.3 s promotion on the dev store, and every row
 -- written is a row a concurrent small writer can lose a conflict on
 -- (beeline-lpx) — which matters now that binding an observer on the
--- unclaimed screen runs this file from a request (beeline-e85).
+-- unclaimed screen runs this file from a request (beeline-e85). Which rows
+-- differ is sample_geoprivacy_stale (schema/105), stated once there and
+-- asserted empty after this runs, as the elevation statement below reads
+-- sample_elevation_stale (beeline-ni5m.8).
 UPDATE sample SET
-  geoprivacy       = nullif(f.geoprivacy, 'open'),
-  taxon_geoprivacy = nullif(f.taxon_geoprivacy, 'open')
-FROM observation_field f
-WHERE sample.inat_observation_id = f.inat_id
-  AND (sample.geoprivacy       IS DISTINCT FROM nullif(f.geoprivacy, 'open')
-    OR sample.taxon_geoprivacy IS DISTINCT FROM nullif(f.taxon_geoprivacy, 'open'));
+  geoprivacy       = st.observation_geoprivacy,
+  taxon_geoprivacy = st.observation_taxon_geoprivacy
+FROM sample_geoprivacy_stale st
+WHERE sample.entity_id = st.sample_id;
 
 -- ── Location candidates ──────────────────────────────────────────────────
 -- Trust is evidenced by the PRESENCE of private coordinates in the

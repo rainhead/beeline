@@ -88,34 +88,23 @@ LEFT JOIN program a ON a.entity_id = sa.atlas_id
 WHERE s.taxon_geoprivacy IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM atlas_taxon_obscured_printing ok WHERE ok.atlas_id = sa.atlas_id);
 
--- Locality must fit a 3-5pt label cell: short place name, no punctuation, no
--- street addresses. Semantics follow the reference implementation
--- (OccurrenceService.updateErrorFlags + includesIllegalSuffix): length > 18,
--- comma or double quote (single quotes are fine — O''Brien Rd is a name),
--- or a word-bounded street/county suffix. norm pads the locality with
--- spaces, turns periods into spaces and isolates commas, which is what
--- supplies the word boundaries the reference got from lookarounds — so no
--- lookbehind is needed and a plain alternation is a faithful translation.
+-- Locality must fit a 3-5pt label cell: 18 characters at most, no comma and
+-- no double quote (single quotes are fine — O'Brien is a name). Those are the
+-- label's physical limits, from the reference implementation
+-- (OccurrenceService.updateErrorFlags).
 --
--- The one place it deliberately parts from the reference is WHERE the
--- suffix may sit: it has to end its phrase, or 'St Helens' is a street
--- address. locality_street_suffix_pattern (schema/108) carries that
--- argument and the measurements behind it (beeline-4dt).
+-- A street address is NOT flagged, though the reference forbade one and this
+-- rule followed it until 2026-10-31: Andony no longer remembers why, and a
+-- volunteer who writes one has made their choice (Peter, relaying Andony).
+-- Beeline still never OFFERS a street as a locality (src/locality-rule.ts,
+-- looksLikeStreet), and minting still skips a street component of an
+-- observation's place guess (observation_locality, schema/108); since
+-- Beeline is to name every locality itself, that is beeline-kkst's to settle.
 --
--- The second accepted DuckDB-flavoured seam, after the JSON shredding in
--- schema/105, and a deliberate one (Peter, 2026-08-28; beeline-2c3.37).
--- `regexp_matches` returns a boolean here and text[] on Postgres, so a port
--- rewrites this predicate — which is a known line of work rather than a
--- silent difference, and worth it: nineteen LIKE passes over every locality
--- in the store cost 187 ms, one alternation costs 15 ms, and with the
--- observation projection stored (beeline-2c3.36) this rule *was* the entire
--- remaining cost of scanning qc_finding. Every QC read in the app goes
--- through that union.
---
--- Do NOT reach for `~` when porting or when writing the next one of these:
--- DuckDB's `~` is regexp_full_match and Postgres's is a partial match, so
--- the same operator quietly answers differently in the two engines. That is
--- the one spelling here that would fail without erroring.
+-- A locality that is only a county ("Benton County") is still flagged, as it
+-- was when the street suffixes caught it: the county prints in its own place
+-- on the label, so as a locality it says nothing. Whether that, too, is the
+-- volunteer's call is not decided.
 CREATE VIEW qc_rule_locality_format AS
 SELECT sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
@@ -124,33 +113,18 @@ SELECT sample_id,
          CASE WHEN len > 18 THEN concat('longer than 18 chars (', len, ')') END,
          CASE WHEN has_comma THEN 'contains comma' END,
          CASE WHEN has_quote THEN 'contains double quote' END,
-         CASE WHEN is_street THEN 'looks like a street address' END
+         CASE WHEN is_county THEN 'names only a county' END
        ) AS details
 FROM (
-  SELECT norm.sample_id,
-         length(norm.locality) AS len,
-         position(',' IN norm.locality) > 0 AS has_comma,
-         position('"' IN norm.locality) > 0 AS has_quote,
-         -- The same seventeen words the reference checks, each still
-         -- required to stand alone between spaces — and, since beeline-4dt,
-         -- to END its phrase, because `st` is Saint and State as well as
-         -- Street. The predicate lives in locality_street_suffix_pattern
-         -- (schema/108), which says why — and as a macro, because a regex
-         -- read from a subquery is recompiled per row — because
-         -- observation_locality applies it too, to pick a locality that does
-         -- not exist yet where this judges one that does.
-         regexp_matches(norm.norm, locality_street_suffix_pattern()) AS is_street
-  FROM (
-    -- A comma ends a phrase, so it survives normalisation as its own token
-    -- rather than becoming a space: 'NW Harrison Blvd, Corvallis' is an
-    -- address and the anchor has to be able to see that.
-    SELECT s.entity_id AS sample_id, s.locality,
-           concat(' ', replace(replace(lower(s.locality), '.', ' '), ',', ' , '), ' ') AS norm
-    FROM sample s
-    WHERE s.locality IS NOT NULL
-  ) norm
+  SELECT s.entity_id AS sample_id,
+         length(s.locality) AS len,
+         position(',' IN s.locality) > 0 AS has_comma,
+         position('"' IN s.locality) > 0 AS has_quote,
+         lower(trim(s.locality)) LIKE '% county' AS is_county
+  FROM sample s
+  WHERE s.locality IS NOT NULL
 ) flags
-WHERE len > 18 OR has_comma OR has_quote OR is_street;
+WHERE len > 18 OR has_comma OR has_quote OR is_county;
 
 -- Country must be an abbreviation (≤ 3 chars), state/province likewise
 -- (≤ 2): the label cell is tiny. Length checks exactly as the reference —

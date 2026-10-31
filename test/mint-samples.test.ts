@@ -706,13 +706,11 @@ describe("the locality a minted sample carries", () => {
     expect(await one("SELECT locality FROM sample")).toEqual(["Bald Hill"]);
   });
 
-  test("the street-suffix predicate has one home, and both readers use it", async () => {
-    // qc_rule_locality_format judges a locality a sample carries;
-    // observation_locality picks one that does not exist yet. beeline-4dt
-    // landed in the one place and reached both: 'st' is Saint here, so the
-    // component is a place name and the sample gets a locality it used to be
-    // refused — and qc_rule_locality_format agrees, which is the half that
-    // used to disagree.
+  test("the street-suffix predicate takes Saint for a place name", async () => {
+    // observation_locality picks a locality from the place guess, skipping a
+    // street. beeline-4dt: 'st' is Saint here, so the component is a place
+    // name and the sample gets a locality it used to be refused, and the
+    // locality check raises nothing about it.
     const [[pattern]] = (await rows(conn, "SELECT locality_street_suffix_pattern()")) as [[string]];
     expect(pattern).toContain("boulevard");
     await stage(obs(7, { place_guess: "St Helens, OR, US", ofvs: ofvs("7", "1") }));

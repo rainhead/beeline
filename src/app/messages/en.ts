@@ -2189,7 +2189,7 @@ export const en = {
     taxon_obscured_awaiting_atlas:
       "iNaturalist hides where the plant on this observation grows, because of its conservation status. A label carries the true location, and Beeline prints it only where the bee atlas for that place has agreed. No atlas has agreed for where this sample was collected, so its labels will not print for now. There is nothing for you to fix.",
     locality_format:
-      "The locality must be a short place name (18 characters or fewer) without commas, quotes, or street addresses — it is printed on a 3pt label. Example: Corvallis not 5th St, Corvallis OR.",
+      "The locality must be short (18 characters or fewer), without commas or double quotes, and more than a county name — it is printed on a 3pt label beside the county. Example: Corvallis rather than Corvallis, OR.",
     place_unabbreviated:
       "Country and state/province must be abbreviations (USA not United States; OR not Oregon) — the label cell is tiny.",
     place_unrecognised:

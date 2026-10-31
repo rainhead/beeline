@@ -187,7 +187,7 @@ const FIXTURES: Array<{
         sample_number: "8",
         locality: "5th St, Corvallis Oregon near the old mill by the river",
         findings: [
-          finding("locality_format", "contains comma; street address", "blocking"),
+          finding("locality_format", "longer than 18 chars (55); contains comma", "blocking"),
         ],
         // The locality named from the coordinates, offered on the flag's line (beeline-7i6).
         locality_suggestion: { locality: "Corvallis", basis: "town_limits" },

@@ -17,11 +17,11 @@
 -- had to fire" stays checkable rather than assumed.
 
 -- ── The street-suffix predicate, stated once ─────────────────────────────
--- The same seventeen words in two places: qc_rule_locality_format
--- (schema/120) judges a locality a sample already carries, and
--- observation_locality below picks one that does not exist yet. A word list
--- duplicated across two files is a word list that will one day be two word
--- lists, so it lives here and both read it.
+-- observation_locality below uses it to pick a locality that does not exist
+-- yet. Until 2026-10-31 qc_rule_locality_format (schema/120) also judged a
+-- locality a sample already carries by it, and it was put here so the two
+-- would not drift apart; that rule no longer treats a volunteer's street
+-- address as a fault (Andony, relayed by Peter), so this is the one reader.
 --
 -- A MACRO rather than the one-row view elevation_derivation_limit uses
 -- (schema/170), and the difference is that this constant is a REGEX. DuckDB

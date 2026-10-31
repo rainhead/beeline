@@ -93,15 +93,45 @@ describe("QC findings and printability", () => {
     expect(f?.rule).toBe("locality_format");
     expect(f?.details).toContain("longer than 18 chars");
     expect(f?.details).toContain("contains comma");
-    expect(f?.details).toContain("street address");
+    expect(f?.details).not.toContain("street");
   });
 
-  // The street-suffix check is one regular expression rather than nineteen
-  // LIKE passes (beeline-2c3.37), and the thing worth pinning is that every
-  // token still has to stand alone between spaces — an alternation is exactly
-  // where that quietly stops being true. Strings lifted from production
-  // staging, one per token, because a rule tested only on strings we wrote is
-  // a rule tested on our assumptions.
+  // Andony no longer remembers why the old system forbade a street address,
+  // and a volunteer who writes one has made their choice (Peter, 2026-10-31).
+  // Strings lifted from production staging, short and clean enough to raise
+  // nothing else.
+  test("a street address the volunteer wrote is not a fault", async () => {
+    const streets = ["Alice Street", "Eugene Olive St", "Thunderbird Ct", "BLM Rd 39-6-36"];
+    for (const [i, locality] of streets.entries()) {
+      const id = await insertCleanSample(conn, { locality: `'${locality}'`, sample_number: `'s${i}'` });
+      expect(await findings(id), locality).toEqual([]);
+    }
+  });
+
+  // The county prints in its own place on the label, so a locality that is
+  // only a county says nothing; the street suffixes used to catch it, and it
+  // is still caught. A county park is a place.
+  test("a locality that is only a county is still flagged", async () => {
+    const id = await insertCleanSample(conn, { locality: "'Jefferson County'" });
+    expect(await findings(id)).toEqual([{ rule: "locality_format", details: "names only a county" }]);
+    const park = await insertCleanSample(conn, { locality: "'Buell County Park'", sample_number: "'p1'" });
+    expect(await findings(park)).toEqual([]);
+  });
+
+  // Minting still skips a street component of an observation's place guess
+  // (observation_locality, schema/108), by one regular expression rather
+  // than nineteen LIKE passes (beeline-2c3.37). The thing worth pinning is
+  // that every token still has to stand alone between spaces, an
+  // alternation being exactly where that quietly stops being true. Strings
+  // lifted from production staging, one per token, because a rule tested
+  // only on strings we wrote is a rule tested on our assumptions.
+  const isStreet = async (s: string) =>
+    ((await rows(
+      conn,
+      `SELECT regexp_matches(concat(' ', replace(replace(lower('${s.replaceAll("'", "''")}'), '.', ' '), ',', ' , '), ' '),
+                             locality_street_suffix_pattern())`,
+    )) as [[boolean]])[0]![0];
+
   test("every street suffix is still matched as a whole word", async () => {
     const streets = [
       "Sisters, Road 1018",
@@ -117,21 +147,12 @@ describe("QC findings and printability", () => {
       "Corvallis NE Smith Ln",
       "Jefferson County",
     ];
-    for (const [i, locality] of streets.entries()) {
-      const id = await insertCleanSample(conn, {
-        locality: `'${locality}'`,
-        sample_number: `'s${i}'`,
-      });
-      const details = (await findings(id)).find((f) => f.rule === "locality_format")?.details ?? "";
-      expect(details, locality).toContain("looks like a street address");
-    }
+    for (const s of streets) expect(await isStreet(s), s).toBe(true);
   });
 
   // beeline-4dt: `st` is Saint and the abbreviation for State as well as
-  // Street, and telling a volunteer that St Helens looks like a street
-  // address is the one kind of finding that damages data — the only way to
-  // satisfy it is to write the locality wrongly. All real localities, all
-  // short and clean enough to raise nothing else.
+  // Street, so a suffix has to end its phrase, or minting would skip St
+  // Helens's own name in its place guess. All real localities.
   test("a suffix that does not end its phrase is part of a place name", async () => {
     const places = [
       "St Helens", // the town in Columbia County, 121 samples
@@ -144,49 +165,29 @@ describe("QC findings and printability", () => {
       "Lane Creek",
       "Buell County Park",
     ];
-    for (const [i, locality] of places.entries()) {
-      const id = await insertCleanSample(conn, {
-        locality: `'${locality}'`,
-        sample_number: `'n${i}'`,
-      });
-      expect(await findings(id), locality).toEqual([]);
-    }
+    for (const s of places) expect(await isStreet(s), s).toBe(false);
   });
 
   // What "ends its phrase" allows either side of the anchor: a comma ends a
   // phrase the way the end of the string does, and a directional or a road
   // number after the suffix is still part of the address.
   test("a comma ends a phrase, and a directional or road number does not", async () => {
-    const streets = ["NW Harrison Blvd, Corvallis", "Salem, Vista Ave SE", "BLM Rd 39-6-36"];
-    for (const [i, locality] of streets.entries()) {
-      const id = await insertCleanSample(conn, {
-        locality: `'${locality}'`,
-        sample_number: `'a${i}'`,
-      });
-      const details = (await findings(id)).find((f) => f.rule === "locality_format")?.details ?? "";
-      expect(details, locality).toContain("looks like a street address");
+    for (const s of ["NW Harrison Blvd, Corvallis", "Salem, Vista Ave SE", "BLM Rd 39-6-36"]) {
+      expect(await isStreet(s), s).toBe(true);
     }
   });
 
   // DuckDB compiles a regex once when the pattern is a literal and once PER
-  // ROW when it is anything else, so the shared predicate is a macro (which
-  // the binder expands into a literal) and not the one-row view a shared
+  // ROW when it is anything else, so the predicate is a macro (which the
+  // binder expands into a literal) and not the one-row view a shared
   // constant would otherwise be. Reading it out of a view cost 1.1 s over
-  // the dev store's 67,304 localities against 18 ms — and every QC read in
-  // the app goes through this union. A timing assertion would be flaky, so
-  // what is pinned is the spelling that makes it fast (ADR 0001, beeline-5bm).
-  test("both readers reach the predicate through the macro, not a subquery", async () => {
-    const bodies = (await rows(
-      conn,
-      `SELECT view_name, sql FROM duckdb_views()
-       WHERE view_name IN ('qc_rule_locality_format', 'observation_locality')
-       ORDER BY view_name`,
-    )) as [string, string][];
-    expect(bodies.map(([name]) => name)).toEqual(["observation_locality", "qc_rule_locality_format"]);
-    for (const [name, sql] of bodies) {
-      expect(sql, name).toContain("locality_street_suffix_pattern()");
-      expect(sql, name).not.toContain("FROM locality_street_suffix_pattern");
-    }
+  // the dev store's 67,304 localities against 18 ms. A timing assertion
+  // would be flaky, so what is pinned is the spelling that makes it fast
+  // (ADR 0001, beeline-5bm).
+  test("minting reaches the predicate through the macro, not a subquery", async () => {
+    const [[sql]] = (await rows(conn, `SELECT sql FROM duckdb_views() WHERE view_name = 'observation_locality'`)) as [[string]];
+    expect(sql).toContain("locality_street_suffix_pattern()");
+    expect(sql).not.toContain("FROM locality_street_suffix_pattern");
   });
 
   test("parts from the reference implementation only where a suffix does not end its phrase", async () => {

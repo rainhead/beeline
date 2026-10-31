@@ -35,7 +35,7 @@ async function person(conn: DuckDBConnection, name: string, login: string, userI
 type Who = "alice" | "bob" | "sam";
 const LOGINS: Record<Who, string> = { alice: "alice", bob: "bob", sam: "samstaff" };
 
-/** Alice's iNat-linked sample, with a street address for a locality and a suggestion beside it. */
+/** Alice's iNat-linked sample, with a street address too long for a label as its locality, and a suggestion beside it. */
 async function setup() {
   const { instance, conn } = await createMemoryDb();
   const ids = {

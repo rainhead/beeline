@@ -2104,7 +2104,7 @@ export const en = {
     duplicate_sample_number:
       "Each sample has its own number, and this one is on more than one of your samples that day. Renumber all but one of their observations on iNaturalist; until their labels print, the samples follow.",
     count_mismatch:
-      "Your iNaturalist observation and this sample disagree about how many specimens were collected. Until labels print, the sample takes the observation's count, so this means the count on the observation is not a number of specimens: zero, less, or not a number at all. Once labels have printed, the record keeps the count its labels were printed for.",
+      "Your iNaturalist observation and this sample disagree about how many specimens were collected. Until labels print, the sample takes the observation's count whenever the observation is still a collection record: a sample number, a date, and a count of one or more. So either the count on the observation is not one (zero, less, or not a number), or the observation has lost its sample number or date. Once labels have printed, the record keeps the count its labels were printed for.",
     count_below_printed:
       "The specimen count is now lower than the number of labels already printed for this sample. Nothing to fix — you will have a few labels left over to discard.",
     within_sample_disagreement:

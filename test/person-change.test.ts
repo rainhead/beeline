@@ -45,12 +45,10 @@ const promotion = { source: "legacy_promotion" } as const;
 
 /** One person's history, asked the way the app asks it: through the store. */
 async function history(person: { ref: string; altRef: string | null }) {
-  const { names } = await readPersonStates(duckdbReader(conn));
+  const store = await readPersonStates(duckdbReader(conn));
   const fields = Object.fromEntries(CHANGE_FIELDS.map((f) => [f, ""])) as Record<ChangeField, string>;
-  const state = [...(await readPersonStates(duckdbReader(conn))).states.values()].find(
-    (s) => s.ref === person.ref,
-  ) ?? { ...person, fields };
-  return historyFor(await readChanges(path), names, state);
+  const state = [...store.states.values()].find((s) => s.ref === person.ref) ?? { ...person, fields };
+  return historyFor(await readChanges(path), store, state);
 }
 
 /** The log as (ref, field, old, new) tuples, in the order it was written. */
@@ -404,6 +402,72 @@ describe("recording what a pass over the store found", () => {
       ["name:Ada Collector", "display_name", "", "Ada Collector"],
     ]);
   });
+
+  it("does not hand an accountless person's history to a newcomer who shares her name", async () => {
+    // Ada has no account, so when Adele arrives under the same display name
+    // nothing in the store names Ada any more and she cannot claim her own
+    // history. Adele, referenced by her account, reaches it by name. Two
+    // people carry that name, so the name cannot say which of them the
+    // history belongs to — and awarding it to the one who happens to be
+    // referenceable records "Ada was bound to 222", which never happened.
+    await add(`INSERT INTO person (entity_id, display_name, given_name) VALUES (1, 'Ada Collector', 'Ada')`);
+    await record(promotion);
+
+    await add(`INSERT INTO person (entity_id, display_name, given_name) VALUES (2, 'Ada Collector', 'Adele')`);
+    await add(`INSERT INTO inat_account VALUES (2, 222, 'adele')`);
+    const pass = await record(promotion);
+
+    expect(pass.contested).toBeGreaterThan(0);
+    expect((await logged()).filter((r) => r[3] === "222" || r[3] === "Adele")).toEqual([]);
+    const adele = await history({ ref: "inat:222", altRef: "name:Ada Collector" });
+    expect(adele.map((c) => c.new_value)).not.toContain("Ada");
+    expect((await record(promotion)).appended).toBe(0);
+  });
+
+  it("does not show a person a history whose account somebody else still holds", async () => {
+    // A rebuild respells Mary, and an unrelated Mary Smith with an account of
+    // her own arrives on the vacated name. A full pass refuses the newcomer
+    // that history, because the real Mary still holds the account it records
+    // (the test above this one). Her page asks the same question about one
+    // person at a time, and must get the same answer.
+    await add(`INSERT INTO person (entity_id, display_name, given_name) VALUES (1, 'Mary Smith', 'Mary')`);
+    await add(`INSERT INTO inat_account VALUES (1, 555, 'msmith')`);
+    await record(promotion);
+
+    await add(`UPDATE person SET display_name = 'Mary A Smith' WHERE entity_id = 1`);
+    await add(`INSERT INTO person (entity_id, display_name, given_name) VALUES (2, 'Mary Smith', 'Marion')`);
+    await add(`INSERT INTO inat_account VALUES (2, 666, 'marion')`);
+    const pass = await record(promotion);
+    expect(pass.contested).toBeGreaterThan(0);
+
+    const marion = await history({ ref: "name:Mary Smith", altRef: "inat:666" });
+    expect(marion.map((c) => c.new_value)).not.toContain("555");
+    expect(marion.map((c) => c.new_value)).not.toContain("Mary");
+  });
+
+  it("records nothing, not a second arrival, for a person whose own reference it holds but cannot confirm", async () => {
+    // Ada is known by her account, because a namesake shares her name. She
+    // is renamed to Cy Netter, and a second Cy Netter exists, so the account
+    // still names her. The pass refuses the exact hit — the name the log
+    // last recorded for that account is still carried by somebody — and
+    // then recorded her as a NEW person under the very reference it had just
+    // refused: "account bound from nothing" beside the entry that bound it,
+    // and the rename hidden as an arrival. What cannot be attributed is
+    // recorded as nothing (ADR 0007).
+    await add(`INSERT INTO person (entity_id, display_name, given_name) VALUES
+                 (1, 'Ada Collector', 'Ada'), (2, 'Ada Collector', 'Adele')`);
+    await add(`INSERT INTO inat_account VALUES (1, 111, 'ada')`);
+    await record(promotion);
+
+    await add(`UPDATE person SET display_name = 'Cy Netter' WHERE entity_id = 1`);
+    await add(`INSERT INTO person (entity_id, display_name) VALUES (3, 'Cy Netter')`);
+    const pass = await record(promotion);
+
+    expect(pass.contested).toBeGreaterThan(0);
+    const arrivals = (await logged()).filter((r) => r[0] === "inat:111" && r[1] === "inat_user_id");
+    expect(arrivals).toEqual([["inat:111", "inat_user_id", "", "111"]]);
+    expect((await record(promotion)).appended).toBe(0);
+  });
 });
 
 describe("a rename moves the reference, and the history goes with it", () => {
@@ -441,7 +505,8 @@ describe("a rename moves the reference, and the history goes with it", () => {
       renamed,
     ];
     const fields = Object.fromEntries(CHANGE_FIELDS.map((f) => [f, ""])) as Record<ChangeField, string>;
-    const found = historyFor(changes, new Set(["Ada Collector-Smith"]), {
+    const store = { names: new Set(["Ada Collector-Smith"]), shared: new Set<string>(), holders: new Map<string, string>() };
+    const found = historyFor(changes, store, {
       ref: "name:Ada Collector-Smith",
       altRef: null,
       fields: { ...fields, display_name: "Ada Collector-Smith" },

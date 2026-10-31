@@ -335,6 +335,31 @@ describe("a corrected reference moves, and the history follows", () => {
     ).toEqual(["sample_number"]);
   });
 
+  it("a narrowed pass records nothing for a sample renumbered onto a triple another sample holds", async () => {
+    // Ada's samples 1 and 2 on one day. Staff renumber 2 to 1, which the
+    // store allows and flags as a duplicate. The edit screen's one-sample
+    // pass cannot see sample 1 beside it, so it matched the edited sample
+    // directly to sample 1's row and recorded the edit as changes to sample
+    // 1's history — then restated that row with the other sample's state,
+    // so the pass after the duplicate is resolved reports sample 1 changing
+    // back to what it always was. A duplicate is recorded as nothing.
+    const one = await insertCleanSample(conn, { locality: "'Corvallis'" });
+    const two = await insertCleanSample(conn, { sample_number: "'2'", locality: "'Alsea'" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '1' WHERE entity_id = ${two}`);
+    const narrowed = await record({ source: "app", author: "ada", where: `s.entity_id = ${two}` });
+    expect(narrowed.appended).toBe(0);
+    expect(narrowed.colliding).toBeGreaterThan(0);
+    const row = (await readSnapshot(paths.state))!.get(
+      `name:Ada Collector\u001f1\u001f${currentSeasonDate(7, 14)}`,
+    );
+    expect(row?.fields.locality).toBe("Corvallis");
+    // Resolving the duplicate leaves sample 1's history as it was.
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${two}`);
+    expect(await record()).toMatchObject({ appended: 0, colliding: 0 });
+    void one;
+  });
+
   const inOrder = (reverse: boolean) => {
     const reader = read();
     return (async (sql: string) => {
@@ -612,6 +637,34 @@ describe("a number-and-date coincidence is not an identity", () => {
     // under his own.
     expect(entries.some((e) => e.collector === "name:Ada Collector" && e.author === "" &&
                                e.field === "sample_number" && e.new_value === "7")).toBe(false);
+  });
+
+  it("a row whose link a colliding sample still holds cannot be claimed by a matching pair either", async () => {
+    // Ada's sample 3 is linked to observation 77. Bo has two samples both
+    // numbered 3 on the same day, a live duplicate the pass records as
+    // nothing. One of Bo's is corrected to Ada, so it now collides with
+    // hers instead and the other stands alone on Bo's number. That one
+    // reaches Ada's row by number and date. Ada is still here and still
+    // holds 77 — but on a shared triple, so the pass could not list her
+    // among the live collectors or the observation holders, and handed her
+    // row to Bo's sample: "unlinked from 77, collector Ada -> Bo", about a
+    // sample that never carried 77.
+    await conn.run("INSERT INTO person (display_name) VALUES ('Bo Collector')");
+    const bo = "(SELECT entity_id FROM person WHERE display_name = 'Bo Collector')";
+    const ada = "(SELECT entity_id FROM person WHERE display_name = 'Ada Collector')";
+    await insertCleanSample(conn, { sample_number: "'3'", inat_observation_id: "77" }, null);
+    const moved = await insertCleanSample(conn, { sample_number: "'3'", collector_id: bo }, null);
+    await insertCleanSample(conn, { sample_number: "'3'", collector_id: bo }, null);
+    expect(await record()).toMatchObject({ baselined: true, colliding: 2 });
+
+    await conn.run(`UPDATE sample_collector SET person_id = ${ada} WHERE sample_id = ${moved}`);
+    const pass = await record();
+    expect(pass.colliding).toBe(2);
+
+    const entries = await readSampleChanges(paths.log);
+    expect(entries.filter((e) => e.collector === "name:Ada Collector")).toEqual([]);
+    expect(entries.filter((e) => e.field === "observation" && e.old_value === "77")).toEqual([]);
+    expect((await record()).appended).toBe(0);
   });
 });
 

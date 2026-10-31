@@ -236,6 +236,20 @@ export const SAMPLE_STATE_SQL = `
   LEFT JOIN atlas atl ON atl.entity_id = sa.atlas_id
   LEFT JOIN person_ref apr ON apr.entity_id = sa.assigned_by`;
 
+/**
+ * How many samples the store derives one triple for. A pass narrowed to one
+ * sample sees one row and cannot tell a live duplicate_sample_number from an
+ * ordinary sample, so it asks this of the whole store before matching; two
+ * samples one reference names are recorded as nothing (SampleStates.colliding).
+ */
+export const tripleCountSql = (t: { collector: string; sample_number: string; date_start: string }): string => {
+  const quoted = (v: string) => `'${v.replaceAll("'", "''")}'`;
+  return (
+    `SELECT count(*) AS n FROM (${SAMPLE_STATE_SQL}) t\n` +
+    `  WHERE t.collector = ${quoted(t.collector)} AND t.sample_number = ${quoted(t.sample_number)} AND t.date_start = ${quoted(t.date_start)}`
+  );
+};
+
 export interface SampleStates {
   /** Keyed by triple. */
   states: Map<string, SampleState>;
@@ -260,7 +274,14 @@ export interface SampleStates {
    */
   suppressedKeys: Set<string>;
   suppressedObservations: Set<string>;
-    /** Samples whose collector no reference names: unrecordable, so counted. */
+  /**
+   * Every collector reference the store answers to — the colliding samples'
+   * included, which `states` leaves out. A collector on a shared triple is
+   * still here, and their rows are no more somebody else's to claim on a
+   * number-and-date coincidence than a collector the pass can speak for.
+   */
+  liveCollectors: Set<string>;
+  /** Samples whose collector no reference names: unrecordable, so counted. */
   unreferenceable: number;
   /**
    * Samples sharing one triple — a live duplicate_sample_number. The
@@ -279,6 +300,7 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
   const states = new Map<string, SampleState>();
   const suppressedKeys = new Set<string>();
   const suppressedObservations = new Set<string>();
+  const liveCollectors = new Set<string>();
   let unreferenceable = 0;
   for (const row of rows) {
     const text = (k: string) => String(row[k] ?? "");
@@ -288,6 +310,7 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
       if (text("observation") !== "") suppressedObservations.add(text("observation"));
       continue;
     }
+    liveCollectors.add(collector);
     const state: SampleState = {
       collector,
       sample_number: text("sample_number"),
@@ -318,7 +341,7 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
     if (collector === "") continue;
     if (suppressedKeys.has(keyOf(collector, String(row.sample_number ?? ""), String(row.date_start ?? "")))) colliding++;
   }
-  return { states, suppressedKeys, suppressedObservations, unreferenceable, colliding };
+  return { states, suppressedKeys, suppressedObservations, liveCollectors, unreferenceable, colliding };
 }
 
 // ── The snapshot ─────────────────────────────────────────────────────────
@@ -609,7 +632,8 @@ export function matchSamples(
   {
     directOnly = false,
     suppressedObservations = new Set<string>(),
-  }: { directOnly?: boolean; suppressedObservations?: ReadonlySet<string> } = {},
+    liveCollectors: alsoLive = new Set<string>(),
+  }: { directOnly?: boolean; suppressedObservations?: ReadonlySet<string>; liveCollectors?: ReadonlySet<string> } = {},
 ): SampleMatching {
   const rows = [...snapshot.values()];
   const byObservation = valueIndex(rows, (s) => s.fields.observation);
@@ -617,7 +641,9 @@ export function matchSamples(
   // Which store sample holds each observation now — the store's answer, not
   // the snapshot's, because the snapshot keeps whatever a sample last held.
   const holder = new Map<string, SampleState>();
-  const liveCollectors = new Set<string>();
+  // The collectors the store answers to: these states' and, from the caller,
+  // the colliding samples' that `states` cannot carry.
+  const liveCollectors = new Set<string>(alsoLive);
   for (const state of states.values()) {
     if (state.fields.observation !== "") holder.set(state.fields.observation, state);
     liveCollectors.add(state.collector);
@@ -675,9 +701,13 @@ export function matchSamples(
     }
     const byPair = byNumberDate.get(`${state.sample_number}${SEP}${state.date_start}`);
     if (byPair == null) continue;
-    // The refusal described above: the row's own link points at somebody else.
+    // The refusal described above: the row's own link points at somebody
+    // else — a sample this pass can speak for, or one it cannot (on a shared
+    // triple, or with no collector reference), which is still evidence that
+    // this sample is not the row's.
     const linkedTo = byPair.fields.observation === "" ? undefined : holder.get(byPair.fields.observation);
     if (linkedTo !== undefined && linkedTo !== state) continue;
+    if (byPair.fields.observation !== "" && suppressedObservations.has(byPair.fields.observation)) continue;
     // The person log's gate, ported: a collector reference the store still
     // answers to means that collector is still here, and their row is not
     // somebody else's to claim on a number-and-date coincidence — however
@@ -830,8 +860,26 @@ async function recordPass(
   paths: SampleLogPaths,
   opts: SampleRecordOptions,
 ): Promise<SampleRecordResult> {
-  const { states, suppressedKeys, suppressedObservations, unreferenceable, colliding } =
-    await readSampleStates(read, opts.where ?? "");
+  const found = await readSampleStates(read, opts.where ?? "");
+  const { states, suppressedKeys, suppressedObservations, liveCollectors, unreferenceable } = found;
+  let { colliding } = found;
+  // A narrowed pass holds one sample and cannot see a second one on the same
+  // triple. Granted the direct hit, it would file this sample's edit as
+  // changes to the other's history and restate the row with this sample's
+  // state, so that resolving the duplicate later reports the other sample
+  // changing back to what it always was. Ask the store, and suppress the
+  // sample as a full pass would.
+  if (opts.where != null) {
+    for (const [key, state] of [...states]) {
+      const [row] = await read(tripleCountSql(state));
+      const n = Number(row?.n ?? 1);
+      if (n <= 1) continue;
+      states.delete(key);
+      suppressedKeys.add(key);
+      if (state.fields.observation !== "") suppressedObservations.add(state.fields.observation);
+      colliding += n;
+    }
+  }
   const snapshot = await readSnapshot(paths.state);
 
   // First pass: the store as it stands is the baseline, and nothing is an
@@ -850,6 +898,7 @@ async function recordPass(
   const { matched, contested, contestedRows } = matchSamples(snapshot, states, {
     directOnly: opts.where != null,
     suppressedObservations,
+    liveCollectors,
   });
 
   // A snapshot this store does not answer to is another store's statement,

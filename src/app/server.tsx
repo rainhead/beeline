@@ -293,7 +293,7 @@ export function createApp({
   // comparable (src/person-change.ts).
   const stateOf = async (personId: number) => {
     const read = await readPersonStates(kyselyReader(db), `p.entity_id = ${Number(personId)}`);
-    return { state: [...read.states.values()][0], names: read.names };
+    return { state: [...read.states.values()][0], names: read.names, shared: read.shared, holders: read.holders };
   };
   // Admin surface (/jobs, /people): everyone in development, and elsewhere
   // whoever holds a person_admin row — the roster moved into the store so the
@@ -1746,8 +1746,8 @@ export function createApp({
 
   /** One person's change history, as the log holds it (beeline-o22). */
   const history = async (personId: number) => {
-    const { state, names } = await stateOf(personId);
-    return historyFor(await readChanges(changesPath), names, state);
+    const { state, ...store } = await stateOf(personId);
+    return historyFor(await readChanges(changesPath), store, state);
   };
 
   const showPerson = async (c: Context<AppEnv>, notice?: string, problem?: string) => {
@@ -1858,9 +1858,9 @@ export function createApp({
       await db.deleteFrom("inat_user_orcid").where("inat_user_id", "=", uid).execute();
       if (orcid !== null) await db.insertInto("inat_user_orcid").values({ inat_user_id: uid, orcid }).execute();
       if (account === undefined || before === undefined) return;
-      const { state: after, names } = await stateOf(account.person_id);
+      const { state: after, ...store } = await stateOf(account.person_id);
       if (after === undefined) return;
-      const seen = knownPerson({ known: lastKnown(await readChanges(changesPath)), names }, before);
+      const seen = knownPerson({ known: lastKnown(await readChanges(changesPath)), ...store }, before);
       await appendChanges(changesPath, diffPerson(seen?.ref ?? before.ref, before, after, { source: "sign_in" }));
     });
 
@@ -1907,8 +1907,10 @@ export function createApp({
     // are still here; it is the log that can no longer name them, and
     // diffing against nothing would record their name and account as
     // *cleared*, over a staff member's own login. Say so instead.
-    const { state: after, names } =
-      afterId === null ? { state: undefined, names: new Set<string>() } : await stateOf(afterId);
+    const { state: after, ...store } =
+      afterId === null
+        ? { state: undefined, names: new Set<string>(), shared: new Set<string>(), holders: new Map<string, string>() }
+        : await stateOf(afterId);
     if (after === undefined) {
       console.warn(
         `not recording: '${d.ref}' now shares a display name with somebody else and holds no ` +
@@ -1920,7 +1922,7 @@ export function createApp({
       // reference instead put an edit made during a namesake era under a
       // second key, and the next pass then diffed the whole person against
       // that half-record and re-reported fields nobody had touched.
-      const seen = knownPerson({ known: lastKnown(await readChanges(changesPath)), names }, before ?? after);
+      const seen = knownPerson({ known: lastKnown(await readChanges(changesPath)), ...store }, before ?? after);
       await appendChanges(
         changesPath,
         diffPerson(seen?.ref ?? before?.ref ?? d.ref, before, after, {

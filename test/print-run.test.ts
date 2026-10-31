@@ -219,6 +219,32 @@ describe("preparing a run", () => {
   });
 });
 
+describe("the pending count says what the freeze will do", () => {
+  it("counts the open places at or below the count, after a count is lowered under an open run", async () => {
+    // Found by a property-based test (beeline-ni5m.13): freeze 1..3, raise
+    // the count to 5, freeze 4 and 5, cancel the first run, lower the count
+    // to 4. "Count minus individuated" said 2 pending; the freeze fills
+    // every open place in 1..count, so it mints 3, for places 1, 2 and 3.
+    // schema/155 promises the Prepare screen and the freeze cannot disagree,
+    // so the view counts as the freeze does. Specimen 5 stays individuated
+    // above the count, which is count_below_printed's to name.
+    const sample = await insertCleanSample(conn, { collector_id: String(ash), specimen_count: "3" });
+    const first = (await prepareRun(conn, { atlasId: null, personId: ash, now: NOW }))!;
+    await conn.run(`UPDATE sample SET specimen_count = 5 WHERE entity_id = ${sample}`);
+    expect(await rows(conn, `SELECT pending_count FROM pending_print_sample`)).toEqual([[2]]);
+    await prepareRun(conn, { atlasId: null, personId: ash, now: LATER });
+    await cancelRun(conn, first.printRunId, { personId: birch, now: LATER, note: "wrong week" });
+    await conn.run(`UPDATE sample SET specimen_count = 4 WHERE entity_id = ${sample}`);
+    expect(await rows(conn, `SELECT specimen_number FROM individuated_specimen ORDER BY 1`)).toEqual([[4], [5]]);
+    expect(await rows(conn, `SELECT pending_count FROM pending_print_sample`)).toEqual([[3]]);
+    const third = await prepareRun(conn, { atlasId: null, personId: ash, now: new Date("2026-09-21T18:00:00Z") });
+    expect(third).toMatchObject({ labels: 3, samples: 1 });
+    expect(await rows(conn, `SELECT specimen_number FROM individuated_specimen ORDER BY 1`)).toEqual([[1], [2], [3], [4], [5]]);
+    expect(await count("SELECT count(*) FROM pending_print_sample")).toBe(0);
+    expect(await rows(conn, `SELECT details FROM qc_rule_count_below_printed`)).toEqual([["5 specimens printed but count is 4"]]);
+  });
+});
+
 describe("moving a run through its states", () => {
   let runId: number;
   beforeEach(async () => {

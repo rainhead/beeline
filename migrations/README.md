@@ -32,8 +32,8 @@ step of its own.
 because the production store is built fresh from `schema/` at cutover and a
 referenced table cannot be restructured on a deployed store: two columns
 nothing read were dropped, `atlas.inat_place_id` and `qc_rule.instructions`
-(beeline-ni5m.4); and the `atlas` table was folded into `program`, becoming a
-view of the programs `atlas_region` names, with `person_membership` keyed by
+(beeline-ni5m.4); and the `atlas` table was folded into `program`, with every
+`atlas_id` column referencing `program` and `person_membership` keyed by
 `program_id` in place of a kind and a nullable atlas (beeline-ni5m.2). A
 sandbox store built earlier shows all of it as drift in `--check` until it is
 reseeded, correctly.

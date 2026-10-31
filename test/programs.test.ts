@@ -25,7 +25,7 @@ const unusedInat: InatClient = {
 let instance: DuckDBInstance;
 let conn: DuckDBConnection;
 
-const atlas = (code: string) => `(SELECT entity_id FROM atlas WHERE code = '${code}')`;
+const atlas = (code: string) => `(SELECT entity_id FROM program WHERE code = '${code}')`;
 const program = (code: string) => `(SELECT entity_id FROM program WHERE code = '${code}')`;
 
 beforeEach(async () => {

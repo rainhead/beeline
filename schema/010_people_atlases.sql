@@ -57,13 +57,17 @@ COMMENT ON COLUMN inat_user_orcid.fetched_at IS 'When iNaturalist last reported 
 -- Programs (beeline-7c1; atlas folded in 2026-10-31, beeline-ni5m.2). A
 -- program is a body people take part in that governs what they collect
 -- through it (CONTEXT.md): each atlas, Master Melittology itself, and the
--- BLM surveys. AN ATLAS IS A PROGRAM WITH A REGION: the six member atlases
--- are the programs atlas_region names, and the view `atlas` (schema/104) is
--- that definition in SQL. So every atlas-shaped fact — the region, who
--- prints, the taxon-obscured answer, a sample's atlas, a person's
--- membership, a print run's scope — REFERENCES program and READS atlas; the
--- columns keep the name atlas_id, because the word still means a program
--- with a region, and the view is what says which programs those are.
+-- BLM surveys. An atlas is a program that atlas_region assigns states or
+-- provinces to, which is how a sample is filed under it by where it fell.
+-- That is a fact about atlas_region and not a kind of program: nothing in
+-- the store names "the atlases" (Peter, 2026-10-31), because a program can
+-- own places without being one — the refuge program (beeline-8zlh) will own
+-- its refuges, which are areas (schema/038) inside the atlases. So every
+-- atlas-shaped fact — the region, who prints, the taxon-obscured answer, a
+-- sample's atlas, a person's membership, a print run's scope — references
+-- program; the columns keep the name atlas_id because the word is the
+-- domain's for the program a sample is filed under, and a reader that needs
+-- "the programs with states assigned" asks atlas_region.
 --
 -- Until 2026-10-31 atlas was a table of its own and program sat beside it
 -- pointing at the atlas it was, "the generalisation arriving one fact at a
@@ -75,7 +79,7 @@ CREATE TABLE program (
   code      TEXT UNIQUE NOT NULL,
   name      TEXT NOT NULL
 );
-COMMENT ON TABLE program IS 'A program people take part in: each atlas, Master Melittology itself, and the BLM surveys. An atlas is a program with a region (atlas_region; the view atlas lists them). Samples are assigned to atlases by geography, never by pipeline or iNat project. The overlay names a program by its code.';
+COMMENT ON TABLE program IS 'A program people take part in: each atlas, Master Melittology itself, and the BLM surveys. An atlas is a program atlas_region assigns states or provinces to; samples are filed under it by geography, never by pipeline or iNat project. A program that owns places is not thereby an atlas. The overlay names a program by its code.';
 COMMENT ON COLUMN program.code IS 'How the person overlay names the program (fields home_atlas and leads), the listings scope an atlas''s records fall under, and the key of the atlas identity in src/app/theme/atlas.ts, and so stable: an atlas''s is its atlas code, then MM and BLM. Letters and digits only, which is what lets a set of them be written joined with semicolons.';
 COMMENT ON COLUMN program.name IS 'The name staff see.';
 
@@ -104,7 +108,7 @@ CREATE TABLE atlas_printing (
   atlas_id INTEGER PRIMARY KEY REFERENCES program(entity_id)
 );
 COMMENT ON TABLE atlas_printing IS 'Atlases that print their own labels; presence is the flag. Empty today: Oregon prints for every atlas. An unscoped print run freezes the samples of every atlas NOT here (print_scope_sample), and an atlas here gets labels only from a run scoped to it. Only an atlas here can be a run''s scope: the rest are the program''s to print, and src/print-run.ts refuses a run scoped to one.';
-COMMENT ON COLUMN atlas_printing.atlas_id IS 'A program with a region (the view atlas).';
+COMMENT ON COLUMN atlas_printing.atlas_id IS 'The program whose labels these are: one atlas_region assigns states to.';
 
 -- Which atlases have said their labels may carry the true coordinates of a
 -- record iNaturalist obscures for its taxon: a row is the answer, the way an
@@ -123,7 +127,7 @@ CREATE TABLE atlas_taxon_obscured_printing (
   source     TEXT NOT NULL
 );
 COMMENT ON TABLE atlas_taxon_obscured_printing IS 'Atlases whose labels may carry the true coordinates of a taxon-obscured record; presence is the answer. An atlas absent here has not answered, and its taxon-obscured samples do not print (qc_rule_taxon_obscured_awaiting_atlas).';
-COMMENT ON COLUMN atlas_taxon_obscured_printing.atlas_id IS 'A program with a region (the view atlas).';
+COMMENT ON COLUMN atlas_taxon_obscured_printing.atlas_id IS 'The program that answered: one atlas_region assigns states to.';
 COMMENT ON COLUMN atlas_taxon_obscured_printing.decided_by IS 'Who answered for the atlas, by name.';
 COMMENT ON COLUMN atlas_taxon_obscured_printing.source IS 'Where the answer was given: a link to the comment or message that holds it.';
 
@@ -137,8 +141,10 @@ FROM program WHERE code = 'OBA';
 
 -- Which atlas covers a state or province — the mapping legacy promotion used
 -- to carry as a six-way CASE, moved into the schema so it can be queried and
--- so its silences can be told apart (beeline-lcl). This table is also what
--- makes a program an atlas: a program some row here names has a region.
+-- so its silences can be told apart (beeline-lcl). A program some row here
+-- names is what the domain calls an atlas, and this table is the whole of
+-- that fact: the listings' scopes, the print-run scopes and the archives
+-- read it to know which programs samples are filed under by state.
 --
 -- A row with a NULL atlas_id is the point of the table: it says "we know this
 -- region and no member atlas covers it", which is what 632 samples in Nevada,
@@ -164,7 +170,7 @@ CREATE TABLE atlas_region (
 -- ALTER TABLE ADD CONSTRAINT), and two stores that differ in how they spell
 -- the same rule are exactly what ADR 0006 exists to prevent.
 CREATE UNIQUE INDEX atlas_region_inat_place_id_key ON atlas_region (inat_place_id);
-COMMENT ON TABLE atlas_region IS 'State/province → the member atlas covering it, for the US and Canada. Geography assigns samples to atlases (schema/030); this is the lookup it does, and the programs it names are the atlases (the view atlas). Deliberately complete rather than data-shaped: a region absent from this table means "unrecognised", so listing only the six would make every other real place look like a typo.';
+COMMENT ON TABLE atlas_region IS 'State/province → the member atlas covering it, for the US and Canada. Geography assigns samples to atlases (schema/030); this is the lookup it does, and the programs it names are the atlases. Deliberately complete rather than data-shaped: a region absent from this table means "unrecognised", so listing only the six would make every other real place look like a typo.';
 COMMENT ON COLUMN atlas_region.state_province IS 'The two-letter USPS or Canada Post code, exactly as a sample carries it — this is the join key, so the format is load-bearing: qc_rule_place_unrecognised fires on anything that does not match a row here.';
 COMMENT ON COLUMN atlas_region.country IS 'ISO 3166-1 alpha-3, matching the ''USA'' the records already carry. Not part of the key — see the note above — but the truth a sample''s own country is checked against.';
 COMMENT ON COLUMN atlas_region.atlas_id IS 'The program whose region this is, which makes that program an atlas. Null ⇒ no member atlas covers this region. That is an answer, not a gap: these are the records that belong to the umbrella program itself.';
@@ -218,10 +224,10 @@ LEFT JOIN program a ON a.code = r.atlas_code;
 -- row per answer and never a nullable column on person. Until 2026-10-31 the
 -- row carried a kind ('atlas' or 'program') beside a nullable atlas id; with
 -- atlases folded into programs the kind IS the program: an atlas's row
--- names a program with a region, and the program-only member's names MM.
--- The person overlay still spells the second as `program` (field
--- home_atlas), and the roster and the change log still read the two shapes
--- off whether the program has a region.
+-- names that atlas, and the program-only member's names MM. The person
+-- overlay still spells the second as `program` (field home_atlas), and the
+-- roster and the change log still show it that way, so no recorded value
+-- changed.
 --
 -- Who administers a program-only member is a separate fact, deliberately not
 -- modelled: OBA staff do, and there is no second administering body to tell
@@ -231,7 +237,7 @@ CREATE TABLE person_membership (
   program_id INTEGER NOT NULL REFERENCES program(entity_id)
 );
 COMMENT ON TABLE person_membership IS 'Where a person belongs: a member atlas, or Master Melittology itself (program MM) with no atlas. A row is an answer somebody gave; absent = never asked, which is the honest default — no row is not the same as OBA, and it is not the same as "no atlas applies" either.';
-COMMENT ON COLUMN person_membership.program_id IS 'The program: an atlas (a program with a region) or MM. Set by staff, never inferred from where their samples landed — a Washington volunteer collecting in Oregon is still WaBA. Taking part in a program that is neither (the BLM surveys) is beeline-85m.4''s to shape, and this column is where it would land.';
+COMMENT ON COLUMN person_membership.program_id IS 'The program: an atlas, or MM. Set by staff, never inferred from where their samples landed — a Washington volunteer collecting in Oregon is still WaBA. Taking part in a program that is neither (the BLM surveys) is beeline-85m.4''s to shape, and this column is where it would land.';
 
 -- Who may use the admin surface. A table rather than a config array so the
 -- roster is editable by the people who own it (beeline-eft added five names

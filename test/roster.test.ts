@@ -188,7 +188,7 @@ describe("the roster screen", () => {
 
   it("filters by where they belong, and to the admins", async () => {
     await ctx.conn.run(`INSERT INTO person_membership (person_id, program_id)
-                        VALUES (1, (SELECT entity_id FROM atlas WHERE code = 'OBA')), (2, (SELECT entity_id FROM program WHERE code = 'MM'))`);
+                        VALUES (1, (SELECT entity_id FROM program WHERE code = 'OBA')), (2, (SELECT entity_id FROM program WHERE code = 'MM'))`);
     const oba = await (await ctx.app.request("/people?member=OBA")).text();
     expect(oba).toContain("Ada Collector");
     expect(oba).not.toContain("Bo Netter");
@@ -585,7 +585,7 @@ describe("the roster screen", () => {
     await post(ctx.app, "/people/1/membership", { home_atlas: "WaBA", reason: "" });
     const home = await ctx.db
       .selectFrom("person_membership as pm")
-      .innerJoin("atlas as a", "a.entity_id", "pm.program_id")
+      .innerJoin("program as a", "a.entity_id", "pm.program_id")
       .where("pm.person_id", "=", 1)
       .select("a.code")
       .executeTakeFirst();
@@ -595,7 +595,7 @@ describe("the roster screen", () => {
       '<img class="atlas-mark" src="/static/atlas/WaBA.jpg" alt="Washington Bee Atlas"',
     );
     const bad = await post(ctx.app, "/people/1/membership", { home_atlas: "ZZ", reason: "" });
-    expect(await bad.text()).toContain("no atlas with code");
+    expect(await bad.text()).toContain("no program with code");
   });
 
   // Absence has to keep meaning one thing: clearing is "nobody has said",
@@ -822,7 +822,7 @@ describe("recording who leads a program", () => {
   it("knows every atlas as a program, and the two programs that are not atlases", async () => {
     // An atlas is a program with a region, which the view atlas lists.
     const programs = await (
-      await ctx.conn.run(`SELECT code, EXISTS (SELECT 1 FROM atlas a WHERE a.entity_id = program.entity_id) FROM program ORDER BY code`)
+      await ctx.conn.run(`SELECT code, EXISTS (SELECT 1 FROM atlas_region r WHERE r.atlas_id = program.entity_id) FROM program ORDER BY code`)
     ).getRows();
     expect(programs).toEqual([
       ["BC", true],

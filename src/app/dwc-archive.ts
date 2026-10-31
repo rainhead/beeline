@@ -1,5 +1,5 @@
 import { Zip, ZipDeflate } from "fflate";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import {
   dateIdentified,
   identifiedByID,
@@ -89,9 +89,12 @@ const CATCH_ALL_PROGRAM = "MM";
 export async function programArchives(db: Kysely<Database>): Promise<ProgramArchive[]> {
   const rows = await db
     .selectFrom("program as p")
-    // An atlas is a program with a region (the view atlas, schema/104).
-    .leftJoin("atlas as a", "a.entity_id", "p.entity_id")
-    .select(["p.code", "p.name", "a.code as atlas_code"])
+    // A program has records by geography where atlas_region assigns it states (schema/010).
+    .leftJoin(
+      (eb) => eb.selectFrom("atlas_region").select("atlas_region.atlas_id").distinct().where("atlas_region.atlas_id", "is not", null).as("g"),
+      (join) => join.onRef("g.atlas_id", "=", "p.entity_id"),
+    )
+    .select(["p.code", "p.name", sql<string | null>`CASE WHEN g.atlas_id IS NOT NULL THEN p.code END`.as("atlas_code")])
     .orderBy("p.name")
     .execute();
   return rows.map((r) => ({

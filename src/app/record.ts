@@ -326,7 +326,7 @@ const sampleColumns = (personId: number, reader: Reader) => sql`
 const sampleJoins = (reader: Reader) => sql`
   FROM sample s
   LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
-  LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
+  LEFT JOIN program a ON a.entity_id = sa.atlas_id
   LEFT JOIN ${ownSamplesSql(reader)} own ON own.sample_id = s.entity_id
   LEFT JOIN observation_field seen ON seen.inat_id = s.inat_observation_id
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id

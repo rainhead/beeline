@@ -140,7 +140,7 @@ describe("legacy promotion", () => {
        LEFT JOIN inat_account i ON i.person_id = p.entity_id
        LEFT JOIN sample_primary_collector pc ON pc.person_id = p.entity_id
        LEFT JOIN sample_atlas sa ON sa.sample_id = pc.sample_id
-       LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
+       LEFT JOIN program a ON a.entity_id = sa.atlas_id
        ORDER BY p.display_name`,
     );
     expect(people).toEqual([

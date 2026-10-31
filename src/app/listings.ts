@@ -326,7 +326,15 @@ export interface AtlasOption {
 }
 
 export async function atlasOptions(db: Kysely<Database>): Promise<AtlasOption[]> {
-  return db.selectFrom("atlas").select(["code", "name"]).orderBy("name").execute();
+  // The programs a sample can be filed under by where it fell: those
+  // atlas_region assigns states or provinces to (schema/010). That is what a
+  // listing scope is, so this is a fact about atlas_region and not a named
+  // kind of program.
+  const { rows } = await sql<AtlasOption>`
+    SELECT p.code, p.name FROM program p
+    WHERE EXISTS (SELECT 1 FROM atlas_region r WHERE r.atlas_id = p.entity_id)
+    ORDER BY p.name`.execute(db);
+  return rows;
 }
 
 /**
@@ -586,13 +594,13 @@ const collectedByMember = (member: MemberFilter) =>
       ? sql<boolean>`EXISTS (
           SELECT 1 FROM sample_collector mc
           JOIN person_membership mm ON mm.person_id = mc.person_id
-          WHERE mc.sample_id = s.entity_id
-            AND NOT EXISTS (SELECT 1 FROM atlas ma WHERE ma.entity_id = mm.program_id)
+          JOIN program ma ON ma.entity_id = mm.program_id
+          WHERE mc.sample_id = s.entity_id AND ma.code = 'MM'
         )`
       : sql<boolean>`EXISTS (
           SELECT 1 FROM sample_collector mc
           JOIN person_membership mm ON mm.person_id = mc.person_id
-          JOIN atlas ma ON ma.entity_id = mm.program_id
+          JOIN program ma ON ma.entity_id = mm.program_id
           WHERE mc.sample_id = s.entity_id AND ma.code = ${member}
         )`;
 
@@ -768,7 +776,7 @@ export async function listSamples(
   let base = db
     .selectFrom("sample as s")
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
-    .leftJoin("atlas as a", "a.entity_id", "sa.atlas_id")
+    .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
     // Only `withheld` reads these, and for staff it reads nothing.
     .$if(!reader.staff, (qb) =>
       qb
@@ -941,7 +949,7 @@ export async function listSpecimens(
     .selectFrom("specimen as sp")
     .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
-    .leftJoin("atlas as a", "a.entity_id", "sa.atlas_id")
+    .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
     // Only `withheld` reads these, and for staff it reads nothing.
     .$if(!reader.staff, (qb) =>
       qb

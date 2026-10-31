@@ -233,7 +233,7 @@ export const SAMPLE_STATE_SQL = `
   JOIN person_ref pr ON pr.entity_id = pc.person_id
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id
   LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
-  LEFT JOIN atlas atl ON atl.entity_id = sa.atlas_id
+  LEFT JOIN program atl ON atl.entity_id = sa.atlas_id
   LEFT JOIN person_ref apr ON apr.entity_id = sa.assigned_by`;
 
 /**

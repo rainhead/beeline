@@ -92,15 +92,19 @@ const emptySeason = (season: number): SeasonCounts => ({ season, samples: 0, spe
 
 async function programRows(db: Kysely<Database>, code?: string): Promise<ProgramRow[]> {
   const where = code === undefined ? sql`` : sql`WHERE lower(p.code) = lower(${code})`;
-  // An atlas is a program with a region: the view atlas says which programs
-  // those are (schema/104), so a program that joins it is an atlas and the
-  // joined row is its own.
+  // A program's records by geography are the samples on the states
+  // atlas_region assigns it (schema/010); a program with none has no ground,
+  // and its scope is decided below. atlas_id and atlas_code are the program's
+  // own where it has ground, which is what the rest of this file reads.
   const { rows } = await sql<ProgramRow>`
-    SELECT p.entity_id AS program_id, p.code, p.name, a.entity_id AS atlas_id, a.code AS atlas_code
-    FROM program p LEFT JOIN atlas a ON a.entity_id = p.entity_id
+    SELECT p.entity_id AS program_id, p.code, p.name,
+           CASE WHEN g.atlas_id IS NOT NULL THEN p.entity_id END AS atlas_id,
+           CASE WHEN g.atlas_id IS NOT NULL THEN p.code END AS atlas_code
+    FROM program p
+    LEFT JOIN (SELECT DISTINCT atlas_id FROM atlas_region WHERE atlas_id IS NOT NULL) g ON g.atlas_id = p.entity_id
     ${where}
-    -- The atlases first, then the programs that are not one, each by name.
-    ORDER BY a.entity_id IS NULL, p.name`.execute(db);
+    -- The programs with ground first, then the rest, each by name.
+    ORDER BY g.atlas_id IS NULL, p.name`.execute(db);
   return rows;
 }
 
@@ -121,7 +125,7 @@ async function seasonCounts(db: Kysely<Database>): Promise<Map<string, SeasonCou
       SELECT ss.sample_id, coalesce(a.code, ${OUTSIDE}) AS scope, ss.season
       FROM sample_season ss
       LEFT JOIN sample_atlas sa ON sa.sample_id = ss.sample_id
-      LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
+      LEFT JOIN program a ON a.entity_id = sa.atlas_id
     ),
     specimens AS (SELECT sample_id, count(*) AS n FROM specimen GROUP BY sample_id),
     collectors AS (

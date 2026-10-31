@@ -123,21 +123,31 @@ export async function resolver(conn: DuckDBConnection, overlay: readonly PersonO
       return { id: ids[0]! };
     }
     if (claimed.has(key)) return { problem: `no person named '${key}'`, missing: true };
-    const to = renamedTo.get(key);
-    const reached = new Set<number>();
-    for (const ref of [...(to === undefined ? [] : [`name:${to}`]), ...(renamedFrom.get(key) ?? [])]) {
-      const parsed = parseRef(ref);
-      if (parsed === null) continue;
-      if (parsed.kind === "inat") {
-        const id = byInat.get(parsed.key);
-        if (id !== undefined) reached.add(id);
-        continue;
+    // Backward first: a rename row's own reference names the person it is
+    // about. Forward — whoever now carries the name this one was changed to
+    // — is consulted only when no rename reaches the name, because a
+    // namesake who already had the new name answers it wrongly: Ada renamed
+    // to Eve and then to Bo, beside another Bo, used to land on the other Bo.
+    const through = (refs: readonly string[]): Set<number> => {
+      const reached = new Set<number>();
+      for (const ref of refs) {
+        const parsed = parseRef(ref);
+        if (parsed === null) continue;
+        if (parsed.kind === "inat") {
+          const id = byInat.get(parsed.key);
+          if (id !== undefined) reached.add(id);
+          continue;
+        }
+        if (seen.has(parsed.key)) continue;
+        seen.add(parsed.key);
+        const found = lookup(parsed.key, seen);
+        if ("id" in found) reached.add(found.id);
       }
-      if (seen.has(parsed.key)) continue;
-      seen.add(parsed.key);
-      const found = lookup(parsed.key, seen);
-      if ("id" in found) reached.add(found.id);
-    }
+      return reached;
+    };
+    const to = renamedTo.get(key);
+    const reached = through(renamedFrom.get(key) ?? []);
+    if (reached.size === 0 && to !== undefined) for (const id of through([`name:${to}`])) reached.add(id);
     if (reached.size > 1) return { problem: `'${key}' names ${reached.size} people` };
     if (reached.size === 1) return { id: [...reached][0]! };
     // `missing` rather than just a reason: `create` may act on nobody-of-that-

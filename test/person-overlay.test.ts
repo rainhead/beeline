@@ -349,6 +349,20 @@ describe("applying the overlay", () => {
     expect(await one(`SELECT count(*) FROM person_admin`)).toEqual([0n]);
   });
 
+  it("follows a chain of renames to the person renamed, not to a namesake who already had the final name", async () => {
+    // Ada Collector becomes Ada Dee, then Ada Dee becomes Bo Netter, a name
+    // another person has; the names form allows both. Replayed, the second
+    // row was followed forward ("Ada Dee is now called Bo Netter, so look up
+    // Bo Netter") and found the other Bo, leaving this person as Ada Dee.
+    const r = await apply([
+      row({ person_ref: "name:Ada Collector", field: "display_name", value: "Ada Dee" }),
+      row({ person_ref: "name:Ada Dee", field: "display_name", value: "Bo Netter" }),
+    ]);
+    expect(r.unresolved).toEqual([]);
+    expect(await one(`SELECT display_name FROM person WHERE entity_id = ${people["Ada Collector"]}`)).toEqual(["Bo Netter"]);
+    expect(await one(`SELECT count(*) FROM person WHERE display_name = 'Bo Netter'`)).toEqual([2n]);
+  });
+
   it("replays a file written after a rename, whichever name a row was keyed on", async () => {
     // This is the shape a rebuild replays: the rename was recorded under the
     // old name, and every decision made afterwards under the new one. Against

@@ -394,3 +394,106 @@ describe("the print-run screens", () => {
   });
 
 });
+
+describe("reprints (gh-218)", () => {
+  /** A staffer's app over a store whose first run has printed. */
+  async function printed() {
+    const env = await printApp();
+    const prepared = await env.post("/print-runs");
+    const runPath = prepared.headers.get("location")!;
+    expect((await env.post(`${runPath}/approve`)).status).toBe(302);
+    expect((await env.post(`${runPath}/printed`)).status).toBe(302);
+    const [[specimenId]] = (await rows(
+      env.conn,
+      `SELECT entity_id FROM specimen WHERE sample_id = ${env.ashSample} AND specimen_number = 2`,
+    )) as [[number]];
+    return { ...env, specimenId };
+  }
+
+  it("asks for one label from the specimen page, which says so to staff and collector alike", async () => {
+    const { app, appFor, post, specimenId } = await printed();
+    const before = await (await app.request(`/specimens/${specimenId}`)).text();
+    expect(before).toContain("Reprint this label");
+    const asked = await post(`/specimens/${specimenId}/reprint`, { reason: "damaged", note: "pin bent" });
+    expect(asked.status).toBe(302);
+    expect(asked.headers.get("location")).toBe(`/specimens/${specimenId}`);
+
+    const staffPage = await (await app.request(`/specimens/${specimenId}`)).text();
+    expect(staffPage).toContain("Sam Staff asked on");
+    expect(staffPage).toContain("Reason: Damaged or lost.");
+    expect(staffPage).toContain("Note: pin bent");
+    expect(staffPage).toContain("Take back the reprint");
+    expect(staffPage).not.toContain("Reprint this label");
+    // Asking twice is refused in words, not a fault.
+    const twice = await post(`/specimens/${specimenId}/reprint`, {});
+    expect(twice.status).toBe(409);
+    expect(await twice.text()).toContain("already been asked for");
+
+    // The collector sees the label coming, and has no form and no write.
+    const volunteer = appFor("ash");
+    const theirs = await (await volunteer.request(`/specimens/${specimenId}`)).text();
+    expect(theirs).toContain("Sam Staff asked on");
+    expect(theirs).not.toContain("Take back the reprint");
+    const refused = await volunteer.request(`/specimens/${specimenId}/reprint`, {
+      method: "POST",
+      headers: { origin: ORIGIN },
+      body: new URLSearchParams({ withdraw: "1" }),
+    });
+    expect(refused.status).toBe(403);
+  });
+
+  it("asks for a whole sample, and the next run prints the reprints after the new labels", async () => {
+    const { app, conn, post, ashSample, specimenId } = await printed();
+    const samplePage = await (await app.request(`/samples/${ashSample}`)).text();
+    expect(samplePage).toContain("Reprint every label in this sample");
+    expect(samplePage).toContain("That is 3 specimens now.");
+    expect((await post(`/samples/${ashSample}/reprint`, { reason: "never_received" })).status).toBe(302);
+    const after = await (await app.request(`/samples/${ashSample}`)).text();
+    expect(after).toContain("3 labels are waiting to be reprinted in the next print run.");
+    expect(after).toContain("reprint requested");
+
+    // A new sample, so the run holds both series.
+    await insertCleanSample(conn, {
+      collector_id: "(SELECT min(entity_id) FROM person)",
+      specimen_count: "1",
+      sample_number: "'8'",
+      county: "'Benton'",
+    });
+    const list = await (await app.request("/print-runs")).text();
+    expect(list).toContain("1 label for 1 sample and 3 reprints waiting");
+    const prepared = await post("/print-runs");
+    const run = await (await app.request(prepared.headers.get("location")!)).text();
+    expect(run).toContain("3 of the labels are reprints, after the new ones.");
+    // A reprint goes out in its own envelope; it does not split its sample's first mailing.
+    expect(run).not.toContain("will arrive in two envelopes");
+    expect(
+      await rows(
+        conn,
+        `SELECT pl.cell, rp.specimen_id IS NOT NULL FROM printed_label pl
+         LEFT JOIN printed_label_reprint rp USING (print_run_id, specimen_id)
+         WHERE pl.print_run_id = (SELECT max(entity_id) FROM print_run) ORDER BY pl.cell`,
+      ),
+    ).toEqual([
+      [0, false],
+      // Cell 1 is the blank between the new labels and the reprints.
+      [2, true],
+      [3, true],
+      [4, true],
+    ]);
+
+    const specimenPage = await (await app.request(`/specimens/${specimenId}`)).text();
+    expect(specimenPage).toContain("Asked for by Sam Staff: never received.");
+    // Taken by the run: nothing is waiting, and while the run is unprinted there is no form either.
+    expect(specimenPage).not.toContain("Take back the reprint");
+    expect(specimenPage).toContain("To change that label, cancel the run.");
+  });
+
+  it("takes back what no run has taken yet", async () => {
+    const { app, post, ashSample } = await printed();
+    await post(`/samples/${ashSample}/reprint`, {});
+    expect((await post(`/samples/${ashSample}/reprint`, { withdraw: "1" })).status).toBe(302);
+    const page = await (await app.request(`/samples/${ashSample}`)).text();
+    expect(page).not.toContain("waiting to be reprinted");
+    expect(page).toContain("That is 3 specimens now.");
+  });
+});

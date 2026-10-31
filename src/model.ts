@@ -586,6 +586,22 @@ export interface PrintedLabelTable {
   warnings: string | null;
 }
 
+export type ReprintReason = "never_received" | "damaged" | "data_corrected";
+
+/** A label to print again under its existing number (gh-218). Answered is derived: pending_reprint. */
+export interface ReprintRequestTable {
+  entity_id: Generated<number>;
+  specimen_id: number;
+  requested_by: number;
+  requested_at: Timestamped;
+  /** Optional (Peter, 2026-10-30): a quick choice, or nothing. */
+  reason: ReprintReason | null;
+  note: string | null;
+  /** A person id without a foreign key, as on print_run. */
+  withdrawn_by: number | null;
+  withdrawn_at: Date | null;
+}
+
 // schema/040_determinations.sql
 
 export type DeterminationChannel = "in_app" | "ecdysis_import" | "legacy_import" | "worksheet_import";
@@ -1088,6 +1104,25 @@ export interface PrintRunStateView {
   sheet_count: number;
   sample_count: number;
   collector_count: number;
+  /** Of label_count, how many are reprints (printed_label_reprint). */
+  reprint_count: number;
+}
+
+/** Labels whose run did not mint the number they carry: reprints. */
+export interface PrintedLabelReprintView {
+  print_run_id: number;
+  specimen_id: number;
+}
+
+/** Reprint requests not withdrawn and not yet taken by an uncanceled run; printable_reprint and print_scope_reprint narrow it. */
+export interface PendingReprintView {
+  reprint_request_id: number;
+  specimen_id: number;
+  sample_id: number;
+  requested_by: number;
+  requested_at: Date;
+  reason: ReprintReason | null;
+  note: string | null;
 }
 
 /** The pending samples an unscoped run freezes. */
@@ -1121,6 +1156,8 @@ export interface SpecimenLabelView {
   printed_at: Date | null;
   mailed_at: Date | null;
   canceled_at: Date | null;
+  /** The run did not mint this number: a reprint. */
+  reprint: boolean;
 }
 
 export interface SpecimenMintedFieldNumberView {
@@ -1277,6 +1314,11 @@ export interface Database {
   print_run: PrintRunTable;
   minted_field_number: MintedFieldNumberTable;
   printed_label: PrintedLabelTable;
+  reprint_request: ReprintRequestTable;
+  printed_label_reprint: PrintedLabelReprintView;
+  pending_reprint: PendingReprintView;
+  printable_reprint: PendingReprintView;
+  print_scope_reprint: PendingReprintView;
   print_run_state: PrintRunStateView;
   print_scope_sample: PrintScopeSampleView;
   printed_sample: PrintedSampleView;

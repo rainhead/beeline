@@ -253,6 +253,8 @@ export interface SampleSpecimenRow {
   label_state: PrintRunState | null;
   /** The date that state was reached: mailed, printed, or prepared. */
   label_at: Date | null;
+  /** Someone has asked for this label again and no run has taken it yet (gh-218). */
+  reprint_requested: boolean;
   rank: string | null;
   scientific_name: string | null;
   authorship: string | null;
@@ -630,6 +632,9 @@ export async function listSampleSpecimens(
       (eb) =>
         eb
           .selectFrom("specimen_label")
+          // A canceled reprint says nothing about the label on the pin: the
+          // request it took is waiting again, and the label before it stands.
+          .where((w) => w.not(w.and([w("reprint", "=", true), w("state", "=", "canceled")])))
           .select(["specimen_id", "state", "prepared_at", "printed_at", "mailed_at"])
           .select(sql<number>`row_number() OVER (PARTITION BY specimen_id ORDER BY prepared_at DESC, print_run_id DESC)`.as("rn"))
           .as("lbl"),
@@ -646,6 +651,7 @@ export async function listSampleSpecimens(
       // so a prepared or approved run both read "Printing — prepared <date>",
       // and a canceled one carries no date at all (views/record.tsx).
       sql<Date | null>`coalesce(lbl.mailed_at, lbl.printed_at, lbl.prepared_at)`.as("label_at"),
+      sql<boolean>`EXISTS (SELECT 1 FROM pending_reprint pr WHERE pr.specimen_id = sp.entity_id)`.as("reprint_requested"),
       "an.rank",
       "an.scientific_name",
       "an.authorship",
@@ -663,6 +669,7 @@ export async function listSampleSpecimens(
       ...r,
       specimen_id: Number(r.specimen_id),
       specimen_number: Number(r.specimen_number),
+      reprint_requested: Boolean(r.reprint_requested),
       is_expert: r.is_expert === null ? null : Boolean(r.is_expert),
     })),
     total,

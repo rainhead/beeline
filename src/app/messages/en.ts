@@ -990,6 +990,21 @@ export const en = {
        * judged fine print anyway. Waivers are shown to everyone who sees the
        * flags, so the collector knows why a flag stopped asking.
        */
+      /**
+       * Asking for every label in the sample again (gh-218). Staff only; the
+       * specimen page has the same for one label.
+       */
+      reprint: {
+        heading: "Reprint labels",
+        hint: (can: number) =>
+          `For staff. Every specimen in this sample that has a field number and is not already waiting for a label goes into the next print run, under the number it already has, after that run's new labels. That is ${n(can)} ${can === 1 ? "specimen" : "specimens"} now.`,
+        pending: (count: number) =>
+          `${n(count)} ${count === 1 ? "label is" : "labels are"} waiting to be reprinted in the next print run.`,
+        none: "No label in this sample can be reprinted now: each one is already waiting, is in a run that has not printed yet, or has no field number.",
+        button: "Reprint every label in this sample",
+        withdraw: "Take back the reprints",
+      },
+
       qcDecisions: {
         waivedHeading: "Waived flags",
         waivedBy: (name: string) => `Waived by ${name}.`,
@@ -1046,6 +1061,8 @@ export const en = {
           canceled: "run canceled; it will be numbered again in the next run",
           /** Every imported specimen: the old system printed it, and Beeline holds no run for it. */
           legacy: "printed before Beeline",
+          /** Under the state: a reprint someone asked for that no run has taken yet (gh-218). */
+          reprintRequested: "reprint requested",
         },
       },
     },
@@ -1087,6 +1104,28 @@ export const en = {
         colPrinted: "Printed",
         colMailed: "Mailed",
         notYet: "not yet",
+        /** Beside a run whose label was a second print under the same number (gh-218). */
+        reprint: "reprint",
+        requestedBy: (name: string, reason: string | null, note: string | null) =>
+          `Asked for by ${name}${reason === null ? "" : `: ${reason.toLowerCase()}`}${note === null ? "" : ` — ${note}`}.`,
+      },
+      /** Asking for this label again (gh-218): the form is for staff, the state for everyone. */
+      reprint: {
+        heading: "Reprint",
+        pending: (name: string, when: string) => `${name} asked on ${when} for this label to be printed again. It goes into the next print run, under the same field number.`,
+        because: (reason: string) => `Reason: ${reason}.`,
+        noteSaid: (note: string) => `Note: ${note}`,
+        /** A flag no waiver can set aside stops it, as it would stop a new label: a hold, a missing field, a hidden point. */
+        waiting: "It will wait while this sample has a flag that stops printing (listed below).",
+        hint: "For staff. The label goes into the next print run under the field number it already has, after that run's new labels, and reads as the record does then. A reason is optional.",
+        reason: "Reason",
+        noReason: "No reason given",
+        note: "Note (optional)",
+        button: "Reprint this label",
+        withdraw: "Take back the reprint",
+        /** Why there is no form: there is nothing to print, or a run is about to print it. */
+        cannotUnnumbered: "This specimen has no field number, so there is no label to reprint.",
+        cannotPrinting: "A print run that has not printed yet already holds a label for this specimen. To change that label, cancel the run.",
       },
     },
 
@@ -1611,6 +1650,12 @@ export const en = {
       mailed: "Mailed",
       canceled: "Canceled",
     } as Record<string, string>,
+    /** The quick choices for why a label is reprinted (gh-218); none is required. */
+    reprintReason: {
+      never_received: "Never received",
+      damaged: "Damaged or lost",
+      data_corrected: "Record corrected",
+    } as Record<string, string>,
     prepare: {
       heading: "Prepare a run",
       scopeLabel: "Whose labels",
@@ -1620,8 +1665,12 @@ export const en = {
         codes.length === 0
           ? "Covers samples outside every atlas; each atlas prints its own."
           : `Covers ${list(codes)}, and samples outside every atlas.`,
-      waiting: (labels: number, samples: number) =>
-        `${n(labels)} ${labels === 1 ? "label" : "labels"} for ${n(samples)} ${samples === 1 ? "sample" : "samples"} waiting`,
+      waiting: (labels: number, samples: number, reprints = 0) =>
+        `${
+          labels === 0
+            ? "no new labels"
+            : `${n(labels)} ${labels === 1 ? "label" : "labels"} for ${n(samples)} ${samples === 1 ? "sample" : "samples"}`
+        }${reprints === 0 ? "" : ` and ${n(reprints)} ${reprints === 1 ? "reprint" : "reprints"}`} waiting`,
       nothingWaiting: "nothing waiting",
       button: "Prepare",
       hint:
@@ -1649,9 +1698,20 @@ export const en = {
         | { code: "no_location"; sampleId: number }
         | { code: "no_primary_collector"; sampleId: number }
         | { code: "determined"; printRunId: number; specimens: number }
-        | { code: "atlas_not_printing"; atlasId: number },
+        | { code: "atlas_not_printing"; atlasId: number }
+        | { code: "reprint_refused"; specimens: number; unnumbered: number; asked: number; printing: number },
     ) =>
-      refusal.code === "atlas_not_printing"
+      refusal.code === "reprint_refused"
+        ? refusal.specimens === 0
+          ? "There is no specimen there to reprint. Nothing was changed."
+          : refusal.specimens === 1
+          ? refusal.asked > 0
+            ? "A reprint of this label has already been asked for. Nothing was changed."
+            : refusal.printing > 0
+              ? "A print run that has not printed yet already holds this label. Nothing was changed."
+              : "This specimen has no field number, so there is no label to reprint. Nothing was changed."
+          : `No label was asked for: of ${n(refusal.specimens)} specimens, ${n(refusal.asked)} ${refusal.asked === 1 ? "is" : "are"} already waiting, ${n(refusal.printing)} ${refusal.printing === 1 ? "is" : "are"} in a run that has not printed, and ${n(refusal.unnumbered)} ${refusal.unnumbered === 1 ? "has" : "have"} no field number.`
+        : refusal.code === "atlas_not_printing"
         ? "No run was prepared: that atlas does not print its own labels, so its samples go in the run for everyone Oregon prints for."
         : refusal.code === "determined"
         ? `This run cannot be canceled: ${n(refusal.specimens)} of its specimens ${refusal.specimens === 1 ? "has" : "have"} already been identified, and canceling would take their field numbers away. Nothing was changed.`
@@ -1668,8 +1728,13 @@ export const en = {
       preparedBy: (name: string, when: string) => `Prepared by ${name}, ${when}.`,
       scopeProgram: "Everyone Oregon prints for.",
       scopeAtlas: (name: string) => `${name} only.`,
-      counts: (labels: number, samples: number, collectors: number, sheets: number) =>
-        `${n(labels)} ${labels === 1 ? "label" : "labels"} for ${n(samples)} ${samples === 1 ? "sample" : "samples"} from ${n(collectors)} ${collectors === 1 ? "collector" : "collectors"}, on ${n(sheets)} ${sheets === 1 ? "sheet" : "sheets"}.`,
+      counts: (labels: number, samples: number, collectors: number, sheets: number, reprints = 0) =>
+        `${n(labels)} ${labels === 1 ? "label" : "labels"} for ${n(samples)} ${samples === 1 ? "sample" : "samples"} from ${n(collectors)} ${collectors === 1 ? "collector" : "collectors"}, on ${n(sheets)} ${sheets === 1 ? "sheet" : "sheets"}.` +
+        (reprints === 0
+          ? ""
+          : ` ${n(reprints)} of the labels ${reprints === 1 ? "is a reprint" : "are reprints"}, after the new ones.`),
+      /** Beside a label that is a second print under the number it already had. */
+      reprint: "reprint",
       download: "Download the sheets (PDF)",
       approve: "Approve",
       approveHint: "The labels have been proofed and are good to print.",
@@ -1688,7 +1753,7 @@ export const en = {
         note === null ? `Canceled ${when}.` : `Canceled ${when}: ${note}`,
       warnings: (count: number) => `${n(count)} ${count === 1 ? "label" : "labels"} to look at`,
       warningsIntro:
-        "These lines were longer than the label was drawn for and have been shrunk to fit, or a county was missing. The run prints regardless.",
+        "These lines were longer than the label was drawn for and have been shrunk to fit, a county was missing, or a reprint reads differently from the specimen's last label because the record has changed since. The run prints regardless.",
       warningsNone: "Every label fits.",
       splitSamples: (count: number) =>
         `${n(count)} ${count === 1 ? "sample" : "samples"} in this run also ${count === 1 ? "has" : "have"} labels in another open run, so its labels will arrive in two envelopes.`,

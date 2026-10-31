@@ -1,7 +1,7 @@
 import type { Child } from "hono/jsx";
 import type { Messages } from "../messages/index.js";
 import { determineHref } from "./determine.js";
-import type { SpecimenLabelRow } from "../print-runs.js";
+import type { SampleReprints, SpecimenLabelRow, SpecimenReprint } from "../print-runs.js";
 import type { PrintRunState } from "../../model.js";
 import type { SampleChange } from "../../sample-change.js";
 import {
@@ -30,6 +30,7 @@ import {
   OrAbsent,
   PageHeader,
   Pager,
+  SelectField,
   LocalityAlternatives,
   SuggestedLocality,
   TaxonName,
@@ -662,6 +663,7 @@ function SampleSpecimens({ m, sample, page }: { m: Messages; sample: SampleDetai
                 <td>{m.format.number(row.specimen_number)}</td>
                 <td>
                   <LabelState m={m} state={row.label_state} at={row.label_at} />
+                  {row.reprint_requested && <Meta block>{c.label.reprintRequested}</Meta>}
                 </td>
                 <td>
                   <RecordedName m={m} row={row} />
@@ -701,6 +703,7 @@ export function SamplePage({
   hold = null,
   specimens,
   history,
+  reprints = null,
   admin = false,
   ownsLocality = false,
 }: {
@@ -711,6 +714,8 @@ export function SamplePage({
   hold?: RecordHold | null;
   specimens: SampleSpecimenPage;
   history: readonly SampleChange[];
+  /** For staff: the labels waiting to be reprinted and how many more could be (gh-218). */
+  reprints?: SampleReprints | null;
   /** Staff see the locality form; off while impersonating, like every admin surface. */
   admin?: boolean;
   /** Whether the reader adopted the locality standing over the observation, and so may take it back (beeline-7i6). */
@@ -764,6 +769,11 @@ export function SamplePage({
       <Card>
         <SampleSpecimens m={m} sample={sample} page={specimens} />
       </Card>
+      {admin && reprints !== null && specimens.total > 0 && (
+        <Card>
+          <SampleReprint m={m} sampleId={sample.sample_id} reprints={reprints} />
+        </Card>
+      )}
       {/* Last, like the person page: history is what you read after acting. */}
       <Card>
         <SampleHistory m={m} history={history} />
@@ -904,6 +914,112 @@ export function Determinations({ m, events }: { m: Messages; events: readonly De
   );
 }
 
+/** The optional quick choice for why, with "no reason" first (Peter, 2026-10-30: a reason is optional). */
+function ReprintReasonField({ m, id }: { m: Messages; id: string }) {
+  const t = m.record.specimen.reprint;
+  const reasons = m.printRuns.reprintReason;
+  return (
+    <SelectField
+      id={id}
+      name="reason"
+      label={t.reason}
+      value=""
+      options={[["", t.noReason], ...Object.entries(reasons).map(([key, label]) => [key, label] as const)]}
+    />
+  );
+}
+
+/**
+ * Asking for this specimen's label again (gh-218). Everyone sees a request
+ * that is waiting, since it is their label coming; only staff get the form,
+ * and it is offered exactly where pressing it would work (specimenReprint).
+ */
+function SpecimenReprintBlock({
+  m,
+  specimenId,
+  reprint,
+  numbered,
+  admin,
+}: {
+  m: Messages;
+  specimenId: number;
+  reprint: SpecimenReprint;
+  numbered: boolean;
+  admin: boolean;
+}) {
+  const t = m.record.specimen.reprint;
+  const action = `/specimens/${specimenId}/reprint`;
+  const { pending } = reprint;
+  if (pending === null && !admin) return null;
+  return (
+    <>
+      <h3>{t.heading}</h3>
+      {pending !== null ? (
+        <>
+          <Meta block>
+            {t.pending(pending.requested_by, m.format.day(pending.requested_at))}
+            {pending.reason !== null && <> {t.because(m.printRuns.reprintReason[pending.reason] ?? pending.reason)}</>}
+          </Meta>
+          {pending.note !== null && <Meta block>{t.noteSaid(pending.note)}</Meta>}
+          {pending.waiting && <Meta block>{t.waiting}</Meta>}
+          {admin && (
+            <form method="post" action={action}>
+              <input type="hidden" name="withdraw" value="1" />
+              <Button variant="outlined">{t.withdraw}</Button>
+            </form>
+          )}
+        </>
+      ) : reprint.canRequest ? (
+        <form method="post" action={action} class="form-column">
+          <Meta block>{t.hint}</Meta>
+          <ReprintReasonField m={m} id="reprint-reason" />
+          <TextField id="reprint-note" name="note" label={t.note} />
+          <p class="row">
+            <Button>{t.button}</Button>
+          </p>
+        </form>
+      ) : (
+        <Meta block>{numbered ? t.cannotPrinting : t.cannotUnnumbered}</Meta>
+      )}
+    </>
+  );
+}
+
+/**
+ * Every label in the sample again, from the sample's page (gh-218): what
+ * Arthur reaches for when a whole envelope never arrived. Staff only.
+ */
+function SampleReprint({ m, sampleId, reprints }: { m: Messages; sampleId: number; reprints: SampleReprints }) {
+  const t = m.record.sample.reprint;
+  const action = `/samples/${sampleId}/reprint`;
+  return (
+    <>
+      <h2>{t.heading}</h2>
+      {reprints.pending > 0 && (
+        <>
+          <Meta block>{t.pending(reprints.pending)}</Meta>
+          <form method="post" action={action}>
+            <input type="hidden" name="withdraw" value="1" />
+            <Button variant="outlined">{t.withdraw}</Button>
+          </form>
+        </>
+      )}
+      {reprints.canRequest > 0 ? (
+        <form method="post" action={action} class="form-column">
+          <Meta block>{t.hint(reprints.canRequest)}</Meta>
+          <ReprintReasonField m={m} id="sample-reprint-reason" />
+          <TextField id="sample-reprint-note" name="note" label={m.record.specimen.reprint.note} />
+          <p class="row">
+            <Button>{t.button}</Button>
+          </p>
+        </form>
+      ) : (
+        reprints.pending === 0 && <Meta block>{t.none}</Meta>
+      )}
+    </>
+  );
+}
+
 /**
  * Every label a specimen has had, one row per print run — the proofing
  * lookup's other half (reference-implementation.md, requirement 6): a
@@ -931,6 +1047,21 @@ function SpecimenLabels({ m, labels, admin }: { m: Messages; labels: readonly Sp
                     <a href={`/print-runs/${l.print_run_id}`}>{m.printRuns.run.title(l.prepared_at, l.atlas_code)}</a>
                   ) : (
                     m.printRuns.run.title(l.prepared_at, l.atlas_code)
+                  )}
+                  {l.reprint && (
+                    <>
+                      {" "}
+                      <Chip>{c.reprint}</Chip>
+                    </>
+                  )}
+                  {l.request !== null && (
+                    <Meta block>
+                      {c.requestedBy(
+                        l.request.requested_by,
+                        l.request.reason === null ? null : (m.printRuns.reprintReason[l.request.reason] ?? l.request.reason),
+                        l.request.note,
+                      )}
+                    </Meta>
                   )}
                 </td>
                 {/* The number as it printed or would have. On a canceled
@@ -963,6 +1094,7 @@ export function SpecimenPage({
   findings,
   waivers = [],
   labels,
+  reprint = { pending: null, canRequest: false },
   admin,
 }: {
   m: Messages;
@@ -972,6 +1104,8 @@ export function SpecimenPage({
   /** The sample's waivers: a waived flag is not among the findings, so it is said here. */
   waivers?: readonly RecordWaiver[];
   labels: readonly SpecimenLabelRow[];
+  /** A reprint waiting, and whether staff may ask for one (gh-218). */
+  reprint?: SpecimenReprint;
   admin: boolean;
 }) {
   const sample = specimen.sample;
@@ -1019,6 +1153,13 @@ export function SpecimenPage({
       </Card>
       <Card>
         <SpecimenLabels m={m} labels={labels} admin={admin} />
+        <SpecimenReprintBlock
+          m={m}
+          specimenId={specimen.specimen_id}
+          reprint={reprint}
+          numbered={specimen.field_number !== null}
+          admin={admin}
+        />
       </Card>
 
       {/* And then the whole sample, not a stub of it: a determination read

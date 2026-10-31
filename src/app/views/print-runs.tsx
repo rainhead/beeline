@@ -62,16 +62,16 @@ export function PrintRuns({
 }) {
   const p = m.printRuns;
   const covered = scope.atlases.filter((a) => !a.own).map((a) => a.code);
-  const waiting = (labels: number, samples: number) =>
-    labels === 0 ? p.prepare.nothingWaiting : p.prepare.waiting(labels, samples);
+  const waiting = (labels: number, samples: number, reprints: number) =>
+    labels === 0 && reprints === 0 ? p.prepare.nothingWaiting : p.prepare.waiting(labels, samples, reprints);
   const options: ReadonlyArray<readonly [string, Child]> = [
-    ["", `${p.prepare.program} — ${waiting(scope.program.labels, scope.program.samples)}`],
+    ["", `${p.prepare.program} — ${waiting(scope.program.labels, scope.program.samples, scope.program.reprints)}`],
     // Only an atlas that prints its own labels can be a run of its own; the
     // rest are the program's run, which the hint names (src/print-run.ts
     // refuses the others too, so this list is not the guard).
     ...scope.atlases
       .filter((a) => a.own)
-      .map((a) => [String(a.atlas_id), `${a.name} — ${waiting(a.labels, a.samples)}`] as const),
+      .map((a) => [String(a.atlas_id), `${a.name} — ${waiting(a.labels, a.samples, a.reprints)}`] as const),
   ];
   return (
     <>
@@ -202,7 +202,7 @@ export function PrintRun({ m, run, labels }: { m: Messages; run: RunDetail; labe
         lede={
           <>
             {run.atlas_name === null ? r.scopeProgram : r.scopeAtlas(run.atlas_name)}{" "}
-            {r.counts(run.label_count, run.sample_count, run.collector_count, run.sheet_count)}
+            {r.counts(run.label_count, run.sample_count, run.collector_count, run.sheet_count, run.reprint_count)}
           </>
         }
         meta={
@@ -287,6 +287,12 @@ function LabelTable({ m, labels }: { m: Messages; labels: RunLabelRow[] }) {
             <a href={specimenHref(l.specimen_id)} class="mono">
               {l.number_text}
             </a>
+            {l.reprint && (
+              <>
+                {" "}
+                <Chip>{r.reprint}</Chip>
+              </>
+            )}
           </td>
           <td>{l.collector_text}</td>
           <td class="nowrap">{l.date_text}</td>

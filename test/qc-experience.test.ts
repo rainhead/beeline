@@ -133,8 +133,8 @@ describe("the front page", () => {
     const { app, conn } = await qcApp();
     await conn.run(`UPDATE sample SET locality = '5th St, Corvallis' WHERE sample_number = 'A-8'`);
     await conn.run(
-      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, derived_at)
-       SELECT l.sample_id, 1, 'Corvallis', 'town_limits', l.latitude, l.longitude, 'test', current_timestamp
+      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
+       SELECT l.sample_id, 1, 'Corvallis', 'town_limits', l.latitude, l.longitude, 'test', 1, current_timestamp
        FROM sample_location l JOIN sample s ON s.entity_id = l.sample_id WHERE s.sample_number = 'A-8'`,
     );
     expect(await (await app.request("/")).text()).toContain("/suggested-locality");

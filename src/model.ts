@@ -377,6 +377,8 @@ export interface SampleLocalityCandidateTable {
   latitude: number;
   longitude: number;
   gazetteer_build: string;
+  /** LOCALITY_RULE_VERSION when it was named; an older one is named again. */
+  rule_version: number;
   derived_at: Date;
 }
 

@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deriveLocalities, localityCandidatesAt } from "../src/derive-locality.js";
+import { LOCALITY_RULE_VERSION } from "../src/locality-rule.js";
 import { buildTestGazetteer, createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 let dir: string;
@@ -73,6 +74,18 @@ describe("deriveLocalities", () => {
     expect(await suggestions(conn)).toEqual([[id, "Philomath", "town"]]);
     await buildTestGazetteer(path, "build-b2");
     expect(await deriveLocalities(conn, path)).toMatchObject({ gazetteerBuild: "build-b2", pending: 1, named: 1 });
+  });
+
+  test("a sample named by an older version of the rule is named again (beeline-75z3)", async () => {
+    const path = join(dir, "b2.duckdb");
+    await buildTestGazetteer(path, "build-b3");
+    const conn = await storeWithPerson();
+    await insertCleanSample(conn, {}, { latitude: "44.55", longitude: "-123.38" });
+    await deriveLocalities(conn, path);
+    expect(await deriveLocalities(conn, path)).toMatchObject({ pending: 0 });
+    await conn.run(`UPDATE sample_locality_candidate SET rule_version = ${LOCALITY_RULE_VERSION - 1}`);
+    expect(await deriveLocalities(conn, path)).toMatchObject({ pending: 1, named: 1 });
+    expect(await rows(conn, `SELECT DISTINCT rule_version FROM sample_locality_candidate`)).toEqual([[LOCALITY_RULE_VERSION]]);
   });
 
   test("never names a sample for the wilderness it is inside (Peter, 2026-10-26)", async () => {

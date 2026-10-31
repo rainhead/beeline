@@ -145,6 +145,16 @@ export interface NamedLocality {
 /** The label allows 18 characters. */
 export const MAX_LOCALITY_LENGTH = 18;
 
+/**
+ * Which version of this rule named a sample, recorded with its candidates
+ * (sample_locality_candidate.rule_version). Raise it with any change to what
+ * the rule names, and the next nightly names every sample again, as a new
+ * gazetteer build does; otherwise a sample keeps the old rule's names until
+ * its point moves. 1: a used name that is only the county is not offered
+ * (beeline-75z3).
+ */
+export const LOCALITY_RULE_VERSION = 1;
+
 const RULE = {
   atKm: 1.5,
   maxKm: 30,
@@ -531,7 +541,7 @@ function namesOnlyCounty(locality: string, e: LocalityEvidence): boolean {
   const bare = (s: string) => s.replace(/ (County|Co\.?|Regional District|RD|Region)$/i, "").toLowerCase();
   const name = bare(locality);
   if (name !== bare(e.county)) return false;
-  const town = locality.toLowerCase() === name && e.nearby.some((c) => c.at.name.toLowerCase() === name);
+  const town = locality.toLowerCase() === name && e.nearby.some((c) => c.at.kind === "town" && c.at.name.toLowerCase() === name);
   return !town;
 }
 

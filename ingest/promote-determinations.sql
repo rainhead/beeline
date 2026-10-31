@@ -157,7 +157,8 @@ CREATE OR REPLACE MACRO legacy_caste_word(x) AS
     WHEN 'queen' THEN 'gyne' WHEN 'gyne' THEN 'gyne' WHEN 'worker' THEN 'worker' WHEN 'drone' THEN 'drone' END;
 CREATE OR REPLACE MACRO legacy_sex_word(x) AS
   CASE lower(trim(coalesce(x, '')))
-    WHEN 'female' THEN 'female' WHEN 'f' THEN 'female' WHEN 'male' THEN 'male' WHEN 'm' THEN 'male' END;
+    WHEN 'female' THEN 'female' WHEN 'f' THEN 'female' WHEN 'male' THEN 'male' WHEN 'm' THEN 'male'
+    WHEN 'gynandromorph' THEN 'gynandromorph' END;
 
 CREATE OR REPLACE MACRO legacy_caste_of(caste_raw, sex_raw) AS
   coalesce(legacy_caste_word(caste_raw), legacy_caste_word(sex_raw));

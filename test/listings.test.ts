@@ -1113,6 +1113,8 @@ describe("Darwin Core archives, by program and year", () => {
     expect(page).toContain("Master Melittology");
     expect(page).toContain("BLM surveys");
     expect(page).toContain("belong to them by the day they were collected on");
+    // The refuge program has no ground either, in its own terms (beeline-8zlh).
+    expect(page).toContain("by the refuge they were collected in");
     // By name, atlases and the rest together (Peter, 2026-10-26).
     const programs = [...page.matchAll(/<h3>([^<]+)<\/h3>/g)].map(([, name]) => name);
     expect(programs).toEqual([
@@ -1120,6 +1122,7 @@ describe("Darwin Core archives, by program and year", () => {
       "British Columbia Bee Atlas",
       "Idaho Bee Atlas",
       "Master Melittology",
+      "National Wildlife Refuges",
       "New Mexico Bee Atlas",
       "Oklahoma Bee Atlas",
       "Oregon Bee Atlas",

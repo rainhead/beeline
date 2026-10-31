@@ -98,7 +98,7 @@ function ProgramSeasons({
       <section>
         <h3>{program.name}</h3>
         <p>
-          <Meta>{program.scope === null ? e.archiveNone : e.noSpecimens}</Meta>
+          <Meta>{program.scope === null ? e.archiveNone(program.code) : e.noSpecimens}</Meta>
         </p>
       </section>
     );

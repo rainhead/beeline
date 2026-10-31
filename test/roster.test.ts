@@ -830,6 +830,7 @@ describe("recording who leads a program", () => {
       ["ID", true],
       ["MM", false],
       ["NM", true],
+      ["NWR", false],
       ["OBA", true],
       ["OK", true],
       ["WaBA", true],

@@ -667,7 +667,7 @@ const BULK_FORM = "reprint-bulk";
  * bulk-select island keeps ticks across pages and filters, counts them, and
  * hides the bar until something is ticked.
  */
-function BulkReprint({ m, back }: { m: Messages; back: string }) {
+function BulkReprint({ m, back, owner }: { m: Messages; back: string; owner: string }) {
   const b = m.listings.specimens.bulk;
   const reasons = m.printRuns.reprintReason;
   return (
@@ -677,6 +677,7 @@ function BulkReprint({ m, back }: { m: Messages; back: string }) {
       action="/specimens/reprint"
       class="card bulk-bar"
       data-bulk=""
+      data-bulk-owner={owner}
       data-count-one={b.countOne}
       data-count-other={b.countOther}
     >
@@ -703,8 +704,15 @@ function BulkReprint({ m, back }: { m: Messages; back: string }) {
   );
 }
 
-export function SpecimenListing(props: ListingProps<SpecimenRow> & { reprinted?: { requested: number; of: number } | null }) {
-  const { m, query, page, atlases, admin, reprinted = null } = props;
+export function SpecimenListing(
+  props: ListingProps<SpecimenRow> & {
+    /** What the last bulk marking did, read back off its redirect. */
+    reprinted?: { requested: number; of: number } | null;
+    /** Who is signed in, which keys the island's stored ticks: a tab outlives a sign-out. */
+    bulkOwner?: string;
+  },
+) {
+  const { m, query, page, atlases, admin, reprinted = null, bulkOwner = "" } = props;
   const copy = m.listings.specimens;
   const f = m.listings.filters;
   const path = "/specimens";
@@ -832,7 +840,7 @@ export function SpecimenListing(props: ListingProps<SpecimenRow> & { reprinted?:
             ))}
           </DataTable>
           <ListingPager m={m} path={path} query={query} total={page.total} />
-          {admin && <BulkReprint m={m} back={listingHref(path, query)} />}
+          {admin && <BulkReprint m={m} back={listingHref(path, query)} owner={bulkOwner} />}
         </>
       )}
     </>

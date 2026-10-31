@@ -493,6 +493,8 @@ describe("reprints (gh-218)", () => {
     const listing = await (await app.request("/specimens?scope=all")).text();
     expect(listing).toContain(`form="reprint-bulk"`);
     expect(listing).toContain("Mark for reprint");
+    // The island keys its stored ticks by who is signed in.
+    expect(listing).toContain(`data-bulk-owner="staffer"`);
     const ids = ((await rows(conn, `SELECT entity_id FROM specimen WHERE sample_id = ${ashSample} ORDER BY specimen_number`)) as [
       number,
     ][]).map(([id]) => id);
@@ -525,6 +527,11 @@ describe("reprints (gh-218)", () => {
     expect(await (await app.request(partly.headers.get("location")!)).text()).toContain(
       "Marked 1 of 2 labels for reprint.",
     );
+    // A listing that already says what an earlier marking did says what this one did instead.
+    await post(`/specimens/${ids[2]}/reprint`, { withdraw: "1" });
+    const repeat = new URLSearchParams({ back: "/specimens?scope=all&reprinted=9&of=9", specimen: String(ids[2]) });
+    const replaced = await app.request("/specimens/reprint", { method: "POST", headers: { origin: ORIGIN }, body: repeat });
+    expect(replaced.headers.get("location")).toBe("/specimens?scope=all&reprinted=1&of=1");
 
     // A volunteer sees the state and no tick boxes, and cannot post.
     const volunteer = appFor("ash");

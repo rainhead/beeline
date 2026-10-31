@@ -878,6 +878,7 @@ export function createApp({
           admin={admin}
           homeAtlas={homeAtlas}
           reprinted={admin ? reprintedOutcome(c) : null}
+          bulkOwner={c.get("session").login}
         />,
       ),
     );
@@ -1728,8 +1729,10 @@ export function createApp({
       const reason = REPRINT_REASONS.has(raw) ? (raw as ReprintReason) : null;
       const { requested, of } = await requestReprint(printWriter!, { specimenIds: ids }, { personId, reason, note });
       const backRaw = String(form.get("back") ?? "");
-      const back = /^\/specimens(\?|$)/.test(backRaw) ? backRaw : "/specimens";
-      return `${back}${back.includes("?") ? "&" : "?"}reprinted=${requested}&of=${of}`;
+      const back = new URL(/^\/specimens(\?|$)/.test(backRaw) ? backRaw : "/specimens", "http://listing");
+      back.searchParams.set("reprinted", String(requested));
+      back.searchParams.set("of", String(of));
+      return `${back.pathname}${back.search}`;
     }),
   );
 

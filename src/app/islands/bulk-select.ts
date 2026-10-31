@@ -8,35 +8,35 @@
  * bar that stays out of the way until something is ticked.
  *
  * The ticks live in sessionStorage, so they belong to this tab and end with
- * it; a store that refuses (a private window, blocked site data) leaves the
- * page working as it does without the script. They are cleared when the
- * listing comes back from a marking (`reprinted` in its query), not on
- * submit, so a refused request leaves them for another try.
+ * it, under a key that names who is signed in: a tab outlives a sign-out,
+ * and the next admin's marking must not carry the last one's ticks under
+ * the next one's name. A store that refuses (a private window, blocked site
+ * data) leaves the page working as it does without the script. They are
+ * cleared when the listing comes back from a marking (`reprinted` in its
+ * query), not on submit, so a refused request leaves them for another try.
  */
-
-const KEY = "beeline:reprint-ticks";
-
-function load(): Set<string> {
-  try {
-    const raw = sessionStorage.getItem(KEY);
-    return new Set(raw === null ? [] : (JSON.parse(raw) as string[]));
-  } catch {
-    return new Set();
-  }
-}
-
-function save(ticked: Set<string>): void {
-  try {
-    if (ticked.size === 0) sessionStorage.removeItem(KEY);
-    else sessionStorage.setItem(KEY, JSON.stringify([...ticked]));
-  } catch {
-    // Kept for this page only; the form still carries what is ticked on it.
-  }
-}
 
 const form = document.querySelector<HTMLFormElement>("form[data-bulk]");
 if (form !== null) {
-  const ticked = new URLSearchParams(location.search).has("reprinted") ? new Set<string>() : load();
+  const key = `beeline:reprint-ticks:${form.dataset.bulkOwner ?? ""}`;
+  const load = (): Set<string> => {
+    try {
+      const raw = sessionStorage.getItem(key);
+      return new Set(raw === null ? [] : (JSON.parse(raw) as string[]));
+    } catch {
+      return new Set();
+    }
+  };
+  const save = (ticked: Set<string>): void => {
+    try {
+      if (ticked.size === 0) sessionStorage.removeItem(key);
+      else sessionStorage.setItem(key, JSON.stringify([...ticked]));
+    } catch {
+      // Kept for this page only; the form still carries what is ticked on it.
+    }
+  };
+
+  let ticked = new URLSearchParams(location.search).has("reprinted") ? new Set<string>() : load();
   save(ticked);
   const rows = Array.from(document.querySelectorAll<HTMLInputElement>(`input[data-bulk-row][form="${form.id}"]`));
   const pageBox = document.querySelector<HTMLInputElement>("input[data-bulk-page]");
@@ -44,6 +44,14 @@ if (form !== null) {
   const clear = form.querySelector<HTMLButtonElement>("[data-bulk-clear]");
   const one = form.dataset.countOne ?? "";
   const other = form.dataset.countOther ?? "";
+
+  /** The fields carrying ticks from other pages, added at submit. */
+  const dropCarried = () => {
+    for (const field of form.querySelectorAll("input[data-bulk-carried]")) field.remove();
+  };
+  const fromStore = () => {
+    for (const row of rows) row.checked = ticked.has(row.value);
+  };
 
   const refresh = () => {
     const onPage = rows.filter((r) => r.checked).length;
@@ -55,8 +63,8 @@ if (form !== null) {
     form.hidden = ticked.size === 0;
   };
 
+  fromStore();
   for (const row of rows) {
-    row.checked = ticked.has(row.value);
     row.addEventListener("change", () => {
       if (row.checked) ticked.add(row.value);
       else ticked.delete(row.value);
@@ -81,13 +89,17 @@ if (form !== null) {
     clear.addEventListener("click", () => {
       ticked.clear();
       for (const row of rows) row.checked = false;
+      dropCarried();
       save(ticked);
       refresh();
     });
   }
   // The boxes ticked on this page submit themselves; the ones ticked on
-  // other pages travel as hidden fields.
+  // other pages travel as hidden fields, rebuilt at each submit so that a
+  // page the browser restores from its back-forward cache carries none left
+  // over from the last one.
   form.addEventListener("submit", () => {
+    dropCarried();
     const here = new Set(rows.map((r) => r.value));
     for (const id of ticked) {
       if (here.has(id)) continue;
@@ -95,8 +107,18 @@ if (form !== null) {
       field.type = "hidden";
       field.name = "specimen";
       field.value = id;
+      field.dataset.bulkCarried = "";
       form.append(field);
     }
+  });
+  // A restored page shows the ticks as they were when it was left, which
+  // another page of the listing may since have changed.
+  window.addEventListener("pageshow", (e) => {
+    if (!e.persisted) return;
+    dropCarried();
+    ticked = load();
+    fromStore();
+    refresh();
   });
   refresh();
 }

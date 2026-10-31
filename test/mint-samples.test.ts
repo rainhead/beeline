@@ -552,10 +552,14 @@ describe("descriptive fields are a fill-only refresh", () => {
       [printed, 3],
     ]);
     // The followed sample agrees with its observation, so nothing is flagged
-    // there; the others are named, and the printed one is the only shape the
-    // flag can take on a sample whose observation still carries a count.
+    // there; the others are named — junk included, since a sample left on
+    // its old count because the observation's is not a number would
+    // otherwise print that count without a word (CodeRabbit, this branch) —
+    // and the printed one is the only shape the flag can take on a sample
+    // whose observation still carries a count.
     expect(await rows(conn, `SELECT sample_id, details FROM qc_finding WHERE rule_name = 'count_mismatch' ORDER BY sample_id`)).toEqual([
       [zeroed, "observation says 0 but sample count is 3"],
+      [junk, "observation says 'lots', which is not a count, but sample count is 3"],
       [printed, "observation says 5 but sample count is 3"],
     ]);
     // And the labels follow the count: five pending for the sample that

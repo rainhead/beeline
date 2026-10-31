@@ -93,7 +93,7 @@ describe("the front page", () => {
     expect(await (await app.request("/")).text()).not.toContain('class="atlas-mark"');
     await conn.run(
       `INSERT INTO person_membership (person_id, program_id)
-       SELECT ${alice}, entity_id FROM atlas WHERE code = 'WaBA'`,
+       SELECT ${alice}, entity_id FROM program WHERE code = 'WaBA'`,
     );
     // Belonging is what counts, not where her samples fell (they are in Oregon).
     const body = await (await app.request("/")).text();

@@ -69,7 +69,7 @@ async function listingApp(
   // One of them has an iNat account, so search-by-login has something to find.
   await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${alice}, 4242, 'aadams')`);
 
-  const atlas = (code: string) => `(SELECT entity_id FROM atlas WHERE code = '${code}')`;
+  const atlas = (code: string) => `(SELECT entity_id FROM program WHERE code = '${code}')`;
 
   // Alice, Oregon: clean, two printed specimens, both determined.
   const a1 = await insertCleanSample(conn, {
@@ -681,7 +681,7 @@ describe("the toolbar", () => {
     const { app, conn, staffer } = await listingApp("staffer");
     await conn.run(
       `INSERT INTO person_membership (person_id, program_id)
-       VALUES (${staffer}, (SELECT entity_id FROM atlas WHERE code = 'WaBA'))`,
+       VALUES (${staffer}, (SELECT entity_id FROM program WHERE code = 'WaBA'))`,
     );
     const body = await get(app, "/samples?scope=WaBA");
     expect(body).toContain(">My records</a>");
@@ -1063,7 +1063,7 @@ describe("Darwin Core archives, by program and year", () => {
     // Until beeline-rxn8 Beeline's season ran from 1 March and called it 2025.
     const feb = await insertCleanSample(conn, {
       collector_id: String(alice),
-      atlas_id: "(SELECT entity_id FROM atlas WHERE code = 'OBA')",
+      atlas_id: "(SELECT entity_id FROM program WHERE code = 'OBA')",
       sample_number: "'A-3'",
       specimen_count: "1",
       date_start: "DATE '2026-02-10'",

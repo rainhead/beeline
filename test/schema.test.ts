@@ -25,7 +25,7 @@ describe("schema application", () => {
   test("the six member atlases are seeded", async () => {
     // A program with no region is not an atlas, so the one inserted above
     // does not appear here.
-    const codes = await rows(conn, "SELECT code FROM atlas ORDER BY code");
+    const codes = await rows(conn, "SELECT p.code FROM program p WHERE EXISTS (SELECT 1 FROM atlas_region r WHERE r.atlas_id = p.entity_id) ORDER BY p.code");
     expect(codes.flat()).toEqual(["BC", "ID", "NM", "OBA", "OK", "WaBA"]);
   });
 
@@ -63,19 +63,18 @@ describe("schema application", () => {
     expect(
       await rows(
         conn,
-        `SELECT pr.code, EXISTS (SELECT 1 FROM atlas a WHERE a.entity_id = pr.entity_id) AS is_atlas
+        `SELECT pr.code, EXISTS (SELECT 1 FROM atlas_region r WHERE r.atlas_id = pr.entity_id) AS has_states
          FROM person_membership m JOIN program pr ON pr.entity_id = m.program_id WHERE m.person_id = ${person}`,
       ),
     ).toEqual([["MM", false]]);
   });
 
-  test("the atlases are exactly the programs with a region", async () => {
-    expect(await rows(conn, "SELECT code FROM atlas ORDER BY entity_id")).toEqual([["OBA"], ["WaBA"], ["BC"], ["ID"], ["NM"], ["OK"]]);
-    // XX is the program the sequence test above inserted.
-    expect(await rows(conn, "SELECT code FROM program WHERE entity_id NOT IN (SELECT entity_id FROM atlas) AND code <> 'XX' ORDER BY code")).toEqual([
-      ["BLM"],
-      ["MM"],
-    ]);
+  test("atlas_region assigns states to the six atlases and to nothing else", async () => {
+    // Nothing in the store names "the atlases" as a kind (Peter, 2026-10-31): a
+    // program has states assigned or it has not, and this is the whole fact.
+    expect(
+      await rows(conn, "SELECT DISTINCT p.code FROM atlas_region r JOIN program p ON p.entity_id = r.atlas_id ORDER BY p.entity_id"),
+    ).toEqual([["OBA"], ["WaBA"], ["BC"], ["ID"], ["NM"], ["OK"]]);
   });
 
   test("enum-ish CHECK constraints reject unknown values", async () => {
@@ -430,7 +429,7 @@ describe("updating a row an incoming foreign key references", () => {
     // dropped that column; the same shape each time, UNIQUE on a referenced
     // row.)
     await db.run("UPDATE program SET name = 'Oregon Bee Atlas (renamed)' WHERE code = 'OBA'");
-    expect(await rows(db, "SELECT name FROM atlas WHERE code = 'OBA'")).toEqual([["Oregon Bee Atlas (renamed)"]]);
+    expect(await rows(db, "SELECT name FROM program WHERE code = 'OBA'")).toEqual([["Oregon Bee Atlas (renamed)"]]);
     await expect(db.run("UPDATE program SET code = 'ORBA' WHERE code = 'OBA'")).rejects.toThrow(violation);
   });
 

@@ -416,7 +416,7 @@ describe("QC findings and printability", () => {
   test("a taxon-obscured sample prints only where its atlas has said labels may carry the true point", async () => {
     // Arthur, 2026-10-21 (gh-13): Oregon's labels may; every other atlas's
     // samples wait until it answers, and so does a sample outside every atlas.
-    const atlas = (code: string) => `(SELECT entity_id FROM atlas WHERE code = '${code}')`;
+    const atlas = (code: string) => `(SELECT entity_id FROM program WHERE code = '${code}')`;
     const oregon = await insertCleanSample(conn, { taxon_geoprivacy: "'obscured'", atlas_id: atlas("OBA") });
     const washington = await insertCleanSample(conn, {
       sample_number: "'2'", state_province: "'WA'", taxon_geoprivacy: "'obscured'", atlas_id: atlas("WaBA"),

@@ -84,7 +84,7 @@ async function countsByYear(db: Kysely<Database>): Promise<Map<string, Map<numbe
     .selectFrom("specimen as sp")
     .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
     .leftJoin("sample_atlas as sa", "sa.sample_id", "sp.sample_id")
-    .leftJoin("atlas as a", "a.entity_id", "sa.atlas_id")
+    .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
     .select(["a.code as atlas_code", year.as("year"), sql<number>`count(*)`.as("n")])
     .groupBy(["a.code", year])
     .execute();

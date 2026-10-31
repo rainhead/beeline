@@ -223,7 +223,10 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       SELECT CAST(active_since - 1 AS TEXT) AS through, EXTRACT(YEAR FROM active_since) AS oldest_active FROM season`.execute(db),
     db
       .selectFrom("person_membership as pm")
-      .innerJoin("atlas as a", "a.entity_id", "pm.program_id")
+      .innerJoin("program as a", "a.entity_id", "pm.program_id")
+      // Only a program with states assigned is a listing scope; Master
+      // Melittology's members get the two-way toggle.
+      .where(({ exists, selectFrom }) => exists(selectFrom("atlas_region").select("atlas_region.atlas_id").whereRef("atlas_region.atlas_id", "=", "pm.program_id")))
       .where("pm.person_id", "=", personId)
       .select(["a.code", "a.name"])
       .executeTakeFirst(),

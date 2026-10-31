@@ -112,13 +112,8 @@ export interface ProgramOption {
 
 /** The atlases first, in the order they were seeded, then the programs with no region. */
 export async function programOptions(db: Kysely<Database>): Promise<ProgramOption[]> {
-  // An atlas is a program with a region: the view atlas says which (schema/104).
-  return db
-    .selectFrom("program")
-    .select(["code", "name"])
-    .orderBy(sql`NOT EXISTS (SELECT 1 FROM atlas a WHERE a.entity_id = program.entity_id)`)
-    .orderBy("name")
-    .execute();
+  // Seed order (schema/010): the six atlases, then Master Melittology and the BLM surveys.
+  return db.selectFrom("program").select(["code", "name"]).orderBy("entity_id").execute();
 }
 
 export type RosterSort = "name" | "login" | "samples" | "lastSample" | "lastSeen" | "membership";
@@ -356,8 +351,8 @@ export async function listRoster(
              a.login,
              a.inat_user_id,
              (SELECT count(*) FROM sample_collector sc WHERE sc.person_id = p.entity_id) AS samples,
-             CASE WHEN pm.person_id IS NULL THEN NULL WHEN atl.code IS NOT NULL THEN 'atlas' ELSE 'program' END AS membership,
-             atl.code AS atlas_code,
+             CASE WHEN pm.person_id IS NULL THEN NULL WHEN atl.code = 'MM' THEN 'program' ELSE 'atlas' END AS membership,
+             CASE WHEN atl.code <> 'MM' THEN atl.code END AS atlas_code,
              (adm.person_id IS NOT NULL) AS is_admin,
              ${leadsSql} AS leads,
              ${boundRecords} AS bound_records,
@@ -373,7 +368,7 @@ export async function listRoster(
       FROM person p
       LEFT JOIN inat_account a ON a.person_id = p.entity_id
       LEFT JOIN person_membership pm ON pm.person_id = p.entity_id
-      LEFT JOIN atlas atl ON atl.entity_id = pm.program_id
+      LEFT JOIN program atl ON atl.entity_id = pm.program_id
       LEFT JOIN person_admin adm ON adm.person_id = p.entity_id
       LEFT JOIN best ON best.person_id = p.entity_id
     ),
@@ -563,8 +558,8 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
            a.login, a.inat_user_id,
            (SELECT count(*) FROM sample_collector sc WHERE sc.person_id = p.entity_id) AS samples,
            (SELECT count(*) FROM sample_primary_collector pc WHERE pc.person_id = p.entity_id) AS primary_samples,
-           CASE WHEN pm.person_id IS NULL THEN NULL WHEN atl.code IS NOT NULL THEN 'atlas' ELSE 'program' END AS membership,
-           atl.code AS atlas_code,
+           CASE WHEN pm.person_id IS NULL THEN NULL WHEN atl.code = 'MM' THEN 'program' ELSE 'atlas' END AS membership,
+           CASE WHEN atl.code <> 'MM' THEN atl.code END AS atlas_code,
            (adm.person_id IS NOT NULL) AS is_admin,
            coalesce((SELECT array_to_string(list(concat('name:', p2.display_name) ORDER BY p2.display_name), ';')
                      FROM person_delegate d
@@ -579,7 +574,7 @@ export async function personDetail(db: Kysely<Database>, personId: number): Prom
     FROM person p
     LEFT JOIN inat_account a ON a.person_id = p.entity_id
     LEFT JOIN person_membership pm ON pm.person_id = p.entity_id
-    LEFT JOIN atlas atl ON atl.entity_id = pm.program_id
+    LEFT JOIN program atl ON atl.entity_id = pm.program_id
     LEFT JOIN person_admin adm ON adm.person_id = p.entity_id
     LEFT JOIN person_orcid po ON po.person_id = p.entity_id
     LEFT JOIN inat_user_orcid io ON io.inat_user_id = a.inat_user_id

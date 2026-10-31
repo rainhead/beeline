@@ -143,9 +143,8 @@ describe("atlas_region place ids", () => {
     );
   });
 
-  test("every atlas has a region, and Washington's is place 46", async () => {
-    expect(await count("SELECT count(*) FROM atlas a WHERE NOT EXISTS (SELECT 1 FROM atlas_region r WHERE r.atlas_id = a.entity_id)")).toBe(0);
-    expect(await rows(conn, "SELECT r.inat_place_id FROM atlas_region r JOIN atlas a ON a.entity_id = r.atlas_id WHERE a.code = 'WaBA'")).toEqual([[46n]]);
+  test("Washington's region is place 46", async () => {
+    expect(await rows(conn, "SELECT r.inat_place_id FROM atlas_region r JOIN program p ON p.entity_id = r.atlas_id WHERE p.code = 'WaBA'")).toEqual([[46n]]);
   });
 });
 

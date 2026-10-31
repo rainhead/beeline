@@ -48,7 +48,7 @@ async function printApp(signedInAs: "ash" | "staffer" = "staffer") {
     collector_id: String(ash),
     specimen_count: "3",
     county: "'Benton'",
-    atlas_id: `(SELECT entity_id FROM atlas WHERE code = 'OBA')`,
+    atlas_id: `(SELECT entity_id FROM program WHERE code = 'OBA')`,
   });
   const birchSample = await insertCleanSample(conn, {
     collector_id: String(birch),
@@ -111,7 +111,7 @@ describe("the print-run screens", () => {
     // No atlas prints its own labels, so no atlas is a scope of its own.
     expect(body).not.toContain("Oregon Bee Atlas —");
     expect(body).not.toContain("Washington Bee Atlas —");
-    await staff.conn.run(`INSERT INTO atlas_printing SELECT entity_id FROM atlas WHERE code = 'WaBA'`);
+    await staff.conn.run(`INSERT INTO atlas_printing SELECT entity_id FROM program WHERE code = 'WaBA'`);
     const flagged = await (await staff.app.request("/print-runs")).text();
     expect(flagged).toContain("Washington Bee Atlas — nothing waiting");
     expect(flagged).not.toContain("Oregon Bee Atlas —");
@@ -119,7 +119,7 @@ describe("the print-run screens", () => {
 
   it("refuses a run scoped to an atlas that does not print its own labels, in words", async () => {
     const { conn, post } = await printApp();
-    const [[oba]] = (await rows(conn, `SELECT entity_id FROM atlas WHERE code = 'OBA'`)) as [[number]];
+    const [[oba]] = (await rows(conn, `SELECT entity_id FROM program WHERE code = 'OBA'`)) as [[number]];
     const refused = await post("/print-runs", { atlas_id: String(oba) });
     expect(refused.status).toBe(409);
     expect(await refused.text()).toContain("that atlas does not print its own labels");

@@ -293,13 +293,12 @@ export const PERSON_STATE_SQL = `
          coalesce(p.label_name, '') AS label_name,
          coalesce(CAST(a.inat_user_id AS VARCHAR), '') AS inat_user_id,
          coalesce(a.login, '') AS login,
-         -- The log's vocabulary from before atlases were folded into
-         -- programs (2026-10-31): an atlas's code, or 'program' for
-         -- membership of Master Melittology itself. Kept so the fold records
-         -- no change nobody made.
+         -- The overlay's vocabulary (home_atlas): a program's code, or
+         -- 'program' for Master Melittology itself. The log has always
+         -- spelled it so, and a rebuild must record no change nobody made.
          CASE WHEN pm.person_id IS NULL THEN ''
-              WHEN atl.code IS NOT NULL THEN atl.code
-              ELSE 'program' END AS membership,
+              WHEN atl.code = 'MM' THEN 'program'
+              ELSE atl.code END AS membership,
          CASE WHEN adm.person_id IS NULL THEN 'no' ELSE 'yes' END AS admin,
          coalesce((SELECT string_agg(concat('name:', p2.display_name), ';' ORDER BY p2.display_name)
                    FROM person_delegate d
@@ -315,7 +314,7 @@ export const PERSON_STATE_SQL = `
   FROM person p
   LEFT JOIN inat_account a ON a.person_id = p.entity_id
   LEFT JOIN person_membership pm ON pm.person_id = p.entity_id
-  LEFT JOIN atlas atl ON atl.entity_id = pm.program_id
+  LEFT JOIN program atl ON atl.entity_id = pm.program_id
   LEFT JOIN person_admin adm ON adm.person_id = p.entity_id
   LEFT JOIN person_orcid po ON po.person_id = p.entity_id
   LEFT JOIN inat_user_orcid io ON io.inat_user_id = a.inat_user_id`;

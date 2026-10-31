@@ -66,7 +66,7 @@ async function recordApp(signedInAs: "alice" | "bob" | "staffer" = "alice") {
   // coordinates here, and an elevation that knows which tile it came from.
   const aliceSample = await insertCleanSample(conn, {
     collector_id: String(alice),
-    atlas_id: `(SELECT entity_id FROM atlas WHERE code = 'OBA')`,
+    atlas_id: `(SELECT entity_id FROM program WHERE code = 'OBA')`,
     sample_number: "'A-1'",
     specimen_count: "2",
     inat_observation_id: "998877",

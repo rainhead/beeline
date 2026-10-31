@@ -223,7 +223,7 @@ describe("reseeding a store that cannot be blown away", () => {
     const bareConn = await bareInstance.connect();
     const seeded = await rows(
       bareConn,
-      `SELECT greatest((SELECT max(entity_id) FROM atlas), (SELECT max(entity_id) FROM program))`,
+      `SELECT max(entity_id) FROM program`,
     );
     bareConn.closeSync();
     expect(bareCounts.sequenceAt).toBe(Number(seeded[0]![0]) + 1);

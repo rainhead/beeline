@@ -78,7 +78,7 @@ export async function programChecklist(db: Kysely<Database>, scope: string): Pro
       JOIN specimen sp ON sp.entity_id = d.specimen_id
       JOIN sample s ON s.entity_id = sp.sample_id
       LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
-      LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
+      LEFT JOIN program a ON a.entity_id = sa.atlas_id
       WHERE (${inScope})
       GROUP BY d.animal_id
     ),

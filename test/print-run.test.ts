@@ -161,7 +161,7 @@ describe("preparing a run", () => {
   it("scopes an unscoped run to atlases that do not print their own, plus the outside", async () => {
     const [[oba], [waba]] = (await rows(
       conn,
-      `SELECT entity_id FROM atlas WHERE code IN ('OBA', 'WaBA') ORDER BY code`,
+      `SELECT entity_id FROM program WHERE code IN ('OBA', 'WaBA') ORDER BY code`,
     )) as [[number], [number]];
     await conn.run(`INSERT INTO atlas_printing (atlas_id) VALUES (${waba})`);
     const inOregon = await insertCleanSample(conn, { collector_id: String(ash), atlas_id: String(oba) });
@@ -186,7 +186,7 @@ describe("preparing a run", () => {
   });
 
   it("refuses a run scoped to an atlas that does not print its own labels, writing nothing", async () => {
-    const [[waba]] = (await rows(conn, `SELECT entity_id FROM atlas WHERE code = 'WaBA'`)) as [[number]];
+    const [[waba]] = (await rows(conn, `SELECT entity_id FROM program WHERE code = 'WaBA'`)) as [[number]];
     const sample = await insertCleanSample(conn, { collector_id: String(ash), atlas_id: String(waba) });
     const refused = await prepareRun(conn, { atlasId: waba, personId: ash, now: NOW }).catch((err: unknown) => err);
     expect(refused).toBeInstanceOf(PrintRunRefused);

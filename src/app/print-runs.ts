@@ -34,7 +34,7 @@ export async function listRuns(db: Kysely<Database>): Promise<RunListRow[]> {
     .selectFrom("print_run as r")
     .innerJoin("print_run_state as s", "s.print_run_id", "r.entity_id")
     .innerJoin("person as p", "p.entity_id", "r.prepared_by")
-    .leftJoin("atlas as a", "a.entity_id", "r.atlas_id")
+    .leftJoin("program as a", "a.entity_id", "r.atlas_id")
     .select([
       "r.entity_id as print_run_id",
       "s.state",
@@ -93,7 +93,8 @@ export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
            (SELECT count(DISTINCT pr.specimen_id) FROM printable_reprint pr
               JOIN sample_atlas rsa ON rsa.sample_id = pr.sample_id
              WHERE rsa.atlas_id = a.entity_id) AS reprints
-    FROM atlas a
+    FROM program a
+    JOIN (SELECT DISTINCT atlas_id FROM atlas_region WHERE atlas_id IS NOT NULL) reg ON reg.atlas_id = a.entity_id
     LEFT JOIN atlas_printing ap ON ap.atlas_id = a.entity_id
     LEFT JOIN sample_atlas sa ON sa.atlas_id = a.entity_id
     LEFT JOIN pending_print_sample p ON p.sample_id = sa.sample_id
@@ -145,7 +146,7 @@ export async function loadRun(db: Kysely<Database>, printRunId: number): Promise
     .selectFrom("print_run as r")
     .innerJoin("print_run_state as s", "s.print_run_id", "r.entity_id")
     .innerJoin("person as p", "p.entity_id", "r.prepared_by")
-    .leftJoin("atlas as a", "a.entity_id", "r.atlas_id")
+    .leftJoin("program as a", "a.entity_id", "r.atlas_id")
     .where("r.entity_id", "=", printRunId)
     .select([
       "r.entity_id as print_run_id",
@@ -375,7 +376,7 @@ export async function specimenLabels(db: Kysely<Database>, specimenId: number): 
   const rows = await db
     .selectFrom("specimen_label as l")
     .innerJoin("print_run as r", "r.entity_id", "l.print_run_id")
-    .leftJoin("atlas as a", "a.entity_id", "r.atlas_id")
+    .leftJoin("program as a", "a.entity_id", "r.atlas_id")
     .where("l.specimen_id", "=", specimenId)
     .select([
       "l.print_run_id",

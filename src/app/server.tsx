@@ -447,7 +447,7 @@ export function createApp({
       // marks the atlases' identity (src/app/theme/atlas.ts). The program
       // pages are behind sign-in, so here a mark links to the atlas's own
       // website, as its name does.
-      const atlases = await db.selectFrom("atlas").select(["code", "name"]).orderBy("entity_id").execute();
+      const atlases = await atlasOptions(db);
       return c.html(
         html`<!doctype html>${(
           <PublicPage
@@ -803,7 +803,9 @@ export function createApp({
     // or somebody nobody has asked about, and the toggle is then two-way.
     const home = await db
       .selectFrom("person_membership as pm")
-      .innerJoin("atlas as a", "a.entity_id", "pm.program_id")
+      .innerJoin("program as a", "a.entity_id", "pm.program_id")
+      // Only a program with states assigned is a listing scope.
+      .where(({ exists, selectFrom }) => exists(selectFrom("atlas_region").select("atlas_region.atlas_id").whereRef("atlas_region.atlas_id", "=", "pm.program_id")))
       .where("pm.person_id", "=", personId)
       .select(["a.code", "a.name"])
       .executeTakeFirst();

@@ -84,7 +84,7 @@ SELECT s.entity_id AS sample_id,
 FROM sample s
 JOIN sample_location loc ON loc.sample_id = s.entity_id
 LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
-LEFT JOIN atlas a ON a.entity_id = sa.atlas_id
+LEFT JOIN program a ON a.entity_id = sa.atlas_id
 WHERE s.taxon_geoprivacy IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM atlas_taxon_obscured_printing ok WHERE ok.atlas_id = sa.atlas_id);
 

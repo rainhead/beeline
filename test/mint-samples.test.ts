@@ -630,7 +630,7 @@ describe("descriptive fields are a fill-only refresh", () => {
     expect(await count("SELECT count(*) FROM sample_atlas_unfilled")).toBe(1);
     await stage(obs(7));
     await promoteObservations(conn);
-    expect(await one(`SELECT a.code FROM sample_atlas sa JOIN atlas a ON a.entity_id = sa.atlas_id
+    expect(await one(`SELECT a.code FROM sample_atlas sa JOIN program a ON a.entity_id = sa.atlas_id
                       WHERE sa.sample_id = ${sampleId}`)).toEqual(["OBA"]);
     expect(await count("SELECT count(*) FROM sample_atlas_unfilled")).toBe(0);
   });

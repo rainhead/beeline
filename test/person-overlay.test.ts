@@ -253,11 +253,11 @@ describe("applying the overlay", () => {
 
   it("sets a home atlas by code, and refuses a code no atlas has", async () => {
     await apply([row({ person_ref: "name:Ada Collector", field: "home_atlas", value: "WaBA" })]);
-    expect(await one(`SELECT a.code FROM person_membership h JOIN atlas a ON a.entity_id = h.program_id`)).toEqual([
+    expect(await one(`SELECT a.code FROM person_membership h JOIN program a ON a.entity_id = h.program_id`)).toEqual([
       "WaBA",
     ]);
     const bad = await apply([row({ person_ref: "name:Ada Collector", field: "home_atlas", value: "ZZ" })]);
-    expect(bad.unresolved[0]!.reason).toMatch(/no atlas with code/);
+    expect(bad.unresolved[0]!.reason).toMatch(/no program with code/);
   });
 
   it("moves between an atlas and the program itself, in both directions", async () => {

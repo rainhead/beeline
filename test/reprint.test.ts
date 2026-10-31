@@ -193,6 +193,18 @@ describe("asking for a reprint", () => {
     expect(await rows(conn, `SELECT field_number FROM specimen WHERE entity_id = ${imported}`)).toEqual([["25000001"]]);
   });
 
+  it("waits, rather than stopping the run, when its sample has lost its coordinates", async () => {
+    await requestReprint(conn, { sampleId: ashSample }, by(NEXT_DAY));
+    await conn.run(`DELETE FROM sample_location WHERE sample_id = ${ashSample}`);
+    // missing_required_field is unwaivable, so the reprint is not printable;
+    // the freeze never reaches its no_location guard.
+    expect(await count("SELECT count(*) FROM pending_reprint")).toBe(2);
+    expect(await count("SELECT count(*) FROM printable_reprint")).toBe(0);
+    const fresh = await insertCleanSample(conn, { collector_id: String(birch), specimen_count: "1", sample_number: "'5'" });
+    expect(await prepareRun(conn, { atlasId: null, personId: ash, now: DAY_AFTER })).toMatchObject({ labels: 1, reprints: 0 });
+    expect(await count(`SELECT count(*) FROM specimen WHERE sample_id = ${fresh}`)).toBe(1);
+  });
+
   it("waits while staff hold the sample", async () => {
     await requestReprint(conn, { sampleId: ashSample }, by(NEXT_DAY));
     await conn.run(`INSERT INTO sample_hold (sample_id, reason, held_by) VALUES (${ashSample}, 'checking the date', ${ash})`);

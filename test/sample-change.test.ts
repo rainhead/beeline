@@ -613,6 +613,34 @@ describe("a number-and-date coincidence is not an identity", () => {
     expect(entries.some((e) => e.collector === "name:Ada Collector" && e.author === "" &&
                                e.field === "sample_number" && e.new_value === "7")).toBe(false);
   });
+
+  it("a row whose link a colliding sample still holds cannot be claimed by a matching pair either", async () => {
+    // Ada's sample 3 is linked to observation 77. Bo has two samples both
+    // numbered 3 on the same day, a live duplicate the pass records as
+    // nothing. One of Bo's is corrected to Ada, so it now collides with
+    // hers instead and the other stands alone on Bo's number. That one
+    // reaches Ada's row by number and date. Ada is still here and still
+    // holds 77 — but on a shared triple, so the pass could not list her
+    // among the live collectors or the observation holders, and handed her
+    // row to Bo's sample: "unlinked from 77, collector Ada -> Bo", about a
+    // sample that never carried 77.
+    await conn.run("INSERT INTO person (display_name) VALUES ('Bo Collector')");
+    const bo = "(SELECT entity_id FROM person WHERE display_name = 'Bo Collector')";
+    const ada = "(SELECT entity_id FROM person WHERE display_name = 'Ada Collector')";
+    await insertCleanSample(conn, { sample_number: "'3'", inat_observation_id: "77" }, null);
+    const moved = await insertCleanSample(conn, { sample_number: "'3'", collector_id: bo }, null);
+    await insertCleanSample(conn, { sample_number: "'3'", collector_id: bo }, null);
+    expect(await record()).toMatchObject({ baselined: true, colliding: 2 });
+
+    await conn.run(`UPDATE sample_collector SET person_id = ${ada} WHERE sample_id = ${moved}`);
+    const pass = await record();
+    expect(pass.colliding).toBe(2);
+
+    const entries = await readSampleChanges(paths.log);
+    expect(entries.filter((e) => e.collector === "name:Ada Collector")).toEqual([]);
+    expect(entries.filter((e) => e.field === "observation" && e.old_value === "77")).toEqual([]);
+    expect((await record()).appended).toBe(0);
+  });
 });
 
 describe("what the pass deliberately does not say", () => {

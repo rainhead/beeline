@@ -260,7 +260,14 @@ export interface SampleStates {
    */
   suppressedKeys: Set<string>;
   suppressedObservations: Set<string>;
-    /** Samples whose collector no reference names: unrecordable, so counted. */
+  /**
+   * Every collector reference the store answers to — the colliding samples'
+   * included, which `states` leaves out. A collector on a shared triple is
+   * still here, and their rows are no more somebody else's to claim on a
+   * number-and-date coincidence than a collector the pass can speak for.
+   */
+  liveCollectors: Set<string>;
+  /** Samples whose collector no reference names: unrecordable, so counted. */
   unreferenceable: number;
   /**
    * Samples sharing one triple — a live duplicate_sample_number. The
@@ -279,6 +286,7 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
   const states = new Map<string, SampleState>();
   const suppressedKeys = new Set<string>();
   const suppressedObservations = new Set<string>();
+  const liveCollectors = new Set<string>();
   let unreferenceable = 0;
   for (const row of rows) {
     const text = (k: string) => String(row[k] ?? "");
@@ -288,6 +296,7 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
       if (text("observation") !== "") suppressedObservations.add(text("observation"));
       continue;
     }
+    liveCollectors.add(collector);
     const state: SampleState = {
       collector,
       sample_number: text("sample_number"),
@@ -318,7 +327,7 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
     if (collector === "") continue;
     if (suppressedKeys.has(keyOf(collector, String(row.sample_number ?? ""), String(row.date_start ?? "")))) colliding++;
   }
-  return { states, suppressedKeys, suppressedObservations, unreferenceable, colliding };
+  return { states, suppressedKeys, suppressedObservations, liveCollectors, unreferenceable, colliding };
 }
 
 // ── The snapshot ─────────────────────────────────────────────────────────
@@ -609,7 +618,8 @@ export function matchSamples(
   {
     directOnly = false,
     suppressedObservations = new Set<string>(),
-  }: { directOnly?: boolean; suppressedObservations?: ReadonlySet<string> } = {},
+    liveCollectors: alsoLive = new Set<string>(),
+  }: { directOnly?: boolean; suppressedObservations?: ReadonlySet<string>; liveCollectors?: ReadonlySet<string> } = {},
 ): SampleMatching {
   const rows = [...snapshot.values()];
   const byObservation = valueIndex(rows, (s) => s.fields.observation);
@@ -617,7 +627,9 @@ export function matchSamples(
   // Which store sample holds each observation now — the store's answer, not
   // the snapshot's, because the snapshot keeps whatever a sample last held.
   const holder = new Map<string, SampleState>();
-  const liveCollectors = new Set<string>();
+  // The collectors the store answers to: these states' and, from the caller,
+  // the colliding samples' that `states` cannot carry.
+  const liveCollectors = new Set<string>(alsoLive);
   for (const state of states.values()) {
     if (state.fields.observation !== "") holder.set(state.fields.observation, state);
     liveCollectors.add(state.collector);
@@ -675,9 +687,13 @@ export function matchSamples(
     }
     const byPair = byNumberDate.get(`${state.sample_number}${SEP}${state.date_start}`);
     if (byPair == null) continue;
-    // The refusal described above: the row's own link points at somebody else.
+    // The refusal described above: the row's own link points at somebody
+    // else — a sample this pass can speak for, or one it cannot (on a shared
+    // triple, or with no collector reference), which is still evidence that
+    // this sample is not the row's.
     const linkedTo = byPair.fields.observation === "" ? undefined : holder.get(byPair.fields.observation);
     if (linkedTo !== undefined && linkedTo !== state) continue;
+    if (byPair.fields.observation !== "" && suppressedObservations.has(byPair.fields.observation)) continue;
     // The person log's gate, ported: a collector reference the store still
     // answers to means that collector is still here, and their row is not
     // somebody else's to claim on a number-and-date coincidence — however
@@ -830,7 +846,7 @@ async function recordPass(
   paths: SampleLogPaths,
   opts: SampleRecordOptions,
 ): Promise<SampleRecordResult> {
-  const { states, suppressedKeys, suppressedObservations, unreferenceable, colliding } =
+  const { states, suppressedKeys, suppressedObservations, liveCollectors, unreferenceable, colliding } =
     await readSampleStates(read, opts.where ?? "");
   const snapshot = await readSnapshot(paths.state);
 
@@ -850,6 +866,7 @@ async function recordPass(
   const { matched, contested, contestedRows } = matchSamples(snapshot, states, {
     directOnly: opts.where != null,
     suppressedObservations,
+    liveCollectors,
   });
 
   // A snapshot this store does not answer to is another store's statement,

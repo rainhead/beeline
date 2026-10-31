@@ -152,9 +152,12 @@ export const IDENTIFICATION_TERMS: readonly (readonly [header: string, term: str
 ];
 
 /**
- * Beeline's own, with no term. Sex and caste are a determination's too, and an
- * earlier one may have said something else; Darwin Core has `sex` only on the
- * occurrence, which carries the determination of record's.
+ * Beeline's own, with no term on the identification. Sex and caste are a
+ * determination's too, and an earlier one may have said something else;
+ * Darwin Core has `sex` on the occurrence, which carries the determination of
+ * record's. Darwin Core has `caste` too since 2026, and Symbiota keeps the
+ * caste in `reproductiveCondition` (beeline-ni5m.5); the occurrence row does
+ * not write either yet.
  */
 export const IDENTIFICATION_OWN_COLUMNS = ["sex", "caste", "identifiedByExpert"] as const;
 

@@ -664,7 +664,7 @@ export interface WorksheetDeterminationTable {
 
 // schema/045_determination_entry.sql, schema/119 (beeline-bcq)
 
-/** Which taxa record sex as queen/worker/male; the nearest stated ancestor decides. */
+/** Which taxa record a caste (gyne, worker or drone); the nearest stated ancestor decides. */
 export interface AnimalCasteTable {
   rank: string;
   scientific_name: string;

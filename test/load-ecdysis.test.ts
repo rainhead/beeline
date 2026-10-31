@@ -52,6 +52,43 @@ const record = (specimenId: number) =>
        FROM determination_of_record r JOIN animal an ON an.entity_id = r.animal_id LEFT JOIN person p ON p.entity_id = r.determiner_id
        WHERE r.specimen_id = ${specimenId}`);
 
+describe("sex and reproductive condition", () => {
+  test("the occurrence's sex and caste land on its current identification, in the model's words", async () => {
+    // Symbiota keeps the caste in dwc:reproductiveCondition, in mixed case
+    // (worker, Gyne, drone on the BC Bee Atlas's dataset); it is the current
+    // identification's, and a superseded one states neither (beeline-ni5m.5).
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-castes-"));
+    await writeFile(
+      join(dir, "occurrences.csv"),
+      "id,catalogNumber,recordID,scientificName,identificationQualifier,identifiedBy,dateIdentified,identificationRemarks,modified,sex,reproductiveCondition\n" +
+        "100,WSDA_2303966,occ-a,Bombus vosnesenskii,,Ellen Expert,2025,,2025-09-23 14:13:48,Female,Gyne\n" +
+        "101,WSDA_2303967,occ-b,Andrena sladeni,,Ellen Expert,2025,,2025-09-23 14:13:48,Male,\n" +
+        "102,WSDA_2303968,occ-c,Lasioglossum cooleyi,,Ellen Expert,2025,,2025-09-23 14:13:48,,worker\n" +
+        "103,WSDA_2303969,occ-d,Ceratina acantha,,Ellen Expert,2025,,2025-09-23 14:13:48,Unknown,\n",
+    );
+    await writeFile(
+      join(dir, "identifications.csv"),
+      "coreid,identifiedBy,dateIdentified,identificationQualifier,scientificName,identificationIsCurrent,identificationRemarks,recordID,modified\n" +
+        "100,Ellen Expert,2025,,Bombus vosnesenskii,1,,id-a,2025-09-23 14:13:48\n" +
+        "100,Ellen Expert,2024,,Bombus,0,,id-a-old,2024-09-23 14:13:48\n" +
+        "101,Ellen Expert,2025,,Andrena sladeni,1,,id-b,2025-09-23 14:13:48\n" +
+        "102,Ellen Expert,2025,,Lasioglossum cooleyi,1,,id-c,2025-09-23 14:13:48\n" +
+        "103,Ellen Expert,2025,,Ceratina acantha,1,,id-d,2025-09-23 14:13:48\n",
+    );
+    await loadEcdysis(conn, { path: dir, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(
+      await rows(conn, `SELECT d.specimen_id, an.scientific_name, d.sex, d.caste FROM determination d JOIN animal an ON an.entity_id = d.animal_id
+                        WHERE d.channel = 'ecdysis_import' ORDER BY d.specimen_id, d.recorded_at`),
+    ).toEqual([
+      [a, "Bombus", null, null], // the superseded identification states neither
+      [a, "Bombus vosnesenskii", "female", "gyne"],
+      [b, "Andrena sladeni", "male", null],
+      [c, "Lasioglossum cooleyi", "female", "worker"], // the caste decides the sex
+      [d, "Ceratina acantha", null, null], // 'Unknown' is nothing the model can say
+    ]);
+  });
+});
+
 describe("an unpacked Darwin Core archive", () => {
   test("records the museum's catalog number of every specimen it matches, as Ecdysis writes it", async () => {
     // A catalog number is the museum's, so Beeline keeps Ecdysis's word for

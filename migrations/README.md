@@ -36,7 +36,10 @@ nothing read were dropped, `atlas.inat_place_id` and `qc_rule.instructions`
 `atlas_id` column referencing `program` and `person_membership` keyed by
 `program_id` in place of a kind and a nullable atlas (beeline-ni5m.2). A
 sandbox store built earlier shows all of it as drift in `--check` until it is
-reseeded, correctly.
+reseeded, correctly. The CHECKs on `determination.sex` and `determination.caste`
+(beeline-ni5m.5) are of ADR 0006's other kind: a deployed store cannot gain a
+CHECK at all, and `--check` does not compare them, so only the fresh build has
+them.
 
 **0001–0023 are the pre-reseed epoch.** beeline-6e9 rebuilt `sample` —
 collector and atlas off the table, `sample_atlas` and

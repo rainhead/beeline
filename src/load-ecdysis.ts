@@ -166,7 +166,12 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       `CREATE OR REPLACE TEMP TABLE ecd_occurrence AS
        SELECT "id" AS occ_id, trim("catalogNumber") AS catalog_number, "recordID" AS occurrence_record_id,
               ${await occurrenceColumn("family")} AS family, ${await occurrenceColumn("order")} AS order_name,
-              ${await occurrenceColumn("class")} AS class_name
+              ${await occurrenceColumn("class")} AS class_name,
+              -- Sex, and the caste, which Symbiota keeps in Darwin Core's
+              -- reproductiveCondition: worker, Gyne, drone in mixed case
+              -- (beeline-ni5m.5). Both belong to the current identification.
+              ${await occurrenceColumn("sex")} AS sex_text,
+              ${await occurrenceColumn("reproductiveCondition")} AS caste_text
        FROM read_csv(${sqlString(files.occurrences)}, header = true, all_varchar = true)`,
     );
     // An occurrence row read as its current identification, keyed by the
@@ -357,6 +362,19 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
        WITH ident AS (
          SELECT i.*, m.specimen_id, o.occurrence_record_id,
                 o.family AS occ_family, o.order_name AS occ_order, o.class_name AS occ_class,
+                -- The occurrence's sex and caste are its current
+                -- identification's; a superseded one states neither. Mapped
+                -- onto the model's vocabulary (schema/040): the caste decides
+                -- the sex, and a word outside it is dropped.
+                CASE WHEN i.is_current THEN
+                  CASE lower(coalesce(o.caste_text, ''))
+                    WHEN 'queen' THEN 'gyne' WHEN 'gyne' THEN 'gyne' WHEN 'worker' THEN 'worker' WHEN 'drone' THEN 'drone' END
+                END AS caste,
+                CASE WHEN i.is_current THEN
+                  CASE lower(coalesce(o.caste_text, ''))
+                    WHEN 'queen' THEN 'female' WHEN 'gyne' THEN 'female' WHEN 'worker' THEN 'female' WHEN 'drone' THEN 'male'
+                    ELSE CASE lower(coalesce(o.sex_text, '')) WHEN 'female' THEN 'female' WHEN 'male' THEN 'male' END END
+                END AS sex,
                 lower(i.scientific_name) IN ('', 'undetermined', 'unidentified') AS placeholder,
                 nullif(lower(i.identified_by), 'unknown') AS by_text,
                 regexp_extract(i.qualifier_text, '^(cf|aff|af|nr)\\.?\\s+(\\S+)$', 1) AS q_word,
@@ -530,7 +548,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       `INSERT INTO determination (specimen_id, animal_id, qualifier, verbatim_identification, sex, caste,
                                   determiner_id, determiner_name, is_expert, channel, determined_on, determined_on_precision,
                                   recorded_at, notes)
-       SELECT specimen_id, animal_id, qualifier, scientific_name, NULL, NULL,
+       SELECT specimen_id, animal_id, qualifier, scientific_name, sex, caste,
               determiner_id, CASE WHEN by_text IS NULL OR by_text = '' THEN NULL ELSE identified_by END,
               true, 'ecdysis_import', determined_on, precision, recorded_at, notes
        FROM ecd_insert`,

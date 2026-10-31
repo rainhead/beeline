@@ -4,8 +4,8 @@ CREATE TABLE determination (
   animal_id       INTEGER NOT NULL REFERENCES animal(entity_id),
   qualifier       TEXT CHECK (qualifier IN ('cf.', 'aff.', 'nr.')),
   verbatim_identification TEXT,
-  sex             TEXT,
-  caste           TEXT,
+  sex             TEXT CHECK (sex IN ('female', 'male')),
+  caste           TEXT CHECK (caste IN ('gyne', 'worker', 'drone')),
   determiner_id   INTEGER REFERENCES person(entity_id),
   determiner_name TEXT,
   is_expert       BOOLEAN NOT NULL,
@@ -15,9 +15,15 @@ CREATE TABLE determination (
   recorded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   notes           TEXT,
   CHECK (nullif(trim(verbatim_identification), '') IS NOT NULL
-         OR (channel = 'legacy_import' AND verbatim_identification IS NULL))
+         OR (channel = 'legacy_import' AND verbatim_identification IS NULL)),
+  -- A drone is a male and a gyne or worker is a female; the draft table
+  -- holds the same rule (schema/045). NULL on either side passes, since a
+  -- source may state one and not the other.
+  CHECK (caste IS NULL OR (caste = 'drone') = (sex = 'male'))
 );
 COMMENT ON TABLE determination IS 'A person asserting a taxon (and sex/caste) for a specimen. Append-only events: a correction is a newer event, never an edit. The volunteer draft/commit boundary lives in the app — only deliberate assertions become rows.';
+COMMENT ON COLUMN determination.sex IS 'female or male (Darwin Core sex), lower case, or NULL where the source said neither. One vocabulary for every channel since 2026-10-31 (beeline-ni5m.5): the loaders map what a source wrote onto it and drop what does not fit, and legacy promotion''s survey (legacy_sex_caste_survey, ingest/) says what was dropped.';
+COMMENT ON COLUMN determination.caste IS 'gyne, worker or drone, or NULL: the caste of a social bee, in the vocabulary the museum databases use — Ecdysis holds it in dwc:reproductiveCondition, which Caleb Lankford calls reproductive condition, with these words (beeline-ni5m.5, Peter 2026-10-31: screens say Caste and gyne). Darwin Core also has dwc:caste. A gyne or worker is female and a drone male (CHECK). Only taxa animal_castes says have castes carry one from in-app entry; an import keeps what the source said.';
 COMMENT ON COLUMN determination.qualifier IS 'Open nomenclature: how sure the determiner was. cf. — resembles this species, needs confirming; aff. — close to it but probably something else; nr. — near it. All three modify a species-rank assertion and none of them is expressible as a coarser one: dropping to genus throws away the resemblance the determiner actually observed. sp./spp. are deliberately absent, being what a genus-rank determination already means (beeline-tgu).';
 COMMENT ON COLUMN determination.verbatim_identification IS 'The name as the determiner wrote it, kept beside the node it resolved to — and required — never blank — on every channel but legacy_import, because not every name will resolve to a name in Ecdysis''s thesaurus, which the tree is matched against, and this is then the only record of what was said (beeline-45v). Legacy import may omit it, never blank it: most of its determinations arrive as parted columns with no whole name to keep, and promotion invents none — with one exception, where a curated decision (a spelling alias, an adopted Ecdysis name) moves a determination to a node other than the one its own columns spell. The spelling the source used is recorded here then, because nothing else would say what was written (beeline-bph). Ecdysis import (phase 7) brings names from a system that records both.';
 COMMENT ON COLUMN determination.determiner_name IS 'Imports name people we may not resolve to a person row.';

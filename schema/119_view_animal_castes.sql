@@ -20,4 +20,4 @@ stated AS (
 SELECT a.entity_id AS animal_id, coalesce(s.has_castes, false) AS has_castes
 FROM animal a
 LEFT JOIN stated s ON s.animal_id = a.entity_id AND s.nearest = 1;
-COMMENT ON VIEW animal_castes IS 'One row per animal node: true when its sex is recorded as queen, worker or male.';
+COMMENT ON VIEW animal_castes IS 'One row per animal node: true when a caste (gyne, worker or drone) is recorded beside its sex.';

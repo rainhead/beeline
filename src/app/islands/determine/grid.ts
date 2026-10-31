@@ -335,7 +335,7 @@ class DetermineGrid extends LitElement {
       ? [
           { label: s.queen, sex: "female", caste: "gyne" },
           { label: s.worker, sex: "female", caste: "worker" },
-          { label: s.male, sex: "male", caste: "drone" },
+          { label: s.drone, sex: "male", caste: "drone" },
         ]
       : [
           { label: s.female, sex: "female", caste: null },

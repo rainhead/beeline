@@ -113,8 +113,13 @@ describe("sex and reproductive condition", () => {
     const sexes = () => rows(conn, `SELECT specimen_id, sex, caste FROM determination WHERE channel = 'ecdysis_import' ORDER BY specimen_id`);
     await loadEcdysis(conn, { path: await write({ a: ["", ""], b: ["Male", ""] }), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(await sexes()).toEqual([[a, null, null], [b, "male", null]]);
-    await loadEcdysis(conn, { path: await write({ a: ["Female", "worker"], b: ["Female", ""] }), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    // A stated sex is kept against a later Female; a caste that would
+    // contradict it (a male worker) is not taken either.
+    await loadEcdysis(conn, { path: await write({ a: ["Female", "worker"], b: ["Female", "worker"] }), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
     expect(await sexes()).toEqual([[a, "female", "worker"], [b, "male", null]]);
+    // A caste that agrees with the stated sex fills in beside it.
+    await loadEcdysis(conn, { path: await write({ a: ["Female", "worker"], b: ["Male", "drone"] }), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(await sexes()).toEqual([[a, "female", "worker"], [b, "male", "drone"]]);
     expect(await rows(conn, `SELECT count(*) FROM determination WHERE channel = 'ecdysis_import'`)).toEqual([[2n]]);
   });
 });

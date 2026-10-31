@@ -151,18 +151,28 @@ JOIN sample_primary_collector pc ON pc.sample_id = n.sample_id;
 -- written in the sex column (a volunteer's "queen") is read as the caste it
 -- names, and the caste decides the sex where both are stated, since a
 -- worker is female and a drone male whatever the other column says.
+-- One word, read as a caste or as a sex; then the two columns together.
+CREATE OR REPLACE MACRO legacy_caste_word(x) AS
+  CASE lower(trim(coalesce(x, '')))
+    WHEN 'queen' THEN 'gyne' WHEN 'gyne' THEN 'gyne' WHEN 'worker' THEN 'worker' WHEN 'drone' THEN 'drone' END;
+CREATE OR REPLACE MACRO legacy_sex_word(x) AS
+  CASE lower(trim(coalesce(x, '')))
+    WHEN 'female' THEN 'female' WHEN 'f' THEN 'female' WHEN 'male' THEN 'male' WHEN 'm' THEN 'male' END;
+
 CREATE OR REPLACE MACRO legacy_caste_of(caste_raw, sex_raw) AS
-  coalesce(
-    CASE lower(trim(coalesce(caste_raw, '')))
-      WHEN 'queen' THEN 'gyne' WHEN 'gyne' THEN 'gyne' WHEN 'worker' THEN 'worker' WHEN 'drone' THEN 'drone' END,
-    CASE lower(trim(coalesce(sex_raw, '')))
-      WHEN 'queen' THEN 'gyne' WHEN 'gyne' THEN 'gyne' WHEN 'worker' THEN 'worker' WHEN 'drone' THEN 'drone' END);
+  coalesce(legacy_caste_word(caste_raw), legacy_caste_word(sex_raw));
 
 CREATE OR REPLACE MACRO legacy_sex_of(sex_raw, caste_raw) AS
   CASE legacy_caste_of(caste_raw, sex_raw)
     WHEN 'gyne' THEN 'female' WHEN 'worker' THEN 'female' WHEN 'drone' THEN 'male'
-    ELSE CASE lower(trim(coalesce(sex_raw, '')))
-      WHEN 'female' THEN 'female' WHEN 'f' THEN 'female' WHEN 'male' THEN 'male' WHEN 'm' THEN 'male' END END;
+    ELSE legacy_sex_word(sex_raw) END;
+
+-- A stated value the mapping discarded, each column judged on its own: a
+-- caste the sex column supplied does not excuse a caste column the mapping
+-- could not read (CodeRabbit on this branch).
+CREATE OR REPLACE MACRO legacy_sex_caste_dropped(sex_raw, caste_raw) AS
+  (nullif(trim(coalesce(caste_raw, '')), '') IS NOT NULL AND legacy_caste_word(caste_raw) IS NULL)
+  OR (nullif(trim(coalesce(sex_raw, '')), '') IS NOT NULL AND legacy_sex_word(sex_raw) IS NULL AND legacy_caste_word(sex_raw) IS NULL);
 
 -- What the mapping did to every distinct value in staging, expert and
 -- volunteer columns apart: the survey to read after the final legacy pull
@@ -171,8 +181,7 @@ CREATE OR REPLACE MACRO legacy_sex_of(sex_raw, caste_raw) AS
 CREATE OR REPLACE VIEW legacy_sex_caste_survey AS
 SELECT 'expert' AS determination, r.sex AS sex_raw, r.caste AS caste_raw,
        legacy_sex_of(r.sex, r.caste) AS sex, legacy_caste_of(r.caste, r.sex) AS caste,
-       (nullif(trim(r.sex), '') IS NOT NULL AND legacy_sex_of(r.sex, r.caste) IS NULL)
-         OR (nullif(trim(r.caste), '') IS NOT NULL AND legacy_caste_of(r.caste, r.sex) IS NULL) AS dropped,
+       legacy_sex_caste_dropped(r.sex, r.caste) AS dropped,
        count(*) AS records
 FROM legacy_promotable r
 WHERE nullif(trim(r.sex), '') IS NOT NULL OR nullif(trim(r.caste), '') IS NOT NULL
@@ -180,8 +189,7 @@ GROUP BY ALL
 UNION ALL
 SELECT 'volunteer', r.sexVolDet, r.casteVolDet,
        legacy_sex_of(r.sexVolDet, r.casteVolDet), legacy_caste_of(r.casteVolDet, r.sexVolDet),
-       (nullif(trim(r.sexVolDet), '') IS NOT NULL AND legacy_sex_of(r.sexVolDet, r.casteVolDet) IS NULL)
-         OR (nullif(trim(r.casteVolDet), '') IS NOT NULL AND legacy_caste_of(r.casteVolDet, r.sexVolDet) IS NULL),
+       legacy_sex_caste_dropped(r.sexVolDet, r.casteVolDet),
        count(*)
 FROM legacy_promotable r
 WHERE nullif(trim(r.sexVolDet), '') IS NOT NULL OR nullif(trim(r.casteVolDet), '') IS NOT NULL

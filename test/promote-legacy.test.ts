@@ -406,6 +406,12 @@ describe("a joint row whose name columns are a list", () => {
     await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('castes-junk' AS _id, '25000018' AS "fieldNumber",
                    '18' AS "sampleId", 'unknown' AS "sex", '' AS "caste")
                  FROM legacy_occurrence WHERE "identifiedBy" = 'Lincoln Best' LIMIT 1`);
+    // A caste the sex column supplies beside a caste column the mapping
+    // cannot read: the determination takes the worker, and the survey still
+    // reports the word it dropped.
+    await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('castes-soldier' AS _id, '25000019' AS "fieldNumber",
+                   'OBAS-00665' AS "sampleId", 'worker' AS "sexVolDet", 'soldier' AS "casteVolDet")
+                 FROM legacy_occurrence WHERE "fieldNumber" = '25000005'`);
     await promoteLegacy(c, FIXTURE_INPUTS);
   });
 
@@ -417,8 +423,12 @@ describe("a joint row whose name columns are a list", () => {
     expect(await det("25000016", false)).toEqual([["male", "drone"]]);
     expect(await det("25000017", true)).toEqual([["female", "gyne"]]); // 'F' and 'Queen'
     expect(await det("25000018", true)).toEqual([[null, null]]); // 'unknown' is nothing the model can say
+    expect(await det("25000019", false)).toEqual([["female", "worker"]]);
     expect(await rows(c, `SELECT determination, sex_raw, caste_raw, sex, caste, dropped, records
-                          FROM legacy_sex_caste_survey WHERE dropped`)).toEqual([["expert", "unknown", "", null, null, true, 1n]]);
+                          FROM legacy_sex_caste_survey WHERE dropped ORDER BY 1`)).toEqual([
+      ["expert", "unknown", "", null, null, true, 1n],
+      ["volunteer", "worker", "soldier", "female", "worker", true, 1n],
+    ]);
   });
 
   test("parts a name that appears in no solo row by its position in the columns", async () => {

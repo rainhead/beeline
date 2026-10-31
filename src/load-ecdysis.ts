@@ -542,11 +542,13 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
     // An identification already recorded — by its recordID, or adopted
     // above — states no sex or caste until an export carries them, which the
     // first load after beeline-ni5m.5 is the first to do for every one on the
-    // store. They are filled where the event has none; a value the event
-    // already states is left, since a determination is an append-only event
-    // and Ecdysis changing one is rare (CodeRabbit on this branch).
+    // store. Each field is filled where the event has none; a value the
+    // event already states is left, since a determination is an append-only
+    // event and Ecdysis changing one is rare, and a fill that would make the
+    // pair contradict itself (a stated male, an exported worker) is left too,
+    // as the CHECK would refuse it (CodeRabbit on this branch).
     await conn.run(
-      `UPDATE determination SET sex = c.sex, caste = c.caste
+      `UPDATE determination SET sex = coalesce(determination.sex, c.sex), caste = coalesce(determination.caste, c.caste)
        FROM (SELECT coalesce(c.adopt_id, e.determination_id) AS determination_id, c.sex, c.caste
              FROM ecd_candidate c
              LEFT JOIN ecdysis_identification e ON e.record_id = c.record_id
@@ -554,7 +556,9 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                AND coalesce(c.adopt_id, e.determination_id) IS NOT NULL
              QUALIFY row_number() OVER (PARTITION BY coalesce(c.adopt_id, e.determination_id) ORDER BY c.record_id) = 1) c
        WHERE determination.entity_id = c.determination_id
-         AND determination.sex IS NULL AND determination.caste IS NULL`,
+         AND (determination.sex IS NULL OR determination.caste IS NULL)
+         AND coalesce(coalesce(determination.caste, c.caste) IS NULL
+                      OR (coalesce(determination.caste, c.caste) = 'drone') = (coalesce(determination.sex, c.sex) = 'male'), true)`,
     );
     // The rows this load inserts are the ones above the sequence's current
     // high-water mark, which is how the provenance rows below find them:

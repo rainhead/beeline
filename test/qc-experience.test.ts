@@ -83,7 +83,7 @@ describe("the front page", () => {
     const { app } = await qcApp();
     const body = await (await app.request("/")).text();
     expect(body).toContain("<h1>Beeline</h1>");
-    expect(body).toContain("Beeline follows the bees you collect");
+    expect(body).toContain("Beeline tracks the bees you collect");
     expect(body).not.toContain("Samples needing attention");
   });
 

@@ -174,7 +174,7 @@ describe("the determination history", () => {
   it("says why the record is not the newest entry", async () => {
     const { app, specimen } = await recordApp();
     const body = await get(app, `/specimens/${specimen}`);
-    expect(body).toContain("stands until another expert revises it");
+    expect(body).toContain("remains the determination of record until another expert revises it");
   });
 
   it("keeps that explanation off a specimen whose newest entry is the record", async () => {
@@ -183,7 +183,7 @@ describe("the determination history", () => {
     await conn.run(`DELETE FROM determination WHERE specimen_id = ${specimen} AND is_expert = false AND channel = 'in_app'`);
     const body = await get(app, `/specimens/${specimen}`);
     expect(body).toContain("of record");
-    expect(body).not.toContain("does not displace it");
+    expect(body).not.toContain("does not replace it");
   });
 
   it("shows the name as the source wrote it, which reached no screen before", async () => {

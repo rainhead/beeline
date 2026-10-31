@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { loadSpatial, openDuckDb } from "./db.js";
 import {
+  LOCALITY_RULE_VERSION,
   localityCandidates,
   type GazetteerPlace,
   type LocalityBasis,
@@ -89,14 +90,14 @@ export async function deriveLocalities(
       `SELECT l.sample_id, l.latitude AS lat, l.longitude AS lon
          FROM sample_location l
          LEFT JOIN sample_locality_candidate g ON g.sample_id = l.sample_id AND g.rank = 1
-        WHERE (g.sample_id IS NULL OR g.gazetteer_build <> $1
+        WHERE (g.sample_id IS NULL OR g.gazetteer_build <> $1 OR g.rule_version <> $3
                OR abs(g.latitude - l.latitude) > 5e-5 OR abs(g.longitude - l.longitude) > 5e-5)
           AND ($2::BIGINT IS NULL OR l.sample_id IN (
                 SELECT sc.sample_id FROM sample_collector sc
                 JOIN inat_account a ON a.person_id = sc.person_id
                 WHERE a.inat_user_id = $2::BIGINT))
         ORDER BY l.sample_id`,
-      [build.build_id, opts.observerUserId ?? null],
+      [build.build_id, opts.observerUserId ?? null, LOCALITY_RULE_VERSION],
     );
     result.pending = pending.length;
     if (pending.length === 0) return result;
@@ -121,7 +122,9 @@ export async function deriveLocalities(
           result.unnamed += 1;
           continue;
         }
-        cands.forEach((c, k) => named.push([p.sample_id, k + 1, c.locality, c.basis, p.lat, p.lon, build.build_id, now]));
+        cands.forEach((c, k) =>
+          named.push([p.sample_id, k + 1, c.locality, c.basis, p.lat, p.lon, build.build_id, LOCALITY_RULE_VERSION, now]),
+        );
         result.named += 1;
         result.byBasis[cands[0]!.basis] = (result.byBasis[cands[0]!.basis] ?? 0) + 1;
       }
@@ -294,7 +297,7 @@ async function gather(
   const ev = new Map<number, LocalityEvidence>();
   for (const p of batch) {
     ev.set(p.sample_id, {
-      regionId: null, refuge: null, wildlifeArea: null, nationalPark: null, statePark: null, parks: [],
+      regionId: null, county: null, refuge: null, wildlifeArea: null, nationalPark: null, statePark: null, parks: [],
       island: null, townLimits: null, nearby: [], farTowns: [], features: [], campgrounds: [], used: [],
     });
   }
@@ -302,11 +305,12 @@ async function gather(
 
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE locality_batch_region AS
-    SELECT b.sample_id, any_value(r.region_id) AS region_id
+    SELECT b.sample_id, arg_min(r.region_id, r.region_id) AS region_id, arg_min(r.county, r.region_id) AS county
     FROM locality_batch b JOIN ${G}.region r ON ST_Intersects(r.geom, ST_Point(b.lon, b.lat))
     GROUP BY b.sample_id`);
-  for (const r of await rows<{ sample_id: number; region_id: string }>(conn, `SELECT * FROM locality_batch_region`)) {
+  for (const r of await rows<{ sample_id: number; region_id: string; county: string | null }>(conn, `SELECT * FROM locality_batch_region`)) {
     of(r.sample_id).regionId = r.region_id;
+    of(r.sample_id).county = r.county;
   }
 
   const inside = (table: string, cols: string) => `
@@ -506,10 +510,10 @@ async function write(conn: Conn, named: unknown[][]): Promise<void> {
     await conn.run(`DELETE FROM sample_locality_candidate WHERE sample_id IN (SELECT sample_id FROM locality_batch)`);
     for (let i = 0; i < named.length; i += 500) {
       const chunk = named.slice(i, i + 500);
-      const values = chunk.map((_, j) => `(${[1, 2, 3, 4, 5, 6, 7, 8].map((k) => `$${j * 8 + k}`).join(", ")})`);
+      const values = chunk.map((_, j) => `(${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => `$${j * 9 + k}`).join(", ")})`);
       await conn.run(
         `INSERT INTO sample_locality_candidate
-           (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, derived_at)
+           (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
          VALUES ${values.join(", ")}`,
         chunk.flat() as never,
       );

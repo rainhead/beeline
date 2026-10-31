@@ -10,9 +10,10 @@
 --
 -- Like an elevation, it is a statement about a point, so it records the
 -- point it was named at, and schema/172 states when it still describes the
--- sample's. It also records which gazetteer build named it, since a new
--- build can name the same point differently; the derive step names again
--- every sample whose row came from another build.
+-- sample's. It also records which gazetteer build and which version of the
+-- rule named it, since either can name the same point differently; the
+-- derive step names again every sample whose row came from another build or
+-- an older rule.
 CREATE TABLE sample_locality_candidate (
   sample_id       INTEGER NOT NULL REFERENCES sample(entity_id),
   rank            INTEGER NOT NULL CHECK (rank BETWEEN 1 AND 4),
@@ -24,6 +25,7 @@ CREATE TABLE sample_locality_candidate (
   latitude        DOUBLE NOT NULL,
   longitude       DOUBLE NOT NULL,
   gazetteer_build TEXT NOT NULL,
+  rule_version    INTEGER NOT NULL,
   derived_at      TIMESTAMP NOT NULL,
   PRIMARY KEY (sample_id, rank)
 );
@@ -32,3 +34,4 @@ COMMENT ON COLUMN sample_locality_candidate.rank IS 'Best first. The best weight
 COMMENT ON COLUMN sample_locality_candidate.basis IS 'Why the name was offered: the locality of the collector''s other samples here, of other samples here; a campground beside it; inside a refuge, a wildlife area unit, a national park unit, a state or provincial park, a local park; a city neighbourhood; inside a town''s limits; on an island; a feature volunteers named nearby; a peak; a nearby town; a hamlet; inside a large reserve; or a distance and direction from a far town.';
 COMMENT ON COLUMN sample_locality_candidate.latitude IS 'With longitude: the point the name was given for, so the store can say whether it still describes the sample''s (schema/172), as elevation_latitude does for an elevation.';
 COMMENT ON COLUMN sample_locality_candidate.gazetteer_build IS 'The gazetteer_build.build_id of the gazetteer that named it. A new build names every sample again.';
+COMMENT ON COLUMN sample_locality_candidate.rule_version IS 'LOCALITY_RULE_VERSION in src/locality-rule.ts when it was named. Raising that constant names every sample again, as a new gazetteer build does.';

@@ -19,6 +19,7 @@ import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 const nothing: LocalityEvidence = {
   regionId: "US-OR-Benton",
+  county: "Benton",
   refuge: null,
   wildlifeArea: null,
   nationalPark: null,
@@ -259,6 +260,28 @@ describe("candidates (beeline-4hxe)", () => {
       ],
     };
     expect(localityCandidates(e).map((c) => c.locality)).toEqual(["Philomath"]);
+  });
+
+  test("a used name that is only the point's county is never offered, unless a town nearby has the name", () => {
+    // As written on the sandbox store: "Curry", "King", "Cariboo" were first
+    // choices for samples in those counties (2026-10-30).
+    const curry = { ...nothing, county: "Curry", nearby: [at(place("Gold Beach"), 6)] };
+    for (const name of ["Curry", "Curry County", "Curry Co.", "curry"]) {
+      expect(localityCandidates({ ...curry, used: [used(name, 4, 4, 0.1)] }).map((c) => c.locality)).toEqual(["Gold Beach"]);
+    }
+    const cariboo = { ...nothing, county: "Cariboo", nearby: [at(place("Alexis Creek"), 3)] };
+    expect(localityCandidates({ ...cariboo, used: [used("Cariboo Regional District", 2, 2, 0.1)] })[0]!.locality).toBe("Alexis Creek");
+    const stikine = { ...nothing, county: "Stikine Region", nearby: [at(place("Dease Lake"), 20)], used: [used("Stikine", 8, 8, 0.1)] };
+    expect(localityCandidates(stikine)[0]!.locality).toBe("Dease Lake");
+    // Hood River is a town as well as the county it is in.
+    const hoodRiver = { ...nothing, county: "Hood River", nearby: [at(place("Hood River"), 8)], used: [used("Hood River", 5, 5, 0.1)] };
+    expect(localityCandidates(hoodRiver)[0]).toEqual({ locality: "Hood River", basis: "used_own" });
+    // A peak of the county's name is not a town that makes it a town's name.
+    const grant = { ...nothing, county: "Grant", nearby: [at(place("Grant", { kind: "peak" }), 5), at(place("Silver City"), 7)], used: [used("Grant", 7, 7, 0.1)] };
+    expect(localityCandidates(grant).map((c) => c.locality)).not.toContain("Grant");
+    // Written as the county, it is the county's name, town or no town.
+    const hoodRiverCounty = { ...hoodRiver, used: [used("Hood River County", 5, 5, 0.1)] };
+    expect(localityCandidates(hoodRiverCounty).map((c) => c.locality)).not.toContain("Hood River County");
   });
 
   test("never more than four, and no name twice whatever its basis", () => {

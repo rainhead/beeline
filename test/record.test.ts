@@ -269,8 +269,8 @@ describe("the sample page", () => {
     // Nothing printed yet: no specimen rows.
     const unprinted = await insertCleanSample(conn, { collector_id: String(alice), sample_number: "'A-2'" });
     await conn.run(
-      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, derived_at)
-       SELECT sample_id, 1, 'Finley NWR', 'refuge', latitude, longitude, 'test', current_timestamp
+      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
+       SELECT sample_id, 1, 'Finley NWR', 'refuge', latitude, longitude, 'test', 1, current_timestamp
        FROM sample_location WHERE sample_id = ${unprinted}`,
     );
     const body = await get(app, `/samples/${unprinted}`);
@@ -288,8 +288,8 @@ describe("the sample page", () => {
     // and its locality no longer follows iNaturalist.
     const { app, conn, aliceSample } = await recordApp();
     await conn.run(
-      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, derived_at)
-       SELECT sample_id, 1, 'Finley NWR', 'refuge', latitude, longitude, 'test', current_timestamp
+      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
+       SELECT sample_id, 1, 'Finley NWR', 'refuge', latitude, longitude, 'test', 1, current_timestamp
        FROM sample_location WHERE sample_id = ${aliceSample}`,
     );
     const body = await get(app, `/samples/${aliceSample}`);
@@ -474,8 +474,8 @@ describe("a location iNaturalist keeps from everyone but its observer", () => {
   it("withholds the locality named from the coordinates, which says where too", async () => {
     const { app, conn, aliceSample } = await recordApp("bob");
     await conn.run(
-      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, derived_at)
-       SELECT sample_id, 1, 'Finley NWR', 'refuge', latitude, longitude, 'test', current_timestamp
+      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
+       SELECT sample_id, 1, 'Finley NWR', 'refuge', latitude, longitude, 'test', 1, current_timestamp
        FROM sample_location WHERE sample_id = ${aliceSample}`,
     );
     const body = await get(app, `/samples/${aliceSample}`);

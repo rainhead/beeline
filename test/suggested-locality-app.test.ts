@@ -51,8 +51,8 @@ async function setup() {
     locality: "'26208 Finley Refuge Rd'",
   });
   await conn.run(
-    `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, derived_at)
-     SELECT sample_id, 1, 'Finley NWR', 'refuge', latitude, longitude, 'test', current_timestamp
+    `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
+     SELECT sample_id, 1, 'Finley NWR', 'refuge', latitude, longitude, 'test', 1, current_timestamp
      FROM sample_location WHERE sample_id = ${sampleId}`,
   );
   const dir = await mkdtemp(join(tmpdir(), "beeline-suggested-"));
@@ -104,8 +104,8 @@ describe("Use this locality", () => {
   it("offers the alternatives too, and makes the one chosen the sample's locality (beeline-4hxe)", async () => {
     const { appFor, conn, sampleId, sampleOverlayPath } = await setup();
     await conn.run(
-      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, derived_at)
-       SELECT sample_id, 2, 'Muddy Creek CG', 'campground', latitude, longitude, 'test', current_timestamp
+      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
+       SELECT sample_id, 2, 'Muddy Creek CG', 'campground', latitude, longitude, 'test', 1, current_timestamp
        FROM sample_location WHERE sample_id = ${sampleId}`,
     );
     const alice = appFor("alice");

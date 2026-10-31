@@ -78,6 +78,8 @@ export interface Near<T> {
 export interface LocalityEvidence {
   /** The county or regional district the point is in, as a gazetteer region id (US-OR-41003, Benton County). */
   regionId: string | null;
+  /** That region's short name, as a label's county reads (Benton; Cariboo). */
+  county: string | null;
   refuge: string | null;
   wildlifeArea: { unit: string; area: string } | null;
   nationalPark: string | null;
@@ -142,6 +144,16 @@ export interface NamedLocality {
 
 /** The label allows 18 characters. */
 export const MAX_LOCALITY_LENGTH = 18;
+
+/**
+ * Which version of this rule named a sample, recorded with its candidates
+ * (sample_locality_candidate.rule_version). Raise it with any change to what
+ * the rule names, and the next nightly names every sample again, as a new
+ * gazetteer build does; otherwise a sample keeps the old rule's names until
+ * its point moves. 1: a used name that is only the county is not offered
+ * (beeline-75z3).
+ */
+export const LOCALITY_RULE_VERSION = 1;
 
 const RULE = {
   atKm: 1.5,
@@ -516,6 +528,24 @@ export function nameLocality(e: LocalityEvidence): NamedLocality | null {
 }
 
 /**
+ * Whether a locality somebody wrote is only the name of the county the point
+ * is in: "Curry", "King County", "Cariboo". The county prints on the label in
+ * its own place, so as a locality it says nothing; 384 samples on the sandbox
+ * store would have been offered one first (2026-10-30). Written bare, the
+ * name of a town nearby (Hood River, Yakima) is the town's, and stays;
+ * "Hood River County" is still the county's.
+ */
+function namesOnlyCounty(locality: string, e: LocalityEvidence): boolean {
+  if (e.county === null) return false;
+  // BC's unincorporated "Stikine Region" is written "Stikine".
+  const bare = (s: string) => s.replace(/ (County|Co\.?|Regional District|RD|Region)$/i, "").toLowerCase();
+  const name = bare(locality);
+  if (name !== bare(e.county)) return false;
+  const town = locality.toLowerCase() === name && e.nearby.some((c) => c.at.kind === "town" && c.at.name.toLowerCase() === name);
+  return !town;
+}
+
+/**
  * The names a person chooses a sample's locality among (beeline-4hxe): the
  * best first, then up to three alternatives, none repeated and every one fit
  * for a label.
@@ -539,7 +569,7 @@ export function localityCandidates(e: LocalityEvidence, max: number = RULE.candi
     out.push({ locality, basis });
   };
   if (e.refuge !== null) add(refugeName(e.refuge), "refuge");
-  const used = e.used.filter((u) => u.km <= RULE.usedKm && u.locality === u.locality.trim());
+  const used = e.used.filter((u) => u.km <= RULE.usedKm && u.locality === u.locality.trim() && !namesOnlyCounty(u.locality, e));
   const usedScore = (u: UsedLocality, n: number) => u.km / Math.sqrt(Math.max(n, 1));
   for (const u of used.filter((x) => x.own > 0).sort((a, b) => usedScore(a, a.own) - usedScore(b, b.own))) {
     add(u.locality, "used_own");

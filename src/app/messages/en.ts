@@ -749,8 +749,10 @@ export const en = {
       next: "Next →",
     },
 
+    /** The Download menu above a listing's table: each form the rows can be had in, and what a download holds. */
     csv: {
-      download: "Download CSV",
+      menu: "Download",
+      download: "Download as CSV",
       note:
         "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns, " +
         "less any location hidden here. Where iNaturalist obscures a record, its own columns say so — worth a look before anything is republished.",

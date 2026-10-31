@@ -21,6 +21,7 @@ import {
   type SpecimenRow,
 } from "../listings.js";
 import { sampleHref, specimenHref } from "../record.js";
+import { ChevronDownIcon } from "./icons.js";
 import type { Messages } from "../messages/index.js";
 import {
   Absent,
@@ -325,10 +326,56 @@ function ResultsHeader({
     <div class="results-header">
       <p class="row baseline">
         <span class="results-count">{count(total)}</span>
-        {total > 0 && <a href={listingHref(`${path}.csv`, query, { page: 1 })}>{m.listings.csv.download}</a>}
       </p>
-      <Meta block>{m.listings.csv.note}</Meta>
     </div>
+  );
+}
+
+/**
+ * What can be done with the listing's rows, immediately above the table
+ * they act on (Peter, 2026-10-31): Download for everyone, and on the
+ * specimens listing the bulk actions staff choose first (beeline-1kb.23).
+ */
+function ListingActions({
+  m,
+  path,
+  query,
+  total,
+  children,
+}: {
+  m: Messages;
+  path: string;
+  query: ListingQuery;
+  total: number;
+  children?: Child;
+}) {
+  return (
+    <div class="row listing-actions">
+      {total > 0 && <DownloadMenu m={m} path={path} query={query} />}
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Download, as a menu of the forms the rows can be had in — the CSV today,
+ * and room for others (a KML has been mentioned) — with what a download
+ * holds said inside it rather than as a paragraph above every table. The
+ * header's <details class="menu">, so the menus island closes it on a click
+ * elsewhere or Escape, and it works without scripting.
+ */
+function DownloadMenu({ m, path, query }: { m: Messages; path: string; query: ListingQuery }) {
+  const d = m.listings.csv;
+  return (
+    <details class="menu download-menu">
+      <summary class="button tonal">
+        {d.menu} <ChevronDownIcon />
+      </summary>
+      <div class="menu-panel">
+        <a href={listingHref(`${path}.csv`, query, { page: 1 })}>{d.download}</a>
+        <p class="meta download-note">{d.note}</p>
+      </div>
+    </details>
   );
 }
 
@@ -530,6 +577,7 @@ export function SampleListing(props: ListingProps<SampleRow>) {
     <>
       <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
       <Toolbar copy={copy} path={path} props={props} />
+      <ListingActions m={m} path={path} query={query} total={page.total} />
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
       ) : (
@@ -673,11 +721,9 @@ const BULK_FORM = "reprint-bulk";
 function BulkActions({ m, path, query }: { m: Messages; path: string; query: ListingQuery }) {
   const b = m.listings.specimens.bulk;
   return (
-    <p class="row">
-      <LinkButton href={listingHref(path, query, { act: "reprint" })} variant="tonal">
-        {b.start}
-      </LinkButton>
-    </p>
+    <LinkButton href={listingHref(path, query, { act: "reprint" })} variant="tonal">
+      {b.start}
+    </LinkButton>
   );
 }
 
@@ -766,8 +812,15 @@ export function SpecimenListing(
       <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
       {reprinted !== null && <Callout tone="success">{copy.bulk.done(reprinted.requested, reprinted.of)}</Callout>}
       <Toolbar copy={copy} path={path} props={props} />
-      {/* Immediately above the table, since they act on its rows (Peter, 2026-10-31). */}
-      {marking ? <BulkModeNote m={m} path={path} query={query} /> : admin && <BulkActions m={m} path={path} query={query} />}
+      {/* Immediately above the table, since they act on its rows (Peter,
+          2026-10-31). While an action is chosen its note takes the row's place. */}
+      {marking ? (
+        <BulkModeNote m={m} path={path} query={query} />
+      ) : (
+        <ListingActions m={m} path={path} query={query} total={page.total}>
+          {admin && <BulkActions m={m} path={path} query={query} />}
+        </ListingActions>
+      )}
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
       ) : (

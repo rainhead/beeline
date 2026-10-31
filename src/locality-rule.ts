@@ -148,12 +148,14 @@ export const MAX_LOCALITY_LENGTH = 18;
 /**
  * Which version of this rule named a sample, recorded with its candidates
  * (sample_locality_candidate.rule_version). Raise it with any change to what
- * the rule names, and the next nightly names every sample again, as a new
- * gazetteer build does; otherwise a sample keeps the old rule's names until
- * its point moves. 1: a used name that is only the county is not offered
- * (beeline-75z3).
+ * the rule names, here or in what src/derive-locality.ts gives it, and the
+ * next nightly names every sample again, as a new gazetteer build does;
+ * otherwise a sample keeps the old rule's names until its point moves.
+ * 1: a used name that is only the county is not offered (beeline-75z3).
+ * 2: a used name one letter from a place nearby takes the place's spelling,
+ * and names that differ only in punctuation are one candidate (beeline-5j10).
  */
-export const LOCALITY_RULE_VERSION = 1;
+export const LOCALITY_RULE_VERSION = 2;
 
 const RULE = {
   atKm: 1.5,
@@ -567,12 +569,17 @@ function namesOnlyCounty(locality: string, e: LocalityEvidence): boolean {
  * whose limits it is in, the island, a feature, a peak, the nearest towns, a
  * hamlet, a large reserve, a distance.
  */
+/** A name folded as fold_locality_name folds one (src/derive-locality.ts), for telling two spellings of it apart. */
+const foldName = (s: string) =>
+  s.toLowerCase().replaceAll("mount ", "mt ").replaceAll("mountain", "mt").replace(/[^a-z0-9]/g, "");
+
 export function localityCandidates(e: LocalityEvidence, max: number = RULE.candidates): NamedLocality[] {
   const out: NamedLocality[] = [];
   const add = (locality: string | null | undefined, basis: LocalityBasis) => {
     if (!locality || !fits(locality) || WILDERNESS.test(locality)) return;
-    const key = locality.toLowerCase();
-    if (out.some((o) => o.locality.toLowerCase() === key)) return;
+    // "Mt. Ashland" and "Mt Ashland", "Mount Ashland" too, are one name.
+    const key = foldName(locality);
+    if (out.some((o) => foldName(o.locality) === key)) return;
     out.push({ locality, basis });
   };
   if (e.refuge !== null) add(refugeName(e.refuge), "refuge");

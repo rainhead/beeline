@@ -181,6 +181,36 @@ describe("deriveLocalities", () => {
     expect(offered[0]).toBe("Philomath");
   });
 
+  test("a name written one letter off a place nearby is offered in the place's spelling, and counts with it (beeline-5j10)", async () => {
+    const path = join(dir, "s1.duckdb");
+    await buildTestGazetteer(path, "build-s1");
+    const conn = await storeWithPerson();
+    // Two people wrote the town's name; one of them misspelt it.
+    await insertCleanSample(conn, { locality: "'Philamath'" }, { latitude: "44.5501", longitude: "-123.38" });
+    await insertCleanSample(conn, { locality: "'Philomath'", sample_number: "'2'" }, { latitude: "44.5502", longitude: "-123.38" });
+    const fresh = await insertCleanSample(conn, { sample_number: "'3'" }, { latitude: "44.55", longitude: "-123.38" });
+    await deriveLocalities(conn, path);
+    const offered = ((await candidates(conn, fresh)) as Array<[string, string]>).map(([l]) => l);
+    expect(offered[0]).toBe("Philomath");
+    expect(offered).not.toContain("Philamath");
+    // And for a point no sample has yet, as trap entry asks.
+    const at = await localityCandidatesAt(conn, path, { latitude: 44.55, longitude: -123.38 }, []);
+    expect(at!.candidates.map((c) => c.locality)).not.toContain("Philamath");
+  });
+
+  test("a plural, or a space taken out, is not taken for a misspelling (beeline-5j10)", async () => {
+    const path = join(dir, "s2.duckdb");
+    await buildTestGazetteer(path, "build-s2");
+    const conn = await storeWithPerson();
+    await insertCleanSample(conn, { locality: "'Philomaths'" }, { latitude: "44.5501", longitude: "-123.38" });
+    await insertCleanSample(conn, { locality: "'Philo math'", sample_number: "'2'" }, { latitude: "44.5502", longitude: "-123.38" });
+    const fresh = await insertCleanSample(conn, { sample_number: "'3'" }, { latitude: "44.55", longitude: "-123.38" });
+    await deriveLocalities(conn, path);
+    const offered = ((await candidates(conn, fresh)) as Array<[string, string]>).map(([l]) => l);
+    expect(offered).toContain("Philomaths");
+    expect(offered).toContain("Philo math");
+  });
+
   test("a name used nearby that is only the county the point is in is not offered", async () => {
     const path = join(dir, "g2.duckdb");
     await buildTestGazetteer(path, "build-g2");

@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { loadSpatial, openDuckDb } from "./db.js";
 import {
   LOCALITY_RULE_VERSION,
+  MAX_LOCALITY_LENGTH,
   localityCandidates,
   type GazetteerPlace,
   type LocalityBasis,
@@ -102,7 +103,7 @@ export async function deriveLocalities(
     result.pending = pending.length;
     if (pending.length === 0) return result;
     await usedFeatures(conn, G);
-    await usedLocalities(conn);
+    await usedLocalities(conn, G);
     const size = opts.batchSize ?? 5000;
     for (let i = 0; i < pending.length; i += size) {
       opts.signal?.throwIfAborted();
@@ -182,7 +183,7 @@ async function candidatesAt(
     if (build === undefined) throw new Error(`${gazetteerPath} has no gazetteer_build row: rebuild it`);
     await createMacros(conn);
     await usedFeatures(conn, G);
-    await usedLocalities(conn);
+    await usedLocalities(conn, G, point);
     // No sample has this id: entity ids start at 1.
     const batch = [{ sample_id: 0, lat: point.latitude, lon: point.longitude }];
     await loadBatch(conn, batch);
@@ -245,13 +246,99 @@ async function usedFeatures(conn: Conn, G: string): Promise<void> {
  * more than the kilometre a used name is read from. Read from the whole
  * store once a run, since any sample's locality counts (beeline-4hxe).
  */
-async function usedLocalities(conn: Conn): Promise<void> {
+async function usedLocalities(conn: Conn, G: string, near?: { latitude: number; longitude: number }): Promise<void> {
+  // Naming one point needs only the cells around it, and a form is waiting.
+  const around = near
+    ? `AND floor(l.latitude / 0.02) BETWEEN ${Math.floor(near.latitude / 0.02) - 1} AND ${Math.floor(near.latitude / 0.02) + 1}
+       AND floor(l.longitude / 0.02) BETWEEN ${Math.floor(near.longitude / 0.02) - 1} AND ${Math.floor(near.longitude / 0.02) + 1}`
+    : "";
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE locality_used_sample AS
-    SELECT s.entity_id AS sample_id, s.locality, l.latitude AS lat, l.longitude AS lon,
+    SELECT s.entity_id AS sample_id, regexp_replace(s.locality, ' {2,}', ' ', 'g') AS locality,
+           l.latitude AS lat, l.longitude AS lon,
            CAST(floor(l.latitude / 0.02) AS INTEGER) AS cy, CAST(floor(l.longitude / 0.02) AS INTEGER) AS cx
     FROM sample s JOIN sample_location l ON l.sample_id = s.entity_id
-    WHERE s.locality IS NOT NULL AND trim(s.locality) <> ''`);
+    WHERE s.locality IS NOT NULL AND trim(s.locality) <> '' ${around}`);
+  await correctSpellings(conn, G, near);
+}
+
+/**
+ * A locality somebody wrote that is one letter from a place's name in the
+ * gazetteer within about 10 km is taken as a misspelling of it, and offered
+ * in the gazetteer's spelling (beeline-5j10): "Miwaukie" is Milwaukie,
+ * "Terrrebonne" Terrebonne, "CottageGrove" Cottage Grove. Two spellings of
+ * one name then count as one name already used, with both their samples.
+ *
+ * Guarded, because a real local name can be one letter from another place's
+ * (2026-10-30, on the sandbox store: of 107 names one or two letters from a
+ * place nearby, two letters was mostly wrong, "Alsea" to Alder, and these
+ * guards left 58, every one a typo):
+ *  - a name that is any place's name, anywhere, is left as written: San
+ *    Antonio is not San Antonito, nor Colville Coville;
+ *  - a plural is not a misspelling: Lava Lakes and Lava Lake are both places;
+ *  - an apostrophe or a full stop is not a misspelling (Mary's Peak), and
+ *    the candidates fold those together anyway (src/locality-rule.ts);
+ *  - a space may be added where the writer ran words together, never taken
+ *    out: Salt Spring Island is that island's official name, though
+ *    OpenStreetMap runs it together;
+ *  - exactly one place nearby is one letter off, and its name fits a label.
+ */
+async function correctSpellings(conn: Conn, G: string, near?: { latitude: number; longitude: number }): Promise<void> {
+  const [hasCamp] = await rows<{ n: number }>(
+    conn,
+    `SELECT count(*)::INTEGER AS n FROM duckdb_tables() WHERE database_name = '${G}' AND table_name = 'campground'`,
+  );
+  const camp = hasCamp!.n > 0;
+  // For one point, only the names within reach of the samples around it can
+  // be a correction; a whole run needs them all.
+  const box = near
+    ? { s: near.latitude - 0.3, n: near.latitude + 0.3, w: near.longitude - 0.5, e: near.longitude + 0.5 }
+    : null;
+  const inBox = box ? `WHERE lat BETWEEN ${box.s} AND ${box.n} AND lon BETWEEN ${box.w} AND ${box.e}` : "";
+  // Filed in cells of 0.1 by 0.2 degrees, so a name is compared only with the
+  // gazetteer's names in its cell and the eight around it: comparing each
+  // with every name took longer than the rest of the step together.
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE locality_gazetteer_name AS
+    SELECT name, lat, lon, CAST(floor(lat / 0.1) AS INTEGER) AS gy, CAST(floor(lon / 0.2) AS INTEGER) AS gx
+    FROM (SELECT name, lat, lon FROM ${G}.place
+          UNION ALL SELECT name, lat, lon FROM ${G}.feature
+          UNION ALL SELECT name, ST_Y(ST_Centroid(geom)), ST_X(ST_Centroid(geom)) FROM ${G}.osm_area
+            WHERE name IS NOT NULL
+            ${box ? `AND ST_Intersects(geom, ST_MakeEnvelope(${box.w}, ${box.s}, ${box.e}, ${box.n}))` : ""}
+          ${camp ? `UNION ALL SELECT name, lat, lon FROM ${G}.campground` : ""})
+    ${inBox}`);
+  // Whether a name is any place's, anywhere, is asked of the whole gazetteer
+  // even for one point: Colville is a town, wherever it was written.
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE locality_known_name AS
+    SELECT lower(name) AS name FROM ${G}.place
+    UNION SELECT lower(name) FROM ${G}.feature
+    UNION SELECT lower(name) FROM ${G}.osm_area WHERE name IS NOT NULL
+    ${camp ? `UNION SELECT lower(name) FROM ${G}.campground` : ""}`);
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE locality_spelling AS
+    WITH unknown AS (
+      SELECT DISTINCT locality, cy, cx, (cy + 0.5) * 0.02 AS lat, (cx + 0.5) * 0.02 AS lon FROM locality_used_sample
+      WHERE lower(locality) NOT IN (SELECT name FROM locality_known_name)),
+    cell AS (
+      SELECT k.*, CAST(floor(k.lat / 0.1) AS INTEGER) + dy AS gy, CAST(floor(k.lon / 0.2) AS INTEGER) + dx AS gx
+      FROM unknown k, range(-1, 2) t1(dy), range(-1, 2) t2(dx)),
+    near AS (
+      SELECT k.locality, k.cy, k.cx, z.name
+      FROM cell k JOIN locality_gazetteer_name z ON z.gy = k.gy AND z.gx = k.gx
+      WHERE abs(z.lat - k.lat) < 0.1 AND abs(z.lon - k.lon) < lon_deg(11, z.lat)
+        AND abs(length(z.name) - length(k.locality)) <= 1 AND length(z.name) <= ${MAX_LOCALITY_LENGTH}
+        AND levenshtein(lower(k.locality), lower(z.name)) = 1
+        AND lower(z.name) <> concat(lower(k.locality), 's') AND lower(k.locality) <> concat(lower(z.name), 's')
+        AND regexp_replace(lower(z.name), '[.''’]', '', 'g') <> regexp_replace(lower(k.locality), '[.''’]', '', 'g')
+        AND NOT (regexp_replace(lower(z.name), '[^a-z0-9]', '', 'g') = regexp_replace(lower(k.locality), '[^a-z0-9]', '', 'g')
+                 AND length(regexp_replace(z.name, '[A-Za-z0-9]', '', 'g')) < length(regexp_replace(k.locality, '[A-Za-z0-9]', '', 'g'))))
+    SELECT locality, cy, cx, any_value(name) AS spelling
+    FROM near GROUP BY locality, cy, cx HAVING count(DISTINCT name) = 1`);
+  await conn.run(`
+    UPDATE locality_used_sample u SET locality = s.spelling
+    FROM locality_spelling s WHERE u.locality = s.locality AND u.cy = s.cy AND u.cx = s.cx`);
 }
 
 interface PlaceRow {

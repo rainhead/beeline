@@ -356,17 +356,25 @@ JOIN observation_field f ON f.inat_id = s.inat_observation_id
 WHERE f.host_is_tracheophyte IS FALSE;
 
 -- The sample's evidencing observation asserts a different specimen count
--- than the sample carries: someone changed one side. Warning — counts move
--- legitimately until printing; staff/self-service reconcile.
+-- than the sample carries, or one that is not a count at all. Warning. An
+-- unprinted sample's count follows its observation while the observation
+-- still carries a positive whole number (ingest/mint-samples.sql,
+-- beeline-ni5m.1), so on one of those this can only say the observation's
+-- count is zero, negative or not a number ('lots'), which the sample has not
+-- taken; on a printed sample the record keeps the count its labels were
+-- printed for, and this names what the observation says since. A count the
+-- observation does not carry at all is not a disagreement.
 CREATE VIEW qc_rule_count_mismatch AS
 SELECT s.entity_id AS sample_id,
        CAST(NULL AS INTEGER) AS specimen_id,
        'count_mismatch' AS rule_name,
-       concat('observation says ', f.specimen_count_raw, ' but sample count is ', s.specimen_count) AS details
+       CASE WHEN try_cast(f.specimen_count_raw AS INTEGER) IS NULL
+            THEN concat('observation says ''', f.specimen_count_raw, ''', which is not a count, but sample count is ', s.specimen_count)
+            ELSE concat('observation says ', f.specimen_count_raw, ' but sample count is ', s.specimen_count) END AS details
 FROM sample s
 JOIN observation_field f ON f.inat_id = s.inat_observation_id
-WHERE try_cast(f.specimen_count_raw AS INTEGER) IS NOT NULL
-  AND try_cast(f.specimen_count_raw AS INTEGER) <> s.specimen_count;
+WHERE nullif(trim(f.specimen_count_raw), '') IS NOT NULL
+  AND try_cast(f.specimen_count_raw AS INTEGER) IS DISTINCT FROM s.specimen_count;
 
 -- The sample's evidencing observation stopped coming back: a completed run
 -- that should have covered it (same source, window containing its observed

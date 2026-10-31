@@ -232,7 +232,12 @@ describe("reconciling against samples the store already holds", () => {
       .toEqual([7n, "trap", currentSeasonDate(7, 10), currentSeasonDate(7, 14)]);
   });
 
-  test("a free link never rewrites the sample's own number, date or count", async () => {
+  test("a free link never rewrites the sample's dates; once linked and unprinted, its count follows like its number", async () => {
+    // The dates are the sample's own: an observation carries one day and a
+    // trap spans a range. The count is the observation's from the moment the
+    // link is made (beeline-ni5m.1), on the same terms as the number
+    // (beeline-0199): until labels print, the observation the collector put
+    // this sample's number on is the record. A printed sample keeps both.
     const sampleId = await insertCleanSample(conn, {
       kind: "'trap'",
       sample_number: "'7'",
@@ -244,7 +249,7 @@ describe("reconciling against samples the store already holds", () => {
     await promoteObservations(conn);
     expect(await one(`SELECT sample_number, CAST(date_start AS VARCHAR), CAST(date_end AS VARCHAR), specimen_count
                       FROM sample WHERE entity_id = ${sampleId}`))
-      .toEqual(["7", currentSeasonDate(7, 10), currentSeasonDate(7, 14), 11]);
+      .toEqual(["7", currentSeasonDate(7, 10), currentSeasonDate(7, 14), 3]);
   });
 
   test("a group matching two existing samples is neither linked nor minted", async () => {
@@ -522,6 +527,44 @@ describe("descriptive fields are a fill-only refresh", () => {
     await markPrinted(conn, run.printRunId, { personId: person, now: later });
     await promoteObservations(conn);
     expect(await one(`SELECT locality FROM sample WHERE entity_id = ${sampleId}`)).toEqual(["Bald Hill"]);
+  });
+
+  test("an unprinted sample's count follows its observation; zero or junk is not followed; a printed one keeps its count", async () => {
+    // beeline-ni5m.1: the count decides how many labels a run prints, and
+    // nobody can edit an iNat-linked sample in the app, so a count corrected
+    // on iNaturalist before the run has to arrive by this route or not at all.
+    // Only a count that still makes the observation a collection record is
+    // taken, on the number's terms: zero and junk are count_mismatch's to name.
+    const unprinted = await insertCleanSample(conn, { inat_observation_id: "7", sample_number: "'7'", specimen_count: "3" });
+    const zeroed = await insertCleanSample(conn, { inat_observation_id: "8", sample_number: "'8'", specimen_count: "3" });
+    const junk = await insertCleanSample(conn, { inat_observation_id: "9", sample_number: "'9'", specimen_count: "3" });
+    const printed = await insertCleanSample(conn, { inat_observation_id: "10", sample_number: "'10'", specimen_count: "3" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${printed}, 1)`);
+    await stage(obs(7, { ofvs: ofvs("7", "5") }));
+    await stage(obs(8, { ofvs: ofvs("8", "0") }));
+    await stage(obs(9, { ofvs: ofvs("9", "lots") }));
+    await stage(obs(10, { ofvs: ofvs("10", "5") }));
+    await promoteObservations(conn);
+    expect(await rows(conn, `SELECT entity_id, specimen_count FROM sample ORDER BY entity_id`)).toEqual([
+      [unprinted, 5],
+      [zeroed, 3],
+      [junk, 3],
+      [printed, 3],
+    ]);
+    // The followed sample agrees with its observation, so nothing is flagged
+    // there; the others are named — junk included, since a sample left on
+    // its old count because the observation's is not a number would
+    // otherwise print that count without a word (CodeRabbit, this branch) —
+    // and the printed one is the only shape the flag can take on a sample
+    // whose observation still carries a count.
+    expect(await rows(conn, `SELECT sample_id, details FROM qc_finding WHERE rule_name = 'count_mismatch' ORDER BY sample_id`)).toEqual([
+      [zeroed, "observation says 0 but sample count is 3"],
+      [junk, "observation says 'lots', which is not a count, but sample count is 3"],
+      [printed, "observation says 5 but sample count is 3"],
+    ]);
+    // And the labels follow the count: five pending for the sample that
+    // followed, which is the whole point.
+    expect(await one(`SELECT pending_count FROM pending_print_sample WHERE sample_id = ${unprinted}`)).toEqual([5]);
   });
 
   test("an imported host name gains the observation's taxon id where the names agree", async () => {

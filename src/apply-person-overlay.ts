@@ -354,20 +354,19 @@ async function applyField(
       await conn.run(`DELETE FROM person_membership WHERE person_id = $1`, [personId] as never);
       return null;
     }
-    if (value === PROGRAM_MEMBERSHIP) {
-      await conn.run(
-        `INSERT INTO person_membership (person_id, kind, atlas_id) VALUES ($1, 'program', NULL)
-         ON CONFLICT (person_id) DO UPDATE SET kind = 'program', atlas_id = NULL`,
-        [personId] as never,
-      );
-      return null;
-    }
-    const atlas = await scalar(conn, `SELECT entity_id FROM atlas WHERE code = $1`, [value]);
-    if (atlas === null) return `no atlas with code '${value}' ('${PROGRAM_MEMBERSHIP}' for no atlas at all)`;
+    // Membership is a program (schema/010, the fold of 2026-10-31): an atlas
+    // by its code, or Master Melittology itself, which the overlay still
+    // spells `program`, since the file is the durable record and its
+    // vocabulary outlives a schema change.
+    const program =
+      value === PROGRAM_MEMBERSHIP
+        ? await scalar(conn, `SELECT entity_id FROM program WHERE code = 'MM'`, [])
+        : await scalar(conn, `SELECT entity_id FROM atlas WHERE code = $1`, [value]);
+    if (program === null) return `no atlas with code '${value}' ('${PROGRAM_MEMBERSHIP}' for no atlas at all)`;
     await conn.run(
-      `INSERT INTO person_membership (person_id, kind, atlas_id) VALUES ($1, 'atlas', $2)
-       ON CONFLICT (person_id) DO UPDATE SET kind = 'atlas', atlas_id = excluded.atlas_id`,
-      [personId, Number(atlas)] as never,
+      `INSERT INTO person_membership (person_id, program_id) VALUES ($1, $2)
+       ON CONFLICT (person_id) DO UPDATE SET program_id = excluded.program_id`,
+      [personId, Number(program)] as never,
     );
     return null;
   }

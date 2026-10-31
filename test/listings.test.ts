@@ -129,8 +129,8 @@ async function listingApp(
   });
 
   await conn.run(
-    `INSERT INTO person_membership (person_id, kind, atlas_id)
-     VALUES (${bob}, 'atlas', ${atlas("WaBA")}), (${cleo}, 'program', NULL)`,
+    `INSERT INTO person_membership (person_id, program_id)
+     VALUES (${bob}, ${atlas("WaBA")}), (${cleo}, (SELECT entity_id FROM program WHERE code = 'MM'))`,
   );
 
   // A slice of taxonomy: family → genus → species, so a family filter has
@@ -680,8 +680,8 @@ describe("the toolbar", () => {
   it("gives staff a three-way toggle: mine, my atlas, everything", async () => {
     const { app, conn, staffer } = await listingApp("staffer");
     await conn.run(
-      `INSERT INTO person_membership (person_id, kind, atlas_id)
-       VALUES (${staffer}, 'atlas', (SELECT entity_id FROM atlas WHERE code = 'WaBA'))`,
+      `INSERT INTO person_membership (person_id, program_id)
+       VALUES (${staffer}, (SELECT entity_id FROM atlas WHERE code = 'WaBA'))`,
     );
     const body = await get(app, "/samples?scope=WaBA");
     expect(body).toContain(">My records</a>");

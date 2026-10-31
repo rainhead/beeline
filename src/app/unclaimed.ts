@@ -263,7 +263,8 @@ export async function listUnclaimed(db: Kysely<Database>): Promise<UnclaimedList
   const programs = await db
     .selectFrom("program")
     .select(["code", "name"])
-    .orderBy(sql`atlas_id IS NULL`)
+    // The atlases first: the programs with a region (the view atlas, schema/104).
+    .orderBy(sql`NOT EXISTS (SELECT 1 FROM atlas a WHERE a.entity_id = program.entity_id)`)
     .orderBy("name")
     .execute();
   const here = await sql<{

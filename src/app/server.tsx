@@ -803,7 +803,7 @@ export function createApp({
     // or somebody nobody has asked about, and the toggle is then two-way.
     const home = await db
       .selectFrom("person_membership as pm")
-      .innerJoin("atlas as a", "a.entity_id", "pm.atlas_id")
+      .innerJoin("atlas as a", "a.entity_id", "pm.program_id")
       .where("pm.person_id", "=", personId)
       .select(["a.code", "a.name"])
       .executeTakeFirst();

@@ -92,12 +92,15 @@ const emptySeason = (season: number): SeasonCounts => ({ season, samples: 0, spe
 
 async function programRows(db: Kysely<Database>, code?: string): Promise<ProgramRow[]> {
   const where = code === undefined ? sql`` : sql`WHERE lower(p.code) = lower(${code})`;
+  // An atlas is a program with a region: the view atlas says which programs
+  // those are (schema/104), so a program that joins it is an atlas and the
+  // joined row is its own.
   const { rows } = await sql<ProgramRow>`
-    SELECT p.entity_id AS program_id, p.code, p.name, p.atlas_id, a.code AS atlas_code
-    FROM program p LEFT JOIN atlas a ON a.entity_id = p.atlas_id
+    SELECT p.entity_id AS program_id, p.code, p.name, a.entity_id AS atlas_id, a.code AS atlas_code
+    FROM program p LEFT JOIN atlas a ON a.entity_id = p.entity_id
     ${where}
     -- The atlases first, then the programs that are not one, each by name.
-    ORDER BY p.atlas_id IS NULL, p.name`.execute(db);
+    ORDER BY a.entity_id IS NULL, p.name`.execute(db);
   return rows;
 }
 
@@ -142,11 +145,11 @@ async function seasonCounts(db: Kysely<Database>): Promise<Map<string, SeasonCou
   return byScope;
 }
 
-/** People who belong to each program, by program code: an atlas's members, and Master Melittology's with no atlas. */
+/** People who belong to each program, by program code: membership names the program itself (schema/010). */
 async function memberCounts(db: Kysely<Database>): Promise<Map<string, number>> {
   const { rows } = await sql<{ code: string; n: number }>`
-    SELECT coalesce(a.code, ${CATCH_ALL_PROGRAM}) AS code, count(*) AS n
-    FROM person_membership m LEFT JOIN atlas a ON a.entity_id = m.atlas_id
+    SELECT pr.code, count(*) AS n
+    FROM person_membership m JOIN program pr ON pr.entity_id = m.program_id
     GROUP BY 1`.execute(db);
   return new Map(rows.map((r) => [r.code, Number(r.n)]));
 }

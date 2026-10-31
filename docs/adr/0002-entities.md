@@ -21,8 +21,10 @@ one thing in the whole model, forever.
 ### Norms
 
 - **Entity tables** name their primary key **`entity_id`**. Current entities:
-  `person`, `atlas`, `animal`, `sample`, `specimen`, `determination`,
-  `elevation_source`.
+  `person`, `program` (an atlas is a program with a region, since the fold of
+  2026-10-31; `atlas` is a view), `animal`, `sample`, `specimen`,
+  `determination`, `elevation_source`, `print_run`, `sync_run`,
+  `observation_load`, `job_run`.
 - **Facet tables** extend an entity 1:1 and have no identity of their own:
   their primary key is the parent's entity id, named for the parent
   (`inat_account.person_id`, `sample_location.sample_id`). A correction to a

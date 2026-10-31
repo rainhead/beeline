@@ -72,7 +72,7 @@ COMMENT ON COLUMN sample_collector.position IS 'Darwin Core recordedBy order, 1-
 -- be confused.
 CREATE TABLE sample_atlas (
   sample_id   INTEGER PRIMARY KEY REFERENCES sample(entity_id),
-  atlas_id    INTEGER REFERENCES atlas(entity_id),
+  atlas_id    INTEGER REFERENCES program(entity_id),
   assigned_by INTEGER REFERENCES person(entity_id),
   CHECK (atlas_id IS NOT NULL OR assigned_by IS NOT NULL)
 );

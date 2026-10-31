@@ -64,10 +64,10 @@ export interface PersonOrcidSharedView {
 }
 
 /** Absent = never asked; 'program' = asked, and no member atlas applies. */
+/** schema/010: the program a person belongs to — an atlas, or Master Melittology (MM). Absent = nobody has asked. */
 export interface PersonMembershipTable {
   person_id: number;
-  kind: MembershipKind;
-  atlas_id: number | null;
+  program_id: number;
 }
 
 export interface PersonAdminTable {
@@ -84,12 +84,11 @@ export interface PersonDelegateTable {
 }
 
 /** schema/010: a program — each atlas, Master Melittology, the BLM surveys (beeline-7c1). */
+/** schema/010: a program people take part in. An atlas is a program with a region: the view `atlas` lists those. */
 export interface ProgramTable {
   entity_id: Generated<number>;
   code: string;
   name: string;
-  /** The atlas this program is; null for a program with no region. */
-  atlas_id: number | null;
 }
 
 /** schema/010: who leads a program — responsibility, never access (beeline-7c1). */
@@ -100,8 +99,9 @@ export interface ProgramLeadTable {
   granted_by: string | null;
 }
 
-export interface AtlasTable {
-  entity_id: Generated<number>;
+/** schema/104: the view of the programs that have a region. Read, never written; the row is the program's. */
+export interface AtlasView {
+  entity_id: number;
   code: string;
   name: string;
 }
@@ -1243,7 +1243,7 @@ export interface Database {
   person_delegate: PersonDelegateTable;
   program: ProgramTable;
   program_lead: ProgramLeadTable;
-  atlas: AtlasTable;
+  atlas: AtlasView;
   atlas_printing: AtlasPrintingTable;
   atlas_taxon_obscured_printing: AtlasTaxonObscuredPrintingTable;
   atlas_region: AtlasRegionTable;

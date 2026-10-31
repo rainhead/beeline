@@ -73,6 +73,10 @@ const SYNTHETIC_QUALIFIERS: Row[] = [
   // is no species to attach it to, and it must not ride along on whatever
   // coarser rank the row does resolve to.
   { sci: "Bombus nr. mixtus" },
+  // A qualifier is attached to the species it names, so where the epithet is
+  // not the whole of what follows it there is nothing to attach it to, and
+  // it must not ride along on the genus determination the row falls to.
+  { sci: "Bombus cf. occidentalis Greene, 1858", genus: "Bombus" },
 ];
 
 /** The other verbatim fields, in the shapes the corpus actually holds. */
@@ -137,7 +141,7 @@ describe("taking a verbatim scientific name apart", () => {
       ["subgenus", 2n],
       ["trinomial", 5n],
       ["uninomial", 1n],
-      ["unparsed", 2n], // "Not a bee", and the qualifier with no genus
+      ["unparsed", 3n], // "Not a bee", the qualifier with no genus, and the authored one
     ]);
   });
 
@@ -212,7 +216,7 @@ describe("taking a verbatim scientific name apart", () => {
       await rows(conn, "SELECT field, shape, records FROM legacy_verbatim_shape ORDER BY field, shape"),
     ).toEqual([
       ["day/month/year", "did not parse", 0n],
-      ["identifiedBy", "named", 25n],
+      ["identifiedBy", "named", 26n],
       ["month", "roman numeral", 1n],
       ["recordedBy", "non-ASCII", 0n],
       ["recordedBy", "other separator (& , ; and)", 0n],
@@ -257,11 +261,23 @@ describe("taking a verbatim scientific name apart", () => {
     expect(await parsed("Bombus nr. mixtus")).toEqual([[null, null, null, null, null, null, null]]);
   });
 
+  test("a qualifier with no epithet to attach to is not a qualifier either", async () => {
+    // 'Bombus cf. occidentalis Greene, 1858': the epithet rule reads nothing
+    // past the authorship, so the row falls to the genus. The qualifier used
+    // to come along, making the determination "cf. Bombus", which is not
+    // what the determiner wrote. Synthetic; the corpus has no authored
+    // qualified name.
+    expect(await parsed("Bombus cf. occidentalis Greene, 1858")).toEqual([
+      ["Bombus", null, null, null, null, null, null],
+    ]);
+  });
+
   test("names the model has nowhere to put are named as such, not silently flattened", async () => {
     // Not a mistake anybody made: a determiner separated Melissodes sp.1 from
     // sp.5 deliberately. The model records the genus and loses the rest — so
     // the loss is at least visible (beeline-8g7).
     expect(await rows(conn, "SELECT sci, parse, lands_on FROM legacy_name_flattened ORDER BY sci")).toEqual([
+      ["Bombus cf. occidentalis Greene, 1858", "unparsed", "Bombus"], // synthetic: nothing to attach the qualifier to
       ["Bombus nr. mixtus", "unparsed", ""], // synthetic: no genus, so nothing to attach
       ["Lasioglossum  sp.1", "morphospecies", "Lasioglossum"],
       ["Melissodes sp.1", "morphospecies", "Melissodes"],

@@ -107,8 +107,11 @@ SELECT * EXCLUDE (tail, qual_tail),
   -- Both are gated on qual_tail, which anchors on this row's own genus the
   -- way trinomial does — without that a row whose genus column is empty
   -- yields a qualifier with no species to attach it to, and it would ride
-  -- along on a family- or order-rank determination.
-  CASE regexp_extract(qual_tail, '^(nr|cf|cfr|aff)\.', 1)
+  -- along on a family- or order-rank determination. The qualifier is also
+  -- gated on the epithet being the whole of what follows it: 'Bombus cf.
+  -- occidentalis Greene, 1858' names no epithet this rule can read, and the
+  -- qualifier used to ride along on the genus determination without one.
+  CASE regexp_extract(qual_tail, '^(nr|cf|cfr|aff)\. [a-z-]+$', 1)
     WHEN 'nr'  THEN 'nr.'  WHEN 'cf'  THEN 'cf.'
     WHEN 'cfr' THEN 'cf.'  WHEN 'aff' THEN 'aff.' END AS qualifier,
   nullif(regexp_extract(qual_tail, '^(?:nr|cf|cfr|aff)\. ([a-z-]+)$', 1), '') AS qualified_epithet

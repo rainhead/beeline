@@ -332,6 +332,15 @@ export interface SampleElevationStaleView {
   elevation_longitude: number;
 }
 
+/** schema/105: a linked sample whose geoprivacy flags no longer say what its observation does. */
+export interface SampleGeoprivacyStaleView {
+  sample_id: number;
+  geoprivacy: Geoprivacy | null;
+  taxon_geoprivacy: Geoprivacy | null;
+  observation_geoprivacy: string | null;
+  observation_taxon_geoprivacy: string | null;
+}
+
 /** schema/170: how vague a coordinate may be and still deserve an elevation. */
 /** schema/120: the coordinate precision a label may carry, and from when (#22). */
 export interface CoordinatePrecisionRuleView {
@@ -1307,6 +1316,7 @@ export interface Database {
   sample_number_gap: SampleNumberGapView;
   sample_elevation_unsupportable: SampleElevationUnsupportableView;
   sample_elevation_stale: SampleElevationStaleView;
+  sample_geoprivacy_stale: SampleGeoprivacyStaleView;
   sample_elevation_pending: SampleElevationPendingView;
   sample_locality_candidate_current: SampleLocalityCandidateCurrentView;
   sample_locality_suggestion_current: SampleLocalitySuggestionCurrentView;

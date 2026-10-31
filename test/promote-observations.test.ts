@@ -3,6 +3,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb, insertCleanSample, currentSeasonDate, rows } from "./helpers.js";
 import { canonicalJson } from "../src/sync-inat.js";
 import { promoteObservations } from "../src/promote-observations.js";
+import { refreshObservationFields } from "../src/refresh-observation-fields.js";
 
 let conn: DuckDBConnection;
 
@@ -165,6 +166,12 @@ describe("observation promotion", () => {
       { source: "'legacy_import'" },
     );
     await stage(obs(9, { taxon_geoprivacy: "open" }));
+    // Staged and not yet promoted, the flags are a copy that has fallen
+    // behind, and the view says so; promotion reads it as its predicate
+    // (beeline-ni5m.8).
+    await refreshObservationFields(conn);
+    expect(await rows(conn, "SELECT sample_id, geoprivacy, observation_geoprivacy FROM sample_geoprivacy_stale"))
+      .toEqual([[sampleId, "obscured", null]]);
     const counts = await promoteObservations(conn);
     expect(counts).toMatchObject({ publicLocations: 1 });
     expect(await location(sampleId)).toEqual(["inat_public", 44.5646, -123.262, 30, 72]);
@@ -173,6 +180,7 @@ describe("observation promotion", () => {
       `SELECT geoprivacy, taxon_geoprivacy FROM sample WHERE entity_id = ${sampleId}`,
     )) as [[unknown, unknown]];
     expect([geo, taxonGeo]).toEqual([null, null]);
+    expect(await rows(conn, "SELECT sample_id FROM sample_geoprivacy_stale")).toEqual([]);
   });
 
   test("obscured without private coordinates writes no location: legacy rows stay, absent stays absent", async () => {

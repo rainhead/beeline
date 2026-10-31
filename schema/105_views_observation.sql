@@ -227,3 +227,31 @@ WHERE (f.private_latitude IS NOT NULL AND f.private_longitude IS NOT NULL)
        AND nullif(f.geoprivacy, 'open') IS NULL
        AND nullif(f.taxon_geoprivacy, 'open') IS NULL);
 COMMENT ON VIEW observation_location IS 'Per observation with believed-true coordinates: the private pair where trust delivers one, else the public pair of an unobscured observation, with its source and uncertainty. Promotion writes it onto linked samples; nothing is here for an obscured observation without trust.';
+
+-- A linked sample whose geoprivacy flags no longer say what its observation
+-- does (beeline-ni5m.8). sample.geoprivacy and sample.taxon_geoprivacy are
+-- a copy of the projection: observation promotion rewrites them from
+-- observation_field on every pass, legacy promotion never writes them, and
+-- they are kept on the sample so the QC rules and the listings — which
+-- decide from them whether a location is withheld — need not join the
+-- projection. Every other copy the store keeps has a view naming
+-- disagreement (sample_elevation_stale, specimen_field_number_stale, the
+-- override views, animal_ecdysis_stale, observation_field_stale), for the
+-- reason those give: correctness that lives in a writer remembering is
+-- correctness one new writer can drop, and an unrefreshed column is not a
+-- visibly broken one. This is that view for the flags, and it is the
+-- predicate promotion's UPDATE reads (ingest/promote-observations.sql), so
+-- "moved" is stated once. iNaturalist sends 'open' as a string where the
+-- sample vocabulary is NULL; the join is inner, since a sample whose
+-- observation is gone from the projection keeps its flags by the writer's
+-- own rule. Asserted empty after promotion by test.
+CREATE VIEW sample_geoprivacy_stale AS
+SELECT s.entity_id AS sample_id,
+       s.geoprivacy, s.taxon_geoprivacy,
+       nullif(f.geoprivacy, 'open')       AS observation_geoprivacy,
+       nullif(f.taxon_geoprivacy, 'open') AS observation_taxon_geoprivacy
+FROM sample s
+JOIN observation_field f ON f.inat_id = s.inat_observation_id
+WHERE s.geoprivacy       IS DISTINCT FROM nullif(f.geoprivacy, 'open')
+   OR s.taxon_geoprivacy IS DISTINCT FROM nullif(f.taxon_geoprivacy, 'open');
+COMMENT ON VIEW sample_geoprivacy_stale IS 'Linked samples whose geoprivacy or taxon_geoprivacy disagrees with their observation''s projection: the flags are a copy promotion rewrites, and this names a copy a writer left behind. Empty after every observation promotion; what that promotion''s flag statement updates.';

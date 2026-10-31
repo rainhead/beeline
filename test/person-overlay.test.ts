@@ -95,6 +95,15 @@ describe("the overlay file", () => {
     expect(saved.find((r) => r.field === "home_atlas")!.value).toBe("OBA");
   });
 
+  it("keeps one row when a batch decides the same field twice, the later one", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "overlay-"));
+    const path = join(dir, "person-overlay.csv");
+    await upsertOverlay(path, [row({ field: "admin", value: "yes" }), row({ field: "admin", value: "no" })]);
+    const saved = await readOverlay(path);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]!.value).toBe("no");
+  });
+
   it("lets an app row win over the git-curated one, per ADR 0004", () => {
     const curated = [row({ value: "no", author: "git" })];
     const app = [row({ value: "yes", author: "staffer" })];

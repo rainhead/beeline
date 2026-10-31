@@ -40,6 +40,17 @@ describe("app correction store", () => {
     expect(records.find((r) => r[1] === "county")?.[3]).toBe("BentonCo");
   });
 
+  test("a batch that names one (_id, field) twice leaves one row, the later one", async () => {
+    // The file's invariant is one current row per key. A batch repeating a
+    // key used to write both rows, and promotion then resolved them by the
+    // larger new_value rather than the later one.
+    const path = await scratchFile();
+    await upsertCorrections(path, [event({ new_value: "first" }), event({ new_value: "second" })]);
+    const records = parseCsv(await readFile(path, "utf8")).slice(1);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.[3]).toBe("second");
+  });
+
   test("a hand-mangled row makes the save refuse instead of silently erasing it (beeline-3xw)", async () => {
     const path = await scratchFile();
     await upsertCorrections(path, [event({})]);

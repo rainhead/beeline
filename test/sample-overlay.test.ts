@@ -103,6 +103,13 @@ describe("the file", () => {
     expect(await readFile(overlayPath, "utf8")).toContain('"Fitton Green, upper loop"');
   });
 
+  test("keeps one row when a batch decides the same field twice, the later one", async () => {
+    await upsertSampleOverlay(overlayPath, [override("Bald Hill"), override("Fitton Green")]);
+    const rows = await readSampleOverlay(overlayPath);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ sample_ref: "inat:7", value: "Fitton Green" });
+  });
+
   test("refuses a row it cannot stand behind rather than repairing it", () => {
     const header = "sample_ref,field,base_value,value,author,reason\n";
     expect(() => parseSampleOverlay(`${header}name:Ada,locality,,Bald Hill,samstaff,\n`, "f")).toThrow(

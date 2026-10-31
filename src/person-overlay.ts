@@ -218,10 +218,12 @@ export async function upsertOverlay(path: string, rows: readonly PersonOverlayRo
   const queued = (writeQueues.get(path) ?? Promise.resolve()).then(async () => {
     await ensureOverlayFile(path);
     const current = parseOverlay(await readFile(path, "utf8"), path);
+    // One row per key is the file's invariant, so a batch naming a key twice
+    // writes only its last row for it.
     const replaced = new Map(rows.map((r) => [rowKey(r), r]));
     const kept = current.filter((r) => !replaced.has(rowKey(r)));
     const tmp = `${path}.tmp`;
-    await writeFile(tmp, formatOverlay([...kept, ...rows]));
+    await writeFile(tmp, formatOverlay([...kept, ...replaced.values()]));
     await rename(tmp, path);
   });
   writeQueues.set(path, queued.catch(() => {}));

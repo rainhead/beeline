@@ -671,10 +671,11 @@ export const cancelRun = (conn: DuckDBConnection, id: number, opts: TransitionOp
   });
 
 /**
- * What a reprint request names (gh-218): one specimen, from its page, or
- * every specimen of a sample, from the sample's page.
+ * What a reprint request names (gh-218): one specimen, from its page; every
+ * specimen of a sample, from the sample's page; or the specimens ticked on
+ * the specimens listing (beeline-1kb.23).
  */
-export type ReprintTarget = { specimenId: number } | { sampleId: number };
+export type ReprintTarget = { specimenId: number } | { sampleId: number } | { specimenIds: readonly number[] };
 
 export interface ReprintOptions {
   personId: number;
@@ -684,8 +685,22 @@ export interface ReprintOptions {
   now?: Date;
 }
 
-const targetWhere = (target: ReprintTarget) =>
-  "specimenId" in target ? { sql: "sp.entity_id = $1", id: target.specimenId } : { sql: "sp.sample_id = $1", id: target.sampleId };
+/**
+ * The target as a predicate on `sp` and its one parameter. A list travels as
+ * one comma-joined string of integers, so every target binds exactly $1 and
+ * nothing a caller sends is ever spliced into the SQL.
+ */
+function targetWhere(target: ReprintTarget): { sql: string; id: number | string } {
+  if ("specimenId" in target) return { sql: "sp.entity_id = $1", id: target.specimenId };
+  if ("sampleId" in target) return { sql: "sp.sample_id = $1", id: target.sampleId };
+  if (!target.specimenIds.every((id) => Number.isSafeInteger(id) && id > 0)) {
+    throw new Error("specimen ids must be positive integers");
+  }
+  return {
+    sql: "CAST(sp.entity_id AS TEXT) IN (SELECT unnest(string_split($1, ',')))",
+    id: target.specimenIds.join(","),
+  };
+}
 
 /**
  * Ask for labels to be printed again. A specimen can be asked for when it has
@@ -737,7 +752,7 @@ export const requestReprint = (conn: DuckDBConnection, target: ReprintTarget, op
                          WHERE pl.specimen_id = sp.entity_id AND r.canceled_at IS NULL AND r.printed_at IS NULL)`,
       [where.id, opts.personId, (opts.now ?? new Date()).toISOString(), opts.reason ?? null, opts.note ?? null],
     );
-    return { requested: can };
+    return { requested: can, of: Number(counts?.total ?? 0) };
   });
 
 /**

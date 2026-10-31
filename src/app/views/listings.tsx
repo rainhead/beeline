@@ -24,6 +24,8 @@ import { sampleHref, specimenHref } from "../record.js";
 import type { Messages } from "../messages/index.js";
 import {
   Absent,
+  Button,
+  Callout,
   Chip,
   DataTable,
   EmptyState,
@@ -655,15 +657,67 @@ export function SampleListing(props: ListingProps<SampleRow>) {
   );
 }
 
-export function SpecimenListing(props: ListingProps<SpecimenRow>) {
-  const { m, query, page, atlases } = props;
+/** The form the specimens listing's tick boxes belong to (beeline-1kb.23). */
+const BULK_FORM = "reprint-bulk";
+
+/**
+ * Marking the ticked specimens for reprint (beeline-1kb.23): the bar under
+ * the table, which the tick boxes in the rows belong to by their `form`
+ * attribute. Without scripting it marks what is ticked on this page; the
+ * bulk-select island keeps ticks across pages and filters, counts them, and
+ * hides the bar until something is ticked.
+ */
+function BulkReprint({ m, back }: { m: Messages; back: string }) {
+  const b = m.listings.specimens.bulk;
+  const reasons = m.printRuns.reprintReason;
+  return (
+    <form
+      id={BULK_FORM}
+      method="post"
+      action="/specimens/reprint"
+      class="card bulk-bar"
+      data-bulk=""
+      data-count-one={b.countOne}
+      data-count-other={b.countOther}
+    >
+      <input type="hidden" name="back" value={back} />
+      {/* One row, so the bar held at the foot of the window covers as few
+          of the rows being ticked as it can. */}
+      <div class="bulk-fields">
+        <strong data-bulk-count=""></strong>
+        <SelectField
+          id="bulk-reason"
+          name="reason"
+          label={m.record.specimen.reprint.reason}
+          value=""
+          options={[["", m.record.specimen.reprint.noReason], ...Object.entries(reasons).map(([k, v]) => [k, v] as const)]}
+        />
+        <TextField id="bulk-note" name="note" label={m.record.specimen.reprint.note} />
+        <Button>{b.button}</Button>
+        <button type="button" class="outlined" data-bulk-clear="" hidden>
+          {b.clear}
+        </button>
+      </div>
+      <Meta block>{b.hint}</Meta>
+    </form>
+  );
+}
+
+export function SpecimenListing(props: ListingProps<SpecimenRow> & { reprinted?: { requested: number; of: number } | null }) {
+  const { m, query, page, atlases, admin, reprinted = null } = props;
   const copy = m.listings.specimens;
   const f = m.listings.filters;
   const path = "/specimens";
   const col = { m, path, query };
+  // Staff tick specimens to mark their labels for reprint; the box in the
+  // heading ticks the page, and is drawn hidden for the island to reveal.
+  const tickColumn = (
+    <input type="checkbox" data-bulk-page="" aria-label={copy.bulk.tickPage} hidden />
+  );
   return (
     <>
       <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
+      {reprinted !== null && <Callout tone="success">{copy.bulk.done(reprinted.requested, reprinted.of)}</Callout>}
       <Toolbar copy={copy} path={path} props={props} />
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
@@ -671,6 +725,7 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
         <>
           <DataTable
             columns={[
+              ...(admin ? [tickColumn] : []),
               column({ ...col, label: copy.colFieldNumber, sort: "field", kind: "number" }),
               column({ ...col, label: copy.colSample, sort: "number", kind: "number" }),
               dateColumn({ ...col, label: copy.colDate }),
@@ -701,6 +756,18 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
           >
             {page.rows.map((row) => (
               <tr>
+                {admin && (
+                  <td>
+                    <input
+                      type="checkbox"
+                      name="specimen"
+                      value={String(row.specimen_id)}
+                      form={BULK_FORM}
+                      data-bulk-row=""
+                      aria-label={copy.bulk.tickOne(row.field_number ?? String(row.specimen_number))}
+                    />
+                  </td>
+                )}
                 <td>
                   <Pill href={specimenHref(row.specimen_id)} mono={row.field_number !== null}>
                     {row.field_number !== null
@@ -709,6 +776,7 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
                         ? copy.awaitingNumber
                         : copy.noFieldNumber}
                   </Pill>
+                  {row.reprint_requested && <Meta block>{copy.reprintRequested}</Meta>}
                 </td>
                 <td>
                   <Pill href={sampleHref(row.sample_id)}>{row.sample_number}</Pill>
@@ -764,6 +832,7 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
             ))}
           </DataTable>
           <ListingPager m={m} path={path} query={query} total={page.total} />
+          {admin && <BulkReprint m={m} back={listingHref(path, query)} />}
         </>
       )}
     </>

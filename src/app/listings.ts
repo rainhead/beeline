@@ -392,6 +392,8 @@ export interface SpecimenRow {
    * numbering, which the cell used to call both (beeline-1kb.21).
    */
   awaiting_number: boolean;
+  /** Someone has asked for this label again and no run has taken it yet (gh-218). */
+  reprint_requested: boolean;
   sample_id: number;
   sample_number: string;
   date_start: Date;
@@ -1020,6 +1022,7 @@ export async function listSpecimens(
         sql<boolean>`sp.field_number IS NULL AND EXISTS (SELECT 1 FROM printed_label pl WHERE pl.specimen_id = sp.entity_id)`.as(
           "awaiting_number",
         ),
+        sql<boolean>`EXISTS (SELECT 1 FROM pending_reprint pr WHERE pr.specimen_id = sp.entity_id)`.as("reprint_requested"),
         "s.entity_id as sample_id",
         "s.sample_number",
         "s.date_start",

@@ -62,6 +62,7 @@ describe("asking for a reprint", () => {
     });
     expect(await requestReprint(conn, { specimenId: second }, { ...by(NEXT_DAY), reason: "damaged" })).toEqual({
       requested: 1,
+      of: 1,
     });
     expect(await rows(conn, `SELECT specimen_id, reason, note FROM pending_reprint`)).toEqual([[second, "damaged", null]]);
 
@@ -113,10 +114,26 @@ describe("asking for a reprint", () => {
     await requestReprint(conn, { specimenId: await specimenOf(ashSample, 1) }, by(NEXT_DAY));
     expect(await requestReprint(conn, { sampleId: ashSample }, { ...by(NEXT_DAY), note: "envelope lost" })).toEqual({
       requested: 1,
+      of: 2,
     });
     expect(await rows(conn, `SELECT note FROM pending_reprint ORDER BY specimen_id`)).toEqual([[null], ["envelope lost"]]);
     const run = await prepareRun(conn, { atlasId: null, personId: ash, now: DAY_AFTER });
     expect(run).toMatchObject({ labels: 2, reprints: 2 });
+  });
+
+  it("asks for a list of specimens from any samples, as ticked on the specimens listing", async () => {
+    const other = await insertCleanSample(conn, { collector_id: String(birch), specimen_count: "1", sample_number: "'6'" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${other}, 1, '25000009')`);
+    const first = await specimenOf(ashSample, 1);
+    const imported = await specimenOf(other, 1);
+    await requestReprint(conn, { specimenId: first }, by(NEXT_DAY));
+    // The first is already asked for, so two of three are.
+    expect(
+      await requestReprint(conn, { specimenIds: [first, await specimenOf(ashSample, 2), imported] }, by(NEXT_DAY)),
+    ).toEqual({ requested: 2, of: 3 });
+    expect(await count("SELECT count(*) FROM pending_reprint")).toBe(3);
+    // Only integers reach the store.
+    await expect(requestReprint(conn, { specimenIds: [first, -1] }, by(NEXT_DAY))).rejects.toThrow("positive integers");
   });
 
   it("refuses, writing nothing, when nothing named can be asked for", async () => {

@@ -488,6 +488,57 @@ describe("reprints (gh-218)", () => {
     expect(specimenPage).toContain("To change that label, cancel the run.");
   });
 
+  it("marks the specimens ticked on the listing, and returns to the same listing (beeline-1kb.23)", async () => {
+    const { app, appFor, conn, post, ashSample } = await printed();
+    const listing = await (await app.request("/specimens?scope=all")).text();
+    expect(listing).toContain(`form="reprint-bulk"`);
+    expect(listing).toContain("Mark for reprint");
+    const ids = ((await rows(conn, `SELECT entity_id FROM specimen WHERE sample_id = ${ashSample} ORDER BY specimen_number`)) as [
+      number,
+    ][]).map(([id]) => id);
+
+    // Two ticked, one of them twice: once on this page, once carried from another.
+    const body = new URLSearchParams({ back: "/specimens?scope=all", reason: "never_received" });
+    body.append("specimen", String(ids[0]));
+    body.append("specimen", String(ids[1]));
+    body.append("specimen", String(ids[1]));
+    const marked = await app.request("/specimens/reprint", { method: "POST", headers: { origin: ORIGIN }, body });
+    expect(marked.status).toBe(302);
+    expect(marked.headers.get("location")).toBe("/specimens?scope=all&reprinted=2&of=2");
+    const after = await (await app.request(marked.headers.get("location")!)).text();
+    expect(after).toContain("Marked 2 labels for reprint.");
+    expect(after.match(/reprint requested/g)?.length).toBe(2);
+    expect(await rows(conn, `SELECT reason FROM pending_reprint ORDER BY specimen_id`)).toEqual([
+      ["never_received"],
+      ["never_received"],
+    ]);
+
+    // Partly marked: one already waiting.
+    const again = await post("/specimens/reprint", { specimen: String(ids[1]), back: "https://elsewhere.example/" });
+    expect(again.status).toBe(409);
+    const some = new URLSearchParams({ back: "https://elsewhere.example/" });
+    some.append("specimen", String(ids[1]));
+    some.append("specimen", String(ids[2]));
+    const partly = await app.request("/specimens/reprint", { method: "POST", headers: { origin: ORIGIN }, body: some });
+    // Somewhere else is not a listing, so it lands on the listing itself.
+    expect(partly.headers.get("location")).toBe("/specimens?reprinted=1&of=2");
+    expect(await (await app.request(partly.headers.get("location")!)).text()).toContain(
+      "Marked 1 of 2 labels for reprint.",
+    );
+
+    // A volunteer sees the state and no tick boxes, and cannot post.
+    const volunteer = appFor("ash");
+    const theirs = await (await volunteer.request("/specimens")).text();
+    expect(theirs).toContain("reprint requested");
+    expect(theirs).not.toContain(`form="reprint-bulk"`);
+    const refused = await volunteer.request("/specimens/reprint", {
+      method: "POST",
+      headers: { origin: ORIGIN },
+      body: new URLSearchParams({ specimen: String(ids[0]) }),
+    });
+    expect(refused.status).toBe(403);
+  });
+
   it("takes back what no run has taken yet", async () => {
     const { app, post, ashSample } = await printed();
     await post(`/samples/${ashSample}/reprint`, {});

@@ -853,6 +853,14 @@ export function createApp({
     return csv(c, body, "beeline-samples");
   });
 
+  /** What the last bulk reprint marked, read back off the redirect (beeline-1kb.23). */
+  const reprintedOutcome = (c: Context<AppEnv>) => {
+    const requested = Number(c.req.query("reprinted"));
+    const of = Number(c.req.query("of"));
+    return Number.isSafeInteger(requested) && Number.isSafeInteger(of) && requested > 0 && of >= requested
+      ? { requested, of }
+      : null;
+  };
   app.get("/specimens", async (c) => {
     const m = c.get("m");
     const { personId, admin, reader, atlases, query, homeAtlas } = await listingRequest(c);
@@ -862,7 +870,15 @@ export function createApp({
       await page(
         c,
         m.listings.specimens.title,
-        <SpecimenListing m={m} query={query} page={results} atlases={atlases} admin={admin} homeAtlas={homeAtlas} />,
+        <SpecimenListing
+          m={m}
+          query={query}
+          page={results}
+          atlases={atlases}
+          admin={admin}
+          homeAtlas={homeAtlas}
+          reprinted={admin ? reprintedOutcome(c) : null}
+        />,
       ),
     );
   });
@@ -1697,6 +1713,25 @@ export function createApp({
     if (id === null) return errorResponse(c, "notFound");
     return reprintWrite(c, { sampleId: id }, `/samples/${id}`);
   });
+  // The specimens ticked on the listing (beeline-1kb.23), back to the same
+  // listing with what was marked. `back` is the listing the form was drawn
+  // on; anything that is not a path under /specimens goes to the listing
+  // itself, so the field cannot send anyone elsewhere.
+  app.post("/specimens/reprint", (c) =>
+    printWrite(c, async (personId, note) => {
+      const form = await c.req.formData();
+      const ids = [...new Set(form.getAll("specimen").map((v) => Number(v)))];
+      if (ids.length === 0 || ids.length > 10_000 || !ids.every((id) => Number.isSafeInteger(id) && id > 0)) {
+        return "/specimens";
+      }
+      const raw = String(form.get("reason") ?? "");
+      const reason = REPRINT_REASONS.has(raw) ? (raw as ReprintReason) : null;
+      const { requested, of } = await requestReprint(printWriter!, { specimenIds: ids }, { personId, reason, note });
+      const backRaw = String(form.get("back") ?? "");
+      const back = /^\/specimens(\?|$)/.test(backRaw) ? backRaw : "/specimens";
+      return `${back}${back.includes("?") ? "&" : "?"}reprinted=${requested}&of=${of}`;
+    }),
+  );
 
   // --- People: the roster, its binding evidence, and the staff decisions
   // that change any of it. Admin-gated like /jobs. Every write goes to the

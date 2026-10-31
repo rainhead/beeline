@@ -7,7 +7,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html } from "hono/html";
 import type { Child } from "hono/jsx";
 import { sql, type Kysely } from "kysely";
-import type { Database } from "../model.js";
+import type { Database, ReprintReason } from "../model.js";
 import { islandsSrc, styleVersion } from "./assets.js";
 import { registerAuthRoutes, signInHref, type InatClient } from "./auth.js";
 import { parseOrcid } from "../orcid.js";
@@ -52,7 +52,16 @@ import { Jobs } from "./views/jobs.js";
 import { Exports } from "./views/exports.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
-import { listRuns, loadRun, runLabels, runPdf, scopeCounts, specimenLabels } from "./print-runs.js";
+import {
+  listRuns,
+  loadRun,
+  runLabels,
+  runPdf,
+  sampleReprints,
+  scopeCounts,
+  specimenLabels,
+  specimenReprint,
+} from "./print-runs.js";
 import {
   approveRun,
   cancelRun,
@@ -61,7 +70,10 @@ import {
   prepareRun,
   PrintRunRefused,
   PrintRunTransitionError,
+  requestReprint,
+  withdrawReprint,
   withPrintRunLock,
+  type ReprintTarget,
 } from "../print-run.js";
 import { PersonPage, Roster } from "./views/roster.js";
 import { ObserverPage, UnclaimedPage } from "./views/unclaimed.js";
@@ -877,11 +889,12 @@ export function createApp({
     const m = c.get("m");
     const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
     if (sample === null) return errorResponse(c, "notFound");
-    const [findings, decisions, specimens, history] = await Promise.all([
+    const [findings, decisions, specimens, history, reprints] = await Promise.all([
       recordFindings(db, sample.sample_id).then((f) => visibleFindings(f, sample)),
       recordQcDecisions(db, sample.sample_id),
       listSampleSpecimens(db, sample.sample_id, parsePage(c.req.query("page"))),
       sampleChangeHistory(db, samplePaths.log, sample.sample_id).then((h) => visibleHistory(h, sample)),
+      c.get("admin") ? sampleReprints(db, sample.sample_id) : Promise.resolve(null),
     ]);
     // A locality this person adopted is theirs to take back (beeline-7i6).
     const ownsLocality =
@@ -900,6 +913,7 @@ export function createApp({
           hold={decisions.hold}
           specimens={specimens}
           history={history}
+          reprints={reprints}
           admin={c.get("admin")}
           ownsLocality={ownsLocality}
         />,
@@ -911,11 +925,12 @@ export function createApp({
     const m = c.get("m");
     const specimen = await loadSpecimen(db, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
     if (specimen === null) return errorResponse(c, "notFound");
-    const [events, findings, decisions, labels] = await Promise.all([
+    const [events, findings, decisions, labels, reprint] = await Promise.all([
       determinationHistory(db, specimen.specimen_id),
       recordFindings(db, specimen.sample.sample_id).then((f) => visibleFindings(f, specimen.sample)),
       recordQcDecisions(db, specimen.sample.sample_id),
       specimenLabels(db, specimen.specimen_id),
+      specimenReprint(db, specimen.specimen_id),
     ]);
     const title =
       specimen.field_number === null
@@ -926,7 +941,7 @@ export function createApp({
         c,
         title,
         <SpecimenPage m={m} specimen={specimen} events={events} findings={findings}
-          waivers={decisions.waivers} labels={labels} admin={c.get("admin")} />,
+          waivers={decisions.waivers} labels={labels} reprint={reprint} admin={c.get("admin")} />,
       ),
     );
   });
@@ -1651,6 +1666,37 @@ export function createApp({
       return `/print-runs/${printRunId(c)}`;
     }),
   );
+
+  // Asking for labels again, or taking the request back (gh-218): from a
+  // specimen's page for its one label, or a sample's for all of them. The
+  // print-run writes' terms, since the next freeze reads what these write.
+  const REPRINT_REASONS: ReadonlySet<string> = new Set<ReprintReason>(["never_received", "damaged", "data_corrected"]);
+  const reprintWrite = (c: Context<AppEnv>, target: ReprintTarget, back: string) =>
+    printWrite(c, async (personId, note) => {
+      const form = await c.req.formData();
+      if (form.get("withdraw") !== null) {
+        await withdrawReprint(printWriter!, target, { personId });
+      } else {
+        const raw = String(form.get("reason") ?? "");
+        const reason = REPRINT_REASONS.has(raw) ? (raw as ReprintReason) : null;
+        await requestReprint(printWriter!, target, { personId, reason, note });
+      }
+      return back;
+    });
+  const recordId = (c: Context<AppEnv>) => {
+    const id = Number(c.req.param("id"));
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  };
+  app.post("/specimens/:id/reprint", (c) => {
+    const id = recordId(c);
+    if (id === null) return errorResponse(c, "notFound");
+    return reprintWrite(c, { specimenId: id }, `/specimens/${id}`);
+  });
+  app.post("/samples/:id/reprint", (c) => {
+    const id = recordId(c);
+    if (id === null) return errorResponse(c, "notFound");
+    return reprintWrite(c, { sampleId: id }, `/samples/${id}`);
+  });
 
   // --- People: the roster, its binding evidence, and the staff decisions
   // that change any of it. Admin-gated like /jobs. Every write goes to the

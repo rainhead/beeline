@@ -118,3 +118,30 @@ COMMENT ON COLUMN printed_label.collector_text IS 'The collector line: labelName
 COMMENT ON COLUMN printed_label.method_text IS 'net, trap or nest.';
 COMMENT ON COLUMN printed_label.number_text IS 'The field number as printed, which is also what the DataMatrix encodes.';
 COMMENT ON COLUMN printed_label.warnings IS 'What the proofer should look at, semicolon-separated: a missing county, a line the label had to shrink to fit (location over 38 characters, collector over 22, method over 5). Never a block — the run prints regardless — and NULL when there is nothing to say.';
+
+-- A label to print again (beeline-1kb.5, gh-218): a staff member names a
+-- specimen whose label was lost, damaged or printed with data since
+-- corrected, and the next print run in its scope takes it alongside the new
+-- labels — under the number it already carries, since a reprint never
+-- renumbers (ADR 0008, decision 2, settled on gh-17 2026-10-21). Whether a
+-- request has been answered is derived, never written: it is answered by a
+-- label for the specimen in an uncanceled run prepared at or after it
+-- (pending_reprint, schema/155), so cancelling that run puts the request
+-- back without anything here changing. Withdrawal is the one UPDATE, and
+-- both of its columns are plain, as on print_run, so it can never touch an
+-- index. Nothing references this table.
+CREATE TABLE reprint_request (
+  entity_id    INTEGER PRIMARY KEY DEFAULT nextval('entity_id_seq'),
+  specimen_id  INTEGER NOT NULL REFERENCES specimen(entity_id),
+  requested_by INTEGER NOT NULL REFERENCES person(entity_id),
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reason       TEXT CHECK (reason IN ('never_received', 'damaged', 'data_corrected')),
+  note         TEXT,
+  withdrawn_by INTEGER,
+  withdrawn_at TIMESTAMPTZ,
+  CHECK ((withdrawn_by IS NULL) = (withdrawn_at IS NULL)),
+  CHECK (withdrawn_at IS NULL OR withdrawn_at >= requested_at)
+);
+COMMENT ON TABLE reprint_request IS 'A request to print a specimen''s label again under its existing field number (gh-218). Answered by the first uncanceled print run prepared at or after it that holds a label for the specimen; pending_reprint is the ones not yet answered. A reason is optional (Peter, 2026-10-30).';
+COMMENT ON COLUMN reprint_request.reason IS 'Why, as one of the quick choices, or NULL: never_received (the label did not arrive), damaged (cut, marred or lost), data_corrected (the record was fixed after the label printed). The note can say more, or say it instead.';
+COMMENT ON COLUMN reprint_request.withdrawn_by IS 'Who took the request back before a run took it. A person entity_id, not a foreign key, so the withdrawing UPDATE touches no index.';

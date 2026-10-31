@@ -14,20 +14,23 @@ SELECT r.entity_id AS print_run_id,
        CAST(coalesce(l.label_count, 0)     AS INTEGER) AS label_count,
        CAST(coalesce(l.sheet_count, 0)     AS INTEGER) AS sheet_count,
        CAST(coalesce(l.sample_count, 0)    AS INTEGER) AS sample_count,
-       CAST(coalesce(l.collector_count, 0) AS INTEGER) AS collector_count
+       CAST(coalesce(l.collector_count, 0) AS INTEGER) AS collector_count,
+       CAST(coalesce(l.reprint_count, 0)   AS INTEGER) AS reprint_count
 FROM print_run r
 LEFT JOIN (
   SELECT pl.print_run_id,
          count(*)                      AS label_count,
          max(pl.sheet)                 AS sheet_count,
          count(DISTINCT sp.sample_id)  AS sample_count,
-         count(DISTINCT pc.person_id)  AS collector_count
+         count(DISTINCT pc.person_id)  AS collector_count,
+         count(rp.specimen_id)         AS reprint_count
   FROM printed_label pl
   JOIN specimen sp ON sp.entity_id = pl.specimen_id
   JOIN sample_primary_collector pc ON pc.sample_id = sp.sample_id
+  LEFT JOIN printed_label_reprint rp ON rp.print_run_id = pl.print_run_id AND rp.specimen_id = pl.specimen_id
   GROUP BY pl.print_run_id
 ) l ON l.print_run_id = r.entity_id;
-COMMENT ON VIEW print_run_state IS 'Per print run: its state (prepared, approved, printed, mailed, canceled) derived from which timestamps are set, and how many labels, sheets, samples and collectors it holds. A canceled run keeps its counts: its labels stay as the record of what was prepared and never printed.';
+COMMENT ON VIEW print_run_state IS 'Per print run: its state (prepared, approved, printed, mailed, canceled) derived from which timestamps are set, and how many labels, sheets, samples and collectors it holds, and how many of the labels are reprints. A canceled run keeps its counts: its labels stay as the record of what was prepared and never printed.';
 
 -- What a run with no atlas covers: every pending sample whose atlas does not
 -- print its own labels (no atlas_printing row, schema/010), and every pending
@@ -73,11 +76,65 @@ COMMENT ON VIEW sample_label_in_progress IS 'Per sample with labels in a live, u
 -- rows here, which the page spells out rather than leaving blank.
 CREATE VIEW specimen_label AS
 SELECT pl.specimen_id, pl.print_run_id, pl.sheet, pl.cell, pl.number_text,
-       s.state, r.prepared_at, r.approved_at, r.printed_at, r.mailed_at, r.canceled_at
+       s.state, r.prepared_at, r.approved_at, r.printed_at, r.mailed_at, r.canceled_at,
+       (rp.specimen_id IS NOT NULL) AS reprint
 FROM printed_label pl
 JOIN print_run r ON r.entity_id = pl.print_run_id
-JOIN print_run_state s ON s.print_run_id = r.entity_id;
-COMMENT ON VIEW specimen_label IS 'One row per label a specimen has had: which run, where on which sheet, and how far that run got. Two rows for one specimen is a reprint; none is an imported specimen.';
+JOIN print_run_state s ON s.print_run_id = r.entity_id
+LEFT JOIN printed_label_reprint rp ON rp.print_run_id = pl.print_run_id AND rp.specimen_id = pl.specimen_id;
+COMMENT ON VIEW specimen_label IS 'One row per label a specimen has had: which run, where on which sheet, how far that run got, and whether it was a reprint (printed_label_reprint). None is an imported specimen that has never been reprinted.';
+
+-- Reprint requests not yet answered (gh-218, schema/035): not withdrawn, and
+-- no uncanceled run prepared at or after the request holds a label for the
+-- specimen. A request is answered the moment a run freezes it, as a sample
+-- stops being pending at the freeze, and a cancel brings it back here by
+-- itself. This is everything asked for, blocked or not; what a run can take
+-- is printable_reprint.
+CREATE VIEW pending_reprint AS
+SELECT q.entity_id AS reprint_request_id, q.specimen_id, sp.sample_id,
+       q.requested_by, q.requested_at, q.reason, q.note
+FROM reprint_request q
+JOIN specimen sp ON sp.entity_id = q.specimen_id
+WHERE q.withdrawn_at IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM printed_label pl
+    JOIN print_run r ON r.entity_id = pl.print_run_id
+    WHERE pl.specimen_id = q.specimen_id
+      AND r.canceled_at IS NULL
+      AND r.prepared_at >= q.requested_at);
+COMMENT ON VIEW pending_reprint IS 'Reprint requests waiting for a run: neither withdrawn nor taken by an uncanceled print run prepared since. Includes those a flag is holding back; printable_reprint is what a run takes.';
+
+-- What a run can take of them. A reprint is a person asking for one label,
+-- so it is not held to printability: an imported sample can carry flags that
+-- were never anybody's to fix, and the reprint of a label already on a pin
+-- should not wait on them. It waits only on the flags no waiver can set
+-- aside (qc_rule_unwaivable, schema/050), because those are the ones that
+-- would print something false or something an atlas has not agreed to: a
+-- staff hold, a field the label cannot be printed without, an obscured point
+-- with no true one behind it, or a taxon-obscured point its atlas has not
+-- said may print. Nothing from a settled season is excluded, unlike
+-- pending_print_sample: a person asked for this label. And a reprint needs a
+-- number to print: a request is refused for a specimen without one, so this
+-- only matters if its number is taken away after it was asked for.
+CREATE VIEW printable_reprint AS
+SELECT p.*
+FROM pending_reprint p
+JOIN specimen sp ON sp.entity_id = p.specimen_id
+WHERE sp.field_number IS NOT NULL
+  AND NOT EXISTS (
+  SELECT 1 FROM sample_qc_finding f
+  JOIN qc_rule_unwaivable u ON u.name = f.rule_name
+  WHERE f.sample_id = p.sample_id);
+COMMENT ON VIEW printable_reprint IS 'The pending reprints a print run can take: those of a specimen with a field number whose sample has no finding from qc_rule_unwaivable (a staff hold, a missing required field, an obscured point without a true one, a taxon-obscured point awaiting its atlas). The rest wait in pending_reprint.';
+
+-- The reprints an unscoped run takes, by the same rule as print_scope_sample.
+CREATE VIEW print_scope_reprint AS
+SELECT p.*
+FROM printable_reprint p
+LEFT JOIN sample_atlas sa ON sa.sample_id = p.sample_id
+LEFT JOIN atlas_printing ap ON ap.atlas_id = sa.atlas_id
+WHERE ap.atlas_id IS NULL;
+COMMENT ON VIEW print_scope_reprint IS 'The printable reprints an unscoped print run takes: those of samples filed under an atlas that does not print its own labels, or under none. A run scoped to one atlas reads printable_reprint joined to sample_atlas instead.';
 
 -- The current number a minted specimen carries, derived exactly as
 -- determination_of_record derives the determination (schema/110): the latest

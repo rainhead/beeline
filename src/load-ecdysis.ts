@@ -539,6 +539,23 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
        QUALIFY row_number() OVER (PARTITION BY c.record_id ORDER BY c.record_id) = 1`,
       [now.toISOString()],
     );
+    // An identification already recorded — by its recordID, or adopted
+    // above — states no sex or caste until an export carries them, which the
+    // first load after beeline-ni5m.5 is the first to do for every one on the
+    // store. They are filled where the event has none; a value the event
+    // already states is left, since a determination is an append-only event
+    // and Ecdysis changing one is rare (CodeRabbit on this branch).
+    await conn.run(
+      `UPDATE determination SET sex = c.sex, caste = c.caste
+       FROM (SELECT coalesce(c.adopt_id, e.determination_id) AS determination_id, c.sex, c.caste
+             FROM ecd_candidate c
+             LEFT JOIN ecdysis_identification e ON e.record_id = c.record_id
+             WHERE NOT c.placeholder AND c.is_current AND (c.sex IS NOT NULL OR c.caste IS NOT NULL)
+               AND coalesce(c.adopt_id, e.determination_id) IS NOT NULL
+             QUALIFY row_number() OVER (PARTITION BY coalesce(c.adopt_id, e.determination_id) ORDER BY c.record_id) = 1) c
+       WHERE determination.entity_id = c.determination_id
+         AND determination.sex IS NULL AND determination.caste IS NULL`,
+    );
     // The rows this load inserts are the ones above the sequence's current
     // high-water mark, which is how the provenance rows below find them:
     // recorded_at is not an identity, since a later load can give another

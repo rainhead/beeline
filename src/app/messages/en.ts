@@ -2189,7 +2189,7 @@ export const en = {
     taxon_obscured_awaiting_atlas:
       "iNaturalist hides where the plant on this observation grows, because of its conservation status. A label carries the true location, and Beeline prints it only where the bee atlas for that place has agreed. No atlas has agreed for where this sample was collected, so its labels will not print for now. There is nothing for you to fix.",
     locality_format:
-      "The locality must be a short place name (18 characters or fewer) without commas, quotes, or street addresses — it is printed on a 3pt label. Example: Corvallis not 5th St, Corvallis OR.",
+      "The locality must be short (18 characters or fewer), without commas or double quotes, and more than a county name — it is printed on a 3pt label beside the county. Example: Corvallis rather than Corvallis, OR.",
     place_unabbreviated:
       "Country and state/province must be abbreviations (USA not United States; OR not Oregon) — the label cell is tiny.",
     place_unrecognised:
@@ -2319,7 +2319,7 @@ export const en = {
       label: {
         term: "Label",
         definition:
-          "The printed slip pinned with a specimen, carrying where and when it was collected, by whom, and its field number. It is printed about 3pt tall, which is why the locality has to be a short place name rather than an address. Labels are printed in batches called print runs; each of your specimens says whether its label is being printed, printed, or mailed.",
+          "The printed slip pinned with a specimen, carrying where and when it was collected, by whom, and its field number. It is printed about 3pt tall, which is why the locality has to be short: 18 characters at most. Labels are printed in batches called print runs; each of your specimens says whether its label is being printed, printed, or mailed.",
       },
       "master-melittology": {
         term: "Master Melittology",

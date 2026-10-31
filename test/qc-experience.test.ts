@@ -128,7 +128,7 @@ describe("the front page", () => {
     void alice;
     const body = await (await app.request("/")).text();
     expect(body).toContain('<td class="flagged blocking">5th St, Corvallis, BentonCo, OR</td>');
-    expect(body).toContain("The locality must be a short place name");
+    expect(body).toContain("The locality must be short (18 characters or fewer)");
   });
 
   it("offers the locality named from the coordinates on a locality flag, until labels print (beeline-7i6)", async () => {

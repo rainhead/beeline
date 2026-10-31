@@ -86,11 +86,11 @@ describe("a hold", () => {
 });
 
 describe("a waiver", () => {
-  async function streetSample() {
+  async function longSample() {
     const { conn } = await createMemoryDb();
     const alice = await person(conn, "Alice Adams", "alice", 1);
-    // "FS Rd 2" is a forest road the street-address check takes for a street.
-    const sampleId = await insertCleanSample(conn, { collector_id: String(alice), inat_observation_id: "998877", locality: "'FS Rd 2'" });
+    // One character over the label's 18, which staff may judge will do.
+    const sampleId = await insertCleanSample(conn, { collector_id: String(alice), inat_observation_id: "998877", locality: "'Deschutes River SRA'" });
     const [[finding]] = (await rows(
       conn,
       `SELECT concat_ws(' ', details, detail_taxon_name) FROM sample_qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'locality_format'`,
@@ -99,23 +99,23 @@ describe("a waiver", () => {
   }
 
   it("lets a flag staff judged fine print, while the flag says what it said", async () => {
-    const { conn, sampleId, finding } = await streetSample();
+    const { conn, sampleId, finding } = await longSample();
     expect(await printable(conn, sampleId)).toBe(false);
 
-    await applySampleOverlay(conn, [row({ field: "waiver:locality_format", value: "waived", base_value: finding, reason: "a forest road" })]);
+    await applySampleOverlay(conn, [row({ field: "waiver:locality_format", value: "waived", base_value: finding, reason: "short enough to read" })]);
     expect(await flags(conn, sampleId)).toEqual([]);
     expect(await printable(conn, sampleId)).toBe(true);
 
     // The record changes and the flag's wording with it: the finding is back
     // once the waivers are next checked, as every promotion does.
-    await conn.run(`UPDATE sample SET locality = 'FS Rd 2, past the gate' WHERE entity_id = ${sampleId}`);
+    await conn.run(`UPDATE sample SET locality = 'Deschutes River SRA, past the gate' WHERE entity_id = ${sampleId}`);
     await refreshWaivers(conn);
     expect((await flags(conn, sampleId)).map((f) => f[0])).toEqual(["locality_format"]);
     expect(await printable(conn, sampleId)).toBe(false);
   });
 
   it("is refused for a flag no waiver may set aside, or one that does not block", async () => {
-    const { conn } = await streetSample();
+    const { conn } = await longSample();
     for (const [field, reason] of [
       ["waiver:missing_required_field", "'missing_required_field' cannot be waived"],
       ["waiver:obscured_no_true_coordinates", "'obscured_no_true_coordinates' cannot be waived"],
@@ -211,7 +211,7 @@ describe("the overlay's hold and waiver fields", () => {
   const header = "sample_ref,field,base_value,value,author,reason\n";
   it("parse, and a value other than the standing one or empty is refused", () => {
     expect(
-      parseSampleOverlay(`${header}inat:1,hold,,held,sam,wrong date\ninat:1,waiver:locality_format,looks like a street address,waived,sam,forest road\n`, "f"),
+      parseSampleOverlay(`${header}inat:1,hold,,held,sam,wrong date\ninat:1,waiver:locality_format,longer than 18 chars (19),waived,sam,short enough to read\n`, "f"),
     ).toHaveLength(2);
     expect(() => parseSampleOverlay(`${header}inat:1,hold,,yes,sam,x\n`, "f")).toThrow(/a hold is 'held' or empty/);
     expect(() => parseSampleOverlay(`${header}inat:1,waiver:Locality,,waived,sam,x\n`, "f")).toThrow(/not a sample overlay field/);
@@ -274,7 +274,7 @@ describe("the sample page's staff forms", () => {
   });
 
   it("waive a firing flag, list the waiver for everyone, and refuse what may not be waived", async () => {
-    const { app: a, post, conn, sampleId } = await app("sam", "'FS Rd 2'");
+    const { app: a, post, conn, sampleId } = await app("sam", "'Deschutes River SRA'");
     const before = await (await a.request(`/samples/${sampleId}`)).text();
     expect(before).toContain("Waive this flag");
     expect(before).toContain('name="rule" value="locality_format"');
@@ -282,12 +282,12 @@ describe("the sample page's staff forms", () => {
     expect((await post(`/samples/${sampleId}/waiver`, { rule: "locality_format", note: "" })).status).toBe(400);
     expect((await post(`/samples/${sampleId}/waiver`, { rule: "missing_required_field", note: "x" })).status).toBe(400);
     expect((await post(`/samples/${sampleId}/waiver`, { rule: "duplicate_sample_number", note: "x" })).status).toBe(400);
-    expect((await post(`/samples/${sampleId}/waiver`, { rule: "locality_format", note: "a forest road" })).status).toBe(302);
+    expect((await post(`/samples/${sampleId}/waiver`, { rule: "locality_format", note: "short enough to read" })).status).toBe(302);
     expect(await printable(conn, sampleId)).toBe(true);
 
     const page = await (await a.request(`/samples/${sampleId}`)).text();
     expect(page).toContain("Waived flags");
-    expect(page).toContain("Waived by Sam Staff. Reason: a forest road");
+    expect(page).toContain("Waived by Sam Staff. Reason: short enough to read");
     expect(page).toContain("Remove the waiver");
 
     expect((await post(`/samples/${sampleId}/waiver`, { rule: "locality_format", remove: "1" })).status).toBe(302);
@@ -295,25 +295,25 @@ describe("the sample page's staff forms", () => {
   });
 
   it("show the collector a hold on their front page and a waiver on their sample", async () => {
-    const { app: a, conn, sampleId } = await app("alice", "'FS Rd 2'");
+    const { app: a, conn, sampleId } = await app("alice", "'Deschutes River SRA'");
     const [[finding]] = (await rows(
       conn,
       `SELECT concat_ws(' ', details, detail_taxon_name) FROM qc_finding WHERE sample_id = ${sampleId} AND rule_name = 'locality_format'`,
     )) as [[string]];
     await applySampleOverlay(conn, [
       row({ field: "hold", value: "held", reason: "check the county" }),
-      row({ field: "waiver:locality_format", value: "waived", base_value: finding, reason: "a forest road" }),
+      row({ field: "waiver:locality_format", value: "waived", base_value: finding, reason: "short enough to read" }),
     ]);
     const front = await (await a.request("/")).text();
     expect(front).toContain("Staff are holding this sample back from printing");
     expect(front).toContain("check the county");
     const page = await (await a.request(`/samples/${sampleId}`)).text();
-    expect(page).toContain("Waived by Sam Staff. Reason: a forest road");
+    expect(page).toContain("Waived by Sam Staff. Reason: short enough to read");
     expect(page).not.toContain("Remove the waiver");
   });
 
   it("refuse a malformed flag name on removal too, leaving the file readable", async () => {
-    const { post, sampleId, sampleOverlayPath } = await app("sam", "'FS Rd 2'");
+    const { post, sampleId, sampleOverlayPath } = await app("sam", "'Deschutes River SRA'");
     await post(`/samples/${sampleId}/hold`, { note: "check the county" });
     for (const rule of ["", "Locality", "locality_format,x"]) {
       expect((await post(`/samples/${sampleId}/waiver`, { rule, remove: "1" })).status).toBe(400);
@@ -322,7 +322,7 @@ describe("the sample page's staff forms", () => {
   });
 
   it("are not offered to the collector, and refuse them", async () => {
-    const { app: a, post, sampleId } = await app("alice", "'FS Rd 2'");
+    const { app: a, post, sampleId } = await app("alice", "'Deschutes River SRA'");
     const page = await (await a.request(`/samples/${sampleId}`)).text();
     expect(page).not.toContain("Hold back from printing");
     expect(page).not.toContain("Waive this flag");

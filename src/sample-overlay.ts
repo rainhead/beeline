@@ -216,10 +216,12 @@ export async function upsertSampleOverlay(path: string, rows: readonly SampleOve
   const queued = (writeQueues.get(path) ?? Promise.resolve()).then(async () => {
     await ensureSampleOverlayFile(path);
     const current = parseSampleOverlay(await readFile(path, "utf8"), path);
+    // One row per key is the file's invariant, so a batch naming a key twice
+    // writes only its last row for it.
     const replaced = new Map(rows.map((r) => [sampleRowKey(r), r]));
     const kept = current.filter((r) => !replaced.has(sampleRowKey(r)));
     const tmp = `${path}.tmp`;
-    await writeFile(tmp, formatSampleOverlay([...kept, ...rows]));
+    await writeFile(tmp, formatSampleOverlay([...kept, ...replaced.values()]));
     await rename(tmp, path);
   });
   writeQueues.set(path, queued.catch(() => {}));

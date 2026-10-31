@@ -559,12 +559,20 @@ describe("the roster screen", () => {
   });
 
   it("refuses a binding another person holds, and says why instead of failing quietly", async () => {
+    // A binding already recorded, which the refused one must not replace.
+    await post(ctx.app, "/people/1/account", { inat_user_id: "111", login: "adacollects", reason: "confirmed" });
     const res = await post(ctx.app, "/people/1/account", { inat_user_id: "333", login: "staffer", reason: "" });
     expect(res.status).toBe(200);
     expect(await res.text()).toContain("already bound");
     // Person 1 keeps the account they had.
     const account = await ctx.db.selectFrom("inat_account").where("person_id", "=", 1).selectAll().executeTakeFirst();
     expect(Number(account!.inat_user_id)).toBe(111);
+    // And so does the file: the decision is written before it is applied,
+    // and a refused one used to replace the good row for good, so the next
+    // rebuild unbound them.
+    expect((await readOverlay(ctx.overlayPath)).filter((r) => r.field === "inat_user_id").map((r) => r.value)).toEqual([
+      "111 adacollects",
+    ]);
   });
 
   it("unbinds, which is how someone stops being able to sign in", async () => {
@@ -702,6 +710,30 @@ describe("granting one person reach over another", () => {
   let ctx: Awaited<ReturnType<typeof rosterApp>>;
   beforeEach(async () => {
     ctx = await rosterApp({ personId: 3, admin: true });
+  });
+
+  it("keeps the grant that stood, in the store and in the file, when a later one is refused", async () => {
+    await post(ctx.app, "/people/adacollects/delegate", { acts_for: "name:Bo Netter", reason: "one household" });
+    const res = await post(ctx.app, "/people/adacollects/delegate", { acts_for: "name:Nobody At All", reason: "" });
+    expect(await res.text()).toContain("no person named");
+    const grants = await (await ctx.conn.run(`SELECT count(*) FROM person_delegate WHERE person_id = 1`)).getRows();
+    expect(grants).toEqual([[1n]]);
+    // The decision is written before it is applied, and the refused row used
+    // to replace the one that stood under the same key, so the next rebuild
+    // replayed the refusal and the grant was gone.
+    expect((await readOverlay(ctx.overlayPath)).filter((r) => r.field === "acts_for").map((r) => r.value)).toEqual([
+      "name:Bo Netter",
+    ]);
+  });
+
+  it("leaves nothing in the file when a first grant is refused, so no rebuild replays the refusal", async () => {
+    const res = await post(ctx.app, "/people/adacollects/delegate", { acts_for: "name:Nobody At All", reason: "" });
+    expect(await res.text()).toContain("no person named");
+    const grants = await (await ctx.conn.run(`SELECT count(*) FROM person_delegate WHERE person_id = 1`)).getRows();
+    expect(grants).toEqual([[0n]]);
+    // With no earlier row to put back, the refused row itself has to go, or
+    // every rebuild would replay and refuse it again (CodeRabbit, this branch).
+    expect((await readOverlay(ctx.overlayPath)).filter((r) => r.field === "acts_for")).toEqual([]);
   });
 
   it("records the grant in the overlay and applies it to the store", async () => {

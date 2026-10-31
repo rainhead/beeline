@@ -93,7 +93,7 @@ import {
   RECENT_CHANGES,
   resolvePersonHandle,
 } from "./roster.js";
-import { upsertOverlay, valueProblem, type OverlayField, type PersonOverlayRow } from "../person-overlay.js";
+import { readOverlay, removeOverlayKeys, rowKey, type OverlayField, type PersonOverlayRow, upsertOverlay, valueProblem } from "../person-overlay.js";
 import {
   appendChanges,
   CHANGE_LOG,
@@ -1884,6 +1884,12 @@ export function createApp({
     /** Who it is about afterwards: the same person, or the one `create` made. */
     findAfter: () => Promise<number | null>;
   }): Promise<{ applied: boolean; problem: string | null; personId: number | null }> => {
+    // What the file said for these keys before, so a decision the applier
+    // refuses can be taken back: written first, a refused row replaces the
+    // row it was keyed over, and the next rebuild then replays the refusal
+    // in place of the decision that stood.
+    const keys = new Set(d.rows.map(rowKey));
+    const stood = (await readOverlay(overlayPath)).filter((r) => keys.has(rowKey(r)));
     await upsertOverlay(overlayPath, d.rows);
     if (conn === undefined) return { applied: false, problem: null, personId: d.personId };
     // What the person looks like now, so the log can say what they looked
@@ -1925,6 +1931,14 @@ export function createApp({
       );
     }
     if (applied.unresolved.length > 0) {
+      const refused = new Set(applied.unresolved.map(rowKey));
+      const restore = stood.filter((r) => refused.has(rowKey(r)));
+      if (restore.length > 0) await upsertOverlay(overlayPath, restore);
+      // A refused decision with no earlier row to put back comes out of the
+      // file altogether, or every rebuild would replay and refuse it again
+      // (CodeRabbit, this branch).
+      const hadRow = new Set(stood.map(rowKey));
+      await removeOverlayKeys(overlayPath, [...refused].filter((k) => !hadRow.has(k)));
       return { applied: true, problem: applied.unresolved.map((u) => u.reason).join("; "), personId: afterId };
     }
     // Whatever this account was, it stops being it now: a session issued under
@@ -1978,6 +1992,23 @@ export function createApp({
       const problem = valueProblem(field, value);
       if (problem !== null) return showPerson(c, undefined, problem);
       rows.push({ person_ref: ref, field, value, author, reason });
+    }
+    // An account another person holds is refused before the file is
+    // written, as an ORCID is below: the applier refuses the row anyway, but
+    // by then it has replaced this person's current binding in the file,
+    // and the next rebuild would leave them with no account at all.
+    for (const r of rows) {
+      if (r.field !== "inat_user_id" || r.value === "") continue;
+      const uid = Number(r.value.split(" ")[0]);
+      const holder = await db
+        .selectFrom("inat_account")
+        .innerJoin("person", "person.entity_id", "inat_account.person_id")
+        .select(["inat_account.person_id", "person.display_name"])
+        .where("inat_account.inat_user_id", "=", BigInt(uid))
+        .executeTakeFirst();
+      if (holder !== undefined && holder.person_id !== person.person_id) {
+        return showPerson(c, undefined, m.people.accountTaken(uid, holder.display_name));
+      }
     }
     // Back to the URL as it was asked for: rebinding an account can change
     // the handle underneath us, and redirecting to the new one would 404 a

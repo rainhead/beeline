@@ -231,6 +231,14 @@ export async function applySampleOverlay(
         // observation yields some, the next promotion writes them.
         const base = await rows(conn, `SELECT observed_latitude, observed_longitude, observed_uncertainty_m, observed_source
                                        FROM sample_location_override WHERE sample_id = $1`, [sampleId]);
+        // The file keeps a removal row for good and every promotion replays
+        // it. With no override standing it has been applied already: there
+        // is nothing to take away or hand back, and the point promotion has
+        // since written from the observation stays.
+        if (base[0] === undefined) {
+          result.applied++;
+          continue;
+        }
         await conn.run(`DELETE FROM sample_location_override WHERE sample_id = $1`, [sampleId] as never);
         const printed = (await rows(conn, `SELECT 1 FROM printed_sample WHERE sample_id = $1`, [sampleId])).length > 0;
         if (!printed) {

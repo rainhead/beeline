@@ -95,6 +95,15 @@ describe("the overlay file", () => {
     expect(saved.find((r) => r.field === "home_atlas")!.value).toBe("OBA");
   });
 
+  it("keeps one row when a batch decides the same field twice, the later one", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "overlay-"));
+    const path = join(dir, "person-overlay.csv");
+    await upsertOverlay(path, [row({ field: "admin", value: "yes" }), row({ field: "admin", value: "no" })]);
+    const saved = await readOverlay(path);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]!.value).toBe("no");
+  });
+
   it("lets an app row win over the git-curated one, per ADR 0004", () => {
     const curated = [row({ value: "no", author: "git" })];
     const app = [row({ value: "yes", author: "staffer" })];
@@ -284,6 +293,74 @@ describe("applying the overlay", () => {
     const r = await apply([row({ person_ref: "name:Nobody At All", field: "admin", value: "yes" })]);
     expect(r.applied).toBe(0);
     expect(r.unresolved[0]!.reason).toMatch(/no person named/);
+  });
+
+  it("admits a person whose name somebody else is renamed to in the same file, and keeps their account theirs", async () => {
+    // Live, these were three accepted decisions: a staffer admitted, their
+    // account bound, and Ada renamed onto the same name. Replayed onto a
+    // fresh store, the create used to be answered through the rename ("Nan
+    // Staffer is what Ada Collector is called now"), so nobody was minted and
+    // the account went to Ada.
+    const r = await apply([
+      row({ person_ref: "name:Nan Staffer", field: "create", value: "yes" }),
+      row({ person_ref: "name:Nan Staffer", field: "inat_user_id", value: "222 nanstaffer" }),
+      row({ person_ref: "name:Ada Collector", field: "display_name", value: "Nan Staffer" }),
+    ]);
+    expect(r.unresolved).toEqual([]);
+    expect(await one(`SELECT count(*) FROM person WHERE display_name = 'Nan Staffer'`)).toEqual([2n]);
+    expect(await one(`SELECT person_id <> ${people["Ada Collector"]} FROM inat_account WHERE inat_user_id = 222`)).toEqual([true]);
+  });
+
+  it("follows a rename keyed on an account, which is how a person with a shared name is renamed", async () => {
+    // Two Bo Netters: the roster can name the one with the account only by
+    // it. Once renamed to a name of their own, every later decision is keyed
+    // on that name, and has to reach them on a fresh store that knows only
+    // the shared one.
+    await conn.run(`INSERT INTO person (display_name) VALUES ('Bo Netter')`);
+    const r = await apply([
+      row({ person_ref: "inat:111", field: "display_name", value: "Bo Netter-Smith" }),
+      row({ person_ref: "name:Bo Netter-Smith", field: "admin", value: "yes" }),
+    ]);
+    expect(r.unresolved).toEqual([]);
+    expect(await one(`SELECT person_id FROM person_admin`)).toEqual([people["Bo Netter"]]);
+  });
+
+  it("still reaches a renamed person after a later save of the names form, which renames them to the name they already have", async () => {
+    // The names form writes display_name on every save, so fixing the family
+    // name after a rename writes a row renaming the person to their current
+    // name. That row used to replace the real rename in the backward chase,
+    // and every decision keyed on the new name was refused on rebuild.
+    const r = await apply([
+      row({ person_ref: "name:Ada Collector", field: "display_name", value: "Ada Collector-Smith" }),
+      row({ person_ref: "name:Ada Collector-Smith", field: "display_name", value: "Ada Collector-Smith" }),
+      row({ person_ref: "name:Ada Collector-Smith", field: "family_name", value: "Collector-Smith" }),
+    ]);
+    expect(r.unresolved).toEqual([]);
+    expect(await one(`SELECT family_name FROM person WHERE entity_id = ${people["Ada Collector"]}`)).toEqual(["Collector-Smith"]);
+  });
+
+  it("refuses a name two different people are renamed to, rather than picking the later rename", async () => {
+    const r = await apply([
+      row({ person_ref: "name:Ada Collector", field: "display_name", value: "Dee Dee" }),
+      row({ person_ref: "name:Bo Netter", field: "display_name", value: "Dee Dee" }),
+      row({ person_ref: "name:Dee Dee", field: "admin", value: "yes" }),
+    ]);
+    expect(r.unresolved.map((u) => u.reason)).toEqual(["'Dee Dee' names 2 people"]);
+    expect(await one(`SELECT count(*) FROM person_admin`)).toEqual([0n]);
+  });
+
+  it("follows a chain of renames to the person renamed, not to a namesake who already had the final name", async () => {
+    // Ada Collector becomes Ada Dee, then Ada Dee becomes Bo Netter, a name
+    // another person has; the names form allows both. Replayed, the second
+    // row was followed forward ("Ada Dee is now called Bo Netter, so look up
+    // Bo Netter") and found the other Bo, leaving this person as Ada Dee.
+    const r = await apply([
+      row({ person_ref: "name:Ada Collector", field: "display_name", value: "Ada Dee" }),
+      row({ person_ref: "name:Ada Dee", field: "display_name", value: "Bo Netter" }),
+    ]);
+    expect(r.unresolved).toEqual([]);
+    expect(await one(`SELECT display_name FROM person WHERE entity_id = ${people["Ada Collector"]}`)).toEqual(["Bo Netter"]);
+    expect(await one(`SELECT count(*) FROM person WHERE display_name = 'Bo Netter'`)).toEqual([2n]);
   });
 
   it("replays a file written after a rename, whichever name a row was keyed on", async () => {

@@ -85,14 +85,35 @@ export async function resolver(conn: DuckDBConnection, overlay: readonly PersonO
   // name a previous row changed; backward covers the commoner case, a row the
   // app wrote after a rename and so keyed on the NEW name, replayed against a
   // freshly promoted store that only knows the old one.
+  // Backward is keyed on the reference the rename row used, not on a name:
+  // the roster renames somebody through `inat:` whenever their old name was
+  // shared, and a rename it could not follow orphaned every later row about
+  // the person under their new, now unique, name.
+  // Every rename onto a name, not the last: the names form writes a
+  // display_name row on every save, so a person renamed and then edited
+  // again carries a row renaming them to the name they already have, which
+  // must not hide the rename that reaches them. Two different people renamed
+  // onto one name are an ambiguity, reported below like any other.
   const renamedTo = new Map<string, string>();
-  const renamedFrom = new Map<string, string>();
+  const renamedFrom = new Map<string, string[]>();
   for (const r of overlay) {
     if (r.field !== "display_name") continue;
     const parsed = parseRef(r.person_ref);
-    if (parsed?.kind !== "name") continue;
-    renamedTo.set(parsed.key, r.value);
-    renamedFrom.set(r.value, parsed.key);
+    if (parsed === null) continue;
+    if (parsed.kind === "name") renamedTo.set(parsed.key, r.value);
+    renamedFrom.set(r.value, [...(renamedFrom.get(r.value) ?? []), r.person_ref]);
+  }
+  // A name a `create` row claims is a person of its own, never the name
+  // somebody else is renamed to in the same file: admitting Nan Staffer and
+  // renaming Ada Collector to Nan Staffer are decisions about two people.
+  // Reaching a claimed name through the rename answered the create with
+  // "already exists", minted nobody, and landed every row about the new
+  // person — their account binding first — on the renamed one.
+  const claimed = new Set<string>();
+  for (const r of overlay) {
+    if (r.field !== "create") continue;
+    const parsed = parseRef(r.person_ref);
+    if (parsed?.kind === "name") claimed.add(parsed.key);
   }
 
   const lookup = (key: string, seen: Set<string>): Found => {
@@ -101,13 +122,34 @@ export async function resolver(conn: DuckDBConnection, overlay: readonly PersonO
       if (ids.length > 1) return { problem: `'${key}' names ${ids.length} people` };
       return { id: ids[0]! };
     }
-    for (const next of [renamedTo.get(key), renamedFrom.get(key)]) {
-      if (next !== undefined && !seen.has(next)) {
-        seen.add(next);
-        const found = lookup(next, seen);
-        if ("id" in found) return found;
+    if (claimed.has(key)) return { problem: `no person named '${key}'`, missing: true };
+    // Backward first: a rename row's own reference names the person it is
+    // about. Forward — whoever now carries the name this one was changed to
+    // — is consulted only when no rename reaches the name, because a
+    // namesake who already had the new name answers it wrongly: Ada renamed
+    // to Eve and then to Bo, beside another Bo, used to land on the other Bo.
+    const through = (refs: readonly string[]): Set<number> => {
+      const reached = new Set<number>();
+      for (const ref of refs) {
+        const parsed = parseRef(ref);
+        if (parsed === null) continue;
+        if (parsed.kind === "inat") {
+          const id = byInat.get(parsed.key);
+          if (id !== undefined) reached.add(id);
+          continue;
+        }
+        if (seen.has(parsed.key)) continue;
+        seen.add(parsed.key);
+        const found = lookup(parsed.key, seen);
+        if ("id" in found) reached.add(found.id);
       }
-    }
+      return reached;
+    };
+    const to = renamedTo.get(key);
+    const reached = through(renamedFrom.get(key) ?? []);
+    if (reached.size === 0 && to !== undefined) for (const id of through([`name:${to}`])) reached.add(id);
+    if (reached.size > 1) return { problem: `'${key}' names ${reached.size} people` };
+    if (reached.size === 1) return { id: [...reached][0]! };
     // `missing` rather than just a reason: `create` may act on nobody-of-that-
     // name, and must not act on a name two people share. Only this branch
     // says the store has room for a new person.

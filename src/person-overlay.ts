@@ -218,10 +218,33 @@ export async function upsertOverlay(path: string, rows: readonly PersonOverlayRo
   const queued = (writeQueues.get(path) ?? Promise.resolve()).then(async () => {
     await ensureOverlayFile(path);
     const current = parseOverlay(await readFile(path, "utf8"), path);
+    // One row per key is the file's invariant, so a batch naming a key twice
+    // writes only its last row for it.
     const replaced = new Map(rows.map((r) => [rowKey(r), r]));
     const kept = current.filter((r) => !replaced.has(rowKey(r)));
     const tmp = `${path}.tmp`;
-    await writeFile(tmp, formatOverlay([...kept, ...rows]));
+    await writeFile(tmp, formatOverlay([...kept, ...replaced.values()]));
+    await rename(tmp, path);
+  });
+  writeQueues.set(path, queued.catch(() => {}));
+  return queued;
+}
+
+/**
+ * Take rows out of the file by key: what the person page does with a decision
+ * the applier refused that had no earlier row to put back, since a refused
+ * row left standing would be replayed and refused again on every rebuild.
+ * Through the same queue as upsertOverlay, so the read-modify-write stays
+ * serialised with it.
+ */
+export async function removeOverlayKeys(path: string, keys: readonly string[]): Promise<void> {
+  if (keys.length === 0) return;
+  const gone = new Set(keys);
+  const queued = (writeQueues.get(path) ?? Promise.resolve()).then(async () => {
+    await ensureOverlayFile(path);
+    const current = parseOverlay(await readFile(path, "utf8"), path);
+    const tmp = `${path}.tmp`;
+    await writeFile(tmp, formatOverlay(current.filter((r) => !gone.has(rowKey(r)))));
     await rename(tmp, path);
   });
   writeQueues.set(path, queued.catch(() => {}));

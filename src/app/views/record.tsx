@@ -1092,7 +1092,7 @@ export function SpecimenPage({
   findings,
   waivers = [],
   labels,
-  reprint = { pending: null, blocker: null },
+  reprint,
   admin,
 }: {
   m: Messages;
@@ -1103,7 +1103,7 @@ export function SpecimenPage({
   waivers?: readonly RecordWaiver[];
   labels: readonly SpecimenLabelRow[];
   /** A reprint waiting, and whether staff may ask for one (gh-218). */
-  reprint?: SpecimenReprint;
+  reprint: SpecimenReprint;
   admin: boolean;
 }) {
   const sample = specimen.sample;

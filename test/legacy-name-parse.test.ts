@@ -84,7 +84,12 @@ const SYNTHETIC_QUALIFIERS: Row[] = [
  * corpus has none, and the parser must read nothing out of one rather than
  * an authorship.
  */
-const SYNTHETIC_TYPOS: Row[] = [{ sci: "Bombus vosneSenskii", genus: "Bombus", epithet: "vosneSenskii" }];
+const SYNTHETIC_TYPOS: Row[] = [
+  { sci: "Bombus vosneSenskii", genus: "Bombus", epithet: "vosneSenskii" },
+  // The subgenus written in brackets beside the epithet, in the epithet
+  // column. The corpus writes it alone there ('(Lasioglossum)', 72 records).
+  { sci: "Osmia tenax", genus: "Osmia", epithet: "tenax (Dialictus)" },
+];
 
 /** The other verbatim fields, in the shapes the corpus actually holds. */
 const OTHER_FIELDS: Row[] = [
@@ -141,7 +146,7 @@ const parsed = (sci: string) =>
 describe("taking a verbatim scientific name apart", () => {
   test("every string lands in exactly one category, and nothing is a surprise", async () => {
     expect(await rows(conn, "SELECT parse, count(*) FROM legacy_name_parse GROUP BY 1 ORDER BY 1")).toEqual([
-      ["binomial", 2n], // Bombus vosnesenskii, plus Apis mellifera from OTHER_FIELDS
+      ["binomial", 3n], // Bombus vosnesenskii, Osmia tenax, plus Apis mellifera from OTHER_FIELDS
       ["binomial with authorship", 4n],
       ["morphospecies", 3n],
       ["qualified", 4n],
@@ -224,6 +229,13 @@ describe("taking a verbatim scientific name apart", () => {
     expect(await parsed("Andrena (Andrena)")).toEqual([["Andrena", "Andrena", null, null, null, null, null]]);
   });
 
+  test("a bracketed name beside the epithet is the subgenus, and leaves the epithet", async () => {
+    // 'tenax (Dialictus)' in the epithet column used to give the subgenus
+    // Dialictus and the epithet 'tenax (dialictus)', which would have minted
+    // the species 'Osmia tenax (dialictus)'. Synthetic.
+    expect(await parsed("Osmia tenax")).toEqual([["Osmia", "Dialictus", "tenax", null, null, null, null]]);
+  });
+
   test("the other verbatim fields are surveyed too, so a new shape shows up", async () => {
     // recordedBy in production uses '|' and nothing else — no '&', no comma.
     // Symbiota's duplicate matcher split 'B. & C. Durden' on '&' and matched
@@ -233,7 +245,7 @@ describe("taking a verbatim scientific name apart", () => {
       await rows(conn, "SELECT field, shape, records FROM legacy_verbatim_shape ORDER BY field, shape"),
     ).toEqual([
       ["day/month/year", "did not parse", 0n],
-      ["identifiedBy", "named", 27n],
+      ["identifiedBy", "named", 28n],
       ["month", "roman numeral", 1n],
       ["recordedBy", "non-ASCII", 0n],
       ["recordedBy", "other separator (& , ; and)", 0n],

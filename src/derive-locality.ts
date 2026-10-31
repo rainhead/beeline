@@ -183,7 +183,7 @@ async function candidatesAt(
     if (build === undefined) throw new Error(`${gazetteerPath} has no gazetteer_build row: rebuild it`);
     await createMacros(conn);
     await usedFeatures(conn, G);
-    await usedLocalities(conn, G);
+    await usedLocalities(conn, G, point);
     // No sample has this id: entity ids start at 1.
     const batch = [{ sample_id: 0, lat: point.latitude, lon: point.longitude }];
     await loadBatch(conn, batch);
@@ -246,15 +246,20 @@ async function usedFeatures(conn: Conn, G: string): Promise<void> {
  * more than the kilometre a used name is read from. Read from the whole
  * store once a run, since any sample's locality counts (beeline-4hxe).
  */
-async function usedLocalities(conn: Conn, G: string): Promise<void> {
+async function usedLocalities(conn: Conn, G: string, near?: { latitude: number; longitude: number }): Promise<void> {
+  // Naming one point needs only the cells around it, and a form is waiting.
+  const around = near
+    ? `AND floor(l.latitude / 0.02) BETWEEN ${Math.floor(near.latitude / 0.02) - 1} AND ${Math.floor(near.latitude / 0.02) + 1}
+       AND floor(l.longitude / 0.02) BETWEEN ${Math.floor(near.longitude / 0.02) - 1} AND ${Math.floor(near.longitude / 0.02) + 1}`
+    : "";
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE locality_used_sample AS
     SELECT s.entity_id AS sample_id, regexp_replace(s.locality, ' {2,}', ' ', 'g') AS locality,
            l.latitude AS lat, l.longitude AS lon,
            CAST(floor(l.latitude / 0.02) AS INTEGER) AS cy, CAST(floor(l.longitude / 0.02) AS INTEGER) AS cx
     FROM sample s JOIN sample_location l ON l.sample_id = s.entity_id
-    WHERE s.locality IS NOT NULL AND trim(s.locality) <> ''`);
-  await correctSpellings(conn, G);
+    WHERE s.locality IS NOT NULL AND trim(s.locality) <> '' ${around}`);
+  await correctSpellings(conn, G, near);
 }
 
 /**
@@ -278,11 +283,18 @@ async function usedLocalities(conn: Conn, G: string): Promise<void> {
  *    OpenStreetMap runs it together;
  *  - exactly one place nearby is one letter off, and its name fits a label.
  */
-async function correctSpellings(conn: Conn, G: string): Promise<void> {
+async function correctSpellings(conn: Conn, G: string, near?: { latitude: number; longitude: number }): Promise<void> {
   const [hasCamp] = await rows<{ n: number }>(
     conn,
     `SELECT count(*)::INTEGER AS n FROM duckdb_tables() WHERE database_name = '${G}' AND table_name = 'campground'`,
   );
+  const camp = hasCamp!.n > 0;
+  // For one point, only the names within reach of the samples around it can
+  // be a correction; a whole run needs them all.
+  const box = near
+    ? { s: near.latitude - 0.3, n: near.latitude + 0.3, w: near.longitude - 0.5, e: near.longitude + 0.5 }
+    : null;
+  const inBox = box ? `WHERE lat BETWEEN ${box.s} AND ${box.n} AND lon BETWEEN ${box.w} AND ${box.e}` : "";
   // Filed in cells of 0.1 by 0.2 degrees, so a name is compared only with the
   // gazetteer's names in its cell and the eight around it: comparing each
   // with every name took longer than the rest of the step together.
@@ -291,13 +303,24 @@ async function correctSpellings(conn: Conn, G: string): Promise<void> {
     SELECT name, lat, lon, CAST(floor(lat / 0.1) AS INTEGER) AS gy, CAST(floor(lon / 0.2) AS INTEGER) AS gx
     FROM (SELECT name, lat, lon FROM ${G}.place
           UNION ALL SELECT name, lat, lon FROM ${G}.feature
-          UNION ALL SELECT name, ST_Y(ST_Centroid(geom)), ST_X(ST_Centroid(geom)) FROM ${G}.osm_area WHERE name IS NOT NULL
-          ${hasCamp!.n > 0 ? `UNION ALL SELECT name, lat, lon FROM ${G}.campground` : ""})`);
+          UNION ALL SELECT name, ST_Y(ST_Centroid(geom)), ST_X(ST_Centroid(geom)) FROM ${G}.osm_area
+            WHERE name IS NOT NULL
+            ${box ? `AND ST_Intersects(geom, ST_MakeEnvelope(${box.w}, ${box.s}, ${box.e}, ${box.n}))` : ""}
+          ${camp ? `UNION ALL SELECT name, lat, lon FROM ${G}.campground` : ""})
+    ${inBox}`);
+  // Whether a name is any place's, anywhere, is asked of the whole gazetteer
+  // even for one point: Colville is a town, wherever it was written.
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE locality_known_name AS
+    SELECT lower(name) AS name FROM ${G}.place
+    UNION SELECT lower(name) FROM ${G}.feature
+    UNION SELECT lower(name) FROM ${G}.osm_area WHERE name IS NOT NULL
+    ${camp ? `UNION SELECT lower(name) FROM ${G}.campground` : ""}`);
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE locality_spelling AS
     WITH unknown AS (
       SELECT DISTINCT locality, cy, cx, (cy + 0.5) * 0.02 AS lat, (cx + 0.5) * 0.02 AS lon FROM locality_used_sample
-      WHERE lower(locality) NOT IN (SELECT lower(name) FROM locality_gazetteer_name)),
+      WHERE lower(locality) NOT IN (SELECT name FROM locality_known_name)),
     cell AS (
       SELECT k.*, CAST(floor(k.lat / 0.1) AS INTEGER) + dy AS gy, CAST(floor(k.lon / 0.2) AS INTEGER) + dx AS gx
       FROM unknown k, range(-1, 2) t1(dy), range(-1, 2) t2(dx)),

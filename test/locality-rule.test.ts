@@ -303,6 +303,15 @@ describe("candidates (beeline-4hxe)", () => {
     expect(localityCandidates(off).map((c) => c.locality)).toEqual(["Philomath", "Lost Lake CG"]);
   });
 
+  test("names that differ only in punctuation, or Mount against Mt, are one candidate (beeline-5j10)", () => {
+    // As the sandbox store offered them side by side.
+    const e = {
+      ...nothing,
+      used: [used("Mt. Ashland", 4, 4, 0.1), used("Mt Ashland", 3, 3, 0.2), used("Mount Ashland", 1, 0, 0.3), used("Mary's Peak", 2, 0, 0.4), used("Marys Peak", 1, 0, 0.5)],
+    };
+    expect(localityCandidates(e).map((c) => c.locality)).toEqual(["Mt. Ashland", "Mary's Peak"]);
+  });
+
   test("campground names", () => {
     expect(campgroundName("Camp Sherman Campground")).toBe("Camp Sherman CG");
     expect(campgroundName("Riverside Campground")).toBe("Riverside CG");

@@ -152,23 +152,23 @@ export const en = {
     /** Takes back a locality the volunteer adopted, so the observation's applies again. */
     undo: "Go back to iNaturalist's locality",
     /** Somebody else set the locality standing on the sample: theirs to take back, not this person's. */
-    notYours: "Only whoever set this locality can take it back. Ask staff if it is wrong.",
+    notYours: "Only the person who set this locality can change it. Contact staff to request a change.",
     /** Somebody else's locality stands on the sample, and is theirs to change. */
-    setByOther: "Somebody else set this sample's locality, so it stays until they change it. Ask staff if it is wrong.",
+    setByOther: "Another user set this sample's locality. Contact staff to request a change.",
     /** The suggestion moved between drawing the page and the click: nothing was saved. */
-    changed: "The suggested locality has changed since the page was shown. Look at it again before using it.",
+    changed: "The suggested locality has changed since the page was loaded. Review it before confirming.",
     /** A printed sample's locality no longer follows anything (CONTEXT.md, Upstream). The name is still shown, for judging it. */
-    printed: "Its labels have already printed, so its locality stays as printed.",
+    printed: "Labels have already been printed for this sample, so its locality cannot be changed.",
     basis: {
       used_own: "the locality of the collector's other samples here",
       used: "the locality of other samples here",
-      campground: "a campground beside it",
+      campground: "a nearby campground",
       refuge: "inside a national wildlife refuge",
       wildlife_area: "inside a WDFW wildlife area unit",
       national_park: "inside a national park or monument",
       state_park: "inside a state or provincial park",
       local_park: "inside a park or reserve",
-      neighbourhood: "the neighbourhood",
+      neighbourhood: "the neighborhood",
       town_limits: "inside the town's limits",
       island: "on the island",
       feature: "a place other volunteers have named nearby",
@@ -313,7 +313,7 @@ export const en = {
      * page says about "my" samples means somebody else while it is up.
      */
     acting: {
-      banner: (name: string) => `You are acting for ${name}. Samples shown as yours are theirs.`,
+      banner: (name: string) => `You are acting on behalf of ${name}. Samples shown as yours belong to them.`,
       stop: "Stop acting",
       /** The picker in the account menu, for a delegate with grants. */
       start: "Act for someone",
@@ -338,7 +338,7 @@ export const en = {
   signIn: {
     title: "Sign in",
     heading: "Beeline",
-    nothingPublic: "Nothing here is public — sign in with iNaturalist to continue.",
+    nothingPublic: "Sign in with iNaturalist to access your records.",
     button: "Sign in with iNaturalist",
     /**
      * For someone who lands here with no account (beeline-2c3.16): what this
@@ -352,15 +352,15 @@ export const en = {
       tail: "volunteers collect.",
     },
     joinLead: "To become a volunteer, start with your atlas:",
-    failed: "Sign-in failed (state mismatch or missing code) — try again from the sign-in page.",
+    failed: "Sign-in failed (state mismatch or missing code). Try again from the sign-in page.",
   },
 
   pendingApproval: {
     title: "Almost there",
     heading: "Almost there",
     body: (login: string) =>
-      `You signed in as ${login}, but that iNaturalist account isn't connected to a member record yet. ` +
-      `Your atlas's staff can connect it — nothing more for you to do here.`,
+      `You signed in as ${login}, but that iNaturalist account is not connected to a member record yet. ` +
+      `Your atlas staff can connect it.`,
   },
 
   qc: {
@@ -372,10 +372,10 @@ export const en = {
      */
     heading: "Beeline",
     lede:
-      "Beeline follows the bees you collect for your atlas. Each iNaturalist observation you make becomes a sample here, " +
-      "its specimens get labels, and what the experts determine them to be comes back to it. " +
-      "This page is your samples from this season that need something from you, or are waiting on labels — " +
-      "and from last season too, until 1 March.",
+      "Beeline tracks the bees you collect for your atlas. Each iNaturalist observation becomes a sample here, " +
+      "specimens receive labels, and expert determinations are recorded back to the sample. " +
+      "This page shows your samples from this season that need attention or are waiting on labels, " +
+      "as well as samples from last season until 1 March.",
     /** Positional so the proofing page can call it with placeholders (messages-proof.tsx). */
     summary: (flagged: number, blocking: number, waiting: number, placeholders: number, unnumbered = 0) => {
       const parts: string[] = [];
@@ -430,7 +430,7 @@ export const en = {
      */
     check: {
       button: "Check iNaturalist now",
-      why: "Fixed something on iNaturalist? Beeline can read your recent observations again now.",
+      why: "If you updated observations on iNaturalist, Beeline can check for updates now.",
       lastChecked: (when: Date) => `Last checked ${dateTime(when)}.`,
       done: (fetched: number, changed: number) =>
         `Beeline read ${n(fetched)} of your recent ${fetched === 1 ? "observation" : "observations"} again. ` +
@@ -438,7 +438,7 @@ export const en = {
           ? "None had changed since it last read them."
           : `${n(changed)} had changed, and this page shows them as they are now.`),
       tooSoon: (seconds: number) =>
-        `Beeline checked iNaturalist moments ago. It can check again in ${n(seconds)} ${seconds === 1 ? "second" : "seconds"}.`,
+        `Beeline checked iNaturalist recently. It can check again in ${n(seconds)} ${seconds === 1 ? "second" : "seconds"}.`,
       busy: "Beeline is reading everybody's observations from iNaturalist right now. Try again after 5am Pacific.",
       failed:
         "Beeline couldn't reach iNaturalist just now, so nothing here has changed. " +
@@ -484,7 +484,7 @@ export const en = {
       chip: "still 0",
       note:
         "This observation still says 0 specimens, so it is not a sample yet and has nothing to print. " +
-        "Once you have checked the place, the pin and the count, enter how many you collected.",
+        "Once you have checked the place, coordinates, and count, enter how many you collected.",
     },
     /**
      * An observation in the atlas's iNaturalist project with its sample
@@ -509,9 +509,8 @@ export const en = {
      */
     skipped: {
       note:
-        "Some recent days skip a sample number. A skipped number is fine. " +
-        "But if you collected a sample under one of these, its observation is missing from your atlas's iNaturalist project, " +
-        "or is in it without its number.",
+        "Some recent days skip a sample number. " +
+        "If you collected a sample under one of these, confirm that its observation is in your atlas's iNaturalist project with its sample number.",
       /** `runs` is the numbers as runs ("3", "5–7"); `count` is how many numbers they hold. */
       day: (when: Date | string, runs: readonly string[], count: number) =>
         `${date(when)}: ${count === 1 ? "no sample" : "no samples"} ${list(runs)}`,
@@ -542,7 +541,7 @@ export const en = {
     settled: {
       note: (samples: number) =>
         `${n(samples)} older ${samples === 1 ? "sample" : "samples"} of yours still ${samples === 1 ? "carries a flag" : "carry flags"}. ` +
-        `Each season settles on 1 March of the next year and no longer waits for you here — fixing them is welcome, not expected.`,
+        `Each season settles on 1 March of the next year; flags remain visible and can still be corrected.`,
       link: "Show them",
     },
   },
@@ -562,8 +561,8 @@ export const en = {
       ledeOutside: "Every sample collected where no member atlas reaches.",
       count: (total: number) => `${n(total)} ${total === 1 ? "sample" : "samples"}`,
       emptyHeading: "Nothing here yet",
-      emptyMine: "None of your collecting has reached Beeline yet. Samples arrive from iNaturalist as they sync.",
-      emptyFiltered: "No samples match these filters. Widen the dates, clear the taxon, or search for less.",
+      emptyMine: "None of your collecting has reached Beeline yet. Samples arrive from iNaturalist during scheduled syncs.",
+      emptyFiltered: "No samples match these filters. Widen the dates, clear the taxon, or broaden the search.",
       colSample: "Sample",
       colDate: "Date",
       colCollectors: "Collectors",
@@ -592,8 +591,8 @@ export const en = {
       count: (total: number) => `${n(total)} ${total === 1 ? "specimen" : "specimens"}`,
       emptyHeading: "Nothing here yet",
       emptyMine:
-        "None of your samples have specimens yet. A specimen becomes its own record when its label is printed.",
-      emptyFiltered: "No specimens match these filters. Widen the dates, clear the taxon, or search for less.",
+        "No specimens recorded yet. A specimen becomes its own record when its label is printed.",
+      emptyFiltered: "No specimens match these filters. Widen the dates, clear the taxon, or broaden the search.",
       colFieldNumber: "Field number",
       colSample: "Sample",
       colDate: "Date",
@@ -666,7 +665,7 @@ export const en = {
       outside: "Outside the atlases",
       /** Above a listing of other people's records, for anyone but staff. */
       withheldNote:
-        "Where somebody's observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected, as on iNaturalist — and the same where Beeline has not yet read the observation, so cannot tell.",
+        "Where an observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected. The same applies where Beeline has not yet read the observation.",
     },
     /** In a Place cell whose locality, and perhaps county, is somebody else's to see. */
     locationHidden: "location hidden",
@@ -763,8 +762,8 @@ export const en = {
     title: "Edit sample",
     heading: (sampleNumber: string) => `Edit sample ${sampleNumber}`,
     intro:
-      "This sample has no iNaturalist observation to fix, so corrections happen here. " +
-      "Saved changes take effect immediately and are kept as attributed corrections that survive database rebuilds.",
+      "This sample has no iNaturalist observation, so corrections are made here. " +
+      "Saved changes take effect immediately and are preserved as attributed corrections across database rebuilds.",
     fields: {
       locality: "Locality",
       country: "Country",
@@ -773,13 +772,13 @@ export const en = {
       protocol: "Sampling protocol",
     } as Record<string, string>,
     noteLabel: "Note (optional)",
-    noteHint: "Why the change, if it isn't obvious",
+    noteHint: "Reason for this change (optional)",
     save: "Save changes",
     cancel: "Cancel",
-    notEditable: "This sample can't be edited here — it may not be yours, or its fixes belong on iNaturalist.",
+    notEditable: "This sample cannot be edited here. It may belong to another collector, or must be edited directly on iNaturalist.",
     /** The error page's heading for that refusal: "There's nothing here" would contradict it. */
-    notEditableHeading: "This sample isn't edited here",
-    noStagingRows: "This sample has no underlying records to correct — ask staff to look into it.",
+    notEditableHeading: "This sample cannot be edited here",
+    noStagingRows: "This sample has no underlying records to correct. Please contact staff for assistance.",
   },
 
   /**
@@ -800,8 +799,8 @@ export const en = {
      */
     history: {
       heading: "History",
-      hint: "Every change recorded for this sample, newest first — an edit made here, an iNaturalist sync moving something, or a rebuild.",
-      empty: "No changes recorded — this sample has not changed since Beeline began keeping history. Changes from here on appear in this list.",
+      hint: "Every change recorded for this sample, newest first: an edit made here, an iNaturalist sync update, or a database rebuild.",
+      empty: "No changes recorded. Subsequent changes to this sample will appear in this list.",
       colWhen: "When",
       colWhat: "What",
       colChange: "Change",
@@ -974,7 +973,7 @@ export const en = {
          * deliberately never brought across, so "none" means none believed.
          */
         coordinatesNone:
-          "Beeline holds no coordinates for this sample. Where iNaturalist has shifted an observation's coordinates, the shifted pair is deliberately never brought across — so nothing here means nothing we believe.",
+          "Beeline holds no coordinates for this sample. Where iNaturalist has shifted an observation's coordinates, the shifted coordinates are not imported; only true coordinates are recorded.",
         accuracy: "Accuracy",
         accuracyValue: (metres: number) => `within ${n(metres)} m`,
         source: "Source",
@@ -1004,13 +1003,13 @@ export const en = {
         privacyPrivate:
           "You set this observation's coordinates to private, so the map shows none. What is above is the true location.",
         privacyTaxonObscured:
-          "iNaturalist obscures this observation's public coordinates because of the species identified on it — not because of anything you set. What is above is the true location.",
+          "iNaturalist obscures this observation's public coordinates automatically because of the species identified on it. The coordinates above show the true location.",
         privacyTaxonPrivate:
-          "iNaturalist withholds this observation's public coordinates because of the species identified on it — not because of anything you set. What is above is the true location.",
+          "iNaturalist withholds this observation's public coordinates automatically because of the species identified on it. The coordinates above show the true location.",
         elevation: "Elevation",
         elevationValue: (metres: number) => `${n(metres)} m`,
         /** Derived from the coordinates, so never anyone's gap to fill. */
-        elevationNone: "Not worked out yet. Elevation is read from the coordinates rather than entered, so there is nothing to do about it.",
+        elevationNone: "Not calculated yet. Elevation is read from the coordinates rather than entered; it will be derived on the next elevation run.",
         elevationFrom: (source: string) => `Read from ${source}.`,
         elevationStale:
           "Read at a point that is no longer where the coordinates above say — it will be read again on the next elevation run.",
@@ -1130,7 +1129,7 @@ export const en = {
       labels: {
         heading: "Labels",
         intro:
-          "Each time a label for this specimen was prepared for printing, and how far that run got. Two rows means it was printed twice; the later one is the label to trust.",
+          "Each time a label for this specimen was prepared for printing, and how far that run got. If printed multiple times, the most recent label is valid.",
         /** An imported specimen: printed, but by the old system, so there is no run to show. */
         legacy: "Printed before Beeline — the previous system printed this label, so there is no print run to show.",
         colRun: "Print run",
@@ -1170,16 +1169,16 @@ export const en = {
     determinations: {
       heading: "Determinations",
       intro:
-        "Every identification anyone has recorded for this specimen, newest first. Nothing here is ever overwritten: a correction is a new entry and the earlier one stays.",
+        "Every identification recorded for this specimen, newest first. Earlier determinations are preserved in history when a new identification is added.",
       /**
        * Stated whenever there is a history to read, because the rule is not
        * guessable from the rows: determination_of_record is not simply the
        * newest (schema/110).
        */
       recordRule:
-        "The one marked “of record” is the one the rest of this site uses: the most recent expert determination, or the most recent of any kind if no expert has looked.",
+        "The determination marked “of record” is the one used across Beeline: the most recent expert determination, or the most recent determination if no expert has identified the specimen.",
       recordNotNewest:
-        "It is not the newest entry here — an expert's determination stands until another expert revises it, so a later identification does not displace it.",
+        "An expert determination remains the determination of record until another expert revises it. A later volunteer identification does not replace it.",
       empty: "Nobody has identified this specimen yet.",
       colDetermination: "Determination",
       colDeterminer: "Determined by",
@@ -1214,7 +1213,7 @@ export const en = {
    */
   determine: {
     title: "Identify your specimens",
-    lede: "Say what each of your pinned specimens is. Go only as far as you're sure — a genus is plenty, and a family will do.",
+    lede: "Enter identifications for your pinned specimens. Identify each specimen as far as you are certain, such as to genus or family.",
     /** The glossary link after the lede. */
     aboutDetermination: "More about determinations.",
     /**
@@ -1224,10 +1223,10 @@ export const en = {
      * expert's work was lost.
      */
     tonight:
-      "Everything saves as you go. Until 1am (Pacific) you can undo anything you entered that day. " +
-      "After that you can still change a name: your newest one is used, and the earlier one stays in the specimen's history.",
+      "Changes save automatically. Entries made today can be undone until 1am Pacific. " +
+      "After 1am, an updated identification is saved as a new determination, and the earlier entry is preserved in the specimen's history.",
     experts:
-      "Names given by experts aren't shown here, so they don't steer you. They're kept, and they're on each specimen's own page.",
+      "Identifications from experts are not shown here to encourage independent determination. They remain recorded on each specimen's page.",
     readOnly: "You're viewing this as someone else, so nothing here can be changed.",
     season: "Season",
     seasonOption: (season: number, unnamed: number) =>
@@ -1252,12 +1251,12 @@ export const en = {
     },
     batch: {
       lede:
-        "Gather specimens from any season by their field numbers — a box you've sorted by genus, say. " +
+        "Gather specimens from any season by their field numbers. " +
         "They're listed in the order you add them, and your batch is kept until you clear it.",
       /** How to write numbers, under the box. */
       hint:
         "Separate numbers with commas. A range can end in just its last digits: 26019685-697 means 26019685 to 26019697. " +
-        "If only one of your numbers ends in 412, 412 is enough.",
+        "If only one of your numbers ends in 412, 412 is sufficient.",
       add: "Add field numbers",
       addButton: "Add",
       placeholder: "26019685-697, 26027608 — or scan each label",
@@ -1302,7 +1301,7 @@ export const en = {
           : `Yours run ${list(spans.map((s) => `${s.first} to ${s.last} (${s.digits} digits)`))}.`,
     },
     bulk: {
-      none: "Select rows to name several at once. Hold Shift to select a block.",
+      none: "Select rows to identify multiple specimens at once. Hold Shift to select a block.",
       ticked: (count: number) => `${n(count)} selected`,
       namePlaceholder: (count: number) => (count === 0 ? "Name them…" : count === 1 ? "Name it…" : `Name all ${n(count)}…`),
       named: (count: number, name: string) => `Named ${n(count)} ${name}.`,
@@ -1334,9 +1333,9 @@ export const en = {
     /** The Saved column. */
     saved: {
       today: "Today",
-      todayHint: "You can undo this until 1am (Pacific).",
+      todayHint: "You can undo this entry until 1am Pacific.",
       undo: "Undo",
-      undoHint: "Go back to what this said before today",
+      undoHint: "Revert to what this said before today",
       on: (when: string) => when,
       beforeBeeline: "Old system",
       nothing: "nothing entered",
@@ -1356,9 +1355,9 @@ export const en = {
       castesHint: "Bumble bees and honey bees: gyne, worker or drone",
     },
     picker: {
-      placeholder: "Type a name — bombus, osmia lig…",
-      noBees: "No bee's name starts like that.",
-      noNames: "No name starts like that.",
+      placeholder: "Type a name (such as Bombus or Osmia)",
+      noBees: "No bee name matches.",
+      noNames: "No name matches.",
       bycatch: "Include wasps and other non-bees",
     },
     saveFailed: "That didn't save. Check your connection, then try again.",
@@ -1378,15 +1377,15 @@ export const en = {
       title: "Page not found",
       heading: "There's nothing here",
       body:
-        "This page doesn't exist, or it holds records that aren't yours to see. " +
-        "If a link in Beeline brought you here, please send feedback so we can fix it.",
+        "This page does not exist, or it holds records you do not have permission to view. " +
+        "If a link in Beeline brought you here, send feedback so staff can fix it.",
     },
     failed: {
       title: "Something went wrong",
       heading: "Something went wrong",
       body:
         "Beeline ran into a problem and couldn't show this page. It wasn't anything you did. " +
-        "Try again in a minute. If it keeps happening, tell us, and include the reference below: it helps us find the problem.",
+        "Try again in a minute. If it keeps happening, send feedback and include the reference below: it helps us find the problem.",
       reference: (reference: string) => `Reference: ${reference}`,
     },
     /**
@@ -1428,7 +1427,7 @@ export const en = {
   taxonomy: {
     title: "Taxonomy",
     intro:
-      "The names specimens are determined to, filed the way the program files them, and how each one stands in Ecdysis, the museum database where the program's taxonomists record their determinations.",
+      "The taxonomic names applied to specimens, organized under the program's taxonomy, and their status in the Ecdysis museum database.",
     aboutEcdysis: "More about Ecdysis.",
     fetched: (on: Date | string) => `Checked against Ecdysis's names as of ${date(on)}.`,
     notLoaded: "Ecdysis's names have not been loaded here, so nothing on these pages says how a name stands there.",
@@ -1501,11 +1500,11 @@ export const en = {
     /** One name's standing, said in full on its own page. */
     standing: {
       accepted: "An accepted name in Ecdysis.",
-      synonym: "Ecdysis lists this name as outdated. The name it uses instead:",
+      synonym: "Ecdysis classifies this name as outdated. The accepted name in Ecdysis is:",
       homonym:
         "Ecdysis has more than one accepted name spelled this way, from different authors, and nothing recorded here says which one this is:",
       absent: (rank: string) =>
-        `Ecdysis has no ${rank} spelled this way. A name too new for Ecdysis, a name the program spells differently, and a misspelling all look like this.`,
+        `Ecdysis has no ${rank} with this spelling. This includes names not yet in Ecdysis, alternative program treatments, and misspellings.`,
       report: (tid: string) => `Ecdysis taxon ${tid}`,
     },
     /** What the program has decided about a name against Ecdysis, and on whose word (beeline-45v.1). */
@@ -2194,40 +2193,40 @@ export const en = {
     missing_required_field:
       "A field the label needs is empty. Fill it in on the iNaturalist observation (or here for trap samples).",
     missing_recommended_field:
-      "A field the record should carry is empty. Filling it in improves the record but does not block printing.",
+      "A recommended field is empty. Adding it improves the record, but does not block printing.",
     obscured_no_true_coordinates:
       "The coordinates are obscured by iNaturalist geoprivacy and Beeline does not hold the true coordinates. Join the project with trusted coordinate access, or clear the geoprivacy setting on the observation.",
     taxon_obscured_awaiting_atlas:
-      "iNaturalist hides where the plant on this observation grows, because of its conservation status. A label carries the true location, and Beeline prints it only where the bee atlas for that place has agreed. No atlas has agreed for where this sample was collected, so its labels will not print for now. There is nothing for you to fix.",
+      "iNaturalist obscures where the plant on this observation grows due to its conservation status. A label carries the true location, and Beeline prints it only where approved by the regional bee atlas. Approval is not yet in place for this area, so labels will not print for now. No action is required.",
     locality_format:
-      "The locality must be short (18 characters or fewer), without commas or double quotes, and more than a county name — it is printed on a 3pt label beside the county. Example: Corvallis rather than Corvallis, OR.",
+      "The locality must be short (18 characters or fewer), without commas or double quotes, and more than a county name: it is printed on a 3pt label beside the county. Example: Corvallis rather than Corvallis, OR.",
     place_unabbreviated:
-      "Country and state/province must be abbreviations (USA not United States; OR not Oregon) — the label cell is tiny.",
+      "Country and state/province must use standard abbreviations (such as USA instead of United States, or OR instead of Oregon) due to limited space on printed labels.",
     place_unrecognised:
-      "The state or province on this record is not one Beeline recognises, or does not agree with the country beside it. Use the two-letter US state or Canadian province code (UT, BC), and a country that matches it. Records from outside the US and Canada are expected here and are not a mistake — staff can confirm them.",
+      "The state or province on this record is not recognized by Beeline, or does not match the country. Use the two-letter US state or Canadian province code (UT, BC) with a matching country. Records from outside the US and Canada can be confirmed by staff.",
     coordinate_uncertainty:
-      "The location accuracy is worse than this record allows — the flag says by how much, and which limit applied. Records from 2 September 2026 onwards must be within 100 m, the resolution of a GPS reading; for a trap, the day it was emptied is the one that counts. Earlier records keep the 250 m that was in force when they were collected. Improve the pin accuracy on the observation, or ask staff if the uncertainty is genuine.",
+      "The location accuracy exceeds the allowed limit. The flag indicates the accuracy and the applicable limit. Records from 2 September 2026 onward must be within 100 m (GPS resolution); for trap samples, the date emptied is used. Earlier records retain the 250 m limit in effect when collected. Update the location accuracy on the observation, or contact staff if the uncertainty cannot be reduced.",
     coordinate_out_of_region:
-      "The coordinates on this record are not in North America, but the record says they should be. Usually the pin was moved on the observation after its location text was written, or a longitude lost its minus sign. Check the pin on the iNaturalist observation — if the record really was collected outside North America, set its country to match and ask staff to confirm it.",
+      "The coordinates on this record are outside North America, but the record indicates they should be within it. Check the pin on the iNaturalist observation. If the record was collected outside North America, set its country to match and ask staff to confirm it.",
     // The second sentence used to be "Its current identification is something
     // else (a moss, alga, fungus, or the bee itself)", which was as close as
     // this could get to naming the taxon while the detail was a machine value.
     // The detail now says which one it is, so the generic list folds into the
     // first sentence rather than being said twice (beeline-dys).
     non_tracheophyte_host:
-      "The iNaturalist observation should be identified as the floral host — a vascular plant, not a moss, an alga, a fungus, or the bee itself. Correct the observation's identification to the plant the bee was collected from.",
+      "The iNaturalist observation should be identified as the floral host: a vascular plant, rather than a moss, alga, fungus, or the bee itself. Update the observation's identification to the plant the bee was collected from.",
     duplicate_sample_number:
-      "Each sample has its own number, and this one is on more than one of your samples that day. Renumber all but one of their observations on iNaturalist; until their labels print, the samples follow.",
+      "Each sample must have its own number, and this one appears on more than one of your samples for that date. Renumber all but one of the observations on iNaturalist. Your samples in Beeline will update automatically until their labels are printed.",
     count_mismatch:
-      "Your iNaturalist observation and this sample disagree about how many specimens were collected. Until labels print, the sample takes the observation's count whenever the observation is still a collection record: a sample number, a date, and a count of one or more. So either the count on the observation is not one (zero, less, or not a number), or the observation has lost its sample number or date. Once labels have printed, the record keeps the count its labels were printed for.",
+      "The specimen count on iNaturalist does not match this sample. Verify that the observation has a sample number, date, and a count of one or more. Once labels have printed, the record keeps the count its labels were printed for.",
     count_below_printed:
-      "The specimen count is now lower than the number of labels already printed for this sample. Nothing to fix — you will have a few labels left over to discard.",
+      "The specimen count is now lower than the number of labels already printed for this sample. No action is needed; extra labels can be discarded.",
     within_sample_disagreement:
-      "The legacy records merged into this sample disagreed about a field; the earliest record's value was kept. Review the alternatives listed and correct the sample if the kept value is wrong.",
+      "Historical records merged into this sample had conflicting values for a field. The earliest record's value was retained. Review the listed alternatives and edit the sample if the retained value is incorrect.",
     observation_missing_upstream:
-      "The iNaturalist observation backing this sample was not returned by a sync that should have included it. It may have been deleted, removed from the project, or had its observation date changed. Staff investigate before any further printing for this sample.",
+      "The iNaturalist observation backing this sample was not returned by a sync that should have included it. It may have been deleted, removed from the project, or had its observation date changed. Staff will investigate before any further printing for this sample.",
     staff_hold:
-      "Staff are holding this sample back from printing. Their note says why. If it asks you to change something, change it; staff will lift the hold once they are satisfied, since fixing the record does not lift it by itself.",
+      "Staff are holding this sample back from printing. Their note says why. If it asks you to change something, change it; staff will review and lift the hold.",
   } as Record<string, string>,
 
   /**
@@ -2243,7 +2242,7 @@ export const en = {
     title: "Glossary",
     heading: "Glossary",
     intro:
-      "The words this site uses, and what they mean here. Some are ours; some come from iNaturalist or from the way scientific names are written. Nothing on this page is something you need to memorise — it is here so you can look it up.",
+      "Terms used across Beeline, from iNaturalist, and in scientific nomenclature.",
     /**
      * Alphabetical by term (beeline-0i2.1): a page called Glossary is a page
      * someone looks a word up on. A test keeps it that way. The key is the
@@ -2258,161 +2257,161 @@ export const en = {
       atlas: {
         term: "Atlas",
         definition:
-          "Your state or provincial bee atlas: Oregon, Washington, British Columbia, Idaho, New Mexico, or Oklahoma. Samples belong to an atlas by where they were collected, not by which iNaturalist project they arrived through. Not everyone has one — you can be a Master Melittologist without a member atlas, and collecting somewhere no atlas covers is ordinary rather than a mistake.",
+          "A state or provincial bee atlas: Oregon, Washington, British Columbia, Idaho, New Mexico, or Oklahoma. Samples belong to an atlas based on where they were collected. Volunteers may also collect outside member atlases as part of Master Melittology.",
       },
       authorship: {
         term: "Authorship",
         definition:
-          "The person who first published a name, and the year, written after it. It is part of the formal name, not a citation, and it is never italicised.",
+          "The author who first published a taxonomic name, and the year of publication. Authorship is part of the formal scientific name and is not italicised.",
         example: { rank: "species", scientificName: "Bombus vosnesenskii", authorship: "Radoszkowski, 1862" },
       },
       "blocks-printing": {
         term: "Blocks printing",
         definition:
-          "A flag serious enough that labels cannot be printed for that sample until it is fixed — usually a missing field the label needs, or coordinates we cannot trust.",
+          "A flag indicating an issue that prevents labels from being printed, such as a missing required field or untrusted coordinates.",
       },
       bycatch: {
         term: "Bycatch",
         definition:
-          "Anything that isn't a bee but ended up in your sample anyway — wasps, bee flies, beetles. It is kept, labelled, and identified like everything else.",
+          "Non-bee specimens collected in a sample, such as wasps, bee flies, or beetles. Bycatch is preserved, labelled, and identified alongside bees.",
       },
       "catalog-number": {
         term: "Catalog number",
         definition:
-          "The identifier a museum gives a specimen once the specimen is in its collection — Washington's come back from Ecdysis as WSDA_2303966. It is not the number on the label you print: that one is the field number.",
+          "The identifier assigned to a specimen by a museum collection, distinct from the field number printed on the label.",
       },
       "cf-aff": {
         term: "cf., aff. and nr.",
         definition:
-          "Ways of naming a species without quite asserting it. cf. means the specimen resembles that species and needs confirming; aff. means it is close to it but probably something else; nr. means near it. All three sit in front of the species name, and all three say more than dropping back to the genus would.",
+          "Qualifiers used when a species identification is tentative. 'cf.' indicates the specimen resembles that species and requires confirmation; 'aff.' indicates affinity to a species but likely a distinct taxon; 'nr.' indicates near that species.",
         example: { rank: "species", scientificName: "Bombus occidentalis", qualifier: "cf." },
       },
       collector: {
         term: "Collector",
         definition:
-          "A person who collected a sample. A sample can name more than one — a trap line run by two people belongs to both of you, under the numbering of whoever is listed first.",
+          "A person who collected a sample. When a sample lists multiple collectors, the sample number matches the numbering of the first collector listed.",
       },
       "coordinate-uncertainty": {
         term: "Coordinate uncertainty",
         definition:
-          "How far from the pin the true location might be, as recorded by iNaturalist. Beyond 100 m the location is too vague to print — usually because the phone had a poor fix. Records collected before 2 September 2026, or trapped and emptied before then, are held to the older 250 m limit: their specimens have often left the collector's hands, so the pin can no longer be corrected.",
+          "The estimated accuracy radius of the coordinates recorded on iNaturalist. Accuracy beyond 100 m is too imprecise to print. Records collected before 2 September 2026 are held to the previous 250 m limit.",
       },
       determination: {
         term: "Determination",
         definition:
-          "Someone asserting what a specimen is. Determinations are a record of who said what and when, so a later identification never erases an earlier one — and an expert's determination is never overwritten by a volunteer's.",
+          "A taxonomic identification recorded for a specimen. Determinations record who identified the specimen and when; earlier determinations are preserved in history when a specimen is re-identified.",
       },
       ecdysis: {
         term: "Ecdysis",
         definition:
-          "The online museum database where Washington's bee specimens are catalogued and where the program's taxonomists record their determinations. Its list of scientific names is what the names here are checked against. Where the program keeps a name Ecdysis does not have, or one Ecdysis calls outdated, a taxonomist has said so.",
+          "The portal and database where specimen records and taxonomist determinations are maintained. Scientific names in Beeline are validated against the Ecdysis taxonomic thesaurus.",
       },
       "field-number": {
         term: "Field number",
         definition:
-          "The number printed on a specimen's label, issued here — 25000001. It is assigned when a print run is prepared, only once the sample's data is clean, and once assigned it belongs to that specimen permanently. A museum may later add a catalog number of its own; the field number stays what it was.",
+          "The unique identifier assigned to a specimen when print runs are prepared, printed directly on the specimen label. Once assigned, the field number remains permanently associated with that specimen.",
       },
       flag: {
         term: "Flag",
         definition:
-          "Something this site noticed about one of your samples. A flag is not a mark against you — it is a to-do. Flags are worked out fresh from your data every sync, so fixing the cause makes the flag disappear on its own.",
+          "A notice indicating an issue with a sample's data. Flags are evaluated automatically from your data during each sync; correcting the issue clears the flag.",
       },
       "floral-host": {
         term: "Floral host",
         definition:
-          "The plant a sample was collected from, identified by the sample's iNaturalist observation. It must be a vascular plant — if the observation is identified as a moss or a fungus or as the bee itself, that raises a flag. Bees taken off no flower have no floral host, and that is a complete answer, not a gap.",
+          "The plant from which a sample was collected, identified via the sample's iNaturalist observation. Floral hosts must be vascular plants. Samples collected without a host plant record none.",
       },
       "heads-up": {
         term: "Heads-up",
         definition:
-          "A flag worth fixing that does not stop labels being printed. Improving it makes the record better; leaving it does not hold anything up.",
+          "An advisory flag highlighting a recommended improvement that does not prevent labels from being printed.",
       },
       label: {
         term: "Label",
         definition:
-          "The printed slip pinned with a specimen, carrying where and when it was collected, by whom, and its field number. It is printed about 3pt tall, which is why the locality has to be short: 18 characters at most. Labels are printed in batches called print runs; each of your specimens says whether its label is being printed, printed, or mailed.",
+          "The printed label pinned with a specimen, indicating collection date, locality, collectors, and field number. Locality text is limited to 18 characters to fit the label.",
       },
       "master-melittology": {
         term: "Master Melittology",
         definition:
-          "The program at Oregon State University Extension that trains and coordinates the atlases, and the umbrella all of them sit under. This site is run by the program on behalf of your atlas — or, if you belong to no member atlas, on its own behalf.",
+          "The program at Oregon State University Extension that trains volunteers and coordinates the regional bee atlases.",
       },
       "obscured-coordinates": {
         term: "Obscured coordinates",
         definition:
-          "iNaturalist sometimes shifts an observation's public coordinates — either because you set it to, or automatically for sensitive species. Obscured coordinates cannot go on a label, because they are not where the bee was actually collected.",
+          "Coordinates shifted by iNaturalist for geoprivacy or rare taxon protection. Obscured coordinates are not printed on specimen labels.",
       },
       observation: {
         term: "Observation",
         definition:
-          "A record on iNaturalist. For this site an observation is the evidence of a sample: it carries your sample number, your specimen count, the date, and the location, and where there is a floral host it is the photograph of that plant. Bees collected off no flower still get an observation — one with no photo and no identification, there to carry the sample.",
+          "An iNaturalist record representing the collection event for a sample, providing the sample number, specimen count, collection date, coordinates, and host plant identification.",
       },
       rank: {
         term: "Rank",
         definition:
-          "How specific a name is — family, genus, species, subspecies, and the coarser ranks above them. Identifications do not always reach species, and a name at genus rank is a complete answer, not a failed one.",
+          "The taxonomic level of an identification, such as family, genus, species, or subspecies. Identifications at genus or family rank are valid determinations.",
       },
       "sensu-stricto": {
         term: "s. str. and s. lat.",
         definition:
-          "Short for sensu stricto and sensu lato — “in the narrow sense” and “in the broad sense”. They mark which of two competing definitions of a name is meant, and like other abbreviations they stay upright.",
+          "Abbreviations for sensu stricto ('in the strict sense') and sensu lato ('in the broad sense'), specifying which taxonomic definition of a name is intended.",
         example: { rank: "genus", scientificName: "Bombus", qualifier: "s. str." },
       },
       sample: {
         term: "Sample",
         definition:
-          "Everything you collected off one flower species in one place on one day — or, where there was no flower, everything you collected in that place that day. Two flower species in the same place on the same day are two samples. A sample is the unit this whole site is organised around: it holds your specimens, it gets its flags checked, and it is what labels are printed for.",
+          "All specimens collected from a single host plant species at one location on a single date, or collected at that location and date without a host. The sample is the primary unit for QC checks and label generation.",
       },
       "sample-number": {
         term: "Sample number",
         definition:
-          "The number you gave a sample on the day you collected it. It only has to be unique among your own samples on that date — two people can both have a sample 3 on the same day.",
+          "The identifier assigned to a sample on the date of collection. Sample numbers are unique to each collector on a given date.",
       },
       protocol: {
         term: "Sampling protocol",
-        definition: "How a sample was collected — netting, a vane trap, a pan trap, a trap nest.",
+        definition: "The collection method used for a sample: netting, vane trap, pan trap, or trap nest.",
       },
       "scientific-name": {
         term: "Scientific name",
         definition:
-          "The formal Latin name of an organism. Genus names and everything below them are written in italics; family names and above are not.",
+          "The formal Latin name of an organism. Genus names and below are written in italics; family names and above are not italicised.",
         example: { rank: "species", scientificName: "Bombus vosnesenskii" },
       },
       season: {
         term: "Season",
         definition:
-          "A calendar year of collecting. A sample belongs to the season of the day it was collected, or for a trap, the day it was set. Your front page asks about this season's samples, and about last season's until 1 March, when specimens are due at the conference. After that, last season is settled: its flags stay and it can still be edited, but it no longer waits for you — fixing it is welcome, not expected. Nothing from a settled season is printed.",
+          "A calendar year of collecting. Samples belong to the season in which they were collected or, for traps, when set. Active seasons receive label printing; on 1 March, the previous season settles and labels are no longer printed.",
       },
       sp: {
         term: "sp. and spp.",
         definition:
-          "sp. means one unnamed species in that genus — “a bumble bee, genus known, species not”. spp. means several. Neither is italicised, because they are abbreviations rather than names.",
+          "Taxonomic abbreviations: 'sp.' denotes an unidentified species in a genus; 'spp.' denotes multiple species. Neither is italicised.",
         example: { rank: "genus", scientificName: "Bombus", qualifier: "sp." },
       },
       specimen: {
         term: "Specimen",
-        definition: "One bee (or one piece of bycatch) from a sample. Each specimen gets its own label and its own field number.",
+        definition: "An individual insect from a sample. Each specimen receives a distinct field number and printed label.",
       },
       subgenus: {
         term: "Subgenus",
         definition:
-          "A grouping inside a genus, written in brackets between the genus and the species. The brackets are part of the convention, not an aside.",
+          "A taxonomic rank between genus and species, written in parentheses between the genus name and specific epithet.",
         example: { rank: "species", scientificName: "Bombus insularis", subgenus: "Psithyrus" },
       },
       sync: {
         term: "Sync",
         definition:
-          "Staff's word for Beeline reading your observations from iNaturalist, which it does every morning at 2am Pacific. A change you make on iNaturalist shows up here the next day, not the moment you make it.",
+          "The scheduled morning process that imports observation updates from iNaturalist into Beeline.",
       },
       "trap-sample": {
         term: "Trap sample",
         definition:
-          "The contents of a trap, collected on the day you emptied it. Because a trap works unattended, its specimens are dated to the range since you last serviced it rather than to a single day. Trap samples usually have no iNaturalist observation, so they are corrected here instead of upstream.",
+          "Specimens collected using an unattended trap, dated across the interval since the trap was last serviced. Trap samples without iNaturalist observations are edited directly in Beeline.",
       },
       "vernacular-name": {
         term: "Vernacular name",
         definition:
-          "An everyday English name, like “yellow-faced bumble bee”. Plants usually have one and bees usually do not, and the same name can mean different things in different places — so scientific names are what this site records.",
+          "A common or colloquial name for an organism. Beeline records formal scientific names rather than common names.",
       },
     } satisfies Record<string, GlossaryEntry>,
   },

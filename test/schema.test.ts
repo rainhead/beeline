@@ -103,6 +103,7 @@ describe("schema application", () => {
     await expect(insert("'male'", "'worker'")).rejects.toThrow(/CHECK/i);
     await insert("'female'", "'gyne'");
     await insert("NULL", "'drone'");
+    await insert("'gynandromorph'", "NULL"); // three expert records in the old system (Peter, 2026-10-31)
   });
 
   test("date range must not run backwards", async () => {

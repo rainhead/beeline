@@ -119,7 +119,7 @@ describe("the programs listing", () => {
   it("is read by everyone signed in, and is in the menu beside the brand", async () => {
     const body = await page(await programsApp(), "/programs");
     expect(between(body, 'class="menu nav-menu"', "</details>")).toContain(`href="/programs"`);
-    for (const code of ["OBA", "WaBA", "BC", "ID", "NM", "OK", "MM", "BLM"]) expect(rowFor(body, code), code).not.toBe("");
+    for (const code of ["OBA", "WaBA", "BC", "ID", "NM", "OK", "MM", "BLM", "NWR"]) expect(rowFor(body, code), code).not.toBe("");
   });
 
   it("counts each program's own: an atlas's ground, and Master Melittology's outside every atlas", async () => {

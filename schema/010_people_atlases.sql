@@ -83,9 +83,15 @@ COMMENT ON TABLE program IS 'A program people take part in: each atlas, Master M
 COMMENT ON COLUMN program.code IS 'How the person overlay names the program (fields home_atlas and leads), the listings scope an atlas''s records fall under, and the key of the atlas identity in src/app/theme/atlas.ts, and so stable: an atlas''s is its atlas code, then MM and BLM. Letters and digits only, which is what lets a set of them be written joined with semicolons.';
 COMMENT ON COLUMN program.name IS 'The name staff see.';
 
--- The six atlases first, then the two programs that are not one (Peter,
--- 2026-10-09). Master Melittology was known only by its iNaturalist
--- project's name, "Master Melittologist (outside of Oregon)".
+-- The six atlases first, then the programs that are not one: Master
+-- Melittology, known until 2026-10-09 only by its iNaturalist project's name
+-- "Master Melittologist (outside of Oregon)", the BLM surveys, and the
+-- National Wildlife Refuges program (beeline-8zlh; code and name Peter,
+-- 2026-10-31), the five-year USFWS cooperative agreement from 2024 that
+-- inventories bees on the refuges of Pacific Region 1. Its samples reach
+-- Beeline through the atlases' iNaturalist projects and print with their
+-- atlases; it owns its refuges, which are areas (schema/038), and is not an
+-- atlas. Its lead is set on /people like every other program's.
 INSERT INTO program (code, name) VALUES
   ('OBA',  'Oregon Bee Atlas'),
   ('WaBA', 'Washington Bee Atlas'),
@@ -94,7 +100,8 @@ INSERT INTO program (code, name) VALUES
   ('NM',   'New Mexico Bee Atlas'),
   ('OK',   'Oklahoma Bee Atlas'),
   ('MM',   'Master Melittology'),
-  ('BLM',  'BLM surveys');
+  ('BLM',  'BLM surveys'),
+  ('NWR',  'National Wildlife Refuges');
 
 -- Which atlases print their own labels: a row is the flag, the way a
 -- person_admin row is. None today — Oregon prints for the whole program, so

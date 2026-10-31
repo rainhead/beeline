@@ -1580,8 +1580,13 @@ export const en = {
     colSeasonCollectors: "Collectors",
     season: (year: number) => `${year} season`,
     noRecords: "No records yet.",
-    surveys:
-      "None by where they were collected: survey samples will come in through the surveys' own field entry, and belong to them by the day they were collected on rather than by where they fell.",
+    /** A program with no ground: why it has no records by geography, in its own terms. */
+    noGround: (code: string) =>
+      code === "BLM"
+        ? "None by where they were collected: survey samples will come in through the surveys' own field entry, and belong to them by the day they were collected on rather than by where they fell."
+        : code === "NWR"
+          ? "None by where they were collected: refuge samples come in through their atlases' iNaturalist projects and print with their atlases, and belong to the program by the refuge they were collected in, which Beeline does not yet record."
+          : "None by where they were collected: this program has no ground of its own, and which samples are its is not yet recorded.",
     seeSamples: "See its samples",
     seeSpecimens: "See its specimens",
     ecdysis: "Expert determinations",
@@ -1606,8 +1611,12 @@ export const en = {
       "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including taxon-obscured ones.",
     archivesMissing:
       "Not written yet. They appear after the next nightly run, or after running the dwc-archives job on Jobs.",
-    archiveNone:
-      "No archives: survey samples will come in through the surveys' own field entry, and belong to them by the day they were collected on rather than by where they fell.",
+    archiveNone: (code: string) =>
+      code === "BLM"
+        ? "No archives: survey samples will come in through the surveys' own field entry, and belong to them by the day they were collected on rather than by where they fell."
+        : code === "NWR"
+          ? "No archives: refuge samples are in their atlases' archives, and belong to the program by the refuge they were collected in, which Beeline does not yet record."
+          : "No archives: this program has no ground of its own, and which samples are its is not yet recorded.",
     noSpecimens: "No specimens yet.",
     colYear: "Year",
     colSpecimens: "Specimens",

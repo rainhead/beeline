@@ -145,7 +145,7 @@ function Seasons({ m, program, admin }: { m: Messages; program: ProgramDetail; a
     <>
       <h2>{p.seasons}</h2>
       {program.scope === null ? (
-        <p>{p.surveys}</p>
+        <p>{p.noGround(program.code)}</p>
       ) : program.seasons.length === 0 ? (
         <EmptyState>{p.noRecords}</EmptyState>
       ) : (

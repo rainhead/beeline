@@ -373,7 +373,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
                 CASE WHEN i.is_current THEN
                   CASE lower(coalesce(o.caste_text, ''))
                     WHEN 'queen' THEN 'female' WHEN 'gyne' THEN 'female' WHEN 'worker' THEN 'female' WHEN 'drone' THEN 'male'
-                    ELSE CASE lower(coalesce(o.sex_text, '')) WHEN 'female' THEN 'female' WHEN 'male' THEN 'male' END END
+                    ELSE CASE lower(coalesce(o.sex_text, '')) WHEN 'female' THEN 'female' WHEN 'male' THEN 'male' WHEN 'gynandromorph' THEN 'gynandromorph' END END
                 END AS sex,
                 lower(i.scientific_name) IN ('', 'undetermined', 'unidentified') AS placeholder,
                 nullif(lower(i.identified_by), 'unknown') AS by_text,

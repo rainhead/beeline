@@ -94,6 +94,18 @@ export async function resolver(conn: DuckDBConnection, overlay: readonly PersonO
     renamedTo.set(parsed.key, r.value);
     renamedFrom.set(r.value, parsed.key);
   }
+  // A name a `create` row claims is a person of its own, never the name
+  // somebody else is renamed to in the same file: admitting Nan Staffer and
+  // renaming Ada Collector to Nan Staffer are decisions about two people.
+  // Reaching a claimed name through the rename answered the create with
+  // "already exists", minted nobody, and landed every row about the new
+  // person — their account binding first — on the renamed one.
+  const claimed = new Set<string>();
+  for (const r of overlay) {
+    if (r.field !== "create") continue;
+    const parsed = parseRef(r.person_ref);
+    if (parsed?.kind === "name") claimed.add(parsed.key);
+  }
 
   const lookup = (key: string, seen: Set<string>): Found => {
     const ids = byName.get(key);
@@ -101,6 +113,7 @@ export async function resolver(conn: DuckDBConnection, overlay: readonly PersonO
       if (ids.length > 1) return { problem: `'${key}' names ${ids.length} people` };
       return { id: ids[0]! };
     }
+    if (claimed.has(key)) return { problem: `no person named '${key}'`, missing: true };
     for (const next of [renamedTo.get(key), renamedFrom.get(key)]) {
       if (next !== undefined && !seen.has(next)) {
         seen.add(next);

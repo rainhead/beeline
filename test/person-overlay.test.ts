@@ -295,6 +295,22 @@ describe("applying the overlay", () => {
     expect(r.unresolved[0]!.reason).toMatch(/no person named/);
   });
 
+  it("admits a person whose name somebody else is renamed to in the same file, and keeps their account theirs", async () => {
+    // Live, these were three accepted decisions: a staffer admitted, their
+    // account bound, and Ada renamed onto the same name. Replayed onto a
+    // fresh store, the create used to be answered through the rename ("Nan
+    // Staffer is what Ada Collector is called now"), so nobody was minted and
+    // the account went to Ada.
+    const r = await apply([
+      row({ person_ref: "name:Nan Staffer", field: "create", value: "yes" }),
+      row({ person_ref: "name:Nan Staffer", field: "inat_user_id", value: "222 nanstaffer" }),
+      row({ person_ref: "name:Ada Collector", field: "display_name", value: "Nan Staffer" }),
+    ]);
+    expect(r.unresolved).toEqual([]);
+    expect(await one(`SELECT count(*) FROM person WHERE display_name = 'Nan Staffer'`)).toEqual([2n]);
+    expect(await one(`SELECT person_id <> ${people["Ada Collector"]} FROM inat_account WHERE inat_user_id = 222`)).toEqual([true]);
+  });
+
   it("replays a file written after a rename, whichever name a row was keyed on", async () => {
     // This is the shape a rebuild replays: the rename was recorded under the
     // old name, and every decision made afterwards under the new one. Against

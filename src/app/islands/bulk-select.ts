@@ -1,14 +1,16 @@
 /**
- * Ticking specimens on the specimens listing and marking them for reprint
- * (beeline-1kb.23). The page draws a form, the bar under the table, and a
- * tick box in each row that belongs to it, so without this script the form
- * still marks whatever is ticked on the page in view. Scripting adds what a
- * collector's labels running to several pages needs: ticks kept while the
- * person pages and filters, a box that ticks the whole page, a count, and a
- * bar that stays out of the way until something is ticked.
+ * Ticking specimens for a bulk action on the specimens listing
+ * (beeline-1kb.23). The action is chosen first, which puts the listing in
+ * its mode: the page draws the action's form, the bar under the table, and
+ * a tick box on each row the action can take, belonging to that form, so
+ * without this script the form still acts on whatever is ticked on the page
+ * in view. Scripting adds what a collector's labels running to several pages
+ * needs: ticks kept while the person pages and filters, a box that ticks the
+ * whole page, a count, and a button held until something is ticked.
  *
  * The ticks live in sessionStorage, so they belong to this tab and end with
- * it, under a key that names who is signed in: a tab outlives a sign-out,
+ * it, under a key that names the action and who is signed in: a tab
+ * outlives a sign-out,
  * and the next admin's marking must not carry the last one's ticks under
  * the next one's name. A store that refuses (a private window, blocked site
  * data) leaves the page working as it does without the script. They are
@@ -18,7 +20,7 @@
 
 const form = document.querySelector<HTMLFormElement>("form[data-bulk]");
 if (form !== null) {
-  const key = `beeline:reprint-ticks:${form.dataset.bulkOwner ?? ""}`;
+  const key = `beeline:ticks:${form.dataset.bulk ?? ""}:${form.dataset.bulkOwner ?? ""}`;
   const load = (): Set<string> => {
     try {
       const raw = sessionStorage.getItem(key);
@@ -50,7 +52,9 @@ if (form !== null) {
   const pageBox = document.querySelector<HTMLInputElement>("input[data-bulk-page]");
   const count = form.querySelector<HTMLElement>("[data-bulk-count]");
   const clear = form.querySelector<HTMLButtonElement>("[data-bulk-clear]");
+  const none = form.dataset.countNone ?? "";
   const one = form.dataset.countOne ?? "";
+  const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
   const other = form.dataset.countOther ?? "";
 
   /** The fields carrying ticks from other pages, added at submit. */
@@ -67,8 +71,11 @@ if (form !== null) {
       pageBox.checked = rows.length > 0 && onPage === rows.length;
       pageBox.indeterminate = onPage > 0 && onPage < rows.length;
     }
-    if (count !== null) count.textContent = ticked.size === 1 ? one : other.replace("{n}", ticked.size.toLocaleString());
-    form.hidden = ticked.size === 0;
+    if (count !== null) {
+      count.textContent =
+        ticked.size === 0 ? none : ticked.size === 1 ? one : other.replace("{n}", ticked.size.toLocaleString());
+    }
+    if (submit !== null) submit.disabled = ticked.size === 0;
   };
 
   fromStore();

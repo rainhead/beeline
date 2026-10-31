@@ -488,16 +488,40 @@ describe("reprints (gh-218)", () => {
     expect(specimenPage).toContain("To change that label, cancel the run.");
   });
 
-  it("marks the specimens ticked on the listing, and returns to the same listing (beeline-1kb.23)", async () => {
+  it("offers marking for reprint as an action first, then ticks only the rows it can take (beeline-1kb.23)", async () => {
     const { app, appFor, conn, post, ashSample } = await printed();
-    const listing = await (await app.request("/specimens?scope=all")).text();
-    expect(listing).toContain(`form="reprint-bulk"`);
-    expect(listing).toContain("Mark for reprint");
-    // The island keys its stored ticks by who is signed in.
-    expect(listing).toContain(`data-bulk-owner="staffer"`);
     const ids = ((await rows(conn, `SELECT entity_id FROM specimen WHERE sample_id = ${ashSample} ORDER BY specimen_number`)) as [
       number,
     ][]).map(([id]) => id);
+    await post(`/specimens/${ids[0]}/reprint`, {});
+
+    // The plain listing names the action and has no tick boxes.
+    const plain = await (await app.request("/specimens?scope=all")).text();
+    expect(plain).toContain(`href="/specimens?scope=all&amp;act=reprint"`);
+    expect(plain).toContain("Mark labels for reprint…");
+    expect(plain).not.toContain(`form="reprint-bulk"`);
+
+    // In the mode: the bar is there before anything is ticked, a box on each
+    // row that can be marked, and the reason on the one that cannot.
+    const marking = await (await app.request("/specimens?scope=all&act=reprint")).text();
+    expect(marking).toContain("Marking labels for reprint.");
+    expect(marking).toContain(`href="/specimens?scope=all">Stop marking`);
+    expect(marking).toContain("Mark for reprint");
+    expect(marking).toContain(`value="${ids[1]}" form="reprint-bulk"`);
+    expect(marking).not.toContain(`value="${ids[0]}" form="reprint-bulk"`);
+    expect(marking).toContain("already waiting");
+    // The island keys its stored ticks by the action and who is signed in.
+    expect(marking).toContain(`data-bulk="reprint"`);
+    expect(marking).toContain(`data-bulk-owner="staffer"`);
+    // Paging keeps the mode, and clearing filters does too.
+    expect(await (await app.request("/specimens?scope=all&act=reprint&taxon=Bombus")).text()).toContain(
+      `href="/specimens?scope=all&amp;act=reprint">`,
+    );
+    await post(`/specimens/${ids[0]}/reprint`, { withdraw: "1" });
+
+    // Nothing ticked goes back to the listing, unchanged.
+    const empty = await post("/specimens/reprint", { back: "/specimens?scope=all&act=reprint" });
+    expect(empty.headers.get("location")).toBe("/specimens?scope=all&act=reprint");
 
     // Two ticked, one of them twice: once on this page, once carried from another.
     const body = new URLSearchParams({ back: "/specimens?scope=all", reason: "never_received" });
@@ -533,10 +557,11 @@ describe("reprints (gh-218)", () => {
     const replaced = await app.request("/specimens/reprint", { method: "POST", headers: { origin: ORIGIN }, body: repeat });
     expect(replaced.headers.get("location")).toBe("/specimens?scope=all&reprinted=1&of=1");
 
-    // A volunteer sees the state and no tick boxes, and cannot post.
+    // A volunteer sees the state, not the action, even by asking for its mode, and cannot post.
     const volunteer = appFor("ash");
-    const theirs = await (await volunteer.request("/specimens")).text();
+    const theirs = await (await volunteer.request("/specimens?act=reprint")).text();
     expect(theirs).toContain("reprint requested");
+    expect(theirs).not.toContain("Mark labels for reprint…");
     expect(theirs).not.toContain(`form="reprint-bulk"`);
     const refused = await volunteer.request("/specimens/reprint", {
       method: "POST",

@@ -254,10 +254,10 @@ tbody tr.flag:hover { background: inherit; }
    easier. */
 .form-column { max-width: 28rem; }
 
-/* The specimens listing's reprint bar (beeline-1kb.23): held at the foot of
-   the window while ticks are made down a page. The script hides it until
-   something is ticked, and reveals its Untick and tick-the-page controls,
-   which nobody without the script could use. */
+/* The specimens listing's bar for a bulk action (beeline-1kb.23), shown for
+   as long as the action is chosen and held at the foot of the window while
+   ticks are made down a page. The script reveals its Untick and
+   tick-the-page controls, which nobody without the script could use. */
 .bulk-bar { position: sticky; bottom: var(--space-4); margin-top: var(--space-4); z-index: 5; padding: var(--space-3) var(--space-4); }
 .bulk-fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-2) var(--space-4); }
 .bulk-fields .field { margin-bottom: 0; }

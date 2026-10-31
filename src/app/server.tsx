@@ -790,10 +790,12 @@ export function createApp({
     const { personId } = c.get("acting");
     const admin = c.get("admin");
     const atlases = await atlasOptions(db);
-    const query = parseListingQuery(new URL(c.req.url).searchParams, {
+    const parsed = parseListingQuery(new URL(c.req.url).searchParams, {
       atlasCodes: atlases.map((a) => a.code),
       preferred: getCookie(c, SCOPE_COOKIE),
     });
+    // Every bulk action so far is staff's (beeline-1kb.23).
+    const query = admin ? parsed : { ...parsed, act: "" as const };
     // Remember an explicit choice only — a bare /samples keeps the cookie.
     if (c.req.query("scope") !== undefined) {
       setCookie(c, SCOPE_COOKIE, query.scope, { path: "/", sameSite: "Lax", httpOnly: true });
@@ -1721,15 +1723,16 @@ export function createApp({
   app.post("/specimens/reprint", (c) =>
     printWrite(c, async (personId, note) => {
       const form = await c.req.formData();
+      const backRaw = String(form.get("back") ?? "");
+      const back = new URL(/^\/specimens(\?|$)/.test(backRaw) ? backRaw : "/specimens", "http://listing");
       const ids = [...new Set(form.getAll("specimen").map((v) => Number(v)))];
+      // Nothing ticked, or not a list of ids: back to the listing, unchanged.
       if (ids.length === 0 || ids.length > 10_000 || !ids.every((id) => Number.isSafeInteger(id) && id > 0)) {
-        return "/specimens";
+        return `${back.pathname}${back.search}`;
       }
       const raw = String(form.get("reason") ?? "");
       const reason = REPRINT_REASONS.has(raw) ? (raw as ReprintReason) : null;
       const { requested, of } = await requestReprint(printWriter!, { specimenIds: ids }, { personId, reason, note });
-      const backRaw = String(form.get("back") ?? "");
-      const back = new URL(/^\/specimens(\?|$)/.test(backRaw) ? backRaw : "/specimens", "http://listing");
       back.searchParams.set("reprinted", String(requested));
       back.searchParams.set("of", String(of));
       return `${back.pathname}${back.search}`;

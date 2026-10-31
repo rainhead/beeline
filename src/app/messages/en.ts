@@ -619,14 +619,26 @@ export const en = {
        * in this browser tab only.
        */
       bulk: {
+        /** The button that puts the listing in the reprint action's mode. */
+        start: "Mark labels for reprint…",
+        modeHeading: "Marking labels for reprint.",
+        modeIntro:
+          "Tick the specimens whose labels should print again; a row that cannot be marked says why. Your ticks stay while you page and filter, in this tab.",
+        leave: "Stop marking",
+        /** In the tick column, instead of a box: why this label cannot be marked now (REPRINT_BLOCKER). */
+        blocker: {
+          unnumbered: "no field number",
+          asked: "already waiting",
+          printing: "in an unprinted run",
+        } as Record<string, string>,
         /** The heading cell's box, for a screen reader: it has no visible words. */
         tickPage: "Tick every specimen on this page",
         tickOne: (fieldNumber: string) => `Tick ${fieldNumber}`,
         /** Counts, with {n} replaced in the browser as the ticks change. */
+        countNone: "Nothing ticked yet",
         countOne: "1 specimen ticked",
         countOther: "{n} specimens ticked",
-        hint:
-          "Their labels go into the next print run under the field numbers they already have, after that run's new labels. Ticks stay while you page and filter, in this tab. A reason is optional.",
+        hint: "Their labels go into the next print run under the field numbers they already have, after that run's new labels. A reason is optional.",
         button: "Mark for reprint",
         clear: "Untick all",
         /** After the marking, back on the listing. */

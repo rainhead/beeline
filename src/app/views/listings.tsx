@@ -28,6 +28,7 @@ import {
   Callout,
   Chip,
   DataTable,
+  LinkButton,
   EmptyState,
   Field,
   FilterPills,
@@ -133,15 +134,16 @@ function ScopeNote({ m, query, admin }: { m: Messages; query: ListingQuery; admi
 }
 
 /**
- * Every filter cleared, scope and sort left alone: clearing is not signing
- * out of an atlas, and not un-sorting.
+ * Every filter cleared, scope, sort and any bulk action left alone: clearing
+ * is not signing out of an atlas, not un-sorting, and not abandoning the
+ * specimens being ticked for an action.
  *
  * Typed as the whole query minus the parts Clear deliberately keeps, so a
  * filter added to ListingQuery and forgotten here fails to compile. It was
  * spread into a Partial before, which let `member` be missing silently — and
  * a Clear link that clears everything but one box is worse than none.
  */
-const emptyFilters: Omit<ListingQuery, "scope" | "page" | "sort" | "dir"> = {
+const emptyFilters: Omit<ListingQuery, "scope" | "page" | "sort" | "dir" | "act"> = {
   q: "",
   from: null,
   to: null,
@@ -661,11 +663,46 @@ export function SampleListing(props: ListingProps<SampleRow>) {
 const BULK_FORM = "reprint-bulk";
 
 /**
- * Marking the ticked specimens for reprint (beeline-1kb.23): the bar under
- * the table, which the tick boxes in the rows belong to by their `form`
- * attribute. Without scripting it marks what is ticked on this page; the
- * bulk-select island keeps ticks across pages and filters, counts them, and
- * hides the bar until something is ticked.
+ * What a reader can do to many rows at once, offered before any row is
+ * ticked (beeline-1kb.23, Peter 2026-10-31: bulk actions are chosen first).
+ * Each is a button naming the action; pressing it puts the listing in that
+ * action's mode, in the URL. Only staff have one so far: marking labels for
+ * reprint. A volunteer's counterpart is a ticket (beeline-l7ui) and will
+ * join this row when tickets exist.
+ */
+function BulkActions({ m, path, query }: { m: Messages; path: string; query: ListingQuery }) {
+  const b = m.listings.specimens.bulk;
+  return (
+    <p class="row">
+      <LinkButton href={listingHref(path, query, { act: "reprint" })} variant="tonal">
+        {b.start}
+      </LinkButton>
+    </p>
+  );
+}
+
+/**
+ * The reprint action's mode, above the table: what it is for, and the way
+ * out. Leaving keeps the ticks for this tab, so coming back resumes; the bar
+ * below has Untick all.
+ */
+function BulkModeNote({ m, path, query }: { m: Messages; path: string; query: ListingQuery }) {
+  const b = m.listings.specimens.bulk;
+  return (
+    <Callout>
+      <strong>{b.modeHeading}</strong> {b.modeIntro}{" "}
+      <a href={listingHref(path, query, { act: "" })}>{b.leave}</a>
+    </Callout>
+  );
+}
+
+/**
+ * Marking the ticked specimens for reprint: the bar under the table, held at
+ * the foot of the window, which the tick boxes in the rows belong to by their
+ * `form` attribute. Shown for as long as the mode is on, so what ticking is
+ * for is said before anything is ticked. Without scripting it marks what is
+ * ticked on this page; the bulk-select island keeps ticks across pages and
+ * filters, counts them, and holds the button until something is ticked.
  */
 function BulkReprint({ m, back, owner }: { m: Messages; back: string; owner: string }) {
   const b = m.listings.specimens.bulk;
@@ -676,14 +713,14 @@ function BulkReprint({ m, back, owner }: { m: Messages; back: string; owner: str
       method="post"
       action="/specimens/reprint"
       class="card bulk-bar"
-      data-bulk=""
+      data-bulk="reprint"
       data-bulk-owner={owner}
+      data-count-none={b.countNone}
       data-count-one={b.countOne}
       data-count-other={b.countOther}
     >
       <input type="hidden" name="back" value={back} />
-      {/* One row, so the bar held at the foot of the window covers as few
-          of the rows being ticked as it can. */}
+      {/* One row, so the bar covers as few of the rows being ticked as it can. */}
       <div class="bulk-fields">
         <strong data-bulk-count=""></strong>
         <SelectField
@@ -717,8 +754,10 @@ export function SpecimenListing(
   const f = m.listings.filters;
   const path = "/specimens";
   const col = { m, path, query };
-  // Staff tick specimens to mark their labels for reprint; the box in the
-  // heading ticks the page, and is drawn hidden for the island to reveal.
+  // The reprint action's mode (query.act, cleared by the route for anyone
+  // but staff): a tick column, whose heading box ticks every row on the page
+  // that can be marked and is drawn hidden for the island to reveal.
+  const marking = query.act === "reprint";
   const tickColumn = (
     <input type="checkbox" data-bulk-page="" aria-label={copy.bulk.tickPage} hidden />
   );
@@ -726,6 +765,7 @@ export function SpecimenListing(
     <>
       <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
       {reprinted !== null && <Callout tone="success">{copy.bulk.done(reprinted.requested, reprinted.of)}</Callout>}
+      {marking ? <BulkModeNote m={m} path={path} query={query} /> : admin && <BulkActions m={m} path={path} query={query} />}
       <Toolbar copy={copy} path={path} props={props} />
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
@@ -733,7 +773,7 @@ export function SpecimenListing(
         <>
           <DataTable
             columns={[
-              ...(admin ? [tickColumn] : []),
+              ...(marking ? [tickColumn] : []),
               column({ ...col, label: copy.colFieldNumber, sort: "field", kind: "number" }),
               column({ ...col, label: copy.colSample, sort: "number", kind: "number" }),
               dateColumn({ ...col, label: copy.colDate }),
@@ -764,16 +804,22 @@ export function SpecimenListing(
           >
             {page.rows.map((row) => (
               <tr>
-                {admin && (
+                {marking && (
                   <td>
-                    <input
-                      type="checkbox"
-                      name="specimen"
-                      value={String(row.specimen_id)}
-                      form={BULK_FORM}
-                      data-bulk-row=""
-                      aria-label={copy.bulk.tickOne(row.field_number ?? String(row.specimen_number))}
-                    />
+                    {/* A row the action cannot take says why, instead of a
+                        box that would only be refused after pressing. */}
+                    {row.reprint_blocker === null ? (
+                      <input
+                        type="checkbox"
+                        name="specimen"
+                        value={String(row.specimen_id)}
+                        form={BULK_FORM}
+                        data-bulk-row=""
+                        aria-label={copy.bulk.tickOne(row.field_number ?? String(row.specimen_number))}
+                      />
+                    ) : (
+                      <Meta>{copy.bulk.blocker[row.reprint_blocker]}</Meta>
+                    )}
                   </td>
                 )}
                 <td>
@@ -784,7 +830,8 @@ export function SpecimenListing(
                         ? copy.awaitingNumber
                         : copy.noFieldNumber}
                   </Pill>
-                  {row.reprint_requested && <Meta block>{copy.reprintRequested}</Meta>}
+                  {/* While marking, the tick column already says so. */}
+                  {row.reprint_requested && !marking && <Meta block>{copy.reprintRequested}</Meta>}
                 </td>
                 <td>
                   <Pill href={sampleHref(row.sample_id)}>{row.sample_number}</Pill>
@@ -844,7 +891,7 @@ export function SpecimenListing(
       )}
       {/* Drawn on an empty listing too: ticks kept from other pages can
           still be marked or cleared from a filter that matches nothing. */}
-      {admin && <BulkReprint m={m} back={listingHref(path, query)} owner={bulkOwner} />}
+      {marking && <BulkReprint m={m} back={listingHref(path, query)} owner={bulkOwner} />}
     </>
   );
 }

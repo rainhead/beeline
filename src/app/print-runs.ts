@@ -4,6 +4,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database, PrintRunState, ReprintReason } from "../model.js";
 import { sha256, type LabelRow } from "../label-pdf.js";
 import { renderLabelsPdfOffThread } from "../label-pdf-worker.js";
+import { REPRINT_BLOCKER, type ReprintBlocker } from "../print-run.js";
 
 /**
  * The print-run screens' reads (beeline-1kb.2, beeline-1kb.4). Writes —
@@ -432,21 +433,20 @@ async function reprintRequests(
  */
 export interface SpecimenReprint {
   pending: (ReprintRequestRow & { waiting: boolean }) | null;
-  canRequest: boolean;
+  /** Why a new request cannot be made, or null when it can (REPRINT_BLOCKER). */
+  blocker: ReprintBlocker | null;
 }
 
 export async function specimenReprint(db: Kysely<Database>, specimenId: number): Promise<SpecimenReprint> {
   const [pending] = await reprintRequests(db, specimenId, true);
-  const facts = await sql<{ numbered: boolean; printing: boolean; printable: boolean }>`
-    SELECT sp.field_number IS NOT NULL AS numbered,
-           EXISTS (SELECT 1 FROM printed_label pl JOIN print_run r ON r.entity_id = pl.print_run_id
-                   WHERE pl.specimen_id = sp.entity_id AND r.canceled_at IS NULL AND r.printed_at IS NULL) AS printing,
+  const facts = await sql<{ blocker: ReprintBlocker | null; printable: boolean }>`
+    SELECT ${sql.raw(REPRINT_BLOCKER)} AS blocker,
            EXISTS (SELECT 1 FROM printable_reprint p WHERE p.specimen_id = sp.entity_id) AS printable
     FROM specimen sp WHERE sp.entity_id = ${specimenId}`.execute(db);
   const f = facts.rows[0];
   return {
     pending: pending === undefined ? null : { ...pending, waiting: !f?.printable },
-    canRequest: pending === undefined && Boolean(f?.numbered) && !f?.printing,
+    blocker: f?.blocker ?? null,
   };
 }
 
@@ -458,15 +458,9 @@ export interface SampleReprints {
 
 export async function sampleReprints(db: Kysely<Database>, sampleId: number): Promise<SampleReprints> {
   const counts = await sql<{ pending: number; can: number }>`
-    SELECT count(*) FILTER (WHERE asked) AS pending,
-           count(*) FILTER (WHERE numbered AND NOT asked AND NOT printing) AS can
-    FROM (
-      SELECT sp.field_number IS NOT NULL AS numbered,
-             EXISTS (SELECT 1 FROM pending_reprint p WHERE p.specimen_id = sp.entity_id) AS asked,
-             EXISTS (SELECT 1 FROM printed_label pl JOIN print_run r ON r.entity_id = pl.print_run_id
-                     WHERE pl.specimen_id = sp.entity_id AND r.canceled_at IS NULL AND r.printed_at IS NULL) AS printing
-      FROM specimen sp WHERE sp.sample_id = ${sampleId}
-    ) t`.execute(db);
+    SELECT count(*) FILTER (WHERE blocker = 'asked') AS pending,
+           count(*) FILTER (WHERE blocker IS NULL) AS can
+    FROM (SELECT ${sql.raw(REPRINT_BLOCKER)} AS blocker FROM specimen sp WHERE sp.sample_id = ${sampleId}) t`.execute(db);
   const c = counts.rows[0];
   return { pending: Number(c?.pending ?? 0), canRequest: Number(c?.can ?? 0) };
 }

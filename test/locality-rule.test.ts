@@ -76,6 +76,11 @@ describe("names", () => {
       "Williams Bonlinda Lane", "Corvallis NE Smith Ln", "Jefferson County", "St Helens", "St. Helens", "St.Helens",
       "W. St. Helens", "St. Johns", "Mosier St Park", "Smith Rock St Prk", "Lane Creek", "Buell County Park",
       'The "Bluff"', "5th St, Corvallis Oregon", "Cottonwood Canyon St Prk",
+      // Synthetic, from the property tests: a character outside the Basic
+      // Multilingual Plane is one character to the rule's length() and two
+      // to JavaScript's .length, and the Turkish dotted capital İ lowercases
+      // to a plain i in DuckDB and to i plus a combining dot in JavaScript.
+      "𝔄 National Reserve", "Cedar DRİVE",
     ];
     const { conn } = await createMemoryDb();
     await conn.run(`INSERT INTO person (display_name) VALUES ('Ada Adams')`);

@@ -18,7 +18,10 @@
 -- lowercase epithet. Four rules ask about it — what authorship is left over,
 -- and three of the survey's categories — so it is written once. Macros are
 -- how the pipeline layer already shares SQL (legacy_month, legacy_date).
-CREATE OR REPLACE MACRO binomial_prefix() AS '^[A-Za-z]+( \([A-Za-z]+\))? [a-z-]+';
+-- The epithet ends at a word boundary: regexp_matches finds the pattern
+-- anywhere, so without one 'Bombus vosneSenskii' (a shifted finger) was a
+-- binomial 'Bombus vosne' followed by the authorship 'Senskii'.
+CREATE OR REPLACE MACRO binomial_prefix() AS '^[A-Za-z]+( \([A-Za-z]+\))? [a-z-]+\b';
 
 -- ── Parts of a name, from whichever column wrote them ───────────────────
 -- Three sources write names in columns rather than as one string: the expert
@@ -43,9 +46,11 @@ CREATE OR REPLACE MACRO name_bracketed(s) AS
 CREATE OR REPLACE MACRO name_subgenus(s) AS
   coalesce(name_bracketed(s),
            name_capitalised(nullif(regexp_extract(trim(s), '^([A-Za-z]+)$', 1), '')));
+-- The bracketed name is taken out of the epithet column wherever it sits in
+-- it, since name_bracketed above has already read it as the subgenus:
+-- 'tenax (Dialictus)' is the epithet tenax, not 'tenax (dialictus)'.
 CREATE OR REPLACE MACRO name_epithet(s) AS
-  CASE WHEN regexp_matches(trim(s), '^\([A-Za-z]+\)$') THEN NULL
-       ELSE nullif(lower(trim(s)), '') END;
+  nullif(lower(trim(regexp_replace(trim(s), '\([A-Za-z]+\)', ''))), '');
 
 -- What the rules cannot recognise is misspelling: 'Agopostemon',
 -- 'Lassioglossum'. ingest/taxon-aliases.csv maps each to the name its writer
@@ -107,8 +112,11 @@ SELECT * EXCLUDE (tail, qual_tail),
   -- Both are gated on qual_tail, which anchors on this row's own genus the
   -- way trinomial does — without that a row whose genus column is empty
   -- yields a qualifier with no species to attach it to, and it would ride
-  -- along on a family- or order-rank determination.
-  CASE regexp_extract(qual_tail, '^(nr|cf|cfr|aff)\.', 1)
+  -- along on a family- or order-rank determination. The qualifier is also
+  -- gated on the epithet being the whole of what follows it: 'Bombus cf.
+  -- occidentalis Greene, 1858' names no epithet this rule can read, and the
+  -- qualifier used to ride along on the genus determination without one.
+  CASE regexp_extract(qual_tail, '^(nr|cf|cfr|aff)\. [a-z-]+$', 1)
     WHEN 'nr'  THEN 'nr.'  WHEN 'cf'  THEN 'cf.'
     WHEN 'cfr' THEN 'cf.'  WHEN 'aff' THEN 'aff.' END AS qualifier,
   nullif(regexp_extract(qual_tail, '^(?:nr|cf|cfr|aff)\. ([a-z-]+)$', 1), '') AS qualified_epithet

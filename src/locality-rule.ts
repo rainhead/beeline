@@ -188,12 +188,19 @@ const RULE = {
 // digit, which CodeQL found exponential over many such words. DuckDB's RE2
 // does not backtrack, so the macro needs no change.
 const STREET = / (road|rd|street|str|st|avenue|ave|av|drive|dr|boulevard|blvd|court|ct|lane|ln|county)( +((ne|nw|se|sw|n|s|e|w)|[^ 0-9]*[0-9][^ ]*))* *(,|$)/;
+// The rule lowercases with DuckDB's lower(), which maps the Turkish dotted
+// capital İ to a plain i; JavaScript's toLowerCase() gives i plus a combining
+// dot, the one character in the Basic Multilingual Plane where the two
+// differ on a letter a street word uses. So "DRİVE" is folded the rule's way.
 const looksLikeStreet = (s: string) =>
-  STREET.test(` ${s.toLowerCase().replaceAll(".", " ").replaceAll(",", " , ")} `);
+  STREET.test(` ${s.replaceAll("\u0130", "i").toLowerCase().replaceAll(".", " ").replaceAll(",", " , ")} `);
 
-/** Whether a name can go on a label as it stands. */
+/**
+ * Whether a name can go on a label as it stands. The length is counted in
+ * characters, as the rule's length() counts, not in UTF-16 code units.
+ */
 export function fits(s: string): boolean {
-  return s.length <= MAX_LOCALITY_LENGTH && !s.includes(",") && !s.includes('"') && !looksLikeStreet(s);
+  return [...s].length <= MAX_LOCALITY_LENGTH && !s.includes(",") && !s.includes('"') && !looksLikeStreet(s);
 }
 
 /** 'BOSQUE DEL APACHE' → 'Bosque del Apache': the agencies write their names in capitals. */

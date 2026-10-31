@@ -73,6 +73,22 @@ const SYNTHETIC_QUALIFIERS: Row[] = [
   // is no species to attach it to, and it must not ride along on whatever
   // coarser rank the row does resolve to.
   { sci: "Bombus nr. mixtus" },
+  // A qualifier is attached to the species it names, so where the epithet is
+  // not the whole of what follows it there is nothing to attach it to, and
+  // it must not ride along on the genus determination the row falls to.
+  { sci: "Bombus cf. occidentalis Greene, 1858", genus: "Bombus" },
+];
+
+/**
+ * A capital letter inside the epithet, a shifted finger. Synthetic: the
+ * corpus has none, and the parser must read nothing out of one rather than
+ * an authorship.
+ */
+const SYNTHETIC_TYPOS: Row[] = [
+  { sci: "Bombus vosneSenskii", genus: "Bombus", epithet: "vosneSenskii" },
+  // The subgenus written in brackets beside the epithet, in the epithet
+  // column. The corpus writes it alone there ('(Lasioglossum)', 72 records).
+  { sci: "Osmia tenax", genus: "Osmia", epithet: "tenax (Dialictus)" },
 ];
 
 /** The other verbatim fields, in the shapes the corpus actually holds. */
@@ -99,7 +115,7 @@ beforeAll(async () => {
   // legacy_verbatim_shape also sizes the two fields that answer through a
   // worklist rather than a rule; the findings view is promote-legacy's.
   await conn.run(`CREATE VIEW legacy_promotion_finding AS SELECT '' AS _id, '' AS rule WHERE false`);
-  for (const [i, r] of [...CORPUS, ...SYNTHETIC_QUALIFIERS, ...OTHER_FIELDS].entries()) {
+  for (const [i, r] of [...CORPUS, ...SYNTHETIC_QUALIFIERS, ...SYNTHETIC_TYPOS, ...OTHER_FIELDS].entries()) {
     await conn.run(
       `INSERT INTO legacy_promotable (_id, "order", family, genus, subgenus,
          specificEpithet, scientificName, taxonRank, recordedBy, month, url,
@@ -130,14 +146,14 @@ const parsed = (sci: string) =>
 describe("taking a verbatim scientific name apart", () => {
   test("every string lands in exactly one category, and nothing is a surprise", async () => {
     expect(await rows(conn, "SELECT parse, count(*) FROM legacy_name_parse GROUP BY 1 ORDER BY 1")).toEqual([
-      ["binomial", 2n], // Bombus vosnesenskii, plus Apis mellifera from OTHER_FIELDS
+      ["binomial", 3n], // Bombus vosnesenskii, Osmia tenax, plus Apis mellifera from OTHER_FIELDS
       ["binomial with authorship", 4n],
       ["morphospecies", 3n],
       ["qualified", 4n],
       ["subgenus", 2n],
       ["trinomial", 5n],
       ["uninomial", 1n],
-      ["unparsed", 2n], // "Not a bee", and the qualifier with no genus
+      ["unparsed", 4n], // "Not a bee", the qualifier with no genus, the authored one, and the typo
     ]);
   });
 
@@ -190,6 +206,16 @@ describe("taking a verbatim scientific name apart", () => {
     expect(await parse("Not a bee")).toEqual([["unparsed"]]);
   });
 
+  test("a capital inside the epithet is not the start of an authorship", async () => {
+    // The binomial shape was matched as a prefix with no boundary after the
+    // epithet, so 'Bombus vosneSenskii' read as the binomial 'Bombus vosne'
+    // with the authorship 'Senskii', which seed-animals.sql would have put on
+    // the species node Bombus vosnesenskii. The epithet itself still comes
+    // from its column, lowercased.
+    expect(await parsed("Bombus vosneSenskii")).toEqual([["Bombus", null, "vosnesenskii", null, null, null, null]]);
+    expect(await parse("Bombus vosneSenskii")).toEqual([["unparsed"]]);
+  });
+
   test("an authored binomial is not mistaken for a trinomial", async () => {
     expect(await parsed("Bombus vosnesenskii Radoszkowski, 1862")).toEqual([
       ["Bombus", null, "vosnesenskii", "Radoszkowski, 1862", null, null, null],
@@ -203,6 +229,13 @@ describe("taking a verbatim scientific name apart", () => {
     expect(await parsed("Andrena (Andrena)")).toEqual([["Andrena", "Andrena", null, null, null, null, null]]);
   });
 
+  test("a bracketed name beside the epithet is the subgenus, and leaves the epithet", async () => {
+    // 'tenax (Dialictus)' in the epithet column used to give the subgenus
+    // Dialictus and the epithet 'tenax (dialictus)', which would have minted
+    // the species 'Osmia tenax (dialictus)'. Synthetic.
+    expect(await parsed("Osmia tenax")).toEqual([["Osmia", "Dialictus", "tenax", null, null, null, null]]);
+  });
+
   test("the other verbatim fields are surveyed too, so a new shape shows up", async () => {
     // recordedBy in production uses '|' and nothing else — no '&', no comma.
     // Symbiota's duplicate matcher split 'B. & C. Durden' on '&' and matched
@@ -212,7 +245,7 @@ describe("taking a verbatim scientific name apart", () => {
       await rows(conn, "SELECT field, shape, records FROM legacy_verbatim_shape ORDER BY field, shape"),
     ).toEqual([
       ["day/month/year", "did not parse", 0n],
-      ["identifiedBy", "named", 25n],
+      ["identifiedBy", "named", 28n],
       ["month", "roman numeral", 1n],
       ["recordedBy", "non-ASCII", 0n],
       ["recordedBy", "other separator (& , ; and)", 0n],
@@ -257,12 +290,25 @@ describe("taking a verbatim scientific name apart", () => {
     expect(await parsed("Bombus nr. mixtus")).toEqual([[null, null, null, null, null, null, null]]);
   });
 
+  test("a qualifier with no epithet to attach to is not a qualifier either", async () => {
+    // 'Bombus cf. occidentalis Greene, 1858': the epithet rule reads nothing
+    // past the authorship, so the row falls to the genus. The qualifier used
+    // to come along, making the determination "cf. Bombus", which is not
+    // what the determiner wrote. Synthetic; the corpus has no authored
+    // qualified name.
+    expect(await parsed("Bombus cf. occidentalis Greene, 1858")).toEqual([
+      ["Bombus", null, null, null, null, null, null],
+    ]);
+  });
+
   test("names the model has nowhere to put are named as such, not silently flattened", async () => {
     // Not a mistake anybody made: a determiner separated Melissodes sp.1 from
     // sp.5 deliberately. The model records the genus and loses the rest — so
     // the loss is at least visible (beeline-8g7).
     expect(await rows(conn, "SELECT sci, parse, lands_on FROM legacy_name_flattened ORDER BY sci")).toEqual([
+      ["Bombus cf. occidentalis Greene, 1858", "unparsed", "Bombus"], // synthetic: nothing to attach the qualifier to
       ["Bombus nr. mixtus", "unparsed", ""], // synthetic: no genus, so nothing to attach
+      ["Bombus vosneSenskii", "unparsed", "Bombus vosnesenskii"], // synthetic: the typo, landing where the columns say
       ["Lasioglossum  sp.1", "morphospecies", "Lasioglossum"],
       ["Melissodes sp.1", "morphospecies", "Melissodes"],
       ["Not a bee", "unparsed", ""],

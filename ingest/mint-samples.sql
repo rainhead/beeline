@@ -222,31 +222,35 @@ WHERE sample.inat_observation_id = pl.inat_id
   AND (sample.country IS NULL OR sample.state_province IS NULL
     OR sample.county IS NULL OR sample.locality IS NULL);
 
--- The host's rank, on the same fill-only terms and for the same reason: the
--- 57,270 iNat-backed samples that already carried a host name were minted or
--- imported before anything read taxon.rank, so without this they would print
--- upright forever while every newly minted one printed correctly. A migration
--- fills them once; this is what keeps them filled.
-UPDATE sample SET host_rank = f.host_taxon_rank
+-- ── The floral host follows its observation, printed or not ─────────────
+-- Not fill-only, and not stopped by printing (Peter, 2026-10-31,
+-- beeline-ni5m.7). Host identifications on iNaturalist improve for years
+-- after the observation, often a genuine correction by somebody who knows
+-- the plant, and CONTEXT.md has always said Beeline wants those updates; a
+-- label never carries the host, so nothing on paper is contradicted. The
+-- three columns move together — the taxon id, the name as iNaturalist
+-- writes it, and its rank, which decides the italics — so they can never
+-- name three different things, which is what the fill-only rule this
+-- replaces guarded against one column at a time: it filled the id only
+-- where the legacy name agreed with the observation's (beeline-z9j), since
+-- an id beside a name it does not belong to is worse than none.
+--
+-- Only while the observation carries a taxon. One that has none says the
+-- bees came off no flower, or that an identification was withdrawn and the
+-- community's is pending, and the sample keeps what it has until the
+-- observation says something again; a legacy name typed for a sample whose
+-- observation never named a plant stays. A sample with no observation is
+-- the old system's record and keeps its host as imported.
+UPDATE sample SET
+  host_inat_taxon_id    = f.host_taxon_id,
+  host_name_as_observed = f.host_taxon_name,
+  host_rank             = f.host_taxon_rank
 FROM observation_field f
 WHERE sample.inat_observation_id = f.inat_id
-  AND sample.host_rank IS NULL
-  AND f.host_taxon_rank IS NOT NULL;
-
--- And the host's iNaturalist taxon, which the legacy import never carries:
--- it holds the plant as a bare name, so an imported sample whose observation
--- names the taxon kept no reference to it — the 2026-09-27 reseed recorded
--- ~3,600 hosts losing their id this way (beeline-z9j). Labels print the
--- name, so nothing printed changes; what is filled is the reference an
--- export reads. Guarded on the names agreeing, since the legacy name was
--- typed separately from the observation and may name another plant — an id
--- beside a name it does not belong to is worse than no id.
-UPDATE sample SET host_inat_taxon_id = f.host_taxon_id
-FROM observation_field f
-WHERE sample.inat_observation_id = f.inat_id
-  AND sample.host_inat_taxon_id IS NULL
   AND f.host_taxon_id IS NOT NULL
-  AND lower(trim(sample.host_name_as_observed)) = lower(trim(f.host_taxon_name));
+  AND (sample.host_inat_taxon_id    IS DISTINCT FROM f.host_taxon_id
+    OR sample.host_name_as_observed IS DISTINCT FROM f.host_taxon_name
+    OR sample.host_rank             IS DISTINCT FROM f.host_taxon_rank);
 
 -- The atlas joins the refresh now (beeline-6e9). It could not while it was a
 -- column on sample: DuckDB will not update an INDEXED column on a row an

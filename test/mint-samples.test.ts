@@ -567,35 +567,41 @@ describe("descriptive fields are a fill-only refresh", () => {
     expect(await one(`SELECT pending_count FROM pending_print_sample WHERE sample_id = ${unprinted}`)).toEqual([5]);
   });
 
-  test("an imported host name gains the observation's taxon id where the names agree", async () => {
-    // The legacy import carries the plant as a bare name and no id
-    // (beeline-z9j); the observation here names Rubus, taxon 47604.
-    const agrees = await insertCleanSample(conn, {
+  test("the floral host follows the observation, printed or not: id, name and rank together", async () => {
+    // Peter, 2026-10-31 (beeline-ni5m.7): a host identification corrected on
+    // iNaturalist years later is wanted, and no label carries the host, so
+    // printing does not stop it. The legacy name typed apart from the
+    // observation (beeline-z9j) is replaced along with the id it lacked.
+    const imported = await insertCleanSample(conn, {
       inat_observation_id: "7", sample_number: "'7'",
-      host_name_as_observed: "'Rubus'", host_inat_taxon_id: "NULL",
+      host_name_as_observed: "'Ericameria nauseosa'", host_inat_taxon_id: "NULL", host_rank: "NULL",
     });
-    await stage(obs(7));
+    const printed = await insertCleanSample(conn, {
+      inat_observation_id: "8", sample_number: "'8'",
+      host_name_as_observed: "'Rubus'", host_inat_taxon_id: "12345", host_rank: "'genus'",
+    });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${printed}, 1)`);
+    await stage(obs(7, { taxon: { id: 47604, name: "Rubus", rank: "genus", ancestor_ids: [48460, 47126, 211194, 47604] } }));
+    await stage(obs(8, { ofvs: ofvs("8", "3"), taxon: { id: 54321, name: "Rubus ursinus", rank: "species", ancestor_ids: [48460, 47126, 211194, 47604, 54321] } }));
     await promoteObservations(conn);
-    expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed FROM sample WHERE entity_id = ${agrees}`))
-      .toEqual([47604n, "Rubus"]);
+    expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed, host_rank FROM sample WHERE entity_id = ${imported}`))
+      .toEqual([47604n, "Rubus", "genus"]);
+    expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed, host_rank FROM sample WHERE entity_id = ${printed}`))
+      .toEqual([54321n, "Rubus ursinus", "species"]);
   });
 
-  test("a host name the observation disagrees with gets no id, and a held id is never replaced", async () => {
-    // The legacy name was typed apart from the observation, so where they
-    // name different plants the id would be a claim about the wrong one.
-    const disagrees = await insertCleanSample(conn, {
+  test("an observation with no taxon leaves the sample's host as it is", async () => {
+    // Bees off no flower, or an identification withdrawn while the
+    // community's is pending: the sample keeps what it has until the
+    // observation names a plant again.
+    const kept = await insertCleanSample(conn, {
       inat_observation_id: "7", sample_number: "'7'",
       host_name_as_observed: "'Ericameria nauseosa'", host_inat_taxon_id: "NULL",
     });
-    const held = await insertCleanSample(conn, {
-      inat_observation_id: "8", sample_number: "'8'",
-      host_name_as_observed: "'Rubus'", host_inat_taxon_id: "12345",
-    });
-    await stage(obs(7));
-    await stage(obs(8, { ofvs: ofvs("8", "3") }));
+    await stage(obs(7, { taxon: null }));
     await promoteObservations(conn);
-    expect(await one(`SELECT host_inat_taxon_id FROM sample WHERE entity_id = ${disagrees}`)).toEqual([null]);
-    expect(await one(`SELECT host_inat_taxon_id FROM sample WHERE entity_id = ${held}`)).toEqual([12345n]);
+    expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed FROM sample WHERE entity_id = ${kept}`))
+      .toEqual([null, "Ericameria nauseosa"]);
   });
 
   test("an atlas a human assigned is not moved by the lookup", async () => {

@@ -84,6 +84,27 @@ describe("schema application", () => {
     ).rejects.toThrow(/CHECK/i);
   });
 
+  test("a determination's sex and caste are the model's words, and a drone is male", async () => {
+    // beeline-ni5m.5 (Peter, 2026-10-31): female or male; gyne, worker or
+    // drone, the museum databases' vocabulary. A CHECK cannot be added to a
+    // deployed store (ADR 0006), so this is pinned before cutover.
+    await conn.run(`INSERT INTO person (display_name) VALUES ('Dee Determiner')`);
+    // A genus of its own, since this file shares one store and a later test seeds Bombus.
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('genus', 'Castebombus')`);
+    const sample = await insertCleanSample(conn, { sample_number: "'41'" });
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${sample}, 1)`);
+    const insert = (sex: string, caste: string) =>
+      conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, sex, caste, is_expert, channel)
+                SELECT sp.entity_id, (SELECT entity_id FROM animal WHERE scientific_name = 'Castebombus'), 'Castebombus', ${sex}, ${caste}, false, 'in_app'
+                FROM specimen sp WHERE sp.sample_id = ${sample}`);
+    await expect(insert("'Female'", "NULL")).rejects.toThrow(/CHECK/i);
+    await expect(insert("'female'", "'queen'")).rejects.toThrow(/CHECK/i);
+    await expect(insert("'female'", "'drone'")).rejects.toThrow(/CHECK/i);
+    await expect(insert("'male'", "'worker'")).rejects.toThrow(/CHECK/i);
+    await insert("'female'", "'gyne'");
+    await insert("NULL", "'drone'");
+  });
+
   test("date range must not run backwards", async () => {
     await expect(
       conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end)

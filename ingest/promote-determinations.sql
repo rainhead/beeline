@@ -140,6 +140,61 @@ FROM legacy_specimen_number n
 JOIN specimen sp ON sp.sample_id = n.sample_id AND sp.specimen_number = n.specimen_number
 JOIN sample_primary_collector pc ON pc.sample_id = n.sample_id;
 
+-- ── Sex and caste, in the model's vocabulary ────────────────────────────
+-- determination.sex is female or male and determination.caste is gyne,
+-- worker or drone (schema/040, beeline-ni5m.5), the words the museum
+-- databases use. The legacy columns are free text — the old system kept
+-- sex and caste as flat reference files and validated nothing — so each
+-- value is mapped and anything the mapping does not know is dropped, which
+-- legacy_sex_caste_survey below reports by value, the way legacy_name_parse
+-- reports the name parser's residue. Two rules beyond spelling: a caste
+-- written in the sex column (a volunteer's "queen") is read as the caste it
+-- names, and the caste decides the sex where both are stated, since a
+-- worker is female and a drone male whatever the other column says.
+-- One word, read as a caste or as a sex; then the two columns together.
+CREATE OR REPLACE MACRO legacy_caste_word(x) AS
+  CASE lower(trim(coalesce(x, '')))
+    WHEN 'queen' THEN 'gyne' WHEN 'gyne' THEN 'gyne' WHEN 'worker' THEN 'worker' WHEN 'drone' THEN 'drone' END;
+CREATE OR REPLACE MACRO legacy_sex_word(x) AS
+  CASE lower(trim(coalesce(x, '')))
+    WHEN 'female' THEN 'female' WHEN 'f' THEN 'female' WHEN 'male' THEN 'male' WHEN 'm' THEN 'male' END;
+
+CREATE OR REPLACE MACRO legacy_caste_of(caste_raw, sex_raw) AS
+  coalesce(legacy_caste_word(caste_raw), legacy_caste_word(sex_raw));
+
+CREATE OR REPLACE MACRO legacy_sex_of(sex_raw, caste_raw) AS
+  CASE legacy_caste_of(caste_raw, sex_raw)
+    WHEN 'gyne' THEN 'female' WHEN 'worker' THEN 'female' WHEN 'drone' THEN 'male'
+    ELSE legacy_sex_word(sex_raw) END;
+
+-- A stated value the mapping discarded, each column judged on its own: a
+-- caste the sex column supplied does not excuse a caste column the mapping
+-- could not read (CodeRabbit on this branch).
+CREATE OR REPLACE MACRO legacy_sex_caste_dropped(sex_raw, caste_raw) AS
+  (nullif(trim(coalesce(caste_raw, '')), '') IS NOT NULL AND legacy_caste_word(caste_raw) IS NULL)
+  OR (nullif(trim(coalesce(sex_raw, '')), '') IS NOT NULL AND legacy_sex_word(sex_raw) IS NULL AND legacy_caste_word(sex_raw) IS NULL);
+
+-- What the mapping did to every distinct value in staging, expert and
+-- volunteer columns apart: the survey to read after the final legacy pull
+-- (beeline-83b8.7). `dropped` names a value the source stated that reached
+-- the model as nothing.
+CREATE OR REPLACE VIEW legacy_sex_caste_survey AS
+SELECT 'expert' AS determination, r.sex AS sex_raw, r.caste AS caste_raw,
+       legacy_sex_of(r.sex, r.caste) AS sex, legacy_caste_of(r.caste, r.sex) AS caste,
+       legacy_sex_caste_dropped(r.sex, r.caste) AS dropped,
+       count(*) AS records
+FROM legacy_promotable r
+WHERE nullif(trim(r.sex), '') IS NOT NULL OR nullif(trim(r.caste), '') IS NOT NULL
+GROUP BY ALL
+UNION ALL
+SELECT 'volunteer', r.sexVolDet, r.casteVolDet,
+       legacy_sex_of(r.sexVolDet, r.casteVolDet), legacy_caste_of(r.casteVolDet, r.sexVolDet),
+       legacy_sex_caste_dropped(r.sexVolDet, r.casteVolDet),
+       count(*)
+FROM legacy_promotable r
+WHERE nullif(trim(r.sexVolDet), '') IS NOT NULL OR nullif(trim(r.casteVolDet), '') IS NOT NULL
+GROUP BY ALL;
+
 -- The verbatim name rides along with the node it resolved to: staging is
 -- re-pullable today and frozen at cutover, after which this is the only
 -- record of what the determiner actually wrote (beeline-tgu).
@@ -150,7 +205,7 @@ SELECT s.specimen_id, an.entity_id, t.qualifier,
        -- The whole name where the source wrote one; failing that, the spelling
        -- it used, but only where a curated decision overruled it (beeline-bph).
        coalesce(t.verbatim, CASE WHEN t.written IS DISTINCT FROM t.name THEN t.written END),
-       nullif(lower(trim(r.sex)), ''), nullif(lower(trim(r.caste)), ''),
+       legacy_sex_of(r.sex, r.caste), legacy_caste_of(r.caste, r.sex),
        dp.person_id, nullif(trim(r.identifiedBy), ''), true, 'legacy_import'
 FROM legacy_promotable r
 JOIN legacy_expert_target t ON t._id = r._id AND t.rank IS NOT NULL
@@ -167,7 +222,7 @@ INSERT INTO determination (specimen_id, animal_id, verbatim_identification, sex,
                            determiner_id, is_expert, channel)
 SELECT s.specimen_id, an.entity_id,
        CASE WHEN t.written IS DISTINCT FROM t.name THEN t.written END,
-       nullif(lower(trim(r.sexVolDet)), ''), nullif(lower(trim(r.casteVolDet)), ''),
+       legacy_sex_of(r.sexVolDet, r.casteVolDet), legacy_caste_of(r.casteVolDet, r.sexVolDet),
        s.collector_id, false, 'legacy_import'
 FROM legacy_promotable r
 JOIN legacy_volunteer_target t ON t._id = r._id AND t.rank IS NOT NULL

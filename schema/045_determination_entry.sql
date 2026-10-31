@@ -10,8 +10,8 @@
 -- and the nightly legacy export at 4am reads what the commit made (Peter,
 -- 2026-10-01).
 
--- Which taxa have castes. Sex is recorded as queen, worker or male for a
--- social bee and as female or male for everything else, and the tree cannot
+-- Which taxa have castes. A social bee's caste is recorded as gyne,
+-- worker or drone, and everything else's sex as female or male, and the tree cannot
 -- say which is which: every Bombus species hangs straight off the genus, so
 -- the cuckoo bumble bees (subgenus Psithyrus, no workers) are not visible as
 -- a group, and the expert records cannot settle it either — the dev store
@@ -27,7 +27,7 @@ CREATE TABLE animal_caste (
   has_castes      BOOLEAN NOT NULL,
   PRIMARY KEY (rank, scientific_name)
 );
-COMMENT ON TABLE animal_caste IS 'Reference data: which taxa record sex as queen/worker/male rather than female/male. The nearest stated ancestor-or-self of a node decides (animal_castes); a node with none stated has no castes.';
+COMMENT ON TABLE animal_caste IS 'Reference data: which taxa record a caste (gyne, worker or drone) beside the sex. The nearest stated ancestor-or-self of a node decides (animal_castes); a node with none stated has no castes.';
 
 INSERT INTO animal_caste (rank, scientific_name, has_castes) VALUES
   ('genus',   'Bombus',            true),

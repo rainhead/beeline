@@ -390,7 +390,45 @@ describe("a joint row whose name columns are a list", () => {
                    'OBAS-00662' AS "sampleId", 'Bea Trapper | Eve Anderson' AS "recordedBy",
                    'Bea/ Eve' AS "firstName", 'Trapper&Anderson' AS "lastName")
                  FROM legacy_occurrence WHERE "fieldNumber" = '25000005'`);
+    // Sex and caste as the old system let people write them (beeline-ni5m.5):
+    // a volunteer's 'worker' in the sex column and a 'drone' beside 'male',
+    // on the trap row's volunteer determination; an expert's 'F' and 'Queen',
+    // and a word the vocabulary has no place for, on a row with an expert one.
+    await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('castes-vol' AS _id, '25000015' AS "fieldNumber",
+                   'OBAS-00663' AS "sampleId", 'worker' AS "sexVolDet", '' AS "casteVolDet")
+                 FROM legacy_occurrence WHERE "fieldNumber" = '25000005'`);
+    await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('castes-drone' AS _id, '25000016' AS "fieldNumber",
+                   'OBAS-00664' AS "sampleId", 'male' AS "sexVolDet", 'drone' AS "casteVolDet")
+                 FROM legacy_occurrence WHERE "fieldNumber" = '25000005'`);
+    await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('castes-expert' AS _id, '25000017' AS "fieldNumber",
+                   '17' AS "sampleId", 'F' AS "sex", 'Queen' AS "caste")
+                 FROM legacy_occurrence WHERE "identifiedBy" = 'Lincoln Best' LIMIT 1`);
+    await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('castes-junk' AS _id, '25000018' AS "fieldNumber",
+                   '18' AS "sampleId", 'unknown' AS "sex", '' AS "caste")
+                 FROM legacy_occurrence WHERE "identifiedBy" = 'Lincoln Best' LIMIT 1`);
+    // A caste the sex column supplies beside a caste column the mapping
+    // cannot read: the determination takes the worker, and the survey still
+    // reports the word it dropped.
+    await c.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('castes-soldier' AS _id, '25000019' AS "fieldNumber",
+                   'OBAS-00665' AS "sampleId", 'worker' AS "sexVolDet", 'soldier' AS "casteVolDet")
+                 FROM legacy_occurrence WHERE "fieldNumber" = '25000005'`);
     await promoteLegacy(c, FIXTURE_INPUTS);
+  });
+
+  test("maps sex and caste onto the model's vocabulary, the caste deciding the sex, and surveys what it dropped", async () => {
+    const det = (fieldNumber: string, expert: boolean) =>
+      rows(c, `SELECT d.sex, d.caste FROM determination d JOIN specimen sp ON sp.entity_id = d.specimen_id
+               WHERE sp.field_number = '${fieldNumber}' AND d.is_expert = ${expert}`);
+    expect(await det("25000015", false)).toEqual([["female", "worker"]]); // the caste, written in the sex column
+    expect(await det("25000016", false)).toEqual([["male", "drone"]]);
+    expect(await det("25000017", true)).toEqual([["female", "gyne"]]); // 'F' and 'Queen'
+    expect(await det("25000018", true)).toEqual([[null, null]]); // 'unknown' is nothing the model can say
+    expect(await det("25000019", false)).toEqual([["female", "worker"]]);
+    expect(await rows(c, `SELECT determination, sex_raw, caste_raw, sex, caste, dropped, records
+                          FROM legacy_sex_caste_survey WHERE dropped ORDER BY 1`)).toEqual([
+      ["expert", "unknown", "", null, null, true, 1n],
+      ["volunteer", "worker", "soldier", "female", "worker", true, 1n],
+    ]);
   });
 
   test("parts a name that appears in no solo row by its position in the columns", async () => {

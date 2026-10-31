@@ -52,6 +52,78 @@ const record = (specimenId: number) =>
        FROM determination_of_record r JOIN animal an ON an.entity_id = r.animal_id LEFT JOIN person p ON p.entity_id = r.determiner_id
        WHERE r.specimen_id = ${specimenId}`);
 
+describe("sex and reproductive condition", () => {
+  test("the occurrence's sex and caste land on its current identification, in the model's words", async () => {
+    // Symbiota keeps the caste in dwc:reproductiveCondition, in mixed case
+    // (worker, Gyne, drone on the BC Bee Atlas's dataset); it is the current
+    // identification's, and a superseded one states neither (beeline-ni5m.5).
+    const dir = await mkdtemp(join(tmpdir(), "ecdysis-castes-"));
+    await writeFile(
+      join(dir, "occurrences.csv"),
+      "id,catalogNumber,recordID,scientificName,identificationQualifier,identifiedBy,dateIdentified,identificationRemarks,modified,sex,reproductiveCondition\n" +
+        "100,WSDA_2303966,occ-a,Bombus vosnesenskii,,Ellen Expert,2025,,2025-09-23 14:13:48,Female,Gyne\n" +
+        "101,WSDA_2303967,occ-b,Andrena sladeni,,Ellen Expert,2025,,2025-09-23 14:13:48,Male,\n" +
+        "102,WSDA_2303968,occ-c,Lasioglossum cooleyi,,Ellen Expert,2025,,2025-09-23 14:13:48,,worker\n" +
+        "103,WSDA_2303969,occ-d,Ceratina acantha,,Ellen Expert,2025,,2025-09-23 14:13:48,Unknown,\n",
+    );
+    await writeFile(
+      join(dir, "identifications.csv"),
+      "coreid,identifiedBy,dateIdentified,identificationQualifier,scientificName,identificationIsCurrent,identificationRemarks,recordID,modified\n" +
+        "100,Ellen Expert,2025,,Bombus vosnesenskii,1,,id-a,2025-09-23 14:13:48\n" +
+        "100,Ellen Expert,2024,,Bombus,0,,id-a-old,2024-09-23 14:13:48\n" +
+        "101,Ellen Expert,2025,,Andrena sladeni,1,,id-b,2025-09-23 14:13:48\n" +
+        "102,Ellen Expert,2025,,Lasioglossum cooleyi,1,,id-c,2025-09-23 14:13:48\n" +
+        "103,Ellen Expert,2025,,Ceratina acantha,1,,id-d,2025-09-23 14:13:48\n",
+    );
+    await loadEcdysis(conn, { path: dir, catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    const landed = () =>
+      rows(conn, `SELECT d.specimen_id, an.scientific_name, d.sex, d.caste FROM determination d JOIN animal an ON an.entity_id = d.animal_id
+                  WHERE d.channel = 'ecdysis_import' ORDER BY d.specimen_id, d.recorded_at`);
+    expect(await landed()).toEqual([
+      [a, "Bombus", null, null], // the superseded identification states neither
+      [a, "Bombus vosnesenskii", "female", "gyne"],
+      [b, "Andrena sladeni", "male", null],
+      [c, "Lasioglossum cooleyi", "female", "worker"], // the caste decides the sex
+      [d, "Ceratina acantha", null, null], // 'Unknown' is nothing the model can say
+    ]);
+  });
+
+  test("an identification already recorded is filled from a later export, and a value it states is kept", async () => {
+    // Every identification on the sandbox was recorded before the loader
+    // read sex, so the first export after it is the first chance to fill
+    // them; a re-load records no new event for an identification it holds
+    // (CodeRabbit on this branch). A later export changing a stated value
+    // does not move it: a determination is an append-only event.
+    const write = async (sexes: { a: [string, string]; b: [string, string] }) => {
+      const dir = await mkdtemp(join(tmpdir(), "ecdysis-fill-"));
+      await writeFile(
+        join(dir, "occurrences.csv"),
+        "id,catalogNumber,recordID,scientificName,identificationQualifier,identifiedBy,dateIdentified,identificationRemarks,modified,sex,reproductiveCondition\n" +
+          `100,WSDA_2303966,occ-a,Bombus vosnesenskii,,Ellen Expert,2025,,2025-09-23 14:13:48,${sexes.a.join(",")}\n` +
+          `101,WSDA_2303967,occ-b,Andrena sladeni,,Ellen Expert,2025,,2025-09-23 14:13:48,${sexes.b.join(",")}\n`,
+      );
+      await writeFile(
+        join(dir, "identifications.csv"),
+        "coreid,identifiedBy,dateIdentified,identificationQualifier,scientificName,identificationIsCurrent,identificationRemarks,recordID,modified\n" +
+          "100,Ellen Expert,2025,,Bombus vosnesenskii,1,,id-a,2025-09-23 14:13:48\n" +
+          "101,Ellen Expert,2025,,Andrena sladeni,1,,id-b,2025-09-23 14:13:48\n",
+      );
+      return dir;
+    };
+    const sexes = () => rows(conn, `SELECT specimen_id, sex, caste FROM determination WHERE channel = 'ecdysis_import' ORDER BY specimen_id`);
+    await loadEcdysis(conn, { path: await write({ a: ["", ""], b: ["Male", ""] }), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(await sexes()).toEqual([[a, null, null], [b, "male", null]]);
+    // A stated sex is kept against a later Female; a caste that would
+    // contradict it (a male worker) is not taken either.
+    await loadEcdysis(conn, { path: await write({ a: ["Female", "worker"], b: ["Female", "worker"] }), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(await sexes()).toEqual([[a, "female", "worker"], [b, "male", null]]);
+    // A caste that agrees with the stated sex fills in beside it.
+    await loadEcdysis(conn, { path: await write({ a: ["Female", "worker"], b: ["Male", "drone"] }), catalogPrefix: "WSDA_", determinerAliases: ALIASES });
+    expect(await sexes()).toEqual([[a, "female", "worker"], [b, "male", "drone"]]);
+    expect(await rows(conn, `SELECT count(*) FROM determination WHERE channel = 'ecdysis_import'`)).toEqual([[2n]]);
+  });
+});
+
 describe("an unpacked Darwin Core archive", () => {
   test("records the museum's catalog number of every specimen it matches, as Ecdysis writes it", async () => {
     // A catalog number is the museum's, so Beeline keeps Ecdysis's word for

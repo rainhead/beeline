@@ -166,7 +166,12 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       `CREATE OR REPLACE TEMP TABLE ecd_occurrence AS
        SELECT "id" AS occ_id, trim("catalogNumber") AS catalog_number, "recordID" AS occurrence_record_id,
               ${await occurrenceColumn("family")} AS family, ${await occurrenceColumn("order")} AS order_name,
-              ${await occurrenceColumn("class")} AS class_name
+              ${await occurrenceColumn("class")} AS class_name,
+              -- Sex, and the caste, which Symbiota keeps in Darwin Core's
+              -- reproductiveCondition: worker, Gyne, drone in mixed case
+              -- (beeline-ni5m.5). Both belong to the current identification.
+              ${await occurrenceColumn("sex")} AS sex_text,
+              ${await occurrenceColumn("reproductiveCondition")} AS caste_text
        FROM read_csv(${sqlString(files.occurrences)}, header = true, all_varchar = true)`,
     );
     // An occurrence row read as its current identification, keyed by the
@@ -357,6 +362,19 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
        WITH ident AS (
          SELECT i.*, m.specimen_id, o.occurrence_record_id,
                 o.family AS occ_family, o.order_name AS occ_order, o.class_name AS occ_class,
+                -- The occurrence's sex and caste are its current
+                -- identification's; a superseded one states neither. Mapped
+                -- onto the model's vocabulary (schema/040): the caste decides
+                -- the sex, and a word outside it is dropped.
+                CASE WHEN i.is_current THEN
+                  CASE lower(coalesce(o.caste_text, ''))
+                    WHEN 'queen' THEN 'gyne' WHEN 'gyne' THEN 'gyne' WHEN 'worker' THEN 'worker' WHEN 'drone' THEN 'drone' END
+                END AS caste,
+                CASE WHEN i.is_current THEN
+                  CASE lower(coalesce(o.caste_text, ''))
+                    WHEN 'queen' THEN 'female' WHEN 'gyne' THEN 'female' WHEN 'worker' THEN 'female' WHEN 'drone' THEN 'male'
+                    ELSE CASE lower(coalesce(o.sex_text, '')) WHEN 'female' THEN 'female' WHEN 'male' THEN 'male' END END
+                END AS sex,
                 lower(i.scientific_name) IN ('', 'undetermined', 'unidentified') AS placeholder,
                 nullif(lower(i.identified_by), 'unknown') AS by_text,
                 regexp_extract(i.qualifier_text, '^(cf|aff|af|nr)\\.?\\s+(\\S+)$', 1) AS q_word,
@@ -521,6 +539,27 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
        QUALIFY row_number() OVER (PARTITION BY c.record_id ORDER BY c.record_id) = 1`,
       [now.toISOString()],
     );
+    // An identification already recorded — by its recordID, or adopted
+    // above — states no sex or caste until an export carries them, which the
+    // first load after beeline-ni5m.5 is the first to do for every one on the
+    // store. Each field is filled where the event has none; a value the
+    // event already states is left, since a determination is an append-only
+    // event and Ecdysis changing one is rare, and a fill that would make the
+    // pair contradict itself (a stated male, an exported worker) is left too,
+    // as the CHECK would refuse it (CodeRabbit on this branch).
+    await conn.run(
+      `UPDATE determination SET sex = coalesce(determination.sex, c.sex), caste = coalesce(determination.caste, c.caste)
+       FROM (SELECT coalesce(c.adopt_id, e.determination_id) AS determination_id, c.sex, c.caste
+             FROM ecd_candidate c
+             LEFT JOIN ecdysis_identification e ON e.record_id = c.record_id
+             WHERE NOT c.placeholder AND c.is_current AND (c.sex IS NOT NULL OR c.caste IS NOT NULL)
+               AND coalesce(c.adopt_id, e.determination_id) IS NOT NULL
+             QUALIFY row_number() OVER (PARTITION BY coalesce(c.adopt_id, e.determination_id) ORDER BY c.record_id) = 1) c
+       WHERE determination.entity_id = c.determination_id
+         AND (determination.sex IS NULL OR determination.caste IS NULL)
+         AND coalesce(coalesce(determination.caste, c.caste) IS NULL
+                      OR (coalesce(determination.caste, c.caste) = 'drone') = (coalesce(determination.sex, c.sex) = 'male'), true)`,
+    );
     // The rows this load inserts are the ones above the sequence's current
     // high-water mark, which is how the provenance rows below find them:
     // recorded_at is not an identity, since a later load can give another
@@ -530,7 +569,7 @@ export async function loadEcdysis(conn: DuckDBConnection, opts: LoadEcdysisOptio
       `INSERT INTO determination (specimen_id, animal_id, qualifier, verbatim_identification, sex, caste,
                                   determiner_id, determiner_name, is_expert, channel, determined_on, determined_on_precision,
                                   recorded_at, notes)
-       SELECT specimen_id, animal_id, qualifier, scientific_name, NULL, NULL,
+       SELECT specimen_id, animal_id, qualifier, scientific_name, sex, caste,
               determiner_id, CASE WHEN by_text IS NULL OR by_text = '' THEN NULL ELSE identified_by END,
               true, 'ecdysis_import', determined_on, precision, recorded_at, notes
        FROM ecd_insert`,

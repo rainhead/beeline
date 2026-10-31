@@ -1321,7 +1321,7 @@ export const en = {
       fieldNumber: "Field number",
       sample: "Sample",
       name: "Identified as",
-      sex: "Sex",
+      sex: "Caste",
       saved: "Entered",
       sampleHeading: (sampleNumber: string, when: string) => `Sample ${sampleNumber} · ${when}`,
       onHost: "on",
@@ -1344,14 +1344,16 @@ export const en = {
       failed: "Not saved",
       retry: "Try again",
     },
+    /** The column is "Caste" and a queen is a gyne, the museum databases' words (Peter, 2026-10-31). */
     sex: {
-      label: "Sex",
+      label: "Caste",
       female: "Female",
       male: "Male",
-      queen: "Queen",
+      queen: "Gyne",
       worker: "Worker",
-      /** Why some rows offer queen and worker. */
-      castesHint: "Bumble bees and honey bees: queen, worker or male",
+      drone: "Drone",
+      /** Why some rows offer gyne and worker. */
+      castesHint: "Bumble bees and honey bees: gyne, worker or drone",
     },
     picker: {
       placeholder: "Type a name — bombus, osmia lig…",

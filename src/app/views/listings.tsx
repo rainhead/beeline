@@ -21,11 +21,15 @@ import {
   type SpecimenRow,
 } from "../listings.js";
 import { sampleHref, specimenHref } from "../record.js";
+import { ChevronDownIcon } from "./icons.js";
 import type { Messages } from "../messages/index.js";
 import {
   Absent,
+  Button,
+  Callout,
   Chip,
   DataTable,
+  LinkButton,
   EmptyState,
   Field,
   FilterPills,
@@ -131,15 +135,16 @@ function ScopeNote({ m, query, admin }: { m: Messages; query: ListingQuery; admi
 }
 
 /**
- * Every filter cleared, scope and sort left alone: clearing is not signing
- * out of an atlas, and not un-sorting.
+ * Every filter cleared, scope, sort and any bulk action left alone: clearing
+ * is not signing out of an atlas, not un-sorting, and not abandoning the
+ * specimens being ticked for an action.
  *
  * Typed as the whole query minus the parts Clear deliberately keeps, so a
  * filter added to ListingQuery and forgotten here fails to compile. It was
  * spread into a Partial before, which let `member` be missing silently — and
  * a Clear link that clears everything but one box is worse than none.
  */
-const emptyFilters: Omit<ListingQuery, "scope" | "page" | "sort" | "dir"> = {
+const emptyFilters: Omit<ListingQuery, "scope" | "page" | "sort" | "dir" | "act"> = {
   q: "",
   from: null,
   to: null,
@@ -321,10 +326,56 @@ function ResultsHeader({
     <div class="results-header">
       <p class="row baseline">
         <span class="results-count">{count(total)}</span>
-        {total > 0 && <a href={listingHref(`${path}.csv`, query, { page: 1 })}>{m.listings.csv.download}</a>}
       </p>
-      <Meta block>{m.listings.csv.note}</Meta>
     </div>
+  );
+}
+
+/**
+ * What can be done with the listing's rows, immediately above the table
+ * they act on (Peter, 2026-10-31): Download for everyone, and on the
+ * specimens listing the bulk actions staff choose first (beeline-1kb.23).
+ */
+function ListingActions({
+  m,
+  path,
+  query,
+  total,
+  children,
+}: {
+  m: Messages;
+  path: string;
+  query: ListingQuery;
+  total: number;
+  children?: Child;
+}) {
+  return (
+    <div class="row listing-actions">
+      {total > 0 && <DownloadMenu m={m} path={path} query={query} />}
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Download, as a menu of the forms the rows can be had in — the CSV today,
+ * and room for others (a KML has been mentioned) — with what a download
+ * holds said inside it rather than as a paragraph above every table. The
+ * header's <details class="menu">, so the menus island closes it on a click
+ * elsewhere or Escape, and it works without scripting.
+ */
+function DownloadMenu({ m, path, query }: { m: Messages; path: string; query: ListingQuery }) {
+  const d = m.listings.csv;
+  return (
+    <details class="menu download-menu">
+      <summary class="button tonal">
+        {d.menu} <ChevronDownIcon />
+      </summary>
+      <div class="menu-panel">
+        <a href={listingHref(`${path}.csv`, query, { page: 1 })}>{d.download}</a>
+        <p class="meta download-note">{d.note}</p>
+      </div>
+    </details>
   );
 }
 
@@ -526,6 +577,7 @@ export function SampleListing(props: ListingProps<SampleRow>) {
     <>
       <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
       <Toolbar copy={copy} path={path} props={props} />
+      <ListingActions m={m} path={path} query={query} total={page.total} />
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
       ) : (
@@ -655,22 +707,127 @@ export function SampleListing(props: ListingProps<SampleRow>) {
   );
 }
 
-export function SpecimenListing(props: ListingProps<SpecimenRow>) {
-  const { m, query, page, atlases } = props;
+/** The form the specimens listing's tick boxes belong to (beeline-1kb.23). */
+const BULK_FORM = "reprint-bulk";
+
+/**
+ * What a reader can do to many rows at once, offered before any row is
+ * ticked (beeline-1kb.23, Peter 2026-10-31: bulk actions are chosen first).
+ * Each is a button naming the action; pressing it puts the listing in that
+ * action's mode, in the URL. Only staff have one so far: marking labels for
+ * reprint. A volunteer's counterpart is a ticket (beeline-l7ui) and will
+ * join this row when tickets exist.
+ */
+function BulkActions({ m, path, query }: { m: Messages; path: string; query: ListingQuery }) {
+  const b = m.listings.specimens.bulk;
+  return (
+    <LinkButton href={listingHref(path, query, { act: "reprint" })} variant="tonal">
+      {b.start}
+    </LinkButton>
+  );
+}
+
+/**
+ * The reprint action's mode, above the table: what it is for, and the way
+ * out. Leaving keeps the ticks for this tab, so coming back resumes; the bar
+ * below has Untick all.
+ */
+function BulkModeNote({ m, path, query }: { m: Messages; path: string; query: ListingQuery }) {
+  const b = m.listings.specimens.bulk;
+  return (
+    <Callout>
+      <strong>{b.modeHeading}</strong> {b.modeIntro}{" "}
+      <a href={listingHref(path, query, { act: "" })}>{b.leave}</a>
+    </Callout>
+  );
+}
+
+/**
+ * Marking the ticked specimens for reprint: the bar under the table, held at
+ * the foot of the window, which the tick boxes in the rows belong to by their
+ * `form` attribute. Shown for as long as the mode is on, so what ticking is
+ * for is said before anything is ticked. Without scripting it marks what is
+ * ticked on this page; the bulk-select island keeps ticks across pages and
+ * filters, counts them, and holds the button until something is ticked.
+ */
+function BulkReprint({ m, back, owner }: { m: Messages; back: string; owner: string }) {
+  const b = m.listings.specimens.bulk;
+  const reasons = m.printRuns.reprintReason;
+  return (
+    <form
+      id={BULK_FORM}
+      method="post"
+      action="/specimens/reprint"
+      class="card bulk-bar"
+      data-bulk="reprint"
+      data-bulk-owner={owner}
+      data-count-none={b.countNone}
+      data-count-one={b.countOne}
+      data-count-other={b.countOther}
+    >
+      <input type="hidden" name="back" value={back} />
+      {/* One row, so the bar covers as few of the rows being ticked as it can. */}
+      <div class="bulk-fields">
+        <strong data-bulk-count=""></strong>
+        <SelectField
+          id="bulk-reason"
+          name="reason"
+          label={m.record.specimen.reprint.reason}
+          value=""
+          options={[["", m.record.specimen.reprint.noReason], ...Object.entries(reasons).map(([k, v]) => [k, v] as const)]}
+        />
+        <TextField id="bulk-note" name="note" label={m.record.specimen.reprint.note} />
+        <Button>{b.button}</Button>
+        <button type="button" class="outlined" data-bulk-clear="" hidden>
+          {b.clear}
+        </button>
+      </div>
+      <Meta block>{b.hint}</Meta>
+    </form>
+  );
+}
+
+export function SpecimenListing(
+  props: ListingProps<SpecimenRow> & {
+    /** What the last bulk marking did, read back off its redirect. */
+    reprinted?: { requested: number; of: number } | null;
+    /** Who is signed in, which keys the island's stored ticks: a tab outlives a sign-out. */
+    bulkOwner?: string;
+  },
+) {
+  const { m, query, page, atlases, admin, reprinted = null, bulkOwner = "" } = props;
   const copy = m.listings.specimens;
   const f = m.listings.filters;
   const path = "/specimens";
   const col = { m, path, query };
+  // The reprint action's mode (query.act, cleared by the route for anyone
+  // but staff): a tick column, whose heading box ticks every row on the page
+  // that can be marked and is drawn hidden for the island to reveal.
+  const marking = query.act === "reprint";
+  const tickColumn = (
+    <input type="checkbox" data-bulk-page="" aria-label={copy.bulk.tickPage} hidden />
+  );
   return (
     <>
       <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
+      {reprinted !== null && <Callout tone="success">{copy.bulk.done(reprinted.requested, reprinted.of)}</Callout>}
       <Toolbar copy={copy} path={path} props={props} />
+      {/* Immediately above the table, since they act on its rows (Peter,
+          2026-10-31). While an action is chosen its note takes the row's place. */}
+      {marking ? (
+        <BulkModeNote m={m} path={path} query={query} />
+      ) : (
+        <ListingActions m={m} path={path} query={query} total={page.total}>
+          {admin && <BulkActions m={m} path={path} query={query} />}
+        </ListingActions>
+      )}
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
       ) : (
         <>
           <DataTable
             columns={[
+              ...(marking ? [tickColumn] : []),
               column({ ...col, label: copy.colFieldNumber, sort: "field", kind: "number" }),
               column({ ...col, label: copy.colSample, sort: "number", kind: "number" }),
               dateColumn({ ...col, label: copy.colDate }),
@@ -701,6 +858,24 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
           >
             {page.rows.map((row) => (
               <tr>
+                {marking && (
+                  <td>
+                    {/* A row the action cannot take says why, instead of a
+                        box that would only be refused after pressing. */}
+                    {row.reprint_blocker === null ? (
+                      <input
+                        type="checkbox"
+                        name="specimen"
+                        value={String(row.specimen_id)}
+                        form={BULK_FORM}
+                        data-bulk-row=""
+                        aria-label={copy.bulk.tickOne(row.field_number ?? String(row.specimen_number))}
+                      />
+                    ) : (
+                      <Meta>{copy.bulk.blocker[row.reprint_blocker]}</Meta>
+                    )}
+                  </td>
+                )}
                 <td>
                   <Pill href={specimenHref(row.specimen_id)} mono={row.field_number !== null}>
                     {row.field_number !== null
@@ -709,6 +884,8 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
                         ? copy.awaitingNumber
                         : copy.noFieldNumber}
                   </Pill>
+                  {/* While marking, the tick column already says so. */}
+                  {row.reprint_requested && !marking && <Meta block>{copy.reprintRequested}</Meta>}
                 </td>
                 <td>
                   <Pill href={sampleHref(row.sample_id)}>{row.sample_number}</Pill>
@@ -766,6 +943,9 @@ export function SpecimenListing(props: ListingProps<SpecimenRow>) {
           <ListingPager m={m} path={path} query={query} total={page.total} />
         </>
       )}
+      {/* Drawn on an empty listing too: ticks kept from other pages can
+          still be marked or cleared from a filter that matches nothing. */}
+      {marking && <BulkReprint m={m} back={listingHref(path, query)} owner={bulkOwner} />}
     </>
   );
 }

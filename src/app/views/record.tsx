@@ -938,13 +938,11 @@ function SpecimenReprintBlock({
   m,
   specimenId,
   reprint,
-  numbered,
   admin,
 }: {
   m: Messages;
   specimenId: number;
   reprint: SpecimenReprint;
-  numbered: boolean;
   admin: boolean;
 }) {
   const t = m.record.specimen.reprint;
@@ -969,7 +967,7 @@ function SpecimenReprintBlock({
             </form>
           )}
         </>
-      ) : reprint.canRequest ? (
+      ) : reprint.blocker === null ? (
         <form method="post" action={action} class="form-column">
           <Meta block>{t.hint}</Meta>
           <ReprintReasonField m={m} id="reprint-reason" />
@@ -979,7 +977,7 @@ function SpecimenReprintBlock({
           </p>
         </form>
       ) : (
-        <Meta block>{numbered ? t.cannotPrinting : t.cannotUnnumbered}</Meta>
+        <Meta block>{reprint.blocker === "unnumbered" ? t.cannotUnnumbered : t.cannotPrinting}</Meta>
       )}
     </>
   );
@@ -1094,7 +1092,7 @@ export function SpecimenPage({
   findings,
   waivers = [],
   labels,
-  reprint = { pending: null, canRequest: false },
+  reprint,
   admin,
 }: {
   m: Messages;
@@ -1105,7 +1103,7 @@ export function SpecimenPage({
   waivers?: readonly RecordWaiver[];
   labels: readonly SpecimenLabelRow[];
   /** A reprint waiting, and whether staff may ask for one (gh-218). */
-  reprint?: SpecimenReprint;
+  reprint: SpecimenReprint;
   admin: boolean;
 }) {
   const sample = specimen.sample;
@@ -1157,7 +1155,6 @@ export function SpecimenPage({
           m={m}
           specimenId={specimen.specimen_id}
           reprint={reprint}
-          numbered={specimen.field_number !== null}
           admin={admin}
         />
       </Card>

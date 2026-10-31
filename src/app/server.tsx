@@ -790,10 +790,12 @@ export function createApp({
     const { personId } = c.get("acting");
     const admin = c.get("admin");
     const atlases = await atlasOptions(db);
-    const query = parseListingQuery(new URL(c.req.url).searchParams, {
+    const parsed = parseListingQuery(new URL(c.req.url).searchParams, {
       atlasCodes: atlases.map((a) => a.code),
       preferred: getCookie(c, SCOPE_COOKIE),
     });
+    // Every bulk action so far is staff's (beeline-1kb.23).
+    const query = admin ? parsed : { ...parsed, act: "" as const };
     // Remember an explicit choice only — a bare /samples keeps the cookie.
     if (c.req.query("scope") !== undefined) {
       setCookie(c, SCOPE_COOKIE, query.scope, { path: "/", sameSite: "Lax", httpOnly: true });
@@ -855,6 +857,14 @@ export function createApp({
     return csv(c, body, "beeline-samples");
   });
 
+  /** What the last bulk reprint marked, read back off the redirect (beeline-1kb.23). */
+  const reprintedOutcome = (c: Context<AppEnv>) => {
+    const requested = Number(c.req.query("reprinted"));
+    const of = Number(c.req.query("of"));
+    return Number.isSafeInteger(requested) && Number.isSafeInteger(of) && requested > 0 && of >= requested
+      ? { requested, of }
+      : null;
+  };
   app.get("/specimens", async (c) => {
     const m = c.get("m");
     const { personId, admin, reader, atlases, query, homeAtlas } = await listingRequest(c);
@@ -864,7 +874,16 @@ export function createApp({
       await page(
         c,
         m.listings.specimens.title,
-        <SpecimenListing m={m} query={query} page={results} atlases={atlases} admin={admin} homeAtlas={homeAtlas} />,
+        <SpecimenListing
+          m={m}
+          query={query}
+          page={results}
+          atlases={atlases}
+          admin={admin}
+          homeAtlas={homeAtlas}
+          reprinted={admin ? reprintedOutcome(c) : null}
+          bulkOwner={c.get("session").login}
+        />,
       ),
     );
   });
@@ -1699,6 +1718,28 @@ export function createApp({
     if (id === null) return errorResponse(c, "notFound");
     return reprintWrite(c, { sampleId: id }, `/samples/${id}`);
   });
+  // The specimens ticked on the listing (beeline-1kb.23), back to the same
+  // listing with what was marked. `back` is the listing the form was drawn
+  // on; anything that is not a path under /specimens goes to the listing
+  // itself, so the field cannot send anyone elsewhere.
+  app.post("/specimens/reprint", (c) =>
+    printWrite(c, async (personId, note) => {
+      const form = await c.req.formData();
+      const backRaw = String(form.get("back") ?? "");
+      const back = new URL(/^\/specimens(\?|$)/.test(backRaw) ? backRaw : "/specimens", "http://listing");
+      const ids = [...new Set(form.getAll("specimen").map((v) => Number(v)))];
+      // Nothing ticked, or not a list of ids: back to the listing, unchanged.
+      if (ids.length === 0 || ids.length > 10_000 || !ids.every((id) => Number.isSafeInteger(id) && id > 0)) {
+        return `${back.pathname}${back.search}`;
+      }
+      const raw = String(form.get("reason") ?? "");
+      const reason = REPRINT_REASONS.has(raw) ? (raw as ReprintReason) : null;
+      const { requested, of } = await requestReprint(printWriter!, { specimenIds: ids }, { personId, reason, note });
+      back.searchParams.set("reprinted", String(requested));
+      back.searchParams.set("of", String(of));
+      return `${back.pathname}${back.search}`;
+    }),
+  );
 
   // --- People: the roster, its binding evidence, and the staff decisions
   // that change any of it. Admin-gated like /jobs. Every write goes to the

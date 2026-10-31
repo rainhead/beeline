@@ -671,10 +671,11 @@ export const cancelRun = (conn: DuckDBConnection, id: number, opts: TransitionOp
   });
 
 /**
- * What a reprint request names (gh-218): one specimen, from its page, or
- * every specimen of a sample, from the sample's page.
+ * What a reprint request names (gh-218): one specimen, from its page; every
+ * specimen of a sample, from the sample's page; or the specimens ticked on
+ * the specimens listing (beeline-1kb.23).
  */
-export type ReprintTarget = { specimenId: number } | { sampleId: number };
+export type ReprintTarget = { specimenId: number } | { sampleId: number } | { specimenIds: readonly number[] };
 
 export interface ReprintOptions {
   personId: number;
@@ -684,8 +685,41 @@ export interface ReprintOptions {
   now?: Date;
 }
 
-const targetWhere = (target: ReprintTarget) =>
-  "specimenId" in target ? { sql: "sp.entity_id = $1", id: target.specimenId } : { sql: "sp.sample_id = $1", id: target.sampleId };
+/**
+ * The target as a predicate on `sp` and its one parameter. A list travels as
+ * one comma-joined string of integers, so every target binds exactly $1 and
+ * nothing a caller sends is ever spliced into the SQL.
+ */
+function targetWhere(target: ReprintTarget): { sql: string; id: number | string } {
+  if ("specimenId" in target) return { sql: "sp.entity_id = $1", id: target.specimenId };
+  if ("sampleId" in target) return { sql: "sp.sample_id = $1", id: target.sampleId };
+  if (!target.specimenIds.every((id) => Number.isSafeInteger(id) && id > 0)) {
+    throw new Error("specimen ids must be positive integers");
+  }
+  return {
+    sql: "CAST(sp.entity_id AS TEXT) IN (SELECT unnest(string_split($1, ',')))",
+    id: target.specimenIds.join(","),
+  };
+}
+
+/** Why a specimen's label cannot be marked for reprint now (REPRINT_BLOCKER). */
+export type ReprintBlocker = "unnumbered" | "asked" | "printing";
+
+/**
+ * Why the specimen `sp` cannot be marked for reprint now, or NULL when it
+ * can: it has no number to print, a reprint is already waiting, or a run
+ * that has not printed yet holds a label for it. The one statement of the
+ * rule, read by the writer below and by every page that offers the action
+ * (the specimen and sample pages, the specimens listing), so a form is
+ * offered exactly where pressing it would work. The first that applies
+ * wins, so each specimen has one reason.
+ */
+export const REPRINT_BLOCKER = `CASE
+  WHEN sp.field_number IS NULL THEN 'unnumbered'
+  WHEN EXISTS (SELECT 1 FROM pending_reprint p WHERE p.specimen_id = sp.entity_id) THEN 'asked'
+  WHEN EXISTS (SELECT 1 FROM printed_label pl JOIN print_run r ON r.entity_id = pl.print_run_id
+               WHERE pl.specimen_id = sp.entity_id AND r.canceled_at IS NULL AND r.printed_at IS NULL) THEN 'printing'
+END`;
 
 /**
  * Ask for labels to be printed again. A specimen can be asked for when it has
@@ -703,17 +737,11 @@ export const requestReprint = (conn: DuckDBConnection, target: ReprintTarget, op
     const [counts] = await rows<{ total: bigint; unnumbered: bigint; asked: bigint; printing: bigint; can: bigint }>(
       conn,
       `SELECT count(*) AS total,
-              count(*) FILTER (WHERE NOT numbered) AS unnumbered,
-              count(*) FILTER (WHERE numbered AND asked) AS asked,
-              count(*) FILTER (WHERE numbered AND NOT asked AND printing) AS printing,
-              count(*) FILTER (WHERE numbered AND NOT asked AND NOT printing) AS can
-       FROM (
-         SELECT sp.field_number IS NOT NULL AS numbered,
-                EXISTS (SELECT 1 FROM pending_reprint p WHERE p.specimen_id = sp.entity_id) AS asked,
-                EXISTS (SELECT 1 FROM printed_label pl JOIN print_run r ON r.entity_id = pl.print_run_id
-                        WHERE pl.specimen_id = sp.entity_id AND r.canceled_at IS NULL AND r.printed_at IS NULL) AS printing
-         FROM specimen sp WHERE ${where.sql}
-       ) t`,
+              count(*) FILTER (WHERE blocker = 'unnumbered') AS unnumbered,
+              count(*) FILTER (WHERE blocker = 'asked') AS asked,
+              count(*) FILTER (WHERE blocker = 'printing') AS printing,
+              count(*) FILTER (WHERE blocker IS NULL) AS can
+       FROM (SELECT ${REPRINT_BLOCKER} AS blocker FROM specimen sp WHERE ${where.sql}) t`,
       [where.id],
     );
     const can = Number(counts?.can ?? 0);
@@ -730,14 +758,10 @@ export const requestReprint = (conn: DuckDBConnection, target: ReprintTarget, op
       `INSERT INTO reprint_request (specimen_id, requested_by, requested_at, reason, note)
        SELECT sp.entity_id, $2, CAST($3 AS TIMESTAMPTZ), $4, $5
        FROM specimen sp
-       WHERE ${where.sql}
-         AND sp.field_number IS NOT NULL
-         AND NOT EXISTS (SELECT 1 FROM pending_reprint p WHERE p.specimen_id = sp.entity_id)
-         AND NOT EXISTS (SELECT 1 FROM printed_label pl JOIN print_run r ON r.entity_id = pl.print_run_id
-                         WHERE pl.specimen_id = sp.entity_id AND r.canceled_at IS NULL AND r.printed_at IS NULL)`,
+       WHERE ${where.sql} AND (${REPRINT_BLOCKER}) IS NULL`,
       [where.id, opts.personId, (opts.now ?? new Date()).toISOString(), opts.reason ?? null, opts.note ?? null],
     );
-    return { requested: can };
+    return { requested: can, of: Number(counts?.total ?? 0) };
   });
 
 /**

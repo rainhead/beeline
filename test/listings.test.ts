@@ -726,7 +726,16 @@ describe("the toolbar", () => {
       const body = await get(app, path);
       const menus = body.match(/<details class="menu col-menu">/g) ?? [];
       expect(menus.length, path).toBeGreaterThan(5);
-      expect(body.match(new RegExp(CHEVRON.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")), path).toHaveLength(menus.length);
+      // The Download menu above the table wears the same mark (Peter, 2026-10-31).
+      const download = body.match(/<details class="menu download-menu">/g) ?? [];
+      expect(download, path).toHaveLength(1);
+      // It holds the CSV of exactly this listing, and what a download holds.
+      const [listing, search] = path.split("?");
+      const item = `href="${listing}.csv?${search!.replaceAll("&", "&amp;")}">Download as CSV</a><p class="meta download-note">The CSV holds`;
+      expect(body.indexOf(item, body.indexOf(`<details class="menu download-menu">`)), path).toBeGreaterThan(0);
+      expect(body.match(new RegExp(CHEVRON.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")), path).toHaveLength(
+        menus.length + download.length,
+      );
       expect(body, path).not.toContain("▾");
       expect(body, path).not.toContain("col-sort");
     }

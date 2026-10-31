@@ -1,4 +1,5 @@
 import { sql, type Kysely, type RawBuilder } from "kysely";
+import { REPRINT_BLOCKER, type ReprintBlocker } from "../print-run.js";
 import { reportError } from "./error-reporting.js";
 import type { CsvTiming } from "./request-timing.js";
 import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
@@ -108,6 +109,17 @@ export type KindFilter = "any" | SampleKind;
 export const KIND_FILTERS = ["any", "net", "trap"] as const;
 
 /**
+ * An action the reader has chosen to take on rows of the specimens listing
+ * (beeline-1kb.23): bulk actions are chosen first, and the listing then
+ * shows which rows the action can take and holds its form at the foot of the
+ * page. In the query, so paging, sorting and filtering keep the mode; ""
+ * is the plain listing. Only staff have one so far, and the route clears it
+ * for anyone else.
+ */
+export type ListingAction = "" | "reprint";
+export const LISTING_ACTIONS = ["reprint"] as const;
+
+/**
  * What a listing is ordered by. Every column that can be sorted names its
  * key here, and a key means the same thing on both listings where both have
  * the column. The default — newest first, then the collector's own numbering
@@ -183,6 +195,8 @@ export interface ListingQuery {
   dir: SortDirection;
   /** 1-based. */
   page: number;
+  /** The bulk action being taken, if any (ListingAction). */
+  act: ListingAction;
 }
 
 export const EMPTY_QUERY: ListingQuery = {
@@ -201,6 +215,7 @@ export const EMPTY_QUERY: ListingQuery = {
   sort: DEFAULT_SORT,
   dir: defaultDirection(DEFAULT_SORT),
   page: 1,
+  act: "",
 };
 
 /** A real calendar date in ISO form — shape alone would admit 2026-13-99. */
@@ -238,6 +253,7 @@ export function parseListingQuery(
   const sort = (SORT_KEYS as readonly string[]).includes(sortParam) ? (sortParam as SortKey) : DEFAULT_SORT;
   const dirParam = params.get("dir");
   const page = Number.parseInt(params.get("page") ?? "1", 10);
+  const act = params.get("act") ?? "";
   return {
     scope: permitted ? requested : MINE,
     q: text(params.get("q")),
@@ -254,6 +270,7 @@ export function parseListingQuery(
     dir: dirParam === "asc" || dirParam === "desc" ? dirParam : defaultDirection(sort),
     qc: (QC_STATUSES as readonly string[]).includes(qc) ? (qc as QcStatus) : "any",
     page: Number.isFinite(page) && page >= 1 ? Math.min(page, 10_000) : 1,
+    act: (LISTING_ACTIONS as readonly string[]).includes(act) ? (act as ListingAction) : "",
   };
 }
 
@@ -297,6 +314,7 @@ export function listingParams(query: ListingQuery, overrides: Partial<ListingQue
   if (merged.sort !== DEFAULT_SORT) params.set("sort", merged.sort);
   if (merged.dir !== defaultDirection(merged.sort)) params.set("dir", merged.dir);
   if (merged.page > 1) params.set("page", String(merged.page));
+  if (merged.act !== "") params.set("act", merged.act);
   return params;
 }
 
@@ -400,6 +418,14 @@ export interface SpecimenRow {
    * numbering, which the cell used to call both (beeline-1kb.21).
    */
   awaiting_number: boolean;
+  /** Someone has asked for this label again and no run has taken it yet (gh-218). */
+  reprint_requested: boolean;
+  /**
+   * While the reprint action is chosen (query.act), why this row cannot be
+   * marked, or null when it can; always null otherwise, so the CSV and the
+   * plain listing pay nothing for it (beeline-1kb.23).
+   */
+  reprint_blocker: ReprintBlocker | null;
   sample_id: number;
   sample_number: string;
   date_start: Date;
@@ -1028,6 +1054,10 @@ export async function listSpecimens(
         "sp.field_number",
         sql<boolean>`sp.field_number IS NULL AND EXISTS (SELECT 1 FROM printed_label pl WHERE pl.specimen_id = sp.entity_id)`.as(
           "awaiting_number",
+        ),
+        sql<boolean>`EXISTS (SELECT 1 FROM pending_reprint pr WHERE pr.specimen_id = sp.entity_id)`.as("reprint_requested"),
+        sql<ReprintBlocker | null>`${query.act === "reprint" ? sql.raw(REPRINT_BLOCKER) : sql`CAST(NULL AS TEXT)`}`.as(
+          "reprint_blocker",
         ),
         "s.entity_id as sample_id",
         "s.sample_number",

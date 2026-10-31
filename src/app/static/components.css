@@ -254,6 +254,26 @@ tbody tr.flag:hover { background: inherit; }
    easier. */
 .form-column { max-width: 28rem; }
 
+/* The specimens listing's bar for a bulk action (beeline-1kb.23), shown for
+   as long as the action is chosen and held at the foot of the window while
+   ticks are made down a page. The script reveals its Untick and
+   tick-the-page controls, which nobody without the script could use. */
+.bulk-bar { position: sticky; bottom: var(--space-4); margin-top: var(--space-4); z-index: 5; padding: var(--space-3) var(--space-4); }
+.bulk-fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-2) var(--space-4); }
+.bulk-fields .field { margin-bottom: 0; }
+.bulk-fields > strong { align-self: center; }
+.bulk-bar[hidden], .bulk-bar [hidden], input[data-bulk-page][hidden] { display: none; }
+
+/* The row of actions immediately above a listing's table: Download, and
+   any bulk actions. Download's toggle is dressed as the tonal button beside
+   it, which the header menu's own summary rules would otherwise repaint. */
+.listing-actions { margin: var(--space-3) 0; flex-wrap: wrap; }
+.download-menu > summary.button { gap: var(--space-1); min-height: 0; }
+.download-menu > summary.button:hover,
+.download-menu[open] > summary.button { background: var(--md-sys-color-secondary-container); }
+.download-menu > .menu-panel { left: 0; width: min(26rem, calc(100vw - 2 * var(--space-4))); }
+.download-note { margin: 0; padding: var(--space-2) var(--space-4); }
+
 /* Fields pair a label with its control and an optional hint. */
 .field { margin-bottom: var(--space-3); }
 .field-hint {

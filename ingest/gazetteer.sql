@@ -5,7 +5,8 @@
 -- downloads, into its own DuckDB file, never into the store: it is a copy of
 -- public data that a build reproduces, and a gigabyte of outlines has no
 -- business in the nightly backup. __SOURCES__ is substituted by the builder;
--- the OpenStreetMap outlines arrive already read, in osm_area_staged.
+-- the OpenStreetMap outlines arrive already read, in osm_area_staged, and
+-- its campgrounds in osm_campground_staged.
 --
 -- Every geometry is longitude/latitude (WGS 84), the order ST_Point takes.
 --
@@ -116,6 +117,10 @@ CREATE TABLE osm_area AS
 SELECT osm_id, name, area_ha, is_island, ST_MakeValid(ST_GeomFromWKB(wkb)) AS geom
 FROM osm_area_staged
 WHERE (is_island AND area_ha >= 100) OR (NOT is_island AND coalesce(protect_class, '') <> '6');
+
+-- OpenStreetMap's named campgrounds, as points (beeline-4hxe).
+CREATE TABLE campground AS
+SELECT osm_id, name, lat, lon FROM osm_campground_staged;
 
 -- GeoNames, read whole; both the places and the features come out of it.
 CREATE TEMP TABLE geonames AS

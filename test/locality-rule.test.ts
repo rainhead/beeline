@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
+  campgroundName,
   fits,
+  localityCandidates,
   nameLocality,
   refugeName,
   shortName,
@@ -27,6 +29,8 @@ const nothing: LocalityEvidence = {
   nearby: [],
   farTowns: [],
   features: [],
+  campgrounds: [],
+  used: [],
 };
 
 let nextId = 1;
@@ -207,5 +211,109 @@ describe("the rule, in order", () => {
 
   test("nothing at all in reach is no name, rather than a wrong one", () => {
     expect(nameLocality(nothing)).toBeNull();
+  });
+});
+
+describe("candidates (beeline-4hxe)", () => {
+  const town = place("Philomath", { pop: 5000 });
+  const used = (locality: string, samples: number, own: number, km: number) => ({ locality, samples, own, km });
+
+  test("with nothing used nearby, the rule's name comes first", () => {
+    const e = { ...nothing, nearby: [at(town, 4)] };
+    expect(localityCandidates(e)[0]).toEqual({ locality: "Philomath", basis: "town" });
+  });
+
+  test("the collector's own names come before other people's, and other people's before the gazetteer's", () => {
+    const e = {
+      ...nothing,
+      nearby: [at(town, 4)],
+      used: [used("Philomath Ridge", 5, 0, 0.4), used("Wren Meadow", 2, 2, 0.6)],
+    };
+    expect(localityCandidates(e).map((c) => [c.locality, c.basis])).toEqual([
+      ["Wren Meadow", "used_own"],
+      ["Philomath Ridge", "used"],
+      ["Philomath", "town"],
+    ]);
+  });
+
+  test("among other people's names, a name written oftener can beat a nearer one", () => {
+    const e = { ...nothing, used: [used("Once Spot", 1, 0, 0.2), used("Common Spot", 16, 0, 0.6)] };
+    expect(localityCandidates(e).map((c) => c.locality)).toEqual(["Common Spot", "Once Spot"]);
+  });
+
+  test("a refuge comes before anything used, since refuge specimens are handled separately", () => {
+    const e = { ...nothing, refuge: "WILLIAM L. FINLEY NATIONAL WILDLIFE REFUGE", used: [used("Wren Meadow", 3, 3, 0.1)] };
+    expect(localityCandidates(e)[0]).toEqual({ locality: "Finley NWR", basis: "refuge" });
+  });
+
+  test("a used name that cannot go on a label, or is a wilderness, is never offered", () => {
+    const e = {
+      ...nothing,
+      nearby: [at(town, 4)],
+      used: [
+        used("1200 NW Hilltop Road", 4, 4, 0.1),
+        used("Corvallis, OR", 4, 4, 0.1),
+        used("A Very Long Locality Name", 4, 4, 0.1),
+        used("Steens Wilderness", 4, 4, 0.1),
+        used("Far Away Spot", 4, 4, 1.4),
+      ],
+    };
+    expect(localityCandidates(e).map((c) => c.locality)).toEqual(["Philomath"]);
+  });
+
+  test("never more than four, and no name twice whatever its basis", () => {
+    const e = {
+      ...nothing,
+      nearby: [at(town, 4), at(place("Alsea", { pop: 164 }), 9), at(place("Blodgett", { pop: 80 }), 12), at(place("Wren", { pop: 50 }), 6)],
+      used: [used("Philomath", 3, 0, 0.2), used("Mary's River", 1, 0, 0.5)],
+    };
+    const cands = localityCandidates(e);
+    expect(cands.length).toBe(4);
+    expect(cands[0]).toEqual({ locality: "Philomath", basis: "used" });
+    expect(new Set(cands.map((c) => c.locality.toLowerCase())).size).toBe(4);
+  });
+
+  test("a campground right beside the point is its name; one further off is offered after", () => {
+    const beside = { ...nothing, nearby: [at(town, 20)], campgrounds: [{ name: "Lost Lake Campground", km: 0.1 }] };
+    expect(localityCandidates(beside)[0]).toEqual({ locality: "Lost Lake CG", basis: "campground" });
+    const off = { ...nothing, nearby: [at(town, 4)], campgrounds: [{ name: "Lost Lake Campground", km: 1.2 }] };
+    expect(localityCandidates(off).map((c) => c.locality)).toEqual(["Philomath", "Lost Lake CG"]);
+  });
+
+  test("campground names", () => {
+    expect(campgroundName("Camp Sherman Campground")).toBe("Camp Sherman CG");
+    expect(campgroundName("Riverside Campground")).toBe("Riverside CG");
+    expect(campgroundName("Cold Springs")).toBe("Cold Springs");
+    expect(campgroundName("Lower Bridge Camping Area")).toBe("Lower Bridge CG");
+  });
+
+  test("campground names as OpenStreetMap writes them", () => {
+    // From the gazetteer built 2026-10-30.
+    expect(campgroundName("Three Isle Lake Backcountry Campground")).toBe("Three Isle Lake CG");
+    expect(campgroundName("Shoreline Group Campground")).toBe("Shoreline CG");
+    expect(campgroundName("Colchuck Lake Backcountry Camping")).toBe("Colchuck Lake CG");
+    expect(campgroundName("Holmes Lake Recreation Site")).toBe("Holmes Lk Rec Site");
+    expect(campgroundName("Surprise Lake Recreation Site")).toBe("Surprise Lake");
+    expect(campgroundName("Cabin Bay Campsite (BCMT)")).toBe("Cabin Bay Campsite");
+    expect(campgroundName("Banco Bonito Campground (Special Use Permit Required)")).toBe("Banco Bonito CG");
+    expect(campgroundName("Camp Gray (OMSI)")).toBe("Camp Gray");
+    // "(Upper)" is what tells it from Johnny Creek's lower campground, so it is
+    // kept rather than dropped as a note, and the name is then too long for a
+    // label: offering nothing is better than offering the other campground.
+    expect(campgroundName("Johnny Creek Campground (Upper)")).toBeNull();
+  });
+
+  test("a single pitch, named only by its number, is no campground", () => {
+    // From the gazetteer built 2026-10-30: OpenStreetMap's tourism=camp_site
+    // points that are one pitch inside a campground.
+    for (const pitch of ["#41", "17", "Site 10", "Campsite 3", "Campsite No. 1", "Campsite", "C6", "SU8", "60.7L", "B"]) {
+      expect(campgroundName(pitch)).toBeNull();
+    }
+    expect(campgroundName("Loop Camp")).toBe("Loop Camp");
+    const pitch = { ...nothing, nearby: [at(town, 4)], campgrounds: [{ name: "#41", km: 0.05 }] };
+    expect(localityCandidates(pitch)[0]).toEqual({ locality: "Philomath", basis: "town" });
+    // A pitch nearer the point than the campground it is in does not hide it.
+    const inside = { ...pitch, campgrounds: [{ name: "#41", km: 0.05 }, { name: "Lost Lake Campground", km: 0.1 }] };
+    expect(localityCandidates(inside)[0]).toEqual({ locality: "Lost Lake CG", basis: "campground" });
   });
 });

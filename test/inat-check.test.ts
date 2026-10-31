@@ -184,18 +184,20 @@ describe("Check iNaturalist now", () => {
     await buildTestGazetteer(path, "build-check");
     // No tiles on disk: deriving elevations finds none and must not fail the check.
     const { app, conn } = await checkApp({ gazetteerPath: path, demDir: join(dir, "dem") });
-    expect(await count(conn, "SELECT count(*) FROM sample_locality_suggestion")).toBe(0);
+    expect(await count(conn, "SELECT count(*) FROM sample_locality_candidate")).toBe(0);
     await check(app);
-    // Ada's sample is named (Philomath, the test gazetteer's town nearby);
-    // Bo's, at the same point, waits for the nightly.
+    // Ada's sample is named: Finley NWR, the locality Bo's sample at the same
+    // point carries, which comes before the gazetteer's town nearby
+    // (beeline-4hxe). Bo's own sample waits for the nightly.
     expect(
       await rows(
         conn,
-        `SELECT g.locality FROM sample_locality_suggestion g
+        `SELECT g.locality FROM sample_locality_candidate g
          JOIN sample_collector sc ON sc.sample_id = g.sample_id
-         JOIN inat_account a ON a.person_id = sc.person_id ORDER BY a.inat_user_id`,
+         JOIN inat_account a ON a.person_id = sc.person_id
+         WHERE g.rank = 1 ORDER BY a.inat_user_id`,
       ),
-    ).toEqual([["Philomath"]]);
+    ).toEqual([["Finley NWR"]]);
     expect(await (await app.request("/")).text()).toContain(en.suggestedLocality.use);
     // Its areas are worked out too, and only Ada's (beeline-9jd4).
     expect(await count(conn, "SELECT count(*) FROM sample_area_derivation")).toBe(1);
@@ -210,7 +212,7 @@ describe("Check iNaturalist now", () => {
     setRunning(null);
     // The check itself ran and said so; only the deriving was left to the nightly.
     expect(await (await check(made.app)).text()).toContain("Beeline read");
-    expect(await count(made.conn, "SELECT count(*) FROM sample_locality_suggestion")).toBe(0);
+    expect(await count(made.conn, "SELECT count(*) FROM sample_locality_candidate")).toBe(0);
     expect(await count(made.conn, "SELECT count(*) FROM sample_area_derivation")).toBe(0);
   });
 

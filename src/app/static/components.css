@@ -160,6 +160,9 @@ form.inline-form { display: inline; margin: 0; }
 /* The suggestion's own line under a sample's place: a div, since a <p>
    cannot hold the form. */
 .suggested-locality-line { margin: var(--space-2) 0; }
+/* The alternatives (beeline-4hxe): each name stays with its basis and button
+   when the line wraps. */
+.locality-alternative { display: inline-block; margin-right: var(--space-3); }
 button.compact-button {
   padding: 0 var(--space-2);
   vertical-align: baseline;

@@ -1077,8 +1077,12 @@ export function createApp({
       result = await setStaffLocality(deps, target, { value: "", remove: true, note: "", author: session.login });
     } else {
       if (standing !== null && standing !== session.login && !c.get("admin")) return c.text(t.setByOther, 403);
-      const suggestion = sample.locality_suggestion;
-      if (suggestion === null || suggestion.locality !== field("locality")) return c.text(t.changed, 409);
+      // The suggestion or one of the alternatives (beeline-4hxe), as the
+      // store holds them now: a name the page showed that is no longer
+      // offered is refused rather than adopted unseen.
+      const offered = [...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]), ...sample.locality_alternatives];
+      const suggestion = offered.find((o) => o.locality === field("locality"));
+      if (suggestion === undefined) return c.text(t.changed, 409);
       reason = t.reason(t.basis[suggestion.basis]);
       result = await adoptSuggestedLocality(deps, target, { suggestion: suggestion.locality, reason, author: session.login });
     }

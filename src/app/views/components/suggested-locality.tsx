@@ -49,3 +49,46 @@ export function SuggestedLocality({
     </span>
   );
 }
+
+/**
+ * The other names offered for the point (beeline-4hxe), each with its own
+ * button where the reader may change the sample. The button is the same form
+ * as the suggestion's, so the route checks the name against the candidates
+ * the store holds now.
+ */
+export function LocalityAlternatives({
+  m,
+  alternatives,
+  current,
+  action,
+}: {
+  m: Messages;
+  alternatives: ReadonlyArray<{ locality: string; basis: LocalityBasis }>;
+  /** The sample's locality, which is marked rather than offered. */
+  current: string | null;
+  action: SuggestedLocalityAction;
+}) {
+  const t = m.suggestedLocality;
+  if (alternatives.length === 0) return null;
+  return (
+    <span class="suggested-locality locality-alternatives">
+      {t.alternativesLead}{" "}
+      {alternatives.map((a) => (
+        <span class="locality-alternative">
+          <strong>{a.locality}</strong> <span class="meta">({t.basis[a.basis]})</span>{" "}
+          {a.locality === current ? (
+            <span class="meta">{t.inUseShort}</span>
+          ) : action.kind === "use" ? (
+            <form method="post" action={action.action} class="inline-form">
+              <input type="hidden" name="locality" value={a.locality} />
+              <input type="hidden" name="return" value={action.returnTo} />
+              <button type="submit" class="outlined compact-button" aria-label={t.useShortLabel(a.locality)}>
+                {t.useShort}
+              </button>
+            </form>
+          ) : null}
+        </span>
+      ))}
+    </span>
+  );
+}

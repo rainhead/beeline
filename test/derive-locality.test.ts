@@ -3,7 +3,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveLocalities } from "../src/derive-locality.js";
+import { deriveLocalities, localityCandidatesAt } from "../src/derive-locality.js";
 import { buildTestGazetteer, createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 let dir: string;
@@ -21,8 +21,13 @@ async function storeWithPerson(): Promise<DuckDBConnection> {
   return conn;
 }
 
+// The best name for each sample: what the pages call the suggestion.
 const suggestions = (conn: DuckDBConnection) =>
   rows(conn, `SELECT sample_id, locality, basis FROM sample_locality_suggestion_current ORDER BY sample_id`);
+
+// Every name offered for one sample, best first.
+const candidates = (conn: DuckDBConnection, sampleId: number) =>
+  rows(conn, `SELECT locality, basis FROM sample_locality_candidate_current WHERE sample_id = ${sampleId} ORDER BY rank`);
 
 describe("deriveLocalities", () => {
   test("without a gazetteer there is nothing to do, and it says so", async () => {
@@ -47,7 +52,7 @@ describe("deriveLocalities", () => {
     ]);
     const [[lat, lon, build]] = (await rows(
       conn,
-      `SELECT latitude, longitude, gazetteer_build FROM sample_locality_suggestion WHERE sample_id = ${inRefuge}`,
+      `SELECT latitude, longitude, gazetteer_build FROM sample_locality_candidate WHERE sample_id = ${inRefuge} AND rank = 1`,
     )) as [[number, number, string]];
     expect([lat, lon, build]).toEqual([44.41, -123.3, "build-a"]);
     // The sample's own locality is never touched: this is only a suggestion.
@@ -113,5 +118,84 @@ describe("deriveLocalities", () => {
     const away = await insertCleanSample(conn, { sample_number: "'3'" }, { latitude: "44.727", longitude: "-123.600" });
     await deriveLocalities(conn, path);
     expect((await suggestions(conn)).find(([sampleId]) => sampleId === away)).toEqual([away, "Marys Peak Lake", "feature"]);
+  });
+
+  test("offers the best name and up to three more, none repeated", async () => {
+    const path = join(dir, "e.duckdb");
+    await buildTestGazetteer(path, "build-e");
+    const conn = await storeWithPerson();
+    const id = await insertCleanSample(conn, {}, { latitude: "44.41", longitude: "-123.30" });
+    await deriveLocalities(conn, path);
+    const offered = (await candidates(conn, id)) as Array<[string, string]>;
+    expect(offered[0]).toEqual(["Finley NWR", "refuge"]);
+    expect(offered.length).toBeGreaterThan(1);
+    expect(offered.length).toBeLessThanOrEqual(4);
+    expect(new Set(offered.map(([l]) => l)).size).toBe(offered.length);
+  });
+
+  test("the name the collector already used nearby comes first, then other people's, then the gazetteer's (Peter, 2026-10-30)", async () => {
+    const path = join(dir, "f.duckdb");
+    await buildTestGazetteer(path, "build-f");
+    const conn = await storeWithPerson();
+    const ada = "(SELECT min(entity_id) FROM person)";
+    const bo = "(SELECT max(entity_id) FROM person)";
+    // Ada named her site, 300 m from the new sample; Bo, collecting 500 m
+    // away, wrote another name twice.
+    await insertCleanSample(conn, { locality: "'Wren Meadow'", collector_id: ada }, { latitude: "44.553", longitude: "-123.38" });
+    await insertCleanSample(conn, { locality: "'Philomath Ridge'", sample_number: "'2'", collector_id: bo }, { latitude: "44.5545", longitude: "-123.38" });
+    await insertCleanSample(conn, { locality: "'Philomath Ridge'", sample_number: "'3'", collector_id: bo }, { latitude: "44.5546", longitude: "-123.38" });
+    const fresh = await insertCleanSample(conn, { sample_number: "'4'", collector_id: ada }, { latitude: "44.55", longitude: "-123.38" });
+    await deriveLocalities(conn, path);
+    expect(await candidates(conn, fresh)).toEqual([
+      ["Wren Meadow", "used_own"],
+      ["Philomath Ridge", "used"],
+      ["Philomath", "town"],
+      ["Alsea", "town"],
+    ]);
+  });
+
+  test("a name used more than a kilometre away, or one that will not fit a label, is not offered", async () => {
+    const path = join(dir, "g.duckdb");
+    await buildTestGazetteer(path, "build-g");
+    const conn = await storeWithPerson();
+    await insertCleanSample(conn, { locality: "'Far Meadow'" }, { latitude: "44.565", longitude: "-123.38" });
+    await insertCleanSample(conn, { locality: "'1200 NW Hilltop Road'", sample_number: "'2'" }, { latitude: "44.5501", longitude: "-123.38" });
+    const fresh = await insertCleanSample(conn, { sample_number: "'3'" }, { latitude: "44.55", longitude: "-123.38" });
+    await deriveLocalities(conn, path);
+    const offered = ((await candidates(conn, fresh)) as Array<[string, string]>).map(([l]) => l);
+    expect(offered).not.toContain("Far Meadow");
+    expect(offered).not.toContain("1200 NW Hilltop Road");
+    expect(offered[0]).toBe("Philomath");
+  });
+
+  test("a campground beside the point names it, shortened to fit (beeline-4hxe)", async () => {
+    const path = join(dir, "h.duckdb");
+    await buildTestGazetteer(path, "build-h");
+    const conn = await storeWithPerson();
+    const beside = await insertCleanSample(conn, {}, { latitude: "44.331", longitude: "-123.49" });
+    const nearby = await insertCleanSample(conn, { sample_number: "'2'" }, { latitude: "44.34", longitude: "-123.49" });
+    await deriveLocalities(conn, path);
+    expect((await candidates(conn, beside))[0]).toEqual(["Alsea Falls CG", "campground"]);
+    // A kilometre off it is not the name, but it is offered.
+    const offered = (await candidates(conn, nearby)) as Array<[string, string]>;
+    expect(offered[0]![0]).not.toBe("Alsea Falls CG");
+    expect(offered).toContainEqual(["Alsea Falls CG", "campground"]);
+  });
+
+  test("a point no sample has yet is named the same way, these people's names counting as their own", async () => {
+    const path = join(dir, "i.duckdb");
+    await buildTestGazetteer(path, "build-i");
+    const conn = await storeWithPerson();
+    await insertCleanSample(conn, { locality: "'Wren Meadow'" }, { latitude: "44.553", longitude: "-123.38" });
+    const [[ada]] = (await rows(conn, `SELECT min(entity_id) FROM person`)) as [[number]];
+    const [[bo]] = (await rows(conn, `SELECT max(entity_id) FROM person`)) as [[number]];
+    const forAda = await localityCandidatesAt(conn, path, { latitude: 44.55, longitude: -123.38 }, [ada]);
+    expect(forAda).toMatchObject({ gazetteerBuild: "build-i" });
+    expect(forAda!.candidates[0]).toEqual({ locality: "Wren Meadow", basis: "used_own" });
+    const forBo = await localityCandidatesAt(conn, path, { latitude: 44.55, longitude: -123.38 }, [bo]);
+    expect(forBo!.candidates[0]).toEqual({ locality: "Wren Meadow", basis: "used" });
+    expect(await localityCandidatesAt(conn, join(dir, "absent.duckdb"), { latitude: 44.55, longitude: -123.38 }, [ada])).toBeNull();
+    // Nothing was written: the point is not a sample.
+    expect(await rows(conn, `SELECT count(*) FROM sample_locality_candidate`)).toEqual([[0n]]);
   });
 });

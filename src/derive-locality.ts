@@ -3,18 +3,21 @@ import { access } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { loadSpatial, openDuckDb } from "./db.js";
 import {
-  nameLocality,
+  localityCandidates,
   type GazetteerPlace,
   type LocalityBasis,
   type LocalityEvidence,
+  type NamedLocality,
   type Near,
   type UsedFeature,
 } from "./locality-rule.js";
 
 /**
  * Name each sample's locality from its coordinates (beeline-7i6), into
- * sample_locality_suggestion (schema/037). The nightly runs it after
- * elevations; `pnpm locality:derive` runs it by hand.
+ * sample_locality_candidate (schema/037): the best name and up to three
+ * alternatives (beeline-4hxe). The nightly runs it after elevations;
+ * `pnpm locality:derive` runs it by hand. `localityCandidatesAt` names one
+ * point that is not a sample yet, for a form that is about to make one.
  *
  * The gazetteer is a separate file (ingest/gazetteer.sql), attached read-only
  * for the run and detached after. Without one there is nothing to do, and
@@ -40,6 +43,7 @@ export interface LocalityResult {
   named: number;
   /** Points nothing in the gazetteer could name: no town in reach at all. */
   unnamed: number;
+  /** Why the best name was chosen, counted. */
   byBasis: Partial<Record<LocalityBasis, number>>;
 }
 
@@ -84,7 +88,7 @@ export async function deriveLocalities(
       conn,
       `SELECT l.sample_id, l.latitude AS lat, l.longitude AS lon
          FROM sample_location l
-         LEFT JOIN sample_locality_suggestion g ON g.sample_id = l.sample_id
+         LEFT JOIN sample_locality_candidate g ON g.sample_id = l.sample_id AND g.rank = 1
         WHERE (g.sample_id IS NULL OR g.gazetteer_build <> $1
                OR abs(g.latitude - l.latitude) > 5e-5 OR abs(g.longitude - l.longitude) > 5e-5)
           AND ($2::BIGINT IS NULL OR l.sample_id IN (
@@ -97,26 +101,92 @@ export async function deriveLocalities(
     result.pending = pending.length;
     if (pending.length === 0) return result;
     await usedFeatures(conn, G);
+    await usedLocalities(conn);
     const size = opts.batchSize ?? 5000;
     for (let i = 0; i < pending.length; i += size) {
       opts.signal?.throwIfAborted();
       const batch = pending.slice(i, i + size);
+      await loadBatch(conn, batch);
+      // Whose names count as the collector's own: everyone on the sample.
+      await conn.run(`
+        CREATE OR REPLACE TEMP TABLE locality_batch_person AS
+        SELECT sc.sample_id, sc.person_id FROM sample_collector sc
+        WHERE sc.sample_id IN (SELECT sample_id FROM locality_batch)`);
       const evidence = await gather(conn, batch, G);
       const now = new Date().toISOString();
       const named: unknown[][] = [];
       for (const p of batch) {
-        const n = nameLocality(evidence.get(p.sample_id)!);
-        if (n === null) {
+        const cands = localityCandidates(evidence.get(p.sample_id)!);
+        if (cands.length === 0) {
           result.unnamed += 1;
           continue;
         }
-        named.push([p.sample_id, n.locality, n.basis, p.lat, p.lon, build.build_id, now]);
-        result.byBasis[n.basis] = (result.byBasis[n.basis] ?? 0) + 1;
+        cands.forEach((c, k) => named.push([p.sample_id, k + 1, c.locality, c.basis, p.lat, p.lon, build.build_id, now]));
+        result.named += 1;
+        result.byBasis[cands[0]!.basis] = (result.byBasis[cands[0]!.basis] ?? 0) + 1;
       }
       await write(conn, named);
-      result.named += named.length;
     }
     return result;
+  } finally {
+    await conn.run(`DETACH ${G}`);
+  }
+}
+
+export interface PointCandidates {
+  gazetteerBuild: string;
+  candidates: NamedLocality[];
+}
+
+// The point lookup builds the same temp tables as a run and is called from
+// requests that can overlap on one connection, so one at a time per
+// connection: two would write each other's locality_batch.
+const pointQueues = new WeakMap<Conn, Promise<unknown>>();
+
+/**
+ * The candidate localities for a point no sample has yet (beeline-4hxe), as
+ * a form entering a sample offers them: the best and up to three more, the
+ * names these people have already used nearby counting as their own. Null
+ * when there is no gazetteer on this machine.
+ */
+export async function localityCandidatesAt(
+  conn: Conn,
+  gazetteerPath: string,
+  point: { latitude: number; longitude: number },
+  personIds: readonly number[],
+): Promise<PointCandidates | null> {
+  const run = (pointQueues.get(conn) ?? Promise.resolve()).then(() => candidatesAt(conn, gazetteerPath, point, personIds));
+  pointQueues.set(conn, run.catch(() => {}));
+  return run;
+}
+
+async function candidatesAt(
+  conn: Conn,
+  gazetteerPath: string,
+  point: { latitude: number; longitude: number },
+  personIds: readonly number[],
+): Promise<PointCandidates | null> {
+  try {
+    await access(gazetteerPath);
+  } catch {
+    return null;
+  }
+  await loadSpatial(conn);
+  const G = `gazetteer_${++attachments}`;
+  await conn.run(`ATTACH '${gazetteerPath.replaceAll("'", "''")}' AS ${G} (READ_ONLY)`);
+  try {
+    const [build] = await rows<{ build_id: string }>(conn, `SELECT build_id FROM ${G}.gazetteer_build`);
+    if (build === undefined) throw new Error(`${gazetteerPath} has no gazetteer_build row: rebuild it`);
+    await createMacros(conn);
+    await usedFeatures(conn, G);
+    await usedLocalities(conn);
+    // No sample has this id: entity ids start at 1.
+    const batch = [{ sample_id: 0, lat: point.latitude, lon: point.longitude }];
+    await loadBatch(conn, batch);
+    await conn.run(`CREATE OR REPLACE TEMP TABLE locality_batch_person (sample_id INTEGER, person_id INTEGER)`);
+    for (const id of personIds) await conn.run(`INSERT INTO locality_batch_person VALUES (0, $1)`, [id]);
+    const evidence = await gather(conn, batch, G);
+    return { gazetteerBuild: build.build_id, candidates: localityCandidates(evidence.get(0)!) };
   } finally {
     await conn.run(`DETACH ${G}`);
   }
@@ -165,6 +235,22 @@ async function usedFeatures(conn: Conn, G: string): Promise<void> {
     GROUP BY f.id`);
 }
 
+/**
+ * Every located sample's locality, filed in cells of 0.02 degrees so the
+ * names near a point are an equality join on its cell and the eight around
+ * it: at least 1.2 km in every direction as far north as the atlases reach,
+ * more than the kilometre a used name is read from. Read from the whole
+ * store once a run, since any sample's locality counts (beeline-4hxe).
+ */
+async function usedLocalities(conn: Conn): Promise<void> {
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE locality_used_sample AS
+    SELECT s.entity_id AS sample_id, s.locality, l.latitude AS lat, l.longitude AS lon,
+           CAST(floor(l.latitude / 0.02) AS INTEGER) AS cy, CAST(floor(l.longitude / 0.02) AS INTEGER) AS cx
+    FROM sample s JOIN sample_location l ON l.sample_id = s.entity_id
+    WHERE s.locality IS NOT NULL AND trim(s.locality) <> ''`);
+}
+
 interface PlaceRow {
   sample_id: number;
   id: number;
@@ -184,12 +270,7 @@ const near = (r: PlaceRow): Near<GazetteerPlace> => ({
   bearing: r.brg,
 });
 
-/** What the gazetteer says about each point in a batch. */
-async function gather(
-  conn: Conn,
-  batch: Array<{ sample_id: number; lat: number; lon: number }>,
-  G: string,
-): Promise<Map<number, LocalityEvidence>> {
+async function loadBatch(conn: Conn, batch: Array<{ sample_id: number; lat: number; lon: number }>): Promise<void> {
   await conn.run(`CREATE OR REPLACE TEMP TABLE locality_batch (sample_id INTEGER, lat DOUBLE, lon DOUBLE)`);
   const appender = await conn.createAppender("locality_batch", "main", "temp");
   for (const p of batch) {
@@ -199,11 +280,22 @@ async function gather(
     appender.endRow();
   }
   appender.closeSync();
+}
+
+/**
+ * What the gazetteer and the store say about each point in locality_batch,
+ * whose collectors are in locality_batch_person.
+ */
+async function gather(
+  conn: Conn,
+  batch: Array<{ sample_id: number; lat: number; lon: number }>,
+  G: string,
+): Promise<Map<number, LocalityEvidence>> {
   const ev = new Map<number, LocalityEvidence>();
   for (const p of batch) {
     ev.set(p.sample_id, {
       regionId: null, refuge: null, wildlifeArea: null, nationalPark: null, statePark: null, parks: [],
-      island: null, townLimits: null, nearby: [], farTowns: [], features: [],
+      island: null, townLimits: null, nearby: [], farTowns: [], features: [], campgrounds: [], used: [],
     });
   }
   const of = (id: number) => ev.get(id)!;
@@ -359,6 +451,51 @@ async function gather(
     };
     of(r.sample_id).features.push({ at, km: r.km });
   }
+  // Campgrounds within 1.5 km, from a gazetteer built since they were added
+  // (beeline-4hxe); an older one simply has none.
+  const [hasCamp] = await rows<{ n: number }>(
+    conn,
+    `SELECT count(*)::INTEGER AS n FROM duckdb_tables() WHERE database_name = '${G}' AND table_name = 'campground'`,
+  );
+  if (hasCamp!.n > 0) {
+    for (const r of await rows<{ sample_id: number; name: string; km: number }>(
+      conn,
+      `SELECT * FROM (
+         SELECT b.sample_id, c.name, hav_km(b.lat, b.lon, c.lat, c.lon) AS km
+           FROM locality_batch b JOIN ${G}.campground c
+             ON abs(c.lat - b.lat) < 0.014 AND abs(c.lon - b.lon) < lon_deg(1.6, b.lat))
+        WHERE km <= 1.5
+        ORDER BY sample_id, km, name`,
+    )) {
+      of(r.sample_id).campgrounds.push({ name: r.name, km: r.km });
+    }
+  }
+  // The localities written for samples within a kilometre, how many carry
+  // each, how many of those the point's own collectors collected, and how
+  // near the nearest is. A sample's own locality is not evidence for itself.
+  for (const r of await rows<{ sample_id: number; locality: string; samples: number; own: number; km: number }>(
+    conn,
+    `WITH b AS (
+       SELECT b.sample_id, b.lat, b.lon, CAST(floor(b.lat / 0.02) AS INTEGER) + dy AS cy,
+              CAST(floor(b.lon / 0.02) AS INTEGER) + dx AS cx
+       FROM locality_batch b, range(-1, 2) t1(dy), range(-1, 2) t2(dx)),
+     near AS (
+       SELECT b.sample_id, u.sample_id AS other, u.locality, hav_km(b.lat, b.lon, u.lat, u.lon) AS km
+       FROM b JOIN locality_used_sample u ON u.cy = b.cy AND u.cx = b.cx
+       WHERE u.sample_id <> b.sample_id),
+     own AS (
+       SELECT DISTINCT n.sample_id, n.other
+       FROM near n
+       JOIN sample_collector sc ON sc.sample_id = n.other
+       JOIN locality_batch_person bp ON bp.sample_id = n.sample_id AND bp.person_id = sc.person_id)
+     SELECT n.sample_id, n.locality, count(*)::INTEGER AS samples, count(o.other)::INTEGER AS own, min(n.km) AS km
+     FROM near n LEFT JOIN own o ON o.sample_id = n.sample_id AND o.other = n.other
+     WHERE n.km <= 1
+     GROUP BY n.sample_id, n.locality
+     ORDER BY n.sample_id, km, n.locality`,
+  )) {
+    of(r.sample_id).used.push({ locality: r.locality, samples: r.samples, own: r.own, km: r.km });
+  }
   return ev;
 }
 
@@ -366,13 +503,13 @@ async function gather(
 async function write(conn: Conn, named: unknown[][]): Promise<void> {
   await conn.run("BEGIN TRANSACTION");
   try {
-    await conn.run(`DELETE FROM sample_locality_suggestion WHERE sample_id IN (SELECT sample_id FROM locality_batch)`);
+    await conn.run(`DELETE FROM sample_locality_candidate WHERE sample_id IN (SELECT sample_id FROM locality_batch)`);
     for (let i = 0; i < named.length; i += 500) {
       const chunk = named.slice(i, i + 500);
-      const values = chunk.map((_, j) => `(${[1, 2, 3, 4, 5, 6, 7].map((k) => `$${j * 7 + k}`).join(", ")})`);
+      const values = chunk.map((_, j) => `(${[1, 2, 3, 4, 5, 6, 7, 8].map((k) => `$${j * 8 + k}`).join(", ")})`);
       await conn.run(
-        `INSERT INTO sample_locality_suggestion
-           (sample_id, locality, basis, latitude, longitude, gazetteer_build, derived_at)
+        `INSERT INTO sample_locality_candidate
+           (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, derived_at)
          VALUES ${values.join(", ")}`,
         chunk.flat() as never,
       );

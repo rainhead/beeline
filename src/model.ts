@@ -366,9 +366,11 @@ export interface SampleElevationPendingView {
   longitude: number;
 }
 
-/** schema/037: a locality named from the sample's coordinates (beeline-7i6), a proposal never written into the sample. */
-export interface SampleLocalitySuggestionTable {
+/** schema/037: the localities named for the sample's coordinates (beeline-7i6, beeline-4hxe), best first; proposals never written into the sample. */
+export interface SampleLocalityCandidateTable {
   sample_id: number;
+  /** 1 is the best (the suggestion), 2 to 4 the alternatives. */
+  rank: number;
   locality: string;
   basis: LocalityBasis;
   /** The point it was named at. */
@@ -378,7 +380,17 @@ export interface SampleLocalitySuggestionTable {
   derived_at: Date;
 }
 
-/** schema/172: the suggestion, where it is still about the sample's point. */
+/** schema/172: every candidate still about the sample's point. */
+export interface SampleLocalityCandidateCurrentView {
+  sample_id: number;
+  rank: number;
+  locality: string;
+  basis: LocalityBasis;
+  gazetteer_build: string;
+  derived_at: Date;
+}
+
+/** schema/172: the best candidate (rank 1), where it is still about the sample's point. */
 export interface SampleLocalitySuggestionCurrentView {
   sample_id: number;
   locality: string;
@@ -1193,7 +1205,7 @@ export interface Database {
   sample: SampleTable;
   elevation_source: ElevationSourceTable;
   sample_location: SampleLocationTable;
-  sample_locality_suggestion: SampleLocalitySuggestionTable;
+  sample_locality_candidate: SampleLocalityCandidateTable;
   area: AreaTable;
   sample_area_derivation: SampleAreaDerivationTable;
   sample_area: SampleAreaTable;
@@ -1257,6 +1269,7 @@ export interface Database {
   sample_elevation_unsupportable: SampleElevationUnsupportableView;
   sample_elevation_stale: SampleElevationStaleView;
   sample_elevation_pending: SampleElevationPendingView;
+  sample_locality_candidate_current: SampleLocalityCandidateCurrentView;
   sample_locality_suggestion_current: SampleLocalitySuggestionCurrentView;
   sample_area_current: SampleAreaCurrentView;
   printable_sample: PrintableSampleView;

@@ -51,8 +51,8 @@ async function setup() {
     locality: "'26208 Finley Refuge Rd'",
   });
   await conn.run(
-    `INSERT INTO sample_locality_suggestion (sample_id, locality, basis, latitude, longitude, gazetteer_build, derived_at)
-     SELECT sample_id, 'Finley NWR', 'refuge', latitude, longitude, 'test', current_timestamp
+    `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, derived_at)
+     SELECT sample_id, 1, 'Finley NWR', 'refuge', latitude, longitude, 'test', current_timestamp
      FROM sample_location WHERE sample_id = ${sampleId}`,
   );
   const dir = await mkdtemp(join(tmpdir(), "beeline-suggested-"));
@@ -99,6 +99,25 @@ describe("Use this locality", () => {
     const body = await (await alice.request(`/samples/${sampleId}`)).text();
     expect(body).toContain(en.suggestedLocality.inUse.replaceAll("'", "&#39;"));
     expect(body).toContain(en.suggestedLocality.undo.replaceAll("'", "&#39;"));
+  });
+
+  it("offers the alternatives too, and makes the one chosen the sample's locality (beeline-4hxe)", async () => {
+    const { appFor, conn, sampleId, sampleOverlayPath } = await setup();
+    await conn.run(
+      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, derived_at)
+       SELECT sample_id, 2, 'Muddy Creek CG', 'campground', latitude, longitude, 'test', current_timestamp
+       FROM sample_location WHERE sample_id = ${sampleId}`,
+    );
+    const alice = appFor("alice");
+    const page = await (await alice.request(`/samples/${sampleId}`)).text();
+    expect(page).toContain("Muddy Creek CG");
+    expect(page).toContain(en.suggestedLocality.basis.campground);
+    expect(page).toContain(`aria-label="${en.suggestedLocality.useShortLabel("Muddy Creek CG")}"`);
+    const res = await post(alice, `/samples/${sampleId}/suggested-locality`, { locality: "Muddy Creek CG" });
+    expect(res.status).toBe(302);
+    expect(await localityOf(conn, sampleId)).toBe("Muddy Creek CG");
+    const [row] = await readSampleOverlay(sampleOverlayPath);
+    expect(row!.reason).toBe(en.suggestedLocality.reason(en.suggestedLocality.basis.campground));
   });
 
   it("refuses a name other than the one the store suggests now", async () => {

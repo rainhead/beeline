@@ -253,6 +253,8 @@ export async function buildTestGazetteer(path: string, buildId: string): Promise
       t(id, name, lat, lon, kind, fcode, pop, region_id, island_id);
     CREATE TABLE feature AS SELECT 10 AS id, 'Marys Peak Lake' AS name, 44.70 AS lat, -123.60 AS lon,
       'H.LK' AS code, 'OR' AS state, NULL::TEXT AS island_id, 'maryspeaklake' AS fold;
+    -- A campground, out of the way of every other place here (beeline-4hxe).
+    CREATE TABLE campground AS SELECT 'node/20' AS osm_id, 'Alsea Falls Campground' AS name, 44.33 AS lat, -123.49 AS lon;
   `);
   conn.closeSync();
   instance.closeSync();

@@ -120,7 +120,7 @@ FROM (
          length(s.locality) AS len,
          position(',' IN s.locality) > 0 AS has_comma,
          position('"' IN s.locality) > 0 AS has_quote,
-         lower(trim(s.locality)) LIKE '% county' AS is_county
+         rtrim(lower(trim(s.locality)), '. ') LIKE '% county' AS is_county
   FROM sample s
   WHERE s.locality IS NOT NULL
 ) flags

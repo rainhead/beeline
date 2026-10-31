@@ -114,6 +114,8 @@ describe("QC findings and printability", () => {
   test("a locality that is only a county is still flagged", async () => {
     const id = await insertCleanSample(conn, { locality: "'Jefferson County'" });
     expect(await findings(id)).toEqual([{ rule: "locality_format", details: "names only a county" }]);
+    const stop = await insertCleanSample(conn, { locality: "'Benton County.'", sample_number: "'c1'" });
+    expect(await findings(stop)).toEqual([{ rule: "locality_format", details: "names only a county" }]);
     const park = await insertCleanSample(conn, { locality: "'Buell County Park'", sample_number: "'p1'" });
     expect(await findings(park)).toEqual([]);
   });

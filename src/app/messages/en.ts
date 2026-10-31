@@ -2319,7 +2319,7 @@ export const en = {
       label: {
         term: "Label",
         definition:
-          "The printed slip pinned with a specimen, carrying where and when it was collected, by whom, and its field number. It is printed about 3pt tall, which is why the locality has to be a short place name rather than an address. Labels are printed in batches called print runs; each of your specimens says whether its label is being printed, printed, or mailed.",
+          "The printed slip pinned with a specimen, carrying where and when it was collected, by whom, and its field number. It is printed about 3pt tall, which is why the locality has to be short: 18 characters at most. Labels are printed in batches called print runs; each of your specimens says whether its label is being printed, printed, or mailed.",
       },
       "master-melittology": {
         term: "Master Melittology",

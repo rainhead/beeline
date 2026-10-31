@@ -765,8 +765,9 @@ export function SpecimenListing(
     <>
       <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
       {reprinted !== null && <Callout tone="success">{copy.bulk.done(reprinted.requested, reprinted.of)}</Callout>}
-      {marking ? <BulkModeNote m={m} path={path} query={query} /> : admin && <BulkActions m={m} path={path} query={query} />}
       <Toolbar copy={copy} path={path} props={props} />
+      {/* Immediately above the table, since they act on its rows (Peter, 2026-10-31). */}
+      {marking ? <BulkModeNote m={m} path={path} query={query} /> : admin && <BulkActions m={m} path={path} query={query} />}
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
       ) : (

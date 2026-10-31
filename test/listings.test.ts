@@ -731,7 +731,7 @@ describe("the toolbar", () => {
       expect(download, path).toHaveLength(1);
       // It holds the CSV of exactly this listing, and what a download holds.
       const [listing, search] = path.split("?");
-      const item = `href="${listing}.csv?${search!.replace("&", "&amp;")}">Download as CSV</a><p class="meta download-note">The CSV holds`;
+      const item = `href="${listing}.csv?${search!.replaceAll("&", "&amp;")}">Download as CSV</a><p class="meta download-note">The CSV holds`;
       expect(body.indexOf(item, body.indexOf(`<details class="menu download-menu">`)), path).toBeGreaterThan(0);
       expect(body.match(new RegExp(CHEVRON.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")), path).toHaveLength(
         menus.length + download.length,

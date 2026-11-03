@@ -116,10 +116,13 @@ cp -rf source dest          # NOT: cp -r source dest
 
 **This repository authorizes agents to commit and push without asking, and
 work lands as a pull request** (2026-08-28). Branch, commit, push, open it with
-`gh pr create`; close the beads you finished when it merges. No approval is
-needed to open one, or to merge a green one — the review, not the asking, is
-the point. **Do not commit or push to `main` directly**: nothing gets reviewed
-on the way in that way, which is the whole reason for the branch.
+`gh pr create`, and stop there: **since cutover (Peter, 2026-11-03) Peter
+merges, not the agent that opened the PR.** No approval is needed to open one.
+Close the beads you finished when it merges. **Do not commit or push to `main`
+directly**: nothing gets reviewed on the way in that way, which is the whole
+reason for the branch. Deploying production (`fly deploy -c
+fly.production.toml`, docs/runbooks/deploy-fly.md) is likewise done when asked,
+never as the tail of a merge.
 
 **Beads make no commits at all** (Peter, 2026-10-23). Issue work syncs with
 `bd sync`, which pulls, checks for conflicts and pushes the Dolt store over
@@ -147,13 +150,16 @@ and still reviews everyone else's. Triage what it says: fix what is real, and
 give the reason in the PR when declining. The branch still earns its keep: CI
 runs on it, and the pull request records what landed and why.
 
-Why the commit authority itself is broad is the era, not the tooling:
-pre-cutover the store is blown away and rebuilt at will, nothing downstream
-consumes it, and no volunteer sees it, so a bad commit costs a revert and
-nothing else. **Revisit at cutover (December 2026)**, when minted field numbers
-become permanent and backups become mandatory — the blow-away era ending is
-what makes this stance expire, and is when a PR will want a human approving it
-rather than only a bot reading it.
+Why the commit authority itself is broad is the era, not the tooling.
+Pre-cutover the store was blown away and rebuilt at will, nothing downstream
+consumed it, and no volunteer saw it, so a bad commit cost a revert and nothing
+else, and an agent merged its own green PR. Cutover on 3 November 2026 ended
+that: minted field numbers are permanent, backups are mandatory, and production
+is never reseeded (ADR 0006), so a merge now wants a human reading it, not only
+a bot. The human is Peter, by merging. GitHub's own review approval cannot
+stand in for this, because `gh` opens every PR as Peter and an author cannot
+approve their own PR, so the rule is a practice recorded here rather than a
+branch protection. An agent that finds a green PR waiting leaves it waiting.
 
 Still true regardless: don't commit someone else's uncommitted work, don't
 rewrite published history, and keep documentation current in the same commit as

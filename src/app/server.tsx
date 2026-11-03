@@ -317,6 +317,19 @@ export function createApp({
   // So every response carries them — error pages and static files included
   // (beeline-m9o; the policy and its reasons are in the module).
   app.use(securityHeaders(config.environment));
+  // The www form of the origin's host is sent to the origin (beeline-83b8.14).
+  // The CSRF check below and the OAuth redirect_uri both name the one origin,
+  // so a page served at www could be read but none of its forms submitted.
+  // Only the www form: the .fly.dev name answers as itself, which is how a
+  // deploy is tried before DNS moves, and so does a request with no Host. The
+  // target is the origin plus the request's own path and query, so nothing a
+  // visitor writes can name another host.
+  const wwwHost = `www.${new URL(config.origin).host}`;
+  app.use(async (c, next) => {
+    if (c.req.header("host")?.toLowerCase() !== wwwHost) return next();
+    const url = new URL(c.req.url);
+    return c.redirect(`${config.origin}${url.pathname}${url.search}`, 301);
+  });
   // Failures and dead ends answer with a page (beeline-0kj): errorResponse
   // below, defined once the page helper exists. Hono calls these after
   // registration, so naming it before it is defined is fine.

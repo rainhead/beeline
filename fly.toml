@@ -1,7 +1,7 @@
-# Beeline on Fly — the sandbox, and production after cutover.
-#
-# TEMPORARY hosting, as maderas was before it (until 2026-09): the
-# hosting decision is re-made with Andony at cutover, December 2026.
+# Beeline on Fly — the sandbox. Production is its own app, beeline-production,
+# configured by fly.production.toml: this file with three values changed, and
+# the reasons for everything else written here (test/fly-config.test.ts keeps
+# the two in step).
 #
 # One machine, one volume, one region, forever. That is not a sandbox
 # shortcut — exactly one process may hold beeline.duckdb (ADR 0005), and a Fly
@@ -83,6 +83,11 @@ swap_size_mb = 1024
   # in Bee Line, on the OSU shared drive. An id grants nothing by itself;
   # what writes there is the service account in BEELINE_DRIVE_KEY, which a
   # manager of the drive added to the folder (GitHub #126).
+  #
+  # Production takes this folder over at cutover, and the sandbox stops
+  # backing up (docs/runbooks/deploy-fly.md, "Two apps"). This line and the
+  # sandbox's BEELINE_DRIVE_KEY secret go in the same deploy: the app refuses
+  # to boot with one set and not the other.
   BEELINE_BACKUP_FOLDER = "1uNdyRAWHMRwWmSv-6yk1ENaJofHyXyz5"
 
 # Secrets, set with `fly secrets set` and never here:

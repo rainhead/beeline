@@ -346,7 +346,7 @@ describe("a night's backup", () => {
 describe("the job", () => {
   const ctx = { conn: {} as JobContext["conn"], step: (_: string, fn: () => Promise<unknown>) => fn() } as unknown as JobContext;
   const job = (
-    environment: "development" | "sandbox",
+    environment: "development" | "sandbox" | "production",
     driveBackup: { key: ServiceAccountKey; folderId: string } | null = null,
     privateDbKey: string | null = null,
   ) =>
@@ -361,14 +361,21 @@ describe("the job", () => {
       privateDbKey,
     }).find((j) => j.name === "store-backup")!;
 
-  it("fails outside development when it has nowhere to go, rather than succeeding at nothing", async () => {
-    await expect(job("sandbox").run(ctx)).rejects.toThrow(/nothing was backed up/);
+  it("fails in production when it has nowhere to go, rather than succeeding at nothing", async () => {
+    await expect(job("production").run(ctx)).rejects.toThrow(/nothing was backed up/);
+  });
+
+  it("stands down in the sandbox and in development when it has nowhere to go", async () => {
+    // From cutover the sandbox is not the record, and it gives its backup
+    // folder to production (beeline-83b8.8).
+    await expect(job("sandbox").run(ctx)).resolves.toMatch(/nothing backed up/);
     await expect(job("development").run(ctx)).resolves.toMatch(/nothing backed up/);
   });
 
   it("refuses, outside development, to back up the private store without its key", async () => {
     const drive = { key: testServiceAccount(), folderId: "f" };
     await expect(job("sandbox", drive, null).run(ctx)).rejects.toThrow(/refusing to back up the private store unencrypted/);
+    await expect(job("production", drive, null).run(ctx)).rejects.toThrow(/refusing to back up the private store unencrypted/);
   });
 
   it("runs ahead of the Sunday sweep, so a long sweep cannot push it past the night window", () => {

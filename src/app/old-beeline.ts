@@ -3,8 +3,8 @@ import type { Env, Hono } from "hono";
 /**
  * Where the old Beeline runs from cutover (beeline-83b8.12). New Beeline takes
  * melittologist.org on 3 November 2026, and the old system moves here and
- * keeps running, its volunteer determination screens open, at least through
- * February (Peter, 2026-11-03): volunteers were not warned about the new
+ * keeps running, its volunteer determination screens open, through February
+ * 2027 (Peter, 2026-11-03): volunteers were not warned about the new
  * interface, so they are not pushed onto it. What they enter there comes into
  * this store by another route (beeline-c43w).
  *

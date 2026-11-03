@@ -38,7 +38,26 @@ describe("the legacy-format export", () => {
     expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     const header = bytes.subarray(3).toString("utf8").split("\n")[0];
     expect(header).toBe(LEGACY_EXPORT_COLUMNS.join(","));
-    expect(LEGACY_EXPORT_COLUMNS).toHaveLength(63);
+    // The template's 63, and occurrenceRemarks after them (beeline-fud5).
+    expect(LEGACY_EXPORT_COLUMNS).toHaveLength(64);
+    expect(LEGACY_EXPORT_COLUMNS.at(-1)).toBe("occurrenceRemarks");
+  });
+
+  test("writes the inventory's remark on a specimen as occurrenceRemarks, and nothing where there is none", async () => {
+    await conn.run(
+      `INSERT INTO specimen_disposition (specimen_id, disposition, remarks, stated_by, stated_on, source)
+       SELECT entity_id, 'missing', 'LOST SPECIMEN: No specimen in complete OR inventory.', 'Inez Inventory', DATE '2026-11-03', 'inventory.xlsx'
+       FROM specimen WHERE field_number = '25000002'`,
+    );
+    const again = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
+    await writeLegacyExport(conn, again);
+    const result = await conn.runAndReadAll(
+      `SELECT "fieldNumber", "occurrenceRemarks" FROM read_csv('${again}', header = true, all_varchar = true) ORDER BY 1`,
+    );
+    const byNumber = new Map(result.getRows().map(([n, r]) => [n, r]));
+    expect(byNumber.get("25000002")).toBe("LOST SPECIMEN: No specimen in complete OR inventory.");
+    expect(byNumber.get("25000001")).toBeNull();
+    await conn.run(`DELETE FROM specimen_disposition`);
   });
 
   test("writes a blank as nothing, never as an empty quoted string", () => {

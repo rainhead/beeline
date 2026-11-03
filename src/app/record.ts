@@ -248,6 +248,11 @@ export interface SpecimenDetail {
   specimen_id: number;
   specimen_number: number;
   field_number: string | null;
+  /** What became of the pin, where a staff inventory has said (specimen_disposition, beeline-fud5); all null otherwise. */
+  disposition: "in collection" | "missing" | null;
+  remarks: string | null;
+  remarks_by: string | null;
+  remarks_on: Date | null;
   sample: SampleDetail;
 }
 
@@ -506,11 +511,23 @@ export async function loadSpecimen(
   reader: Reader,
 ): Promise<SpecimenDetail | null> {
   if (!Number.isSafeInteger(specimenId) || specimenId <= 0) return null;
-  const found = await sql<RawSample & { specimen_id: number; specimen_number: number; field_number: string | null }>`
+  const found = await sql<
+    RawSample & {
+      specimen_id: number;
+      specimen_number: number;
+      field_number: string | null;
+      disposition: "in collection" | "missing" | null;
+      remarks: string | null;
+      remarks_by: string | null;
+      remarks_on: Date | null;
+    }
+  >`
     SELECT sp.entity_id AS specimen_id, sp.specimen_number, sp.field_number,
+           sd.disposition, sd.remarks, sd.stated_by AS remarks_by, sd.stated_on AS remarks_on,
            ${sampleColumns(personId, reader)}
     ${sampleJoins(reader)}
     JOIN specimen sp ON sp.sample_id = s.entity_id
+    LEFT JOIN specimen_disposition sd ON sd.specimen_id = sp.entity_id
     WHERE sp.entity_id = ${specimenId}`.execute(db);
   const row = found.rows[0];
   if (row === undefined) return null;
@@ -518,6 +535,10 @@ export async function loadSpecimen(
     specimen_id: Number(row.specimen_id),
     specimen_number: Number(row.specimen_number),
     field_number: row.field_number,
+    disposition: row.disposition,
+    remarks: row.remarks,
+    remarks_by: row.remarks_by,
+    remarks_on: row.remarks_on,
     sample: await hydrate(db, row),
   };
 }

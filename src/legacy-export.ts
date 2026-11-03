@@ -50,6 +50,11 @@ export const LEGACY_EXPORT_COLUMNS = [
   "url", "phylum", "class", "order", "family", "genus", "subgenus", "specificEpithet", "taxonomicNotes",
   "scientificName", "sex", "caste", "taxonRank", "identifiedBy", "familyVolDet", "genusVolDet", "speciesVolDet",
   "sexVolDet", "casteVolDet", "geoprivacy", "taxon_geoprivacy",
+  // The one column after the template's: the inventory's remark on the
+  // specimen (specimen_disposition, beeline-fud5), which the old system's
+  // own 2025 master file carries under this name and the template never
+  // had. Last, so a reader of the 63 columns by position reads what it read.
+  "occurrenceRemarks",
 ] as const;
 
 /** Staged legacy columns the export reads, when the store holds staging at all. */
@@ -366,6 +371,8 @@ rows AS (
     -- imported sample it never linked keeps what the legacy record said.
     ${t(`coalesce(s.geoprivacy, nullif(lo."geoprivacy", ''))`)} AS "geoprivacy",
     ${t(`coalesce(s.taxon_geoprivacy, nullif(lo."taxon_geoprivacy", ''))`)} AS "taxon_geoprivacy",
+    -- What became of the pin, where somebody has said (beeline-fud5).
+    ${t("sd.remarks")} AS "occurrenceRemarks",
     -- (the composite sort is computed from these columns below)
     sp.entity_id AS sort_tiebreak
   FROM specimen sp
@@ -383,6 +390,7 @@ rows AS (
   LEFT JOIN volunteer v ON v.specimen_id = sp.entity_id
   LEFT JOIN lineage vl ON vl.node_id = v.animal_id
   LEFT JOIN printed pr ON pr.specimen_id = sp.entity_id
+  LEFT JOIN specimen_disposition sd ON sd.specimen_id = sp.entity_id
   ${staged}
   ${rowJoins}
 )

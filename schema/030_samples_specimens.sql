@@ -189,6 +189,34 @@ COMMENT ON TABLE specimen IS 'One physical insect. Specimens are individuated by
 COMMENT ON COLUMN specimen.specimen_number IS '1..N within the sample at freeze time.';
 COMMENT ON COLUMN specimen.field_number IS 'The number Beeline issues and prints on the label (CONTEXT.md, beeline-nfo) — never the museum''s catalog number, which arrives from Ecdysis with its institutional prefix and gets its own column when import lands. Opaque verbatim text: all four historical identifier eras land here, including the era of duplicates — so no UNIQUE. A number Beeline mints is written here AND as a row in minted_field_number (schema/035), whose PRIMARY KEY is the guarantee (ADR 0008); specimen_field_number_stale (schema/155) checks that the two agree. Not indexed, deliberately: an indexed column on a row a determination references could never be updated (duckdb/duckdb#20246), and a duplicate repair will one day update this one.';
 
+-- Where a specimen physically stands, as a person who looked has said
+-- (beeline-fud5): Darwin Core's disposition and occurrenceRemarks, on the
+-- specimen, because the exports carry both and nothing else records what
+-- became of a pin. It exists for the 2025 season. The old system printed
+-- one specimen under two or three numbers, issued one number to collectors
+-- in two states, and left some labels unprinted; Andony's inventory of the
+-- boxes in the autumn of 2026 wrote a remark on every record it found
+-- wanting (docs/research/2025-inventory.md), and src/load-dispositions.ts
+-- brings those remarks in, corrected where Beeline's reading differs: a
+-- record he called lost whose bee the inventory found under its other number
+-- is a surplus label, and the remark goes on the specimen that exists. One
+-- row per specimen, replaced by a later load that says something different.
+CREATE TABLE specimen_disposition (
+  specimen_id INTEGER PRIMARY KEY REFERENCES specimen(entity_id),
+  disposition TEXT CHECK (disposition IN ('in collection', 'missing')),
+  remarks     TEXT NOT NULL CHECK (remarks <> ''),
+  stated_by   TEXT NOT NULL CHECK (stated_by <> ''),
+  stated_on   DATE NOT NULL,
+  source      TEXT NOT NULL CHECK (source <> ''),
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE specimen_disposition IS 'What became of the pin, as a person stated it after looking (dwc:disposition, dwc:occurrenceRemarks). Absent for the ordinary specimen nobody has had cause to remark on. Written by pnpm disposition:load from a staff inventory file; the legacy-format export and the Darwin Core archives carry both columns.';
+COMMENT ON COLUMN specimen_disposition.disposition IS 'Darwin Core''s vocabulary, the two values the inventory can say: in collection (a pin with this label is in a box) or missing (no pin, and the record cannot be matched to one). Null where the remark says something else, such as that a label is still to print.';
+COMMENT ON COLUMN specimen_disposition.remarks IS 'The remark as stated, or as corrected by the load: the words the exports write as occurrenceRemarks.';
+COMMENT ON COLUMN specimen_disposition.stated_by IS 'Who looked: the name given to the load, not a person reference, since the inventory is a file and not an act in Beeline.';
+COMMENT ON COLUMN specimen_disposition.stated_on IS 'The date the statement is good for, given to the load: the inventory''s date rather than the load''s.';
+COMMENT ON COLUMN specimen_disposition.source IS 'The file the remark was read from, by name.';
+
 -- Which iNaturalist observations an imported sample's legacy records came
 -- from. Legacy promotion merges records on (collector, sample number, date),
 -- and a record carries its observation's URL; only staging can see that a

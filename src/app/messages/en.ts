@@ -1159,6 +1159,20 @@ export const en = {
         `Not numbered — ${number} was taken back when ${run} was canceled; the next run will number this specimen again.`,
       inSample: "Number in its sample",
       fromSample: "From sample",
+      /**
+       * What became of the pin, where a staff inventory has said
+       * (specimen_disposition, beeline-fud5): the 2025 boxes were gone
+       * through in the autumn of 2026, and every record found wanting got a
+       * remark. Shown only on a specimen that has one.
+       */
+      disposition: {
+        heading: "The pin",
+        state: "Where it is",
+        inCollection: "In the collection",
+        missing: "Missing: no pin with this label was found",
+        remarks: "Remarks",
+        statedBy: (name: string, date: string) => `Stated by ${name}, ${date}.`,
+      },
       /** Every time a label for this specimen went into a print run (schema/035). */
       labels: {
         heading: "Labels",

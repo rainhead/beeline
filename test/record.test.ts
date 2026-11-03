@@ -186,6 +186,24 @@ describe("the determination history", () => {
     expect(body).not.toContain("does not replace it");
   });
 
+  it("says what became of the pin where a staff inventory has said, and nothing where none has (beeline-fud5)", async () => {
+    const { app, conn, specimen } = await recordApp();
+    expect(await get(app, `/specimens/${specimen}`)).not.toContain("Stated by");
+    await conn.run(
+      `INSERT INTO specimen_disposition (specimen_id, disposition, remarks, stated_by, stated_on, source)
+       VALUES (${specimen}, 'missing', 'LOST SPECIMEN: No specimen in complete OR inventory.', 'Inez Inventory', DATE '2026-11-03', 'inventory.xlsx')`,
+    );
+    const body = await get(app, `/specimens/${specimen}`);
+    expect(body).toContain("Missing: no pin with this label was found");
+    expect(body).toContain("LOST SPECIMEN: No specimen in complete OR inventory.");
+    expect(body).toContain("Stated by Inez Inventory, Nov 3, 2026.");
+    // A remark that says nothing about the pin has no state to show.
+    await conn.run(`UPDATE specimen_disposition SET disposition = NULL, remarks = 'PRINT REQUIRED: Generate label.' WHERE specimen_id = ${specimen}`);
+    const later = await get(app, `/specimens/${specimen}`);
+    expect(later).toContain("PRINT REQUIRED: Generate label.");
+    expect(later).not.toContain("Where it is");
+  });
+
   it("shows the name as the source wrote it, which reached no screen before", async () => {
     const { app, specimen } = await recordApp();
     const body = await get(app, `/specimens/${specimen}`);

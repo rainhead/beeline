@@ -1137,7 +1137,6 @@ describe("Darwin Core archives, by program and year", () => {
       "Master Melittology",
       "National Wildlife Refuges",
       "New Mexico Bee Atlas",
-      "Oklahoma Bee Atlas",
       "Oregon Bee Atlas",
       "Washington Bee Atlas",
     ]);

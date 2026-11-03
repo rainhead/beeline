@@ -34,7 +34,7 @@ Two seams will need deciding, neither now:
    web page. That is a design problem in its own right, not a routing change.
 
 Worth noting for scale: the smaller atlases have little or no web presence of their own.
-New Mexico and Oklahoma have no site at all, only an iNaturalist project; Idaho is a Google
+New Mexico has no site at all, only an iNaturalist project; Idaho is a Google
 Sites page. A public tier would be filling a real gap, not duplicating one (beeline-58b).
 
 ## Downstream consumers today

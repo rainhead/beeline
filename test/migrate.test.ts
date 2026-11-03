@@ -184,3 +184,38 @@ describe("emptying specimen.occurrence_id (0060, 0061)", () => {
     expect(await schemaDrift(conn)).toEqual(["not in the schema: specimen.occurrence_id"]);
   });
 });
+
+describe("removing the Oklahoma Bee Atlas (0071)", () => {
+  test("runs on a store whose samples, members and leads name it", async () => {
+    // The shape the migration was written for: the program row, Oklahoma's
+    // region pointing at it, and every kind of row that references it.
+    await conn.run("INSERT INTO program (code, name) VALUES ('OK', 'Oklahoma Bee Atlas')");
+    await conn.run(
+      "UPDATE atlas_region SET atlas_id = (SELECT entity_id FROM program WHERE code = 'OK') WHERE state_province = 'OK'",
+    );
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    const sampleId = await insertCleanSample(conn, {
+      state_province: "'OK'",
+      atlas_id: "(SELECT entity_id FROM program WHERE code = 'OK')",
+    });
+    await conn.run(`INSERT INTO person_membership (person_id, program_id)
+                    SELECT min(p.entity_id), (SELECT entity_id FROM program WHERE code = 'OK') FROM person p`);
+    await conn.run(`INSERT INTO program_lead (program_id, person_id)
+                    SELECT (SELECT entity_id FROM program WHERE code = 'OK'), min(p.entity_id) FROM person p`);
+
+    // Two migrations, because DuckDB will not delete the program row in the
+    // transaction that removed the rows referencing it.
+    const names = ["0071-nothing-names-the-oklahoma-bee-atlas.sql", "0072-there-is-no-oklahoma-bee-atlas.sql"];
+    for (const name of names) await copyFile(join(MIGRATIONS_DIR, name), join(dir, name));
+    expect(await migrate(conn, { dir })).toEqual(names);
+
+    expect(await rows(conn, "SELECT count(*) FROM program WHERE code = 'OK'")).toEqual([[0n]]);
+    expect(await rows(conn, "SELECT atlas_id FROM atlas_region WHERE state_province = 'OK'")).toEqual([[null]]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_atlas WHERE sample_id = ${sampleId}`)).toEqual([[0n]]);
+    expect(
+      await rows(conn, "SELECT p.code FROM person_membership m JOIN program p ON p.entity_id = m.program_id"),
+    ).toEqual([["MM"]]);
+    expect(await rows(conn, "SELECT count(*) FROM program_lead")).toEqual([[0n]]);
+    expect(await schemaDrift(conn)).toEqual([]);
+  });
+});

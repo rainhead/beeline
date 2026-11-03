@@ -98,22 +98,14 @@ months: wherever the old system goes under `melittologist.org`, it needs HTTPS.
 **One backup folder, and only production writes to it.** Retention reads the
 folder and goes by file name alone ([`src/store-backup.ts`](../../src/store-backup.ts)),
 so two apps writing there would each move the other's copies to the bin, and a
-restore could not tell whose copy was whose. From cutover the sandbox stands
-down: with neither `BEELINE_DRIVE_KEY` nor `BEELINE_BACKUP_FOLDER` set, its
+restore could not tell whose copy was whose. Since cutover (2026-11-03) the
+sandbox has neither `BEELINE_DRIVE_KEY` nor `BEELINE_BACKUP_FOLDER`, so its
 `store-backup` job succeeds and says nothing was backed up, where production's
-fails. Both settings go in one deploy, since the app refuses to boot with only
-one of them:
-
-```sh
-fly secrets unset --stage --app beeline BEELINE_DRIVE_KEY
-# delete BEELINE_BACKUP_FOLDER from fly.toml, then
-fly deploy
-```
-
-Move the sandbox's copies out of the folder into a subfolder of their own
-before production's first backup. Otherwise production's retention counts
-them as its own, and the copy it keeps for a year as November's would be the
-sandbox's from 1 or 2 November.
+fails; the app refuses to boot with only one of the two set. The sandbox's
+copies from before cutover sit in the subfolder "sandbox, before cutover
+2026-11-03" inside the folder, which retention ignores because its name is not
+a backup's; had they stayed, production would have kept the sandbox's copy of
+1 November as November's for a year.
 
 **Sentry** takes both apps' reports under one DSN, told apart by
 `environment` (`sandbox` or `production`). The uptime monitor and the alert

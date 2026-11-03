@@ -79,22 +79,18 @@ swap_size_mb = 1024
   BEELINE_SYNC_PROJECTS = "18521,166376,99706"
   BEELINE_SWEEP_DAYS = "365"
 
-  # The nightly backup's destination (beeline-elf): the databaseBackups folder
-  # in Bee Line, on the OSU shared drive. An id grants nothing by itself;
-  # what writes there is the service account in BEELINE_DRIVE_KEY, which a
-  # manager of the drive added to the folder (GitHub #126).
-  #
-  # Production takes this folder over at cutover, and the sandbox stops
-  # backing up (docs/runbooks/deploy-fly.md, "Two apps"). This line and the
-  # sandbox's BEELINE_DRIVE_KEY secret go in the same deploy: the app refuses
-  # to boot with one set and not the other.
-  BEELINE_BACKUP_FOLDER = "1uNdyRAWHMRwWmSv-6yk1ENaJofHyXyz5"
+  # No BEELINE_BACKUP_FOLDER, and no BEELINE_DRIVE_KEY secret, since cutover
+  # (2026-11-03): the databaseBackups folder on the OSU shared drive is
+  # production's (fly.production.toml), and two apps writing to it would each
+  # bin the other's copies. With neither set, the sandbox's store-backup job
+  # says it backed nothing up (docs/runbooks/deploy-fly.md, "Two apps").
 
 # Secrets, set with `fly secrets set` and never here:
 #   BEELINE_PRIVATE_DB_KEY  losing it is losing the private store (ADR 0003),
 #                           and every backup of it; copies are kept off the
 #                           server (Peter's password manager, beeline-yml3)
-#   BEELINE_DRIVE_KEY       the backup's service account key, the JSON whole
+#   BEELINE_DRIVE_KEY       the backup's service account key, the JSON whole;
+#                           production only, since cutover (above)
 #   INAT_CLIENT_ID / INAT_CLIENT_SECRET
 # The nightly's pipeline token stays a file on the volume
 # (data/secrets/inat-oauth-token), which is where mintJwt reads it.

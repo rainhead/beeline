@@ -36,10 +36,11 @@ swap_size_mb = 1024
   BEELINE_SYNC_PROJECTS = "18521,166376,99706"
   BEELINE_SWEEP_DAYS = "365"
 
-  # The sandbox's folder, which production takes over at cutover (Peter,
-  # 2026-11-02). Two apps writing here would each move the other's copies to
-  # the bin, since retention goes by file name alone (src/store-backup.ts),
-  # so the sandbox stops backing up when production starts serving: see
+  # The sandbox's folder until cutover, production's since (Peter,
+  # 2026-11-02; done 2026-11-03). Two apps writing here would each move the
+  # other's copies to the bin, since retention goes by file name alone
+  # (src/store-backup.ts), so the sandbox no longer backs up, and its copies
+  # from before cutover sit in a subfolder retention ignores: see
   # docs/runbooks/deploy-fly.md, "Two apps".
   BEELINE_BACKUP_FOLDER = "1uNdyRAWHMRwWmSv-6yk1ENaJofHyXyz5"
 

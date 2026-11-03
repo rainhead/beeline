@@ -2,7 +2,7 @@ import { openDuckDb } from "./db.js";
 import { rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { applySchema } from "./schema.js";
-import { PrintedStoreRefused, refuseToReplacePrintedStore } from "./registry-guard.js";
+import { refuseToReplacePrintedStore, StoreRefused } from "./registry-guard.js";
 
 // The schema lives in ./schema.ts; re-exported here because callers (tests,
 // scratch work) have always reached for build-db.
@@ -36,7 +36,7 @@ export async function buildStore(target: string): Promise<string[]> {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const target = process.argv[2] ?? "beeline.duckdb";
   const stamped = await buildStore(target).catch((err: unknown) => {
-    if (!(err instanceof PrintedStoreRefused)) throw err;
+    if (!(err instanceof StoreRefused)) throw err;
     console.error(err.message);
     process.exit(1);
   });

@@ -4,10 +4,10 @@ import { rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { applySchema } from "./schema.js";
 import {
-  PrintedStoreRefused,
   refuseReseedOfPrintedFile,
   refuseReseedOfPrintedStore,
   refuseToReplacePrintedStore,
+  StoreRefused,
 } from "./registry-guard.js";
 
 /**
@@ -296,7 +296,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     process.exit(2);
   }
   const counts = await reseedStore(source, target).catch((err: unknown) => {
-    if (!(err instanceof PrintedStoreRefused)) throw err;
+    if (!(err instanceof StoreRefused)) throw err;
     console.error(err.message);
     process.exit(1);
   });

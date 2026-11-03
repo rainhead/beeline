@@ -55,8 +55,16 @@ export async function countRegistry(conn: DuckDBConnection, catalog: string): Pr
   return { print_run: await count("print_run"), minted_field_number: await count("minted_field_number") };
 }
 
+/** A refusal written for the operator: the CLIs print its message alone. */
+export class StoreRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StoreRefused";
+  }
+}
+
 /** Thrown, before anything is written, by a rebuild pointed at a store that has printed. */
-export class PrintedStoreRefused extends Error {
+export class PrintedStoreRefused extends StoreRefused {
   constructor(
     readonly counts: RegistryCounts,
     message: string,
@@ -138,14 +146,37 @@ export async function refuseReseedOfPrintedFile(sourcePath: string): Promise<voi
  * printed, which both would do to whatever is at their target path. A path
  * with nothing at it is no refusal.
  */
-export async function refuseToReplacePrintedStore(targetPath: string, tool: string): Promise<void> {
-  if (!existsSync(targetPath)) return;
-  const counts = await countRegistryAt(targetPath);
+export async function refuseToReplacePrintedStore(
+  targetPath: string,
+  tool: "db:build" | "db:reseed",
+): Promise<void> {
+  if (!existsSync(targetPath)) {
+    // A WAL with no store is not checked by anything below, and building
+    // would discard it, with whatever it holds.
+    if (existsSync(`${targetPath}.wal`)) {
+      throw new StoreRefused(
+        `Refusing to build ${targetPath}: a WAL is beside it with no store, and building would discard it. ` +
+          `Nothing was deleted; move ${targetPath}.wal aside if it should go.`,
+      );
+    }
+    return;
+  }
+  let counts: RegistryCounts;
+  try {
+    counts = await countRegistryAt(targetPath);
+  } catch (err) {
+    throw new StoreRefused(
+      `Refusing to replace ${targetPath}: it is not a store Beeline can read (${(err as Error).message.split("\n")[0]}), ` +
+        `so it was not deleted. Move it aside if it should be replaced.`,
+    );
+  }
   if (counts.print_run + counts.minted_field_number === 0) return;
   throw new PrintedStoreRefused(
     counts,
     `Refusing to replace ${targetPath}: it holds ${held(counts)}, and ${tool} deletes the store at its target ` +
       `before building, so those would be lost and the next print run would issue the same numbers again. ` +
-      `Nothing was deleted, and there is no override. Check the order of the arguments. See ${RUNBOOK}.`,
+      `Nothing was deleted, and there is no override. ` +
+      (tool === "db:reseed" ? "Check the order of the arguments. " : "") +
+      `See ${RUNBOOK}.`,
   );
 }

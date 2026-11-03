@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DuckDBInstance } from "@duckdb/node-api";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applySchema, buildStore } from "../src/build-db.js";
-import { countRegistryAt, PrintedStoreRefused } from "../src/registry-guard.js";
+import { countRegistryAt, PrintedStoreRefused, StoreRefused } from "../src/registry-guard.js";
 import { rows } from "./helpers.js";
 
 /**
@@ -45,7 +46,8 @@ describe("building over a store", () => {
   test("a target that has printed is refused, and left as it was", async () => {
     const live = await store("printed.duckdb", [PERSON, RUN, MINTED]);
     await expect(buildStore(live)).rejects.toThrow(PrintedStoreRefused);
-    await expect(buildStore(live)).rejects.toThrow(/Nothing was deleted/);
+    // One argument, so no word about their order.
+    await expect(buildStore(live)).rejects.toThrow(/Nothing was deleted, and there is no override\. See /);
     expect(await countRegistryAt(live)).toEqual({ print_run: 1, minted_field_number: 1 });
   });
 
@@ -77,6 +79,26 @@ describe("building over a store", () => {
     instance.closeSync();
     expect(await countRegistryAt(path)).toEqual({ print_run: 0, minted_field_number: 0 });
     await expect(buildStore(path)).resolves.toBeInstanceOf(Array);
+  });
+
+  test("a file that is not a store is refused rather than replaced", async () => {
+    // It used to be deleted and built over. It cannot be read to ask whether
+    // it has printed, so it is left for a person to move aside.
+    for (const [name, content] of [["empty.duckdb", ""], ["notes.duckdb", "not a database\n"]] as const) {
+      const path = join(dir, name);
+      await writeFile(path, content);
+      await expect(buildStore(path)).rejects.toThrow(StoreRefused);
+      await expect(buildStore(path)).rejects.toThrow(/not a store Beeline can read.*Move it aside/);
+      expect(await readFile(path, "utf8")).toBe(content);
+    }
+  });
+
+  test("a WAL with no store beside it is refused, not discarded", async () => {
+    const path = join(dir, "wal-only.duckdb");
+    await writeFile(`${path}.wal`, "a WAL a store was never checkpointed from");
+    await expect(buildStore(path)).rejects.toThrow(/a WAL is beside it with no store.*Nothing was deleted/);
+    expect(existsSync(`${path}.wal`)).toBe(true);
+    expect(existsSync(path)).toBe(false);
   });
 
   test("a path with nothing at it is built", async () => {

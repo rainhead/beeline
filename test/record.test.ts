@@ -466,7 +466,7 @@ describe("a location iNaturalist keeps from everyone but its observer", () => {
       // The county stays, as iNaturalist's public view keeps it.
       expect(body, path).toContain("BentonCo");
       expect(body, path).toContain(
-        en.record.sample.where.withheld({ geoprivacy: null, taxonGeoprivacy: "obscured" }).replaceAll("'", "&#39;"),
+        en.record.sample.where.withheld({ geoprivacy: null, taxonGeoprivacy: "obscured", gone: false }).replaceAll("'", "&#39;"),
       );
     }
   });
@@ -498,10 +498,49 @@ describe("a location iNaturalist keeps from everyone but its observer", () => {
     await conn.run(`UPDATE sample SET taxon_geoprivacy = NULL WHERE entity_id = ${aliceSample}`);
     const unread = await get(app, `/samples/${aliceSample}`);
     expect(unread).not.toContain(COORDINATES);
-    expect(unread).toContain(en.record.sample.where.withheld({ geoprivacy: null, taxonGeoprivacy: null }).replaceAll("'", "&#39;"));
+    expect(unread).toContain(en.record.sample.where.withheld({ geoprivacy: null, taxonGeoprivacy: null, gone: false }).replaceAll("'", "&#39;"));
     // Once a sync has read it and it is open, it is open.
     await conn.run(`INSERT INTO observation_field (inat_id, place_guess) VALUES (998877, 'Verlot, WA, US')`);
     expect(await get(app, `/samples/${aliceSample}`)).toContain(COORDINATES);
+  });
+
+  it("says an observation iNaturalist no longer has is gone, links nowhere, and stops promising a read (beeline-wcc6)", async () => {
+    // A-1 cites 998877, which no sync has read and iNaturalist, asked by id,
+    // answered without on 24 October.
+    const gone = async (who: "alice" | "bob") => {
+      const { app, conn, aliceSample } = await recordApp(who);
+      await conn.run(`UPDATE sample SET taxon_geoprivacy = NULL WHERE entity_id = ${aliceSample}`);
+      await conn.run(
+        `INSERT INTO observation_absent (inat_id, absent_since, asked_at)
+         VALUES (998877, TIMESTAMPTZ '2026-10-24 09:00:00+00', TIMESTAMPTZ '2026-11-01 09:00:00+00')`,
+      );
+      return { app, conn, aliceSample, body: await get(app, `/samples/${aliceSample}`) };
+    };
+    const link = "inaturalist.org/observations/998877";
+    const goneLine = en.record.sample.observationGone("Oct 24, 2026");
+
+    // Somebody else's sample: still withheld, since nobody can say whether
+    // it was private, but without the promise that a read is coming.
+    const bob = await gone("bob");
+    expect(bob.body).not.toContain(COORDINATES);
+    expect(bob.body).toContain(en.record.sample.where.withheld({ geoprivacy: null, taxonGeoprivacy: null, gone: true }).replaceAll("'", "&#39;"));
+    expect(bob.body).not.toContain(en.record.sample.where.withheld({ geoprivacy: null, taxonGeoprivacy: null, gone: false }).replaceAll("'", "&#39;"));
+
+    // Her own: the location is hers to see, and the id stays, unlinked.
+    const alice = await gone("alice");
+    expect(alice.body).toContain(COORDINATES);
+    for (const { body } of [alice, bob]) {
+      expect(body).toContain(goneLine);
+      expect(body).toContain("998877");
+      expect(body).not.toContain(link);
+      expect(body).not.toContain(en.record.sample.viewOnInat);
+    }
+
+    // Once a sync reads it after all, it is an observation like any other.
+    await alice.conn.run(`INSERT INTO observation_field (inat_id, place_guess) VALUES (998877, 'Verlot, WA, US')`);
+    const back = await get(alice.app, `/samples/${alice.aliceSample}`);
+    expect(back).toContain(link);
+    expect(back).not.toContain("No longer on iNaturalist");
   });
 
   it("withholds the observation's own place guess", async () => {
@@ -523,7 +562,7 @@ describe("a location iNaturalist keeps from everyone but its observer", () => {
     await conn.run(`UPDATE sample SET geoprivacy = 'private', taxon_geoprivacy = NULL WHERE entity_id = ${aliceSample}`);
     const body = await get(app, `/samples/${aliceSample}`);
     expect(body).not.toContain("BentonCo");
-    expect(body).toContain(en.record.sample.where.withheld({ geoprivacy: "private", taxonGeoprivacy: null }).replaceAll("'", "&#39;"));
+    expect(body).toContain(en.record.sample.where.withheld({ geoprivacy: "private", taxonGeoprivacy: null, gone: false }).replaceAll("'", "&#39;"));
   });
 
   it("leaves out the history of where it was, and what its flags quote", () => {

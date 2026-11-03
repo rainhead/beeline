@@ -142,6 +142,15 @@ describe("the rows", () => {
     expect(season.map((r) => r.fieldNumber)).toEqual(["25000900", "26000101", "26000102", "26000103"]);
     expect(season[2]!.prior).toMatchObject({ animalId: await animal("Bombus"), sex: "female", channel: "in_app" });
   });
+
+  it("offer no link to an observation iNaturalist no longer has (beeline-wcc6)", async () => {
+    const { db, conn, ada, ada26 } = await fixture();
+    await conn.run(`UPDATE sample SET inat_observation_id = 5551 WHERE entity_id = ${ada26}`);
+    const observations = async () => [...new Set((await seasonRows(db, ada, ada, 2026)).map((r) => r.sample.observation))];
+    expect(await observations()).toContain("5551");
+    await conn.run(`INSERT INTO observation_absent (inat_id) VALUES (5551)`);
+    expect(await observations()).not.toContain("5551");
+  });
 });
 
 describe("drafts", () => {

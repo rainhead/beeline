@@ -250,7 +250,7 @@ export interface FetchByIdOptions
 
 export interface FetchByIdResult {
   syncRunId: number;
-  /** Observations asked for, and how many iNaturalist returned: the rest are gone upstream, or hidden from this token. */
+  /** Observations asked for, and how many iNaturalist returned: the rest are gone upstream, or hidden from this token, and recorded in observation_absent. */
   asked: number;
   fetched: number;
   newLoads: number;
@@ -307,13 +307,29 @@ export async function fetchObservationsById(conn: DuckDBConnection, opts: FetchB
       const body = (await response.json()) as { results?: unknown };
       if (!Array.isArray(body.results)) throw new Error("iNat API returned no results array for a by-id request — aborting the run");
       const asked = new Set(chunk);
+      const returned = new Set<number>();
       for (const obs of body.results as Array<Record<string, unknown>>) {
         // Only what was asked: anything else would be recorded as seen by a
         // run that never asked about it.
         if (!asked.has(Number(obs.id))) continue;
+        returned.add(Number(obs.id));
         fetched += 1;
         if (await recordObservation(conn, syncRunId, obs)) newLoads += 1;
         else unchanged += 1;
+      }
+      // What iNaturalist answered without is absent; what it returned is no
+      // longer (schema/060 observation_absent, beeline-wcc6). Only on a 200
+      // with a results array, which the checks above have already required.
+      for (const id of chunk) {
+        if (returned.has(id)) {
+          await conn.run(`DELETE FROM observation_absent WHERE inat_id = $1`, [id]);
+        } else {
+          await conn.run(
+            `INSERT INTO observation_absent (inat_id) VALUES ($1)
+             ON CONFLICT (inat_id) DO UPDATE SET asked_at = now()`,
+            [id],
+          );
+        }
       }
       if (i + CHUNK < ids.length && opts.pageDelayMs !== 0) {
         await new Promise((r) => setTimeout(r, opts.pageDelayMs ?? 1100));

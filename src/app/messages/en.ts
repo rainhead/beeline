@@ -891,6 +891,14 @@ export const en = {
       /** Trap samples usually have none, and that is not a gap. */
       observationNone: "None — this sample did not come from an observation, so it is corrected here rather than upstream.",
       /**
+       * Beside the id, unlinked, where iNaturalist has never given Beeline
+       * the observation and, asked for it, answered without it
+       * (beeline-wcc6). "Deleted" is the likely reading rather than a
+       * certainty, so it is said as one.
+       */
+      observationGone: (since: Date | string) =>
+        `No longer on iNaturalist: Beeline has not found it there since ${date(since)}, so it has most likely been deleted.`,
+      /**
        * The observer's own free text on the observation (beeline-hza). "Notes"
        * rather than "Description", which is iNaturalist's word for the field
        * and not what anyone calls it. The row is absent where there are none,
@@ -961,8 +969,12 @@ export const en = {
          * everyone but its observer — and which of the two kept it, since
          * one is the collector's choice and the other is about a rare plant.
          */
-        withheld: (why: { geoprivacy: string | null; taxonGeoprivacy: string | null }) =>
-          why.geoprivacy === null && why.taxonGeoprivacy === null
+        withheld: (why: { geoprivacy: string | null; taxonGeoprivacy: string | null; gone: boolean }) =>
+          // Before "not read yet", which would promise a read that cannot
+          // come: the observation is no longer on iNaturalist (beeline-wcc6).
+          why.gone
+            ? "This sample's observation is no longer on iNaturalist, so Beeline cannot tell whether the collector kept its location private there. Only its collectors and staff see where it was collected."
+            : why.geoprivacy === null && why.taxonGeoprivacy === null
             ? "Beeline has not read this sample's observation from iNaturalist, so it cannot tell whether the collector keeps its location private there. Until it can, only its collectors and staff see where it was collected."
             : why.geoprivacy !== null
             ? `The collector keeps this observation's location ${why.geoprivacy === "private" ? "private" : "obscured"} on iNaturalist, so only its collectors and staff see where it was collected.`

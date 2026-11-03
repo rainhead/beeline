@@ -389,6 +389,8 @@ export interface SampleRow {
   protocol: string | null;
   specimen_count: number;
   inat_observation_id: bigint | null;
+  /** iNaturalist no longer has the observation (`observationGone`): nothing to link to. */
+  observation_gone: boolean;
   atlas_code: string | null;
   host_name: string | null;
   host_rank: string | null;
@@ -684,6 +686,19 @@ export function withheld(reader: Reader) {
                     AND own.sample_id IS NULL)`;
 }
 
+/**
+ * The sample cites an observation iNaturalist has never given Beeline and,
+ * asked for it by id, answered without it (schema/060 observation_absent,
+ * beeline-wcc6): deleted upstream, so there is no page to send anyone to and
+ * nothing to read. Correlated on `s`, for a query that has `s` in scope. The
+ * same two conditions as the missing-upstream flag's second branch
+ * (schema/120).
+ */
+export const observationGone = sql<boolean>`EXISTS (
+  SELECT 1 FROM observation_absent ab
+  WHERE ab.inat_id = s.inat_observation_id
+    AND NOT EXISTS (SELECT 1 FROM observation_field gf WHERE gf.inat_id = s.inat_observation_id))`;
+
 /** The reader's own samples, as SQL to join as `own`, for a query written in SQL. */
 export const ownSamplesSql = (reader: Reader) =>
   sql`(SELECT DISTINCT oc.sample_id FROM sample_collector oc
@@ -929,6 +944,7 @@ export async function listSamples(
         "s.protocol",
         "s.specimen_count",
         "s.inat_observation_id",
+        observationGone.as("observation_gone"),
         "a.code as atlas_code",
         "s.host_name_as_observed as host_name",
         "s.host_rank",

@@ -763,6 +763,13 @@ export interface SyncRunTable {
   fetched_by_id: ColumnType<boolean | null, boolean | undefined, boolean>;
 }
 
+/** schema/060: an observation a by-id run asked for and did not get back (beeline-wcc6). */
+export interface ObservationAbsentTable {
+  inat_id: BigIntCol;
+  absent_since: Generated<Date>;
+  asked_at: Generated<Date>;
+}
+
 /**
  * schema/060: the stored form of the projection observation_current_fields
  * defines. Read this rather than the view — the view costs ~200 ms a scan
@@ -1335,6 +1342,7 @@ export interface Database {
   observation_sample_number_conflict: ObservationSampleNumberConflictView;
   inat_place: InatPlaceTable;
   inat_place_absent: InatPlaceAbsentTable;
+  observation_absent: ObservationAbsentTable;
   observation_place: ObservationPlaceView;
   observation_place_ambiguous: ObservationPlaceAmbiguousView;
   inat_place_uncached: InatPlaceUncachedView;

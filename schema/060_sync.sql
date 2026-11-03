@@ -42,6 +42,31 @@ CREATE TABLE observation_seen (
 );
 COMMENT ON TABLE observation_seen IS 'Every observation a run fetched, changed or not. Loads are hash-deduped, so a missing load row cannot distinguish unchanged from gone — deletion detection (qc_rule_observation_missing_upstream) reads presence from here instead.';
 
+-- The other half of what a by-id run learns (beeline-wcc6). A sample can cite
+-- an observation no sync ever returned: the legacy records link 474 that were
+-- deleted before Beeline's first sync. observation_seen cannot say so, since
+-- it records only what came back, and a by-id run proves nothing about an
+-- observation it did not ask for. What it does prove is that iNaturalist
+-- answered without the ones it did ask for, and that is kept here, keyed by
+-- the id it is about, as inat_place_absent keeps the same verdict on a place.
+--
+-- A row is removed when a by-id run gets the observation back. A project
+-- sweep that returns it leaves the row, and needs no DELETE per observation
+-- to be right: every reader asks for an id here AND no observation_field row,
+-- which is "iNaturalist has never given Beeline this observation, and said
+-- so". The nightly keeps asking for those (src/app/jobs/registry.ts
+-- refreshCitedObservations), which is what would notice one returning.
+--
+-- Not an entity (ADR 0002): nothing anchors on an absence.
+CREATE TABLE observation_absent (
+  inat_id      BIGINT PRIMARY KEY,
+  absent_since TIMESTAMPTZ NOT NULL DEFAULT now(),
+  asked_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE observation_absent IS 'Observation ids a by-id run asked iNaturalist for and did not get back: deleted upstream (or hidden from the token that asked) while a sample still cites them. Removed when a later by-id run returns the observation. A sample whose observation is here and not in observation_field is flagged observation_missing_upstream, and its page says the observation is no longer on iNaturalist.';
+COMMENT ON COLUMN observation_absent.absent_since IS 'The first time iNaturalist answered without it. Stays put while it stays absent, because the flag quotes it and a waiver is tied to what the flag says (schema/050).';
+COMMENT ON COLUMN observation_absent.asked_at IS 'The last time iNaturalist was asked and answered without it: how old the verdict is.';
+
 -- The shredded form of each observation's current load, stored rather than
 -- derived — the one place in this schema where a *view's* output is kept.
 --

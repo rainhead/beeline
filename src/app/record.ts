@@ -11,7 +11,7 @@ import type { DeterminedOnPrecision,
 } from "../model.js";
 import { labelName } from "../person-name.js";
 import type { LocalityBasis } from "../locality-rule.js";
-import { ownSamplesSql, placeColumns, withheld, type ListedCollector, type Reader } from "./listings.js";
+import { observationGone, ownSamplesSql, placeColumns, withheld, type ListedCollector, type Reader } from "./listings.js";
 import { readSampleChanges, sampleHistory, SAMPLE_STATE_SQL, type SampleChange } from "../sample-change.js";
 
 /**
@@ -87,6 +87,13 @@ export interface SampleDetail {
   protocol: string | null;
   sampling_effort: string | null;
   inat_observation_id: bigint | null;
+  /**
+   * The day iNaturalist first answered without the observation, where it has
+   * never given Beeline it (`observationGone`, beeline-wcc6): the id is shown
+   * unlinked, with no button to iNaturalist, and the page says why. Null
+   * wherever there is an observation to link to, or none cited.
+   */
+  observation_gone_since: Date | null;
   host_inat_taxon_id: bigint | null;
   host_name_as_observed: string | null;
   host_rank: string | null;
@@ -278,6 +285,9 @@ const sampleColumns = (personId: number, reader: Reader) => sql`
   s.state_province, s.country,
   s.protocol, s.sampling_effort,
   s.inat_observation_id, s.host_inat_taxon_id, s.host_name_as_observed, s.host_rank,
+  CASE WHEN ${observationGone}
+       THEN (SELECT CAST(ab.absent_since AS DATE) FROM observation_absent ab WHERE ab.inat_id = s.inat_observation_id)
+       END AS observation_gone_since,
   s.geoprivacy, s.taxon_geoprivacy,
   a.code AS atlas_code, a.name AS atlas_name,
   loc.latitude, loc.longitude, loc.coordinate_uncertainty_m,

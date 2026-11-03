@@ -413,7 +413,22 @@ JOIN sync_run r
  AND NOT coalesce(r.fetched_by_id, false)
  AND (r.window_start IS NULL OR l.observed_on >= r.window_start)
  AND (r.window_end IS NULL OR l.observed_on <= r.window_end)
-GROUP BY l.sample_id, l.inat_observation_id;
+GROUP BY l.sample_id, l.inat_observation_id
+-- And the observation no sync ever returned, which iNaturalist answered
+-- without when asked for it by id (schema/060 observation_absent,
+-- beeline-wcc6): the legacy records cite hundreds deleted before the first
+-- sync, and the branch above cannot see them, since it starts from a
+-- projection they never had. The date is the first time iNaturalist said so,
+-- which stays put for the waiver's sake as last_seen_at does above.
+UNION ALL
+SELECT s.entity_id AS sample_id,
+       CAST(NULL AS INTEGER) AS specimen_id,
+       'observation_missing_upstream' AS rule_name,
+       concat('observation ', s.inat_observation_id, ' not found on iNaturalist since ',
+              CAST(CAST(ab.absent_since AS DATE) AS VARCHAR)) AS details
+FROM sample s
+JOIN observation_absent ab ON ab.inat_id = s.inat_observation_id
+WHERE NOT EXISTS (SELECT 1 FROM observation_field f WHERE f.inat_id = s.inat_observation_id);
 
 -- Post-print trouble: count fell below the number of specimens already frozen
 -- — individuated ones (schema/117), so a canceled run's leftovers do not

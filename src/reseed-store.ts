@@ -83,6 +83,7 @@ export const CARRIED_TABLES = [
   "job_run",
   "inat_place",
   "inat_place_absent",
+  "observation_absent",
   "inat_user_orcid",
   "ecdysis_taxon",
 ] as const;
@@ -211,6 +212,14 @@ export async function carryStaging(
     if (await has("inat_place_absent")) {
       await conn.run(`INSERT INTO inat_place_absent BY NAME SELECT * FROM old.inat_place_absent`);
       await count("inat_place_absent");
+    }
+    // Same terms as the places' verdicts, for observations (beeline-wcc6):
+    // keyed by iNat's id, and its instants are when iNat answered. Dropped,
+    // the flag on every sample citing a deleted observation would vanish
+    // until the next nightly, and come back dated that night.
+    if (await has("observation_absent")) {
+      await conn.run(`INSERT INTO observation_absent BY NAME SELECT * FROM old.observation_absent`);
+      await count("observation_absent");
     }
     // Same terms again: keyed by the iNat user id, which a rebuild does not
     // redraw, and fetched rather than derived (beeline-yaaj).

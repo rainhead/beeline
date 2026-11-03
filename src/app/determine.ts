@@ -1,6 +1,7 @@
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import type { Database, DraftCaste, DraftSex } from "../model.js";
 import { BEE_FAMILIES } from "../bee-families.js";
+import { observationGone } from "./listings.js";
 import { NumberIndex, type NumberEntry } from "../determination-numbers.js";
 
 /**
@@ -146,7 +147,9 @@ async function loadRows(
     SELECT sp.entity_id AS id, sp.field_number, sp.specimen_number,
            s.entity_id AS sample_id, s.sample_number,
            CAST(s.date_start AS TEXT) AS date_start, CAST(s.date_end AS TEXT) AS date_end,
-           s.kind, s.locality, s.county, CAST(s.inat_observation_id AS TEXT) AS observation,
+           s.kind, s.locality, s.county,
+           -- Only to link to, so none where iNaturalist no longer has it (beeline-wcc6).
+           CASE WHEN ${observationGone} THEN NULL ELSE CAST(s.inat_observation_id AS TEXT) END AS observation,
            s.host_name_as_observed AS host,
            vol.animal_id AS prior_animal, vol.sex AS prior_sex, vol.caste AS prior_caste,
            CAST(vol.determined_on AS TEXT) AS prior_on, vol.channel AS prior_channel,

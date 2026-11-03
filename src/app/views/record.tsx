@@ -201,6 +201,12 @@ export function SampleFacts({
       value:
         sample.inat_observation_id === null ? (
           <Meta>{s.observationNone}</Meta>
+        ) : sample.observation_gone_since !== null ? (
+          // The id still says which observation the record came from, so it
+          // stays; the link does not, since the page is gone (beeline-wcc6).
+          <>
+            {String(sample.inat_observation_id)} <Meta>{s.observationGone(sample.observation_gone_since)}</Meta>
+          </>
         ) : (
           <a href={`https://www.inaturalist.org/observations/${sample.inat_observation_id}`}>
             {String(sample.inat_observation_id)}
@@ -243,7 +249,13 @@ export function WhereCollected({ m, sample, admin = false }: { m: Messages; samp
     return (
       <>
         <h2>{w.heading}</h2>
-        <Meta block>{w.withheld({ geoprivacy: sample.geoprivacy, taxonGeoprivacy: sample.taxon_geoprivacy })}</Meta>
+        <Meta block>
+          {w.withheld({
+            geoprivacy: sample.geoprivacy,
+            taxonGeoprivacy: sample.taxon_geoprivacy,
+            gone: sample.observation_gone_since !== null,
+          })}
+        </Meta>
       </>
     );
   }
@@ -546,6 +558,11 @@ function StaffHold({ m, staff, hold }: { m: Messages; staff: StaffQc; hold: Reco
  * there is not — and only for someone who actually collected it. */
 function SampleActions({ m, sample }: { m: Messages; sample: SampleDetail }) {
   const s = m.record.sample;
+  // Nothing upstream to fix and, because the sample cites an observation,
+  // nothing here either: the edit form can only correct a sample with none
+  // (src/app/sample-edit.ts). The missing-upstream flag says staff will look
+  // into it (beeline-wcc6).
+  if (sample.observation_gone_since !== null) return null;
   if (sample.inat_observation_id !== null) {
     return (
       <p class="row">

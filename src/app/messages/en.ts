@@ -259,7 +259,7 @@ export const en = {
      * decisions there daily until production opened, and one made there now is
      * lost, so the banner says where the record is instead.
      */
-    sandboxBanner: "This is the sandbox. Beeline is at melittologist.org; anything you decide here is not kept.",
+    sandboxBanner: "This is the sandbox, not Beeline. Changes made here are not kept. Beeline is at melittologist.org.",
     nav: {
       samples: "Samples",
       specimens: "Specimens",

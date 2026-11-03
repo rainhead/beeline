@@ -240,7 +240,7 @@ describe("app scaffold", () => {
       });
       const body = await (await sandbox.request("/")).text();
       expect(body).toContain("env-banner");
-      expect(body).toContain("Beeline is at melittologist.org; anything you decide here is not kept.");
+      expect(body).toContain("This is the sandbox, not Beeline. Changes made here are not kept. Beeline is at melittologist.org.");
       expect(body).not.toContain("blown away");
     }
   });

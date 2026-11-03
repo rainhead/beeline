@@ -10,6 +10,7 @@ import { sql, type Kysely } from "kysely";
 import type { Database, ReprintReason } from "../model.js";
 import { islandsSrc, styleVersion } from "./assets.js";
 import { registerAuthRoutes, signInHref, type InatClient } from "./auth.js";
+import { OLD_BEELINE_ORIGIN, registerOldBeelineRedirects } from "./old-beeline.js";
 import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
@@ -415,6 +416,8 @@ export function createApp({
   });
   app.use("/static/*", serveStatic({ root: "./src/app" }));
   app.use("/assets/*", serveStatic({ root: "./dist/app" }));
+  // The old Beeline's addresses, until it closes (src/app/old-beeline.ts).
+  registerOldBeelineRedirects(app);
   registerAuthRoutes(app, {
     db,
     inat,
@@ -462,6 +465,10 @@ export function createApp({
               <a class="button" href={signInHref(wanted)}>
                 {m.signIn.button}
               </a>
+            </p>
+            <p>
+              {m.signIn.oldBeeline.lead} <a href={OLD_BEELINE_ORIGIN}>{m.signIn.oldBeeline.label}</a>
+              {m.signIn.oldBeeline.tail}
             </p>
             <p>
               {m.signIn.about.lead} <a href={m.signIn.about.program.href}>{m.signIn.about.program.label}</a>{" "}

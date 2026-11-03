@@ -148,11 +148,16 @@ describe("fly.production.toml", () => {
     "env:BEELINE_ORIGIN": "https://melittologist.org",
   };
 
-  it("differs from fly.toml only in the app, BEELINE_ENV and BEELINE_ORIGIN", async () => {
+  // The backup folder is production's from cutover, when the sandbox stops
+  // naming it (docs/runbooks/deploy-fly.md, "Two apps"), so fly.toml may drop
+  // it while this file must not.
+  const BACKUP_FOLDER = "env:BEELINE_BACKUP_FOLDER";
+
+  it("differs from fly.toml only in the app, BEELINE_ENV and BEELINE_ORIGIN, and the backup folder at cutover", async () => {
     const { sandbox, production } = await readBoth();
     const keys = new Set([...sandbox.keys(), ...production.keys()]);
     for (const key of keys) {
-      if (key in PRODUCTION) continue;
+      if (key in PRODUCTION || key === BACKUP_FOLDER) continue;
       expect(production.get(key)?.value, `${key} in fly.production.toml`).toBe(sandbox.get(key)?.value);
     }
   });
@@ -163,5 +168,16 @@ describe("fly.production.toml", () => {
       expect(production.get(key)?.value, key).toBe(value);
       expect(sandbox.get(key)?.value, `fly.toml's ${key} is the sandbox's`).not.toBe(value);
     }
+  });
+
+  it("names a backup folder, which the sandbox shares only until cutover", async () => {
+    const { sandbox, production } = await readBoth();
+    const folder = production.get(BACKUP_FOLDER)?.value;
+    // Unset, production's backup job fails every night (src/app/jobs/registry.ts).
+    expect(folder, `${BACKUP_FOLDER} in fly.production.toml`).toMatch(/\S/);
+    // A different folder in the sandbox would be a second backup series
+    // nobody restores from; the plan is the same folder, then none.
+    const sandboxFolder = sandbox.get(BACKUP_FOLDER)?.value;
+    if (sandboxFolder !== undefined) expect(sandboxFolder).toBe(folder);
   });
 });

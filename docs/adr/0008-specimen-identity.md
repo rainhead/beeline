@@ -390,7 +390,10 @@ answers which label is right.
    ([ADR 0006](0006-migrations-for-deployed-stores.md)), and backups are
    mandatory from the first real run. Before cutover a reseeded store mints
    again from the imported ceiling, which is what the seed rule in (7)
-   guarantees is safe.
+   guarantees is safe. From production's first run (3 November 2026,
+   beeline-83b8.13) that is enforced rather than stated: `db:reseed` refuses
+   a source holding any print run or minted number, where it used to count
+   them as left behind, and `legacy:promote` refuses a target holding any.
 
 ### What reads them
 

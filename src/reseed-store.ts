@@ -1,8 +1,9 @@
 import { DuckDBConnection } from "@duckdb/node-api";
-import { openDuckDb } from "./db.js";
+import { openDuckDb, openMemoryDuckDb } from "./db.js";
 import { rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { applySchema } from "./schema.js";
+import { refuseReseedOfPrintedStore } from "./registry-guard.js";
 
 /**
  * Rebuild a deployed store's model from the staging it already holds.
@@ -91,20 +92,14 @@ export const CARRIED_TABLES = [
 export interface ReseedCounts {
   carried: Record<string, number>;
   /**
-   * What the source held that a reseed cannot carry and does not try to: its
-   * print runs and the field numbers they minted (schema/035). Every one of
-   * those rows hangs off an entity_id a reseed redraws — a run off the person
-   * who prepared it, a minted specimen off a sample promotion re-mints — and
-   * remapping them is a job with no customer: the sandbox is the only store
-   * that reseeds, its runs are rehearsals, and a deployed store after cutover
-   * is migrated, never reseeded (ADR 0006). A reseeded store therefore mints
-   * again from the imported ceiling, which is fine before cutover and cannot
-   * happen after it. Reported rather than silent, because the numbers were
-   * burned in the source and are not in the target.
+   * What the source held that a reseed does not carry and the target
+   * therefore lacks. Print runs and minted field numbers are not here,
+   * because a source holding either is refused before anything is built
+   * (beeline-83b8.13, src/registry-guard.ts): every one of those rows hangs
+   * off an entity_id a reseed redraws, and a reseeded store would mint again
+   * from the imported ceiling, issuing numbers that are already on pins.
    */
   leftBehind: {
-    print_run: number;
-    minted_field_number: number;
     /**
      * Volunteers' determinations entered in Beeline, and what they had not
      * committed yet (beeline-bcq). Same reason as the runs: every row hangs
@@ -146,6 +141,9 @@ export async function carryStaging(
   const [[target]] = (await (await conn.run(`SELECT current_database()`)).getRows()) as [[string]];
   await conn.run(`ATTACH '${sourcePath.replaceAll("'", "''")}' AS old (READ_ONLY)`);
   try {
+    // reseedStore has asked already, before building anything; this is for a
+    // caller that holds its own connection.
+    await refuseReseedOfPrintedStore(conn, "old", sourcePath);
     const carried: Record<string, number> = {};
     const has = (table: string) => tableExists(conn, "old", table);
     const count = async (table: string) => {
@@ -237,10 +235,6 @@ export async function carryStaging(
     }
 
     const leftBehind = {
-      print_run: (await has("print_run")) ? await scalar(conn, `SELECT count(*) FROM old.print_run`) : 0,
-      minted_field_number: (await has("minted_field_number"))
-        ? await scalar(conn, `SELECT count(*) FROM old.minted_field_number`)
-        : 0,
       in_app_determination: await scalar(conn, `SELECT count(*) FROM old.determination WHERE channel = 'in_app'`),
       determination_draft: (await has("determination_draft")) ? await scalar(conn, `SELECT count(*) FROM old.determination_draft`) : 0,
       determination_batch: (await has("determination_batch")) ? await scalar(conn, `SELECT count(*) FROM old.determination_batch`) : 0,
@@ -263,12 +257,14 @@ export async function carryStaging(
 
 /**
  * Build `targetPath` from the schema and carry `sourcePath`'s staging into it.
- * The target is replaced if it exists; the source is only ever read.
+ * The target is replaced if it exists; the source is only ever read. A source
+ * that has printed is refused before the target is touched.
  */
 export async function reseedStore(sourcePath: string, targetPath: string): Promise<ReseedCounts> {
   if (sourcePath === targetPath) {
     throw new Error("reseed writes a new store beside the old one — give it a different target path");
   }
+  await refuseIfPrinted(sourcePath);
   await rm(targetPath, { force: true });
   const instance = await openDuckDb(targetPath);
   const conn = await instance.connect();
@@ -284,6 +280,19 @@ export async function reseedStore(sourcePath: string, targetPath: string): Promi
   }
 }
 
+/** Read the source's registry from a throwaway instance, so that nothing is built first. */
+async function refuseIfPrinted(sourcePath: string): Promise<void> {
+  const probe = await openMemoryDuckDb();
+  const conn = await probe.connect();
+  try {
+    await conn.run(`ATTACH '${sourcePath.replaceAll("'", "''")}' AS source (READ_ONLY)`);
+    await refuseReseedOfPrintedStore(conn, "source", sourcePath);
+  } finally {
+    conn.closeSync();
+    probe.closeSync();
+  }
+}
+
 // CLI: pnpm db:reseed <source.duckdb> <target.duckdb>
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const [source, target] = process.argv.slice(2);
@@ -294,12 +303,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   }
   const counts = await reseedStore(source, target);
   console.log(JSON.stringify(counts, null, 2));
-  if (counts.leftBehind.print_run > 0) {
-    console.log(
-      `\nLeft behind: ${counts.leftBehind.print_run} print run(s) and ${counts.leftBehind.minted_field_number} ` +
-        `minted field number(s). A reseed carries neither; the target mints again from the imported ceiling.`,
-    );
-  }
   const { in_app_determination, determination_draft, determination_batch } = counts.leftBehind;
   if (in_app_determination + determination_draft + determination_batch > 0) {
     console.log(

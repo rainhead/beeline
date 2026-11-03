@@ -665,7 +665,7 @@ export const en = {
       outside: "Outside the atlases",
       /** Above a listing of other people's records, for anyone but staff. */
       withheldNote:
-        "Where an observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected. The same applies where Beeline has not read the observation, or iNaturalist no longer has it.",
+        "Where an observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected. The same applies where Beeline has not read the observation, or cannot find it on iNaturalist.",
     },
     /** In a Place cell whose locality, and perhaps county, is somebody else's to see. */
     locationHidden: "location hidden",
@@ -973,7 +973,7 @@ export const en = {
           // Before "not read yet", which would promise a read that cannot
           // come: the observation is no longer on iNaturalist (beeline-wcc6).
           why.gone
-            ? "This sample's observation is no longer on iNaturalist, so Beeline cannot tell whether the collector kept its location private there. Only its collectors and staff see where it was collected."
+            ? "Beeline cannot find this sample's observation on iNaturalist, so it cannot tell whether the collector kept its location private there. Only its collectors and staff see where it was collected."
             : why.geoprivacy === null && why.taxonGeoprivacy === null
             ? "Beeline has not read this sample's observation from iNaturalist, so it cannot tell whether the collector keeps its location private there. Until it can, only its collectors and staff see where it was collected."
             : why.geoprivacy !== null

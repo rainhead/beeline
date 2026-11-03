@@ -271,9 +271,12 @@ fly machine update --env BEELINE_MAINTENANCE= <id>    # back to serving
 ```
 
 This is where `pnpm db:reseed`, `pnpm person:apply`,
-`pnpm person:orcids`, `pnpm inat:fetch-orcids` and
+`pnpm person:orcids`, `pnpm inat:fetch-orcids`, `pnpm disposition:load` and
 `pnpm elevation:fetch` run. A list of confirmed ORCID iDs names people, so it
-goes up with `fly ssh sftp put` into `data/` and never into git. The image
+goes up with `fly ssh sftp put` into `data/` and never into git; so does a
+staff inventory file (`data/dispositions/<file>.xlsx`, loaded with
+`pnpm disposition:load data/dispositions/<file>.xlsx data/beeline.duckdb --by "<name>" --on <date>`,
+which leaves what it could not place in `<file>.xlsx.held.csv` beside it). The image
 has `curl` and `jq` for asking iNaturalist or Ecdysis something with the
 machine's own secrets, `unzip`, `ps`/`top`/`free` for watching a long run, and
 `less`. It has no editor, and no `duckdb` command, which would have to stay

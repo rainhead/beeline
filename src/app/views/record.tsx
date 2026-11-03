@@ -1176,6 +1176,29 @@ export function SpecimenPage({
         />
       </Card>
 
+      {/* What became of the pin, where a staff inventory has said
+          (specimen_disposition, beeline-fud5). The ordinary specimen has
+          no row and no card: there is nothing to say about it. */}
+      {specimen.remarks !== null && (
+        <Card>
+          <h2>{c.disposition.heading}</h2>
+          <DetailList
+            items={[
+              specimen.disposition === null
+                ? null
+                : {
+                    term: c.disposition.state,
+                    value: specimen.disposition === "missing" ? c.disposition.missing : c.disposition.inCollection,
+                  },
+              { term: c.disposition.remarks, value: specimen.remarks },
+            ]}
+          />
+          {specimen.remarks_by !== null && specimen.remarks_on !== null && (
+            <Meta block>{c.disposition.statedBy(specimen.remarks_by, m.format.date(specimen.remarks_on))}</Meta>
+          )}
+        </Card>
+      )}
+
       {/* And then the whole sample, not a stub of it: a determination read
           without where and when the insect was collected is not a record. */}
       <Card>

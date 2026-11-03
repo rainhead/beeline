@@ -439,6 +439,9 @@ export interface SpecimenRow {
   protocol: string | null;
   /** The museum's catalog number, as Ecdysis reports it; null where no museum has said (gh-98). */
   catalog_number: string | null;
+  /** What became of the pin, where a staff inventory has said (specimen_disposition, beeline-fud5). */
+  disposition: string | null;
+  occurrence_remarks: string | null;
   atlas_code: string | null;
   /** The sample's floral host, as the observation named it — a column here as on the samples listing. */
   host_name: string | null;
@@ -1087,6 +1090,10 @@ export async function listSpecimens(
         sql<string | null>`(SELECT c.catalog_number FROM specimen_catalog_number c WHERE c.specimen_id = sp.entity_id)`.as(
           "catalog_number",
         ),
+        sql<string | null>`(SELECT sd.disposition FROM specimen_disposition sd WHERE sd.specimen_id = sp.entity_id)`.as("disposition"),
+        sql<string | null>`(SELECT sd.remarks FROM specimen_disposition sd WHERE sd.specimen_id = sp.entity_id)`.as(
+          "occurrence_remarks",
+        ),
         "a.code as atlas_code",
         "s.host_name_as_observed as host_name",
         "s.host_rank",
@@ -1448,6 +1455,8 @@ export const SPECIMEN_DWC_COLUMNS = [
   "basisOfRecord",
   "catalogNumber",
   "fieldNumber",
+  "disposition",
+  "occurrenceRemarks",
   "eventDate",
   "samplingProtocol",
   "recordedBy",
@@ -1496,6 +1505,8 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   "PreservedSpecimen",
   r.catalog_number,
   r.field_number,
+  r.disposition,
+  r.occurrence_remarks,
   eventDate(r.date_start, r.date_end),
   r.protocol,
   recordedBy(page, r.sample_id),

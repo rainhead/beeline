@@ -651,6 +651,17 @@ export interface SpecimenCatalogNumberTable {
   loaded_at: Timestamped;
 }
 
+/** What became of the pin, as a staff inventory stated it (beeline-fud5): dwc:disposition and dwc:occurrenceRemarks. */
+export interface SpecimenDispositionTable {
+  specimen_id: number;
+  disposition: "in collection" | "missing" | null;
+  remarks: string;
+  stated_by: string;
+  stated_on: ColumnType<Date, Date | string, Date | string>;
+  source: string;
+  recorded_at: Timestamped;
+}
+
 /** The worksheet row an imported volunteer determination came from (beeline-pbk). */
 export interface WorksheetDeterminationTable {
   determination_id: number;
@@ -1261,6 +1272,7 @@ export interface Database {
   determination: DeterminationTable;
   ecdysis_identification: EcdysisIdentificationTable;
   specimen_catalog_number: SpecimenCatalogNumberTable;
+  specimen_disposition: SpecimenDispositionTable;
   worksheet_determination: WorksheetDeterminationTable;
   animal_caste: AnimalCasteTable;
   determination_draft: DeterminationDraftTable;

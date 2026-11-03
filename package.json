@@ -39,6 +39,7 @@
     "fly:usage": "tsx src/fly-usage.ts",
     "worksheets:fetch": "tsx src/fetch-worksheets.ts",
     "worksheets:load": "tsx src/load-worksheets.ts",
+    "disposition:load": "tsx src/load-dispositions.ts",
     "person:apply": "tsx src/apply-person-overlay.ts",
     "person:orcids": "tsx src/load-orcids.ts",
     "sample:apply": "tsx src/apply-sample-overlay.ts",

@@ -34,6 +34,7 @@ pnpm ecdysis:taxonomy [db] [--cached]        # Ecdysis's thesaurus, every insect
 pnpm taxon:fetch-sheet <sheet-id> [dir]      # a taxonomist's worksheet, every tab as CSV, to data/taxon-decisions/<modified instant>/ — to be read, not parsed
 pnpm taxon:decide <kind> <rank> "<name>" --by … --reason …   # record one decision (or --batch file.csv): Ecdysis's facts filled from the store, the row validated, the file merged
 pnpm taxon:apply [db]                        # replay ingest/taxon-curation.csv onto a store: the program's departures from Ecdysis, and what a later fetch moved from under
+pnpm disposition:load <file> [db] --by <name> --on <date>  # a staff inventory's remark on each specimen (Andony's 2025 master file) → specimen_disposition; what it cannot place goes to <file>.held.csv
 pnpm legacy:export [db] [out.csv]            # every specimen as the legacy occurrences file (the app writes it nightly)
 pnpm legacy:compare-export [db] [export.csv] # how far that file is from the staged legacy records, by kind and by column, in records split by season with a few examples each, less what ingest/legacy-export-rulings.csv explains
 pnpm backup:check <archive.tar.gz> [dir]     # a nightly backup downloaded from Drive: hashes against its manifest, both stores opened (BEELINE_PRIVATE_DB_KEY for the private one), left extracted for a restore

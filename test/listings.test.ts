@@ -833,6 +833,12 @@ describe("CSV export", () => {
       `INSERT INTO specimen_catalog_number (specimen_id, catalog_number)
        SELECT entity_id, 'OSAC_9001' FROM specimen WHERE field_number = 'OBA00002'`,
     );
+    // And what became of one pin, as the inventory said (beeline-fud5).
+    await conn.run(
+      `INSERT INTO specimen_disposition (specimen_id, disposition, remarks, stated_by, stated_on, source)
+       SELECT entity_id, 'missing', 'LOST SPECIMEN: No specimen in complete OR inventory.', 'Inez Inventory', DATE '2026-11-03', 'inventory.xlsx'
+       FROM specimen WHERE field_number = 'OBA00002'`,
+    );
     const csv = await (await app.request("/specimens.csv?scope=OBA")).text();
     expect(csv).toContain("OBA00001");
     expect(csv).toContain("Bombus vosnesenskii");
@@ -846,10 +852,10 @@ describe("CSV export", () => {
     // the museum's, empty until a museum has said, never derived (gh-98).
     // The sample number has a column of its own.
     const [header, ...records] = csv.split("\n");
-    expect(header).toContain("occurrenceID,basisOfRecord,catalogNumber,fieldNumber");
+    expect(header).toContain("occurrenceID,basisOfRecord,catalogNumber,fieldNumber,disposition,occurrenceRemarks");
     expect(header).toContain("dateIdentified,sampleNumber,specimenNumber,atlas");
-    expect(csv).toContain("PreservedSpecimen,,OBA00001,");
-    expect(csv).toContain("PreservedSpecimen,OSAC_9001,OBA00002,");
+    expect(csv).toContain("PreservedSpecimen,,OBA00001,,,");
+    expect(csv).toContain("PreservedSpecimen,OSAC_9001,OBA00002,missing,LOST SPECIMEN: No specimen in complete OR inventory.,");
     expect(records.find((l) => l.includes(",OBA00001,"))).toContain(",A-1,1,OBA,");
   });
 
@@ -1005,7 +1011,7 @@ describe("Darwin Core archives, by program and year", () => {
     const [header, ...occurrences] = table(files["occurrence.txt"]!);
     expect(meta).toContain(`rowType="http://rs.tdwg.org/dwc/terms/Occurrence"`);
     expect(meta).toContain(`rowType="http://rs.tdwg.org/dwc/terms/Identification"`);
-    for (const term of ["occurrenceID", "catalogNumber", "fieldNumber", "decimalLatitude", "scientificName", "dateIdentified"]) {
+    for (const term of ["occurrenceID", "catalogNumber", "fieldNumber", "disposition", "occurrenceRemarks", "decimalLatitude", "scientificName", "dateIdentified"]) {
       expect(meta).toContain(`<field index="${header!.indexOf(term)}" term="http://rs.tdwg.org/dwc/terms/${term}"/>`);
     }
     expect(meta).toContain(

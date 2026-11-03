@@ -338,7 +338,13 @@ export const en = {
   signIn: {
     title: "Sign in",
     heading: "Beeline",
-    nothingPublic: "Sign in with iNaturalist to access your records.",
+    /**
+     * Until the old Beeline closes (beeline-83b8.12): new Beeline was never
+     * announced to volunteers, so the page says what it is (Peter,
+     * 2026-11-03). Afterwards it reads "Sign in with iNaturalist to access
+     * your records." again.
+     */
+    nothingPublic: "Beeline has been remade. Try it out by signing in with iNaturalist.",
     button: "Sign in with iNaturalist",
     /**
      * For someone who lands here with no account (beeline-2c3.16): what this
@@ -357,9 +363,9 @@ export const en = {
      * February.
      */
     oldBeeline: {
-      lead: "Entering determinations in the old Beeline? It has moved to",
+      lead: "If you would like to continue using the old interface to enter your determinations, it will be available at",
       label: "old.melittologist.org",
-      tail: ".",
+      tail: " through February 2027.",
     },
     joinLead: "To become a volunteer, start with your atlas:",
     failed: "Sign-in failed (state mismatch or missing code). Try again from the sign-in page.",

@@ -8,9 +8,9 @@ This file provides instructions and context for AI coding agents working on this
 pnpm install
 pnpm test                      # vitest, against in-memory DuckDB
 pnpm typecheck
-pnpm db:build [target.duckdb]  # blow away and rebuild from schema/*.sql
+pnpm db:build [target.duckdb]  # blow away and rebuild from schema/*.sql; refuses a target that has printed
 pnpm db:migrate [--status|--check|--baseline] [db]  # bring a deployed store forward (ADR 0006)
-pnpm db:reseed <old.duckdb> <new.duckdb>  # re-derive a deployed store: fresh schema + its staging, then re-promote
+pnpm db:reseed <old.duckdb> <new.duckdb>  # re-derive a deployed store: fresh schema + its staging, then re-promote; refused once it has printed
 pnpm app:dev                   # web app: tsx watch + vite build --watch (islands)
 pnpm app:build && pnpm app:start  # web app, production shape
 pnpm bench:pages [store]       # page latency against a copy of a store; --compare=<result.json> (bench/README.md)

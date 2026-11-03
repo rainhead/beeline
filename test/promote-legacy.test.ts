@@ -3,6 +3,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { createMemoryDb, FIXTURE_INPUTS, rows } from "./helpers.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy, type PromotionCounts } from "../src/promote-legacy.js";
+import { PrintedStoreRefused } from "../src/registry-guard.js";
 
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 const REGISTER = new URL("./fixtures/usernames.csv", import.meta.url).pathname;
@@ -14,6 +15,49 @@ beforeAll(async () => {
   ({ conn } = await createMemoryDb());
   await loadLegacyStaging(conn, FIXTURE);
   counts = await promoteLegacy(conn, { ...FIXTURE_INPUTS, usernameRegister: REGISTER });
+});
+
+describe("a store that has printed", () => {
+  // Promotion rebuilds the people, samples and specimens a print run and its
+  // minted numbers hang off, and a minted number is on a pin (ADR 0008). From
+  // production's first run that store must never be promoted into
+  // (beeline-83b8.13), and the refusal comes before anything is written.
+  test("is refused by name, and nothing is changed", async () => {
+    const { conn: printed } = await createMemoryDb();
+    await loadLegacyStaging(printed, FIXTURE);
+    await printed.run(`INSERT INTO person (display_name) VALUES ('Ada Ash')`);
+    await printed.run(
+      `INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person;
+       INSERT INTO minted_field_number (field_number, print_run_id)
+         SELECT '26072092', min(entity_id) FROM print_run`,
+    );
+    const refusal = promoteLegacy(printed, { ...FIXTURE_INPUTS, usernameRegister: REGISTER });
+    await expect(refusal).rejects.toThrow(PrintedStoreRefused);
+    await expect(refusal).rejects.toThrow(/1 print run\(s\) and 1 minted field number\(s\).*deploy-fly\.md/);
+    expect(await rows(printed, `SELECT count(*) FROM person`)).toEqual([[1n]]);
+    expect(await rows(printed, `SELECT count(*) FROM specimen`)).toEqual([[0n]]);
+    // One of the first tables promote-legacy.sql makes, so its absence says the SQL never ran.
+    expect(
+      await rows(printed, `SELECT count(*) FROM duckdb_tables() WHERE table_name = 'legacy_correction'`),
+    ).toEqual([[0n]]);
+  });
+
+  test("a print run with no minted number is enough", async () => {
+    // Each table is counted on its own. The schema allows a run with no
+    // minted number, so a guard reading only one table must fail here.
+    const { conn: runOnly } = await createMemoryDb();
+    await runOnly.run(`INSERT INTO person (display_name) VALUES ('Ada Ash')`);
+    await runOnly.run(`INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person`);
+    await expect(promoteLegacy(runOnly, FIXTURE_INPUTS)).rejects.toThrow(
+      /1 print run\(s\) and 0 minted field number\(s\)/,
+    );
+  });
+
+  test("an empty registry is no refusal: the store above was promoted", () => {
+    // The beforeAll promoted a fresh store whose print_run and
+    // minted_field_number are empty, which is every store until it prints.
+    expect(counts.specimens).toBeGreaterThan(0);
+  });
 });
 
 describe("legacy promotion", () => {

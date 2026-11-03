@@ -302,6 +302,24 @@ wc -l data/sample-change.csv
 
 ## Re-deriving the model after a promotion change
 
+> **Refused on production from its first print run (3 November 2026).** A
+> reseed carries no print run and no minted field number, so the new store's
+> next run would issue numbers that are already on pins; and legacy promotion
+> rebuilds the people, samples and specimens those runs hang off. So
+> `pnpm db:reseed` refuses a source store that holds any row in `print_run` or
+> `minted_field_number`, and `pnpm legacy:promote` refuses a target that holds
+> any, both before changing anything and with no override
+> ([`src/registry-guard.ts`](../../src/registry-guard.ts), beeline-83b8.13).
+> `db:reseed` and `pnpm db:build` also refuse to delete a target that holds
+> any. **Never move a store that has not printed over one that has**: nothing
+> checks the `mv` at the end of this procedure yet (beeline-l3w7), and the
+> next run on the moved store would issue numbers that are already on pins.
+> This remains the procedure for any store that has printed nothing; a sandbox
+> store holding rehearsal runs is refused as well. How a promotion-rule change
+> reaches a store that has printed is not decided (beeline-131s): carry the
+> print runs and minted numbers across a reseed by natural key, or make
+> corrections and migrations the only way to change such a store.
+
 Migrations carry a change to the **schema**. They cannot carry a change to
 **promotion**, the rules that derive the model from staged rows, so after one
 the store is shaped right and derived wrong, and `pnpm db:migrate --check`

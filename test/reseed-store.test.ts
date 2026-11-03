@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applySchema } from "../src/schema.js";
 import { CARRIED_TABLES, carryStaging, reseedStore, type ReseedCounts } from "../src/reseed-store.js";
+import { PrintedStoreRefused } from "../src/registry-guard.js";
 import { rows } from "./helpers.js";
 
 /**
@@ -84,13 +86,6 @@ beforeAll(async () => {
   );
   // Model rows, of the kind promotion derives and this tool must not carry.
   await seed.run(`INSERT INTO person (entity_id, display_name) VALUES (nextval('entity_id_seq'), 'Stale Person')`);
-  // A rehearsal print run and the number it minted: neither is carried, and
-  // the reseed says how many it left behind rather than dropping them silently.
-  await seed.run(
-    `INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person;
-     INSERT INTO minted_field_number (field_number, print_run_id)
-       SELECT '26000001', min(entity_id) FROM print_run`,
-  );
   // And a sequence left where a promoted store leaves it: far ahead. Both
   // catalogs are attached during the carry and both have a sequence by this
   // name, so reading the wrong one reports the source's floor as the target's.
@@ -154,15 +149,85 @@ describe("reseeding a store that cannot be blown away", () => {
     expect(await rows(conn, `SELECT count(*) FROM sample`)).toEqual([[0n]]);
   });
 
-  test("print runs and minted numbers are left behind, and counted", async () => {
-    // Authored data the reseed cannot carry (schema/035): every row hangs off
-    // an entity_id promotion redraws. The sandbox is the only store that
-    // reseeds and its runs are rehearsals; a deployed store after cutover is
-    // migrated, never reseeded (ADR 0006). So the target mints again from the
-    // imported ceiling, and the report says what was dropped.
-    expect(counts.leftBehind).toMatchObject({ print_run: 1, minted_field_number: 1 });
+  test("a source that has printed is refused, and no target is built", async () => {
+    // A reseed carries no print run and no minted number (schema/035): every
+    // such row hangs off an entity_id it redraws. Until production's first run
+    // it counted them as left behind and built anyway, and the new store then
+    // minted again from the imported ceiling, issuing numbers already on pins
+    // (beeline-83b8.13). One minted number is enough to refuse.
+    const printed = join(dir, "printed.duckdb");
+    const out = join(dir, "printed-target.duckdb");
+    const instance = await DuckDBInstance.create(printed);
+    const c = await instance.connect();
+    await applySchema(c);
+    await c.run(`INSERT INTO person (display_name) VALUES ('Ada Ash')`);
+    await c.run(
+      `INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person;
+       INSERT INTO minted_field_number (field_number, print_run_id)
+         SELECT '26072092', min(entity_id) FROM print_run`,
+    );
+    c.closeSync();
+    instance.closeSync();
+
+    const refusal = reseedStore(printed, out);
+    await expect(refusal).rejects.toThrow(PrintedStoreRefused);
+    await expect(refusal).rejects.toThrow(/1 print run\(s\) and 1 minted field number\(s\).*Nothing was built/);
+    expect(existsSync(out)).toBe(false);
+
+    // The low-level path refuses too, for a caller with its own connection.
+    const handle = await DuckDBInstance.create(":memory:");
+    const hc = await handle.connect();
+    // Its caller has built the target already, so it says only that nothing came across.
+    await expect(carryStaging(hc, printed)).rejects.toThrow(/Nothing was carried from it/);
+    hc.closeSync();
+  });
+
+  test("a source with a print run and no minted number is refused too", async () => {
+    // Each table is counted on its own. The schema allows a run with no
+    // minted number, so a guard reading only one table must fail here.
+    const runOnly = join(dir, "run-only.duckdb");
+    const instance = await DuckDBInstance.create(runOnly);
+    const c = await instance.connect();
+    await applySchema(c);
+    await c.run(`INSERT INTO person (display_name) VALUES ('Ada Ash')`);
+    await c.run(`INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person`);
+    c.closeSync();
+    instance.closeSync();
+    await expect(reseedStore(runOnly, join(dir, "run-only-target.duckdb"))).rejects.toThrow(
+      /1 print run\(s\) and 0 minted field number\(s\)/,
+    );
+  });
+
+  test("a target that has printed is refused, and not deleted, though the source has not", async () => {
+    // The reseed deletes whatever is at its target. Swapped arguments, or a
+    // rebuild from a copy taken before the first run, would pass the source's
+    // check and then delete the live store with its registry.
+    const live = join(dir, "live.duckdb");
+    const instance = await DuckDBInstance.create(live);
+    const c = await instance.connect();
+    await applySchema(c);
+    await c.run(`INSERT INTO person (display_name) VALUES ('Ada Ash')`);
+    await c.run(
+      `INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person;
+       INSERT INTO minted_field_number (field_number, print_run_id)
+         SELECT '26072092', min(entity_id) FROM print_run`,
+    );
+    c.closeSync();
+    instance.closeSync();
+
+    await expect(reseedStore(source, live)).rejects.toThrow(/Refusing to replace .*Nothing was deleted/);
+    const after = await DuckDBInstance.create(live);
+    const ac = await after.connect();
+    expect(await rows(ac, `SELECT field_number FROM minted_field_number`)).toEqual([["26072092"]]);
+    ac.closeSync();
+    after.closeSync();
+  });
+
+  test("the source above has printed nothing, so the reseed built it", async () => {
+    // The ordinary case keeps working: an empty registry is not a refusal.
     expect(await rows(conn, `SELECT count(*) FROM print_run`)).toEqual([[0n]]);
     expect(await rows(conn, `SELECT count(*) FROM minted_field_number`)).toEqual([[0n]]);
+    expect(counts.leftBehind).not.toHaveProperty("print_run");
   });
 
   test("the presence rows deletion detection reads keep pointing at their run", async () => {

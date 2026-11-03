@@ -9,6 +9,7 @@ import { mergeOverlays, readOverlay, CURATED_OVERLAY } from "./person-overlay.js
 import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
 import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
 import { applyTaxonCuration, CURATED_TAXON_CURATION, readTaxonCuration, type Unplaced } from "./taxon-curation.js";
+import { PrintedStoreRefused, refusePromotionIntoPrintedStore } from "./registry-guard.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -123,7 +124,16 @@ export const LIVE_INPUTS: PromotionInputs = {
   usernameRegister: "data/legacy/usernames.csv",
 };
 
-/** Promote staged legacy_occurrence rows into the model. Fresh model only. */
+/**
+ * Promote staged legacy_occurrence rows into the model. Fresh model only.
+ *
+ * Two refusals, both before anything is written. A store that has printed is
+ * refused first and by name (beeline-83b8.13): its print runs and minted
+ * numbers hang off the records promotion would rebuild. Such a store always
+ * has people too, since a run names who prepared it, so the person check
+ * below would refuse it as well, but with a message that says nothing about
+ * why the store must not be rebuilt.
+ */
 export async function promoteLegacy(
   conn: DuckDBConnection,
   inputs: PromotionInputs,
@@ -136,6 +146,7 @@ export async function promoteLegacy(
     const [[v]] = (await (await conn.run(sql)).getRows()) as [[bigint]];
     return Number(v);
   };
+  await refusePromotionIntoPrintedStore(conn);
   if ((await scalar("SELECT count(*) FROM person")) > 0) {
     throw new Error("model already contains people — promotion runs only against a freshly built database");
   }
@@ -219,7 +230,12 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const dbPath = process.argv[2] ?? DEFAULT_DB;
   const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
-  const counts = await promoteLegacy(conn, LIVE_INPUTS);
+  const counts = await promoteLegacy(conn, LIVE_INPUTS).catch((err: unknown) => {
+    if (!(err instanceof PrintedStoreRefused)) throw err;
+    console.error(`${dbPath}: ${err.message}`);
+    conn.closeSync();
+    process.exit(1);
+  });
 
   // The admin seed, before the history is recorded rather than at the app's
   // next boot. The people in the bootstrap roster hold their rights through

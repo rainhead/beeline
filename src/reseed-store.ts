@@ -3,7 +3,7 @@ import { openDuckDb, openMemoryDuckDb } from "./db.js";
 import { rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { applySchema } from "./schema.js";
-import { refuseReseedOfPrintedStore } from "./registry-guard.js";
+import { PrintedStoreRefused, refuseReseedOfPrintedStore } from "./registry-guard.js";
 
 /**
  * Rebuild a deployed store's model from the staging it already holds.
@@ -102,7 +102,7 @@ export interface ReseedCounts {
   leftBehind: {
     /**
      * Volunteers' determinations entered in Beeline, and what they had not
-     * committed yet (beeline-bcq). Same reason as the runs: every row hangs
+     * committed yet (beeline-bcq). Same reason as print runs: every row hangs
      * off a specimen and a person a reseed redraws, and before cutover the
      * sandbox's entries are rehearsals.
      */
@@ -301,7 +301,11 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     console.error("The source must not be open — one process owns a store (ADR 0005).");
     process.exit(2);
   }
-  const counts = await reseedStore(source, target);
+  const counts = await reseedStore(source, target).catch((err: unknown) => {
+    if (!(err instanceof PrintedStoreRefused)) throw err;
+    console.error(err.message);
+    process.exit(1);
+  });
   console.log(JSON.stringify(counts, null, 2));
   const { in_app_determination, determination_draft, determination_batch } = counts.leftBehind;
   if (in_app_determination + determination_draft + determination_batch > 0) {

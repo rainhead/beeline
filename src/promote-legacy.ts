@@ -9,7 +9,7 @@ import { mergeOverlays, readOverlay, CURATED_OVERLAY } from "./person-overlay.js
 import { changeLogFor, DEFAULT_DB, duckdbReader, recordPersonChanges } from "./person-change.js";
 import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
 import { applyTaxonCuration, CURATED_TAXON_CURATION, readTaxonCuration, type Unplaced } from "./taxon-curation.js";
-import { refusePromotionIntoPrintedStore } from "./registry-guard.js";
+import { PrintedStoreRefused, refusePromotionIntoPrintedStore } from "./registry-guard.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -230,7 +230,12 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const dbPath = process.argv[2] ?? DEFAULT_DB;
   const instance = await openDuckDb(dbPath);
   const conn = await instance.connect();
-  const counts = await promoteLegacy(conn, LIVE_INPUTS);
+  const counts = await promoteLegacy(conn, LIVE_INPUTS).catch((err: unknown) => {
+    if (!(err instanceof PrintedStoreRefused)) throw err;
+    console.error(`${dbPath}: ${err.message}`);
+    conn.closeSync();
+    process.exit(1);
+  });
 
   // The admin seed, before the history is recorded rather than at the app's
   // next boot. The people in the bootstrap roster hold their rights through

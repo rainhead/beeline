@@ -665,7 +665,7 @@ export const en = {
       outside: "Outside the atlases",
       /** Above a listing of other people's records, for anyone but staff. */
       withheldNote:
-        "Where an observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected. The same applies where Beeline has not yet read the observation.",
+        "Where an observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected. The same applies where Beeline has not read the observation, or iNaturalist no longer has it.",
     },
     /** In a Place cell whose locality, and perhaps county, is somebody else's to see. */
     locationHidden: "location hidden",
@@ -897,7 +897,7 @@ export const en = {
        * certainty, so it is said as one.
        */
       observationGone: (since: Date | string) =>
-        `No longer on iNaturalist: Beeline has not found it there since ${date(since)}, so it has most likely been deleted.`,
+        `Not found on iNaturalist since ${date(since)}: it has most likely been deleted.`,
       /**
        * The observer's own free text on the observation (beeline-hza). "Notes"
        * rather than "Description", which is iNaturalist's word for the field
@@ -2236,7 +2236,7 @@ export const en = {
     within_sample_disagreement:
       "Historical records merged into this sample had conflicting values for a field. The earliest record's value was retained. Review the listed alternatives and edit the sample if the retained value is incorrect.",
     observation_missing_upstream:
-      "The iNaturalist observation backing this sample was not returned by a sync that should have included it. It may have been deleted, removed from the project, or had its observation date changed. Staff will investigate before any further printing for this sample.",
+      "iNaturalist no longer returns the observation backing this sample. It may have been deleted, or, if Beeline used to read it through a project, removed from that project or given a different date. Staff will investigate before any further printing for this sample.",
     staff_hold:
       "Staff are holding this sample back from printing. Their note says why. If it asks you to change something, change it; staff will review and lift the hold.",
   } as Record<string, string>,

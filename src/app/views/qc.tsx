@@ -86,6 +86,12 @@ export interface Finding {
 export interface DashboardRow {
   sample_id: number | null;
   inat_observation_id: bigint | null;
+  /**
+   * iNaturalist no longer has the sample's observation (`observationGone`,
+   * beeline-wcc6): no page to fix it on, and no edit form either, since the
+   * form corrects only a sample that cites no observation.
+   */
+  observation_gone: boolean;
   /** Null only for an observation whose sample number was left blank. */
   sample_number: string | null;
   date_start: Date;
@@ -275,7 +281,9 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
     row.sample_number === null ? m.qc.unnumberedTitle(row.date_start) : m.qc.sampleTitle(row.sample_number, row.date_start);
   const observationHref =
     row.inat_observation_id === null ? null : `https://www.inaturalist.org/observations/${row.inat_observation_id}`;
-  const fixHref = observationHref ?? (row.sample_id === null ? null : `/samples/${row.sample_id}/edit`);
+  const fixHref = row.observation_gone
+    ? null
+    : (observationHref ?? (row.sample_id === null ? null : `/samples/${row.sample_id}/edit`));
   const fixLabel = observationHref !== null ? m.qc.fixOnInat : m.qc.editSample;
   const findings = sortFindings(row.findings);
   return (

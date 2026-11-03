@@ -3,6 +3,7 @@ import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { createMemoryDb, insertCleanSample, CURRENT_SEASON, currentSeasonDate, rows, scratchPaths, SETTLED_SEASON } from "./helpers.js";
+import { en } from "../src/app/messages/en.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -216,6 +217,15 @@ describe("the front page", () => {
     const body = await (await app.request("/")).text();
     expect(body).toContain("https://www.inaturalist.org/observations/123456");
     expect(body).toContain("Fix on iNaturalist");
+  });
+
+  it("offers no fix where iNaturalist no longer has the observation, only the flag that says so (beeline-wcc6)", async () => {
+    const { app, conn } = await qcApp();
+    await conn.run(`INSERT INTO observation_absent (inat_id) VALUES (123456)`);
+    const body = await (await app.request("/")).text();
+    expect(body).toContain(en.qcInstructions.observation_missing_upstream);
+    expect(body).not.toContain("https://www.inaturalist.org/observations/123456");
+    expect(body).not.toContain("Fix on iNaturalist");
   });
 
   it("lists the collector's clean samples as waiting on labels, in the same table", async () => {

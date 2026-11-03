@@ -540,7 +540,7 @@ describe("a location iNaturalist keeps from everyone but its observer", () => {
     await alice.conn.run(`INSERT INTO observation_field (inat_id, place_guess) VALUES (998877, 'Verlot, WA, US')`);
     const back = await get(alice.app, `/samples/${alice.aliceSample}`);
     expect(back).toContain(link);
-    expect(back).not.toContain("No longer on iNaturalist");
+    expect(back).not.toContain("Not found on iNaturalist");
   });
 
   it("withholds the observation's own place guess", async () => {

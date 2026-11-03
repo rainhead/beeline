@@ -31,6 +31,7 @@ const finding = (
 const row = (over: Partial<DashboardRow>): DashboardRow => ({
   sample_id: 1,
   inat_observation_id: 123456789n,
+  observation_gone: false,
   sample_number: "3",
   date_start: new Date("2026-07-14T12:00:00"),
   locality: "Corvallis",

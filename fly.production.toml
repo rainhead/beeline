@@ -1,0 +1,73 @@
+# Beeline on Fly — production, from cutover on 3 November 2026 (beeline-83b8).
+#
+# Deploy with `fly deploy -c fly.production.toml`. The sandbox is fly.toml.
+#
+# This file is fly.toml with three values changed: the app, BEELINE_ENV and
+# BEELINE_ORIGIN. Every other setting is the sandbox's, and the reason for each
+# is written there, not here; test/fly-config.test.ts fails if the two files
+# drift apart anywhere else. So a change to the machine's size, DuckDB's
+# budget, the volume or the health check is made in both files at once.
+
+app = "beeline-production"
+primary_region = "sjc"
+
+# Top level, above the first table: see fly.toml.
+kill_signal = "SIGTERM"
+kill_timeout = "120s"
+swap_size_mb = 1024
+
+[build]
+
+[env]
+  BEELINE_ENV = "production"
+  # Builds the iNaturalist sign-in's redirect_uri, which must equal the one
+  # URI registered on the old system's OAuth app (beeline-83b8.3). Sign-in
+  # works only once melittologist.org points here and that app's redirect
+  # reads https://melittologist.org/auth/inat/callback.
+  BEELINE_ORIGIN = "https://melittologist.org"
+  PORT = "3054"
+
+  BEELINE_DB = "/app/data/beeline.duckdb"
+  BEELINE_PRIVATE_DB = "/app/data/private.duckdb"
+
+  BEELINE_DUCKDB_MEMORY_LIMIT = "1536MB"
+  BEELINE_DUCKDB_THREADS = "2"
+
+  BEELINE_SYNC_PROJECTS = "18521,166376,99706"
+  BEELINE_SWEEP_DAYS = "365"
+
+  # The sandbox's folder, which production takes over at cutover (Peter,
+  # 2026-11-02). Two apps writing here would each move the other's copies to
+  # the bin, since retention goes by file name alone (src/store-backup.ts),
+  # so the sandbox stops backing up when production starts serving: see
+  # docs/runbooks/deploy-fly.md, "Two apps".
+  BEELINE_BACKUP_FOLDER = "1uNdyRAWHMRwWmSv-6yk1ENaJofHyXyz5"
+
+# Secrets, as for the sandbox (fly.toml lists them). The iNat client id and
+# secret are the old system's OAuth app's; the rest are the sandbox's.
+
+[mounts]
+  source = "beeline_data"
+  destination = "/app/data"
+  initial_size = "10gb"
+  auto_extend_size_threshold = 80
+  auto_extend_size_increment = "5gb"
+  auto_extend_size_limit = "40gb"
+  snapshot_retention = 14
+
+[http_service]
+  internal_port = 3054
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "3gb"

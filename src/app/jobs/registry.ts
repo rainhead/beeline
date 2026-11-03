@@ -400,8 +400,13 @@ export function buildJobs(
         if (!config.driveBackup) {
           const unset = "BEELINE_DRIVE_KEY and BEELINE_BACKUP_FOLDER are not set";
           // A backup job that succeeds at doing nothing reads, on /jobs and
-          // in Sentry, like a backup.
-          if (config.environment === "development") return `${unset} — nothing backed up`;
+          // in Sentry, like a backup — so production fails. The sandbox may
+          // stand down: from cutover production's store is the record, and
+          // the two cannot share the backup folder, since each one's
+          // retention would bin the other's copies (beeline-83b8.8).
+          if (config.environment === "development" || config.environment === "sandbox") {
+            return `${unset} — nothing backed up`;
+          }
           throw new Error(`${unset}: nothing was backed up`);
         }
         // Never a plaintext copy of the private store on the drive: the job

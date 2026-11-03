@@ -127,3 +127,57 @@ describe("fly.toml", () => {
     expect(entries.get("http_service:internal_port")!.value).toBe(entries.get("env:PORT")!.value);
   });
 });
+
+/**
+ * Production's config is the sandbox's with three values changed. Fly has no
+ * include, so the settings are written twice, and each one fails silently when
+ * it is wrong (above): a production machine that kept an old memory size, or
+ * a kill_timeout lost in an edit to one file only, would say nothing. Every
+ * test above reads fly.toml; this one makes them true of production too.
+ */
+describe("fly.production.toml", () => {
+  const PRODUCTION_TOML = fileURLToPath(new URL("../fly.production.toml", import.meta.url));
+  const readBoth = async () => ({
+    sandbox: await read(),
+    production: scanToml(await readFile(PRODUCTION_TOML, "utf8")),
+  });
+  // The only settings allowed to differ, and what production's must be.
+  const PRODUCTION: Record<string, string> = {
+    ":app": "beeline-production",
+    "env:BEELINE_ENV": "production",
+    "env:BEELINE_ORIGIN": "https://melittologist.org",
+  };
+
+  // The backup folder is production's from cutover, when the sandbox stops
+  // naming it (docs/runbooks/deploy-fly.md, "Two apps"), so fly.toml may drop
+  // it while this file must not.
+  const BACKUP_FOLDER = "env:BEELINE_BACKUP_FOLDER";
+
+  it("differs from fly.toml only in the app, BEELINE_ENV and BEELINE_ORIGIN, and the backup folder at cutover", async () => {
+    const { sandbox, production } = await readBoth();
+    const keys = new Set([...sandbox.keys(), ...production.keys()]);
+    for (const key of keys) {
+      if (key in PRODUCTION || key === BACKUP_FOLDER) continue;
+      expect(production.get(key)?.value, `${key} in fly.production.toml`).toBe(sandbox.get(key)?.value);
+    }
+  });
+
+  it("names the production app, environment and origin", async () => {
+    const { sandbox, production } = await readBoth();
+    for (const [key, value] of Object.entries(PRODUCTION)) {
+      expect(production.get(key)?.value, key).toBe(value);
+      expect(sandbox.get(key)?.value, `fly.toml's ${key} is the sandbox's`).not.toBe(value);
+    }
+  });
+
+  it("names a backup folder, which the sandbox shares only until cutover", async () => {
+    const { sandbox, production } = await readBoth();
+    const folder = production.get(BACKUP_FOLDER)?.value;
+    // Unset, production's backup job fails every night (src/app/jobs/registry.ts).
+    expect(folder, `${BACKUP_FOLDER} in fly.production.toml`).toMatch(/\S/);
+    // A different folder in the sandbox would be a second backup series
+    // nobody restores from; the plan is the same folder, then none.
+    const sandboxFolder = sandbox.get(BACKUP_FOLDER)?.value;
+    if (sandboxFolder !== undefined) expect(sandboxFolder).toBe(folder);
+  });
+});

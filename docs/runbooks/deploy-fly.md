@@ -1,9 +1,14 @@
 # Deploy to Fly
 
-Beeline runs on Fly as one app, one machine, one volume, in `sjc`. Tracked
-config: [`fly.toml`](../../fly.toml), [`Dockerfile`](../../Dockerfile),
-[`infra/fly/entrypoint.sh`](../../infra/fly/entrypoint.sh). **Temporary hosting** in
-the same sense maderas was: the decision is re-made with Andony at cutover.
+Beeline runs on Fly as two apps in the `osu-mm` organisation, each one
+machine and one volume in `sjc`: the sandbox, `beeline`, and from cutover
+production, `beeline-production` ([below](#two-apps-the-sandbox-and-production)).
+Tracked config: [`fly.toml`](../../fly.toml) and
+[`fly.production.toml`](../../fly.production.toml),
+[`Dockerfile`](../../Dockerfile),
+[`infra/fly/entrypoint.sh`](../../infra/fly/entrypoint.sh). The commands below
+name the sandbox; for production, pass `-c fly.production.toml` to `fly deploy`
+and `--app beeline-production` to everything else.
 
 The shape is not a sandbox shortcut. Exactly one process may hold
 `beeline.duckdb` ([ADR 0005](../adr/0005-app-process-owns-the-store.md)), and
@@ -59,6 +64,61 @@ reading and can plan a query against memory the machine will not give it,
 which the kernel answers with a kill rather than a spill. Stated, an
 over-large query spills to disk: measured, a full legacy promotion completes
 with the limit at 244 MiB, 16% slower than uncapped.
+
+## Two apps: the sandbox and production
+
+Production is a new app rather than the sandbox promoted (Peter, 2026-10-30,
+beeline-83b8.1), so that its store starts with no rehearsal print runs or
+field numbers, and the sandbox stays a place to try a change. The image is
+the same; [`fly.production.toml`](../../fly.production.toml) is `fly.toml` with
+the app, `BEELINE_ENV` and `BEELINE_ORIGIN` changed, and a test fails if the
+two differ anywhere else. A change to the machine, the volume or DuckDB's
+budget is made in both files.
+
+**Its secrets are the sandbox's**, copied machine to machine on 2026-11-02 so
+that no value passed through a terminal, except the iNaturalist client id and
+secret, which are the old system's OAuth app's (from its `.env` on the old
+server, renamed from `INATURALIST_CLIENT_*`; beeline-83b8.3). So the
+private-store key is the sandbox's too, and the copies of it kept off the
+server already cover production. `fly secrets list` shows a digest for each,
+and equal digests across the two apps mean equal values.
+
+**Its address is `melittologist.org`**, and `www.melittologist.org`. Fly holds
+a certificate for each name; `fly certs setup <name> --app beeline-production`
+prints the records to add. The DNS is at domain.com, and Andony holds it. The
+`_acme-challenge` CNAME records can go in ahead of the switch, so the
+certificates are issued before any traffic moves; the A and AAAA records are
+the switch itself. Sign-in works only once both names point at the app and the
+OAuth app's one redirect URI reads `https://melittologist.org/auth/inat/callback`.
+Production's responses carry HSTS with `includeSubDomains`
+([`src/app/security-headers.ts`](../../src/app/security-headers.ts)), so a
+browser that has visited it refuses plain HTTP on every subdomain for six
+months: wherever the old system goes under `melittologist.org`, it needs HTTPS.
+
+**One backup folder, and only production writes to it.** Retention reads the
+folder and goes by file name alone ([`src/store-backup.ts`](../../src/store-backup.ts)),
+so two apps writing there would each move the other's copies to the bin, and a
+restore could not tell whose copy was whose. From cutover the sandbox stands
+down: with neither `BEELINE_DRIVE_KEY` nor `BEELINE_BACKUP_FOLDER` set, its
+`store-backup` job succeeds and says nothing was backed up, where production's
+fails. Both settings go in one deploy, since the app refuses to boot with only
+one of them:
+
+```sh
+fly secrets unset --stage --app beeline BEELINE_DRIVE_KEY
+# delete BEELINE_BACKUP_FOLDER from fly.toml, then
+fly deploy
+```
+
+Move the sandbox's copies out of the folder into a subfolder of their own
+before production's first backup. Otherwise production's retention counts
+them as its own, and the copy it keeps for a year as November's would be the
+sandbox's from 1 or 2 November.
+
+**Sentry** takes both apps' reports under one DSN, told apart by
+`environment` (`sandbox` or `production`). The uptime monitor and the alert
+in [Errors, logs and job check-ins](#errors-logs-and-job-check-ins) watch the
+sandbox until they are pointed at production (beeline-83b8.9).
 
 ## One-time setup
 
@@ -645,9 +705,12 @@ why it is the bin. Anything that fails, fails the run, so a missing backup
 shows on `/jobs` and on `/healthz/jobs`, which Sentry polls, with the step
 that failed named in the run's detail. Its own Sentry cron monitor is one of
 the eight the plan keeps disabled.
-Outside development it also fails rather than succeeding at nothing when the
-folder or the Drive key is not set, and rather than upload the private store
-unencrypted when the store's key is not. A run killed partway, by memory or a
+In production it also fails rather than succeeding at nothing when the
+folder or the Drive key is not set; the sandbox, which gives the folder to
+production at cutover, says it backed nothing up
+([Two apps](#two-apps-the-sandbox-and-production)). Outside development it
+fails rather than upload the private store unencrypted when the store's key
+is not set. A run killed partway, by memory or a
 restart, leaves its work directory under `data/backups/`; the next run
 removes it and says so.
 

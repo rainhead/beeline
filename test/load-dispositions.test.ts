@@ -185,14 +185,18 @@ describe("what is held", () => {
       ada("1", { fieldNumber: "25001375" }),
       // A found row on no specimen with nothing to say is not worth listing.
       { fieldNumber: "25008888" },
+      // A lost row with no number of its own names no label: held, never a
+      // surplus label with a blank number on its twin.
+      ada("1", { occurrenceRemarks: LOST }),
     ]);
     const result = await load(path);
-    expect(result.held).toEqual({ no_specimen: 1, number_unknown: 1, ambiguous_number: 0, ambiguous_twin: 0, conflicting_remarks: 0 });
+    expect(result.held).toEqual({ no_specimen: 2, number_unknown: 1, ambiguous_number: 0, ambiguous_twin: 0, conflicting_remarks: 0 });
     expect(await stored()).toEqual([]);
     const held = await heldRows(path);
-    expect(held).toHaveLength(2);
+    expect(held).toHaveLength(3);
     expect(held[0]).toContain("25009999,LOST SPECIMEN,no_specimen,");
     expect(held[1]).toBe("3,25001375,,number_unknown,");
+    expect(held[2]).toContain("5,,LOST SPECIMEN,no_specimen,");
   });
 
   test("two rows remarking differently on one specimen, and a number two specimens carry", async () => {

@@ -152,7 +152,10 @@ export async function loadDispositions(conn: DuckDBConnection, opts: Disposition
                      AND w.recorded_by = u.recorded_by AND w.day = u.day AND w.month = u.month AND w.year = u.year
                      AND w.sample_number = u.sample_number AND w.specimen_number = u.specimen_number
       JOIN disp_number m ON m.row_number = w.row_number AND m.n = 1
-      WHERE NOT EXISTS (SELECT 1 FROM disp_number n WHERE n.row_number = u.row_number)
+      -- A row with no number of its own names no label, so it can be
+      -- nobody's twin (CodeRabbit on the first review).
+      WHERE u.field_number IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM disp_number n WHERE n.row_number = u.row_number)
       GROUP BY u.row_number`);
     await conn.run(`
       CREATE OR REPLACE TEMP TABLE disp_outcome AS

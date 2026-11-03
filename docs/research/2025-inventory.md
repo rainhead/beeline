@@ -23,7 +23,7 @@ kind in capitals.
 | --- | ---: | --- |
 | `LOST SPECIMEN`: not in the inventory, no metadata match | 10,890 | Oregon 8,084, Washington 2,159, New Mexico 515, the rest small |
 | `PRINT REQUIRED`: label never generated | 2,481 | New Mexico, Idaho, BC, Kansas, Nevada, Alberta and others; none Oregon or Washington |
-| `PHANTOM RECORD`: metadata duplicates another number, retire this one | 1,082 | all Oregon; 482 are O'Loughlin trap samples |
+| `PHANTOM RECORD`: metadata duplicates another number, retire this one | 1,082 | all Oregon; 482 are trap samples from one pair of collectors |
 | `METADATA RECONSTRUCTED`: from archived files, or from the pinned label | 361 | |
 | `PRINTED`: confirmed in BC's Ecdysis by the BC taxonomist | 211 | BC |
 | `RELABELLED`: a duplicate number; this pin reprinted under a new one | 90 | 25100000 to 25100089, printed 22 September 2026 |
@@ -95,7 +95,7 @@ placeholder. 806 rows are held:
 | --- | ---: | --- |
 | No specimen, and no twin | 535 | 259 reconstructed, 163 lost, 83 relabelled, 26 wrong-collector labels, 4 with no record |
 | A twin, but the row is not a lost record: a number Beeline lacks | 186 | 102 reconstructed, 63 pins the inventory found under that number, 12 recovered, 7 relabelled, 2 reprints |
-| A lost record whose twin is two specimens | 84 | the old system holds the bee twice, and which is the pin is not for the loader to say |
+| A lost record whose twin is two specimens | 84 | one collector, day, sample and specimen number under three field numbers, of which the inventory found two pinned, in 21 samples; Beeline holds each found pair as two specimens in two samples, and which of them the third label was for is not for the loader to say |
 | A number two specimens carry | 1 | |
 
 Two things about the file are assumptions rather than facts in it. A row with no remark

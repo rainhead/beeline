@@ -254,6 +254,12 @@ export const en = {
     },
     /** Any instance that is not production says so (beeline-2u8). */
     envBanner: (environment: string) => `${environment} instance — data here may be blown away and rebuilt at any time`,
+    /**
+     * The sandbox's own banner, from cutover (beeline-83b8.15): staff made real
+     * decisions there daily until production opened, and one made there now is
+     * lost, so the banner says where the record is instead.
+     */
+    sandboxBanner: "This is the sandbox, not Beeline. Changes made here are not kept. Beeline is at melittologist.org.",
     nav: {
       samples: "Samples",
       specimens: "Specimens",

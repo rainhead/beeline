@@ -224,6 +224,25 @@ describe("app scaffold", () => {
     const body = await (await app.request("/")).text();
     expect(body).toContain("env-banner");
     expect(body).toContain("blown away");
+    expect(body).not.toContain("melittologist.org");
+  });
+
+  it("the sandbox says where Beeline is now, before and after signing in (beeline-83b8.15)", async () => {
+    for (const resolveSession of [noSession, async () => ({ personId: 1, login: "testuser", iconUrl: null })]) {
+      const { instance, conn } = await createMemoryDb();
+      await conn.run(`INSERT INTO person (display_name) VALUES ('Test Person')`);
+      const sandbox = createApp({
+        ...(await scratchPaths()),
+        db: createKysely(instance),
+        config: { environment: "sandbox" as const, origin: "https://beeline.fly.dev" },
+        inat: unusedInat,
+        resolveSession,
+      });
+      const body = await (await sandbox.request("/")).text();
+      expect(body).toContain("env-banner");
+      expect(body).toContain("Beeline is at melittologist.org; anything you decide here is not kept.");
+      expect(body).not.toContain("blown away");
+    }
   });
 
   it("the string-proofing page renders every catalog entry with visible slots", async () => {

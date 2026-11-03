@@ -130,6 +130,15 @@ function SiteFooter({ m }: { m: Messages }) {
 }
 
 /**
+ * Any instance that is not production says so (beeline-2u8). The sandbox
+ * also says where Beeline now is, since a decision made there is not kept.
+ */
+function EnvBanner({ environment, m }: { environment: PageEnv["environment"]; m: Messages }) {
+  if (environment === "production") return null;
+  return <div class="env-banner">{environment === "sandbox" ? m.layout.sandboxBanner : m.layout.envBanner(environment)}</div>;
+}
+
+/**
  * The pages that exist before a session does — the sign-in door and the
  * pending-approval holding page. Same head and same environment banner as
  * the app proper (beeline-2u8 asks for the banner on the front door
@@ -157,9 +166,7 @@ export function PublicPage(props: {
         ))}
       </head>
       <body>
-        {props.environment !== "production" && (
-          <div class="env-banner">{m.layout.envBanner(props.environment)}</div>
-        )}
+        <EnvBanner environment={props.environment} m={m} />
         <main>{props.children}</main>
         <SiteFooter m={m} />
       </body>
@@ -190,7 +197,7 @@ export function Layout(props: {
         {env.islandsSrc && <script type="module" src={env.islandsSrc}></script>}
       </head>
       <body>
-        {env.environment !== "production" && <div class="env-banner">{m.layout.envBanner(env.environment)}</div>}
+        <EnvBanner environment={env.environment} m={m} />
         {/* Acting for someone changes what every "my samples" surface means,
             so it is stated at the top of every page rather than tucked into
             the menu that switched it on (beeline-oyl). */}

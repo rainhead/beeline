@@ -351,6 +351,16 @@ export const en = {
       program: { label: "Master Melittologist", href: "https://extension.oregonstate.edu/master-melittologist" },
       tail: "volunteers collect.",
     },
+    /**
+     * For a volunteer who bookmarked the old Beeline at this address, which it
+     * left at cutover (beeline-83b8.12). Until the old Beeline closes, after
+     * February.
+     */
+    oldBeeline: {
+      lead: "Entering determinations in the old Beeline? It has moved to",
+      label: "old.melittologist.org",
+      tail: ".",
+    },
     joinLead: "To become a volunteer, start with your atlas:",
     failed: "Sign-in failed (state mismatch or missing code). Try again from the sign-in page.",
   },

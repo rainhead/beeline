@@ -99,7 +99,10 @@ export const NIGHTLY_CITED_LIMIT = 2_000;
  * withhold their location from other volunteers for want of knowing
  * (src/app/listings.ts `withheld`, which defines "unread" the same way). The
  * ones iNaturalist no longer has stay unread and are asked about again each
- * night: a few hundred ids, two requests.
+ * night: a few hundred ids, two or three requests. Each answer without one is
+ * recorded in observation_absent (schema/060, beeline-wcc6), which flags the
+ * samples citing it and tells their pages the observation is gone; asking
+ * again is what would notice one coming back.
  *
  * NEVER FAILS THE RUN, for refreshPlaces's reason: a location withheld one
  * more night is no harm, and a skipped promotion is.

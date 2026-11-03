@@ -213,6 +213,19 @@ describe("sample listing", () => {
     expect(body).toContain("clean");
   });
 
+  it("links no row to an observation iNaturalist no longer has (beeline-wcc6)", async () => {
+    const { app, conn } = await listingApp();
+    await conn.run(`UPDATE sample SET inat_observation_id = 5551 WHERE sample_number = 'A-1'`);
+    const link = "https://www.inaturalist.org/observations/5551";
+    // Cited and not read yet: the link is worth following.
+    expect(await get(app, "/samples")).toContain(link);
+    // iNaturalist answered without it: there is no page there.
+    await conn.run(`INSERT INTO observation_absent (inat_id) VALUES (5551)`);
+    const body = await get(app, "/samples");
+    expect(body).toContain("A-1");
+    expect(body).not.toContain(link);
+  });
+
   it("starts a volunteer at their own records, and lets them see everybody's", async () => {
     const { app } = await listingApp();
     const mine = await get(app, "/samples");

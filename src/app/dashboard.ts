@@ -2,6 +2,7 @@ import { sql, type Kysely } from "kysely";
 import type { LocalityBasis } from "../locality-rule.js";
 import type { Database, Geoprivacy, QcSeverity } from "../model.js";
 import { entrySeasons } from "./determine.js";
+import { observationGone } from "./listings.js";
 import { DASHBOARD_RULES, type CoCollectors, type DashboardRow, type Finding, type SkippedDay } from "./views/qc.js";
 
 /**
@@ -49,6 +50,7 @@ const num = (v: unknown): number | null => (v === null || v === undefined ? null
 interface RawSampleRow {
   sample_id: number;
   inat_observation_id: bigint | null;
+  observation_gone: boolean;
   sample_number: string;
   date_start: Date;
   locality: string | null;
@@ -103,7 +105,8 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
     // labels a run already holds; which of them the page shows is decided
     // below, against the findings. Labels are the one other question.
     sql<RawSampleRow>`
-      SELECT s.entity_id AS sample_id, s.inat_observation_id, s.sample_number, s.date_start,
+      SELECT s.entity_id AS sample_id, s.inat_observation_id, ${observationGone} AS observation_gone,
+             s.sample_number, s.date_start,
              s.locality, s.county, s.state_province,
              loc.latitude, loc.longitude, loc.coordinate_uncertainty_m,
              s.geoprivacy, s.taxon_geoprivacy,
@@ -288,6 +291,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
     rows.push({
       sample_id: sampleId,
       inat_observation_id: s.inat_observation_id,
+      observation_gone: Boolean(s.observation_gone),
       sample_number: s.sample_number,
       date_start: s.date_start,
       locality: s.locality,
@@ -316,6 +320,8 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
     rows.push({
       sample_id: null,
       inat_observation_id: u.inat_observation_id,
+      // An observation iNaturalist just returned: not gone by construction.
+      observation_gone: false,
       sample_number: null,
       date_start: u.date_start,
       ...placeOf(u.inat_observation_id),
@@ -339,6 +345,8 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
     rows.push({
       sample_id: null,
       inat_observation_id: p.inat_observation_id,
+      // An observation iNaturalist just returned: not gone by construction.
+      observation_gone: false,
       sample_number: p.sample_number,
       date_start: p.date_start,
       ...placeOf(p.inat_observation_id),

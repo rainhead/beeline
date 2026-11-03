@@ -63,6 +63,11 @@ beforeAll(async () => {
     `INSERT INTO inat_place_absent (inat_place_id, asked_at)
      VALUES (117476, TIMESTAMPTZ '2026-08-01 12:00:00+00')`,
   );
+  // And the same verdict on an observation a sample cites (beeline-wcc6).
+  await seed.run(
+    `INSERT INTO observation_absent (inat_id, absent_since, asked_at)
+     VALUES (370191199, TIMESTAMPTZ '2026-08-01 12:00:00+00', TIMESTAMPTZ '2026-08-02 12:00:00+00')`,
+  );
   // An account's ORCID iD (beeline-yaaj): keyed by the iNat user id and
   // fetched from iNaturalist, so it comes across as the place cache does.
   await seed.run(
@@ -124,6 +129,7 @@ describe("reseeding a store that cannot be blown away", () => {
       job_run: 1,
       inat_place: 1,
       inat_place_absent: 1,
+      observation_absent: 1,
       inat_user_orcid: 1,
       ecdysis_taxon: 2,
     });
@@ -138,6 +144,10 @@ describe("reseeding a store that cannot be blown away", () => {
     expect(
       await rows(conn, `SELECT inat_place_id, asked_at = TIMESTAMPTZ '2026-08-01 12:00:00+00' FROM inat_place_absent`),
     ).toEqual([[117476n, true]]);
+    expect(
+      await rows(conn, `SELECT inat_id, absent_since = TIMESTAMPTZ '2026-08-01 12:00:00+00',
+                               asked_at = TIMESTAMPTZ '2026-08-02 12:00:00+00' FROM observation_absent`),
+    ).toEqual([[370191199n, true, true]]);
 
     // The whole point: the model is empty, so promotion may run against it.
     expect(await rows(conn, `SELECT count(*) FROM person`)).toEqual([[0n]]);
@@ -216,6 +226,7 @@ describe("reseeding a store that cannot be blown away", () => {
       job_run: 0,
       inat_place: 0,
       inat_place_absent: 0,
+      observation_absent: 0,
       inat_user_orcid: 0,
       ecdysis_taxon: 0,
     });

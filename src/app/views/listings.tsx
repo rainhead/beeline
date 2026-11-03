@@ -682,7 +682,9 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                 </td>
                 {/* Links out, not a value: empty when there is nothing to offer. */}
                 <td class="actions">
-                  {row.inat_observation_id !== null ? (
+                  {row.observation_gone ? null : row.inat_observation_id !== null ? (
+                    // Not where iNaturalist no longer has it: the link would
+                    // open a page that is not there (beeline-wcc6).
                     <a
                       class="inat-link"
                       href={`https://www.inaturalist.org/observations/${row.inat_observation_id}`}

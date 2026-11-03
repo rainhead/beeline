@@ -298,6 +298,52 @@ describe("iNat sync", () => {
     expect(await rows(conn, `SELECT inat_id, geoprivacy FROM observation_field`)).toEqual([[42n, "private"]]);
   });
 
+  test("keeps what iNaturalist answered without, flags the samples citing it, and forgets it when it comes back (beeline-wcc6)", async () => {
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    const cited = await insertCleanSample(conn, { inat_observation_id: "43" });
+    const flags = () =>
+      rows(conn, `SELECT details FROM qc_finding WHERE sample_id = ${cited} AND rule_name = 'observation_missing_upstream'`);
+    expect(await flags()).toEqual([]);
+
+    // Asked for 42 and 43; only 42 came back.
+    await fetchObservationsById(conn, { ids: [42, 43], token: "test-jwt", fetchImpl: fakeApi([[obs(42)]]), pageDelayMs: 0 });
+    expect(await rows(conn, `SELECT inat_id FROM observation_absent`)).toEqual([[43n]]);
+    await conn.run(`UPDATE observation_absent SET absent_since = TIMESTAMPTZ '2026-10-24 09:00:00+00'`);
+    expect(await flags()).toEqual([["observation 43 not found on iNaturalist since 2026-10-24"]]);
+
+    // Asked again the next night: the verdict is fresher, and what the flag
+    // says is not, so a waiver on it would hold.
+    await fetchObservationsById(conn, { ids: [43], token: "test-jwt", fetchImpl: fakeApi([[]]), pageDelayMs: 0 });
+    expect(
+      await rows(conn, `SELECT absent_since = TIMESTAMPTZ '2026-10-24 09:00:00+00', asked_at > absent_since FROM observation_absent`),
+    ).toEqual([[true, true]]);
+    expect(await flags()).toEqual([["observation 43 not found on iNaturalist since 2026-10-24"]]);
+
+    // A failed request records nothing: no answer is not an answer without it.
+    await conn.run(`DELETE FROM observation_absent`);
+    const down: typeof fetch = async () => new Response("", { status: 503 });
+    await expect(fetchObservationsById(conn, { ids: [43], token: "test-jwt", fetchImpl: down, pageDelayMs: 0 })).rejects.toThrow();
+    expect(await rows(conn, `SELECT count(*) FROM observation_absent`)).toEqual([[0n]]);
+
+    // Back upstream: the row goes, and so does the flag.
+    await fetchObservationsById(conn, { ids: [43], token: "test-jwt", fetchImpl: fakeApi([[]]), pageDelayMs: 0 });
+    await fetchObservationsById(conn, { ids: [43], token: "test-jwt", fetchImpl: fakeApi([[obs(43)]]), pageDelayMs: 0 });
+    expect(await rows(conn, `SELECT count(*) FROM observation_absent`)).toEqual([[0n]]);
+    expect(await flags()).toEqual([]);
+  });
+
+  test("an observation a sweep has read is judged by the sweep's branch alone, whatever observation_absent says", async () => {
+    // A row left from before a project sweep read it (the sweep does not
+    // delete it): the observation is there, so nothing says it is gone.
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    const swept = await insertCleanSample(conn, { inat_observation_id: "42" });
+    await conn.run(`INSERT INTO observation_absent (inat_id) VALUES (42)`);
+    await syncINat(conn, { ...base, fetchImpl: fakeApi([[obs(42)]]) });
+    expect(
+      await rows(conn, `SELECT count(*) FROM qc_finding WHERE sample_id = ${swept} AND rule_name = 'observation_missing_upstream'`),
+    ).toEqual([[0n]]);
+  });
+
   test("asks in requests of two hundred ids", async () => {
     const asked: number[] = [];
     const api: typeof fetch = async (input) => {

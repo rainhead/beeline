@@ -665,7 +665,7 @@ export const en = {
       outside: "Outside the atlases",
       /** Above a listing of other people's records, for anyone but staff. */
       withheldNote:
-        "Where an observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected. The same applies where Beeline has not yet read the observation.",
+        "Where an observation is obscured or private on iNaturalist, only its collectors and staff see where it was collected. The same applies where Beeline has not read the observation, or cannot find it on iNaturalist.",
     },
     /** In a Place cell whose locality, and perhaps county, is somebody else's to see. */
     locationHidden: "location hidden",
@@ -891,6 +891,14 @@ export const en = {
       /** Trap samples usually have none, and that is not a gap. */
       observationNone: "None — this sample did not come from an observation, so it is corrected here rather than upstream.",
       /**
+       * Beside the id, unlinked, where iNaturalist has never given Beeline
+       * the observation and, asked for it, answered without it
+       * (beeline-wcc6). "Deleted" is the likely reading rather than a
+       * certainty, so it is said as one.
+       */
+      observationGone: (since: Date | string) =>
+        `Not found on iNaturalist since ${date(since)}: it has most likely been deleted.`,
+      /**
        * The observer's own free text on the observation (beeline-hza). "Notes"
        * rather than "Description", which is iNaturalist's word for the field
        * and not what anyone calls it. The row is absent where there are none,
@@ -961,8 +969,12 @@ export const en = {
          * everyone but its observer — and which of the two kept it, since
          * one is the collector's choice and the other is about a rare plant.
          */
-        withheld: (why: { geoprivacy: string | null; taxonGeoprivacy: string | null }) =>
-          why.geoprivacy === null && why.taxonGeoprivacy === null
+        withheld: (why: { geoprivacy: string | null; taxonGeoprivacy: string | null; gone: boolean }) =>
+          // Before "not read yet", which would promise a read that cannot
+          // come: the observation is no longer on iNaturalist (beeline-wcc6).
+          why.gone
+            ? "Beeline cannot find this sample's observation on iNaturalist, so it cannot tell whether the collector kept its location private there. Only its collectors and staff see where it was collected."
+            : why.geoprivacy === null && why.taxonGeoprivacy === null
             ? "Beeline has not read this sample's observation from iNaturalist, so it cannot tell whether the collector keeps its location private there. Until it can, only its collectors and staff see where it was collected."
             : why.geoprivacy !== null
             ? `The collector keeps this observation's location ${why.geoprivacy === "private" ? "private" : "obscured"} on iNaturalist, so only its collectors and staff see where it was collected.`
@@ -2224,7 +2236,7 @@ export const en = {
     within_sample_disagreement:
       "Historical records merged into this sample had conflicting values for a field. The earliest record's value was retained. Review the listed alternatives and edit the sample if the retained value is incorrect.",
     observation_missing_upstream:
-      "The iNaturalist observation backing this sample was not returned by a sync that should have included it. It may have been deleted, removed from the project, or had its observation date changed. Staff will investigate before any further printing for this sample.",
+      "iNaturalist no longer returns the observation backing this sample. It may have been deleted, or, if Beeline used to read it through a project, removed from that project or given a different date. Staff will investigate before any further printing for this sample.",
     staff_hold:
       "Staff are holding this sample back from printing. Their note says why. If it asks you to change something, change it; staff will review and lift the hold.",
   } as Record<string, string>,

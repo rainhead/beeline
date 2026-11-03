@@ -1,9 +1,14 @@
 import { DuckDBConnection } from "@duckdb/node-api";
-import { openDuckDb, openMemoryDuckDb } from "./db.js";
+import { openDuckDb } from "./db.js";
 import { rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { applySchema } from "./schema.js";
-import { PrintedStoreRefused, refuseReseedOfPrintedStore } from "./registry-guard.js";
+import {
+  PrintedStoreRefused,
+  refuseReseedOfPrintedFile,
+  refuseReseedOfPrintedStore,
+  refuseToReplacePrintedStore,
+} from "./registry-guard.js";
 
 /**
  * Rebuild a deployed store's model from the staging it already holds.
@@ -258,13 +263,15 @@ export async function carryStaging(
 /**
  * Build `targetPath` from the schema and carry `sourcePath`'s staging into it.
  * The target is replaced if it exists; the source is only ever read. A source
- * that has printed is refused before the target is touched.
+ * that has printed is refused before the target is touched, and so is a
+ * target that has printed, since replacing it deletes it.
  */
 export async function reseedStore(sourcePath: string, targetPath: string): Promise<ReseedCounts> {
   if (sourcePath === targetPath) {
     throw new Error("reseed writes a new store beside the old one — give it a different target path");
   }
-  await refuseIfPrinted(sourcePath);
+  await refuseReseedOfPrintedFile(sourcePath);
+  await refuseToReplacePrintedStore(targetPath, "db:reseed");
   await rm(targetPath, { force: true });
   const instance = await openDuckDb(targetPath);
   const conn = await instance.connect();
@@ -277,19 +284,6 @@ export async function reseedStore(sourcePath: string, targetPath: string): Promi
     return await carryStaging(conn, sourcePath);
   } finally {
     conn.closeSync();
-  }
-}
-
-/** Read the source's registry from a throwaway instance, so that nothing is built first. */
-async function refuseIfPrinted(sourcePath: string): Promise<void> {
-  const probe = await openMemoryDuckDb();
-  const conn = await probe.connect();
-  try {
-    await conn.run(`ATTACH '${sourcePath.replaceAll("'", "''")}' AS source (READ_ONLY)`);
-    await refuseReseedOfPrintedStore(conn, "source", sourcePath);
-  } finally {
-    conn.closeSync();
-    probe.closeSync();
   }
 }
 

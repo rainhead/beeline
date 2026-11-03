@@ -177,8 +177,50 @@ describe("reseeding a store that cannot be blown away", () => {
     // The low-level path refuses too, for a caller with its own connection.
     const handle = await DuckDBInstance.create(":memory:");
     const hc = await handle.connect();
-    await expect(carryStaging(hc, printed)).rejects.toThrow(PrintedStoreRefused);
+    // Its caller has built the target already, so it says only that nothing came across.
+    await expect(carryStaging(hc, printed)).rejects.toThrow(/Nothing was carried from it/);
     hc.closeSync();
+  });
+
+  test("a source with a print run and no minted number is refused too", async () => {
+    // Each table is counted on its own. The schema allows a run with no
+    // minted number, so a guard reading only one table must fail here.
+    const runOnly = join(dir, "run-only.duckdb");
+    const instance = await DuckDBInstance.create(runOnly);
+    const c = await instance.connect();
+    await applySchema(c);
+    await c.run(`INSERT INTO person (display_name) VALUES ('Ada Ash')`);
+    await c.run(`INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person`);
+    c.closeSync();
+    instance.closeSync();
+    await expect(reseedStore(runOnly, join(dir, "run-only-target.duckdb"))).rejects.toThrow(
+      /1 print run\(s\) and 0 minted field number\(s\)/,
+    );
+  });
+
+  test("a target that has printed is refused, and not deleted, though the source has not", async () => {
+    // The reseed deletes whatever is at its target. Swapped arguments, or a
+    // rebuild from a copy taken before the first run, would pass the source's
+    // check and then delete the live store with its registry.
+    const live = join(dir, "live.duckdb");
+    const instance = await DuckDBInstance.create(live);
+    const c = await instance.connect();
+    await applySchema(c);
+    await c.run(`INSERT INTO person (display_name) VALUES ('Ada Ash')`);
+    await c.run(
+      `INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person;
+       INSERT INTO minted_field_number (field_number, print_run_id)
+         SELECT '26072092', min(entity_id) FROM print_run`,
+    );
+    c.closeSync();
+    instance.closeSync();
+
+    await expect(reseedStore(source, live)).rejects.toThrow(/Refusing to replace .*Nothing was deleted/);
+    const after = await DuckDBInstance.create(live);
+    const ac = await after.connect();
+    expect(await rows(ac, `SELECT field_number FROM minted_field_number`)).toEqual([["26072092"]]);
+    ac.closeSync();
+    after.closeSync();
   });
 
   test("the source above has printed nothing, so the reseed built it", async () => {

@@ -1,4 +1,6 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
+import { existsSync } from "node:fs";
+import { openMemoryDuckDb } from "./db.js";
 
 /**
  * The two tools that rebuild a store's model refuse a store that has printed
@@ -10,6 +12,11 @@ import type { DuckDBConnection } from "@duckdb/node-api";
  * which the next run mints again from the imported ceiling and issues the
  * same numbers a second time. Before production's first run this was a
  * rehearsal cost on the sandbox; from it, it is two pins with one number.
+ *
+ * The two tools that build a store into a file, `db:build` and `db:reseed`,
+ * delete whatever is at that path first, so they refuse a target that has
+ * printed as well: swapped arguments, or a reseed from an older copy, would
+ * otherwise delete the live store's registry outright.
  *
  * There is no override. What replaces a reseed for a promotion-rule change on
  * a store that has printed is not decided (the runbook says so).
@@ -75,7 +82,12 @@ export async function refusePromotionIntoPrintedStore(conn: DuckDBConnection): P
   );
 }
 
-/** The reseed's refusal: the new store would have no record of numbers already on pins. */
+/**
+ * The reseed's refusal: the new store would have no record of numbers already
+ * on pins. Worded for both callers: reseedStore asks before it builds
+ * anything, and carryStaging after its caller has built the target, so the
+ * message says only that nothing was carried.
+ */
 export async function refuseReseedOfPrintedStore(
   conn: DuckDBConnection,
   catalog: string,
@@ -86,7 +98,54 @@ export async function refuseReseedOfPrintedStore(
   throw new PrintedStoreRefused(
     counts,
     `Refusing to reseed from ${sourcePath}: it holds ${held(counts)}, and a reseed carries neither, so the new ` +
+      `store's next print run would issue those numbers again. Nothing was carried from it, and there is no ` +
+      `override. See ${RUNBOOK}.`,
+  );
+}
+
+/**
+ * Count the registry of the store at `path`, read-only, from a throwaway
+ * in-memory instance, so that nothing is opened for writing to ask. A file
+ * that cannot be attached (one the app holds open, or not a store at all)
+ * throws, which leaves the caller refusing rather than deleting it.
+ */
+export async function countRegistryAt(path: string): Promise<RegistryCounts> {
+  const probe = await openMemoryDuckDb();
+  const conn = await probe.connect();
+  try {
+    await conn.run(`ATTACH '${path.replaceAll("'", "''")}' AS probed (READ_ONLY)`);
+    return await countRegistry(conn, "probed");
+  } finally {
+    conn.closeSync();
+    probe.closeSync();
+  }
+}
+
+/** The reseed's refusal, asked of a source file before anything is built. */
+export async function refuseReseedOfPrintedFile(sourcePath: string): Promise<void> {
+  const counts = await countRegistryAt(sourcePath);
+  if (counts.print_run + counts.minted_field_number === 0) return;
+  throw new PrintedStoreRefused(
+    counts,
+    `Refusing to reseed from ${sourcePath}: it holds ${held(counts)}, and a reseed carries neither, so the new ` +
       `store's next print run would issue those numbers again. Nothing was built, and there is no override. ` +
       `See ${RUNBOOK}.`,
+  );
+}
+
+/**
+ * The refusal of `db:build` and `db:reseed` to delete a store that has
+ * printed, which both would do to whatever is at their target path. A path
+ * with nothing at it is no refusal.
+ */
+export async function refuseToReplacePrintedStore(targetPath: string, tool: string): Promise<void> {
+  if (!existsSync(targetPath)) return;
+  const counts = await countRegistryAt(targetPath);
+  if (counts.print_run + counts.minted_field_number === 0) return;
+  throw new PrintedStoreRefused(
+    counts,
+    `Refusing to replace ${targetPath}: it holds ${held(counts)}, and ${tool} deletes the store at its target ` +
+      `before building, so those would be lost and the next print run would issue the same numbers again. ` +
+      `Nothing was deleted, and there is no override. Check the order of the arguments. See ${RUNBOOK}.`,
   );
 }

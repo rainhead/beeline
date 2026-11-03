@@ -42,6 +42,17 @@ describe("a store that has printed", () => {
     ).toEqual([[0n]]);
   });
 
+  test("a print run with no minted number is enough", async () => {
+    // Each table is counted on its own. The schema allows a run with no
+    // minted number, so a guard reading only one table must fail here.
+    const { conn: runOnly } = await createMemoryDb();
+    await runOnly.run(`INSERT INTO person (display_name) VALUES ('Ada Ash')`);
+    await runOnly.run(`INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person`);
+    await expect(promoteLegacy(runOnly, FIXTURE_INPUTS)).rejects.toThrow(
+      /1 print run\(s\) and 0 minted field number\(s\)/,
+    );
+  });
+
   test("an empty registry is no refusal: the store above was promoted", () => {
     // The beforeAll promoted a fresh store whose print_run and
     // minted_field_number are empty, which is every store until it prints.

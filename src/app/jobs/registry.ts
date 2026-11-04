@@ -198,12 +198,13 @@ export async function refreshLocalities(
   conn: JobContext["conn"],
   gazetteerPath: string,
   signal?: AbortSignal,
-): Promise<string | null> {
+): Promise<{ detail: string | null; assigned: number }> {
   try {
-    return describeLocalities(await deriveLocalities(conn, gazetteerPath, { signal }));
+    const result = await deriveLocalities(conn, gazetteerPath, { signal });
+    return { detail: describeLocalities(result), assigned: result.assigned };
   } catch (err) {
     signal?.throwIfAborted();
-    return `naming localities failed (${(err as Error).message})`;
+    return { detail: `naming localities failed (${(err as Error).message})`, assigned: 0 };
   }
 }
 
@@ -303,7 +304,17 @@ export async function pipelineTail(
     refused = stamped.refused;
   }
   const localities = await ctx.step("name localities", () => refreshLocalities(ctx.conn, gazetteerPath, ctx.signal));
-  if (localities !== null) parts.push(localities);
+  if (localities.detail !== null) parts.push(localities.detail);
+  // A sample minted tonight whose observation gives no locality fit for a
+  // label took the one just named for it (beeline-pimo): the coordinates'
+  // doing too, recorded the same way as the counties above.
+  if (localities.assigned > 0 && refused === null) {
+    const given = await ctx.step("record locality changes", () =>
+      recordSampleChanges(duckdbReader(ctx.conn), samplePaths, { source: "coordinates" }),
+    );
+    if (given.appended > 0) parts.push(`${given.appended} locality change(s) recorded`);
+    refused = given.refused;
+  }
   // A refused snapshot (beeline-hrw) fails the run — after every store step
   // has done its work, so nothing the nightly is for waits on it — because a
   // refusal is a standing condition that needs a person, and a run marked

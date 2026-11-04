@@ -2,6 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { access } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { loadSpatial, openDuckDb } from "./db.js";
+import { applyLocalityFallback } from "./locality-fallback.js";
 import {
   LOCALITY_RULE_VERSION,
   MAX_LOCALITY_LENGTH,
@@ -47,6 +48,11 @@ export interface LocalityResult {
   unnamed: number;
   /** Why the best name was chosen, counted. */
   byBasis: Partial<Record<LocalityBasis, number>>;
+  /**
+   * Samples that took the name just given them, because their observation
+   * gives no locality fit for a label (schema/174, beeline-pimo).
+   */
+  assigned: number;
 }
 
 export interface DeriveLocalityOptions {
@@ -72,7 +78,7 @@ export async function deriveLocalities(
   gazetteerPath: string,
   opts: DeriveLocalityOptions = {},
 ): Promise<LocalityResult> {
-  const result: LocalityResult = { gazetteerBuild: null, pending: 0, named: 0, unnamed: 0, byBasis: {} };
+  const result: LocalityResult = { gazetteerBuild: null, pending: 0, named: 0, unnamed: 0, byBasis: {}, assigned: 0 };
   try {
     await access(gazetteerPath);
   } catch {
@@ -131,6 +137,9 @@ export async function deriveLocalities(
       }
       await write(conn, named);
     }
+    // A sample minted tonight had no name until now, so promotion could not
+    // give it one; this is where it gets it.
+    result.assigned = await applyLocalityFallback(conn);
     return result;
   } finally {
     await conn.run(`DETACH ${G}`);
@@ -616,7 +625,11 @@ async function write(conn: Conn, named: unknown[][]): Promise<void> {
 export function describeLocalities(r: LocalityResult): string | null {
   if (r.gazetteerBuild === null) return "localities: no gazetteer on this machine";
   if (r.pending === 0) return null;
-  return `localities ${r.named}/${r.pending} named` + (r.unnamed > 0 ? `, ${r.unnamed} with nothing in reach` : "");
+  return (
+    `localities ${r.named}/${r.pending} named` +
+    (r.unnamed > 0 ? `, ${r.unnamed} with nothing in reach` : "") +
+    (r.assigned > 0 ? `, ${r.assigned} given to samples whose iNaturalist locality does not fit a label` : "")
+  );
 }
 
 // CLI: pnpm locality:derive [db] [gazetteer]

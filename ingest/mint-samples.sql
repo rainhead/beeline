@@ -114,9 +114,11 @@ SELECT m.sample_id, m.person_id, 1 FROM minted_sample m;
 -- sample not in printed_sample (schema/101): no label of its is on paper.
 -- Until its labels print, a sample's locality is the volunteer's to fix on
 -- iNaturalist (CONTEXT.md, Upstream). A place name too long for a label is
--- minted as written and flagged (schema/108), and nobody can edit an
--- iNat-linked sample in the app, so a fill-only locality would leave that
--- flag with no one able to clear it (beeline-kza). Nothing a person types is
+-- minted as written (schema/108), and nobody can edit an iNat-linked sample
+-- in the app, so a fill-only locality would leave the volunteer's fix on
+-- iNaturalist with no way in (beeline-kza). Where the observation gives no
+-- name fit for a label, the sample takes Beeline's name for its point after
+-- this (schema/174, src/locality-fallback.ts, beeline-pimo). Nothing a person types is
 -- at risk: the in-app editor refuses iNat-linked samples, so on these rows
 -- the observation is the only writer. Once a label is on paper the locality
 -- stays what the label says (beeline-1kb.2) — that is printed_sample's

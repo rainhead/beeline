@@ -806,6 +806,21 @@ describe("a locality that does not fit a label", () => {
     expect(await one("SELECT locality FROM sample")).toEqual(["Bald Hill"]);
   });
 
+  test("an observation set back to a count of zero is the volunteer's to rework, and Beeline leaves its locality alone", async () => {
+    // Peter, 2026-11-04: before Beeline takes an observation in, volunteers
+    // expect to edit it freely, and a count of zero is how one says it is not
+    // a collection record yet. Minting already skips one; a sample minted
+    // earlier keeps following it, and is given no name of Beeline's.
+    await stage(obs(7, { place_guess: "Deception Creek Trail, Skykomish, WA, US" }));
+    await promoteObservations(conn);
+    await suggest("Skykomish");
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Skykomish"]);
+    await stage(obs(7, { place_guess: "Deception Creek Trail, Skykomish, WA, US", ofvs: ofvs("7", "0") }));
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Deception Creek Trail"]);
+  });
+
   test("a printed sample keeps what its labels say", async () => {
     await stage(obs(7, { place_guess: "Deception Creek Trail, Skykomish, WA, US" }));
     await promoteObservations(conn);

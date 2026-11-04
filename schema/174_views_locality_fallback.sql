@@ -16,10 +16,14 @@
 -- the two cannot disagree; every candidate passes it (src/locality-rule.ts,
 -- fits()). Printed samples are left alone, since their locality is what the
 -- labels say, and so is one a person set (sample_locality_override). Only
--- iNat-linked samples: anything else has no observation to follow, and its
--- locality is whatever a person typed. Every season, not only the active
--- ones: a sample that never printed would otherwise flip back to the unfit
--- name on the night its season settles.
+-- a sample whose observation is a collection record right now, by minting's
+-- own test (observation_sample_candidate, schema/108): a volunteer who sets
+-- the count back to zero is reworking the observation, and expects to edit
+-- it freely until it is one again (Peter, 2026-11-04). Anything without an
+-- observation has none to follow, and its locality is whatever a person
+-- typed. Every season, not only the active ones: a sample that never
+-- printed would otherwise flip back to the unfit name on the night its
+-- season settles.
 --
 -- Empty after every promotion and every naming of localities, both of
 -- which apply it; a row here between them is a sample minted tonight that
@@ -27,10 +31,10 @@
 CREATE VIEW sample_locality_fallback AS
 SELECT s.entity_id AS sample_id, s.locality AS observed_locality, sug.locality
 FROM sample s
-JOIN observation_field f ON f.inat_id = s.inat_observation_id
+JOIN observation_sample_candidate c ON c.inat_id = s.inat_observation_id
 JOIN sample_locality_suggestion_current sug ON sug.sample_id = s.entity_id
 WHERE NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
   AND NOT EXISTS (SELECT 1 FROM sample_locality_override o WHERE o.sample_id = s.entity_id)
   AND (s.locality IS NULL OR trim(s.locality) = ''
        OR s.entity_id IN (SELECT sample_id FROM qc_rule_locality_format));
-COMMENT ON VIEW sample_locality_fallback IS 'Unprinted iNat-linked samples, with no locality a person set, whose locality is missing or unfit for a label, beside the name Beeline gives their coordinates, which they take (beeline-pimo). Applied by observation promotion and by naming localities, so empty after either.';
+COMMENT ON VIEW sample_locality_fallback IS 'Unprinted samples whose observation is a collection record (observation_sample_candidate: a sample number, a positive count, a date), with no locality a person set, whose locality is missing or unfit for a label, beside the name Beeline gives their coordinates, which they take (beeline-pimo). Applied by observation promotion and by naming localities, so empty after either.';

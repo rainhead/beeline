@@ -126,6 +126,12 @@ export const en = {
   /** Locale-aware value formatters, for views composing values into markup. */
   format: { date, datePrecise, day, dateTime, dateRange, number: n, list, place },
 
+  /** The combobox's own words (src/app/islands/combobox.ts, beeline-wn2). */
+  combobox: {
+    /** The list is open and nothing matches what is typed. */
+    noMatches: "Nothing matches.",
+  },
+
   /**
    * A locality named from the sample's coordinates (beeline-7i6), offered on
    * the sample page and on the front page's locality flags. One click makes
@@ -617,15 +623,17 @@ export const en = {
         /** The pencil, for a screen reader: it has no visible words. */
         open: (sample: string) => `Change the locality of sample ${sample}`,
         label: "Locality",
-        /** What iNaturalist's place name yields, which the sample follows until someone chooses otherwise. */
-        original: (locality: string | null) =>
-          locality === null ? "iNaturalist's: none usable" : `iNaturalist's: ${locality}`,
-        /** The best name Beeline gives the point. */
-        suggested: (locality: string) => `${locality} (suggested)`,
+        /** Beside each choice in the box: where the name came from. */
+        noteInaturalist: "iNaturalist's",
+        noteSuggested: "suggested from the coordinates",
+        noteAlternative: "also suggested",
         /** The sample's locality where it is none of the above: keeping it changes nothing. */
-        current: (locality: string) => `${locality} (as it is)`,
-        writeIn: "Or write one in",
+        noteCurrent: "as it is",
+        /** Under the box, for staff, who may write any name. */
+        hintStaff: "Choose a name, or write one in. Empty follows iNaturalist again.",
         save: "Save",
+        /** A collector wrote a name that is not one of the choices. */
+        onlyOffered: "Choose one of the names offered. To use another, change the place on iNaturalist.",
       },
     },
 

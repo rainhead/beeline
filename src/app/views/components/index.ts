@@ -41,3 +41,4 @@ export {
 } from "./taxon.js";
 export { Term, type GlossarySlug } from "./term.js";
 export { Absent, Meta, OrAbsent, PageHeader } from "./text.js";
+export { Combobox, type ComboboxChoice } from "./combobox.js";

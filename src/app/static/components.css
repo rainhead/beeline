@@ -579,3 +579,19 @@ td:has(> .place-edit[open]) > .place-text { display: none; }
 .place-edit[open] { display: block; margin-left: 0; }
 .place-edit-form { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); margin-top: var(--space-1); min-width: 12rem; }
 .place-edit-form select, .place-edit-form input[type="text"] { width: 100%; }
+
+/* The combobox (src/app/islands/combobox.ts, beeline-wn2): a text box with
+   its list of choices under it, over whatever follows. The fallback the
+   server draws is a plain input with a <datalist>, styled as any input. */
+.combobox { position: relative; }
+.combobox > input { width: 100%; box-sizing: border-box; }
+.combobox-panel {
+  position: absolute; z-index: 20; top: calc(100% + 2px); left: 0; min-width: 100%; width: max-content; max-width: 32rem;
+  background: var(--md-sys-color-surface); border: 1px solid var(--md-sys-color-outline);
+  border-radius: var(--radius-sm); box-shadow: 0 6px 18px rgb(0 0 0 / 0.15); padding: var(--space-1) 0;
+}
+.combobox-panel ul { list-style: none; margin: 0; padding: 0; }
+.combobox-panel li { padding: var(--space-1-5) var(--space-3); cursor: pointer; display: flex; gap: var(--space-2); align-items: baseline; }
+.combobox-panel li[aria-selected="true"], .combobox-panel li:hover { background: var(--md-sys-color-secondary-container); }
+.combobox-panel li .meta { margin-left: auto; padding-left: var(--space-4); }
+.combobox-panel > .meta { padding: var(--space-2) var(--space-3); margin: 0; }

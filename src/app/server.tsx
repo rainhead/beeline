@@ -1161,17 +1161,18 @@ export function createApp({
     return c.redirect(field("return") === "home" ? "/" : sampleHref(sample.sample_id));
   });
 
-  // The Place cell's editor on the samples listing (beeline-7ywr): one form
-  // for the three things the sample page offers separately, then back to the
-  // listing the form was drawn on. `choice` is "original" (follow
-  // iNaturalist again), "pick:<name>" (a name offered for the point, checked
-  // against what the store offers now), or "current" (keep it); a name in
-  // `written` wins over the choice and is staff's alone. Every write is one
-  // the sample page already makes, with its permissions: staff on any
-  // sample, a collector on their own, a collector never over a locality
-  // somebody else set, and nobody on a printed sample. `back` that is not a
-  // path under /samples goes to the listing itself, so the field cannot send
-  // anyone elsewhere.
+  // The Place cell's editor on the samples listing (beeline-7ywr): one
+  // combobox, one `locality` field, and what the name is decides what is
+  // written, so the form needs no second field to say so. Empty, or the name
+  // the observation itself yields, follows iNaturalist again; one of the
+  // names offered for the point is adopted as the sample page's "Use this
+  // locality" adopts it; the sample's own locality changes nothing; any
+  // other name is written in, which is staff's alone. Every write is one the
+  // sample page already makes, with its permissions: staff on any sample, a
+  // collector on their own, a collector never over a locality somebody else
+  // set, and nobody on a printed sample. `back` that is not a path under
+  // /samples goes to the listing itself, so the field cannot send anyone
+  // elsewhere.
   app.post("/samples/:id/place", async (c) => {
     const m = c.get("m");
     const t = m.suggestedLocality;
@@ -1187,31 +1188,35 @@ export function createApp({
     const back = /^\/samples(\?|$)/.test(backRaw) ? backRaw : "/samples";
     const deps = { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections };
     const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
-    const standing =
-      sample.inat_observation_id === null ? null : await standingLocalityAuthor(sampleOverlay, sample.inat_observation_id);
-    const written = field("written").trim();
-    const choice = field("choice");
+    const linked = sample.inat_observation_id !== null;
+    const standing = linked ? await standingLocalityAuthor(sampleOverlay, sample.inat_observation_id!) : null;
+    // What the observation itself yields, as promotion would write it.
+    const observed = linked
+      ? ((
+          await sql<{ locality: string | null }>`SELECT loc.locality FROM sample s
+            LEFT JOIN observation_locality loc ON loc.inat_id = s.inat_observation_id
+            WHERE s.entity_id = ${sample.sample_id}`.execute(db)
+        ).rows[0]?.locality ?? null)
+      : null;
+    const name = field("locality").trim();
+    const offered = [...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]), ...sample.locality_alternatives];
+    const suggestion = offered.find((o) => o.locality === name);
     let result;
     let reason: string | undefined;
-    if (written !== "") {
-      if (!admin) return c.text("Admins only.", 403);
-      if (written === sample.locality) return c.redirect(back);
-      result = await setStaffLocality(deps, target, { value: written, remove: false, note: "", author: session.login });
-    } else if (choice === "original") {
+    if (linked && (name === "" || name === observed)) {
+      // Follow iNaturalist again: take away whatever locality stands.
       if (standing === null) return c.redirect(back);
       if (standing !== session.login && !admin) return c.text(t.notYours, 403);
       result = await setStaffLocality(deps, target, { value: "", remove: true, note: "", author: session.login });
-    } else if (choice.startsWith("pick:")) {
-      const name = choice.slice("pick:".length);
-      if (name === sample.locality) return c.redirect(back);
+    } else if (name === "" || name === sample.locality) {
+      return c.redirect(back);
+    } else if (suggestion !== undefined) {
       if (standing !== null && standing !== session.login && !admin) return c.text(t.setByOther, 403);
-      const offered = [...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]), ...sample.locality_alternatives];
-      const suggestion = offered.find((o) => o.locality === name);
-      if (suggestion === undefined) return c.text(t.changed, 409);
       reason = t.reason(t.basis[suggestion.basis]);
       result = await adoptSuggestedLocality(deps, target, { suggestion: suggestion.locality, reason, author: session.login });
     } else {
-      return c.redirect(back);
+      if (!admin) return c.text(m.listings.samples.placeEdit.onlyOffered, 403);
+      result = await setStaffLocality(deps, target, { value: name, remove: false, note: "", author: session.login });
     }
     if (result.outcome === "invalid") return c.text(result.problem, 400);
     if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);

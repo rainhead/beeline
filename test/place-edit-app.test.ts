@@ -98,31 +98,33 @@ const localityOf = async (conn: DuckDBConnection, id: number) =>
 const pencil = (id: number) => `action="/samples/${id}/place"`;
 
 describe("the Place cell's editor", () => {
-  it("is offered to staff on a sample that has not printed, with every choice and a box to write one in", async () => {
+  it("is offered to staff on a sample that has not printed: one combobox of every name, free to write one in", async () => {
     const { appFor, open, printed } = await setup();
     const page = await (await appFor("sam").request("/samples?scope=all")).text();
     expect(page).toContain(pencil(open));
     expect(page).not.toContain(pencil(printed));
     expect(page).toContain(`aria-label="${t.open("A-1")}"`);
-    expect(page).toContain(`value="original"`);
-    expect(page).toContain(t.suggested("Finley NWR"));
-    expect(page).toContain(`value="pick:Muddy Creek CG"`);
-    expect(page).toContain(t.current("26208 Finley Refuge Rd"));
-    expect(page).toContain(`name="written"`);
+    expect(page).toContain(`<beeline-combobox free="">`);
+    expect(page).toContain(`id="place-${open}" name="locality" type="text" value="26208 Finley Refuge Rd" list="place-${open}-choices"`);
+    expect(page).toContain(`<option value="Finley NWR" label="${t.noteSuggested}">`);
+    expect(page).toContain(`<option value="Muddy Creek CG" label="${t.noteAlternative}">`);
+    expect(page).toContain(`<option value="26208 Finley Refuge Rd" label="${t.noteCurrent}">`);
+    expect(page).toContain(t.hintStaff);
   });
 
-  it("is offered to the collector on their own sample without the box, and to nobody else", async () => {
+  it("is offered to the collector on their own sample, choices only, and to nobody else", async () => {
     const { appFor, open } = await setup();
     const own = await (await appFor("alice").request("/samples?scope=mine")).text();
     expect(own).toContain(pencil(open));
-    expect(own).not.toContain(`name="written"`);
+    expect(own).toContain("<beeline-combobox>");
+    expect(own).not.toContain(t.hintStaff);
     const other = await (await appFor("bob").request("/samples?scope=all")).text();
     expect(other).not.toContain(pencil(open));
   });
 
-  it("makes a name offered for the point the locality, credited to whoever chose it, and goes back to the listing", async () => {
+  it("adopts a name offered for the point, credited to whoever chose it, and goes back to the listing", async () => {
     const { appFor, conn, open, sampleOverlayPath } = await setup();
-    const res = await place(appFor("sam"), open, { choice: "pick:Muddy Creek CG" });
+    const res = await place(appFor("sam"), open, { locality: "Muddy Creek CG" });
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/samples?scope=all&qc=locality");
     expect(await localityOf(conn, open)).toBe("Muddy Creek CG");
@@ -131,39 +133,46 @@ describe("the Place cell's editor", () => {
     expect(row!.reason).toBe(en.suggestedLocality.reason(en.suggestedLocality.basis.campground));
   });
 
-  it("takes a name staff write in over the choice, and refuses one from a collector", async () => {
+  it("writes in any other name for staff, and refuses one from a collector", async () => {
     const { appFor, conn, open } = await setup();
-    expect((await place(appFor("alice"), open, { choice: "current", written: "Muddy Creek" })).status).toBe(403);
+    const refused = await place(appFor("alice"), open, { locality: "Muddy Creek" });
+    expect(refused.status).toBe(403);
+    expect(await refused.text()).toBe(t.onlyOffered);
     expect(await localityOf(conn, open)).toBe("26208 Finley Refuge Rd");
-    await place(appFor("sam"), open, { choice: "pick:Finley NWR", written: "Muddy Creek" });
+    await place(appFor("sam"), open, { locality: "  Muddy Creek " });
     expect(await localityOf(conn, open)).toBe("Muddy Creek");
   });
 
-  it("lets a collector choose a suggestion and go back to iNaturalist's, but not over a locality staff set", async () => {
+  it("keeps the sample's own locality as it is", async () => {
+    const { appFor, open, sampleOverlayPath } = await setup();
+    const res = await place(appFor("sam"), open, { locality: "26208 Finley Refuge Rd" });
+    expect(res.status).toBe(302);
+    expect(await readSampleOverlay(sampleOverlayPath)).toEqual([]);
+  });
+
+  it("lets a collector adopt a suggestion and empty the box to follow iNaturalist again, but not over staff's locality", async () => {
     const { appFor, conn, open, sampleOverlayPath } = await setup();
     const alice = appFor("alice");
-    await place(alice, open, { choice: "pick:Finley NWR" });
+    await place(alice, open, { locality: "Finley NWR" });
     expect(await localityOf(conn, open)).toBe("Finley NWR");
-    // Back to iNaturalist's: her row is emptied, which is how the overlay
-    // says nobody's locality stands.
-    await place(alice, open, { choice: "original" });
+    // Her row is emptied, which is how the overlay says nobody's locality stands.
+    await place(alice, open, { locality: "" });
     expect((await readSampleOverlay(sampleOverlayPath)).map((r) => [r.author, r.value])).toEqual([["alice", ""]]);
-    await place(appFor("sam"), open, { choice: "pick:Muddy Creek CG" });
-    expect((await place(alice, open, { choice: "original" })).status).toBe(403);
-    expect((await place(alice, open, { choice: "pick:Finley NWR" })).status).toBe(403);
+    await place(appFor("sam"), open, { locality: "Muddy Creek CG" });
+    expect((await place(alice, open, { locality: "" })).status).toBe(403);
+    expect((await place(alice, open, { locality: "Finley NWR" })).status).toBe(403);
     expect(await localityOf(conn, open)).toBe("Muddy Creek CG");
     // And the pencil is gone from her listing while staff's locality stands.
     expect(await (await alice.request("/samples?scope=mine")).text()).not.toContain(pencil(open));
   });
 
-  it("refuses a printed sample, a name no longer offered, and sends a back link elsewhere to the listing", async () => {
+  it("refuses a printed sample, and sends a back link elsewhere to the listing", async () => {
     const { appFor, open, printed } = await setup();
     const sam = appFor("sam");
-    expect((await place(sam, printed, { choice: "pick:Finley NWR" })).status).toBe(409);
-    expect((await place(sam, open, { choice: "pick:Somewhere Else" })).status).toBe(409);
+    expect((await place(sam, printed, { locality: "Finley NWR" })).status).toBe(409);
     const res = await sam.request(`/samples/${open}/place`, {
       method: "POST",
-      body: new URLSearchParams({ back: "https://example.com/samples", choice: "pick:Finley NWR" }),
+      body: new URLSearchParams({ back: "https://example.com/samples", locality: "Finley NWR" }),
     });
     expect(res.headers.get("location")).toBe("/samples");
   });

@@ -44,6 +44,8 @@ import {
   TextField,
   type FilterPill,
   type TableColumn,
+  Combobox,
+  type ComboboxChoice,
 } from "./components/index.js";
 
 /**
@@ -99,22 +101,18 @@ export function placeEditable(row: SampleRow, admin: boolean): boolean {
 
 function PlaceEdit({ m, row, admin, back }: { m: Messages; row: SampleRow; admin: boolean; back: string }) {
   const t = m.listings.samples.placeEdit;
-  const choices = row.locality_choices === null ? [] : row.locality_choices.split("\n");
   const linked = row.inat_observation_id !== null;
-  // Which option the sample is on now: following iNaturalist, one of the
-  // names offered, or something else a person set, kept as it is.
-  const following = linked && !row.locality_set_by_other && row.locality === row.observed_locality;
-  const current = row.locality;
-  const listed = following || (current !== null && choices.includes(current));
-  const options: Array<{ value: string; label: string; selected: boolean }> = [
-    ...(linked ? [{ value: "original", label: t.original(row.observed_locality), selected: following }] : []),
-    ...choices.map((name, i) => ({
-      value: `pick:${name}`,
-      label: i === 0 ? t.suggested(name) : name,
-      selected: !following && name === current,
-    })),
-    ...(!listed && current !== null ? [{ value: "current", label: t.current(current), selected: true }] : []),
-  ];
+  // iNaturalist's own name first, then Beeline's, best first, then what the
+  // sample holds if it is none of those: one name, one choice.
+  const choices: ComboboxChoice[] = [];
+  const add = (value: string | null, note: string) => {
+    if (value !== null && value !== "" && !choices.some((c) => c.value === value)) choices.push({ value, note });
+  };
+  if (linked) add(row.observed_locality, t.noteInaturalist);
+  (row.locality_choices === null ? [] : row.locality_choices.split("\n")).forEach((name, i) =>
+    add(name, i === 0 ? t.noteSuggested : t.noteAlternative),
+  );
+  add(row.locality, t.noteCurrent);
   const id = `place-${row.sample_id}`;
   return (
     <details class="place-edit">
@@ -123,19 +121,15 @@ function PlaceEdit({ m, row, admin, back }: { m: Messages; row: SampleRow; admin
       </summary>
       <form method="post" action={`/samples/${row.sample_id}/place`} class="place-edit-form">
         <input type="hidden" name="back" value={back} />
-        <label for={`${id}-choice`} class="visually-hidden">
-          {t.label}
-        </label>
-        <select id={`${id}-choice`} name="choice">
-          {options.map((o) => (
-            <option value={o.value} selected={o.selected}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        {admin && (
-          <input type="text" name="written" aria-label={t.writeIn} placeholder={t.writeIn} maxlength={60} />
-        )}
+        <Combobox
+          id={id}
+          name="locality"
+          label={t.label}
+          value={row.locality}
+          choices={choices}
+          free={admin}
+          hint={admin ? t.hintStaff : undefined}
+        />
         <button type="submit" class="outlined compact-button">
           {t.save}
         </button>

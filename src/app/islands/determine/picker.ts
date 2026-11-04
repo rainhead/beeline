@@ -5,6 +5,8 @@
  * Bees by default; anyone may widen it to bycatch.
  */
 import { html, LitElement, nothing } from "lit";
+import { matchesWords, type ComboboxOption } from "../combobox-model.js";
+import "../combobox.js";
 import { messagesFor } from "../../messages/index.js";
 
 const m = messagesFor(null);
@@ -48,10 +50,8 @@ export function searchTaxa(taxa: readonly PickerTaxon[], query: string, bycatch:
   const out: { t: PickerTaxon; score: number }[] = [];
   for (const t of taxa) {
     if (!bycatch && !t.bee) continue;
+    if (!matchesWords(query, t.name)) continue;
     const words = t.name.toLowerCase().replace(/[()]/g, "").split(/\s+/);
-    let i = 0;
-    for (const w of words) if (i < q.length && w.startsWith(q[i]!)) i++;
-    if (i < q.length) continue;
     const exact = words.join(" ") === q.join(" ");
     out.push({ t, score: (exact ? 1e9 : 0) + Math.log(t.uses + 1) * 10 + (t.bee ? 5 : 0) - words.length });
   }
@@ -61,24 +61,25 @@ export function searchTaxa(taxa: readonly PickerTaxon[], query: string, bycatch:
     .map((o) => o.t);
 }
 
+/**
+ * The general combobox (../combobox.ts) with the taxonomy as its search: it
+ * supplies the names, how they are matched and how they are drawn, and the
+ * bycatch switch under the list, and turns a pick into a `pick` event
+ * carrying the taxon. Never free text, and the box empties on a pick, since
+ * what the page wants is the node, not the words.
+ */
 export class DetermineTaxonPicker extends LitElement {
   static properties = {
     placeholder: {},
     autofocus: { type: Boolean },
     disabled: { type: Boolean },
-    query: { state: true },
-    active: { state: true },
     bycatch: { state: true },
-    open: { state: true },
     taxa: { state: true },
   };
   declare placeholder: string;
   declare autofocus: boolean;
   declare disabled: boolean;
-  declare query: string;
-  declare active: number;
   declare bycatch: boolean;
-  declare open: boolean;
   declare taxa: PickerTaxon[];
 
   constructor() {
@@ -86,10 +87,7 @@ export class DetermineTaxonPicker extends LitElement {
     this.placeholder = m.determine.picker.placeholder;
     this.autofocus = false;
     this.disabled = false;
-    this.query = "";
-    this.active = 0;
     this.bycatch = false;
-    this.open = false;
     this.taxa = [];
   }
 
@@ -102,83 +100,33 @@ export class DetermineTaxonPicker extends LitElement {
     loadTaxa().then((t) => (this.taxa = t)).catch(() => undefined);
   }
 
-  override firstUpdated() {
-    if (this.autofocus) this.querySelector("input")?.focus();
-  }
-
-  #pick(t: PickerTaxon) {
-    this.query = "";
-    this.open = false;
-    this.dispatchEvent(new CustomEvent<PickerTaxon>("pick", { detail: t, bubbles: true }));
-  }
-
-  #key(e: KeyboardEvent, results: PickerTaxon[]) {
-    if (e.key === "ArrowDown") {
-      this.active = Math.min(this.active + 1, results.length - 1);
-      e.preventDefault();
-    } else if (e.key === "ArrowUp") {
-      this.active = Math.max(this.active - 1, 0);
-      e.preventDefault();
-    } else if (e.key === "Enter") {
-      const t = results[this.active];
-      if (t) this.#pick(t);
-      e.preventDefault();
-    } else if (e.key === "Escape") {
-      this.query = "";
-      this.open = false;
-      this.dispatchEvent(new CustomEvent("cancel", { bubbles: true }));
-    }
-  }
-
   override render() {
     const p = m.determine.picker;
-    const results = searchTaxa(this.taxa, this.query, this.bycatch);
-    const listId = `picker-${this.id || Math.random().toString(36).slice(2)}`;
-    return html`<div class="determine-picker">
-      <input
-        type="search"
-        role="combobox"
-        aria-expanded=${this.open && this.query.trim() !== ""}
-        aria-controls=${listId}
-        autocomplete="off"
-        .value=${this.query}
-        placeholder=${this.placeholder}
-        ?disabled=${this.disabled}
-        @input=${(e: InputEvent) => {
-          this.query = (e.target as HTMLInputElement).value;
-          this.active = 0;
-          this.open = true;
-        }}
-        @focus=${() => (this.open = true)}
-        @blur=${() => setTimeout(() => (this.open = false), 150)}
-        @keydown=${(e: KeyboardEvent) => this.#key(e, results)}
-      />
-      ${this.open && this.query.trim() !== ""
-        ? html`<div class="determine-picker-panel">
-            ${results.length === 0
-              ? html`<p class="meta">${this.bycatch ? p.noNames : p.noBees}</p>`
-              : html`<ul role="listbox" id=${listId}>
-                  ${results.map(
-                    (t, i) => html`<li
-                      role="option"
-                      aria-selected=${i === this.active}
-                      @mousedown=${(e: Event) => {
-                        e.preventDefault();
-                        this.#pick(t);
-                      }}
-                    >
-                      ${nameTemplate(t)} <span class="determine-rank">${t.rank}</span>
-                      <span class="meta">${t.rank === "family" ? "" : (t.family ?? "")}</span>
-                    </li>`,
-                  )}
-                </ul>`}
-            <label class="determine-bycatch" @mousedown=${(e: Event) => e.preventDefault()}>
-              <input type="checkbox" .checked=${this.bycatch} @change=${() => (this.bycatch = !this.bycatch)} />
-              ${p.bycatch}
-            </label>
-          </div>`
-        : nothing}
-    </div>`;
+    const search = (query: string): ComboboxOption<PickerTaxon>[] =>
+      searchTaxa(this.taxa, query, this.bycatch).map((t) => ({ value: t.name, data: t }));
+    return html`<beeline-combobox
+      class="determine-picker"
+      type="search"
+      clear-on-pick
+      placeholder=${this.placeholder}
+      ?autofocus=${this.autofocus}
+      ?disabled=${this.disabled}
+      empty-text=${this.bycatch ? p.noNames : p.noBees}
+      .search=${search}
+      .renderOption=${(o: ComboboxOption) => {
+        const t = o.data as PickerTaxon;
+        return html`${nameTemplate(t)} <span class="determine-rank">${t.rank}</span>
+          <span class="meta">${t.rank === "family" ? "" : (t.family ?? "")}</span>`;
+      }}
+      .renderFooter=${() => html`<label class="determine-bycatch" @mousedown=${(e: Event) => e.preventDefault()}>
+        <input type="checkbox" .checked=${this.bycatch} @change=${() => (this.bycatch = !this.bycatch)} />
+        ${p.bycatch}
+      </label>`}
+      @pick=${(e: CustomEvent<ComboboxOption>) => {
+        e.stopPropagation();
+        this.dispatchEvent(new CustomEvent<PickerTaxon>("pick", { detail: e.detail.data as PickerTaxon, bubbles: true }));
+      }}
+    ></beeline-combobox>`;
   }
 }
 customElements.define("determine-taxon-picker", DetermineTaxonPicker);

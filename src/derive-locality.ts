@@ -137,8 +137,8 @@ export async function deriveLocalities(
       }
       await write(conn, named);
     }
-    // A sample minted tonight had no name until now, so promotion could not
-    // give it one; this is where it gets it.
+    // A sample Beeline created tonight had no name until now, so promotion
+    // could not give it one; this is where it gets it.
     result.assigned = await applyLocalityFallback(conn);
     return result;
   } finally {

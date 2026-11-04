@@ -16,8 +16,9 @@
 -- the two cannot disagree; every candidate passes it (src/locality-rule.ts,
 -- fits()). Printed samples are left alone, since their locality is what the
 -- labels say, and so is one a person set (sample_locality_override). Only
--- a sample whose observation is a collection record right now, by minting's
--- own test (observation_sample_candidate, schema/108): a volunteer who sets
+-- a sample whose observation is a collection record right now, by the test
+-- that decides which observations become samples (observation_sample_candidate,
+-- schema/108): a volunteer who sets
 -- the count back to zero is reworking the observation, and expects to edit
 -- it freely until it is one again (Peter, 2026-11-04). Anything without an
 -- observation has none to follow, and its locality is whatever a person
@@ -26,8 +27,8 @@
 -- season settles.
 --
 -- Empty after every promotion and every naming of localities, both of
--- which apply it; a row here between them is a sample minted tonight that
--- has just been named.
+-- which apply it; a row here between them is a sample Beeline created
+-- from its observation tonight and has just named.
 CREATE VIEW sample_locality_fallback AS
 SELECT s.entity_id AS sample_id, s.locality AS observed_locality, sug.locality
 FROM sample s

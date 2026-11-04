@@ -9,7 +9,8 @@ import type { DuckDBConnection } from "@duckdb/node-api";
  * rule has written the observation's own name again (the view is the
  * difference between the two, so the net change on a sample already
  * carrying its suggestion is none). Naming localities applies it after
- * naming, because a sample minted tonight has no suggestion until then.
+ * naming, because a sample Beeline created tonight has no suggestion until
+ * then.
  *
  * One statement, so it runs inside a caller's transaction or as its own.
  */

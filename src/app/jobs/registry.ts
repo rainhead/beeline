@@ -305,9 +305,9 @@ export async function pipelineTail(
   }
   const localities = await ctx.step("name localities", () => refreshLocalities(ctx.conn, gazetteerPath, ctx.signal));
   if (localities.detail !== null) parts.push(localities.detail);
-  // A sample minted tonight whose observation gives no locality fit for a
-  // label took the one just named for it (beeline-pimo): the coordinates'
-  // doing too, recorded the same way as the counties above.
+  // A sample Beeline created tonight, whose observation gives no locality
+  // fit for a label, took the name just given it (beeline-pimo): the
+  // coordinates' doing too, recorded the same way as the counties above.
   if (localities.assigned > 0 && refused === null) {
     const given = await ctx.step("record locality changes", () =>
       recordSampleChanges(duckdbReader(ctx.conn), samplePaths, { source: "coordinates" }),

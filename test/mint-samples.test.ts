@@ -809,8 +809,8 @@ describe("a locality that does not fit a label", () => {
   test("an observation set back to a count of zero is the volunteer's to rework, and Beeline leaves its locality alone", async () => {
     // Peter, 2026-11-04: before Beeline takes an observation in, volunteers
     // expect to edit it freely, and a count of zero is how one says it is not
-    // a collection record yet. Minting already skips one; a sample minted
-    // earlier keeps following it, and is given no name of Beeline's.
+    // a collection record yet. Beeline already makes no sample from one; a
+    // sample made earlier keeps following it, and is given no name of Beeline's.
     await stage(obs(7, { place_guess: "Deception Creek Trail, Skykomish, WA, US" }));
     await promoteObservations(conn);
     await suggest("Skykomish");
@@ -842,7 +842,7 @@ describe("a locality that does not fit a label", () => {
     expect(await one("SELECT locality FROM sample")).toEqual(["Deception Falls"]);
   });
 
-  test("a sample minted tonight takes its name when localities are named, after promotion", async () => {
+  test("a sample created tonight takes its name when localities are named, after promotion", async () => {
     const dir = await mkdtemp(join(tmpdir(), "beeline-fallback-"));
     try {
       const path = join(dir, "g.duckdb");

@@ -72,6 +72,8 @@ export class BeelineCombobox extends LitElement {
   declare active: number;
   /** What the box held when it was focused: what a second Escape puts back. */
   #initial = "";
+  /** The chevron opened the list: show every choice, whatever is typed, until the next keystroke. */
+  #all = false;
   readonly #listId = `combobox-${++lists}`;
 
   constructor() {
@@ -103,22 +105,26 @@ export class BeelineCombobox extends LitElement {
    * Take over the fallback the server drew — a plain <input> with a
    * <datalist> — keeping its id (which its <label for> names), its name,
    * value and choices, and then remove it, since this element draws the box
-   * itself.
+   * itself. Only before the first render: the fallback exists only then, and
+   * an element moved later is connected again with its own box inside,
+   * which this must not take for the fallback, nor reset what was typed.
    */
   override connectedCallback() {
-    const input = this.querySelector<HTMLInputElement>(":scope input");
-    if (input !== null) {
-      this.inputId ||= input.id;
-      this.name ||= input.name;
-      this.value ||= input.value;
-      this.placeholder ||= input.placeholder;
-      const list = this.querySelector<HTMLDataListElement>(":scope datalist");
-      if (list !== null && this.options.length === 0) {
-        this.options = Array.from(list.options, (o) => ({ value: o.value, ...(o.label && o.label !== o.value ? { note: o.label } : {}) }));
+    if (!this.hasUpdated) {
+      const input = this.querySelector<HTMLInputElement>(":scope input");
+      if (input !== null) {
+        this.inputId ||= input.id;
+        this.name ||= input.name;
+        this.value ||= input.value;
+        this.placeholder ||= input.placeholder;
+        const list = this.querySelector<HTMLDataListElement>(":scope datalist");
+        if (list !== null && this.options.length === 0) {
+          this.options = Array.from(list.options, (o) => ({ value: o.value, ...(o.label && o.label !== o.value ? { note: o.label } : {}) }));
+        }
+        this.replaceChildren();
       }
-      this.replaceChildren();
+      this.query = this.value;
     }
-    this.query = this.value;
     super.connectedCallback();
   }
 
@@ -129,7 +135,17 @@ export class BeelineCombobox extends LitElement {
   /** The options shown for what is in the box now. */
   #shown(): ComboboxOption[] {
     if (this.search !== undefined) return this.query.trim() === "" ? [] : this.search(this.query);
-    return filterOptions(this.options, this.query);
+    return this.#all ? [...this.options] : filterOptions(this.options, this.query);
+  }
+
+  /**
+   * Whether the panel is drawn: open, and for a search once something is
+   * typed, whether or not it matched (then it says so); for a fixed list
+   * while it has choices to show.
+   */
+  #panelShown(shown: ComboboxOption[]): boolean {
+    if (!this.open) return false;
+    return this.search !== undefined ? this.query.trim() !== "" : shown.length > 0 || this.renderFooter !== undefined;
   }
 
   /** Open the list, highlighting the option the box holds, if any. */
@@ -165,7 +181,7 @@ export class BeelineCombobox extends LitElement {
 
   override render() {
     const shown = this.#shown();
-    const showPanel = this.open && (shown.length > 0 || (this.search !== undefined && this.query.trim() !== "") || this.renderFooter !== undefined);
+    const showPanel = this.#panelShown(shown);
     const activeId = this.open && this.active >= 0 && this.active < shown.length ? `${this.#listId}-${this.active}` : nothing;
     return html`<div class="combobox">
       <input
@@ -183,6 +199,7 @@ export class BeelineCombobox extends LitElement {
         ?disabled=${this.disabled}
         @input=${(e: InputEvent) => {
           this.query = (e.target as HTMLInputElement).value;
+          this.#all = false;
           this.open = true;
           this.active = this.search !== undefined ? 0 : -1;
         }}
@@ -210,12 +227,18 @@ export class BeelineCombobox extends LitElement {
             ?disabled=${this.disabled}
             @mousedown=${(e: Event) => {
               // Keep focus in the box, which is where the keys work. Whether
-              // the list was open is read first: focusing the box opens it.
+              // a list is showing is read first, since focusing the box opens
+              // it, and by what is drawn: typing that matches nothing leaves
+              // the list open with nothing in it.
               e.preventDefault();
-              const wasOpen = this.open;
+              const wasOpen = this.#panelShown(this.#shown());
               this.querySelector("input")?.focus();
+              this.#all = !wasOpen;
               if (wasOpen) this.open = false;
-              else this.#openList(filterOptions(this.options, ""));
+              else this.#openList([...this.options]);
+              // #all is not a reactive property, and `open` may not have
+              // changed (typing had opened an empty list), so ask for the redraw.
+              this.requestUpdate();
             }}
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" width="16" height="16" class="icon icon-small" aria-hidden="true">

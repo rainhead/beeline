@@ -23,7 +23,9 @@ import { Field } from "./field.js";
  *   writing a locality in); without it only a choice will do, and the route
  *   refuses anything else, since the server is where that is enforced.
  * - **Behaviour** (src/app/islands/combobox.ts, the rules in
- *   combobox-model.ts). Focusing or clicking the box opens the list. Typing
+ *   combobox-model.ts). Focusing or clicking the box opens the list, and so
+ *   does the chevron at its right, which shows every choice whatever is
+ *   typed (a search has no chevron: it has nothing to show untyped). Typing
  *   narrows it to the choices every typed word begins a word of, and an
  *   empty box, or one holding a choice exactly, shows them all. Down and Up
  *   move the highlight, Enter takes the highlighted choice into the box (and

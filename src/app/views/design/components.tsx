@@ -313,7 +313,8 @@ export function DesignComponents({ m }: { m: Messages }) {
         text stand; without it only a choice will do, and the route refuses anything else.
       </p>
       <p>
-        Focusing the box opens the list. Typing narrows it to the choices every typed word begins a word of; an empty
+        Focusing the box opens the list, and so does the chevron at its right, which shows every choice whatever is
+        typed. Typing narrows it to the choices every typed word begins a word of; an empty
         box, or one holding a choice exactly, shows them all. Down and Up move the highlight, Enter takes it (and with
         nothing highlighted submits free text as typed), Escape closes the list and a second Escape puts back what the
         box held, and Tab moves on without choosing. Focus never leaves the box. Without scripting it is the same box

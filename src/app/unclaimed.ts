@@ -263,7 +263,7 @@ export async function listUnclaimed(db: Kysely<Database>): Promise<UnclaimedList
   const programs = await db
     .selectFrom("program")
     .select(["code", "name"])
-    // Seed order (schema/010): the six atlases, then Master Melittology and the BLM surveys.
+    // Seed order (schema/010): the atlases, then Master Melittology and the BLM surveys.
     .orderBy("entity_id")
     .execute();
   const here = await sql<{

@@ -119,7 +119,7 @@ describe("the programs listing", () => {
   it("is read by everyone signed in, and is in the menu beside the brand", async () => {
     const body = await page(await programsApp(), "/programs");
     expect(between(body, 'class="menu nav-menu"', "</details>")).toContain(`href="/programs"`);
-    for (const code of ["OBA", "WaBA", "BC", "ID", "NM", "OK", "MM", "BLM", "NWR"]) expect(rowFor(body, code), code).not.toBe("");
+    for (const code of ["OBA", "WaBA", "BC", "ID", "NM", "MM", "BLM", "NWR"]) expect(rowFor(body, code), code).not.toBe("");
   });
 
   it("counts each program's own: an atlas's ground, and Master Melittology's outside every atlas", async () => {
@@ -138,7 +138,7 @@ describe("the programs listing", () => {
   it("never leaves a value cell empty, and says what the surveys cannot be counted by", async () => {
     const body = await page(await programsApp(), "/programs");
     expect(body).not.toMatch(EMPTY_VALUE_CELL);
-    expect(rowFor(body, "OK")).toContain("no lead recorded");
+    expect(rowFor(body, "ID")).toContain("no lead recorded");
     expect(rowFor(body, "BLM")).toContain("not recorded");
   });
 

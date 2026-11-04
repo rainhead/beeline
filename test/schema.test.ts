@@ -22,18 +22,18 @@ describe("schema application", () => {
     expect(c).toBe(b + 1);
   });
 
-  test("the six member atlases are seeded", async () => {
+  test("the five member atlases are seeded", async () => {
     // A program with no region is not an atlas, so the one inserted above
     // does not appear here.
     const codes = await rows(conn, "SELECT p.code FROM program p WHERE EXISTS (SELECT 1 FROM atlas_region r WHERE r.atlas_id = p.entity_id) ORDER BY p.code");
-    expect(codes.flat()).toEqual(["BC", "ID", "NM", "OBA", "OK", "WaBA"]);
+    expect(codes.flat()).toEqual(["BC", "ID", "NM", "OBA", "WaBA"]);
   });
 
-  test("atlas_region knows the regions no atlas covers, not only the six", async () => {
+  test("atlas_region knows the regions no atlas covers, not only the atlases' own", async () => {
     // The point of the table: a NULL atlas on a real region is an answer.
     const [[covered]] = (await rows(conn, "SELECT count(*) FROM atlas_region WHERE atlas_id IS NOT NULL")) as [[bigint]];
     const [[outside]] = (await rows(conn, "SELECT count(*) FROM atlas_region WHERE atlas_id IS NULL")) as [[bigint]];
-    expect(Number(covered)).toBe(6);
+    expect(Number(covered)).toBe(5);
     expect(Number(outside)).toBeGreaterThan(50);
     // Nevada is known and uncovered; Waikato is not a region we recognise.
     expect(await rows(conn, "SELECT country, atlas_id FROM atlas_region WHERE state_province = 'NV'")).toEqual([
@@ -69,12 +69,12 @@ describe("schema application", () => {
     ).toEqual([["MM", false]]);
   });
 
-  test("atlas_region assigns states to the six atlases and to nothing else", async () => {
+  test("atlas_region assigns states to the five atlases and to nothing else", async () => {
     // Nothing in the store names "the atlases" as a kind (Peter, 2026-10-31): a
     // program has states assigned or it has not, and this is the whole fact.
     expect(
       await rows(conn, "SELECT DISTINCT p.code FROM atlas_region r JOIN program p ON p.entity_id = r.atlas_id ORDER BY p.entity_id"),
-    ).toEqual([["OBA"], ["WaBA"], ["BC"], ["ID"], ["NM"], ["OK"]]);
+    ).toEqual([["OBA"], ["WaBA"], ["BC"], ["ID"], ["NM"]]);
   });
 
   test("enum-ish CHECK constraints reject unknown values", async () => {

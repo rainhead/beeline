@@ -182,14 +182,13 @@ describe("iNat OAuth sign-in", () => {
     const page = await (await app.request("/")).text();
     expect(page).toContain("Beeline keeps the records of the bee specimens");
     expect(page).toContain(`<a href="https://extension.oregonstate.edu/master-melittologist">Master Melittologist</a>`);
-    // All six, by the store's names, each to its own site with its mark.
+    // All five, by the store's names, each to its own site with its mark.
     for (const [name, href] of [
       ["Oregon Bee Atlas", "https://extension.oregonstate.edu/bee-atlas"],
       ["Washington Bee Atlas", "https://agr.wa.gov/departments/insects-pests-and-weeds/insects/apiary-pollinators/pollinator-health/bee-atlas/"],
       ["British Columbia Bee Atlas", "https://www.bcnativebees.org/bc-bee-atlas"],
       ["Idaho Bee Atlas", "https://sites.google.com/view/idahobeeatlas/home"],
       ["New Mexico Bee Atlas", "https://www.inaturalist.org/projects/new-mexico-bee-atlas"],
-      ["Oklahoma Bee Atlas", "https://www.inaturalist.org/projects/oklahoma-bee-atlas"],
     ] as const) {
       expect(page).toContain(`<a href="${href}">${name}</a>`);
       // The mark links there too, since the program pages are behind sign-in.

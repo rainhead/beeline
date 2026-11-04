@@ -112,7 +112,7 @@ export interface ProgramOption {
 
 /** The atlases first, in the order they were seeded, then the programs with no region. */
 export async function programOptions(db: Kysely<Database>): Promise<ProgramOption[]> {
-  // Seed order (schema/010): the six atlases, then Master Melittology and the BLM surveys.
+  // Seed order (schema/010): the atlases, then Master Melittology and the BLM surveys.
   return db.selectFrom("program").select(["code", "name"]).orderBy("entity_id").execute();
 }
 

@@ -681,7 +681,7 @@ export const en = {
       atlasRecords: (atlas: string) => `${atlas} records`,
       all: "All records",
       /**
-       * Collecting outside the six is ordinary, not an error, and the label
+       * Collecting outside the atlases is ordinary, not an error, and the label
        * has to sound like it (beeline-lcl).
        */
       outside: "Outside the atlases",
@@ -2305,7 +2305,7 @@ export const en = {
       atlas: {
         term: "Atlas",
         definition:
-          "A state or provincial bee atlas: Oregon, Washington, British Columbia, Idaho, New Mexico, or Oklahoma. Samples belong to an atlas based on where they were collected. Volunteers may also collect outside member atlases as part of Master Melittology.",
+          "A state or provincial bee atlas: Oregon, Washington, British Columbia, Idaho, or New Mexico. Samples belong to an atlas based on where they were collected. Volunteers may also collect outside member atlases as part of Master Melittology.",
       },
       authorship: {
         term: "Authorship",

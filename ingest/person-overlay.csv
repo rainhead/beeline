@@ -324,7 +324,7 @@ name:Robin Gill,home_atlas,OBA,usernames.csv,"usernames.csv stateProvince OR, ma
 name:Rocky Bessette,home_atlas,OBA,usernames.csv,"usernames.csv stateProvince OR, matched by login"
 name:Emily Carmichael,home_atlas,BC,usernames.csv,"usernames.csv stateProvince BC, matched by login"
 name:Sarah Gardner,home_atlas,OBA,usernames.csv,"usernames.csv stateProvince OR, matched by name"
-name:Sean Washington,home_atlas,OK,usernames.csv,"usernames.csv stateProvince OK, matched by login"
+name:Sean Washington,home_atlas,program,usernames.csv,"usernames.csv stateProvince OK, matched by login; Master Melittology with no atlas since there is no Oklahoma Bee Atlas (gh-251)"
 name:Stuart Murray,home_atlas,ID,usernames.csv,"usernames.csv stateProvince ID, matched by login"
 name:Stuart Wilson,home_atlas,WaBA,usernames.csv,"usernames.csv stateProvince WA, matched by login"
 name:Susan Albright,home_atlas,OBA,usernames.csv,"usernames.csv stateProvince OR, matched by login"

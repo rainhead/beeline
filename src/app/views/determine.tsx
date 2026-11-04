@@ -64,13 +64,21 @@ export function DeterminePage({ m, seasons, data }: { m: Messages; seasons: Entr
               </a>
             </nav>
             {data.view === "sample" && (
-              <nav class="segmented" aria-label={d.season}>
-                {seasons.map((s) => (
-                  <a href={determineHref("sample", s.season)} aria-current={s.season === data.season ? "page" : undefined}>
-                    {d.seasonOption(s.season, s.unnamed)}
-                  </a>
-                ))}
-              </nav>
+              <form method="get" action="/determinations" class="determine-season">
+                <label for="determine-season">{d.season}</label>
+                <select id="determine-season" name="season">
+                  {seasons.map((s) => (
+                    <option value={String(s.season)} selected={s.season === data.season}>
+                      {d.seasonOption(s.season, s.unnamed)}
+                    </option>
+                  ))}
+                </select>
+                <noscript>
+                  <button type="submit" class="outlined small">
+                    {d.seasonGo}
+                  </button>
+                </noscript>
+              </form>
             )}
           </div>
           {data.view === "batch" && <p>{d.batch.lede}</p>}

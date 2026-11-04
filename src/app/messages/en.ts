@@ -613,6 +613,8 @@ export const en = {
       title: "Specimens",
       heading: "Specimens",
       ledeMine: "Every specimen from your samples.",
+      /** After ledeMine, a link to /determinations. */
+      identify: "Identify them.",
       ledeAtlas: (atlas: string) => `Every specimen in the ${atlas}.`,
       ledeAll: "Every specimen in every atlas.",
       ledeOutside: "Every specimen collected where no member atlas reaches.",
@@ -1283,6 +1285,8 @@ export const en = {
       "Identifications from experts are not shown here to encourage independent determination. They remain recorded on each specimen's page.",
     readOnly: "You're viewing this as someone else, so nothing here can be changed.",
     season: "Season",
+    /** Only without script, beside the season menu. */
+    seasonGo: "Show",
     seasonOption: (season: number, unnamed: number) =>
       unnamed === 0 ? String(season) : `${season} · ${n(unnamed)} to name`,
     empty: "You have no specimens yet. A specimen appears here once its label has been printed.",
@@ -1291,11 +1295,6 @@ export const en = {
       label: "Work through",
       bySample: "By sample",
       batch: (count: number) => `Batch (${n(count)})`,
-    },
-    show: {
-      label: "Show",
-      unnamed: (count: number) => `Not yet named (${n(count)})`,
-      all: (count: number) => `All (${n(count)})`,
     },
     jump: {
       label: "Go to field number",

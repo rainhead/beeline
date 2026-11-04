@@ -811,7 +811,18 @@ export function SpecimenListing(
   );
   return (
     <>
-      <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
+      <PageHeader
+        title={copy.heading}
+        lede={
+          query.scope === MINE ? (
+            <>
+              {copy.ledeMine} <a href="/determinations">{copy.identify}</a>
+            </>
+          ) : (
+            lede(copy, query, atlases)
+          )
+        }
+      />
       {reprinted !== null && <Callout tone="success">{copy.bulk.done(reprinted.requested, reprinted.of)}</Callout>}
       <Toolbar copy={copy} path={path} props={props} />
       {/* Immediately above the table, since they act on its rows (Peter,

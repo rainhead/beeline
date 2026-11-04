@@ -607,6 +607,26 @@ export const en = {
       colLinks: "Links",
       viewOnInat: "View on iNaturalist",
       edit: "Edit",
+      /**
+       * Changing a sample's locality from its Place cell (beeline-7ywr): a
+       * pencil that opens a choice of the observation's own locality and the
+       * names suggested from the coordinates, and for staff a box to write
+       * one in. The same writes as the sample page's.
+       */
+      placeEdit: {
+        /** The pencil, for a screen reader: it has no visible words. */
+        open: (sample: string) => `Change the locality of sample ${sample}`,
+        label: "Locality",
+        /** What iNaturalist's place name yields, which the sample follows until someone chooses otherwise. */
+        original: (locality: string | null) =>
+          locality === null ? "iNaturalist's: none usable" : `iNaturalist's: ${locality}`,
+        /** The best name Beeline gives the point. */
+        suggested: (locality: string) => `${locality} (suggested)`,
+        /** The sample's locality where it is none of the above: keeping it changes nothing. */
+        current: (locality: string) => `${locality} (as it is)`,
+        writeIn: "Or write one in",
+        save: "Save",
+      },
     },
 
     specimens: {
@@ -735,6 +755,8 @@ export const en = {
       qcBlocking: "Blocks printing",
       qcWarning: "Heads-up only",
       qcClean: "Clean",
+      /** A locality flag, or no locality at all: what a suggested locality fixes (beeline-7ywr). */
+      qcLocality: "Locality missing or unusable",
       apply: "Apply",
       clear: "Clear all",
       /** Read aloud over the row of pills: the filters in force. */

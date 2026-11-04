@@ -1161,6 +1161,76 @@ export function createApp({
     return c.redirect(field("return") === "home" ? "/" : sampleHref(sample.sample_id));
   });
 
+  // The Place cell's editor on the samples listing (beeline-7ywr): one form
+  // for the three things the sample page offers separately, then back to the
+  // listing the form was drawn on. `choice` is "original" (follow
+  // iNaturalist again), "pick:<name>" (a name offered for the point, checked
+  // against what the store offers now), or "current" (keep it); a name in
+  // `written` wins over the choice and is staff's alone. Every write is one
+  // the sample page already makes, with its permissions: staff on any
+  // sample, a collector on their own, a collector never over a locality
+  // somebody else set, and nobody on a printed sample. `back` that is not a
+  // path under /samples goes to the listing itself, so the field cannot send
+  // anyone elsewhere.
+  app.post("/samples/:id/place", async (c) => {
+    const m = c.get("m");
+    const t = m.suggestedLocality;
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    const admin = c.get("admin");
+    const session = c.get("session");
+    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, admin ? STAFF_READER : readerOf(c));
+    if (sample === null || (!sample.mine && !admin)) return errorResponse(c, "notFound");
+    if (sample.printed) return c.text(t.printed, 409);
+    const body = await c.req.parseBody();
+    const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+    const backRaw = field("back");
+    const back = /^\/samples(\?|$)/.test(backRaw) ? backRaw : "/samples";
+    const deps = { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections };
+    const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
+    const standing =
+      sample.inat_observation_id === null ? null : await standingLocalityAuthor(sampleOverlay, sample.inat_observation_id);
+    const written = field("written").trim();
+    const choice = field("choice");
+    let result;
+    let reason: string | undefined;
+    if (written !== "") {
+      if (!admin) return c.text("Admins only.", 403);
+      if (written === sample.locality) return c.redirect(back);
+      result = await setStaffLocality(deps, target, { value: written, remove: false, note: "", author: session.login });
+    } else if (choice === "original") {
+      if (standing === null) return c.redirect(back);
+      if (standing !== session.login && !admin) return c.text(t.notYours, 403);
+      result = await setStaffLocality(deps, target, { value: "", remove: true, note: "", author: session.login });
+    } else if (choice.startsWith("pick:")) {
+      const name = choice.slice("pick:".length);
+      if (name === sample.locality) return c.redirect(back);
+      if (standing !== null && standing !== session.login && !admin) return c.text(t.setByOther, 403);
+      const offered = [...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]), ...sample.locality_alternatives];
+      const suggestion = offered.find((o) => o.locality === name);
+      if (suggestion === undefined) return c.text(t.changed, 409);
+      reason = t.reason(t.basis[suggestion.basis]);
+      result = await adoptSuggestedLocality(deps, target, { suggestion: suggestion.locality, reason, author: session.login });
+    } else {
+      return c.redirect(back);
+    }
+    if (result.outcome === "invalid") return c.text(result.problem, 400);
+    if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
+    if (result.outcome === "unresolved") return c.text(result.reason, 409);
+    if (result.outcome === "saved" || result.outcome === "removed") {
+      try {
+        await recordSampleChanges(kyselyReader(db), samplePaths, {
+          source: "app",
+          author: session.login,
+          reason,
+          where: `s.entity_id = ${sample.sample_id}`,
+        });
+      } catch (err) {
+        console.warn(`could not record the locality change: ${(err as Error).message}`);
+      }
+    }
+    return c.redirect(back);
+  });
+
   // The coordinates, on the same terms (beeline-942). The one case a
   // volunteer cannot fix upstream at all is an obscured observation with no
   // trust, which yields no coordinates and cannot print; this is where staff

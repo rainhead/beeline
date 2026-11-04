@@ -93,8 +93,8 @@ export const MEMBER_ANY = "";
  * are disjoint. "warning" means warnings *and no blocking finding*, which
  * is the question a person actually asks ("what is only a heads-up?").
  */
-export type QcStatus = "any" | "flagged" | "blocking" | "warning" | "clean";
-export const QC_STATUSES = ["any", "flagged", "blocking", "warning", "clean"] as const;
+export type QcStatus = "any" | "flagged" | "blocking" | "warning" | "clean" | "locality";
+export const QC_STATUSES = ["any", "flagged", "blocking", "warning", "clean", "locality"] as const;
 
 /**
  * Whether a specimen has been determined. A taxon name only ever finds
@@ -407,6 +407,19 @@ export interface SampleRow {
   warning: number;
   /** Whether the viewer is one of this sample's collectors. */
   mine: boolean;
+  /**
+   * For the Place cell's editor (beeline-7ywr). Whether a label is on paper,
+   * after which the locality no longer changes; the names Beeline offers for
+   * the point, best first, one per line (null where there are none or the
+   * location is withheld); what the observation itself yields, for an
+   * iNat-linked sample (likewise withheld); and whether a locality somebody
+   * other than the viewer set stands on the sample, which a collector may
+   * not replace.
+   */
+  printed: boolean;
+  locality_choices: string | null;
+  observed_locality: string | null;
+  locality_set_by_other: boolean;
 }
 
 export interface SpecimenRow {
@@ -802,6 +815,15 @@ function qcPredicate(status: QcStatus) {
       return sql<boolean>`${blockingCount} = 0 AND ${warningCount} > 0`;
     case "clean":
       return sql<boolean>`${blockingCount} = 0 AND ${warningCount} = 0`;
+    // A locality that will not do for a label, or none: what the Place
+    // cell's editor fixes (beeline-7ywr). The same two findings the front
+    // page offers a suggested locality on.
+    case "locality":
+      return sql<boolean>`EXISTS (
+        SELECT 1 FROM sample_qc_finding lf
+        WHERE lf.sample_id = s.entity_id
+          AND (lf.rule_name = 'locality_format'
+               OR (lf.rule_name = 'missing_required_field' AND lf.details LIKE '%locality%')))`;
     case "any":
       return null;
   }
@@ -963,6 +985,20 @@ export async function listSamples(
         warningCount.as("warning"),
         sql<boolean>`EXISTS (SELECT 1 FROM sample_collector mine
                              WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})`.as("mine"),
+        sql<boolean>`EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)`.as("printed"),
+        located(
+          hidden,
+          sql<string | null>`(SELECT string_agg(g.locality, chr(10) ORDER BY g.rank)
+                              FROM sample_locality_candidate_current g WHERE g.sample_id = s.entity_id)`,
+        ).as("locality_choices"),
+        located(
+          hidden,
+          sql<string | null>`(SELECT ol.locality FROM observation_locality ol WHERE ol.inat_id = s.inat_observation_id)`,
+        ).as("observed_locality"),
+        sql<boolean>`EXISTS (SELECT 1 FROM sample_locality_override lo
+                             WHERE lo.sample_id = s.entity_id AND lo.set_by IS DISTINCT FROM ${personId})`.as(
+          "locality_set_by_other",
+        ),
       ])
       .orderBy(sampleOrder(query, place))
       .orderBy("s.entity_id")

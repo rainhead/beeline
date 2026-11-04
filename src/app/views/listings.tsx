@@ -21,7 +21,7 @@ import {
   type SpecimenRow,
 } from "../listings.js";
 import { sampleHref, specimenHref } from "../record.js";
-import { ChevronDownIcon } from "./icons.js";
+import { ChevronDownIcon, PencilIcon } from "./icons.js";
 import type { Messages } from "../messages/index.js";
 import {
   Absent,
@@ -75,6 +75,72 @@ function PlaceCell({ m, row }: { m: Messages; row: SampleRow | SpecimenRow }) {
     <>
       {place} · <Meta>{m.listings.locationHidden}</Meta>
     </>
+  );
+}
+
+/**
+ * The Place cell of a sample whose locality the reader may change
+ * (beeline-7ywr, Peter 2026-11-04): the place as usual, and a pencil that
+ * opens, in the cell, a choice of iNaturalist's own locality, the names
+ * suggested from the coordinates, and for staff a box to write one in. A
+ * <details>, so it opens without scripting, and the place text gives way to
+ * the form while it is open (components.css). Posts to
+ * /samples/:id/place, which makes the same writes as the sample page.
+ *
+ * Offered on a sample whose labels have not printed, to staff, and to its
+ * collector where they have something to choose from and nobody else's
+ * locality stands on it, as on the sample page.
+ */
+export function placeEditable(row: SampleRow, admin: boolean): boolean {
+  if (row.printed || row.location_withheld) return false;
+  if (admin) return true;
+  return row.mine && !row.locality_set_by_other && (row.locality_choices !== null || row.inat_observation_id !== null);
+}
+
+function PlaceEdit({ m, row, admin, back }: { m: Messages; row: SampleRow; admin: boolean; back: string }) {
+  const t = m.listings.samples.placeEdit;
+  const choices = row.locality_choices === null ? [] : row.locality_choices.split("\n");
+  const linked = row.inat_observation_id !== null;
+  // Which option the sample is on now: following iNaturalist, one of the
+  // names offered, or something else a person set, kept as it is.
+  const following = linked && !row.locality_set_by_other && row.locality === row.observed_locality;
+  const current = row.locality;
+  const listed = following || (current !== null && choices.includes(current));
+  const options: Array<{ value: string; label: string; selected: boolean }> = [
+    ...(linked ? [{ value: "original", label: t.original(row.observed_locality), selected: following }] : []),
+    ...choices.map((name, i) => ({
+      value: `pick:${name}`,
+      label: i === 0 ? t.suggested(name) : name,
+      selected: !following && name === current,
+    })),
+    ...(!listed && current !== null ? [{ value: "current", label: t.current(current), selected: true }] : []),
+  ];
+  const id = `place-${row.sample_id}`;
+  return (
+    <details class="place-edit">
+      <summary class="icon-button" aria-label={t.open(row.sample_number)} title={t.open(row.sample_number)}>
+        <PencilIcon />
+      </summary>
+      <form method="post" action={`/samples/${row.sample_id}/place`} class="place-edit-form">
+        <input type="hidden" name="back" value={back} />
+        <label for={`${id}-choice`} class="visually-hidden">
+          {t.label}
+        </label>
+        <select id={`${id}-choice`} name="choice">
+          {options.map((o) => (
+            <option value={o.value} selected={o.selected}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        {admin && (
+          <input type="text" name="written" aria-label={t.writeIn} placeholder={t.writeIn} maxlength={60} />
+        )}
+        <button type="submit" class="outlined compact-button">
+          {t.save}
+        </button>
+      </form>
+    </details>
   );
 }
 
@@ -212,7 +278,13 @@ function activeFilters(
     });
   }
   if (query.qc !== "any") {
-    const value = { flagged: f.qcFlagged, blocking: f.qcBlocking, warning: f.qcWarning, clean: f.qcClean }[query.qc];
+    const value = {
+      flagged: f.qcFlagged,
+      blocking: f.qcBlocking,
+      warning: f.qcWarning,
+      clean: f.qcClean,
+      locality: f.qcLocality,
+    }[query.qc];
     out.push({ label: f.qc, value, clearHref: clear({ qc: "any" }) });
   }
   return out;
@@ -568,7 +640,7 @@ function DetSelect({ m, query }: { m: Messages; query: ListingQuery }) {
 }
 
 export function SampleListing(props: ListingProps<SampleRow>) {
-  const { m, query, page, atlases } = props;
+  const { m, query, page, atlases, admin } = props;
   const copy = m.listings.samples;
   const f = m.listings.filters;
   const path = "/samples";
@@ -644,6 +716,7 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                       ["blocking", f.qcBlocking],
                       ["warning", f.qcWarning],
                       ["clean", f.qcClean],
+                      ["locality", f.qcLocality],
                     ]}
                   />
                 ),
@@ -663,7 +736,10 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                     collector is whose name will be printed (/design/names). */}
                 <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
                 <td>
-                  <PlaceCell m={m} row={row} />
+                  <span class="place-text">
+                    <PlaceCell m={m} row={row} />
+                  </span>
+                  {placeEditable(row, admin) && <PlaceEdit m={m} row={row} admin={admin} back={listingHref(path, query)} />}
                 </td>
                 <td>
                   {row.host_name === null ? (

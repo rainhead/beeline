@@ -564,3 +564,18 @@ th details.col-menu > .menu-panel {
   padding: 0 var(--space-2);
   margin-left: calc(var(--space-2) * -1);
 }
+
+/* The Place cell's editor on the samples listing (beeline-7ywr): a pencil
+   beside the place that opens a small form in the cell, which takes the
+   place text's room while it is open. A <details>, so no script is needed. */
+.place-edit { display: inline-block; vertical-align: middle; margin-left: var(--space-1); }
+.place-edit > summary {
+  list-style: none; cursor: pointer; display: inline-flex; padding: 2px; border-radius: 4px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+.place-edit > summary::-webkit-details-marker { display: none; }
+.place-edit > summary:hover, .place-edit[open] > summary { background: var(--md-sys-color-secondary-container); }
+td:has(> .place-edit[open]) > .place-text { display: none; }
+.place-edit[open] { display: block; margin-left: 0; }
+.place-edit-form { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); margin-top: var(--space-1); min-width: 12rem; }
+.place-edit-form select, .place-edit-form input[type="text"] { width: 100%; }

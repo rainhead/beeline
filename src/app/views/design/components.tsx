@@ -185,6 +185,14 @@ export function DesignComponents({ m }: { m: Messages }) {
         Variant is about weight on the page, not about what the action does. A screen has at most one filled button.
         Navigations stay real links so they can be middle-clicked and copied.
       </p>
+      <p>
+        A form's actions go after its fields, left-aligned with them, in a <code>row</code>: the main action first, then
+        anything secondary with less weight, an outlined button or a plain link (Cancel is a link back to where the person
+        came from). Someone finishing the last field is already looking down that left edge, so the button is where
+        their eye is; this is also what the GOV.UK Design System and form-usability research recommend. Right-aligned
+        actions are a dialog convention, marking the end of a boxed task, and a form on a page or an editor in a table
+        cell is not a dialog.
+      </p>
       <Specimen>
         <p class="row">
           {BUTTON_VARIANTS.map((variant) => (

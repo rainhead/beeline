@@ -580,7 +580,6 @@ td:has(> .place-edit[open]) > .place-text { display: none; }
 .place-edit[open] > summary { display: none; }
 .place-edit-form { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); min-width: 14rem; }
 .place-edit-form .field { margin: 0; }
-.place-edit-actions { display: flex; align-items: center; gap: var(--space-3); }
 
 /* The combobox (src/app/islands/combobox.ts, beeline-wn2): a text box with
    its list of choices under it, over whatever follows. The fallback the

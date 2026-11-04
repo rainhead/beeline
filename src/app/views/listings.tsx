@@ -125,7 +125,7 @@ function PlaceEdit({ m, row, admin, back }: { m: Messages; row: SampleRow; admin
       <form method="post" action={`/samples/${row.sample_id}/place`} class="place-edit-form">
         <input type="hidden" name="back" value={back} />
         <Combobox id={id} name="locality" label={t.label} labelHidden value={row.locality} choices={choices} free={admin} />
-        <div class="place-edit-actions">
+        <div class="row">
           <button type="submit" class="outlined compact-button">
             {t.save}
           </button>

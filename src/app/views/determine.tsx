@@ -9,7 +9,7 @@ import { Term } from "./components/term.js";
  * island, `determine-grid`: the grid is the whole interaction — ticking,
  * filling a column, saving as you go — and is no use without script. The
  * shell owns what a URL should hold: which season, and whether you are
- * working by sample or through your batch.
+ * working by season or by field number (the batch).
  */
 
 export type DetermineView = "sample" | "batch";

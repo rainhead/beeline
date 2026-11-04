@@ -198,7 +198,11 @@ describe("Check iNaturalist now", () => {
          WHERE g.rank = 1 ORDER BY a.inat_user_id`,
       ),
     ).toEqual([["Finley NWR"]]);
-    expect(await (await app.request("/")).text()).toContain(en.suggestedLocality.use);
+    // Ada's observation gives no locality fit for a label, so the sample takes
+    // the name at once (beeline-pimo) and the front page has no button to offer.
+    const page = await (await app.request("/")).text();
+    expect(page).toContain("Finley NWR, Benton, OR");
+    expect(page).not.toContain(en.suggestedLocality.use);
     // Its areas are worked out too, and only Ada's (beeline-9jd4).
     expect(await count(conn, "SELECT count(*) FROM sample_area_derivation")).toBe(1);
   });

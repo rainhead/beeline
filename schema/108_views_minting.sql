@@ -99,7 +99,8 @@ CREATE MACRO locality_street_suffix_pattern() AS
 --   2+ characters      and no upper bound, which there used to be (18, the
 --                      label's). A place name too long for a label
 --                      ('Deception Creek Trail', 21) is now minted as written
---                      and flagged by qc_rule_locality_format, where the cap
+--                      and then given Beeline's name for the point instead
+--                      (schema/174, beeline-pimo), where the cap
 --                      made the rule skip to whatever came next: for 113
 --                      observations that was a postal town, 12.3 km from the
 --                      trail in the Deception Creek case and outside the
@@ -230,7 +231,7 @@ usable AS (
 SELECT inat_id, part AS locality, position AS component
 FROM (SELECT u.*, row_number() OVER (PARTITION BY u.inat_id ORDER BY u.position) AS rn FROM usable u) ranked
 WHERE rn = 1;
-COMMENT ON VIEW observation_locality IS 'The locality a sample minted from an observation carries: the first comma-separated component of its (private-preferred) place_guess that reads like a place name, however long. A component too long for a label is taken as written and flagged by qc_rule_locality_format; an observation with no usable component is absent here, and the sample it mints blocks as missing_required_field. Either is the volunteer''s to fix upstream on iNaturalist, as SOP, and an unprinted sample follows its observation, so the fix arrives on the next promotion (beeline-kza).';
+COMMENT ON VIEW observation_locality IS 'The locality a sample minted from an observation carries: the first comma-separated component of its (private-preferred) place_guess that reads like a place name, however long. A component too long for a label is taken as written; an observation with no usable component is absent here. Either way the unprinted sample takes the locality Beeline names from its coordinates instead (sample_locality_fallback, beeline-pimo), and a fix upstream on iNaturalist that yields a name fit for a label wins on the next promotion, since an unprinted sample follows its observation (beeline-kza).';
 
 -- ── Which observations are samples ───────────────────────────────────────
 -- A sample number and a positive specimen count and a date. Count zero is

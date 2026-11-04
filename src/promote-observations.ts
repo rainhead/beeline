@@ -8,6 +8,7 @@ import { refreshObservationFields } from "./refresh-observation-fields.js";
 import { applySampleOverlay, type UnresolvedSampleRow } from "./apply-sample-overlay.js";
 import { readSampleOverlay } from "./sample-overlay.js";
 import { retryOnWriteConflict, type ConflictRetryOptions } from "./write-conflict.js";
+import { applyLocalityFallback } from "./locality-fallback.js";
 
 const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
 
@@ -27,7 +28,11 @@ const INGEST_DIR = new URL("../ingest/", import.meta.url).pathname;
  *    locations (private/trusted > public-unobscured; obscured-untrusted
  *    writes nothing), keyed on the inat_observation_id step 2 has just set,
  *    so a sample minted on this pass is located on this pass.
- * 4. The sample overlay (src/sample-overlay.ts), last, because it names
+ * 4. The locality fallback (schema/174, beeline-pimo): an unprinted sample
+ *    whose observation gives no locality fit for a label takes the one
+ *    Beeline names from its coordinates. After step 3, because a suggestion
+ *    counts only while it is about the sample's point, which step 3 writes.
+ * 5. The sample overlay (src/sample-overlay.ts), last, because it names
  *    samples by the observation ids steps 2 and 3 have just set: a staff
  *    locality stands over whatever the follow rule wrote (beeline-649).
  *    Applied only when a path is given — a test store, and any scratch
@@ -111,6 +116,11 @@ async function promoteOnce(
     // Counted before the file that empties it, for the same reason.
     const standinsCorrected = await scalar("SELECT count(*) FROM sample_location_standin");
     await conn.run(await readFile(`${INGEST_DIR}promote-observations.sql`, "utf8"));
+    // Not counted: the follow rule above has just written the observation's
+    // name back onto every sample this gives Beeline's to, so the number is
+    // the same samples every night, not what changed. The history pass sees
+    // the net change, which is none.
+    await applyLocalityFallback(conn);
     const overlay =
       opts.sampleOverlayPath === undefined
         ? { applied: 0, unresolved: [] }

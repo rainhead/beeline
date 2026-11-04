@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { createMemoryDb, insertCleanSample, currentSeasonDate, rows } from "./helpers.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildTestGazetteer, createMemoryDb, insertCleanSample, currentSeasonDate, rows } from "./helpers.js";
+import { deriveLocalities } from "../src/derive-locality.js";
 import { canonicalJson } from "../src/sync-inat.js";
 import { promoteObservations } from "../src/promote-observations.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
@@ -744,5 +748,115 @@ describe("the locality a minted sample carries", () => {
     await stage(obs(7, { place_guess: guess }));
     await promoteObservations(conn);
     expect(await one("SELECT locality FROM sample")).toEqual([expected]);
+  });
+});
+
+/**
+ * Where iNaturalist gives no locality fit for a label, Beeline's does
+ * (Peter, 2026-11-04, beeline-pimo). The guesses are the real ones from the
+ * dev corpus the tests above use; the suggestion is written by hand where
+ * the gazetteer is not what is under test, at the point promotion gives the
+ * sample (obs() above), since a name for another point is not shown.
+ */
+describe("a locality that does not fit a label", () => {
+  const suggest = async (locality: string) => {
+    await conn.run(
+      `INSERT INTO sample_locality_candidate
+         (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
+       SELECT entity_id, 1, $1, 'town', 44.5646, -123.262, 'test', 1, now() FROM sample`,
+      [locality] as never,
+    );
+  };
+  const findings = () => count("SELECT count(*) FROM qc_finding WHERE rule_name IN ('locality_format', 'missing_required_field')");
+
+  test("too long: the sample takes the suggestion, keeps it night after night, and a fix upstream still wins", async () => {
+    await stage(obs(7, { place_guess: "Deception Creek Trail, Skykomish, WA, US" }));
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Deception Creek Trail"]);
+    await suggest("Skykomish");
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Skykomish"]);
+    expect(await findings()).toBe(0);
+    expect(await count("SELECT count(*) FROM sample_locality_fallback")).toBe(0);
+    // The follow rule writes the observation's name again each night; the
+    // fallback is what keeps the sample where it was.
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Skykomish"]);
+    // Synthetic: the shortening a volunteer would make on iNaturalist.
+    await stage(obs(7, { place_guess: "Deception Creek Tr, Skykomish, WA, US" }));
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Deception Creek Tr"]);
+  });
+
+  test("missing: a guess too coarse to use leaves the suggestion", async () => {
+    await stage(obs(7, { place_guess: "Wheeler County, US-OR, US" }));
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual([null]);
+    await suggest("Clarno");
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Clarno"]);
+    expect(await findings()).toBe(0);
+  });
+
+  test("a name that fits is the volunteer's, whatever Beeline would call the place", async () => {
+    await stage(obs(7, { place_guess: "Bald Hill, OR, US" }));
+    await promoteObservations(conn);
+    await suggest("Corvallis");
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Bald Hill"]);
+  });
+
+  test("an observation set back to a count of zero is the volunteer's to rework, and Beeline leaves its locality alone", async () => {
+    // Peter, 2026-11-04: before Beeline takes an observation in, volunteers
+    // expect to edit it freely, and a count of zero is how one says it is not
+    // a collection record yet. Beeline already makes no sample from one; a
+    // sample made earlier keeps following it, and is given no name of Beeline's.
+    await stage(obs(7, { place_guess: "Deception Creek Trail, Skykomish, WA, US" }));
+    await promoteObservations(conn);
+    await suggest("Skykomish");
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Skykomish"]);
+    await stage(obs(7, { place_guess: "Deception Creek Trail, Skykomish, WA, US", ofvs: ofvs("7", "0") }));
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Deception Creek Trail"]);
+  });
+
+  test("a printed sample keeps what its labels say", async () => {
+    await stage(obs(7, { place_guess: "Deception Creek Trail, Skykomish, WA, US" }));
+    await promoteObservations(conn);
+    await conn.run("INSERT INTO specimen (sample_id, specimen_number) SELECT entity_id, 1 FROM sample");
+    await suggest("Skykomish");
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Deception Creek Trail"]);
+  });
+
+  test("a locality a person set stands over the suggestion", async () => {
+    await stage(obs(7, { place_guess: "Deception Creek Trail, Skykomish, WA, US" }));
+    await promoteObservations(conn);
+    await conn.run(
+      `INSERT INTO sample_locality_override (sample_id, locality, observed_locality) SELECT entity_id, 'Deception Falls', locality FROM sample`,
+    );
+    await conn.run("UPDATE sample SET locality = 'Deception Falls'");
+    await suggest("Skykomish");
+    await promoteObservations(conn);
+    expect(await one("SELECT locality FROM sample")).toEqual(["Deception Falls"]);
+  });
+
+  test("a sample created tonight takes its name when localities are named, after promotion", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "beeline-fallback-"));
+    try {
+      const path = join(dir, "g.duckdb");
+      await buildTestGazetteer(path, "build-fallback");
+      await stage(obs(7, { place_guess: "Wheeler County, US-OR, US" }));
+      await promoteObservations(conn);
+      expect(await one("SELECT locality FROM sample")).toEqual([null]);
+      const r = await deriveLocalities(conn, path);
+      expect(r).toMatchObject({ named: 1, assigned: 1 });
+      const [suggestion] = (await one("SELECT locality FROM sample_locality_suggestion_current")) as [string];
+      expect(await one("SELECT locality FROM sample")).toEqual([suggestion]);
+      expect(await findings()).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

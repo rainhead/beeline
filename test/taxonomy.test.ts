@@ -155,6 +155,7 @@ describe("the taxonomy pages", () => {
       "/design",
       "/exports",
       "/glossary",
+      "/how-it-works",
       "/determinations",
       "/jobs",
       "/people",

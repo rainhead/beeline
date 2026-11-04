@@ -177,7 +177,7 @@ describe("app scaffold", () => {
 
   it("no session means no page — every data route is gated", async () => {
     const app = await appOnMemoryDb(null);
-    for (const path of ["/", "/design", "/glossary", "/taxonomy", "/anything-not-registered"]) {
+    for (const path of ["/", "/design", "/glossary", "/how-it-works", "/taxonomy", "/anything-not-registered"]) {
       const res = await app.request(path);
       expect(res.status, path).toBe(401);
       const body = await res.text();
@@ -302,6 +302,32 @@ describe("app scaffold", () => {
       expect(res.status, from).toBe(301);
       expect(res.headers.get("location"), from).toBe(to);
     }
+  });
+
+  // beeline-kgwd: the process for volunteers, in the menu and linked from the
+  // front page, and every link in it lands somewhere real.
+  it("how Beeline works is volunteer-facing, and every link on it resolves", async () => {
+    const app = await appOnMemoryDb("testuser");
+    const res = await app.request("/how-it-works");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    for (const step of en.howItWorks.steps) expect(body).toContain(step.heading);
+    expect(body).toContain(en.howItWorks.whenHeading);
+    // The page's own links, not the menu's around it.
+    const content = body.slice(body.indexOf('<ol class="steps">'), body.lastIndexOf("</ul>"));
+    const hrefs = [...content.matchAll(/<a href="([^"]+)">/g)].map((mm) => mm[1]!);
+    expect(hrefs.length).toBeGreaterThan(5);
+    for (const href of hrefs) {
+      if (href.startsWith("/glossary#")) {
+        expect(Object.keys(en.glossary.entries), href).toContain(href.slice("/glossary#".length));
+      } else if (href.startsWith("/")) {
+        const linked = await app.request(href);
+        expect(linked.status, href).toBeLessThan(400);
+      }
+    }
+    const front = await (await app.request("/")).text();
+    expect(front).toContain(`href="/how-it-works"`);
+    expect(front).toContain(en.qc.howItWorksLink);
   });
 
   it("the glossary is volunteer-facing, and every linked term resolves to an anchor", async () => {

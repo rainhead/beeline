@@ -63,6 +63,7 @@ function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
     <nav class="menu-section" aria-label={m.layout.more}>
       {[
         { href: "/glossary", label: m.layout.nav.glossary, shown: true },
+        { href: "/how-it-works", label: m.layout.nav.howItWorks, shown: true },
         { href: "/determinations", label: m.layout.nav.identify, shown: true },
         { href: "/taxonomy", label: m.layout.nav.taxonomy, shown: true },
         { href: "/programs", label: m.layout.nav.programs, shown: true },

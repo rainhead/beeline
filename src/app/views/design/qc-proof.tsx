@@ -44,7 +44,9 @@ const row = (over: Partial<DashboardRow>): DashboardRow => ({
   taxon_geoprivacy: null,
   host_name: "Phacelia",
   host_rank: "genus",
-  host_taxon_id: 52774,
+  // Null by default, so an example that clears host_name reads as no host;
+  // the one unnamed-host example supplies its own id (gh-250).
+  host_taxon_id: null,
   specimen_count: 3,
   pending_count: 0,
   printing_count: 0,

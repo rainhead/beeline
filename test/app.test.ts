@@ -304,6 +304,32 @@ describe("app scaffold", () => {
     }
   });
 
+  // gh-250: a host identified on iNaturalist to a taxon Beeline has no name
+  // for was drawn as "none", beside a flag saying the host is not a plant.
+  it("shows a host Beeline has no name for as its iNaturalist taxon, not as absent", async () => {
+    const { instance, conn } = await createMemoryDb();
+    const [[person]] = (await (
+      await conn.run(`INSERT INTO person (display_name) VALUES ('Test Person') RETURNING entity_id`)
+    ).getRows()) as [[number]];
+    const unnamed = await insertCleanSample(conn, { collector_id: String(person), sample_number: "'1'" });
+    const none = await insertCleanSample(conn, { collector_id: String(person), sample_number: "'2'" });
+    await conn.run(`UPDATE sample SET host_inat_taxon_id = 47126, host_name_as_observed = NULL, host_rank = NULL WHERE entity_id = ${unnamed}`);
+    await conn.run(`UPDATE sample SET host_inat_taxon_id = NULL, host_name_as_observed = NULL, host_rank = NULL WHERE entity_id = ${none}`);
+    const app = createApp({
+      ...(await scratchPaths()),
+      db: createKysely(instance),
+      config: { environment: "development" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId: person, login: "testuser", iconUrl: null }),
+    });
+    const body = await (await app.request("/")).text();
+    // Both samples are on the page, since both wait for labels.
+    expect(body).toContain(`href="https://www.inaturalist.org/taxa/47126"`);
+    expect(body).toContain(en.qc.hostUnnamed(47126));
+    // The sample with no host at all is still drawn as absent.
+    expect(body).toContain(en.qc.hostNone);
+  });
+
   it("the glossary is volunteer-facing, and every linked term resolves to an anchor", async () => {
     const app = await appOnMemoryDb("testuser");
     const glossary = await (await app.request("/glossary")).text();

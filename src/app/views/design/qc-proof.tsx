@@ -44,6 +44,7 @@ const row = (over: Partial<DashboardRow>): DashboardRow => ({
   taxon_geoprivacy: null,
   host_name: "Phacelia",
   host_rank: "genus",
+  host_taxon_id: 52774,
   specimen_count: 3,
   pending_count: 0,
   printing_count: 0,
@@ -268,12 +269,15 @@ const FIXTURES: Array<{
         findings: [finding("non_tracheophyte_host", null, "blocking", { name: "Life", rank: "stateofmatter" })],
       }),
       // iNaturalist gave an id and no name: the rule falls back to prose,
-      // which is still a machine value and still belongs in a <code>.
+      // which is still a machine value and still belongs in a <code>. The
+      // host cell says which taxon, linked, rather than "none" (gh-250): a
+      // blank observation, for a bee caught off no flower, is never flagged.
       row({
         sample_id: 24,
         sample_number: "24",
         host_name: null,
         host_rank: null,
+        host_taxon_id: 47126,
         findings: [finding("non_tracheophyte_host", "observation taxon 47126 is not a vascular plant", "blocking")],
       }),
     ],

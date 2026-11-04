@@ -484,6 +484,8 @@ export const en = {
     coordinatesObscured: "obscured",
     coordinatesNone: "none",
     hostNone: "none",
+    /** A host identified on iNaturalist to a taxon Beeline has no name for (gh-250): the taxon, linked, never "none". */
+    hostUnnamed: (taxonId: number) => `iNaturalist taxon ${taxonId}`,
     fixOnInat: "Fix on iNaturalist",
     editSample: "Edit this sample",
     blocksPrinting: "blocks printing",
@@ -2262,7 +2264,7 @@ export const en = {
     // The detail now says which one it is, so the generic list folds into the
     // first sentence rather than being said twice (beeline-dys).
     non_tracheophyte_host:
-      "The iNaturalist observation should be identified as the floral host: a vascular plant, rather than a moss, alga, fungus, or the bee itself. Update the observation's identification to the plant the bee was collected from.",
+      "The iNaturalist observation should be identified as the floral host: a vascular plant, rather than a moss, alga, fungus, or the bee itself. An observation left without an identification is correct for a bee caught off no flower, and is not flagged. If the bee was collected from a plant, update the observation's identification to that plant.",
     duplicate_sample_number:
       "Each sample must have its own number, and this one appears on more than one of your samples for that date. Renumber all but one of the observations on iNaturalist. Your samples in Beeline will update automatically until their labels are printed.",
     count_mismatch:

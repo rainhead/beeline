@@ -114,7 +114,7 @@ const FIXTURES: Array<{
         inat_observation_id: null,
         specimen_count: 2140,
         coordinate_uncertainty_m: 3200,
-        findings: [finding("coordinate_uncertainty", "3200 m > 250 m", "blocking")],
+        findings: [finding("coordinate_uncertainty", "3200 m > 100 m", "blocking")],
       }),
     ],
     everSynced: true,
@@ -182,7 +182,7 @@ const FIXTURES: Array<{
         sample_number: "7",
         findings: [
           finding("duplicate_sample_number", "also sample 7 on 14 Jul 2026", "blocking"),
-          finding("coordinate_uncertainty", "3200 m > 250 m", "blocking"),
+          finding("coordinate_uncertainty", "3200 m > 100 m", "blocking"),
         ],
         coordinate_uncertainty_m: 3200,
       }),

@@ -428,3 +428,8 @@ name:Juan Manuel Benitez Alvarez,label_name,J.M. Benitez Alvarez,rainhead,"Peter
 name:Savannah Bowman,family_name,Bowman,rainhead,"Peter 2026-10-18: Bowman, per her iNaturalist profile (annabobana). Every recordedBy row spells it Bowamn, so the collector alias can rename her but promotion has no row to take the family name from, and labels would print S.Bowamn."
 name:Jacob Osler,given_name,Jacob,rainhead,"Peter 2026-10-18: Jacob, per his iNaturalist profile (josler). Both recordedBy rows put his whole name in firstName, which made him Jacob Osler Osler; the collector alias renames him, and this keeps the given name from staying 'Jacob Osler'."
 name:Alex Wikstrom,family_name,Wikstrom,rainhead,"Peter 2026-10-18: his emails come from 'Alex Wikstrom', and his login is alex-wikstrom. The records spell it Wilkstorm and his iNaturalist profile Wikstorm. Labels print A.Wikstrom."
+name:Arthur Schrenk,create,yes,rainhead,"Peter 2026-11-04: program staff, who has been signing in as Andony. He collects nothing, so no record mints him and no account can bind until he exists."
+name:Arthur Schrenk,given_name,Arthur,rainhead,"Peter 2026-11-04: parted by hand, since there is no recordedBy row to part."
+name:Arthur Schrenk,family_name,Schrenk,rainhead,"Peter 2026-11-04: parted by hand, since there is no recordedBy row to part."
+name:Arthur Schrenk,inat_user_id,9996380 ascomo512,rainhead,"Peter 2026-11-04: his own account, ascomo512; verified against the iNat API, whose profile name for it is Arthur_Schrenk."
+name:Arthur Schrenk,admin,yes,rainhead,"Peter 2026-11-04: staff, so admin rights in Beeline."

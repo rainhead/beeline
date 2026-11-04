@@ -2289,7 +2289,7 @@ export const en = {
     place_unrecognised:
       "The state or province on this record is not recognized by Beeline, or does not match the country. Use the two-letter US state or Canadian province code (UT, BC) with a matching country. Records from outside the US and Canada can be confirmed by staff.",
     coordinate_uncertainty:
-      "The location accuracy exceeds the allowed limit. The flag indicates the accuracy and the applicable limit. Records from 2 September 2026 onward must be within 100 m (GPS resolution); for trap samples, the date emptied is used. Earlier records retain the 250 m limit in effect when collected. Update the location accuracy on the observation, or contact staff if the uncertainty cannot be reduced.",
+      "The location accuracy exceeds the allowed limit. The flag indicates the accuracy and the applicable limit. Records must be within 100 m (GPS resolution) to print. A record collected before 2 September 2026 keeps the previous 250 m limit only once its labels have printed or its season has settled. Update the location accuracy on the observation, or contact staff if the uncertainty cannot be reduced.",
     coordinate_out_of_region:
       "The coordinates on this record are outside North America, but the record indicates they should be within it. Check the pin on the iNaturalist observation. If the record was collected outside North America, set its country to match and ask staff to confirm it.",
     // The second sentence used to be "Its current identification is something
@@ -2469,7 +2469,7 @@ export const en = {
       "coordinate-uncertainty": {
         term: "Coordinate uncertainty",
         definition:
-          "The estimated accuracy radius of the coordinates recorded on iNaturalist. Accuracy beyond 100 m is too imprecise to print. Records collected before 2 September 2026 are held to the previous 250 m limit.",
+          "The estimated accuracy radius of the coordinates recorded on iNaturalist. Accuracy beyond 100 m is too imprecise to print. A record collected before 2 September 2026 whose labels have printed, or whose season has settled, keeps the previous 250 m limit.",
       },
       determination: {
         term: "Determination",

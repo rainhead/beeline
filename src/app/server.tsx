@@ -131,6 +131,7 @@ import { MessagesProof } from "./views/design/messages-proof.js";
 import { QcProof } from "./views/design/qc-proof.js";
 import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
 import {
+  adoptSuggestedLocalities,
   adoptSuggestedLocality,
   setStaffCoordinates,
   setStaffLocality,
@@ -856,11 +857,27 @@ export function createApp({
     const { personId, admin, reader, atlases, query, homeAtlas } = await listingRequest(c);
     countListingView(listingAttributes("samples", "page", query, viewer(c)));
     const results = await listSamples(db, query, personId, reader);
+    // What the last bulk action did, read back off its redirect (beeline-7ywr).
+    const given = Number(c.req.query("localities"));
+    const of = Number(c.req.query("of"));
+    const localitiesGiven =
+      admin && Number.isSafeInteger(given) && Number.isSafeInteger(of) && given >= 0 && of > 0 && of >= given
+        ? { changed: given, of }
+        : null;
     return c.html(
       await page(
         c,
         m.listings.samples.title,
-        <SampleListing m={m} query={query} page={results} atlases={atlases} admin={admin} homeAtlas={homeAtlas} />,
+        <SampleListing
+          m={m}
+          query={query}
+          page={results}
+          atlases={atlases}
+          admin={admin}
+          homeAtlas={homeAtlas}
+          localitiesGiven={localitiesGiven}
+          bulkOwner={c.get("session").login}
+        />,
       ),
     );
   });
@@ -1159,6 +1176,47 @@ export function createApp({
       }
     }
     return c.redirect(field("return") === "home" ? "/" : sampleHref(sample.sample_id));
+  });
+
+  // The samples ticked on the listing (beeline-7ywr), each given its
+  // suggested locality as one press of "Use this locality" would, then back
+  // to the same listing with what was done. `back` is the listing the form
+  // was drawn on; anything that is not a path under /samples goes to the
+  // listing itself, so the field cannot send anyone elsewhere.
+  app.post("/samples/locality", async (c) => {
+    const m = c.get("m");
+    const t = m.suggestedLocality;
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const form = await c.req.formData();
+    const backRaw = String(form.get("back") ?? "");
+    const back = new URL(/^\/samples(\?|$)/.test(backRaw) ? backRaw : "/samples", "http://listing");
+    const ids = [...new Set(form.getAll("sample").map((v) => Number(v)))];
+    // Nothing ticked, or not a list of ids: back to the listing, unchanged.
+    if (ids.length === 0 || ids.length > 10_000 || !ids.every((id) => Number.isSafeInteger(id) && id > 0)) {
+      return c.redirect(`${back.pathname}${back.search}`);
+    }
+    const login = c.get("session").login;
+    const { changed, of } = await adoptSuggestedLocalities(
+      { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections },
+      ids,
+      { author: login, reason: (basis) => t.reason(t.basis[basis as keyof typeof t.basis] ?? basis) },
+    );
+    if (changed.length > 0) {
+      try {
+        await recordSampleChanges(kyselyReader(db), samplePaths, {
+          source: "app",
+          author: login,
+          reason: m.listings.samples.bulk.historyReason,
+          where: `s.entity_id IN (${changed.join(", ")})`,
+        });
+      } catch (err) {
+        console.warn(`could not record the locality changes: ${(err as Error).message}`);
+      }
+    }
+    back.searchParams.set("localities", String(changed.length));
+    back.searchParams.set("of", String(of));
+    return c.redirect(`${back.pathname}${back.search}`);
   });
 
   // The coordinates, on the same terms (beeline-942). The one case a

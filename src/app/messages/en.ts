@@ -607,6 +607,44 @@ export const en = {
       colLinks: "Links",
       viewOnInat: "View on iNaturalist",
       edit: "Edit",
+      /**
+       * Staff giving many samples their suggested locality at once
+       * (beeline-7ywr), the samples listing's counterpart of marking labels
+       * for reprint on the specimens listing.
+       */
+      bulk: {
+        /** The button that puts the listing in the action's mode. */
+        start: "Use suggested localities…",
+        modeHeading: "Giving samples their suggested locality.",
+        modeIntro:
+          "Tick the samples that should take the locality suggested from their coordinates, shown in each row; a row that cannot take one says why. Set Flags to “Locality missing or unusable” to see the samples that need one. Your ticks stay while you page and filter, in this tab.",
+        leave: "Stop",
+        /** In the tick column, instead of a box: why this sample cannot take its suggestion (LOCALITY_BLOCKER). */
+        blocker: {
+          printed: "labels printed",
+          printing: "in an unprinted run",
+          none: "no suggestion",
+          same: "already uses it",
+          set: "set by a person; change it on the sample page",
+        } as Record<string, string>,
+        /** The heading cell's box, for a screen reader: it has no visible words. */
+        tickPage: "Tick every sample on this page",
+        tickOne: (sample: string, locality: string) => `Give sample ${sample} the locality ${locality}`,
+        /** Counts, with {n} replaced in the browser as the ticks change. */
+        countNone: "Nothing ticked yet",
+        countOne: "1 sample ticked",
+        countOther: "{n} samples ticked",
+        hint: "Each ticked sample takes the suggestion it has when you press the button, as if you had pressed “Use this locality” on its page. It is credited to you, and stands over iNaturalist's locality until someone changes it.",
+        button: "Use suggested localities",
+        clear: "Untick all",
+        /** In each sample's history, beside the change. */
+        historyReason: "Suggested from the coordinates, given to many samples at once.",
+        /** After the action, back on the listing. */
+        done: (changed: number, of: number) =>
+          changed === of
+            ? `Gave ${n(changed)} ${changed === 1 ? "sample its" : "samples their"} suggested locality.`
+            : `Gave ${n(changed)} of ${n(of)} ${of === 1 ? "sample" : "samples"} their suggested locality. The rest could no longer take one: their labels printed, their suggestion changed, or someone set their locality meanwhile.`,
+      },
     },
 
     specimens: {
@@ -735,6 +773,8 @@ export const en = {
       qcBlocking: "Blocks printing",
       qcWarning: "Heads-up only",
       qcClean: "Clean",
+      /** A locality flag, or no locality at all: what a suggested locality fixes (beeline-7ywr). */
+      qcLocality: "Locality missing or unusable",
       apply: "Apply",
       clear: "Clear all",
       /** Read aloud over the row of pills: the filters in force. */

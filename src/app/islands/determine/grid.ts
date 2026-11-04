@@ -41,7 +41,6 @@ const absent = (label: string) =>
 class DetermineGrid extends LitElement {
   static properties = {
     rows: { state: true },
-    filter: { state: true },
     selected: { state: true },
     editing: { state: true },
     limit: { state: true },
@@ -53,7 +52,6 @@ class DetermineGrid extends LitElement {
     flash: { state: true },
   };
   declare rows: EntryRow[];
-  declare filter: "unnamed" | "all";
   declare selected: Set<number>;
   declare editing: number | null;
   declare limit: number;
@@ -67,8 +65,6 @@ class DetermineGrid extends LitElement {
 
   data: DeterminePageData;
   taxa = new Map<number, TaxonInfo>();
-  /** Rows with no name when the page loaded: a row named now must not vanish from "not yet named". */
-  #unnamedAtLoad: Set<number>;
   #anchor: number | null = null;
   #queue: Promise<unknown> = Promise.resolve();
   /**
@@ -85,8 +81,6 @@ class DetermineGrid extends LitElement {
     this.data = JSON.parse(document.getElementById("determine-data")?.textContent ?? "{}") as DeterminePageData;
     this.rows = this.data.rows ?? [];
     for (const [id, t] of Object.entries(this.data.taxa ?? {})) this.taxa.set(Number(id), t);
-    this.#unnamedAtLoad = new Set(this.rows.filter((r) => r.prior === null && r.draft?.animalId == null).map((r) => r.id));
-    this.filter = this.data.view === "sample" && this.#unnamedAtLoad.size > 0 ? "unnamed" : "all";
     this.selected = new Set();
     this.editing = null;
     this.limit = CHUNK;
@@ -104,6 +98,10 @@ class DetermineGrid extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
+    // The season menu is the shell's, a plain GET form: choosing a season goes there.
+    document.querySelector<HTMLSelectElement>("#determine-season")?.addEventListener("change", (e) => {
+      (e.target as HTMLSelectElement).form?.requestSubmit();
+    });
     loadTaxa()
       .then((list: PickerTaxon[]) => {
         for (const t of list) this.taxa.set(t.id, { name: t.name, rank: t.rank, castes: t.castes });
@@ -114,10 +112,6 @@ class DetermineGrid extends LitElement {
 
   get #batch() {
     return this.data.view === "batch";
-  }
-
-  #shown(): EntryRow[] {
-    return this.filter === "unnamed" ? this.rows.filter((r) => this.#unnamedAtLoad.has(r.id)) : this.rows;
   }
 
   #current(r: EntryRow): EntryValue {
@@ -227,12 +221,6 @@ class DetermineGrid extends LitElement {
     this.selected = next;
   }
 
-  #setFilter(filter: "unnamed" | "all") {
-    this.filter = filter;
-    const shown = new Set(this.#shown().map((r) => r.id));
-    this.selected = new Set([...this.selected].filter((id) => shown.has(id)));
-  }
-
   async #batchRequest(body: object) {
     const res = await fetch("/determinations/batch", {
       method: "POST",
@@ -319,8 +307,7 @@ class DetermineGrid extends LitElement {
       return;
     }
     const id = entry.ids[0]!;
-    if (!this.#shown().some((r) => r.id === id)) this.filter = "all";
-    const index = this.#shown().findIndex((r) => r.id === id);
+    const index = this.rows.findIndex((r) => r.id === id);
     if (index >= this.limit) this.limit = index + CHUNK;
     this.message = "";
     this.flash = id;
@@ -491,15 +478,7 @@ class DetermineGrid extends LitElement {
         <p class="meta determine-hint">${bt.hint}</p>
       </div>`;
     }
-    const sh = d.show;
-    const unnamed = this.#unnamedAtLoad.size;
     return html`<div class="determine-toolbar">
-      <div class="segmented" role="group" aria-label=${sh.label}>
-        <a href="#unnamed" aria-current=${this.filter === "unnamed" ? "true" : nothing}
-          @click=${(e: Event) => { e.preventDefault(); this.#setFilter("unnamed"); }}>${sh.unnamed(unnamed)}</a>
-        <a href="#all" aria-current=${this.filter === "all" ? "true" : nothing}
-          @click=${(e: Event) => { e.preventDefault(); this.#setFilter("all"); }}>${sh.all(this.rows.length)}</a>
-      </div>
       <label class="determine-jump">${d.jump.label}
         <input type="text" inputmode="numeric" autocomplete="off" placeholder=${d.jump.placeholder}
           @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this.#jump(e.target as HTMLInputElement); }}
@@ -516,7 +495,7 @@ class DetermineGrid extends LitElement {
 
   override render() {
     const t = d.table;
-    const list = this.#shown();
+    const list = this.rows;
     const shown = list.slice(0, this.limit);
     const batch = this.#batch;
     const allTicked = list.length > 0 && list.every((r) => this.selected.has(r.id));

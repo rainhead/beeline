@@ -613,6 +613,8 @@ export const en = {
       title: "Specimens",
       heading: "Specimens",
       ledeMine: "Every specimen from your samples.",
+      /** After ledeMine, a link to /determinations. */
+      identify: "Identify them.",
       ledeAtlas: (atlas: string) => `Every specimen in the ${atlas}.`,
       ledeAll: "Every specimen in every atlas.",
       ledeOutside: "Every specimen collected where no member atlas reaches.",
@@ -1283,30 +1285,27 @@ export const en = {
       "Identifications from experts are not shown here to encourage independent determination. They remain recorded on each specimen's page.",
     readOnly: "You're viewing this as someone else, so nothing here can be changed.",
     season: "Season",
+    /** Only without script, beside the season menu. */
+    seasonGo: "Show",
     seasonOption: (season: number, unnamed: number) =>
       unnamed === 0 ? String(season) : `${season} · ${n(unnamed)} to name`,
     empty: "You have no specimens yet. A specimen appears here once its label has been printed.",
     emptySeason: "No specimens from this season.",
     mode: {
       label: "Work through",
-      bySample: "By sample",
-      batch: (count: number) => `Batch (${n(count)})`,
-    },
-    show: {
-      label: "Show",
-      unnamed: (count: number) => `Not yet named (${n(count)})`,
-      all: (count: number) => `All (${n(count)})`,
+      bySample: "By season",
+      batch: (count: number) => `By field number (${n(count)})`,
     },
     jump: {
       label: "Go to field number",
       placeholder: "26019685, or its last few digits",
       notHere: (typed: string, season: number) =>
-        `${typed} isn't among your ${season} specimens. Try another season, or add it to your batch, which looks in every season.`,
+        `${typed} isn't among your ${season} specimens. Try another season, or add it to your list under By field number, which looks in every season.`,
     },
     batch: {
       lede:
         "Gather specimens from any season by their field numbers. " +
-        "They're listed in the order you add them, and your batch is kept until you clear it.",
+        "They're listed in the order you add them, and your list is kept until you clear it.",
       /** How to write numbers, under the box. */
       hint:
         "Separate numbers with commas. A range can end in just its last digits: 26019685-697 means 26019685 to 26019697. " +
@@ -1314,15 +1313,15 @@ export const en = {
       add: "Add field numbers",
       addButton: "Add",
       placeholder: "26019685-697, 26027608 — or scan each label",
-      empty: "Your batch is empty. Add field numbers above, or select rows in the By sample view and add them from there.",
+      empty: "Your list is empty. Add field numbers above, or tick rows under By season and add them from there.",
       added: (count: number) => `Added ${n(count)}.`,
       addedSome: (added: number, already: number) =>
-        `Added ${n(added)}; ${n(already)} ${already === 1 ? "was" : "were"} already in your batch.`,
-      alreadyOne: (fieldNumber: string) => `${fieldNumber} is already in your batch.`,
-      alreadyAll: (count: number) => `All ${n(count)} are already in your batch.`,
+        `Added ${n(added)}; ${n(already)} ${already === 1 ? "was" : "were"} already in your list.`,
+      alreadyOne: (fieldNumber: string) => `${fieldNumber} is already in your list.`,
+      alreadyAll: (count: number) => `All ${n(count)} are already in your list.`,
       dismiss: (text: string) => `Dismiss ${text}`,
-      emptyBatch: "Clear the batch",
-      remove: (fieldNumber: string) => `Remove ${fieldNumber} from the batch (its name stays)`,
+      emptyBatch: "Clear the list",
+      remove: (fieldNumber: string) => `Remove ${fieldNumber} from the list (its name stays)`,
     },
     /** Why a field number someone typed found nothing. */
     problem: {
@@ -1362,8 +1361,8 @@ export const en = {
       sexSet: (count: number) => `Set the sex of ${n(count)}.`,
       undo: "Undo",
       untick: "Clear selection",
-      addToBatch: "Add to batch",
-      removeFromBatch: "Remove from batch",
+      addToBatch: "Add to list",
+      removeFromBatch: "Remove from list",
       sexLabel: "Sex of the selected specimens",
     },
     table: {

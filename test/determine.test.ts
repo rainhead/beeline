@@ -304,6 +304,7 @@ describe("the page and its endpoints", () => {
     expect(body).toContain("26000101");
     expect(body).not.toContain("26000201"); // Bo's
     expect(body).toContain(en.determine.seasonOption(2026, 3));
+    expect(body).toContain('<select id="determine-season" name="season">');
     // 26000102's expert species must not reach the screen, by name or by id.
     expect(body).not.toContain("Bombus vosnesenskii");
   });

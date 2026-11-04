@@ -103,10 +103,14 @@ function PlaceEdit({ m, row, admin, back }: { m: Messages; row: SampleRow; admin
   const t = m.listings.samples.placeEdit;
   const linked = row.inat_observation_id !== null;
   // iNaturalist's own name first, then Beeline's, best first, then what the
-  // sample holds if it is none of those: one name, one choice.
+  // sample holds if it is none of those: one name, one choice. Each is shown
+  // with the sample's county and state, as the Place column writes the place
+  // (Peter, 2026-11-04); only the locality is saved, since the county and
+  // state are fields of their own.
   const choices: ComboboxChoice[] = [];
   const add = (value: string | null, note: string) => {
-    if (value !== null && value !== "" && !choices.some((c) => c.value === value)) choices.push({ value, note });
+    if (value !== null && value !== "" && !choices.some((c) => c.value === value))
+      choices.push({ value, label: m.format.place([value, row.county, row.state_province]), note });
   };
   if (linked) add(row.observed_locality, t.noteInaturalist);
   (row.locality_choices === null ? [] : row.locality_choices.split("\n")).forEach((name, i) =>

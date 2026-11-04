@@ -106,9 +106,9 @@ describe("the Place cell's editor", () => {
     expect(page).toContain(`aria-label="${t.open("A-1")}"`);
     expect(page).toContain(`<beeline-combobox free="">`);
     expect(page).toContain(`id="place-${open}" name="locality" type="text" value="26208 Finley Refuge Rd" list="place-${open}-choices"`);
-    expect(page).toContain(`<option value="Finley NWR" label="${t.noteSuggested}">`);
-    expect(page).toContain(`<option value="Muddy Creek CG" label="${t.noteAlternative}">`);
-    expect(page).toContain(`<option value="26208 Finley Refuge Rd" label="${t.noteCurrent}">`);
+    expect(page).toContain(`<option value="Finley NWR" label="${t.noteSuggested}" data-label="Finley NWR, BentonCo, OR">`);
+    expect(page).toContain(`<option value="Muddy Creek CG" label="${t.noteAlternative}" data-label="Muddy Creek CG, BentonCo, OR">`);
+    expect(page).toContain(`<option value="26208 Finley Refuge Rd" label="${t.noteCurrent}" data-label="26208 Finley Refuge Rd, BentonCo, OR">`);
     // Edit mode is the box, Save, and a Cancel that goes back to the listing.
     expect(page).toContain(`<a href="/samples?scope=all" data-close-details="">${t.cancel}</a>`);
   });

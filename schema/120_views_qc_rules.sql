@@ -172,12 +172,13 @@ WHERE s.state_province IS NOT NULL
 -- places of latitude, which is what a GPS reports (Andony, 2026-08-31). The
 -- 250 m that had been in force was a transcription error, not a decision.
 --
--- It cannot be applied backwards. A volunteer can tighten the pin on their
--- own iNaturalist observation and the next sync picks it up — but only while
--- they still have the specimens, and for older records the bees have often
--- long since left their possession. Blocking those would demand a correction
--- nobody is able to make. So a sample is judged by the limit in force when it
--- was collected, and records predating the change keep 250 m for good.
+-- It cannot be applied backwards everywhere. A volunteer can tighten the pin
+-- on their own iNaturalist observation and the next sync picks it up — but
+-- only while they still have the specimens, and for older records the bees
+-- have often long since left their possession. Blocking those would demand a
+-- correction nobody is able to make. So records predating the change keep
+-- 250 m where that is so: once printed, or once their season has settled
+-- (sample_coordinate_limit, below, which says why the line moved there).
 --
 -- Judged on date_end: a trap line that ran across the boundary is held to
 -- the limit in force when it was emptied.
@@ -189,14 +190,28 @@ COMMENT ON VIEW coordinate_precision_rule IS 'One row: the coordinate uncertaint
 
 -- The limit that applies to one sample, named once so the rule below and
 -- anything else that has to explain itself to a volunteer agree about it.
+--
+-- The grandfathered 250 m is for records nobody can fix any more, and that
+-- turned out to be narrower than "collected before the change". Peter,
+-- 2026-11-04, before the first production print run: an unprinted sample in
+-- an active season is held to 100 m whenever it was collected, because its
+-- collector can still tighten the pin and a label with a 180 m circle would
+-- also go out with no elevation (elevation_derivation_limit). So 250 m stays
+-- only for a sample that has printed, whose label is on a pin already, and
+-- for one from a settled season, which never prints and whose collector has
+-- mostly long since handed the bees over. Of the unprinted samples in the
+-- 100-250 m band on that morning's backup, 4 were in active seasons (3 of
+-- them, 10 labels, in that day's run) and 38 settled.
 CREATE VIEW sample_coordinate_limit AS
 SELECT s.entity_id AS sample_id,
        CASE WHEN s.date_end >= r.effective_from
+              OR (NOT EXISTS (SELECT 1 FROM printed_sample p WHERE p.sample_id = s.entity_id)
+                  AND NOT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id))
             THEN r.uncertainty_m
             ELSE r.grandfathered_uncertainty_m END AS uncertainty_m
 FROM sample s
 CROSS JOIN coordinate_precision_rule r;
-COMMENT ON VIEW sample_coordinate_limit IS 'Per sample: the coordinate uncertainty above which it cannot be printed, which depends on when it was collected.';
+COMMENT ON VIEW sample_coordinate_limit IS 'Per sample: the coordinate uncertainty above which it cannot be printed. 100 m, except 250 m for a sample collected before 2 September 2026 that has printed or is in a settled season.';
 
 CREATE VIEW qc_rule_coordinate_uncertainty AS
 SELECT loc.sample_id,

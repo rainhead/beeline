@@ -273,7 +273,7 @@ const FIXTURES: Array<{
       // iNaturalist gave an id and no name: the rule falls back to prose,
       // which is still a machine value and still belongs in a <code>. The
       // host cell says which taxon, linked, rather than "none" (gh-250): a
-      // blank observation, for a bee caught off no flower, is never flagged.
+      // observation with no identification, for a bee caught in flight, is never flagged.
       row({
         sample_id: 24,
         sample_number: "24",

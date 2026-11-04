@@ -1,6 +1,6 @@
 # Beeline
 
-A rebuild of the specimen-cataloging and label-printing system for the Master Melittologist program (OSU Extension) and its member bee atlases: Oregon, British Columbia, Washington, Idaho, New Mexico, Oklahoma.
+A rebuild of the specimen-cataloging and label-printing system for the Master Melittologist program (OSU Extension) and its member bee atlases: Oregon, British Columbia, Washington, Idaho, New Mexico.
 
 **Status: sandbox.** This repository currently exists to design the replacement data model. The production system it will replace lives at [oregon-bee-project/OBP-Server](https://github.com/oregon-bee-project/OBP-Server/); [docs/reference-implementation.md](docs/reference-implementation.md) records how that system actually works and the requirements those findings imply.
 

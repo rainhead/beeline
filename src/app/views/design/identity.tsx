@@ -3,7 +3,7 @@ import { AtlasMark } from "../components/index.js";
 import { DesignPage, DoDont, OpenQuestion, Specimen } from "./shell.js";
 
 /**
- * The six member atlases (schema/010_people_atlases.sql) by the names this
+ * The five member atlases (schema/010_people_atlases.sql) by the names this
  * page proofs them under. Their homes, colorways and marks are
  * ATLAS_IDENTITY's, which is what the product reads too.
  */
@@ -13,7 +13,6 @@ const ATLASES = [
   { code: "BC", name: "British Columbia Bee Atlas" },
   { code: "ID", name: "Idaho Bee Atlas" },
   { code: "NM", name: "New Mexico Bee Atlas" },
-  { code: "OK", name: "Oklahoma Bee Atlas" },
 ] as const;
 
 /**
@@ -72,11 +71,10 @@ export function DesignIdentity() {
         instead would render Washington navy throughout and Idaho black, which is not what either identity means.
       </p>
       <p>
-        Four of the six discs are warm — Oregon brick, Washington, Idaho and New Mexico gold — close enough to
+        Four of the five discs are warm — Oregon brick, Washington, Idaho and New Mexico gold — close enough to
         Beeline&apos;s honey that the product barely shifts. British Columbia is sky blue, and is the useful case:
         it proves the disc is the seed because it <em>is</em> the accent, not because atlas colours happen to be
-        warm. A BC-seeded Beeline should come out blue. Oklahoma turns the usual contrast around, with a dark red
-        disc inside a charcoal ring; the disc is still the accent and still the seed.
+        warm. A BC-seeded Beeline should come out blue.
       </p>
       <Specimen>
         <table>
@@ -122,7 +120,7 @@ export function DesignIdentity() {
 
       <OpenQuestion bead="beeline-2c3.12">
         <p>
-          All six colours are sampled from the marks the program distributes on Canvas, recorded on beeline-2c3.12.
+          All five colours are sampled from the marks the program distributes on Canvas, recorded on beeline-2c3.12.
           None has been stated by a brand source, and none seeds the product palette yet: every atlas still renders
           in Beeline&apos;s own honey.
         </p>

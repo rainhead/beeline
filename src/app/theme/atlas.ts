@@ -50,10 +50,4 @@ export const ATLAS_IDENTITY: Readonly<Record<string, AtlasIdentity>> = {
     ring: "#42b6a3",
     logo: "/static/atlas/NM.jpg",
   },
-  OK: {
-    url: "https://www.inaturalist.org/projects/oklahoma-bee-atlas",
-    disc: "#851617",
-    ring: "#333333",
-    logo: "/static/atlas/OK.jpg",
-  },
 };

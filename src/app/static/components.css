@@ -551,6 +551,12 @@ th details.col-menu > .menu-panel {
   color: var(--md-sys-color-on-surface-variant);
 }
 
+/* How Beeline works: numbered steps, each a heading and a paragraph. */
+.steps { padding-left: var(--space-6); }
+.steps > li { margin-top: var(--space-6); }
+.steps > li > h2 { font: var(--md-sys-typescale-title); margin: 0; }
+.steps > li > p { margin: var(--space-1) 0 0; }
+
 .glossary dt:target {
   background: var(--md-sys-color-warning-container);
   color: var(--md-sys-color-on-warning-container);

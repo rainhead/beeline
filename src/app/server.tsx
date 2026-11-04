@@ -26,6 +26,7 @@ import { csvGenerationTiming, requestTiming } from "./request-timing.js";
 import { securityHeaders } from "./security-headers.js";
 import { countListingView, listingAttributes, rosterAttributes, type Viewer } from "./usage.js";
 import { Glossary } from "./views/glossary.js";
+import { HowItWorks } from "./views/how-it-works.js";
 import { TaxonomyIndex, TaxonPage } from "./views/taxonomy.js";
 import { ProgramIndex, ProgramPage } from "./views/programs.js";
 import { listPrograms, loadProgram, programHref } from "./programs.js";
@@ -1269,6 +1270,13 @@ export function createApp({
   app.get("/glossary", async (c) => {
     const m = c.get("m");
     return c.html(await page(c, m.glossary.title, <Glossary m={m} />));
+  });
+
+  // The process, step by step, for volunteers (beeline-kgwd): catalog copy
+  // throughout, like the glossary, and in the menu for everyone.
+  app.get("/how-it-works", async (c) => {
+    const m = c.get("m");
+    return c.html(await page(c, m.howItWorks.title, <HowItWorks m={m} />));
   });
 
   // The taxonomy (beeline-45v.5). Read by everyone, like the glossary: it

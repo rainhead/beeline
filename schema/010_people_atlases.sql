@@ -83,7 +83,7 @@ COMMENT ON TABLE program IS 'A program people take part in: each atlas, Master M
 COMMENT ON COLUMN program.code IS 'How the person overlay names the program (fields home_atlas and leads), the listings scope an atlas''s records fall under, and the key of the atlas identity in src/app/theme/atlas.ts, and so stable: an atlas''s is its atlas code, then MM and BLM. Letters and digits only, which is what lets a set of them be written joined with semicolons.';
 COMMENT ON COLUMN program.name IS 'The name staff see.';
 
--- The six atlases first, then the programs that are not one: Master
+-- The five atlases first, then the programs that are not one: Master
 -- Melittology, known until 2026-10-09 only by its iNaturalist project's name
 -- "Master Melittologist (outside of Oregon)", the BLM surveys, and the
 -- National Wildlife Refuges program (beeline-8zlh; code and name Peter,
@@ -98,7 +98,6 @@ INSERT INTO program (code, name) VALUES
   ('BC',   'British Columbia Bee Atlas'),
   ('ID',   'Idaho Bee Atlas'),
   ('NM',   'New Mexico Bee Atlas'),
-  ('OK',   'Oklahoma Bee Atlas'),
   ('MM',   'Master Melittology'),
   ('BLM',  'BLM surveys'),
   ('NWR',  'National Wildlife Refuges');
@@ -177,11 +176,11 @@ CREATE TABLE atlas_region (
 -- ALTER TABLE ADD CONSTRAINT), and two stores that differ in how they spell
 -- the same rule are exactly what ADR 0006 exists to prevent.
 CREATE UNIQUE INDEX atlas_region_inat_place_id_key ON atlas_region (inat_place_id);
-COMMENT ON TABLE atlas_region IS 'State/province → the member atlas covering it, for the US and Canada. Geography assigns samples to atlases (schema/030); this is the lookup it does, and the programs it names are the atlases. Deliberately complete rather than data-shaped: a region absent from this table means "unrecognised", so listing only the six would make every other real place look like a typo.';
+COMMENT ON TABLE atlas_region IS 'State/province → the member atlas covering it, for the US and Canada. Geography assigns samples to atlases (schema/030); this is the lookup it does, and the programs it names are the atlases. Deliberately complete rather than data-shaped: a region absent from this table means "unrecognised", so listing only the atlases'' regions would make every other real place look like a typo.';
 COMMENT ON COLUMN atlas_region.state_province IS 'The two-letter USPS or Canada Post code, exactly as a sample carries it — this is the join key, so the format is load-bearing: qc_rule_place_unrecognised fires on anything that does not match a row here.';
 COMMENT ON COLUMN atlas_region.country IS 'ISO 3166-1 alpha-3, matching the ''USA'' the records already carry. Not part of the key — see the note above — but the truth a sample''s own country is checked against.';
 COMMENT ON COLUMN atlas_region.atlas_id IS 'The program whose region this is, which makes that program an atlas. Null ⇒ no member atlas covers this region. That is an answer, not a gap: these are the records that belong to the umbrella program itself.';
-COMMENT ON COLUMN atlas_region.inat_place_id IS 'This region''s iNaturalist place, so a sample minted from an observation can be given a state at all: iNat stamps observations with place ids and place_guess is free text ("Leach Botanical Garden"), so the two-letter code has to be reached through here (beeline-2yt). The one place id in the store for a region, the six atlases'' included.';
+COMMENT ON COLUMN atlas_region.inat_place_id IS 'This region''s iNaturalist place, so a sample minted from an observation can be given a state at all: iNat stamps observations with place ids and place_guess is free text ("Leach Botanical Garden"), so the two-letter code has to be reached through here (beeline-2yt). The one place id in the store for a region, the atlases'' included.';
 
 -- Place ids were derived twice and agreed: iNaturalist's own autocomplete
 -- filtered to admin_level 10 under the right country, and — independently —
@@ -194,10 +193,13 @@ COMMENT ON COLUMN atlas_region.inat_place_id IS 'This region''s iNaturalist plac
 INSERT INTO atlas_region (state_province, country, atlas_id, inat_place_id)
 SELECT r.state_province, r.country, a.entity_id, r.inat_place_id
 FROM (VALUES
-  -- The six, in the order schema declares them.
+  -- The five, in the order schema declares them.
   ('OR', 'USA', 'OBA', 10), ('WA', 'USA', 'WaBA', 46), ('BC', 'CAN', 'BC', 7085),
-  ('ID', 'USA', 'ID', 22),  ('NM', 'USA', 'NM', 9),   ('OK', 'USA', 'OK', 12),
-  -- Everywhere else Master Melittologists have collected, or could.
+  ('ID', 'USA', 'ID', 22),  ('NM', 'USA', 'NM', 9),
+  -- Everywhere else Master Melittologists have collected, or could. The store
+  -- was seeded with an Oklahoma atlas until 2026-11-03, but there is
+  -- no Oklahoma Bee Atlas in the program (gh-251, migrations 0071 and 0072).
+  ('OK', 'USA', NULL, 12),
   ('AL', 'USA', NULL, 19), ('AK', 'USA', NULL, 6), ('AZ', 'USA', NULL, 40), ('AR', 'USA', NULL, 36),
   ('CA', 'USA', NULL, 14), ('CO', 'USA', NULL, 34), ('CT', 'USA', NULL, 49), ('DE', 'USA', NULL, 4),
   ('DC', 'USA', NULL, 5), ('FL', 'USA', NULL, 21), ('GA', 'USA', NULL, 23), ('HI', 'USA', NULL, 11),

@@ -63,6 +63,7 @@ interface RawSampleRow {
   taxon_geoprivacy: Geoprivacy | null;
   host_name: string | null;
   host_rank: string | null;
+  host_taxon_id: unknown;
   specimen_count: unknown;
   pending_count: unknown;
   printing_count: unknown;
@@ -84,6 +85,7 @@ interface RawObservationRow {
   taxon_geoprivacy: Geoprivacy | null;
   host_name: string | null;
   host_rank: string | null;
+  host_taxon_id: unknown;
 }
 
 export async function loadDashboard(db: Kysely<Database>, personId: number, determinerId: number = personId): Promise<Dashboard> {
@@ -110,7 +112,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
              s.locality, s.county, s.state_province,
              loc.latitude, loc.longitude, loc.coordinate_uncertainty_m,
              s.geoprivacy, s.taxon_geoprivacy,
-             s.host_name_as_observed AS host_name, s.host_rank,
+             s.host_name_as_observed AS host_name, s.host_rank, s.host_inat_taxon_id AS host_taxon_id,
              s.specimen_count, coalesce(p.pending_count, 0) AS pending_count,
              coalesce(lp.printing_count, 0) AS printing_count,
              coalesce(lp.printed_count, 0) AS printed_count, lp.printed_at,
@@ -163,7 +165,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
              f.positional_accuracy AS coordinate_uncertainty_m,
              nullif(f.geoprivacy, 'open') AS geoprivacy,
              nullif(f.taxon_geoprivacy, 'open') AS taxon_geoprivacy,
-             f.host_taxon_name AS host_name, f.host_taxon_rank AS host_rank
+             f.host_taxon_name AS host_name, f.host_taxon_rank AS host_rank, f.host_taxon_id
       FROM observation_field f
       JOIN inat_account a ON a.inat_user_id = f.user_id AND a.person_id = ${personId}
       CROSS JOIN season
@@ -187,7 +189,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
              f.positional_accuracy AS coordinate_uncertainty_m,
              nullif(f.geoprivacy, 'open') AS geoprivacy,
              nullif(f.taxon_geoprivacy, 'open') AS taxon_geoprivacy,
-             f.host_taxon_name AS host_name, f.host_taxon_rank AS host_rank,
+             f.host_taxon_name AS host_name, f.host_taxon_rank AS host_rank, f.host_taxon_id,
              try_cast(f.specimen_count_raw AS INTEGER) AS specimen_count,
              u.notes
       FROM observation_unnumbered u
@@ -304,6 +306,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       taxon_geoprivacy: s.taxon_geoprivacy,
       host_name: s.host_name,
       host_rank: s.host_rank,
+      host_taxon_id: num(s.host_taxon_id),
       specimen_count: Number(s.specimen_count),
       pending_count: pending,
       printing_count: printing,
@@ -332,6 +335,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       taxon_geoprivacy: u.taxon_geoprivacy,
       host_name: u.host_name,
       host_rank: u.host_rank,
+      host_taxon_id: num(u.host_taxon_id),
       specimen_count: num(u.specimen_count),
       notes: u.notes,
       pending_count: 0,
@@ -357,6 +361,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       taxon_geoprivacy: p.taxon_geoprivacy,
       host_name: p.host_name,
       host_rank: p.host_rank,
+      host_taxon_id: num(p.host_taxon_id),
       specimen_count: 0,
       pending_count: 0,
       printing_count: 0,

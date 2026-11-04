@@ -44,6 +44,9 @@ const row = (over: Partial<DashboardRow>): DashboardRow => ({
   taxon_geoprivacy: null,
   host_name: "Phacelia",
   host_rank: "genus",
+  // Null by default, so an example that clears host_name reads as no host;
+  // the one unnamed-host example supplies its own id (gh-250).
+  host_taxon_id: null,
   specimen_count: 3,
   pending_count: 0,
   printing_count: 0,
@@ -268,12 +271,15 @@ const FIXTURES: Array<{
         findings: [finding("non_tracheophyte_host", null, "blocking", { name: "Life", rank: "stateofmatter" })],
       }),
       // iNaturalist gave an id and no name: the rule falls back to prose,
-      // which is still a machine value and still belongs in a <code>.
+      // which is still a machine value and still belongs in a <code>. The
+      // host cell says which taxon, linked, rather than "none" (gh-250): a
+      // observation with no identification, for a bee caught in flight, is never flagged.
       row({
         sample_id: 24,
         sample_number: "24",
         host_name: null,
         host_rank: null,
+        host_taxon_id: 47126,
         findings: [finding("non_tracheophyte_host", "observation taxon 47126 is not a vascular plant", "blocking")],
       }),
     ],

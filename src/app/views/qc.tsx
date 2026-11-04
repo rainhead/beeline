@@ -106,6 +106,8 @@ export interface DashboardRow {
   taxon_geoprivacy: Geoprivacy | null;
   host_name: string | null;
   host_rank: string | null;
+  /** The iNaturalist taxon the host was identified as, where there is one: shown when Beeline has no name for it (gh-250). */
+  host_taxon_id: number | null;
   /** Null only where an unnumbered observation's count was left blank too. */
   specimen_count: number | null;
   /** An unnumbered observation's own notes, where the number sometimes is. */
@@ -306,10 +308,14 @@ function Row({ m, row, others }: { m: Messages; row: DashboardRow; others: strin
           <Coordinates m={m} row={row} />
         </td>
         <td class={cellClass(marks, "host")}>
-          {row.host_name === null ? (
-            <Absent label={m.qc.hostNone} />
-          ) : (
+          {row.host_name !== null ? (
             <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} />
+          ) : row.host_taxon_id !== null ? (
+            // Identified, to a taxon Beeline has no name for: say so, rather
+            // than "none" beside a flag about the host (gh-250).
+            <a href={`https://www.inaturalist.org/taxa/${row.host_taxon_id}`}>{m.qc.hostUnnamed(row.host_taxon_id)}</a>
+          ) : (
+            <Absent label={m.qc.hostNone} />
           )}
         </td>
         <td class={cellClass(marks, "specimens")}>

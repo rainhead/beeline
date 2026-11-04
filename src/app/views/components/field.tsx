@@ -11,15 +11,20 @@ export function Field({
   label,
   hint,
   children,
+  labelHidden = false,
 }: {
   id: string;
   label: Child;
   hint?: Child;
   children: Child;
+  /** Read aloud but not drawn, where something on screen already labels the control (a column heading). Still a real label. */
+  labelHidden?: boolean;
 }) {
   return (
     <div class="field">
-      <label for={id}>{label}</label>
+      <label for={id} class={labelHidden ? "visually-hidden" : undefined}>
+        {label}
+      </label>
       {children}
       {hint !== undefined && <p class="field-hint">{hint}</p>}
     </div>

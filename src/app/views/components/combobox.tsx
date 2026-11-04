@@ -54,6 +54,7 @@ export function Combobox({
   free = false,
   hint,
   placeholder,
+  labelHidden = false,
 }: {
   id: string;
   name: string;
@@ -63,10 +64,12 @@ export function Combobox({
   free?: boolean;
   hint?: Child;
   placeholder?: string;
+  /** Read aloud but not drawn, where something on screen already labels the box (a column heading). */
+  labelHidden?: boolean;
 }) {
   const listId = `${id}-choices`;
   return (
-    <Field id={id} label={label} hint={hint}>
+    <Field id={id} label={label} hint={hint} labelHidden={labelHidden}>
       {/* Present or absent, never "false": the island reads any value as true. */}
       <beeline-combobox free={free ? "" : undefined}>
         <input id={id} name={name} type="text" value={value ?? ""} list={listId} autocomplete="off" placeholder={placeholder} />

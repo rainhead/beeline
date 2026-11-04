@@ -30,3 +30,17 @@ document.addEventListener(
   },
   true,
 );
+
+// A link marked data-close-details closes the <details> it is in without
+// following the link, which is its fallback without scripting: the Place
+// cell's Cancel goes back to the listing, which draws the cell closed. The
+// form inside is put back as it was drawn.
+document.addEventListener("click", (e) => {
+  const link = (e.target as Element | null)?.closest?.("[data-close-details]");
+  if (!link) return;
+  const details = link.closest("details");
+  if (details === null) return;
+  e.preventDefault();
+  details.querySelector("form")?.reset();
+  details.open = false;
+});

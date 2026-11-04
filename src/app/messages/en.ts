@@ -130,6 +130,8 @@ export const en = {
   combobox: {
     /** The list is open and nothing matches what is typed. */
     noMatches: "Nothing matches.",
+    /** The chevron at the right of the box, for a screen reader. */
+    toggle: "Show choices",
   },
 
   /**
@@ -621,17 +623,16 @@ export const en = {
        */
       placeEdit: {
         /** The pencil, for a screen reader: it has no visible words. */
-        open: (sample: string) => `Change the locality of sample ${sample}`,
-        label: "Locality",
+        open: (sample: string) => `Change the place of sample ${sample}`,
+        /** The box's label, read aloud only: the column heading says it on screen. */
+        label: "Place",
         /** Beside each choice in the box: where the name came from. */
-        noteInaturalist: "iNaturalist's",
-        noteSuggested: "suggested from the coordinates",
+        noteInaturalist: "from iNaturalist",
+        noteSuggested: "suggested",
         noteAlternative: "also suggested",
-        /** The sample's locality where it is none of the above: keeping it changes nothing. */
-        noteCurrent: "as it is",
-        /** Under the box, for staff, who may write any name. */
-        hintStaff: "Choose a name, or write one in. Empty follows iNaturalist again.",
+        noteCurrent: "current",
         save: "Save",
+        cancel: "Cancel",
         /** A collector wrote a name that is not one of the choices. */
         onlyOffered: "Choose one of the names offered. To use another, change the place on iNaturalist.",
       },

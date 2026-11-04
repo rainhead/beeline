@@ -577,14 +577,26 @@ th details.col-menu > .menu-panel {
 .place-edit > summary:hover, .place-edit[open] > summary { background: var(--md-sys-color-secondary-container); }
 td:has(> .place-edit[open]) > .place-text { display: none; }
 .place-edit[open] { display: block; margin-left: 0; }
-.place-edit-form { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); margin-top: var(--space-1); min-width: 12rem; }
-.place-edit-form select, .place-edit-form input[type="text"] { width: 100%; }
+.place-edit[open] > summary { display: none; }
+.place-edit-form { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); min-width: 14rem; }
+.place-edit-form .field { margin: 0; }
+.place-edit-actions { display: flex; align-items: center; gap: var(--space-3); }
 
 /* The combobox (src/app/islands/combobox.ts, beeline-wn2): a text box with
    its list of choices under it, over whatever follows. The fallback the
    server draws is a plain input with a <datalist>, styled as any input. */
 .combobox { position: relative; }
 .combobox > input { width: 100%; box-sizing: border-box; }
+/* The chevron at the right of a fixed list's box, which opens and closes
+   the list; the box leaves it room. A search has none: there is nothing to
+   show until something is typed. */
+.combobox:has(> .combobox-toggle) > input { padding-right: 2rem; }
+.combobox-toggle {
+  position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem;
+  padding: 0; border: none; background: none; cursor: pointer; color: var(--md-sys-color-on-surface-variant);
+}
+.combobox-toggle:hover { color: var(--md-sys-color-on-surface); }
 .combobox-panel {
   position: absolute; z-index: 20; top: calc(100% + 2px); left: 0; min-width: 100%; width: max-content; max-width: 32rem;
   background: var(--md-sys-color-surface); border: 1px solid var(--md-sys-color-outline);

@@ -114,6 +114,9 @@ function PlaceEdit({ m, row, admin, back }: { m: Messages; row: SampleRow; admin
   );
   add(row.locality, t.noteCurrent);
   const id = `place-${row.sample_id}`;
+  // Editing shows only the box and its two buttons: the pencil gives way
+  // (components.css), and Cancel is a link back to the listing, which closes
+  // the editor without scripting and is intercepted to close it in place.
   return (
     <details class="place-edit">
       <summary class="icon-button" aria-label={t.open(row.sample_number)} title={t.open(row.sample_number)}>
@@ -121,18 +124,15 @@ function PlaceEdit({ m, row, admin, back }: { m: Messages; row: SampleRow; admin
       </summary>
       <form method="post" action={`/samples/${row.sample_id}/place`} class="place-edit-form">
         <input type="hidden" name="back" value={back} />
-        <Combobox
-          id={id}
-          name="locality"
-          label={t.label}
-          value={row.locality}
-          choices={choices}
-          free={admin}
-          hint={admin ? t.hintStaff : undefined}
-        />
-        <button type="submit" class="outlined compact-button">
-          {t.save}
-        </button>
+        <Combobox id={id} name="locality" label={t.label} labelHidden value={row.locality} choices={choices} free={admin} />
+        <div class="place-edit-actions">
+          <button type="submit" class="outlined compact-button">
+            {t.save}
+          </button>
+          <a href={back} data-close-details="">
+            {t.cancel}
+          </a>
+        </div>
       </form>
     </details>
   );

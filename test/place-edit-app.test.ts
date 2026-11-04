@@ -109,7 +109,8 @@ describe("the Place cell's editor", () => {
     expect(page).toContain(`<option value="Finley NWR" label="${t.noteSuggested}">`);
     expect(page).toContain(`<option value="Muddy Creek CG" label="${t.noteAlternative}">`);
     expect(page).toContain(`<option value="26208 Finley Refuge Rd" label="${t.noteCurrent}">`);
-    expect(page).toContain(t.hintStaff);
+    // Edit mode is the box, Save, and a Cancel that goes back to the listing.
+    expect(page).toContain(`<a href="/samples?scope=all" data-close-details="">${t.cancel}</a>`);
   });
 
   it("is offered to the collector on their own sample, choices only, and to nobody else", async () => {
@@ -117,7 +118,6 @@ describe("the Place cell's editor", () => {
     const own = await (await appFor("alice").request("/samples?scope=mine")).text();
     expect(own).toContain(pencil(open));
     expect(own).toContain("<beeline-combobox>");
-    expect(own).not.toContain(t.hintStaff);
     const other = await (await appFor("bob").request("/samples?scope=all")).text();
     expect(other).not.toContain(pencil(open));
   });

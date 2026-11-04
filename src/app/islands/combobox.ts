@@ -199,6 +199,30 @@ export class BeelineCombobox extends LitElement {
         @blur=${() => setTimeout(() => (this.open = false), 150)}
         @keydown=${(e: KeyboardEvent) => this.#key(e, shown)}
       />
+      ${this.search === undefined
+        ? html`<button
+            type="button"
+            class="combobox-toggle"
+            tabindex="-1"
+            aria-label=${m.combobox.toggle}
+            aria-controls=${this.#listId}
+            aria-expanded=${showPanel ? "true" : "false"}
+            ?disabled=${this.disabled}
+            @mousedown=${(e: Event) => {
+              // Keep focus in the box, which is where the keys work. Whether
+              // the list was open is read first: focusing the box opens it.
+              e.preventDefault();
+              const wasOpen = this.open;
+              this.querySelector("input")?.focus();
+              if (wasOpen) this.open = false;
+              else this.#openList(filterOptions(this.options, ""));
+            }}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" width="16" height="16" class="icon icon-small" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+            </svg>
+          </button>`
+        : nothing}
       ${showPanel
         ? html`<div class="combobox-panel">
             ${shown.length === 0

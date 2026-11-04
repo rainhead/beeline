@@ -212,7 +212,13 @@ function activeFilters(
     });
   }
   if (query.qc !== "any") {
-    const value = { flagged: f.qcFlagged, blocking: f.qcBlocking, warning: f.qcWarning, clean: f.qcClean }[query.qc];
+    const value = {
+      flagged: f.qcFlagged,
+      blocking: f.qcBlocking,
+      warning: f.qcWarning,
+      clean: f.qcClean,
+      locality: f.qcLocality,
+    }[query.qc];
     out.push({ label: f.qc, value, clearHref: clear({ qc: "any" }) });
   }
   return out;
@@ -567,23 +573,87 @@ function DetSelect({ m, query }: { m: Messages; query: ListingQuery }) {
   );
 }
 
-export function SampleListing(props: ListingProps<SampleRow>) {
-  const { m, query, page, atlases } = props;
+/** The form the samples listing's tick boxes belong to (beeline-7ywr). */
+const LOCALITY_FORM = "locality-bulk";
+
+/**
+ * Giving the ticked samples their suggested locality: the bar under the
+ * table, the samples listing's counterpart of BulkReprint, and read by the
+ * same island. The rows' boxes carry sample ids, and the listing comes back
+ * with `localities` in its query.
+ */
+function BulkLocality({ m, back, owner }: { m: Messages; back: string; owner: string }) {
+  const b = m.listings.samples.bulk;
+  return (
+    <form
+      id={LOCALITY_FORM}
+      method="post"
+      action="/samples/locality"
+      class="card bulk-bar"
+      data-bulk="locality"
+      data-bulk-field="sample"
+      data-bulk-done="localities"
+      data-bulk-owner={owner}
+      data-count-none={b.countNone}
+      data-count-one={b.countOne}
+      data-count-other={b.countOther}
+    >
+      <input type="hidden" name="back" value={back} />
+      <div class="bulk-fields">
+        <strong data-bulk-count=""></strong>
+        <Button>{b.button}</Button>
+        <button type="button" class="outlined" data-bulk-clear="" hidden>
+          {b.clear}
+        </button>
+      </div>
+      <Meta block>{b.hint}</Meta>
+    </form>
+  );
+}
+
+export function SampleListing(
+  props: ListingProps<SampleRow> & {
+    /** What the last bulk action did, read back off its redirect. */
+    localitiesGiven?: { changed: number; of: number } | null;
+    /** Who is signed in, which keys the island's stored ticks. */
+    bulkOwner?: string;
+  },
+) {
+  const { m, query, page, atlases, admin, localitiesGiven = null, bulkOwner = "" } = props;
   const copy = m.listings.samples;
   const f = m.listings.filters;
   const path = "/samples";
   const col = { m, path, query };
+  // The suggested-locality action's mode (query.act, cleared by the route
+  // for anyone but staff), as the specimens listing's reprint mode.
+  const giving = query.act === "locality";
+  const b = copy.bulk;
+  const tickColumn = <input type="checkbox" data-bulk-page="" aria-label={b.tickPage} hidden />;
   return (
     <>
       <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
+      {localitiesGiven !== null && <Callout tone="success">{b.done(localitiesGiven.changed, localitiesGiven.of)}</Callout>}
       <Toolbar copy={copy} path={path} props={props} />
-      <ListingActions m={m} path={path} query={query} total={page.total} />
+      {giving ? (
+        <Callout>
+          <strong>{b.modeHeading}</strong> {b.modeIntro} <a href={listingHref(path, query, { act: "" })}>{b.leave}</a>
+        </Callout>
+      ) : (
+        <ListingActions m={m} path={path} query={query} total={page.total}>
+          {admin && (
+            <LinkButton href={listingHref(path, query, { act: "locality" })} variant="tonal">
+              {b.start}
+            </LinkButton>
+          )}
+        </ListingActions>
+      )}
       {page.rows.length === 0 ? (
         <EmptyState heading={copy.emptyHeading}>{isFiltered(query) ? copy.emptyFiltered : copy.emptyMine}</EmptyState>
       ) : (
         <>
           <DataTable
             columns={[
+              ...(giving ? [tickColumn] : []),
               column({ ...col, label: copy.colSample, sort: "number", kind: "number" }),
               dateColumn({ ...col, label: copy.colDate }),
               collectorsColumn({ ...col, label: copy.colCollectors, atlases }),
@@ -644,6 +714,7 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                       ["blocking", f.qcBlocking],
                       ["warning", f.qcWarning],
                       ["clean", f.qcClean],
+                      ["locality", f.qcLocality],
                     ]}
                   />
                 ),
@@ -655,6 +726,27 @@ export function SampleListing(props: ListingProps<SampleRow>) {
           >
             {page.rows.map((row) => (
               <tr>
+                {giving && (
+                  <td>
+                    {/* The name it would take, beside the box, so ticking is
+                        judging the name; a row that cannot take one says why. */}
+                    {row.locality_blocker === null && row.locality_suggestion !== null ? (
+                      <label>
+                        <input
+                          type="checkbox"
+                          name="sample"
+                          value={String(row.sample_id)}
+                          form={LOCALITY_FORM}
+                          data-bulk-row=""
+                          aria-label={b.tickOne(row.sample_number, row.locality_suggestion)}
+                        />{" "}
+                        <strong>{row.locality_suggestion}</strong>
+                      </label>
+                    ) : (
+                      <Meta>{b.blocker[row.locality_blocker ?? "none"]}</Meta>
+                    )}
+                  </td>
+                )}
                 <td>
                   <Pill href={sampleHref(row.sample_id)}>{row.sample_number}</Pill>
                 </td>
@@ -705,6 +797,7 @@ export function SampleListing(props: ListingProps<SampleRow>) {
           <ListingPager m={m} path={path} query={query} total={page.total} />
         </>
       )}
+      {giving && <BulkLocality m={m} back={listingHref(path, query)} owner={bulkOwner} />}
     </>
   );
 }

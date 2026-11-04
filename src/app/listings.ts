@@ -1,5 +1,6 @@
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import { REPRINT_BLOCKER, type ReprintBlocker } from "../print-run.js";
+import { LOCALITY_BLOCKER, SUGGESTED_LOCALITY, type LocalityBlocker } from "./locality-override.js";
 import { reportError } from "./error-reporting.js";
 import type { CsvTiming } from "./request-timing.js";
 import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
@@ -93,8 +94,8 @@ export const MEMBER_ANY = "";
  * are disjoint. "warning" means warnings *and no blocking finding*, which
  * is the question a person actually asks ("what is only a heads-up?").
  */
-export type QcStatus = "any" | "flagged" | "blocking" | "warning" | "clean";
-export const QC_STATUSES = ["any", "flagged", "blocking", "warning", "clean"] as const;
+export type QcStatus = "any" | "flagged" | "blocking" | "warning" | "clean" | "locality";
+export const QC_STATUSES = ["any", "flagged", "blocking", "warning", "clean", "locality"] as const;
 
 /**
  * Whether a specimen has been determined. A taxon name only ever finds
@@ -116,8 +117,8 @@ export const KIND_FILTERS = ["any", "net", "trap"] as const;
  * is the plain listing. Only staff have one so far, and the route clears it
  * for anyone else.
  */
-export type ListingAction = "" | "reprint";
-export const LISTING_ACTIONS = ["reprint"] as const;
+export type ListingAction = "" | "reprint" | "locality";
+export const LISTING_ACTIONS = ["reprint", "locality"] as const;
 
 /**
  * What a listing is ordered by. Every column that can be sorted names its
@@ -407,6 +408,13 @@ export interface SampleRow {
   warning: number;
   /** Whether the viewer is one of this sample's collectors. */
   mine: boolean;
+  /**
+   * While the suggested-locality action is chosen (query.act), the name
+   * Beeline gives the sample's point, and why the sample cannot take it
+   * (LOCALITY_BLOCKER), or null where it can. Both null otherwise.
+   */
+  locality_suggestion: string | null;
+  locality_blocker: LocalityBlocker | null;
 }
 
 export interface SpecimenRow {
@@ -802,6 +810,15 @@ function qcPredicate(status: QcStatus) {
       return sql<boolean>`${blockingCount} = 0 AND ${warningCount} > 0`;
     case "clean":
       return sql<boolean>`${blockingCount} = 0 AND ${warningCount} = 0`;
+    // A locality that will not do for a label, or none: what staff give a
+    // suggested locality to in bulk (beeline-7ywr). The same two findings
+    // the front page offers a suggestion on.
+    case "locality":
+      return sql<boolean>`EXISTS (
+        SELECT 1 FROM sample_qc_finding lf
+        WHERE lf.sample_id = s.entity_id
+          AND (lf.rule_name = 'locality_format'
+               OR (lf.rule_name = 'missing_required_field' AND lf.details LIKE '%locality%')))`;
     case "any":
       return null;
   }
@@ -963,6 +980,12 @@ export async function listSamples(
         warningCount.as("warning"),
         sql<boolean>`EXISTS (SELECT 1 FROM sample_collector mine
                              WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})`.as("mine"),
+        sql<string | null>`${query.act === "locality" ? sql.raw(SUGGESTED_LOCALITY) : sql`CAST(NULL AS TEXT)`}`.as(
+          "locality_suggestion",
+        ),
+        sql<LocalityBlocker | null>`${query.act === "locality" ? sql.raw(LOCALITY_BLOCKER) : sql`CAST(NULL AS TEXT)`}`.as(
+          "locality_blocker",
+        ),
       ])
       .orderBy(sampleOrder(query, place))
       .orderBy("s.entity_id")

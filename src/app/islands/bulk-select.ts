@@ -14,8 +14,11 @@
  * and the next admin's marking must not carry the last one's ticks under
  * the next one's name. A store that refuses (a private window, blocked site
  * data) leaves the page working as it does without the script. They are
- * cleared when the listing comes back from a marking (`reprinted` in its
- * query), not on submit, so a refused request leaves them for another try.
+ * cleared when the listing comes back from a marking (the parameter the
+ * form names in `data-bulk-done`, `reprinted` on specimens), not on submit,
+ * so a refused request leaves them for another try. The rows' field name is
+ * the form's `data-bulk-field`: `specimen` for reprints, `sample` for
+ * suggested localities (beeline-7ywr).
  */
 
 const form = document.querySelector<HTMLFormElement>("form[data-bulk]");
@@ -40,11 +43,13 @@ if (form !== null) {
 
   // Back from a marking: the ticks it took are done with. The marker is then
   // taken out of the address, so a reload later on keeps ticks made since.
+  const done = form.dataset.bulkDone ?? "reprinted";
+  const fieldName = form.dataset.bulkField ?? "specimen";
   const url = new URL(location.href);
-  let ticked = url.searchParams.has("reprinted") ? new Set<string>() : load();
+  let ticked = url.searchParams.has(done) ? new Set<string>() : load();
   save(ticked);
-  if (url.searchParams.has("reprinted")) {
-    url.searchParams.delete("reprinted");
+  if (url.searchParams.has(done)) {
+    url.searchParams.delete(done);
     url.searchParams.delete("of");
     history.replaceState(history.state, "", url);
   }
@@ -120,7 +125,7 @@ if (form !== null) {
       if (here.has(id)) continue;
       const field = document.createElement("input");
       field.type = "hidden";
-      field.name = "specimen";
+      field.name = fieldName;
       field.value = id;
       field.dataset.bulkCarried = "";
       form.append(field);

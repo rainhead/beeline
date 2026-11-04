@@ -1,5 +1,5 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import {
   applySampleOverlay,
@@ -189,6 +189,39 @@ export async function setStaffCoordinates(
 }
 
 /**
+ * The name Beeline gives the point of the sample `s` (schema/172), or NULL.
+ * As a correlated subquery, so a listing can read it beside its own joins.
+ */
+export const SUGGESTED_LOCALITY = `(SELECT g.locality FROM sample_locality_suggestion_current g WHERE g.sample_id = s.entity_id)`;
+
+/** Why a sample cannot be given its suggested locality in bulk (LOCALITY_BLOCKER). */
+export type LocalityBlocker = "printed" | "printing" | "none" | "same" | "set";
+
+/**
+ * Why staff cannot give the sample `s` its suggested locality from the
+ * listing (beeline-7ywr), or NULL when they can. The one statement of the
+ * rule, read by the listing that offers the tick box and by the route that
+ * acts on it, so a box is offered exactly where ticking would work. The
+ * first that applies wins:
+ *  - printed: its labels are on pins, and say what the locality is;
+ *  - printing: a run that has not printed holds its labels, composed
+ *    already, so the record would disagree with what is about to print;
+ *  - none: nothing in the gazetteer names its point;
+ *  - same: it carries the suggestion already;
+ *  - set: a person set its locality, the collector or staff, and one at a
+ *    time on the sample page is where to overrule them, not in bulk.
+ */
+export const LOCALITY_BLOCKER = `CASE
+  WHEN EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id) THEN 'printed'
+  WHEN EXISTS (SELECT 1 FROM printed_label pl JOIN specimen lsp ON lsp.entity_id = pl.specimen_id
+               JOIN print_run r ON r.entity_id = pl.print_run_id
+               WHERE lsp.sample_id = s.entity_id AND r.canceled_at IS NULL AND r.printed_at IS NULL) THEN 'printing'
+  WHEN ${SUGGESTED_LOCALITY} IS NULL THEN 'none'
+  WHEN s.locality IS NOT DISTINCT FROM ${SUGGESTED_LOCALITY} THEN 'same'
+  WHEN EXISTS (SELECT 1 FROM sample_locality_override o WHERE o.sample_id = s.entity_id) THEN 'set'
+END`;
+
+/**
  * A collector adopting the locality Beeline names from the sample's
  * coordinates (beeline-7i6), in one click: the staff locality write above,
  * credited to the volunteer, with the suggestion as the value. So it lands
@@ -214,4 +247,50 @@ export async function standingLocalityAuthor(sampleOverlayPath: string, inatObse
   const ref = observationRef(inatObservationId);
   const row = (await readSampleOverlay(sampleOverlayPath)).find((r) => r.sample_ref === ref && r.field === "locality");
   return row === undefined || row.value === "" ? null : row.author;
+}
+
+/**
+ * Staff giving many samples their suggested locality at once, from the
+ * samples listing (beeline-7ywr): for each sample LOCALITY_BLOCKER lets
+ * through as it stands now, the same write as one press of "Use this
+ * locality", credited to `author`, with the suggestion read from the store
+ * rather than the form, so a name that changed after the page was drawn is
+ * the one taken. A sample that can no longer take one is left as it is and
+ * counted out. Returns the samples changed, of how many asked for.
+ */
+export async function adoptSuggestedLocalities(
+  deps: StaffLocalityDeps,
+  sampleIds: readonly number[],
+  input: { author: string; reason: (basis: string) => string },
+): Promise<{ changed: number[]; of: number }> {
+  const ids = [...new Set(sampleIds)].filter((id) => Number.isSafeInteger(id) && id > 0);
+  if (ids.length === 0) return { changed: [], of: 0 };
+  const { rows } = await sql<{
+    entity_id: number;
+    inat_observation_id: string | null;
+    locality: string | null;
+    suggestion: string;
+    basis: string;
+  }>`SELECT s.entity_id, CAST(s.inat_observation_id AS TEXT) AS inat_observation_id, s.locality,
+            g.locality AS suggestion, g.basis
+     FROM sample s
+     JOIN sample_locality_suggestion_current g ON g.sample_id = s.entity_id
+     WHERE CAST(s.entity_id AS TEXT) IN (SELECT unnest(string_split(${ids.join(",")}, ',')))
+       AND (${sql.raw(LOCALITY_BLOCKER)}) IS NULL
+     ORDER BY s.entity_id`.execute(deps.db);
+  const changed: number[] = [];
+  for (const r of rows) {
+    const target = {
+      entity_id: Number(r.entity_id),
+      inat_observation_id: r.inat_observation_id === null ? null : BigInt(r.inat_observation_id),
+      locality: r.locality,
+    };
+    const result = await adoptSuggestedLocality(deps, target, {
+      suggestion: r.suggestion,
+      reason: input.reason(r.basis),
+      author: input.author,
+    });
+    if (result.outcome === "saved") changed.push(Number(r.entity_id));
+  }
+  return { changed, of: ids.length };
 }

@@ -44,6 +44,14 @@ import { Field } from "./field.js";
  */
 export interface ComboboxChoice {
   value: string;
+  /**
+   * Shown in the list in place of the value, which is still what fills the
+   * box and is submitted: a locality offered as "Finley NWR, BentonCo, OR",
+   * as the Place column writes it, that saves as "Finley NWR". The list
+   * matches typing against both. Without scripting the browser's own list
+   * shows the value.
+   */
+  label?: string;
   note?: string;
 }
 
@@ -77,7 +85,7 @@ export function Combobox({
         <input id={id} name={name} type="text" value={value ?? ""} list={listId} autocomplete="off" placeholder={placeholder} />
         <datalist id={listId}>
           {choices.map((c) => (
-            <option value={c.value} label={c.note} />
+            <option value={c.value} label={c.note} data-label={c.label} />
           ))}
         </datalist>
       </beeline-combobox>

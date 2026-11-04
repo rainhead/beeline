@@ -119,7 +119,11 @@ export class BeelineCombobox extends LitElement {
         this.placeholder ||= input.placeholder;
         const list = this.querySelector<HTMLDataListElement>(":scope datalist");
         if (list !== null && this.options.length === 0) {
-          this.options = Array.from(list.options, (o) => ({ value: o.value, ...(o.label && o.label !== o.value ? { note: o.label } : {}) }));
+          this.options = Array.from(list.options, (o) => ({
+            value: o.value,
+            ...(o.dataset.label ? { label: o.dataset.label } : {}),
+            ...(o.label && o.label !== o.value ? { note: o.label } : {}),
+          }));
         }
         this.replaceChildren();
       }

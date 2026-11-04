@@ -7,4 +7,5 @@ import "./demo-counter.js";
 import "./menus.js";
 import "./carousel.js";
 import "./bulk-select.js";
+import "./combobox.js";
 import "./determine/grid.js";

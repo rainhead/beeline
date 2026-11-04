@@ -8,6 +8,7 @@ declare module "hono/jsx" {
     interface IntrinsicElements {
       "demo-counter": { class?: string };
       "determine-grid": Record<string, never>;
+      "beeline-combobox": { free?: string; class?: string; children?: unknown };
     }
   }
 }

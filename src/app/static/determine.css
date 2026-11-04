@@ -12,18 +12,8 @@ determine-grid button[disabled] { opacity: 0.45; cursor: not-allowed; }
 .determine-rank { font: var(--md-sys-typescale-label); color: var(--md-sys-color-on-surface-variant); margin-left: var(--space-1); }
 
 /* The name picker */
-.determine-picker { position: relative; min-width: 16rem; }
-.determine-picker input { width: 100%; box-sizing: border-box; }
-.determine-picker-panel {
-  position: absolute; z-index: 20; top: calc(100% + 2px); left: 0; min-width: 100%; width: max-content; max-width: 32rem;
-  background: var(--md-sys-color-surface); border: 1px solid var(--md-sys-color-outline);
-  border-radius: var(--radius-sm); box-shadow: 0 6px 18px rgb(0 0 0 / 0.15); padding: var(--space-1) 0;
-}
-.determine-picker-panel ul { list-style: none; margin: 0; padding: 0; }
-.determine-picker-panel li { padding: var(--space-1-5) var(--space-3); cursor: pointer; display: flex; gap: var(--space-2); align-items: baseline; }
-.determine-picker-panel li[aria-selected="true"], .determine-picker-panel li:hover { background: var(--md-sys-color-secondary-container); }
-.determine-picker-panel li .meta { margin-left: auto; padding-left: var(--space-4); }
-.determine-picker-panel > .meta { padding: var(--space-2) var(--space-3); margin: 0; }
+.determine-picker { min-width: 16rem; }
+/* The list under it is the combobox's (components.css). */
 .determine-bycatch { display: flex; gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); border-top: 1px solid var(--md-sys-color-outline-variant); font: var(--md-sys-typescale-label); }
 
 /* Sex: one segmented control, a click sets it and a click on the choice set clears it */

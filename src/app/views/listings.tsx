@@ -21,7 +21,7 @@ import {
   type SpecimenRow,
 } from "../listings.js";
 import { sampleHref, specimenHref } from "../record.js";
-import { ChevronDownIcon } from "./icons.js";
+import { ChevronDownIcon, PencilIcon } from "./icons.js";
 import type { Messages } from "../messages/index.js";
 import {
   Absent,
@@ -44,6 +44,8 @@ import {
   TextField,
   type FilterPill,
   type TableColumn,
+  Combobox,
+  type ComboboxChoice,
 } from "./components/index.js";
 
 /**
@@ -75,6 +77,64 @@ function PlaceCell({ m, row }: { m: Messages; row: SampleRow | SpecimenRow }) {
     <>
       {place} · <Meta>{m.listings.locationHidden}</Meta>
     </>
+  );
+}
+
+/**
+ * The Place cell of a sample whose locality the reader may change
+ * (beeline-7ywr, Peter 2026-11-04): the place as usual, and a pencil that
+ * opens, in the cell, a choice of iNaturalist's own locality, the names
+ * suggested from the coordinates, and for staff a box to write one in. A
+ * <details>, so it opens without scripting, and the place text gives way to
+ * the form while it is open (components.css). Posts to
+ * /samples/:id/place, which makes the same writes as the sample page.
+ *
+ * Offered on a sample whose labels have not printed, to staff, and to its
+ * collector where they have something to choose from and nobody else's
+ * locality stands on it, as on the sample page.
+ */
+export function placeEditable(row: SampleRow, admin: boolean): boolean {
+  if (row.printed || row.location_withheld) return false;
+  if (admin) return true;
+  return row.mine && !row.locality_set_by_other && (row.locality_choices !== null || row.inat_observation_id !== null);
+}
+
+function PlaceEdit({ m, row, admin, back }: { m: Messages; row: SampleRow; admin: boolean; back: string }) {
+  const t = m.listings.samples.placeEdit;
+  const linked = row.inat_observation_id !== null;
+  // iNaturalist's own name first, then Beeline's, best first, then what the
+  // sample holds if it is none of those: one name, one choice.
+  const choices: ComboboxChoice[] = [];
+  const add = (value: string | null, note: string) => {
+    if (value !== null && value !== "" && !choices.some((c) => c.value === value)) choices.push({ value, note });
+  };
+  if (linked) add(row.observed_locality, t.noteInaturalist);
+  (row.locality_choices === null ? [] : row.locality_choices.split("\n")).forEach((name, i) =>
+    add(name, i === 0 ? t.noteSuggested : t.noteAlternative),
+  );
+  add(row.locality, t.noteCurrent);
+  const id = `place-${row.sample_id}`;
+  // Editing shows only the box and its two buttons: the pencil gives way
+  // (components.css), and Cancel is a link back to the listing, which closes
+  // the editor without scripting and is intercepted to close it in place.
+  return (
+    <details class="place-edit">
+      <summary class="icon-button" aria-label={t.open(row.sample_number)} title={t.open(row.sample_number)}>
+        <PencilIcon />
+      </summary>
+      <form method="post" action={`/samples/${row.sample_id}/place`} class="place-edit-form">
+        <input type="hidden" name="back" value={back} />
+        <Combobox id={id} name="locality" label={t.label} labelHidden value={row.locality} choices={choices} free={admin} />
+        <div class="row">
+          <button type="submit" class="outlined compact-button">
+            {t.save}
+          </button>
+          <a href={back} data-close-details="">
+            {t.cancel}
+          </a>
+        </div>
+      </form>
+    </details>
   );
 }
 
@@ -212,7 +272,13 @@ function activeFilters(
     });
   }
   if (query.qc !== "any") {
-    const value = { flagged: f.qcFlagged, blocking: f.qcBlocking, warning: f.qcWarning, clean: f.qcClean }[query.qc];
+    const value = {
+      flagged: f.qcFlagged,
+      blocking: f.qcBlocking,
+      warning: f.qcWarning,
+      clean: f.qcClean,
+      locality: f.qcLocality,
+    }[query.qc];
     out.push({ label: f.qc, value, clearHref: clear({ qc: "any" }) });
   }
   return out;
@@ -568,7 +634,7 @@ function DetSelect({ m, query }: { m: Messages; query: ListingQuery }) {
 }
 
 export function SampleListing(props: ListingProps<SampleRow>) {
-  const { m, query, page, atlases } = props;
+  const { m, query, page, atlases, admin } = props;
   const copy = m.listings.samples;
   const f = m.listings.filters;
   const path = "/samples";
@@ -644,6 +710,7 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                       ["blocking", f.qcBlocking],
                       ["warning", f.qcWarning],
                       ["clean", f.qcClean],
+                      ["locality", f.qcLocality],
                     ]}
                   />
                 ),
@@ -663,7 +730,10 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                     collector is whose name will be printed (/design/names). */}
                 <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
                 <td>
-                  <PlaceCell m={m} row={row} />
+                  <span class="place-text">
+                    <PlaceCell m={m} row={row} />
+                  </span>
+                  {placeEditable(row, admin) && <PlaceEdit m={m} row={row} admin={admin} back={listingHref(path, query)} />}
                 </td>
                 <td>
                   {row.host_name === null ? (

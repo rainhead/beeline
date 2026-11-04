@@ -14,6 +14,7 @@ import {
   LinkButton,
   Pager,
   CheckboxField,
+  Combobox,
   SelectField,
   Meta,
   PhotoCarousel,
@@ -184,6 +185,14 @@ export function DesignComponents({ m }: { m: Messages }) {
         Variant is about weight on the page, not about what the action does. A screen has at most one filled button.
         Navigations stay real links so they can be middle-clicked and copied.
       </p>
+      <p>
+        A form's actions go after its fields, left-aligned with them, in a <code>row</code>: the main action first, then
+        anything secondary with less weight, an outlined button or a plain link (Cancel is a link back to where the person
+        came from). Someone finishing the last field is already looking down that left edge, so the button is where
+        their eye is; this is also what the GOV.UK Design System and form-usability research recommend. Right-aligned
+        actions are a dialog convention, marking the end of a boxed task, and a form on a page or an editor in a table
+        cell is not a dialog.
+      </p>
       <Specimen>
         <p class="row">
           {BUTTON_VARIANTS.map((variant) => (
@@ -294,6 +303,64 @@ export function DesignComponents({ m }: { m: Messages }) {
           />
         </div>
       </Specimen>
+
+      <h2>Combobox</h2>
+      <p>
+        One text box with a list of known values under it, for any field that has values worth offering: a locality
+        suggested from the coordinates, a person, a taxon. It replaces a <code>&lt;select&gt;</code> beside a text box,
+        and a bare text box someone has to guess into. Each choice is a value, which fills the box and is what the form
+        submits, and may carry a note in secondary text saying where it came from. A <em>free</em> combobox lets any
+        text stand; without it only a choice will do, and the route refuses anything else.
+      </p>
+      <p>
+        Focusing the box opens the list, and so does the chevron at its right, which shows every choice whatever is
+        typed. Typing narrows it to the choices every typed word begins a word of; an empty
+        box, or one holding a choice exactly, shows them all. Down and Up move the highlight, Enter takes it (and with
+        nothing highlighted submits free text as typed), Escape closes the list and a second Escape puts back what the
+        box held, and Tab moves on without choosing. Focus never leaves the box. Without scripting it is the same box
+        with a native <code>&lt;datalist&gt;</code>, submitting the same field. A list too long to send with the page,
+        such as the taxonomy, is searched instead, through the island's <code>search</code>, which is how the taxon
+        picker on Identify specimens is built.
+      </p>
+      <Specimen>
+        <div class="form-column">
+          <Combobox
+            id="demo-combobox-free"
+            name="locality"
+            label="Locality (free: staff may write one in)"
+            value="26208 Finley Refuge Rd"
+            choices={[
+              { value: "Finley NWR", note: "suggested from the coordinates" },
+              { value: "Muddy Creek CG", note: "also suggested" },
+              { value: "26208 Finley Refuge Rd", note: "as it is" },
+            ]}
+            free
+            hint="Choose a name, or write one in."
+          />
+          <Combobox
+            id="demo-combobox-closed"
+            name="locality-closed"
+            label="Locality (choices only)"
+            value=""
+            choices={[
+              { value: "Finley NWR", note: "suggested from the coordinates" },
+              { value: "Muddy Creek CG", note: "also suggested" },
+            ]}
+          />
+        </div>
+      </Specimen>
+      <DoDont
+        dos={[
+          "Offer the values the page already knows, each with a note saying where it came from.",
+          "Submit the text, and let the route decide what the text means.",
+          "Make it free only where the reader may write any value, and enforce that on the server too.",
+        ]}
+        donts={[
+          "Don't put a write-in box beside a combobox: free text is the combobox's own.",
+          "Don't use it for a few fixed codes nobody would type, such as a status: that is a select.",
+          "Don't send a long list with the page: search it through the island instead.",
+        ]}
+      />
 
       <h2>Filters and paging</h2>
       <p>

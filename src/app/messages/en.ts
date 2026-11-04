@@ -126,6 +126,14 @@ export const en = {
   /** Locale-aware value formatters, for views composing values into markup. */
   format: { date, datePrecise, day, dateTime, dateRange, number: n, list, place },
 
+  /** The combobox's own words (src/app/islands/combobox.ts, beeline-wn2). */
+  combobox: {
+    /** The list is open and nothing matches what is typed. */
+    noMatches: "Nothing matches.",
+    /** The chevron at the right of the box, for a screen reader. */
+    toggle: "Show choices",
+  },
+
   /**
    * A locality named from the sample's coordinates (beeline-7i6), offered on
    * the sample page and on the front page's locality flags. One click makes
@@ -607,6 +615,27 @@ export const en = {
       colLinks: "Links",
       viewOnInat: "View on iNaturalist",
       edit: "Edit",
+      /**
+       * Changing a sample's locality from its Place cell (beeline-7ywr): a
+       * pencil that opens a choice of the observation's own locality and the
+       * names suggested from the coordinates, and for staff a box to write
+       * one in. The same writes as the sample page's.
+       */
+      placeEdit: {
+        /** The pencil, for a screen reader: it has no visible words. */
+        open: (sample: string) => `Change the place of sample ${sample}`,
+        /** The box's label, read aloud only: the column heading says it on screen. */
+        label: "Place",
+        /** Beside each choice in the box: where the name came from. */
+        noteInaturalist: "from iNaturalist",
+        noteSuggested: "suggested",
+        noteAlternative: "also suggested",
+        noteCurrent: "current",
+        save: "Save",
+        cancel: "Cancel",
+        /** A collector wrote a name that is not one of the choices. */
+        onlyOffered: "Choose one of the names offered. To use another, change the place on iNaturalist.",
+      },
     },
 
     specimens: {
@@ -737,6 +766,8 @@ export const en = {
       qcBlocking: "Blocks printing",
       qcWarning: "Heads-up only",
       qcClean: "Clean",
+      /** A locality flag, or no locality at all: what a suggested locality fixes (beeline-7ywr). */
+      qcLocality: "Locality missing or unusable",
       apply: "Apply",
       clear: "Clear all",
       /** Read aloud over the row of pills: the filters in force. */

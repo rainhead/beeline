@@ -7,6 +7,7 @@
 
 import type { TaxonQualifier } from "../views/components/taxon.js";
 import type { LocalityBasis } from "../../locality-rule.js";
+import { OLD_BEELINE_ORIGIN } from "../old-beeline.js";
 
 /** An outside data source the site footer credits, with the licence or terms it asks credit under, where it names some. */
 export interface CreditedSource {
@@ -2281,15 +2282,6 @@ export const en = {
   } as Record<string, string>,
 
   /**
-   * The glossary (/glossary). Volunteers meet a lot of vocabulary here that
-   * nobody explained to them — some of it ours, some of it nomenclature.
-   * Keys are the anchor slugs, so renaming one breaks a link: a test pins
-   * every `Term` usage against these keys.
-   *
-   * Order is display order. Written to be read by someone who has collected
-   * bees for a season and never used this software.
-   */
-  /**
    * The process, step by step, for a volunteer who has never seen Beeline
    * (beeline-kgwd; Peter, 2026-11-03, cutover day): what happens and when, and
    * what each step needs from them. Every sentence is a fact about how the
@@ -2309,7 +2301,7 @@ export const en = {
         body: [
           "A ",
           { href: "/glossary#sample", label: "sample" },
-          " is one act of collecting: one place, one day, one flower (or none). For each one, make an ",
+          " is one act of collecting: one place, one day, one kind of plant (or none). For each one, make an ",
           { href: "/glossary#observation", label: "observation" },
           " in your atlas's project, of the plant you collected from, or a blank observation if the bees came off no flower. Give it the sample number (1, 2, 3… restarting each day) and the number of specimens. The observation's date and location become the sample's.",
         ],
@@ -2325,17 +2317,19 @@ export const en = {
       {
         heading: "Your front page lists what needs attention.",
         body: [
-          "Beeline checks each sample before it can be labelled, and lists the ones that need something: a missing sample number or count, a number used twice on one day, a place name that won't fit on a label, coordinates that are uncertain or far from your atlas, an observation that no longer exists. Most fixes are made on iNaturalist; a place name can be fixed in one click here. A sample with an open ",
+          "Beeline checks each sample before it can be labelled, and lists the ones that need something, such as a missing sample number or count, a number used twice on one day, a place name that won't fit on a label, coordinates that are uncertain, outside North America, or hidden by iNaturalist so that Beeline cannot read them, a host that is not a plant, or an observation that no longer exists. Most fixes are made on iNaturalist; a place name can often be fixed in one click here. A sample with a ",
           { href: "/glossary#flag", label: "flag" },
+          " that ",
+          { href: "/glossary#blocks-printing", label: "blocks printing" },
           " is not printed until it's fixed, so this is the step that matters most.",
         ],
       },
       {
         heading: "Staff prepare a print run.",
         body: [
-          "When your atlas's staff decide to print, every sample that is ready goes in. That is the moment your specimens get their field numbers; the ",
+          "When staff prepare a print run, every sample that is ready goes in. That is the moment your specimens get their field numbers; the ",
           { href: "/glossary#label", label: "labels" },
-          " are printed and mailed to you. From then on, the date, place and coordinates on a label are fixed: a later edit on iNaturalist no longer changes them, so check your observations before the run, not after.",
+          " are printed and mailed to you. From then on, the place, the coordinates, the sample number and the count are fixed: a later edit on iNaturalist no longer changes them, so check your observations before the run, not after. A sample's date is taken once and never changed from iNaturalist; a wrong date is fixed by telling staff.",
         ],
       },
       {
@@ -2354,7 +2348,7 @@ export const en = {
           " and enter what you can for each one, as far as you are certain, such as genus or family. Changes save as you go and can be undone until 1am; after that they are kept as your ",
           { href: "/glossary#determination", label: "determination" },
           ". If you prefer the old Beeline's screens, they stay available at ",
-          { href: "https://old.melittologist.org", label: "old.melittologist.org" },
+          { href: OLD_BEELINE_ORIGIN, label: "old.melittologist.org" },
           " through February 2027.",
         ],
       },
@@ -2367,17 +2361,26 @@ export const en = {
     ],
     whenHeading: "When things happen",
     when: [
+      ["Every day, 1am Pacific: the identifications you entered since the last 1am are recorded as your determinations."],
       ["Every day, 2am Pacific: Beeline reads iNaturalist."],
-      ["Every day, 1am Pacific: the identifications you entered the day before become permanent."],
       [
         "1 March: the previous year's ",
         { href: "/glossary#season", label: "season" },
-        " settles. Nothing more is printed from it, though its records stay editable.",
+        " settles. No new labels are printed from it, though its records stay editable.",
       ],
-      ["Print runs happen when your atlas's staff prepare them, not on a schedule."],
+      ["Print runs happen when staff prepare them, not on a schedule."],
     ],
   },
 
+  /**
+   * The glossary (/glossary). Volunteers meet a lot of vocabulary here that
+   * nobody explained to them — some of it ours, some of it nomenclature.
+   * Keys are the anchor slugs, so renaming one breaks a link: a test pins
+   * every `Term` usage against these keys.
+   *
+   * Order is display order. Written to be read by someone who has collected
+   * bees for a season and never used this software.
+   */
   glossary: {
     title: "Glossary",
     heading: "Glossary",

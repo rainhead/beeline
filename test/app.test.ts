@@ -6,6 +6,7 @@ import { noSession } from "../src/app/session.js";
 import { createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 import { DESIGN_SECTIONS } from "../src/app/views/design/shell.js";
 import { en } from "../src/app/messages/en.js";
+import { OLD_BEELINE_ORIGIN } from "../src/app/old-beeline.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "https://inat.example/authorize",
@@ -322,9 +323,11 @@ describe("app scaffold", () => {
         expect(Object.keys(en.glossary.entries), href).toContain(href.slice("/glossary#".length));
       } else if (href.startsWith("/")) {
         const linked = await app.request(href);
-        expect(linked.status, href).toBeLessThan(400);
+        expect(linked.status, href).toBe(200);
       }
     }
+    // The one address off the site comes from the module that owns it.
+    expect(hrefs.filter((h) => !h.startsWith("/"))).toEqual([OLD_BEELINE_ORIGIN]);
     const front = await (await app.request("/")).text();
     expect(front).toContain(`href="/how-it-works"`);
     expect(front).toContain(en.qc.howItWorksLink);

@@ -470,7 +470,11 @@ export function QcHome(props: {
     <>
       <PageHeader
         title={m.qc.heading}
-        lede={m.qc.lede}
+        lede={
+          <>
+            {m.qc.lede} <a href="/how-it-works">{m.qc.howItWorksLink}</a>
+          </>
+        }
         mark={props.atlas ? <AtlasMark code={props.atlas.code} name={props.atlas.name} /> : undefined}
       />
       {props.check?.notice !== undefined && (

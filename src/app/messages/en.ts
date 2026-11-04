@@ -7,6 +7,7 @@
 
 import type { TaxonQualifier } from "../views/components/taxon.js";
 import type { LocalityBasis } from "../../locality-rule.js";
+import { OLD_BEELINE_ORIGIN } from "../old-beeline.js";
 
 /** An outside data source the site footer credits, with the licence or terms it asks credit under, where it names some. */
 export interface CreditedSource {
@@ -264,6 +265,7 @@ export const en = {
       samples: "Samples",
       specimens: "Specimens",
       glossary: "Glossary",
+      howItWorks: "How Beeline works",
       people: "People",
       design: "Design",
       jobs: "Jobs",
@@ -398,6 +400,8 @@ export const en = {
       "specimens receive labels, and expert determinations are recorded back to the sample. " +
       "This page shows your samples from this season that need attention or are waiting on labels, " +
       "as well as samples from last season until 1 March.",
+    /** After the lede: the whole process, for someone who has just arrived (beeline-kgwd). */
+    howItWorksLink: "How Beeline works, step by step.",
     /** Positional so the proofing page can call it with placeholders (messages-proof.tsx). */
     summary: (flagged: number, blocking: number, waiting: number, placeholders: number, unnumbered = 0) => {
       const parts: string[] = [];
@@ -2276,6 +2280,97 @@ export const en = {
     staff_hold:
       "Staff are holding this sample back from printing. Their note says why. If it asks you to change something, change it; staff will review and lift the hold.",
   } as Record<string, string>,
+
+  /**
+   * The process, step by step, for a volunteer who has never seen Beeline
+   * (beeline-kgwd; Peter, 2026-11-03, cutover day): what happens and when, and
+   * what each step needs from them. Every sentence is a fact about how the
+   * system runs today, and nothing promises a timing it does not keep: print
+   * runs are staff's decision, not a schedule. A body is text with links in
+   * it, so each technical word is glossed where it first appears, as the
+   * voice page asks. The order is the specimen's own: field, overnight read,
+   * front page, print run, pinning, identifying, handing in.
+   */
+  howItWorks: {
+    title: "How Beeline works",
+    heading: "How Beeline works",
+    lede: "Beeline turns your collecting into labelled, identified specimens. Here is what happens at each step, and what it needs from you.",
+    steps: [
+      {
+        heading: "In the field: record each sample on iNaturalist.",
+        body: [
+          "A ",
+          { href: "/glossary#sample", label: "sample" },
+          " is one act of collecting: one place, one day, one kind of plant (or none). For each one, make an ",
+          { href: "/glossary#observation", label: "observation" },
+          " in your atlas's project, of the plant you collected from, or a blank observation if the bees came off no flower. Give it the sample number (1, 2, 3… restarting each day) and the number of specimens. The observation's date and location become the sample's.",
+        ],
+      },
+      {
+        heading: "Every morning at 2am Pacific, Beeline reads your observations.",
+        body: [
+          "Nothing to do. A new or changed observation shows up here the next day, or straight away if you press “Check iNaturalist now” on ",
+          { href: "/", label: "your front page" },
+          ".",
+        ],
+      },
+      {
+        heading: "Your front page lists what needs attention.",
+        body: [
+          "Beeline checks each sample before it can be labelled, and lists the ones that need something, such as a missing sample number or count, a number used twice on one day, a place name that won't fit on a label, coordinates that are uncertain, outside North America, or hidden by iNaturalist so that Beeline cannot read them, a host that is not a plant, or an observation that no longer exists. Most fixes are made on iNaturalist; a place name can often be fixed in one click here. A sample with a ",
+          { href: "/glossary#flag", label: "flag" },
+          " that ",
+          { href: "/glossary#blocks-printing", label: "blocks printing" },
+          " is not printed until it's fixed, so this is the step that matters most.",
+        ],
+      },
+      {
+        heading: "Staff prepare a print run.",
+        body: [
+          "When staff prepare a print run, every sample that is ready goes in. That is the moment your specimens get their field numbers; the ",
+          { href: "/glossary#label", label: "labels" },
+          " are printed and mailed to you. From then on, the place, the coordinates, the sample number and the count are fixed: a later edit on iNaturalist no longer changes them, so check your observations before the run, not after. A sample's date is taken once and never changed from iNaturalist; a wrong date is fixed by telling staff.",
+        ],
+      },
+      {
+        heading: "Labels arrive: pin your specimens and attach them.",
+        body: [
+          "Each label carries the field number, your name, the date, the place and the ",
+          { href: "/glossary#specimen", label: "specimen" },
+          "'s number in its sample.",
+        ],
+      },
+      {
+        heading: "Identify your specimens.",
+        body: [
+          "Open ",
+          { href: "/determinations", label: "Identify your specimens" },
+          " and enter what you can for each one, as far as you are certain, such as genus or family. Changes save as you go and can be undone until 1am; after that they are kept as your ",
+          { href: "/glossary#determination", label: "determination" },
+          ". If you prefer the old Beeline's screens, they stay available at ",
+          { href: OLD_BEELINE_ORIGIN, label: "old.melittologist.org" },
+          " through February 2027.",
+        ],
+      },
+      {
+        heading: "Hand in your specimens.",
+        body: [
+          "Your season's specimens go to your atlas's taxonomist or staff, by the Melittologist conference in early March. Expert identifications arrive later, often months or years, in batches, and appear on each specimen's page.",
+        ],
+      },
+    ],
+    whenHeading: "When things happen",
+    when: [
+      ["Every day, 1am Pacific: the identifications you entered since the last 1am are recorded as your determinations."],
+      ["Every day, 2am Pacific: Beeline reads iNaturalist."],
+      [
+        "1 March: the previous year's ",
+        { href: "/glossary#season", label: "season" },
+        " settles. No new labels are printed from it, though its records stay editable.",
+      ],
+      ["Print runs happen when staff prepare them, not on a schedule."],
+    ],
+  },
 
   /**
    * The glossary (/glossary). Volunteers meet a lot of vocabulary here that

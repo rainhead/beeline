@@ -146,6 +146,7 @@ import {
   mayEditTrapSample,
   mayEnterTrapSamples,
   nextSampleNumber,
+  numberTakenProblem,
   updateTrapSample,
   type FieldProblems,
   type TrapSampleForm,
@@ -1112,6 +1113,11 @@ export function createApp({
       return c.html(await trapPage(c, c.get("m").trapSample.newTitle, form, checked.problems, "/trap-samples/new"), 400);
     }
     const id = await createTrapSample(printWriter!, checked.sample, c.get("session").personId);
+    // Somebody else saved this number since the form was checked.
+    if (id === "taken") {
+      const problems = { sample_number: numberTakenProblem(checked.sample.sample_number) };
+      return c.html(await trapPage(c, c.get("m").trapSample.newTitle, form, problems, "/trap-samples/new"), 409);
+    }
     await recordTrapChange(c, id);
     return c.redirect(`/samples/${id}`);
   });
@@ -1142,8 +1148,13 @@ export function createApp({
     if ("problems" in checked) {
       return c.html(await trapPage(c, m.trapSample.editTitle, form, checked.problems, `/samples/${id}/trap`, id), 400);
     }
-    if ((await updateTrapSample(printWriter!, id, checked.sample)) === "printed") {
+    const updated = await updateTrapSample(printWriter!, id, checked.sample);
+    if (updated === "printed") {
       return errorResponse(c, "notFound", { heading: m.trapSample.notEditableHeading, message: m.trapSample.notEditable });
+    }
+    if (updated === "taken") {
+      const problems = { sample_number: numberTakenProblem(checked.sample.sample_number) };
+      return c.html(await trapPage(c, m.trapSample.editTitle, form, problems, `/samples/${id}/trap`, id), 409);
     }
     await recordTrapChange(c, id);
     return c.redirect(`/samples/${id}`);

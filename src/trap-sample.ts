@@ -149,6 +149,25 @@ async function personByName(conn: DuckDBConnection, name: string): Promise<Perso
   return `${matches.length} people are called ${name}; choose one on their page and ask staff to tell them apart`;
 }
 
+/**
+ * Whether another trap sample has this number. Unique among trap samples
+ * only (Peter, 2026-11-04): an OBAS- number is the program's, while a net
+ * sample's number is its collector's for the day, so thousands of net
+ * samples share "3". Asked once to answer the form, and again by the writers
+ * inside the print runs' lock, which every trap write takes, so two saves of
+ * the number the form offered both cannot pass (CodeRabbit).
+ */
+async function numberTaken(conn: DuckDBConnection, sampleNumber: string, sampleId: number | null): Promise<boolean> {
+  const taken = await rows<{ entity_id: number }>(
+    conn,
+    `SELECT entity_id FROM sample WHERE kind = 'trap' AND sample_number = $1 AND entity_id IS DISTINCT FROM $2 LIMIT 1`,
+    [sampleNumber, sampleId],
+  );
+  return taken.length > 0;
+}
+
+export const numberTakenProblem = (sampleNumber: string) => `Trap sample ${sampleNumber} is already in Beeline.`;
+
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 function parseDate(s: string): string | null {
@@ -178,15 +197,7 @@ export async function checkTrapSample(
   const sampleNumber = form.sample_number.trim();
   if (sampleNumber === "") problems.sample_number = "A sample number is needed.";
   else {
-    const taken = await rows<{ entity_id: number }>(
-      conn,
-      // Unique among trap samples only (Peter, 2026-11-04): an OBAS- number
-      // is the program's, while a net sample's number is its collector's for
-      // the day, so thousands of net samples share "3".
-      `SELECT entity_id FROM sample WHERE kind = 'trap' AND sample_number = $1 AND entity_id IS DISTINCT FROM $2 LIMIT 1`,
-      [sampleNumber, sampleId],
-    );
-    if (taken.length > 0) problems.sample_number = `Trap sample ${sampleNumber} is already in Beeline.`;
+    if (await numberTaken(conn, sampleNumber, sampleId)) problems.sample_number = numberTakenProblem(sampleNumber);
   }
 
   const names = form.collectors.map((n) => n.trim()).filter((n) => n !== "");
@@ -289,9 +300,10 @@ async function writeParts(conn: DuckDBConnection, id: number, s: TrapSample, wit
 }
 
 /** Write a new trap sample; its id. Behind the print runs' lock, on the print connection. */
-export function createTrapSample(conn: DuckDBConnection, s: TrapSample, enteredBy: number | null): Promise<number> {
-  return withPrintRunLock(() =>
-    inTransaction(conn, async () => {
+export function createTrapSample(conn: DuckDBConnection, s: TrapSample, enteredBy: number | null): Promise<number | "taken"> {
+  return withPrintRunLock(async () => {
+    if (await numberTaken(conn, s.sample_number, null)) return "taken";
+    return inTransaction(conn, async () => {
       const created = await rows<{ entity_id: number }>(
         conn,
         `INSERT INTO sample (kind, sample_number, date_start, date_end, specimen_count, country, state_province, county, locality, protocol, sampling_effort)
@@ -302,8 +314,8 @@ export function createTrapSample(conn: DuckDBConnection, s: TrapSample, enteredB
       await conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES ($1, $2)`, [id, enteredBy] as never);
       await writeParts(conn, id, s);
       return id;
-    }),
-  );
+    });
+  });
 }
 
 /** A sample entered in Beeline, as its form shows it; null if it is not one. */
@@ -350,10 +362,11 @@ export async function loadTrapSample(conn: DuckDBConnection, id: number): Promis
  * Rewrite an entered sample from its form. Refused once its labels are on
  * paper or frozen into a run, since the run already holds the label text.
  */
-export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSample): Promise<"saved" | "printed"> {
+export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSample): Promise<"saved" | "printed" | "taken"> {
   return withPrintRunLock(async () => {
     const current = await loadTrapSample(conn, id);
     if (current === null || !current.editable) return "printed";
+    if (await numberTaken(conn, s.sample_number, id)) return "taken";
     return inTransaction(conn, async () => {
       // The satellites are replaced rather than updated: none is referenced,
       // and the sample row itself keeps its id (beeline-6e9).

@@ -83,7 +83,7 @@ describe("entering and editing", () => {
   it("writes the sample, its collectors, its point and its atlas, and marks it entered", async () => {
     const checked = await checkTrapSample(conn, form());
     if (!("sample" in checked)) throw new Error("unexpected problems");
-    const id = await createTrapSample(conn, checked.sample, await personId("Dan O'Loughlin"));
+    const id = (await createTrapSample(conn, checked.sample, await personId("Dan O'Loughlin"))) as number;
     expect(await rows(conn, `SELECT kind, sample_number, protocol, sampling_effort, specimen_count FROM sample WHERE entity_id = ${id}`)).toEqual([
       ["trap", "OBAS-20300", "vane trap", "12 vane traps", 0],
     ]);
@@ -93,10 +93,19 @@ describe("entering and editing", () => {
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_primary_collector_invalid`)).toEqual([[0]]);
   });
 
+  it("refuses the second of two saves that were both checked before either was written", async () => {
+    const [a, b] = [await checkTrapSample(conn, form()), await checkTrapSample(conn, form())];
+    if (!("sample" in a) || !("sample" in b)) throw new Error("unexpected problems");
+    const [first, second] = await Promise.all([createTrapSample(conn, a.sample, null), createTrapSample(conn, b.sample, null)]);
+    expect(typeof first).toBe("number");
+    expect(second).toBe("taken");
+    expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample WHERE sample_number = 'OBAS-20300'`)).toEqual([[1]]);
+  });
+
   it("edits it from the same form, collectors and point included", async () => {
     const first = await checkTrapSample(conn, form());
     if (!("sample" in first)) throw new Error("unexpected problems");
-    const id = await createTrapSample(conn, first.sample, null);
+    const id = (await createTrapSample(conn, first.sample, null)) as number;
     const second = await checkTrapSample(
       conn,
       form({ collectors: ["Michael O'Loughlin"], specimen_count: "40", latitude: "42.1", state_province: "WA" }),

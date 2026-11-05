@@ -187,8 +187,10 @@ export async function importTrapRegistry(conn: DuckDBConnection, opts: ImportOpt
   const [person] = await rows<{ person_id: number }>(conn, `SELECT person_id FROM inat_account WHERE login = $1`, [opts.by]);
   if (person === undefined) throw new Error(`--by ${opts.by}: no person signs in with that iNaturalist login`);
   const collectorMap = await readCollectorMap(opts.collectorMap);
-  await conn.run("INSTALL excel; LOAD excel");
-  const source = opts.file.toLowerCase().endsWith(".csv")
+  // The excel extension only for a spreadsheet: installing it may download it.
+  const isCsv = opts.file.toLowerCase().endsWith(".csv");
+  if (!isCsv) await conn.run("INSTALL excel; LOAD excel");
+  const source = isCsv
     ? `read_csv(${sqlString(opts.file)}, header = true, all_varchar = true)`
     : `read_xlsx(${sqlString(opts.file)}, header = true, all_varchar = true, stop_at_empty = false)`;
   const registry = await rows<RegistryRow>(conn, `SELECT * FROM ${source} WHERE sampleID IS NOT NULL AND trim(sampleID) <> ''`);

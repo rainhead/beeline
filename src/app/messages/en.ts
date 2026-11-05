@@ -7,6 +7,7 @@
 
 import type { TaxonQualifier } from "../views/components/taxon.js";
 import type { LocalityBasis } from "../../locality-rule.js";
+import type { OutOfDateField } from "../../model.js";
 import { OLD_BEELINE_ORIGIN } from "../old-beeline.js";
 
 /** An outside data source the site footer credits, with the licence or terms it asks credit under, where it names some. */
@@ -1949,6 +1950,23 @@ export const en = {
         `Staff have held ${count === 1 ? "a sample" : `${n(count)} samples`} in this run back from printing since it was prepared. ` +
         `The run still includes ${count === 1 ? "it" : "them"}. To leave ${count === 1 ? "it" : "them"} out, cancel the run and prepare it again.`,
       heldSample: (collector: string, sampleNumber: string) => `${collector}'s sample ${sampleNumber}`,
+      outOfDate: (count: number) =>
+        `${count === 1 ? "A sample" : `${n(count)} samples`} in this run ${count === 1 ? "has" : "have"} changed since it was prepared, ` +
+        `but ${count === 1 ? "its labels" : "their labels"} still show the values from then. ` +
+        `To print the new values, cancel the run and prepare it again, or print it and reprint ${count === 1 ? "those labels" : "the labels of these samples"}.`,
+      outOfDateSample: (collector: string, sampleNumber: string, labels: number) =>
+        `${collector}'s sample ${sampleNumber} (${n(labels)} ${labels === 1 ? "label" : "labels"})`,
+      outOfDateField: {
+        locality: "locality",
+        county: "county",
+        state_province: "state or province",
+        country: "country",
+        coordinates: "coordinates",
+        elevation: "elevation",
+        dates: "dates",
+      } satisfies Record<OutOfDateField, string>,
+      outOfDateChange: (field: string, onLabel: string | null, now: string | null) =>
+        `${field} ${onLabel ?? "none"} on the labels, ${now ?? "none"} now`,
       labels: "Labels",
       colSheet: "Sheet",
       colCell: "Cell",

@@ -234,3 +234,28 @@ SELECT print_run_id, specimen_id, sample_id, 'dates',
        concat(CAST(now_date_start AS TEXT), ' – ', CAST(now_date_end AS TEXT))
 FROM pair WHERE date_start IS DISTINCT FROM now_date_start OR date_end IS DISTINCT FROM now_date_end;
 COMMENT ON VIEW printed_label_out_of_date IS 'Labels in a run not yet printed (and not canceled) whose sample has changed since the run was prepared: one row per label and changed field (locality, county, state_province, country, coordinates, elevation, dates), with the value on the label and the value now. The run page lists these so the printer can cancel and prepare again, or print and reprint (beeline-fq3j). The collector line is not compared.';
+
+-- How many of each sample's specimens have no label on paper yet
+-- (beeline-3v33), for the listings: "waiting on labels" as a filter, and the
+-- count beside the sample's specimens. Unlike pending_print_sample it does not
+-- ask whether the sample can print, so a sample held back by a flag is here,
+-- which is the question staff ask of it: what still needs labels, and (with
+-- the Flags filter) what is stopping it. A specimen in a run that has not
+-- printed is still waiting. Settled samples are left out, as they are from
+-- printing: nothing from a settled season prints, so none of it is waiting.
+-- Specimens numbered above the count do not count against it, as in
+-- pending_print_sample (qc_rule_count_below_printed names them).
+CREATE VIEW sample_labels_waiting AS
+SELECT s.entity_id AS sample_id,
+       CAST(s.specimen_count - coalesce(paper.n, 0) AS INTEGER) AS waiting
+FROM sample s
+LEFT JOIN (
+  SELECT o.sample_id, count(*) AS n
+  FROM specimen_on_paper o
+  JOIN sample held ON held.entity_id = o.sample_id
+  WHERE o.specimen_number <= held.specimen_count
+  GROUP BY o.sample_id
+) paper ON paper.sample_id = s.entity_id
+WHERE s.specimen_count > coalesce(paper.n, 0)
+  AND NOT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id);
+COMMENT ON VIEW sample_labels_waiting IS 'Samples in an active season with specimens whose labels are not on paper yet, and how many: printable or held back by a flag, and including specimens in a run that has not printed. The listings'' "waiting on labels" filter (beeline-3v33).';

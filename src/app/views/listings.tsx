@@ -652,7 +652,7 @@ function DetSelect({ m, query }: { m: Messages; query: ListingQuery }) {
   );
 }
 
-export function SampleListing(props: ListingProps<SampleRow>) {
+export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSamples?: boolean }) {
   const { m, query, page, atlases, admin } = props;
   const copy = m.listings.samples;
   const f = m.listings.filters;
@@ -661,6 +661,11 @@ export function SampleListing(props: ListingProps<SampleRow>) {
   return (
     <>
       <PageHeader title={copy.heading} lede={lede(copy, query, atlases)} />
+      {props.mayEnterTrapSamples && (
+        <p class="row">
+          <LinkButton href="/trap-samples/new" variant="tonal">{m.trapSample.enterLink}</LinkButton>
+        </p>
+      )}
       <Toolbar copy={copy} path={path} props={props} />
       <ListingActions m={m} path={path} query={query} total={page.total} />
       {page.rows.length === 0 ? (

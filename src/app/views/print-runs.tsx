@@ -225,6 +225,19 @@ export function PrintRun({ m, run, labels }: { m: Messages; run: RunDetail; labe
           </ul>
         </Callout>
       )}
+      {run.outOfDate.length > 0 && (
+        <Callout tone="warning">
+          {r.outOfDate(run.outOfDate.length)}
+          <ul>
+            {run.outOfDate.map((o) => (
+              <li>
+                <a href={`/samples/${o.sample_id}`}>{r.outOfDateSample(o.collector, o.sample_number, o.labels)}</a>:{" "}
+                {o.changes.map((c) => r.outOfDateChange(r.outOfDateField[c.field], c.on_label, c.now)).join("; ")}
+              </li>
+            ))}
+          </ul>
+        </Callout>
+      )}
 
       <Card>
         {/* A canceled run's labels were never printed and never will be:

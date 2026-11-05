@@ -7,6 +7,7 @@
 
 import type { TaxonQualifier } from "../views/components/taxon.js";
 import type { LocalityBasis } from "../../locality-rule.js";
+import type { OutOfDateField } from "../../model.js";
 import { OLD_BEELINE_ORIGIN } from "../old-beeline.js";
 
 /** An outside data source the site footer credits, with the licence or terms it asks credit under, where it names some. */
@@ -827,6 +828,61 @@ export const en = {
         "The CSV holds exactly what these filters select, coordinates and all, in Darwin Core columns, " +
         "less any location hidden here. Where iNaturalist obscures a record, its own columns say so — worth a look before anything is republished.",
     },
+  },
+
+  /** Entering a trap sample, and editing one entered here (beeline-3vs.2). */
+  trapSample: {
+    newTitle: "Enter a trap sample",
+    newHeading: "Enter a trap sample",
+    editTitle: "Edit trap sample",
+    editHeading: (sampleNumber: string) => `Edit trap sample ${sampleNumber}`,
+    intro:
+      "One sample is what one bottle or pooled set of bottles holds, from the day the traps were set to the day they were collected. " +
+      "Its labels print once the specimens are pinned and counted.",
+    notSaved: "Nothing was saved. Correct the fields marked below and save again.",
+    trapCollectorNote: "has trap samples",
+    fields: {
+      sampleNumber: "Sample number",
+      collector: "Collector",
+      otherCollector: (n: number) => `Collector ${n} (optional)`,
+      dateStart: "Traps set",
+      dateEnd: "Traps collected",
+      method: "Kind of trap",
+      trapCount: "Number of traps",
+      specimenCount: "Specimens",
+      latitude: "Latitude",
+      longitude: "Longitude",
+      uncertainty: "Coordinate uncertainty (m)",
+      country: "Country",
+      stateProvince: "State or province",
+      county: "County",
+      locality: "Locality",
+    },
+    hints: {
+      sampleNumber: "The next number in Oregon's series is filled in. Change it for another series or a trap code.",
+      collector: "The first collector's name comes first on the label.",
+      dateStart: "The day the traps went out.",
+      dateEnd: "The day they were brought in. Leave it empty if it was the same day.",
+      method: "Choose one, or write it in.",
+      trapCount: "How many traps went into this sample, if you know.",
+      specimenCount: "Leave at 0 until the bees are pinned and counted: a sample with no specimens prints no labels.",
+      // An example in the hint, never as a placeholder: grey text in an empty box read as a value (Peter, 2026-11-04).
+      latitude: "In decimal degrees, such as 44.5646.",
+      longitude: "In decimal degrees, west negative, such as -123.2620.",
+      uncertainty: "How far the traps could be from this point.",
+      stateProvince: "The two-letter code: OR, WA, BC.",
+      county: "Beeline writes the county from the coordinates each night, so this can be left empty.",
+      locality: "As the label should print it.",
+    },
+    create: "Enter sample",
+    save: "Save changes",
+    cancel: "Cancel",
+    enterLink: "Enter a trap sample",
+    edit: "Edit trap sample",
+    notAllowedHeading: "Trap samples are entered by people who handle them",
+    notAllowed: "Trap samples are entered by staff and by people who have collected trap samples before.",
+    notEditableHeading: "This sample can no longer be changed here",
+    notEditable: "This sample's labels are printed or about to print, so it can no longer be changed here. Ask staff to correct it.",
   },
 
   sampleEdit: {
@@ -1904,6 +1960,23 @@ export const en = {
         `Staff have held ${count === 1 ? "a sample" : `${n(count)} samples`} in this run back from printing since it was prepared. ` +
         `The run still includes ${count === 1 ? "it" : "them"}. To leave ${count === 1 ? "it" : "them"} out, cancel the run and prepare it again.`,
       heldSample: (collector: string, sampleNumber: string) => `${collector}'s sample ${sampleNumber}`,
+      outOfDate: (count: number) =>
+        `${count === 1 ? "A sample" : `${n(count)} samples`} in this run ${count === 1 ? "has" : "have"} changed since it was prepared, ` +
+        `but ${count === 1 ? "its labels" : "their labels"} still show the values from then. ` +
+        `To print the new values, cancel the run and prepare it again, or print it and reprint ${count === 1 ? "those labels" : "the labels of these samples"}.`,
+      outOfDateSample: (collector: string, sampleNumber: string, labels: number) =>
+        `${collector}'s sample ${sampleNumber} (${n(labels)} ${labels === 1 ? "label" : "labels"})`,
+      outOfDateField: {
+        locality: "locality",
+        county: "county",
+        state_province: "state or province",
+        country: "country",
+        coordinates: "coordinates",
+        elevation: "elevation",
+        dates: "dates",
+      } satisfies Record<OutOfDateField, string>,
+      outOfDateChange: (field: string, onLabel: string | null, now: string | null) =>
+        `${field} ${onLabel ?? "none"} on the labels, ${now ?? "none"} now`,
       labels: "Labels",
       colSheet: "Sheet",
       colCell: "Cell",

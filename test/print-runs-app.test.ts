@@ -225,6 +225,31 @@ describe("the print-run screens", () => {
     void birchSample;
   });
 
+  // The first production run (2026-11-04): localities were corrected during
+  // proofing, after the labels were fixed, and the run page said nothing.
+  it("names the samples that changed after the run was prepared, until it prints (beeline-fq3j)", async () => {
+    const { app, conn, post, ashSample } = await printApp();
+    const runPath = (await post("/print-runs", { atlas_id: "" })).headers.get("location")!;
+    const warning = "changed since it was prepared";
+    expect(await (await app.request(runPath)).text()).not.toContain(warning);
+
+    await conn.run(`UPDATE sample SET locality = 'Philomath' WHERE entity_id = ${ashSample}`);
+    await conn.run(`UPDATE sample_location SET elevation_m = 81 WHERE sample_id = ${ashSample}`);
+    let page = await (await app.request(runPath)).text();
+    expect(page).toContain(`A sample in this run has changed since it was prepared`);
+    expect(page).toContain(`<a href="/samples/${ashSample}">Ada Ash&#39;s sample 1 (3 labels)</a>`);
+    expect(page).toContain("elevation 72 on the labels, 81 now");
+    expect(page).toContain("locality Corvallis on the labels, Philomath now");
+
+    await post(`${runPath}/approve`);
+    expect(await (await app.request(runPath)).text()).toContain(warning);
+    // Once printed, the labels are what is on the pins: a later edit is a
+    // reprint's business, not this run's.
+    await post(`${runPath}/printed`);
+    page = await (await app.request(runPath)).text();
+    expect(page).not.toContain(warning);
+  });
+
   it("says when nothing was waiting, and shows a canceled run's leftovers honestly", async () => {
     const { app, conn, post, ashSample } = await printApp();
     const first = await post("/print-runs", { atlas_id: "" });

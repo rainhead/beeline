@@ -94,6 +94,31 @@ export const MEMBER_ANY = "";
  * is the question a person actually asks ("what is only a heads-up?").
  */
 export type QcStatus = "any" | "flagged" | "blocking" | "warning" | "clean" | "locality";
+
+/**
+ * Every QC rule, for the Flags column's "kind of flag" filter (beeline-ik0d).
+ * The schema is the authority (qc_rule, schema/050); a test holds this list
+ * to it, as it holds the message catalog's keys.
+ */
+export const QC_RULE_NAMES = [
+  "missing_required_field",
+  "missing_recommended_field",
+  "obscured_no_true_coordinates",
+  "taxon_obscured_awaiting_atlas",
+  "locality_format",
+  "place_unabbreviated",
+  "place_unrecognised",
+  "coordinate_uncertainty",
+  "coordinate_out_of_region",
+  "non_tracheophyte_host",
+  "duplicate_sample_number",
+  "count_mismatch",
+  "count_below_printed",
+  "within_sample_disagreement",
+  "observation_missing_upstream",
+  "staff_hold",
+] as const;
+export type QcRuleName = (typeof QC_RULE_NAMES)[number];
 export const QC_STATUSES = ["any", "flagged", "blocking", "warning", "clean", "locality"] as const;
 
 /**
@@ -203,6 +228,8 @@ export interface ListingQuery {
   /** Net or trap; on specimens, the kind of the sample each came from. */
   kind: KindFilter;
   qc: QcStatus;
+  /** One kind of flag (a QC rule's name), or "" for any. Samples only. */
+  flag: QcRuleName | "";
   sort: SortKey;
   dir: SortDirection;
   /** 1-based. */
@@ -225,6 +252,7 @@ export const EMPTY_QUERY: ListingQuery = {
   labels: "any",
   kind: "any",
   qc: "any",
+  flag: "",
   sort: DEFAULT_SORT,
   dir: defaultDirection(DEFAULT_SORT),
   page: 1,
@@ -260,6 +288,7 @@ export function parseListingQuery(
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
   const qc = params.get("qc") ?? "";
+  const flag = params.get("flag") ?? "";
   const det = params.get("det") ?? "";
   const labels = params.get("labels") ?? "";
   const kind = params.get("kind") ?? "";
@@ -284,6 +313,7 @@ export function parseListingQuery(
     sort,
     dir: dirParam === "asc" || dirParam === "desc" ? dirParam : defaultDirection(sort),
     qc: (QC_STATUSES as readonly string[]).includes(qc) ? (qc as QcStatus) : "any",
+    flag: (QC_RULE_NAMES as readonly string[]).includes(flag) ? (flag as QcRuleName) : "",
     page: Number.isFinite(page) && page >= 1 ? Math.min(page, 10_000) : 1,
     act: (LISTING_ACTIONS as readonly string[]).includes(act) ? (act as ListingAction) : "",
   };
@@ -324,6 +354,7 @@ export function listingParams(query: ListingQuery, overrides: Partial<ListingQue
   if (merged.labels !== "any") params.set("labels", merged.labels);
   if (merged.kind !== "any") params.set("kind", merged.kind);
   if (merged.qc !== "any") params.set("qc", merged.qc);
+  if (merged.flag !== "") params.set("flag", merged.flag);
   // The sort is in the URL only when it is not the default, and the
   // direction only when it is not the key's own default — so a link that
   // sorts by date newest-first is the plain listing.
@@ -353,7 +384,8 @@ export const isFiltered = (q: ListingQuery) =>
   q.det !== "any" ||
   q.labels !== "any" ||
   q.kind !== "any" ||
-  q.qc !== "any";
+  q.qc !== "any" ||
+  q.flag !== "";
 
 export interface AtlasOption {
   code: string;
@@ -537,6 +569,8 @@ export interface Page<Row> {
   total: number;
   /** sample_id → everyone who collected it, in recordedBy order. */
   collectors: Map<number, ListedCollector[]>;
+  /** sample_id → its flags, for the samples listing's Flags column; absent on specimens. */
+  findings?: Map<number, ListedFlag[]>;
 }
 
 const like = (term: string) => `%${term.toLowerCase()}%`;
@@ -983,6 +1017,12 @@ export async function listSamples(
   }
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
+  if (query.flag !== "") {
+    base = base.where(
+      sql<boolean>`EXISTS (SELECT 1 FROM sample_qc_finding kf
+                           WHERE kf.sample_id = s.entity_id AND kf.rule_name = ${query.flag})`,
+    );
+  }
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1044,11 +1084,49 @@ export async function listSamples(
     opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
   ]);
   const sampleRows = rows as unknown as SampleRow[];
+  const ids = sampleRows.map((r) => r.sample_id);
+  const [collectors, findings] = await Promise.all([collectorsOf(db, ids), findingsOf(db, ids)]);
   return {
     rows: sampleRows,
     total: Number(count?.n ?? 0),
-    collectors: await collectorsOf(db, sampleRows.map((r) => r.sample_id)),
+    collectors,
+    findings,
   };
+}
+
+/**
+ * One kind of flag on a sample, as the Flags column shows it (beeline-ik0d):
+ * the rule, whether it blocks printing, and what its findings say, one entry
+ * per finding (a rule can fire once per specimen).
+ */
+export interface ListedFlag {
+  rule: QcRuleName;
+  severity: "blocking" | "warning";
+  details: string[];
+}
+
+/** sample_id → its flags, blocking ones first, for one page of samples. */
+async function findingsOf(db: Kysely<Database>, sampleIds: number[]): Promise<Map<number, ListedFlag[]>> {
+  const out = new Map<number, ListedFlag[]>();
+  if (sampleIds.length === 0) return out;
+  const result = await sql<{ sample_id: number; rule_name: QcRuleName; severity: "blocking" | "warning"; details: string | null }>`
+    SELECT f.sample_id, f.rule_name, r.severity, f.details
+    FROM sample_qc_finding f
+    JOIN qc_rule r ON r.name = f.rule_name
+    WHERE f.sample_id IN (${sql.join(sampleIds)})
+    ORDER BY f.sample_id, CASE r.severity WHEN 'blocking' THEN 0 ELSE 1 END, f.rule_name, f.details`.execute(db);
+  for (const row of result.rows) {
+    const id = Number(row.sample_id);
+    const flags = out.get(id) ?? [];
+    let flag = flags.find((x) => x.rule === row.rule_name);
+    if (flag === undefined) {
+      flag = { rule: row.rule_name, severity: row.severity, details: [] };
+      flags.push(flag);
+    }
+    if (row.details !== null && row.details !== "") flag.details.push(row.details);
+    out.set(id, flags);
+  }
+  return out;
 }
 
 export async function listSpecimens(

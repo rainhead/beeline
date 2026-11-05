@@ -778,6 +778,9 @@ export const en = {
       qcClean: "Clean",
       /** A locality flag, or no locality at all: what a suggested locality fixes (beeline-7ywr). */
       qcLocality: "Locality missing or unusable",
+      /** One kind of flag, named as its chip is (status.flag). */
+      flagKind: "Kind of flag",
+      flagKindAny: "Any",
       apply: "Apply",
       clear: "Clear all",
       /** Read aloud over the row of pills: the filters in force. */
@@ -811,6 +814,44 @@ export const en = {
       blocking: (count: number) => `${n(count)} ${count === 1 ? "flag blocks" : "flags block"} printing`,
       warning: (count: number) => `${n(count)} ${count === 1 ? "heads-up" : "heads-ups"}`,
       clean: "clean",
+      /**
+       * One chip per kind of flag in the Flags column (beeline-ik0d, Peter
+       * 2026-11-04): the problem in a word or two, the colour for whether it
+       * blocks printing, the rule's explanation on click. Keyed by
+       * qc_rule.name, like qcInstructions; a test holds the keys to the
+       * schema's rules. Two take their words from the finding instead: a
+       * missing field names the field, and a hold uses its reason.
+       */
+      flag: {
+        missing_required_field: "missing field",
+        missing_recommended_field: "no county",
+        obscured_no_true_coordinates: "hidden location",
+        taxon_obscured_awaiting_atlas: "rare host plant",
+        locality_format: "locality",
+        place_unabbreviated: "place abbreviation",
+        place_unrecognised: "unknown state",
+        coordinate_uncertainty: "accuracy",
+        coordinate_out_of_region: "out of region",
+        non_tracheophyte_host: "host plant",
+        duplicate_sample_number: "duplicate number",
+        count_mismatch: "specimen count",
+        count_below_printed: "count below labels",
+        within_sample_disagreement: "identifications differ",
+        observation_missing_upstream: "observation gone",
+        staff_hold: "held by staff",
+      },
+      /** What missing_required_field's details name, in the chip's words. */
+      flagMissing: {
+        location: "no location",
+        country: "no country",
+        state_province: "no state",
+        locality: "no locality",
+        protocol: "no method",
+      } as Record<string, string>,
+      /** For screen readers and the hover text: colour alone cannot say it. */
+      flagSeverity: { blocking: "Blocks printing", warning: "Heads-up" },
+      flagMore: (count: number) => `+${n(count)} more`,
+      flagOpen: (name: string, severity: string) => `${name}: ${severity}. Show what to do`,
     },
 
     paging: {

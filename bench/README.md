@@ -17,7 +17,7 @@ A result file records the kind of machine (never its hostname), DuckDB's thread 
 
 ## Running on the sandbox
 
-The numbers that matter are the sandbox's — two shared vCPUs, DuckDB at two threads and 1 GB ([`fly.toml`](../fly.toml)). The image carries `src/` and `tsx` but not `bench/`, so the files are uploaded to a directory a deploy erases, run beside the live app against a copy of its store, and removed:
+The numbers that matter are the sandbox's — two shared vCPUs, DuckDB at two threads and 1 GB ([`fly.production.toml`](../fly.production.toml)). The image carries `src/` and `tsx` but not `bench/`, so the files are uploaded to a directory a deploy erases, run beside the live app against a copy of its store, and removed:
 
 ```sh
 fly ssh console -C "mkdir -p /app/bench"

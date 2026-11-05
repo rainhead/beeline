@@ -225,7 +225,7 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
 // The process owns the database (ADR 0005): close it before exiting so the
 // WAL flushes; the supervisor restarting us is the normal deploy.
 //
-// The budget is Fly's `kill_timeout` (fly.toml: 120s, and the nightly runs
+// The budget is Fly's `kill_timeout` (fly.production.toml: 120s, and the nightly runs
 // inside the window host maintenance can land in). It is spent in this order,
 // and the order is the point (beeline-fth): stop taking requests, settle the
 // running job, then checkpoint and close. The job comes before the close

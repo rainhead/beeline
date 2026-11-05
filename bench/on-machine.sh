@@ -4,14 +4,14 @@
 #
 #   /app/bench/on-machine.sh pages|contention [flags for the benchmark]
 #
-# The budgets are fly.toml's, restated because `fly ssh console` does not hand
+# The budgets are fly.production.toml's, restated because `fly ssh console` does not hand
 # a command the machine's [env]. That makes this a second process entitled to
 # a gigabyte on a 2 GB machine whose live app is entitled to its own, and the
 # kernel answers an overdraft with a kill — of either process — rather than a
 # spill. So it refuses to start unless the memory is actually there, which on
 # an idle sandbox it is (the app serves at well under 300 MB). Capping this
 # process lower is not the way out: at 512 MB the first promotion of the
-# sandbox's store fails outright, as fly.toml's own note on 384 MB predicts.
+# sandbox's store fails outright, as fly.production.toml's own note on 384 MB predicts.
 set -eu
 which="$1"
 shift

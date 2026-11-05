@@ -145,4 +145,52 @@ describe("entering a trap sample", () => {
     const [[imported]] = (await rows(conn, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00657'`)) as [[number]];
     expect((await as("staffer").app.request(`/samples/${imported}/trap`)).status).toBe(404);
   });
+
+  // beeline-3vs.5: the listing's Edit link and Place pencil used to go to the
+  // correction form for old Beeline records, which an entered sample cannot use.
+  it("lets whoever entered a sample edit it, even once they no longer qualify to enter new ones", async () => {
+    const { as, conn } = await trapApp();
+    const id = Number((await as("trapper").post("/trap-samples/new", entry())).headers.get("location")!.split("/")[2]);
+    // Tess is no longer on any trap sample, this one included; she entered it.
+    await conn.run(`DELETE FROM sample_collector WHERE person_id = (SELECT entity_id FROM person WHERE display_name = 'Tess Trapper') AND sample_id <> ${id}`);
+    const otto = new URLSearchParams(entry());
+    otto.delete("collector");
+    otto.append("collector", "Otto Other");
+    expect((await as("staffer").post(`/samples/${id}/trap`, otto)).status).toBe(302);
+    const tess = as("trapper");
+    expect((await tess.app.request("/trap-samples/new")).status).toBe(404);
+    expect((await tess.app.request(`/samples/${id}/trap`)).status).toBe(200);
+  });
+
+  it("keeps the form's link on an entered sample an observation was later linked to", async () => {
+    const { as, conn } = await trapApp();
+    const staff = as("staffer");
+    const id = Number((await staff.post("/trap-samples/new", entry())).headers.get("location")!.split("/")[2]);
+    await conn.run(`UPDATE sample SET inat_observation_id = 4242 WHERE entity_id = ${id}`);
+    const listing = await (await staff.app.request("/samples?scope=all")).text();
+    expect(listing).toContain("inaturalist.org/observations/4242");
+    expect(listing).toContain(`href="/samples/${id}/trap"`);
+  });
+
+  it("links an entered sample's row to its own form, and changes its place directly", async () => {
+    const { as, conn } = await trapApp();
+    const staff = as("staffer");
+    const id = Number((await staff.post("/trap-samples/new", entry())).headers.get("location")!.split("/")[2]);
+    const listing = await (await staff.app.request("/samples?scope=all")).text();
+    expect(listing).toContain(`href="/samples/${id}/trap"`);
+    expect(listing).not.toContain(`href="/samples/${id}/edit"`);
+    expect(listing).toContain(`action="/samples/${id}/place"`);
+    // A collector writes any name, as on the form.
+    const moved = await as("trapper").post(`/samples/${id}/place`, new URLSearchParams({ locality: "Denio Junction", back: "/samples" }));
+    expect(moved.status).toBe(302);
+    expect(await rows(conn, `SELECT locality FROM sample WHERE entity_id = ${id}`)).toEqual([["Denio Junction"]]);
+    // Blank clears it.
+    await as("trapper").post(`/samples/${id}/place`, new URLSearchParams({ locality: "", back: "/samples" }));
+    expect(await rows(conn, `SELECT locality FROM sample WHERE entity_id = ${id}`)).toEqual([[null]]);
+    await as("trapper").post(`/samples/${id}/place`, new URLSearchParams({ locality: "Denio Junction", back: "/samples" }));
+    // Somebody who is neither staff, its collector nor its enterer cannot.
+    const refused = await as("otherTrapper").post(`/samples/${id}/place`, new URLSearchParams({ locality: "Elsewhere", back: "/samples" }));
+    expect(refused.status).toBe(404);
+    expect(await rows(conn, `SELECT locality FROM sample WHERE entity_id = ${id}`)).toEqual([["Denio Junction"]]);
+  });
 });

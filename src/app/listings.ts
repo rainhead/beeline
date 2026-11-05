@@ -471,6 +471,13 @@ export interface SampleRow {
   locality_choices: string | null;
   observed_locality: string | null;
   locality_set_by_other: boolean;
+  /**
+   * Whether the sample was entered in Beeline (beeline-3vs.2), and whether
+   * the viewer entered it: such a sample is edited on its own form and its
+   * locality written directly, not as a correction to an old Beeline record.
+   */
+  entered: boolean;
+  entered_by_me: boolean;
 }
 
 export interface SpecimenRow {
@@ -1121,6 +1128,10 @@ export async function listSamples(
         sql<boolean>`EXISTS (SELECT 1 FROM sample_locality_override lo
                              WHERE lo.sample_id = s.entity_id AND lo.set_by IS DISTINCT FROM ${personId})`.as(
           "locality_set_by_other",
+        ),
+        sql<boolean>`EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id)`.as("entered"),
+        sql<boolean>`EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id AND e.entered_by = ${personId})`.as(
+          "entered_by_me",
         ),
       ])
       .orderBy(sampleOrder(query, place))

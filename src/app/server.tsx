@@ -147,6 +147,7 @@ import {
   mayEnterTrapSamples,
   nextSampleNumber,
   numberTakenProblem,
+  setTrapSampleLocality,
   updateTrapSample,
   type FieldProblems,
   type TrapSampleForm,
@@ -1048,11 +1049,14 @@ export function createApp({
       locality: one("locality"),
     };
   };
-  const trapGate = async (c: Context<AppEnv>, writing: boolean): Promise<Response | null> => {
+  // Entering a new sample asks whether this person may enter trap samples;
+  // editing one asks only whether they may edit that sample (mayEditTrapSample
+  // in the routes), so an enterer who no longer traps can still fix their own.
+  const trapGate = async (c: Context<AppEnv>, writing: boolean, entering = true): Promise<Response | null> => {
     const m = c.get("m");
     if (writing && c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
     if (conn === undefined || printWriter === undefined) return c.text("This instance cannot enter samples.", 503);
-    if (!(await mayEnterTrapSamples(conn, c.get("acting").personId, c.get("admin")))) {
+    if (entering && !(await mayEnterTrapSamples(conn, c.get("acting").personId, c.get("admin")))) {
       return errorResponse(c, "notFound", { heading: m.trapSample.notAllowedHeading, message: m.trapSample.notAllowed });
     }
     return null;
@@ -1123,7 +1127,7 @@ export function createApp({
   });
 
   app.get("/samples/:id/trap", async (c) => {
-    const refused = await trapGate(c, false);
+    const refused = await trapGate(c, false, false);
     if (refused !== null) return refused;
     const m = c.get("m");
     const id = Number(c.req.param("id"));
@@ -1136,7 +1140,7 @@ export function createApp({
   });
 
   app.post("/samples/:id/trap", async (c) => {
-    const refused = await trapGate(c, true);
+    const refused = await trapGate(c, true, false);
     if (refused !== null) return refused;
     const m = c.get("m");
     const id = Number(c.req.param("id"));
@@ -1350,12 +1354,26 @@ export function createApp({
     const admin = c.get("admin");
     const session = c.get("session");
     const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, admin ? STAFF_READER : readerOf(c));
-    if (sample === null || (!sample.mine && !admin)) return errorResponse(c, "notFound");
+    if (sample === null) return errorResponse(c, "notFound");
+    const enteredHere = conn !== undefined && (await loadTrapSample(conn, sample.sample_id)) !== null;
+    if (!sample.mine && !admin && !enteredHere) return errorResponse(c, "notFound");
     if (sample.printed) return c.text(t.printed, 409);
     const body = await c.req.parseBody();
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
     const backRaw = field("back");
     const back = /^\/samples(\?|$)/.test(backRaw) ? backRaw : "/samples";
+    // A sample entered in Beeline has no old Beeline record to correct: its
+    // locality is written directly, by whoever may edit it, any name they
+    // like, as on its own form (beeline-3vs.5).
+    if (enteredHere && conn !== undefined && printWriter !== undefined) {
+      if (!(await mayEditTrapSample(conn, sample.sample_id, c.get("acting").personId, admin))) return errorResponse(c, "notFound");
+      const name = field("locality").trim();
+      // Blank clears it, as on the form.
+      if (name === (sample.locality ?? "")) return c.redirect(back);
+      if ((await setTrapSampleLocality(printWriter, sample.sample_id, name)) === "printed") return c.text(t.printed, 409);
+      await recordTrapChange(c, sample.sample_id);
+      return c.redirect(back);
+    }
     const deps = { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections };
     const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
     const linked = sample.inat_observation_id !== null;

@@ -386,3 +386,17 @@ export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSamp
     });
   });
 }
+
+/**
+ * Write an entered sample's locality, as the samples listing's Place cell
+ * does (beeline-3vs.5): directly, since Beeline is its only record, and only
+ * until its labels are printed or frozen into a run.
+ */
+export function setTrapSampleLocality(conn: DuckDBConnection, id: number, locality: string): Promise<"saved" | "printed"> {
+  return withPrintRunLock(async () => {
+    const current = await loadTrapSample(conn, id);
+    if (current === null || !current.editable) return "printed";
+    await conn.run(`UPDATE sample SET locality = $2 WHERE entity_id = $1`, [id, locality.trim() === "" ? null : locality.trim()] as never);
+    return "saved";
+  });
+}

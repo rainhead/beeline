@@ -556,8 +556,17 @@ function StaffHold({ m, staff, hold }: { m: Messages; staff: StaffQc; hold: Reco
 
 /** The fix-it action: upstream where there is an observation, here where
  * there is not — and only for someone who actually collected it. */
-function SampleActions({ m, sample }: { m: Messages; sample: SampleDetail }) {
+function SampleActions({ m, sample, trapEditHref }: { m: Messages; sample: SampleDetail; trapEditHref?: string }) {
   const s = m.record.sample;
+  // A sample entered in Beeline is edited from the form it was entered with
+  // (beeline-3vs.2); the correction form below needs an old Beeline record.
+  if (trapEditHref !== undefined) {
+    return (
+      <p class="row">
+        <LinkButton href={trapEditHref}>{m.trapSample.edit}</LinkButton>
+      </p>
+    );
+  }
   // Nothing upstream to fix and, because the sample cites an observation,
   // nothing here either: the edit form can only correct a sample with none
   // (src/app/sample-edit.ts). The missing-upstream flag says staff will look
@@ -723,6 +732,8 @@ export function SamplePage({
   reprints = null,
   admin = false,
   ownsLocality = false,
+  trapEditHref,
+  entered = false,
 }: {
   m: Messages;
   sample: SampleDetail;
@@ -737,6 +748,10 @@ export function SamplePage({
   admin?: boolean;
   /** Whether the reader adopted the locality standing over the observation, and so may take it back (beeline-7i6). */
   ownsLocality?: boolean;
+  /** Where this reader edits the sample, when it was entered in Beeline and they may (beeline-3vs.2). */
+  trapEditHref?: string;
+  /** Whether the sample was entered in Beeline rather than imported (beeline-3vs.2). */
+  entered?: boolean;
 }) {
   return (
     <>
@@ -763,8 +778,9 @@ export function SamplePage({
             undo: ownsLocality && !sample.printed,
           }}
         />
-        <SampleActions m={m} sample={sample} />
-        {admin ? <StaffLocality m={m} sample={sample} /> : null}
+        <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} />
+        {/* An entered sample's locality is edited on its own form; this one writes a correction to an old Beeline record. */}
+        {admin && !entered ? <StaffLocality m={m} sample={sample} /> : null}
       </Card>
       <Card>
         <WhereCollected m={m} sample={sample} admin={admin} />

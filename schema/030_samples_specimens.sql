@@ -133,6 +133,20 @@ CREATE TABLE sample_location_override (
 COMMENT ON TABLE sample_location_override IS 'Coordinates a staff member set on a sample, which promotion never overwrites: the location upgrade (ingest/promote-observations.sql) skips samples with a row here. Re-derived at the end of observation promotion from data/sample-overlay.csv; sample_location carries the same point with source staff_entry, and sample_location_override_stale asserts the two agree.';
 COMMENT ON COLUMN sample_location_override.observed_latitude IS 'With observed_longitude, observed_uncertainty_m and observed_source: the sample_location row as it stood when the override was written — the merge base, and what removal restores. All null where the sample had no coordinates then.';
 
+-- A sample somebody entered in Beeline rather than one iNaturalist or the
+-- old Beeline supplied (beeline-3vs.2): trap samples, typed into a form by
+-- staff or by someone who has handled trap samples before. Present only for
+-- those, so its absence is how every older sample reads, and it is what tells
+-- an entered sample, which Beeline is the only record of and edits directly,
+-- from an imported one, whose corrections go through the corrections overlay.
+CREATE TABLE sample_entry (
+  sample_id  INTEGER PRIMARY KEY REFERENCES sample(entity_id),
+  entered_by INTEGER REFERENCES person(entity_id),
+  entered_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+);
+COMMENT ON TABLE sample_entry IS 'A sample entered in Beeline (beeline-3vs.2), with who entered it and when (UTC). Beeline is the only record of such a sample, so it is edited directly; samples without a row came from iNaturalist or the old Beeline.';
+COMMENT ON COLUMN sample_entry.entered_by IS 'The person who entered it, not anyone they were acting for. Null when entered by a staff login that is no person.';
+
 -- Where an elevation value came from: the legacy import, or (once Beeline
 -- derives its own) a specific DEM tile, identified by name and content hash so
 -- a re-derivation against updated data is distinguishable from the original.

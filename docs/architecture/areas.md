@@ -1,6 +1,6 @@
 # Areas
 
-Part of Beeline's architecture notes; the index is in [AGENTS.md](../../AGENTS.md#architecture-overview).
+Part of Beeline's architecture notes; the index is [README.md](README.md).
 
 An area is a named place with an outline that a sample's true coordinates can lie inside (beeline-9jd4). There are two kinds so far: the federal wilderness, because collecting there needs a permit the program usually lacks (beeline-zdfz), and the county, below. A sample inside a wilderness says so on its sample page and its specimens' pages, under the place, and the listings' place filter finds it by the wilderness's name, so "wilderness" finds every sample inside one. **It is a note, not a flag** (Peter, 2026-10-26): the specimens exist either way, so nothing blocks their labels. Beeline does not track permits yet, so the note says that collecting there needs one, not whether the program had one; inside Olympic National Park it did. Wilderness study areas do not count.
 

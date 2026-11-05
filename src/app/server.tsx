@@ -1049,11 +1049,14 @@ export function createApp({
       locality: one("locality"),
     };
   };
-  const trapGate = async (c: Context<AppEnv>, writing: boolean): Promise<Response | null> => {
+  // Entering a new sample asks whether this person may enter trap samples;
+  // editing one asks only whether they may edit that sample (mayEditTrapSample
+  // in the routes), so an enterer who no longer traps can still fix their own.
+  const trapGate = async (c: Context<AppEnv>, writing: boolean, entering = true): Promise<Response | null> => {
     const m = c.get("m");
     if (writing && c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
     if (conn === undefined || printWriter === undefined) return c.text("This instance cannot enter samples.", 503);
-    if (!(await mayEnterTrapSamples(conn, c.get("acting").personId, c.get("admin")))) {
+    if (entering && !(await mayEnterTrapSamples(conn, c.get("acting").personId, c.get("admin")))) {
       return errorResponse(c, "notFound", { heading: m.trapSample.notAllowedHeading, message: m.trapSample.notAllowed });
     }
     return null;
@@ -1124,7 +1127,7 @@ export function createApp({
   });
 
   app.get("/samples/:id/trap", async (c) => {
-    const refused = await trapGate(c, false);
+    const refused = await trapGate(c, false, false);
     if (refused !== null) return refused;
     const m = c.get("m");
     const id = Number(c.req.param("id"));
@@ -1137,7 +1140,7 @@ export function createApp({
   });
 
   app.post("/samples/:id/trap", async (c) => {
-    const refused = await trapGate(c, true);
+    const refused = await trapGate(c, true, false);
     if (refused !== null) return refused;
     const m = c.get("m");
     const id = Number(c.req.param("id"));

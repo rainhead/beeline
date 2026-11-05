@@ -148,6 +148,20 @@ describe("entering a trap sample", () => {
 
   // beeline-3vs.5: the listing's Edit link and Place pencil used to go to the
   // correction form for old Beeline records, which an entered sample cannot use.
+  it("lets whoever entered a sample edit it, even once they no longer qualify to enter new ones", async () => {
+    const { as, conn } = await trapApp();
+    const id = Number((await as("trapper").post("/trap-samples/new", entry())).headers.get("location")!.split("/")[2]);
+    // Tess is no longer on any trap sample, this one included; she entered it.
+    await conn.run(`DELETE FROM sample_collector WHERE person_id = (SELECT entity_id FROM person WHERE display_name = 'Tess Trapper') AND sample_id <> ${id}`);
+    const otto = new URLSearchParams(entry());
+    otto.delete("collector");
+    otto.append("collector", "Otto Other");
+    expect((await as("staffer").post(`/samples/${id}/trap`, otto)).status).toBe(302);
+    const tess = as("trapper");
+    expect((await tess.app.request("/trap-samples/new")).status).toBe(404);
+    expect((await tess.app.request(`/samples/${id}/trap`)).status).toBe(200);
+  });
+
   it("keeps the form's link on an entered sample an observation was later linked to", async () => {
     const { as, conn } = await trapApp();
     const staff = as("staffer");

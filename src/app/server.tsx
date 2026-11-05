@@ -138,6 +138,20 @@ import {
 } from "./locality-override.js";
 import { setHold, setWaiver, type QcDecisionResult } from "./qc-decisions.js";
 import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
+import {
+  checkTrapSample,
+  collectorChoices,
+  createTrapSample,
+  loadTrapSample,
+  mayEditTrapSample,
+  mayEnterTrapSamples,
+  nextSampleNumber,
+  numberTakenProblem,
+  updateTrapSample,
+  type FieldProblems,
+  type TrapSampleForm,
+} from "../trap-sample.js";
+import { TrapSampleFormPage } from "./views/trap-sample.js";
 import { deploymentPath } from "../deployment-path.js";
 import { SampleEditForm } from "./views/sample-edit.js";
 import {
@@ -860,7 +874,15 @@ export function createApp({
       await page(
         c,
         m.listings.samples.title,
-        <SampleListing m={m} query={query} page={results} atlases={atlases} admin={admin} homeAtlas={homeAtlas} />,
+        <SampleListing
+          m={m}
+          query={query}
+          page={results}
+          atlases={atlases}
+          admin={admin}
+          homeAtlas={homeAtlas}
+          mayEnterTrapSamples={conn !== undefined && !c.get("acting").impersonating && (await mayEnterTrapSamples(conn, c.get("acting").personId, c.get("admin")))}
+        />,
       ),
     );
   });
@@ -943,6 +965,13 @@ export function createApp({
       sample.locality_override !== null &&
       sample.inat_observation_id !== null &&
       (await standingLocalityAuthor(sampleOverlay, sample.inat_observation_id)) === c.get("session").login;
+    // A sample entered in Beeline, still unprinted, is edited from its own
+    // form by whoever may enter trap samples (beeline-3vs.2).
+    const entered = conn === undefined ? null : await loadTrapSample(conn, sample.sample_id);
+    const trapEditHref =
+      entered?.editable && !c.get("acting").impersonating && (await mayEditTrapSample(conn!, sample.sample_id, c.get("acting").personId, c.get("admin")))
+        ? `/samples/${sample.sample_id}/trap`
+        : undefined;
     return c.html(
       await page(
         c,
@@ -958,6 +987,8 @@ export function createApp({
           reprints={reprints}
           admin={c.get("admin")}
           ownsLocality={ownsLocality}
+          trapEditHref={trapEditHref}
+          entered={entered !== null}
         />,
       ),
     );
@@ -990,6 +1021,145 @@ export function createApp({
 
   // Non-iNat samples are fixed here, not upstream (beeline-2c3.8). The gate
   // is in the query: your sample, and no observation to send you to.
+  // Trap samples entered in Beeline (beeline-3vs.2): staff, and anyone who
+  // has collected a trap sample, which reads the effective person, so a
+  // delegate reaches it for the person they act for. The writes go on the
+  // print connection behind the print runs' lock, since an edit must not land
+  // between a freeze reading a sample and composing its labels; the history
+  // credits whoever typed it.
+  const trapFormFrom = (body: Record<string, string | File | (string | File)[]>): TrapSampleForm => {
+    const one = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+    const many = body["collector"];
+    const collectors = (Array.isArray(many) ? many : [many]).filter((v): v is string => typeof v === "string");
+    return {
+      sample_number: one("sample_number"),
+      collectors,
+      date_start: one("date_start"),
+      date_end: one("date_end"),
+      method: one("method"),
+      trap_count: one("trap_count"),
+      specimen_count: one("specimen_count"),
+      latitude: one("latitude"),
+      longitude: one("longitude"),
+      uncertainty: one("uncertainty"),
+      country: one("country"),
+      state_province: one("state_province"),
+      county: one("county"),
+      locality: one("locality"),
+    };
+  };
+  const trapGate = async (c: Context<AppEnv>, writing: boolean): Promise<Response | null> => {
+    const m = c.get("m");
+    if (writing && c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (conn === undefined || printWriter === undefined) return c.text("This instance cannot enter samples.", 503);
+    if (!(await mayEnterTrapSamples(conn, c.get("acting").personId, c.get("admin")))) {
+      return errorResponse(c, "notFound", { heading: m.trapSample.notAllowedHeading, message: m.trapSample.notAllowed });
+    }
+    return null;
+  };
+  const trapPage = async (c: Context<AppEnv>, title: string, form: TrapSampleForm, problems: FieldProblems, action: string, sampleId?: number) =>
+    page(
+      c,
+      title,
+      <TrapSampleFormPage
+        m={c.get("m")}
+        form={form}
+        problems={problems}
+        collectorNames={await collectorChoices(conn!)}
+        action={action}
+        sampleId={sampleId}
+      />,
+    );
+  const recordTrapChange = async (c: Context<AppEnv>, sampleId: number) => {
+    try {
+      await recordSampleChanges(kyselyReader(db), samplePaths, {
+        source: "app",
+        author: c.get("session").login,
+        where: `s.entity_id = ${sampleId}`,
+      });
+    } catch (err) {
+      console.warn(`could not record the change to trap sample ${sampleId}: ${(err as Error).message}`);
+    }
+  };
+
+  app.get("/trap-samples/new", async (c) => {
+    const refused = await trapGate(c, false);
+    if (refused !== null) return refused;
+    const blank: TrapSampleForm = {
+      sample_number: await nextSampleNumber(conn!),
+      collectors: [],
+      date_start: "",
+      date_end: "",
+      method: "",
+      trap_count: "",
+      specimen_count: "0",
+      latitude: "",
+      longitude: "",
+      uncertainty: "",
+      country: "USA",
+      state_province: "OR",
+      county: "",
+      locality: "",
+    };
+    return c.html(await trapPage(c, c.get("m").trapSample.newTitle, blank, {}, "/trap-samples/new"));
+  });
+
+  app.post("/trap-samples/new", async (c) => {
+    const refused = await trapGate(c, true);
+    if (refused !== null) return refused;
+    const form = trapFormFrom(await c.req.parseBody({ all: true }));
+    const checked = await checkTrapSample(conn!, form);
+    if ("problems" in checked) {
+      return c.html(await trapPage(c, c.get("m").trapSample.newTitle, form, checked.problems, "/trap-samples/new"), 400);
+    }
+    const id = await createTrapSample(printWriter!, checked.sample, c.get("session").personId);
+    // Somebody else saved this number since the form was checked.
+    if (id === "taken") {
+      const problems = { sample_number: numberTakenProblem(checked.sample.sample_number) };
+      return c.html(await trapPage(c, c.get("m").trapSample.newTitle, form, problems, "/trap-samples/new"), 409);
+    }
+    await recordTrapChange(c, id);
+    return c.redirect(`/samples/${id}`);
+  });
+
+  app.get("/samples/:id/trap", async (c) => {
+    const refused = await trapGate(c, false);
+    if (refused !== null) return refused;
+    const m = c.get("m");
+    const id = Number(c.req.param("id"));
+    const current = await loadTrapSample(conn!, id);
+    if (current === null || !(await mayEditTrapSample(conn!, id, c.get("acting").personId, c.get("admin")))) {
+      return errorResponse(c, "notFound");
+    }
+    if (!current.editable) return errorResponse(c, "notFound", { heading: m.trapSample.notEditableHeading, message: m.trapSample.notEditable });
+    return c.html(await trapPage(c, m.trapSample.editTitle, current, {}, `/samples/${id}/trap`, id));
+  });
+
+  app.post("/samples/:id/trap", async (c) => {
+    const refused = await trapGate(c, true);
+    if (refused !== null) return refused;
+    const m = c.get("m");
+    const id = Number(c.req.param("id"));
+    if ((await loadTrapSample(conn!, id)) === null || !(await mayEditTrapSample(conn!, id, c.get("acting").personId, c.get("admin")))) {
+      return errorResponse(c, "notFound");
+    }
+    const form = trapFormFrom(await c.req.parseBody({ all: true }));
+    const checked = await checkTrapSample(conn!, form, id);
+    if ("problems" in checked) {
+      return c.html(await trapPage(c, m.trapSample.editTitle, form, checked.problems, `/samples/${id}/trap`, id), 400);
+    }
+    const updated = await updateTrapSample(printWriter!, id, checked.sample);
+    if (updated === "printed") {
+      return errorResponse(c, "notFound", { heading: m.trapSample.notEditableHeading, message: m.trapSample.notEditable });
+    }
+    if (updated === "taken") {
+      const problems = { sample_number: numberTakenProblem(checked.sample.sample_number) };
+      return c.html(await trapPage(c, m.trapSample.editTitle, form, problems, `/samples/${id}/trap`, id), 409);
+    }
+    await recordTrapChange(c, id);
+    return c.redirect(`/samples/${id}`);
+  });
+
   app.get("/samples/:id/edit", async (c) => {
     const m = c.get("m");
     // Acting for someone is reach to act, not only to look: the collector

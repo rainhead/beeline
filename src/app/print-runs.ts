@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { sql, type Kysely } from "kysely";
-import type { Database, PrintRunState, ReprintReason } from "../model.js";
+import type { Database, OutOfDateField, PrintRunState, ReprintReason } from "../model.js";
 import { sha256, type LabelRow } from "../label-pdf.js";
 import { renderLabelsPdfOffThread } from "../label-pdf-worker.js";
 import { REPRINT_BLOCKER, type ReprintBlocker } from "../print-run.js";
@@ -131,6 +131,61 @@ export interface RunDetail extends RunListRow {
    * (beeline-plu), for the printer to decide on. Empty once it prints.
    */
   held: HeldInRun[];
+  /**
+   * Samples in this unprinted run that have changed since it was prepared,
+   * whose labels still show the values from then (beeline-fq3j), for the
+   * printer to decide on. Empty once it prints.
+   */
+  outOfDate: OutOfDateSample[];
+}
+
+export interface OutOfDateSample {
+  sample_id: number;
+  sample_number: string;
+  collector: string;
+  /** How many of this sample's labels in the run are affected. */
+  labels: number;
+  changes: Array<{ field: OutOfDateField; on_label: string | null; now: string | null }>;
+}
+
+/**
+ * Every sample in the run whose labels no longer match it, one entry per
+ * sample with each changed field once: a sample's labels were all made from
+ * the same values, so the fields repeat down its labels.
+ */
+async function loadOutOfDate(db: Kysely<Database>, printRunId: number): Promise<OutOfDateSample[]> {
+  const rows = (
+    await sql<{
+      sample_id: number;
+      sample_number: string;
+      collector: string;
+      field: OutOfDateField;
+      on_label: string | null;
+      now: string | null;
+      labels: number;
+    }>`
+      SELECT o.sample_id, s.sample_number, p.display_name AS collector, o.field, o.on_label, o.now,
+             CAST(count(DISTINCT o.specimen_id) AS INTEGER) AS labels
+      FROM printed_label_out_of_date o
+      JOIN sample s ON s.entity_id = o.sample_id
+      JOIN sample_primary_collector pc ON pc.sample_id = o.sample_id
+      JOIN person p ON p.entity_id = pc.person_id
+      WHERE o.print_run_id = ${printRunId}
+      GROUP BY o.sample_id, s.sample_number, p.display_name, o.field, o.on_label, o.now
+      ORDER BY p.display_name, s.sample_number, o.sample_id, o.field`.execute(db)
+  ).rows;
+  const bySample = new Map<number, OutOfDateSample>();
+  for (const r of rows) {
+    const id = Number(r.sample_id);
+    let entry = bySample.get(id);
+    if (entry === undefined) {
+      entry = { sample_id: id, sample_number: r.sample_number, collector: r.collector, labels: 0, changes: [] };
+      bySample.set(id, entry);
+    }
+    entry.labels = Math.max(entry.labels, Number(r.labels));
+    entry.changes.push({ field: r.field, on_label: r.on_label, now: r.now });
+  }
+  return [...bySample.values()];
 }
 
 export interface HeldInRun {
@@ -216,12 +271,14 @@ export async function loadRun(db: Kysely<Database>, printRunId: number): Promise
             ORDER BY s.sample_number, s.entity_id`.execute(db)
         ).rows.map((h) => ({ ...h, sample_id: Number(h.sample_id) }))
       : [];
+  const outOfDate = row.state === "prepared" || row.state === "approved" ? await loadOutOfDate(db, printRunId) : [];
   return {
     ...row,
     print_run_id: Number(row.print_run_id),
     warned: Number(row.warned),
     split_samples: Number(row.split_samples),
     held,
+    outOfDate,
   } as RunDetail;
 }
 

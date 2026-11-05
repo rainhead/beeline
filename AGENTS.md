@@ -67,6 +67,7 @@ How each part of Beeline works, one file per area in [`docs/architecture/`](docs
 - [ORCID](docs/architecture/orcid.md) — `schema/103`
 - [Addressing a person, and admin](docs/architecture/addressing-a-person-and-admin.md)
 - [Editing and corrections](docs/architecture/editing-and-corrections.md) — `src/corrections.ts`, `ingest/legacy-corrections.csv`
+- [Entering trap samples](docs/architecture/entering-trap-samples.md) — `src/trap-sample.ts`, `src/app/views/trap-sample.tsx`
 - [The legacy-format export](docs/architecture/the-legacy-format-export.md) — `src/legacy-export.ts`, `ingest/collector-aliases.csv`
 - [Errors and logs](docs/architecture/errors-and-logs.md) — `src/app/error-reporting.ts`, `src/app/usage.ts`
 - [Backups](docs/architecture/backups.md) — `src/store-backup.ts`, `src/store-snapshot.ts`

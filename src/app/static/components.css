@@ -281,6 +281,8 @@ tbody tr.flag:hover { background: inherit; }
   color: var(--md-sys-color-on-surface-variant);
   margin: var(--space-1) 0 0;
 }
+/* A field a refused save names: the reason, in the hint's place. */
+.field-problem { color: var(--md-sys-color-error); }
 
 /* The filter bar above a listing. A plain GET form: fields flow into as
    many columns as fit, and the actions row lands last on every width. */
@@ -615,7 +617,8 @@ td:has(> .place-edit[open]) > .place-text { display: none; }
 /* The combobox (src/app/islands/combobox.ts, beeline-wn2): a text box with
    its list of choices under it, over whatever follows. The fallback the
    server draws is a plain input with a <datalist>, styled as any input. */
-.combobox { position: relative; }
+/* As wide as any other input (elements.css), so the chevron sits inside the box. */
+.combobox { position: relative; max-width: 24rem; }
 .combobox > input { width: 100%; box-sizing: border-box; }
 /* The chevron at the right of a fixed list's box, which opens and closes
    the list; the box leaves it room. A search has none: there is nothing to

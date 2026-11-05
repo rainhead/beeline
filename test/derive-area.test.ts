@@ -209,10 +209,14 @@ describe("stamping a sample's county from its coordinates (beeline-313x, Peter, 
               'c', 'net', 'n', 44.5, -123.6, s.date_start, s.date_end
        FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id WHERE sp.sample_id = ${frozen}`,
     );
+    // Entered in Beeline (beeline-3vs.2): no observation, but Beeline is its only record.
+    const entered = await insertCleanSample(conn, { sample_number: "'7'", kind: "'trap'" }, ALSEA);
+    await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
     const r = await deriveAreas(conn, path, { stampCounties: true });
-    expect(r.countiesStamped).toBe(1);
-    expect(describeAreas(r)).toContain("1 county(ies) written from the coordinates");
+    expect(r.countiesStamped).toBe(2);
+    expect(describeAreas(r)).toContain("2 county(ies) written from the coordinates");
     expect(await countyOf(conn, stamped)).toBe("Benton");
+    expect(await countyOf(conn, entered)).toBe("Benton");
     for (const id of [noObservation, settled, printed, otherState, frozen]) {
       expect(await countyOf(conn, id)).toBe("BentonCo");
     }

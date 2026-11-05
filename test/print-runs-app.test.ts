@@ -75,7 +75,7 @@ async function printApp(signedInAs: "ash" | "staffer" = "staffer") {
   const app = appFor(signedInAs);
   const post = (path: string, body: Record<string, string> = {}) =>
     app.request(path, { method: "POST", headers: { origin: ORIGIN }, body: new URLSearchParams(body) });
-  return { app, appFor, conn, db, post, dir, ash, birch, ashSample, birchSample };
+  return { app, appFor, conn, db, post, dir, paths, ash, birch, ashSample, birchSample };
 }
 
 /**
@@ -115,6 +115,15 @@ describe("the print-run screens", () => {
     const flagged = await (await staff.app.request("/print-runs")).text();
     expect(flagged).toContain("Washington Bee Atlas — nothing waiting");
     expect(flagged).not.toContain("Oregon Bee Atlas —");
+  });
+
+  // beeline-l3w7: the boot refuses a store holding fewer numbers than the
+  // mark, so every run that mints has to raise it.
+  it("raises the registry mark when a run is prepared", async () => {
+    const { post, paths } = await printApp();
+    await expect(readFile(paths.registryMarkPath, "utf8")).rejects.toThrow();
+    expect((await post("/print-runs")).status).toBe(302);
+    expect(JSON.parse(await readFile(paths.registryMarkPath, "utf8"))).toEqual({ print_run: 1, minted_field_number: 4 });
   });
 
   it("refuses a run scoped to an atlas that does not print its own labels, in words", async () => {

@@ -67,6 +67,13 @@ export interface AppConfig {
   sampleStatePath: string;
   /** Where rendered label sheets are cached, one PDF per print run (beeline-1kb.4). */
   printRunsDir: string;
+  /**
+   * How many print runs and minted field numbers this deployment's store has
+   * held (beeline-l3w7, src/registry-mark.ts). Beside the store and outside
+   * it, so that a store moved over the live one cannot bring its own; the app
+   * refuses to boot on a store that holds fewer. Not backed up, on purpose.
+   */
+  registryMarkPath: string;
   /** Where the nightly legacy-format export is written (beeline-6q8); regenerable, so not backed up. */
   exportsDir: string;
   /**
@@ -244,6 +251,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     sampleChangesPath: env.BEELINE_SAMPLE_CHANGES ?? SAMPLE_CHANGE_LOG,
     sampleStatePath: env.BEELINE_SAMPLE_STATE ?? SAMPLE_STATE_SNAPSHOT,
     printRunsDir: env.BEELINE_PRINT_RUNS ?? "data/print-runs",
+    registryMarkPath: env.BEELINE_REGISTRY_MARK ?? "data/registry-mark.json",
     exportsDir: env.BEELINE_EXPORTS ?? "data/exports",
     environment,
     devLogin: environment === "development" ? (env.BEELINE_DEV_LOGIN ?? null) : null,

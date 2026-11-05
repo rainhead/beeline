@@ -306,9 +306,15 @@ wc -l data/sample-change.csv
 > any, both before changing anything and with no override
 > ([`src/registry-guard.ts`](../../src/registry-guard.ts), beeline-83b8.13).
 > `db:reseed` and `pnpm db:build` also refuse to delete a target that holds
-> any. **Never move a store that has not printed over one that has**: nothing
-> checks the `mv` at the end of this procedure yet (beeline-l3w7), and the
-> next run on the moved store would issue numbers that are already on pins.
+> any. **Never move a store that has not printed over one that has.** The
+> app refuses to boot on a store that holds fewer print runs or minted field
+> numbers than `data/registry-mark.json` records this deployment has held
+> ([`src/registry-mark.ts`](../../src/registry-mark.ts), beeline-l3w7), so
+> the machine fails its health check instead of serving a store whose next
+> run would issue numbers already on pins. The fix is to put back the store
+> that held them. Delete the mark only when losing those numbers is
+> understood and accepted, such as restoring a backup after the live store
+> was destroyed; the next boot starts it again from the store it finds.
 > This remains the procedure for any store that has printed nothing; a sandbox
 > store holding rehearsal runs is refused as well. How a promotion-rule change
 > reaches a store that has printed is not decided (beeline-131s): carry the

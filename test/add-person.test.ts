@@ -82,6 +82,7 @@ async function addApp(opts: { admin?: boolean; failing?: boolean } = {}) {
     correctionsPath: join(dir, "corrections.csv"),
     programContactsPath: join(dir, "program-contacts.csv"),
     printRunsDir: join(dir, "print-runs"),
+    registryMarkPath: join(dir, "registry-mark.json"),
     conn,
     inatProfiles: profiles.lookUp,
   });

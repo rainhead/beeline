@@ -11,7 +11,9 @@ import { ensureProgramContactsFile } from "../program-contacts.js";
 import { startScheduler } from "./jobs/framework.js";
 import { buildJobs, DEM_DIR, GAZETTEER_PATH } from "./jobs/registry.js";
 import { createApp } from "./server.js";
-import { flushErrorReporting, initErrorReporting, jobCheckIns } from "./error-reporting.js";
+import { flushErrorReporting, initErrorReporting, jobCheckIns, reportError } from "./error-reporting.js";
+import { checkRegistryMark, currentCatalog, RegistryShrankRefused } from "../registry-mark.js";
+import { rm } from "node:fs/promises";
 import { cookieSessionResolver, type SessionResolver } from "./session.js";
 
 const config = configFromEnv();
@@ -20,6 +22,45 @@ const config = configFromEnv();
 const reporting = initErrorReporting(config);
 if (reporting) console.log(`reporting errors to Sentry as ${config.environment}${config.release ? ` (${config.release})` : ""}`);
 const { db, instance, close } = await openAppDb(config);
+
+// Before anything reads or writes the store: refuse one that holds fewer
+// print runs or minted field numbers than this deployment has seen
+// (beeline-l3w7, src/registry-mark.ts). A refusal exits, so the machine
+// fails its health check rather than serving a store whose next print run
+// would issue numbers already on pins. Development, where stores are built
+// and thrown away, says so and starts the mark again.
+{
+  const markConn = await instance.connect();
+  try {
+    const { store, before } = await checkRegistryMark(markConn, await currentCatalog(markConn), config.registryMarkPath);
+    if (before === null) {
+      console.log(
+        `registry mark started at ${config.registryMarkPath}: ${store.print_run} print run(s), ` +
+          `${store.minted_field_number} minted field number(s)`,
+      );
+    }
+  } catch (err) {
+    if (!(err instanceof RegistryShrankRefused)) throw err;
+    if (config.environment === "development") {
+      console.warn(`${err.message}\n(development: starting the mark again from this store)`);
+      await rm(config.registryMarkPath, { force: true });
+      await checkRegistryMark(markConn, await currentCatalog(markConn), config.registryMarkPath);
+    } else {
+      console.error(err.message);
+      reportError(err, { step: "boot" });
+      markConn.closeSync();
+      await close();
+      await flushErrorReporting().catch(() => undefined);
+      process.exit(1);
+    }
+  } finally {
+    try {
+      markConn.closeSync();
+    } catch {
+      // already closed on the refusal's way out
+    }
+  }
+}
 
 // The sample overlay exists from the first boot, header only, rather than
 // from the first staff save: the nightly backup carries it as one of the
@@ -178,6 +219,7 @@ const app = createApp({
         }
       : undefined,
   printRunsDir: config.printRunsDir,
+  registryMarkPath: config.registryMarkPath,
 });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`beeline app (${config.environment}) listening on http://localhost:${info.port}`);

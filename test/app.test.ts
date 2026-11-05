@@ -56,6 +56,7 @@ describe("app scaffold", () => {
       ["sampleChangesPath", "data/sample-change.csv"],
       ["sampleStatePath", "data/sample-state.csv"],
       ["printRunsDir", "data/print-runs"],
+      ["registryMarkPath", "data/registry-mark.json"],
     ] as const) {
       expect(() => createApp({ ...deps, ...paths, [name]: undefined }), name).toThrow(`deployment's own ${file}:`);
     }

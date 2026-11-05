@@ -149,13 +149,16 @@ describe("the taxonomy pages", () => {
       expect(menu).toContain(`href="${path}"`);
       expect(account).not.toContain(`href="${path}"`);
     }
-    // Alphabetical, by the labels a person reads.
+    // "How Beeline works" first of all, above even the records a narrow
+    // screen brings into the menu (gh-262).
+    expect(menu.match(/href="([^"]+)"/)?.[1]).toBe("/how-it-works");
+    expect([...menu.matchAll(/href="\/how-it-works"/g)]).toHaveLength(1);
+    // The rest alphabetical, by the labels a person reads.
     const group = between(menu, `aria-label="${en.layout.more}"`, "</nav>");
     expect([...group.matchAll(/href="([^"]+)"/g)].map((match) => match[1])).toEqual([
       "/design",
       "/exports",
       "/glossary",
-      "/how-it-works",
       "/determinations",
       "/jobs",
       "/people",

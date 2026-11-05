@@ -54,7 +54,8 @@ function NavLinks({ m }: { m: Messages }) {
 
 /**
  * Everything else a person can open — reference pages and staff tools — in
- * the menu left of the brand, grouped by what it is for rather than by who
+ * the menu left of the brand, below "How Beeline works", which the panel
+ * puts first of all, grouped by what it is for rather than by who
  * may use it (beeline-45v.5). Each item is still shown only to whoever may
  * open it. Never the account menu: that one is about the person signed in.
  */
@@ -63,7 +64,6 @@ function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
     <nav class="menu-section" aria-label={m.layout.more}>
       {[
         { href: "/glossary", label: m.layout.nav.glossary, shown: true },
-        { href: "/how-it-works", label: m.layout.nav.howItWorks, shown: true },
         { href: "/determinations", label: m.layout.nav.identify, shown: true },
         { href: "/taxonomy", label: m.layout.nav.taxonomy, shown: true },
         { href: "/programs", label: m.layout.nav.programs, shown: true },
@@ -228,6 +228,12 @@ export function Layout(props: {
               <MenuIcon />
             </summary>
             <div class="menu-panel">
+              {/* First, above everything, on every screen: the page that
+                  explains the rest (Andony, gh-262). Its own section, so the
+                  alphabetical list below keeps its rule. */}
+              <div class="menu-section">
+                <a href="/how-it-works">{m.layout.nav.howItWorks}</a>
+              </div>
               {/* The inline nav is hidden on a narrow screen, so the records
                   come along here; on a wide one they stay in the header. */}
               <nav class="menu-section nav-records" aria-label={m.layout.records}>

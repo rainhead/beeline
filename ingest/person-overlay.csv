@@ -433,3 +433,8 @@ name:Arthur Schrenk,given_name,Arthur,rainhead,"Peter 2026-11-04: parted by hand
 name:Arthur Schrenk,family_name,Schrenk,rainhead,"Peter 2026-11-04: parted by hand, since there is no recordedBy row to part."
 name:Arthur Schrenk,inat_user_id,9996380 ascomo512,rainhead,"Peter 2026-11-04: his own account, ascomo512; verified against the iNat API, whose profile name for it is Arthur_Schrenk."
 name:Arthur Schrenk,admin,yes,rainhead,"Peter 2026-11-04: staff, so admin rights in Beeline."
+name:Jen Larsen,create,yes,rainhead,"Peter 2026-11-04: OSU program staff, who generates the stewardship reports. She collects nothing, so no record mints her and no account can bind until she exists."
+name:Jen Larsen,given_name,Jen,rainhead,"Peter 2026-11-04: parted by hand, since there is no recordedBy row to part."
+name:Jen Larsen,family_name,Larsen,rainhead,"Peter 2026-11-04: parted by hand, since there is no recordedBy row to part."
+name:Jen Larsen,inat_user_id,11227491 jenlarsen52,rainhead,"Peter 2026-11-04: her account, jenlarsen52, which signed in to production twice on 4 November and was turned away for having no person. The iNat API gives id 11227491 for it, with no profile name and no observations (made that day); Peter identified it as hers."
+name:Jen Larsen,admin,yes,rainhead,"Peter 2026-11-04: staff, so admin rights in Beeline."

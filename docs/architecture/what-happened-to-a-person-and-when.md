@@ -1,6 +1,6 @@
 # What happened to a person, and when
 
-Part of Beeline's architecture notes; the index is in [AGENTS.md](../../AGENTS.md#architecture-overview).
+Part of Beeline's architecture notes; the index is [README.md](README.md).
 
 The overlay says what was decided; it cannot say what happened. One current row per (`person_ref`, field) means a later edit replaces the earlier one, so it answers "who last changed this, and why" and never when, what the value was before, that it changed twice, or who changed it the first time — and nothing displayed it at all. So there is a second artifact beside it, in the shape the project already settled for a correction to a determination (`schema/040`): authored changes are append-only events. `data/person-change.csv` (`src/person-change.ts`) holds one entry per (when, `person_ref`, field, old, new, author, source, reason), read on `/people/:id` as that person's history and on the unfiltered `/people` as the newest entries across everybody — filtered, the panel is dropped, since a search for one person answered with somebody else's history reads as a filter that leaked. A CSV rather than a table for the same reason the overlays are, and a sharper one: a history the blow-away erases answers "who changed this" with "nobody, we rebuilt it". That constraint dies at cutover and the natural home is then a table — [ADR 0007](../adr/0007-authored-changes-are-events.md), beeline-o22.
 

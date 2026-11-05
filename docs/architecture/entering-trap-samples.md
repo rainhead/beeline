@@ -1,6 +1,6 @@
 # Entering trap samples
 
-Part of Beeline's architecture notes; the index is in [AGENTS.md](../../AGENTS.md#architecture-overview).
+Part of Beeline's architecture notes; the index is [README.md](README.md).
 
 Until November 2026 every sample came from iNaturalist or the old Beeline. Trap samples reached the old system only as spreadsheets staff prepared and uploaded, one row per specimen, a few batches a year of about a hundred specimens, while Lincoln Best kept Oregon's own registry of trap samples (1,608 of them, 2018 to 2025, about a hundred new each year) in a spreadsheet of his own. At that volume a form suits better than an upload (Peter, 2026-11-04), so `/trap-samples/new` (`src/trap-sample.ts`, `src/app/views/trap-sample.tsx`, beeline-3vs.2) is a form whose fields are the ones those spreadsheets carry that a label prints or a Darwin Core record would carry: the sample number, up to three collectors in order, the days the traps were set and collected, the kind of trap and how many, the specimen count, the point and its uncertainty, and the country, state, county and locality. Everything else in the spreadsheets (whether a bottle held bumble bees, the lab's processing times, cup colours) stays in them. A one-time import of the existing spreadsheets, as the old Beeline's records were imported, is to follow.
 

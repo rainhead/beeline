@@ -17,63 +17,11 @@ pnpm bench:pages [store]       # page latency against a copy of a store; --compa
 pnpm bench:contention [store]  # pages, edits and the nightly overlapping: latency, and conflicts counted apart
 ```
 
-Populating a fresh database end to end (production access = `beeline` in
-`~/.ssh/config`; iNat access = dev OAuth credentials in `data/secrets/`):
-
-```bash
-pnpm legacy:fetch && pnpm legacy:load && pnpm legacy:promote  # production Mongo → model
-pnpm inat:login                             # OAuth sign-in; mints the 24h JWT sync reads
-pnpm inat:sync <projectId> [d1] [d2]        # observation window → append-only loads
-pnpm inat:promote                           # current observation state → samples
-pnpm inat:backfill-accounts                 # resolve legacy logins → iNat accounts
-pnpm elevation:fetch && pnpm elevation:derive  # DEM tiles (SRTM 1-arc-second, Copernicus GLO-30 where SRTM does not reach) → missing elevations
-pnpm locality:fetch && pnpm locality:gazetteer  # public place names and outlines (about 2 GB) → data/gazetteer.duckdb, on a workstation
-pnpm area:derive [db] [gazetteer]              # the areas (federal wildernesses, counties and BC districts) each sample's coordinates lie inside (the nightly runs it)
-pnpm locality:derive [db] [gazetteer]          # a locality named from each sample's coordinates, offered beside its own (the nightly runs it)
-pnpm ecdysis:taxonomy [db] [--cached]        # Ecdysis's thesaurus, every insect (about 3 minutes) → data/ecdysis-taxonomy/ → ecdysis_taxon, every animal node matched
-pnpm taxon:fetch-sheet <sheet-id> [dir]      # a taxonomist's worksheet, every tab as CSV, to data/taxon-decisions/<modified instant>/ — to be read, not parsed
-pnpm taxon:decide <kind> <rank> "<name>" --by … --reason …   # record one decision (or --batch file.csv): Ecdysis's facts filled from the store, the row validated, the file merged
-pnpm taxon:apply [db]                        # replay ingest/taxon-curation.csv onto a store: the program's departures from Ecdysis, and what a later fetch moved from under
-pnpm disposition:load <file> [db] --by <name> --on <date>  # a staff inventory's remark on each specimen (Andony's 2025 master file) → specimen_disposition; what it cannot place goes to <file>.held.csv
-pnpm legacy:export [db] [out.csv]            # every specimen as the legacy occurrences file (the app writes it nightly)
-pnpm legacy:compare-export [db] [export.csv] # how far that file is from the staged legacy records, by kind and by column, in records split by season with a few examples each, less what ingest/legacy-export-rulings.csv explains
-pnpm backup:check <archive.tar.gz> [dir]     # a nightly backup downloaded from Drive: hashes against its manifest, both stores opened (BEELINE_PRIVATE_DB_KEY for the private one), left extracted for a restore
-```
+Populating a store end to end, from the old system, iNaturalist, elevation tiles, the gazetteer and Ecdysis, and checking a backup: the `populate-store` skill (`.claude/skills/populate-store/SKILL.md`).
 
 ## Architecture Overview
 
-How each part of Beeline works, one file per area in [`docs/architecture/`](docs/architecture). Read the file for the area you are about to change before changing it: each records the decisions and traps behind that code, with the issues and ADRs that carry them. When a change alters how an area works, update its file in the same pull request.
-
-- [Store and schema](docs/architecture/store-and-schema.md) — `schema/*.sql`, `migrations/NNNN-slug.sql`
-- [The app process, and its gate](docs/architecture/the-app-process-and-its-gate.md) — `src/app/`, `src/app/theme/tokens.ts`
-- [Browsing: scope, filters, sort](docs/architecture/browsing-scope-filters-sort.md) — `src/app/listings.ts`, `src/app/views/listings.tsx`
-- [The front page](docs/architecture/the-front-page.md) — `src/app/dashboard.ts`, `src/app/views/qc.tsx`
-- [One record](docs/architecture/one-record.md) — `src/app/record.ts`, `src/app/views/record.tsx`
-- [Printing](docs/architecture/printing.md) — `schema/035`, `schema/155`
-- [Determinations from Ecdysis](docs/architecture/determinations-from-ecdysis.md) — `src/load-ecdysis.ts`, `src/adopt-ecdysis.ts`
-- [Volunteers identifying their own specimens](docs/architecture/volunteers-identifying-their-own-specimens.md) — `src/app/determine.ts`, `src/app/views/determine.tsx`
-- [Determinations from worksheets](docs/architecture/determinations-from-worksheets.md) — `src/fetch-worksheets.ts`, `src/load-worksheets.ts`
-- [Copy](docs/architecture/copy.md) — `src/app/messages/`
-- [A value that is not there](docs/architecture/a-value-that-is-not-there.md) — `src/app/views/components/text.tsx`
-- [Determinations and names](docs/architecture/determinations-and-names.md) — `schema/020`, `schema/115`
-- [The roster](docs/architecture/the-roster.md) — `src/app/roster.ts`, `src/app/views/roster.tsx`
-- [The person's own page, and the overlay](docs/architecture/the-persons-own-page-and-the-overlay.md) — `src/person-overlay.ts`, `src/apply-person-overlay.ts`
-- [Collectors Beeline doesn't know](docs/architecture/collectors-beeline-doesnt-know.md) — `src/app/unclaimed.ts`, `src/app/views/unclaimed.tsx`
-- [What happened to a person, and when](docs/architecture/what-happened-to-a-person-and-when.md) — `schema/040`, `src/person-change.ts`
-- [And to a sample](docs/architecture/and-to-a-sample.md) — `src/sample-change.ts`
-- [Delegation](docs/architecture/delegation.md) — `src/app/acting.ts`
-- [Membership](docs/architecture/membership.md)
-- [Programs](docs/architecture/programs.md) — `src/app/programs.ts`, `src/app/views/programs.tsx`
-- [ORCID](docs/architecture/orcid.md) — `schema/103`
-- [Addressing a person, and admin](docs/architecture/addressing-a-person-and-admin.md)
-- [Editing and corrections](docs/architecture/editing-and-corrections.md) — `src/corrections.ts`, `ingest/legacy-corrections.csv`
-- [Entering trap samples](docs/architecture/entering-trap-samples.md) — `src/trap-sample.ts`, `src/app/views/trap-sample.tsx`
-- [The legacy-format export](docs/architecture/the-legacy-format-export.md) — `src/legacy-export.ts`, `ingest/collector-aliases.csv`
-- [Errors and logs](docs/architecture/errors-and-logs.md) — `src/app/error-reporting.ts`, `src/app/usage.ts`
-- [Backups](docs/architecture/backups.md) — `src/store-backup.ts`, `src/store-snapshot.ts`
-- [Ingestion, jobs, and elevation](docs/architecture/ingestion-jobs-and-elevation.md) — `src/app/jobs/`, `src/write-conflict.ts`
-- [Localities from coordinates](docs/architecture/localities-from-coordinates.md) — `src/locality-rule.ts`, `src/derive-locality.ts`, `ingest/gazetteer.sql`
-- [Areas](docs/architecture/areas.md) — `schema/038`, `src/derive-area.ts`
+How each part of Beeline works is in [`docs/architecture/`](docs/architecture/README.md), one file per area, listed there with the source each covers. Read the file for the area you are about to change before changing it: each records the decisions and traps behind that code, with the issues and ADRs that carry them. When a change alters how an area works, update its file in the same pull request.
 
 ## Conventions & Patterns
 
@@ -245,27 +193,3 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 - Do not commit or push without clear authority from the active profile or the current user request.
 - If a required sync or push is blocked, stop and report the exact command and error.
 <!-- END BEADS INTEGRATION -->
-
-<!-- BEGIN BEADS CODEX SETUP: generated by bd setup codex -->
-## Beads Issue Tracker
-
-Use Beads (`bd`) for durable task tracking in repositories that include it. Use the `beads` skill at `.agents/skills/beads/SKILL.md` (project install) or `~/.agents/skills/beads/SKILL.md` (global install) for Beads workflow guidance, then use the `bd` CLI for issue operations.
-
-### Quick Reference
-
-```bash
-bd ready                # Find available work
-bd show <id>            # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>           # Complete work
-bd prime                # Refresh Beads context
-```
-
-### Rules
-
-- Use `bd` for all task tracking; do not create markdown TODO lists.
-- Run `bd prime` when Beads context is missing or stale. Codex 0.129.0+ can load Beads context automatically through native hooks; use `/hooks` to inspect or toggle them.
-- Don't keep project memory in `bd remember`: this repo is public, and so is everything in beads. Use Claude's file memory.
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
-<!-- END BEADS CODEX SETUP -->

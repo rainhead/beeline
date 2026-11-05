@@ -145,4 +145,24 @@ describe("entering a trap sample", () => {
     const [[imported]] = (await rows(conn, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00657'`)) as [[number]];
     expect((await as("staffer").app.request(`/samples/${imported}/trap`)).status).toBe(404);
   });
+
+  // beeline-3vs.5: the listing's Edit link and Place pencil used to go to the
+  // correction form for old Beeline records, which an entered sample cannot use.
+  it("links an entered sample's row to its own form, and changes its place directly", async () => {
+    const { as, conn } = await trapApp();
+    const staff = as("staffer");
+    const id = Number((await staff.post("/trap-samples/new", entry())).headers.get("location")!.split("/")[2]);
+    const listing = await (await staff.app.request("/samples?scope=all")).text();
+    expect(listing).toContain(`href="/samples/${id}/trap"`);
+    expect(listing).not.toContain(`href="/samples/${id}/edit"`);
+    expect(listing).toContain(`action="/samples/${id}/place"`);
+    // A collector writes any name, as on the form.
+    const moved = await as("trapper").post(`/samples/${id}/place`, new URLSearchParams({ locality: "Denio Junction", back: "/samples" }));
+    expect(moved.status).toBe(302);
+    expect(await rows(conn, `SELECT locality FROM sample WHERE entity_id = ${id}`)).toEqual([["Denio Junction"]]);
+    // Somebody who is neither staff, its collector nor its enterer cannot.
+    const refused = await as("otherTrapper").post(`/samples/${id}/place`, new URLSearchParams({ locality: "Elsewhere", back: "/samples" }));
+    expect(refused.status).toBe(404);
+    expect(await rows(conn, `SELECT locality FROM sample WHERE entity_id = ${id}`)).toEqual([["Denio Junction"]]);
+  });
 });

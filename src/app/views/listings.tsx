@@ -96,6 +96,8 @@ function PlaceCell({ m, row }: { m: Messages; row: SampleRow | SpecimenRow }) {
 export function placeEditable(row: SampleRow, admin: boolean): boolean {
   if (row.printed || row.location_withheld) return false;
   if (admin) return true;
+  // An entered sample's own form lets its collectors and its enterer write any locality.
+  if (row.entered) return row.mine || row.entered_by_me;
   return row.mine && !row.locality_set_by_other && (row.locality_choices !== null || row.inat_observation_id !== null);
 }
 
@@ -128,7 +130,7 @@ function PlaceEdit({ m, row, admin, back }: { m: Messages; row: SampleRow; admin
       </summary>
       <form method="post" action={`/samples/${row.sample_id}/place`} class="place-edit-form">
         <input type="hidden" name="back" value={back} />
-        <Combobox id={id} name="locality" label={t.label} labelHidden value={row.locality} choices={choices} free={admin} />
+        <Combobox id={id} name="locality" label={t.label} labelHidden value={row.locality} choices={choices} free={admin || row.entered} />
         <div class="row">
           <button type="submit" class="outlined compact-button">
             {t.save}
@@ -772,10 +774,14 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                       <img src="/static/inat-logo.png" alt={copy.viewOnInat} width="66" height="12" />
                     </a>
                   ) : (
-                    // No observation to fix upstream: editing happens here,
-                    // and only a collector of this sample may do it
-                    // (ADR 0004, beeline-2c3.8).
-                    row.mine && <a href={`/samples/${row.sample_id}/edit`}>{copy.edit}</a>
+                    // No observation to fix upstream: editing happens here.
+                    // A sample entered in Beeline has its own form, for staff,
+                    // its collectors and its enterer (beeline-3vs.5); an old
+                    // Beeline record is corrected by its collectors (ADR 0004,
+                    // beeline-2c3.8).
+                    row.entered
+                      ? !row.printed && (admin || row.mine || row.entered_by_me) && <a href={`/samples/${row.sample_id}/trap`}>{copy.edit}</a>
+                      : row.mine && <a href={`/samples/${row.sample_id}/edit`}>{copy.edit}</a>
                   )}
                 </td>
               </tr>

@@ -147,6 +147,7 @@ import {
   mayEnterTrapSamples,
   nextSampleNumber,
   numberTakenProblem,
+  setTrapSampleLocality,
   updateTrapSample,
   type FieldProblems,
   type TrapSampleForm,
@@ -1350,12 +1351,25 @@ export function createApp({
     const admin = c.get("admin");
     const session = c.get("session");
     const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, admin ? STAFF_READER : readerOf(c));
-    if (sample === null || (!sample.mine && !admin)) return errorResponse(c, "notFound");
+    if (sample === null) return errorResponse(c, "notFound");
+    const enteredHere = conn !== undefined && (await loadTrapSample(conn, sample.sample_id)) !== null;
+    if (!sample.mine && !admin && !enteredHere) return errorResponse(c, "notFound");
     if (sample.printed) return c.text(t.printed, 409);
     const body = await c.req.parseBody();
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
     const backRaw = field("back");
     const back = /^\/samples(\?|$)/.test(backRaw) ? backRaw : "/samples";
+    // A sample entered in Beeline has no old Beeline record to correct: its
+    // locality is written directly, by whoever may edit it, any name they
+    // like, as on its own form (beeline-3vs.5).
+    if (enteredHere && conn !== undefined && printWriter !== undefined) {
+      if (!(await mayEditTrapSample(conn, sample.sample_id, c.get("acting").personId, admin))) return errorResponse(c, "notFound");
+      const name = field("locality").trim();
+      if (name === "" || name === sample.locality) return c.redirect(back);
+      if ((await setTrapSampleLocality(printWriter, sample.sample_id, name)) === "printed") return c.text(t.printed, 409);
+      await recordTrapChange(c, sample.sample_id);
+      return c.redirect(back);
+    }
     const deps = { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections };
     const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
     const linked = sample.inat_observation_id !== null;

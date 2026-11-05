@@ -9,7 +9,7 @@ import { createApp } from "../src/app/server.js";
 import { readOverlay, type PersonOverlayRow } from "../src/person-overlay.js";
 import { readChanges } from "../src/person-change.js";
 import { applyPersonOverlay } from "../src/apply-person-overlay.js";
-import { attachPrivateStore, seedAdmins } from "../src/app/db.js";
+import { seedAdmins } from "../src/app/db.js";
 import type { InatClient } from "../src/app/auth.js";
 
 const unusedInat: InatClient = {
@@ -22,12 +22,8 @@ const unusedInat: InatClient = {
  * The roster screen. Sandbox, not development, because development makes
  * everyone an admin and the gate is half of what these tests check.
  */
-async function rosterApp(signedIn: { personId: number; admin: boolean; privateStore?: boolean }) {
+async function rosterApp(signedIn: { personId: number; admin: boolean }) {
   const { instance, conn } = await createMemoryDb();
-  // Off by default: most of these tests are about the roster's own reasoning,
-  // and a store with no private half is a real state (a CLI run, a restore)
-  // that one of them checks. The activity tests below ask for it.
-  if (signedIn.privateStore) await attachPrivateStore(instance, { path: ":memory:", key: null });
   await conn.run(`INSERT INTO person (entity_id, display_name, given_name, family_name)
                   VALUES (1, 'Ada Collector', 'Ada', 'Collector'),
                          (2, 'Bo Netter', 'Bo', 'Netter'),
@@ -178,8 +174,8 @@ describe("the roster screen", () => {
     });
 
     it("counts a visit as well as a sample", async () => {
-      const ctx = await rosterApp({ personId: 3, admin: true, privateStore: true });
-      await ctx.conn.run(`INSERT INTO private.person_activity (inat_user_id, last_seen_at) VALUES (111, now())`);
+      const ctx = await rosterApp({ personId: 3, admin: true });
+      await ctx.conn.run(`INSERT INTO person_activity (inat_user_id, last_seen_at) VALUES (111, now())`);
       const active = await (await ctx.app.request("/people?active=active")).text();
       expect(active).toContain("Ada Collector");
       expect(active).not.toContain("Bo Netter");
@@ -314,14 +310,14 @@ describe("the roster screen", () => {
    */
   describe("last seen says which evidence it is", () => {
     const visited = async (when: string) => {
-      const ctx = await rosterApp({ personId: 3, admin: true, privateStore: true });
-      await ctx.conn.run(`INSERT INTO private.person_activity (inat_user_id, last_seen_at)
+      const ctx = await rosterApp({ personId: 3, admin: true });
+      await ctx.conn.run(`INSERT INTO person_activity (inat_user_id, last_seen_at)
                           VALUES (111, TIMESTAMP '${when}')`);
       return ctx;
     };
     const signedIn = async (when: string) => {
-      const ctx = await rosterApp({ personId: 3, admin: true, privateStore: true });
-      await ctx.conn.run(`INSERT INTO private.inat_sign_in (inat_user_id, login, last_login_at)
+      const ctx = await rosterApp({ personId: 3, admin: true });
+      await ctx.conn.run(`INSERT INTO inat_sign_in (inat_user_id, login, last_login_at)
                           VALUES (111, 'adacollects', TIMESTAMP '${when}')`);
       return ctx;
     };
@@ -344,7 +340,7 @@ describe("the roster screen", () => {
       // The sign-in is the older fact here, which is the normal shape: people
       // sign in once and then keep turning up.
       const ctx = await visited("2026-03-04 09:00:00");
-      await ctx.conn.run(`INSERT INTO private.inat_sign_in (inat_user_id, login, last_login_at)
+      await ctx.conn.run(`INSERT INTO inat_sign_in (inat_user_id, login, last_login_at)
                           VALUES (111, 'adacollects', TIMESTAMP '2025-11-01 09:00:00')`);
       const body = await (await ctx.app.request("/people?q=Ada")).text();
       expect(body).toContain("Mar 4, 2026");
@@ -353,16 +349,15 @@ describe("the roster screen", () => {
     });
 
     it("still says never when neither happened", async () => {
-      const ctx = await rosterApp({ personId: 3, admin: true, privateStore: true });
+      const ctx = await rosterApp({ personId: 3, admin: true });
       const body = await (await ctx.app.request("/people?q=Ada")).text();
       expect(body).not.toContain("sign-in only");
       expect(body).toContain(`aria-label="Last seen: sort"`);
     });
   });
 
-  it("has no answer for last seen rather than a wrong one, with no private store", async () => {
-    // createMemoryDb attaches no private store, which is also a CLI run or a
-    // restore. An em dash, not a crash and not today's date.
+  it("has no answer for last seen rather than a wrong one, for somebody never here", async () => {
+    // An em dash, not a crash and not today's date.
     const body = await (await ctx.app.request("/people?q=Bo")).text();
     expect(body).toContain(`aria-label="Last seen: sort"`);
     expect((await ctx.app.request("/people")).status).toBe(200);

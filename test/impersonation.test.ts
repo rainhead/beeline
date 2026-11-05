@@ -6,7 +6,6 @@ import { createApp } from "../src/app/server.js";
 import { createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 import { en } from "../src/app/messages/en.js";
 import { ACTING_COOKIE, IMPERSONATING_COOKIE } from "../src/app/acting.js";
-import { attachPrivateStore } from "../src/app/db.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "https://inat.example/authorize",
@@ -24,19 +23,19 @@ const unusedInat: InatClient = {
 async function fixture({
   admin,
   twins = false,
-  privateStore = true,
+  traceTable = true,
   delegate = false,
 }: {
   admin: boolean;
   /** A second Robert Pederson: a name two people share names neither of them. */
   twins?: boolean;
-  /** Attach the private catalog the trace is written to; false for a store opened without it. */
-  privateStore?: boolean;
+  /** Keep the table the trace is written to; false for a store that cannot take the write. */
+  traceTable?: boolean;
   /** Grant the staff member delegation over a third person, Jane. */
   delegate?: boolean;
 }) {
   const { instance, conn } = await createMemoryDb();
-  if (privateStore) await attachPrivateStore(instance, { path: ":memory:", key: null });
+  if (!traceTable) await conn.run("DROP TABLE impersonation");
   await conn.run(`INSERT INTO person (display_name) VALUES ('Staff Member'), ('Robert Pederson')`);
   const [[robert], [staff]] = (await (
     await conn.run(`SELECT entity_id FROM person ORDER BY display_name`)
@@ -90,16 +89,16 @@ describe("viewing Beeline as somebody else", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/");
     expect(res.headers.get("set-cookie")).toContain(`${IMPERSONATING_COOKIE}=${encodeURIComponent(ROBERT)}`);
-    const trace = await db.selectFrom("private.impersonation").selectAll().execute();
+    const trace = await db.selectFrom("impersonation").selectAll().execute();
     expect(trace).toHaveLength(1);
     expect(trace[0]).toMatchObject({ admin_login: "staff", person_name: ROBERT });
     expect(trace[0]?.started_at).toBeInstanceOf(Date);
   });
 
   it("does not start when the trace cannot be written", async () => {
-    // The card says "each time is recorded"; a store opened without the
-    // private catalog cannot keep that promise, so the switch stays off.
-    const { post, robert } = await fixture({ admin: true, privateStore: false });
+    // The card says "each time is recorded"; a store that cannot take the
+    // write cannot keep that promise, so the switch stays off.
+    const { post, robert } = await fixture({ admin: true, traceTable: false });
     const res = await post(`/people/${robert}/impersonate`);
     expect(res.status).toBe(503);
     expect(await res.text()).toBe(en.errors.impersonationNotRecorded);
@@ -112,7 +111,7 @@ describe("viewing Beeline as somebody else", () => {
     expect(res.status).toBe(200);
     expect(await res.text()).toContain(en.people.problem(en.people.viewAsNameShared));
     expect(res.headers.get("set-cookie")).toBeNull();
-    expect(await db.selectFrom("private.impersonation").selectAll().execute()).toHaveLength(0);
+    expect(await db.selectFrom("impersonation").selectAll().execute()).toHaveLength(0);
   });
 
   it("wins over delegation, and carries no grant across", async () => {

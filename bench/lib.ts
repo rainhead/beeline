@@ -4,9 +4,9 @@ import { cpus, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import type { Kysely } from "kysely";
-import { attachPrivateStore } from "../src/app/db.js";
 import { createApp } from "../src/app/server.js";
-import { cookieSessionResolver, createSession, SESSION_COOKIE } from "../src/app/session.js";
+import { SESSION_COOKIE } from "../src/app/cookies.js";
+import { cookieSessionResolver, createSession } from "../src/app/session.js";
 import { createKysely, duckDbConfig, openDuckDb } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
 import type { Database } from "../src/model.js";
@@ -67,7 +67,6 @@ export async function openBench(sourcePath: string): Promise<Bench> {
   await copyFile(`${sourcePath}.wal`, `${dbPath}.wal`).catch(() => undefined);
 
   const instance = await openDuckDb(dbPath);
-  await attachPrivateStore(instance, { path: join(dir, "private.duckdb"), key: null });
   const db = createKysely(instance);
   const jobConn = await instance.connect();
   // A copy of an older store is brought forward the way a deploy would bring
@@ -111,7 +110,7 @@ export async function openBench(sourcePath: string): Promise<Bench> {
     db,
     config: { environment: "sandbox", origin: ORIGIN },
     inat: undefined as never,
-    resolveSession: cookieSessionResolver(db),
+    resolveSession: cookieSessionResolver(db, ORIGIN),
     correctionsPath: paths.corrections,
     personOverlayPath: join(dir, "person-overlay.csv"),
     personChangesPath: paths.personChanges,
@@ -139,7 +138,7 @@ export async function openBench(sourcePath: string): Promise<Bench> {
   };
 }
 
-/** A fresh session for somebody: its own row in the private store, so its own row to slide. */
+/** A fresh session for somebody: its own row in the session table, so its own row to slide. */
 export async function sessionFor(bench: Bench, who: Pick<Subject, "personId" | "inatUserId">): Promise<Subject> {
   return { ...who, cookie: `${SESSION_COOKIE}=${await createSession(bench.db, who.inatUserId)}` };
 }

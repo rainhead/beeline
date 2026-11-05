@@ -27,5 +27,5 @@ pnpm taxon:apply [db]                        # replay ingest/taxon-curation.csv 
 pnpm disposition:load <file> [db] --by <name> --on <date>  # a staff inventory's remark on each specimen (Andony's 2025 master file) → specimen_disposition; what it cannot place goes to <file>.held.csv
 pnpm legacy:export [db] [out.csv]            # every specimen as the legacy occurrences file (the app writes it nightly)
 pnpm legacy:compare-export [db] [export.csv] # how far that file is from the staged legacy records, by kind and by column, in records split by season with a few examples each, less what ingest/legacy-export-rulings.csv explains
-pnpm backup:check <archive.tar.gz> [dir]     # a nightly backup downloaded from Drive: hashes against its manifest, both stores opened (BEELINE_PRIVATE_DB_KEY for the private one), left extracted for a restore
+pnpm backup:check <archive.tar.gz> [dir]     # a nightly backup downloaded from Drive: hashes against its manifest, the store opened (and, in an archive from before 2026-11-05, the retired private store, with BEELINE_PRIVATE_DB_KEY), left extracted for a restore
 ```

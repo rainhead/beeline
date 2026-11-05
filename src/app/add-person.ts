@@ -1,6 +1,5 @@
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
-import { hasSessions } from "./roster.js";
 
 /**
  * Adding a person by their iNaturalist account (beeline-2c3.33). Promotion
@@ -94,14 +93,12 @@ export interface TurnedAway {
 /**
  * Everybody turned away at sign-in, most recent first. Sign-in records each
  * account before it asks whether anyone holds it (src/app/auth.tsx), so this
- * is that record less the accounts somebody now holds. A store with no
- * private tables has nobody to list.
+ * is that record less the accounts somebody now holds.
  */
 export async function turnedAway(db: Kysely<Database>): Promise<TurnedAway[]> {
-  if (!(await hasSessions(db))) return [];
   const found = await sql<{ inat_user_id: number | bigint; login: string; created_at: Date; last_login_at: Date }>`
     SELECT s.inat_user_id, s.login, s.created_at, s.last_login_at
-    FROM private.inat_sign_in s
+    FROM inat_sign_in s
     WHERE NOT EXISTS (SELECT 1 FROM inat_account a WHERE a.inat_user_id = s.inat_user_id)
     ORDER BY s.last_login_at DESC`.execute(db);
   return found.rows.map((r) => ({
@@ -137,11 +134,10 @@ export async function accountStanding(db: Kysely<Database>, uid: number): Promis
     SELECT count(*) AS n FROM unclaimed_record WHERE user_id = ${uid}`.execute(db);
   const records = Number(waiting.rows[0]?.n ?? 0);
   if (records > 0) return { kind: "waiting", records };
-  const tried = (await hasSessions(db))
-    ? (
-        await sql<{ last_login_at: Date }>`
-          SELECT last_login_at FROM private.inat_sign_in WHERE inat_user_id = ${uid}`.execute(db)
-      ).rows[0]?.last_login_at ?? null
-    : null;
+  const tried =
+    (
+      await sql<{ last_login_at: Date }>`
+        SELECT last_login_at FROM inat_sign_in WHERE inat_user_id = ${uid}`.execute(db)
+    ).rows[0]?.last_login_at ?? null;
   return { kind: "free", triedToSignIn: tried };
 }

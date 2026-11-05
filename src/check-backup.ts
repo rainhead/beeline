@@ -7,8 +7,9 @@ import { checkBackup } from "./store-backup.js";
 // CLI: pnpm backup:check <beeline-backup-….tar.gz> [dir]
 // Extract a backup downloaded from the Bee Line folder into dir (a new
 // temporary directory when none is given), check every file against the
-// manifest, and open both stores. BEELINE_PRIVATE_DB_KEY opens the private
-// store; without it that store is reported as not checked. The extracted
+// manifest, and open the store. An archive from before 2026-11-05 also holds
+// the retired private store (beeline-4tdh): BEELINE_PRIVATE_DB_KEY opens it,
+// and without the key it is reported as not checked. The extracted
 // files are left in place: they are what a restore puts back under /app/data,
 // and what the drill opens a scratch app against.
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

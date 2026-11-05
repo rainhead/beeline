@@ -335,7 +335,6 @@ export function buildJobs(
         | "driveBackup"
         | "backupsDir"
         | "environment"
-        | "privateDbKey"
         | "release"
         | "correctionsPath"
         | "personOverlayPath"
@@ -412,18 +411,10 @@ export function buildJobs(
           }
           throw new Error(`${unset}: nothing was backed up`);
         }
-        // Never a plaintext copy of the private store on the drive: the job
-        // is handed the key with the rest of the config, and a caller that
-        // narrowed the config would otherwise back it up unencrypted, record
-        // `encrypted: false`, and pass every check.
-        if (!config.privateDbKey && config.environment !== "development") {
-          throw new Error("no private-store key (BEELINE_PRIVATE_DB_KEY): refusing to back up the private store unencrypted");
-        }
         const [[main]] = (await (await ctx.conn.run("SELECT current_database()")).getRows()) as [[string]];
         const result = await backUp(ctx.conn, {
           workDir: config.backupsDir ?? deploymentPath("data/backups"),
-          catalogs: { main, private: "private" },
-          privateKey: config.privateDbKey ?? null,
+          catalog: main,
           authored: [
             config.correctionsPath ?? deploymentPath("data/corrections.csv"),
             config.personOverlayPath ?? deploymentPath("data/person-overlay.csv"),

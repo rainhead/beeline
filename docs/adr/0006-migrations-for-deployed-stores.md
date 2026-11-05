@@ -91,6 +91,9 @@ deltas that bring an already-deployed database up to it.**
 - **Post-cutover this is the only path.** The blow-away era ends in December
   2026; from then on every schema change needs its migration, and the
   `--check` drift report becomes a deploy-time gate rather than a warning.
-- **The private store still patches itself at boot** (`attachPrivateStore`,
-  ADR 0003) — it is attached, not this catalog, and outlives rebuilds for its
-  own reasons. Folding it onto this mechanism is a later cleanup.
+- **The private store patched itself at boot** (ADR 0003) until it was
+  retired on 2026-11-05 (beeline-4tdh): its tables are now in this catalog,
+  created by migration 0076 like any other, and the app carries a deployed
+  private store's rows across at boot (`absorbPrivateStore`). Before that it
+  was attached rather than part of this catalog, and patched itself at boot
+  outside this mechanism.

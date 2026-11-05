@@ -9,7 +9,7 @@ Both drive the app through `app.request` — every route, the session gate, SSR 
 
 ## The store is always a copy
 
-The benchmarks write, and exactly one process may hold a store ([ADR 0005](../docs/adr/0005-app-process-owns-the-store.md)). [`lib.ts`](lib.ts) copies the file and its WAL into a temporary directory (`BENCH_TMP`, else the system's), migrates the copy forward, gives it an empty private store, and deletes the lot afterwards (`BENCH_KEEP=1` keeps it). Subjects — which sample, which genus, which collector — are chosen from the store by rule, so the same file runs anywhere, and results carry no names, logins, or record ids: the repository is public.
+The benchmarks write, and exactly one process may hold a store ([ADR 0005](../docs/adr/0005-app-process-owns-the-store.md)). [`lib.ts`](lib.ts) copies the file and its WAL into a temporary directory (`BENCH_TMP`, else the system's), migrates the copy forward, and deletes the lot afterwards (`BENCH_KEEP=1` keeps it). Subjects — which sample, which genus, which collector — are chosen from the store by rule, so the same file runs anywhere, and results carry no names, logins, or record ids: the repository is public.
 
 ## Results are only comparable within an environment
 

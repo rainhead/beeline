@@ -13,7 +13,6 @@ import { lastSyncStart } from "../src/app/jobs/registry.js";
 import { resetCheckAttempts } from "../src/app/inat-check.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
-import { attachPrivateStore } from "../src/app/db.js";
 import { promoteObservations } from "../src/promote-observations.js";
 import { syncINat } from "../src/sync-inat.js";
 import { buildTestGazetteer, createMemoryDb, rows, scratchPaths } from "./helpers.js";
@@ -71,7 +70,6 @@ async function checkApp(
 ) {
   let running = opts.running ?? null;
   const { instance, conn } = await createMemoryDb();
-  await attachPrivateStore(instance, { path: ":memory:", key: null });
   [[seasonDay]] = (await rows(conn, "SELECT CAST(active_since + 30 AS VARCHAR) FROM season")) as [[string]];
   for (const [id, name, level] of [
     [1, "United States", 0],

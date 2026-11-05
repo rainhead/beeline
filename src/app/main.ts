@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { inatClient, loadInatCredentials } from "./auth.js";
 import { configFromEnv } from "./config.js";
-import { openAppDb, seedAdmins } from "./db.js";
+import { absorbPrivateStore, openAppDb, seedAdmins } from "./db.js";
 import { CURATED_OVERLAY, mergeOverlays, readOverlay } from "../person-overlay.js";
 import { cachedPipelineJwt } from "../inat-jwt.js";
 import { kyselyReader, recordPersonChanges } from "../person-change.js";
@@ -47,7 +47,7 @@ const { db, instance, close } = await openAppDb(config);
       await checkRegistryMark(markConn, await currentCatalog(markConn), config.registryMarkPath);
     } else {
       // Every failure here, not only a refusal, closes the store before
-      // exiting: the private store may already have been written to.
+      // exiting, so whatever it holds is checkpointed.
       console.error(err instanceof StoreRefused ? err.message : `could not check the registry mark: ${String(err)}`);
       reportError(err, { step: "boot" });
       markConn.closeSync();
@@ -57,6 +57,19 @@ const { db, instance, close } = await openAppDb(config);
     }
   }
   markConn.closeSync();
+}
+
+// A retired private store's rows come across once, after the guard above,
+// so a store it refuses is never written to (beeline-4tdh). A store that will
+// not open stops the boot here rather than signing everyone out.
+try {
+  await absorbPrivateStore(instance, { path: config.privateDbPath, key: config.privateDbKey });
+} catch (err) {
+  console.error(`could not carry the retired private store into the store: ${String(err)}`);
+  reportError(err, { step: "boot" });
+  await close().catch(() => undefined);
+  await flushErrorReporting().catch(() => undefined);
+  process.exit(1);
 }
 
 // The sample overlay exists from the first boot, header only, rather than
@@ -148,14 +161,10 @@ await readSampleChanges(config.sampleChangesPath).catch((err: Error) =>
   console.warn(`could not read the sample change log: ${err.message}`),
 );
 
-if (config.privateDbKey === null) {
-  console.warn("BEELINE_PRIVATE_DB_KEY unset: private store is UNENCRYPTED (development only)");
-}
-
 // Real cookie sessions; a development instance may bypass them wholesale via
 // BEELINE_DEV_LOGIN (no OAuth round-trip). The stub resolves the login
 // against inat_account so dev sessions see that person's real data.
-let resolveSession: SessionResolver = cookieSessionResolver(db);
+let resolveSession: SessionResolver = cookieSessionResolver(db, config.origin);
 if (config.devLogin) {
   const account = await db
     .selectFrom("inat_account")

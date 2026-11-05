@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Context } from "hono";
-import { getCookie } from "hono/cookie";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
+import { cookieJar, SESSION_COOKIE } from "./cookies.js";
 
 /**
  * Who is signed in. Minted at OAuth sign-in for people with an inat_account
@@ -25,14 +25,24 @@ export interface Session {
    * A short name for this session that is safe to hand to a person: the
    * cookie's value is the bearer credential, so a feedback email carrying it
    * would let whoever reads the email sign in as the sender. The first 12 hex
-   * digits of its SHA-256 find the row again (`sha256(id)` in DuckDB) and
-   * grant nothing. Absent on a dev-login stub, which has no cookie.
+   * digits of its SHA-256, which are the first 12 of the row's `id_sha256`,
+   * find the row again and grant nothing. Absent on a dev-login stub, which
+   * has no cookie.
    */
   ref?: string;
 }
 
+/**
+ * What the store keeps of a session: the SHA-256 of the cookie's value, never
+ * the value (beeline-5l84). The value signs its holder in; the hash does not,
+ * so a copy of the session table, from a backup or anywhere else, signs
+ * nobody in. The value is 256 random bits, so nothing slower than one SHA-256
+ * is needed to make it unguessable from its hash.
+ */
+export const hashSessionId = (id: string) => createHash("sha256").update(id).digest("hex");
+
 /** See {@link Session.ref}. */
-export const sessionRef = (id: string) => createHash("sha256").update(id).digest("hex").slice(0, 12);
+export const sessionRef = (id: string) => hashSessionId(id).slice(0, 12);
 
 /** Resolves a request to a session, or null for anonymous. */
 export type SessionResolver = (c: Context) => Promise<Session | null>;
@@ -57,9 +67,16 @@ export type AppEnv = {
 
 export const noSession: SessionResolver = async () => null;
 
-export const SESSION_COOKIE = "beeline_session";
 /** Sliding expiry: a session dies 30 days after its last request. */
 const idleCutoff = sql<Date>`current_timestamp - INTERVAL 30 DAY`;
+
+/**
+ * And 90 days after it began, however often it is used (beeline-jpau): with
+ * only the sliding expiry, a cookie used every week never stopped working, so
+ * neither did a stolen one. Signing in again is one click for anyone already
+ * signed in to iNaturalist.
+ */
+const lifetimeCutoff = sql<Date>`current_timestamp - INTERVAL 90 DAY`;
 
 /**
  * A session slides at most this often. The expiry it serves is thirty days,
@@ -86,8 +103,8 @@ const slideDue = sql<Date>`current_timestamp - INTERVAL 5 MINUTE`;
  * two requests both find the write due. Two first-ever visits racing to
  * insert one `person_activity` row lose the same way, as a duplicate key.
  *
- * Only that class of error. Anything else — a private store that will not
- * take a write at all — is still the request's problem.
+ * Only that class of error. Anything else — a store that will not take a
+ * write at all — is still the request's problem.
  */
 async function bookkeeping(write: () => Promise<unknown>): Promise<void> {
   try {
@@ -98,7 +115,7 @@ async function bookkeeping(write: () => Promise<unknown>): Promise<void> {
 }
 
 /**
- * Record that this person was here, in the private store's `person_activity`
+ * Record that this person was here, in `person_activity`
  * — outside the session, so that ending sessions cannot age it (beeline-dji).
  *
  * Throttled to an hour: the only question asked of this table is whether a
@@ -117,7 +134,7 @@ async function bookkeeping(write: () => Promise<unknown>): Promise<void> {
  */
 async function recordActivity(db: Kysely<Database>, inatUserId: bigint | number): Promise<void> {
   await sql`
-    INSERT INTO private.person_activity (inat_user_id, last_seen_at) VALUES (${inatUserId}, now())
+    INSERT INTO person_activity (inat_user_id, last_seen_at) VALUES (${inatUserId}, now())
     ON CONFLICT (inat_user_id) DO UPDATE SET last_seen_at = excluded.last_seen_at
      WHERE person_activity.last_seen_at < now() - INTERVAL '1 hour'`.execute(db);
 }
@@ -130,31 +147,40 @@ async function recordActivity(db: Kysely<Database>, inatUserId: bigint | number)
  */
 export async function createSession(db: Kysely<Database>, inatUserId: number): Promise<string> {
   const id = randomBytes(32).toString("hex");
-  await db.insertInto("private.session").values({ id, inat_user_id: inatUserId }).execute();
+  await db.insertInto("session").values({ id_sha256: hashSessionId(id), inat_user_id: inatUserId }).execute();
   return id;
 }
 
 export async function deleteSession(db: Kysely<Database>, id: string): Promise<void> {
-  await db.deleteFrom("private.session").where("id", "=", id).execute();
+  await db.deleteFrom("session").where("id_sha256", "=", hashSessionId(id)).execute();
 }
 
+
 /**
- * The real resolver: session cookie → private.session row → iNat account →
- * person. The account join is the binding, so unbinding an account ends its
- * sessions and rebinding moves them — both of which are what staff mean by
- * those words (/people).
+ * The real resolver: session cookie → session row (by the cookie's hash) →
+ * iNat account → person. The account join is the binding, so unbinding an
+ * account ends its sessions and rebinding moves them — both of which are what
+ * staff mean by those words (/people). `origin` decides the cookie's name
+ * (src/app/cookies.ts).
  */
-export function cookieSessionResolver(db: Kysely<Database>): SessionResolver {
+export function cookieSessionResolver(db: Kysely<Database>, origin: string): SessionResolver {
+  const cookies = cookieJar(origin);
   return async (c) => {
-    const id = getCookie(c, SESSION_COOKIE);
+    // Only ever the prefixed name on an https origin. The name from before
+    // beeline-73c9 is not read even for a while: any subdomain can set it, so
+    // honouring it would reopen the hole the prefix closes. Everyone signed
+    // in again once instead.
+    const id = cookies.get(c, SESSION_COOKIE);
     if (!id) return null;
+    const hash = hashSessionId(id);
     const row = await db
-      .selectFrom("private.session")
-      .innerJoin("inat_account", "inat_account.inat_user_id", "private.session.inat_user_id")
+      .selectFrom("session")
+      .innerJoin("inat_account", "inat_account.inat_user_id", "session.inat_user_id")
       .innerJoin("person", "person.entity_id", "inat_account.person_id")
-      .leftJoin("private.inat_sign_in as token", "token.inat_user_id", "private.session.inat_user_id")
-      .where("private.session.id", "=", id)
-      .where("last_seen_at", ">", idleCutoff)
+      .leftJoin("inat_sign_in as token", "token.inat_user_id", "session.inat_user_id")
+      .where("session.id_sha256", "=", hash)
+      .where("session.last_seen_at", ">", idleCutoff)
+      .where("session.created_at", ">", lifetimeCutoff)
       .select([
         "inat_account.person_id",
         "inat_account.inat_user_id",
@@ -166,9 +192,9 @@ export function cookieSessionResolver(db: Kysely<Database>): SessionResolver {
     if (row === undefined) return null;
     await bookkeeping(() =>
       db
-        .updateTable("private.session")
+        .updateTable("session")
         .set({ last_seen_at: sql`current_timestamp` })
-        .where("id", "=", id)
+        .where("id_sha256", "=", hash)
         .where("last_seen_at", "<", slideDue)
         .execute(),
     );
@@ -188,28 +214,29 @@ export function cookieSessionResolver(db: Kysely<Database>): SessionResolver {
  * is for, so this is the realistic path, not a contrived one.
  */
 export async function endSessionsFor(db: Kysely<Database>, inatUserId: number | bigint): Promise<void> {
-  await db.deleteFrom("private.session").where("inat_user_id", "=", BigInt(inatUserId)).execute();
+  await db.deleteFrom("session").where("inat_user_id", "=", BigInt(inatUserId)).execute();
 }
 
 /**
- * Expired sessions linger until this runs (a scheduled job, beeline-2c3.4) —
- * and so do sessions whose account has since been unbound, which resolution
- * refuses but nothing was deleting: their `last_seen_at` stops moving the
- * moment they stop resolving, so the idle cutoff never reaches them.
+ * Expired sessions linger until this runs (a scheduled job, beeline-2c3.4),
+ * idle or past their lifetime — and so do sessions whose account has since
+ * been unbound, which resolution refuses but nothing was deleting: their
+ * `last_seen_at` stops moving the moment they stop resolving, so the idle
+ * cutoff never reaches them.
  */
 export async function purgeIdleSessions(db: Kysely<Database>): Promise<void> {
   await db
-    .deleteFrom("private.session")
-    .where("last_seen_at", "<=", idleCutoff)
+    .deleteFrom("session")
+    .where((eb) => eb.or([eb("last_seen_at", "<=", idleCutoff), eb("created_at", "<=", lifetimeCutoff)]))
     .execute();
   await db
-    .deleteFrom("private.session")
+    .deleteFrom("session")
     .where(({ not, exists, selectFrom }) =>
       not(
         exists(
           selectFrom("inat_account")
             .select("inat_account.person_id")
-            .whereRef("inat_account.inat_user_id", "=", "private.session.inat_user_id"),
+            .whereRef("inat_account.inat_user_id", "=", "session.inat_user_id"),
         ),
       ),
     )

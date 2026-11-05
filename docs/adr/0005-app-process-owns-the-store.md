@@ -49,6 +49,7 @@ model.
     long transactions is not worth building at this scale.
 - **[ADR 0003](0003-private-data-store.md) carries over unchanged**: the
   encrypted `private.duckdb` is `ATTACH`ed by the same owning process.
+  (Retired 2026-11-05, beeline-4tdh: its tables are now in the main store.)
 - **The Postgres escape hatch stays open.** The DDL remains dialect-neutral
   per ADR 0001. The new tripwire: if the SLAs prove unmeetable with chunked
   jobs — or a second app instance ever becomes necessary — the app store

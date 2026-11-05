@@ -84,6 +84,12 @@ beforeAll(async () => {
        (265407, 'species', 'Brachymelecta californica', '(Cresson, 1878)', 'accepted', 265407, 173747, 173747, DATE '2026-10-24'),
        (1645055, 'species', 'Xeromelecta californica', '(Cresson, 1879)', 'synonym', 265407, 204170, NULL, DATE '2026-10-24')`,
   );
+  // Who has signed in and been here (schema/012): synthetic, keyed by iNat
+  // user id and by name, so they come across as they are (beeline-4tdh).
+  await seed.run(`INSERT INTO inat_sign_in (inat_user_id, login) VALUES (501, 'memberbee')`);
+  await seed.run(`INSERT INTO session (id_sha256, inat_user_id) VALUES (repeat('b', 64), 501)`);
+  await seed.run(`INSERT INTO person_activity (inat_user_id) VALUES (501)`);
+  await seed.run(`INSERT INTO impersonation (admin_login, person_name) VALUES ('staffer', 'Member Bee')`);
   // Model rows, of the kind promotion derives and this tool must not carry.
   await seed.run(`INSERT INTO person (entity_id, display_name) VALUES (nextval('entity_id_seq'), 'Stale Person')`);
   // And a sequence left where a promoted store leaves it: far ahead. Both
@@ -127,6 +133,10 @@ describe("reseeding a store that cannot be blown away", () => {
       observation_absent: 1,
       inat_user_orcid: 1,
       ecdysis_taxon: 2,
+      inat_sign_in: 1,
+      session: 1,
+      person_activity: 1,
+      impersonation: 1,
     });
     // The place cache comes across whole, keeping the instant iNat was
     // actually asked: now() would claim a freshness the reseed did not earn.
@@ -294,6 +304,10 @@ describe("reseeding a store that cannot be blown away", () => {
       observation_absent: 0,
       inat_user_orcid: 0,
       ecdysis_taxon: 0,
+      inat_sign_in: 0,
+      session: 0,
+      person_activity: 0,
+      impersonation: 0,
     });
     const bareInstance = await DuckDBInstance.create(out);
     const bareConn = await bareInstance.connect();

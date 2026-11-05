@@ -40,12 +40,15 @@ const STYLESHEETS = ["/tokens.css", "/static/elements.css", "/static/layout.css"
 const versioned = (href: string, version: string) => `${href}${href.includes("?") ? "&" : "?"}v=${version}`;
 
 /**
- * The header nav: the records people work through, and nothing else.
+ * The header nav: the page that explains the process, then the records people
+ * work through. "How Beeline works" is here rather than in the menu at
+ * Andony's request (gh-262), so nobody has to open a menu to find it.
  * Rendered twice — inline on wide screens, in the hamburger menu on narrow ones.
  */
 function NavLinks({ m }: { m: Messages }) {
   return (
     <>
+      <a href="/how-it-works">{m.layout.nav.howItWorks}</a>
       <a href="/samples">{m.layout.nav.samples}</a>
       <a href="/specimens">{m.layout.nav.specimens}</a>
     </>
@@ -63,7 +66,6 @@ function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
     <nav class="menu-section" aria-label={m.layout.more}>
       {[
         { href: "/glossary", label: m.layout.nav.glossary, shown: true },
-        { href: "/how-it-works", label: m.layout.nav.howItWorks, shown: true },
         { href: "/determinations", label: m.layout.nav.identify, shown: true },
         { href: "/taxonomy", label: m.layout.nav.taxonomy, shown: true },
         { href: "/programs", label: m.layout.nav.programs, shown: true },

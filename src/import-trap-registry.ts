@@ -230,7 +230,14 @@ export async function importTrapRegistry(conn: DuckDBConnection, opts: ImportOpt
       hold(number, "no_date", `${row.startDay ?? ""} ${row.startMonth ?? ""} ${row.startYear ?? ""}`.trim() || "no start day");
       continue;
     }
-    const end = registryDate(row.endDay, row.endMonth, row.endYear) ?? start;
+    // The start day stands for the end only where no end is written; an end
+    // that is written but unreadable holds the row, since it would print (CodeRabbit).
+    const endGiven = [row.endDay, row.endMonth, row.endYear].some((p) => p !== null && p.trim() !== "");
+    const end = endGiven ? registryDate(row.endDay, row.endMonth, row.endYear) : start;
+    if (end === null) {
+      hold(number, "no_date", `end day: ${row.endDay ?? ""} ${row.endMonth ?? ""} ${row.endYear ?? ""}`.trim());
+      continue;
+    }
     const method = parseMethod(row.sampleMethod);
 
     const [existing] = await rows<Existing>(

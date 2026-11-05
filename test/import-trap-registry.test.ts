@@ -66,6 +66,7 @@ describe("importing a registry", () => {
     "OBAS-00710,y,,R. and G. Pederson?,trap,20,june,2021,30,june,2021,44.3,-121.2,USA,OR,,Redmond,",
     "0BAS-00598,y,,LRB,trap,20,june,2021,30,june,2021,44.3,-121.2,USA,OR,,Redmond,",
     "OBAS-00657,y,,LRB,vane trap,1,july,2020,15,july,2020,44.5646,-123.262,USA,OR,Benton,Corvallis,",
+    "OBAS-00711,y,,LRB,vane trap,1,june,2021,31,june,2021,44.3,-121.2,USA,OR,,Redmond,",
   ].join("\n");
 
   it("enters new samples, compares known ones, and holds what it cannot place", async () => {
@@ -80,7 +81,7 @@ describe("importing a registry", () => {
     const result = await importTrapRegistry(conn, { file, by: "beesofcanada" });
 
     expect(result.created).toEqual({ active: 0, settled: 2 });
-    expect(result.held).toEqual({ number_shape: 1, collector_unknown: 1, no_date: 0, refused: 1 });
+    expect(result.held).toEqual({ number_shape: 1, collector_unknown: 1, no_date: 1, refused: 1 });
     expect(result.differing).toBe(1);
     expect(
       await rows(conn, `SELECT s.sample_number, s.kind, s.protocol, s.sampling_effort, s.specimen_count, strftime(s.date_end, '%Y-%m-%d'),
@@ -95,6 +96,8 @@ describe("importing a registry", () => {
     expect(held).toContain("OBAS-00709,refused,A latitude in decimal degrees is needed.");
     expect(held).toContain("OBAS-00710,collector_unknown,R. and G. Pederson?");
     expect(held).toContain("0BAS-00598,number_shape");
+    // An end day written but not a date holds the row rather than printing the start day as the end.
+    expect(held).toContain("OBAS-00711,no_date,end day: 31 june 2021");
     expect(await readFile(`${file}.differences.csv`, "utf8")).toContain("OBAS-00657,end day,2020-07-15,2020-07-16");
 
     // Run again, and what it entered is now what it compares against.

@@ -19,7 +19,7 @@ import { resolveActing, startActing, stopActing, startImpersonating, stopImperso
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
 import { jobHealth, type Job, type LastOutcome } from "./jobs/framework.js";
-import { reportAppError, reportError } from "./error-reporting.js";
+import { reportAppError } from "./error-reporting.js";
 import { currentCatalog, raiseRegistryMark } from "../registry-mark.js";
 import { ErrorPage, staticErrorPage, type ErrorKind } from "./views/error-page.js";
 import { HTTPException } from "hono/http-exception";
@@ -1964,17 +1964,17 @@ export function createApp({
       const raw = String(form.get("atlas_id") ?? "").trim();
       const atlasId = raw === "" ? null : Number(raw);
       if (atlasId !== null && !Number.isSafeInteger(atlasId)) return "/print-runs";
-      const result = await prepareRun(printWriter!, { atlasId, personId });
-      // The run is committed: raise the mark so that a store moved in over
-      // this one later, holding fewer numbers, is refused at boot
-      // (beeline-l3w7). A failure here leaves the mark behind, which the next
-      // boot catches up, so it is reported rather than shown to the printer.
-      if (result !== null) {
-        await raiseRegistryMark(printWriter!, await currentCatalog(printWriter!), markPath).catch((err: unknown) => {
-          console.warn(`[print run] could not raise the registry mark: ${(err as Error).message}`);
-          reportError(err, { step: "raise registry mark" });
-        });
-      }
+      // The registry mark is raised inside the run's transaction, before it
+      // commits (beeline-l3w7): a failure to write it refuses the run, and a
+      // crash after it leaves the mark ahead of the store, which refuses a
+      // good store at boot rather than serving a bad one.
+      const result = await prepareRun(printWriter!, {
+        atlasId,
+        personId,
+        beforeCommit: async (conn) => {
+          await raiseRegistryMark(conn, await currentCatalog(conn), markPath);
+        },
+      });
       return result === null ? "/print-runs?prepared=nothing" : `/print-runs/${result.printRunId}`;
     }),
   );

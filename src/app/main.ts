@@ -12,7 +12,8 @@ import { startScheduler } from "./jobs/framework.js";
 import { buildJobs, DEM_DIR, GAZETTEER_PATH } from "./jobs/registry.js";
 import { createApp } from "./server.js";
 import { flushErrorReporting, initErrorReporting, jobCheckIns, reportError } from "./error-reporting.js";
-import { checkRegistryMark, currentCatalog, RegistryShrankRefused } from "../registry-mark.js";
+import { checkRegistryMark, currentCatalog } from "../registry-mark.js";
+import { StoreRefused } from "../registry-guard.js";
 import { rm } from "node:fs/promises";
 import { cookieSessionResolver, type SessionResolver } from "./session.js";
 
@@ -40,26 +41,22 @@ const { db, instance, close } = await openAppDb(config);
       );
     }
   } catch (err) {
-    if (!(err instanceof RegistryShrankRefused)) throw err;
-    if (config.environment === "development") {
+    if (config.environment === "development" && err instanceof StoreRefused) {
       console.warn(`${err.message}\n(development: starting the mark again from this store)`);
       await rm(config.registryMarkPath, { force: true });
       await checkRegistryMark(markConn, await currentCatalog(markConn), config.registryMarkPath);
     } else {
-      console.error(err.message);
+      // Every failure here, not only a refusal, closes the store before
+      // exiting: the private store may already have been written to.
+      console.error(err instanceof StoreRefused ? err.message : `could not check the registry mark: ${String(err)}`);
       reportError(err, { step: "boot" });
       markConn.closeSync();
-      await close();
+      await close().catch(() => undefined);
       await flushErrorReporting().catch(() => undefined);
       process.exit(1);
     }
-  } finally {
-    try {
-      markConn.closeSync();
-    } catch {
-      // already closed on the refusal's way out
-    }
   }
+  markConn.closeSync();
 }
 
 // The sample overlay exists from the first boot, header only, rather than

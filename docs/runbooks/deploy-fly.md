@@ -308,7 +308,8 @@ wc -l data/sample-change.csv
 > `db:reseed` and `pnpm db:build` also refuse to delete a target that holds
 > any. **Never move a store that has not printed over one that has.** The
 > app refuses to boot on a store that holds fewer print runs or minted field
-> numbers than `data/registry-mark.json` records this deployment has held
+> numbers, or a lower highest number, than `data/registry-mark.json` records
+> this deployment has held
 > ([`src/registry-mark.ts`](../../src/registry-mark.ts), beeline-l3w7), so
 > the machine fails its health check instead of serving a store whose next
 > run would issue numbers already on pins. The fix is to put back the store

@@ -2,7 +2,13 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkRegistryMark, raiseRegistryMark, readRegistryMark, RegistryShrankRefused } from "../src/registry-mark.js";
+import {
+  checkRegistryMark,
+  raiseRegistryMark,
+  readRegistryMark,
+  RegistryShrankRefused,
+  UnreadableMarkRefused,
+} from "../src/registry-mark.js";
 import { createMemoryDb, rows } from "./helpers.js";
 
 /**
@@ -22,8 +28,8 @@ async function markPath(): Promise<string> {
   return join(dir, "registry-mark.json");
 }
 
-/** A store holding `runs` print runs, the first of them minting `numbers` field numbers. */
-async function storeWith(runs: number, numbers: number) {
+/** A store holding `runs` print runs, the first of them minting `numbers` field numbers from base + 1. */
+async function storeWith(runs: number, numbers: number, base = 26000000) {
   const { conn } = await createMemoryDb();
   const [[person]] = (await rows(
     conn,
@@ -38,7 +44,7 @@ async function storeWith(runs: number, numbers: number) {
     runIds.push(id);
   }
   for (let i = 1; i <= numbers; i++) {
-    await conn.run(`INSERT INTO minted_field_number (field_number, print_run_id) VALUES ('${26000000 + i}', ${runIds[0]})`);
+    await conn.run(`INSERT INTO minted_field_number (field_number, print_run_id) VALUES ('${base + i}', ${runIds[0]})`);
   }
   return conn;
 }
@@ -49,46 +55,49 @@ describe("the registry mark", () => {
     const conn = await storeWith(2, 5);
     const { store, before } = await checkRegistryMark(conn, "memory", path);
     expect(before).toBeNull();
-    expect(store).toEqual({ print_run: 2, minted_field_number: 5 });
-    expect(await readRegistryMark(path)).toEqual({ print_run: 2, minted_field_number: 5 });
+    expect(store).toEqual({ print_run: 2, minted_field_number: 5, highest_field_number: 26000005 });
+    expect(await readRegistryMark(path)).toEqual({ print_run: 2, minted_field_number: 5, highest_field_number: 26000005 });
   });
 
   it("refuses a store that holds fewer minted numbers or runs than the mark, and leaves the mark alone", async () => {
     const path = await markPath();
-    await writeFile(path, JSON.stringify({ print_run: 2, minted_field_number: 5 }));
+    await writeFile(path, JSON.stringify({ print_run: 2, minted_field_number: 5, highest_field_number: 26000005 }));
     const rebuilt = await storeWith(2, 3);
     const refusal = checkRegistryMark(rebuilt, "memory", path);
     await expect(refusal).rejects.toBeInstanceOf(RegistryShrankRefused);
-    await expect(refusal).rejects.toThrow(/holds 2 print run\(s\) and 3 minted field number\(s\).*held 2 and 5/);
+    await expect(refusal).rejects.toThrow(
+      /holds 2 print run\(s\) and 3 minted field number\(s\), the highest 26000003, and this deployment has held 2 print run\(s\) and 5/,
+    );
     const fewerRuns = await storeWith(1, 5);
     await expect(checkRegistryMark(fewerRuns, "memory", path)).rejects.toBeInstanceOf(RegistryShrankRefused);
     // A store built from scratch has none at all.
     await expect(checkRegistryMark(await storeWith(0, 0), "memory", path)).rejects.toBeInstanceOf(RegistryShrankRefused);
-    expect(await readRegistryMark(path)).toEqual({ print_run: 2, minted_field_number: 5 });
+    expect(await readRegistryMark(path)).toEqual({ print_run: 2, minted_field_number: 5, highest_field_number: 26000005 });
   });
 
   it("serves a store that holds as many or more, and raises the mark to it", async () => {
     const path = await markPath();
-    await writeFile(path, JSON.stringify({ print_run: 1, minted_field_number: 4 }));
+    await writeFile(path, JSON.stringify({ print_run: 1, minted_field_number: 4, highest_field_number: 26000004 }));
     await checkRegistryMark(await storeWith(1, 4), "memory", path);
-    expect(await readRegistryMark(path)).toEqual({ print_run: 1, minted_field_number: 4 });
+    expect(await readRegistryMark(path)).toEqual({ print_run: 1, minted_field_number: 4, highest_field_number: 26000004 });
     await checkRegistryMark(await storeWith(3, 9), "memory", path);
-    expect(await readRegistryMark(path)).toEqual({ print_run: 3, minted_field_number: 9 });
+    expect(await readRegistryMark(path)).toEqual({ print_run: 3, minted_field_number: 9, highest_field_number: 26000009 });
   });
 
   it("is never lowered by a raise", async () => {
     const path = await markPath();
-    await writeFile(path, JSON.stringify({ print_run: 4, minted_field_number: 2 }));
-    expect(await raiseRegistryMark(await storeWith(1, 7), "memory", path)).toEqual({
-      print_run: 4,
-      minted_field_number: 7,
-    });
+    await writeFile(path, JSON.stringify({ print_run: 4, minted_field_number: 2, highest_field_number: 26000002 }));
+    expect(await raiseRegistryMark(await storeWith(1, 7), "memory", path)).toEqual({ print_run: 4, minted_field_number: 7, highest_field_number: 26000007 });
   });
 
-  it("throws on a mark it cannot read rather than treating it as none", async () => {
+  it("refuses a mark it cannot read rather than treating it as none, naming the file", async () => {
     const path = await markPath();
-    await writeFile(path, `{"print_run": "lots"}`);
-    await expect(checkRegistryMark(await storeWith(0, 0), "memory", path)).rejects.toThrow(/not a registry mark/);
-    expect(await readFile(path, "utf8")).toBe(`{"print_run": "lots"}`);
+    for (const text of [`{"print_run": "lots"}`, "", `{"print_run": 1, "minted`, "null"]) {
+      await writeFile(path, text);
+      const refusal = checkRegistryMark(await storeWith(0, 0), "memory", path);
+      await expect(refusal).rejects.toBeInstanceOf(UnreadableMarkRefused);
+      await expect(refusal).rejects.toThrow(path);
+      expect(await readFile(path, "utf8")).toBe(text);
+    }
   });
 });

@@ -8,11 +8,13 @@ import {
   MINE,
   OUTSIDE,
   PAGE_SIZE,
+  QC_RULE_NAMES,
   defaultDirection,
   isFiltered,
   listingHref,
   listingParams,
   type AtlasOption,
+  type ListedFlag,
   type ListingQuery,
   type Page,
   type SampleRow,
@@ -33,6 +35,7 @@ import {
   EmptyState,
   Field,
   FilterPills,
+  FindingDetail,
   Meta,
   OrAbsent,
   PageHeader,
@@ -221,6 +224,7 @@ const emptyFilters: Omit<ListingQuery, "scope" | "page" | "sort" | "dir" | "act"
   labels: "any",
   kind: "any",
   qc: "any",
+  flag: "",
 };
 
 function activeFilters(
@@ -299,6 +303,9 @@ function activeFilters(
       locality: f.qcLocality,
     }[query.qc];
     out.push({ label: f.qc, value, clearHref: clear({ qc: "any" }) });
+  }
+  if (query.flag !== "") {
+    out.push({ label: f.flagKind, value: m.listings.status.flag[query.flag], clearHref: clear({ flag: "" }) });
   }
   return out;
 }
@@ -387,11 +394,84 @@ function column({ m, path, query, label, sort, kind = "text", fields = [], contr
 }
 
 
-/** The QC chip a row carries — the same three buckets the filter offers. */
-function StatusChip({ m, blocking, warning }: { m: Messages; blocking: number; warning: number }) {
-  if (blocking > 0) return <Chip tone="blocking">{m.listings.status.blocking(blocking)}</Chip>;
-  if (warning > 0) return <Chip tone="warning">{m.listings.status.warning(warning)}</Chip>;
-  return <Chip tone="success">{m.listings.status.clean}</Chip>;
+/** At most this many chips in a cell; the rest are a link to the sample. */
+const FLAGS_SHOWN = 3;
+/** A hold's reason as a chip is cut here, with its whole text in the panel. */
+const HOLD_CHIP_LENGTH = 24;
+
+/**
+ * A flag's chip text (beeline-ik0d): the problem in a word or two. A missing
+ * field names the field, and a hold uses its reason (Peter, 2026-11-04),
+ * since the staffer's words say more than "held by staff".
+ */
+function flagName(m: Messages, flag: ListedFlag): string {
+  const names = m.listings.status;
+  const detail = flag.details[0];
+  if (flag.rule === "missing_required_field" && detail !== undefined) {
+    const fields = detail.split(", ").map((f) => names.flagMissing[f]);
+    if (fields.every((f) => f !== undefined)) return fields.join(", ");
+  }
+  if (flag.rule === "staff_hold" && detail !== undefined) {
+    const reason = detail.trim();
+    if (reason !== "") return reason.length > HOLD_CHIP_LENGTH ? `${reason.slice(0, HOLD_CHIP_LENGTH - 1).trimEnd()}…` : reason;
+  }
+  return names.flag[flag.rule];
+}
+
+/**
+ * The Flags cell (beeline-ik0d, Peter 2026-11-04): one chip per kind of
+ * flag, named for the problem, its colour for whether it blocks printing,
+ * and the rule's explanation and this sample's details on click or tap — a
+ * <details> menu, so it opens without scripting, from the keyboard and on a
+ * phone, where there is no hover; the hover text says the same for a mouse.
+ * Colour is not the only signal: the severity is in each chip's accessible
+ * name and at the head of its panel, and blocking flags come first. A
+ * symbol for it waits on the domain icon set (beeline-2c3.14).
+ */
+function FlagsCell({
+  m,
+  flags,
+  sampleId,
+  selected,
+}: {
+  m: Messages;
+  flags: readonly ListedFlag[];
+  sampleId: number;
+  /** The kind the listing is filtered to, shown first so it is never among the hidden (CodeRabbit). */
+  selected: string;
+}) {
+  const s = m.listings.status;
+  if (flags.length === 0) return <Chip tone="success">{s.clean}</Chip>;
+  const more = flags.length - FLAGS_SHOWN;
+  const ordered = [...flags.filter((f) => f.rule === selected), ...flags.filter((f) => f.rule !== selected)];
+  return (
+    <span class="flag-chips">
+      {ordered.slice(0, FLAGS_SHOWN).map((flag) => {
+        const name = flagName(m, flag);
+        const severity = s.flagSeverity[flag.severity];
+        const instruction = m.qcInstructions[flag.rule];
+        return (
+          <details class="menu flag-menu">
+            <summary class={`chip ${flag.severity}`} title={`${severity}: ${instruction}`}>
+              {name}
+              <span class="visually-hidden">: {severity}</span>
+            </summary>
+            <div class="menu-panel flag-panel">
+              <p class="flag-severity">{severity}</p>
+              <p>{instruction}</p>
+              {flag.details.map((d) => (
+                <p>
+                  <FindingDetail details={d} ruleName={flag.rule} />
+                </p>
+              ))}
+              <a href={sampleHref(sampleId)}>{s.flagSeeSample}</a>
+            </div>
+          </details>
+        );
+      })}
+      {more > 0 && <a href={sampleHref(sampleId)}>{s.flagMore(more)}</a>}
+    </span>
+  );
 }
 
 function ResultsHeader({
@@ -733,22 +813,37 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                 label: copy.colStatus,
                 sort: "flags",
                 kind: "number",
-                fields: ["qc"],
+                fields: ["qc", "flag"],
                 controls: (
-                  <SelectField
-                    id="qc"
-                    name="qc"
-                    label={f.qc}
-                    value={query.qc}
-                    options={[
-                      ["any", f.qcAny],
-                      ["flagged", f.qcFlagged],
-                      ["blocking", f.qcBlocking],
-                      ["warning", f.qcWarning],
-                      ["clean", f.qcClean],
-                      ["locality", f.qcLocality],
-                    ]}
-                  />
+                  <>
+                    <SelectField
+                      id="qc"
+                      name="qc"
+                      label={f.qc}
+                      value={query.qc}
+                      options={[
+                        ["any", f.qcAny],
+                        ["flagged", f.qcFlagged],
+                        ["blocking", f.qcBlocking],
+                        ["warning", f.qcWarning],
+                        ["clean", f.qcClean],
+                        ["locality", f.qcLocality],
+                      ]}
+                    />
+                    {/* One kind of flag, named as its chip is (beeline-ik0d). */}
+                    <SelectField
+                      id="flag"
+                      name="flag"
+                      label={f.flagKind}
+                      value={query.flag}
+                      options={[
+                        ["", f.flagKindAny],
+                        ...QC_RULE_NAMES.map((rule) => [rule, m.listings.status.flag[rule]] as const).sort(([, a], [, b]) =>
+                          a.localeCompare(b),
+                        ),
+                      ]}
+                    />
+                  </>
                 ),
               }),
               atlasColumn({ ...col, label: copy.colAtlas, atlases }),
@@ -789,7 +884,12 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                   )}
                 </td>
                 <td>
-                  <StatusChip m={m} blocking={row.blocking} warning={row.warning} />
+                  <FlagsCell
+                    m={m}
+                    flags={page.findings?.get(row.sample_id) ?? []}
+                    sampleId={row.sample_id}
+                    selected={query.flag}
+                  />
                 </td>
                 <td>
                   <OrAbsent value={row.atlas_code} label={copy.atlasOutside} spelled />

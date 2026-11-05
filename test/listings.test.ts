@@ -206,10 +206,15 @@ describe("sample listing", () => {
     expect(body).toContain("3 samples");
   });
 
-  it("carries the QC state of each row", async () => {
+  it("names each row's flags, says whether each blocks printing, and explains it on click (beeline-ik0d)", async () => {
     const { app } = await listingApp();
     const body = await get(app, "/samples");
-    expect(body).toContain("1 flag blocks printing");
+    // A-2 has no locality: the chip names the field, its accessible name
+    // says it blocks printing, and its panel carries the rule's instruction.
+    const s = en.listings.status;
+    expect(body).toContain(`<summary class="chip blocking" title="${s.flagSeverity.blocking}: ${en.qcInstructions.missing_required_field}">`);
+    expect(body).toContain(`${s.flagMissing.locality}<span class="visually-hidden">: ${s.flagSeverity.blocking}</span>`);
+    expect(body).toContain(`<p>${en.qcInstructions.missing_required_field}</p>`);
     expect(body).toContain("clean");
   });
 

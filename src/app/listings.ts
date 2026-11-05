@@ -94,6 +94,31 @@ export const MEMBER_ANY = "";
  * is the question a person actually asks ("what is only a heads-up?").
  */
 export type QcStatus = "any" | "flagged" | "blocking" | "warning" | "clean" | "locality";
+
+/**
+ * Every QC rule, for the Flags column's "kind of flag" filter (beeline-ik0d).
+ * The schema is the authority (qc_rule, schema/050); a test holds this list
+ * to it, as it holds the message catalog's keys.
+ */
+export const QC_RULE_NAMES = [
+  "missing_required_field",
+  "missing_recommended_field",
+  "obscured_no_true_coordinates",
+  "taxon_obscured_awaiting_atlas",
+  "locality_format",
+  "place_unabbreviated",
+  "place_unrecognised",
+  "coordinate_uncertainty",
+  "coordinate_out_of_region",
+  "non_tracheophyte_host",
+  "duplicate_sample_number",
+  "count_mismatch",
+  "count_below_printed",
+  "within_sample_disagreement",
+  "observation_missing_upstream",
+  "staff_hold",
+] as const;
+export type QcRuleName = (typeof QC_RULE_NAMES)[number];
 export const QC_STATUSES = ["any", "flagged", "blocking", "warning", "clean", "locality"] as const;
 
 /**
@@ -203,6 +228,8 @@ export interface ListingQuery {
   /** Net or trap; on specimens, the kind of the sample each came from. */
   kind: KindFilter;
   qc: QcStatus;
+  /** One kind of flag (a QC rule's name), or "" for any; on specimens, their sample's. */
+  flag: QcRuleName | "";
   sort: SortKey;
   dir: SortDirection;
   /** 1-based. */
@@ -225,6 +252,7 @@ export const EMPTY_QUERY: ListingQuery = {
   labels: "any",
   kind: "any",
   qc: "any",
+  flag: "",
   sort: DEFAULT_SORT,
   dir: defaultDirection(DEFAULT_SORT),
   page: 1,
@@ -260,6 +288,7 @@ export function parseListingQuery(
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
   const qc = params.get("qc") ?? "";
+  const flag = params.get("flag") ?? "";
   const det = params.get("det") ?? "";
   const labels = params.get("labels") ?? "";
   const kind = params.get("kind") ?? "";
@@ -284,6 +313,7 @@ export function parseListingQuery(
     sort,
     dir: dirParam === "asc" || dirParam === "desc" ? dirParam : defaultDirection(sort),
     qc: (QC_STATUSES as readonly string[]).includes(qc) ? (qc as QcStatus) : "any",
+    flag: (QC_RULE_NAMES as readonly string[]).includes(flag) ? (flag as QcRuleName) : "",
     page: Number.isFinite(page) && page >= 1 ? Math.min(page, 10_000) : 1,
     act: (LISTING_ACTIONS as readonly string[]).includes(act) ? (act as ListingAction) : "",
   };
@@ -324,6 +354,7 @@ export function listingParams(query: ListingQuery, overrides: Partial<ListingQue
   if (merged.labels !== "any") params.set("labels", merged.labels);
   if (merged.kind !== "any") params.set("kind", merged.kind);
   if (merged.qc !== "any") params.set("qc", merged.qc);
+  if (merged.flag !== "") params.set("flag", merged.flag);
   // The sort is in the URL only when it is not the default, and the
   // direction only when it is not the key's own default — so a link that
   // sorts by date newest-first is the plain listing.
@@ -353,7 +384,8 @@ export const isFiltered = (q: ListingQuery) =>
   q.det !== "any" ||
   q.labels !== "any" ||
   q.kind !== "any" ||
-  q.qc !== "any";
+  q.qc !== "any" ||
+  q.flag !== "";
 
 export interface AtlasOption {
   code: string;
@@ -522,6 +554,12 @@ export interface ListingPageOptions {
   /** False skips counting the whole selection; `total` is then 0. */
   withTotal?: boolean;
   /**
+   * False skips reading the findings whose words make a Flags chip
+   * (findingWords): a download shows no chips. The kinds of flag are still
+   * listed, since they come free with the counts.
+   */
+  withFlagWords?: boolean;
+  /**
    * Only samples collected in this calendar year, judged on their first day
    * (no sample on the dev store spans New Year). Not a listing filter — the
    * listings have none, by design — but the grain the program archives are
@@ -537,6 +575,8 @@ export interface Page<Row> {
   total: number;
   /** sample_id → everyone who collected it, in recordedBy order. */
   collectors: Map<number, ListedCollector[]>;
+  /** sample_id → its flags, for the samples listing's Flags column; absent on specimens. */
+  findings?: Map<number, ListedFlag[]>;
 }
 
 const like = (term: string) => `%${term.toLowerCase()}%`;
@@ -682,6 +722,52 @@ const QC_COUNT_SELECTIONS = [
   sql<number>`CAST(sum(CASE WHEN r.severity = 'blocking' THEN 1 ELSE 0 END) AS INTEGER)`.as("blocking"),
   sql<number>`CAST(sum(CASE WHEN r.severity = 'warning' THEN 1 ELSE 0 END) AS INTEGER)`.as("warning"),
 ] as const;
+
+/**
+ * Which kinds of flag each sample carries, for the Flags column
+ * (beeline-ik0d), gathered in the pass that counts them: as rule names it
+ * costs nothing more, measured on production's store. What the findings say
+ * costs more than it is worth here. Gathered in this pass, it adds about a
+ * third to every samples page, since every sample's details are built to be
+ * aggregated; asked for afterwards by the page's ids, the union of rules is
+ * built again over every sample, the ids not reaching inside it, which cost
+ * the same. So only the two chips whose words come from a finding read
+ * their rule's own view, for the page's samples (findingWords), and the rest
+ * leave their details to the sample page. "rule:severity", comma-separated.
+ */
+const FLAG_LIST = sql<string | null>`string_agg(DISTINCT concat(f.rule_name, ':', r.severity), ',')`.as("flag_list");
+
+/** The sample (alias `s`) carries this kind of flag: the Flags column's filter. */
+const flaggedWith = (rule: QcRuleName) =>
+  sql<boolean>`EXISTS (SELECT 1 FROM sample_qc_finding kf WHERE kf.sample_id = s.entity_id AND kf.rule_name = ${rule})`;
+
+/** The kinds of flag a sample carries, blocking first, then by rule. */
+function parseFlags(list: string | null): ListedFlag[] {
+  return (list ?? "")
+    .split(",")
+    .filter((entry) => entry !== "")
+    .map((entry) => {
+      const [rule, severity] = entry.split(":") as [QcRuleName, "blocking" | "warning"];
+      return { rule, severity, details: [] as string[] };
+    })
+    .sort((a, b) => (a.severity === b.severity ? a.rule.localeCompare(b.rule) : a.severity === "blocking" ? -1 : 1));
+}
+
+/**
+ * The findings whose words make their chip — which fields are missing, and a
+ * hold's reason — for one page of samples, each from its rule's own view,
+ * which is cheap where the union is not (about 8 ms for a page of 50).
+ */
+async function findingWords(db: Kysely<Database>, sampleIds: number[]) {
+  if (sampleIds.length === 0) return [];
+  const ids = sql.join(sampleIds);
+  return (
+    await sql<{ sample_id: number; rule_name: QcRuleName; details: string | null }>`
+      SELECT sample_id, rule_name, details FROM qc_rule_missing_required_field WHERE sample_id IN (${ids})
+      UNION ALL
+      SELECT sample_id, rule_name, details FROM qc_rule_staff_hold WHERE sample_id IN (${ids})`.execute(db)
+  ).rows;
+}
 
 /** The place columns as one haystack: a person types a place, not a column. */
 /**
@@ -879,7 +965,7 @@ export async function listSamples(
           .innerJoin("qc_rule as r", "r.name", "f.rule_name")
           .where("f.sample_id", "is not", null)
           .groupBy("f.sample_id")
-          .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS])
+          .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS, FLAG_LIST])
           .as("qc"),
       (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
     );
@@ -983,6 +1069,7 @@ export async function listSamples(
   }
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
+  if (query.flag !== "") base = base.where(flaggedWith(query.flag));
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1015,6 +1102,7 @@ export async function listSamples(
         hidden.as("location_withheld"),
         blockingCount.as("blocking"),
         warningCount.as("warning"),
+        sql<string | null>`qc.flag_list`.as("flag_list"),
         sql<boolean>`EXISTS (SELECT 1 FROM sample_collector mine
                              WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})`.as("mine"),
         sql<boolean>`EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)`.as("printed"),
@@ -1043,12 +1131,38 @@ export async function listSamples(
     // A streamed download pages through everything and never shows a total.
     opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
   ]);
-  const sampleRows = rows as unknown as SampleRow[];
+  const sampleRows = rows as unknown as Array<SampleRow & { flag_list: string | null }>;
+  const ids = sampleRows.map((r) => r.sample_id);
+  const findings = new Map(sampleRows.map((r) => [r.sample_id, parseFlags(r.flag_list)] as const));
+  // Where the location is withheld from this reader, a finding's words go,
+  // as on the sample page (visibleFindings, src/app/record.ts): a hold's
+  // note can say where the sample was (CodeRabbit).
+  const wordsFor = sampleRows.filter((r) => !r.location_withheld).map((r) => r.sample_id);
+  const [collectors, words] = await Promise.all([
+    collectorsOf(db, ids),
+    opts.withFlagWords === false ? Promise.resolve([]) : findingWords(db, wordsFor),
+  ]);
+  for (const w of words) {
+    const flag = findings.get(Number(w.sample_id))?.find((x) => x.rule === w.rule_name);
+    if (flag !== undefined && w.details !== null && w.details !== "") flag.details.push(w.details);
+  }
   return {
     rows: sampleRows,
     total: Number(count?.n ?? 0),
-    collectors: await collectorsOf(db, sampleRows.map((r) => r.sample_id)),
+    collectors,
+    findings,
   };
+}
+
+/**
+ * One kind of flag on a sample, as the Flags column shows it (beeline-ik0d):
+ * the rule, whether it blocks printing, and, for the two rules whose chip is
+ * made from them (findingWords), what its findings say.
+ */
+export interface ListedFlag {
+  rule: QcRuleName;
+  severity: "blocking" | "warning";
+  details: string[];
 }
 
 export async function listSpecimens(
@@ -1139,6 +1253,9 @@ export async function listSpecimens(
   }
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
+  // By the sample's flags, as the severity filter above narrows specimens: a
+  // link to /specimens?flag= must not name a filter it does not apply.
+  if (query.flag !== "") base = base.where(flaggedWith(query.flag));
   if (opts.year !== undefined) base = base.where(sql<number>`extract(year from s.date_start)`, "=", opts.year);
 
   const limit = opts.limit ?? PAGE_SIZE;

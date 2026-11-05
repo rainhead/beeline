@@ -198,6 +198,30 @@ describe("deriveLocalities", () => {
     expect(at!.candidates.map((c) => c.locality)).not.toContain("Philamath");
   });
 
+  // beeline-fiyy: "Check iNaturalist now" names its few points from what lies
+  // around each one, and a whole run reads everything. The two must agree,
+  // for points far enough apart that each needs its own neighbourhood.
+  test("a few points are named exactly as a whole run names them", async () => {
+    const path = join(dir, "n1.duckdb");
+    await buildTestGazetteer(path, "build-n1");
+    const named = async (narrowUpTo: number) => {
+      const conn = await storeWithPerson();
+      await insertCleanSample(conn, { locality: "'Philamath'" }, { latitude: "44.5501", longitude: "-123.38" });
+      await insertCleanSample(conn, { locality: "'Philomath'", sample_number: "'2'" }, { latitude: "44.5502", longitude: "-123.38" });
+      await insertCleanSample(conn, { sample_number: "'3'" }, { latitude: "44.55", longitude: "-123.38" });
+      await insertCleanSample(conn, { sample_number: "'4'" }, { latitude: "44.41", longitude: "-123.30" });
+      // Far outside every other point's neighbourhood, and last, so a run
+      // that read only one point's surroundings would read only this one's.
+      await insertCleanSample(conn, { sample_number: "'5'" }, { latitude: "46.50", longitude: "-120.60" });
+      expect(await deriveLocalities(conn, path, { narrowUpTo })).toMatchObject({ pending: 5 });
+      return rows(conn, `SELECT sample_id, rank, locality, basis FROM sample_locality_candidate ORDER BY ALL`);
+    };
+    const narrow = await named(50);
+    expect(narrow.length).toBeGreaterThan(4);
+    expect(narrow.filter((r) => r[2] === "Philamath")).toEqual([]);
+    expect(narrow).toEqual(await named(0));
+  });
+
   test("a plural, or a space taken out, is not taken for a misspelling (beeline-5j10)", async () => {
     const path = join(dir, "s2.duckdb");
     await buildTestGazetteer(path, "build-s2");

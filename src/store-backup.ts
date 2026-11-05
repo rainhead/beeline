@@ -170,7 +170,12 @@ export async function fileHash(path: string, algorithm: "md5" | "sha256"): Promi
 
 /** What a backup says about itself, inside the archive. */
 export interface BackupManifest {
-  format: 1;
+  /**
+   * 1 holds the main store and the private store; 2, from the retirement of
+   * the private store (beeline-4tdh), the main store alone. The number, not
+   * the date, says which, since the night of the deploy could be either.
+   */
+  format: 1 | 2;
   takenAt: string;
   release: string | null;
   /** The DuckDB that wrote the copies, so a restorer knows what can open them. */
@@ -187,16 +192,14 @@ export const MANIFEST = "manifest.json";
 export const STORE_FILES = ["beeline.duckdb"] as const;
 
 /**
- * Archives taken before this also hold the retired private store
- * (beeline-4tdh), so one that does not has lost it. The day before the
- * retirement deployed, so it errs toward demanding less, never more.
+ * The stores an archive of each manifest format must hold: a format 1
+ * archive also held the retired private store, so one that does not has lost
+ * it.
  */
-const PRIVATE_STORE_RETIRED = "2026-11-05T00:00:00.000Z";
-
-/** The stores an archive must hold, judged by when its manifest says it was taken. */
-export function requiredStores(takenAt: string): string[] {
-  return takenAt < PRIVATE_STORE_RETIRED ? [...STORE_FILES, "private.duckdb"] : [...STORE_FILES];
-}
+const REQUIRED_STORES: Record<BackupManifest["format"], readonly string[]> = {
+  1: [...STORE_FILES, "private.duckdb"],
+  2: STORE_FILES,
+};
 
 export interface BackupOptions {
   /** Where the copies and the archive are written while a run is in progress. Emptied afterwards. */
@@ -291,7 +294,7 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
       files[entry.name] = { sha256: await fileHash(entry.path, "sha256"), bytes: (await stat(entry.path)).size };
     }
     const manifest: BackupManifest = {
-      format: 1,
+      format: 2,
       takenAt: takenAt.toISOString(),
       release: opts.release,
       duckdb,
@@ -407,7 +410,9 @@ export async function checkBackup(archive: string, opts: { dir: string; privateK
   await mkdir(opts.dir, { recursive: true, mode: 0o700 });
   await execFileAsync("tar", ["-xzf", archive, "-C", opts.dir]);
   const manifest = JSON.parse(await readFile(join(opts.dir, MANIFEST), "utf8")) as BackupManifest;
-  if (manifest.format !== 1) throw new Error(`${archive}: manifest format ${String(manifest.format)}, this checks format 1`);
+  if (manifest.format !== 1 && manifest.format !== 2) {
+    throw new Error(`${archive}: manifest format ${String(manifest.format)}, this checks formats 1 and 2`);
+  }
   // A downloaded archive is read, not trusted: a name in its manifest that
   // climbs out of the directory would have this hash, or open, some other file.
   for (const name of [...Object.keys(manifest.files), ...Object.keys(manifest.stores)]) {
@@ -418,7 +423,7 @@ export async function checkBackup(archive: string, opts: { dir: string; privateK
   // Judged against what every backup holds, never only against what this
   // manifest says it holds: a truncated or edited manifest that names less
   // would otherwise pass by checking less.
-  const missing = requiredStores(manifest.takenAt).filter((file) => !(file in manifest.stores));
+  const missing = REQUIRED_STORES[manifest.format].filter((file) => !(file in manifest.stores));
   if (missing.length > 0) throw new Error(`${archive}: the manifest describes no ${missing.join(" or ")}`);
   // A store is opened only once its bytes have been checked.
   const unhashed = Object.keys(manifest.stores).filter((file) => !(file in manifest.files));

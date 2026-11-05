@@ -29,7 +29,9 @@ export type Absorbed = Record<(typeof RETIRED_TABLES)[number], number> | null;
  * next boot without duplicating anything — the impersonation log, which has
  * no key, by matching every column. Then the file is renamed to
  * `<path>.retired` rather than deleted: it is the only copy of the rows as
- * they stood, and its key still opens it.
+ * they stood, and its key still opens it. A second store carried later (one
+ * restored from an older backup) gets a name of its own rather than
+ * replacing the first.
  *
  * A file that will not open — encrypted and no key given, or the wrong key —
  * throws, and the app does not start. Starting without the rows would sign
@@ -111,10 +113,12 @@ export async function absorbPrivateStore(
     // leave the file unopenable (beeline-vyi). Before the rename, so the rows
     // are in the main file before the old one stops being found.
     await conn.run("CHECKPOINT");
-    await rename(opts.path, `${opts.path}.retired`);
-    if (existsSync(`${opts.path}.wal`)) await rename(`${opts.path}.wal`, `${opts.path}.retired.wal`);
+    let retired = `${opts.path}.retired`;
+    for (let n = 2; existsSync(retired) || existsSync(`${retired}.wal`); n++) retired = `${opts.path}.retired-${n}`;
+    await rename(opts.path, retired);
+    if (existsSync(`${opts.path}.wal`)) await rename(`${opts.path}.wal`, `${retired}.wal`);
     console.log(
-      `absorbed the private store into the main store and renamed it ${opts.path}.retired: ` +
+      `absorbed the private store into the main store and renamed it ${retired}: ` +
         RETIRED_TABLES.map((t) => `${carried[t]} ${t}`).join(", "),
     );
     return carried;

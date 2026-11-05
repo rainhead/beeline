@@ -258,11 +258,11 @@ describe("a night's backup", () => {
   };
 
   it("uploads one archive that restores, and moves what the retention rule lets go to the bin", async () => {
-    const now = new Date("2026-11-12T10:00:00Z");
+    const now = new Date("2026-10-12T10:00:00Z");
     const drive = fakeDrive("folder", [
-      backupName(new Date("2026-11-11T10:00:00Z")),
-      backupName(new Date("2026-10-20T10:00:00Z")),
-      backupName(new Date("2026-10-01T10:00:00Z")),
+      backupName(new Date("2026-10-11T10:00:00Z")),
+      backupName(new Date("2026-09-20T10:00:00Z")),
+      backupName(new Date("2026-09-01T10:00:00Z")),
     ]);
     // What a run the process did not survive leaves behind.
     const { result, dir } = await run(drive, now, async (d) => {
@@ -270,10 +270,10 @@ describe("a night's backup", () => {
       await writeFile(join(d, "work", "run-killed", "beeline.duckdb"), "half a copy");
     });
 
-    expect(result.name).toBe("beeline-backup-20261112T100000Z.tar.gz");
+    expect(result.name).toBe("beeline-backup-20261012T100000Z.tar.gz");
     expect(result.staleRemoved).toBe(1);
     expect(result.absent).toEqual(["corrections.csv"]);
-    expect(result.trashed).toEqual([backupName(new Date("2026-10-20T10:00:00Z"))]);
+    expect(result.trashed).toEqual([backupName(new Date("2026-09-20T10:00:00Z"))]);
     expect(result.kept).toBe(3);
 
     // What Drive holds is a backup `pnpm backup:check` accepts, its store opened.
@@ -281,6 +281,7 @@ describe("a night's backup", () => {
     await writeFile(archive, drive.files.find((f) => f.id === "new")!.bytes);
     const checked = await checkBackup(archive, { dir: join(dir, "restored"), privateKey: null });
     expect(checked.storesOpened).toEqual(["beeline.duckdb"]);
+    expect(checked.manifest.format).toBe(2);
     expect(Object.keys(checked.manifest.stores)).toEqual(["beeline.duckdb"]);
     expect(checked.manifest.release).toBe("deployment-test");
     expect(checked.manifest.absent).toEqual(["corrections.csv"]);
@@ -292,8 +293,7 @@ describe("a night's backup", () => {
 
   it("is refused by backup:check once its manifest or its files have been tampered with", async () => {
     const drive = fakeDrive("folder", []);
-    // After the private store was retired, so one store is all it must hold.
-    const { dir } = await run(drive, new Date("2026-11-12T10:00:00Z"));
+    const { dir } = await run(drive, new Date("2026-10-12T10:00:00Z"));
     const original = join(dir, "downloaded.tar.gz");
     await writeFile(original, drive.files.find((f) => f.id === "new")!.bytes);
     const unpacked = join(dir, "unpacked");
@@ -344,7 +344,9 @@ describe("a night's backup", () => {
     const size = async (f: string) => (await readFile(join(work, f))).length;
     const manifest: BackupManifest = {
       format: 1,
-      takenAt: "2026-11-04T11:00:52.000Z",
+      // The night of the deploy, after midnight UTC: the format, not the
+      // date, is what says an archive held the private store.
+      takenAt: "2026-11-05T11:00:13.000Z",
       release: "before-4tdh",
       duckdb: "v1.5.5",
       stores: { "beeline.duckdb": { encrypted: false, ...main }, "private.duckdb": { encrypted: true, ...priv } },

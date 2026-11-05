@@ -630,6 +630,19 @@ describe("retiring the private store (beeline-4tdh)", () => {
     expect(await counts(createKysely(instance))).toEqual({ inat_sign_in: 2, session: 1, person_activity: 1, impersonation: 1 });
   });
 
+  it("a second store carried later is kept beside the first, not over it", async () => {
+    // Restoring a backup from before the retirement puts a private store
+    // back; the first one's .retired file is still the only copy of its rows.
+    const path = await retiredStore();
+    const { instance } = await createMemoryDb();
+    await absorbPrivateStore(instance, { path, key: null });
+    await copyFile(`${path}.retired`, path);
+    await absorbPrivateStore(instance, { path, key: null });
+    expect(existsSync(`${path}.retired`)).toBe(true);
+    expect(existsSync(`${path}.retired-2`)).toBe(true);
+    expect(existsSync(path)).toBe(false);
+  });
+
   it("a store in an older shape gives what it can: sign-ins, and no session keyed on person_id", async () => {
     const path = await retiredStore({ legacy: true });
     const { instance } = await createMemoryDb();

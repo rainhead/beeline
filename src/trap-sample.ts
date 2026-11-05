@@ -382,7 +382,8 @@ export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSamp
     if (await numberTaken(conn, s.sample_number, id)) return "taken";
     // No count given and the same kind of trap: keep the effort as it was
     // written, which the form had no single count to show for (CodeRabbit).
-    if (s.sampling_effort === null && s.protocol === current.method) {
+    // Only where the form showed no count: blanking a count it showed clears it.
+    if (s.sampling_effort === null && s.protocol === current.method && current.trap_count === "") {
       const [kept] = await rows<{ sampling_effort: string | null }>(conn, `SELECT sampling_effort FROM sample WHERE entity_id = $1`, [id]);
       s = { ...s, sampling_effort: kept?.sampling_effort ?? null };
     }

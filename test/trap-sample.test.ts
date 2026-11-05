@@ -131,6 +131,16 @@ describe("entering and editing", () => {
     expect(await rows(conn, `SELECT sampling_effort, specimen_count FROM sample WHERE entity_id = ${id}`)).toEqual([["42 pan traps, 14 vane traps", 12]]);
   });
 
+  it("clears a count the form showed when it is blanked", async () => {
+    const first = await checkTrapSample(conn, form());
+    if (!("sample" in first)) throw new Error("unexpected problems");
+    const id = (await createTrapSample(conn, first.sample, null)) as number;
+    const again = await checkTrapSample(conn, { ...(await loadTrapSample(conn, id))!, trap_count: "" }, id);
+    if (!("sample" in again)) throw new Error(JSON.stringify(again.problems));
+    await updateTrapSample(conn, id, again.sample);
+    expect(await rows(conn, `SELECT sampling_effort FROM sample WHERE entity_id = ${id}`)).toEqual([[null]]);
+  });
+
   it("is not a trap sample form for an imported sample", async () => {
     const id = await insertCleanSample(conn, { kind: "'trap'" });
     expect(await loadTrapSample(conn, id)).toBeNull();

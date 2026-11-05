@@ -115,8 +115,14 @@ export function parseMethod(value: string | null): ParsedMethod {
   }
   const protocol = vane ? "vane trap" : pan ? "pan trap" : "trap";
   const numbers = [...first.matchAll(/\b(\d+)\b/g)].map((m) => Number(m[1]));
-  // Cups are counted by colour ("12 yellow, 4 blue cups"), so their numbers add up.
-  const count = numbers.length === 0 ? (/^one\b/.test(first) ? 1 : null) : numbers.reduce((a, b) => a + b, 0);
+  // Cups are counted by colour ("12 yellow, 4 blue cups"), so their numbers
+  // add up; anywhere else, several numbers are not a count (CodeRabbit).
+  const cups = /\bcups?\b/.test(first);
+  const count =
+    numbers.length === 0 ? (/^one\b/.test(first) ? 1 : null)
+    : numbers.length === 1 ? numbers[0]!
+    : cups ? numbers.reduce((a, b) => a + b, 0)
+    : null;
   return { kind: "trap", protocol, trapCount: count, effort: null };
 }
 

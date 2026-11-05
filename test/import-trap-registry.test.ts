@@ -27,6 +27,9 @@ describe("reading the registry's columns", () => {
     expect(parseMethod("16 pan traps ")).toMatchObject({ protocol: "pan trap", trapCount: 16 });
     expect(parseMethod("12 yellow, 4 blue cups. One pan tossed. Flowers in bloom - none")).toMatchObject({ protocol: "pan trap", trapCount: 16 });
     expect(parseMethod("72 vanes")).toMatchObject({ protocol: "vane trap", trapCount: 72 });
+    expect(parseMethod("8 yellow, 7 blue, 1 yellow replacement cup")).toMatchObject({ protocol: "pan trap", trapCount: 16 });
+    // Synthetic: several numbers that are not cups by colour are no count.
+    expect(parseMethod("6 vane traps 2 lost")).toMatchObject({ protocol: "vane trap", trapCount: null });
     expect(parseMethod("Vane trap")).toMatchObject({ protocol: "vane trap", trapCount: null });
     expect(parseMethod("one trap")).toMatchObject({ protocol: "trap", trapCount: 1 });
     expect(parseMethod("Bowl Trap")).toMatchObject({ protocol: "pan trap" });

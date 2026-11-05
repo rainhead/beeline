@@ -383,24 +383,16 @@ regression.
 ## Admitting a person who has no records
 
 Promotion makes people from the records, so somebody who collects nothing,
-such as an intern or a coordinator, is in no store and cannot sign in: what
-lets a person in is an iNaturalist account bound to a person. The unknown
-collectors' screen admits only somebody with records (beeline-2c3.33), so
-this goes through
-[`ingest/person-overlay.csv`](../../ingest/person-overlay.csv): `create` first,
-then the account and whatever else is true of them.
+such as staff, an intern or a coordinator, is in no store and cannot sign in:
+what lets a person in is an iNaturalist account bound to a person. Add them
+at **People → Add a person** (`/people/new`, beeline-2c3.33): it looks the
+account up on iNaturalist, and writes the same overlay rows as every other
+decision about a person, applied at once. Nothing needs deploying. The page
+also lists everyone turned away at sign-in, each a click from the form.
 
-```csv
-name:Nora Jacobi,create,yes,rainhead,"why they belong in the store"
-name:Nora Jacobi,inat_user_id,10206031 njacobi,rainhead,"verified against the iNat API"
-name:Nora Jacobi,admin,yes,rainhead,"why"
-```
-
-Check the iNaturalist id first (`curl -s https://api.inaturalist.org/v1/users/<login>`),
-because the id is the binding and a lookalike account has survived review
-before. Deploy, then run `pnpm person:apply` in maintenance mode. It prints
-what it applied and every row it could not resolve, it is idempotent, and the
-same rows rebuild the person after the next reseed.
+Somebody whose collection records are waiting is added from Unknown
+collectors instead, which also makes those records into samples; the form
+says so and links there.
 
 ## The taxonomy's reference
 

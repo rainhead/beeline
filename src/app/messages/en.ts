@@ -2302,6 +2302,73 @@ export const en = {
   },
 
   /**
+   * Adding somebody by their iNaturalist account (beeline-2c3.33): staff, an
+   * intern, anyone who collects nothing and so has no other way in.
+   * Staff-facing, English-only.
+   */
+  addPerson: {
+    link: "Add a person",
+    title: "Add a person",
+    heading: "Add a person",
+    intro:
+      "Somebody who signs in to Beeline needs to be connected to their iNaturalist account first. Volunteers are added from their collection records on Unknown collectors; use this for anyone who has none, such as staff.",
+    backToPeople: "All people",
+    lookUp: "Their iNaturalist account",
+    lookUpHint: "Their login, or a link to their iNaturalist profile.",
+    find: "Look them up",
+    notAccount: (typed: string) => `"${typed}" isn't an iNaturalist login or a link to a profile.`,
+    noSuchAccount: (typed: string) => `iNaturalist has no account called ${typed}.`,
+    lookupFailed: "iNaturalist didn't answer just now. Try again in a minute.",
+
+    turnedAwayHeading: "Turned away at sign-in",
+    turnedAwayHint:
+      "These people signed in with iNaturalist, but nobody in Beeline is connected to their account, so they were told to ask their atlas staff.",
+    turnedAwayEmpty: "Nobody has been turned away at sign-in.",
+    colAccount: "iNaturalist account",
+    colTried: "Last tried",
+    // Compared as said, so two attempts in the same minute read as one.
+    tried: (first: Date, last: Date) =>
+      dateTime(first) === dateTime(last) ? dateTime(last) : `${dateTime(last)} (first ${dateTime(first)})`,
+    addThem: "Add",
+
+    profile: "Their iNaturalist profile",
+    profileName: (name: string) => `Named ${name} on iNaturalist`,
+    noProfileName: "No name on their iNaturalist profile",
+    about: (observations: number, joined: Date | null) =>
+      [
+        `${n(observations)} ${observations === 1 ? "observation" : "observations"}`,
+        joined === null
+          ? null
+          : // A string passes through, as the formatters above let the proofing page's placeholders.
+            `joined ${typeof joined === "string" ? joined : joined.toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric", timeZone: ZONE })}`,
+      ]
+        .filter((x) => x !== null)
+        .join(", "),
+    triedToSignIn: (when: Date) => `Tried to sign in to Beeline ${dateTime(when)}.`,
+    held: (name: string) => `This account is already connected to ${name}.`,
+    openPerson: (name: string) => `Open ${name}`,
+    waiting: (records: number) =>
+      `This account has ${n(records)} collection ${records === 1 ? "record" : "records"} waiting on Unknown collectors. Add them there, so their records become samples at the same time.`,
+    openWaiting: "Open them on Unknown collectors",
+
+    displayName: "Name",
+    displayNameHint: "How they appear across Beeline.",
+    givenName: "Given name",
+    familyName: "Family name",
+    namesHint: "Used on labels, if they ever collect.",
+    staff: "Staff",
+    staffHint: "Staff can see and change everything in Beeline, including People.",
+    reason: "Why (optional)",
+    add: "Add them",
+    addedReason: (staff: boolean) => (staff ? "Program staff" : "Added by their iNaturalist account"),
+
+    nameBlank: "give them a name",
+    nameTaken: (name: string) =>
+      `somebody here is already called "${name}". If this is them, connect the account from their page on People; if not, give this person a name that tells them apart`,
+    problem: (why: string) => `Not saved: ${why}`,
+  },
+
+  /**
    * Collectors Beeline does not know (beeline-e85). Staff-facing, English-only.
    * Said as staff would say it: somebody posted collection records and
    * nobody here is connected to their iNaturalist account — never "unresolved"

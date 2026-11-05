@@ -339,7 +339,7 @@ export function Roster({
   const col = { m, query };
   return (
     <>
-      <PageHeader title={p.heading} lede={p.intro} />
+      <PageHeader title={p.heading} lede={p.intro} meta={<a href="/people/new">{m.addPerson.link}</a>} />
 
       <div class="listing-toolbar">
         <SearchForm action="/people" params={rosterParams(query)} value={query.search} label={p.search} placeholder={p.searchHint} />

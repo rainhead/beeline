@@ -40,6 +40,7 @@
     "worksheets:fetch": "tsx src/fetch-worksheets.ts",
     "worksheets:load": "tsx src/load-worksheets.ts",
     "disposition:load": "tsx src/load-dispositions.ts",
+    "trap:import": "tsx src/import-trap-registry.ts",
     "person:apply": "tsx src/apply-person-overlay.ts",
     "person:orcids": "tsx src/load-orcids.ts",
     "sample:apply": "tsx src/apply-sample-overlay.ts",

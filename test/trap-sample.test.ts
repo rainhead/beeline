@@ -118,6 +118,29 @@ describe("entering and editing", () => {
     expect(await rows(conn, `SELECT a.code FROM sample_atlas sa JOIN program a ON a.entity_id = sa.atlas_id WHERE sa.sample_id = ${id}`)).toEqual([["WaBA"]]);
   });
 
+  it("keeps an effort the form has no single count for when the sample is edited", async () => {
+    const first = await checkTrapSample(conn, form({ method: "vane and pan traps", trap_count: "" }));
+    if (!("sample" in first)) throw new Error("unexpected problems");
+    // As the spreadsheet import writes a sample that mixes kinds of trap.
+    const id = (await createTrapSample(conn, { ...first.sample, sampling_effort: "42 pan traps, 14 vane traps" }, null)) as number;
+    const loaded = await loadTrapSample(conn, id);
+    expect(loaded?.trap_count).toBe("");
+    const again = await checkTrapSample(conn, { ...loaded!, specimen_count: "12" }, id);
+    if (!("sample" in again)) throw new Error(JSON.stringify(again.problems));
+    expect(await updateTrapSample(conn, id, again.sample)).toBe("saved");
+    expect(await rows(conn, `SELECT sampling_effort, specimen_count FROM sample WHERE entity_id = ${id}`)).toEqual([["42 pan traps, 14 vane traps", 12]]);
+  });
+
+  it("clears a count the form showed when it is blanked", async () => {
+    const first = await checkTrapSample(conn, form());
+    if (!("sample" in first)) throw new Error("unexpected problems");
+    const id = (await createTrapSample(conn, first.sample, null)) as number;
+    const again = await checkTrapSample(conn, { ...(await loadTrapSample(conn, id))!, trap_count: "" }, id);
+    if (!("sample" in again)) throw new Error(JSON.stringify(again.problems));
+    await updateTrapSample(conn, id, again.sample);
+    expect(await rows(conn, `SELECT sampling_effort FROM sample WHERE entity_id = ${id}`)).toEqual([[null]]);
+  });
+
   it("is not a trap sample form for an imported sample", async () => {
     const id = await insertCleanSample(conn, { kind: "'trap'" });
     expect(await loadTrapSample(conn, id)).toBeNull();

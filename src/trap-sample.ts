@@ -256,7 +256,7 @@ export async function checkTrapSample(
       date_end: end!,
       protocol: method,
       // Effort as the old records wrote it ('6 vane traps'), from its own field.
-      sampling_effort: trapCount === null ? null : `${trapCount} ${method}${trapCount === 1 ? "" : "s"}`,
+      sampling_effort: trapCount === null ? null : effortText(trapCount, method),
       specimen_count: specimens!,
       latitude: latitude!,
       longitude: longitude!,
@@ -268,6 +268,9 @@ export async function checkTrapSample(
     },
   };
 }
+
+/** Effort as the form writes it, and as the old records did: "6 vane traps". */
+export const effortText = (count: number, method: string) => `${count} ${method}${count === 1 ? "" : "s"}`;
 
 async function inTransaction<T>(conn: DuckDBConnection, fn: () => Promise<T>): Promise<T> {
   await conn.run("BEGIN TRANSACTION");
@@ -300,15 +303,21 @@ async function writeParts(conn: DuckDBConnection, id: number, s: TrapSample, wit
 }
 
 /** Write a new trap sample; its id. Behind the print runs' lock, on the print connection. */
-export function createTrapSample(conn: DuckDBConnection, s: TrapSample, enteredBy: number | null): Promise<number | "taken"> {
+export function createTrapSample(
+  conn: DuckDBConnection,
+  s: TrapSample,
+  enteredBy: number | null,
+  /** A net sample only from the spreadsheet import, where a registry row says "net". */
+  kind: "trap" | "net" = "trap",
+): Promise<number | "taken"> {
   return withPrintRunLock(async () => {
     if (await numberTaken(conn, s.sample_number, null)) return "taken";
     return inTransaction(conn, async () => {
       const created = await rows<{ entity_id: number }>(
         conn,
         `INSERT INTO sample (kind, sample_number, date_start, date_end, specimen_count, country, state_province, county, locality, protocol, sampling_effort)
-         VALUES ('trap', $1, $2::DATE, $3::DATE, $4, $5, $6, $7, $8, $9, $10) RETURNING entity_id`,
-        [s.sample_number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol, s.sampling_effort],
+         VALUES ($11, $1, $2::DATE, $3::DATE, $4, $5, $6, $7, $8, $9, $10) RETURNING entity_id`,
+        [s.sample_number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol, s.sampling_effort, kind],
       );
       const id = created[0]!.entity_id;
       await conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES ($1, $2)`, [id, enteredBy] as never);
@@ -338,7 +347,11 @@ export async function loadTrapSample(conn: DuckDBConnection, id: number): Promis
   const r = found[0];
   if (r === undefined) return null;
   const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
-  const effort = /^(\d+) /.exec(str(r.sampling_effort));
+  // A count only where the effort is what the form itself writes; an effort
+  // written otherwise ("42 pan traps, 14 vane traps", from the import) is no
+  // single count, and the form must not turn its first number into one.
+  const counted = /^(\d+) /.exec(str(r.sampling_effort));
+  const effort = counted !== null && effortText(Number(counted[1]), str(r.protocol)) === str(r.sampling_effort) ? counted : null;
   return {
     sample_number: str(r.sample_number),
     collectors: (r.collectors as string[] | null) ?? [],
@@ -367,6 +380,13 @@ export function updateTrapSample(conn: DuckDBConnection, id: number, s: TrapSamp
     const current = await loadTrapSample(conn, id);
     if (current === null || !current.editable) return "printed";
     if (await numberTaken(conn, s.sample_number, id)) return "taken";
+    // No count given and the same kind of trap: keep the effort as it was
+    // written, which the form had no single count to show for (CodeRabbit).
+    // Only where the form showed no count: blanking a count it showed clears it.
+    if (s.sampling_effort === null && s.protocol === current.method && current.trap_count === "") {
+      const [kept] = await rows<{ sampling_effort: string | null }>(conn, `SELECT sampling_effort FROM sample WHERE entity_id = $1`, [id]);
+      s = { ...s, sampling_effort: kept?.sampling_effort ?? null };
+    }
     return inTransaction(conn, async () => {
       // The satellites are replaced rather than updated: none is referenced,
       // and the sample row itself keeps its id (beeline-6e9).

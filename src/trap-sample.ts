@@ -180,10 +180,13 @@ export async function checkTrapSample(
   else {
     const taken = await rows<{ entity_id: number }>(
       conn,
-      `SELECT entity_id FROM sample WHERE sample_number = $1 AND entity_id IS DISTINCT FROM $2 LIMIT 1`,
+      // Unique among trap samples only (Peter, 2026-11-04): an OBAS- number
+      // is the program's, while a net sample's number is its collector's for
+      // the day, so thousands of net samples share "3".
+      `SELECT entity_id FROM sample WHERE kind = 'trap' AND sample_number = $1 AND entity_id IS DISTINCT FROM $2 LIMIT 1`,
       [sampleNumber, sampleId],
     );
-    if (taken.length > 0) problems.sample_number = `Sample ${sampleNumber} is already in Beeline.`;
+    if (taken.length > 0) problems.sample_number = `Trap sample ${sampleNumber} is already in Beeline.`;
   }
 
   const names = form.collectors.map((n) => n.trim()).filter((n) => n !== "");

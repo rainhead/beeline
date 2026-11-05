@@ -113,7 +113,7 @@ describe("entering a trap sample", () => {
     const res = await as("staffer").post("/trap-samples/new", entry({ sample_number: "OBAS-00657", latitude: "" }));
     expect(res.status).toBe(400);
     const body = await res.text();
-    expect(body).toContain("Sample OBAS-00657 is already in Beeline.");
+    expect(body).toContain("Trap sample OBAS-00657 is already in Beeline.");
     expect(body).toContain("A latitude in decimal degrees is needed.");
     expect(body).toContain(`value="Fields-Denio N"`);
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_entry`)).toEqual([[0]]);

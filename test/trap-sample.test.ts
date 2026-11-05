@@ -66,6 +66,11 @@ describe("checking a trap sample", () => {
     expect(checked.problems.collectors).toContain("Nobody Known");
   });
 
+  it("refuses a number another trap sample has, but not one a net sample has", async () => {
+    await insertCleanSample(conn, { sample_number: "'3'", kind: "'net'" });
+    expect("sample" in (await checkTrapSample(conn, form({ sample_number: "3" })))).toBe(true);
+  });
+
   it("refuses a number already in Beeline, but not the sample's own", async () => {
     const id = await insertCleanSample(conn, { sample_number: "'OBAS-20300'", kind: "'trap'" });
     const clash = await checkTrapSample(conn, form());

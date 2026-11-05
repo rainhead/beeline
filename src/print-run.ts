@@ -77,6 +77,13 @@ export interface PrepareOptions {
   atlasId: number | null;
   personId: number;
   now?: Date;
+  /**
+   * Run inside the freeze's transaction, after every row is written and
+   * before the commit; a throw rolls the run back. The app raises the
+   * registry mark here (src/registry-mark.ts, beeline-l3w7), so that a run
+   * cannot commit with the mark still behind it.
+   */
+  beforeCommit?: (conn: DuckDBConnection) => Promise<void>;
 }
 
 export interface PrepareResult {
@@ -555,6 +562,7 @@ async function prepareRunUnlocked(conn: DuckDBConnection, opts: PrepareOptions):
     await conn.run(`DROP TABLE IF EXISTS freeze_scope`);
     await conn.run(`DROP TABLE IF EXISTS freeze_reprint`);
     await conn.run(`DROP TABLE IF EXISTS freeze_samples`);
+    await opts.beforeCommit?.(conn);
     await conn.run("COMMIT");
     return { printRunId, labels: laidOut.length, reprints: reprints.length, samples: samples.size, sheets };
   } catch (err) {

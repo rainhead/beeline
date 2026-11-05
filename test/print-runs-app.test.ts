@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DuckDBConnection } from "@duckdb/node-api";
@@ -75,7 +75,7 @@ async function printApp(signedInAs: "ash" | "staffer" = "staffer") {
   const app = appFor(signedInAs);
   const post = (path: string, body: Record<string, string> = {}) =>
     app.request(path, { method: "POST", headers: { origin: ORIGIN }, body: new URLSearchParams(body) });
-  return { app, appFor, conn, db, post, dir, ash, birch, ashSample, birchSample };
+  return { app, appFor, conn, db, post, dir, paths, ash, birch, ashSample, birchSample };
 }
 
 /**
@@ -115,6 +115,27 @@ describe("the print-run screens", () => {
     const flagged = await (await staff.app.request("/print-runs")).text();
     expect(flagged).toContain("Washington Bee Atlas — nothing waiting");
     expect(flagged).not.toContain("Oregon Bee Atlas —");
+  });
+
+  // beeline-l3w7: the boot refuses a store holding fewer numbers than the
+  // mark, so every run that mints has to raise it.
+  it("raises the registry mark when a run is prepared", async () => {
+    const { post, paths } = await printApp();
+    await expect(readFile(paths.registryMarkPath, "utf8")).rejects.toThrow();
+    expect((await post("/print-runs")).status).toBe(302);
+    const mark = JSON.parse(await readFile(paths.registryMarkPath, "utf8"));
+    expect(mark).toMatchObject({ print_run: 1, minted_field_number: 4 });
+    expect(String(mark.highest_field_number)).toMatch(/^\d{2}000004$/);
+  });
+
+  // Raised before the commit, so a mark that cannot be written refuses the
+  // run instead of letting it commit with the mark behind it.
+  it("refuses to prepare a run when the registry mark cannot be written", async () => {
+    const { post, paths, conn } = await printApp();
+    await mkdir(paths.registryMarkPath);
+    expect((await post("/print-runs")).status).toBe(500);
+    expect(await rows(conn, `SELECT count(*) FROM print_run`)).toEqual([[0n]]);
+    expect(await rows(conn, `SELECT count(*) FROM minted_field_number`)).toEqual([[0n]]);
   });
 
   it("refuses a run scoped to an atlas that does not print its own labels, in words", async () => {

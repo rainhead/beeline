@@ -7,7 +7,7 @@ How each part of Beeline works, one file per area. Read the file for the area yo
 - [Browsing: scope, filters, sort](browsing-scope-filters-sort.md) — `src/app/listings.ts`, `src/app/views/listings.tsx`
 - [The front page](the-front-page.md) — `src/app/dashboard.ts`, `src/app/views/qc.tsx`
 - [One record](one-record.md) — `src/app/record.ts`, `src/app/views/record.tsx`
-- [Printing](printing.md) — `schema/035`, `schema/155`
+- [Printing](printing.md) — `schema/035`, `schema/155`, `src/registry-mark.ts`
 - [Determinations from Ecdysis](determinations-from-ecdysis.md) — `src/load-ecdysis.ts`, `src/adopt-ecdysis.ts`
 - [Volunteers identifying their own specimens](volunteers-identifying-their-own-specimens.md) — `src/app/determine.ts`, `src/app/views/determine.tsx`
 - [Determinations from worksheets](determinations-from-worksheets.md) — `src/fetch-worksheets.ts`, `src/load-worksheets.ts`

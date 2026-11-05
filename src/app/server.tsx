@@ -20,6 +20,7 @@ import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
 import { jobHealth, type Job, type LastOutcome } from "./jobs/framework.js";
 import { reportAppError } from "./error-reporting.js";
+import { currentCatalog, raiseRegistryMark } from "../registry-mark.js";
 import { ErrorPage, staticErrorPage, type ErrorKind } from "./views/error-page.js";
 import { HTTPException } from "hono/http-exception";
 import { csvGenerationTiming, requestTiming } from "./request-timing.js";
@@ -260,6 +261,8 @@ export interface AppDeps {
   };
   /** Where rendered label sheets are kept (config.printRunsDir). */
   printRunsDir?: string;
+  /** The registry mark each print run raises (config.registryMarkPath, src/registry-mark.ts). */
+  registryMarkPath?: string;
   /** The programs' licence and privacy-policy decisions; the curated files in ingest/ unless a test says otherwise. */
   programGovernance?: GovernancePaths;
   /** App-written log of each program's contact address, as staff set it on the program's page (beeline-rrit). */
@@ -293,6 +296,7 @@ export function createApp({
   mintConn,
   inatCheck,
   printRunsDir,
+  registryMarkPath,
   programGovernance,
   programContactsPath,
   reportSignIn,
@@ -303,6 +307,7 @@ export function createApp({
   // fails as it builds the app, whatever it goes on to request
   // (src/deployment-path.ts).
   const printRunsPath = printRunsDir ?? deploymentPath("data/print-runs");
+  const markPath = registryMarkPath ?? deploymentPath("data/registry-mark.json");
   const printWriter = printConn ?? conn;
   const corrections = correctionsPath ?? deploymentPath("data/corrections.csv");
   const overlayPath = personOverlayPath ?? deploymentPath("data/person-overlay.csv");
@@ -1959,7 +1964,17 @@ export function createApp({
       const raw = String(form.get("atlas_id") ?? "").trim();
       const atlasId = raw === "" ? null : Number(raw);
       if (atlasId !== null && !Number.isSafeInteger(atlasId)) return "/print-runs";
-      const result = await prepareRun(printWriter!, { atlasId, personId });
+      // The registry mark is raised inside the run's transaction, before it
+      // commits (beeline-l3w7): a failure to write it refuses the run, and a
+      // crash after it leaves the mark ahead of the store, which refuses a
+      // good store at boot rather than serving a bad one.
+      const result = await prepareRun(printWriter!, {
+        atlasId,
+        personId,
+        beforeCommit: async (conn) => {
+          await raiseRegistryMark(conn, await currentCatalog(conn), markPath);
+        },
+      });
       return result === null ? "/print-runs?prepared=nothing" : `/print-runs/${result.printRunId}`;
     }),
   );

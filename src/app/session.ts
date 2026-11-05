@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Context } from "hono";
-import { deleteCookie, getCookie } from "hono/cookie";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { cookieJar, SESSION_COOKIE } from "./cookies.js";
@@ -156,14 +155,6 @@ export async function deleteSession(db: Kysely<Database>, id: string): Promise<v
   await db.deleteFrom("session").where("id_sha256", "=", hashSessionId(id)).execute();
 }
 
-/**
- * The session cookie's name before beeline-73c9 gave it the `__Host-`
- * prefix. Read for 30 days after that change (the idle limit), so nobody was
- * signed out by it: a request carrying only this cookie that still resolves
- * is given the new one and this one is deleted. Remove after 2026-12-10,
- * with the fallback in {@link cookieSessionResolver}.
- */
-const OLD_SESSION_COOKIE = "beeline_session";
 
 /**
  * The real resolver: session cookie → session row (by the cookie's hash) →
@@ -175,10 +166,11 @@ const OLD_SESSION_COOKIE = "beeline_session";
 export function cookieSessionResolver(db: Kysely<Database>, origin: string): SessionResolver {
   const cookies = cookieJar(origin);
   return async (c) => {
-    let id = cookies.get(c, SESSION_COOKIE);
-    // Only on a Secure origin do the two names differ.
-    const old = id === undefined && cookies.secure ? getCookie(c, OLD_SESSION_COOKIE) : undefined;
-    id ??= old;
+    // Only ever the prefixed name on an https origin. The name from before
+    // beeline-73c9 is not read even for a while: any subdomain can set it, so
+    // honouring it would reopen the hole the prefix closes. Everyone signed
+    // in again once instead.
+    const id = cookies.get(c, SESSION_COOKIE);
     if (!id) return null;
     const hash = hashSessionId(id);
     const row = await db
@@ -198,10 +190,6 @@ export function cookieSessionResolver(db: Kysely<Database>, origin: string): Ses
       ])
       .executeTakeFirst();
     if (row === undefined) return null;
-    if (old !== undefined) {
-      cookies.set(c, SESSION_COOKIE, old);
-      deleteCookie(c, OLD_SESSION_COOKIE, { path: "/" });
-    }
     await bookkeeping(() =>
       db
         .updateTable("session")

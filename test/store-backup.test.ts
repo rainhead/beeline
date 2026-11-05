@@ -258,11 +258,11 @@ describe("a night's backup", () => {
   };
 
   it("uploads one archive that restores, and moves what the retention rule lets go to the bin", async () => {
-    const now = new Date("2026-10-12T10:00:00Z");
+    const now = new Date("2026-11-12T10:00:00Z");
     const drive = fakeDrive("folder", [
-      backupName(new Date("2026-10-11T10:00:00Z")),
-      backupName(new Date("2026-09-20T10:00:00Z")),
-      backupName(new Date("2026-09-01T10:00:00Z")),
+      backupName(new Date("2026-11-11T10:00:00Z")),
+      backupName(new Date("2026-10-20T10:00:00Z")),
+      backupName(new Date("2026-10-01T10:00:00Z")),
     ]);
     // What a run the process did not survive leaves behind.
     const { result, dir } = await run(drive, now, async (d) => {
@@ -270,10 +270,10 @@ describe("a night's backup", () => {
       await writeFile(join(d, "work", "run-killed", "beeline.duckdb"), "half a copy");
     });
 
-    expect(result.name).toBe("beeline-backup-20261012T100000Z.tar.gz");
+    expect(result.name).toBe("beeline-backup-20261112T100000Z.tar.gz");
     expect(result.staleRemoved).toBe(1);
     expect(result.absent).toEqual(["corrections.csv"]);
-    expect(result.trashed).toEqual([backupName(new Date("2026-09-20T10:00:00Z"))]);
+    expect(result.trashed).toEqual([backupName(new Date("2026-10-20T10:00:00Z"))]);
     expect(result.kept).toBe(3);
 
     // What Drive holds is a backup `pnpm backup:check` accepts, its store opened.
@@ -292,7 +292,8 @@ describe("a night's backup", () => {
 
   it("is refused by backup:check once its manifest or its files have been tampered with", async () => {
     const drive = fakeDrive("folder", []);
-    const { dir } = await run(drive, new Date("2026-10-12T10:00:00Z"));
+    // After the private store was retired, so one store is all it must hold.
+    const { dir } = await run(drive, new Date("2026-11-12T10:00:00Z"));
     const original = join(dir, "downloaded.tar.gz");
     await writeFile(original, drive.files.find((f) => f.id === "new")!.bytes);
     const unpacked = join(dir, "unpacked");
@@ -361,6 +362,15 @@ describe("a night's backup", () => {
     expect(withKey.storesOpened).toEqual(["beeline.duckdb", "private.duckdb"]);
     const without = await checkBackup(archive, { dir: join(dir, "without"), privateKey: null });
     expect(without.storesOpened).toEqual(["beeline.duckdb"]);
+
+    // And one that has lost its private store, from the manifest and the
+    // archive both, is refused rather than passed for checking less.
+    const { "private.duckdb": _store, ...stores } = manifest.stores;
+    const { "private.duckdb": _file, ...files } = manifest.files;
+    await writeFile(join(work, "manifest.json"), JSON.stringify({ ...manifest, stores, files }));
+    const stripped = join(dir, "stripped.tar.gz");
+    await writeArchive(["manifest.json", "beeline.duckdb"].map((name) => ({ name, path: join(work, name) })), stripped);
+    await expect(checkBackup(stripped, { dir: join(dir, "stripped"), privateKey: KEY })).rejects.toThrow(/describes no private\.duckdb/);
   });
 
   it("fails, naming the step, when the file Drive holds is not the file that was sent, and bins that file", async () => {

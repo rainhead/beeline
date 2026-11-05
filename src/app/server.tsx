@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type Context } from "hono";
-import { deleteCookie, getCookie } from "hono/cookie";
 import { cookieJar, SESSION_COOKIE } from "./cookies.js";
 import { html } from "hono/html";
 import type { Child } from "hono/jsx";
@@ -551,12 +550,9 @@ export function createApp({
 
   // --- Authenticated app. ---
   app.post("/auth/logout", async (c) => {
-    // The cookie's name before the __Host- prefix too, for as long as the
-    // resolver reads it (beeline-73c9; src/app/session.ts).
-    const id = cookies.get(c, SESSION_COOKIE) ?? getCookie(c, "beeline_session");
+    const id = cookies.get(c, SESSION_COOKIE);
     if (id) await deleteSession(db, id);
     cookies.delete(c, SESSION_COOKIE);
-    deleteCookie(c, "beeline_session", { path: "/" });
     // The switch is scoped to the session that held the grant. Leaving it set
     // is not exploitable — resolveActing re-checks the grant against whoever
     // signs in next — but on a household's shared browser it would outlive

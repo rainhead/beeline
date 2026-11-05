@@ -511,15 +511,13 @@ describe("cookies no other host can set (beeline-73c9)", () => {
     expect(res.status).toBe(400);
   });
 
-  it("a session cookie under its name from before still signs in, and moves to the new name", async () => {
-    // Read for 30 days after the rename, so nobody was signed out by it.
+  it("a session cookie without the prefix signs nobody in, even one holding a real session", async () => {
+    // What a sibling subdomain could plant for the whole domain: its own
+    // valid session, to sign a visitor in as somebody else. Not even read for
+    // a while after the rename, since that would reopen the hole for as long.
     const { app } = await httpsApp();
     const id = idFrom(await signIn(app));
-    const res = await app.request("/", { headers: { cookie: `beeline_session=${id}` } });
-    expect(res.status).toBe(200);
-    const set = res.headers.getSetCookie();
-    expect(set.some((c) => c.startsWith(`__Host-beeline_session=${id};`))).toBe(true);
-    expect(set.some((c) => /^beeline_session=;.*Max-Age=0/.test(c))).toBe(true);
+    expect((await app.request("/", { headers: { cookie: `beeline_session=${id}` } })).status).toBe(401);
   });
 });
 

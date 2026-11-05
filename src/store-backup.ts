@@ -186,6 +186,18 @@ export const MANIFEST = "manifest.json";
 /** The store every backup holds, by its name in the archive. */
 export const STORE_FILES = ["beeline.duckdb"] as const;
 
+/**
+ * Archives taken before this also hold the retired private store
+ * (beeline-4tdh), so one that does not has lost it. The day before the
+ * retirement deployed, so it errs toward demanding less, never more.
+ */
+const PRIVATE_STORE_RETIRED = "2026-11-05T00:00:00.000Z";
+
+/** The stores an archive must hold, judged by when its manifest says it was taken. */
+export function requiredStores(takenAt: string): string[] {
+  return takenAt < PRIVATE_STORE_RETIRED ? [...STORE_FILES, "private.duckdb"] : [...STORE_FILES];
+}
+
 export interface BackupOptions {
   /** Where the copies and the archive are written while a run is in progress. Emptied afterwards. */
   workDir: string;
@@ -406,7 +418,7 @@ export async function checkBackup(archive: string, opts: { dir: string; privateK
   // Judged against what every backup holds, never only against what this
   // manifest says it holds: a truncated or edited manifest that names less
   // would otherwise pass by checking less.
-  const missing = STORE_FILES.filter((file) => !(file in manifest.stores));
+  const missing = requiredStores(manifest.takenAt).filter((file) => !(file in manifest.stores));
   if (missing.length > 0) throw new Error(`${archive}: the manifest describes no ${missing.join(" or ")}`);
   // A store is opened only once its bytes have been checked.
   const unhashed = Object.keys(manifest.stores).filter((file) => !(file in manifest.files));

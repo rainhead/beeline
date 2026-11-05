@@ -199,26 +199,28 @@ describe("deriveLocalities", () => {
   });
 
   // beeline-fiyy: "Check iNaturalist now" names its few points from what lies
-  // around each one, and a whole run reads everything. The two must agree,
-  // for points far enough apart that each needs its own neighbourhood.
-  test("a few points are named exactly as a whole run names them", async () => {
+  // around each one, and a whole run reads everything. The two must agree.
+  // Most of the store is already named and so not pending, which is the case
+  // that matters: what the narrow run must still read is the samples around
+  // the new point, in the cells beside its own, and correct the misspelling
+  // among them.
+  test("a new point is named exactly as a whole run names it", async () => {
     const path = join(dir, "n1.duckdb");
     await buildTestGazetteer(path, "build-n1");
     const named = async (narrowUpTo: number) => {
       const conn = await storeWithPerson();
-      await insertCleanSample(conn, { locality: "'Philamath'" }, { latitude: "44.5501", longitude: "-123.38" });
-      await insertCleanSample(conn, { locality: "'Philomath'", sample_number: "'2'" }, { latitude: "44.5502", longitude: "-123.38" });
-      await insertCleanSample(conn, { sample_number: "'3'" }, { latitude: "44.55", longitude: "-123.38" });
-      await insertCleanSample(conn, { sample_number: "'4'" }, { latitude: "44.41", longitude: "-123.30" });
-      // Far outside every other point's neighbourhood, and last, so a run
-      // that read only one point's surroundings would read only this one's.
-      await insertCleanSample(conn, { sample_number: "'5'" }, { latitude: "46.50", longitude: "-120.60" });
-      expect(await deriveLocalities(conn, path, { narrowUpTo })).toMatchObject({ pending: 5 });
-      return rows(conn, `SELECT sample_id, rank, locality, basis FROM sample_locality_candidate ORDER BY ALL`);
+      // A few hundred metres north, across the line into the next 0.02-degree
+      // cell: a name nobody's gazetteer has, and the town's name misspelt.
+      await insertCleanSample(conn, { locality: "'Greasy Creek'" }, { latitude: "44.5610", longitude: "-123.38" });
+      await insertCleanSample(conn, { locality: "'Philamath'", sample_number: "'2'" }, { latitude: "44.5611", longitude: "-123.38" });
+      await deriveLocalities(conn, path);
+      const fresh = await insertCleanSample(conn, { sample_number: "'5'" }, { latitude: "44.5590", longitude: "-123.38" });
+      expect(await deriveLocalities(conn, path, { narrowUpTo })).toMatchObject({ pending: 1, named: 1 });
+      return candidates(conn, fresh);
     };
-    const narrow = await named(50);
-    expect(narrow.length).toBeGreaterThan(4);
-    expect(narrow.filter((r) => r[2] === "Philamath")).toEqual([]);
+    const narrow = (await named(50)) as Array<[string, string]>;
+    expect(narrow.map(([l]) => l)).toContain("Greasy Creek");
+    expect(narrow.map(([l]) => l)).not.toContain("Philamath");
     expect(narrow).toEqual(await named(0));
   });
 

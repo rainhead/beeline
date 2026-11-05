@@ -251,12 +251,15 @@ describe("/people/new", () => {
   });
 
   it("refuses a blank name, and a name somebody here already has", async () => {
-    const { app, conn, overlayPath } = await addApp();
+    const { app, conn, overlayPath, asked } = await addApp();
     expect(await (await post(app, { inat_user_id: "204323", display_name: " " })).text()).toContain("Not saved: give them a name");
     const taken = await (await post(app, { inat_user_id: "204323", display_name: "Bo Netter" })).text();
     expect(taken).toContain(html(`somebody here is already called "Bo Netter"`));
     // Still offering the form, filled from iNaturalist.
     expect(taken).toContain(`name="inat_user_id" value="204323"`);
+    // From the lookup the add made before taking its turn, not a second one
+    // made while every other decision about a person waited.
+    expect(asked).toEqual(["204323", "204323"]);
     expect(await readOverlay(overlayPath)).toEqual([]);
     expect(await rows(conn, "SELECT count(*) FROM inat_account WHERE inat_user_id = 204323")).toEqual([[0n]]);
   });

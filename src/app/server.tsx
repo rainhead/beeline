@@ -2137,12 +2137,16 @@ export function createApp({
    * The account is looked up again whatever else the page is showing, so a
    * refused add comes back with the form still filled from iNaturalist.
    */
-  const showAddPerson = async (c: Context<AppEnv>, typed: string, problem?: string) => {
+  const showAddPerson = async (c: Context<AppEnv>, typed: string, problem?: string, known?: InatProfile) => {
     const m = c.get("m");
     const a = m.addPerson;
     let found: { profile: InatProfile; standing: Awaited<ReturnType<typeof accountStanding>> } | undefined;
     let issue = problem;
-    if (typed !== "") {
+    if (known !== undefined) {
+      // Already read from iNaturalist by the caller — the add, which holds the
+      // decision lock and must not wait on the network while it does.
+      found = { profile: known, standing: await accountStanding(db, known.id) };
+    } else if (typed !== "") {
       const account = parseInatAccount(typed);
       if (account === null) issue ??= a.notAccount(typed);
       else {
@@ -2744,9 +2748,9 @@ export function createApp({
       // Read inside the turn: somebody may have connected the account, or
       // its records may have arrived, since the form was drawn. Either way
       // the page now says so instead of offering the form.
-      if ((await accountStanding(db, found.id)).kind !== "free") return showAddPerson(c, found.login);
+      if ((await accountStanding(db, found.id)).kind !== "free") return showAddPerson(c, found.login, undefined, found);
       const name = field("display_name");
-      if (name === "") return showAddPerson(c, found.login, a.problem(a.nameBlank));
+      if (name === "") return showAddPerson(c, found.login, a.problem(a.nameBlank), found);
       const staff = form.get("staff") !== null;
       const reason = field("reason") || a.addedReason(staff);
       const author = c.get("session").login;
@@ -2765,7 +2769,7 @@ export function createApp({
       const taken = await db.selectFrom("person").select("entity_id").where("display_name", "=", name).execute();
       const resolved = await resolveName(name, rows);
       if (taken.length > 0 || (resolved !== null && !("missing" in resolved && resolved.missing === true))) {
-        return showAddPerson(c, found.login, a.problem(a.nameTaken(name)));
+        return showAddPerson(c, found.login, a.problem(a.nameTaken(name)), found);
       }
       const outcome = await commitDecisions({
         rows,
@@ -2776,7 +2780,7 @@ export function createApp({
         boundBefore: null,
         findAfter: () => holderOf(found.id),
       });
-      if (outcome.problem !== null) return showAddPerson(c, found.login, a.problem(outcome.problem));
+      if (outcome.problem !== null) return showAddPerson(c, found.login, a.problem(outcome.problem), found);
       // No connection to apply with (a test without one): saved, and made at the next rebuild.
       if (!outcome.applied) return c.redirect("/people");
       return c.redirect(`/people/${encodeURIComponent(found.login)}`);

@@ -300,15 +300,21 @@ async function writeParts(conn: DuckDBConnection, id: number, s: TrapSample, wit
 }
 
 /** Write a new trap sample; its id. Behind the print runs' lock, on the print connection. */
-export function createTrapSample(conn: DuckDBConnection, s: TrapSample, enteredBy: number | null): Promise<number | "taken"> {
+export function createTrapSample(
+  conn: DuckDBConnection,
+  s: TrapSample,
+  enteredBy: number | null,
+  /** A net sample only from the spreadsheet import, where a registry row says "net". */
+  kind: "trap" | "net" = "trap",
+): Promise<number | "taken"> {
   return withPrintRunLock(async () => {
     if (await numberTaken(conn, s.sample_number, null)) return "taken";
     return inTransaction(conn, async () => {
       const created = await rows<{ entity_id: number }>(
         conn,
         `INSERT INTO sample (kind, sample_number, date_start, date_end, specimen_count, country, state_province, county, locality, protocol, sampling_effort)
-         VALUES ('trap', $1, $2::DATE, $3::DATE, $4, $5, $6, $7, $8, $9, $10) RETURNING entity_id`,
-        [s.sample_number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol, s.sampling_effort],
+         VALUES ($11, $1, $2::DATE, $3::DATE, $4, $5, $6, $7, $8, $9, $10) RETURNING entity_id`,
+        [s.sample_number, s.date_start, s.date_end, s.specimen_count, s.country, s.state_province, s.county, s.locality, s.protocol, s.sampling_effort, kind],
       );
       const id = created[0]!.entity_id;
       await conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES ($1, $2)`, [id, enteredBy] as never);

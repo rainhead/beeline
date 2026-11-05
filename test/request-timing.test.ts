@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
-import { csvGenerationTiming, requestTiming } from "../src/app/request-timing.js";
+import { csvGenerationTiming, hostKind, requestTiming } from "../src/app/request-timing.js";
 
 /**
  * Request timing: every request's duration by route pattern, and a warning
@@ -77,5 +77,33 @@ describe("request timing", () => {
       { route: "(not found)", method: "GET", status: 404 },
       { route: "/broken", method: "GET", status: 500 },
     ]);
+  });
+});
+
+describe("which of the app's names a request was asked under (beeline-87rn)", () => {
+  const origin = "https://melittologist.org";
+
+  test("its own name, the www redirect, a fly.dev name, none, or anything else", () => {
+    expect(hostKind("melittologist.org", origin)).toBe("origin");
+    expect(hostKind("Melittologist.ORG", origin)).toBe("origin");
+    expect(hostKind("www.melittologist.org", origin)).toBe("www");
+    expect(hostKind("beeline-production.fly.dev", origin)).toBe("fly.dev");
+    expect(hostKind(undefined, origin)).toBe("none");
+    expect(hostKind("evil.example", origin)).toBe("other");
+    // A name that merely ends like ours is not ours.
+    expect(hostKind("notmelittologist.org", origin)).toBe("other");
+  });
+
+  test("a fly.dev origin is the origin, not merely fly.dev", () => {
+    expect(hostKind("beeline.fly.dev", "https://beeline.fly.dev")).toBe("origin");
+  });
+
+  test("the request is tagged with it once the origin is known", async () => {
+    const recorded: Array<Record<string, string | number>> = [];
+    const a = new Hono();
+    a.use(requestTiming({ origin, record: (_ms, attributes) => recorded.push(attributes), warn: () => {} }));
+    a.get("/fast", (c) => c.text("ok"));
+    await a.request("https://www.melittologist.org/fast", { headers: { host: "www.melittologist.org" } });
+    expect(recorded).toEqual([{ route: "/fast", method: "GET", status: 200, host: "www" }]);
   });
 });

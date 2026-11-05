@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { sql } from "kysely";
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
-import type { InatClient } from "../src/app/auth.js";
+import type { InatClient, SignInOutcome } from "../src/app/auth.js";
 import { attachPrivateStore, commentsIn } from "../src/app/db.js";
 import { createApp } from "../src/app/server.js";
 import { cookieSessionResolver, endSessionsFor, purgeIdleSessions, sessionRef } from "../src/app/session.js";
@@ -22,7 +22,11 @@ const fakeInat = (identity: FakeIdentity): InatClient => ({
   identity: async () => ({ iconUrl: null, ...identity }),
 });
 
-async function testApp(identity: FakeIdentity, feedbackEmail?: string) {
+async function testApp(
+  identity: FakeIdentity,
+  feedbackEmail?: string,
+  reportSignIn?: (outcome: SignInOutcome, line: string) => void,
+) {
   const { instance, conn } = await createMemoryDb();
   await attachPrivateStore(instance, { path: ":memory:", key: null });
   await conn.run(`INSERT INTO person (entity_id, display_name) VALUES (11, 'Member Bee')`);
@@ -37,6 +41,7 @@ async function testApp(identity: FakeIdentity, feedbackEmail?: string) {
     inat: fakeInat(identity),
     resolveSession: cookieSessionResolver(db),
     personChangesPath: changesPath,
+    reportSignIn,
   });
   return { app, db, changesPath };
 }
@@ -643,5 +648,72 @@ describe("the private store against a file-backed main database", () => {
     const [[current]] = (await (await conn.run("SELECT current_database()")).getRows()) as [[string]];
     expect(current).toBe(catalog);
     conn.closeSync();
+  });
+});
+
+describe("each sign-in's outcome is reported (beeline-87rn)", () => {
+  async function listening(identity: FakeIdentity = { inatUserId: 501, login: "memberbee" }) {
+    const reports: Array<{ outcome: SignInOutcome; line: string }> = [];
+    const { app } = await testApp(identity, undefined, (outcome, line) => reports.push({ outcome, line }));
+    return { app, reports };
+  }
+
+  it("a member signing in is reported by login", async () => {
+    const { app, reports } = await listening();
+    expect((await signIn(app)).status).toBe(302);
+    expect(reports).toEqual([{ outcome: "signed-in", line: "[sign-in] signed in: memberbee" }]);
+  });
+
+  it("someone turned away is named, so staff can connect them", async () => {
+    const { app, reports } = await listening({ inatUserId: 11227491, login: "jenlarsen52" });
+    expect((await signIn(app)).status).toBe(403);
+    expect(reports).toEqual([
+      {
+        outcome: "turned-away",
+        line: "[sign-in] turned away: no person holds iNaturalist account jenlarsen52 (11227491)",
+      },
+    ]);
+  });
+
+  it("each way a callback fails is told apart", async () => {
+    const { app, reports } = await listening();
+    const cookie = { headers: { cookie: "beeline_oauth_state=right" } };
+    expect((await app.request("/auth/inat/callback?error=access_denied&state=right", cookie)).status).toBe(400);
+    expect((await app.request("/auth/inat/callback?code=abc&state=right")).status).toBe(400);
+    expect((await app.request("/auth/inat/callback?code=abc&state=wrong", cookie)).status).toBe(400);
+    expect((await app.request("/auth/inat/callback?state=right", cookie)).status).toBe(400);
+    expect(reports.map((r) => r.outcome)).toEqual(["declined", "no-state-cookie", "state-mismatch", "no-code"]);
+    expect(reports[0]!.line).toBe("[sign-in] declined: iNaturalist returned access_denied");
+  });
+
+  it("an error the callback was handed is not written into the log unless it reads as an OAuth code", async () => {
+    const { app, reports } = await listening();
+    await app.request(`/auth/inat/callback?error=${encodeURIComponent("<script>alert(1)</script>")}`);
+    expect(reports).toEqual([{ outcome: "declined", line: "[sign-in] declined: iNaturalist returned an unrecognised error" }]);
+  });
+
+  it("a failed exchange is reported with iNaturalist's reason, as a string", async () => {
+    const { instance } = await createMemoryDb();
+    await attachPrivateStore(instance, { path: ":memory:", key: null });
+    const db = createKysely(instance);
+    const reports: Array<{ outcome: SignInOutcome; line: string }> = [];
+    const app = createApp({
+      ...(await scratchPaths()),
+      db,
+      config: { environment: "development", origin: ORIGIN },
+      inat: {
+        ...fakeInat({ inatUserId: 501, login: "memberbee" }),
+        exchangeCode: () => Promise.reject(new Error("code exchange failed: 502")),
+      },
+      resolveSession: cookieSessionResolver(db),
+      reportSignIn: (outcome, line) => reports.push({ outcome, line }),
+    });
+    expect((await signIn(app)).status).toBe(400);
+    expect(reports).toEqual([
+      {
+        outcome: "exchange-failed",
+        line: "[sign-in] failed: iNaturalist would not exchange the code, or say whose account it was: code exchange failed: 502",
+      },
+    ]);
   });
 });

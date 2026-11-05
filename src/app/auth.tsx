@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import * as Sentry from "@sentry/node";
 import { readFile } from "node:fs/promises";
 import type { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -96,7 +97,7 @@ export function inatClient(creds: InatCredentials): InatClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...creds, code, redirect_uri: redirectUri, grant_type: "authorization_code" }),
       });
-      if (!response.ok) throw new Error(`token exchange failed: ${response.status} ${await response.text()}`);
+      if (!response.ok) throw new Error(`code exchange failed: ${response.status} ${(await response.text()).slice(0, 200)}`);
       return ((await response.json()) as { access_token: string }).access_token;
     },
     async identity(accessToken) {
@@ -135,6 +136,65 @@ export interface AuthDeps {
    * is, so it is when an iD they connected arrives — no schedule needed.
    */
   recordOrcid?: (inatUserId: number, orcid: string | null) => Promise<void>;
+  /** Where each callback's outcome goes; the metric and the console unless a test listens. */
+  reportSignIn?: (outcome: SignInOutcome, line: string) => void;
+}
+
+/**
+ * How one return from iNaturalist to the callback ended (beeline-87rn). Until
+ * these were logged, the only trace of a person turned away at sign-in was
+ * their row in the private store, and a failed callback left none at all: on
+ * the first two days after cutover 18 of 57 callbacks failed and 8 turned
+ * somebody away, and finding out who took decrypting a copy of the store.
+ *
+ * - `signed-in`: a session was made.
+ * - `turned-away`: iNaturalist says who they are, but no person holds that
+ *   account, so they got the holding page.
+ * - `declined`: iNaturalist sent back an `error` instead of a code, as it does
+ *   when somebody presses Cancel on its authorisation page.
+ * - `no-state-cookie`: the attempt's cookie was gone — it lasts ten minutes,
+ *   and a callback opened in another browser, or reached again with Back
+ *   after it had been used, has none.
+ * - `state-mismatch`: a cookie, but from a different attempt, as when two
+ *   sign-ins were started in two tabs.
+ * - `no-code`: neither a code nor an error.
+ * - `exchange-failed`: iNaturalist would not trade the code for a token, or
+ *   would not say whose it was.
+ */
+export type SignInOutcome =
+  | "signed-in"
+  | "turned-away"
+  | "declined"
+  | "no-state-cookie"
+  | "state-mismatch"
+  | "no-code"
+  | "exchange-failed";
+
+/**
+ * Counted as the metric `sign_in` by outcome, and logged as one line. The
+ * line names the iNaturalist login where the callback learnt it: a login is a
+ * public handle, which the slow-request line already carries, and for someone
+ * turned away it is what staff need to connect them. Never quoted, since
+ * `redact` blanks anything in quotes.
+ */
+export function reportSignIn(outcome: SignInOutcome, line: string): void {
+  try {
+    Sentry.metrics.count("sign_in", 1, { attributes: { outcome } });
+  } catch (err) {
+    console.error(`sign_in not counted: ${(err as Error).stack ?? String(err)}`);
+  }
+  if (outcome === "signed-in" || outcome === "declined") console.info(line);
+  else console.warn(line);
+}
+
+/**
+ * The `error` iNaturalist put on the callback, if it reads as an OAuth error
+ * code. Anyone can craft the callback's query, so anything else is reported
+ * as unrecognised rather than written into the log.
+ */
+function oauthError(raw: string | undefined): string | null {
+  if (raw === undefined) return null;
+  return /^[a-z_]{1,40}$/.test(raw) ? raw : "an unrecognised error";
 }
 
 /**
@@ -146,6 +206,7 @@ export interface AuthDeps {
 export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
   const redirectUri = `${deps.origin}/auth/inat/callback`;
   const secure = deps.origin.startsWith("https:");
+  const report = deps.reportSignIn ?? reportSignIn;
 
   app.get("/auth/inat", (c) => {
     const state = randomBytes(16).toString("hex");
@@ -167,7 +228,22 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
     deleteCookie(c, NEXT_COOKIE, { path: "/" });
     const m = c.get("m");
     const code = c.req.query("code");
-    if (!code || !expected || c.req.query("state") !== expected) {
+    // The error first: it is the person's own answer, whatever else is wrong.
+    const declined = oauthError(c.req.query("error"));
+    if (declined !== null) {
+      report("declined", `[sign-in] declined: iNaturalist returned ${declined}`);
+      return c.text(m.signIn.failed, 400);
+    }
+    if (!expected) {
+      report("no-state-cookie", "[sign-in] failed: the attempt's cookie was missing (expired, another browser, or a callback reached twice)");
+      return c.text(m.signIn.failed, 400);
+    }
+    if (c.req.query("state") !== expected) {
+      report("state-mismatch", "[sign-in] failed: the state did not match this browser's attempt");
+      return c.text(m.signIn.failed, 400);
+    }
+    if (!code) {
+      report("no-code", "[sign-in] failed: iNaturalist returned neither a code nor an error");
       return c.text(m.signIn.failed, 400);
     }
     // A failed exchange is a user-visible sign-in failure, not a 500 — and
@@ -179,7 +255,9 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
       accessToken = await deps.inat.exchangeCode(code, redirectUri);
       identity = await deps.inat.identity(accessToken);
     } catch (err) {
-      console.error("sign-in: token exchange or identity fetch failed:", err);
+      // A string, never the error object: the log integration would send it
+      // as JSON. And no "token" before a word, which redact() would blank.
+      report("exchange-failed", `[sign-in] failed: iNaturalist would not exchange the code, or say whose account it was: ${(err as Error).message}`);
       return c.text(m.signIn.failed, 400);
     }
 
@@ -217,6 +295,10 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
       .executeTakeFirst();
 
     if (account === undefined) {
+      report(
+        "turned-away",
+        `[sign-in] turned away: no person holds iNaturalist account ${identity.login} (${identity.inatUserId})`,
+      );
       return c.html(
         html`<!doctype html>${(
           <PublicPage
@@ -234,6 +316,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
     }
 
     const sessionId = await createSession(deps.db, identity.inatUserId);
+    report("signed-in", `[sign-in] signed in: ${identity.login}`);
     setCookie(c, SESSION_COOKIE, sessionId, { httpOnly: true, sameSite: "Lax", secure, path: "/" });
     // Back to whatever was asked for before the gate got in the way; home
     // when sign-in was the errand itself (beeline-2c3.31).

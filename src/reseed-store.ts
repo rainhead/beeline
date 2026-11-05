@@ -92,6 +92,10 @@ export const CARRIED_TABLES = [
   "observation_absent",
   "inat_user_orcid",
   "ecdysis_taxon",
+  "inat_sign_in",
+  "session",
+  "person_activity",
+  "impersonation",
 ] as const;
 
 export interface ReseedCounts {
@@ -237,6 +241,17 @@ export async function carryStaging(
     if (await has("ecdysis_taxon")) {
       await conn.run(`INSERT INTO ecdysis_taxon BY NAME SELECT * FROM old.ecdysis_taxon`);
       await count("ecdysis_taxon");
+    }
+    // Who has signed in, their sessions, when they were last here and who
+    // viewed Beeline as them (schema/012). Keyed by iNat user id and by name,
+    // never by an entity_id, so they come across as they are — and they did
+    // survive a reseed while they lived in the private store, a file a reseed
+    // never touched (beeline-4tdh).
+    for (const table of ["inat_sign_in", "session", "person_activity", "impersonation"]) {
+      if (await has(table)) {
+        await conn.run(`INSERT INTO ${table} BY NAME SELECT * FROM old.${table}`);
+        await count(table);
+      }
     }
 
     const leftBehind = {

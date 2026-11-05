@@ -4,8 +4,8 @@
 -- (beeline-5l84), nothing in them does harm if a copy of the store leaks —
 -- iNaturalist logins and avatars are public, and the main store already holds
 -- people's names, their iNaturalist accounts and true coordinates. A deployed
--- store's rows were carried across by the app at its first boot after the
--- change (absorbPrivateStore, src/app/db.ts).
+-- store's rows, all but its sessions, were carried across by the app at its
+-- first boot after the change (absorbPrivateStore, src/app/db.ts).
 --
 -- No foreign keys to inat_account. A sign-in record is written before anyone
 -- holds the account (that is how staff find who was turned away), and
@@ -13,9 +13,8 @@
 -- an account that is unlinked are deleted explicitly (endSessionsFor,
 -- src/app/session.ts) and by the nightly purge.
 --
--- These are about people rather than records, and a db:reseed does not carry
--- them, so reseeding a store signs everyone out and forgets who has been
--- here. Production is never reseeded (ADR 0006).
+-- Keyed by iNat user id and by name, never by an entity_id, so db:reseed
+-- carries them as they are (CARRIED_TABLES, src/reseed-store.ts).
 
 CREATE TABLE inat_sign_in (
   inat_user_id  BIGINT PRIMARY KEY,

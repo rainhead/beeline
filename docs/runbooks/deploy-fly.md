@@ -188,8 +188,8 @@ machine** rather than uploading them — see below.
 There is no private store to set up: sessions and sign-in records are tables
 in the store itself since 2026-11-05 (beeline-4tdh). Until then they were in
 an encrypted `private.duckdb` beside it ([ADR 0003](../adr/0003-private-data-store.md)),
-and the app carries such a file's rows across at the first boot that finds
-one, then renames it `private.duckdb.retired`.
+and the app carries such a file's rows across, all but its sessions, at the
+first boot that finds one, then renames it `private.duckdb.retired`.
 
 ## Deploying a change
 
@@ -369,10 +369,9 @@ mv -f data/beeline.duckdb data/beeline-prev-<date>.duckdb
 mv -f data/beeline-new.duckdb data/beeline.duckdb
 ```
 
-Then leave maintenance mode. Sessions and sign-in records do not survive:
-they are tables in the store since the private store was retired
-(beeline-4tdh), and a reseed does not carry them, so everyone signs in again.
-A store that has printed is refused a reseed in any case. The overlays in `data/` replay onto the
+Then leave maintenance mode. Sessions and sign-in records survive: a reseed
+carries them, since they are keyed by the iNaturalist user, not by the person
+number a reseed redraws (beeline-ten). The overlays in `data/` replay onto the
 new store during promotion, which is what they are for. Delete old
 `beeline-prev-*` stores when the volume needs the room. Rehearse on a copy of
 the store first when the change is large: comparing the two side by side is

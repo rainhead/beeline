@@ -1,10 +1,11 @@
 -- Migration for schema/012_sign_in.sql: the private store's four tables move
 -- into the main store (beeline-4tdh), with a session kept as the SHA-256 of
 -- its cookie rather than the cookie itself (beeline-5l84). The tables are
--- created empty here; the app fills them from the deployed private store at
--- its first boot afterwards (absorbPrivateStore, src/app/db.ts), because only
--- the app holds that store's key and migrations are plain SQL run before it
--- starts (ADR 0006).
+-- created empty here; the app fills all but session from the deployed private
+-- store at its first boot afterwards (absorbPrivateStore, src/app/db.ts),
+-- because only the app holds that store's key and migrations are plain SQL
+-- run before it starts (ADR 0006). Sessions are not carried: everyone signs
+-- in once more.
 
 CREATE TABLE inat_sign_in (
   inat_user_id  BIGINT PRIMARY KEY,

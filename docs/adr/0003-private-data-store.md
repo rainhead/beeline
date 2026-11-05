@@ -15,12 +15,15 @@ beeline-4tdh): the store is gone and its tables are in the main store. See
 By November the store held four tables: sign-in records (an iNaturalist
 login, a public avatar address and two dates per person), sessions, when each
 person was last here, and a log of staff viewing Beeline as somebody else.
-Only the sessions would do harm in the wrong hands, because a session id is
-the cookie itself: anyone holding a copy of the table could sign in as
-anyone listed, staff included, for up to 30 days. The usual fix makes that
-harmless without a second store: keep only the SHA-256 of each cookie
-(beeline-5l84), which signs nobody in. The cookie is 256 random bits, so one
-SHA-256 is enough.
+Only the sessions would do harm in the wrong hands. A session row held the
+very value the browser keeps in its cookie, so anyone with a copy of the
+table could put that value in their own browser and be signed in as anyone
+listed, staff included, for as long as they kept using it. The usual fix
+makes that harmless without a second store: keep only the SHA-256 of each
+cookie (beeline-5l84), from which the cookie cannot be worked out, so a copy
+of the table signs nobody in. The cookie is 256 random bits, so one SHA-256
+is enough. A session now also ends 90 days after sign-in however often it is
+used (beeline-jpau).
 
 With that done, the rest is less sensitive than what the main store already
 holds — people's names, their iNaturalist accounts, and true coordinates —
@@ -29,8 +32,10 @@ survive somewhere other than the server or every backup's copy was lost
 (beeline-yml3), a second file in every backup and every restore, and a
 boot-time patching mechanism of its own beside migrations (ADR 0006). So the
 four tables moved into the main store (`schema/012`, migration 0076), and the
-app carried production's rows across at its first boot afterwards, hashing
-the sessions on the way (`absorbPrivateStore`, `src/app/db.ts`).
+app carried production's rows across at its first boot afterwards
+(`absorbPrivateStore`, `src/app/db.ts`) — all but the sessions, which no
+browser could have used again, since the session cookie was renamed at the
+same time (beeline-73c9). Everyone signed in once more.
 
 **Mailing addresses were this store's reason to exist, and they have not
 arrived** (beeline-1kb.6). When they do, how to protect them is a new

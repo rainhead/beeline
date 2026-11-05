@@ -577,20 +577,29 @@ describe("retiring the private store (beeline-4tdh)", () => {
     impersonation: (await db.selectFrom("impersonation").selectAll().execute()).length,
   });
 
-  it("carries every row across, and somebody signed in before is still signed in", async () => {
+  it("carries everything but the sessions across, and an old session id signs nobody in", async () => {
+    // On the https origin, as production runs. The browser holds its session
+    // under the cookie's old name, which is not read; and the old id under
+    // the new name, as somebody holding it from an old backup could send it,
+    // must not work either. So the sessions are not carried at all.
     const path = await retiredStore();
-    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" }, undefined, undefined, ORIGIN, { path, key: null });
-    expect(await counts(db)).toEqual({ inat_sign_in: 2, session: 1, person_activity: 1, impersonation: 1 });
+    const { app, db } = await testApp(
+      { inatUserId: 501, login: "memberbee" },
+      undefined,
+      undefined,
+      "https://beeline.example",
+      { path, key: null },
+    );
+    expect(await counts(db)).toEqual({ inat_sign_in: 2, session: 0, person_activity: 1, impersonation: 1 });
     expect(
       await db.selectFrom("inat_sign_in").select(["login", "last_login_at"]).orderBy("login").execute(),
     ).toEqual([
       { login: "memberbee", last_login_at: new Date("2026-11-01T12:00:00Z") },
       { login: "stranger", last_login_at: new Date("2026-11-02T12:00:00Z") },
     ]);
-    // The session is kept as its hash, and its cookie still works.
-    const [session] = await db.selectFrom("session").select("id_sha256").execute();
-    expect(session!.id_sha256).toBe(hashSessionId("a".repeat(64)));
-    expect((await app.request("/", { headers: { cookie: `beeline_session=${"a".repeat(64)}` } })).status).toBe(200);
+    for (const cookie of [`beeline_session=${"a".repeat(64)}`, `__Host-beeline_session=${"a".repeat(64)}`]) {
+      expect((await app.request("/", { headers: { cookie } })).status).toBe(401);
+    }
     // Renamed rather than deleted, so the next boot does not carry it again.
     expect(existsSync(path)).toBe(false);
     expect(existsSync(`${path}.retired`)).toBe(true);
@@ -608,7 +617,6 @@ describe("retiring the private store (beeline-4tdh)", () => {
     expect(existsSync(path)).toBe(true);
     expect(await absorbPrivateStore(instance, { path, key: "the-key" })).toEqual({
       inat_sign_in: 2,
-      session: 1,
       person_activity: 1,
       impersonation: 1,
     });
@@ -623,11 +631,10 @@ describe("retiring the private store (beeline-4tdh)", () => {
     await copyFile(`${path}.retired`, path);
     expect(await absorbPrivateStore(instance, { path, key: null })).toEqual({
       inat_sign_in: 0,
-      session: 0,
       person_activity: 0,
       impersonation: 0,
     });
-    expect(await counts(createKysely(instance))).toEqual({ inat_sign_in: 2, session: 1, person_activity: 1, impersonation: 1 });
+    expect(await counts(createKysely(instance))).toEqual({ inat_sign_in: 2, session: 0, person_activity: 1, impersonation: 1 });
   });
 
   it("a second store carried later is kept beside the first, not over it", async () => {
@@ -660,7 +667,7 @@ describe("retiring the private store (beeline-4tdh)", () => {
     const path = await retiredStore();
     const { instance } = await createFileDb();
     await absorbPrivateStore(instance, { path, key: null });
-    expect(await counts(createKysely(instance))).toEqual({ inat_sign_in: 2, session: 1, person_activity: 1, impersonation: 1 });
+    expect(await counts(createKysely(instance))).toEqual({ inat_sign_in: 2, session: 0, person_activity: 1, impersonation: 1 });
     instance.closeSync();
   });
 });

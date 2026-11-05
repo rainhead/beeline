@@ -194,7 +194,9 @@ export const STORE_FILES = ["beeline.duckdb"] as const;
 /**
  * The stores an archive of each manifest format must hold: a format 1
  * archive also held the retired private store, so one that does not has lost
- * it.
+ * it. This catches an archive that lost a file, not one somebody forged: the
+ * manifest is not signed, so whoever can edit its format can rewrite its
+ * hashes too.
  */
 const REQUIRED_STORES: Record<BackupManifest["format"], readonly string[]> = {
   1: [...STORE_FILES, "private.duckdb"],

@@ -8,8 +8,15 @@ import type { AppConfig } from "./config.js";
 
 const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
 
-/** The tables the retired private store held, by the names its last shape used. */
-const RETIRED_TABLES = ["inat_sign_in", "session", "person_activity", "impersonation"] as const;
+/**
+ * The retired private store's tables that are carried. Not its sessions: a
+ * browser holds its session under the cookie name from before the __Host-
+ * prefix (beeline-73c9), which is no longer read, so no carried session could
+ * be used by its own browser. It could still be used by anyone holding the
+ * old id in the clear, from an older backup or the retired file, so carrying
+ * one would only keep it alive. Everyone signs in once more instead.
+ */
+const RETIRED_TABLES = ["inat_sign_in", "person_activity", "impersonation"] as const;
 
 /** What absorbing a retired private store carried, table by table; null when there was none. */
 export type Absorbed = Record<(typeof RETIRED_TABLES)[number], number> | null;
@@ -20,11 +27,11 @@ export type Absorbed = Record<(typeof RETIRED_TABLES)[number], number> | null;
  * Until 2026-11-05 sessions, sign-in records, last visits and the
  * impersonation log lived in a second, encrypted file (ADR 0003). The tables
  * now live in the main store (schema/012), and a deployed store gets them
- * empty from migration 0076; this fills them. It is the app's job rather than
- * the migration's because only the app holds the old store's key.
+ * empty from migration 0076; this fills all but the sessions (see
+ * RETIRED_TABLES). It is the app's job rather than the migration's because
+ * only the app holds the old store's key.
  *
- * Session ids are hashed on the way (beeline-5l84), so everyone stays signed
- * in. Every insert skips a row already there and the whole copy is one
+ * Every insert skips a row already there and the whole copy is one
  * transaction, so a crash before the file is renamed repeats the copy on the
  * next boot without duplicating anything — the impersonation log, which has
  * no key, by matching every column. Then the file is renamed to
@@ -59,7 +66,7 @@ export async function absorbPrivateStore(
       return Number(found.rowsChanged);
     };
 
-    const carried = { inat_sign_in: 0, session: 0, person_activity: 0, impersonation: 0 };
+    const carried = { inat_sign_in: 0, person_activity: 0, impersonation: 0 };
     await conn.run("BEGIN TRANSACTION");
     try {
       // A store from before 2026-08-28 named the sign-in table for the token
@@ -75,15 +82,6 @@ export async function absorbPrivateStore(
           `INSERT INTO inat_sign_in (inat_user_id, login, icon_url, created_at, last_login_at)
            SELECT inat_user_id, login, ${signIn.has("icon_url") ? "icon_url" : "NULL"}, created_at, last_login_at
            FROM retired_private.${signInTable}
-           ON CONFLICT DO NOTHING`,
-        );
-      }
-      // A session keyed on person_id predates beeline-ten and never resolves,
-      // so it is not carried.
-      if ((await columnsOf("session")).has("inat_user_id")) {
-        carried.session = await count(
-          `INSERT INTO session (id_sha256, inat_user_id, created_at, last_seen_at)
-           SELECT sha256(id), inat_user_id, created_at, last_seen_at FROM retired_private.session
            ON CONFLICT DO NOTHING`,
         );
       }
@@ -106,6 +104,7 @@ export async function absorbPrivateStore(
       await conn.run("COMMIT");
     } catch (err) {
       await conn.run("ROLLBACK");
+      await conn.run("DETACH retired_private");
       throw err;
     }
     await conn.run("DETACH retired_private");

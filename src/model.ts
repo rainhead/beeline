@@ -1136,6 +1136,18 @@ export interface PrintedLabelReprintView {
   specimen_id: number;
 }
 
+/** A field a label in an unprinted run shows differently from its sample now (printed_label_out_of_date). */
+export type OutOfDateField = "locality" | "county" | "state_province" | "country" | "coordinates" | "elevation" | "dates";
+
+export interface PrintedLabelOutOfDateView {
+  print_run_id: number;
+  specimen_id: number;
+  sample_id: number;
+  field: OutOfDateField;
+  on_label: string | null;
+  now: string | null;
+}
+
 /** Reprint requests not withdrawn and not yet taken by an uncanceled run; printable_reprint and print_scope_reprint narrow it. */
 export interface PendingReprintView {
   reprint_request_id: number;
@@ -1339,6 +1351,7 @@ export interface Database {
   printed_label: PrintedLabelTable;
   reprint_request: ReprintRequestTable;
   printed_label_reprint: PrintedLabelReprintView;
+  printed_label_out_of_date: PrintedLabelOutOfDateView;
   pending_reprint: PendingReprintView;
   printable_reprint: PendingReprintView;
   print_scope_reprint: PendingReprintView;

@@ -1365,7 +1365,8 @@ export function createApp({
     if (enteredHere && conn !== undefined && printWriter !== undefined) {
       if (!(await mayEditTrapSample(conn, sample.sample_id, c.get("acting").personId, admin))) return errorResponse(c, "notFound");
       const name = field("locality").trim();
-      if (name === "" || name === sample.locality) return c.redirect(back);
+      // Blank clears it, as on the form.
+      if (name === (sample.locality ?? "")) return c.redirect(back);
       if ((await setTrapSampleLocality(printWriter, sample.sample_id, name)) === "printed") return c.text(t.printed, 409);
       await recordTrapChange(c, sample.sample_id);
       return c.redirect(back);

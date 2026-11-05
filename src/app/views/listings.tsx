@@ -774,14 +774,15 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                       <img src="/static/inat-logo.png" alt={copy.viewOnInat} width="66" height="12" />
                     </a>
                   ) : (
-                    // No observation to fix upstream: editing happens here.
-                    // A sample entered in Beeline has its own form, for staff,
-                    // its collectors and its enterer (beeline-3vs.5); an old
-                    // Beeline record is corrected by its collectors (ADR 0004,
-                    // beeline-2c3.8).
-                    row.entered
-                      ? !row.printed && (admin || row.mine || row.entered_by_me) && <a href={`/samples/${row.sample_id}/trap`}>{copy.edit}</a>
-                      : row.mine && <a href={`/samples/${row.sample_id}/edit`}>{copy.edit}</a>
+                    // No observation to fix upstream: an old Beeline record is
+                    // corrected here by its collectors (ADR 0004, beeline-2c3.8).
+                    !row.entered && row.mine && <a href={`/samples/${row.sample_id}/edit`}>{copy.edit}</a>
+                  )}
+                  {/* A sample entered in Beeline has its own form, for staff, its
+                      collectors and its enterer (beeline-3vs.5), whatever an
+                      observation linked to it later says. */}
+                  {row.entered && !row.printed && (admin || row.mine || row.entered_by_me) && (
+                    <a href={`/samples/${row.sample_id}/trap`}>{copy.edit}</a>
                   )}
                 </td>
               </tr>

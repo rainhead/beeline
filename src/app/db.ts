@@ -103,8 +103,9 @@ export async function absorbPrivateStore(
       }
       await conn.run("COMMIT");
     } catch (err) {
-      await conn.run("ROLLBACK");
-      await conn.run("DETACH retired_private");
+      // Neither clean-up step may hide why the copy failed.
+      await conn.run("ROLLBACK").catch((e: Error) => console.error(`rollback failed: ${e.message}`));
+      await conn.run("DETACH retired_private").catch((e: Error) => console.error(`detach failed: ${e.message}`));
       throw err;
     }
     await conn.run("DETACH retired_private");

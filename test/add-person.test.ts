@@ -116,7 +116,14 @@ describe("reading the account staff typed", () => {
   });
 
   it("refuses anything else, rather than asking iNaturalist about it", () => {
-    for (const typed of ["", "Jen Larsen", "https://example.org/people/kragadox", "../users/me", "a/b"]) {
+    for (const typed of [
+      "",
+      "Jen Larsen",
+      "https://example.org/people/kragadox",
+      "../users/me",
+      "a/b",
+      "https://www.inaturalist.org/people/%E0%A4%A",
+    ]) {
       expect(parseInatAccount(typed)).toBeNull();
     }
   });

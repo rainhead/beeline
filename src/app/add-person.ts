@@ -37,7 +37,14 @@ export function parseInatAccount(raw: string): string | null {
   let s = raw.trim();
   if (s === "") return null;
   const link = /^(?:https?:\/\/)?(?:www\.)?inaturalist\.org\/(?:people|users)\/([^/?#\s]+)\/?(?:[?#].*)?$/i.exec(s);
-  if (link) s = decodeURIComponent(link[1]!);
+  if (link) {
+    // A link with broken percent-encoding names no account; decodeURIComponent would throw on it.
+    try {
+      s = decodeURIComponent(link[1]!);
+    } catch {
+      return null;
+    }
+  }
   if (s.startsWith("@")) s = s.slice(1);
   if (/^\d{1,12}$/.test(s)) return s;
   if (/^[a-z][a-z0-9_-]{0,39}$/i.test(s)) return s.toLowerCase();

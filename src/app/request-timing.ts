@@ -13,7 +13,8 @@ import { routePath } from "hono/route";
  * src/app/error-reporting.ts):
  *
  * - every request records `request.duration` as a Sentry distribution metric,
- *   tagged with the route pattern, the method and the status — so a route's
+ *   tagged with the route pattern, the method, the status and which of the
+ *   app's names was asked for (hostKind) — so a route's
  *   p50 and p95 can be read, and alerted on, over time;
  * - a request slower than SLOW_REQUEST_MS also writes a warning line, which
  *   reaches Sentry's searchable log like the jobs' SLA warnings do.
@@ -37,6 +38,30 @@ export interface RequestTimingOptions {
   record?: (ms: number, attributes: Record<string, string | number>) => void;
   /** Where a slow request is reported; the console (and so Sentry's log) unless a test says otherwise. */
   warn?: (line: string) => void;
+  /**
+   * The app's own origin. Given, each request is also tagged with which of
+   * its names it was asked under (`hostKind`); absent, as in tests about
+   * something else, it is not.
+   */
+  origin?: string;
+}
+
+/**
+ * Which of the app's names a request was asked under (beeline-87rn): `origin`,
+ * `www` (which only redirects, beeline-83b8.14), `fly.dev` (how a deploy is
+ * tried before DNS), `none`, or `other`. A class rather than the Host header
+ * itself, which anyone can set to anything, and an attribute must not grow
+ * without bound. On the first two days after cutover the www redirect answered
+ * 2,056 times, and without this nothing said which name had been asked for.
+ */
+export function hostKind(host: string | undefined, origin: string): string {
+  if (host === undefined || host === "") return "none";
+  const h = host.toLowerCase();
+  const own = new URL(origin).host.toLowerCase();
+  if (h === own) return "origin";
+  if (h === `www.${own}`) return "www";
+  if (/^[a-z0-9-]+\.fly\.dev(:\d+)?$/.test(h)) return "fly.dev";
+  return "other";
 }
 
 const recordToSentry = (ms: number, attributes: Record<string, string | number>) => {
@@ -105,7 +130,9 @@ export function requestTiming(opts: RequestTimingOptions = {}): MiddlewareHandle
       const ms = Math.round(performance.now() - started);
       const route = routeOf(c);
       const status = c.res.status;
-      record(ms, { route, method: c.req.method, status });
+      const attributes: Record<string, string | number> = { route, method: c.req.method, status };
+      if (opts.origin !== undefined) attributes.host = hostKind(c.req.header("host"), opts.origin);
+      record(ms, attributes);
       if (ms > slowMs) {
         const login = (c.get("session") as { login?: string } | undefined)?.login;
         warn(`[request] slow: ${c.req.method} ${route} took ${ms}ms (status ${status}${login ? `, signed in as ${login}` : ""})`);

@@ -21,6 +21,20 @@ import { createMemoryDb } from "./helpers.js";
 // in a public repository.
 
 describe("redact", () => {
+  it("leaves the sign-in and iNaturalist-check lines readable (beeline-87rn)", () => {
+    // "token" and a word after it reads as a credential, which is why these
+    // lines say "JWT" and "exchange the code"; the same line with "token" lost its number.
+    expect(redact("token 450 ms")).toBe("token [token] ms");
+    for (const line of [
+      "[inat check] user 83288: 199 read, 0 changed; waited 0 ms for the promotion lock, JWT 450 ms, requests 3588 ms",
+      "[sign-in] turned away: no person holds iNaturalist account jenlarsen52 (11227491)",
+      "[sign-in] failed: iNaturalist would not exchange the code, or say whose account it was: code exchange failed: 502",
+      "[sign-in] declined: iNaturalist returned access_denied",
+    ]) {
+      expect(redact(line)).toBe(line);
+    }
+  });
+
   it("removes quoted values, which is where DuckDB and our own messages put them", () => {
     expect(redact('Constraint Error: Duplicate key "display_name: Ada Example" violates unique constraint')).toBe(
       'Constraint Error: Duplicate key "[redacted]" violates unique constraint',

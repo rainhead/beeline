@@ -91,8 +91,12 @@ export interface CheckOptions {
 
 export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions): Promise<CheckOutcome> {
   lastAttempt.set(String(opts.userId), (opts.now ?? Date.now)());
+  // Waiting for a promotion already under way (the nightly's, or another
+  // check's) is part of what the person waits for, so it is measured too.
+  const asked = Date.now();
   return withPromotionLock(async () => {
     const started = Date.now();
+    const waitedMs = started - asked;
     const [[seasonStart]] = (await (
       await conn.run("SELECT CAST(active_since AS VARCHAR) FROM season")
     ).getRows()) as [[string]];
@@ -136,7 +140,9 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
     await deriveAfterCheck(conn, opts);
     console.log(
       `[inat check] user ${opts.userId}: ${fetched} read, ${changed} changed; ` +
-        `token ${tokenMs} ms, requests ${requestMs} ms, field refresh ${refreshMs} ms, places ${placesMs} ms, ` +
+        // "JWT", not "token": redact() reads "token" and a number as a
+        // credential and blanks the number (beeline-87rn).
+        `waited ${waitedMs} ms for the promotion lock, JWT ${tokenMs} ms, requests ${requestMs} ms, field refresh ${refreshMs} ms, places ${placesMs} ms, ` +
         `promotion ${outcome.promoteMs} ms, elevations and localities ${Date.now() - derived} ms`,
     );
     return outcome;

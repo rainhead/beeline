@@ -9,7 +9,7 @@ import type { Child } from "hono/jsx";
 import { sql, type Kysely } from "kysely";
 import type { Database, ReprintReason } from "../model.js";
 import { islandsSrc, styleVersion } from "./assets.js";
-import { registerAuthRoutes, signInHref, type InatClient } from "./auth.js";
+import { registerAuthRoutes, signInHref, type AuthDeps, type InatClient } from "./auth.js";
 import { OLD_BEELINE_ORIGIN, registerOldBeelineRedirects } from "./old-beeline.js";
 import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
@@ -262,6 +262,8 @@ export interface AppDeps {
   programGovernance?: GovernancePaths;
   /** App-written log of each program's contact address, as staff set it on the program's page (beeline-rrit). */
   programContactsPath?: string;
+  /** Where each sign-in's outcome goes (src/app/auth.ts); the metric and the console unless a test listens. */
+  reportSignIn?: AuthDeps["reportSignIn"];
 }
 
 /**
@@ -289,6 +291,7 @@ export function createApp({
   printRunsDir,
   programGovernance,
   programContactsPath,
+  reportSignIn,
 }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], start: async () => false };
   // Resolved now rather than at first use, so a test that leaves one out
@@ -329,7 +332,7 @@ export function createApp({
   const app = new Hono<AppEnv>();
   // Outermost, so the time it records is the whole request, every middleware
   // after it included, and so it sees the status an error page settled on.
-  app.use(requestTiming());
+  app.use(requestTiming({ origin: config.origin }));
   // So every response carries them — error pages and static files included
   // (beeline-m9o; the policy and its reasons are in the module).
   app.use(securityHeaders(config.environment));
@@ -453,6 +456,7 @@ export function createApp({
     origin: config.origin,
     environment: config.environment,
     recordOrcid: (inatUserId, orcid) => recordSignInOrcid(inatUserId, orcid),
+    reportSignIn,
   });
 
   // --- CSRF: cross-origin writes die here (cookies are SameSite=Lax too). ---

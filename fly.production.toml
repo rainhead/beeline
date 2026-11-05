@@ -100,7 +100,8 @@ swap_size_mb = 1024
 [mounts]
   source = "beeline_data"
   destination = "/app/data"
-  # 4.6 GB of DEM tiles plus a 266 MB store that only grows.
+  # The DEM tiles (1.7 GB on the sandbox) plus a store that only grows,
+  # about 400 MB at cutover.
   initial_size = "10gb"
   auto_extend_size_threshold = 80
   auto_extend_size_increment = "5gb"

@@ -136,6 +136,8 @@ describe("fly.production.toml", () => {
     expect(entries.get("env:BEELINE_ORIGIN")!.value).toBe("https://melittologist.org");
     // Unset, production's backup job fails every night (src/app/jobs/registry.ts).
     expect(entries.get("env:BEELINE_BACKUP_FOLDER")?.value).toMatch(/\S/);
-    await expect(readFile(fileURLToPath(new URL("../fly.toml", import.meta.url)), "utf8")).rejects.toThrow();
+    await expect(readFile(fileURLToPath(new URL("../fly.toml", import.meta.url)), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });

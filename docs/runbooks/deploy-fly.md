@@ -86,7 +86,9 @@ neither `BEELINE_DRIVE_KEY` nor `BEELINE_BACKUP_FOLDER`. Retention goes by
 file name alone ([`src/store-backup.ts`](../../src/store-backup.ts)), so two
 apps writing to one folder would each move the other's copies to the bin.
 
-**Production's secrets** were copied from the sandbox machine to machine on
+## Production's secrets, address and reports
+
+**Its secrets** were copied from the sandbox machine to machine on
 2026-11-02, so that no value passed through a terminal, except the
 iNaturalist client id and secret, which are the old system's OAuth app's
 (from its `.env` on the old server, renamed from `INATURALIST_CLIENT_*`;
@@ -122,7 +124,8 @@ person has signed in and shows only the generic sign-in failure page.
 `configFromEnv` refuses a non-bare origin at boot for the same reason.
 
 The DNS for `melittologist.org` is described under
-[The sandbox, retired](#the-sandbox-retired) above, with the address.
+[Production's secrets, address and reports](#productions-secrets-address-and-reports)
+above.
 
 ```sh
 fly apps create beeline-production --org osu-mm   # done
@@ -173,7 +176,7 @@ fly ssh sftp shell --app beeline-production
 #   put data/sample-state.csv                 sample-change, sample-state — the
 #                                             six that a rebuild cannot reconstruct)
 #   put data/secrets/inat-oauth-token        -> /app/data/secrets/
-fly machine update --env BEELINE_MAINTENANCE= <id>
+fly machine update --env BEELINE_MAINTENANCE= <id> --app beeline-production
 ```
 
 `data/secrets/inat-oauth-token` is easy to forget and nothing fails until 2am:
@@ -182,15 +185,16 @@ the whole run rather than syncing anonymously. It cannot be minted on the
 machine — `pnpm inat:login` is a browser flow — so run that on a workstation
 and upload the file, mode 600.
 
-The DEM tiles are the exception: 1.7 GB across 123 files on the sandbox,
+The DEM tiles are the exception: 1.7 GB across 123 files on the sandbox, the last count,
 from two public datasets that want no credential. The nightly fetches the
 ones it needs by itself, up to 25 a night (beeline-z08), so a new volume fills
 over a few nights; to fill it at once, run `pnpm elevation:fetch` **on the
 machine** rather than uploading them — see below.
 
-`private.duckdb` is not copied between hosts. The app creates it at first
-boot; sessions and sign-in records are acceptable losses pre-cutover. A
-restore from a backup is the exception ([Backups](#backups)).
+`private.duckdb` is created by the app at first boot on a new volume. On
+production it is never left behind: since cutover it holds what volunteers
+cannot simply redo, so moving or restoring production restores it from a
+backup with its key ([Backups](#backups)).
 
 ## Deploying a change
 
@@ -206,9 +210,9 @@ is applied there, and a person who exists only in that file still cannot sign
 in. After the deploy is healthy:
 
 ```sh
-fly machine update --env BEELINE_MAINTENANCE=1 <id> --yes
+fly machine update --env BEELINE_MAINTENANCE=1 <id> --app beeline-production --yes
 fly ssh console --app beeline-production -C "sh -c 'cd /app && pnpm person:apply'"
-fly machine update --env BEELINE_MAINTENANCE= <id> --yes
+fly machine update --env BEELINE_MAINTENANCE= <id> --app beeline-production --yes
 ```
 
 `person:apply` prints how many rows it applied and lists any it could not
@@ -234,14 +238,11 @@ reported a timeout. If the responder itself ever fails to start, the entrypoint
 says so in `fly logs` and holds the machine up anyway, since a shell is what
 the mode is for; the check then fails as it used to, and the wait is back.
 
-One thing about the **first** deploy that looks like a failure and is not
-yours:
-
-**IP allocation can fail on a first deploy.** Ours did, with an internal error
-(`org_slug is only supported with private_v6 type`), leaving the app with no
-addresses and its `.fly.dev` hostname unresolvable. `fly ips allocate-v6` and
-`fly ips allocate-v4 --shared` fixed it in one go. Check `fly ips list` if the
-hostname does not resolve.
+**IP allocation can fail on an app's first deploy.** The sandbox's did, with
+an internal error (`org_slug is only supported with private_v6 type`),
+leaving it with no addresses. `fly ips allocate-v6 --app beeline-production`
+and `fly ips allocate-v4 --shared --app beeline-production` fix it; check
+`fly ips list --app beeline-production` if the hostname does not resolve.
 
 ## Running a CLI against the store
 
@@ -251,16 +252,16 @@ you stand:
 
 ```sh
 fly machine list --app beeline-production
-fly machine update --env BEELINE_MAINTENANCE=1 <id>   # app down, volume mounted
+fly machine update --env BEELINE_MAINTENANCE=1 <id> --app beeline-production   # app down, volume mounted
 fly ssh console --app beeline-production
   cd /app && pnpm db:reseed data/beeline.duckdb data/new.duckdb   # etc.
-fly machine update --env BEELINE_MAINTENANCE= <id>    # back to serving
+fly machine update --env BEELINE_MAINTENANCE= <id> --app beeline-production    # back to serving
 ```
 
 This is where `pnpm db:reseed`, `pnpm person:apply`,
 `pnpm person:orcids`, `pnpm inat:fetch-orcids`, `pnpm disposition:load` and
 `pnpm elevation:fetch` run. A list of confirmed ORCID iDs names people, so it
-goes up with `fly ssh sftp put` into `data/` and never into git; so does a
+goes up with `fly ssh sftp put --app beeline-production` into `data/` and never into git; so does a
 staff inventory file (`data/dispositions/<file>.xlsx`, loaded with
 `pnpm disposition:load data/dispositions/<file>.xlsx data/beeline.duckdb --by "<name>" --on <date>`,
 which leaves what it could not place in `<file>.xlsx.held.csv` beside it). The image
@@ -407,9 +408,9 @@ fetch while the app runs and stop it only for the load, which writes the store:
 
 ```sh
 fly ssh console --app beeline-production -C "sh -c 'cd /app && pnpm ecdysis:taxonomy --fetch-only'"
-fly machine update --env BEELINE_MAINTENANCE=1 <id>    # the load writes the store
+fly machine update --env BEELINE_MAINTENANCE=1 <id> --app beeline-production    # the load writes the store
 fly ssh console --app beeline-production -C "sh -c 'cd /app && pnpm ecdysis:taxonomy --cached'"
-fly machine update --env BEELINE_MAINTENANCE= <id>
+fly machine update --env BEELINE_MAINTENANCE= <id> --app beeline-production
 ```
 
 `--cached` loads the last fetch into the machine's `BEELINE_DB`, replaces the
@@ -733,7 +734,7 @@ new service account cannot see the old one's files: it would never move them
 to the bin, and the year of monthly copies would start again from nothing. So
 a new key is made for the same account
 (`gcloud iam service-accounts keys create … --iam-account beeline-production@beeline-510517.iam.gserviceaccount.com`),
-set with `fly secrets set BEELINE_DRIVE_KEY=…`, and the old key deleted once
+set with `fly secrets set --app beeline-production BEELINE_DRIVE_KEY=…`, and the old key deleted once
 a night's run has succeeded with the new one.
 
 ### Restoring, and the drill
@@ -755,7 +756,7 @@ private store was **not** checked rather than passing it. What it leaves in
 2. On the volume, **delete `beeline.duckdb.wal` and `private.duckdb.wal`** if
    they exist. A WAL left beside an older store is replayed onto it, as with
    [the pre-migrate copy](#the-pre-migrate-copy).
-3. `fly ssh sftp shell`, and `put` the two stores to `/app/data/beeline.duckdb`
+3. `fly ssh sftp shell --app beeline-production`, and `put` the two stores to `/app/data/beeline.duckdb`
    and `/app/data/private.duckdb`, and each `authored/*.csv` to `/app/data/`.
 4. On a new volume, also what the archive does not hold: the pipeline's
    `data/secrets/inat-oauth-token` ([One-time setup](#one-time-setup)), and
@@ -763,7 +764,7 @@ private store was **not** checked rather than passing it. What it leaves in
    `pnpm elevation:fetch` on the machine at once. Ecdysis's archive and
    the print runs' sheets come back by themselves: the first is fetched
    again, the second re-rendered from the store.
-5. `fly machine update --env BEELINE_MAINTENANCE= <id>`. Boot applies any
+5. `fly machine update --env BEELINE_MAINTENANCE= <id> --app beeline-production`. Boot applies any
    migration newer than the copy, as it does for every deploy.
 
 **`store-backup` then reads as failing on `/jobs` and `/healthz/jobs`, and

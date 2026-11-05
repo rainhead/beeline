@@ -15,18 +15,18 @@ The benchmarks write, and exactly one process may hold a store ([ADR 0005](../do
 
 A result file records the kind of machine (never its hostname), DuckDB's thread and memory budgets, the store's size, the commit and the flags it was run with; under each summary it keeps every timing as taken and a count of what each request answered, so a later reader can compute the statistic nobody thought of. Error text is reduced to its class before it is written — DuckDB quotes the offending value in a constraint error, and the store is real people's records. The first sandbox baseline predates the raw timings and holds summaries only; the next run there replaces it. Compare like with like: the workstation runs the same pages two to three times faster than the sandbox, and says nothing about it. Baselines live in [`results/`](results/).
 
-## Running on the sandbox
+## Running on the machine
 
-The numbers that matter are the sandbox's — two shared vCPUs, DuckDB at two threads and 1 GB ([`fly.production.toml`](../fly.production.toml)). The image carries `src/` and `tsx` but not `bench/`, so the files are uploaded to a directory a deploy erases, run beside the live app against a copy of its store, and removed:
+These ran on the sandbox until it was retired on 2026-11-05. The only Fly machine now is production's — two shared vCPUs, DuckDB at two threads and 1.5 GB, 3 GB in all ([`fly.production.toml`](../fly.production.toml)) — and a run there slows the site for everyone using it and competes with the live app for memory. So run it there only when nobody is on the site and with Peter's say-so; otherwise run locally against a downloaded nightly backup, and compare only with other local runs. The image carries `src/` and `tsx` but not `bench/`, so the files are uploaded to a directory a deploy erases, run beside the live app against a copy of its store, and removed:
 
 ```sh
-fly ssh console -C "mkdir -p /app/bench"
-for f in lib.ts pages.ts contention.ts; do fly ssh sftp put bench/$f /app/bench/$f; done
-fly ssh sftp put --mode 0755 bench/on-machine.sh /app/bench/on-machine.sh
-fly ssh console -C "/app/bench/on-machine.sh pages --n=15"
-fly ssh console -C "/app/bench/on-machine.sh contention --seconds=30"
-fly ssh sftp get /app/data/bench-tmp/pages.json bench/results/pages-sandbox-$(date +%F).json
-fly ssh console -C "rm -rf /app/bench /app/data/bench-tmp"
+fly ssh console --app beeline-production -C "mkdir -p /app/bench"
+for f in lib.ts pages.ts contention.ts; do fly ssh sftp put --app beeline-production bench/$f /app/bench/$f; done
+fly ssh sftp put --app beeline-production --mode 0755 bench/on-machine.sh /app/bench/on-machine.sh
+fly ssh console --app beeline-production -C "/app/bench/on-machine.sh pages --n=15"
+fly ssh console --app beeline-production -C "/app/bench/on-machine.sh contention --seconds=30"
+fly ssh sftp get --app beeline-production /app/data/bench-tmp/pages.json bench/results/pages-production-$(date +%F).json
+fly ssh console --app beeline-production -C "rm -rf /app/bench /app/data/bench-tmp"
 ```
 
-It is a second DuckDB entitled to a gigabyte on a 2 GB machine; [`on-machine.sh`](on-machine.sh) refuses to start unless the memory is there, and says why a lower cap is not the answer. The sandbox is slow for everyone while it runs — about three minutes each. The uploaded `bench/` must match the deployed `src/`: run it from the commit that is deployed. Shared vCPUs are throttled once their burst balance is spent, so a second run straight after a first can read slower than it should. The first baseline has one such outlier — a single 40-second save in an otherwise steady column, on the third run in a row — whose cause was not established; read the p50, and rerun before believing a max.
+It is a second DuckDB entitled to a gigabyte beside the live app; [`on-machine.sh`](on-machine.sh) refuses to start unless the memory is there, and says why a lower cap is not the answer. The site is slow for everyone while it runs — about three minutes each. The uploaded `bench/` must match the deployed `src/`: run it from the commit that is deployed. Shared vCPUs are throttled once their burst balance is spent, so a second run straight after a first can read slower than it should. The first baseline has one such outlier — a single 40-second save in an otherwise steady column, on the third run in a row — whose cause was not established; read the p50, and rerun before believing a max.

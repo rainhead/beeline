@@ -51,6 +51,10 @@ async function setup() {
   const h = await sample("H", 2, { locality: "NULL" });
   // 2025 has settled for good, whatever today's date.
   const s = await sample("S", 2, { date_start: "DATE '2025-07-14'", date_end: "DATE '2025-07-14'" });
+  // T, settled too, with one of its two labels on paper: not waiting, since
+  // nothing settled prints, and not all printed either.
+  const t = await sample("T", 2, { date_start: "DATE '2025-07-15'", date_end: "DATE '2025-07-15'" });
+  await imported(t, [1]);
   const run = await prepareRun(conn, { atlasId: null, personId: staff });
   expect(run?.labels).toBe(4); // W's three and X's one
   const app = createApp({
@@ -61,7 +65,7 @@ async function setup() {
     resolveSession: async () => ({ personId: staff, login: "staff", iconUrl: null }),
   });
   const get = async (path: string) => (await app.request(path)).text();
-  return { get, conn, ids: { p, w, x, h, s } };
+  return { get, conn, ids: { p, w, x, h, s, t } };
 }
 
 const sampleLink = (id: number) => `href="/samples/${id}"`;
@@ -71,14 +75,13 @@ describe("waiting on labels", () => {
     const { get, ids } = await setup();
     const waiting = await get("/samples?scope=all&labels=waiting");
     for (const id of [ids.w, ids.x, ids.h]) expect(waiting).toContain(sampleLink(id));
-    for (const id of [ids.p, ids.s]) expect(waiting).not.toContain(sampleLink(id));
-    expect(waiting).toContain(`${f.labels}`);
-    expect(waiting).toContain(f.labelsWaiting);
+    for (const id of [ids.p, ids.s, ids.t]) expect(waiting).not.toContain(sampleLink(id));
+    expect(waiting).toContain(`${f.labels}: ${f.labelsWaiting}`);
 
     const printed = await get("/samples?scope=all&labels=printed");
     expect(printed).toContain(sampleLink(ids.p));
-    // A settled sample that never printed is neither waiting nor printed.
-    for (const id of [ids.w, ids.x, ids.h, ids.s]) expect(printed).not.toContain(sampleLink(id));
+    // A settled sample never printed, or printed only in part, is neither.
+    for (const id of [ids.w, ids.x, ids.h, ids.s, ids.t]) expect(printed).not.toContain(sampleLink(id));
   });
 
   it("counts what is waiting beside the specimens, and only where something is", async () => {

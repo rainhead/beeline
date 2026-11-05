@@ -968,14 +968,17 @@ export async function listSamples(
   }
   if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
-  // "Printed" is every label on paper: printed, and none still waiting. A
-  // settled sample that never printed is neither.
+  // "Printed" is every label on paper, counted against the specimen count in
+  // any season: a settled sample printed only in part is not waiting, since
+  // settled samples never print, and is not all printed either (CodeRabbit).
+  // A settled sample that never printed is neither.
   if (query.labels === "waiting") {
     base = base.where(sql<boolean>`EXISTS (SELECT 1 FROM sample_labels_waiting w WHERE w.sample_id = s.entity_id)`);
   } else if (query.labels === "printed") {
     base = base.where(
-      sql<boolean>`EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
-                   AND NOT EXISTS (SELECT 1 FROM sample_labels_waiting w WHERE w.sample_id = s.entity_id)`,
+      sql<boolean>`s.specimen_count > 0
+                   AND (SELECT count(*) FROM specimen_on_paper op
+                        WHERE op.sample_id = s.entity_id AND op.specimen_number <= s.specimen_count) >= s.specimen_count`,
     );
   }
   const qc = qcPredicate(query.qc);

@@ -79,6 +79,8 @@ import {
 } from "../print-run.js";
 import { PersonPage, Roster } from "./views/roster.js";
 import { ObserverPage, UnclaimedPage } from "./views/unclaimed.js";
+import { AddPersonPage } from "./views/add-person.js";
+import { accountStanding, inatProfiles, parseInatAccount, turnedAway, type InatProfile, type InatProfiles } from "./add-person.js";
 import { bindablePeople, listUnclaimed, mintNow, observerDetail, type ObserverDetail } from "./unclaimed.js";
 import {
   linkChanges,
@@ -264,6 +266,8 @@ export interface AppDeps {
   programContactsPath?: string;
   /** Where each sign-in's outcome goes (src/app/auth.ts); the metric and the console unless a test listens. */
   reportSignIn?: AuthDeps["reportSignIn"];
+  /** How /people/new looks an iNaturalist account up (src/app/add-person.ts); iNaturalist's API unless a test says otherwise. */
+  inatProfiles?: InatProfiles;
 }
 
 /**
@@ -292,6 +296,7 @@ export function createApp({
   programGovernance,
   programContactsPath,
   reportSignIn,
+  inatProfiles: lookUpProfile = inatProfiles(),
 }: AppDeps) {
   const jobsDep: JobsDep = jobs ?? { list: [], start: async () => false };
   // Resolved now rather than at first use, so a test that leaves one out
@@ -2123,6 +2128,48 @@ export function createApp({
     return csv(c, rosterCsv(listed), "beeline-people");
   });
 
+  /**
+   * Adding somebody by their iNaturalist account (beeline-2c3.33,
+   * src/app/add-person.ts): look it up, then name them. Registered before
+   * /people/:id, or "new" would be read as a login; an account actually
+   * called new is still reachable by its person's entity_id.
+   *
+   * The account is looked up again whatever else the page is showing, so a
+   * refused add comes back with the form still filled from iNaturalist.
+   */
+  const showAddPerson = async (c: Context<AppEnv>, typed: string, problem?: string) => {
+    const m = c.get("m");
+    const a = m.addPerson;
+    let found: { profile: InatProfile; standing: Awaited<ReturnType<typeof accountStanding>> } | undefined;
+    let issue = problem;
+    if (typed !== "") {
+      const account = parseInatAccount(typed);
+      if (account === null) issue ??= a.notAccount(typed);
+      else {
+        try {
+          const profile = await lookUpProfile(account);
+          if (profile === null) issue ??= a.noSuchAccount(typed);
+          else found = { profile, standing: await accountStanding(db, profile.id) };
+        } catch (err) {
+          console.warn(`[add person] iNaturalist lookup failed: ${(err as Error).message}`);
+          issue ??= a.lookupFailed;
+        }
+      }
+    }
+    return c.html(
+      await page(
+        c,
+        a.title,
+        <AddPersonPage m={m} typed={typed} found={found} turnedAway={await turnedAway(db)} problem={issue} />,
+      ),
+    );
+  };
+
+  app.get("/people/new", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    return showAddPerson(c, (c.req.query("account") ?? "").trim());
+  });
+
   app.get("/people/:id", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     return showPerson(c);
@@ -2667,6 +2714,72 @@ export function createApp({
       });
       if (outcome.problem !== null) return showObserver(c, outcome.problem);
       return afterConnecting(c, detail, { personId: outcome.personId, name, applied: outcome.applied });
+    });
+  });
+
+  // Somebody with no records (beeline-2c3.33): the same rows /unclaimed's
+  // add writes — create, the account, the name parts — plus admin for staff,
+  // and the same refusal of a name that would reach somebody already here.
+  // The account is read from iNaturalist again rather than trusted from the
+  // form, so the login written beside the id is the one iNaturalist has now.
+  app.post("/people/new", async (c) => {
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const a = m.addPerson;
+    const form = await c.req.formData();
+    const field = (name: string) => String(form.get(name) ?? "").trim();
+    const rawId = field("inat_user_id");
+    if (!/^\d{1,12}$/.test(rawId)) return showAddPerson(c, "", a.problem(a.notAccount(rawId)));
+    let profile: InatProfile | null;
+    try {
+      profile = await lookUpProfile(rawId);
+    } catch (err) {
+      console.warn(`[add person] iNaturalist lookup failed: ${(err as Error).message}`);
+      return showAddPerson(c, "", a.lookupFailed);
+    }
+    if (profile === null) return showAddPerson(c, "", a.problem(a.noSuchAccount(rawId)));
+    const found = profile;
+    return oneDecisionAtATime(async () => {
+      // Read inside the turn: somebody may have connected the account, or
+      // its records may have arrived, since the form was drawn. Either way
+      // the page now says so instead of offering the form.
+      if ((await accountStanding(db, found.id)).kind !== "free") return showAddPerson(c, found.login);
+      const name = field("display_name");
+      if (name === "") return showAddPerson(c, found.login, a.problem(a.nameBlank));
+      const staff = form.get("staff") !== null;
+      const reason = field("reason") || a.addedReason(staff);
+      const author = c.get("session").login;
+      const ref = `name:${name}`;
+      const rows: PersonOverlayRow[] = (
+        [
+          ["create", "yes"],
+          ["inat_user_id", `${found.id} ${found.login}`],
+          ["given_name", field("given_name")],
+          ["family_name", field("family_name")],
+          ["admin", staff ? "yes" : ""],
+        ] as Array<[OverlayField, string]>
+      )
+        .filter(([f, value]) => f === "create" || f === "inat_user_id" || value !== "")
+        .map(([f, value]) => ({ person_ref: ref, field: f, value, author, reason }));
+      const taken = await db.selectFrom("person").select("entity_id").where("display_name", "=", name).execute();
+      const resolved = await resolveName(name, rows);
+      if (taken.length > 0 || (resolved !== null && !("missing" in resolved && resolved.missing === true))) {
+        return showAddPerson(c, found.login, a.problem(a.nameTaken(name)));
+      }
+      const outcome = await commitDecisions({
+        rows,
+        ref,
+        author,
+        reason,
+        personId: null,
+        boundBefore: null,
+        findAfter: () => holderOf(found.id),
+      });
+      if (outcome.problem !== null) return showAddPerson(c, found.login, a.problem(outcome.problem));
+      // No connection to apply with (a test without one): saved, and made at the next rebuild.
+      if (!outcome.applied) return c.redirect("/people");
+      return c.redirect(`/people/${encodeURIComponent(found.login)}`);
     });
   });
 

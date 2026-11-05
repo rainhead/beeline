@@ -554,6 +554,12 @@ export interface ListingPageOptions {
   /** False skips counting the whole selection; `total` is then 0. */
   withTotal?: boolean;
   /**
+   * False skips reading the findings whose words make a Flags chip
+   * (findingWords): a download shows no chips. The kinds of flag are still
+   * listed, since they come free with the counts.
+   */
+  withFlagWords?: boolean;
+  /**
    * Only samples collected in this calendar year, judged on their first day
    * (no sample on the dev store spans New Year). Not a listing filter — the
    * listings have none, by design — but the grain the program archives are
@@ -716,6 +722,48 @@ const QC_COUNT_SELECTIONS = [
   sql<number>`CAST(sum(CASE WHEN r.severity = 'blocking' THEN 1 ELSE 0 END) AS INTEGER)`.as("blocking"),
   sql<number>`CAST(sum(CASE WHEN r.severity = 'warning' THEN 1 ELSE 0 END) AS INTEGER)`.as("warning"),
 ] as const;
+
+/**
+ * Which kinds of flag each sample carries, for the Flags column
+ * (beeline-ik0d), gathered in the pass that counts them: as rule names it
+ * costs nothing more, measured on production's store. What the findings say
+ * costs more than it is worth here. Gathered in this pass, it adds about a
+ * third to every samples page, since every sample's details are built to be
+ * aggregated; asked for afterwards by the page's ids, the union of rules is
+ * built again over every sample, the ids not reaching inside it, which cost
+ * the same. So only the two chips whose words come from a finding read
+ * their rule's own view, for the page's samples (findingWords), and the rest
+ * leave their details to the sample page. "rule:severity", comma-separated.
+ */
+const FLAG_LIST = sql<string | null>`string_agg(DISTINCT concat(f.rule_name, ':', r.severity), ',')`.as("flag_list");
+
+/** The kinds of flag a sample carries, blocking first, then by rule. */
+function parseFlags(list: string | null): ListedFlag[] {
+  return (list ?? "")
+    .split(",")
+    .filter((entry) => entry !== "")
+    .map((entry) => {
+      const [rule, severity] = entry.split(":") as [QcRuleName, "blocking" | "warning"];
+      return { rule, severity, details: [] as string[] };
+    })
+    .sort((a, b) => (a.severity === b.severity ? a.rule.localeCompare(b.rule) : a.severity === "blocking" ? -1 : 1));
+}
+
+/**
+ * The findings whose words make their chip — which fields are missing, and a
+ * hold's reason — for one page of samples, each from its rule's own view,
+ * which is cheap where the union is not (about 8 ms for a page of 50).
+ */
+async function findingWords(db: Kysely<Database>, sampleIds: number[]) {
+  if (sampleIds.length === 0) return [];
+  const ids = sql.join(sampleIds);
+  return (
+    await sql<{ sample_id: number; rule_name: QcRuleName; details: string | null }>`
+      SELECT sample_id, rule_name, details FROM qc_rule_missing_required_field WHERE sample_id IN (${ids})
+      UNION ALL
+      SELECT sample_id, rule_name, details FROM qc_rule_staff_hold WHERE sample_id IN (${ids})`.execute(db)
+  ).rows;
+}
 
 /** The place columns as one haystack: a person types a place, not a column. */
 /**
@@ -913,7 +961,7 @@ export async function listSamples(
           .innerJoin("qc_rule as r", "r.name", "f.rule_name")
           .where("f.sample_id", "is not", null)
           .groupBy("f.sample_id")
-          .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS])
+          .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS, FLAG_LIST])
           .as("qc"),
       (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
     );
@@ -1055,6 +1103,7 @@ export async function listSamples(
         hidden.as("location_withheld"),
         blockingCount.as("blocking"),
         warningCount.as("warning"),
+        sql<string | null>`qc.flag_list`.as("flag_list"),
         sql<boolean>`EXISTS (SELECT 1 FROM sample_collector mine
                              WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})`.as("mine"),
         sql<boolean>`EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)`.as("printed"),
@@ -1083,9 +1132,17 @@ export async function listSamples(
     // A streamed download pages through everything and never shows a total.
     opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
   ]);
-  const sampleRows = rows as unknown as SampleRow[];
+  const sampleRows = rows as unknown as Array<SampleRow & { flag_list: string | null }>;
   const ids = sampleRows.map((r) => r.sample_id);
-  const [collectors, findings] = await Promise.all([collectorsOf(db, ids), findingsOf(db, ids)]);
+  const findings = new Map(sampleRows.map((r) => [r.sample_id, parseFlags(r.flag_list)] as const));
+  const [collectors, words] = await Promise.all([
+    collectorsOf(db, ids),
+    opts.withFlagWords === false ? Promise.resolve([]) : findingWords(db, ids),
+  ]);
+  for (const w of words) {
+    const flag = findings.get(Number(w.sample_id))?.find((x) => x.rule === w.rule_name);
+    if (flag !== undefined && w.details !== null && w.details !== "") flag.details.push(w.details);
+  }
   return {
     rows: sampleRows,
     total: Number(count?.n ?? 0),
@@ -1096,37 +1153,13 @@ export async function listSamples(
 
 /**
  * One kind of flag on a sample, as the Flags column shows it (beeline-ik0d):
- * the rule, whether it blocks printing, and what its findings say, one entry
- * per finding (a rule can fire once per specimen).
+ * the rule, whether it blocks printing, and, for the two rules whose chip is
+ * made from them (findingWords), what its findings say.
  */
 export interface ListedFlag {
   rule: QcRuleName;
   severity: "blocking" | "warning";
   details: string[];
-}
-
-/** sample_id → its flags, blocking ones first, for one page of samples. */
-async function findingsOf(db: Kysely<Database>, sampleIds: number[]): Promise<Map<number, ListedFlag[]>> {
-  const out = new Map<number, ListedFlag[]>();
-  if (sampleIds.length === 0) return out;
-  const result = await sql<{ sample_id: number; rule_name: QcRuleName; severity: "blocking" | "warning"; details: string | null }>`
-    SELECT f.sample_id, f.rule_name, r.severity, f.details
-    FROM sample_qc_finding f
-    JOIN qc_rule r ON r.name = f.rule_name
-    WHERE f.sample_id IN (${sql.join(sampleIds)})
-    ORDER BY f.sample_id, CASE r.severity WHEN 'blocking' THEN 0 ELSE 1 END, f.rule_name, f.details`.execute(db);
-  for (const row of result.rows) {
-    const id = Number(row.sample_id);
-    const flags = out.get(id) ?? [];
-    let flag = flags.find((x) => x.rule === row.rule_name);
-    if (flag === undefined) {
-      flag = { rule: row.rule_name, severity: row.severity, details: [] };
-      flags.push(flag);
-    }
-    if (row.details !== null && row.details !== "") flag.details.push(row.details);
-    out.set(id, flags);
-  }
-  return out;
 }
 
 export async function listSpecimens(

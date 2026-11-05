@@ -452,6 +452,7 @@ function FlagsCell({ m, flags, sampleId }: { m: Messages; flags: readonly Listed
                   <FindingDetail details={d} ruleName={flag.rule} />
                 </p>
               ))}
+              <a href={sampleHref(sampleId)}>{s.flagSeeSample}</a>
             </div>
           </details>
         );

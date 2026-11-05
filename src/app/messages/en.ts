@@ -851,8 +851,8 @@ export const en = {
       /** For screen readers and the hover text: colour alone cannot say it. */
       flagSeverity: { blocking: "Blocks printing", warning: "Heads-up" },
       flagMore: (count: number) => `+${n(count)} more`,
-      flagOpen: (name: string, severity: string) => `${name}: ${severity}. Show what to do`,
-    },
+      /** In a flag's panel: its details, how far over a limit and the like, are on the sample's page. */
+      flagSeeSample: "See the sample",    },
 
     paging: {
       page: (page: number, pages: number) => `Page ${n(page)} of ${n(pages)}`,

@@ -871,7 +871,7 @@ export function createApp({
     // The whole selection, a page at a time: no cap, no truncation line.
     const body = csvStream(
       SAMPLE_CSV_HEADER,
-      (limit, offset) => listSamples(db, query, personId, reader, { limit, offset, withTotal: false }),
+      (limit, offset) => listSamples(db, query, personId, reader, { limit, offset, withTotal: false, withFlagWords: false }),
       sampleCsvRow,
       csvGenerationTiming("samples"),
     );

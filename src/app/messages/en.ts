@@ -855,6 +855,9 @@ export const en = {
       method: "Choose one, or write it in.",
       trapCount: "How many traps went into this sample, if you know.",
       specimenCount: "Leave at 0 until the bees are pinned and counted: a sample with no specimens prints no labels.",
+      // An example in the hint, never as a placeholder: grey text in an empty box read as a value (Peter, 2026-11-04).
+      latitude: "In decimal degrees, such as 44.5646.",
+      longitude: "In decimal degrees, west negative, such as -123.2620.",
       uncertainty: "How far the traps could be from this point.",
       stateProvince: "The two-letter code: OR, WA, BC.",
       county: "Beeline writes the county from the coordinates each night, so this can be left empty.",

@@ -66,8 +66,8 @@ export function TrapSampleFormPage({
         />
         <TextField id="trap-trap_count" name="trap_count" label={t.fields.trapCount} value={form.trap_count} hint={problem("trap_count") ?? t.hints.trapCount} />
         <TextField id="trap-specimen_count" name="specimen_count" label={t.fields.specimenCount} value={form.specimen_count} hint={problem("specimen_count") ?? t.hints.specimenCount} />
-        <TextField id="trap-latitude" name="latitude" label={t.fields.latitude} value={form.latitude} hint={problem("latitude")} placeholder="44.5646" />
-        <TextField id="trap-longitude" name="longitude" label={t.fields.longitude} value={form.longitude} hint={problem("longitude")} placeholder="-123.2620" />
+        <TextField id="trap-latitude" name="latitude" label={t.fields.latitude} value={form.latitude} hint={problem("latitude") ?? t.hints.latitude} />
+        <TextField id="trap-longitude" name="longitude" label={t.fields.longitude} value={form.longitude} hint={problem("longitude") ?? t.hints.longitude} />
         <TextField id="trap-uncertainty" name="uncertainty" label={t.fields.uncertainty} value={form.uncertainty} hint={problem("uncertainty") ?? t.hints.uncertainty} />
         <TextField id="trap-country" name="country" label={t.fields.country} value={form.country} hint={problem("country")} />
         <TextField id="trap-state_province" name="state_province" label={t.fields.stateProvince} value={form.state_province} hint={problem("state_province") ?? t.hints.stateProvince} />

@@ -1134,9 +1134,13 @@ export async function listSamples(
   const sampleRows = rows as unknown as Array<SampleRow & { flag_list: string | null }>;
   const ids = sampleRows.map((r) => r.sample_id);
   const findings = new Map(sampleRows.map((r) => [r.sample_id, parseFlags(r.flag_list)] as const));
+  // Where the location is withheld from this reader, a finding's words go,
+  // as on the sample page (visibleFindings, src/app/record.ts): a hold's
+  // note can say where the sample was (CodeRabbit).
+  const wordsFor = sampleRows.filter((r) => !r.location_withheld).map((r) => r.sample_id);
   const [collectors, words] = await Promise.all([
     collectorsOf(db, ids),
-    opts.withFlagWords === false ? Promise.resolve([]) : findingWords(db, ids),
+    opts.withFlagWords === false ? Promise.resolve([]) : findingWords(db, wordsFor),
   ]);
   for (const w of words) {
     const flag = findings.get(Number(w.sample_id))?.find((x) => x.rule === w.rule_name);

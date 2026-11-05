@@ -43,15 +43,30 @@ async function setup() {
   await conn.run(
     `INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${held}, 1, '25000901'), (${clean}, 1, '25000902')`,
   );
-  const app = createApp({
-    ...(await scratchPaths()),
-    db: createKysely(instance),
-    config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
-    inat: unusedInat,
-    resolveSession: async () => ({ personId: staff, login: "staff", iconUrl: null }),
-  });
+  // Staff's own sample, obscured on iNaturalist and held with a note that
+  // says where: a volunteer browsing every record is not shown the location,
+  // so not the note either.
+  const obscured = await insertCleanSample(conn, { sample_number: "'O'", geoprivacy: "'obscured'" });
+  await conn.run(
+    `INSERT INTO sample_hold (sample_id, reason, held_by) VALUES (${obscured}, 'Behind 1234 Elm St', ${staff})`,
+  );
+  const [[volunteer]] = (await rows(
+    conn,
+    `INSERT INTO person (display_name, given_name, family_name) VALUES ('Vi Volunteer', 'Vi', 'Volunteer') RETURNING entity_id`,
+  )) as [[number]];
+  const paths = await scratchPaths();
+  const appAs = (personId: number) =>
+    createApp({
+      ...paths,
+      db: createKysely(instance),
+      config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId, login: "someone", iconUrl: null }),
+    });
+  const app = appAs(staff);
   const get = async (path: string) => (await app.request(path)).text();
-  return { get, conn, ids: { held, many, clean } };
+  const getAsVolunteer = async (path: string) => (await appAs(volunteer).request(path)).text();
+  return { get, getAsVolunteer, conn, ids: { held, many, clean, obscured } };
 }
 
 const link = (id: number) => `href="/samples/${id}"`;
@@ -63,6 +78,14 @@ describe("the Flags column", () => {
     expect(page).toContain(`Pin is in the river; as…<span class="visually-hidden">: ${s.flagSeverity.blocking}</span>`);
     expect(page).toContain("<q>Pin is in the river; asked the collector to move it</q>");
     expect(page).toContain(`${s.flag.locality_format}<span class="visually-hidden">`);
+  });
+
+  it("keeps a hold's note from a reader the location is withheld from, as the sample page does", async () => {
+    const { get, getAsVolunteer } = await setup();
+    expect(await get("/samples?scope=all")).toContain("Behind 1234 Elm St");
+    const page = await getAsVolunteer("/samples?scope=all");
+    expect(page).not.toContain("Elm St");
+    expect(page).toContain(`${s.flag.staff_hold}<span class="visually-hidden">`);
   });
 
   it("shows three kinds of flag and links to the sample for the rest", async () => {

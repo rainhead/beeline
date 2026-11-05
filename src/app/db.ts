@@ -130,13 +130,12 @@ export interface AppDb {
 }
 
 /**
- * Open the database the app owns (ADR 0005: exactly one process, this one),
- * first carrying across a retired private store if one is still where it was
- * kept (beeline-4tdh).
+ * Open the database the app owns (ADR 0005: exactly one process, this one).
+ * Carrying a retired private store across is the caller's next step, after
+ * the registry guard (src/app/main.ts).
  */
-export async function openAppDb(config: Pick<AppConfig, "dbPath" | "privateDbPath" | "privateDbKey">): Promise<AppDb> {
+export async function openAppDb(config: Pick<AppConfig, "dbPath">): Promise<AppDb> {
   const instance = await openDuckDb(config.dbPath);
-  await absorbPrivateStore(instance, { path: config.privateDbPath, key: config.privateDbKey });
   const db = createKysely(instance);
   return {
     instance,

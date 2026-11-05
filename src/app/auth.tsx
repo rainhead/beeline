@@ -97,7 +97,11 @@ export function inatClient(creds: InatCredentials): InatClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...creds, code, redirect_uri: redirectUri, grant_type: "authorization_code" }),
       });
-      if (!response.ok) throw new Error(`code exchange failed: ${response.status} ${(await response.text()).slice(0, 200)}`);
+      // One line, whatever the body holds: the message is logged at sign-in.
+      if (!response.ok) {
+        const body = (await response.text()).replace(/\s+/g, " ").trim().slice(0, 200);
+        throw new Error(`code exchange failed: ${response.status} ${body}`);
+      }
       return ((await response.json()) as { access_token: string }).access_token;
     },
     async identity(accessToken) {

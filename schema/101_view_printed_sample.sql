@@ -41,8 +41,13 @@ COMMENT ON VIEW printed_label_reprint IS 'The labels that are reprints: their ru
 -- replaced asked two questions as two subqueries over ~400,000 specimens,
 -- 33 ms against 8 ms on the sandbox's store, and the QC rules read this view
 -- on every listing page (migrations/0056).
-CREATE VIEW printed_sample AS
-SELECT DISTINCT sp.sample_id
+--
+-- The test is made per specimen, in specimen_on_paper, and printed_sample is
+-- the samples it finds, so the listings' "waiting on labels" filter
+-- (beeline-3v33) and the rule that stops a printed sample following
+-- iNaturalist read one definition.
+CREATE VIEW specimen_on_paper AS
+SELECT sp.entity_id AS specimen_id, sp.sample_id, sp.specimen_number
 FROM specimen sp
 LEFT JOIN (
   SELECT pl.specimen_id,
@@ -54,4 +59,8 @@ LEFT JOIN (
   GROUP BY pl.specimen_id
 ) label ON label.specimen_id = sp.entity_id
 WHERE label.specimen_id IS NULL OR label.on_paper OR NOT label.minted;
+COMMENT ON VIEW specimen_on_paper IS 'Specimens whose label is on paper: printed by a Beeline print run, or imported (the legacy system printed every specimen it holds). A specimen in a run that has not printed, or only in canceled runs, is not here.';
+
+CREATE VIEW printed_sample AS
+SELECT DISTINCT sample_id FROM specimen_on_paper;
 COMMENT ON VIEW printed_sample IS 'Samples with at least one label on paper: printed by a Beeline print run, or imported (the legacy system printed every specimen it holds, and a reprint waiting for one does not change that). These keep their date, locality and coordinates when iNaturalist changes them; a sample frozen into an unprinted run is not here, so a canceled run holds nothing back.';

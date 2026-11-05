@@ -173,3 +173,28 @@ FROM minted_field_number m
 JOIN specimen sp ON sp.field_number = m.field_number
 WHERE sp.entity_id IS DISTINCT FROM m.specimen_id;
 COMMENT ON VIEW minted_field_number_collision IS 'Minted numbers that some other specimen also carries — an imported one, since two minted rows cannot share a number. Expected empty: the seed reads the imported ceiling as well as the registry (ADR 0008 §7).';
+
+-- How many of each sample's specimens have no label on paper yet
+-- (beeline-3v33), for the listings: "waiting on labels" as a filter, and the
+-- count beside the sample's specimens. Unlike pending_print_sample it does not
+-- ask whether the sample can print, so a sample held back by a flag is here,
+-- which is the question staff ask of it: what still needs labels, and (with
+-- the Flags filter) what is stopping it. A specimen in a run that has not
+-- printed is still waiting. Settled samples are left out, as they are from
+-- printing: nothing from a settled season prints, so none of it is waiting.
+-- Specimens numbered above the count do not count against it, as in
+-- pending_print_sample (qc_rule_count_below_printed names them).
+CREATE VIEW sample_labels_waiting AS
+SELECT s.entity_id AS sample_id,
+       CAST(s.specimen_count - coalesce(paper.n, 0) AS INTEGER) AS waiting
+FROM sample s
+LEFT JOIN (
+  SELECT o.sample_id, count(*) AS n
+  FROM specimen_on_paper o
+  JOIN sample held ON held.entity_id = o.sample_id
+  WHERE o.specimen_number <= held.specimen_count
+  GROUP BY o.sample_id
+) paper ON paper.sample_id = s.entity_id
+WHERE s.specimen_count > coalesce(paper.n, 0)
+  AND NOT EXISTS (SELECT 1 FROM settled_sample st WHERE st.sample_id = s.entity_id);
+COMMENT ON VIEW sample_labels_waiting IS 'Samples in an active season with specimens whose labels are not on paper yet, and how many: printable or held back by a flag, and including specimens in a run that has not printed. The listings'' "waiting on labels" filter (beeline-3v33).';

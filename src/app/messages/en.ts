@@ -756,6 +756,16 @@ export const en = {
       detAny: "Any",
       detDetermined: "Determined",
       detUndetermined: "Not determined",
+      /** Whether labels are on paper (beeline-3v33): a sample's labels, or a specimen's own. */
+      labels: "Labels",
+      labelsAny: "Any",
+      labelsWaiting: "Waiting",
+      labelsPrinted: "All printed",
+      labelsWaitingHint: "Some specimens have no label printed yet, including samples held back by a flag",
+      labelWaiting: "Not printed yet",
+      labelPrinted: "Printed",
+      /** Beside a sample's specimen count. */
+      labelsWaitingCount: (count: number) => `${n(count)} waiting on labels`,
       method: "Method",
       methodAny: "Any",
       methodNet: "Net",

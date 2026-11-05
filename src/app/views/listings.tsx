@@ -218,6 +218,7 @@ const emptyFilters: Omit<ListingQuery, "scope" | "page" | "sort" | "dir" | "act"
   taxon: "",
   host: "",
   det: "any",
+  labels: "any",
   kind: "any",
   qc: "any",
 };
@@ -267,6 +268,20 @@ function activeFilters(
       value: query.det === "determined" ? f.detDetermined : f.detUndetermined,
       clearHref: clear({ det: "any" }),
     });
+  }
+  if (query.labels !== "any") {
+    // A sample's labels, or a specimen's own: the same filter in each
+    // listing's own words.
+    const specimens = path === "/specimens";
+    const value =
+      query.labels === "waiting"
+        ? specimens
+          ? f.labelWaiting
+          : f.labelsWaiting
+        : specimens
+          ? f.labelPrinted
+          : f.labelsPrinted;
+    out.push({ label: f.labels, value, clearHref: clear({ labels: "any" }) });
   }
   if (query.kind !== "any") {
     out.push({
@@ -688,11 +703,23 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                 label: copy.colSpecimens,
                 sort: "specimens",
                 kind: "number",
-                fields: ["taxon", "det"],
+                fields: ["taxon", "det", "labels"],
                 controls: (
                   <>
                     <TextField id="taxon" name="taxon" label={f.taxon} value={query.taxon} hint={f.taxonHint} />
                     <DetSelect m={m} query={query} />
+                    <SelectField
+                      id="labels"
+                      name="labels"
+                      label={f.labels}
+                      value={query.labels}
+                      hint={f.labelsWaitingHint}
+                      options={[
+                        ["any", f.labelsAny],
+                        ["waiting", f.labelsWaiting],
+                        ["printed", f.labelsPrinted],
+                      ]}
+                    />
                   </>
                 ),
               }),
@@ -747,7 +774,15 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                   )}
                 </td>
                 <td>{row.kind === "trap" ? f.methodTrap : f.methodNet}</td>
-                <td>{m.format.number(row.specimen_count)}</td>
+                <td>
+                  {m.format.number(row.specimen_count)}
+                  {row.labels_waiting > 0 && (
+                    <>
+                      {" "}
+                      · <Meta>{f.labelsWaitingCount(row.labels_waiting)}</Meta>
+                    </>
+                  )}
+                </td>
                 <td>
                   <StatusChip m={m} blocking={row.blocking} warning={row.warning} />
                 </td>
@@ -915,7 +950,28 @@ export function SpecimenListing(
           <DataTable
             columns={[
               ...(marking ? [tickColumn] : []),
-              column({ ...col, label: copy.colFieldNumber, sort: "field", kind: "number" }),
+              // The number is what the label carries, so whether it is on
+              // paper yet is asked here (beeline-3v33).
+              column({
+                ...col,
+                label: copy.colFieldNumber,
+                sort: "field",
+                kind: "number",
+                fields: ["labels"],
+                controls: (
+                  <SelectField
+                    id="labels"
+                    name="labels"
+                    label={f.labels}
+                    value={query.labels}
+                    options={[
+                      ["any", f.labelsAny],
+                      ["waiting", f.labelWaiting],
+                      ["printed", f.labelPrinted],
+                    ]}
+                  />
+                ),
+              }),
               column({ ...col, label: copy.colSample, sort: "number", kind: "number" }),
               dateColumn({ ...col, label: copy.colDate }),
               collectorsColumn({ ...col, label: copy.colCollectors, atlases }),

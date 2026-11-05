@@ -104,6 +104,16 @@ export const QC_STATUSES = ["any", "flagged", "blocking", "warning", "clean", "l
 export type DeterminationState = "any" | "determined" | "undetermined";
 export const DETERMINATION_STATES = ["any", "determined", "undetermined"] as const;
 
+/**
+ * Whether labels are on paper (beeline-3v33, Peter 2026-11-04): what is still
+ * waiting for labels, held back or not, against what has printed. On a
+ * sample, "waiting" is any specimen of an active season without a label on
+ * paper (sample_labels_waiting) and "printed" is all of them on paper; on a
+ * specimen, its own label (specimen_on_paper).
+ */
+export type LabelFilter = "any" | "waiting" | "printed";
+export const LABEL_FILTERS = ["any", "waiting", "printed"] as const;
+
 /** How the sample was collected: netted, or the contents of a trap. */
 export type KindFilter = "any" | SampleKind;
 export const KIND_FILTERS = ["any", "net", "trap"] as const;
@@ -188,6 +198,8 @@ export interface ListingQuery {
    * least one specimen still waiting for a name.
    */
   det: DeterminationState;
+  /** Whether the labels are on paper yet (LabelFilter). */
+  labels: LabelFilter;
   /** Net or trap; on specimens, the kind of the sample each came from. */
   kind: KindFilter;
   qc: QcStatus;
@@ -210,6 +222,7 @@ export const EMPTY_QUERY: ListingQuery = {
   taxon: "",
   host: "",
   det: "any",
+  labels: "any",
   kind: "any",
   qc: "any",
   sort: DEFAULT_SORT,
@@ -248,6 +261,7 @@ export function parseListingQuery(
   const to = params.get("to") ?? "";
   const qc = params.get("qc") ?? "";
   const det = params.get("det") ?? "";
+  const labels = params.get("labels") ?? "";
   const kind = params.get("kind") ?? "";
   const sortParam = params.get("sort") ?? "";
   const sort = (SORT_KEYS as readonly string[]).includes(sortParam) ? (sortParam as SortKey) : DEFAULT_SORT;
@@ -265,6 +279,7 @@ export function parseListingQuery(
     taxon: text(params.get("taxon")),
     host: text(params.get("host")),
     det: (DETERMINATION_STATES as readonly string[]).includes(det) ? (det as DeterminationState) : "any",
+    labels: (LABEL_FILTERS as readonly string[]).includes(labels) ? (labels as LabelFilter) : "any",
     kind: (KIND_FILTERS as readonly string[]).includes(kind) ? (kind as KindFilter) : "any",
     sort,
     dir: dirParam === "asc" || dirParam === "desc" ? dirParam : defaultDirection(sort),
@@ -306,6 +321,7 @@ export function listingParams(query: ListingQuery, overrides: Partial<ListingQue
   if (merged.taxon !== "") params.set("taxon", merged.taxon);
   if (merged.host !== "") params.set("host", merged.host);
   if (merged.det !== "any") params.set("det", merged.det);
+  if (merged.labels !== "any") params.set("labels", merged.labels);
   if (merged.kind !== "any") params.set("kind", merged.kind);
   if (merged.qc !== "any") params.set("qc", merged.qc);
   // The sort is in the URL only when it is not the default, and the
@@ -335,6 +351,7 @@ export const isFiltered = (q: ListingQuery) =>
   q.taxon !== "" ||
   q.host !== "" ||
   q.det !== "any" ||
+  q.labels !== "any" ||
   q.kind !== "any" ||
   q.qc !== "any";
 
@@ -417,6 +434,8 @@ export interface SampleRow {
    * not replace.
    */
   printed: boolean;
+  /** Specimens with no label on paper yet, in an active season (sample_labels_waiting); 0 otherwise. */
+  labels_waiting: number;
   locality_choices: string | null;
   observed_locality: string | null;
   locality_set_by_other: boolean;
@@ -949,6 +968,16 @@ export async function listSamples(
   }
   if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
+  // "Printed" is every label on paper: printed, and none still waiting. A
+  // settled sample that never printed is neither.
+  if (query.labels === "waiting") {
+    base = base.where(sql<boolean>`EXISTS (SELECT 1 FROM sample_labels_waiting w WHERE w.sample_id = s.entity_id)`);
+  } else if (query.labels === "printed") {
+    base = base.where(
+      sql<boolean>`EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+                   AND NOT EXISTS (SELECT 1 FROM sample_labels_waiting w WHERE w.sample_id = s.entity_id)`,
+    );
+  }
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
 
@@ -986,6 +1015,9 @@ export async function listSamples(
         sql<boolean>`EXISTS (SELECT 1 FROM sample_collector mine
                              WHERE mine.sample_id = s.entity_id AND mine.person_id = ${personId})`.as("mine"),
         sql<boolean>`EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)`.as("printed"),
+        sql<number>`coalesce((SELECT w.waiting FROM sample_labels_waiting w WHERE w.sample_id = s.entity_id), 0)`.as(
+          "labels_waiting",
+        ),
         located(
           hidden,
           sql<string | null>`(SELECT string_agg(g.locality, chr(10) ORDER BY g.rank)
@@ -1095,6 +1127,13 @@ export async function listSpecimens(
   if (query.det === "determined") base = base.where("d.specimen_id", "is not", null);
   if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
+  // A specimen's own label: in a run not yet printed, or numbered by a run
+  // since canceled, it is waiting; printed or imported, it is on paper.
+  if (query.labels === "waiting") {
+    base = base.where(sql<boolean>`NOT EXISTS (SELECT 1 FROM specimen_on_paper op WHERE op.specimen_id = sp.entity_id)`);
+  } else if (query.labels === "printed") {
+    base = base.where(sql<boolean>`EXISTS (SELECT 1 FROM specimen_on_paper op WHERE op.specimen_id = sp.entity_id)`);
+  }
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
   if (opts.year !== undefined) base = base.where(sql<number>`extract(year from s.date_start)`, "=", opts.year);

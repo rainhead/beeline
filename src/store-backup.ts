@@ -19,21 +19,25 @@ import {
 import { snapshotCatalog, verifySnapshot, type Snapshot } from "./store-snapshot.js";
 
 /**
- * The nightly backup (beeline-elf, GitHub #126): both stores and the authored
+ * The nightly backup (beeline-elf, GitHub #126): the store and the authored
  * files a rebuild cannot reconstruct, as one archive in the Bee Line folder on
  * the OSU shared drive, for recovery only — nobody opens these.
  *
  * One file a night, `beeline-backup-<UTC instant>.tar.gz`, holding
  *
- *   beeline.duckdb    a consistent copy of the main store (src/store-snapshot.ts)
- *   private.duckdb    the same of the private store, encrypted with the key the
- *                     running app uses (ADR 0003) — never anything weaker
+ *   beeline.duckdb    a consistent copy of the store (src/store-snapshot.ts)
  *   authored/*.csv    the overlays and change logs, as they stand on the volume
  *   manifest.json     what the copies held and the hash of every file, which is
  *                     what `pnpm backup:check` checks a downloaded archive against
  *
  * Restoring is extracting it and putting each file back where the app reads
- * it; the copies are ordinary stores the app opens as they are.
+ * it; the copy is an ordinary store the app opens as it is.
+ *
+ * Archives taken before 2026-11-05 also hold private.duckdb, the private
+ * store retired by beeline-4tdh, encrypted with its key. checkBackup still
+ * reads them: it opens that copy when given the key and says it did not when
+ * not. Restoring one puts private.duckdb back beside the main store, and the
+ * app carries its rows across at boot as it did for production's own.
  *
  * Each step is checked rather than trusted, because a backup that only looks
  * like one is the failure this exists to prevent: the copies are reopened on
@@ -179,16 +183,14 @@ export interface BackupManifest {
 }
 
 export const MANIFEST = "manifest.json";
-/** The two stores every backup holds, by their names in the archive. */
-export const STORE_FILES = ["beeline.duckdb", "private.duckdb"] as const;
+/** The store every backup holds, by its name in the archive. */
+export const STORE_FILES = ["beeline.duckdb"] as const;
 
 export interface BackupOptions {
   /** Where the copies and the archive are written while a run is in progress. Emptied afterwards. */
   workDir: string;
-  /** The main store's catalog, and the private store's. */
-  catalogs: { main: string; private: string };
-  /** The private store's key; null only in development, where the store is unencrypted too. */
-  privateKey: string | null;
+  /** The store's catalog. */
+  catalog: string;
   /** The authored files to carry, by their path on this machine. */
   authored: string[];
   release: string | null;
@@ -235,10 +237,7 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
   const work = await mkdtemp(join(opts.workDir, "run-"));
   try {
     const stores: BackupManifest["stores"] = {};
-    const copies = [
-      { file: STORE_FILES[0], catalog: opts.catalogs.main, key: null },
-      { file: STORE_FILES[1], catalog: opts.catalogs.private, key: opts.privateKey },
-    ];
+    const copies = [{ file: STORE_FILES[0], catalog: opts.catalog, key: null }];
     for (const copy of copies) {
       const path = join(work, copy.file);
       const snapshot = await step(`copy ${copy.file}`, () => snapshotCatalog(conn, copy.catalog, path, copy.key));
@@ -379,7 +378,7 @@ export interface CheckResult {
   manifest: BackupManifest;
   /** Files whose hash matched the manifest. */
   files: number;
-  /** Stores opened and counted; the private one only when its key was given. */
+  /** Stores opened and counted; a retired private store's only when its key was given. */
   storesOpened: string[];
 }
 
@@ -389,8 +388,8 @@ export interface CheckResult {
  * is also the proof that tar reads what writeArchive writes; hash every file
  * against the manifest; and open each store on an instance of its own and
  * count its tables against what the backup said it copied. The private store
- * opens only with its key, and is reported as not opened without one, never
- * as fine.
+ * an archive from before 2026-11-05 holds opens only with its key, and is
+ * reported as not opened without one, never as fine.
  */
 export async function checkBackup(archive: string, opts: { dir: string; privateKey: string | null }): Promise<CheckResult> {
   await mkdir(opts.dir, { recursive: true, mode: 0o700 });

@@ -89,8 +89,7 @@ export interface RosterRow {
  * Still active, or gone quiet: collected a sample or been here within the
  * last twelve months, or neither (beeline-caa). Either date counts, since
  * somebody can collect for years without signing in and sign in without
- * having collected since 2019; a store without its private half answers from
- * the last sample alone.
+ * having collected since 2019.
  */
 export type ActivityFilter = "any" | "active" | "inactive";
 export const ACTIVITY_FILTERS = ["any", "active", "inactive"] as const;
@@ -216,30 +215,14 @@ export async function hasLegacyEvidence(db: Kysely<Database>): Promise<boolean> 
 }
 
 /**
- * Whether the private store is attached (ADR 0003). It holds when somebody
- * was last here; a store opened without it — tests, a CLI run — simply has no
- * answer, rather than failing to have one. All three tables or none: the app
- * creates whichever are missing at boot (src/app/db.ts), so a store holding
- * two of them is a state only something other than the app could produce, and
- * a blank column is the right answer to it.
- */
-export async function hasSessions(db: Kysely<Database>): Promise<boolean> {
-  const found = await sql<{ n: number | bigint }>`
-    SELECT count(*) AS n FROM information_schema.tables
-    WHERE table_catalog = 'private'
-      AND table_name IN ('session', 'inat_sign_in', 'person_activity')`.execute(db);
-  return Number(found.rows[0]?.n ?? 0) === 3;
-}
-
-/**
  * When somebody was last here — a visit, meaning a request they actually made.
  * `person_activity` is the durable record and `session` the live one, fresher
  * inside the activity table's one-hour throttle; both are the same kind of
  * evidence, so the later wins.
  */
 const lastVisitSql = sql`greatest(
-  (SELECT act.last_seen_at FROM private.person_activity act WHERE act.inat_user_id = a.inat_user_id),
-  (SELECT max(sn.last_seen_at) FROM private.session sn
+  (SELECT act.last_seen_at FROM person_activity act WHERE act.inat_user_id = a.inat_user_id),
+  (SELECT max(sn.last_seen_at) FROM session sn
      JOIN inat_account ia ON ia.inat_user_id = sn.inat_user_id
     WHERE ia.person_id = p.entity_id))`;
 
@@ -251,7 +234,7 @@ const lastVisitSql = sql`greatest(
  * exactly the judgement a silent fallback got wrong (beeline-dji).
  */
 const lastLoginSql = sql`(
-  SELECT t.last_login_at FROM private.inat_sign_in t WHERE t.inat_user_id = a.inat_user_id)`;
+  SELECT t.last_login_at FROM inat_sign_in t WHERE t.inat_user_id = a.inat_user_id)`;
 
 /**
  * The programs they lead, as the overlay spells them: codes, alphabetical,
@@ -309,9 +292,8 @@ export async function listRoster(
   opts: { limit?: number; offset?: number } = {},
 ): Promise<RosterPage> {
   const evidence = await hasLegacyEvidence(db);
-  const sessions = await hasSessions(db);
-  const lastVisit = sessions ? lastVisitSql : sql`NULL::TIMESTAMP`;
-  const lastLogin = sessions ? lastLoginSql : sql`NULL::TIMESTAMP`;
+  const lastVisit = lastVisitSql;
+  const lastLogin = lastLoginSql;
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
   const term = `%${query.search.toLowerCase()}%`;
@@ -550,9 +532,8 @@ export interface PersonDetail extends RosterRow {
 }
 
 export async function personDetail(db: Kysely<Database>, personId: number): Promise<PersonDetail | null> {
-  const sessions = await hasSessions(db);
-  const lastVisit = sessions ? lastVisitSql : sql`NULL::TIMESTAMP`;
-  const lastLogin = sessions ? lastLoginSql : sql`NULL::TIMESTAMP`;
+  const lastVisit = lastVisitSql;
+  const lastLogin = lastLoginSql;
   const found = await sql<Omit<PersonDetail, "leads" | "orcid_shared_with"> & { leads: string }>`
     SELECT p.entity_id AS person_id, p.display_name, p.given_name, p.family_name, p.label_name,
            a.login, a.inat_user_id,

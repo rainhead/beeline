@@ -8,17 +8,21 @@ import { SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
  * App configuration, read once from the environment at startup.
  *
  * The app process is the sole owner of the database (ADR 0005); paths here
- * name the files it opens. The private-store key must come from the
- * environment, never from a file beside the database (ADR 0003).
+ * name the files it opens.
  */
 export interface AppConfig {
   /** Listening port. */
   port: number;
   /** Path to the main database file the app owns read-write. */
   dbPath: string;
-  /** Path to the encrypted private store; attached only when a key is set. */
+  /**
+   * Where the retired private store was kept (ADR 0003, retired by
+   * beeline-4tdh). A file still there is carried into the main store at boot
+   * and renamed; nothing else reads it. Goes once production has absorbed its
+   * store.
+   */
   privateDbPath: string;
-  /** Encryption key for the private store; may be null in development only. */
+  /** That store's key, needed only to carry an encrypted one across. */
   privateDbKey: string | null;
   /** Public origin of this instance, e.g. https://beeline.example — OAuth redirect target and CSRF origin check. */
   origin: string;
@@ -156,9 +160,6 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`BEELINE_ENV must be development|sandbox|production, got '${environment}'`);
   }
   const privateDbKey = env.BEELINE_PRIVATE_DB_KEY ?? null;
-  if (privateDbKey === null && environment !== "development") {
-    throw new Error(`BEELINE_PRIVATE_DB_KEY is required outside development: the private store must be encrypted (ADR 0003)`);
-  }
   const port = env.PORT ? Number(env.PORT) : 0xbee; // 3054: unmistakably ours among the neighbors' dev servers
   // The origin decides the cookie Secure flag, the OAuth redirect_uri, and
   // the CSRF origin check; a deploy that forgot it must not limp along on

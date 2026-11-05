@@ -9,7 +9,6 @@ import { canonicalJson } from "../src/sync-inat.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
 import { readOverlay } from "../src/person-overlay.js";
 import type { InatClient } from "../src/app/auth.js";
-import { attachPrivateStore } from "../src/app/db.js";
 import { inatProfiles, parseInatAccount, type InatProfile } from "../src/app/add-person.js";
 import { createMemoryDb, currentSeasonDate, rows } from "./helpers.js";
 
@@ -53,7 +52,6 @@ const idOf = async (conn: DuckDBConnection, name: string) =>
 
 async function addApp(opts: { admin?: boolean; failing?: boolean } = {}) {
   const { instance, conn } = await createMemoryDb();
-  await attachPrivateStore(instance, { path: ":memory:", key: null });
   // Drawn from the sequence, never written by hand: `create` draws a person id too.
   await conn.run(`INSERT INTO person (display_name, given_name, family_name) VALUES
                   ('Staff Person', 'Staff', 'Person'),
@@ -104,7 +102,7 @@ const post = (app: App, body: Record<string, string>) =>
 /** A sign-in that was turned away, as src/app/auth.tsx records one. */
 const turnedAwayAt = (conn: DuckDBConnection, uid: number, login: string, at: string) =>
   conn.run(
-    `INSERT INTO private.inat_sign_in (inat_user_id, login, created_at, last_login_at) VALUES (${uid}, '${login}', TIMESTAMP '${at}', TIMESTAMP '${at}')`,
+    `INSERT INTO inat_sign_in (inat_user_id, login, created_at, last_login_at) VALUES (${uid}, '${login}', TIMESTAMP '${at}', TIMESTAMP '${at}')`,
   );
 
 describe("reading the account staff typed", () => {

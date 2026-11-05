@@ -11,7 +11,6 @@ import { readOverlay } from "../src/person-overlay.js";
 import { kyselyReader } from "../src/person-change.js";
 import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import type { InatClient } from "../src/app/auth.js";
-import { attachPrivateStore } from "../src/app/db.js";
 import { createMemoryDb, rows, scratchPaths } from "./helpers.js";
 
 /**
@@ -67,7 +66,6 @@ const idOf = async (conn: DuckDBConnection, name: string) =>
 
 async function unclaimedApp(opts: { admin?: boolean } = {}) {
   const { instance, conn } = await createMemoryDb();
-  await attachPrivateStore(instance, { path: ":memory:", key: null });
   for (const [id, name, level] of [
     [1, "United States", 0],
     [10, "Oregon", 10],
@@ -350,8 +348,7 @@ describe("the unknown collectors screen", () => {
   it("says when the samples could not be made now, and keeps the decision", async () => {
     // No connection to promote on: the binding is saved, the nightly mints.
     const { instance, conn } = await createMemoryDb();
-    await attachPrivateStore(instance, { path: ":memory:", key: null });
-    await conn.run("INSERT INTO person (display_name) VALUES ('Staff Person'), ('Ada Collector')");
+      await conn.run("INSERT INTO person (display_name) VALUES ('Staff Person'), ('Ada Collector')");
     const staff = await idOf(conn, "Staff Person");
     await conn.run(`INSERT INTO person_admin (person_id) VALUES (${staff})`);
     await stage(conn, obs(1, { place_ids: [] }));

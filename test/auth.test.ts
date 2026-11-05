@@ -1,13 +1,15 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { copyFile, mkdtemp } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DuckDBInstance } from "@duckdb/node-api";
 import { sql } from "kysely";
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient, SignInOutcome } from "../src/app/auth.js";
-import { attachPrivateStore, commentsIn } from "../src/app/db.js";
 import { createApp } from "../src/app/server.js";
-import { cookieSessionResolver, endSessionsFor, purgeIdleSessions, sessionRef } from "../src/app/session.js";
+import { absorbPrivateStore } from "../src/app/db.js";
+import { cookieSessionResolver, endSessionsFor, hashSessionId, purgeIdleSessions, sessionRef } from "../src/app/session.js";
 import { createFileDb, createMemoryDb, scratchPaths } from "./helpers.js";
 import { readChanges } from "../src/person-change.js";
 
@@ -26,20 +28,23 @@ async function testApp(
   identity: FakeIdentity,
   feedbackEmail?: string,
   reportSignIn?: (outcome: SignInOutcome, line: string) => void,
+  origin = ORIGIN,
+  /** A retired private store to carry across first, as the app does at boot. */
+  privateStore?: { path: string; key: string | null },
 ) {
   const { instance, conn } = await createMemoryDb();
-  await attachPrivateStore(instance, { path: ":memory:", key: null });
   await conn.run(`INSERT INTO person (entity_id, display_name) VALUES (11, 'Member Bee')`);
   await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (11, 501, 'memberbee')`);
+  if (privateStore) await absorbPrivateStore(instance, privateStore);
   const db = createKysely(instance);
   // Never the real log: sign-in records what it learns about a person there.
   const changesPath = join(await mkdtemp(join(tmpdir(), "auth-")), "person-change.csv");
   const app = createApp({
     ...(await scratchPaths()),
     db,
-    config: { environment: "development", origin: ORIGIN, feedbackEmail },
+    config: { environment: "development", origin, feedbackEmail },
     inat: fakeInat(identity),
-    resolveSession: cookieSessionResolver(db),
+    resolveSession: cookieSessionResolver(db, origin),
     personChangesPath: changesPath,
     reportSignIn,
   });
@@ -84,7 +89,7 @@ describe("iNat OAuth sign-in", () => {
     const cb = await signIn(app);
     const session = /beeline_session=([a-f0-9]+)/.exec(cb.headers.get("set-cookie")!)![1];
 
-    const token = await db.selectFrom("private.inat_sign_in").selectAll().executeTakeFirstOrThrow();
+    const token = await db.selectFrom("inat_sign_in").selectAll().executeTakeFirstOrThrow();
     expect(token.icon_url).toBe(icon);
 
     const home = await app.request("/", { headers: { cookie: `beeline_session=${session}` } });
@@ -133,7 +138,7 @@ describe("iNat OAuth sign-in", () => {
     // nothing ever read one back, and a non-expiring credential kept for no
     // reason is one leaked for no reason (Peter, 2026-08-28).
     const recorded = await db
-      .selectFrom("private.inat_sign_in")
+      .selectFrom("inat_sign_in")
       .selectAll()
       .executeTakeFirstOrThrow();
     expect(recorded.login).toBe("stranger");
@@ -142,8 +147,7 @@ describe("iNat OAuth sign-in", () => {
 
   it("a failed token exchange is a sign-in failure, not a 500", async () => {
     const { instance } = await createMemoryDb();
-    await attachPrivateStore(instance, { path: ":memory:", key: null });
-    const db = createKysely(instance);
+      const db = createKysely(instance);
     const app = createApp({
       ...(await scratchPaths()),
       db,
@@ -152,7 +156,7 @@ describe("iNat OAuth sign-in", () => {
         ...fakeInat({ inatUserId: 501, login: "memberbee" }),
         exchangeCode: () => Promise.reject(new Error("iNat said 502")),
       },
-      resolveSession: cookieSessionResolver(db),
+      resolveSession: cookieSessionResolver(db, ORIGIN),
     });
     const res = await signIn(app);
     expect(res.status).toBe(400);
@@ -176,7 +180,7 @@ describe("iNat OAuth sign-in", () => {
       headers: { cookie: `beeline_session=${session}`, origin: ORIGIN },
     });
     expect(out.status).toBe(302);
-    expect(await db.selectFrom("private.session").selectAll().execute()).toHaveLength(0);
+    expect(await db.selectFrom("session").selectAll().execute()).toHaveLength(0);
 
     const home = await app.request("/", { headers: { cookie: `beeline_session=${session}` } });
     expect(home.status).toBe(401);
@@ -289,144 +293,6 @@ describe("iNat OAuth sign-in", () => {
     expect(after.status).toBe(401);
   });
 
-  it("a private store built before the rekey is repaired at boot", async () => {
-    // The private store outlives the blow-away era, so its schema changes are
-    // patched in at boot (src/app/db.ts) rather than by rebuild. Dropped
-    // rather than translated: rewriting the old rows would mean trusting the
-    // very ids that were the bug (beeline-ten).
-    const { instance, conn } = await createMemoryDb();
-    const file = join(await mkdtemp(join(tmpdir(), "beeline-private-")), "private.duckdb");
-    await conn.run(`ATTACH '${file}' AS legacy_private`);
-    await conn.run(`USE legacy_private`);
-    await conn.run(`CREATE TABLE inat_oauth_token (
-      inat_user_id BIGINT PRIMARY KEY, login TEXT NOT NULL, icon_url TEXT,
-      access_token TEXT NOT NULL,
-      created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-      last_login_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
-    await conn.run(`CREATE TABLE session (
-      id TEXT PRIMARY KEY, person_id INTEGER NOT NULL,
-      created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-      last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
-    await conn.run(`INSERT INTO session (id, person_id) VALUES ('stale', 11)`);
-    await conn.run(`INSERT INTO inat_oauth_token (inat_user_id, login, access_token)
-                    VALUES (501, 'memberbee', 'a-token-nothing-ever-read')`);
-    await conn.run(`USE memory`);
-    await conn.run(`DETACH legacy_private`);
-    conn.closeSync();
-
-    const { instance: fresh } = await createMemoryDb();
-    await attachPrivateStore(fresh, { path: file, key: null });
-    const db = createKysely(fresh);
-
-    // The session is gone with its key; who signed in, which was never the
-    // problem, is not — now under the name that says what it is (beeline-cj6).
-    expect(await db.selectFrom("private.session").selectAll().execute()).toEqual([]);
-    expect(await db.selectFrom("private.inat_sign_in").select("login").execute()).toEqual([
-      { login: "memberbee" },
-    ]);
-    // And the access token that store had been keeping since its first
-    // sign-in is gone — dropping the column is what actually deletes it from
-    // a deployed store, so booting against one is the only thing that does.
-    const columns = await sql<{ n: number | bigint }>`
-      SELECT count(*) AS n FROM information_schema.columns
-       WHERE table_catalog = 'private' AND table_name = 'inat_sign_in'
-         AND column_name = 'access_token'`.execute(db);
-    expect(Number(columns.rows[0]!.n)).toBe(0);
-    // And the new shape is there to sign in against.
-    await db.insertInto("private.session").values({ id: "new", inat_user_id: 501 }).execute();
-    expect(
-      await db.selectFrom("private.session").select("inat_user_id").execute(),
-    ).toEqual([{ inat_user_id: 501n }]);
-  });
-
-  it("a deployed store's sign-in table is renamed in place, rows and all, and its comments follow the DDL", async () => {
-    // The shape the sandbox holds today: the token column already dropped,
-    // the old name and the old comments still on it. Renamed BEFORE the
-    // create-missing loop, or that loop would build inat_sign_in empty and
-    // strand everyone's sign-in history under the old name (beeline-cj6).
-    const { conn } = await createMemoryDb();
-    const file = join(await mkdtemp(join(tmpdir(), "beeline-private-")), "private.duckdb");
-    await conn.run(`ATTACH '${file}' AS deployed`);
-    await conn.run(`USE deployed`);
-    await conn.run(`CREATE TABLE inat_oauth_token (
-      inat_user_id BIGINT PRIMARY KEY, login TEXT NOT NULL, icon_url TEXT,
-      created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-      last_login_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
-    await conn.run(`COMMENT ON TABLE inat_oauth_token IS 'retention is still minimized'`);
-    await conn.run(`INSERT INTO inat_oauth_token (inat_user_id, login, last_login_at)
-                    VALUES (501, 'memberbee', TIMESTAMP '2025-05-01 12:00:00')`);
-    await conn.run(`CREATE TABLE person_activity (
-      inat_user_id BIGINT PRIMARY KEY,
-      last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
-    await conn.run(`COMMENT ON COLUMN person_activity.last_seen_at IS 'No job does that yet (beeline-zg4)'`);
-    await conn.run(`USE memory`);
-    await conn.run(`DETACH deployed`);
-    conn.closeSync();
-
-    const { instance: fresh } = await createMemoryDb();
-    await attachPrivateStore(fresh, { path: file, key: null });
-    const db = createKysely(fresh);
-    expect(
-      await db.selectFrom("private.inat_sign_in").select(["login", "last_login_at"]).execute(),
-    ).toEqual([{ login: "memberbee", last_login_at: new Date("2025-05-01T12:00:00Z") }]);
-    const tables = await sql<{ table_name: string }>`
-      SELECT table_name FROM information_schema.tables
-       WHERE table_catalog = 'private' AND table_name LIKE 'inat_%' ORDER BY 1`.execute(db);
-    expect(tables.rows.map((r) => r.table_name)).toEqual(["inat_sign_in"]);
-
-    // The comments a deployed store already had are the DDL's now — the
-    // create path never re-applied them, so the purge they promised stood.
-    const ddl = (f: string) => readFile(join("schema/private", f), "utf8");
-    const want = [...commentsIn(await ddl("010_auth.sql")), ...commentsIn(await ddl("030_activity.sql"))];
-    const tableComment = await sql<{ comment: string }>`
-      SELECT comment FROM duckdb_tables() WHERE database_name = 'private' AND table_name = 'inat_sign_in'`.execute(db);
-    expect(tableComment.rows[0]!.comment).toBe(want.find((c) => c.table === "inat_sign_in" && c.column === null)!.text);
-    expect(tableComment.rows[0]!.comment).toContain("no purge");
-    const activity = await sql<{ comment: string }>`
-      SELECT comment FROM duckdb_columns()
-       WHERE database_name = 'private' AND table_name = 'person_activity' AND column_name = 'last_seen_at'`.execute(db);
-    expect(activity.rows[0]!.comment).toBe(want.find((c) => c.column === "last_seen_at")!.text);
-    fresh.closeSync();
-
-    // And a second boot finds nothing to do and changes nothing.
-    const { instance: again } = await createMemoryDb();
-    await attachPrivateStore(again, { path: file, key: null });
-    expect(await createKysely(again).selectFrom("private.inat_sign_in").select("login").execute()).toEqual([
-      { login: "memberbee" },
-    ]);
-  });
-
-  it("a store left holding tokens and no session table boots and repairs itself", async () => {
-    // The crash window the rekey used to open: DROP committed, CREATE not.
-    // The old probe asked "is there a session table?", got no, and replayed
-    // the whole private schema — including a CREATE for the token table that
-    // still existed, which is an unrecoverable boot crash on the store
-    // holding real OAuth tokens. Each table is now created on its own.
-    const { instance, conn } = await createMemoryDb();
-    const file = join(await mkdtemp(join(tmpdir(), "beeline-private-")), "private.duckdb");
-    await conn.run(`ATTACH '${file}' AS half`);
-    await conn.run(`USE half`);
-    await conn.run(`CREATE TABLE inat_oauth_token (
-      inat_user_id BIGINT PRIMARY KEY, login TEXT NOT NULL, icon_url TEXT,
-      access_token TEXT NOT NULL,
-      created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-      last_login_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
-    await conn.run(`INSERT INTO inat_oauth_token (inat_user_id, login, access_token)
-                    VALUES (501, 'memberbee', 'tok')`);
-    await conn.run(`USE memory`);
-    await conn.run(`DETACH half`);
-    conn.closeSync();
-
-    const { instance: fresh } = await createMemoryDb();
-    await attachPrivateStore(fresh, { path: file, key: null });
-    const db = createKysely(fresh);
-    // The missing table is built; the surviving one is untouched.
-    await db.insertInto("private.session").values({ id: "s", inat_user_id: 501 }).execute();
-    expect(await db.selectFrom("private.inat_sign_in").select("login").execute()).toEqual([
-      { login: "memberbee" },
-    ]);
-  });
-
   it("rebinding an account does not revive the sessions it used to authorise", async () => {
     // Resolution failing is not revocation: an unbound session's last_seen_at
     // stops sliding, so the idle cutoff never reaches it, and binding that
@@ -455,9 +321,9 @@ describe("iNat OAuth sign-in", () => {
     const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
     await signIn(app);
     await db.deleteFrom("inat_account").where("inat_user_id", "=", 501n).execute();
-    expect(await db.selectFrom("private.session").selectAll().execute()).toHaveLength(1);
+    expect(await db.selectFrom("session").selectAll().execute()).toHaveLength(1);
     await purgeIdleSessions(db);
-    expect(await db.selectFrom("private.session").selectAll().execute()).toEqual([]);
+    expect(await db.selectFrom("session").selectAll().execute()).toEqual([]);
   });
 
   it("stale session ids resolve to nobody", async () => {
@@ -501,7 +367,7 @@ describe("iNat OAuth sign-in", () => {
 describe("when somebody was last here", () => {
   const cookieFrom = (cb: Response) => `beeline_session=${/beeline_session=([a-f0-9]+)/.exec(cb.headers.get("set-cookie")!)![1]}`;
   const activity = (db: Awaited<ReturnType<typeof testApp>>["db"]) =>
-    db.selectFrom("private.person_activity").selectAll().execute();
+    db.selectFrom("person_activity").selectAll().execute();
 
   it("is recorded on the request path, keyed on the iNat user", async () => {
     const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
@@ -523,7 +389,7 @@ describe("when somebody was last here", () => {
     // collects the rest. All three leave activity alone.
     await endSessionsFor(db, 501);
     await purgeIdleSessions(db);
-    expect(await db.selectFrom("private.session").selectAll().execute()).toHaveLength(0);
+    expect(await db.selectFrom("session").selectAll().execute()).toHaveLength(0);
     expect(await activity(db)).toHaveLength(1);
   });
 
@@ -542,7 +408,7 @@ describe("when somebody was last here", () => {
 
     // Once it is stale, the next request moves it.
     await db
-      .updateTable("private.person_activity")
+      .updateTable("person_activity")
       .set({ last_seen_at: sql`now() - INTERVAL '2 hours'` })
       .execute();
     await app.request("/", { headers: { cookie } });
@@ -551,7 +417,7 @@ describe("when somebody was last here", () => {
   });
 
   const sessionSeen = async (db: Awaited<ReturnType<typeof testApp>>["db"]) =>
-    (await db.selectFrom("private.session").select("last_seen_at").executeTakeFirstOrThrow()).last_seen_at;
+    (await db.selectFrom("session").select("last_seen_at").executeTakeFirstOrThrow()).last_seen_at;
 
   it("the session slides once it is due, and not on every request", async () => {
     const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
@@ -560,7 +426,7 @@ describe("when somebody was last here", () => {
     await app.request("/", { headers: { cookie } });
     expect(await sessionSeen(db)).toEqual(signedIn);
 
-    await db.updateTable("private.session").set({ last_seen_at: sql`now() - INTERVAL '10 minutes'` }).execute();
+    await db.updateTable("session").set({ last_seen_at: sql`now() - INTERVAL '10 minutes'` }).execute();
     await app.request("/", { headers: { cookie } });
     expect((await sessionSeen(db)).getTime()).toBeGreaterThan(Date.now() - 60_000);
   });
@@ -573,8 +439,8 @@ describe("when somebody was last here", () => {
     const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
     const cookie = cookieFrom(await signIn(app));
     for (let round = 0; round < 5; round++) {
-      await db.updateTable("private.session").set({ last_seen_at: sql`now() - INTERVAL '10 minutes'` }).execute();
-      await db.updateTable("private.person_activity").set({ last_seen_at: sql`now() - INTERVAL '2 hours'` }).execute();
+      await db.updateTable("session").set({ last_seen_at: sql`now() - INTERVAL '10 minutes'` }).execute();
+      await db.updateTable("person_activity").set({ last_seen_at: sql`now() - INTERVAL '2 hours'` }).execute();
       const burst = await Promise.all(Array.from({ length: 8 }, () => app.request("/", { headers: { cookie } })));
       expect(burst.map((r) => r.status)).toEqual(Array(8).fill(200));
     }
@@ -582,72 +448,209 @@ describe("when somebody was last here", () => {
   });
 });
 
-describe("the private store against a file-backed main database", () => {
+describe("what is kept of a session (beeline-5l84, beeline-jpau)", () => {
+  const idFrom = (cb: Response) => /beeline_session=([a-f0-9]+)/.exec(cb.headers.get("set-cookie")!)![1]!;
+
+  it("the store keeps the cookie's hash, and the hash signs nobody in", async () => {
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
+    const id = idFrom(await signIn(app));
+    const [row] = await db.selectFrom("session").selectAll().execute();
+    expect(row!.id_sha256).toBe(hashSessionId(id));
+    expect(row!.id_sha256).not.toContain(id);
+    // Somebody holding a copy of the table, from a backup say, has only this.
+    expect((await app.request("/", { headers: { cookie: `beeline_session=${row!.id_sha256}` } })).status).toBe(401);
+    expect((await app.request("/", { headers: { cookie: `beeline_session=${id}` } })).status).toBe(200);
+    // And the reference a feedback email carries still finds the row.
+    expect(row!.id_sha256.startsWith(sessionRef(id))).toBe(true);
+  });
+
+  it("a session ends 90 days after it began, however recently it was used", async () => {
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" });
+    const cookie = `beeline_session=${idFrom(await signIn(app))}`;
+    await db.updateTable("session").set({ created_at: sql`now() - INTERVAL 89 DAY` }).execute();
+    expect((await app.request("/", { headers: { cookie } })).status).toBe(200);
+
+    await db.updateTable("session").set({ created_at: sql`now() - INTERVAL 91 DAY`, last_seen_at: sql`now()` }).execute();
+    expect((await app.request("/", { headers: { cookie } })).status).toBe(401);
+    await purgeIdleSessions(db);
+    expect(await db.selectFrom("session").selectAll().execute()).toEqual([]);
+  });
+});
+
+/**
+ * On an https origin every cookie is named with the __Host- prefix, which no
+ * other host may set: melittologist.org's subdomains reach servers Beeline
+ * does not run (src/app/cookies.ts).
+ */
+describe("cookies no other host can set (beeline-73c9)", () => {
+  const HTTPS = "https://beeline.example";
+  const httpsApp = () => testApp({ inatUserId: 501, login: "memberbee" }, undefined, undefined, HTTPS);
+  const idFrom = (cb: Response) => /__Host-beeline_session=([a-f0-9]+)/.exec(cb.headers.get("set-cookie")!)![1]!;
+
+  it("are named __Host-, Secure, for the whole site, and give no Domain", async () => {
+    const { app } = await httpsApp();
+    const start = await app.request("/auth/inat");
+    for (const c of start.headers.getSetCookie()) {
+      expect(c).toMatch(/^__Host-beeline_oauth_/);
+      expect(c).toContain("; Secure");
+      expect(c).toContain("; Path=/");
+      expect(c).not.toMatch(/domain=/i);
+    }
+    const cb = await signIn(app);
+    const set = cb.headers.getSetCookie().find((c) => c.startsWith("__Host-beeline_session="))!;
+    expect(set).toContain("; Secure");
+    expect(set).toContain("; HttpOnly");
+    expect((await app.request("/", { headers: { cookie: `__Host-beeline_session=${idFrom(cb)}` } })).status).toBe(200);
+  });
+
+  it("an OAuth state cookie without the prefix, as another host could set it, is not read", async () => {
+    const { app } = await httpsApp();
+    const res = await app.request("/auth/inat/callback?code=abc&state=right", {
+      headers: { cookie: "beeline_oauth_state=right" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("a session cookie under its name from before still signs in, and moves to the new name", async () => {
+    // Read for 30 days after the rename, so nobody was signed out by it.
+    const { app } = await httpsApp();
+    const id = idFrom(await signIn(app));
+    const res = await app.request("/", { headers: { cookie: `beeline_session=${id}` } });
+    expect(res.status).toBe(200);
+    const set = res.headers.getSetCookie();
+    expect(set.some((c) => c.startsWith(`__Host-beeline_session=${id};`))).toBe(true);
+    expect(set.some((c) => /^beeline_session=;.*Max-Age=0/.test(c))).toBe(true);
+  });
+});
+
+describe("retiring the private store (beeline-4tdh)", () => {
   /**
-   * Every other test in this file opens the private store as a FILE and the
-   * main database in memory, which is precisely the combination that cannot
-   * see beeline-d34: applying private DDL means switching catalog and
-   * switching back, and the code switched back to a hardcoded `memory` —
-   * which is the default catalog's name only when the main database is
-   * in-memory. A file-backed one is named after its file, so `USE memory`
-   * threw "No catalog + schema named memory" on every real store, and on
-   * none of these tests.
-   *
-   * So these two open the main database as a file too. They are slower for
-   * it, and that is the price of testing the shape production actually runs.
+   * A private store in the shape production's held on 2026-11-05, written
+   * the way the app used to write one. `legacy` gives the older shapes a
+   * store could still be met in: the sign-in table under its first name with
+   * the token column, and sessions keyed on person_id.
    */
-  it("creates its tables rather than crashing on the way back out", async () => {
-    const { instance, privatePath } = await createFileDb();
-    await attachPrivateStore(instance, { path: privatePath, key: null });
-    const db = createKysely(instance);
-    // All three, in one boot. This used to manage one per boot and die: the
-    // DDL succeeded and the throw came from the finally after it, so the
-    // table was created and the next restart found it and moved on to the
-    // next one.
-    await db.insertInto("private.session").values({ id: "s", inat_user_id: 501 }).execute();
-    await db
-      .insertInto("private.inat_sign_in")
-      .values({ inat_user_id: 501, login: "memberbee" })
-      .execute();
-    await db.insertInto("private.person_activity").values({ inat_user_id: 501 }).execute();
+  async function retiredStore(opts: { key?: string; legacy?: boolean } = {}) {
+    const path = join(await mkdtemp(join(tmpdir(), "beeline-private-")), "private.duckdb");
+    const instance = await DuckDBInstance.create(":memory:");
+    const conn = await instance.connect();
+    await conn.run(`ATTACH '${path}' AS p${opts.key ? ` (ENCRYPTION_KEY '${opts.key}')` : ""}`);
+    if (opts.legacy) {
+      await conn.run(`CREATE TABLE p.inat_oauth_token (
+        inat_user_id BIGINT PRIMARY KEY, login TEXT NOT NULL, access_token TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+        last_login_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
+      await conn.run(`INSERT INTO p.inat_oauth_token (inat_user_id, login, access_token) VALUES (501, 'memberbee', 'tok')`);
+      await conn.run(`CREATE TABLE p.session (
+        id TEXT PRIMARY KEY, person_id INTEGER NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+        last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
+      await conn.run(`INSERT INTO p.session (id, person_id) VALUES ('stale', 11)`);
+    } else {
+      await conn.run(`CREATE TABLE p.inat_sign_in (
+        inat_user_id BIGINT PRIMARY KEY, login TEXT NOT NULL, icon_url TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+        last_login_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
+      await conn.run(`INSERT INTO p.inat_sign_in (inat_user_id, login, icon_url, last_login_at) VALUES
+        (501, 'memberbee', 'https://static.inaturalist.org/a.jpg', TIMESTAMP '2026-11-01 12:00:00'),
+        (999, 'stranger', NULL, TIMESTAMP '2026-11-02 12:00:00')`);
+      await conn.run(`CREATE TABLE p.session (
+        id TEXT PRIMARY KEY, inat_user_id BIGINT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+        last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
+      await conn.run(`INSERT INTO p.session (id, inat_user_id) VALUES ('${"a".repeat(64)}', 501)`);
+      await conn.run(`CREATE TABLE p.person_activity (
+        inat_user_id BIGINT PRIMARY KEY, last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
+      await conn.run(`INSERT INTO p.person_activity VALUES (501, TIMESTAMP '2026-11-04 12:00:00')`);
+      await conn.run(`CREATE TABLE p.impersonation (
+        admin_login TEXT NOT NULL, person_name TEXT NOT NULL,
+        started_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
+      await conn.run(`INSERT INTO p.impersonation VALUES ('staffer', 'Member Bee', TIMESTAMP '2026-10-30 09:00:00')`);
+    }
+    await conn.run("DETACH p");
+    conn.closeSync();
+    instance.closeSync();
+    return path;
+  }
+  const counts = async (db: Awaited<ReturnType<typeof testApp>>["db"]) => ({
+    inat_sign_in: (await db.selectFrom("inat_sign_in").selectAll().execute()).length,
+    session: (await db.selectFrom("session").selectAll().execute()).length,
+    person_activity: (await db.selectFrom("person_activity").selectAll().execute()).length,
+    impersonation: (await db.selectFrom("impersonation").selectAll().execute()).length,
   });
 
-  it("rekeys a pre-beeline-ten session table instead of looping forever", async () => {
-    // The unrecoverable one. The rekey wraps the same call in a transaction,
-    // so the rollback took the CREATE back out along with the DROP and left
-    // the store in the shape it started in — same branch next boot, same
-    // crash, and a store holding the old session shape could never start.
-    const { instance, catalog, privatePath } = await createFileDb();
-    const conn = await instance.connect();
-    await conn.run(`ATTACH '${privatePath}' AS seed`);
-    await conn.run(`USE seed`);
-    await conn.run(`CREATE TABLE session (
-      id TEXT PRIMARY KEY, person_id INTEGER NOT NULL,
-      created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-      last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
-    await conn.run(`INSERT INTO session (id, person_id) VALUES ('stale', 11)`);
-    await conn.run(`USE ${catalog}`);
-    await conn.run(`DETACH seed`);
-    conn.closeSync();
-
-    await attachPrivateStore(instance, { path: privatePath, key: null });
-    const db = createKysely(instance);
-    await db.insertInto("private.session").values({ id: "new", inat_user_id: 501 }).execute();
-    expect(await db.selectFrom("private.session").select("inat_user_id").execute()).toEqual([
-      { inat_user_id: 501n },
+  it("carries every row across, and somebody signed in before is still signed in", async () => {
+    const path = await retiredStore();
+    const { app, db } = await testApp({ inatUserId: 501, login: "memberbee" }, undefined, undefined, ORIGIN, { path, key: null });
+    expect(await counts(db)).toEqual({ inat_sign_in: 2, session: 1, person_activity: 1, impersonation: 1 });
+    expect(
+      await db.selectFrom("inat_sign_in").select(["login", "last_login_at"]).orderBy("login").execute(),
+    ).toEqual([
+      { login: "memberbee", last_login_at: new Date("2026-11-01T12:00:00Z") },
+      { login: "stranger", last_login_at: new Date("2026-11-02T12:00:00Z") },
     ]);
+    // The session is kept as its hash, and its cookie still works.
+    const [session] = await db.selectFrom("session").select("id_sha256").execute();
+    expect(session!.id_sha256).toBe(hashSessionId("a".repeat(64)));
+    expect((await app.request("/", { headers: { cookie: `beeline_session=${"a".repeat(64)}` } })).status).toBe(200);
+    // Renamed rather than deleted, so the next boot does not carry it again.
+    expect(existsSync(path)).toBe(false);
+    expect(existsSync(`${path}.retired`)).toBe(true);
   });
 
-  it("leaves the caller in the catalog it found them in", async () => {
-    // The property the fix turns on, asserted directly: whatever runs after
-    // attachPrivateStore reads unqualified names, and a connection left
-    // pointing at `private` would resolve them against the wrong store.
-    const { instance, catalog, privatePath } = await createFileDb();
-    await attachPrivateStore(instance, { path: privatePath, key: null });
-    const conn = await instance.connect();
-    const [[current]] = (await (await conn.run("SELECT current_database()")).getRows()) as [[string]];
-    expect(current).toBe(catalog);
-    conn.closeSync();
+  it("does nothing when there is no store to carry", async () => {
+    const { instance } = await createMemoryDb();
+    expect(await absorbPrivateStore(instance, { path: join(tmpdir(), "no-such-private.duckdb"), key: null })).toBeNull();
+  });
+
+  it("an encrypted store is carried with its key, and stops the boot without it", async () => {
+    const path = await retiredStore({ key: "the-key" });
+    const { instance } = await createMemoryDb();
+    await expect(absorbPrivateStore(instance, { path, key: null })).rejects.toThrow();
+    expect(existsSync(path)).toBe(true);
+    expect(await absorbPrivateStore(instance, { path, key: "the-key" })).toEqual({
+      inat_sign_in: 2,
+      session: 1,
+      person_activity: 1,
+      impersonation: 1,
+    });
+  });
+
+  it("carrying it again after a crash duplicates nothing", async () => {
+    // The rename is the last step; a crash before it means the next boot
+    // carries the same file a second time.
+    const path = await retiredStore();
+    const { instance } = await createMemoryDb();
+    await absorbPrivateStore(instance, { path, key: null });
+    await copyFile(`${path}.retired`, path);
+    expect(await absorbPrivateStore(instance, { path, key: null })).toEqual({
+      inat_sign_in: 0,
+      session: 0,
+      person_activity: 0,
+      impersonation: 0,
+    });
+    expect(await counts(createKysely(instance))).toEqual({ inat_sign_in: 2, session: 1, person_activity: 1, impersonation: 1 });
+  });
+
+  it("a store in an older shape gives what it can: sign-ins, and no session keyed on person_id", async () => {
+    const path = await retiredStore({ legacy: true });
+    const { instance } = await createMemoryDb();
+    await absorbPrivateStore(instance, { path, key: null });
+    const db = createKysely(instance);
+    expect(await db.selectFrom("inat_sign_in").select(["login", "icon_url"]).execute()).toEqual([
+      { login: "memberbee", icon_url: null },
+    ]);
+    expect(await db.selectFrom("session").selectAll().execute()).toEqual([]);
+  });
+
+  it("works against a file-backed main store, as production's is", async () => {
+    // A file-backed store's catalog is named after its file, not `memory`,
+    // which is where beeline-d34 hid from a suite of in-memory stores.
+    const path = await retiredStore();
+    const { instance } = await createFileDb();
+    await absorbPrivateStore(instance, { path, key: null });
+    expect(await counts(createKysely(instance))).toEqual({ inat_sign_in: 2, session: 1, person_activity: 1, impersonation: 1 });
+    instance.closeSync();
   });
 });
 
@@ -694,8 +697,7 @@ describe("each sign-in's outcome is reported (beeline-87rn)", () => {
 
   it("a failed exchange is reported with iNaturalist's reason, as a string", async () => {
     const { instance } = await createMemoryDb();
-    await attachPrivateStore(instance, { path: ":memory:", key: null });
-    const db = createKysely(instance);
+      const db = createKysely(instance);
     const reports: Array<{ outcome: SignInOutcome; line: string }> = [];
     const app = createApp({
       ...(await scratchPaths()),
@@ -705,7 +707,7 @@ describe("each sign-in's outcome is reported (beeline-87rn)", () => {
         ...fakeInat({ inatUserId: 501, login: "memberbee" }),
         exchangeCode: () => Promise.reject(new Error("code exchange failed: 502")),
       },
-      resolveSession: cookieSessionResolver(db),
+      resolveSession: cookieSessionResolver(db, ORIGIN),
       reportSignIn: (outcome, line) => reports.push({ outcome, line }),
     });
     expect((await signIn(app)).status).toBe(400);

@@ -55,6 +55,9 @@ swap_size_mb = 1024
   # directory and lands on the volume unchanged; only the two stores default
   # to the repo root and so have to be named.
   BEELINE_DB = "/app/data/beeline.duckdb"
+  # Where the retired private store was kept: the boot after beeline-4tdh
+  # carries its rows into the main store and renames it. Goes with the
+  # BEELINE_PRIVATE_DB_KEY secret once that has happened.
   BEELINE_PRIVATE_DB = "/app/data/private.duckdb"
 
   # Stated rather than detected — see the comment on duckDbConfig in

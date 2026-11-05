@@ -29,8 +29,7 @@ import { openMemoryDuckDb } from "./db.js";
  * makes it consistent: every table is read as of the same moment however long
  * the copy takes, while the app goes on writing to the store. One store per
  * transaction, because DuckDB lets a transaction write to only one attached
- * database; the private store's copy is therefore a moment later than the
- * main store's, which costs nothing, since no reference crosses between them.
+ * database.
  */
 
 const quoteIdent = (s: string) => `"${s.replaceAll('"', '""')}"`;

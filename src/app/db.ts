@@ -1,201 +1,126 @@
 import { DuckDBInstance } from "@duckdb/node-api";
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+import { rename } from "node:fs/promises";
 import type { Kysely } from "kysely";
 import { createKysely, openDuckDb } from "../db.js";
 import type { Database } from "../model.js";
 import type { AppConfig } from "./config.js";
 
-const PRIVATE_SCHEMA_DIR = fileURLToPath(new URL("../../schema/private/", import.meta.url));
-/** The one home of the session DDL, re-applied on its own by the patch below. */
-const SESSION_SCHEMA = "020_session.sql";
-
 const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
-/** Identifier quoting, for a catalog name that came out of the database. */
-const quoteIdent = (s: string) => `"${s.replaceAll('"', '""')}"`;
+
+/** The tables the retired private store held, by the names its last shape used. */
+const RETIRED_TABLES = ["inat_sign_in", "session", "person_activity", "impersonation"] as const;
+
+/** What absorbing a retired private store carried, table by table; null when there was none. */
+export type Absorbed = Record<(typeof RETIRED_TABLES)[number], number> | null;
 
 /**
- * Attach the private store (ADR 0003) and create its tables if missing —
- * the app owns the store's lifecycle (blow-away era; no migrations).
- * Encryption requires a key; config enforces one outside development.
+ * Carry a retired private store's rows into the main store, once (beeline-4tdh).
+ *
+ * Until 2026-11-05 sessions, sign-in records, last visits and the
+ * impersonation log lived in a second, encrypted file (ADR 0003). The tables
+ * now live in the main store (schema/012), and a deployed store gets them
+ * empty from migration 0076; this fills them. It is the app's job rather than
+ * the migration's because only the app holds the old store's key.
+ *
+ * Session ids are hashed on the way (beeline-5l84), so everyone stays signed
+ * in. Every insert skips a row already there and the whole copy is one
+ * transaction, so a crash before the file is renamed repeats the copy on the
+ * next boot without duplicating anything — the impersonation log, which has
+ * no key, by matching every column. Then the file is renamed to
+ * `<path>.retired` rather than deleted: it is the only copy of the rows as
+ * they stood, and its key still opens it.
+ *
+ * A file that will not open — encrypted and no key given, or the wrong key —
+ * throws, and the app does not start. Starting without the rows would sign
+ * everyone out and lose who has been here, quietly.
  */
-export async function attachPrivateStore(
+export async function absorbPrivateStore(
   instance: DuckDBInstance,
   opts: { path: string; key: string | null },
-): Promise<void> {
+): Promise<Absorbed> {
+  if (!existsSync(opts.path)) return null;
   const conn = await instance.connect();
   try {
-    const options = opts.key === null ? "" : ` (ENCRYPTION_KEY ${quote(opts.key)})`;
-    await conn.run(`ATTACH IF NOT EXISTS ${quote(opts.path)} AS private${options}`);
-
-    const count = async (sql: string, params: unknown[]) => {
-      const found = await conn.run(sql, params as never);
-      const [[n]] = (await found.getRows()) as [[bigint]];
-      return n > 0n;
-    };
-    const tableExists = (table: string) =>
-      count(
-        `SELECT count(*) FROM information_schema.tables
-          WHERE table_catalog = 'private' AND table_name = $1`,
-        [table],
+    const options = ["READ_ONLY", ...(opts.key === null ? [] : [`ENCRYPTION_KEY ${quote(opts.key)}`])].join(", ");
+    await conn.run(`ATTACH ${quote(opts.path)} AS retired_private (${options})`);
+    const columnsOf = async (table: string): Promise<Set<string>> => {
+      const found = await conn.run(
+        `SELECT column_name FROM information_schema.columns
+          WHERE table_catalog = 'retired_private' AND table_name = $1`,
+        [table] as never,
       );
-    const columnExists = (table: string, column: string) =>
-      count(
-        `SELECT count(*) FROM information_schema.columns
-          WHERE table_catalog = 'private' AND table_name = $1 AND column_name = $2`,
-        [table, column],
-      );
-    const readDdl = (file: string) => readFile(join(PRIVATE_SCHEMA_DIR, file), "utf8");
-
-    // The DDL files name their tables unqualified (schema/private/*.sql), so
-    // applying one means switching catalog and switching back. What to switch
-    // BACK to has to be read, not assumed: `memory` is the default catalog's
-    // name only when the main database is in-memory, and a file-backed store's
-    // is named after its file — so the hardcoded `USE memory` this used to end
-    // with threw "No catalog + schema named memory" on every real store
-    // (beeline-d34).
-    //
-    // It threw from a `finally`, which is what made it so quiet: the DDL had
-    // already succeeded, so a fresh table WAS created and the next boot found
-    // it and skipped it. One crash and restart per new private table, and the
-    // sandbox wore exactly that for a day. The session rekey below is where it
-    // stopped being survivable — that one wraps this call in a transaction, so
-    // the rollback took the CREATE back out with the DROP and left the store in
-    // the same pre-patch shape it started in. Same branch next boot, same
-    // crash, forever: any store still holding the pre-beeline-ten session
-    // shape could not start at all.
-    const currentCatalog = async (): Promise<string> => {
-      const found = await conn.run("SELECT current_database()");
-      const [[name]] = (await found.getRows()) as [[string]];
-      return name;
+      return new Set(((await found.getRows()) as [string][]).map(([c]) => c));
     };
-    const apply = async (ddl: string) => {
-      const previous = await currentCatalog();
-      await conn.run(`USE private`);
-      try {
-        await conn.run(ddl);
-      } finally {
-        await conn.run(`USE ${quoteIdent(previous)}`);
-      }
+    const count = async (statement: string): Promise<number> => {
+      const found = await conn.run(statement);
+      return Number(found.rowsChanged);
     };
 
-    // Per table, not all-or-nothing. This store outlives the blow-away era, so
-    // it is met in more states than "fresh" and "current": the patch below
-    // drops a table, and a crash in the wrong microsecond would leave the
-    // store holding some of its tables and not others. Creating whatever is
-    // missing repairs every one of those states — where a single "is it
-    // fresh?" probe sent a half-patched store down the fresh path to re-run
-    // DDL for a table that still existed, which is an unrecoverable boot crash
-    // on the store holding everyone's live sessions.
-    // A rename runs BEFORE the create-missing loop, which is the opposite of
-    // every patch below. The loop creates any table its DDL names and does not
-    // find, so with the DDL renamed and this after it, a deployed store would
-    // CREATE inat_sign_in empty and keep everyone's sign-in history stranded
-    // under the old name, silently (beeline-cj6). The table held no token
-    // after 2026-08-28; the old name said it did.
-    if ((await tableExists("inat_oauth_token")) && !(await tableExists("inat_sign_in"))) {
-      await conn.run(`ALTER TABLE private.inat_oauth_token RENAME TO inat_sign_in`);
-      await conn.run(`CHECKPOINT private`);
-      console.log("renamed private.inat_oauth_token to inat_sign_in: it holds no token");
-    } else if (await tableExists("inat_oauth_token")) {
-      // Both exist only if something created the new table first; the rows
-      // that matter are in the old one, so say so rather than pick.
-      console.warn("private store holds both inat_oauth_token and inat_sign_in; sign-in history is in the old table");
-    }
-
-    const files = (await readdir(PRIVATE_SCHEMA_DIR)).filter((f) => f.endsWith(".sql")).sort();
-    let created = false;
-    for (const file of files) {
-      const ddl = await readDdl(file);
-      const table = /CREATE TABLE (\w+)/.exec(ddl)?.[1];
-      if (table === undefined || (await tableExists(table))) continue;
-      await apply(ddl);
-      created = true;
-    }
-    // CHECKPOINT per docs/runbooks: DuckDB < 1.6 can fail WAL replay after DDL
-    // and leave the file unopenable (beeline-vyi).
-    if (created) await conn.run(`CHECKPOINT private`);
-
-    // Columns added to a table that already exists are patched in rather than
-    // rebuilt, since the rows are live.
-    if (!(await columnExists("inat_sign_in", "icon_url"))) {
-      await conn.run(`ALTER TABLE private.inat_sign_in ADD COLUMN icon_url TEXT`);
-      await conn.run(`CHECKPOINT private`);
-    }
-
-    // And a column removed the same way. Every volunteer's non-expiring iNat
-    // access token was stored here and never read back — the session cookie
-    // authenticates a request, and sync authenticates as the pipeline rather
-    // than as a volunteer (Peter, 2026-08-28). Dropping the column is what
-    // actually deletes them from a store that has been collecting them since
-    // the first sign-in, so it is a patch rather than a schema change alone.
-    if (await columnExists("inat_sign_in", "access_token")) {
-      await conn.run(`ALTER TABLE private.inat_sign_in DROP COLUMN access_token`);
-      await conn.run(`CHECKPOINT private`);
-      console.log("dropped stored iNaturalist access tokens: nothing read them");
-    }
-
-    // Sessions used to be keyed on person.entity_id, which a rebuild redraws —
-    // so after a reseed each one resolved to whoever inherited its number
-    // (beeline-ten). Rekeyed on the iNat user, which is stable. Dropped rather
-    // than translated: rewriting the rows would mean trusting the very ids
-    // that were the bug. Everyone signs in once more; last_seen_at goes with
-    // the rows (beeline-dji).
-    if (await columnExists("session", "person_id")) {
-      // One transaction, so a crash cannot leave the store with sign-in rows
-      // and no session table — and the loop above would repair it even if it
-      // did.
-      await conn.run(`BEGIN TRANSACTION`);
-      try {
-        await conn.run(`DROP TABLE private.session`);
-        await apply(await readDdl(SESSION_SCHEMA));
-        await conn.run(`COMMIT`);
-      } catch (err) {
-        await conn.run(`ROLLBACK`);
-        throw err;
+    const carried = { inat_sign_in: 0, session: 0, person_activity: 0, impersonation: 0 };
+    await conn.run("BEGIN TRANSACTION");
+    try {
+      // A store from before 2026-08-28 named the sign-in table for the token
+      // it then held; one that never had icon_url gives none.
+      let signIn = await columnsOf("inat_sign_in");
+      let signInTable = "inat_sign_in";
+      if (signIn.size === 0) {
+        signIn = await columnsOf("inat_oauth_token");
+        signInTable = "inat_oauth_token";
       }
-      await conn.run(`CHECKPOINT private`);
-    }
-
-    // Comments follow the DDL. The loop above applies a file only to a store
-    // missing its table, so a corrected COMMENT ON never reached a store that
-    // already had one — and a comment is what anyone reading the store trusts
-    // about what it holds and keeps (beeline-zg4: two of them promised a purge
-    // no job ran). Only the ones that differ are written.
-    let commented = false;
-    for (const file of files) {
-      for (const c of commentsIn(await readDdl(file))) {
-        const current = await conn.run(
-          c.column === null
-            ? `SELECT comment FROM duckdb_tables() WHERE database_name = 'private' AND table_name = $1`
-            : `SELECT comment FROM duckdb_columns() WHERE database_name = 'private' AND table_name = $1 AND column_name = $2`,
-          (c.column === null ? [c.table] : [c.table, c.column]) as never,
+      if (signIn.size > 0) {
+        carried.inat_sign_in = await count(
+          `INSERT INTO inat_sign_in (inat_user_id, login, icon_url, created_at, last_login_at)
+           SELECT inat_user_id, login, ${signIn.has("icon_url") ? "icon_url" : "NULL"}, created_at, last_login_at
+           FROM retired_private.${signInTable}
+           ON CONFLICT DO NOTHING`,
         );
-        const rows = (await current.getRows()) as Array<[string | null]>;
-        if (rows[0] === undefined || rows[0][0] === c.text) continue;
-        await apply(c.statement);
-        commented = true;
       }
+      // A session keyed on person_id predates beeline-ten and never resolves,
+      // so it is not carried.
+      if ((await columnsOf("session")).has("inat_user_id")) {
+        carried.session = await count(
+          `INSERT INTO session (id_sha256, inat_user_id, created_at, last_seen_at)
+           SELECT sha256(id), inat_user_id, created_at, last_seen_at FROM retired_private.session
+           ON CONFLICT DO NOTHING`,
+        );
+      }
+      if ((await columnsOf("person_activity")).size > 0) {
+        carried.person_activity = await count(
+          `INSERT INTO person_activity (inat_user_id, last_seen_at)
+           SELECT inat_user_id, last_seen_at FROM retired_private.person_activity
+           ON CONFLICT DO NOTHING`,
+        );
+      }
+      if ((await columnsOf("impersonation")).size > 0) {
+        carried.impersonation = await count(
+          `INSERT INTO impersonation (admin_login, person_name, started_at)
+           SELECT r.admin_login, r.person_name, r.started_at FROM retired_private.impersonation r
+           WHERE NOT EXISTS (
+             SELECT 1 FROM impersonation i
+              WHERE i.admin_login = r.admin_login AND i.person_name = r.person_name AND i.started_at = r.started_at)`,
+        );
+      }
+      await conn.run("COMMIT");
+    } catch (err) {
+      await conn.run("ROLLBACK");
+      throw err;
     }
-    if (commented) await conn.run(`CHECKPOINT private`);
+    await conn.run("DETACH retired_private");
+    // CHECKPOINT per docs/runbooks: DuckDB < 1.6 can fail WAL replay and
+    // leave the file unopenable (beeline-vyi). Before the rename, so the rows
+    // are in the main file before the old one stops being found.
+    await conn.run("CHECKPOINT");
+    await rename(opts.path, `${opts.path}.retired`);
+    if (existsSync(`${opts.path}.wal`)) await rename(`${opts.path}.wal`, `${opts.path}.retired.wal`);
+    console.log(
+      `absorbed the private store into the main store and renamed it ${opts.path}.retired: ` +
+        RETIRED_TABLES.map((t) => `${carried[t]} ${t}`).join(", "),
+    );
+    return carried;
   } finally {
     conn.closeSync();
   }
-}
-
-/** The COMMENT ON statements in a DDL file, with what each one says. Exported for its test. */
-export function commentsIn(ddl: string): Array<{ statement: string; table: string; column: string | null; text: string }> {
-  const out = [];
-  for (const m of ddl.matchAll(/COMMENT ON (TABLE|COLUMN) (\w+)(?:\.(\w+))? IS '((?:[^']|'')*)';/g)) {
-    out.push({
-      statement: m[0],
-      table: m[2]!,
-      column: m[1] === "COLUMN" ? m[3]! : null,
-      text: m[4]!.replaceAll("''", "'"),
-    });
-  }
-  return out;
 }
 
 export interface AppDb {
@@ -205,19 +130,19 @@ export interface AppDb {
 }
 
 /**
- * Open the database the app owns (ADR 0005: exactly one process, this one)
- * with the private store attached. Without a key the store is unencrypted —
- * config only permits that in development.
+ * Open the database the app owns (ADR 0005: exactly one process, this one),
+ * first carrying across a retired private store if one is still where it was
+ * kept (beeline-4tdh).
  */
 export async function openAppDb(config: Pick<AppConfig, "dbPath" | "privateDbPath" | "privateDbKey">): Promise<AppDb> {
   const instance = await openDuckDb(config.dbPath);
-  await attachPrivateStore(instance, { path: config.privateDbPath, key: config.privateDbKey });
+  await absorbPrivateStore(instance, { path: config.privateDbPath, key: config.privateDbKey });
   const db = createKysely(instance);
   return {
     instance,
     db,
     async close() {
-      // Checkpoint both stores explicitly before closing, and say so if it
+      // Checkpoint the store explicitly before closing, and say so if it
       // fails. Closing the instance checkpoints too, but that path is the
       // last thing to run before exit and its failure is silent; DuckDB
       // <= 1.5.5 can fail to replay an uncheckpointed WAL and leave the file
@@ -232,12 +157,10 @@ export async function openAppDb(config: Pick<AppConfig, "dbPath" | "privateDbPat
       try {
         const conn = await instance.connect();
         try {
-          for (const catalog of ["", " private"]) {
-            try {
-              await conn.run(`CHECKPOINT${catalog}`);
-            } catch (err) {
-              console.error(`checkpoint${catalog || " (main)"} failed: ${(err as Error).message}`);
-            }
+          try {
+            await conn.run("CHECKPOINT");
+          } catch (err) {
+            console.error(`checkpoint failed: ${(err as Error).message}`);
           }
         } finally {
           conn.closeSync();

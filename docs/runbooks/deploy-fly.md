@@ -92,8 +92,7 @@ apps writing to one folder would each move the other's copies to the bin.
 2026-11-02, so that no value passed through a terminal, except the
 iNaturalist client id and secret, which are the old system's OAuth app's
 (from its `.env` on the old server, renamed from `INATURALIST_CLIENT_*`;
-beeline-83b8.3). The copies of the private-store key kept off the server cover
-it.
+beeline-83b8.3).
 
 **Its address is `melittologist.org`**, and `www.melittologist.org`. Fly holds
 a certificate for each name; `fly certs setup <name> --app beeline-production`
@@ -131,7 +130,6 @@ above.
 fly apps create beeline-production --org osu-mm   # done
 fly volumes create beeline_data --size 10 --region sjc --app beeline-production
 fly secrets set --app beeline-production \
-  BEELINE_PRIVATE_DB_KEY="$(openssl rand -hex 32)" \
   INAT_CLIENT_ID=... INAT_CLIENT_SECRET=...
 ```
 
@@ -151,10 +149,6 @@ since half a login stops the app at boot.
 `BEELINE_DRIVE_KEY` is the service account's JSON key, whole, that the
 `store-backup` job writes with ([Backups](#backups)); `BEELINE_BACKUP_FOLDER`,
 in `fly.production.toml`, is the folder. Set both or neither, as with Ecdysis.
-
-Keep a copy of the private-store key in your password manager before you set
-it: Fly secrets are write-only, and losing the key is losing the private store
-([ADR 0003](../adr/0003-private-data-store.md)).
 
 Then deploy, and fill the volume. **Deploy into maintenance mode first.** An
 app that boots against an empty volume has no store; the entrypoint refuses to
@@ -191,10 +185,11 @@ ones it needs by itself, up to 25 a night (beeline-z08), so a new volume fills
 over a few nights; to fill it at once, run `pnpm elevation:fetch` **on the
 machine** rather than uploading them — see below.
 
-`private.duckdb` is created by the app at first boot on a new volume. On
-production it is never left behind: since cutover it holds what volunteers
-cannot simply redo, so moving or restoring production restores it from a
-backup with its key ([Backups](#backups)).
+There is no private store to set up: sessions and sign-in records are tables
+in the store itself since 2026-11-05 (beeline-4tdh). Until then they were in
+an encrypted `private.duckdb` beside it ([ADR 0003](../adr/0003-private-data-store.md)),
+and the app carries such a file's rows across at the first boot that finds
+one, then renames it `private.duckdb.retired`.
 
 ## Deploying a change
 
@@ -374,9 +369,10 @@ mv -f data/beeline.duckdb data/beeline-prev-<date>.duckdb
 mv -f data/beeline-new.duckdb data/beeline.duckdb
 ```
 
-Then leave maintenance mode. `private.duckdb` is untouched, and sessions
-survive, since they are keyed by the iNaturalist user, not by the person
-number a reseed redraws (beeline-ten). The overlays in `data/` replay onto the
+Then leave maintenance mode. Sessions and sign-in records do not survive:
+they are tables in the store since the private store was retired
+(beeline-4tdh), and a reseed does not carry them, so everyone signs in again.
+A store that has printed is refused a reseed in any case. The overlays in `data/` replay onto the
 new store during promotion, which is what they are for. Delete old
 `beeline-prev-*` stores when the volume needs the room. Rehearse on a copy of
 the store first when the change is large: comparing the two side by side is
@@ -683,13 +679,12 @@ oversight: the drive's members are the staff already trusted with the store
 (Andony, 2026-09-11, beeline-elf). Encrypting it too would take one argument
 to the copy, if that ever changes. Inside:
 
-- `beeline.duckdb` and `private.duckdb` — consistent copies of both stores,
-  taken inside the app because nothing else may open them (ADR 0005). Each is
-  an ordinary store the app opens as it is. The private one is encrypted with
-  `BEELINE_PRIVATE_DB_KEY`, the same key the running store uses
-  ([ADR 0003](../adr/0003-private-data-store.md)), so **a backup of it is only
-  as recoverable as that key**: copies are kept off the server, in Peter's
-  password manager and (beeline-yml3) Andony's.
+- `beeline.duckdb` — a consistent copy of the store, taken inside the app
+  because nothing else may open it (ADR 0005); an ordinary store the app
+  opens as it is. Archives from before 2026-11-05 also hold `private.duckdb`,
+  the retired private store, encrypted with `BEELINE_PRIVATE_DB_KEY`
+  ([ADR 0003](../adr/0003-private-data-store.md)); its only copy off the
+  server is in Peter's password manager.
 - `authored/` — the overlays and change logs a rebuild cannot reconstruct.
 - `manifest.json` — what each store held, table by table and in the rest of
   its schema, the DuckDB version that wrote the copies, and the SHA-256 of
@@ -715,9 +710,7 @@ that failed named in the run's detail. Its own Sentry cron monitor is one of
 the eight the plan keeps disabled.
 In production it also fails rather than succeeding at nothing when the
 folder or the Drive key is not set; a sandbox says it backed nothing up
-([The sandbox, retired](#the-sandbox-retired)). Outside development it
-fails rather than upload the private store unencrypted when the store's key
-is not set. A run killed partway, by memory or a
+([The sandbox, retired](#the-sandbox-retired)). A run killed partway, by memory or a
 restart, leaves its work directory under `data/backups/`; the next run
 removes it and says so.
 
@@ -726,8 +719,10 @@ The writer is a service account,
 the secret `BEELINE_DRIVE_KEY`. It holds the `drive.file` scope, so it sees
 only the files it made: a key that leaked reaches the backups, which are the
 whole store, and nothing else on the drive. The Cloud project that owns it,
-`beeline-510517`, is under Peter's account with Nora as a second owner; moving
-it under OSU's Google organisation is to come.
+`beeline-510517`, has been in the melittologist.org organisation (Andony's
+Google Workspace) since 2026-11-05 (beeline-9xxl); its owners are Andony
+(info@oregonbeeproject.org), Peter (rainhead@gmail.com) and Nora. The same
+project holds melittologist.org's DNS zone, in Cloud DNS.
 
 **Rotate the key, never the account.** Because the scope is `drive.file`, a
 new service account cannot see the old one's files: it would never move them
@@ -743,21 +738,24 @@ Download the copy from the folder (any member of the drive can), then check
 it before trusting it:
 
 ```sh
-BEELINE_PRIVATE_DB_KEY=… pnpm backup:check ~/Downloads/beeline-backup-….tar.gz [dir]
+pnpm backup:check ~/Downloads/beeline-backup-….tar.gz [dir]
 ```
 
 It extracts the archive with the system's tar, checks every file against the
-manifest, and opens and counts both stores; without the key it says the
-private store was **not** checked rather than passing it. What it leaves in
-`dir` is what a restore puts back. Unlike a first install, the private store
-**is** restored: from cutover it holds what volunteers cannot simply redo.
+manifest, and opens and counts the store. An archive from before 2026-11-05
+also holds the retired private store: with `BEELINE_PRIVATE_DB_KEY` set it is
+opened too, and without the key the check says it was **not** checked rather
+than passing it. What it leaves in `dir` is what a restore puts back.
 
 1. `fly deploy -c fly.production.toml --env BEELINE_MAINTENANCE=1`, so nothing holds the store.
 2. On the volume, **delete `beeline.duckdb.wal` and `private.duckdb.wal`** if
    they exist. A WAL left beside an older store is replayed onto it, as with
    [the pre-migrate copy](#the-pre-migrate-copy).
-3. `fly ssh sftp shell --app beeline-production`, and `put` the two stores to `/app/data/beeline.duckdb`
-   and `/app/data/private.duckdb`, and each `authored/*.csv` to `/app/data/`.
+3. `fly ssh sftp shell --app beeline-production`, and `put` the store to `/app/data/beeline.duckdb`
+   and each `authored/*.csv` to `/app/data/`. An archive from before
+   2026-11-05 also holds `private.duckdb`: put it to `/app/data/private.duckdb`
+   too, and the app carries its sign-ins across at boot, which needs
+   `BEELINE_PRIVATE_DB_KEY` set as a secret for that boot.
 4. On a new volume, also what the archive does not hold: the pipeline's
    `data/secrets/inat-oauth-token` ([One-time setup](#one-time-setup)), and
    the DEM tiles, which the nightly fetches again by itself, 25 a night, or

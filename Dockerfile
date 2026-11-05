@@ -49,8 +49,7 @@ RUN apt-get update \
 
 # Every path below is read at runtime, and each for its own reason:
 #   src/        the server itself, and src/app/static, which it serves
-#   schema/     private-store DDL applied at boot, and db:migrate --check's
-#               comparison against schema/*.sql
+#   schema/     db:migrate --check's comparison against schema/*.sql
 #   migrations/ applied by the entrypoint before the app starts
 #   ingest/     the git-curated person overlay, read on every boot
 #   dist/app    the built islands, located through Vite's manifest
@@ -76,8 +75,9 @@ COPY --chown=node:node ingest ./ingest
 # image while every test passes — a test pins this line for that reason.
 COPY --chown=node:node assets ./assets
 COPY --from=build --chown=node:node /app/dist ./dist
-# Bake DuckDB's httpfs extension into the image. The private store is
-# encrypted (ADR 0003), and DuckDB's ENCRYPTION_KEY path needs the crypto
+# Bake DuckDB's httpfs extension into the image. The retired private store is
+# encrypted (ADR 0003), and the boot that carries its rows into the main store
+# opens it (absorbPrivateStore); DuckDB's ENCRYPTION_KEY path needs the crypto
 # module that ships inside httpfs — without it, ATTACH fails outright with
 # "DuckDB currently has a read-only crypto module loaded". Left to itself
 # DuckDB downloads ~20 MB into ~/.duckdb at first boot, which is the container
@@ -119,7 +119,7 @@ RUN mkdir -p /app/data && chown -R node:node /app
 # DuckDB finds its extensions under $HOME, and the entrypoint drops to `node`
 # with setpriv, which changes the uid but NOT the environment — so without
 # this, a non-root boot looks in /root/.duckdb, finds nothing, and dies with
-# "read-only crypto module loaded" the moment it attaches the encrypted
+# "read-only crypto module loaded" the moment it opens the encrypted
 # private store. Set beside the install above, because it is the same decision.
 ENV HOME=/home/node
 ENV NODE_ENV=production

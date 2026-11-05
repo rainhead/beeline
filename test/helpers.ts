@@ -16,11 +16,11 @@ export { createMemoryDb };
  * Reach for it only where being file-backed is the thing under test.
  * createMemoryDb is the default everywhere else and is faster; the one
  * property this buys is that the default catalog is named after the file
- * instead of `memory`, which is where beeline-d34 lived — the private-store
- * patch switched catalog to apply DDL and switched back to a hardcoded
- * `USE memory`, and every test in the suite paired a file-backed PRIVATE
- * store with an in-memory main one, which is the single combination in which
- * that cannot fail.
+ * instead of `memory`, which is where beeline-d34 lived — the boot-time
+ * patch of what was then a separate private store switched catalog to apply
+ * DDL and switched back to a hardcoded `USE memory`, and every test in the
+ * suite paired a file-backed private store with an in-memory main one, which
+ * is the single combination in which that cannot fail.
  *
  * Returns the catalog name so a test can assert against it without hardcoding
  * how it was derived.
@@ -28,7 +28,6 @@ export { createMemoryDb };
 export async function createFileDb(): Promise<{
   instance: DuckDBInstance;
   catalog: string;
-  privatePath: string;
 }> {
   const dir = await mkdtemp(join(tmpdir(), "beeline-filedb-"));
   const instance = await DuckDBInstance.create(join(dir, "beeline.duckdb"));
@@ -38,7 +37,7 @@ export async function createFileDb(): Promise<{
   } finally {
     conn.closeSync();
   }
-  return { instance, catalog: "beeline", privatePath: join(dir, "private.duckdb") };
+  return { instance, catalog: "beeline" };
 }
 
 const fixture = (name: string) => new URL(`./fixtures/${name}`, import.meta.url).pathname;

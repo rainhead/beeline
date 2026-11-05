@@ -2,12 +2,12 @@ import { randomBytes } from "node:crypto";
 import * as Sentry from "@sentry/node";
 import { readFile } from "node:fs/promises";
 import type { Hono } from "hono";
-import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html } from "hono/html";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { parseOrcid } from "../orcid.js";
-import { SESSION_COOKIE, createSession, type AppEnv } from "./session.js";
+import { cookieJar, SESSION_COOKIE } from "./cookies.js";
+import { createSession, type AppEnv } from "./session.js";
 import { PublicPage } from "./views/layout.js";
 import { styleVersion } from "./assets.js";
 import type { PageEnv } from "./views/layout.js";
@@ -147,9 +147,10 @@ export interface AuthDeps {
 /**
  * How one return from iNaturalist to the callback ended (beeline-87rn). Until
  * these were logged, the only trace of a person turned away at sign-in was
- * their row in the private store, and a failed callback left none at all: on
+ * their sign-in record, and a failed callback left none at all: on
  * the first two days after cutover 18 of 57 callbacks failed and 8 turned
- * somebody away, and finding out who took decrypting a copy of the store.
+ * somebody away, and finding out who took decrypting a copy of what was then
+ * an encrypted private store.
  *
  * - `signed-in`: a session was made.
  * - `turned-away`: iNaturalist says who they are, but no person holds that
@@ -204,32 +205,32 @@ function oauthError(raw: string | undefined): string | null {
 /**
  * The sign-in routes, registered on the public surface (they are how a
  * session comes to exist). The approval gate is an inat_account row: known
- * people get a session; anyone else gets their token stored (ADR 0003:
- * stored at first login, not used until approved) and a holding page.
+ * people get a session; anyone else gets a sign-in record, which is how
+ * staff find who was turned away, and a holding page.
  */
 export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
   const redirectUri = `${deps.origin}/auth/inat/callback`;
-  const secure = deps.origin.startsWith("https:");
+  const cookies = cookieJar(deps.origin);
   const report = deps.reportSignIn ?? reportSignIn;
 
   app.get("/auth/inat", (c) => {
     const state = randomBytes(16).toString("hex");
-    setCookie(c, STATE_COOKIE, state, { httpOnly: true, sameSite: "Lax", secure, path: "/", maxAge: 600 });
+    cookies.set(c, STATE_COOKIE, state, { maxAge: 600 });
     // Revalidated on the way in as well as on the way out: this one arrives
     // in a query parameter anyone can craft a link to.
     const next = returnTo(c.req.query("next"));
-    if (next === null) deleteCookie(c, NEXT_COOKIE, { path: "/" });
-    else setCookie(c, NEXT_COOKIE, next, { httpOnly: true, sameSite: "Lax", secure, path: "/", maxAge: 600 });
+    if (next === null) cookies.delete(c, NEXT_COOKIE);
+    else cookies.set(c, NEXT_COOKIE, next, { maxAge: 600 });
     return c.redirect(deps.inat.authorizeUrl(state, redirectUri));
   });
 
   app.get("/auth/inat/callback", async (c) => {
-    const expected = getCookie(c, STATE_COOKIE);
+    const expected = cookies.get(c, STATE_COOKIE);
     // Both cookies belong to this one attempt, however it ends: a failure
     // that left them behind would send the next attempt somewhere stale.
-    const next = returnTo(getCookie(c, NEXT_COOKIE));
-    deleteCookie(c, STATE_COOKIE, { path: "/" });
-    deleteCookie(c, NEXT_COOKIE, { path: "/" });
+    const next = returnTo(cookies.get(c, NEXT_COOKIE));
+    cookies.delete(c, STATE_COOKIE);
+    cookies.delete(c, NEXT_COOKIE);
     const m = c.get("m");
     const code = c.req.query("code");
     // The error first: it is the person's own answer, whatever else is wrong.
@@ -266,7 +267,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
     }
 
     await deps.db
-      .insertInto("private.inat_sign_in")
+      .insertInto("inat_sign_in")
       .values({
         inat_user_id: identity.inatUserId,
         login: identity.login,
@@ -321,7 +322,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: AuthDeps): void {
 
     const sessionId = await createSession(deps.db, identity.inatUserId);
     report("signed-in", `[sign-in] signed in: ${identity.login}`);
-    setCookie(c, SESSION_COOKIE, sessionId, { httpOnly: true, sameSite: "Lax", secure, path: "/" });
+    cookies.set(c, SESSION_COOKIE, sessionId);
     // Back to whatever was asked for before the gate got in the way; home
     // when sign-in was the errand itself (beeline-2c3.31).
     return c.redirect(next ?? "/");

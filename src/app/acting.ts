@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { getCookie, deleteCookie, setCookie } from "hono/cookie";
+import type { CookieJar } from "./cookies.js";
 import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import type { Session } from "./session.js";
@@ -49,7 +49,7 @@ export const ACTING_COOKIE = "beeline_acting";
  * is named by display name and re-resolved every request — and differs in
  * three ways the routes enforce rather than this module: it is read-only,
  * it takes the admin surfaces away for the duration so the view is faithful,
- * and turning it on leaves a trace (private.impersonation). Its own cookie,
+ * and turning it on leaves a trace (the impersonation table). Its own cookie,
  * not a mode on the delegation one, so the delegation cookie keeps the
  * property that a forged value resolves to nothing for everyone.
  */
@@ -100,20 +100,21 @@ export async function resolveActing(
   session: Session,
   c: Context,
   /** Whether the signed-in person is an admin — the only people impersonation resolves for. */
-  admin = false,
+  admin: boolean,
+  cookies: CookieJar,
 ): Promise<Acting> {
   // Impersonation wins over delegation: an admin who turned it on chose it
   // deliberately, and the picker that would set the other cookie is hidden
   // for the duration. The delegation grants are deliberately NOT carried
   // across — they are the signed-in person's, and the view is meant to be
   // the volunteer's.
-  const impersonated = admin ? await resolveImpersonation(db, c) : null;
+  const impersonated = admin ? await resolveImpersonation(db, c, cookies) : null;
   if (impersonated !== null) {
     return { personId: impersonated.personId, actingFor: impersonated, impersonating: true, canActFor: [] };
   }
   const canActFor = await delegations(db, session.personId);
   const self: Acting = { personId: session.personId, actingFor: null, impersonating: false, canActFor };
-  const raw = getCookie(c, ACTING_COOKIE);
+  const raw = cookies.get(c, ACTING_COOKIE);
   if (raw === undefined || raw === "") return self;
   // Exactly one, or nobody: two grants sharing a display name is a household
   // naming problem, and guessing between them is how the wrong person gets
@@ -134,8 +135,9 @@ export async function resolveActing(
 async function resolveImpersonation(
   db: Kysely<Database>,
   c: Context,
+  cookies: CookieJar,
 ): Promise<{ personId: number; name: string } | null> {
-  const raw = getCookie(c, IMPERSONATING_COOKIE);
+  const raw = cookies.get(c, IMPERSONATING_COOKIE);
   if (raw === undefined || raw === "") return null;
   const rows = await db
     .selectFrom("person")
@@ -149,28 +151,15 @@ async function resolveImpersonation(
 }
 
 /**
- * `secure` follows the origin, as the session and OAuth-state cookies do
- * (src/app/auth.tsx) and as the scope cookie does not. This one sits with the
- * session cookies rather than with scope: scope only filters what you read,
- * while this decides whose records the sample-edit gate lets you WRITE.
+ * Both switches' cookies carry the same attributes as the session's
+ * (src/app/cookies.ts): this one decides whose records the sample-edit gate
+ * lets you WRITE, so it is a cookie no other host may set.
  */
-export const startActing = (c: Context, name: string, origin: string) =>
-  setCookie(c, ACTING_COOKIE, name, {
-    path: "/",
-    httpOnly: true,
-    sameSite: "Lax",
-    secure: origin.startsWith("https:"),
-  });
+export const startActing = (c: Context, name: string, cookies: CookieJar) => cookies.set(c, ACTING_COOKIE, name);
 
-export const stopActing = (c: Context) => deleteCookie(c, ACTING_COOKIE, { path: "/" });
+export const stopActing = (c: Context, cookies: CookieJar) => cookies.delete(c, ACTING_COOKIE);
 
-/** Same cookie attributes as the delegation switch, for the same reason. */
-export const startImpersonating = (c: Context, name: string, origin: string) =>
-  setCookie(c, IMPERSONATING_COOKIE, name, {
-    path: "/",
-    httpOnly: true,
-    sameSite: "Lax",
-    secure: origin.startsWith("https:"),
-  });
+export const startImpersonating = (c: Context, name: string, cookies: CookieJar) =>
+  cookies.set(c, IMPERSONATING_COOKIE, name);
 
-export const stopImpersonating = (c: Context) => deleteCookie(c, IMPERSONATING_COOKIE, { path: "/" });
+export const stopImpersonating = (c: Context, cookies: CookieJar) => cookies.delete(c, IMPERSONATING_COOKIE);

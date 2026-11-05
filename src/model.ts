@@ -141,7 +141,7 @@ export interface InatPlaceAbsentTable {
   asked_at: Generated<Date>;
 }
 
-// schema/private/010_auth.sql — the attached private store (ADR 0003)
+// schema/012_sign_in.sql — signing in, and who has been here (beeline-4tdh)
 
 export interface InatSignInTable {
   inat_user_id: BigIntCol;
@@ -152,14 +152,14 @@ export interface InatSignInTable {
 }
 
 export interface SessionTable {
-  id: string;
+  /** SHA-256 of the cookie's value, lowercase hex; never the value (beeline-5l84). */
+  id_sha256: string;
   /** Who signed in — stable across a rebuild, unlike an entity_id (beeline-ten). */
   inat_user_id: BigIntCol;
   created_at: Generated<Date>;
   last_seen_at: Generated<Date>;
 }
 
-// schema/private/030_activity.sql
 
 /**
  * When somebody was last here, outliving the session that observed it —
@@ -172,7 +172,7 @@ export interface PersonActivityTable {
 }
 
 /**
- * schema/private/040: each time a staff member viewed Beeline as somebody
+ * Each time a staff member viewed Beeline as somebody
  * else (beeline-jjt). Append-only; an audit line, never a credential.
  */
 export interface ImpersonationTable {
@@ -1383,9 +1383,8 @@ export interface Database {
   animal_ecdysis_match: AnimalEcdysisMatchView;
   animal_ecdysis_stale: AnimalEcdysisStaleView;
   animal_curation_stale: AnimalCurationStaleView;
-  // Attached private store (ADR 0003), catalog-qualified:
-  "private.inat_sign_in": InatSignInTable;
-  "private.session": SessionTable;
-  "private.person_activity": PersonActivityTable;
-  "private.impersonation": ImpersonationTable;
+  inat_sign_in: InatSignInTable;
+  session: SessionTable;
+  person_activity: PersonActivityTable;
+  impersonation: ImpersonationTable;
 }

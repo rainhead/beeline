@@ -47,7 +47,7 @@ const { db, instance, close } = await openAppDb(config);
       await checkRegistryMark(markConn, await currentCatalog(markConn), config.registryMarkPath);
     } else {
       // Every failure here, not only a refusal, closes the store before
-      // exiting: the private store may already have been written to.
+      // exiting: absorbing a retired private store may already have written to it.
       console.error(err instanceof StoreRefused ? err.message : `could not check the registry mark: ${String(err)}`);
       reportError(err, { step: "boot" });
       markConn.closeSync();
@@ -148,14 +148,10 @@ await readSampleChanges(config.sampleChangesPath).catch((err: Error) =>
   console.warn(`could not read the sample change log: ${err.message}`),
 );
 
-if (config.privateDbKey === null) {
-  console.warn("BEELINE_PRIVATE_DB_KEY unset: private store is UNENCRYPTED (development only)");
-}
-
 // Real cookie sessions; a development instance may bypass them wholesale via
 // BEELINE_DEV_LOGIN (no OAuth round-trip). The stub resolves the login
 // against inat_account so dev sessions see that person's real data.
-let resolveSession: SessionResolver = cookieSessionResolver(db);
+let resolveSession: SessionResolver = cookieSessionResolver(db, config.origin);
 if (config.devLogin) {
   const account = await db
     .selectFrom("inat_account")

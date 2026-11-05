@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type Context } from "hono";
-import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { deleteCookie, getCookie } from "hono/cookie";
+import { cookieJar, SESSION_COOKIE } from "./cookies.js";
 import { html } from "hono/html";
 import type { Child } from "hono/jsx";
 import { sql, type Kysely } from "kysely";
@@ -14,7 +15,7 @@ import { OLD_BEELINE_ORIGIN, registerOldBeelineRedirects } from "./old-beeline.j
 import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
-import { deleteSession, endSessionsFor, SESSION_COOKIE, type AppEnv, type Session, type SessionResolver } from "./session.js";
+import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
@@ -330,6 +331,7 @@ export function createApp({
   // people who own it can edit it (beeline-eft added five names by deploy).
   // config.adminLogins is only the bootstrap seed now, applied at boot to a
   // store that has never granted anything; a revocation here therefore sticks.
+  const cookies = cookieJar(config.origin);
   const isAdmin = async (session: Session) => {
     if (config.environment === "development") return true;
     const row = await db
@@ -535,7 +537,7 @@ export function createApp({
     const admin = await isAdmin(session);
     // Whose records `mine` means. Re-checked against person_delegate every
     // request, so a revoked grant stops working at once (beeline-oyl).
-    const acting = await resolveActing(db, session, c, admin);
+    const acting = await resolveActing(db, session, c, admin, cookies);
     c.set("acting", acting);
     // Impersonation takes the admin surfaces away for the duration
     // (beeline-jjt): every admin gate below — /people, /jobs, the scope
@@ -549,15 +551,18 @@ export function createApp({
 
   // --- Authenticated app. ---
   app.post("/auth/logout", async (c) => {
-    const id = getCookie(c, SESSION_COOKIE);
+    // The cookie's name before the __Host- prefix too, for as long as the
+    // resolver reads it (beeline-73c9; src/app/session.ts).
+    const id = cookies.get(c, SESSION_COOKIE) ?? getCookie(c, "beeline_session");
     if (id) await deleteSession(db, id);
-    deleteCookie(c, SESSION_COOKIE, { path: "/" });
+    cookies.delete(c, SESSION_COOKIE);
+    deleteCookie(c, "beeline_session", { path: "/" });
     // The switch is scoped to the session that held the grant. Leaving it set
     // is not exploitable — resolveActing re-checks the grant against whoever
     // signs in next — but on a household's shared browser it would outlive
     // the person who turned it on, which is its own kind of wrong.
-    stopActing(c);
-    stopImpersonating(c);
+    stopActing(c, cookies);
+    stopImpersonating(c, cookies);
     return c.redirect("/");
   });
 
@@ -576,12 +581,12 @@ export function createApp({
       return c.text(c.get("m").errors.forbidden, 403);
     }
     // The cookie carries the name, not the id it was picked by (acting.ts).
-    startActing(c, grant.name, config.origin);
+    startActing(c, grant.name, cookies);
     return c.redirect("/");
   });
 
   app.post("/acting/stop", async (c) => {
-    stopActing(c);
+    stopActing(c, cookies);
     return c.redirect("/");
   });
 
@@ -589,7 +594,7 @@ export function createApp({
   // duration, and the one thing that must work under it is getting out. Back
   // to the roster, which is where the switch is turned on.
   app.post("/impersonation/stop", async (c) => {
-    stopImpersonating(c);
+    stopImpersonating(c, cookies);
     return c.redirect("/people");
   });
 
@@ -842,13 +847,13 @@ export function createApp({
     const atlases = await atlasOptions(db);
     const parsed = parseListingQuery(new URL(c.req.url).searchParams, {
       atlasCodes: atlases.map((a) => a.code),
-      preferred: getCookie(c, SCOPE_COOKIE),
+      preferred: cookies.get(c, SCOPE_COOKIE),
     });
     // Every bulk action so far is staff's (beeline-1kb.23).
     const query = admin ? parsed : { ...parsed, act: "" as const };
     // Remember an explicit choice only — a bare /samples keeps the cookie.
     if (c.req.query("scope") !== undefined) {
-      setCookie(c, SCOPE_COOKIE, query.scope, { path: "/", sameSite: "Lax", httpOnly: true });
+      cookies.set(c, SCOPE_COOKIE, query.scope);
     }
     // The atlas this person belongs to, for the scope toggle's middle
     // position: mine, my atlas, everything. Nobody's for a program member
@@ -2212,7 +2217,7 @@ export function createApp({
     }
     try {
       await db
-        .insertInto("private.impersonation")
+        .insertInto("impersonation")
         .values({ admin_login: c.get("session").login, person_name: person.display_name })
         .execute();
     } catch (err) {
@@ -2221,7 +2226,7 @@ export function createApp({
     }
     // By name, as the delegation cookie is (acting.ts): a name that stops
     // matching resolves to nobody rather than to the wrong person.
-    startImpersonating(c, person.display_name, config.origin);
+    startImpersonating(c, person.display_name, cookies);
     return c.redirect("/");
   });
 

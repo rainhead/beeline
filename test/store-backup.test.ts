@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configFromEnv } from "../src/app/config.js";
-import { attachPrivateStore } from "../src/app/db.js";
 import { buildJobs } from "../src/app/jobs/registry.js";
 import type { JobContext } from "../src/app/jobs/framework.js";
 import type { DriveFile, ServiceAccountKey } from "../src/drive-service-account.js";
@@ -30,7 +29,6 @@ const scratch = () => mkdtemp(join(tmpdir(), "beeline-backup-"));
 async function storeWithData() {
   const { instance, conn } = await createMemoryDb();
   const dir = await scratch();
-  await attachPrivateStore(instance, { path: join(dir, "private.duckdb"), key: KEY });
   // Ids chosen so the species is numbered below its genus and the genus
   // below its family: a copy that inserts the table in one statement, or in
   // id order, fails on the reference to a parent not yet copied.
@@ -39,7 +37,7 @@ async function storeWithData() {
   await conn.run(`INSERT INTO animal (entity_id, parent_id, rank, scientific_name) VALUES (800, 900, 'genus', 'Bombus')`);
   await conn.run(`INSERT INTO animal (entity_id, parent_id, rank, scientific_name) VALUES (700, 800, 'species', 'Bombus vosnesenskii')`);
   await conn.run(`INSERT INTO person (display_name) VALUES ('A. Collector')`);
-  await conn.run(`INSERT INTO private.session (id, inat_user_id, created_at, last_seen_at) VALUES ('s1', 1, now(), now())`);
+  await conn.run(`INSERT INTO session (id_sha256, inat_user_id, created_at, last_seen_at) VALUES (repeat('a', 64), 1, now(), now())`);
   const [[catalog]] = (await rows(conn, "SELECT current_database()")) as [[string]];
   return { instance, conn, dir, catalog };
 }
@@ -79,10 +77,10 @@ describe("a copy of a store", () => {
     expect((await rows(copy, "SELECT comment FROM duckdb_tables() WHERE table_name = 'animal'"))[0]![0]).toMatch(/curated taxonomy/);
   });
 
-  it("encrypts the private store's copy with the store's own key", async () => {
-    const { conn, dir } = await storeWithData();
-    const path = join(dir, "private-copy.duckdb");
-    const snap = await snapshotCatalog(conn, "private", path, KEY);
+  it("is encrypted when taken with a key, as the retired private store's copies were", async () => {
+    const { conn, dir, catalog } = await storeWithData();
+    const path = join(dir, "encrypted-copy.duckdb");
+    const snap = await snapshotCatalog(conn, catalog, path, KEY);
     expect(snap.tables["main.session"]).toBe(1);
     await verifySnapshot(path, KEY, snap);
     await expect(verifySnapshot(path, null, snap)).rejects.toThrow();
@@ -249,8 +247,7 @@ describe("a night's backup", () => {
     await before?.(dir);
     const result = await backUp(conn, {
       workDir: join(dir, "work"),
-      catalogs: { main: catalog, private: "private" },
-      privateKey: KEY,
+      catalog,
       authored: [join(dir, "person-change.csv"), join(dir, "corrections.csv")],
       release: "deployment-test",
       drive: { key: testServiceAccount(), folderId: "folder" },
@@ -279,11 +276,12 @@ describe("a night's backup", () => {
     expect(result.trashed).toEqual([backupName(new Date("2026-09-20T10:00:00Z"))]);
     expect(result.kept).toBe(3);
 
-    // What Drive holds is a backup `pnpm backup:check` accepts, both stores opened.
+    // What Drive holds is a backup `pnpm backup:check` accepts, its store opened.
     const archive = join(dir, "downloaded.tar.gz");
     await writeFile(archive, drive.files.find((f) => f.id === "new")!.bytes);
-    const checked = await checkBackup(archive, { dir: join(dir, "restored"), privateKey: KEY });
-    expect(checked.storesOpened).toEqual(["beeline.duckdb", "private.duckdb"]);
+    const checked = await checkBackup(archive, { dir: join(dir, "restored"), privateKey: null });
+    expect(checked.storesOpened).toEqual(["beeline.duckdb"]);
+    expect(Object.keys(checked.manifest.stores)).toEqual(["beeline.duckdb"]);
     expect(checked.manifest.release).toBe("deployment-test");
     expect(checked.manifest.absent).toEqual(["corrections.csv"]);
     expect(checked.manifest.duckdb).toMatch(/^v\d/);
@@ -310,11 +308,11 @@ describe("a night's backup", () => {
       await writeFile(join(unpacked, "manifest.json"), JSON.stringify(m));
       const out = join(dir, `tampered-${++n}.tar.gz`);
       await writeArchive([...members, ...extra].map((name) => ({ name, path: join(unpacked, name) })), out);
-      return checkBackup(out, { dir: join(dir, `check-${n}`), privateKey: KEY });
+      return checkBackup(out, { dir: join(dir, `check-${n}`), privateKey: null });
     };
 
     // Repacked unchanged, it passes: what fails below fails for its edit.
-    await expect(tampered(() => undefined)).resolves.toMatchObject({ storesOpened: ["beeline.duckdb", "private.duckdb"] });
+    await expect(tampered(() => undefined)).resolves.toMatchObject({ storesOpened: ["beeline.duckdb"] });
     await expect(tampered((m) => (m.files["authored/person-change.csv"]!.sha256 = "0".repeat(64)))).rejects.toThrow(
       /person-change\.csv does not match/,
     );
@@ -327,9 +325,42 @@ describe("a night's backup", () => {
         m.stores = {};
         m.files = {};
       }),
-    ).rejects.toThrow(/describes no beeline\.duckdb or private\.duckdb/);
+    ).rejects.toThrow(/describes no beeline\.duckdb/);
     await writeFile(join(unpacked, "stray.txt"), "not in the manifest");
     await expect(tampered(() => undefined, ["stray.txt"])).rejects.toThrow(/holds stray\.txt, which the manifest does not hash/);
+  });
+
+  it("an archive from before the private store was retired still checks, that store opened only with its key", async () => {
+    // Retention keeps a year of monthly copies, so for a year some archives
+    // hold private.duckdb beside the main store (beeline-4tdh). Built here as
+    // the job used to build one: an encrypted second store, both hashed.
+    const { conn, dir, catalog } = await storeWithData();
+    const work = join(dir, "old");
+    await mkdir(work);
+    const main = await snapshotCatalog(conn, catalog, join(work, "beeline.duckdb"), null);
+    const priv = await snapshotCatalog(conn, catalog, join(work, "private.duckdb"), KEY);
+    const sha = async (f: string) => createHash("sha256").update(await readFile(join(work, f))).digest("hex");
+    const size = async (f: string) => (await readFile(join(work, f))).length;
+    const manifest: BackupManifest = {
+      format: 1,
+      takenAt: "2026-11-04T11:00:52.000Z",
+      release: "before-4tdh",
+      duckdb: "v1.5.5",
+      stores: { "beeline.duckdb": { encrypted: false, ...main }, "private.duckdb": { encrypted: true, ...priv } },
+      files: {
+        "beeline.duckdb": { sha256: await sha("beeline.duckdb"), bytes: await size("beeline.duckdb") },
+        "private.duckdb": { sha256: await sha("private.duckdb"), bytes: await size("private.duckdb") },
+      },
+      absent: [],
+    };
+    await writeFile(join(work, "manifest.json"), JSON.stringify(manifest));
+    const archive = join(dir, "old.tar.gz");
+    await writeArchive(["manifest.json", "beeline.duckdb", "private.duckdb"].map((name) => ({ name, path: join(work, name) })), archive);
+
+    const withKey = await checkBackup(archive, { dir: join(dir, "with-key"), privateKey: KEY });
+    expect(withKey.storesOpened).toEqual(["beeline.duckdb", "private.duckdb"]);
+    const without = await checkBackup(archive, { dir: join(dir, "without"), privateKey: null });
+    expect(without.storesOpened).toEqual(["beeline.duckdb"]);
   });
 
   it("fails, naming the step, when the file Drive holds is not the file that was sent, and bins that file", async () => {
@@ -348,7 +379,6 @@ describe("the job", () => {
   const job = (
     environment: "development" | "sandbox" | "production",
     driveBackup: { key: ServiceAccountKey; folderId: string } | null = null,
-    privateDbKey: string | null = null,
   ) =>
     buildJobs({
       syncProjects: [],
@@ -358,7 +388,6 @@ describe("the job", () => {
       sampleStatePath: "unused.csv",
       environment,
       driveBackup,
-      privateDbKey,
     }).find((j) => j.name === "store-backup")!;
 
   it("fails in production when it has nowhere to go, rather than succeeding at nothing", async () => {
@@ -370,12 +399,6 @@ describe("the job", () => {
     // folder to production (beeline-83b8.8).
     await expect(job("sandbox").run(ctx)).resolves.toMatch(/nothing backed up/);
     await expect(job("development").run(ctx)).resolves.toMatch(/nothing backed up/);
-  });
-
-  it("refuses, outside development, to back up the private store without its key", async () => {
-    const drive = { key: testServiceAccount(), folderId: "f" };
-    await expect(job("sandbox", drive, null).run(ctx)).rejects.toThrow(/refusing to back up the private store unencrypted/);
-    await expect(job("production", drive, null).run(ctx)).rejects.toThrow(/refusing to back up the private store unencrypted/);
   });
 
   it("runs ahead of the Sunday sweep, so a long sweep cannot push it past the night window", () => {

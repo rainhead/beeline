@@ -75,7 +75,7 @@ export function openMemoryDuckDb(): Promise<DuckDBInstance> {
  * read outlines: building the gazetteer and naming a sample's locality from
  * its coordinates (beeline-7i6). The store holds no geometry, so it is loaded
  * where it is used rather than at every open. The image installs it at build
- * time beside httpfs (Dockerfile), so the machine needs no network here; a
+ * time (Dockerfile), so the machine needs no network here; a
  * workstation or CI fetches it into ~/.duckdb on first use.
  */
 export async function loadSpatial(conn: { run(sql: string): Promise<unknown> }): Promise<void> {

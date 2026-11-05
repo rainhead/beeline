@@ -1,16 +1,13 @@
-import { copyFile, mkdtemp } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DuckDBInstance } from "@duckdb/node-api";
 import { sql } from "kysely";
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient, SignInOutcome } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
-import { absorbPrivateStore } from "../src/app/db.js";
 import { cookieSessionResolver, endSessionsFor, hashSessionId, purgeIdleSessions, sessionRef } from "../src/app/session.js";
-import { createFileDb, createMemoryDb, scratchPaths } from "./helpers.js";
+import { createMemoryDb, scratchPaths } from "./helpers.js";
 import { readChanges } from "../src/person-change.js";
 
 const ORIGIN = "http://localhost:3054";
@@ -29,13 +26,10 @@ async function testApp(
   feedbackEmail?: string,
   reportSignIn?: (outcome: SignInOutcome, line: string) => void,
   origin = ORIGIN,
-  /** A retired private store to carry across first, as the app does at boot. */
-  privateStore?: { path: string; key: string | null },
 ) {
   const { instance, conn } = await createMemoryDb();
   await conn.run(`INSERT INTO person (entity_id, display_name) VALUES (11, 'Member Bee')`);
   await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (11, 501, 'memberbee')`);
-  if (privateStore) await absorbPrivateStore(instance, privateStore);
   const db = createKysely(instance);
   // Never the real log: sign-in records what it learns about a person there.
   const changesPath = join(await mkdtemp(join(tmpdir(), "auth-")), "person-change.csv");
@@ -518,157 +512,6 @@ describe("cookies no other host can set (beeline-73c9)", () => {
     const { app } = await httpsApp();
     const id = idFrom(await signIn(app));
     expect((await app.request("/", { headers: { cookie: `beeline_session=${id}` } })).status).toBe(401);
-  });
-});
-
-describe("retiring the private store (beeline-4tdh)", () => {
-  /**
-   * A private store in the shape production's held on 2026-11-05, written
-   * the way the app used to write one. `legacy` gives the older shapes a
-   * store could still be met in: the sign-in table under its first name with
-   * the token column, and sessions keyed on person_id.
-   */
-  async function retiredStore(opts: { key?: string; legacy?: boolean } = {}) {
-    const path = join(await mkdtemp(join(tmpdir(), "beeline-private-")), "private.duckdb");
-    const instance = await DuckDBInstance.create(":memory:");
-    const conn = await instance.connect();
-    await conn.run(`ATTACH '${path}' AS p${opts.key ? ` (ENCRYPTION_KEY '${opts.key}')` : ""}`);
-    if (opts.legacy) {
-      await conn.run(`CREATE TABLE p.inat_oauth_token (
-        inat_user_id BIGINT PRIMARY KEY, login TEXT NOT NULL, access_token TEXT NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-        last_login_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
-      await conn.run(`INSERT INTO p.inat_oauth_token (inat_user_id, login, access_token) VALUES (501, 'memberbee', 'tok')`);
-      await conn.run(`CREATE TABLE p.session (
-        id TEXT PRIMARY KEY, person_id INTEGER NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-        last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
-      await conn.run(`INSERT INTO p.session (id, person_id) VALUES ('stale', 11)`);
-    } else {
-      await conn.run(`CREATE TABLE p.inat_sign_in (
-        inat_user_id BIGINT PRIMARY KEY, login TEXT NOT NULL, icon_url TEXT,
-        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-        last_login_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
-      await conn.run(`INSERT INTO p.inat_sign_in (inat_user_id, login, icon_url, last_login_at) VALUES
-        (501, 'memberbee', 'https://static.inaturalist.org/a.jpg', TIMESTAMP '2026-11-01 12:00:00'),
-        (999, 'stranger', NULL, TIMESTAMP '2026-11-02 12:00:00')`);
-      await conn.run(`CREATE TABLE p.session (
-        id TEXT PRIMARY KEY, inat_user_id BIGINT NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-        last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
-      await conn.run(`INSERT INTO p.session (id, inat_user_id) VALUES ('${"a".repeat(64)}', 501)`);
-      await conn.run(`CREATE TABLE p.person_activity (
-        inat_user_id BIGINT PRIMARY KEY, last_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
-      await conn.run(`INSERT INTO p.person_activity VALUES (501, TIMESTAMP '2026-11-04 12:00:00')`);
-      await conn.run(`CREATE TABLE p.impersonation (
-        admin_login TEXT NOT NULL, person_name TEXT NOT NULL,
-        started_at TIMESTAMP NOT NULL DEFAULT current_timestamp)`);
-      await conn.run(`INSERT INTO p.impersonation VALUES ('staffer', 'Member Bee', TIMESTAMP '2026-10-30 09:00:00')`);
-    }
-    await conn.run("DETACH p");
-    conn.closeSync();
-    instance.closeSync();
-    return path;
-  }
-  const counts = async (db: Awaited<ReturnType<typeof testApp>>["db"]) => ({
-    inat_sign_in: (await db.selectFrom("inat_sign_in").selectAll().execute()).length,
-    session: (await db.selectFrom("session").selectAll().execute()).length,
-    person_activity: (await db.selectFrom("person_activity").selectAll().execute()).length,
-    impersonation: (await db.selectFrom("impersonation").selectAll().execute()).length,
-  });
-
-  it("carries everything but the sessions across, and an old session id signs nobody in", async () => {
-    // On the https origin, as production runs. The browser holds its session
-    // under the cookie's old name, which is not read; and the old id under
-    // the new name, as somebody holding it from an old backup could send it,
-    // must not work either. So the sessions are not carried at all.
-    const path = await retiredStore();
-    const { app, db } = await testApp(
-      { inatUserId: 501, login: "memberbee" },
-      undefined,
-      undefined,
-      "https://beeline.example",
-      { path, key: null },
-    );
-    expect(await counts(db)).toEqual({ inat_sign_in: 2, session: 0, person_activity: 1, impersonation: 1 });
-    expect(
-      await db.selectFrom("inat_sign_in").select(["login", "last_login_at"]).orderBy("login").execute(),
-    ).toEqual([
-      { login: "memberbee", last_login_at: new Date("2026-11-01T12:00:00Z") },
-      { login: "stranger", last_login_at: new Date("2026-11-02T12:00:00Z") },
-    ]);
-    for (const cookie of [`beeline_session=${"a".repeat(64)}`, `__Host-beeline_session=${"a".repeat(64)}`]) {
-      expect((await app.request("/", { headers: { cookie } })).status).toBe(401);
-    }
-    // Renamed rather than deleted, so the next boot does not carry it again.
-    expect(existsSync(path)).toBe(false);
-    expect(existsSync(`${path}.retired`)).toBe(true);
-  });
-
-  it("does nothing when there is no store to carry", async () => {
-    const { instance } = await createMemoryDb();
-    expect(await absorbPrivateStore(instance, { path: join(tmpdir(), "no-such-private.duckdb"), key: null })).toBeNull();
-  });
-
-  it("an encrypted store is carried with its key, and stops the boot without it", async () => {
-    const path = await retiredStore({ key: "the-key" });
-    const { instance } = await createMemoryDb();
-    await expect(absorbPrivateStore(instance, { path, key: null })).rejects.toThrow();
-    expect(existsSync(path)).toBe(true);
-    expect(await absorbPrivateStore(instance, { path, key: "the-key" })).toEqual({
-      inat_sign_in: 2,
-      person_activity: 1,
-      impersonation: 1,
-    });
-  });
-
-  it("carrying it again after a crash duplicates nothing", async () => {
-    // The rename is the last step; a crash before it means the next boot
-    // carries the same file a second time.
-    const path = await retiredStore();
-    const { instance } = await createMemoryDb();
-    await absorbPrivateStore(instance, { path, key: null });
-    await copyFile(`${path}.retired`, path);
-    expect(await absorbPrivateStore(instance, { path, key: null })).toEqual({
-      inat_sign_in: 0,
-      person_activity: 0,
-      impersonation: 0,
-    });
-    expect(await counts(createKysely(instance))).toEqual({ inat_sign_in: 2, session: 0, person_activity: 1, impersonation: 1 });
-  });
-
-  it("a second store carried later is kept beside the first, not over it", async () => {
-    // Restoring a backup from before the retirement puts a private store
-    // back; the first one's .retired file is still the only copy of its rows.
-    const path = await retiredStore();
-    const { instance } = await createMemoryDb();
-    await absorbPrivateStore(instance, { path, key: null });
-    await copyFile(`${path}.retired`, path);
-    await absorbPrivateStore(instance, { path, key: null });
-    expect(existsSync(`${path}.retired`)).toBe(true);
-    expect(existsSync(`${path}.retired-2`)).toBe(true);
-    expect(existsSync(path)).toBe(false);
-  });
-
-  it("a store in an older shape gives what it can: sign-ins, and no session keyed on person_id", async () => {
-    const path = await retiredStore({ legacy: true });
-    const { instance } = await createMemoryDb();
-    await absorbPrivateStore(instance, { path, key: null });
-    const db = createKysely(instance);
-    expect(await db.selectFrom("inat_sign_in").select(["login", "icon_url"]).execute()).toEqual([
-      { login: "memberbee", icon_url: null },
-    ]);
-    expect(await db.selectFrom("session").selectAll().execute()).toEqual([]);
-  });
-
-  it("works against a file-backed main store, as production's is", async () => {
-    // A file-backed store's catalog is named after its file, not `memory`,
-    // which is where beeline-d34 hid from a suite of in-memory stores.
-    const path = await retiredStore();
-    const { instance } = await createFileDb();
-    await absorbPrivateStore(instance, { path, key: null });
-    expect(await counts(createKysely(instance))).toEqual({ inat_sign_in: 2, session: 0, person_activity: 1, impersonation: 1 });
-    instance.closeSync();
   });
 });
 

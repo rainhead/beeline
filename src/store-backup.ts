@@ -36,8 +36,8 @@ import { snapshotCatalog, verifySnapshot, type Snapshot } from "./store-snapshot
  * Archives taken before 2026-11-05 also hold private.duckdb, the private
  * store retired by beeline-4tdh, encrypted with its key. checkBackup still
  * reads them: it opens that copy when given the key and says it did not when
- * not. Restoring one puts private.duckdb back beside the main store, and the
- * app carries its rows across at boot as it did for production's own.
+ * not. The app no longer reads that file, so restoring such an archive starts
+ * with empty sign-in tables (docs/runbooks/deploy-fly.md, Restoring).
  *
  * Each step is checked rather than trusted, because a backup that only looks
  * like one is the failure this exists to prevent: the copies are reopened on

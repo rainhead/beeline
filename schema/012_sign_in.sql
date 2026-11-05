@@ -5,7 +5,7 @@
 -- iNaturalist logins and avatars are public, and the main store already holds
 -- people's names, their iNaturalist accounts and true coordinates. A deployed
 -- store's rows, all but its sessions, were carried across by the app at its
--- first boot after the change (absorbPrivateStore, src/app/db.ts).
+-- first boot after the change, by code since removed (beeline-csgv).
 --
 -- No foreign keys to inat_account. A sign-in record is written before anyone
 -- holds the account (that is how staff find who was turned away), and

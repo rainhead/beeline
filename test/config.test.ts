@@ -21,7 +21,7 @@ describe("configFromEnv sync settings (beeline-vni)", () => {
 
 describe("configFromEnv deploy safety", () => {
   it("requires BEELINE_ORIGIN outside development (beeline-4cb)", () => {
-    const base = { BEELINE_ENV: "sandbox", BEELINE_PRIVATE_DB_KEY: "k" };
+    const base = { BEELINE_ENV: "sandbox" };
     expect(() => configFromEnv(base)).toThrow(/BEELINE_ORIGIN/);
     const config = configFromEnv({ ...base, BEELINE_ORIGIN: "https://beeline.example" });
     expect(config.origin).toBe("https://beeline.example");
@@ -33,7 +33,7 @@ describe("configFromEnv deploy safety", () => {
   // AFTER the person has signed in, showing only the generic failure page.
   // Refused at boot instead.
   it("refuses an origin that is not bare", () => {
-    const base = { BEELINE_ENV: "sandbox", BEELINE_PRIVATE_DB_KEY: "k" };
+    const base = { BEELINE_ENV: "sandbox" };
     const origin = (o: string) => () => configFromEnv({ ...base, BEELINE_ORIGIN: o });
     expect(origin("https://beeline.fly.dev/")).toThrow(/bare origin/); // -> //auth/inat/callback
     expect(origin("https://beeline.fly.dev/app")).toThrow(/bare origin/);

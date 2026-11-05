@@ -94,6 +94,6 @@ deltas that bring an already-deployed database up to it.**
 - **The private store patched itself at boot** (ADR 0003) until it was
   retired on 2026-11-05 (beeline-4tdh): its tables are now in this catalog,
   created by migration 0076 like any other, and the app carries a deployed
-  private store's rows across at boot (`absorbPrivateStore`). Before that it
+  private store's rows across at its first boot afterwards. Before that it
   was attached rather than part of this catalog, and patched itself at boot
   outside this mechanism.

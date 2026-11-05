@@ -75,29 +75,25 @@ COPY --chown=node:node ingest ./ingest
 # image while every test passes — a test pins this line for that reason.
 COPY --chown=node:node assets ./assets
 COPY --from=build --chown=node:node /app/dist ./dist
-# Bake DuckDB's httpfs extension into the image. The retired private store is
-# encrypted (ADR 0003), and the boot that carries its rows into the main store
-# opens it (absorbPrivateStore); DuckDB's ENCRYPTION_KEY path needs the crypto
-# module that ships inside httpfs — without it, ATTACH fails outright with
-# "DuckDB currently has a read-only crypto module loaded". Left to itself
-# DuckDB downloads ~20 MB into ~/.duckdb at first boot, which is the container
-# layer: every deploy would re-fetch it, and every boot would depend on
-# DuckDB's extension repository being reachable. Baked here, boot needs no
-# network at all.
+# Bake DuckDB's spatial extension into the image: the nightly names each
+# sample's locality from its coordinates by reading outlines from the
+# gazetteer (src/derive-locality.ts, beeline-7i6). Left to itself DuckDB
+# downloads it into ~/.duckdb at first use, which is the container layer:
+# every deploy would re-fetch it, and the nightly would depend on DuckDB's
+# extension repository being reachable. Baked here, it needs no network.
+#
+# httpfs was baked in beside it until 2026-11-05, for the crypto module the
+# encrypted private store needed (ADR 0003); that store is retired
+# (beeline-4tdh, beeline-csgv) and nothing else needs it.
 #
 # NOTE: the extension is per-platform, so this must be built for the machine
 # it runs on. `fly deploy` builds on Fly's amd64 builders; building locally on
 # an arm64 Mac to push needs --platform linux/amd64.
-#
-# The spatial extension is baked in beside it, for the same reason: the
-# nightly names each sample's locality from its coordinates by reading
-# outlines from the gazetteer (src/derive-locality.ts, beeline-7i6).
 USER node
 RUN node --input-type=module -e "\
 import { DuckDBInstance } from '@duckdb/node-api'; \
 const i = await DuckDBInstance.create(':memory:'); \
 const c = await i.connect(); \
-await c.run('INSTALL httpfs'); \
 await c.run('INSTALL spatial'); \
 c.closeSync();"
 USER root
@@ -118,9 +114,9 @@ RUN mkdir -p /app/data && chown -R node:node /app
 
 # DuckDB finds its extensions under $HOME, and the entrypoint drops to `node`
 # with setpriv, which changes the uid but NOT the environment — so without
-# this, a non-root boot looks in /root/.duckdb, finds nothing, and dies with
-# "read-only crypto module loaded" the moment it opens the encrypted
-# private store. Set beside the install above, because it is the same decision.
+# this, a non-root process looks in /root/.duckdb, finds nothing, and fetches
+# spatial from the network. Set beside the install above, because it is the
+# same decision.
 ENV HOME=/home/node
 ENV NODE_ENV=production
 ENV PORT=3054

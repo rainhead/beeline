@@ -78,13 +78,13 @@ describe("fly.production.toml", () => {
     expect(entries.get(":kill_signal")!.value).toBe("SIGTERM");
   });
 
-  it("keeps both stores on the mounted volume", async () => {
+  it("keeps the store on the mounted volume", async () => {
     const entries = await read();
     const destination = entries.get("mounts:destination")!.value;
     // A store path outside the mount is not an error anyone sees: the app
     // opens it, serves from it, and the machine's next redeploy discards it
     // with the container layer.
-    for (const key of ["BEELINE_DB", "BEELINE_PRIVATE_DB"]) {
+    for (const key of ["BEELINE_DB"]) {
       const path = entries.get(`env:${key}`);
       expect(path, `${key} is not set in [env]`).toBeDefined();
       expect(path!.value.startsWith(`${destination}/`), `${key}=${path!.value} is not under ${destination}`).toBe(true);

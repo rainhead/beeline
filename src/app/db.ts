@@ -1,131 +1,8 @@
 import { DuckDBInstance } from "@duckdb/node-api";
-import { existsSync } from "node:fs";
-import { rename } from "node:fs/promises";
 import type { Kysely } from "kysely";
 import { createKysely, openDuckDb } from "../db.js";
 import type { Database } from "../model.js";
 import type { AppConfig } from "./config.js";
-
-const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
-
-/**
- * The retired private store's tables that are carried. Not its sessions: a
- * browser holds its session under the cookie name from before the __Host-
- * prefix (beeline-73c9), which is no longer read, so no carried session could
- * be used by its own browser. It could still be used by anyone holding the
- * old id in the clear, from an older backup or the retired file, so carrying
- * one would only keep it alive. Everyone signs in once more instead.
- */
-const RETIRED_TABLES = ["inat_sign_in", "person_activity", "impersonation"] as const;
-
-/** What absorbing a retired private store carried, table by table; null when there was none. */
-export type Absorbed = Record<(typeof RETIRED_TABLES)[number], number> | null;
-
-/**
- * Carry a retired private store's rows into the main store, once (beeline-4tdh).
- *
- * Until 2026-11-05 sessions, sign-in records, last visits and the
- * impersonation log lived in a second, encrypted file (ADR 0003). The tables
- * now live in the main store (schema/012), and a deployed store gets them
- * empty from migration 0076; this fills all but the sessions (see
- * RETIRED_TABLES). It is the app's job rather than the migration's because
- * only the app holds the old store's key.
- *
- * Every insert skips a row already there and the whole copy is one
- * transaction, so a crash before the file is renamed repeats the copy on the
- * next boot without duplicating anything — the impersonation log, which has
- * no key, by matching every column. Then the file is renamed to
- * `<path>.retired` rather than deleted: it is the only copy of the rows as
- * they stood, and its key still opens it. A second store carried later (one
- * restored from an older backup) gets a name of its own rather than
- * replacing the first.
- *
- * A file that will not open — encrypted and no key given, or the wrong key —
- * throws, and the app does not start. Starting without the rows would sign
- * everyone out and lose who has been here, quietly.
- */
-export async function absorbPrivateStore(
-  instance: DuckDBInstance,
-  opts: { path: string; key: string | null },
-): Promise<Absorbed> {
-  if (!existsSync(opts.path)) return null;
-  const conn = await instance.connect();
-  try {
-    const options = ["READ_ONLY", ...(opts.key === null ? [] : [`ENCRYPTION_KEY ${quote(opts.key)}`])].join(", ");
-    await conn.run(`ATTACH ${quote(opts.path)} AS retired_private (${options})`);
-    const columnsOf = async (table: string): Promise<Set<string>> => {
-      const found = await conn.run(
-        `SELECT column_name FROM information_schema.columns
-          WHERE table_catalog = 'retired_private' AND table_name = $1`,
-        [table] as never,
-      );
-      return new Set(((await found.getRows()) as [string][]).map(([c]) => c));
-    };
-    const count = async (statement: string): Promise<number> => {
-      const found = await conn.run(statement);
-      return Number(found.rowsChanged);
-    };
-
-    const carried = { inat_sign_in: 0, person_activity: 0, impersonation: 0 };
-    await conn.run("BEGIN TRANSACTION");
-    try {
-      // A store from before 2026-08-28 named the sign-in table for the token
-      // it then held; one that never had icon_url gives none.
-      let signIn = await columnsOf("inat_sign_in");
-      let signInTable = "inat_sign_in";
-      if (signIn.size === 0) {
-        signIn = await columnsOf("inat_oauth_token");
-        signInTable = "inat_oauth_token";
-      }
-      if (signIn.size > 0) {
-        carried.inat_sign_in = await count(
-          `INSERT INTO inat_sign_in (inat_user_id, login, icon_url, created_at, last_login_at)
-           SELECT inat_user_id, login, ${signIn.has("icon_url") ? "icon_url" : "NULL"}, created_at, last_login_at
-           FROM retired_private.${signInTable}
-           ON CONFLICT DO NOTHING`,
-        );
-      }
-      if ((await columnsOf("person_activity")).size > 0) {
-        carried.person_activity = await count(
-          `INSERT INTO person_activity (inat_user_id, last_seen_at)
-           SELECT inat_user_id, last_seen_at FROM retired_private.person_activity
-           ON CONFLICT DO NOTHING`,
-        );
-      }
-      if ((await columnsOf("impersonation")).size > 0) {
-        carried.impersonation = await count(
-          `INSERT INTO impersonation (admin_login, person_name, started_at)
-           SELECT r.admin_login, r.person_name, r.started_at FROM retired_private.impersonation r
-           WHERE NOT EXISTS (
-             SELECT 1 FROM impersonation i
-              WHERE i.admin_login = r.admin_login AND i.person_name = r.person_name AND i.started_at = r.started_at)`,
-        );
-      }
-      await conn.run("COMMIT");
-    } catch (err) {
-      // Neither clean-up step may hide why the copy failed.
-      await conn.run("ROLLBACK").catch((e: Error) => console.error(`rollback failed: ${e.message}`));
-      await conn.run("DETACH retired_private").catch((e: Error) => console.error(`detach failed: ${e.message}`));
-      throw err;
-    }
-    await conn.run("DETACH retired_private");
-    // CHECKPOINT per docs/runbooks: DuckDB < 1.6 can fail WAL replay and
-    // leave the file unopenable (beeline-vyi). Before the rename, so the rows
-    // are in the main file before the old one stops being found.
-    await conn.run("CHECKPOINT");
-    let retired = `${opts.path}.retired`;
-    for (let n = 2; existsSync(retired) || existsSync(`${retired}.wal`); n++) retired = `${opts.path}.retired-${n}`;
-    await rename(opts.path, retired);
-    if (existsSync(`${opts.path}.wal`)) await rename(`${opts.path}.wal`, `${retired}.wal`);
-    console.log(
-      `absorbed the private store into the main store and renamed it ${retired}: ` +
-        RETIRED_TABLES.map((t) => `${carried[t]} ${t}`).join(", "),
-    );
-    return carried;
-  } finally {
-    conn.closeSync();
-  }
-}
 
 export interface AppDb {
   instance: DuckDBInstance;
@@ -133,11 +10,7 @@ export interface AppDb {
   close(): Promise<void>;
 }
 
-/**
- * Open the database the app owns (ADR 0005: exactly one process, this one).
- * Carrying a retired private store across is the caller's next step, after
- * the registry guard (src/app/main.ts).
- */
+/** Open the database the app owns (ADR 0005: exactly one process, this one). */
 export async function openAppDb(config: Pick<AppConfig, "dbPath">): Promise<AppDb> {
   const instance = await openDuckDb(config.dbPath);
   const db = createKysely(instance);

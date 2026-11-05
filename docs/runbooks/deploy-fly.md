@@ -187,9 +187,9 @@ machine** rather than uploading them — see below.
 
 There is no private store to set up: sessions and sign-in records are tables
 in the store itself since 2026-11-05 (beeline-4tdh). Until then they were in
-an encrypted `private.duckdb` beside it ([ADR 0003](../adr/0003-private-data-store.md)),
-and the app carries such a file's rows across, all but its sessions, at the
-first boot that finds one, then renames it `private.duckdb.retired`.
+an encrypted `private.duckdb` beside it ([ADR 0003](../adr/0003-private-data-store.md));
+production's rows were carried across at its first boot after the change, and
+the app no longer reads such a file.
 
 ## Deploying a change
 
@@ -747,14 +747,15 @@ opened too, and without the key the check says it was **not** checked rather
 than passing it. What it leaves in `dir` is what a restore puts back.
 
 1. `fly deploy -c fly.production.toml --env BEELINE_MAINTENANCE=1`, so nothing holds the store.
-2. On the volume, **delete `beeline.duckdb.wal` and `private.duckdb.wal`** if
-   they exist. A WAL left beside an older store is replayed onto it, as with
+2. On the volume, **delete `beeline.duckdb.wal`** if it exists. A WAL left
+   beside an older store is replayed onto it, as with
    [the pre-migrate copy](#the-pre-migrate-copy).
 3. `fly ssh sftp shell --app beeline-production`, and `put` the store to `/app/data/beeline.duckdb`
    and each `authored/*.csv` to `/app/data/`. An archive from before
-   2026-11-05 also holds `private.duckdb`: put it to `/app/data/private.duckdb`
-   too, and the app carries its sign-ins across at boot, which needs
-   `BEELINE_PRIVATE_DB_KEY` set as a secret for that boot.
+   2026-11-05 also holds `private.duckdb`, which the app no longer reads:
+   restoring such an archive starts with no sign-in history and nobody ever
+   seen, since its store predates the sign-in tables and boot creates them
+   empty. Everyone signs in again, and "Last seen" starts over.
 4. On a new volume, also what the archive does not hold: the pipeline's
    `data/secrets/inat-oauth-token` ([One-time setup](#one-time-setup)), and
    the DEM tiles, which the nightly fetches again by itself, 25 a night, or

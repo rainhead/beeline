@@ -228,7 +228,7 @@ export interface ListingQuery {
   /** Net or trap; on specimens, the kind of the sample each came from. */
   kind: KindFilter;
   qc: QcStatus;
-  /** One kind of flag (a QC rule's name), or "" for any. Samples only. */
+  /** One kind of flag (a QC rule's name), or "" for any; on specimens, their sample's. */
   flag: QcRuleName | "";
   sort: SortKey;
   dir: SortDirection;
@@ -737,6 +737,10 @@ const QC_COUNT_SELECTIONS = [
  */
 const FLAG_LIST = sql<string | null>`string_agg(DISTINCT concat(f.rule_name, ':', r.severity), ',')`.as("flag_list");
 
+/** The sample (alias `s`) carries this kind of flag: the Flags column's filter. */
+const flaggedWith = (rule: QcRuleName) =>
+  sql<boolean>`EXISTS (SELECT 1 FROM sample_qc_finding kf WHERE kf.sample_id = s.entity_id AND kf.rule_name = ${rule})`;
+
 /** The kinds of flag a sample carries, blocking first, then by rule. */
 function parseFlags(list: string | null): ListedFlag[] {
   return (list ?? "")
@@ -1065,12 +1069,7 @@ export async function listSamples(
   }
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
-  if (query.flag !== "") {
-    base = base.where(
-      sql<boolean>`EXISTS (SELECT 1 FROM sample_qc_finding kf
-                           WHERE kf.sample_id = s.entity_id AND kf.rule_name = ${query.flag})`,
-    );
-  }
+  if (query.flag !== "") base = base.where(flaggedWith(query.flag));
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1250,6 +1249,9 @@ export async function listSpecimens(
   }
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
+  // By the sample's flags, as the severity filter above narrows specimens: a
+  // link to /specimens?flag= must not name a filter it does not apply.
+  if (query.flag !== "") base = base.where(flaggedWith(query.flag));
   if (opts.year !== undefined) base = base.where(sql<number>`extract(year from s.date_start)`, "=", opts.year);
 
   const limit = opts.limit ?? PAGE_SIZE;

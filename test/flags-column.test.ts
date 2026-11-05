@@ -39,6 +39,10 @@ async function setup() {
     { coordinate_uncertainty_m: "500" },
   );
   const clean = await insertCleanSample(conn, { sample_number: "'C'" });
+  // One specimen each for the held and the clean sample, for /specimens.
+  await conn.run(
+    `INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${held}, 1, '25000901'), (${clean}, 1, '25000902')`,
+  );
   const app = createApp({
     ...(await scratchPaths()),
     db: createKysely(instance),
@@ -77,6 +81,12 @@ describe("the Flags column", () => {
     expect(page).not.toContain(link(ids.many));
     expect(page).not.toContain(link(ids.clean));
     expect(page).toContain(`${en.listings.filters.flagKind}: ${s.flag.staff_hold}`);
+    // On specimens it narrows by their sample, as the severity filter does,
+    // rather than naming a filter it does not apply (CodeRabbit).
+    const specimens = await get("/specimens?scope=all&flag=staff_hold");
+    expect(specimens).toContain(`${en.listings.filters.flagKind}: ${s.flag.staff_hold}`);
+    expect(specimens).toContain("25000901");
+    expect(specimens).not.toContain("25000902");
     // Not a rule: ignored, as any other unknown value is.
     const unknown = await get("/samples?scope=all&flag=nonsense");
     for (const id of [ids.held, ids.many, ids.clean]) expect(unknown).toContain(link(id));

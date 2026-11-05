@@ -198,6 +198,32 @@ describe("deriveLocalities", () => {
     expect(at!.candidates.map((c) => c.locality)).not.toContain("Philamath");
   });
 
+  // beeline-fiyy: "Check iNaturalist now" names its few points from what lies
+  // around each one, and a whole run reads everything. The two must agree.
+  // Most of the store is already named and so not pending, which is the case
+  // that matters: what the narrow run must still read is the samples around
+  // the new point, in the cells beside its own, and correct the misspelling
+  // among them.
+  test("a new point is named exactly as a whole run names it", async () => {
+    const path = join(dir, "n1.duckdb");
+    await buildTestGazetteer(path, "build-n1");
+    const named = async (narrowUpTo: number) => {
+      const conn = await storeWithPerson();
+      // A few hundred metres north, across the line into the next 0.02-degree
+      // cell: a name nobody's gazetteer has, and the town's name misspelt.
+      await insertCleanSample(conn, { locality: "'Greasy Creek'" }, { latitude: "44.5610", longitude: "-123.38" });
+      await insertCleanSample(conn, { locality: "'Philamath'", sample_number: "'2'" }, { latitude: "44.5611", longitude: "-123.38" });
+      await deriveLocalities(conn, path);
+      const fresh = await insertCleanSample(conn, { sample_number: "'5'" }, { latitude: "44.5590", longitude: "-123.38" });
+      expect(await deriveLocalities(conn, path, { narrowUpTo })).toMatchObject({ pending: 1, named: 1 });
+      return candidates(conn, fresh);
+    };
+    const narrow = (await named(50)) as Array<[string, string]>;
+    expect(narrow.map(([l]) => l)).toContain("Greasy Creek");
+    expect(narrow.map(([l]) => l)).not.toContain("Philamath");
+    expect(narrow).toEqual(await named(0));
+  });
+
   test("a plural, or a space taken out, is not taken for a misspelling (beeline-5j10)", async () => {
     const path = join(dir, "s2.duckdb");
     await buildTestGazetteer(path, "build-s2");

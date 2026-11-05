@@ -58,9 +58,23 @@ export interface DeriveLocalityOptions {
    * the rest of the store is the nightly's.
    */
   observerUserId?: number;
+  /**
+   * Up to how many pending points a run reads only what lies around them
+   * (NARROW_RUN_POINTS). A test sets 0 to read everything, so the two ways
+   * can be held to the same answer.
+   */
+  narrowUpTo?: number;
 }
 
 type Conn = DuckDBConnection;
+type LatLon = { latitude: number; longitude: number };
+
+/**
+ * Up to this many points, a run reads only the samples and gazetteer names
+ * around each one, as the form's single point does. Past it the conditions,
+ * one per point, cost more than reading everything.
+ */
+const NARROW_RUN_POINTS = 50;
 
 async function rows<T>(conn: Conn, sql: string, params?: unknown[]): Promise<T[]> {
   const reader = await conn.runAndReadAll(sql, params as never);
@@ -103,7 +117,12 @@ export async function deriveLocalities(
     result.pending = pending.length;
     if (pending.length === 0) return result;
     await usedFeatures(conn, G);
-    await usedLocalities(conn, G);
+    // A few points, as "Check iNaturalist now" brings, are named from the
+    // samples and gazetteer names around them, as the form names one; that
+    // narrowing is what keeps the check from spending seconds comparing
+    // every locality in the store with the gazetteer (beeline-fiyy). A
+    // whole run needs them all.
+    await usedLocalities(conn, G, pending.length <= (opts.narrowUpTo ?? NARROW_RUN_POINTS) ? pending.map(({ lat, lon }) => ({ latitude: lat, longitude: lon })) : undefined);
     const size = opts.batchSize ?? 5000;
     for (let i = 0; i < pending.length; i += size) {
       opts.signal?.throwIfAborted();
@@ -183,7 +202,7 @@ async function candidatesAt(
     if (build === undefined) throw new Error(`${gazetteerPath} has no gazetteer_build row: rebuild it`);
     await createMacros(conn);
     await usedFeatures(conn, G);
-    await usedLocalities(conn, G, point);
+    await usedLocalities(conn, G, [point]);
     // No sample has this id: entity ids start at 1.
     const batch = [{ sample_id: 0, lat: point.latitude, lon: point.longitude }];
     await loadBatch(conn, batch);
@@ -246,11 +265,17 @@ async function usedFeatures(conn: Conn, G: string): Promise<void> {
  * more than the kilometre a used name is read from. Read from the whole
  * store once a run, since any sample's locality counts (beeline-4hxe).
  */
-async function usedLocalities(conn: Conn, G: string, near?: { latitude: number; longitude: number }): Promise<void> {
-  // Naming one point needs only the cells around it, and a form is waiting.
+async function usedLocalities(conn: Conn, G: string, near?: readonly LatLon[]): Promise<void> {
+  // Naming a few points needs only the cells around them, and somebody is
+  // waiting: a form, or "Check iNaturalist now".
   const around = near
-    ? `AND floor(l.latitude / 0.02) BETWEEN ${Math.floor(near.latitude / 0.02) - 1} AND ${Math.floor(near.latitude / 0.02) + 1}
-       AND floor(l.longitude / 0.02) BETWEEN ${Math.floor(near.longitude / 0.02) - 1} AND ${Math.floor(near.longitude / 0.02) + 1}`
+    ? `AND (${near
+        .map(
+          (p) =>
+            `(floor(l.latitude / 0.02) BETWEEN ${Math.floor(p.latitude / 0.02) - 1} AND ${Math.floor(p.latitude / 0.02) + 1}
+              AND floor(l.longitude / 0.02) BETWEEN ${Math.floor(p.longitude / 0.02) - 1} AND ${Math.floor(p.longitude / 0.02) + 1})`,
+        )
+        .join(" OR ")})`
     : "";
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE locality_used_sample AS
@@ -283,7 +308,7 @@ async function usedLocalities(conn: Conn, G: string, near?: { latitude: number; 
  *    OpenStreetMap runs it together;
  *  - exactly one place nearby is one letter off, and its name fits a label.
  */
-async function correctSpellings(conn: Conn, G: string, near?: { latitude: number; longitude: number }): Promise<void> {
+async function correctSpellings(conn: Conn, G: string, near?: readonly LatLon[]): Promise<void> {
   const [hasCamp] = await rows<{ n: number }>(
     conn,
     `SELECT count(*)::INTEGER AS n FROM duckdb_tables() WHERE database_name = '${G}' AND table_name = 'campground'`,
@@ -291,21 +316,25 @@ async function correctSpellings(conn: Conn, G: string, near?: { latitude: number
   const camp = hasCamp!.n > 0;
   // For one point, only the names within reach of the samples around it can
   // be a correction; a whole run needs them all.
-  const box = near
-    ? { s: near.latitude - 0.3, n: near.latitude + 0.3, w: near.longitude - 0.5, e: near.longitude + 0.5 }
-    : null;
-  const inBox = box ? `WHERE lat BETWEEN ${box.s} AND ${box.n} AND lon BETWEEN ${box.w} AND ${box.e}` : "";
+  const boxes = near?.map((p) => ({ s: p.latitude - 0.3, n: p.latitude + 0.3, w: p.longitude - 0.5, e: p.longitude + 0.5 }));
+  const inBox = boxes
+    ? `WHERE ${boxes.map((b) => `(lat BETWEEN ${b.s} AND ${b.n} AND lon BETWEEN ${b.w} AND ${b.e})`).join(" OR ")}`
+    : "";
   // Filed in cells of 0.1 by 0.2 degrees, so a name is compared only with the
   // gazetteer's names in its cell and the eight around it: comparing each
   // with every name took longer than the rest of the step together.
+  // An area's centre is worked out once, before any filter reads it: written
+  // inline, the planner copied ST_Centroid into every comparison of the
+  // boxes' filter, and "Check iNaturalist now" with 13 points spent a second
+  // here (beeline-fiyy).
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE locality_gazetteer_name AS
+    WITH osm AS MATERIALIZED (
+      SELECT name, ST_Centroid(geom) AS centre FROM ${G}.osm_area WHERE name IS NOT NULL)
     SELECT name, lat, lon, CAST(floor(lat / 0.1) AS INTEGER) AS gy, CAST(floor(lon / 0.2) AS INTEGER) AS gx
     FROM (SELECT name, lat, lon FROM ${G}.place
           UNION ALL SELECT name, lat, lon FROM ${G}.feature
-          UNION ALL SELECT name, ST_Y(ST_Centroid(geom)), ST_X(ST_Centroid(geom)) FROM ${G}.osm_area
-            WHERE name IS NOT NULL
-            ${box ? `AND ST_Intersects(geom, ST_MakeEnvelope(${box.w}, ${box.s}, ${box.e}, ${box.n}))` : ""}
+          UNION ALL SELECT name, ST_Y(centre), ST_X(centre) FROM osm
           ${camp ? `UNION ALL SELECT name, lat, lon FROM ${G}.campground` : ""})
     ${inBox}`);
   // Whether a name is any place's, anywhere, is asked of the whole gazetteer

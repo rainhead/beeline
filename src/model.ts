@@ -459,6 +459,13 @@ export interface SampleAtlasTable {
   assigned_by: number | null;
 }
 
+/** A sample entered in Beeline rather than imported (beeline-3vs.2). */
+export interface SampleEntryTable {
+  sample_id: number;
+  entered_by: number | null;
+  entered_at: Generated<Date>;
+}
+
 /** A locality staff set, which promotion never overwrites (beeline-649). */
 export interface SampleLocalityOverrideTable {
   sample_id: number;
@@ -1299,6 +1306,7 @@ export interface Database {
   sample_primary_collector: SamplePrimaryCollectorView;
   sample_primary_collector_invalid: SamplePrimaryCollectorInvalidView;
   sample_atlas: SampleAtlasTable;
+  sample_entry: SampleEntryTable;
   sample_locality_override: SampleLocalityOverrideTable;
   sample_locality_override_stale: SampleLocalityOverrideStaleView;
   sample_locality_override_diverged: SampleLocalityOverrideDivergedView;

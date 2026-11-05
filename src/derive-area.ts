@@ -298,7 +298,8 @@ async function stampCountiesUnlocked(conn: Conn, G: string): Promise<number> {
           FROM sample_area_current a JOIN ${G}.region r ON r.source = a.source AND r.source_id = a.source_id
           WHERE a.kind = 'county'
           GROUP BY a.sample_id HAVING count(*) = 1) point ON point.sample_id = s.entity_id
-    WHERE s.inat_observation_id IS NOT NULL
+    WHERE (s.inat_observation_id IS NOT NULL
+           OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id))
       AND s.state_province = point.state
       AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
       AND NOT EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = s.entity_id)

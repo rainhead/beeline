@@ -89,6 +89,25 @@ export async function mayEnterTrapSamples(conn: DuckDBConnection, personId: numb
   return (found[0]?.n ?? 0) > 0;
 }
 
+/**
+ * Who may edit an entered sample: staff, one of its collectors, or whoever
+ * entered it, as the correction form lets a collector edit only their own
+ * samples (CodeRabbit). Entering is open to every trapper; editing someone
+ * else's sample is not.
+ */
+export async function mayEditTrapSample(conn: DuckDBConnection, sampleId: number, personId: number | null, admin: boolean): Promise<boolean> {
+  if (admin) return true;
+  if (personId === null) return false;
+  const found = await rows<{ n: number }>(
+    conn,
+    `SELECT count(*)::INTEGER AS n FROM sample_entry e
+     WHERE e.sample_id = $1
+       AND (e.entered_by = $2 OR EXISTS (SELECT 1 FROM sample_collector c WHERE c.sample_id = e.sample_id AND c.person_id = $2))`,
+    [sampleId, personId],
+  );
+  return (found[0]?.n ?? 0) > 0;
+}
+
 /** The people the collector boxes offer: everyone who has collected anything, trap collectors first. */
 export async function collectorChoices(conn: DuckDBConnection): Promise<{ name: string; trap: boolean }[]> {
   const found = await rows<{ display_name: string; trap: boolean }>(

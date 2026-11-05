@@ -23,12 +23,14 @@ async function trapApp() {
     ((await rows(conn, `INSERT INTO person (display_name) VALUES ('${name}') RETURNING entity_id`))[0]![0] as number);
   const people = {
     trapper: await person("Tess Trapper"),
+    otherTrapper: await person("Otto Other"),
     netter: await person("Ned Netter"),
     staffer: await person("Sam Staff"),
   };
   await conn.run(`INSERT INTO person_admin (person_id) VALUES (${people.staffer})`);
   await insertCleanSample(conn, { kind: "'trap'", sample_number: "'OBAS-00657'", collector_id: String(people.trapper) });
   await insertCleanSample(conn, { kind: "'net'", collector_id: String(people.netter) });
+  await insertCleanSample(conn, { kind: "'trap'", sample_number: "'OBAS-00600'", collector_id: String(people.otherTrapper) });
   const db = createKysely(instance);
   const paths = await scratchPaths();
   const as = (who: keyof typeof people) => {
@@ -126,6 +128,16 @@ describe("entering a trap sample", () => {
     const saved = await staff.post(`/samples/${id}/trap`, entry({ specimen_count: "42" }));
     expect(saved.status).toBe(302);
     expect(await rows(conn, `SELECT specimen_count FROM sample WHERE entity_id = ${id}`)).toEqual([[42]]);
+  });
+
+  it("lets another trapper enter samples but not edit this one", async () => {
+    const { as } = await trapApp();
+    const id = Number((await as("trapper").post("/trap-samples/new", entry())).headers.get("location")!.split("/")[2]);
+    const other = as("otherTrapper");
+    expect((await other.app.request("/trap-samples/new")).status).toBe(200);
+    expect(await (await other.app.request(`/samples/${id}`)).text()).not.toContain(`/samples/${id}/trap`);
+    expect((await other.app.request(`/samples/${id}/trap`)).status).toBe(404);
+    expect((await other.post(`/samples/${id}/trap`, entry({ specimen_count: "9" }))).status).toBe(404);
   });
 
   it("does not open an imported sample in the trap form", async () => {

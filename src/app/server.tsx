@@ -143,6 +143,7 @@ import {
   collectorChoices,
   createTrapSample,
   loadTrapSample,
+  mayEditTrapSample,
   mayEnterTrapSamples,
   nextSampleNumber,
   updateTrapSample,
@@ -967,7 +968,7 @@ export function createApp({
     // form by whoever may enter trap samples (beeline-3vs.2).
     const entered = conn === undefined ? null : await loadTrapSample(conn, sample.sample_id);
     const trapEditHref =
-      entered?.editable && !c.get("acting").impersonating && (await mayEnterTrapSamples(conn!, c.get("acting").personId, c.get("admin")))
+      entered?.editable && !c.get("acting").impersonating && (await mayEditTrapSample(conn!, sample.sample_id, c.get("acting").personId, c.get("admin")))
         ? `/samples/${sample.sample_id}/trap`
         : undefined;
     return c.html(
@@ -1121,7 +1122,9 @@ export function createApp({
     const m = c.get("m");
     const id = Number(c.req.param("id"));
     const current = await loadTrapSample(conn!, id);
-    if (current === null) return errorResponse(c, "notFound");
+    if (current === null || !(await mayEditTrapSample(conn!, id, c.get("acting").personId, c.get("admin")))) {
+      return errorResponse(c, "notFound");
+    }
     if (!current.editable) return errorResponse(c, "notFound", { heading: m.trapSample.notEditableHeading, message: m.trapSample.notEditable });
     return c.html(await trapPage(c, m.trapSample.editTitle, current, {}, `/samples/${id}/trap`, id));
   });
@@ -1131,7 +1134,9 @@ export function createApp({
     if (refused !== null) return refused;
     const m = c.get("m");
     const id = Number(c.req.param("id"));
-    if ((await loadTrapSample(conn!, id)) === null) return errorResponse(c, "notFound");
+    if ((await loadTrapSample(conn!, id)) === null || !(await mayEditTrapSample(conn!, id, c.get("acting").personId, c.get("admin")))) {
+      return errorResponse(c, "notFound");
+    }
     const form = trapFormFrom(await c.req.parseBody({ all: true }));
     const checked = await checkTrapSample(conn!, form, id);
     if ("problems" in checked) {

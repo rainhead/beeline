@@ -93,7 +93,8 @@ deltas that bring an already-deployed database up to it.**
   `--check` drift report becomes a deploy-time gate rather than a warning.
 - **The private store patched itself at boot** (ADR 0003) until it was
   retired on 2026-11-05 (beeline-4tdh): its tables are now in this catalog,
-  created by migration 0076 like any other, and the app carries a deployed
-  private store's rows across at its first boot afterwards. Before that it
+  created by migration 0076 like any other, and production's rows were
+  carried across once, at its first boot afterwards, by code since removed
+  (beeline-csgv; restoring an older archive is in the runbook). Before that it
   was attached rather than part of this catalog, and patched itself at boot
   outside this mechanism.

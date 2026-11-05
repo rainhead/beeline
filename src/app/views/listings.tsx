@@ -428,13 +428,25 @@ function flagName(m: Messages, flag: ListedFlag): string {
  * name and at the head of its panel, and blocking flags come first. A
  * symbol for it waits on the domain icon set (beeline-2c3.14).
  */
-function FlagsCell({ m, flags, sampleId }: { m: Messages; flags: readonly ListedFlag[]; sampleId: number }) {
+function FlagsCell({
+  m,
+  flags,
+  sampleId,
+  selected,
+}: {
+  m: Messages;
+  flags: readonly ListedFlag[];
+  sampleId: number;
+  /** The kind the listing is filtered to, shown first so it is never among the hidden (CodeRabbit). */
+  selected: string;
+}) {
   const s = m.listings.status;
   if (flags.length === 0) return <Chip tone="success">{s.clean}</Chip>;
   const more = flags.length - FLAGS_SHOWN;
+  const ordered = [...flags.filter((f) => f.rule === selected), ...flags.filter((f) => f.rule !== selected)];
   return (
     <span class="flag-chips">
-      {flags.slice(0, FLAGS_SHOWN).map((flag) => {
+      {ordered.slice(0, FLAGS_SHOWN).map((flag) => {
         const name = flagName(m, flag);
         const severity = s.flagSeverity[flag.severity];
         const instruction = m.qcInstructions[flag.rule];
@@ -867,7 +879,12 @@ export function SampleListing(props: ListingProps<SampleRow>) {
                   )}
                 </td>
                 <td>
-                  <FlagsCell m={m} flags={page.findings?.get(row.sample_id) ?? []} sampleId={row.sample_id} />
+                  <FlagsCell
+                    m={m}
+                    flags={page.findings?.get(row.sample_id) ?? []}
+                    sampleId={row.sample_id}
+                    selected={query.flag}
+                  />
                 </td>
                 <td>
                   <OrAbsent value={row.atlas_code} label={copy.atlasOutside} spelled />

@@ -95,6 +95,10 @@ describe("the Flags column", () => {
     // Blocking first: the county is only a heads-up, so it is among those
     // left over, and its chip is not drawn.
     expect(page).not.toContain(`${s.flag.missing_recommended_field}<span class="visually-hidden">`);
+    // Unless it is the kind the listing is filtered to, which comes first.
+    const filtered = await get("/samples?scope=all&flag=missing_recommended_field");
+    expect(filtered).toContain(`${s.flag.missing_recommended_field}<span class="visually-hidden">`);
+    expect(filtered).toContain(`<a href="/samples/${ids.many}">${s.flagMore(2)}</a>`);
   });
 
   it("filters to one kind of flag", async () => {

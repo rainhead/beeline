@@ -149,10 +149,13 @@ describe("the taxonomy pages", () => {
       expect(menu).toContain(`href="${path}"`);
       expect(account).not.toContain(`href="${path}"`);
     }
-    // "How Beeline works" first of all, above even the records a narrow
-    // screen brings into the menu (gh-262).
-    expect(menu.match(/href="([^"]+)"/)?.[1]).toBe("/how-it-works");
-    expect([...menu.matchAll(/href="\/how-it-works"/g)]).toHaveLength(1);
+    // "How Beeline works" is in the header bar, first (gh-262), so it is
+    // not among the menu's reference pages; a narrow screen brings the bar's
+    // links into the menu, where it heads them.
+    const bar = between(body, 'class="nav-inline"', "</nav>");
+    expect(bar.match(/href="([^"]+)"/)?.[1]).toBe("/how-it-works");
+    const records = between(menu, 'class="menu-section nav-records"', "</nav>");
+    expect(records.match(/href="([^"]+)"/)?.[1]).toBe("/how-it-works");
     // The rest alphabetical, by the labels a person reads.
     const group = between(menu, `aria-label="${en.layout.more}"`, "</nav>");
     expect([...group.matchAll(/href="([^"]+)"/g)].map((match) => match[1])).toEqual([

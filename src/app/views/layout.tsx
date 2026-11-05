@@ -40,12 +40,15 @@ const STYLESHEETS = ["/tokens.css", "/static/elements.css", "/static/layout.css"
 const versioned = (href: string, version: string) => `${href}${href.includes("?") ? "&" : "?"}v=${version}`;
 
 /**
- * The header nav: the records people work through, and nothing else.
+ * The header nav: the page that explains the process, then the records people
+ * work through. "How Beeline works" is here rather than in the menu at
+ * Andony's request (gh-262), so nobody has to open a menu to find it.
  * Rendered twice — inline on wide screens, in the hamburger menu on narrow ones.
  */
 function NavLinks({ m }: { m: Messages }) {
   return (
     <>
+      <a href="/how-it-works">{m.layout.nav.howItWorks}</a>
       <a href="/samples">{m.layout.nav.samples}</a>
       <a href="/specimens">{m.layout.nav.specimens}</a>
     </>
@@ -54,8 +57,7 @@ function NavLinks({ m }: { m: Messages }) {
 
 /**
  * Everything else a person can open — reference pages and staff tools — in
- * the menu left of the brand, below "How Beeline works", which the panel
- * puts first of all, grouped by what it is for rather than by who
+ * the menu left of the brand, grouped by what it is for rather than by who
  * may use it (beeline-45v.5). Each item is still shown only to whoever may
  * open it. Never the account menu: that one is about the person signed in.
  */
@@ -228,12 +230,6 @@ export function Layout(props: {
               <MenuIcon />
             </summary>
             <div class="menu-panel">
-              {/* First, above everything, on every screen: the page that
-                  explains the rest (Andony, gh-262). Its own section, so the
-                  alphabetical list below keeps its rule. */}
-              <div class="menu-section">
-                <a href="/how-it-works">{m.layout.nav.howItWorks}</a>
-              </div>
               {/* The inline nav is hidden on a narrow screen, so the records
                   come along here; on a wide one they stay in the header. */}
               <nav class="menu-section nav-records" aria-label={m.layout.records}>

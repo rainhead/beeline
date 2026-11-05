@@ -1,16 +1,17 @@
 # Deploy to Fly
 
-Beeline runs on Fly as two apps in the `osu-mm` organisation, each one
-machine and one volume in `sjc`: the sandbox, `beeline`, and from cutover
-production, `beeline-production` ([below](#two-apps-the-sandbox-and-production)).
-Tracked config: [`fly.toml`](../../fly.toml) and
+Beeline runs on Fly as one app in the `osu-mm` organisation,
+`beeline-production`: one machine and one volume in `sjc`, serving
+`melittologist.org`. Tracked config:
 [`fly.production.toml`](../../fly.production.toml),
 [`Dockerfile`](../../Dockerfile),
-[`infra/fly/entrypoint.sh`](../../infra/fly/entrypoint.sh). The commands below
-name the sandbox; for production, pass `-c fly.production.toml` to `fly deploy`
-and `--app beeline-production` to everything else.
+[`infra/fly/entrypoint.sh`](../../infra/fly/entrypoint.sh). Deploy with
+`fly deploy -c fly.production.toml`, and name the app (`--app
+beeline-production`) on every other command. There is deliberately no
+`fly.toml`, so a bare `fly deploy` fails rather than guessing. The sandbox,
+`beeline`, was retired on 2026-11-05 ([below](#the-sandbox-retired)).
 
-The shape is not a sandbox shortcut. Exactly one process may hold
+The shape is deliberate. Exactly one process may hold
 `beeline.duckdb` ([ADR 0005](../adr/0005-app-process-owns-the-store.md)), and
 a Fly volume attaches to exactly one Machine — so the platform enforces what
 the systemd unit could only ask for. A second machine has no store to open.
@@ -58,30 +59,41 @@ process dies on the spot, which is the escape hatch and exactly the unclean
 exit the first signal avoids.
 
 **DuckDB's budgets are stated, not detected.** `BEELINE_DUCKDB_MEMORY_LIMIT`
-and `BEELINE_DUCKDB_THREADS` are set in `fly.toml` and read by `duckDbConfig`
+and `BEELINE_DUCKDB_THREADS` are set in `fly.production.toml` and read by `duckDbConfig`
 ([`src/db.ts`](../../src/db.ts)). Unset, DuckDB sizes itself from a cgroup
 reading and can plan a query against memory the machine will not give it,
 which the kernel answers with a kill rather than a spill. Stated, an
 over-large query spills to disk: measured, a full legacy promotion completes
 with the limit at 244 MiB, 16% slower than uncapped.
 
-## Two apps: the sandbox and production
+## The sandbox, retired
 
-Production is a new app rather than the sandbox promoted (Peter, 2026-10-30,
-beeline-83b8.1), so that its store starts with no rehearsal print runs or
-field numbers, and the sandbox stays a place to try a change. The image is
-the same; [`fly.production.toml`](../../fly.production.toml) is `fly.toml` with
-the app, `BEELINE_ENV` and `BEELINE_ORIGIN` changed, and a test fails if the
-two differ anywhere else. A change to the machine, the volume or DuckDB's
-budget is made in both files.
+Until 2026-11-05 a second app, `beeline` at `beeline.fly.dev`, ran the same
+image as a place to try changes; production was made a new app rather than
+the sandbox promoted, so that its store started with no rehearsal print runs
+or field numbers (Peter, 2026-10-30, beeline-83b8.1). Once production had run
+for two days the sandbox was destroyed, with its machine, volume and secrets.
+Its backups from before cutover, and a final archive of its store, private
+store and the files written in the app (`sandbox-final-2026-11-05.tar.gz`,
+encrypted private store and all, so it needs the private-store key), are in
+the subfolder "sandbox, before cutover 2026-11-03" of the backup folder,
+which retention ignores because the names are not a backup's.
 
-**Its secrets are the sandbox's**, copied machine to machine on 2026-11-02 so
-that no value passed through a terminal, except the iNaturalist client id and
-secret, which are the old system's OAuth app's (from its `.env` on the old
-server, renamed from `INATURALIST_CLIENT_*`; beeline-83b8.3). So the
-private-store key is the sandbox's too, and the copies of it kept off the
-server already cover production. `fly secrets list` shows a digest for each,
-and equal digests across the two apps mean equal values.
+To stand one up again: a new app and volume, `BEELINE_ENV=sandbox` (which
+shows the environment banner and lets the backup job stand down), its own
+iNaturalist OAuth app, since an OAuth app holds exactly one redirect URI, and
+neither `BEELINE_DRIVE_KEY` nor `BEELINE_BACKUP_FOLDER`. Retention goes by
+file name alone ([`src/store-backup.ts`](../../src/store-backup.ts)), so two
+apps writing to one folder would each move the other's copies to the bin.
+
+## Production's secrets, address and reports
+
+**Its secrets** were copied from the sandbox machine to machine on
+2026-11-02, so that no value passed through a terminal, except the
+iNaturalist client id and secret, which are the old system's OAuth app's
+(from its `.env` on the old server, renamed from `INATURALIST_CLIENT_*`;
+beeline-83b8.3). The copies of the private-store key kept off the server cover
+it.
 
 **Its address is `melittologist.org`**, and `www.melittologist.org`. Fly holds
 a certificate for each name; `fly certs setup <name> --app beeline-production`
@@ -95,44 +107,30 @@ Production's responses carry HSTS with `includeSubDomains`
 browser that has visited it refuses plain HTTP on every subdomain for six
 months: wherever the old system goes under `melittologist.org`, it needs HTTPS.
 
-**One backup folder, and only production writes to it.** Retention reads the
-folder and goes by file name alone ([`src/store-backup.ts`](../../src/store-backup.ts)),
-so two apps writing there would each move the other's copies to the bin, and a
-restore could not tell whose copy was whose. Since cutover (2026-11-03) the
-sandbox has neither `BEELINE_DRIVE_KEY` nor `BEELINE_BACKUP_FOLDER`, so its
-`store-backup` job succeeds and says nothing was backed up, where production's
-fails; the app refuses to boot with only one of the two set. The sandbox's
-copies from before cutover sit in the subfolder "sandbox, before cutover
-2026-11-03" inside the folder, which retention ignores because its name is not
-a backup's; had they stayed, production would have kept the sandbox's copy of
-1 November as November's for a year.
-
-**Sentry** takes both apps' reports under one DSN, told apart by
-`environment` (`sandbox` or `production`). The uptime monitor and the alert
-in [Errors, logs and job check-ins](#errors-logs-and-job-check-ins) watch the
-sandbox until they are pointed at production (beeline-83b8.9).
+**Sentry** takes production's reports as `environment` `production`; see
+[Errors, logs and job check-ins](#errors-logs-and-job-check-ins).
 
 ## One-time setup
 
-Off-host first: the iNat OAuth app. There is one, called **Beeline**, and it
-holds exactly **one** redirect URI — iNaturalist does not take a list, despite
-Doorkeeper supporting them elsewhere. It currently reads
-`https://beeline.fly.dev/auth/inat/callback`, which is why `BEELINE_ORIGIN` in
-`fly.toml` is the `.fly.dev` hostname and not the eventual one. The two move
+Off-host first: the iNat OAuth app. It holds exactly **one** redirect URI —
+iNaturalist does not take a list, despite Doorkeeper supporting them
+elsewhere — and production's reads
+`https://melittologist.org/auth/inat/callback`, matching `BEELINE_ORIGIN` in
+`fly.production.toml`. The two move
 together or not at all: `BEELINE_ORIGIN` is concatenated into the
 `redirect_uri` (`src/app/auth.tsx`), and iNat matches it exactly, on the token
 exchange as well as the authorize redirect — so a mismatch fails *after* the
 person has signed in and shows only the generic sign-in failure page.
 `configFromEnv` refuses a non-bare origin at boot for the same reason.
 
-DNS comes later, at cutover: `beeline.beeatlas.net` is CDK-managed in the
-**beeatlas** repo — add records there and `cdk deploy`, never hand-edit Route
-53 — and the OAuth app's redirect URI changes to match in the same sitting.
+The DNS for `melittologist.org` is described under
+[Production's secrets, address and reports](#productions-secrets-address-and-reports)
+above.
 
 ```sh
-fly apps create beeline --org osu-mm          # done
-fly volumes create beeline_data --size 10 --region sjc --app beeline
-fly secrets set --app beeline \
+fly apps create beeline-production --org osu-mm   # done
+fly volumes create beeline_data --size 10 --region sjc --app beeline-production
+fly secrets set --app beeline-production \
   BEELINE_PRIVATE_DB_KEY="$(openssl rand -hex 32)" \
   INAT_CLIENT_ID=... INAT_CLIENT_SECRET=...
 ```
@@ -152,7 +150,7 @@ since half a login stops the app at boot.
 
 `BEELINE_DRIVE_KEY` is the service account's JSON key, whole, that the
 `store-backup` job writes with ([Backups](#backups)); `BEELINE_BACKUP_FOLDER`,
-in `fly.toml`, is the folder. Set both or neither, as with Ecdysis.
+in `fly.production.toml`, is the folder. Set both or neither, as with Ecdysis.
 
 Keep a copy of the private-store key in your password manager before you set
 it: Fly secrets are write-only, and losing the key is losing the private store
@@ -170,15 +168,15 @@ and will boot into 500s on every listing
 ([ADR 0006](../adr/0006-migrations-for-deployed-stores.md)).
 
 ```sh
-fly deploy --env BEELINE_MAINTENANCE=1
-fly ssh sftp shell --app beeline
+fly deploy -c fly.production.toml --env BEELINE_MAINTENANCE=1
+fly ssh sftp shell --app beeline-production
 #   put beeline.duckdb                       -> /app/data/beeline.duckdb
 #   put data/corrections.csv                 -> /app/data/corrections.csv
 #   put data/person-overlay.csv              (and sample-overlay, person-change,
 #   put data/sample-state.csv                 sample-change, sample-state — the
 #                                             six that a rebuild cannot reconstruct)
 #   put data/secrets/inat-oauth-token        -> /app/data/secrets/
-fly machine update --env BEELINE_MAINTENANCE= <id>
+fly machine update --env BEELINE_MAINTENANCE= <id> --app beeline-production
 ```
 
 `data/secrets/inat-oauth-token` is easy to forget and nothing fails until 2am:
@@ -187,19 +185,20 @@ the whole run rather than syncing anonymously. It cannot be minted on the
 machine — `pnpm inat:login` is a browser flow — so run that on a workstation
 and upload the file, mode 600.
 
-The DEM tiles are the exception: 1.7 GB across 123 files on the sandbox,
+The DEM tiles are the exception: 1.7 GB across 123 files on the sandbox, the last count,
 from two public datasets that want no credential. The nightly fetches the
 ones it needs by itself, up to 25 a night (beeline-z08), so a new volume fills
 over a few nights; to fill it at once, run `pnpm elevation:fetch` **on the
 machine** rather than uploading them — see below.
 
-`private.duckdb` is not copied between hosts. The app creates it at first
-boot; sessions and sign-in records are acceptable losses pre-cutover. A
-restore from a backup is the exception ([Backups](#backups)).
+`private.duckdb` is created by the app at first boot on a new volume. On
+production it is never left behind: since cutover it holds what volunteers
+cannot simply redo, so moving or restoring production restores it from a
+backup with its key ([Backups](#backups)).
 
 ## Deploying a change
 
-`fly deploy`. The machine is replaced in place: migrations run, then the app
+`fly deploy -c fly.production.toml`. The machine is replaced in place: migrations run, then the app
 starts. Downtime is one boot.
 
 **A change to the curated person overlay is not live after a deploy.** The
@@ -211,9 +210,9 @@ is applied there, and a person who exists only in that file still cannot sign
 in. After the deploy is healthy:
 
 ```sh
-fly machine update --env BEELINE_MAINTENANCE=1 <id> --yes
-fly ssh console --app beeline -C "sh -c 'cd /app && pnpm person:apply'"
-fly machine update --env BEELINE_MAINTENANCE= <id> --yes
+fly machine update --env BEELINE_MAINTENANCE=1 <id> --app beeline-production --yes
+fly ssh console --app beeline-production -C "sh -c 'cd /app && pnpm person:apply'"
+fly machine update --env BEELINE_MAINTENANCE= <id> --app beeline-production --yes
 ```
 
 `person:apply` prints how many rows it applied and lists any it could not
@@ -231,7 +230,7 @@ of them one new person.
 small responder (`src/app/maintenance.ts`) answers `/healthz` with 200 and
 every other path with a 503 page saying Beeline is down for maintenance, and
 never opens the store. So switching into the mode — `fly machine update` or
-`fly deploy --env BEELINE_MAINTENANCE=1` — finishes in a boot, like any other
+`fly deploy -c fly.production.toml --env BEELINE_MAINTENANCE=1` — finishes in a boot, like any other
 update. Until 2026-10-04 nothing listened: the update sat for five minutes on a
 check nothing could pass, holding the machine's lease, so the update back out
 had to wait for the lease to lapse, and a deploy into maintenance always
@@ -239,14 +238,11 @@ reported a timeout. If the responder itself ever fails to start, the entrypoint
 says so in `fly logs` and holds the machine up anyway, since a shell is what
 the mode is for; the check then fails as it used to, and the wait is back.
 
-One thing about the **first** deploy that looks like a failure and is not
-yours:
-
-**IP allocation can fail on a first deploy.** Ours did, with an internal error
-(`org_slug is only supported with private_v6 type`), leaving the app with no
-addresses and `beeline.fly.dev` unresolvable. `fly ips allocate-v6` and
-`fly ips allocate-v4 --shared` fixed it in one go. Check `fly ips list` if the
-hostname does not resolve.
+**IP allocation can fail on an app's first deploy.** The sandbox's did, with
+an internal error (`org_slug is only supported with private_v6 type`),
+leaving it with no addresses. `fly ips allocate-v6 --app beeline-production`
+and `fly ips allocate-v4 --shared --app beeline-production` fix it; check
+`fly ips list --app beeline-production` if the hostname does not resolve.
 
 ## Running a CLI against the store
 
@@ -255,17 +251,17 @@ app, and a stopped machine cannot be reached at all. Maintenance mode is where
 you stand:
 
 ```sh
-fly machine list --app beeline
-fly machine update --env BEELINE_MAINTENANCE=1 <id>   # app down, volume mounted
-fly ssh console --app beeline
+fly machine list --app beeline-production
+fly machine update --env BEELINE_MAINTENANCE=1 <id> --app beeline-production   # app down, volume mounted
+fly ssh console --app beeline-production
   cd /app && pnpm db:reseed data/beeline.duckdb data/new.duckdb   # etc.
-fly machine update --env BEELINE_MAINTENANCE= <id>    # back to serving
+fly machine update --env BEELINE_MAINTENANCE= <id> --app beeline-production    # back to serving
 ```
 
 This is where `pnpm db:reseed`, `pnpm person:apply`,
 `pnpm person:orcids`, `pnpm inat:fetch-orcids`, `pnpm disposition:load` and
 `pnpm elevation:fetch` run. A list of confirmed ORCID iDs names people, so it
-goes up with `fly ssh sftp put` into `data/` and never into git; so does a
+goes up with `fly ssh sftp put --app beeline-production` into `data/` and never into git; so does a
 staff inventory file (`data/dispositions/<file>.xlsx`, loaded with
 `pnpm disposition:load data/dispositions/<file>.xlsx data/beeline.duckdb --by "<name>" --on <date>`,
 which leaves what it could not place in `<file>.xlsx.held.csv` beside it). The image
@@ -411,10 +407,10 @@ minutes of requests and a 72 MB CSV in `/app/data/ecdysis-taxonomy/` — so
 fetch while the app runs and stop it only for the load, which writes the store:
 
 ```sh
-fly ssh console --app beeline -C "sh -c 'cd /app && pnpm ecdysis:taxonomy --fetch-only'"
-fly machine update --env BEELINE_MAINTENANCE=1 <id>    # the load writes the store
-fly ssh console --app beeline -C "sh -c 'cd /app && pnpm ecdysis:taxonomy --cached'"
-fly machine update --env BEELINE_MAINTENANCE= <id>
+fly ssh console --app beeline-production -C "sh -c 'cd /app && pnpm ecdysis:taxonomy --fetch-only'"
+fly machine update --env BEELINE_MAINTENANCE=1 <id> --app beeline-production    # the load writes the store
+fly ssh console --app beeline-production -C "sh -c 'cd /app && pnpm ecdysis:taxonomy --cached'"
+fly machine update --env BEELINE_MAINTENANCE= <id> --app beeline-production
 ```
 
 `--cached` loads the last fetch into the machine's `BEELINE_DB`, replaces the
@@ -441,9 +437,9 @@ file:
 ```sh
 pnpm locality:fetch                      # once; later runs keep what is there
 pnpm locality:gazetteer                  # about a minute → data/gazetteer.duckdb
-fly ssh sftp shell --app beeline
+fly ssh sftp shell --app beeline-production
 #   put data/gazetteer.duckdb  -> /app/data/gazetteer.duckdb.new
-fly ssh console --app beeline -C "mv -f /app/data/gazetteer.duckdb.new /app/data/gazetteer.duckdb"
+fly ssh console --app beeline-production -C "mv -f /app/data/gazetteer.duckdb.new /app/data/gazetteer.duckdb"
 ```
 
 Each build has its own id, so the next nightly names every sample again,
@@ -527,7 +523,7 @@ or the store cannot be read as well as when a job is failing or overdue,
 while Fly already restarts the machine on `/healthz` itself. A monitor alerts
 only through an alert it is connected to, and until 2026-10-24 neither was, so
 neither had ever told anybody anything. Both are now connected to the alert
-"Monitors: the sandbox or its jobs are down, or the nightly failed", which
+"Monitors: production or its jobs are down, or the nightly failed", which
 emails Peter when a monitor's issue first appears, comes back after being
 resolved, or recurs. A new monitor needs connecting to it too. Tested on
 2026-10-24 by pointing the monitor at an address that answers 401: the email
@@ -551,7 +547,7 @@ whose every key is quoted and so redacted into nothing.
 
 The machine is `shared-cpu-2x`, 3 GB with 1 GB of swap (2 GB until
 2026-10-04, beeline-1w2d), and a volume Fly grows by 5 GB at 80% full — 10 GB
-until a failed reseed filled it on 2026-10-04, 15 GB since ([`fly.toml`](../../fly.toml)). What it actually used,
+until a failed reseed filled it on 2026-10-04, 15 GB since ([`fly.production.toml`](../../fly.production.toml)). What it actually used,
 2026-09-12 to 10-01 from Fly's own metrics: a normal day ~0.003 cores and
 0.5–0.65 GB of memory, no swap, ~2.4 GB on the volume, no OOM kills. The one
 limit it reaches is the **CPU burst balance**: a shared vCPU may run above its
@@ -579,7 +575,7 @@ or rotate it, and to measure by hand:
 
 ```sh
 fly tokens create readonly osu-mm --name "beeline resource-budget job" --expiry 8760h
-fly secrets set --app beeline FLY_METRICS_TOKEN='FlyV1 …'      # restarts the machine
+fly secrets set --app beeline-production FLY_METRICS_TOKEN='FlyV1 …'      # restarts the machine
 FLY_METRICS_TOKEN="$(fly tokens create readonly osu-mm --expiry 1h)" pnpm fly:usage 168
 ```
 
@@ -679,7 +675,7 @@ Sunday sweep and the Ecdysis fetch, so neither can push it past the 5am end of
 the night window; what Ecdysis sends back is in the next night's copy), and
 puts one file, `beeline-backup-<UTC instant>.tar.gz`, in the
 `databaseBackups` folder inside Bee Line on the OSU shared drive
-(`BEELINE_BACKUP_FOLDER` in [`fly.toml`](../../fly.toml)). It is for recovery
+(`BEELINE_BACKUP_FOLDER` in [`fly.production.toml`](../../fly.production.toml)). It is for recovery
 only: nobody opens these. **The main store's copy is not encrypted**, so every
 member of the drive can read the whole store, the true coordinates of obscured
 observations and every volunteer's name included. That is a decision, not an
@@ -718,9 +714,8 @@ shows on `/jobs` and on `/healthz/jobs`, which Sentry polls, with the step
 that failed named in the run's detail. Its own Sentry cron monitor is one of
 the eight the plan keeps disabled.
 In production it also fails rather than succeeding at nothing when the
-folder or the Drive key is not set; the sandbox, which gives the folder to
-production at cutover, says it backed nothing up
-([Two apps](#two-apps-the-sandbox-and-production)). Outside development it
+folder or the Drive key is not set; a sandbox says it backed nothing up
+([The sandbox, retired](#the-sandbox-retired)). Outside development it
 fails rather than upload the private store unencrypted when the store's key
 is not set. A run killed partway, by memory or a
 restart, leaves its work directory under `data/backups/`; the next run
@@ -739,7 +734,7 @@ new service account cannot see the old one's files: it would never move them
 to the bin, and the year of monthly copies would start again from nothing. So
 a new key is made for the same account
 (`gcloud iam service-accounts keys create … --iam-account beeline-production@beeline-510517.iam.gserviceaccount.com`),
-set with `fly secrets set BEELINE_DRIVE_KEY=…`, and the old key deleted once
+set with `fly secrets set --app beeline-production BEELINE_DRIVE_KEY=…`, and the old key deleted once
 a night's run has succeeded with the new one.
 
 ### Restoring, and the drill
@@ -757,11 +752,11 @@ private store was **not** checked rather than passing it. What it leaves in
 `dir` is what a restore puts back. Unlike a first install, the private store
 **is** restored: from cutover it holds what volunteers cannot simply redo.
 
-1. `fly deploy --env BEELINE_MAINTENANCE=1`, so nothing holds the store.
+1. `fly deploy -c fly.production.toml --env BEELINE_MAINTENANCE=1`, so nothing holds the store.
 2. On the volume, **delete `beeline.duckdb.wal` and `private.duckdb.wal`** if
    they exist. A WAL left beside an older store is replayed onto it, as with
    [the pre-migrate copy](#the-pre-migrate-copy).
-3. `fly ssh sftp shell`, and `put` the two stores to `/app/data/beeline.duckdb`
+3. `fly ssh sftp shell --app beeline-production`, and `put` the two stores to `/app/data/beeline.duckdb`
    and `/app/data/private.duckdb`, and each `authored/*.csv` to `/app/data/`.
 4. On a new volume, also what the archive does not hold: the pipeline's
    `data/secrets/inat-oauth-token` ([One-time setup](#one-time-setup)), and
@@ -769,7 +764,7 @@ private store was **not** checked rather than passing it. What it leaves in
    `pnpm elevation:fetch` on the machine at once. Ecdysis's archive and
    the print runs' sheets come back by themselves: the first is fetched
    again, the second re-rendered from the store.
-5. `fly machine update --env BEELINE_MAINTENANCE= <id>`. Boot applies any
+5. `fly machine update --env BEELINE_MAINTENANCE= <id> --app beeline-production`. Boot applies any
    migration newer than the copy, as it does for every deploy.
 
 **`store-backup` then reads as failing on `/jobs` and `/healthz/jobs`, and
@@ -807,7 +802,7 @@ pulls end at cutover, when the legacy system freezes.
 
 ```sh
 pnpm legacy:fetch                          # data/legacy/: occurrences.jsonl.gz, taxonomy.csv, usernames.csv
-fly ssh sftp shell --app beeline
+fly ssh sftp shell --app beeline-production
   mkdir /app/data/legacy-<date>
   put data/legacy/occurrences.jsonl.gz /app/data/legacy-<date>/occurrences.jsonl.gz
   put data/legacy/taxonomy.csv /app/data/legacy-<date>/taxonomy.csv

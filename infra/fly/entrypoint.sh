@@ -60,9 +60,9 @@ node_run() { node --import tsx "$@"; }
 # a stopped machine cannot be reached at all — so "stop the app but keep the
 # volume" needs somewhere to stand:
 #
-#   fly machine update --env BEELINE_MAINTENANCE=1 <id>   # app down, store free
-#   fly ssh console --app <app>                           # pnpm db:reseed, etc.
-#   fly machine update --env BEELINE_MAINTENANCE= <id>    # back to serving
+#   fly machine update --env BEELINE_MAINTENANCE=1 <id> --app <app>   # app down, store free
+#   fly ssh console --app <app>                                       # pnpm db:reseed, etc.
+#   fly machine update --env BEELINE_MAINTENANCE= <id> --app <app>    # back to serving
 #
 # Everything below this point can be skipped by it, which is also how you get a
 # machine to boot at all when the migration or the store check is broken. Only

@@ -165,7 +165,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   // localhost defaults (beeline-4cb).
   const origin = env.BEELINE_ORIGIN ?? null;
   if (origin === null && environment !== "development") {
-    throw new Error(`BEELINE_ORIGIN is required outside development, e.g. https://beeline.fly.dev`);
+    throw new Error(`BEELINE_ORIGIN is required outside development, e.g. https://melittologist.org`);
   }
   // A bare origin, checked here rather than discovered at sign-in. This value
   // becomes the OAuth `redirect_uri` by concatenation

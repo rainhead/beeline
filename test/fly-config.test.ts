@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
- * fly.toml holds settings whose failure mode is silence, so they are pinned
+ * fly.production.toml holds settings whose failure mode is silence, so they are pinned
  * here rather than trusted to review.
  *
  * The one that prompted this: `kill_timeout` was written at the foot of the
@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
  * the rule that was broken, and a full parse would hide it behind a nested
  * lookup that reads as if it had always been correct.
  */
-const FLY_TOML = fileURLToPath(new URL("../fly.toml", import.meta.url));
+const FLY_TOML = fileURLToPath(new URL("../fly.production.toml", import.meta.url));
 
 interface Entry {
   /** The table this key landed in: "" for top level, else e.g. "http_service.checks". */
@@ -46,14 +46,14 @@ function scanToml(text: string): Map<string, Entry> {
 
 const read = async () => scanToml(await readFile(FLY_TOML, "utf8"));
 
-describe("fly.toml", () => {
+describe("fly.production.toml", () => {
   it("keeps kill_signal and kill_timeout at the top level, not inside a table", async () => {
     const entries = await read();
     // Named by their full key so a move into any table fails here rather than
     // at 2am on a machine Fly restarted for host maintenance.
     for (const key of ["kill_signal", "kill_timeout"]) {
       const found = [...entries].filter(([k]) => k.endsWith(`:${key}`));
-      expect(found, `${key} is absent from fly.toml`).toHaveLength(1);
+      expect(found, `${key} is absent from fly.production.toml`).toHaveLength(1);
       expect(found[0]![1].table, `${key} belongs to top level, not [${found[0]![1].table}]`).toBe("");
     }
   });
@@ -61,7 +61,7 @@ describe("fly.toml", () => {
   it("keeps swap_size_mb at the top level, where Fly reads it", async () => {
     const entries = await read();
     const found = [...entries].filter(([k]) => k.endsWith(":swap_size_mb"));
-    expect(found, "swap_size_mb is absent from fly.toml").toHaveLength(1);
+    expect(found, "swap_size_mb is absent from fly.production.toml").toHaveLength(1);
     // Not a [[vm]] key: written there it is dropped in the same silence, and
     // the machine runs with no swap. DuckDB's memory_limit governs only
     // DuckDB — the Node heap is what swap is for.
@@ -101,11 +101,11 @@ describe("fly.toml", () => {
 
   it("leaves DuckDB room to work, and room around it", async () => {
     const entries = await read();
-    // A size as fly.toml writes it: "1024MB", "2gb". Refused rather than
+    // A size as Fly's config writes it: "1024MB", "2gb". Refused rather than
     // coerced, so a typo is a failing test and not a silently tiny budget.
     const mb = (v: string): number => {
       const m = /^(\d+)\s*(mb|gb)$/i.exec(v.trim());
-      expect(m, `not a size fly.toml understands: '${v}'`).not.toBeNull();
+      expect(m, `not a size Fly understands: '${v}'`).not.toBeNull();
       const [, digits, unit] = m as RegExpExecArray & [string, string, string];
       return Number(digits) * (unit.toLowerCase() === "gb" ? 1024 : 1);
     };
@@ -126,58 +126,18 @@ describe("fly.toml", () => {
     const entries = await read();
     expect(entries.get("http_service:internal_port")!.value).toBe(entries.get("env:PORT")!.value);
   });
-});
 
-/**
- * Production's config is the sandbox's with three values changed. Fly has no
- * include, so the settings are written twice, and each one fails silently when
- * it is wrong (above): a production machine that kept an old memory size, or
- * a kill_timeout lost in an edit to one file only, would say nothing. Every
- * test above reads fly.toml; this one makes them true of production too.
- */
-describe("fly.production.toml", () => {
-  const PRODUCTION_TOML = fileURLToPath(new URL("../fly.production.toml", import.meta.url));
-  const readBoth = async () => ({
-    sandbox: await read(),
-    production: scanToml(await readFile(PRODUCTION_TOML, "utf8")),
-  });
-  // The only settings allowed to differ, and what production's must be.
-  const PRODUCTION: Record<string, string> = {
-    ":app": "beeline-production",
-    "env:BEELINE_ENV": "production",
-    "env:BEELINE_ORIGIN": "https://melittologist.org",
-  };
-
-  // The backup folder is production's from cutover, when the sandbox stops
-  // naming it (docs/runbooks/deploy-fly.md, "Two apps"), so fly.toml may drop
-  // it while this file must not.
-  const BACKUP_FOLDER = "env:BEELINE_BACKUP_FOLDER";
-
-  it("differs from fly.toml only in the app, BEELINE_ENV and BEELINE_ORIGIN, and the backup folder at cutover", async () => {
-    const { sandbox, production } = await readBoth();
-    const keys = new Set([...sandbox.keys(), ...production.keys()]);
-    for (const key of keys) {
-      if (key in PRODUCTION || key === BACKUP_FOLDER) continue;
-      expect(production.get(key)?.value, `${key} in fly.production.toml`).toBe(sandbox.get(key)?.value);
-    }
-  });
-
-  it("names the production app, environment and origin", async () => {
-    const { sandbox, production } = await readBoth();
-    for (const [key, value] of Object.entries(PRODUCTION)) {
-      expect(production.get(key)?.value, key).toBe(value);
-      expect(sandbox.get(key)?.value, `fly.toml's ${key} is the sandbox's`).not.toBe(value);
-    }
-  });
-
-  it("names a backup folder, which the sandbox shares only until cutover", async () => {
-    const { sandbox, production } = await readBoth();
-    const folder = production.get(BACKUP_FOLDER)?.value;
+  // Retiring the sandbox (2026-11-05) deleted fly.toml on purpose: with it
+  // gone, a bare `fly deploy` fails instead of reaching production by habit.
+  it("is the only Fly config, named and targeting production", async () => {
+    const entries = await read();
+    expect(entries.get(":app")!.value).toBe("beeline-production");
+    expect(entries.get("env:BEELINE_ENV")!.value).toBe("production");
+    expect(entries.get("env:BEELINE_ORIGIN")!.value).toBe("https://melittologist.org");
     // Unset, production's backup job fails every night (src/app/jobs/registry.ts).
-    expect(folder, `${BACKUP_FOLDER} in fly.production.toml`).toMatch(/\S/);
-    // A different folder in the sandbox would be a second backup series
-    // nobody restores from; the plan is the same folder, then none.
-    const sandboxFolder = sandbox.get(BACKUP_FOLDER)?.value;
-    if (sandboxFolder !== undefined) expect(sandboxFolder).toBe(folder);
+    expect(entries.get("env:BEELINE_BACKUP_FOLDER")?.value).toMatch(/\S/);
+    await expect(readFile(fileURLToPath(new URL("../fly.toml", import.meta.url)), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });

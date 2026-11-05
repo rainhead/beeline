@@ -42,7 +42,7 @@ export interface UsageSummary {
 
 /**
  * The limits the job fails on, in one place. Disk stops short of the 80% at
- * which Fly grows the volume (fly.toml), because growing it costs money and
+ * which Fly grows the volume (fly.production.toml), because growing it costs money and
  * is a decision, not a reflex. An hour of empty balance in a day is sustained
  * throttling rather than one reseed's worth.
  */

@@ -33,7 +33,7 @@ survive somewhere other than the server or every backup's copy was lost
 boot-time patching mechanism of its own beside migrations (ADR 0006). So the
 four tables moved into the main store (`schema/012`, migration 0076), and the
 app carried production's rows across at its first boot afterwards
-(`absorbPrivateStore`, `src/app/db.ts`) — all but the sessions, which no
+(by code since removed, beeline-csgv) — all but the sessions, which no
 browser could have used again, since the session cookie was renamed at the
 same time (beeline-73c9). Everyone signed in once more.
 

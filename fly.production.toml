@@ -52,13 +52,9 @@ swap_size_mb = 1024
   PORT = "3054"
 
   # Everything else the app reads from data/ is relative to the working
-  # directory and lands on the volume unchanged; only the two stores default
-  # to the repo root and so have to be named.
+  # directory and lands on the volume unchanged; only the store defaults to
+  # the repo root and so has to be named.
   BEELINE_DB = "/app/data/beeline.duckdb"
-  # Where the retired private store was kept: the boot after beeline-4tdh
-  # carries its rows into the main store and renames it. Goes with the
-  # BEELINE_PRIVATE_DB_KEY secret once that has happened.
-  BEELINE_PRIVATE_DB = "/app/data/private.duckdb"
 
   # Stated rather than detected — see the comment on duckDbConfig in
   # src/db.ts. Left unset, DuckDB would size itself from a cgroup reading and
@@ -89,11 +85,6 @@ swap_size_mb = 1024
   BEELINE_BACKUP_FOLDER = "1uNdyRAWHMRwWmSv-6yk1ENaJofHyXyz5"
 
 # Secrets, set with `fly secrets set` and never here:
-#   BEELINE_PRIVATE_DB_KEY  the retired private store's key (ADR 0003), needed
-#                           only for the boot that carries its rows across;
-#                           unset once that is done (beeline-csgv). Peter's
-#                           copy still opens the store in backups from before
-#                           2026-11-05
 #   BEELINE_DRIVE_KEY       the backup's service account key, the JSON whole
 #   INAT_CLIENT_ID / INAT_CLIENT_SECRET  the OAuth app whose redirect is
 #                           BEELINE_ORIGIN's /auth/inat/callback

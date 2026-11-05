@@ -15,15 +15,6 @@ export interface AppConfig {
   port: number;
   /** Path to the main database file the app owns read-write. */
   dbPath: string;
-  /**
-   * Where the retired private store was kept (ADR 0003, retired by
-   * beeline-4tdh). A file still there is carried into the main store at boot
-   * and renamed; nothing else reads it. Goes once production has absorbed its
-   * store.
-   */
-  privateDbPath: string;
-  /** That store's key, needed only to carry an encrypted one across. */
-  privateDbKey: string | null;
   /** Public origin of this instance, e.g. https://beeline.example — OAuth redirect target and CSRF origin check. */
   origin: string;
   /**
@@ -159,7 +150,6 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (environment !== "development" && environment !== "sandbox" && environment !== "production") {
     throw new Error(`BEELINE_ENV must be development|sandbox|production, got '${environment}'`);
   }
-  const privateDbKey = env.BEELINE_PRIVATE_DB_KEY ?? null;
   const port = env.PORT ? Number(env.PORT) : 0xbee; // 3054: unmistakably ours among the neighbors' dev servers
   // The origin decides the cookie Secure flag, the OAuth redirect_uri, and
   // the CSRF origin check; a deploy that forgot it must not limp along on
@@ -235,8 +225,6 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     port,
     dbPath: env.BEELINE_DB ?? "beeline.duckdb",
-    privateDbPath: env.BEELINE_PRIVATE_DB ?? "private.duckdb",
-    privateDbKey,
     origin: origin ?? `http://localhost:${port}`,
     adminLogins:
       env.BEELINE_ADMIN_LOGINS === undefined

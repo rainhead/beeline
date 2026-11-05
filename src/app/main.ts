@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { inatClient, loadInatCredentials } from "./auth.js";
 import { configFromEnv } from "./config.js";
-import { absorbPrivateStore, openAppDb, seedAdmins } from "./db.js";
+import { openAppDb, seedAdmins } from "./db.js";
 import { CURATED_OVERLAY, mergeOverlays, readOverlay } from "../person-overlay.js";
 import { cachedPipelineJwt } from "../inat-jwt.js";
 import { kyselyReader, recordPersonChanges } from "../person-change.js";
@@ -57,19 +57,6 @@ const { db, instance, close } = await openAppDb(config);
     }
   }
   markConn.closeSync();
-}
-
-// A retired private store's rows come across once, after the guard above,
-// so a store it refuses is never written to (beeline-4tdh). A store that will
-// not open stops the boot here rather than signing everyone out.
-try {
-  await absorbPrivateStore(instance, { path: config.privateDbPath, key: config.privateDbKey });
-} catch (err) {
-  console.error(`could not carry the retired private store into the store: ${String(err)}`);
-  reportError(err, { step: "boot" });
-  await close().catch(() => undefined);
-  await flushErrorReporting().catch(() => undefined);
-  process.exit(1);
 }
 
 // The sample overlay exists from the first boot, header only, rather than

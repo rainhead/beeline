@@ -159,6 +159,12 @@ export interface SampleDetail {
    * withheld: the name says where the point is.
    */
   wildernesses: string[];
+  /**
+   * The EPA Level III ecoregion the point lies in (beeline-l5so), by name, or
+   * null where it lies in none. Null where the location is withheld, as
+   * the wilderness is: the name says where the point is.
+   */
+  ecoregion: string | null;
   /** Everyone who collected it, in recordedBy order (beeline-77j). */
   collectors: ListedCollector[];
 }
@@ -323,6 +329,9 @@ const sampleColumns = (personId: number, reader: Reader) => sql`
   -- withheld where the point is, as the suggestion is (hydrate).
   (SELECT string_agg(sac.name, chr(10) ORDER BY sac.name) FROM sample_area_current sac
     WHERE sac.sample_id = s.entity_id AND sac.kind = 'wilderness') AS wilderness_names,
+  -- The ecoregion the point lies in (beeline-l5so); withheld with the wildernesses.
+  (SELECT min(sac.name) FROM sample_area_current sac
+    WHERE sac.sample_id = s.entity_id AND sac.kind = 'ecoregion') AS ecoregion_name,
   EXISTS (SELECT 1 FROM sample_elevation_stale st WHERE st.sample_id = s.entity_id) AS elevation_stale,
   EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id) AS printed,
   o.locality AS override_locality, o.observed_locality AS override_observed,
@@ -359,11 +368,12 @@ const num = (v: unknown): number | null => (v === null || v === undefined ? null
 
 type RawSample = Omit<
   SampleDetail,
-  "collectors" | "locality_override" | "location_override" | "locality_suggestion" | "locality_alternatives" | "wildernesses"
+  "collectors" | "locality_override" | "location_override" | "locality_suggestion" | "locality_alternatives" | "wildernesses" | "ecoregion"
 > & {
   suggested_locality: string | null;
   alternative_localities: string | null;
   wilderness_names: string | null;
+  ecoregion_name: string | null;
   suggested_basis: LocalityBasis | null;
   override_locality: string | null;
   override_observed: string | null;
@@ -398,6 +408,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
     alternative_localities,
     suggested_basis,
     wilderness_names,
+    ecoregion_name,
     override_locality,
     override_observed,
     override_set_by,
@@ -423,6 +434,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
             return { locality, basis };
           }),
     wildernesses: hidden || wilderness_names === null ? [] : wilderness_names.split("\n"),
+    ecoregion: hidden ? null : ecoregion_name,
     // The overrides say where too: staff set them to a point or a place name.
     location_override: hidden || !location_overridden
       ? null

@@ -201,7 +201,7 @@ export interface ListingQuery {
   /** Inclusive ISO dates bounding the collecting window; null = unbounded. */
   from: string | null;
   to: string | null;
-  /** Matches any of locality, county, state/province, country, or an area the point lies inside (a wilderness). */
+  /** Matches any of locality, county, state/province, country, or an area the point lies inside (a wilderness, county or ecoregion). */
   place: string;
   /**
    * A collector's name or iNat login. Matches anyone on the sample, not just

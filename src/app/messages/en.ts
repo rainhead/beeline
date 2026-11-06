@@ -736,7 +736,7 @@ export const en = {
       from: "Collected from",
       to: "Collected to",
       place: "Place",
-      placeHint: "Locality, county, state, country, or wilderness",
+      placeHint: "Locality, county, state, country, wilderness, or ecoregion",
       collector: "Collector",
       collectorHint: "Name or iNaturalist login — anyone on the sample",
       /**
@@ -1051,6 +1051,8 @@ export const en = {
        * program had one: inside Olympic it did. `names` is already a list.
        */
       inWilderness: (names: string) => `Inside the ${names}. Collecting in a federal wilderness needs a permit.`,
+      /** The EPA Level III ecoregion the coordinates lie in (beeline-l5so): a fact, not a note. */
+      inEcoregion: (name: string) => `${name} ecoregion`,
       atlas: "Atlas",
       /** Collecting outside the member atlases is ordinary (beeline-lcl). */
       atlasOutside: "None — collected where no member atlas reaches",

@@ -150,6 +150,8 @@ export function SampleFacts({
           {sample.wildernesses.length === 0 ? null : (
             <Meta block>{s.inWilderness(m.format.list(sample.wildernesses))}</Meta>
           )}
+          {/* The EPA ecoregion the point lies in (beeline-l5so): a plain fact. */}
+          {sample.ecoregion === null ? null : <Meta block>{s.inEcoregion(sample.ecoregion)}</Meta>}
           {/* A staff-set locality carries its provenance beside it, as the
               coordinates carry theirs (beeline-649): who, why, and what
               iNaturalist says now where the observation has moved on. */}

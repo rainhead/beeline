@@ -52,15 +52,15 @@ export function DesignIndex() {
         program. It is session-gated throughout and has no anonymous reads.
       </p>
       <p>
-        The program's domain, <code>melittologist.org</code>, is expected in time to carry a second scope: a{" "}
-        <strong>public tier</strong> saying what the Master Melittologist program and its member atlases are, and how
-        to join one. That surface has a different audience, a different voice, and almost certainly a different visual
-        register — none of which is designed yet, and none of which this system currently speaks for. Two scopes share
-        the domain; do not read a rule written here as binding on a page that does not exist.
+        The program's public face is not Beeline. It is the{" "}
+        <a href="https://extension.oregonstate.edu/master-melittologist">
+          OSU Extension Master Melittologist website
+        </a>
+        , which is where the program says what it is and how to join, and no public-facing Beeline is planned. This
+        system therefore covers everything on <code>melittologist.org</code>.
       </p>
       <p>
-        The one place the two already touch is the sign-in page, which is the entire handoff today and says only that
-        nothing here is public.
+        The only thing an outsider sees here is the sign-in page, which says only that nothing here is public.
       </p>
 
       <h2>Sections</h2>

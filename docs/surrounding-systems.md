@@ -2,40 +2,18 @@
 
 What consumes Beeline's data today, what is planned to build on it, and — the reason this document exists — what each of those pulls on the core data model. Recorded from project-lead context, 2026-08-18.
 
-## Two scopes on one domain
+## Where Beeline stops
 
-`melittologist.org` is the program's domain and Beeline's home, and it carries **two
-scopes that should not be confused** (project lead, 2026-08-23):
+`melittologist.org` is the program's domain and Beeline's home, and Beeline is all it carries. Beeline is internal-facing, for people already in the program: volunteers fixing their own records, staff running ingestion and printing labels. Every route is session-gated by construction and there are no anonymous reads, because `sample_true_location` makes a leak a live hazard. This is the whole of what is being built.
 
-- **Beeline — the tool.** Internal-facing, for people already in the program: volunteers
-  fixing their own records, staff running ingestion and printing labels. Every route is
-  session-gated by construction and there are no anonymous reads, because
-  `sample_true_location` makes a leak a live hazard. This is the whole of what is being
-  built now.
-- **The public tier — the program's face.** Expected in time, not yet designed: what the
-  Master Melittologist program and its member atlases are, how to learn more, and sign-up
-  funnels for prospective volunteers.
+The program's public face is the [OSU Extension Master Melittologist website](https://extension.oregonstate.edu/master-melittologist), which says what the program and its member atlases are and how to join one. Program staff, answering the design-system question in [issue #249](https://github.com/rainhead/beeline/issues/249) (Andony, 2026-11-03): "The entry point will continue to be the OSU Extension Master Melittologist website ... We do not envision a public-facing beeline at this time." Until 2026-11-03 this document expected a second, public scope on the same domain (project lead, 2026-08-23); that expectation is withdrawn.
 
-The two are different surfaces that share a domain, so **"no anonymous reads" is a
-statement about the tool, not about the domain** — it does not preclude a public presence
-and should not be quoted as if it did.
+Two consequences:
 
-Several bullets already listed below belong to the public tier rather than to Beeline: the
-public-facing collector page, Canvas retirement's static content, and the CRM's
-prospective-volunteer funnel. Naming the split is what makes those tractable.
+1. **The sign-in page is the only thing an outsider sees.** It tells an unrecognised visitor only that nothing here is public (beeline-2c3.16).
+2. **Anything that would be public is out of Beeline's scope.** The items below that were once assigned to a public tier (the collector page, Canvas retirement's static content, the prospective-volunteer funnel) are each marked with where that leaves them. If a public view of Beeline's data is ever proposed, the per-atlas geoprivacy question ([questions.md](questions.md)) stops being about labels and exports and becomes about a web page, which is a design problem in its own right.
 
-Two seams will need deciding, neither now:
-
-1. **Where the public site hands off to the tool.** Today that is a bare sign-in page that
-   tells an unrecognised visitor only that nothing here is public (beeline-2c3.16).
-2. **Whether the public tier ever reads Beeline's data.** The moment it does — an atlas
-   page showing species recorded, a collector page — the per-atlas geoprivacy question
-   ([questions.md](questions.md)) stops being about labels and exports and becomes about a
-   web page. That is a design problem in its own right, not a routing change.
-
-Worth noting for scale: the smaller atlases have little or no web presence of their own.
-New Mexico has no site at all, only an iNaturalist project; Idaho is a Google
-Sites page. A public tier would be filling a real gap, not duplicating one (beeline-58b).
+Worth noting for scale: the smaller atlases have little or no web presence of their own. New Mexico has no site at all, only an iNaturalist project; Idaho is a Google Sites page (beeline-58b).
 
 ## Downstream consumers today
 
@@ -47,17 +25,17 @@ Sites page. A public tier would be filling a real gap, not duplicating one (beel
 
 ## Adjacent and future scopes
 
-- **Volunteer report / dashboard** (top priority for a future scope) — the landowner-style report addressed to the volunteer: what you've found and where, recent identifications of your bees. Goals: help volunteers see the scope of their work and feel good about it; support their learning. A previous incarnation was a very long PDF answering far too many questions; this one should be concise, interactive, always up to date. beeatlas.net has a prototype. Includes a public-facing **collector page** for other participants to view, and a way to contact the collector.
+- **Volunteer report / dashboard** (top priority for a future scope) — the landowner-style report addressed to the volunteer: what you've found and where, recent identifications of your bees. Goals: help volunteers see the scope of their work and feel good about it; support their learning. A previous incarnation was a very long PDF answering far too many questions; this one should be concise, interactive, always up to date. beeatlas.net has a prototype. Includes a **collector page** for other participants to view, and a way to contact the collector. With no public-facing Beeline, any such page would sit behind sign-in; a page open to anyone is out of Beeline's scope.
 - **Identification notifications** — there is currently *no way* for a volunteer to learn their bees were identified, which often happens a year or two after collection. Part of the dashboard scope, and the sharpest single requirement it imposes on the core model (see below).
 - **[Melittoflora](https://agsci.oregonstate.edu/bee-atlas/melittoflora)** — an existing explorer of plant–pollinator associations for Oregon data, maintained by others; its interface is being improved and instances deployed for other atlases' data. A consumer of specimen + host-association data.
-- **Canvas retirement** — replacing the Master Melittologist program's Canvas usage with static content (11ty?) plus some replacement for its forum and "grading" mechanisms. Mostly disjoint from specimens. **Not for some time** (Andony, 2026-09-11): the educational content stays in Canvas, and only what people need in order to do their work moves over, at cutover (beeline-jn3). Where it lands is not decided; being for people doing the work, Beeline is the likelier home than the public tier.
-- **Lightweight CRM** — centralizing communication with landowners and prospective/new volunteers, so relationship ownership survives handoffs between staff.
+- **Canvas retirement** — replacing the Master Melittologist program's Canvas usage with static content (11ty?) plus some replacement for its forum and "grading" mechanisms. Mostly disjoint from specimens. **Not for some time** (Andony, 2026-09-11): the educational content stays in Canvas, and only what people need in order to do their work moves over, at cutover (beeline-jn3). Where it lands is not decided; being for people doing the work, Beeline is a likelier home than the Extension website, whose content stays public.
+- **Lightweight CRM** — centralizing communication with landowners and prospective/new volunteers, so relationship ownership survives handoffs between staff. The prospective-volunteer side starts on the Extension website, not in Beeline; whether Beeline holds any of it is undecided.
 - **Central feed** — one place for news from OSU, news from your atlas, new identifications of your specimens, and so on.
 
 ## What these pull on the core model
 
 1. **Determinations must be events, not current values.** Three independent scopes demand it: identification notifications ("your bee was identified" requires knowing *when* a determination arrived), the central feed (same, as a feed item), and the Ecdysis/in-app coexistence problem (concurrent channels need append-only assertions with a computed determination-of-record). One design decision satisfies all three.
-2. **Collector visibility is a policy decision, not an afterthought.** Public collector pages and contact mechanisms mean the collector entity needs consent/visibility preferences from the start.
+2. **Collector visibility is a policy decision, not an afterthought.** Collector pages and contact mechanisms mean the collector entity needs consent/visibility preferences from the start.
 3. **Plant–pollinator associations are a query product.** Landowner reports and Melittoflora both consume specimen×host associations; the model should make that a natural join, not a report-time reconstruction.
 4. **Exports are a product.** Student projects and successor systems need self-describing datasets; budget for a documented export format, not just CSV endpoints.
 5. **The feed and CRM scopes suggest a generic event/notification substrate eventually** — worth keeping in mind, not worth building ahead of need.

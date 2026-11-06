@@ -65,9 +65,10 @@ async function setup(geoprivacy: "NULL" | "'obscured'") {
       resolveSession: async () => ({ personId: ids[who], login: who, iconUrl: null }),
       conn,
     });
-  return { appFor, sampleId, specimenId: Number(specimenId) };
+  return { appFor, sampleId, specimenId: Number(specimenId), conn };
 }
 
+const ecoNote = en.record.sample.inEcoregion("Coast Range");
 const note = en.record.sample.inWilderness("Alsea Wilderness");
 const escaped = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const placeSearch = (place: string) => `/samples?scope=all&place=${encodeURIComponent(place)}`;
@@ -98,5 +99,30 @@ describe("a sample inside a wilderness", () => {
     const alice = appFor("alice");
     expect(await (await alice.request(`/samples/${sampleId}`)).text()).toContain(escaped(note));
     expect(await (await alice.request(placeSearch("alsea wilderness"))).text()).toContain(`/samples/${sampleId}"`);
+  });
+});
+
+describe("a sample in an ecoregion (beeline-l5so)", () => {
+  it("says so on its sample page and its specimen's, and is found by the ecoregion's name", async () => {
+    const { appFor, sampleId, specimenId } = await setup("NULL");
+    const bob = appFor("bob");
+    expect(await (await bob.request(`/samples/${sampleId}`)).text()).toContain(escaped(ecoNote));
+    expect(await (await bob.request(`/specimens/${specimenId}`)).text()).toContain(escaped(ecoNote));
+    expect(await (await bob.request(placeSearch("coast range"))).text()).toContain(`/samples/${sampleId}"`);
+  });
+
+  it("keeps the ecoregion to those who may see where the sample is", async () => {
+    const { appFor, sampleId } = await setup("'obscured'");
+    const bob = appFor("bob");
+    expect(await (await bob.request(`/samples/${sampleId}`)).text()).not.toContain(escaped(ecoNote));
+    expect(await (await bob.request(placeSearch("coast range"))).text()).not.toContain(`/samples/${sampleId}"`);
+    expect(await (await appFor("alice").request(`/samples/${sampleId}`)).text()).toContain(escaped(ecoNote));
+  });
+
+  it("says nothing for a sample in no ecoregion", async () => {
+    const { appFor, sampleId, conn } = await setup("NULL");
+    await conn.run(`DELETE FROM sample_area WHERE sample_id = ${sampleId} AND area_source = 'epa-cec'`);
+    const html = await (await appFor("bob").request(`/samples/${sampleId}`)).text();
+    expect(html).not.toContain("ecoregion");
   });
 });

@@ -43,7 +43,7 @@ describe("deriveAreas", () => {
     const conn = await storeWithPerson();
     await insertCleanSample(conn);
     expect(await deriveAreas(conn, join(dir, "absent.duckdb"))).toEqual({
-      gazetteerBuild: null, pending: 0, inWilderness: 0, inCounty: 0, outdated: false, countiesStamped: 0,
+      gazetteerBuild: null, pending: 0, inWilderness: 0, inCounty: 0, inEcoregion: 0, ecoregionByShore: 0, outdated: false, countiesStamped: 0,
     });
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_area_derivation`)).toEqual([[0]]);
   });
@@ -63,7 +63,7 @@ describe("deriveAreas", () => {
     await insertCleanSample(conn, {}, ALSEA);
     const r = await deriveAreas(conn, path);
     expect(r).toEqual({
-      gazetteerBuild: "build-old", pending: 0, inWilderness: 0, inCounty: 0, outdated: true, countiesStamped: 0,
+      gazetteerBuild: "build-old", pending: 0, inWilderness: 0, inCounty: 0, inEcoregion: 0, ecoregionByShore: 0, outdated: true, countiesStamped: 0,
     });
     expect(describeAreas(r)).toBe("areas: the gazetteer predates them; rebuild it");
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_area_derivation`)).toEqual([[0]]);
@@ -76,7 +76,7 @@ describe("deriveAreas", () => {
     const inAlsea = await insertCleanSample(conn, {}, ALSEA);
     const outside = await insertCleanSample(conn, { sample_number: "'2'" }, REFUGE);
     expect(await deriveAreas(conn, path)).toEqual({
-      gazetteerBuild: "build-a", pending: 2, inWilderness: 1, inCounty: 2, outdated: false, countiesStamped: 0,
+      gazetteerBuild: "build-a", pending: 2, inWilderness: 1, inCounty: 2, inEcoregion: 2, ecoregionByShore: 0, outdated: false, countiesStamped: 0,
     });
     expect(await inside(conn)).toEqual([[inAlsea, "wilderness.net", "9001", "wilderness", "Alsea Wilderness"]]);
     // Both are in Benton County, by its Census GEOID.
@@ -84,8 +84,11 @@ describe("deriveAreas", () => {
       [inAlsea, "census", "41003", "Benton County"],
       [outside, "census", "41003", "Benton County"],
     ]);
-    // Ox Wilderness has nobody in it, so the store does not hold it.
-    expect(await areas(conn)).toEqual([["41003", "Benton County"], ["9001", "Alsea Wilderness"]]);
+    // Ox Wilderness has nobody in it, so the store does not hold it; the
+    // test ecoregions are Coast Range (Alsea) and Willamette Valley (refuge).
+    expect(await areas(conn)).toEqual([
+      ["41003", "Benton County"], ["7.1.8", "Coast Range"], ["7.1.9", "Willamette Valley"], ["9001", "Alsea Wilderness"],
+    ]);
     // Both were tested, the one outside every area too, at their own points.
     expect(
       await rows(conn, `SELECT sample_id, latitude, longitude, gazetteer_build FROM sample_area_derivation ORDER BY 1`),
@@ -119,7 +122,7 @@ describe("deriveAreas", () => {
     expect(await inside(conn)).toEqual([]);
     expect(await deriveAreas(conn, path)).toMatchObject({ pending: 1, inWilderness: 1 });
     expect(await inside(conn)).toEqual([[id, "wilderness.net", "9002", "wilderness", "Ox Wilderness"]]);
-    expect(await areas(conn)).toEqual([["41003", "Benton County"], ["9002", "Ox Wilderness"]]);
+    expect(await areas(conn)).toEqual([["41003", "Benton County"], ["7.1.8", "Coast Range"], ["9002", "Ox Wilderness"]]);
   });
 
   test("a new gazetteer build tests every sample again and brings its areas up to that build", async () => {
@@ -131,10 +134,11 @@ describe("deriveAreas", () => {
     await deriveAreas(conn, path);
     await buildTestGazetteer(path, "build-c2");
     expect(await deriveAreas(conn, path, { batchSize: 1 })).toEqual({
-      gazetteerBuild: "build-c2", pending: 2, inWilderness: 2, inCounty: 2, outdated: false, countiesStamped: 0,
+      gazetteerBuild: "build-c2", pending: 2, inWilderness: 2, inCounty: 2, inEcoregion: 2, ecoregionByShore: 0, outdated: false, countiesStamped: 0,
     });
     expect(await rows(conn, `SELECT source_id, gazetteer_build FROM area ORDER BY 1`)).toEqual([
       ["41003", "build-c2"],
+      ["7.1.8", "build-c2"],
       ["9001", "build-c2"],
     ]);
   });
@@ -166,6 +170,67 @@ describe("deriveAreas", () => {
     await insertCleanSample(conn, { sample_number: "'2'" }, { latitude: "44.50", longitude: "-124.02" });
     expect(await deriveAreas(conn, path)).toMatchObject({ pending: 2, inCounty: 1 });
     expect((await counties(conn)).map(([id]) => id)).toEqual([beach]);
+  });
+});
+
+describe("ecoregions (beeline-l5so)", () => {
+  const ecoregions = (conn: DuckDBConnection) =>
+    rows(conn, `SELECT sample_id, source, source_id, name FROM sample_area_current WHERE kind = 'ecoregion' ORDER BY sample_id`);
+  const missing = (conn: DuckDBConnection) =>
+    rows(conn, `SELECT sample_id, settled FROM sample_ecoregion_missing ORDER BY sample_id`);
+
+  test("a point reads the ecoregion it is in; one just off the shore takes the nearest; one farther reads none", async () => {
+    const path = join(dir, "eco.duckdb");
+    await buildTestGazetteer(path, "build-eco");
+    const conn = await storeWithPerson();
+    const valley = await insertCleanSample(conn, {}, REFUGE);
+    const range = await insertCleanSample(conn, { sample_number: "'2'" }, ALSEA);
+    // The Coast Range's west edge is longitude -124: about 400 m and 1.6 km west of it.
+    const beach = await insertCleanSample(conn, { sample_number: "'3'" }, { latitude: "44.50", longitude: "-124.005" });
+    const sea = await insertCleanSample(conn, { sample_number: "'4'" }, { latitude: "44.50", longitude: "-124.02" });
+    expect(await deriveAreas(conn, path)).toMatchObject({ pending: 4, inEcoregion: 3, ecoregionByShore: 1 });
+    expect(await ecoregions(conn)).toEqual([
+      [valley, "epa-cec", "7.1.9", "Willamette Valley"],
+      [range, "epa-cec", "7.1.8", "Coast Range"],
+      [beach, "epa-cec", "7.1.8", "Coast Range"],
+    ]);
+    // The sample in the sea was tested and found none, which the view says, in the season it is from.
+    expect(await missing(conn)).toEqual([[sea, false]]);
+    expect(describeAreas(await deriveAreas(conn, path))).toBeNull();
+  });
+
+  test("the samples with none are told apart by season, and a sample without true coordinates is not one of them", async () => {
+    const path = join(dir, "eco-missing.duckdb");
+    await buildTestGazetteer(path, "build-eco-missing");
+    const conn = await storeWithPerson();
+    const out = { latitude: "44.50", longitude: "-124.02" };
+    const active = await insertCleanSample(conn, {}, out);
+    const settled = await insertCleanSample(
+      conn, { sample_number: "'2'", date_start: `DATE '${SETTLED_SEASON}-07-14'`, date_end: `DATE '${SETTLED_SEASON}-07-14'` }, out);
+    const unlocated = await insertCleanSample(conn, { sample_number: "'3'" }, null);
+    await deriveAreas(conn, path);
+    expect(await missing(conn)).toEqual([[active, false], [settled, true]]);
+    expect(await rows(conn, `SELECT count(*)::INTEGER FROM sample_area_derivation WHERE sample_id = ${unlocated}`)).toEqual([[0]]);
+    expect((await ecoregions(conn)).length).toBe(0);
+  });
+
+  test("a gazetteer without the ecoregion table still finds wildernesses and counties, and leaves every sample in the missing view", async () => {
+    const path = join(dir, "eco-old.duckdb");
+    await buildTestGazetteer(path, "build-eco-old");
+    const instance = await openDuckDb(path);
+    const g = await instance.connect();
+    await g.run(`DROP TABLE ecoregion`);
+    g.closeSync();
+    instance.closeSync();
+    const conn = await storeWithPerson();
+    const id = await insertCleanSample(conn, {}, ALSEA);
+    expect(await deriveAreas(conn, path)).toMatchObject({
+      outdated: false, pending: 1, inWilderness: 1, inCounty: 1, inEcoregion: 0, ecoregionByShore: 0,
+    });
+    expect(await inside(conn)).toEqual([[id, "wilderness.net", "9001", "wilderness", "Alsea Wilderness"]]);
+    expect(await counties(conn)).toEqual([[id, "census", "41003", "Benton County"]]);
+    expect(await ecoregions(conn)).toEqual([]);
+    expect(await missing(conn)).toEqual([[id, false]]);
   });
 });
 

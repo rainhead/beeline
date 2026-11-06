@@ -1,9 +1,10 @@
 -- Areas (beeline-9jd4): named places with an outline, and which of them each
--- sample's believed-true point lies inside. Two kinds so far: the federal
+-- sample's believed-true point lies inside. Three kinds so far: the federal
 -- wilderness, where collecting is forbidden except inside a national park the
 -- program has a permit for (beeline-zdfz), and the county, with BC's
 -- regional districts as counties, so a sample's county can be read from its
--- point rather than from iNaturalist (beeline-313x). Refuges, wildlife area
+-- point rather than from iNaturalist (beeline-313x), and the EPA's Level III
+-- ecoregion (beeline-l5so). Refuges, wildlife area
 -- units, parks and islands are to follow.
 --
 -- An area is reference data keyed by its source's own id, not an entity
@@ -22,19 +23,19 @@
 -- and migrates without the spatial extension, which only the derive step
 -- loads. PostGIS has the same type (ADR 0001 names it as a seam).
 CREATE TABLE area (
-  source          TEXT NOT NULL CHECK (source IN ('wilderness.net', 'census', 'bc-abms')),
+  source          TEXT NOT NULL CHECK (source IN ('wilderness.net', 'census', 'bc-abms', 'epa-cec')),
   source_id       TEXT NOT NULL,
-  kind            TEXT NOT NULL CHECK (kind IN ('wilderness', 'county')),
+  kind            TEXT NOT NULL CHECK (kind IN ('wilderness', 'county', 'ecoregion')),
   name            TEXT NOT NULL,
   geom            GEOMETRY NOT NULL,
   gazetteer_build TEXT NOT NULL,
   PRIMARY KEY (source, source_id)
 );
 COMMENT ON TABLE area IS 'A named place with an outline, copied from the gazetteer once a sample lies inside it (beeline-9jd4). Reference data keyed by its source''s own id, not an entity: a reseed must not move it.';
-COMMENT ON COLUMN area.source IS 'Whose layer the outline comes from: wilderness.net is the National Wilderness Preservation System as Wilderness.net publishes it; census is the Census Bureau''s cartographic county boundaries; bc-abms is British Columbia''s legally defined administrative areas.';
-COMMENT ON COLUMN area.source_id IS 'The source''s own id, which survives a rename: Wilderness.net''s WID (428 is the Daniel J. Evans Wilderness, called the Olympic Wilderness until 2017), a county''s Census GEOID (41003 is Benton County, Oregon), a regional district''s LGL_ADMIN_AREA_ID in BC''s layer.';
-COMMENT ON COLUMN area.kind IS 'What sort of place: wilderness is a federally designated wilderness, never a wilderness study area (Peter, 2026-10-26); county is a US county or a BC regional district.';
-COMMENT ON COLUMN area.name IS 'The name as the source writes it: Steens Mountain Wilderness, Benton County, Capital Regional District.';
+COMMENT ON COLUMN area.source IS 'Whose layer the outline comes from: wilderness.net is the National Wilderness Preservation System as Wilderness.net publishes it; census is the Census Bureau''s cartographic county boundaries; bc-abms is British Columbia''s legally defined administrative areas; epa-cec is the EPA''s Level III ecoregions of North America, the Commission for Environmental Cooperation''s file.';
+COMMENT ON COLUMN area.source_id IS 'The source''s own id, which survives a rename: Wilderness.net''s WID (428 is the Daniel J. Evans Wilderness, called the Olympic Wilderness until 2017), a county''s Census GEOID (41003 is Benton County, Oregon), a regional district''s LGL_ADMIN_AREA_ID in BC''s layer, an ecoregion''s Level III code (7.1.9 is the Willamette Valley).';
+COMMENT ON COLUMN area.kind IS 'What sort of place: wilderness is a federally designated wilderness, never a wilderness study area (Peter, 2026-10-26); county is a US county or a BC regional district; ecoregion is an EPA Level III ecoregion.';
+COMMENT ON COLUMN area.name IS 'The name as the source writes it: Steens Mountain Wilderness, Benton County, Capital Regional District, Willamette Valley.';
 COMMENT ON COLUMN area.gazetteer_build IS 'The gazetteer_build.build_id the row was last copied from.';
 
 -- Which samples have had their areas worked out, at which point and from which
@@ -60,4 +61,4 @@ CREATE TABLE sample_area (
   area_source_id TEXT NOT NULL,
   PRIMARY KEY (sample_id, area_source, area_source_id)
 );
-COMMENT ON TABLE sample_area IS 'Each area a sample''s believed-true point lies inside, whatever its kind. Inside a wilderness means more than 100 m inside its outline, the program''s allowance for GPS error (Peter, 2026-10-26); a county is simply the one the point is in. Worked out at the point and build in sample_area_derivation.';
+COMMENT ON TABLE sample_area IS 'Each area a sample''s believed-true point lies inside, whatever its kind. Inside a wilderness means more than 100 m inside its outline, the program''s allowance for GPS error (Peter, 2026-10-26); a county is simply the one the point is in, and so is an ecoregion, or for a point on the shore the nearest within 1 km. Worked out at the point and build in sample_area_derivation.';

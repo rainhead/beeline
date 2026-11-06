@@ -14,7 +14,9 @@ import { recordSampleChanges, sampleLogFor } from "./sample-change.js";
  * person's samples; `pnpm area:derive` runs it by hand. Two kinds so far:
  * the federal wilderness (beeline-zdfz), and the county or BC regional
  * district (beeline-313x), which is the one the point is in, or for a point
- * on the shore just outside every county, the nearest within 1 km.
+ * on the shore just outside every county, the nearest within 1 km; and the
+ * EPA Level III ecoregion (beeline-l5so), found the same way, with the same
+ * allowance on the shore.
  *
  * With `stampCounties`, it then writes the county of each sample still to
  * print from
@@ -53,6 +55,13 @@ export const WILDERNESS_EDGE_M = 100;
  */
 export const COUNTY_SHORE_M = 1000;
 
+/**
+ * How far outside every ecoregion a point may be and still take the nearest
+ * one (beeline-l5so). The ecoregions tile the land, so a point on the shore
+ * falls outside them as it does outside the counties; the same allowance.
+ */
+export const ECOREGION_SHORE_M = COUNTY_SHORE_M;
+
 export interface AreaResult {
   /** Null when there was no gazetteer to read. */
   gazetteerBuild: string | null;
@@ -61,6 +70,10 @@ export interface AreaResult {
   inWilderness: number;
   /** Of the samples tested, how many lie inside a county or regional district. */
   inCounty: number;
+  /** Of the samples tested, how many lie in an EPA Level III ecoregion. */
+  inEcoregion: number;
+  /** Of those, how many were outside every ecoregion and took the nearest within ECOREGION_SHORE_M. */
+  ecoregionByShore: number;
   /** The gazetteer was built before it held any areas: nothing was tested. */
   outdated: boolean;
   /** Samples whose county was written from their coordinates (stampCounties). */
@@ -91,7 +104,8 @@ async function rows<T>(conn: Conn, sql: string, params?: unknown[]): Promise<T[]
 
 export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: DeriveAreaOptions = {}): Promise<AreaResult> {
   const result: AreaResult = {
-    gazetteerBuild: null, pending: 0, inWilderness: 0, inCounty: 0, outdated: false, countiesStamped: 0,
+    gazetteerBuild: null, pending: 0, inWilderness: 0, inCounty: 0, inEcoregion: 0, ecoregionByShore: 0,
+    outdated: false, countiesStamped: 0,
   };
   try {
     await access(gazetteerPath);
@@ -107,18 +121,25 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
     result.gazetteerBuild = build.build_id;
     // A gazetteer from before areas (beeline-9jd4), without the wildernesses
     // or without its regions' own ids, is still good for localities; it only
-    // has no areas to test against.
-    const [{ n: found } = { n: 0 }] = await rows<{ n: number }>(
+    // has no areas to test against. One without the ecoregion table
+    // (beeline-l5so) is not outdated: wildernesses and counties are tested as
+    // before and no ecoregions are found, so production's nightly keeps
+    // working until its gazetteer is rebuilt. sample_ecoregion_missing then
+    // holds every located sample, which is the signal to rebuild it.
+    const present = await rows<{ t: string }>(
       conn,
-      `SELECT count(*)::INTEGER AS n FROM duckdb_columns() WHERE database_name = $1
+      `SELECT DISTINCT table_name || '.' || column_name AS t FROM duckdb_columns() WHERE database_name = $1
          AND ((table_name = 'wilderness' AND column_name = 'wid')
-              OR (table_name = 'region' AND column_name = 'source_id'))`,
+              OR (table_name = 'region' AND column_name = 'source_id')
+              OR (table_name = 'ecoregion' AND column_name = 'code'))`,
       [G],
     );
-    if (found < 2) {
+    const has = new Set(present.map((r) => r.t));
+    if (!has.has("wilderness.wid") || !has.has("region.source_id")) {
       result.outdated = true;
       return result;
     }
+    const ecoregions = has.has("ecoregion.code");
     const pending = await rows<{ sample_id: number; lat: number; lon: number }>(
       conn,
       `SELECT l.sample_id, l.latitude AS lat, l.longitude AS lon
@@ -137,9 +158,11 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
     const size = opts.batchSize ?? 5000;
     for (let i = 0; i < pending.length; i += size) {
       opts.signal?.throwIfAborted();
-      const found = await testBatch(conn, pending.slice(i, i + size), G, build.build_id);
+      const found = await testBatch(conn, pending.slice(i, i + size), G, build.build_id, ecoregions);
       result.inWilderness += found.wilderness;
       result.inCounty += found.county;
+      result.inEcoregion += found.ecoregion;
+      result.ecoregionByShore += found.ecoregionByShore;
     }
     // An area no sample lies inside any more goes: the store keeps only the
     // areas somebody collected in.
@@ -153,10 +176,12 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
 }
 
 /** Every area the gazetteer holds, in the store's terms. */
-const gazetteerAreas = (G: string) => `
+const gazetteerAreas = (G: string, ecoregions: boolean) => `
   SELECT 'wilderness.net' AS source, wid AS source_id, 'wilderness' AS kind, name, geom FROM ${G}.wilderness
   UNION ALL
-  SELECT source, source_id, 'county' AS kind, name, geom FROM ${G}.region`;
+  SELECT source, source_id, 'county' AS kind, name, geom FROM ${G}.region${ecoregions ? `
+  UNION ALL
+  SELECT 'epa-cec' AS source, code AS source_id, 'ecoregion' AS kind, name, geom FROM ${G}.ecoregion` : ""}`;
 
 /** Replace one batch's areas; returns how many of its samples lie inside an area of each kind. */
 async function testBatch(
@@ -164,7 +189,8 @@ async function testBatch(
   batch: Array<{ sample_id: number; lat: number; lon: number }>,
   G: string,
   buildId: string,
-): Promise<{ wilderness: number; county: number }> {
+  ecoregions: boolean,
+): Promise<{ wilderness: number; county: number; ecoregion: number; ecoregionByShore: number }> {
   await conn.run(`CREATE OR REPLACE TEMP TABLE area_batch (sample_id INTEGER, lat DOUBLE, lon DOUBLE)`);
   const appender = await conn.createAppender("area_batch", "main", "temp");
   for (const p of batch) {
@@ -176,7 +202,7 @@ async function testBatch(
   appender.closeSync();
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE area_batch_hit AS
-    SELECT DISTINCT sample_id, 'wilderness.net' AS source, wid AS source_id, 'wilderness' AS kind
+    SELECT DISTINCT sample_id, 'wilderness.net' AS source, wid AS source_id, 'wilderness' AS kind, FALSE AS by_shore
     FROM (SELECT b.sample_id, b.lat, b.lon, w.wid,
                  ST_ClosestPoint(ST_Boundary(w.geom), ST_Point(b.lon, b.lat)) AS edge
           FROM area_batch b JOIN ${G}.wilderness w ON ST_Contains(w.geom, ST_Point(b.lon, b.lat)))
@@ -188,7 +214,7 @@ async function testBatch(
     UNION ALL
     -- The county or regional district the point is in, with no allowance at
     -- the line between two: a point is in one or the other.
-    SELECT DISTINCT b.sample_id, r.source, r.source_id, 'county'
+    SELECT DISTINCT b.sample_id, r.source, r.source_id, 'county', FALSE
     FROM area_batch b JOIN ${G}.region r ON ST_Contains(r.geom, ST_Point(b.lon, b.lat))
     UNION ALL
     -- A point in no county at all, on a beach outside boundaries that stop
@@ -198,7 +224,7 @@ async function testBatch(
     -- Not refused across a border the gazetteer does not cover: a point just
     -- inside Alberta is recorded in the BC district beside it, and only the
     -- stamp's state check keeps that off the sample's county.
-    SELECT sample_id, source, source_id, 'county'
+    SELECT sample_id, source, source_id, 'county', TRUE
     FROM (SELECT b.sample_id, r.source, r.source_id,
                  ST_ClosestPoint(r.geom, ST_Point(b.lon, b.lat)) AS edge, b.lat, b.lon
           FROM area_batch b JOIN ${G}.region r ON ST_DWithin(r.geom, ST_Point(b.lon, b.lat), 0.03)
@@ -206,7 +232,24 @@ async function testBatch(
          LATERAL (SELECT 2 * 6371000 * asin(sqrt(pow(sin(radians(ST_Y(edge) - lat) / 2), 2)
                     + cos(radians(lat)) * cos(radians(ST_Y(edge))) * pow(sin(radians(ST_X(edge) - lon) / 2), 2))) AS m)
     WHERE m <= ${COUNTY_SHORE_M}
-    QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY m, source, source_id) = 1`);
+    QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY m, source, source_id) = 1
+${ecoregions ? `    UNION ALL
+    -- The ecoregion the point is in. They tile the land, so a point on an
+    -- edge is given by ST_Contains to neither and by the next test to one.
+    SELECT DISTINCT b.sample_id, 'epa-cec', e.code, 'ecoregion', FALSE
+    FROM area_batch b JOIN ${G}.ecoregion e ON ST_Contains(e.geom, ST_Point(b.lon, b.lat))
+    UNION ALL
+    -- A point in no ecoregion, on a beach outside outlines that stop at the
+    -- shoreline, takes the nearest within ECOREGION_SHORE_M, as a county does.
+    SELECT sample_id, 'epa-cec', code, 'ecoregion', TRUE
+    FROM (SELECT b.sample_id, e.code,
+                 ST_ClosestPoint(e.geom, ST_Point(b.lon, b.lat)) AS edge, b.lat, b.lon
+          FROM area_batch b JOIN ${G}.ecoregion e ON ST_DWithin(e.geom, ST_Point(b.lon, b.lat), 0.03)
+          WHERE NOT EXISTS (SELECT 1 FROM ${G}.ecoregion e2 WHERE ST_Contains(e2.geom, ST_Point(b.lon, b.lat)))) near,
+         LATERAL (SELECT 2 * 6371000 * asin(sqrt(pow(sin(radians(ST_Y(edge) - lat) / 2), 2)
+                    + cos(radians(lat)) * cos(radians(ST_Y(edge))) * pow(sin(radians(ST_X(edge) - lon) / 2), 2))) AS m)
+    WHERE m <= ${ECOREGION_SHORE_M}
+    QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY m, code) = 1` : ""}`);
   const now = new Date().toISOString();
   await conn.run("BEGIN TRANSACTION");
   try {
@@ -216,7 +259,7 @@ async function testBatch(
     await conn.run(
       `INSERT INTO area (source, source_id, kind, name, geom, gazetteer_build)
        SELECT g.source, g.source_id, g.kind, g.name, g.geom, $1
-       FROM (${gazetteerAreas(G)}) g
+       FROM (${gazetteerAreas(G, ecoregions)}) g
        WHERE EXISTS (SELECT 1 FROM area_batch_hit h WHERE h.source = g.source AND h.source_id = g.source_id)
          AND NOT EXISTS (SELECT 1 FROM area a
                          WHERE a.source = g.source AND a.source_id = g.source_id AND a.gazetteer_build = $1)
@@ -240,13 +283,20 @@ async function testBatch(
     await conn.run("ROLLBACK");
     throw err;
   }
-  const [found] = await rows<{ wilderness: number; county: number }>(
+  const [found] = await rows<{ wilderness: number; county: number; ecoregion: number; shore: number }>(
     conn,
     `SELECT count(DISTINCT sample_id) FILTER (WHERE kind = 'wilderness')::INTEGER AS wilderness,
-            count(DISTINCT sample_id) FILTER (WHERE kind = 'county')::INTEGER AS county
+            count(DISTINCT sample_id) FILTER (WHERE kind = 'county')::INTEGER AS county,
+            count(DISTINCT sample_id) FILTER (WHERE kind = 'ecoregion')::INTEGER AS ecoregion,
+            count(DISTINCT sample_id) FILTER (WHERE kind = 'ecoregion' AND by_shore)::INTEGER AS shore
      FROM area_batch_hit`,
   );
-  return { wilderness: found?.wilderness ?? 0, county: found?.county ?? 0 };
+  return {
+    wilderness: found?.wilderness ?? 0,
+    county: found?.county ?? 0,
+    ecoregion: found?.ecoregion ?? 0,
+    ecoregionByShore: found?.shore ?? 0,
+  };
 }
 
 /**
@@ -318,7 +368,8 @@ export function describeAreas(r: AreaResult): string | null {
   if (r.outdated) return "areas: the gazetteer predates them; rebuild it";
   const stamped = r.countiesStamped > 0 ? `; ${r.countiesStamped} county(ies) written from the coordinates` : "";
   if (r.pending === 0) return stamped === "" ? null : `areas${stamped}`;
-  return `areas: ${r.pending} sample(s) tested, ${r.inWilderness} inside a wilderness, ${r.inCounty} in a county${stamped}`;
+  const shore = r.ecoregionByShore > 0 ? ` (${r.ecoregionByShore} by the shore rule)` : "";
+  return `areas: ${r.pending} sample(s) tested, ${r.inWilderness} inside a wilderness, ${r.inCounty} in a county, ${r.inEcoregion} in an ecoregion${shore}${stamped}`;
 }
 
 // CLI: pnpm area:derive [db] [gazetteer]

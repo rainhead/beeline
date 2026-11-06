@@ -402,8 +402,8 @@ export interface SampleLocalitySuggestionCurrentView {
   derived_at: Date;
 }
 
-/** schema/038: what kind of area (beeline-9jd4). A county includes a BC regional district. */
-export type AreaKind = "wilderness" | "county";
+/** schema/038: what kind of area (beeline-9jd4). A county includes a BC regional district; an ecoregion is an EPA Level III one (beeline-l5so). */
+export type AreaKind = "wilderness" | "county" | "ecoregion";
 
 /**
  * schema/038: a named place with an outline, keyed by its source's own id.
@@ -411,7 +411,7 @@ export type AreaKind = "wilderness" | "county";
  * reads it, and the driver has no type for it without the spatial extension.
  */
 export interface AreaTable {
-  source: "wilderness.net" | "census" | "bc-abms";
+  source: "wilderness.net" | "census" | "bc-abms" | "epa-cec";
   source_id: string;
   kind: AreaKind;
   name: string;
@@ -432,6 +432,12 @@ export interface SampleAreaTable {
   sample_id: number;
   area_source: string;
   area_source_id: string;
+}
+
+/** schema/173: a located sample no ecoregion was found for; settled says its season has settled (schema/102). */
+export interface SampleEcoregionMissingView {
+  sample_id: number;
+  settled: boolean;
 }
 
 /** schema/173: the areas, where they were found at the point the sample has now. */
@@ -1352,6 +1358,7 @@ export interface Database {
   sample_locality_candidate_current: SampleLocalityCandidateCurrentView;
   sample_locality_suggestion_current: SampleLocalitySuggestionCurrentView;
   sample_area_current: SampleAreaCurrentView;
+  sample_ecoregion_missing: SampleEcoregionMissingView;
   printable_sample: PrintableSampleView;
   pending_print_sample: PendingPrintSampleView;
   print_run: PrintRunTable;

@@ -214,6 +214,22 @@ describe("ecoregions (beeline-l5so)", () => {
     expect((await ecoregions(conn)).length).toBe(0);
   });
 
+  test("a point where two simplified outlines lap over each other gets one ecoregion, not two", async () => {
+    const path = join(dir, "eco-overlap.duckdb");
+    await buildTestGazetteer(path, "build-eco-overlap");
+    const instance = await openDuckDb(path);
+    const g = await instance.connect();
+    // A neighbour whose simplified edge laps a few hundred metres over the Coast Range's.
+    await g.run(`LOAD spatial; INSERT INTO ecoregion VALUES ('7.1.8b', 'Overlap Range',
+      ST_GeomFromText('POLYGON((-123.605 44, -123 44, -123 45, -123.605 45, -123.605 44))'))`);
+    g.closeSync();
+    instance.closeSync();
+    const conn = await storeWithPerson();
+    const id = await insertCleanSample(conn, {}, ALSEA);
+    expect(await deriveAreas(conn, path)).toMatchObject({ pending: 1, inEcoregion: 1, ecoregionByShore: 0 });
+    expect(await ecoregions(conn)).toEqual([[id, "epa-cec", "7.1.8", "Coast Range"]]);
+  });
+
   test("a gazetteer without the ecoregion table still finds wildernesses and counties, and leaves every sample in the missing view", async () => {
     const path = join(dir, "eco-old.duckdb");
     await buildTestGazetteer(path, "build-eco-old");

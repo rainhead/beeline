@@ -76,6 +76,24 @@ FROM (SELECT * FROM ST_Read('__SOURCES__/wilderness_0.geojson')
       UNION ALL BY NAME SELECT * FROM ST_Read('__SOURCES__/wilderness_600.geojson'))
 GROUP BY WID;
 
+-- EPA Level III ecoregions of North America (beeline-l5so), one row per
+-- ecoregion. The source (NA_CEC_Eco_Level3, the Commission for Environmental
+-- Cooperation's file, which beeatlas.net also loads) is cut into many patches
+-- per ecoregion, so they are dissolved to one geometry each, as old Beeline's
+-- stewardship-report GeoPackage already is. Keyed by NA_L3CODE (7.1.9 is the
+-- Willamette Valley), the EPA's own identifier, rather than the name. The file is
+-- in a Lambert azimuthal equal-area projection on a sphere; ST_Transform reads
+-- that from the file and gives longitude/latitude. Code 0.0.0 is "Water" (the
+-- Great Lakes), no ecoregion. Level IV waits for a consumer. The derive step
+-- copies the ones samples lie inside into the store as areas
+-- (src/derive-area.ts).
+CREATE TABLE ecoregion AS
+SELECT NA_L3CODE AS code, min(NA_L3NAME) AS name,
+       ST_MakeValid(ST_Union_Agg(ST_MakeValid(ST_Transform(geom, 'EPSG:4326', always_xy := true)))) AS geom
+FROM ST_Read('__SOURCES__/ecoregions/NA_CEC_Eco_Level3.shp')
+WHERE NA_L3CODE <> '0.0.0'
+GROUP BY NA_L3CODE;
+
 -- Washington state parks, and BC's provincial parks, protected areas,
 -- ecological reserves and recreation areas, each with the suffix its label
 -- carries. A state park trail is a corridor a point on is better named for

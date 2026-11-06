@@ -57,6 +57,11 @@ for page in wilderness_0 wilderness_300; do
   [ "$(jq '.features | length' "$page.geojson")" -eq 300 ] || { echo "$page.geojson is not a full page of 300: the service pages differently now" >&2; exit 1; }
 done
 [ "$(jq '.features | length' wilderness_600.geojson)" -lt 300 ] || { echo "more than 900 wilderness features: add a page to this script and to ingest/gazetteer.sql" >&2; exit 1; }
+# EPA Level III ecoregions of North America, the Commission for Environmental
+# Cooperation's file (beeline-l5so): 182 ecoregion codes, 181 of them land.
+# The same file beeatlas.net loads for its ecoregion_l3 column. The projection
+# is Lambert azimuthal equal-area, which ingest/gazetteer.sql converts.
+get https://dmap-prod-oms-edc.s3.us-east-1.amazonaws.com/ORD/Ecoregions/cec_na/NA_CEC_Eco_Level3.zip NA_CEC_Eco_Level3.zip
 # Park, reserve and island outlines from OpenStreetMap (ODbL), for the
 # regional and city parks no government layer gathers, and for islands.
 # Geofabrik's extracts, one per state or province the atlases collect in.
@@ -68,5 +73,6 @@ done
 [ -d us ] || unzip -oq US.zip -d us
 [ -d ca ] || unzip -oq CA.zip -d ca
 [ -d counties ] || unzip -oq cb_2023_us_county_500k.zip -d counties
+[ -d ecoregions ] || unzip -oq NA_CEC_Eco_Level3.zip -d ecoregions
 [ -d places ] || unzip -oq cb_2023_us_place_500k.zip -d places
 echo "sources in $DL" >&2

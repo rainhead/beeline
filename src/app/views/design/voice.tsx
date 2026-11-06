@@ -16,11 +16,14 @@ export function DesignVoice({ m }: { m: Messages }) {
         speak differently: terse and technical, because their audience is three people who built the thing.
       </p>
       <p>
-        There is a third audience this system does <em>not</em> speak for: someone who has never heard of the program,
-        arriving at the public tier expected on <code>melittologist.org</code>. Persuading a stranger to volunteer is a
-        different job from helping a volunteer fix a record, and the voice below would be wrong for it — it assumes you
-        already collect bees, already have samples, and already know what a determination is. When that surface is
-        designed it needs its own voice section, not an extension of this one.
+        This system does <em>not</em> speak to a third audience: someone who has never heard of the program.
+        Persuading a stranger to volunteer is a different job from helping a volunteer fix a record, and the voice
+        below would be wrong for it — it assumes you already collect bees, already have samples, and already know
+        what a determination is. That job belongs to the{" "}
+        <a href="https://extension.oregonstate.edu/master-melittologist">
+          OSU Extension Master Melittologist website
+        </a>
+        , not to Beeline.
       </p>
 
       <h2>The rules, and where they already hold</h2>

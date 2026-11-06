@@ -87,9 +87,22 @@ GROUP BY WID;
 -- Great Lakes), no ecoregion. Level IV waits for a consumer. The derive step
 -- copies the ones samples lie inside into the store as areas
 -- (src/derive-area.ts).
+--
+-- The EPA file comes at full resolution, 3.1 million vertices for 181
+-- outlines, as many as all 806 wildernesses; the other layers arrive
+-- simplified to about 30 m (maxAllowableOffset 0.0003 in
+-- scripts/fetch-gazetteer.sh). So each dissolved outline is simplified to the
+-- same tolerance, which keeps a third of the vertices (1.06 million).
+-- Simplifying neighbours separately can open slivers between them or lap one
+-- over the other; measured on 300,000 random points over the four atlases'
+-- states (2026-11-06), the full and the simplified outlines put every point
+-- in the same number of ecoregions, none in two, and one shore point moved
+-- from none to one. The derive step keeps one ecoregion per sample anyway.
 CREATE TABLE ecoregion AS
 SELECT NA_L3CODE AS code, min(NA_L3NAME) AS name,
-       ST_MakeValid(ST_Union_Agg(ST_MakeValid(ST_Transform(geom, 'EPSG:4326', always_xy := true)))) AS geom
+       ST_MakeValid(ST_SimplifyPreserveTopology(
+         ST_MakeValid(ST_Union_Agg(ST_MakeValid(ST_Transform(geom, 'EPSG:4326', always_xy := true)))),
+         0.0003)) AS geom
 FROM ST_Read('__SOURCES__/ecoregions/NA_CEC_Eco_Level3.shp')
 WHERE NA_L3CODE <> '0.0.0'
 GROUP BY NA_L3CODE;

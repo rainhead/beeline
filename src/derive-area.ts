@@ -236,8 +236,14 @@ async function testBatch(
 ${ecoregions ? `    UNION ALL
     -- The ecoregion the point is in. They tile the land, so a point on an
     -- edge is given by ST_Contains to neither and by the next test to one.
-    SELECT DISTINCT b.sample_id, 'epa-cec', e.code, 'ecoregion', FALSE
-    FROM area_batch b JOIN ${G}.ecoregion e ON ST_Contains(e.geom, ST_Point(b.lon, b.lat))
+    -- One per sample: the outlines are simplified one by one in the
+    -- gazetteer, so two neighbours can lap over each other by a few metres
+    -- (none did on 300,000 random points; ingest/gazetteer.sql), and the
+    -- pages and the counts assume a sample has one ecoregion.
+    SELECT sample_id, 'epa-cec', code, 'ecoregion', FALSE
+    FROM (SELECT b.sample_id, e.code
+          FROM area_batch b JOIN ${G}.ecoregion e ON ST_Contains(e.geom, ST_Point(b.lon, b.lat)))
+    QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY code) = 1
     UNION ALL
     -- A point in no ecoregion, on a beach outside outlines that stop at the
     -- shoreline, takes the nearest within ECOREGION_SHORE_M, as a county does.

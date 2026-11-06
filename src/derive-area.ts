@@ -120,22 +120,26 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
     if (build === undefined) throw new Error(`${gazetteerPath} has no gazetteer_build row: rebuild it`);
     result.gazetteerBuild = build.build_id;
     // A gazetteer from before areas (beeline-9jd4), without the wildernesses
-    // or without its regions' own ids, or from before the ecoregions
-    // (beeline-l5so), is still good for localities; it only has no areas to
-    // test against. Production's gazetteer is replaced by hand, so it stays
-    // so until then.
-    const [{ n: found } = { n: 0 }] = await rows<{ n: number }>(
+    // or without its regions' own ids, is still good for localities; it only
+    // has no areas to test against. One without the ecoregion table
+    // (beeline-l5so) is not outdated: wildernesses and counties are tested as
+    // before and no ecoregions are found, so production's nightly keeps
+    // working until its gazetteer is rebuilt. sample_ecoregion_missing then
+    // holds every located sample, which is the signal to rebuild it.
+    const present = await rows<{ t: string }>(
       conn,
-      `SELECT count(*)::INTEGER AS n FROM duckdb_columns() WHERE database_name = $1
+      `SELECT DISTINCT table_name || '.' || column_name AS t FROM duckdb_columns() WHERE database_name = $1
          AND ((table_name = 'wilderness' AND column_name = 'wid')
               OR (table_name = 'region' AND column_name = 'source_id')
               OR (table_name = 'ecoregion' AND column_name = 'code'))`,
       [G],
     );
-    if (found < 3) {
+    const has = new Set(present.map((r) => r.t));
+    if (!has.has("wilderness.wid") || !has.has("region.source_id")) {
       result.outdated = true;
       return result;
     }
+    const ecoregions = has.has("ecoregion.code");
     const pending = await rows<{ sample_id: number; lat: number; lon: number }>(
       conn,
       `SELECT l.sample_id, l.latitude AS lat, l.longitude AS lon
@@ -154,7 +158,7 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
     const size = opts.batchSize ?? 5000;
     for (let i = 0; i < pending.length; i += size) {
       opts.signal?.throwIfAborted();
-      const found = await testBatch(conn, pending.slice(i, i + size), G, build.build_id);
+      const found = await testBatch(conn, pending.slice(i, i + size), G, build.build_id, ecoregions);
       result.inWilderness += found.wilderness;
       result.inCounty += found.county;
       result.inEcoregion += found.ecoregion;
@@ -172,12 +176,12 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
 }
 
 /** Every area the gazetteer holds, in the store's terms. */
-const gazetteerAreas = (G: string) => `
+const gazetteerAreas = (G: string, ecoregions: boolean) => `
   SELECT 'wilderness.net' AS source, wid AS source_id, 'wilderness' AS kind, name, geom FROM ${G}.wilderness
   UNION ALL
-  SELECT source, source_id, 'county' AS kind, name, geom FROM ${G}.region
+  SELECT source, source_id, 'county' AS kind, name, geom FROM ${G}.region${ecoregions ? `
   UNION ALL
-  SELECT 'epa-cec' AS source, code AS source_id, 'ecoregion' AS kind, name, geom FROM ${G}.ecoregion`;
+  SELECT 'epa-cec' AS source, code AS source_id, 'ecoregion' AS kind, name, geom FROM ${G}.ecoregion` : ""}`;
 
 /** Replace one batch's areas; returns how many of its samples lie inside an area of each kind. */
 async function testBatch(
@@ -185,6 +189,7 @@ async function testBatch(
   batch: Array<{ sample_id: number; lat: number; lon: number }>,
   G: string,
   buildId: string,
+  ecoregions: boolean,
 ): Promise<{ wilderness: number; county: number; ecoregion: number; ecoregionByShore: number }> {
   await conn.run(`CREATE OR REPLACE TEMP TABLE area_batch (sample_id INTEGER, lat DOUBLE, lon DOUBLE)`);
   const appender = await conn.createAppender("area_batch", "main", "temp");
@@ -228,7 +233,7 @@ async function testBatch(
                     + cos(radians(lat)) * cos(radians(ST_Y(edge))) * pow(sin(radians(ST_X(edge) - lon) / 2), 2))) AS m)
     WHERE m <= ${COUNTY_SHORE_M}
     QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY m, source, source_id) = 1
-    UNION ALL
+${ecoregions ? `    UNION ALL
     -- The ecoregion the point is in. They tile the land, so a point on an
     -- edge is given by ST_Contains to neither and by the next test to one.
     SELECT DISTINCT b.sample_id, 'epa-cec', e.code, 'ecoregion', FALSE
@@ -244,7 +249,7 @@ async function testBatch(
          LATERAL (SELECT 2 * 6371000 * asin(sqrt(pow(sin(radians(ST_Y(edge) - lat) / 2), 2)
                     + cos(radians(lat)) * cos(radians(ST_Y(edge))) * pow(sin(radians(ST_X(edge) - lon) / 2), 2))) AS m)
     WHERE m <= ${ECOREGION_SHORE_M}
-    QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY m, code) = 1`);
+    QUALIFY row_number() OVER (PARTITION BY sample_id ORDER BY m, code) = 1` : ""}`);
   const now = new Date().toISOString();
   await conn.run("BEGIN TRANSACTION");
   try {
@@ -254,7 +259,7 @@ async function testBatch(
     await conn.run(
       `INSERT INTO area (source, source_id, kind, name, geom, gazetteer_build)
        SELECT g.source, g.source_id, g.kind, g.name, g.geom, $1
-       FROM (${gazetteerAreas(G)}) g
+       FROM (${gazetteerAreas(G, ecoregions)}) g
        WHERE EXISTS (SELECT 1 FROM area_batch_hit h WHERE h.source = g.source AND h.source_id = g.source_id)
          AND NOT EXISTS (SELECT 1 FROM area a
                          WHERE a.source = g.source AND a.source_id = g.source_id AND a.gazetteer_build = $1)

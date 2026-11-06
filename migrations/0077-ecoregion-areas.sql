@@ -2,9 +2,9 @@
 -- becomes a third kind of area. DuckDB cannot alter a CHECK constraint, so
 -- area is made again, keeping its rows (nothing refers to it by foreign key),
 -- as 0065 did. The samples' areas stay as they are. A gazetteer built before
--- this change has no ecoregion table, and until one built from this commit's
--- ingest/gazetteer.sql arrives the nightly says the gazetteer predates areas;
--- the new build then tests every sample again and finds their ecoregions.
+-- this change has no ecoregion table; the nightly then tests wildernesses and
+-- counties as before and finds no ecoregions, until a gazetteer built from
+-- this commit's ingest/gazetteer.sql arrives and tests every sample again.
 -- Also adds the view that counts samples left without one.
 
 DROP VIEW sample_area_current;
@@ -43,7 +43,9 @@ WHERE abs(d.latitude - l.latitude) <= 5e-5
 -- Located samples that no ecoregion was found for (beeline-l5so): the file
 -- covers the land, so a point in the sea off the coast, or in a country the
 -- file leaves out, is in none, and so is a sample the derive step has not yet
--- tested against a gazetteer that holds ecoregions. A check count, so it says
+-- tested against a gazetteer that holds ecoregions: with a gazetteer built
+-- before they were added, every located sample is here, which is the signal
+-- to rebuild it. A check count, so it says
 -- which season the sample is in: ask it split, never as one number.
 CREATE VIEW sample_ecoregion_missing AS
 SELECT d.sample_id, EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = d.sample_id) AS settled
@@ -52,4 +54,4 @@ JOIN sample_location l ON l.sample_id = d.sample_id
 WHERE abs(d.latitude - l.latitude) <= 5e-5
   AND abs(d.longitude - l.longitude) <= 5e-5
   AND NOT EXISTS (SELECT 1 FROM sample_area_current c WHERE c.sample_id = d.sample_id AND c.kind = 'ecoregion');
-COMMENT ON VIEW sample_ecoregion_missing IS 'Samples with a believed-true point, tested for areas at that point, that lie in no EPA ecoregion (a point in the sea beyond 1 km of the shore, or outside the file''s coverage). settled says whether the sample is from a settled season, so the count is read split: active seasons against settled ones.';
+COMMENT ON VIEW sample_ecoregion_missing IS 'Samples with a believed-true point, tested for areas at that point, that lie in no EPA ecoregion (a point in the sea beyond 1 km of the shore, or outside the file''s coverage), and every located sample while the gazetteer predates ecoregions, which is the signal to rebuild it. settled says whether the sample is from a settled season, so the count is read split: active seasons against settled ones.';

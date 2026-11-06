@@ -51,7 +51,6 @@ describe("deriveAreas", () => {
   test.each([
     ["without wildernesses", `DROP TABLE wilderness`],
     ["without its regions' own ids", `ALTER TABLE region DROP COLUMN source_id`],
-    ["without ecoregions (beeline-l5so)", `DROP TABLE ecoregion`],
   ])("a gazetteer built before areas (%s) is left for localities, and says it needs rebuilding", async (_, change) => {
     const path = join(dir, `old-${Math.random().toString(36).slice(2)}.duckdb`);
     await buildTestGazetteer(path, "build-old");
@@ -215,7 +214,7 @@ describe("ecoregions (beeline-l5so)", () => {
     expect((await ecoregions(conn)).length).toBe(0);
   });
 
-  test("a gazetteer without the ecoregion table reports outdated and does not throw", async () => {
+  test("a gazetteer without the ecoregion table still finds wildernesses and counties, and leaves every sample in the missing view", async () => {
     const path = join(dir, "eco-old.duckdb");
     await buildTestGazetteer(path, "build-eco-old");
     const instance = await openDuckDb(path);
@@ -224,8 +223,14 @@ describe("ecoregions (beeline-l5so)", () => {
     g.closeSync();
     instance.closeSync();
     const conn = await storeWithPerson();
-    await insertCleanSample(conn, {}, ALSEA);
-    await expect(deriveAreas(conn, path)).resolves.toMatchObject({ outdated: true, inEcoregion: 0 });
+    const id = await insertCleanSample(conn, {}, ALSEA);
+    expect(await deriveAreas(conn, path)).toMatchObject({
+      outdated: false, pending: 1, inWilderness: 1, inCounty: 1, inEcoregion: 0, ecoregionByShore: 0,
+    });
+    expect(await inside(conn)).toEqual([[id, "wilderness.net", "9001", "wilderness", "Alsea Wilderness"]]);
+    expect(await counties(conn)).toEqual([[id, "census", "41003", "Benton County"]]);
+    expect(await ecoregions(conn)).toEqual([]);
+    expect(await missing(conn)).toEqual([[id, false]]);
   });
 });
 

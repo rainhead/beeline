@@ -72,8 +72,9 @@ describe("fly.production.toml", () => {
     const entries = await read();
     const timeout = entries.get(":kill_timeout")!.value;
     const seconds = Number(/^(\d+)s$/.exec(timeout)?.[1]);
-    // An uncheckpointed WAL carrying DDL can leave the store unopenable on
-    // DuckDB <= 1.5.5 (beeline-c1b). The default 5s is not enough.
+    // Shutdown settles the running job and checkpoints (beeline-fth), which
+    // the default 5s is not enough for. On DuckDB <= 1.5.5 an uncheckpointed
+    // WAL carrying DDL could leave the store unopenable (beeline-c1b).
     expect(seconds).toBeGreaterThanOrEqual(60);
     expect(entries.get(":kill_signal")!.value).toBe("SIGTERM");
   });

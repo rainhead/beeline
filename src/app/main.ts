@@ -228,8 +228,8 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
 // because a connection closed under a transaction is what this used to do —
 // and the close is reached whatever happens before it, because the version
 // that put it in an async callback lost the checkpoint to an unhandled
-// rejection, which is the uncheckpointed WAL DuckDB <= 1.5.5 can fail to
-// replay (beeline-c1b).
+// rejection, leaving an uncheckpointed WAL: on DuckDB <= 1.5.5 that could
+// make the file unopenable, and 2.0 replays it (beeline-c1b).
 //
 // The job gets a minute to finish on its own before it is interrupted, which
 // leaves the other minute for its rollback, the drain and the checkpoint. The

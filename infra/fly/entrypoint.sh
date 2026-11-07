@@ -145,8 +145,9 @@ fi
 # important line in the file. pnpm does not forward SIGTERM: it takes the
 # signal, kills the app, and exits 1 ("[ELIFECYCLE] Command failed") in about
 # a quarter of a second — so main.ts's shutdown handler never runs, the store
-# is never closed, and the WAL is left uncheckpointed. That is precisely the
-# state DuckDB <= 1.5.5 can fail to replay, leaving the file unopenable
-# (beeline-c1b). Measured: through pnpm, SIGTERM gave exit 1 in 0.24s;
-# direct, the handler runs and exits 0.
+# is never closed, the running job is not settled, and the WAL is left
+# uncheckpointed. DuckDB <= 1.5.5 could fail to replay that WAL, leaving the
+# file unopenable; 2.0 replays it (beeline-c1b), but a shutdown that never
+# runs is still a job cut off mid-write. Measured: through pnpm, SIGTERM gave
+# exit 1 in 0.24s; direct, the handler runs and exits 0.
 exec node --import tsx src/app/main.ts

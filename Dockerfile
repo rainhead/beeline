@@ -47,6 +47,26 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl jq less procps unzip \
   && rm -rf /var/lib/apt/lists/*
 
+# The duckdb command, for querying the store in maintenance mode only: while
+# the app runs, nothing else may hold the store (ADR 0005). Its version is
+# exactly the DuckDB inside @duckdb/node-api, because a newer command could
+# write a store format the app cannot read (beeline-irgi), and
+# test/duckdb-openers.test.ts fails when the two differ. Taken from DuckDB's
+# release by checksum, the same file and sum as salishsea-io's image.
+ARG DUCKDB_VERSION=2.0.0
+ARG TARGETARCH
+RUN arch="${TARGETARCH:-amd64}" \
+  && case "$arch" in \
+       amd64) sum=c6507206baf7793c6013dbd82368469a45f20dc0e17a6f92f204602f652ed2bc ;; \
+       arm64) sum=859e1875d2a9515fbb4bf8871061437a14af82320da68c753f094c4b776348fe ;; \
+       *) echo "no duckdb command pinned for $arch" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL -o /tmp/duckdb.tar.gz \
+       "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb-cli-linux-${arch}.tar.gz" \
+  && echo "$sum  /tmp/duckdb.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/duckdb.tar.gz -C /usr/local/bin duckdb \
+  && rm -f /tmp/duckdb.tar.gz
+
 # Every path below is read at runtime, and each for its own reason:
 #   src/        the server itself, and src/app/static, which it serves
 #   schema/     db:migrate --check's comparison against schema/*.sql

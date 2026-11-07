@@ -25,6 +25,7 @@ let source: string;
 let target: string;
 let counts: ReseedCounts;
 let conn: DuckDBConnection;
+let instance: DuckDBInstance;
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "beeline-reseed-"));
@@ -99,12 +100,13 @@ beforeAll(async () => {
   seed.closeSync();
 
   counts = await reseedStore(source, target);
-  const instance = await DuckDBInstance.create(target);
+  instance = await DuckDBInstance.create(target);
   conn = await instance.connect();
 });
 
 afterAll(async () => {
   conn?.closeSync();
+  instance?.closeSync();
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -269,8 +271,16 @@ describe("reseeding a store that cannot be blown away", () => {
   test("reseeding the result again lands in the same id range", async () => {
     // The property the old behaviour lacked: reseed twice and the floor was a
     // million higher. A store should not accumulate id debt for being kept.
+    // One process owns a store (ADR 0005), so the copy this suite reads is
+    // closed before the reseed opens it as a source, and reopened after.
+    // DuckDB 1.5 let a second instance in the same process read the file
+    // anyway; 2.0 finds its write-ahead log out of step and refuses.
+    conn.closeSync();
+    instance.closeSync();
     const again = join(dir, "again.duckdb");
     const second = await reseedStore(target, again);
+    instance = await DuckDBInstance.create(target);
+    conn = await instance.connect();
     expect(second.carried).toEqual(counts.carried);
     expect(second.sequenceAt).toBe(counts.sequenceAt);
   });

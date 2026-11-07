@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { openMemoryDuckDb } from "../src/db.js";
 
 /**
  * Every DuckDB this project opens must go through `openDuckDb` or
@@ -42,5 +43,16 @@ describe("DuckDB openers", () => {
       offenders,
       `open these through openDuckDb/openMemoryDuckDb (src/db.ts) so the budgets apply:\n  ${offenders.join("\n  ")}`,
     ).toEqual([]);
+  });
+
+  it("the image's duckdb command is the library's DuckDB", async () => {
+    // A newer command could write a store format the app cannot read, so the
+    // Dockerfile's pin moves with @duckdb/node-api or not at all (beeline-irgi).
+    const dockerfile = await readFile(new URL("../Dockerfile", import.meta.url), "utf8");
+    const pinned = /^ARG DUCKDB_VERSION=(\S+)$/m.exec(dockerfile)?.[1];
+    const conn = await (await openMemoryDuckDb()).connect();
+    const [[library]] = (await (await conn.run("SELECT version()")).getRows()) as [[string]];
+    conn.closeSync();
+    expect(pinned && `v${pinned}`).toBe(library);
   });
 });

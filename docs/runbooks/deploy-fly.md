@@ -37,8 +37,9 @@ restoring `beeline.duckdb.pre-migrate`.
 
 **Node is PID 1, never `pnpm`.** pnpm does not forward SIGTERM: it takes the
 signal, kills the app, and exits 1 in about a quarter of a second, so the
-shutdown handler never runs and the WAL is left uncheckpointed — the state
-DuckDB ≤ 1.5.5 can fail to replay, leaving the file unopenable (beeline-c1b).
+shutdown handler never runs, the running job is cut off, and the WAL is left
+uncheckpointed. DuckDB ≤ 1.5.5 could fail to replay that WAL, leaving the file
+unopenable; 2.0 replays it (beeline-c1b).
 `kill_timeout` cannot help, because nothing is waiting. Hence
 `exec node --import tsx src/app/main.ts`.
 
@@ -262,8 +263,10 @@ staff inventory file (`data/dispositions/<file>.xlsx`, loaded with
 which leaves what it could not place in `<file>.xlsx.held.csv` beside it). The image
 has `curl` and `jq` for asking iNaturalist or Ecdysis something with the
 machine's own secrets, `unzip`, `ps`/`top`/`free` for watching a long run, and
-`less`. It has no editor, and no `duckdb` command, which would have to stay
-on the same version as `@duckdb/node-api` to be safe on the store. What to run
+`less`. It has no editor. It has the `duckdb` command, on exactly the
+version inside `@duckdb/node-api` (a test holds the two together, because a
+newer command could write a store format the app cannot read), for a query by
+hand in maintenance mode only: `duckdb -readonly data/beeline.duckdb`. What to run
 after a change under `ingest/`, and why re-fetching is not the fix, is
 [below](#re-deriving-the-model-after-a-promotion-change).
 

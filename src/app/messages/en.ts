@@ -1835,6 +1835,8 @@ export const en = {
         "Pulls every observation changed since the last run (edits and new records, however old the observation), promotes into samples, and fills missing elevations from the DEM tiles on disk.",
       "legacy-export":
         "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
+      "legacy-copy":
+        "Copies every specimen printed here into the old Beeline at old.melittologist.org, so volunteers can enter their identifications there until it closes in February 2027. Sends only what changed since the last copy, and never overwrites an identification a volunteer entered there.",
       "dwc-archives":
         "Writes a Darwin Core archive for each atlas and for Master Melittology, one per calendar year, for staff to review, and removes any whose year no longer has specimens. Download them from Exports.",
       "ecdysis-fetch":

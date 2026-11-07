@@ -618,6 +618,15 @@ export interface ReprintRequestTable {
   withdrawn_at: Date | null;
 }
 
+/** A printed specimen as last copied into the old Beeline (beeline-83b8.18, src/legacy-copy.ts). */
+export interface LegacyCopyTable {
+  specimen_id: number;
+  field_number: string;
+  content_sha256: string;
+  first_copied_at: Timestamped;
+  last_copied_at: Timestamped;
+}
+
 // schema/040_determinations.sql
 
 export type DeterminationChannel = "in_app" | "ecdysis_import" | "legacy_import" | "worksheet_import";
@@ -1384,6 +1393,7 @@ export interface Database {
   minted_field_number: MintedFieldNumberTable;
   printed_label: PrintedLabelTable;
   reprint_request: ReprintRequestTable;
+  legacy_copy: LegacyCopyTable;
   printed_label_reprint: PrintedLabelReprintView;
   printed_label_out_of_date: PrintedLabelOutOfDateView;
   pending_reprint: PendingReprintView;

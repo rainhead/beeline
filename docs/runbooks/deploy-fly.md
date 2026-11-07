@@ -151,6 +151,16 @@ since half a login stops the app at boot.
 `store-backup` job writes with ([Backups](#backups)); `BEELINE_BACKUP_FOLDER`,
 in `fly.production.toml`, is the folder. Set both or neither, as with Ecdysis.
 
+`OLD_BEELINE_USERNAME` and `OLD_BEELINE_PASSWORD` are an admin login on the
+old Beeline at old.melittologist.org, which the `legacy-copy` job copies every
+printed specimen in with (beeline-83b8.18,
+[the legacy-format export](../architecture/the-legacy-format-export.md)).
+Make the account in the old Beeline's admin page, keep it for this job alone,
+and set both or neither. Without them the job fails every night in production,
+as the backup does. Try the login first from a workstation with
+`pnpm legacy:copy <store copy> --dry-run`, which signs in and reads the old
+system but sends nothing.
+
 Then deploy, and fill the volume. **Deploy into maintenance mode first.** An
 app that boots against an empty volume has no store; the entrypoint refuses to
 start rather than letting `openAppDb` create an empty one and crash-loop while

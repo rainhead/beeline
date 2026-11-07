@@ -22,7 +22,7 @@ import {
   type SortKey,
   type SpecimenRow,
 } from "../listings.js";
-import { sampleHref, specimenHref } from "../record.js";
+import { sampleHref, specimenHref, type LocalitySuggestion } from "../record.js";
 import { ChevronDownIcon } from "./icons.js";
 import type { Messages } from "../messages/index.js";
 import {
@@ -83,17 +83,30 @@ function PlaceCell({ m, row }: { m: Messages; row: SampleRow | SpecimenRow }) {
   );
 }
 
+/** The listing's 'name<TAB>basis' lines (`locality_choices`), best first. */
+function parseLocalityChoices(lines: string | null): LocalitySuggestion[] {
+  if (lines === null) return [];
+  return lines.split("\n").map((line) => {
+    const [locality, basis] = line.split("\t") as [string, LocalitySuggestion["basis"]];
+    return { locality, basis };
+  });
+}
+
 /**
  * Whether the Place cell offers the pencil that changes a sample's locality
- * (beeline-7ywr, Peter 2026-11-04; the editor is `PlaceEdit`). Offered on a sample whose labels have not printed, to staff, and to its
- * collector where they have something to choose from and nobody else's
- * locality stands on it, as on the sample page.
+ * (beeline-7ywr, Peter 2026-11-04; the editor is `PlaceEdit`), by the sample
+ * page's rule (`samplePlaceEdit`). To staff, on a printed sample too, to
+ * correct the record before a reprint, except one entered in Beeline, whose
+ * own form refuses that. To whoever may edit a sample entered in Beeline,
+ * until it prints. To its collector, until it prints, where they have
+ * something to choose from and nobody else's locality stands on it.
  */
 export function placeEditable(row: SampleRow, admin: boolean): boolean {
-  if (row.printed || row.location_withheld) return false;
-  if (admin) return true;
+  if (row.location_withheld) return false;
   // An entered sample's own form lets its collectors and its enterer write any locality.
-  if (row.entered) return row.mine || row.entered_by_me;
+  if (row.entered) return !row.printed && (admin || row.mine || row.entered_by_me);
+  if (admin) return true;
+  if (row.printed) return false;
   return row.mine && !row.locality_set_by_other && (row.locality_choices !== null || row.inat_observation_id !== null);
 }
 
@@ -754,7 +767,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                     collector is whose name will be printed (/design/names). */}
                 <td>{m.format.list((page.collectors.get(row.sample_id) ?? []).map((c) => c.label))}</td>
                 <td>
-                  <span class="place-text">
+                  <span class="inline-edit-text">
                     <PlaceCell m={m} row={row} />
                   </span>
                   {placeEditable(row, admin) && (
@@ -766,8 +779,9 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                       county={row.county}
                       stateProvince={row.state_province}
                       observed={row.inat_observation_id === null ? null : row.observed_locality}
-                      suggestions={row.locality_choices === null ? [] : row.locality_choices.split("\n")}
+                      suggestions={parseLocalityChoices(row.locality_choices)}
                       free={admin || row.entered}
+                      printed={row.printed}
                       back={listingHref(path, query)}
                     />
                   )}

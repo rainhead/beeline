@@ -679,11 +679,12 @@ export const cancelRun = (conn: DuckDBConnection, id: number, opts: TransitionOp
   });
 
 /**
- * What a reprint request names (gh-218): one specimen, from its page; every
- * specimen of a sample, from the sample's page; or the specimens ticked on
- * the specimens listing (beeline-1kb.23).
+ * What a reprint request names (gh-218): one specimen, from its page, or the
+ * specimens ticked on the specimens listing (beeline-1kb.23). Reprinting is
+ * specimen by specimen (Peter, 2026-11-06): a whole sample's labels are
+ * asked for again by ticking its specimens.
  */
-export type ReprintTarget = { specimenId: number } | { sampleId: number } | { specimenIds: readonly number[] };
+export type ReprintTarget = { specimenId: number } | { specimenIds: readonly number[] };
 
 export interface ReprintOptions {
   personId: number;
@@ -700,7 +701,6 @@ export interface ReprintOptions {
  */
 function targetWhere(target: ReprintTarget): { sql: string; id: number | string } {
   if ("specimenId" in target) return { sql: "sp.entity_id = $1", id: target.specimenId };
-  if ("sampleId" in target) return { sql: "sp.sample_id = $1", id: target.sampleId };
   if (!target.specimenIds.every((id) => Number.isSafeInteger(id) && id > 0)) {
     throw new Error("specimen ids must be positive integers");
   }

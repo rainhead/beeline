@@ -507,18 +507,3 @@ export async function specimenReprint(db: Kysely<Database>, specimenId: number):
     blocker: f?.blocker ?? null,
   };
 }
-
-/** The sample page's form: how many of its specimens are asked for now, and how many more could be. */
-export interface SampleReprints {
-  pending: number;
-  canRequest: number;
-}
-
-export async function sampleReprints(db: Kysely<Database>, sampleId: number): Promise<SampleReprints> {
-  const counts = await sql<{ pending: number; can: number }>`
-    SELECT count(*) FILTER (WHERE blocker = 'asked') AS pending,
-           count(*) FILTER (WHERE blocker IS NULL) AS can
-    FROM (SELECT ${sql.raw(REPRINT_BLOCKER)} AS blocker FROM specimen sp WHERE sp.sample_id = ${sampleId}) t`.execute(db);
-  const c = counts.rows[0];
-  return { pending: Number(c?.pending ?? 0), canRequest: Number(c?.can ?? 0) };
-}

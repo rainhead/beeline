@@ -33,6 +33,7 @@ import {
   OrAbsent,
   PageHeader,
   Pager,
+  InlineEdit,
   PlaceEdit,
   SelectField,
   TaxonName,
@@ -92,23 +93,26 @@ function observedLocality(sample: SampleDetail): string | null {
  * listing's rule (`placeEditable`), read off the sample page's own data, so
  * a sample changeable from one is changeable from the other.
  *
- * Not once labels have printed, since the locality is then what the labels
- * say, nor where the reader may not see where it was collected. Staff may
- * write any name. A sample entered in Beeline takes any name from whoever
- * may edit it. A collector chooses among the names offered, and not over a
- * locality somebody else set, which stands until they change it.
+ * Not where the reader may not see where it was collected. Once labels
+ * have printed the locality is what the labels say, so only staff change
+ * it, to correct the record before a reprint, as the staff locality form let
+ * them (beeline-649); a sample entered in Beeline not even then, since its
+ * own form refuses it. Staff may write any name, and so may whoever may edit
+ * a sample entered in Beeline. A collector chooses among the names offered,
+ * and not over a locality somebody else set, which stands until they change
+ * it.
  */
 export function samplePlaceEdit(
   sample: SampleDetail,
   reader: { admin: boolean; ownsLocality: boolean; editsEntered: boolean; entered: boolean },
-): { free: boolean } | null {
-  if (sample.printed || sample.location_withheld) return null;
-  if (reader.admin) return { free: true };
-  if (reader.entered) return reader.editsEntered ? { free: true } : null;
-  if (!sample.mine) return null;
+): { free: boolean; printed: boolean } | null {
+  if (sample.location_withheld) return null;
+  if (reader.entered) return !sample.printed && (reader.admin || reader.editsEntered) ? { free: true, printed: false } : null;
+  if (reader.admin) return { free: true, printed: sample.printed };
+  if (sample.printed || !sample.mine) return null;
   if (sample.locality_override !== null && !reader.ownsLocality) return null;
   const offered = sample.locality_suggestion !== null || sample.inat_observation_id !== null;
-  return offered ? { free: false } : null;
+  return offered ? { free: false, printed: false } : null;
 }
 
 /**
@@ -144,7 +148,7 @@ export function SampleFacts({
    * whether they may write any name or only one offered (`samplePlaceEdit`).
    * Null on the specimen page, which repeats these facts for reading.
    */
-  placeEdit?: { free: boolean } | null;
+  placeEdit?: { free: boolean; printed: boolean } | null;
 }) {
   const s = m.record.sample;
   const items: Array<Detail | null> = [
@@ -156,7 +160,7 @@ export function SampleFacts({
     // it says more than the kind: the kind of trap, or an old record's own
     // words.
     {
-      term: <Term m={m} slug="protocol">{s.method}</Term>,
+      term: <Term m={m} slug="method">{s.method}</Term>,
       value: (
         <>
           {sample.kind === "trap" ? <Term m={m} slug="trap-sample">{s.methodTrap}</Term> : s.methodNet}
@@ -170,7 +174,7 @@ export function SampleFacts({
       term: s.place,
       value: (
         <>
-          <span class="place-text">
+          <span class="inline-edit-text">
             {orUnknown(m, m.format.place([sample.locality, sample.county, sample.state_province, sample.country]) || null)}
           </span>
           {placeEdit !== null && (
@@ -183,10 +187,11 @@ export function SampleFacts({
               stateProvince={sample.state_province}
               observed={observedLocality(sample)}
               suggestions={[
-                ...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion.locality]),
-                ...sample.locality_alternatives.map((a) => a.locality),
+                ...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]),
+                ...sample.locality_alternatives,
               ]}
               free={placeEdit.free}
+              printed={placeEdit.printed}
               back={sampleHref(sample.sample_id)}
             />
           )}
@@ -280,11 +285,11 @@ export function SampleFacts({
  */
 export function WhereCollected({ m, sample, admin = false }: { m: Messages; sample: SampleDetail; admin?: boolean }) {
   const w = m.record.sample.where;
-  // The staff form belongs on both branches, and matters most on this one:
-  // an obscured observation with no trusted access yields no coordinates
-  // and cannot print, and only a person can put the true point in
-  // (beeline-942). A sample with no observation is not offered it.
-  const staff = admin && sample.inat_observation_id !== null ? <StaffCoordinates m={m} sample={sample} /> : null;
+  // The staff editor belongs on both branches, and matters most on the one
+  // with no coordinates: an obscured observation with no trusted access
+  // yields none and cannot print, and only a person can put the true point
+  // in (beeline-942). A sample with no observation is not offered it.
+  const edit = admin && sample.inat_observation_id !== null ? <CoordinatesEdit m={m} sample={sample} /> : null;
   // Staff never reach this: a withheld location is a volunteer reading
   // somebody else's protected sample (src/app/listings.ts `withheld`).
   if (sample.location_withheld) {
@@ -306,7 +311,23 @@ export function WhereCollected({ m, sample, admin = false }: { m: Messages; samp
       <>
         <h2>{w.heading}</h2>
         <Meta block>{w.coordinatesNone}</Meta>
-        {staff}
+        {edit !== null && (
+          <DetailList
+            items={[
+              {
+                term: w.coordinates,
+                value: (
+                  <>
+                    <span class="inline-edit-text">
+                      <Absent label={m.absence.none} spelled />
+                    </span>
+                    {edit}
+                  </>
+                ),
+              },
+            ]}
+          />
+        )}
       </>
     );
   }
@@ -330,7 +351,15 @@ export function WhereCollected({ m, sample, admin = false }: { m: Messages; samp
       <h2>{w.heading}</h2>
       <DetailList
         items={[
-          { term: w.coordinates, value: <span class="mono">{`${sample.latitude}, ${sample.longitude}`}</span> },
+          {
+            term: w.coordinates,
+            value: (
+              <>
+                <span class="inline-edit-text mono">{`${sample.latitude}, ${sample.longitude}`}</span>
+                {edit}
+              </>
+            ),
+          },
           {
             term: <Term m={m} slug="coordinate-uncertainty">{w.accuracy}</Term>,
             value:
@@ -395,41 +424,46 @@ export function WhereCollected({ m, sample, admin = false }: { m: Messages; samp
           },
         ]}
       />
-      {staff}
     </>
   );
 }
 
-/** The staff write for coordinates (beeline-942): the locality form's twin. */
-function StaffCoordinates({ m, sample }: { m: Messages; sample: SampleDetail }) {
+/**
+ * Staff setting the coordinates (beeline-942), from a pencil on the
+ * Coordinates row (beeline-8w8n), as the place is changed from its row. The
+ * pair and its accuracy in one small form, and where staff coordinates
+ * stand, a second form under it that takes them away so the observation's
+ * apply again.
+ */
+function CoordinatesEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
   const t = m.record.sample.staffCoordinates;
   const action = `/samples/${sample.sample_id}/coordinates`;
+  const back = sampleHref(sample.sample_id);
   const num = (v: number | null) => (v === null ? null : String(v));
   return (
-    <>
-      <h3>{t.heading}</h3>
+    <InlineEdit
+      label={t.open}
+      action={action}
+      back={back}
+      save={t.save}
+      cancel={m.listings.samples.placeEdit.cancel}
+      after={
+        sample.location_override === null ? undefined : (
+          <form method="post" action={action}>
+            <input type="hidden" name="remove" value="1" />
+            <button type="submit" class="outlined compact-button">
+              {t.remove}
+            </button>
+          </form>
+        )
+      }
+    >
       <Meta block>{t.hint}</Meta>
       {sample.printed ? <Meta block>{t.printed}</Meta> : null}
-      <form method="post" action={action} class="form-column">
-        <TextField id="staff-latitude" name="latitude" label={t.latitude} value={num(sample.latitude)} />
-        <TextField id="staff-longitude" name="longitude" label={t.longitude} value={num(sample.longitude)} />
-        <TextField id="staff-uncertainty" name="uncertainty" label={t.uncertainty} value={num(sample.coordinate_uncertainty_m)} />
-        <TextField id="staff-coordinates-note" name="note" label={t.note} />
-        <p class="row">
-          <Button>{t.save}</Button>
-          {sample.location_override === null ? null : (
-            <Button variant="outlined" form="staff-coordinates-remove">
-              {t.remove}
-            </Button>
-          )}
-        </p>
-      </form>
-      {sample.location_override === null ? null : (
-        <form id="staff-coordinates-remove" method="post" action={action}>
-          <input type="hidden" name="remove" value="1" />
-        </form>
-      )}
-    </>
+      <TextField id="staff-latitude" name="latitude" label={t.latitude} value={num(sample.latitude)} />
+      <TextField id="staff-longitude" name="longitude" label={t.longitude} value={num(sample.longitude)} />
+      <TextField id="staff-uncertainty" name="uncertainty" label={t.uncertainty} value={num(sample.coordinate_uncertainty_m)} />
+    </InlineEdit>
   );
 }
 

@@ -37,6 +37,12 @@ async function person(display: string, given: string, family: string): Promise<n
 const count = async (sql: string): Promise<number> => Number(((await rows(conn, sql)) as [[bigint]])[0][0]);
 const specimenOf = async (sampleId: number, n: number): Promise<number> =>
   ((await rows(conn, `SELECT entity_id FROM specimen WHERE sample_id = ${sampleId} AND specimen_number = ${n}`)) as [[number]])[0][0];
+/** Every specimen of a sample, as a list a reprint can name. */
+const specimensOf = async (sampleId: number): Promise<{ specimenIds: number[] }> => ({
+  specimenIds: ((await rows(conn, `SELECT entity_id FROM specimen WHERE sample_id = ${sampleId} ORDER BY specimen_number`)) as [number][]).map(
+    ([id]) => Number(id),
+  ),
+});
 const by = (now: Date) => ({ personId: ash, now });
 
 /** Ash's sample of two, printed in the first run. */
@@ -110,17 +116,6 @@ describe("asking for a reprint", () => {
     ).toEqual([["USA:OR:BentonCoCo Philomath", "reprint differs from its last label: location"]]);
   });
 
-  it("asks for every specimen of a sample, leaving out the ones already asked for", async () => {
-    await requestReprint(conn, { specimenId: await specimenOf(ashSample, 1) }, by(NEXT_DAY));
-    expect(await requestReprint(conn, { sampleId: ashSample }, { ...by(NEXT_DAY), note: "envelope lost" })).toEqual({
-      requested: 1,
-      of: 2,
-    });
-    expect(await rows(conn, `SELECT note FROM pending_reprint ORDER BY specimen_id`)).toEqual([[null], ["envelope lost"]]);
-    const run = await prepareRun(conn, { atlasId: null, personId: ash, now: DAY_AFTER });
-    expect(run).toMatchObject({ labels: 2, reprints: 2 });
-  });
-
   it("asks for a list of specimens from any samples, as ticked on the specimens listing", async () => {
     const other = await insertCleanSample(conn, { collector_id: String(birch), specimen_count: "1", sample_number: "'6'" });
     await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${other}, 1, '25000009')`);
@@ -151,13 +146,13 @@ describe("asking for a reprint", () => {
     // In a run that has not printed: that run is about to print it.
     const fresh = await insertCleanSample(conn, { collector_id: String(birch), specimen_count: "1", sample_number: "'9'" });
     await prepareRun(conn, { atlasId: null, personId: ash, now: DAY_AFTER });
-    const printing = await requestReprint(conn, { sampleId: fresh }, by(DAY_AFTER)).catch((e: unknown) => e);
+    const printing = await requestReprint(conn, await specimensOf(fresh), by(DAY_AFTER)).catch((e: unknown) => e);
     expect((printing as PrintRunRefused).refusal).toMatchObject({ specimens: 1, printing: 1 });
 
     // An imported specimen from before field numbers has nothing to print.
     const old = await insertCleanSample(conn, { collector_id: String(birch), specimen_count: "1", sample_number: "'3'" });
     await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${old}, 1, NULL)`);
-    const unnumbered = await requestReprint(conn, { sampleId: old }, by(DAY_AFTER)).catch((e: unknown) => e);
+    const unnumbered = await requestReprint(conn, await specimensOf(old), by(DAY_AFTER)).catch((e: unknown) => e);
     expect((unnumbered as PrintRunRefused).refusal).toMatchObject({ specimens: 1, unnumbered: 1 });
     expect(await count("SELECT count(*) FROM reprint_request")).toBe(1);
   });
@@ -165,7 +160,7 @@ describe("asking for a reprint", () => {
   it("can be withdrawn until a run takes it", async () => {
     const first = await specimenOf(ashSample, 1);
     await requestReprint(conn, { specimenId: first }, by(NEXT_DAY));
-    expect(await withdrawReprint(conn, { sampleId: ashSample }, by(NEXT_DAY))).toEqual({ withdrawn: 1 });
+    expect(await withdrawReprint(conn, await specimensOf(ashSample), by(NEXT_DAY))).toEqual({ withdrawn: 1 });
     expect(await count("SELECT count(*) FROM pending_reprint")).toBe(0);
     expect(await prepareRun(conn, { atlasId: null, personId: ash, now: DAY_AFTER })).toBeNull();
     expect(await rows(conn, `SELECT withdrawn_by FROM reprint_request`)).toEqual([[ash]]);
@@ -211,7 +206,7 @@ describe("asking for a reprint", () => {
   });
 
   it("waits, rather than stopping the run, when its sample has lost its coordinates", async () => {
-    await requestReprint(conn, { sampleId: ashSample }, by(NEXT_DAY));
+    await requestReprint(conn, await specimensOf(ashSample), by(NEXT_DAY));
     await conn.run(`DELETE FROM sample_location WHERE sample_id = ${ashSample}`);
     // missing_required_field is unwaivable, so the reprint is not printable;
     // the freeze never reaches its no_location guard.
@@ -223,7 +218,7 @@ describe("asking for a reprint", () => {
   });
 
   it("waits while staff hold the sample", async () => {
-    await requestReprint(conn, { sampleId: ashSample }, by(NEXT_DAY));
+    await requestReprint(conn, await specimensOf(ashSample), by(NEXT_DAY));
     await conn.run(`INSERT INTO sample_hold (sample_id, reason, held_by) VALUES (${ashSample}, 'checking the date', ${ash})`);
     expect(await count("SELECT count(*) FROM pending_reprint")).toBe(2);
     expect(await count("SELECT count(*) FROM printable_reprint")).toBe(0);

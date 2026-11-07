@@ -44,3 +44,4 @@ export { Absent, Meta, OrAbsent, PageHeader } from "./text.js";
 export { Combobox, type ComboboxChoice } from "./combobox.js";
 export { PlaceEdit } from "./place-edit.js";
 export { FlagChips } from "./flag-chips.js";
+export { InlineEdit } from "./inline-edit.js";

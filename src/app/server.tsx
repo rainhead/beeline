@@ -60,7 +60,6 @@ import {
   loadRun,
   runLabels,
   runPdf,
-  sampleReprints,
   scopeCounts,
   specimenLabels,
   specimenReprint,
@@ -1249,49 +1248,10 @@ export function createApp({
     return c.redirect("/");
   });
 
-  // A staff member sets a sample's locality from its page (beeline-649): the
-  // one write a volunteer cannot make on an iNat-linked sample, standing
-  // over the observation on every sync. Admin-gated — and the admin flag is
-  // off while impersonating, so the impersonation refusal is stated first
-  // and the gate then catches everything else.
-  app.post("/samples/:id/locality", async (c) => {
-    const m = c.get("m");
-    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
-    if (!c.get("admin")) return c.text("Admins only.", 403);
-    const session = c.get("session");
-    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, STAFF_READER);
-    if (sample === null) return errorResponse(c, "notFound");
-    const body = await c.req.parseBody();
-    const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
-    const result = await setStaffLocality(
-      { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections },
-      { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality },
-      { value: field("locality"), remove: field("remove") !== "", note: field("note"), author: session.login },
-    );
-    if (result.outcome === "invalid") return c.text(result.problem, 400);
-    if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
-    if (result.outcome === "unresolved") return c.text(result.reason, 409);
-    // Credited to whoever typed it, narrowed to this sample — the same
-    // reasoning as the collector's edit above; the overlay carries the
-    // attribution durably whatever happens here.
-    if (result.outcome === "saved" || result.outcome === "removed") {
-      try {
-        await recordSampleChanges(kyselyReader(db), samplePaths, {
-          source: "app",
-          author: session.login,
-          reason: field("note").trim() || undefined,
-          where: `s.entity_id = ${sample.sample_id}`,
-        });
-      } catch (err) {
-        console.warn(`could not record the locality change: ${(err as Error).message}`);
-      }
-    }
-    return c.redirect(`/samples/${sample.sample_id}`);
-  });
-
   // A collector makes the locality Beeline names from the coordinates the
-  // sample's own in one click, or takes back one they made (beeline-7i6).
-  // The write is the staff locality's, credited to whoever clicked. Open to
+  // sample's own in one click, from a flag on the front page (beeline-7i6).
+  // The write is the staff locality's, credited to whoever clicked. Taking
+  // it back is the place editor's (below), by choosing iNaturalist's name. Open to
   // the sample's collectors, through whoever they act for, and to staff;
   // refused while impersonating, and on a printed sample, whose locality no
   // longer changes. The value comes from the store, never from the form:
@@ -1310,25 +1270,18 @@ export function createApp({
     const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
     // Who set the locality standing over the observation, if anyone: a
     // locality someone else set stands until they change it, so a collector
-    // may neither replace it nor take it back. Staff may replace any.
+    // may not replace it. Staff may replace any.
     const standing =
       sample.inat_observation_id === null ? null : await standingLocalityAuthor(sampleOverlay, sample.inat_observation_id);
-    let result;
-    let reason: string | undefined;
-    if (field("undo") !== "") {
-      if (standing !== session.login) return c.text(t.notYours, 403);
-      result = await setStaffLocality(deps, target, { value: "", remove: true, note: "", author: session.login });
-    } else {
-      if (standing !== null && standing !== session.login && !c.get("admin")) return c.text(t.setByOther, 403);
-      // The suggestion or one of the alternatives (beeline-4hxe), as the
-      // store holds them now: a name the page showed that is no longer
-      // offered is refused rather than adopted unseen.
-      const offered = [...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]), ...sample.locality_alternatives];
-      const suggestion = offered.find((o) => o.locality === field("locality"));
-      if (suggestion === undefined) return c.text(t.changed, 409);
-      reason = t.reason(t.basis[suggestion.basis]);
-      result = await adoptSuggestedLocality(deps, target, { suggestion: suggestion.locality, reason, author: session.login });
-    }
+    if (standing !== null && standing !== session.login && !c.get("admin")) return c.text(t.setByOther, 403);
+    // The suggestion or one of the alternatives (beeline-4hxe), as the
+    // store holds them now: a name the page showed that is no longer
+    // offered is refused rather than adopted unseen.
+    const offered = [...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]), ...sample.locality_alternatives];
+    const suggestion = offered.find((o) => o.locality === field("locality"));
+    if (suggestion === undefined) return c.text(t.changed, 409);
+    const reason = t.reason(t.basis[suggestion.basis]);
+    const result = await adoptSuggestedLocality(deps, target, { suggestion: suggestion.locality, reason, author: session.login });
     if (result.outcome === "invalid") return c.text(result.problem, 400);
     if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
     if (result.outcome === "unresolved") return c.text(result.reason, 409);
@@ -1347,18 +1300,17 @@ export function createApp({
     return c.redirect(field("return") === "home" ? "/" : sampleHref(sample.sample_id));
   });
 
-  // The Place cell's editor on the samples listing (beeline-7ywr): one
-  // combobox, one `locality` field, and what the name is decides what is
-  // written, so the form needs no second field to say so. Empty, or the name
-  // the observation itself yields, follows iNaturalist again; one of the
-  // names offered for the point is adopted as the sample page's "Use this
-  // locality" adopts it; the sample's own locality changes nothing; any
-  // other name is written in, which is staff's alone. Every write is one the
-  // sample page already makes, with its permissions: staff on any sample, a
-  // collector on their own, a collector never over a locality somebody else
-  // set, and nobody on a printed sample. `back` that is not a path under
-  // /samples goes to the listing itself, so the field cannot send anyone
-  // elsewhere.
+  // The place editor, on the samples listing's Place cell and the sample
+  // page's Place row (beeline-7ywr, beeline-8w8n): one combobox, one
+  // `locality` field, and what the name is decides what is written, so the
+  // form needs no second field to say so. Empty, or the name the observation
+  // itself yields, follows iNaturalist again; one of the names offered for
+  // the point is adopted, as the front page's "Use this locality" adopts it;
+  // the sample's own locality changes nothing; any other name is written in,
+  // which is staff's alone. Staff may change any sample, a collector their
+  // own, a collector never over a locality somebody else set, and nobody a
+  // printed sample. `back` that is not the listing or a sample's page goes to
+  // the listing itself, so the field cannot send anyone elsewhere.
   app.post("/samples/:id/place", async (c) => {
     const m = c.get("m");
     const t = m.suggestedLocality;
@@ -1369,7 +1321,11 @@ export function createApp({
     if (sample === null) return errorResponse(c, "notFound");
     const enteredHere = conn !== undefined && (await loadTrapSample(conn, sample.sample_id)) !== null;
     if (!sample.mine && !admin && !enteredHere) return errorResponse(c, "notFound");
-    if (sample.printed) return c.text(t.printed, 409);
+    // A printed sample's locality is what its labels say, so only staff
+    // change it, correcting the record before a reprint, as the staff
+    // locality form let them (beeline-649). A sample entered in Beeline is
+    // refused below whoever asks: its own form refuses it too.
+    if (sample.printed && !admin) return c.text(t.printed, 409);
     const body = await c.req.parseBody();
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
     const backRaw = field("back");
@@ -2002,9 +1958,9 @@ export function createApp({
     }),
   );
 
-  // Asking for labels again, or taking the request back (gh-218): from a
-  // specimen's page for its one label, or a sample's for all of them. The
-  // print-run writes' terms, since the next freeze reads what these write.
+  // Asking for a label again, or taking the request back (gh-218), from a
+  // specimen's page. The print-run writes' terms, since the next freeze
+  // reads what these write.
   const REPRINT_REASONS: ReadonlySet<string> = new Set<ReprintReason>(["never_received", "damaged", "data_corrected"]);
   const reprintWrite = (c: Context<AppEnv>, target: ReprintTarget, back: string) =>
     printWrite(c, async (personId, note) => {
@@ -2026,11 +1982,6 @@ export function createApp({
     const id = recordId(c);
     if (id === null) return errorResponse(c, "notFound");
     return reprintWrite(c, { specimenId: id }, `/specimens/${id}`);
-  });
-  app.post("/samples/:id/reprint", (c) => {
-    const id = recordId(c);
-    if (id === null) return errorResponse(c, "notFound");
-    return reprintWrite(c, { sampleId: id }, `/samples/${id}`);
   });
   // The specimens ticked on the listing (beeline-1kb.23), back to the same
   // listing with what was marked. `back` is the listing the form was drawn

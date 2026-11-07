@@ -14,8 +14,9 @@ import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers
 
 /**
  * "Use this locality" (beeline-7i6): a collector makes the locality Beeline
- * named from the coordinates the sample's own, in one click, through the
- * staff locality's write, and may take back one they adopted.
+ * named from the coordinates the sample's own, in one click from the front
+ * page, through the staff locality's write, and may take back one they
+ * adopted from the place editor (beeline-8w8n).
  */
 
 const unusedInat: InatClient = {
@@ -86,7 +87,8 @@ describe("Use this locality", () => {
   it("makes the suggestion the sample's locality, credited to the collector, and clears the flag", async () => {
     const { appFor, conn, sampleId, sampleOverlayPath } = await setup();
     const alice = appFor("alice");
-    expect(await (await alice.request(`/samples/${sampleId}`)).text()).toContain(en.suggestedLocality.use);
+    // The front page offers it on the locality flag.
+    expect(await (await alice.request("/")).text()).toContain(en.suggestedLocality.use);
     const res = await post(alice, `/samples/${sampleId}/suggested-locality`, { locality: "Finley NWR", return: "home" });
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/");
@@ -95,13 +97,9 @@ describe("Use this locality", () => {
     expect(row).toMatchObject({ sample_ref: "inat:998877", field: "locality", value: "Finley NWR", author: "alice" });
     expect(row!.reason).toBe(en.suggestedLocality.reason(en.suggestedLocality.basis.refuge));
     expect(await rows(conn, `SELECT 1 FROM qc_rule_locality_format WHERE sample_id = ${sampleId}`)).toEqual([]);
-    // And the page now says it is in use, and offers to take it back.
-    const body = await (await alice.request(`/samples/${sampleId}`)).text();
-    expect(body).toContain(en.suggestedLocality.inUse.replaceAll("'", "&#39;"));
-    expect(body).toContain(en.suggestedLocality.undo.replaceAll("'", "&#39;"));
   });
 
-  it("offers the alternatives too, and makes the one chosen the sample's locality (beeline-4hxe)", async () => {
+  it("takes an alternative too, and makes the one chosen the sample's locality (beeline-4hxe)", async () => {
     const { appFor, conn, sampleId, sampleOverlayPath } = await setup();
     await conn.run(
       `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
@@ -109,10 +107,9 @@ describe("Use this locality", () => {
        FROM sample_location WHERE sample_id = ${sampleId}`,
     );
     const alice = appFor("alice");
+    // The sample page offers it in the place editor, with why.
     const page = await (await alice.request(`/samples/${sampleId}`)).text();
-    expect(page).toContain("Muddy Creek CG");
-    expect(page).toContain(en.suggestedLocality.basis.campground);
-    expect(page).toContain(`aria-label="${en.suggestedLocality.useShortLabel("Muddy Creek CG")}"`);
+    expect(page).toContain(`<option value="Muddy Creek CG" label="${en.listings.samples.placeEdit.noteBasis.campground}"`);
     const res = await post(alice, `/samples/${sampleId}/suggested-locality`, { locality: "Muddy Creek CG" });
     expect(res.status).toBe(302);
     expect(await localityOf(conn, sampleId)).toBe("Muddy Creek CG");
@@ -135,14 +132,17 @@ describe("Use this locality", () => {
     expect(await localityOf(conn, sampleId)).toBe("26208 Finley Refuge Rd");
   });
 
-  it("lets the volunteer who adopted it go back, with the reason in the sample's history", async () => {
+  it("lets the volunteer who adopted it go back by choosing iNaturalist's name, with the reason in the sample's history", async () => {
     const { appFor, conn, sampleId, sampleOverlayPath, sampleChangesPath, sampleStatePath } = await setup();
     // The history's baseline, as a running deployment has one: the first pass only writes it.
     await recordSampleChanges(duckdbReader(conn), { log: sampleChangesPath, state: sampleStatePath }, { source: "observation_promotion" });
     const alice = appFor("alice");
     await post(alice, `/samples/${sampleId}/suggested-locality`, { locality: "Finley NWR" });
     expect(await readFile(sampleChangesPath, "utf8")).toContain(en.suggestedLocality.reason(en.suggestedLocality.basis.refuge));
-    expect((await post(alice, `/samples/${sampleId}/suggested-locality`, { undo: "1" })).status).toBe(302);
+    // The place editor, emptied, follows iNaturalist again; there is no undo button any more.
+    const back = await post(alice, `/samples/${sampleId}/place`, { locality: "", back: `/samples/${sampleId}` });
+    expect(back.status).toBe(302);
+    expect(back.headers.get("location")).toBe(`/samples/${sampleId}`);
     const [row] = await readSampleOverlay(sampleOverlayPath);
     expect(row).toMatchObject({ field: "locality", value: "", author: "alice" });
   });
@@ -150,17 +150,17 @@ describe("Use this locality", () => {
   it("leaves a locality somebody else set alone: no replacing it, no taking it back (Fable's review)", async () => {
     const { appFor, conn, sampleId, sampleOverlayPath } = await setup();
     // Staff set a locality of their own on the sample.
-    const staffSet = await post(appFor("sam"), `/samples/${sampleId}/locality`, { locality: "Finley NWR N unit", note: "north unit" });
+    const staffSet = await post(appFor("sam"), `/samples/${sampleId}/place`, { locality: "Finley NWR N unit" });
     expect(staffSet.status).toBe(302);
     const alice = appFor("alice");
     const page = await (await alice.request(`/samples/${sampleId}`)).text();
-    expect(page).not.toContain(en.suggestedLocality.use);
-    expect(page).not.toContain(en.suggestedLocality.undo.replaceAll("'", "&#39;"));
+    // No pencil for her: the locality is somebody else's to change.
+    expect(page).not.toContain(`/samples/${sampleId}/place`);
     expect((await post(alice, `/samples/${sampleId}/suggested-locality`, { locality: "Finley NWR" })).status).toBe(403);
-    expect((await post(alice, `/samples/${sampleId}/suggested-locality`, { undo: "1" })).status).toBe(403);
+    expect((await post(alice, `/samples/${sampleId}/place`, { locality: "" })).status).toBe(403);
     expect(await localityOf(conn, sampleId)).toBe("Finley NWR N unit");
     const [row] = await readSampleOverlay(sampleOverlayPath);
-    expect(row).toMatchObject({ value: "Finley NWR N unit", author: "samstaff", reason: "north unit" });
+    expect(row).toMatchObject({ value: "Finley NWR N unit", author: "samstaff" });
     // Staff may still replace it with the suggestion.
     expect((await post(appFor("sam"), `/samples/${sampleId}/suggested-locality`, { locality: "Finley NWR" })).status).toBe(302);
     expect(await localityOf(conn, sampleId)).toBe("Finley NWR");

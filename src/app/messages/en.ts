@@ -1870,6 +1870,28 @@ export const en = {
     /** A run with no end yet: said, since a blank duration reads as one that failed to record. */
     stillRunning: "still running",
     noRuns: "No runs yet.",
+    /** The night steps' trend (beeline-e1xg). */
+    steps: "Night steps over time",
+    stepsIntro:
+      "Each step of the night jobs: how its latest run went, and the most memory the app held during it in the week three months ago, the week a month ago and this week. A step whose figure rises from left to right is growing with the data, and is the one to make lighter before a night runs out of memory. DuckDB's figure is the part its own memory limit caps.",
+    noSteps: "No night job has run since steps were recorded.",
+    colStep: "Step",
+    colLastRun: "Latest run",
+    colTook: "Took",
+    colMemory: "Memory at most",
+    colDuckDb: "DuckDB",
+    colQuarterAgo: "3 months ago",
+    colMonthAgo: "A month ago",
+    colThisWeek: "This week",
+    stepFailed: "failed",
+    megabytes: (mb: number) => `${n(mb)} MB`,
+    /** Seconds are rounded before they are split, so nothing reads "1 min 60 s". */
+    duration: (ms: number) => {
+      if (ms < 1000) return `${n(ms)} ms`;
+      if (ms < 59_950) return `${n(Math.round(ms / 100) / 10)} s`;
+      const s = Math.round(ms / 1000);
+      return `${n(Math.floor(s / 60))} min ${n(s % 60)} s`;
+    },
   },
 
   /** Print runs (/print-runs, beeline-1kb.2). Staff-facing, English-only. */

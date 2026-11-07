@@ -1,4 +1,5 @@
 import type { JobOutcome } from "../../model.js";
+import type { StepTrendRow } from "../job-steps.js";
 import type { Job, Schedule } from "../jobs/framework.js";
 import type { Messages } from "../messages/index.js";
 import { Absent, Button, Chip, DataTable, EmptyState, Meta, OrAbsent, PageHeader } from "./components/index.js";
@@ -25,7 +26,7 @@ function Outcome({ m, run }: { m: Messages; run: JobRunRow }) {
   return <Chip>{m.jobs.outcomeRunning}</Chip>;
 }
 
-export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[] }) {
+export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[]; steps: StepTrendRow[] }) {
   const { m } = props;
   return (
     <>
@@ -87,6 +88,75 @@ export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[] }) {
           ))}
         </DataTable>
       )}
+
+      <h2>{m.jobs.steps}</h2>
+      <p>{m.jobs.stepsIntro}</p>
+      {props.steps.length === 0 ? (
+        <EmptyState>{m.jobs.noSteps}</EmptyState>
+      ) : (
+        byJob(props.steps).map(([jobName, steps]) => (
+          <>
+            <h3>
+              <code>{jobName}</code>
+            </h3>
+            <DataTable
+              columns={[
+                m.jobs.colStep,
+                m.jobs.colLastRun,
+                m.jobs.colTook,
+                m.jobs.colMemory,
+                m.jobs.colDuckDb,
+                m.jobs.colQuarterAgo,
+                m.jobs.colMonthAgo,
+                m.jobs.colThisWeek,
+              ]}
+            >
+              {steps.map((step) => (
+                <tr>
+                  <td>
+                    {step.label}
+                    {step.last_failed ? (
+                      <>
+                        {" "}
+                        <Chip tone="blocking">{m.jobs.stepFailed}</Chip>
+                      </>
+                    ) : null}
+                  </td>
+                  <td>{m.format.dateTime(step.last_started_at)}</td>
+                  <td>{m.jobs.duration(step.last_duration_ms)}</td>
+                  <td>
+                    <Megabytes m={m} value={step.last_peak_mb} />
+                  </td>
+                  <td>
+                    <Megabytes m={m} value={step.last_duckdb_mb} />
+                  </td>
+                  <td>
+                    <Megabytes m={m} value={step.peak_quarter_ago_mb} />
+                  </td>
+                  <td>
+                    <Megabytes m={m} value={step.peak_month_ago_mb} />
+                  </td>
+                  <td>
+                    <Megabytes m={m} value={step.peak_week_mb} />
+                  </td>
+                </tr>
+              ))}
+            </DataTable>
+          </>
+        ))
+      )}
     </>
   );
+}
+
+/** The steps grouped by job, in the order stepTrend returns them. */
+function byJob(steps: StepTrendRow[]): [string, StepTrendRow[]][] {
+  const groups = new Map<string, StepTrendRow[]>();
+  for (const step of steps) groups.set(step.job_name, [...(groups.get(step.job_name) ?? []), step]);
+  return [...groups];
+}
+
+/** A peak is unknown wherever the store was written off Linux; a dash says so rather than a zero. */
+function Megabytes({ m, value }: { m: Messages; value: number | null }) {
+  return value === null ? <Absent label={m.absence.notRecorded} /> : <>{m.jobs.megabytes(value)}</>;
 }

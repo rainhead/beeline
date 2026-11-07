@@ -634,8 +634,8 @@ export const en = {
          * longer form is `suggestedLocality.basis`, which the front page shows.
          */
         noteBasis: {
-          used_own: "the collector's name here",
-          used: "others' name here",
+          used_own: "previously used by the collector",
+          used: "previously used",
           campground: "campground",
           refuge: "wildlife refuge",
           wildlife_area: "wildlife area",

@@ -1070,6 +1070,24 @@ export interface JobRunTable {
   sla_breaches: Generated<number>;
 }
 
+/** One step of a night job's run (beeline-e1xg). */
+export interface JobStepTable {
+  job_run_id: number;
+  step_number: number;
+  label: string;
+  /** Written as an ISO string: kysely-duckdb cannot bind a Date. */
+  started_at: ColumnType<Date, string, string>;
+  duration_ms: number;
+  cpu_ms: number;
+  stolen_ms: number | null;
+  failed: boolean;
+  rss_mb: number;
+  peak_mb: number | null;
+  duckdb_mb: number | null;
+  duckdb_spilled_mb: number | null;
+  heap_mb: number;
+}
+
 // schema/000_schema_migration.sql
 export interface SchemaMigrationTable {
   name: string;
@@ -1322,6 +1340,7 @@ export interface Database {
   sync_run: SyncRunTable;
   observation_field: ObservationFieldTable;
   job_run: JobRunTable;
+  job_step: JobStepTable;
   determination_of_record: DeterminationTable;
   qc_finding: QcFindingView;
   sample_qc_finding: SampleQcFindingView;

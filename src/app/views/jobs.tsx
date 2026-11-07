@@ -148,5 +148,5 @@ export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[]; steps
 
 /** A peak is unknown wherever the store was written off Linux; a dash says so rather than a zero. */
 function Megabytes({ m, value }: { m: Messages; value: number | null }) {
-  return value === null ? <Absent label={m.absence.none} /> : <>{m.jobs.megabytes(value)}</>;
+  return value === null ? <Absent label={m.absence.notRecorded} /> : <>{m.jobs.megabytes(value)}</>;
 }

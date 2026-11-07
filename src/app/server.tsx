@@ -52,6 +52,7 @@ import {
 } from "./determine.js";
 import { DeterminePage } from "./views/determine.js";
 import { Jobs } from "./views/jobs.js";
+import { stepTrend } from "./job-steps.js";
 import { Exports } from "./views/exports.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
@@ -1725,7 +1726,8 @@ export function createApp({
       .orderBy("started_at", "desc")
       .limit(20)
       .execute();
-    return c.html(await page(c, m.jobs.title, <Jobs m={m} jobs={jobsDep.list} runs={runs} />));
+    const steps = await stepTrend(db);
+    return c.html(await page(c, m.jobs.title, <Jobs m={m} jobs={jobsDep.list} runs={runs} steps={steps} />));
   });
 
   // --- Exports (beeline-6q8). The legacy-format occurrences file the

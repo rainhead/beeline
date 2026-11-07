@@ -1,9 +1,11 @@
+import { existsSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import {
   describeStep,
   formatDuration,
+  measureStepPeak,
   isDue,
   runJob,
   startScheduler,
@@ -12,6 +14,7 @@ import {
   type JobContext,
 } from "../src/app/jobs/framework.js";
 import { lastSyncStart, pipelineTail, refreshPlaces } from "../src/app/jobs/registry.js";
+import { stepTrend } from "../src/app/job-steps.js";
 import { createApp } from "../src/app/server.js";
 import { buildTestGazetteer, createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 
@@ -155,7 +158,7 @@ describe("where a night job's time goes (beeline-6hud)", () => {
     const stolen = (await stolenMs()) === null ? "" : `, ${D} stolen`;
     expect(lines).toEqual(expect.arrayContaining([
       expect.stringMatching(
-        new RegExp(String.raw`^\[job timed-night\] step 'first chunk' took ${D}: ${D} CPU${stolen}; memory \d+ MB, most since start \d+ MB( \(\+\d+ MB in this step\))?; DuckDB counts \d+ MB \(\d+ MB before\)(, \d+ MB spilled to disk)?; Node's heap \d+ MB$`),
+        new RegExp(String.raw`^\[job timed-night\] step 'first chunk' took ${D}: ${D} CPU${stolen}; memory \d+ MB, (at most \d+ MB during the step|most since start \d+ MB( \(\+\d+ MB in this step\))?); DuckDB counts \d+ MB \(\d+ MB before\)(, \d+ MB spilled to disk)?; Node's heap \d+ MB$`),
       ),
       expect.stringMatching(/^\[job timed-night\] step 'second chunk' took /),
       expect.stringMatching(new RegExp(String.raw`^\[job timed-night\] succeeded in ${D}: done$`)),
@@ -219,6 +222,15 @@ describe("where a night job's time goes (beeline-6hud)", () => {
     );
   });
 
+  it("says a step's own peak where the platform can reset the high-water mark (beeline-e1xg)", () => {
+    const cpu = { user: 4_000_000, system: 1_000_000 };
+    const MB = 1024 * 1024;
+    // Synthetic: the export's step after the incremental syncs had set a higher peak.
+    expect(describeStep("write the export", 20_700, cpu, null, null, {
+      rss: 1_050 * MB, peakBefore: 2_148 * MB, peakAfter: 2_148 * MB, stepPeak: 1_470 * MB, heapUsed: 17 * MB,
+    })).toBe("step 'write the export' took 20.7s: 5.0s CPU; memory 1050 MB, at most 1470 MB during the step; Node's heap 17 MB");
+  });
+
   it("a step that leaves its transaction aborted still logs, and fails with its own error", async () => {
     const deps = await jobDeps();
     const lines: string[] = [];
@@ -246,6 +258,67 @@ describe("where a night job's time goes (beeline-6hud)", () => {
     const step = lines.find((l) => l.startsWith("[job aborted-night] step 'break the transaction'"));
     expect(step).toMatch(/; memory \d+ MB/);
     expect(step).not.toMatch(/DuckDB counts/);
+  });
+});
+
+describe("night steps kept in the store (beeline-e1xg)", () => {
+  // Where Linux lets the process reset its high-water mark; GitHub's runners
+  // and Fly can, a Mac cannot.
+  const linux = existsSync("/proc/self/clear_refs");
+
+  it("keeps each night step's time and memory beside its run, failed steps included", async () => {
+    const deps = await jobDeps();
+    const spy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const job = (name: string, window: "interactive" | "night"): Job => ({
+        name,
+        schedule: { kind: "everyMinutes", minutes: 1 },
+        window,
+        run: async (ctx) => {
+          await ctx.step("first chunk", () => sleep(5));
+          await ctx.step("second chunk", async () => {
+            throw new Error("upstream said 503");
+          });
+        },
+      });
+      await runJob(deps, job("kept-night", "night"));
+      await runJob(deps, job("unkept-interactive", "interactive"));
+    } finally {
+      spy.mockRestore();
+    }
+    const steps = await deps.db
+      .selectFrom("job_step")
+      .innerJoin("job_run", "job_run.entity_id", "job_step.job_run_id")
+      .select(["job_run.job_name", "job_run.outcome", "step_number", "label", "failed", "duration_ms", "rss_mb", "peak_mb", "duckdb_mb", "heap_mb"])
+      .orderBy("step_number")
+      .execute();
+    expect(steps.map(({ job_name, outcome, step_number, label, failed }) => ({ job_name, outcome, step_number, label, failed }))).toEqual([
+      { job_name: "kept-night", outcome: "failed", step_number: 1, label: "first chunk", failed: false },
+      { job_name: "kept-night", outcome: "failed", step_number: 2, label: "second chunk", failed: true },
+    ]);
+    for (const step of steps) {
+      expect(step.duration_ms).toBeGreaterThanOrEqual(0);
+      expect(step.rss_mb).toBeGreaterThan(0);
+      expect(step.heap_mb).toBeGreaterThan(0);
+      expect(step.duckdb_mb).not.toBeNull();
+      if (linux) expect(step.peak_mb).toBeGreaterThan(0);
+      else expect(step.peak_mb).toBeNull();
+    }
+  });
+
+  it.runIf(linux)("measures what a step itself held", async () => {
+    const MB = 1024 * 1024;
+    const end = await measureStepPeak();
+    const held = Buffer.alloc(64 * MB, 1);
+    const rss = process.memoryUsage.rss();
+    const peak = await end();
+    expect(held.length).toBe(64 * MB);
+    expect(peak).not.toBeNull();
+    expect(peak!).toBeGreaterThanOrEqual(rss);
+  });
+
+  it.runIf(!linux)("reads no peak where the high-water mark cannot be reset", async () => {
+    expect(await (await measureStepPeak())()).toBeNull();
   });
 });
 
@@ -571,6 +644,58 @@ describe("/jobs page", () => {
     const after = await (await app.request("/jobs")).text();
     expect(after).toContain("pressed the button");
     expect(after).toContain("succeeded");
+  });
+
+  it("shows each night step's latest run and its highest peak over a week, a month and three months (beeline-e1xg)", async () => {
+    const deps = await jobDeps();
+    // Synthetic history: one step on four nights, the oldest past the 90 days.
+    const night = async (daysAgo: number, peak: number | null, failed = false) => {
+      const [[runId]] = (await (await deps.conn.run(
+        `INSERT INTO job_run (job_name, started_at, completed_at, outcome)
+         VALUES ('legacy-export', now() - to_days(${daysAgo}), now() - to_days(${daysAgo}), 'succeeded') RETURNING entity_id`,
+      )).getRows()) as [[number]];
+      await deps.conn.run(
+        `INSERT INTO job_step (job_run_id, step_number, label, started_at, duration_ms, cpu_ms, failed, rss_mb, peak_mb, duckdb_mb, heap_mb)
+         VALUES ($1, 1, 'write the export', now() - to_days(${daysAgo}), 3953, 3900, $2, 1050, $3, 980, 17)`,
+        [Number(runId), failed, peak] as never,
+      );
+    };
+    await night(120, 2_000);
+    await night(60, 1_600);
+    await night(20, 1_500);
+    await night(2, 1_470);
+    expect(await stepTrend(deps.db)).toEqual([
+      expect.objectContaining({
+        job_name: "legacy-export",
+        label: "write the export",
+        last_duration_ms: 3953,
+        last_failed: false,
+        last_peak_mb: 1_470,
+        last_duckdb_mb: 980,
+        peak_7d_mb: 1_470,
+        peak_30d_mb: 1_500,
+        peak_90d_mb: 1_600,
+      }),
+    ]);
+
+    const app = createApp({
+      ...(await scratchPaths()),
+      db: deps.db,
+      config: { environment: "development", origin: "http://localhost:3054" },
+      inat: {
+        authorizeUrl: () => "unused",
+        exchangeCode: () => Promise.reject(new Error("not under test")),
+        identity: () => Promise.reject(new Error("not under test")),
+      },
+      resolveSession: async () => ({ personId: 1, login: "tester", iconUrl: null }),
+      jobs: { list: [], start: async () => false },
+    });
+    const page = await (await app.request("/jobs")).text();
+    expect(page).toContain("Night steps over time");
+    expect(page).toContain("write the export");
+    expect(page).toContain("1,470 MB");
+    expect(page).toContain("1,600 MB");
+    expect(page).toContain(">4 s<");
   });
 
   it("outside development, /jobs is admin-only (beeline-6va)", async () => {

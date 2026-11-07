@@ -1,4 +1,5 @@
 import type { JobOutcome } from "../../model.js";
+import type { StepTrendRow } from "../job-steps.js";
 import type { Job, Schedule } from "../jobs/framework.js";
 import type { Messages } from "../messages/index.js";
 import { Absent, Button, Chip, DataTable, EmptyState, Meta, OrAbsent, PageHeader } from "./components/index.js";
@@ -25,7 +26,7 @@ function Outcome({ m, run }: { m: Messages; run: JobRunRow }) {
   return <Chip>{m.jobs.outcomeRunning}</Chip>;
 }
 
-export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[] }) {
+export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[]; steps: StepTrendRow[] }) {
   const { m } = props;
   return (
     <>
@@ -87,6 +88,65 @@ export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[] }) {
           ))}
         </DataTable>
       )}
+
+      <h2>{m.jobs.steps}</h2>
+      <p>{m.jobs.stepsIntro}</p>
+      {props.steps.length === 0 ? (
+        <EmptyState>{m.jobs.noSteps}</EmptyState>
+      ) : (
+        <DataTable
+          columns={[
+            m.jobs.colJob,
+            m.jobs.colStep,
+            m.jobs.colLastRun,
+            m.jobs.colTook,
+            m.jobs.colMemory,
+            m.jobs.colDuckDb,
+            m.jobs.colWeek,
+            m.jobs.colMonth,
+            m.jobs.colQuarter,
+          ]}
+        >
+          {props.steps.map((step) => (
+            <tr>
+              <td>
+                <code>{step.job_name}</code>
+              </td>
+              <td>
+                {step.label}
+                {step.last_failed ? (
+                  <>
+                    {" "}
+                    <Chip tone="blocking">{m.jobs.stepFailed}</Chip>
+                  </>
+                ) : null}
+              </td>
+              <td>{m.format.dateTime(step.last_started_at)}</td>
+              <td>{m.jobs.duration(step.last_duration_ms)}</td>
+              <td>
+                <Megabytes m={m} value={step.last_peak_mb} />
+              </td>
+              <td>
+                <Megabytes m={m} value={step.last_duckdb_mb} />
+              </td>
+              <td>
+                <Megabytes m={m} value={step.peak_7d_mb} />
+              </td>
+              <td>
+                <Megabytes m={m} value={step.peak_30d_mb} />
+              </td>
+              <td>
+                <Megabytes m={m} value={step.peak_90d_mb} />
+              </td>
+            </tr>
+          ))}
+        </DataTable>
+      )}
     </>
   );
+}
+
+/** A peak is unknown wherever the store was written off Linux; a dash says so rather than a zero. */
+function Megabytes({ m, value }: { m: Messages; value: number | null }) {
+  return value === null ? <Absent label={m.absence.none} /> : <>{m.jobs.megabytes(value)}</>;
 }

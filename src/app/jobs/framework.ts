@@ -1,7 +1,7 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { readFile } from "node:fs/promises";
-import { sql, type Kysely } from "kysely";
-import type { Database } from "../../model.js";
+import { readFile, writeFile } from "node:fs/promises";
+import { sql, type Insertable, type Kysely } from "kysely";
+import type { Database, JobStepTable } from "../../model.js";
 
 /**
  * The in-process job framework (ADR 0005). Jobs run inside the one process
@@ -249,14 +249,17 @@ export function formatDuration(ms: number): string {
 
 /**
  * The process's memory after a step, in bytes: what it holds now, and the
- * most it has held since it started, before and after the step. Linux keeps
- * only the high-water mark since start, so a step that stayed under an
- * earlier peak shows no rise rather than its own peak.
+ * most it has held since it started, before and after the step. That
+ * high-water mark never falls, so a step that stayed under an earlier peak
+ * shows no rise rather than its own peak; where Linux lets the mark be reset,
+ * `stepPeak` is the step's own peak instead (beeline-e1xg).
  */
 export interface StepMemory {
   rss: number;
   peakBefore: number;
   peakAfter: number;
+  /** The most the process held during this step; null or absent where the platform cannot say. */
+  stepPeak?: number | null;
   /** What DuckDB counts as held before and after the step; null where it could not be read. */
   duckdbBefore?: DuckDbMemory | null;
   duckdbAfter?: DuckDbMemory | null;
@@ -266,6 +269,60 @@ export interface StepMemory {
 
 /** The process's high-water mark since start, in bytes (Node reports kilobytes). */
 export const peakRss = () => process.resourceUsage().maxRSS * 1024;
+
+/**
+ * Linux's high-water mark of the process's resident memory (`VmHWM`), in
+ * bytes, or null where /proc cannot say, as on a Mac.
+ */
+async function highWater(): Promise<number | null> {
+  try {
+    const kb = /^VmHWM:\s+(\d+) kB$/m.exec(await readFile("/proc/self/status", "utf8"))?.[1];
+    return kb === undefined ? null : Number(kb) * 1024;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Night steps measuring their own peak, each with the most seen so far. A
+ * reset of the high-water mark would hide from every other step what came
+ * before it, so whoever resets first credits the mark to all of them; steps
+ * do not nest today, but the Fly-metrics requests run side by side.
+ */
+const measuring = new Set<{ peak: number }>();
+
+async function creditHighWater(): Promise<void> {
+  const mark = await highWater();
+  if (mark === null) return;
+  for (const step of measuring) step.peak = Math.max(step.peak, mark);
+}
+
+/**
+ * Start measuring one step's own peak (beeline-e1xg): reset the process's
+ * high-water mark to what it holds now, by writing 5 to
+ * /proc/self/clear_refs, which resets that mark and nothing else. Returns the
+ * function that ends the measurement and gives the peak in bytes, or null
+ * where the mark cannot be reset — anywhere but Linux. Without it the only
+ * figure is the peak since the process started, which never falls, so a night
+ * smaller than an earlier one, or a step after a bigger one, would leave no
+ * trace. The reset lowers getrusage's peak too, so where it works the log
+ * line gives the step's own peak in place of the peak since start.
+ */
+export async function measureStepPeak(): Promise<() => Promise<number | null>> {
+  await creditHighWater();
+  try {
+    await writeFile("/proc/self/clear_refs", "5");
+  } catch {
+    return async () => null;
+  }
+  const step = { peak: (await highWater()) ?? 0 };
+  measuring.add(step);
+  return async () => {
+    await creditHighWater();
+    measuring.delete(step);
+    return step.peak > 0 ? step.peak : null;
+  };
+}
 
 /**
  * The memory DuckDB's own accounting says it holds, and what it has spilled
@@ -326,7 +383,9 @@ export function describeStep(
   const mem =
     memory === undefined
       ? ""
-      : `; memory ${mb(memory.rss)}, most since start ${mb(memory.peakAfter)}${rise > 0 ? ` (+${mb(rise)} in this step)` : ""}`;
+      : typeof memory.stepPeak === "number"
+        ? `; memory ${mb(memory.rss)}, at most ${mb(memory.stepPeak)} during the step`
+        : `; memory ${mb(memory.rss)}, most since start ${mb(memory.peakAfter)}${rise > 0 ? ` (+${mb(rise)} in this step)` : ""}`;
   const after = memory?.duckdbAfter;
   const before = memory?.duckdbBefore;
   const duck =
@@ -335,6 +394,34 @@ export function describeStep(
       : `; DuckDB counts ${mb(after.held)}${before ? ` (${mb(before.held)} before)` : ""}${after.spilled > 0 ? `, ${mb(after.spilled)} spilled to disk` : ""}`;
   const heap = memory?.heapUsed === undefined ? "" : `; Node's heap ${mb(memory.heapUsed)}`;
   return `step '${label}' took ${formatDuration(ms)}: ${formatDuration(cpuMs)} CPU${stolen}${mem}${duck}${heap}`;
+}
+
+const toMb = (bytes: number) => Math.round(bytes / (1024 * 1024));
+
+/** A step's memory as job_step stores it, in whole megabytes. */
+export function stepMemoryColumns(memory: StepMemory) {
+  return {
+    rss_mb: toMb(memory.rss),
+    peak_mb: typeof memory.stepPeak === "number" ? toMb(memory.stepPeak) : null,
+    duckdb_mb: memory.duckdbAfter ? toMb(memory.duckdbAfter.held) : null,
+    duckdb_spilled_mb: memory.duckdbAfter ? toMb(memory.duckdbAfter.spilled) : null,
+    heap_mb: toMb(memory.heapUsed ?? process.memoryUsage().heapUsed),
+  };
+}
+
+/**
+ * Keep a night step's figures beside its run (beeline-e1xg), so the nightly's
+ * growth over seasons can be read later; the console keeps them for days.
+ * Through the Kysely handle, not the job's connection, which a failed step
+ * may have left inside an aborted transaction. A row that cannot be written
+ * is said in the log and costs the step nothing.
+ */
+async function recordStep(db: Kysely<Database>, row: Insertable<JobStepTable>): Promise<void> {
+  try {
+    await db.insertInto("job_step").values(row).execute();
+  } catch (err) {
+    console.warn(`[jobs] could not record step '${row.label}': ${(err as Error).message}`);
+  }
 }
 
 /** What a step throws when shutdown reaches it first; job_run.detail says which step. */
@@ -361,6 +448,7 @@ export async function runJob(
   const run = await db.insertInto("job_run").values({ job_name: job.name }).returning("entity_id").executeTakeFirstOrThrow();
   onStarted?.();
   let breaches = 0;
+  let steps = 0;
   const ctx: JobContext = {
     db,
     conn,
@@ -371,29 +459,50 @@ export async function runJob(
       // the unit of work worth finishing, and a step that has not is the
       // cheapest place to stop.
       if (signal.aborted) throw new JobInterrupted(label);
+      const night = job.window === "night";
+      const stepNumber = (steps += 1);
+      const startedAt = new Date();
+      const stolen0 = night ? await stolenMs() : null;
+      const peak0 = peakRss();
+      const duck0 = night ? await duckDbMemory(conn) : null;
+      const stepPeak = night ? await measureStepPeak() : null;
       const t0 = performance.now();
       const cpu0 = process.cpuUsage();
-      const stolen0 = job.window === "night" ? await stolenMs() : null;
-      const peak0 = peakRss();
-      const duck0 = job.window === "night" ? await duckDbMemory(conn) : null;
+      let failed = true;
       try {
-        return await fn();
+        const result = await fn();
+        failed = false;
+        return result;
       } finally {
         const ms = performance.now() - t0;
         if (job.window === "interactive" && ms > budget) {
           breaches += 1;
           console.warn(`[job ${job.name}] SLA breach: step '${label}' took ${Math.round(ms)}ms (budget ${budget}ms)`);
         }
-        if (job.window === "night") {
+        if (night) {
+          const cpu = process.cpuUsage(cpu0);
+          const stolen1 = await stolenMs();
           const memory: StepMemory = {
             rss: process.memoryUsage.rss(),
             peakBefore: peak0,
             peakAfter: peakRss(),
+            stepPeak: await stepPeak!(),
             duckdbBefore: duck0,
             duckdbAfter: await duckDbMemory(conn),
             heapUsed: process.memoryUsage().heapUsed,
           };
-          console.log(`[job ${job.name}] ${describeStep(label, ms, process.cpuUsage(cpu0), stolen0, await stolenMs(), memory)}`);
+          console.log(`[job ${job.name}] ${describeStep(label, ms, cpu, stolen0, stolen1, memory)}`);
+          await recordStep(db, {
+            job_run_id: run.entity_id,
+            step_number: stepNumber,
+            label,
+            started_at: startedAt.toISOString(),
+            duration_ms: Math.round(ms),
+            cpu_ms: Math.round((cpu.user + cpu.system) / 1000),
+            stolen_ms: stolen0 === null || stolen1 === null ? null : stolen1 - stolen0,
+            failed,
+            ...stepMemoryColumns(memory),
+          });
         }
       }
     },

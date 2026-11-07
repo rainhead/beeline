@@ -12,7 +12,7 @@
 -- ADD COLUMN is permitted, but leaving the old column behind fails the point.
 -- So: copy out, drop, recreate from schema/030 and schema/040 verbatim, copy
 -- back with entity_ids preserved, and rebuild every view that reads either
--- table. Worth re-testing when DuckDB moves past 1.5.x (beeline-c1b).
+-- table. Re-tested on DuckDB 2.0 (2026-11-07): it still refuses both.
 
 DROP VIEW pending_print_sample;
 DROP VIEW printable_sample;

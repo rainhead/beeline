@@ -166,7 +166,7 @@ describe("taking a verbatim scientific name apart", () => {
       ["Colletes", null, "consors", null, "Colletes consors pascoensis", null, null],
     ]);
     expect(
-      await rows(conn, "SELECT count(*) FROM legacy_det_taxa WHERE authorship ~ '^[a-z]'"),
+      await rows(conn, "SELECT count(*) FROM legacy_det_taxa WHERE regexp_matches(authorship, '^[a-z]')"),
     ).toEqual([[0n]]);
   });
 

@@ -20,11 +20,12 @@ export async function openAppDb(config: Pick<AppConfig, "dbPath">): Promise<AppD
     async close() {
       // Checkpoint the store explicitly before closing, and say so if it
       // fails. Closing the instance checkpoints too, but that path is the
-      // last thing to run before exit and its failure is silent; DuckDB
-      // <= 1.5.5 can fail to replay an uncheckpointed WAL and leave the file
-      // unopenable (beeline-c1b), which is the one outcome a shutdown exists
-      // to avoid. A failure here does not stop the close — a checkpoint the
-      // close manages is still a checkpoint.
+      // last thing to run before exit and its failure is silent. DuckDB
+      // <= 1.5.5 could fail to replay an uncheckpointed WAL and leave the
+      // file unopenable; 2.0 replays it (verified 2026-11-07, beeline-c1b),
+      // but a store closed with nothing in its WAL is still one file a backup
+      // or a copy can take on its own. A failure here does not stop the
+      // close — a checkpoint the close manages is still a checkpoint.
       //
       // Every step runs whatever the one before it did: the instance close is
       // the last chance at a checkpoint, and a connection that could not be

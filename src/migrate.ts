@@ -16,8 +16,10 @@ import { createMemoryDb, SCHEMA_DIR } from "./schema.js";
  * `migrations/NNNN-slug.sql`.
  *
  * Each migration runs in its own transaction and the run ends with an
- * explicit CHECKPOINT: DuckDB ≤ 1.5.5 can fail WAL replay after DDL and
- * leave the file unopenable (beeline-vyi, beeline-c1b).
+ * explicit CHECKPOINT, so the migrated store is one file with nothing left in
+ * its WAL. It was first written because DuckDB ≤ 1.5.5 could fail WAL replay
+ * after DDL and leave the file unopenable (beeline-vyi); 2.0 replays it
+ * (verified 2026-11-07, beeline-c1b).
  */
 
 export const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));

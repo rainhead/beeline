@@ -165,7 +165,7 @@ const subgenusOf = (x: string) => `regexp_extract(${x}, '\\(([A-Z][a-z]+)\\)', 1
 // A collector column as its list of names, written any way the legacy entry
 // form allowed: the same split as promotion's legacy_name_list.
 const collectors = (x: string) =>
-  `list_transform(regexp_split_to_array(trim(${x}), '\\s*(\\||/|&|\\b(?i:and)\\b)\\s*'), y -> trim(y))`;
+  `list_transform(regexp_split_to_array(trim(${x}), '\\s*(\\||/|&|\\b(?i:and)\\b)\\s*'), lambda y: trim(y))`;
 
 /**
  * The kind of one difference, over columns `column`, `exported` and `legacy`

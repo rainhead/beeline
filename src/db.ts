@@ -55,19 +55,32 @@ export function duckDbConfig(env: NodeJS.ProcessEnv = process.env): Record<strin
 const STORE_TIME_ZONE = { TimeZone: "UTC" };
 
 /**
+ * DuckDB 2.0 plans a correlated subquery differently by default
+ * (`delim_join_as_cte`), and the new plan copies the subquery's outer side
+ * once per subquery instead of sharing it. Beeline's name parsing hides a
+ * correlated subquery in each alias macro (`legacy_genus_alias`,
+ * `legacy_species_alias`, ingest/parse-names.sql), and the nested macros
+ * repeat it several times per row, so under the new plan `legacy_det_taxa`
+ * evaluated the staging views over and over: counting its five rows on the
+ * test fixture took 1.5 s against 82 ms on 1.5, and a legacy promotion 100 s
+ * against 3.5 s. With the old plan restored, 2.0 is back to about 1.5's speed.
+ */
+const PLANNER = { delim_join_as_cte: "false" };
+
+/**
  * Every DuckDB this project opens goes through here or through
- * {@link openMemoryDuckDb}, so the budgets above and the store's time zone
- * apply everywhere — and `test/duckdb-openers.test.ts` holds that true,
- * because the first attempt at this refactor missed two call sites to a
- * `grep | head` and nothing noticed.
+ * {@link openMemoryDuckDb}, so the budgets above, the store's time zone and
+ * the planner setting apply everywhere — and `test/duckdb-openers.test.ts`
+ * holds that true, because the first attempt at this refactor missed two call
+ * sites to a `grep | head` and nothing noticed.
  */
 export function openDuckDb(path: string): Promise<DuckDBInstance> {
-  return DuckDBInstance.create(path, { ...duckDbConfig(), ...STORE_TIME_ZONE });
+  return DuckDBInstance.create(path, { ...duckDbConfig(), ...STORE_TIME_ZONE, ...PLANNER });
 }
 
 /** The in-memory case (tests, the migration tool's drift check). */
 export function openMemoryDuckDb(): Promise<DuckDBInstance> {
-  return DuckDBInstance.create(":memory:", { ...duckDbConfig(), ...STORE_TIME_ZONE });
+  return DuckDBInstance.create(":memory:", { ...duckDbConfig(), ...STORE_TIME_ZONE, ...PLANNER });
 }
 
 /**

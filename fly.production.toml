@@ -25,10 +25,11 @@ primary_region = "sjc"
 # [[http_service.checks]], where Fly never reads them and the default 5s
 # applies. Verified by parsing the file, not by reading it.
 #
-# DuckDB must checkpoint and close cleanly: <= 1.5.5 can leave the file
-# unopenable when DDL reaches the WAL uncheckpointed (beeline-c1b,
-# duckdb/duckdb#18259). Five seconds is not enough, and host maintenance
-# restarts machines without much warning, so this fires eventually.
+# Shutdown settles the running job, then checkpoints and closes the store
+# (beeline-fth). Five seconds is not enough, and host maintenance restarts
+# machines without much warning, so this fires eventually. On DuckDB <= 1.5.5
+# an uncheckpointed WAL carrying DDL could also leave the file unopenable
+# (duckdb/duckdb#18259); 2.0 replays it (beeline-c1b).
 # main.ts handles both SIGINT and SIGTERM.
 kill_signal = "SIGTERM"
 kill_timeout = "120s"

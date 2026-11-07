@@ -70,8 +70,15 @@ swap_size_mb = 1024
   # corpus grows nightly and the failure is invisible until somebody looks.
   #
   # 1.5 GB since 2026-10-04, with the machine's third GB: the legacy-format
-  # export needs ~830 MB on one thread after #136 (1,150 MB on two), which
+  # export needed ~830 MB on one thread after #136 (1,150 MB on two), which
   # left it ~190 MB under 1 GB and shrinking every season (beeline-1w2d).
+  # Measured again on a copy of the store of 2026-11-07, it fails at 768 MB
+  # and completes at 1 GB, peaking at ~980 MB of DuckDB's own memory. Most of
+  # that is its joins to the old system's records, whose number is now fixed:
+  # old Beeline only adds volunteer determinations to them until it closes in
+  # early 2027. So the export grows only with Beeline's own specimens, about
+  # 14,000 of its 397,289 rows so far, and this limit leaves it ~500 MB to
+  # grow into (beeline-bav5).
   BEELINE_DUCKDB_MEMORY_LIMIT = "1536MB"
   BEELINE_DUCKDB_THREADS = "2"
 

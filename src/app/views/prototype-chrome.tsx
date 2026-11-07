@@ -130,7 +130,12 @@ export function TopBarChrome(props: {
       <nav class="md-tabs" aria-label={props.m.layout.records}>
         {tabs.map((d) => (
           <a href={d.href} aria-current={isActive(d.href, props.path) ? "page" : undefined}>
-            <span>{d.label}</span>
+            {/* On a phone, the short label, so every tab fits without scrolling. */}
+            <span class="tab-icon">
+              <Sym name={d.icon} fill={isActive(d.href, props.path)} />
+            </span>
+            <span class="tab-long">{d.label}</span>
+            <span class="tab-short">{d.href === "/how-it-works" ? "How it works" : d.short}</span>
           </a>
         ))}
       </nav>

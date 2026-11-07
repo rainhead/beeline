@@ -1,0 +1,424 @@
+/* PROTOTYPE (beeline-d0u4) — throwaway, never merged to main.
+   Loaded after the real stylesheets whenever ?variant= is set; every rule
+   but the switcher's is scoped to :root[data-variant], so ?variant=current
+   is today's design untouched. See src/app/views/prototype-chrome.tsx. */
+
+/* ── The switcher bar (all variants, current included) ─────────────────── */
+.proto-switcher {
+  position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%);
+  z-index: 1000; display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.375rem 0.5rem; border-radius: 999rem;
+  background: #111; color: #fff; font: 500 0.8125rem/1.25rem ui-monospace, Menlo, monospace;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.35); white-space: nowrap;
+}
+.proto-switcher a, .proto-switcher a:visited {
+  color: #fff; text-decoration: none; width: 2rem; height: 2rem; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center; background: #333;
+}
+.proto-switcher a:hover { background: #555; }
+body:has(.proto-switcher) { padding-bottom: 4.5rem; }
+:root[data-variant="B"] body:has(.proto-switcher) { padding-bottom: 4.5rem; }
+.md-phone-only { display: none; }
+
+/* ── Shared Material 3 layer ───────────────────────────────────────────── */
+:root[data-variant] {
+  /* The full MD3 type scale, not the five-step slice elements.css keeps. */
+  --md-ref-typeface: var(--md-sys-typescale-font);
+  --md-sys-typescale-display-small: 400 2.25rem/2.75rem var(--md-ref-typeface);
+  --md-sys-typescale-headline-large: 400 2rem/2.5rem var(--md-ref-typeface);
+  --md-sys-typescale-headline-medium: 400 1.75rem/2.25rem var(--md-ref-typeface);
+  --md-sys-typescale-headline-small: 400 1.5rem/2rem var(--md-ref-typeface);
+  --md-sys-typescale-title-large: 400 1.375rem/1.75rem var(--md-ref-typeface);
+  --md-sys-typescale-title-medium: 500 1rem/1.5rem var(--md-ref-typeface);
+  --md-sys-typescale-title-small: 500 0.875rem/1.25rem var(--md-ref-typeface);
+  --md-sys-typescale-body-large: 400 1rem/1.5rem var(--md-ref-typeface);
+  --md-sys-typescale-body-medium: 400 0.875rem/1.25rem var(--md-ref-typeface);
+  --md-sys-typescale-label-large: 500 0.875rem/1.25rem var(--md-ref-typeface);
+  --md-sys-typescale-label-medium: 500 0.75rem/1rem var(--md-ref-typeface);
+  --md-sys-typescale-label-small: 500 0.6875rem/1rem var(--md-ref-typeface);
+  /* The old names, pointed at the full scale. */
+  --md-sys-typescale-display: var(--md-sys-typescale-display-small);
+  --md-sys-typescale-headline: var(--md-sys-typescale-headline-small);
+  --md-sys-typescale-title: var(--md-sys-typescale-title-medium);
+  --md-sys-typescale-body: var(--md-sys-typescale-body-large);
+  --md-sys-typescale-label: var(--md-sys-typescale-label-large);
+
+  /* The MD3 shape scale, in place of three radii. */
+  --md-sys-shape-corner-extra-small: 4px;
+  --md-sys-shape-corner-small: 8px;
+  --md-sys-shape-corner-medium: 12px;
+  --md-sys-shape-corner-large: 16px;
+  --md-sys-shape-corner-extra-large: 28px;
+  --radius-sm: var(--md-sys-shape-corner-extra-small);
+  --radius-md: var(--md-sys-shape-corner-medium);
+
+  /* Elevation, which today's design rules out entirely. */
+  --md-sys-elevation-1: 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 3px 1px rgb(0 0 0 / 0.15);
+  --md-sys-elevation-2: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 6px 2px rgb(0 0 0 / 0.15);
+  --md-sys-elevation-3: 0 1px 3px rgb(0 0 0 / 0.3), 0 4px 8px 3px rgb(0 0 0 / 0.15);
+
+  /* State layers: a wash of the content colour over whatever is beneath. */
+  --md-state-hover: color-mix(in srgb, currentColor 8%, transparent);
+  --md-state-press: color-mix(in srgb, currentColor 12%, transparent);
+}
+:root[data-variant] body { background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); }
+:root[data-variant] .sym { width: 1.5rem; height: 1.5rem; flex: none; display: block; }
+
+/* Headings on the MD3 scale. */
+:root[data-variant] h1 { font: var(--md-sys-typescale-headline-large); }
+:root[data-variant] h2 { font: var(--md-sys-typescale-title-large); }
+:root[data-variant] h3 { font: var(--md-sys-typescale-title-medium); }
+
+/* Buttons: 40px tall, label-large, state layer instead of brightness. */
+:root[data-variant] :where(button, .button, a.button:visited) {
+  font: var(--md-sys-typescale-label-large);
+  min-height: 2.5rem;
+  padding: 0 var(--space-6);
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  border-radius: var(--radius-full);
+}
+:root[data-variant] :where(button, .button):hover {
+  filter: none;
+  background-image: linear-gradient(var(--md-state-hover), var(--md-state-hover));
+}
+:root[data-variant] :where(button, .button):active { background-image: linear-gradient(var(--md-state-press), var(--md-state-press)); }
+:root[data-variant] :where(button, .button):not(.tonal, .outlined, .compact-button, .chip-remove, .search button) { box-shadow: none; }
+:root[data-variant] :where(button, .button):not(.tonal, .outlined, .compact-button, .chip-remove, .search button, .menu-panel button):hover { box-shadow: var(--md-sys-elevation-1); }
+:root[data-variant] .outlined { border-color: var(--md-sys-color-outline); color: var(--md-sys-color-primary); }
+:root[data-variant] button.compact-button { min-height: 2rem; padding: 0 var(--space-3); }
+
+/* Menus: no outline, surface-container, elevation 2, 48px rows. */
+:root[data-variant] details.menu > .menu-panel {
+  background: var(--md-sys-color-surface-container);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-extra-small);
+  box-shadow: var(--md-sys-elevation-2);
+}
+:root[data-variant] .menu-panel a, :root[data-variant] .menu-panel button:not(.col-filter button) {
+  min-height: 3rem; display: flex; align-items: center; padding: 0 var(--space-3) 0 var(--space-4);
+  font: var(--md-sys-typescale-label-large);
+}
+:root[data-variant] .menu-panel a:hover, :root[data-variant] .menu-panel button:not(.col-filter button):hover {
+  background: var(--md-state-hover);
+}
+:root[data-variant] .menu-section { border-bottom-color: var(--md-sys-color-outline-variant); }
+
+/* Icon buttons: the menu and account summaries, the feedback link. */
+:root[data-variant] details.menu > summary { min-width: 2.5rem; min-height: 2.5rem; color: var(--md-sys-color-on-surface-variant); }
+:root[data-variant] details.menu > summary:hover, :root[data-variant] details.menu[open] > summary { background: var(--md-state-hover); }
+:root[data-variant] .feedback-link { min-height: 2.5rem; color: var(--md-sys-color-on-surface-variant); }
+:root[data-variant] .feedback-link:hover { background: var(--md-state-hover); }
+:root[data-variant] .avatar { width: 2rem; height: 2rem; }
+
+/* Chips: 32px, small corners, tone as a tonal fill with a leading dot
+   rather than a left rule (MD3 has no rule; the dot keeps a mark that is
+   not only a fill). */
+:root[data-variant] .chip {
+  border-left: none;
+  border-radius: var(--md-sys-shape-corner-small);
+  min-height: 2rem;
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 0 var(--space-3);
+  font: var(--md-sys-typescale-label-large);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+}
+:root[data-variant] .chip:is(.blocking, .warning, .success) { border-color: transparent; }
+:root[data-variant] .chip:is(.blocking, .warning, .success)::before {
+  content: ""; width: 0.5rem; height: 0.5rem; border-radius: 50%; flex: none; background: currentColor;
+}
+:root[data-variant] .chip.blocking { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+:root[data-variant] .chip.warning { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+:root[data-variant] .chip.blocking::before { background: var(--md-sys-color-error); border-radius: 1px; }
+:root[data-variant] .chip.warning::before { background: var(--md-sys-color-warning); transform: rotate(45deg); border-radius: 1px; }
+:root[data-variant] .chip.success::before { background: var(--md-sys-color-success); }
+:root[data-variant] details.flag-menu > summary { border-radius: var(--md-sys-shape-corner-small); }
+:root[data-variant] details.flag-menu > summary:hover { text-decoration: none; filter: brightness(0.96); }
+:root[data-variant] .pill, :root[data-variant] a.pill:visited {
+  border-radius: var(--md-sys-shape-corner-small);
+  min-height: 2rem; display: inline-flex; align-items: center;
+  font: var(--md-sys-typescale-label-large);
+}
+:root[data-variant] .pill:hover { filter: none; text-decoration: none; box-shadow: var(--md-sys-elevation-1); }
+
+/* Segmented buttons: 40px, a check on the chosen one. */
+:root[data-variant] .segmented { border-color: var(--md-sys-color-outline); }
+:root[data-variant] .segmented a {
+  min-height: 2.5rem; display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 0 var(--space-4); font: var(--md-sys-typescale-label-large);
+  border-left-color: var(--md-sys-color-outline);
+}
+:root[data-variant] .segmented a:hover { background: var(--md-state-hover); }
+:root[data-variant] .segmented a[aria-current]::before { content: "✓"; font-weight: 700; }
+
+/* The search bar: MD3's 56px pill, the button inside it. */
+:root[data-variant] .search { position: relative; max-width: 36rem; }
+:root[data-variant] .search input {
+  min-height: 3.5rem; border: none; border-radius: var(--radius-full);
+  background: var(--md-sys-color-surface-container-high);
+  padding: 0 3.5rem 0 var(--space-6);
+}
+:root[data-variant] .search input:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 0; }
+:root[data-variant] .search button {
+  position: absolute; right: var(--space-2); top: 50%; transform: translateY(-50%);
+  width: 2.5rem; min-height: 2.5rem; padding: 0; border-radius: 50%;
+  background: transparent; color: var(--md-sys-color-on-surface-variant);
+}
+:root[data-variant] .search button:hover { box-shadow: none; }
+
+/* Tables: 52px rows, a state layer on hover, headers in title-small. */
+:root[data-variant] th { font: var(--md-sys-typescale-title-small); color: var(--md-sys-color-on-surface-variant); }
+:root[data-variant] th, :root[data-variant] td { padding: var(--space-3-5, 0.875rem) var(--space-4); }
+:root[data-variant] tbody tr:hover { background: var(--md-state-hover); }
+
+/* Callouts become cards with a leading tone bar inside the corner. */
+:root[data-variant] .callout {
+  border: none;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container);
+  padding: var(--space-4) var(--space-5);
+  position: relative; overflow: hidden;
+}
+:root[data-variant] .callout.warning { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+:root[data-variant] .callout.blocking { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+:root[data-variant] .callout.success { background: var(--md-sys-color-success-container); color: var(--md-sys-color-on-success-container); }
+:root[data-variant] .callout .meta { color: inherit; font: var(--md-sys-typescale-body-medium); }
+:root[data-variant] .empty {
+  border: none; border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-body-large);
+}
+
+/* The footer: label-medium, quieter. */
+:root[data-variant] .site-footer { font: var(--md-sys-typescale-body-medium); border-top-color: var(--md-sys-color-outline-variant); }
+:root[data-variant] .meta { font: var(--md-sys-typescale-body-medium); }
+
+/* The environment banner, as an MD3 banner strip. */
+:root[data-variant] .env-banner { font: var(--md-sys-typescale-label-medium); }
+
+/* ── A: Top app bar and tabs ───────────────────────────────────────────── */
+:root[data-variant="A"] .md-top-app-bar {
+  display: flex; align-items: center; gap: var(--space-1);
+  height: 4rem; padding: 0 var(--space-2) 0 var(--space-1);
+  background: var(--md-sys-color-surface);
+}
+:root[data-variant="A"] .md-top-app-bar .brand {
+  font: var(--md-sys-typescale-title-large); color: var(--md-sys-color-on-surface); text-decoration: none; margin-left: var(--space-2);
+}
+.md-spacer { flex: 1; }
+:root[data-variant="A"] .md-top-app-bar .account-menu { margin-left: 0; }
+:root[data-variant="A"] .md-top-app-bar .feedback-link { margin-left: 0; }
+:root[data-variant="A"] .nav-records { display: none; }
+:root[data-variant="A"] .md-tabs {
+  display: flex; gap: 0; padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--md-sys-color-surface-variant);
+  background: var(--md-sys-color-surface);
+  overflow-x: auto; scrollbar-width: none;
+  position: sticky; top: 0; z-index: var(--layer-raised);
+}
+:root[data-variant="A"] .md-tabs a {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  height: 3rem; padding: 0 var(--space-4);
+  font: var(--md-sys-typescale-title-small); text-decoration: none; white-space: nowrap;
+  color: var(--md-sys-color-on-surface-variant);
+}
+:root[data-variant="A"] .md-tabs a:hover { background: var(--md-state-hover); }
+:root[data-variant="A"] .md-tabs a[aria-current] { color: var(--md-sys-color-primary); }
+:root[data-variant="A"] .md-tabs a[aria-current] span::after {
+  content: ""; position: absolute; left: var(--space-4); right: var(--space-4); bottom: 0;
+  height: 3px; border-radius: 3px 3px 0 0; background: var(--md-sys-color-primary);
+}
+/* Outlined cards, outlined fields: the closest of the three to today. */
+:root[data-variant="A"] .card { border-radius: var(--md-sys-shape-corner-medium); border-color: var(--md-sys-color-outline-variant); }
+:root[data-variant="A"] :is(input:not([type="checkbox"], [type="radio"]), select, textarea):not(.search input) {
+  min-height: 3.5rem; border-radius: var(--md-sys-shape-corner-extra-small); border-color: var(--md-sys-color-outline);
+  padding: 0 var(--space-4);
+}
+:root[data-variant="A"] textarea { padding: var(--space-4); }
+:root[data-variant="A"] :is(input, select, textarea):focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: -1px; }
+:root[data-variant="A"] main > .table-scroll table {
+  border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-sys-shape-corner-medium);
+  border-collapse: separate; border-spacing: 0; overflow: clip;
+}
+:root[data-variant="A"] main > .table-scroll tbody tr:last-child td { border-bottom: none; }
+@media (max-width: 640px) {
+  :root[data-variant="A"] .md-top-app-bar .feedback-link span { display: none; }
+  :root[data-variant="A"] .md-tabs { padding: 0; }
+}
+
+/* ── B: Navigation rail ────────────────────────────────────────────────── */
+@font-face {
+  font-family: "Roboto Flex";
+  src: url("./roboto-flex.woff2") format("woff2");
+  font-weight: 100 1000;
+  font-display: swap;
+}
+:root[data-variant="B"] { --md-ref-typeface: "Roboto Flex", system-ui, sans-serif; --md-sys-typescale-font: var(--md-ref-typeface); }
+:root[data-variant="B"] body { background: var(--md-sys-color-surface-container); }
+:root[data-variant="B"] .md-shell { display: grid; grid-template-columns: 5rem minmax(0, 1fr); min-height: 100vh; }
+:root[data-variant="B"] .md-rail {
+  position: sticky; top: 0; height: 100vh;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-8);
+  padding: var(--space-3) 0;
+}
+:root[data-variant="B"] .md-rail-top { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+:root[data-variant="B"] .md-rail .nav-menu > .menu-panel { left: calc(100% + var(--space-1)); top: 0; }
+:root[data-variant="B"] .nav-records { display: none; }
+:root[data-variant="B"] .md-fab {
+  width: 3.5rem; height: 3.5rem; border-radius: var(--md-sys-shape-corner-large);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container);
+  box-shadow: var(--md-sys-elevation-1);
+}
+:root[data-variant="B"] .md-fab:hover { box-shadow: var(--md-sys-elevation-2); background-image: linear-gradient(var(--md-state-hover), var(--md-state-hover)); }
+:root[data-variant="B"] .md-rail-items { display: flex; flex-direction: column; gap: var(--space-3); }
+:root[data-variant="B"] .md-rail-items a {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
+  width: 5rem; text-decoration: none; color: var(--md-sys-color-on-surface-variant);
+}
+:root[data-variant="B"] .md-indicator {
+  width: 3.5rem; height: 2rem; border-radius: var(--radius-full);
+  display: flex; align-items: center; justify-content: center;
+}
+:root[data-variant="B"] .md-rail-items a:hover .md-indicator { background: var(--md-state-hover); }
+:root[data-variant="B"] .md-rail-items a[aria-current] { color: var(--md-sys-color-on-surface); }
+:root[data-variant="B"] .md-rail-items a[aria-current] .md-indicator {
+  background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container);
+}
+:root[data-variant="B"] .md-rail-label { font: var(--md-sys-typescale-label-medium); }
+:root[data-variant="B"] .md-rail-items a[aria-current] .md-rail-label { font-weight: 700; }
+/* The content sits in a pane: surface on a surface-container ground. */
+:root[data-variant="B"] .md-pane {
+  background: var(--md-sys-color-surface);
+  margin: var(--space-2) var(--space-2) var(--space-2) 0;
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  min-width: 0;
+}
+:root[data-variant="B"] .md-pane > .md-top-app-bar {
+  display: flex; align-items: center; gap: var(--space-1); height: 4rem; padding: 0 var(--space-3) 0 var(--space-6);
+}
+:root[data-variant="B"] .md-pane > .md-top-app-bar .brand { font: var(--md-sys-typescale-title-large); color: var(--md-sys-color-on-surface); text-decoration: none; }
+:root[data-variant="B"] .md-pane .account-menu, :root[data-variant="B"] .md-pane .feedback-link { margin-left: 0; }
+:root[data-variant="B"] main { padding-top: var(--space-2); }
+:root[data-variant="B"] h1 { font: var(--md-sys-typescale-display-small); }
+/* Elevated cards, filled fields. */
+:root[data-variant="B"] .card {
+  border: none; border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container-low); box-shadow: var(--md-sys-elevation-1);
+}
+:root[data-variant="B"] .callout { box-shadow: none; border-radius: var(--md-sys-shape-corner-large); }
+:root[data-variant="B"] :is(input:not([type="checkbox"], [type="radio"]), select, textarea):not(.search input) {
+  min-height: 3.5rem; border: none; border-bottom: 1px solid var(--md-sys-color-on-surface-variant);
+  border-radius: var(--md-sys-shape-corner-extra-small) var(--md-sys-shape-corner-extra-small) 0 0;
+  background: var(--md-sys-color-surface-container-highest); padding: 0 var(--space-4);
+}
+:root[data-variant="B"] :is(input, select, textarea):not(.search input):focus-visible {
+  outline: none; border-bottom: 2px solid var(--md-sys-color-primary);
+}
+:root[data-variant="B"] main > .table-scroll thead th { background: var(--md-sys-color-surface); }
+:root[data-variant="B"] th { border-bottom-color: var(--md-sys-color-outline); }
+/* A record's facts: a card per definition list. */
+:root[data-variant="B"] main dl.details:not(.card dl) {
+  background: var(--md-sys-color-surface-container-low); border-radius: var(--md-sys-shape-corner-large);
+  padding: var(--space-5) var(--space-6); gap: var(--space-3) var(--space-6);
+}
+/* On a phone the rail becomes the navigation bar at the foot. */
+@media (max-width: 640px) {
+  :root[data-variant="B"] .md-shell { display: block; }
+  :root[data-variant="B"] .md-rail {
+    position: fixed; top: auto; bottom: 0; left: 0; right: 0; height: 5rem; z-index: var(--layer-menu);
+    flex-direction: row; justify-content: center; padding: var(--space-3) 0 var(--space-4);
+    background: var(--md-sys-color-surface-container);
+  }
+  :root[data-variant="B"] .md-rail-top .nav-menu { display: none; }
+  :root[data-variant="B"] .md-phone-only { display: block; }
+  :root[data-variant="B"] .md-phone-only .nav-menu > .menu-panel { left: 0; }
+  :root[data-variant="B"] .proto-switcher { bottom: 10.5rem; }
+  :root[data-variant="B"] .md-fab { position: fixed; right: var(--space-4); bottom: 6rem; box-shadow: var(--md-sys-elevation-3); }
+  :root[data-variant="B"] .md-rail-items { flex-direction: row; gap: 0; width: 100%; justify-content: space-around; }
+  :root[data-variant="B"] .md-rail-items a { width: auto; flex: 1; }
+  :root[data-variant="B"] .md-pane { margin: 0; border-radius: 0; padding-bottom: 5rem; }
+  :root[data-variant="B"] .md-pane > .md-top-app-bar { padding-left: var(--space-1); }
+  :root[data-variant="B"] .md-pane .feedback-link span { display: none; }
+  :root[data-variant="B"] h1 { font: var(--md-sys-typescale-headline-medium); }
+}
+
+/* ── C: Navigation drawer ──────────────────────────────────────────────── */
+:root[data-variant="C"] .md-shell { display: grid; grid-template-columns: 17.5rem minmax(0, 1fr); min-height: 100vh; }
+:root[data-variant="C"] .md-drawer {
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  background: var(--md-sys-color-surface-container-low);
+  padding: var(--space-3);
+}
+:root[data-variant="C"] .md-drawer-brand {
+  display: block; padding: var(--space-4) var(--space-4) var(--space-5);
+  font: var(--md-sys-typescale-title-large); color: var(--md-sys-color-on-surface); text-decoration: none;
+}
+:root[data-variant="C"] .md-drawer-section { padding-bottom: var(--space-2); }
+:root[data-variant="C"] .md-drawer-section + .md-drawer-section { border-top: 1px solid var(--md-sys-color-outline-variant); padding-top: var(--space-2); }
+:root[data-variant="C"] .md-drawer-headline {
+  font: var(--md-sys-typescale-title-small); color: var(--md-sys-color-on-surface-variant);
+  padding: var(--space-4) var(--space-4) var(--space-2);
+}
+:root[data-variant="C"] :is(.md-drawer, .md-drawer-modal .menu-panel) .md-drawer-section a {
+  display: flex; align-items: center; gap: var(--space-3);
+  min-height: 3.5rem; padding: 0 var(--space-6) 0 var(--space-4);
+  border-radius: var(--radius-full);
+  font: var(--md-sys-typescale-label-large); text-decoration: none;
+  color: var(--md-sys-color-on-surface-variant);
+}
+:root[data-variant="C"] :is(.md-drawer, .md-drawer-modal .menu-panel) .md-drawer-section a:hover { background: var(--md-state-hover); }
+:root[data-variant="C"] :is(.md-drawer, .md-drawer-modal .menu-panel) .md-drawer-section a[aria-current] {
+  background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font-weight: 700;
+}
+:root[data-variant="C"] .md-pane { min-width: 0; }
+:root[data-variant="C"] .md-pane > .md-top-app-bar {
+  display: flex; align-items: center; gap: var(--space-1); height: 4rem; padding: 0 var(--space-3);
+}
+:root[data-variant="C"] .md-pane .account-menu, :root[data-variant="C"] .md-pane .feedback-link { margin-left: 0; }
+:root[data-variant="C"] .md-drawer-modal { display: none; }
+/* The page title in the large top app bar's place and size. */
+:root[data-variant="C"] main { padding-top: 0; }
+:root[data-variant="C"] h1 { font: var(--md-sys-typescale-headline-medium); }
+/* Filled cards, filled fields, lists, dense tables. */
+:root[data-variant="C"] .card {
+  border: none; border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container-highest);
+}
+:root[data-variant="C"] :is(input:not([type="checkbox"], [type="radio"]), select, textarea):not(.search input) {
+  min-height: 3rem; border: none; border-bottom: 1px solid var(--md-sys-color-on-surface-variant);
+  border-radius: var(--md-sys-shape-corner-extra-small) var(--md-sys-shape-corner-extra-small) 0 0;
+  background: var(--md-sys-color-surface-container-highest); padding: 0 var(--space-3);
+}
+:root[data-variant="C"] :is(input, select, textarea):not(.search input):focus-visible { outline: none; border-bottom: 2px solid var(--md-sys-color-primary); }
+:root[data-variant="C"] .search input { min-height: 3rem; }
+:root[data-variant="C"] th, :root[data-variant="C"] td { padding: var(--space-2) var(--space-3); }
+:root[data-variant="C"] th { background: var(--md-sys-color-surface-container); }
+:root[data-variant="C"] main > .table-scroll thead th { background: var(--md-sys-color-surface-container); }
+/* A record's facts as an MD3 list: label over value, divided. */
+:root[data-variant="C"] main dl.details { display: block; }
+:root[data-variant="C"] main dl.details dt {
+  font: var(--md-sys-typescale-label-medium); color: var(--md-sys-color-on-surface-variant);
+  padding-top: var(--space-3); letter-spacing: 0.03em;
+}
+:root[data-variant="C"] main dl.details dd {
+  font: var(--md-sys-typescale-body-large); padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant); margin: 0;
+}
+@media (max-width: 64rem) {
+  :root[data-variant="C"] .md-shell { display: block; }
+  :root[data-variant="C"] .md-drawer { display: none; }
+  :root[data-variant="C"] .md-drawer-modal { display: block; }
+  :root[data-variant="C"] .md-drawer-modal > .menu-panel {
+    position: fixed; top: 0; left: 0; bottom: 0; width: min(20rem, 85vw);
+    border-radius: 0 var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) 0;
+    background: var(--md-sys-color-surface-container-low); padding: var(--space-3); overflow-y: auto;
+    box-shadow: var(--md-sys-elevation-1);
+  }
+  :root[data-variant="C"] .md-drawer-modal[open]::before {
+    content: ""; position: fixed; inset: 0; background: rgb(0 0 0 / 0.32); z-index: calc(var(--layer-menu) - 1);
+  }
+  :root[data-variant="C"] .md-pane .feedback-link span { display: none; }
+}

@@ -4,6 +4,9 @@ import type { CreditedSource } from "../messages/en.js";
 import type { Session } from "../session.js";
 import type { Acting } from "../acting.js";
 import { FeedbackIcon, MenuIcon, PersonIcon } from "./icons.js";
+import { DrawerList, PrototypeSwitcher, Rail, Sym, TopBarChrome, type Variant } from "./prototype-chrome.js";
+
+export { prototypeVariant } from "./prototype-chrome.js";
 
 export interface PageEnv {
   /** Stamp appended to stylesheet URLs so a CSS change is not cached past it. */
@@ -27,6 +30,10 @@ export interface PageEnv {
    */
   feedbackHref: string | null;
   m: Messages;
+  /** PROTOTYPE (beeline-d0u4): which Material variant, or null outside one. */
+  variant?: Variant | null;
+  /** PROTOTYPE: this page's path and query, for the switcher and active nav. */
+  href?: string;
 }
 
 /**
@@ -186,15 +193,105 @@ export function Layout(props: {
 }) {
   const { env, title } = props;
   const { m, session } = env;
+  const variant: Variant | null = env.variant ?? null;
+  const md = variant !== null && variant !== "current";
+  const path = (env.href ?? "/").split("?")[0]!;
+  const navMenu = (
+    <details class="menu nav-menu">
+      <summary aria-label={m.layout.menu} title={m.layout.menu}>
+        {md ? <Sym name="menu" /> : <MenuIcon />}
+      </summary>
+      <div class="menu-panel">
+        {/* The inline nav is hidden on a narrow screen, so the records
+            come along here; on a wide one they stay in the header. */}
+        <nav class="menu-section nav-records" aria-label={m.layout.records}>
+          <NavLinks m={m} />
+        </nav>
+        <MoreLinks m={m} admin={env.admin} />
+      </div>
+    </details>
+  );
+  // C's narrow-screen menu: the drawer itself, as a modal panel.
+  const drawerMenu = (
+    <details class="menu nav-menu md-drawer-modal">
+      <summary aria-label={m.layout.menu} title={m.layout.menu}>
+        <Sym name="menu" />
+      </summary>
+      <div class="menu-panel">
+        <DrawerList m={m} admin={env.admin} path={path} />
+      </div>
+    </details>
+  );
+  const feedback =
+    env.feedbackHref !== null ? (
+      <a class="feedback-link" href={env.feedbackHref}>
+        {md ? <Sym name="feedback" /> : <FeedbackIcon />}
+        <span>{m.layout.feedback.label}</span>
+      </a>
+    ) : null;
+  const accountMenu = (
+    <details class="menu account-menu">
+      <summary aria-label={m.layout.account(session.login)} title={m.layout.account(session.login)}>
+        {session.iconUrl !== null ? <img class="avatar" src={session.iconUrl} alt="" /> : md ? <Sym name="account_circle" /> : <PersonIcon />}
+      </summary>
+      <div class="menu-panel">
+        <div class="menu-identity">{session.login}</div>
+        {env.acting.canActFor.length > 0 && (
+          <div class="menu-section">
+            <div class="menu-heading">{m.layout.acting.start}</div>
+            {env.acting.canActFor.map((person) => (
+              <form method="post" action="/acting">
+                <input type="hidden" name="person" value={String(person.personId)} />
+                <button>{m.layout.acting.startFor(person.name)}</button>
+              </form>
+            ))}
+          </div>
+        )}
+        {session.stub === true ? (
+          // A dev-login session has no cookie behind it to end.
+          <div class="menu-identity">{m.layout.devSession}</div>
+        ) : (
+          <form method="post" action="/auth/logout">
+            <button>{m.layout.signOut}</button>
+          </form>
+        )}
+      </div>
+    </details>
+  );
+  const chrome =
+    variant === "A" ? (
+      <TopBarChrome m={m} admin={env.admin} path={path} menu={navMenu} feedback={feedback} account={accountMenu} />
+    ) : variant === "B" || variant === "C" ? null : (
+      <header>
+        {navMenu}
+        {/* The brand and the nav share a baseline: the header centres its
+            items, and centring a title-sized word beside label-sized links
+            puts their baselines at different heights. */}
+        <div class="header-title">
+          <a href="/" class="brand">
+            {m.brand}
+          </a>
+          <nav class="nav-inline">
+            <NavLinks m={m} />
+          </nav>
+        </div>
+        {/* In the header itself, never in a menu: the one thing a person
+            who has hit something wrong must not have to hunt for. */}
+        {feedback}
+        {/* The account menu is about the person signed in — who they are,
+            who they act for, signing out — and never a place to find pages. */}
+        {accountMenu}
+      </header>
+    );
   return (
-    <html lang={m.locale}>
+    <html lang={m.locale} data-variant={md ? variant : undefined}>
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         {/* No search engine has any business here: every page is private. */}
         <meta name="robots" content="noindex" />
         <title>{m.layout.pageTitle(title)}</title>
-        {[...STYLESHEETS, ...(props.stylesheets ?? [])].map((href) => (
+        {[...STYLESHEETS, ...(props.stylesheets ?? []), ...(variant !== null ? ["/static/prototype/md3.css"] : [])].map((href) => (
           <link rel="stylesheet" href={versioned(href, env.styleVersion)} />
         ))}
         {env.islandsSrc && <script type="module" src={env.islandsSrc}></script>}
@@ -222,73 +319,43 @@ export function Layout(props: {
             </form>
           </div>
         )}
-        {/* The dropdowns are <details> so they work with no JavaScript at all;
-            the islands bundle adds outside-click/Escape dismissal on top. */}
-        <header>
-          <details class="menu nav-menu">
-            <summary aria-label={m.layout.menu} title={m.layout.menu}>
-              <MenuIcon />
-            </summary>
-            <div class="menu-panel">
-              {/* The inline nav is hidden on a narrow screen, so the records
-                  come along here; on a wide one they stay in the header. */}
-              <nav class="menu-section nav-records" aria-label={m.layout.records}>
-                <NavLinks m={m} />
+        {chrome}
+        {variant === "B" || variant === "C" ? (
+          <div class="md-shell">
+            {variant === "B" ? (
+              <Rail m={m} admin={env.admin} path={path} menu={navMenu} />
+            ) : (
+              <nav class="md-drawer" aria-label={m.layout.more}>
+                <a href="/" class="md-drawer-brand">
+                  {m.brand}
+                </a>
+                <DrawerList m={m} admin={env.admin} path={path} />
               </nav>
-              <MoreLinks m={m} admin={env.admin} />
+            )}
+            <div class="md-pane">
+              <header class="md-top-app-bar">
+                {variant === "C" ? drawerMenu : null}
+                {variant === "B" ? <div class="md-phone-only">{navMenu}</div> : null}
+                {variant === "B" ? (
+                  <a href="/" class="brand">
+                    {m.brand}
+                  </a>
+                ) : null}
+                <span class="md-spacer" />
+                {feedback}
+                {accountMenu}
+              </header>
+              <main>{props.children}</main>
+              <SiteFooter m={m} />
             </div>
-          </details>
-          {/* The brand and the nav share a baseline: the header centres its
-              items, and centring a title-sized word beside label-sized links
-              puts their baselines at different heights. */}
-          <div class="header-title">
-            <a href="/" class="brand">
-              {m.brand}
-            </a>
-            <nav class="nav-inline">
-              <NavLinks m={m} />
-            </nav>
           </div>
-          {/* In the header itself, never in a menu: the one thing a person
-              who has hit something wrong must not have to hunt for. */}
-          {env.feedbackHref !== null && (
-            <a class="feedback-link" href={env.feedbackHref}>
-              <FeedbackIcon />
-              <span>{m.layout.feedback.label}</span>
-            </a>
-          )}
-          {/* The account menu is about the person signed in — who they are,
-              who they act for, signing out — and never a place to find pages. */}
-          <details class="menu account-menu">
-            <summary aria-label={m.layout.account(session.login)} title={m.layout.account(session.login)}>
-              {session.iconUrl !== null ? <img class="avatar" src={session.iconUrl} alt="" /> : <PersonIcon />}
-            </summary>
-            <div class="menu-panel">
-              <div class="menu-identity">{session.login}</div>
-              {env.acting.canActFor.length > 0 && (
-                <div class="menu-section">
-                  <div class="menu-heading">{m.layout.acting.start}</div>
-                  {env.acting.canActFor.map((person) => (
-                    <form method="post" action="/acting">
-                      <input type="hidden" name="person" value={String(person.personId)} />
-                      <button>{m.layout.acting.startFor(person.name)}</button>
-                    </form>
-                  ))}
-                </div>
-              )}
-              {session.stub === true ? (
-                // A dev-login session has no cookie behind it to end.
-                <div class="menu-identity">{m.layout.devSession}</div>
-              ) : (
-                <form method="post" action="/auth/logout">
-                  <button>{m.layout.signOut}</button>
-                </form>
-              )}
-            </div>
-          </details>
-        </header>
-        <main>{props.children}</main>
-        <SiteFooter m={m} />
+        ) : (
+          <>
+            <main>{props.children}</main>
+            <SiteFooter m={m} />
+          </>
+        )}
+        {variant !== null && <PrototypeSwitcher variant={variant} href={env.href ?? "/"} />}
       </body>
     </html>
   );

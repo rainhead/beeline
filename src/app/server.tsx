@@ -17,7 +17,7 @@ import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
-import { Layout, PublicPage } from "./views/layout.js";
+import { Layout, PublicPage, prototypeVariant } from "./views/layout.js";
 import { jobHealth, type Job, type LastOutcome } from "./jobs/framework.js";
 import { reportAppError } from "./error-reporting.js";
 import { currentCatalog, raiseRegistryMark } from "../registry-mark.js";
@@ -629,6 +629,10 @@ export function createApp({
           acting: c.get("acting"),
           feedbackHref: feedbackHref(c),
           m: c.get("m"),
+          // PROTOTYPE (beeline-d0u4): ?variant= swaps the chrome and styles;
+          // never honoured in production.
+          variant: config.environment === "production" ? null : prototypeVariant(c.req.query("variant")),
+          href: `${new URL(c.req.url).pathname}${new URL(c.req.url).search}`,
         }}
         title={title}
         stylesheets={stylesheets}

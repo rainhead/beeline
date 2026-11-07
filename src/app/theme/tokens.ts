@@ -1,4 +1,4 @@
-import { argbFromHex, hexFromArgb, themeFromSourceColor, type CustomColor } from "@material/material-color-utilities";
+import { argbFromHex, hexFromArgb, themeFromSourceColor, Hct, MaterialDynamicColors, SchemeTonalSpot, type CustomColor } from "@material/material-color-utilities";
 
 /**
  * Seed for the Material 3 color scheme — everything else is derived.
@@ -57,6 +57,27 @@ export function normalizeSeed(seed: string | undefined | null): string {
  * demand so per-atlas colorways can be proofed at /design/identity before
  * any atlas's real color is known.
  */
+/**
+ * PROTOTYPE (beeline-d0u4): the surface roles MD3 added after the Scheme
+ * class this file uses — the five surface containers, dim and bright — from
+ * the tonal-spot dynamic scheme, so the Material variants can layer tones.
+ */
+function surfaceVars(seed: string, dark: boolean): string {
+  const scheme = new SchemeTonalSpot(Hct.fromInt(argbFromHex(seed)), dark, 0);
+  const roles = {
+    "surface-container-lowest": MaterialDynamicColors.surfaceContainerLowest,
+    "surface-container-low": MaterialDynamicColors.surfaceContainerLow,
+    "surface-container": MaterialDynamicColors.surfaceContainer,
+    "surface-container-high": MaterialDynamicColors.surfaceContainerHigh,
+    "surface-container-highest": MaterialDynamicColors.surfaceContainerHighest,
+    "surface-dim": MaterialDynamicColors.surfaceDim,
+    "surface-bright": MaterialDynamicColors.surfaceBright,
+  };
+  return Object.entries(roles)
+    .map(([name, role]) => cssVar(name, role.getArgb(scheme as never)))
+    .join("\n");
+}
+
 export function tokensCss(seed: string = SEED_COLOR): string {
   const theme = themeFromSourceColor(
     argbFromHex(seed),
@@ -69,11 +90,13 @@ export function tokensCss(seed: string = SEED_COLOR): string {
   color-scheme: light dark;
 ${schemeVars(theme.schemes.light.toJSON())}
 ${customVars(named("light"))}
+${surfaceVars(seed, false)}
 }
 @media (prefers-color-scheme: dark) {
   :root {
 ${schemeVars(theme.schemes.dark.toJSON())}
 ${customVars(named("dark"))}
+${surfaceVars(seed, true)}
   }
 }
 `;

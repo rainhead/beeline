@@ -41,9 +41,8 @@
 -- selecting the lowest-id place of that admin_level — and it re-unnests the
 -- JSON once per level per observation, which over 63k observations and 1.57M
 -- place ids does not finish in two minutes. Shredding once and pivoting with
--- FILTER runs in well under a second, and is the same shape
--- observation_current_fields already uses to pull several values out of one
--- ofvs array.
+-- FILTER runs in well under a second. observation_current_fields learned the
+-- same lesson about its own JSON and now parses each load once (beeline-dmoi).
 CREATE VIEW observation_place AS
 WITH resolved AS (
   SELECT e.inat_id, p.admin_level, p.inat_place_id, p.name,

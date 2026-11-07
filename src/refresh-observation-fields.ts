@@ -4,12 +4,18 @@ import type { DuckDBConnection } from "@duckdb/node-api";
  * Refreshing `observation_field` — the stored form of the projection
  * `observation_current_fields` defines (schema/060, schema/105).
  *
- * Shredding the JSON is expensive and its input is not: 63k observations
- * take ~200 ms, almost all of it in the two correlated `$.ofvs` subqueries,
- * and three QC rules read it — which is why the whole `qc_finding` union
- * cost ~670 ms and the flagship page, both listings, printability and the
- * record pages each paid it once. Storing the shred takes the union to
- * ~205 ms (beeline-2c3.36).
+ * Shredding the JSON is expensive and its input is not, and three QC rules
+ * read it — which is why the whole `qc_finding` union cost ~670 ms and the
+ * flagship page, both listings, printability and the record pages each paid
+ * it once. Storing the shred takes the union to ~205 ms (beeline-2c3.36).
+ *
+ * It is expensive in memory as well as time, and that is what to watch when
+ * changing the view: a refresh reads every observation, not one night's. On
+ * the production store of 2026-11-07 (65,939 observations) the refresh raised
+ * the process's peak memory by about 1.1 GB, most of it outside DuckDB's
+ * memory_limit, because the view parsed each load once per field it read.
+ * It now parses each load once and adds about 120 MB in 0.3 s (beeline-dmoi;
+ * schema/105 has the measurements).
  *
  * The rule, in two halves that are not the same rule twice:
  *

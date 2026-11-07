@@ -120,6 +120,67 @@ describe("the stored projection", () => {
     ]);
   });
 
+  /**
+   * Every column of one observation, so that reading the struct the load is
+   * parsed into once (beeline-dmoi) cannot quietly swap the coordinates — a
+   * list counts from 1 where a JSON path counts from 0 — or drop a cast. The
+   * fields that have two names take the second where the first is blank, and
+   * the first of two values where both are filled.
+   */
+  test("reads every field from one parse of the load", async () => {
+    await stageLoad(
+      obs(41, {
+        private_geojson: { coordinates: [-123.3, 44.6], type: "Point" },
+        public_positional_accuracy: 28000,
+        geoprivacy: "obscured",
+        taxon_geoprivacy: "open",
+        viewer_trusted_by_observer: true,
+        place_guess: "Deschutes Co., OR, USA",
+        private_place_guess: "Bend, OR, USA",
+        quality_grade: "needs_id",
+        taxon: { id: 51048, name: "Salvia officinalis", rank: "species", ancestor_ids: [211194, 51048] },
+        ofvs: [
+          { name: "sampleId", value: " " },
+          { name: "sample id", value: "12" },
+          { name: "sample id", value: "13" },
+          { name: "Number of bees collected", value: "5" },
+          { name: "OBA Collection Method", value: "Net" },
+        ],
+      }),
+    );
+    await refreshObservationFields(conn);
+    expect(await count("SELECT count(*) FROM observation_field_stale")).toBe(0);
+    expect(
+      (await conn.runAndReadAll("SELECT * EXCLUDE (inat_id, observed_on) FROM observation_field")).getRowObjectsJson(),
+    ).toEqual([
+      {
+        latitude: 44.5646,
+        longitude: -123.262,
+        private_latitude: 44.6,
+        private_longitude: -123.3,
+        positional_accuracy: 30,
+        public_positional_accuracy: 28000,
+        geoprivacy: "obscured",
+        taxon_geoprivacy: "open",
+        viewer_trusted: true,
+        user_id: "100",
+        user_login: "adacollects",
+        place_guess: "Deschutes Co., OR, USA",
+        host_taxon_id: "51048",
+        host_taxon_name: "Salvia officinalis",
+        host_is_tracheophyte: true,
+        quality_grade: "needs_id",
+        sample_number_raw: "12",
+        specimen_count_raw: "5",
+        collection_method_raw: "Net",
+        private_place_guess: "Bend, OR, USA",
+        host_taxon_rank: "species",
+        notes: null,
+        sample_number_field_attached: true,
+      },
+    ]);
+  });
+
   test("keeps markup as written, because what the collector typed is the record", async () => {
     await stageLoad(obs(24, { description: "on <b>Salvia</b> — see [notes](http://x/) & co." }));
     await refreshObservationFields(conn);

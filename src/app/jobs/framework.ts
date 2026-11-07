@@ -257,10 +257,47 @@ export interface StepMemory {
   rss: number;
   peakBefore: number;
   peakAfter: number;
+  /** What DuckDB counts as held before and after the step; null where it could not be read. */
+  duckdbBefore?: DuckDbMemory | null;
+  duckdbAfter?: DuckDbMemory | null;
+  /** Node's own heap after the step: the JavaScript objects, nothing native. */
+  heapUsed?: number;
 }
 
 /** The process's high-water mark since start, in bytes (Node reports kilobytes). */
 export const peakRss = () => process.resourceUsage().maxRSS * 1024;
+
+/**
+ * The memory DuckDB's own accounting says it holds, and what it has spilled
+ * to disk, across the whole instance (beeline-n41l). It is the figure
+ * `memory_limit` caps, which is what makes it worth logging, and it is not
+ * all the memory DuckDB uses: what its JSON functions allocate goes
+ * uncounted, so a step can raise the process's peak by a gigabyte while this
+ * stays flat (beeline-dmoi). So a rise in this figure is DuckDB's buffer pool,
+ * capped and able to spill; a rise in neither this nor Node's heap is memory
+ * nothing counts, which is the kind that can exhaust the machine.
+ *
+ * Null when the query fails, as it does on a connection whose transaction a
+ * failed step left aborted: a log line is no reason to fail a step, or to
+ * hide the step's own error behind this one.
+ */
+export async function duckDbMemory(conn: DuckDBConnection): Promise<DuckDbMemory | null> {
+  try {
+    const reader = await conn.runAndReadAll(
+      `SELECT coalesce(sum(memory_usage_bytes), 0)::BIGINT, coalesce(sum(temporary_storage_bytes), 0)::BIGINT
+       FROM duckdb_memory()`,
+    );
+    const [[held, spilled]] = reader.getRows() as [[bigint, bigint]];
+    return { held: Number(held), spilled: Number(spilled) };
+  } catch {
+    return null;
+  }
+}
+
+export interface DuckDbMemory {
+  held: number;
+  spilled: number;
+}
 
 /**
  * One log line for a night job's step (beeline-6hud): how long it took, how
@@ -290,7 +327,14 @@ export function describeStep(
     memory === undefined
       ? ""
       : `; memory ${mb(memory.rss)}, most since start ${mb(memory.peakAfter)}${rise > 0 ? ` (+${mb(rise)} in this step)` : ""}`;
-  return `step '${label}' took ${formatDuration(ms)}: ${formatDuration(cpuMs)} CPU${stolen}${mem}`;
+  const after = memory?.duckdbAfter;
+  const before = memory?.duckdbBefore;
+  const duck =
+    after === undefined || after === null
+      ? ""
+      : `; DuckDB counts ${mb(after.held)}${before ? ` (${mb(before.held)} before)` : ""}${after.spilled > 0 ? `, ${mb(after.spilled)} spilled to disk` : ""}`;
+  const heap = memory?.heapUsed === undefined ? "" : `; Node's heap ${mb(memory.heapUsed)}`;
+  return `step '${label}' took ${formatDuration(ms)}: ${formatDuration(cpuMs)} CPU${stolen}${mem}${duck}${heap}`;
 }
 
 /** What a step throws when shutdown reaches it first; job_run.detail says which step. */
@@ -331,6 +375,7 @@ export async function runJob(
       const cpu0 = process.cpuUsage();
       const stolen0 = job.window === "night" ? await stolenMs() : null;
       const peak0 = peakRss();
+      const duck0 = job.window === "night" ? await duckDbMemory(conn) : null;
       try {
         return await fn();
       } finally {
@@ -340,7 +385,14 @@ export async function runJob(
           console.warn(`[job ${job.name}] SLA breach: step '${label}' took ${Math.round(ms)}ms (budget ${budget}ms)`);
         }
         if (job.window === "night") {
-          const memory = { rss: process.memoryUsage.rss(), peakBefore: peak0, peakAfter: peakRss() };
+          const memory: StepMemory = {
+            rss: process.memoryUsage.rss(),
+            peakBefore: peak0,
+            peakAfter: peakRss(),
+            duckdbBefore: duck0,
+            duckdbAfter: await duckDbMemory(conn),
+            heapUsed: process.memoryUsage().heapUsed,
+          };
           console.log(`[job ${job.name}] ${describeStep(label, ms, process.cpuUsage(cpu0), stolen0, await stolenMs(), memory)}`);
         }
       }

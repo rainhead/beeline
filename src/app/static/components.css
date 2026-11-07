@@ -598,9 +598,10 @@ th details.col-menu > .menu-panel {
   margin-left: calc(var(--space-2) * -1);
 }
 
-/* The Place cell's editor on the samples listing (beeline-7ywr): a pencil
-   beside the place that opens a small form in the cell, which takes the
-   place text's room while it is open. A <details>, so no script is needed. */
+/* The place editor (beeline-7ywr, beeline-8w8n): a pencil beside the place,
+   in the samples listing's Place cell and the sample page's Place row, that
+   opens a small form which takes the place text's room while it is open. A
+   <details>, so no script is needed. */
 .place-edit { display: inline-block; vertical-align: middle; margin-left: var(--space-1); }
 .place-edit > summary {
   list-style: none; cursor: pointer; display: inline-flex; padding: 2px; border-radius: 4px;
@@ -608,8 +609,14 @@ th details.col-menu > .menu-panel {
 }
 .place-edit > summary::-webkit-details-marker { display: none; }
 .place-edit > summary:hover, .place-edit[open] > summary { background: var(--md-sys-color-secondary-container); }
-td:has(> .place-edit[open]) > .place-text { display: none; }
+:is(td, dd):has(> .place-edit[open]) > .place-text { display: none; }
 .place-edit[open] { display: block; margin-left: 0; }
+dd > .place-edit[open] { max-width: 24rem; }
+
+/* A sample's flags as chips after its name, in a heading on the specimen
+   page (beeline-8w8n): set in the body's size, beside the heading's text. */
+.heading-with-chips { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+.heading-with-chips .flag-chips { font-size: var(--md-sys-typescale-body-medium-size, 0.875rem); font-weight: normal; }
 .place-edit[open] > summary { display: none; }
 .place-edit-form { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); min-width: 14rem; }
 .place-edit-form .field { margin: 0; }

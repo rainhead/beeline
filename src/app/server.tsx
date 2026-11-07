@@ -969,14 +969,13 @@ export function createApp({
     const m = c.get("m");
     const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
     if (sample === null) return errorResponse(c, "notFound");
-    const [findings, decisions, specimens, history, reprints] = await Promise.all([
+    const [findings, decisions, specimens, history] = await Promise.all([
       recordFindings(db, sample.sample_id).then((f) => visibleFindings(f, sample)),
       recordQcDecisions(db, sample.sample_id),
       listSampleSpecimens(db, sample.sample_id, parsePage(c.req.query("page"))),
       sampleChangeHistory(db, samplePaths.log, sample.sample_id).then((h) => visibleHistory(h, sample)),
-      c.get("admin") ? sampleReprints(db, sample.sample_id) : Promise.resolve(null),
     ]);
-    // A locality this person adopted is theirs to take back (beeline-7i6).
+    // A locality this person set is theirs to change again (beeline-7i6).
     const ownsLocality =
       sample.locality_override !== null &&
       sample.inat_observation_id !== null &&
@@ -1000,7 +999,6 @@ export function createApp({
           hold={decisions.hold}
           specimens={specimens}
           history={history}
-          reprints={reprints}
           admin={c.get("admin")}
           ownsLocality={ownsLocality}
           trapEditHref={trapEditHref}
@@ -1014,10 +1012,9 @@ export function createApp({
     const m = c.get("m");
     const specimen = await loadSpecimen(db, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
     if (specimen === null) return errorResponse(c, "notFound");
-    const [events, findings, decisions, labels, reprint] = await Promise.all([
+    const [events, findings, labels, reprint] = await Promise.all([
       determinationHistory(db, specimen.specimen_id),
       recordFindings(db, specimen.sample.sample_id).then((f) => visibleFindings(f, specimen.sample)),
-      recordQcDecisions(db, specimen.sample.sample_id),
       specimenLabels(db, specimen.specimen_id),
       specimenReprint(db, specimen.specimen_id),
     ]);
@@ -1030,7 +1027,7 @@ export function createApp({
         c,
         title,
         <SpecimenPage m={m} specimen={specimen} events={events} findings={findings}
-          waivers={decisions.waivers} labels={labels} reprint={reprint} admin={c.get("admin")} />,
+          labels={labels} reprint={reprint} admin={c.get("admin")} />,
       ),
     );
   });
@@ -1376,7 +1373,8 @@ export function createApp({
     const body = await c.req.parseBody();
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
     const backRaw = field("back");
-    const back = /^\/samples(\?|$)/.test(backRaw) ? backRaw : "/samples";
+    // Back to the listing or to the sample's own page, whichever it came from.
+    const back = /^\/samples(\/\d+)?(\?|$)/.test(backRaw) ? backRaw : "/samples";
     // A sample entered in Beeline has no old Beeline record to correct: its
     // locality is written directly, by whoever may edit it, any name they
     // like, as on its own form (beeline-3vs.5).

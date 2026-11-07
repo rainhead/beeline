@@ -23,7 +23,7 @@ import {
   type SpecimenRow,
 } from "../listings.js";
 import { sampleHref, specimenHref } from "../record.js";
-import { ChevronDownIcon, PencilIcon } from "./icons.js";
+import { ChevronDownIcon } from "./icons.js";
 import type { Messages } from "../messages/index.js";
 import {
   Absent,
@@ -47,8 +47,8 @@ import {
   TextField,
   type FilterPill,
   type TableColumn,
-  Combobox,
-  type ComboboxChoice,
+  PlaceEdit,
+  FlagChips,
 } from "./components/index.js";
 
 /**
@@ -84,15 +84,8 @@ function PlaceCell({ m, row }: { m: Messages; row: SampleRow | SpecimenRow }) {
 }
 
 /**
- * The Place cell of a sample whose locality the reader may change
- * (beeline-7ywr, Peter 2026-11-04): the place as usual, and a pencil that
- * opens, in the cell, a choice of iNaturalist's own locality, the names
- * suggested from the coordinates, and for staff a box to write one in. A
- * <details>, so it opens without scripting, and the place text gives way to
- * the form while it is open (components.css). Posts to
- * /samples/:id/place, which makes the same writes as the sample page.
- *
- * Offered on a sample whose labels have not printed, to staff, and to its
+ * Whether the Place cell offers the pencil that changes a sample's locality
+ * (beeline-7ywr, Peter 2026-11-04; the editor is `PlaceEdit`). Offered on a sample whose labels have not printed, to staff, and to its
  * collector where they have something to choose from and nobody else's
  * locality stands on it, as on the sample page.
  */
@@ -102,49 +95,6 @@ export function placeEditable(row: SampleRow, admin: boolean): boolean {
   // An entered sample's own form lets its collectors and its enterer write any locality.
   if (row.entered) return row.mine || row.entered_by_me;
   return row.mine && !row.locality_set_by_other && (row.locality_choices !== null || row.inat_observation_id !== null);
-}
-
-function PlaceEdit({ m, row, admin, back }: { m: Messages; row: SampleRow; admin: boolean; back: string }) {
-  const t = m.listings.samples.placeEdit;
-  const linked = row.inat_observation_id !== null;
-  // iNaturalist's own name first, then Beeline's, best first, then what the
-  // sample holds if it is none of those: one name, one choice. Each is shown
-  // with the sample's county and state, as the Place column writes the place
-  // (Peter, 2026-11-04); only the locality is saved, since the county and
-  // state are fields of their own.
-  const choices: ComboboxChoice[] = [];
-  const add = (value: string | null, note: string) => {
-    if (value !== null && value !== "" && !choices.some((c) => c.value === value))
-      choices.push({ value, label: m.format.place([value, row.county, row.state_province]), note });
-  };
-  if (linked) add(row.observed_locality, t.noteInaturalist);
-  (row.locality_choices === null ? [] : row.locality_choices.split("\n")).forEach((name, i) =>
-    add(name, i === 0 ? t.noteSuggested : t.noteAlternative),
-  );
-  add(row.locality, t.noteCurrent);
-  const id = `place-${row.sample_id}`;
-  // Editing shows only the box and its two buttons: the pencil gives way
-  // (components.css), and Cancel is a link back to the listing, which closes
-  // the editor without scripting and is intercepted to close it in place.
-  return (
-    <details class="place-edit">
-      <summary class="icon-button" aria-label={t.open(row.sample_number)} title={t.open(row.sample_number)}>
-        <PencilIcon />
-      </summary>
-      <form method="post" action={`/samples/${row.sample_id}/place`} class="place-edit-form">
-        <input type="hidden" name="back" value={back} />
-        <Combobox id={id} name="locality" label={t.label} labelHidden value={row.locality} choices={choices} free={admin || row.entered} />
-        <div class="row">
-          <button type="submit" class="outlined compact-button">
-            {t.save}
-          </button>
-          <a href={back} data-close-details="">
-            {t.cancel}
-          </a>
-        </div>
-      </form>
-    </details>
-  );
 }
 
 /** How a listing describes itself, given who is looking and at what. */
@@ -396,39 +346,9 @@ function column({ m, path, query, label, sort, kind = "text", fields = [], contr
 }
 
 
-/** At most this many chips in a cell; the rest are a link to the sample. */
-const FLAGS_SHOWN = 3;
-/** A hold's reason as a chip is cut here, with its whole text in the panel. */
-const HOLD_CHIP_LENGTH = 24;
-
 /**
- * A flag's chip text (beeline-ik0d): the problem in a word or two. A missing
- * field names the field, and a hold uses its reason (Peter, 2026-11-04),
- * since the staffer's words say more than "held by staff".
- */
-function flagName(m: Messages, flag: ListedFlag): string {
-  const names = m.listings.status;
-  const detail = flag.details[0];
-  if (flag.rule === "missing_required_field" && detail !== undefined) {
-    const fields = detail.split(", ").map((f) => names.flagMissing[f]);
-    if (fields.every((f) => f !== undefined)) return fields.join(", ");
-  }
-  if (flag.rule === "staff_hold" && detail !== undefined) {
-    const reason = detail.trim();
-    if (reason !== "") return reason.length > HOLD_CHIP_LENGTH ? `${reason.slice(0, HOLD_CHIP_LENGTH - 1).trimEnd()}…` : reason;
-  }
-  return names.flag[flag.rule];
-}
-
-/**
- * The Flags cell (beeline-ik0d, Peter 2026-11-04): one chip per kind of
- * flag, named for the problem, its colour for whether it blocks printing,
- * and the rule's explanation and this sample's details on click or tap — a
- * <details> menu, so it opens without scripting, from the keyboard and on a
- * phone, where there is no hover; the hover text says the same for a mouse.
- * Colour is not the only signal: the severity is in each chip's accessible
- * name and at the head of its panel, and blocking flags come first. A
- * symbol for it waits on the domain icon set (beeline-2c3.14).
+ * The Flags cell (beeline-ik0d, Peter 2026-11-04): the sample's flags as
+ * chips (`FlagChips`), blocking first, or a chip saying nothing is flagged.
  */
 function FlagsCell({
   m,
@@ -442,38 +362,9 @@ function FlagsCell({
   /** The kind the listing is filtered to, shown first so it is never among the hidden (CodeRabbit). */
   selected: string;
 }) {
-  const s = m.listings.status;
-  if (flags.length === 0) return <Chip tone="success">{s.clean}</Chip>;
-  const more = flags.length - FLAGS_SHOWN;
+  if (flags.length === 0) return <Chip tone="success">{m.listings.status.clean}</Chip>;
   const ordered = [...flags.filter((f) => f.rule === selected), ...flags.filter((f) => f.rule !== selected)];
-  return (
-    <span class="flag-chips">
-      {ordered.slice(0, FLAGS_SHOWN).map((flag) => {
-        const name = flagName(m, flag);
-        const severity = s.flagSeverity[flag.severity];
-        const instruction = m.qcInstructions[flag.rule];
-        return (
-          <details class="menu flag-menu">
-            <summary class={`chip ${flag.severity}`} title={`${severity}: ${instruction}`}>
-              {name}
-              <span class="visually-hidden">: {severity}</span>
-            </summary>
-            <div class="menu-panel flag-panel">
-              <p class="flag-severity">{severity}</p>
-              <p>{instruction}</p>
-              {flag.details.map((d) => (
-                <p>
-                  <FindingDetail details={d} ruleName={flag.rule} />
-                </p>
-              ))}
-              <a href={sampleHref(sampleId)}>{s.flagSeeSample}</a>
-            </div>
-          </details>
-        );
-      })}
-      {more > 0 && <a href={sampleHref(sampleId)}>{s.flagMore(more)}</a>}
-    </span>
-  );
+  return <FlagChips m={m} flags={ordered} sampleId={sampleId} />;
 }
 
 function ResultsHeader({
@@ -866,7 +757,20 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                   <span class="place-text">
                     <PlaceCell m={m} row={row} />
                   </span>
-                  {placeEditable(row, admin) && <PlaceEdit m={m} row={row} admin={admin} back={listingHref(path, query)} />}
+                  {placeEditable(row, admin) && (
+                    <PlaceEdit
+                      m={m}
+                      sampleId={row.sample_id}
+                      sampleNumber={row.sample_number}
+                      locality={row.locality}
+                      county={row.county}
+                      stateProvince={row.state_province}
+                      observed={row.inat_observation_id === null ? null : row.observed_locality}
+                      suggestions={row.locality_choices === null ? [] : row.locality_choices.split("\n")}
+                      free={admin || row.entered}
+                      back={listingHref(path, query)}
+                    />
+                  )}
                 </td>
                 <td>
                   {row.host_name === null ? (

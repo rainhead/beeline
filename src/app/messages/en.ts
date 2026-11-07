@@ -931,7 +931,7 @@ export const en = {
     heading: (sampleNumber: string) => `Edit sample ${sampleNumber}`,
     intro:
       "This sample has no iNaturalist observation, so corrections are made here. " +
-      "Saved changes take effect immediately and are preserved as attributed corrections across database rebuilds.",
+      "Saved changes take effect immediately and are recorded with your name.",
     fields: {
       locality: "Locality",
       country: "Country",
@@ -967,7 +967,7 @@ export const en = {
      */
     history: {
       heading: "History",
-      hint: "Every change recorded for this sample, newest first: an edit made here, an iNaturalist sync update, or a database rebuild.",
+      hint: "Every change recorded for this sample, newest first: an edit made here, an update from iNaturalist, or the import from old Beeline.",
       empty: "No changes recorded. Subsequent changes to this sample will appear in this list.",
       colWhen: "When",
       colWhat: "What",
@@ -1003,7 +1003,7 @@ export const en = {
       },
       source: {
         app: "staff",
-        legacy_promotion: "a rebuild",
+        legacy_promotion: "the import from old Beeline",
         observation_promotion: "an iNaturalist sync",
         reconcile: "found at startup",
         /** The county written from the sample's coordinates (beeline-313x). */
@@ -1020,7 +1020,6 @@ export const en = {
       method: "Method",
       methodNet: "Net",
       methodTrap: "Trap",
-      protocol: "Sampling protocol",
       effort: "Sampling effort",
       place: "Place",
       /**
@@ -1053,9 +1052,8 @@ export const en = {
       inWilderness: (names: string) => `Inside the ${names}. Collecting in a federal wilderness needs a permit.`,
       /** The EPA Level III ecoregion the coordinates lie in (beeline-l5so): a fact, not a note. */
       inEcoregion: (name: string) => `${name} ecoregion`,
-      atlas: "Atlas",
-      /** Collecting outside the member atlases is ordinary (beeline-lcl). */
-      atlasOutside: "None — collected where no member atlas reaches",
+      /** The program the sample was collected for (beeline-8w8n): its atlas, else Master Melittology itself. */
+      program: "Program",
       host: "Floral host",
       observation: "iNaturalist observation",
       /** Trap samples usually have none, and that is not a gap. */
@@ -1081,30 +1079,18 @@ export const en = {
       /** Every value the record simply does not carry. */
       unknown: "not recorded",
       /**
-       * Staff set a locality the observation cannot yield (beeline-649). The
-       * provenance lines sit under the place, in the same voice as
-       * asRecorded: what stands, who said so, and what iNaturalist says now
-       * where that has moved on. The form is the page's only write for
-       * staff, and says plainly that the value stands over the observation
-       * until it is removed — the one thing a staffer needs to know before
-       * pressing it.
+       * A locality set in Beeline over the observation's (beeline-649,
+       * beeline-7i6). The provenance lines sit under the place, in the same
+       * voice as asRecorded: what stands, who said so, and what iNaturalist
+       * says now where that has moved on. It is changed from the Place row's
+       * pencil, where iNaturalist's own name is one of the choices.
        */
       staffLocality: {
         setBy: (name: string) => `Locality set here by ${name}.`,
         setByStaff: "Locality set here by staff.",
         because: (reason: string) => `Reason: ${reason}`,
         observationNow: (text: string) =>
-          `iNaturalist now yields “${text}” for this observation; the locality set here stands until it is removed.`,
-        heading: "Set the locality",
-        hint: "For staff. A locality set here stands over the observation's on every sync, and survives rebuilds, until it is removed.",
-        hintNoObservation:
-          "For staff. This sample has no observation, so the locality is kept as a correction — the same way the collector's own edits are.",
-        printed:
-          "Labels for this sample have already been printed and carry the locality as it was; changing it here does not change them.",
-        field: "Locality",
-        note: "Why (optional)",
-        save: "Set locality",
-        remove: "Remove, and follow iNaturalist again",
+          `iNaturalist now yields “${text}” for this observation; the locality set here stands until someone chooses iNaturalist's.`,
       },
       /**
        * Staff set the coordinates (beeline-942), on the same terms as the
@@ -1119,7 +1105,7 @@ export const en = {
         observationNow: (lat: number, lon: number) =>
           `iNaturalist now puts this observation at ${lat}, ${lon}; the coordinates set here stand until they are removed.`,
         heading: "Set the coordinates",
-        hint: "For staff. Coordinates set here are believed true, stand over the observation's on every sync, and survive rebuilds, until they are removed. The elevation is read again on the next run.",
+        hint: "For staff. Coordinates set here are believed true, stand over the observation's on every sync until they are removed. The elevation is read again on the next run.",
         printed:
           "Labels for this sample have already been printed and carry the coordinates as they were; changing them here does not change them.",
         noObservation: "Coordinates can only be set here on a sample with an iNaturalist observation.",
@@ -2231,7 +2217,7 @@ export const en = {
     samplesCollected: (all: number, primary: number) =>
       `${n(all)} collected, ${n(primary)} as primary collector`,
     saved: "Saved.",
-    savedRebuild: "Saved. It is also recorded in the overlay, so a rebuild keeps it.",
+    savedRebuild: "Saved.",
 
     /**
      * The change log (beeline-o22). Staff-facing, English-only like the rest
@@ -2242,7 +2228,7 @@ export const en = {
     history: {
       heading: "History",
       hint:
-        "Every change recorded for this person, newest first — from this screen, from a rebuild, or from an iNaturalist sync.",
+        "Every change recorded for this person, newest first — from this screen, from the import from old Beeline, or from an iNaturalist sync.",
       empty: "Nothing recorded yet. Changes from here on appear in this list.",
       colWhen: "When",
       colWhat: "What",
@@ -2281,7 +2267,7 @@ export const en = {
        */
       source: {
         app: "staff",
-        legacy_promotion: "a rebuild",
+        legacy_promotion: "the import from old Beeline",
         observation_promotion: "an iNaturalist sync",
         inat_backfill: "an iNaturalist login lookup",
         inat_orcid_fetch: "an iNaturalist ORCID lookup",
@@ -2735,9 +2721,14 @@ export const en = {
         definition:
           "The identifier assigned to a sample on the date of collection. Sample numbers are unique to each collector on a given date.",
       },
+      program: {
+        term: "Program",
+        definition:
+          "The program a sample was collected for: a state or provincial bee atlas where it was collected inside one, otherwise Master Melittology itself. Programs that are not atlases, such as the BLM surveys, will be recorded as they begin.",
+      },
       protocol: {
-        term: "Sampling protocol",
-        definition: "The collection method used for a sample: netting, vane trap, pan trap, or trap nest.",
+        term: "Method",
+        definition: "How a sample was collected: with a net, or in a trap such as a vane trap, pan trap, or trap nest.",
       },
       "scientific-name": {
         term: "Scientific name",

@@ -159,8 +159,6 @@ export const en = {
     inUseShort: "in use",
     /** Recorded as the reason beside the locality set here, so the sample page says where it came from. */
     reason: (basis: string) => `Suggested from the coordinates: ${basis}.`,
-    /** Takes back a locality the volunteer adopted, so the observation's applies again. */
-    undo: "Go back to iNaturalist's locality",
     /** Somebody else set the locality standing on the sample: theirs to take back, not this person's. */
     notYours: "Only the person who set this locality can change it. Contact staff to request a change.",
     /** Somebody else's locality stands on the sample, and is theirs to change. */
@@ -617,21 +615,46 @@ export const en = {
       viewOnInat: "View on iNaturalist",
       edit: "Edit",
       /**
-       * Changing a sample's locality from its Place cell (beeline-7ywr): a
-       * pencil that opens a choice of the observation's own locality and the
-       * names suggested from the coordinates, and for staff a box to write
-       * one in. The same writes as the sample page's.
+       * Changing a sample's locality from its place (beeline-7ywr,
+       * beeline-8w8n): a pencil, in the listing's Place cell and the sample
+       * page's Place row, that opens a choice of the observation's own
+       * locality and the names suggested from the coordinates, and for staff
+       * a box to write one in.
        */
       placeEdit: {
         /** The pencil, for a screen reader: it has no visible words. */
         open: (sample: string) => `Change the place of sample ${sample}`,
-        /** The box's label, read aloud only: the column heading says it on screen. */
+        /** The box's label, read aloud only: the column heading or row says it on screen. */
         label: "Place",
         /** Beside each choice in the box: where the name came from. */
         noteInaturalist: "from iNaturalist",
-        noteSuggested: "suggested",
-        noteAlternative: "also suggested",
+        /**
+         * Beside a name suggested from the coordinates: why, in a word or two
+         * (Peter, 2026-11-06: "nearby town" says more than "suggested"). The
+         * longer form is `suggestedLocality.basis`, which the front page shows.
+         */
+        noteBasis: {
+          used_own: "previously used by the collector",
+          used: "previously used",
+          campground: "campground",
+          refuge: "wildlife refuge",
+          wildlife_area: "wildlife area",
+          national_park: "national park",
+          state_park: "state park",
+          local_park: "park",
+          neighbourhood: "neighborhood",
+          town_limits: "town",
+          island: "island",
+          feature: "named nearby",
+          peak: "nearby peak",
+          town: "nearby town",
+          hamlet: "nearby place",
+          large_reserve: "reserve",
+          distance: "from nearest town",
+        } satisfies Record<LocalityBasis, string>,
         noteCurrent: "current",
+        /** Under the box, for staff on a printed sample: the labels keep the old name. */
+        printed: "This sample's labels are already printed. Changing the locality here does not change the printed labels.",
         save: "Save",
         cancel: "Cancel",
         /** A collector wrote a name that is not one of the choices. */
@@ -931,7 +954,7 @@ export const en = {
     heading: (sampleNumber: string) => `Edit sample ${sampleNumber}`,
     intro:
       "This sample has no iNaturalist observation, so corrections are made here. " +
-      "Saved changes take effect immediately and are preserved as attributed corrections across database rebuilds.",
+      "Saved changes take effect immediately and are recorded with your name.",
     fields: {
       locality: "Locality",
       country: "Country",
@@ -967,8 +990,8 @@ export const en = {
      */
     history: {
       heading: "History",
-      hint: "Every change recorded for this sample, newest first: an edit made here, an iNaturalist sync update, or a database rebuild.",
-      empty: "No changes recorded. Subsequent changes to this sample will appear in this list.",
+      hint: "Every change recorded for this sample, newest first: an edit made here, an update from iNaturalist, or the import from old Beeline.",
+      empty: "No changes yet. Changes to this sample will be listed here.",
       colWhen: "When",
       colWhat: "What",
       colChange: "Change",
@@ -989,7 +1012,7 @@ export const en = {
         state_province: "State/Province",
         county: "County",
         locality: "Locality",
-        protocol: "Protocol",
+        protocol: "Method",
         sampling_effort: "Sampling effort",
         host: "Floral host",
         atlas: "Atlas",
@@ -1003,14 +1026,14 @@ export const en = {
       },
       source: {
         app: "staff",
-        legacy_promotion: "a rebuild",
-        observation_promotion: "an iNaturalist sync",
+        legacy_promotion: "the import from old Beeline",
+        observation_promotion: "iNaturalist",
         reconcile: "found at startup",
         /** The county written from the sample's coordinates (beeline-313x). */
         coordinates: "its coordinates",
       },
     },
-    notYours: "This is not one of your own records.",
+    notYours: "Someone else collected this sample.",
 
     sample: {
       title: (sampleNumber: string) => `Sample ${sampleNumber}`,
@@ -1020,7 +1043,6 @@ export const en = {
       method: "Method",
       methodNet: "Net",
       methodTrap: "Trap",
-      protocol: "Sampling protocol",
       effort: "Sampling effort",
       place: "Place",
       /**
@@ -1053,13 +1075,12 @@ export const en = {
       inWilderness: (names: string) => `Inside the ${names}. Collecting in a federal wilderness needs a permit.`,
       /** The EPA Level III ecoregion the coordinates lie in (beeline-l5so): a fact, not a note. */
       inEcoregion: (name: string) => `${name} ecoregion`,
-      atlas: "Atlas",
-      /** Collecting outside the member atlases is ordinary (beeline-lcl). */
-      atlasOutside: "None — collected where no member atlas reaches",
+      /** The program the sample was collected for (beeline-8w8n): its atlas, else Master Melittology itself. */
+      program: "Program",
       host: "Floral host",
       observation: "iNaturalist observation",
       /** Trap samples usually have none, and that is not a gap. */
-      observationNone: "None — this sample did not come from an observation, so it is corrected here rather than upstream.",
+      observationNone: "None. This sample is not linked to an iNaturalist observation, so it is corrected here in Beeline.",
       /**
        * Beside the id, unlinked, where iNaturalist has never given Beeline
        * the observation and, asked for it, answered without it
@@ -1081,54 +1102,42 @@ export const en = {
       /** Every value the record simply does not carry. */
       unknown: "not recorded",
       /**
-       * Staff set a locality the observation cannot yield (beeline-649). The
-       * provenance lines sit under the place, in the same voice as
-       * asRecorded: what stands, who said so, and what iNaturalist says now
-       * where that has moved on. The form is the page's only write for
-       * staff, and says plainly that the value stands over the observation
-       * until it is removed — the one thing a staffer needs to know before
-       * pressing it.
+       * A locality set in Beeline over the observation's (beeline-649,
+       * beeline-7i6). The provenance lines sit under the place, in the same
+       * voice as asRecorded: what stands, who said so, and what iNaturalist
+       * says now where that has moved on. It is changed from the Place row's
+       * pencil, where iNaturalist's own name is one of the choices.
        */
       staffLocality: {
-        setBy: (name: string) => `Locality set here by ${name}.`,
-        setByStaff: "Locality set here by staff.",
+        setBy: (name: string) => `Locality set in Beeline by ${name}.`,
+        setByStaff: "Locality set in Beeline by staff.",
         because: (reason: string) => `Reason: ${reason}`,
         observationNow: (text: string) =>
-          `iNaturalist now yields “${text}” for this observation; the locality set here stands until it is removed.`,
-        heading: "Set the locality",
-        hint: "For staff. A locality set here stands over the observation's on every sync, and survives rebuilds, until it is removed.",
-        hintNoObservation:
-          "For staff. This sample has no observation, so the locality is kept as a correction — the same way the collector's own edits are.",
-        printed:
-          "Labels for this sample have already been printed and carry the locality as it was; changing it here does not change them.",
-        field: "Locality",
-        note: "Why (optional)",
-        save: "Set locality",
-        remove: "Remove, and follow iNaturalist again",
+          `iNaturalist now gives “${text}” for this observation. The locality set in Beeline is kept until someone chooses iNaturalist's instead.`,
       },
       /**
        * Staff set the coordinates (beeline-942), on the same terms as the
        * locality. The case that matters most is an obscured observation
        * with no trusted access: it yields no coordinates, cannot print, and
-       * only a person who knows where the bees were caught can say.
+       * only a person who knows where the bees were caught can say. Changed
+       * from a pencil on the Coordinates row, as the place is (beeline-8w8n).
        */
       staffCoordinates: {
-        setBy: (name: string) => `Coordinates set here by ${name}.`,
-        setByStaff: "Coordinates set here by staff.",
+        setBy: (name: string) => `Coordinates set in Beeline by ${name}.`,
+        setByStaff: "Coordinates set in Beeline by staff.",
         because: (reason: string) => `Reason: ${reason}`,
         observationNow: (lat: number, lon: number) =>
-          `iNaturalist now puts this observation at ${lat}, ${lon}; the coordinates set here stand until they are removed.`,
-        heading: "Set the coordinates",
-        hint: "For staff. Coordinates set here are believed true, stand over the observation's on every sync, and survive rebuilds, until they are removed. The elevation is read again on the next run.",
-        printed:
-          "Labels for this sample have already been printed and carry the coordinates as they were; changing them here does not change them.",
+          `iNaturalist now puts this observation at ${lat}, ${lon}. The coordinates set in Beeline are kept until someone chooses to follow iNaturalist again.`,
+        /** The pencil, for a screen reader: it has no visible words. */
+        open: "Change the coordinates",
+        hint: "Coordinates set here are treated as the true location and replace the observation's, even when iNaturalist updates. The elevation is recalculated overnight.",
+        printed: "This sample's labels are already printed. Changing the coordinates here does not change the printed labels.",
         noObservation: "Coordinates can only be set here on a sample with an iNaturalist observation.",
         latitude: "Latitude",
         longitude: "Longitude",
         uncertainty: "Accuracy, in meters (optional)",
-        note: "Why (optional)",
-        save: "Set coordinates",
-        remove: "Remove, and follow iNaturalist again",
+        save: "Save",
+        remove: "Follow iNaturalist again",
       },
 
       where: {
@@ -1155,16 +1164,16 @@ export const en = {
          * deliberately never brought across, so "none" means none believed.
          */
         coordinatesNone:
-          "Beeline holds no coordinates for this sample. Where iNaturalist has shifted an observation's coordinates, the shifted coordinates are not imported; only true coordinates are recorded.",
+          "Beeline has no coordinates for this sample. Beeline records only true coordinates, so where iNaturalist shifts an observation's location for privacy, the shifted location is not used.",
         accuracy: "Accuracy",
         accuracyValue: (metres: number) => `within ${n(metres)} m`,
         source: "Source",
         sources: {
           inat_trusted:
-            "Read from your iNaturalist observation with trusted access, so these are the true coordinates even where the public map shows them shifted.",
-          inat_public: "Read from your iNaturalist observation, which publishes them as they are.",
+            "From the iNaturalist observation, read with the collector's permission, so these are the true coordinates even where iNaturalist's public map shifts them.",
+          inat_public: "From the iNaturalist observation, which shows them publicly as they are.",
           legacy_import:
-            "Imported from the old atlas database, which recorded nothing about where its coordinates came from. These are the ones already printed on labels.",
+            "Imported from old Beeline, which did not record where its coordinates came from. These are the coordinates printed on the labels.",
           staff_entry: "Entered by staff.",
         } as Record<string, string>,
         /**
@@ -1181,20 +1190,19 @@ export const en = {
          */
         privacy: "Public coordinates",
         privacyObscured:
-          "You set this observation's coordinates to obscured, so the map shows a shifted pair. What is above is the true location.",
+          "The collector set this observation to obscured on iNaturalist, so its public map shows a shifted location. The coordinates above are the true location.",
         privacyPrivate:
-          "You set this observation's coordinates to private, so the map shows none. What is above is the true location.",
+          "The collector set this observation to private on iNaturalist, so its public map shows no location. The coordinates above are the true location.",
         privacyTaxonObscured:
-          "iNaturalist obscures this observation's public coordinates automatically because of the species identified on it. The coordinates above show the true location.",
+          "iNaturalist shifts this observation's public location automatically because its host plant is rare. The coordinates above are the true location.",
         privacyTaxonPrivate:
-          "iNaturalist withholds this observation's public coordinates automatically because of the species identified on it. The coordinates above show the true location.",
+          "iNaturalist hides this observation's public location automatically because its host plant is rare. The coordinates above are the true location.",
         elevation: "Elevation",
         elevationValue: (metres: number) => `${n(metres)} m`,
         /** Derived from the coordinates, so never anyone's gap to fill. */
-        elevationNone: "Not calculated yet. Elevation is read from the coordinates rather than entered; it will be derived on the next elevation run.",
+        elevationNone: "Not calculated yet. Elevation is worked out from the coordinates overnight.",
         elevationFrom: (source: string) => `Read from ${source}.`,
-        elevationStale:
-          "Read at a point that is no longer where the coordinates above say — it will be read again on the next elevation run.",
+        elevationStale: "Calculated for earlier coordinates. It will be recalculated overnight.",
       },
 
       flags: {
@@ -1209,21 +1217,6 @@ export const en = {
        * judged fine print anyway. Waivers are shown to everyone who sees the
        * flags, so the collector knows why a flag stopped asking.
        */
-      /**
-       * Asking for every label in the sample again (gh-218). Staff only; the
-       * specimen page has the same for one label.
-       */
-      reprint: {
-        heading: "Reprint labels",
-        hint: (can: number) =>
-          `For staff. Every specimen in this sample that has a field number and is not already waiting for a label goes into the next print run, under the number it already has, after that run's new labels. That is ${n(can)} ${can === 1 ? "specimen" : "specimens"} now.`,
-        pending: (count: number) =>
-          `${n(count)} ${count === 1 ? "label is" : "labels are"} waiting to be reprinted in the next print run.`,
-        none: "No label in this sample can be reprinted now: each one is already waiting, is in a run that has not printed yet, or has no field number.",
-        button: "Reprint every label in this sample",
-        withdraw: "Take back the reprints",
-      },
-
       qcDecisions: {
         waivedHeading: "Waived flags",
         waivedBy: (name: string) => `Waived by ${name}.`,
@@ -1231,23 +1224,23 @@ export const en = {
         flagSaid: (text: string) => `When it was waived, the flag said “${text}”.`,
         because: (reason: string) => `Reason: ${reason}`,
         noLongerApplies:
-          "This waiver no longer applies: the flag does not say what it said when it was waived. If the flag still fires, it is listed above.",
+          "This waiver no longer applies, because the flag's details have changed since it was waived. If the flag still applies, it is listed above.",
         waive: "Waive this flag",
         waiveHint:
-          "For staff. The flag stops blocking printing for as long as it says what it says now. Say why: the collector and whoever prints will read it.",
+          "For staff. The flag stops blocking printing until its details change. Say why: the collector and whoever prints will see your reason.",
         reason: "Why",
         waiveSave: "Waive",
         removeWaiver: "Remove the waiver",
         holdHeading: "Hold back from printing",
         holdHint:
-          "For staff. A held sample is left out of every print run prepared from now on, until an admin lifts the hold; the collector fixing the record does not lift it. If it is already in a prepared run, the run page names it. Your note is shown to the collector and to whoever prints.",
-        holdPrinted: "Its labels have already printed, so a hold stops nothing unless its count rises.",
+          "For staff. A held sample is left out of new print runs until an admin lifts the hold, even if the collector fixes the record. If it is already in a prepared run, that run's page says so. The collector and whoever prints will see your note.",
+        holdPrinted: "Its labels are already printed, so a hold only matters if more specimens are added.",
         heldBy: (name: string) => `Held by ${name}.`,
         heldByStaff: "Held by staff.",
         hold: "Hold",
         liftNote: "Note (optional)",
         lift: "Lift the hold",
-        noObservation: "This sample has no iNaturalist observation, so it cannot be held, or have a flag waived, here.",
+        noObservation: "This sample has no iNaturalist observation, so it cannot be held or have flags waived.",
       },
 
       specimens: {
@@ -1256,7 +1249,7 @@ export const en = {
         none: "No specimens yet. A specimen becomes its own record when its label is printed.",
         /** The working count and the printed rows can honestly disagree. */
         counted: (expected: number, printed: number) =>
-          `The sample is counted at ${n(expected)}; ${n(printed)} ${printed === 1 ? "has" : "have"} been individuated by printing.`,
+          `The sample's specimen count is ${n(expected)}, and ${n(printed)} of them ${printed === 1 ? "has" : "have"} printed labels so far.`,
         colFieldNumber: "Field number",
         colNumber: "#",
         colDetermination: "Determination",
@@ -1325,9 +1318,9 @@ export const en = {
       labels: {
         heading: "Labels",
         intro:
-          "Each time a label for this specimen was prepared for printing, and how far that run got. If printed multiple times, the most recent label is valid.",
+          "Every print run that prepared a label for this specimen, and how far each run got. If the label was printed more than once, the most recent one is correct.",
         /** An imported specimen: printed, but by the old system, so there is no run to show. */
-        legacy: "Printed before Beeline — the previous system printed this label, so there is no print run to show.",
+        legacy: "Printed by old Beeline, so there is no print run to show.",
         colRun: "Print run",
         /** As printed, or as it would have: a canceled run's number lives on only here. */
         colNumber: "Number",
@@ -1349,8 +1342,8 @@ export const en = {
         because: (reason: string) => `Reason: ${reason}.`,
         noteSaid: (note: string) => `Note: ${note}`,
         /** A flag no waiver can set aside stops it, as it would stop a new label: a hold, a missing field, a hidden point. */
-        waiting: "It will wait while this sample has a flag that stops printing (listed below).",
-        hint: "For staff. The label goes into the next print run under the field number it already has, after that run's new labels, and reads as the record does then. A reason is optional.",
+        waiting: "It will wait while the sample has a flag that blocks printing (shown beside the sample below).",
+        hint: "For staff. The label is printed in the next print run, after that run's new labels, with the field number it already has and the record as it stands then.",
         reason: "Reason",
         noReason: "No reason given",
         note: "Note (optional)",
@@ -1365,36 +1358,38 @@ export const en = {
     determinations: {
       heading: "Determinations",
       intro:
-        "Every identification recorded for this specimen, newest first. Earlier determinations are preserved in history when a new identification is added.",
+        "Every identification of this specimen, newest first. A new identification never erases an earlier one.",
       /**
        * Stated whenever there is a history to read, because the rule is not
        * guessable from the rows: determination_of_record is not simply the
        * newest (schema/110).
        */
       recordRule:
-        "The determination marked “of record” is the one used across Beeline: the most recent expert determination, or the most recent determination if no expert has identified the specimen.",
+        "The identification marked “current” is the one Beeline uses, as Ecdysis does: the most recent by an expert, or the most recent of all if no expert has identified the specimen.",
       recordNotNewest:
-        "An expert determination remains the determination of record until another expert revises it. A later volunteer identification does not replace it.",
+        "An expert determination stays current until another expert revises it. A later volunteer identification does not replace it.",
       empty: "Nobody has identified this specimen yet.",
       colDetermination: "Determination",
       colDeterminer: "Determined by",
       colDetermined: "Determined",
-      colRecorded: "Reached Beeline",
+      colRecorded: "Added to Beeline",
       /** The status column carries the chip and needs no heading. */
       colStatus: "",
-      ofRecord: "of record",
+      /** Ecdysis's word for the determination in use (Peter, 2026-11-06), and the plainer one to a volunteer. */
+      ofRecord: "current",
       expert: "expert",
       determinerUnknown: "not recorded",
       determinedUnknown: "date not recorded",
       /** The name as the source wrote it, kept beside the node it resolved to. */
       verbatim: (text: string) => `written as “${text}”`,
-      sex: (value: string) => `sex ${value}`,
+      /** Female and male read plainly on their own; anything else says what it is. */
+      sex: (value: string) => (value === "female" || value === "male" ? value : `sex ${value}`),
       caste: (value: string) => `caste ${value}`,
       /** How the determination reached Beeline, in a volunteer's words. */
       channels: {
         in_app: "entered here",
         ecdysis_import: "imported from Ecdysis",
-        legacy_import: "imported from the old atlas database",
+        legacy_import: "imported from old Beeline",
         worksheet_import: "imported from a determination worksheet",
       } as Record<string, string>,
     },
@@ -1683,10 +1678,10 @@ export const en = {
     nowCalled: "Ecdysis uses:",
     specimens: (count: number) => `${n(count)} ${count === 1 ? "specimen" : "specimens"}`,
     /** Under a name's count, when nothing below it was counted. */
-    counted: "Counted by determination of record.",
+    counted: "Counted by current determination.",
     /** Under a name's count, which includes everything filed below it. */
     determinedHere: (count: number, rank: string) =>
-      `Counted by determination of record, including everything filed below. ${n(count)} ${count === 1 ? "is" : "are"} determined to this ${rank} and no finer.`,
+      `Counted by current determination, including everything filed below. ${n(count)} ${count === 1 ? "is" : "are"} determined to this ${rank} and no finer.`,
     seeSpecimens: "See these specimens",
     below: "Filed below",
     nothingBelow: "Nothing is filed below this name.",
@@ -2231,7 +2226,7 @@ export const en = {
     samplesCollected: (all: number, primary: number) =>
       `${n(all)} collected, ${n(primary)} as primary collector`,
     saved: "Saved.",
-    savedRebuild: "Saved. It is also recorded in the overlay, so a rebuild keeps it.",
+    savedRebuild: "Saved.",
 
     /**
      * The change log (beeline-o22). Staff-facing, English-only like the rest
@@ -2242,7 +2237,7 @@ export const en = {
     history: {
       heading: "History",
       hint:
-        "Every change recorded for this person, newest first — from this screen, from a rebuild, or from an iNaturalist sync.",
+        "Every change recorded for this person, newest first — from this screen, from the import from old Beeline, or from an iNaturalist sync.",
       empty: "Nothing recorded yet. Changes from here on appear in this list.",
       colWhen: "When",
       colWhat: "What",
@@ -2281,7 +2276,7 @@ export const en = {
        */
       source: {
         app: "staff",
-        legacy_promotion: "a rebuild",
+        legacy_promotion: "the import from old Beeline",
         observation_promotion: "an iNaturalist sync",
         inat_backfill: "an iNaturalist login lookup",
         inat_orcid_fetch: "an iNaturalist ORCID lookup",
@@ -2704,6 +2699,10 @@ export const en = {
         definition:
           "The program at Oregon State University Extension that trains volunteers and coordinates the regional bee atlases.",
       },
+      method: {
+        term: "Method",
+        definition: "How a sample was collected: with a net, or in a trap such as a vane trap, pan trap, or trap nest.",
+      },
       "obscured-coordinates": {
         term: "Obscured coordinates",
         definition:
@@ -2713,6 +2712,11 @@ export const en = {
         term: "Observation",
         definition:
           "An iNaturalist record representing the collection event for a sample, providing the sample number, specimen count, collection date, coordinates, and host plant identification.",
+      },
+      program: {
+        term: "Program",
+        definition:
+          "The program a sample was collected for: a state or provincial bee atlas where it was collected inside one, otherwise Master Melittology itself. Programs that are not atlases, such as the BLM surveys, will be recorded as they begin.",
       },
       rank: {
         term: "Rank",
@@ -2734,10 +2738,6 @@ export const en = {
         term: "Sample number",
         definition:
           "The identifier assigned to a sample on the date of collection. Sample numbers are unique to each collector on a given date.",
-      },
-      protocol: {
-        term: "Sampling protocol",
-        definition: "The collection method used for a sample: netting, vane trap, pan trap, or trap nest.",
       },
       "scientific-name": {
         term: "Scientific name",

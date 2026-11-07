@@ -1,13 +1,12 @@
 import type { Child } from "hono/jsx";
 import type { Messages } from "../messages/index.js";
 import { determineHref } from "./determine.js";
-import type { SampleReprints, SpecimenLabelRow, SpecimenReprint } from "../print-runs.js";
+import type { SpecimenLabelRow, SpecimenReprint } from "../print-runs.js";
 import type { PrintRunState } from "../../model.js";
 import type { SampleChange } from "../../sample-change.js";
 import {
   sampleHref,
   specimenHref,
-  suggestedLocalityHref,
   type DeterminationEvent,
   type RecordFinding,
   type RecordHold,
@@ -16,28 +15,31 @@ import {
   type SampleSpecimenPage,
   type SpecimenDetail,
 } from "../record.js";
+import { programHref } from "../programs.js";
+import type { ListedFlag } from "../listings.js";
 import {
   Absent,
+  AtlasMark,
   Button,
   Card,
   Chip,
   DataTable,
   DetailList,
   FindingDetail,
+  FlagChips,
   EmptyState,
   LinkButton,
   Meta,
   OrAbsent,
   PageHeader,
   Pager,
+  InlineEdit,
+  PlaceEdit,
   SelectField,
-  LocalityAlternatives,
-  SuggestedLocality,
   TaxonName,
   Term,
   TextField,
   type Detail,
-  type SuggestedLocalityAction,
 } from "./components/index.js";
 
 /**
@@ -59,24 +61,68 @@ const Unknown = ({ m }: { m: Messages }) => <Absent label={m.record.sample.unkno
 const orUnknown = (m: Messages, value: string | null): Child => (value === null || value === "" ? <Unknown m={m} /> : value);
 
 /**
- * What the reader may do with a sample's suggested locality: nothing where
- * it is the locality already or labels have printed, and a button only for
- * someone who may change the sample.
+ * Protocols that only restate the kind. Every sample minted from an
+ * observation carries "aerial net" (ingest/mint-samples.sql), so showing it
+ * beside "Net" says the same thing twice.
  */
-export function suggestionAction(sample: SampleDetail, allowed: boolean): SuggestedLocalityAction {
-  if (sample.locality_suggestion !== null && sample.locality === sample.locality_suggestion.locality) {
-    return { kind: "inUse" };
-  }
-  if (sample.printed) return { kind: "printed" };
-  if (!allowed) return { kind: "none" };
-  return { kind: "use", action: suggestedLocalityHref(sample.sample_id), returnTo: "sample" };
+const PROTOCOL_IS_KIND = new Set(["aerial net", "net", "netting", "trap"]);
+
+/** Whether the protocol says more than the kind: the kind of trap, or an old record's own words. */
+export function protocolSaysMore(sample: Pick<SampleDetail, "protocol">): boolean {
+  const protocol = sample.protocol?.trim().toLowerCase() ?? "";
+  return protocol !== "" && !PROTOCOL_IS_KIND.has(protocol);
 }
 
-/** The same for the alternatives: a button each, where the reader may change the sample and labels have not printed. */
-export function alternativesAction(sample: SampleDetail, allowed: boolean): SuggestedLocalityAction {
-  if (sample.printed) return { kind: "printed" };
-  if (!allowed) return { kind: "none" };
-  return { kind: "use", action: suggestedLocalityHref(sample.sample_id), returnTo: "sample" };
+/**
+ * The locality the sample's observation yields, which choosing in the place
+ * editor follows iNaturalist again; null for a sample with no observation.
+ * Where nothing stands over it, that is the sample's locality; where
+ * something does, it is what the observation said when that was set, or
+ * what it says now if it has moved on since.
+ */
+function observedLocality(sample: SampleDetail): string | null {
+  if (sample.inat_observation_id === null) return null;
+  const set = sample.locality_override;
+  if (set === null) return sample.locality;
+  return set.observation_now ?? set.observed_locality;
+}
+
+/**
+ * Whether the sample page offers the pencil on its Place row, and with a
+ * box any name may be written into or only the names offered — the samples
+ * listing's rule (`placeEditable`), read off the sample page's own data, so
+ * a sample changeable from one is changeable from the other.
+ *
+ * Not where the reader may not see where it was collected. Once labels
+ * have printed the locality is what the labels say, so only staff change
+ * it, to correct the record before a reprint, as the staff locality form let
+ * them (beeline-649); a sample entered in Beeline not even then, since its
+ * own form refuses it. Staff may write any name, and so may whoever may edit
+ * a sample entered in Beeline. A collector chooses among the names offered,
+ * and not over a locality somebody else set, which stands until they change
+ * it.
+ */
+export function samplePlaceEdit(
+  sample: SampleDetail,
+  reader: { admin: boolean; ownsLocality: boolean; editsEntered: boolean; entered: boolean },
+): { free: boolean; printed: boolean } | null {
+  if (sample.location_withheld) return null;
+  if (reader.entered) return !sample.printed && (reader.admin || reader.editsEntered) ? { free: true, printed: false } : null;
+  if (reader.admin) return { free: true, printed: sample.printed };
+  if (sample.printed || !sample.mine) return null;
+  if (sample.locality_override !== null && !reader.ownsLocality) return null;
+  const offered = sample.locality_suggestion !== null || sample.inat_observation_id !== null;
+  return offered ? { free: false, printed: false } : null;
+}
+
+/**
+ * The mark of the program the sample was collected for, at the top right of
+ * its page (beeline-8w8n), where the program has one: today the atlases. It
+ * links to the program's page. Master Melittology has none yet, and draws
+ * nothing, as an atlas with no mark on file does.
+ */
+function ProgramMark({ sample }: { sample: SampleDetail }) {
+  return <AtlasMark code={sample.program_code} name={sample.program_name} />;
 }
 
 /** The staff note, on a record the viewer did not collect. */
@@ -93,58 +139,67 @@ export function RecordScopeNote({ m, mine }: { m: Messages; mine: boolean }) {
 export function SampleFacts({
   m,
   sample,
-  locality = { adopt: false, undo: false },
+  placeEdit = null,
 }: {
   m: Messages;
   sample: SampleDetail;
   /**
-   * Whether the reader may make the suggested locality the sample's
-   * (its collector, or staff), and take back one they adopted (beeline-7i6).
-   * Off on the specimen page, which repeats these facts for reading.
+   * Whether the reader may change the locality from the Place row, and
+   * whether they may write any name or only one offered (`samplePlaceEdit`).
+   * Null on the specimen page, which repeats these facts for reading.
    */
-  locality?: { adopt: boolean; undo: boolean };
+  placeEdit?: { free: boolean; printed: boolean } | null;
 }) {
   const s = m.record.sample;
   const items: Array<Detail | null> = [
     { term: <Term m={m} slug="collector">{s.collectors}</Term>, value: m.format.list(sample.collectors.map((c) => c.display)) },
     { term: s.collected, value: m.format.dateRange(sample.date_start, sample.date_end) },
-    { term: s.method, value: sample.kind === "trap" ? <Term m={m} slug="trap-sample">{s.methodTrap}</Term> : s.methodNet },
-    { term: <Term m={m} slug="protocol">{s.protocol}</Term>, value: orUnknown(m, sample.protocol) },
+    // One row, not two: the kind and the protocol are the same fact, and on
+    // every sample minted from an observation the protocol is the constant
+    // "aerial net" (ingest/mint-samples.sql). It says something only where
+    // it says more than the kind: the kind of trap, or an old record's own
+    // words.
+    {
+      term: <Term m={m} slug="method">{s.method}</Term>,
+      value: (
+        <>
+          {sample.kind === "trap" ? <Term m={m} slug="trap-sample">{s.methodTrap}</Term> : s.methodNet}
+          {protocolSaysMore(sample) && <Meta> · {sample.protocol}</Meta>}
+        </>
+      ),
+    },
     // Trap-only, and still free text pending the staff vocabulary answers.
     sample.sampling_effort === null ? null : { term: s.effort, value: sample.sampling_effort },
     {
       term: s.place,
       value: (
         <>
-          {orUnknown(m, m.format.place([sample.locality, sample.county, sample.state_province, sample.country]) || null)}
+          <span class="inline-edit-text">
+            {orUnknown(m, m.format.place([sample.locality, sample.county, sample.state_province, sample.country]) || null)}
+          </span>
+          {placeEdit !== null && (
+            <PlaceEdit
+              m={m}
+              sampleId={sample.sample_id}
+              sampleNumber={sample.sample_number}
+              locality={sample.locality}
+              county={sample.county}
+              stateProvince={sample.state_province}
+              observed={observedLocality(sample)}
+              suggestions={[
+                ...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]),
+                ...sample.locality_alternatives,
+              ]}
+              free={placeEdit.free}
+              printed={placeEdit.printed}
+              back={sampleHref(sample.sample_id)}
+            />
+          )}
           {/* The observation's own words, beside what the model made of them.
               Nothing else on the site shows them, and where the locality is
               missing this is the string that has to change upstream. */}
           {sample.observation_place_guess === null ? null : (
             <Meta block>{s.asRecorded(sample.observation_place_guess)}</Meta>
-          )}
-          {/* A locality named from the coordinates (beeline-7i6), on every
-              sample that has one, so it can be judged against the locality
-              the sample carries. */}
-          {sample.locality_suggestion === null ? null : (
-            <div class="suggested-locality-line">
-              <SuggestedLocality
-                m={m}
-                locality={sample.locality_suggestion.locality}
-                basis={sample.locality_suggestion.basis}
-                action={suggestionAction(sample, locality.adopt)}
-              />
-            </div>
-          )}
-          {sample.locality_alternatives.length === 0 ? null : (
-            <div class="suggested-locality-line">
-              <LocalityAlternatives
-                m={m}
-                alternatives={sample.locality_alternatives}
-                current={sample.locality}
-                action={alternativesAction(sample, locality.adopt)}
-              />
-            </div>
           )}
           {/* Inside a federal wilderness (beeline-zdfz): said, never blocking. */}
           {sample.wildernesses.length === 0 ? null : (
@@ -168,22 +223,12 @@ export function SampleFacts({
           {sample.locality_override?.observation_now == null ? null : (
             <Meta block>{s.staffLocality.observationNow(sample.locality_override.observation_now)}</Meta>
           )}
-          {locality.undo ? (
-            <form method="post" action={suggestedLocalityHref(sample.sample_id)}>
-              <input type="hidden" name="undo" value="1" />
-              <button type="submit" class="outlined compact-button">
-                {m.suggestedLocality.undo}
-              </button>
-            </form>
-          ) : null}
         </>
       ),
     },
     {
-      term: <Term m={m} slug="atlas">{s.atlas}</Term>,
-      // No atlas is an answer, not a gap: collecting where none reaches is
-      // ordinary Master Melittologist work (beeline-lcl).
-      value: sample.atlas_name ?? <Absent label={s.atlasOutside} spelled />,
+      term: <Term m={m} slug="program">{s.program}</Term>,
+      value: <a href={programHref(sample.program_code)}>{sample.program_name}</a>,
     },
     // A bee taken off no flower has no floral host, and that is complete —
     // so the row is absent rather than reading as something missing.
@@ -240,11 +285,11 @@ export function SampleFacts({
  */
 export function WhereCollected({ m, sample, admin = false }: { m: Messages; sample: SampleDetail; admin?: boolean }) {
   const w = m.record.sample.where;
-  // The staff form belongs on both branches, and matters most on this one:
-  // an obscured observation with no trusted access yields no coordinates
-  // and cannot print, and only a person can put the true point in
-  // (beeline-942). A sample with no observation is not offered it.
-  const staff = admin && sample.inat_observation_id !== null ? <StaffCoordinates m={m} sample={sample} /> : null;
+  // The staff editor belongs on both branches, and matters most on the one
+  // with no coordinates: an obscured observation with no trusted access
+  // yields none and cannot print, and only a person can put the true point
+  // in (beeline-942). A sample with no observation is not offered it.
+  const edit = admin && sample.inat_observation_id !== null ? <CoordinatesEdit m={m} sample={sample} /> : null;
   // Staff never reach this: a withheld location is a volunteer reading
   // somebody else's protected sample (src/app/listings.ts `withheld`).
   if (sample.location_withheld) {
@@ -266,7 +311,23 @@ export function WhereCollected({ m, sample, admin = false }: { m: Messages; samp
       <>
         <h2>{w.heading}</h2>
         <Meta block>{w.coordinatesNone}</Meta>
-        {staff}
+        {edit !== null && (
+          <DetailList
+            items={[
+              {
+                term: w.coordinates,
+                value: (
+                  <>
+                    <span class="inline-edit-text">
+                      <Absent label={m.absence.none} spelled />
+                    </span>
+                    {edit}
+                  </>
+                ),
+              },
+            ]}
+          />
+        )}
       </>
     );
   }
@@ -290,7 +351,15 @@ export function WhereCollected({ m, sample, admin = false }: { m: Messages; samp
       <h2>{w.heading}</h2>
       <DetailList
         items={[
-          { term: w.coordinates, value: <span class="mono">{`${sample.latitude}, ${sample.longitude}`}</span> },
+          {
+            term: w.coordinates,
+            value: (
+              <>
+                <span class="inline-edit-text mono">{`${sample.latitude}, ${sample.longitude}`}</span>
+                {edit}
+              </>
+            ),
+          },
           {
             term: <Term m={m} slug="coordinate-uncertainty">{w.accuracy}</Term>,
             value:
@@ -355,41 +424,46 @@ export function WhereCollected({ m, sample, admin = false }: { m: Messages; samp
           },
         ]}
       />
-      {staff}
     </>
   );
 }
 
-/** The staff write for coordinates (beeline-942): the locality form's twin. */
-function StaffCoordinates({ m, sample }: { m: Messages; sample: SampleDetail }) {
+/**
+ * Staff setting the coordinates (beeline-942), from a pencil on the
+ * Coordinates row (beeline-8w8n), as the place is changed from its row. The
+ * pair and its accuracy in one small form, and where staff coordinates
+ * stand, a second form under it that takes them away so the observation's
+ * apply again.
+ */
+function CoordinatesEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
   const t = m.record.sample.staffCoordinates;
   const action = `/samples/${sample.sample_id}/coordinates`;
+  const back = sampleHref(sample.sample_id);
   const num = (v: number | null) => (v === null ? null : String(v));
   return (
-    <>
-      <h3>{t.heading}</h3>
+    <InlineEdit
+      label={t.open}
+      action={action}
+      back={back}
+      save={t.save}
+      cancel={m.listings.samples.placeEdit.cancel}
+      after={
+        sample.location_override === null ? undefined : (
+          <form method="post" action={action}>
+            <input type="hidden" name="remove" value="1" />
+            <button type="submit" class="outlined compact-button">
+              {t.remove}
+            </button>
+          </form>
+        )
+      }
+    >
       <Meta block>{t.hint}</Meta>
       {sample.printed ? <Meta block>{t.printed}</Meta> : null}
-      <form method="post" action={action} class="form-column">
-        <TextField id="staff-latitude" name="latitude" label={t.latitude} value={num(sample.latitude)} />
-        <TextField id="staff-longitude" name="longitude" label={t.longitude} value={num(sample.longitude)} />
-        <TextField id="staff-uncertainty" name="uncertainty" label={t.uncertainty} value={num(sample.coordinate_uncertainty_m)} />
-        <TextField id="staff-coordinates-note" name="note" label={t.note} />
-        <p class="row">
-          <Button>{t.save}</Button>
-          {sample.location_override === null ? null : (
-            <Button variant="outlined" form="staff-coordinates-remove">
-              {t.remove}
-            </Button>
-          )}
-        </p>
-      </form>
-      {sample.location_override === null ? null : (
-        <form id="staff-coordinates-remove" method="post" action={action}>
-          <input type="hidden" name="remove" value="1" />
-        </form>
-      )}
-    </>
+      <TextField id="staff-latitude" name="latitude" label={t.latitude} value={num(sample.latitude)} />
+      <TextField id="staff-longitude" name="longitude" label={t.longitude} value={num(sample.longitude)} />
+      <TextField id="staff-uncertainty" name="uncertainty" label={t.uncertainty} value={num(sample.coordinate_uncertainty_m)} />
+    </InlineEdit>
   );
 }
 
@@ -591,42 +665,6 @@ function SampleActions({ m, sample, trapEditHref }: { m: Messages; sample: Sampl
   );
 }
 
-/**
- * The staff write on a sample page (beeline-649): set the locality, standing
- * over the observation, or remove the one that stands. Plain form POST, like
- * the collector's edit. Rendered only for an admin — and the admin flag is
- * off while impersonating, so a staffer viewing as a volunteer sees what
- * the volunteer sees.
- */
-function StaffLocality({ m, sample }: { m: Messages; sample: SampleDetail }) {
-  const t = m.record.sample.staffLocality;
-  const action = `/samples/${sample.sample_id}/locality`;
-  return (
-    <>
-      <h3>{t.heading}</h3>
-      <Meta block>{sample.inat_observation_id === null ? t.hintNoObservation : t.hint}</Meta>
-      {sample.printed ? <Meta block>{t.printed}</Meta> : null}
-      <form method="post" action={action} class="form-column">
-        <TextField id="staff-locality" name="locality" label={t.field} value={sample.locality} />
-        <TextField id="staff-locality-note" name="note" label={t.note} />
-        <p class="row">
-          <Button>{t.save}</Button>
-          {sample.locality_override === null ? null : (
-            <Button variant="outlined" form="staff-locality-remove">
-              {t.remove}
-            </Button>
-          )}
-        </p>
-      </form>
-      {sample.locality_override === null ? null : (
-        <form id="staff-locality-remove" method="post" action={action}>
-          <input type="hidden" name="remove" value="1" />
-        </form>
-      )}
-    </>
-  );
-}
-
 /** The determination of record for one specimen, as a listing cell. */
 function RecordedName({
   m,
@@ -731,7 +769,6 @@ export function SamplePage({
   hold = null,
   specimens,
   history,
-  reprints = null,
   admin = false,
   ownsLocality = false,
   trapEditHref,
@@ -744,11 +781,9 @@ export function SamplePage({
   hold?: RecordHold | null;
   specimens: SampleSpecimenPage;
   history: readonly SampleChange[];
-  /** For staff: the labels waiting to be reprinted and how many more could be (gh-218). */
-  reprints?: SampleReprints | null;
-  /** Staff see the locality form; off while impersonating, like every admin surface. */
+  /** Staff may write any locality and see the forms over flags; off while impersonating, like every admin surface. */
   admin?: boolean;
-  /** Whether the reader adopted the locality standing over the observation, and so may take it back (beeline-7i6). */
+  /** Whether the locality standing over the observation is the reader's own, which they may change again (beeline-7i6). */
   ownsLocality?: boolean;
   /** Where this reader edits the sample, when it was entered in Beeline and they may (beeline-3vs.2). */
   trapEditHref?: string;
@@ -767,22 +802,16 @@ export function SamplePage({
           sample.county,
           sample.state_province,
         ])}`}
+        mark={<ProgramMark sample={sample} />}
       />
       <RecordScopeNote m={m} mine={sample.mine} />
       <Card>
         <SampleFacts
           m={m}
           sample={sample}
-          // A locality someone else set stands until they change it: a
-          // collector may adopt only where none stands or it is their own.
-          locality={{
-            adopt: admin || (sample.mine && (sample.locality_override === null || ownsLocality)),
-            undo: ownsLocality && !sample.printed,
-          }}
+          placeEdit={samplePlaceEdit(sample, { admin, ownsLocality, entered, editsEntered: trapEditHref !== undefined })}
         />
         <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} />
-        {/* An entered sample's locality is edited on its own form; this one writes a correction to an old Beeline record. */}
-        {admin && !entered ? <StaffLocality m={m} sample={sample} /> : null}
       </Card>
       <Card>
         <WhereCollected m={m} sample={sample} admin={admin} />
@@ -804,11 +833,6 @@ export function SamplePage({
       <Card>
         <SampleSpecimens m={m} sample={sample} page={specimens} />
       </Card>
-      {admin && reprints !== null && specimens.total > 0 && (
-        <Card>
-          <SampleReprint m={m} sampleId={sample.sample_id} reprints={reprints} />
-        </Card>
-      )}
       {/* Last, like the person page: history is what you read after acting. */}
       <Card>
         <SampleHistory m={m} history={history} />
@@ -1019,41 +1043,6 @@ function SpecimenReprintBlock({
 }
 
 /**
- * Every label in the sample again, from the sample's page (gh-218): what
- * Arthur reaches for when a whole envelope never arrived. Staff only.
- */
-function SampleReprint({ m, sampleId, reprints }: { m: Messages; sampleId: number; reprints: SampleReprints }) {
-  const t = m.record.sample.reprint;
-  const action = `/samples/${sampleId}/reprint`;
-  return (
-    <>
-      <h2>{t.heading}</h2>
-      {reprints.pending > 0 && (
-        <>
-          <Meta block>{t.pending(reprints.pending)}</Meta>
-          <form method="post" action={action}>
-            <input type="hidden" name="withdraw" value="1" />
-            <Button variant="outlined">{t.withdraw}</Button>
-          </form>
-        </>
-      )}
-      {reprints.canRequest > 0 ? (
-        <form method="post" action={action} class="form-column">
-          <Meta block>{t.hint(reprints.canRequest)}</Meta>
-          <ReprintReasonField m={m} id="sample-reprint-reason" />
-          <TextField id="sample-reprint-note" name="note" label={m.record.specimen.reprint.note} />
-          <p class="row">
-            <Button>{t.button}</Button>
-          </p>
-        </form>
-      ) : (
-        reprints.pending === 0 && <Meta block>{t.none}</Meta>
-      )}
-    </>
-  );
-}
-
-/**
  * Every label a specimen has had, one row per print run — the proofing
  * lookup's other half (reference-implementation.md, requirement 6): a
  * number that matches twice shows each specimen's labels beside their runs.
@@ -1125,7 +1114,6 @@ export function SpecimenPage({
   specimen,
   events,
   findings,
-  waivers = [],
   labels,
   reprint,
   admin,
@@ -1133,9 +1121,8 @@ export function SpecimenPage({
   m: Messages;
   specimen: SpecimenDetail;
   events: readonly DeterminationEvent[];
+  /** The sample's findings: its own become chips, this specimen's a card. */
   findings: readonly RecordFinding[];
-  /** The sample's waivers: a waived flag is not among the findings, so it is said here. */
-  waivers?: readonly RecordWaiver[];
   labels: readonly SpecimenLabelRow[];
   /** A reprint waiting, and whether staff may ask for one (gh-218). */
   reprint: SpecimenReprint;
@@ -1143,6 +1130,9 @@ export function SpecimenPage({
 }) {
   const sample = specimen.sample;
   const c = m.record.specimen;
+  const mine = findings
+    .filter((f) => f.specimen_id === specimen.specimen_id)
+    .map((f) => ({ ...f, specimen_id: null, field_number: null }));
   return (
     <>
       <p>
@@ -1159,6 +1149,7 @@ export function SpecimenPage({
           sample.county,
           sample.state_province,
         ])}`}
+        mark={<ProgramMark sample={sample} />}
       />
       <RecordScopeNote m={m} mine={sample.mine} />
       {/* No number is two different stories. A label row with none means a
@@ -1220,17 +1211,42 @@ export function SpecimenPage({
       {/* And then the whole sample, not a stub of it: a determination read
           without where and when the insect was collected is not a record. */}
       <Card>
-        <h2>
-          <a href={sampleHref(sample.sample_id)}>{m.record.sample.title(sample.sample_number)}</a>
+        {/* The sample's own flags as chips beside its name, as the listing
+            shows them: what is wrong with the sample is the sample page's
+            to say in full, and each chip's panel links there. */}
+        <h2 class="heading-with-chips">
+          <a href={sampleHref(sample.sample_id)}>{m.record.sample.title(sample.sample_number)}</a>{" "}
+          <FlagChips m={m} flags={asListedFlags(findings.filter((f) => f.specimen_id === null))} sampleId={sample.sample_id} />
         </h2>
         <SampleFacts m={m} sample={sample} />
       </Card>
       <Card>
         <WhereCollected m={m} sample={sample} />
       </Card>
-      <Card>
-        <SampleFlags m={m} findings={findings} waivers={waivers} withheld={sample.location_withheld} />
-      </Card>
+      {/* Flags about this specimen itself, where there are any; the
+          sample's are the chips above. Shown as this specimen's, so without
+          the link to it each carries on the sample page. */}
+      {mine.length > 0 && (
+        <Card>
+          <SampleFlags m={m} findings={mine} />
+        </Card>
+      )}
     </>
   );
+}
+
+/**
+ * A sample's findings as the listing's flags (`ListedFlag`): one per rule,
+ * its details gathered, blocking first, so `FlagChips` draws them as the
+ * samples listing does.
+ */
+function asListedFlags(findings: readonly RecordFinding[]): ListedFlag[] {
+  const byRule = new Map<string, ListedFlag>();
+  for (const f of findings) {
+    const flag = byRule.get(f.rule_name) ?? { rule: f.rule_name as ListedFlag["rule"], severity: f.severity, details: [] };
+    if (f.details !== null && f.details !== "") flag.details.push(f.details);
+    byRule.set(f.rule_name, flag);
+  }
+  const flags = [...byRule.values()];
+  return [...flags.filter((f) => f.severity === "blocking"), ...flags.filter((f) => f.severity !== "blocking")];
 }

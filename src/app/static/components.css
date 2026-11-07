@@ -212,6 +212,11 @@ th, td {
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--md-sys-color-outline-variant);
 }
+/* A row reads along its first line (Peter, 2026-11-06): a cell with a
+   second line under it ("imported from Ecdysis") would otherwise push its
+   first line above its neighbours'. Baseline rather than top, so a cell
+   with a chip, whose padding makes its line taller, lines up too. */
+td { vertical-align: baseline; }
 tbody tr:hover { background: var(--md-sys-color-surface-variant); }
 
 /* The dashboard's table marks the cell a flag is about — place, coordinates,
@@ -598,21 +603,29 @@ th details.col-menu > .menu-panel {
   margin-left: calc(var(--space-2) * -1);
 }
 
-/* The Place cell's editor on the samples listing (beeline-7ywr): a pencil
-   beside the place that opens a small form in the cell, which takes the
-   place text's room while it is open. A <details>, so no script is needed. */
-.place-edit { display: inline-block; vertical-align: middle; margin-left: var(--space-1); }
-.place-edit > summary {
+/* A value changed where it is shown (InlineEdit, beeline-7ywr,
+   beeline-8w8n): a pencil beside the value, in a table cell or a definition,
+   that opens a small form which takes the value's room while it is open. A
+   <details>, so no script is needed. */
+.inline-edit { display: inline-block; vertical-align: middle; margin-left: var(--space-1); }
+.inline-edit > summary {
   list-style: none; cursor: pointer; display: inline-flex; padding: 2px; border-radius: 4px;
   color: var(--md-sys-color-on-surface-variant);
 }
-.place-edit > summary::-webkit-details-marker { display: none; }
-.place-edit > summary:hover, .place-edit[open] > summary { background: var(--md-sys-color-secondary-container); }
-td:has(> .place-edit[open]) > .place-text { display: none; }
-.place-edit[open] { display: block; margin-left: 0; }
-.place-edit[open] > summary { display: none; }
-.place-edit-form { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); min-width: 14rem; }
-.place-edit-form .field { margin: 0; }
+.inline-edit > summary::-webkit-details-marker { display: none; }
+.inline-edit > summary:hover, .inline-edit[open] > summary { background: var(--md-sys-color-secondary-container); }
+:is(td, dd):has(> .inline-edit[open]) > .inline-edit-text { display: none; }
+.inline-edit[open] { display: block; margin-left: 0; }
+dd > .inline-edit[open] { max-width: 24rem; }
+.inline-edit[open] > summary { display: none; }
+.inline-edit-form { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); min-width: 14rem; }
+.inline-edit-form .field { margin: 0; }
+.inline-edit > form + form { margin-top: var(--space-2); }
+
+/* A sample's flags as chips after its name, in a heading on the specimen
+   page (beeline-8w8n): set in the body's size, beside the heading's text. */
+.heading-with-chips { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+.heading-with-chips .flag-chips { font: var(--md-sys-typescale-label); }
 
 /* The combobox (src/app/islands/combobox.ts, beeline-wn2): a text box with
    its list of choices under it, over whatever follows. The fallback the

@@ -98,16 +98,17 @@ const localityOf = async (conn: DuckDBConnection, id: number) =>
 const pencil = (id: number) => `action="/samples/${id}/place"`;
 
 describe("the Place cell's editor", () => {
-  it("is offered to staff on a sample that has not printed: one combobox of every name, free to write one in", async () => {
+  it("is offered to staff: one combobox of every name, free to write one in, and on a printed sample with a note that the labels keep the old name", async () => {
     const { appFor, open, printed } = await setup();
     const page = await (await appFor("sam").request("/samples?scope=all")).text();
     expect(page).toContain(pencil(open));
-    expect(page).not.toContain(pencil(printed));
+    expect(page).toContain(pencil(printed));
+    expect(page).toContain(t.printed.replaceAll("'", "&#39;"));
     expect(page).toContain(`aria-label="${t.open("A-1")}"`);
     expect(page).toContain(`<beeline-combobox free="">`);
     expect(page).toContain(`id="place-${open}" name="locality" type="text" value="26208 Finley Refuge Rd" list="place-${open}-choices"`);
-    expect(page).toContain(`<option value="Finley NWR" label="${t.noteSuggested}" data-label="Finley NWR, BentonCo, OR">`);
-    expect(page).toContain(`<option value="Muddy Creek CG" label="${t.noteAlternative}" data-label="Muddy Creek CG, BentonCo, OR">`);
+    expect(page).toContain(`<option value="Finley NWR" label="${t.noteBasis.refuge}" data-label="Finley NWR, BentonCo, OR">`);
+    expect(page).toContain(`<option value="Muddy Creek CG" label="${t.noteBasis.campground}" data-label="Muddy Creek CG, BentonCo, OR">`);
     expect(page).toContain(`<option value="26208 Finley Refuge Rd" label="${t.noteCurrent}" data-label="26208 Finley Refuge Rd, BentonCo, OR">`);
     // Edit mode is the box, Save, and a Cancel that goes back to the listing.
     expect(page).toContain(`<a href="/samples?scope=all" data-close-details="">${t.cancel}</a>`);
@@ -166,10 +167,16 @@ describe("the Place cell's editor", () => {
     expect(await (await alice.request("/samples?scope=mine")).text()).not.toContain(pencil(open));
   });
 
-  it("refuses a printed sample, and sends a back link elsewhere to the listing", async () => {
-    const { appFor, open, printed } = await setup();
+  it("refuses the collector a printed sample, lets staff correct one, and sends a back link elsewhere to the listing", async () => {
+    const { appFor, conn, open, printed } = await setup();
+    expect((await place(appFor("alice"), printed, { locality: "Finley NWR" })).status).toBe(409);
+    expect(await localityOf(conn, printed)).toBe("26208 Finley Refuge Rd");
     const sam = appFor("sam");
-    expect((await place(sam, printed, { locality: "Finley NWR" })).status).toBe(409);
+    expect((await place(sam, printed, { locality: "Finley NWR" })).status).toBe(302);
+    expect(await localityOf(conn, printed)).toBe("Finley NWR");
+    // Back to a sample's own page is allowed; anywhere else goes to the listing.
+    const own = await place(sam, open, { locality: "Muddy Creek CG", back: `/samples/${open}` });
+    expect(own.headers.get("location")).toBe(`/samples/${open}`);
     const res = await sam.request(`/samples/${open}/place`, {
       method: "POST",
       body: new URLSearchParams({ back: "https://example.com/samples", locality: "Finley NWR" }),

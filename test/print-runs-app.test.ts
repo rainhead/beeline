@@ -434,7 +434,7 @@ describe("the print-run screens", () => {
       [number],
     ];
     const specimen = await (await app.request(`/specimens/${specimenId}`)).text();
-    expect(specimen).toContain("Printed before Beeline");
+    expect(specimen).toContain("Printed by old Beeline");
     // A volunteer sees the labels block without a link into the staff tool.
     expect(specimen).not.toContain(`href="/print-runs`);
   });
@@ -488,15 +488,17 @@ describe("reprints (gh-218)", () => {
     expect(refused.status).toBe(403);
   });
 
-  it("asks for a whole sample, and the next run prints the reprints after the new labels", async () => {
+  it("asks specimen by specimen, never for a whole sample from its page, and the next run prints the reprints after the new labels", async () => {
     const { app, conn, post, ashSample, specimenId } = await printed();
-    const samplePage = await (await app.request(`/samples/${ashSample}`)).text();
-    expect(samplePage).toContain("Reprint every label in this sample");
-    expect(samplePage).toContain("That is 3 specimens now.");
-    expect((await post(`/samples/${ashSample}/reprint`, { reason: "never_received" })).status).toBe(302);
+    // Reprinting is per specimen (Peter, 2026-11-06): the sample page offers none, and its route is gone.
+    expect(await (await app.request(`/samples/${ashSample}`)).text()).not.toContain(`/samples/${ashSample}/reprint`);
+    expect((await post(`/samples/${ashSample}/reprint`, {})).status).toBe(404);
+    const ids = (await rows(conn, `SELECT entity_id FROM specimen WHERE sample_id = ${ashSample} ORDER BY specimen_number`)) as [number][];
+    const body = new URLSearchParams({ back: "/specimens", reason: "never_received" });
+    for (const [id] of ids) body.append("specimen", String(id));
+    expect((await app.request("/specimens/reprint", { method: "POST", headers: { origin: ORIGIN }, body })).status).toBe(302);
     const after = await (await app.request(`/samples/${ashSample}`)).text();
-    expect(after).toContain("3 labels are waiting to be reprinted in the next print run.");
-    expect(after).toContain("reprint requested");
+    expect(after.match(/reprint requested/g)?.length).toBe(3);
 
     // A new sample, so the run holds both series.
     await insertCleanSample(conn, {
@@ -618,11 +620,10 @@ describe("reprints (gh-218)", () => {
   });
 
   it("takes back what no run has taken yet", async () => {
-    const { app, post, ashSample } = await printed();
-    await post(`/samples/${ashSample}/reprint`, {});
-    expect((await post(`/samples/${ashSample}/reprint`, { withdraw: "1" })).status).toBe(302);
-    const page = await (await app.request(`/samples/${ashSample}`)).text();
-    expect(page).not.toContain("waiting to be reprinted");
-    expect(page).toContain("That is 3 specimens now.");
+    const { app, post, ashSample, specimenId } = await printed();
+    await post(`/specimens/${specimenId}/reprint`, {});
+    expect((await post(`/specimens/${specimenId}/reprint`, { withdraw: "1" })).status).toBe(302);
+    expect(await (await app.request(`/samples/${ashSample}`)).text()).not.toContain("reprint requested");
+    expect(await (await app.request(`/specimens/${specimenId}`)).text()).toContain("Reprint this label");
   });
 });

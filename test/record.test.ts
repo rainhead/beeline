@@ -155,7 +155,7 @@ describe("the determination history", () => {
     // markup — the epithet and its qualifier are.
     expect(body).toContain("<i>vosnesenskii</i>");
     expect(body).toContain("<i>Andrena</i>");
-    expect(body).toContain("of record");
+    expect(body).toContain(`>${en.record.determinations.ofRecord}<`);
     // Who, and through which channel — none of which reaches the listing.
     expect(body).toContain("Ellen Expert");
     expect(body).toContain("imported from Ecdysis");
@@ -174,7 +174,7 @@ describe("the determination history", () => {
   it("says why the record is not the newest entry", async () => {
     const { app, specimen } = await recordApp();
     const body = await get(app, `/specimens/${specimen}`);
-    expect(body).toContain("remains the determination of record until another expert revises it");
+    expect(body).toContain("stays current until another expert revises it");
   });
 
   it("keeps that explanation off a specimen whose newest entry is the record", async () => {
@@ -182,7 +182,7 @@ describe("the determination history", () => {
     // Retire the third opinion; the expert's is then both newest and record.
     await conn.run(`DELETE FROM determination WHERE specimen_id = ${specimen} AND is_expert = false AND channel = 'in_app'`);
     const body = await get(app, `/specimens/${specimen}`);
-    expect(body).toContain("of record");
+    expect(body).toContain(`>${en.record.determinations.ofRecord}<`);
     expect(body).not.toContain("does not replace it");
   });
 
@@ -226,10 +226,10 @@ describe("the sample page", () => {
     const { app, aliceSample } = await recordApp();
     const body = await get(app, `/samples/${aliceSample}`);
     expect(body).toContain("44.5646, -123.262");
-    expect(body).toContain("which publishes them as they are");
+    expect(body).toContain("which shows them publicly as they are");
     // Taxon-driven obscuring is not something the observer did, and the copy
     // has to say which it is.
-    expect(body).toContain("because of the species identified on it");
+    expect(body).toContain("because its host plant is rare");
     // ...and not as something the observer chose, which is the other reason
     // coordinates get obscured and a different thing to tell someone.
     expect(body).not.toContain("You set this observation");
@@ -282,38 +282,72 @@ describe("the sample page", () => {
     expect(await get(legacy, `/samples/${a2}`)).not.toContain("Recorded in iNaturalist as");
   });
 
-  it("offers a locality named from the coordinates, with a button to copy it (beeline-7i6)", async () => {
+  it("changes the place from a pencil on its row, offering the names from the coordinates and why (beeline-8w8n)", async () => {
     const { app, conn, alice } = await recordApp();
-    // Nothing printed yet: no specimen rows.
-    const unprinted = await insertCleanSample(conn, { collector_id: String(alice), sample_number: "'A-2'" });
+    // Nothing printed yet: no specimen rows. With an observation, so its
+    // collector has iNaturalist's name to go back to as well.
+    const unprinted = await insertCleanSample(conn, { collector_id: String(alice), sample_number: "'A-2'", inat_observation_id: "554433" });
     await conn.run(
       `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
        SELECT sample_id, 1, 'Finley NWR', 'refuge', latitude, longitude, 'test', 1, current_timestamp
        FROM sample_location WHERE sample_id = ${unprinted}`,
     );
     const body = await get(app, `/samples/${unprinted}`);
-    expect(body).toContain(en.suggestedLocality.lead);
-    expect(body).toContain("Finley NWR");
-    expect(body).toContain(en.suggestedLocality.basis.refuge);
-    expect(body).toContain(en.suggestedLocality.use);
-    // Named for a point the sample no longer has: not shown.
+    const t = en.listings.samples.placeEdit;
+    expect(body).toContain(`aria-label="${t.open("A-2")}"`);
+    expect(body).toContain(`action="/samples/${unprinted}/place"`);
+    expect(body).toContain(`<input type="hidden" name="back" value="/samples/${unprinted}"/>`);
+    expect(body).toContain(`<option value="Finley NWR" label="${t.noteBasis.refuge}"`);
+    // A collector chooses among the names offered; only staff write one in.
+    expect(body).not.toContain(`<beeline-combobox free="">`);
+    // The suggestion is no longer a line of its own under the place.
+    expect(body).not.toContain(en.suggestedLocality.lead);
+    // Named for a point the sample no longer has: not offered.
     await conn.run(`UPDATE sample_location SET latitude = latitude + 0.01 WHERE sample_id = ${unprinted}`);
     expect(await get(app, `/samples/${unprinted}`)).not.toContain("Finley NWR");
   });
 
-  it("shows a printed sample's suggested locality without offering to copy it", async () => {
+  it("offers staff a box to write any locality in, and nobody else's sample to anyone else", async () => {
+    for (const [reader, offered] of [["staffer", true], ["bob", false]] as const) {
+      const { app, conn, alice } = await recordApp(reader);
+      const unprinted = await insertCleanSample(conn, { collector_id: String(alice), sample_number: "'A-2'", inat_observation_id: "554433" });
+      const body = await get(app, `/samples/${unprinted}`);
+      expect(body.includes(`/samples/${unprinted}/place`), reader).toBe(offered);
+      expect(body.includes(`<beeline-combobox free="">`), reader).toBe(offered);
+    }
+  });
+
+  it("offers the collector no pencil on a printed sample, and staff one that says the labels keep the old name", async () => {
     // A-1 has specimen rows from the legacy import, so its labels are on paper
     // and its locality no longer follows iNaturalist.
+    const { app, aliceSample } = await recordApp("alice");
+    expect(await get(app, `/samples/${aliceSample}`)).not.toContain(`/samples/${aliceSample}/place`);
+    // Staff correct the record before a reprint, as the staff locality form let them.
+    const { app: staff, aliceSample: a2 } = await recordApp("staffer");
+    const page = await get(staff, `/samples/${a2}`);
+    expect(page).toContain(`/samples/${a2}/place`);
+    expect(page).toContain(en.listings.samples.placeEdit.printed.replaceAll("'", "&#39;"));
+  });
+
+  it("says Method once, adding the protocol only where it says more than the kind", async () => {
     const { app, conn, aliceSample } = await recordApp();
-    await conn.run(
-      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
-       SELECT sample_id, 1, 'Finley NWR', 'refuge', latitude, longitude, 'test', 1, current_timestamp
-       FROM sample_location WHERE sample_id = ${aliceSample}`,
-    );
-    const body = await get(app, `/samples/${aliceSample}`);
-    expect(body).toContain("Finley NWR");
-    expect(body).toContain(en.suggestedLocality.printed);
-    expect(body).not.toContain(en.suggestedLocality.use);
+    await conn.run(`UPDATE sample SET protocol = 'aerial net' WHERE entity_id = ${aliceSample}`);
+    const net = await get(app, `/samples/${aliceSample}`);
+    expect(net).toContain(en.record.sample.methodNet);
+    expect(net).not.toContain("aerial net");
+    await conn.run(`UPDATE sample SET kind = 'trap', protocol = 'blue vane trap' WHERE entity_id = ${aliceSample}`);
+    expect(await get(app, `/samples/${aliceSample}`)).toContain(" · blue vane trap");
+  });
+
+  it("names the program, an atlas's mark at the top, and Master Melittology outside every atlas", async () => {
+    const { app, aliceSample, bobSample } = await recordApp();
+    const oba = await get(app, `/samples/${aliceSample}`);
+    expect(oba).toContain(`<a href="/programs/OBA">Oregon Bee Atlas</a>`);
+    expect(oba).toContain(`class="atlas-mark"`);
+    // B-1 has no atlas: it was collected for the program itself, which has no mark.
+    const mm = await get(app, `/samples/${bobSample}`);
+    expect(mm).toContain(`<a href="/programs/MM">Master Melittology</a>`);
+    expect(mm).not.toContain(`class="atlas-mark"`);
   });
 
   it("shows the observer's own notes, as text and never as markup", async () => {
@@ -389,14 +423,14 @@ describe("the sample page", () => {
     expect(body).toContain(`/specimens/${specimen}`);
     // The working count and the printed rows agree here; when they do, the
     // page does not explain a discrepancy it does not have.
-    expect(body).not.toContain("individuated by printing");
+    expect(body).not.toContain("printed labels so far");
   });
 
   it("says when the count and the printed specimens disagree", async () => {
     const { app, conn, aliceSample } = await recordApp();
     await conn.run(`UPDATE sample SET specimen_count = 9 WHERE entity_id = ${aliceSample}`);
     const body = await get(app, `/samples/${aliceSample}`);
-    expect(body).toContain("individuated by printing");
+    expect(body).toContain("printed labels so far");
   });
 
   it("answers 'why will this not print' with the same words the QC home uses", async () => {
@@ -404,13 +438,20 @@ describe("the sample page", () => {
     await conn.run(`UPDATE sample SET locality = NULL WHERE entity_id = ${aliceSample}`);
     const sampleBody = await get(app, `/samples/${aliceSample}`);
     expect(sampleBody).toContain("A field the label needs is empty");
-    // And the specimen page carries its sample's flags too: a determiner
-    // asked to name an insect should see that its record cannot print.
+    // The specimen page carries its sample's flags as the listing's chips,
+    // after the sample's name, and no Flags card of the sample's own: a
+    // determiner asked to name an insect should see that its record cannot
+    // print, and the sample page says the rest (beeline-8w8n).
     const { app: unflagged, specimen } = await recordApp();
-    expect(await get(unflagged, `/specimens/${specimen}`)).toContain("Nothing is flagged on this sample");
+    const clean = await get(unflagged, `/specimens/${specimen}`);
+    expect(clean).not.toContain(`class="flag-chips"`);
+    expect(clean).not.toContain(en.record.sample.flags.heading);
     const { app: flagged, conn: conn2, aliceSample: a2, specimen: s2 } = await recordApp();
     await conn2.run(`UPDATE sample SET locality = NULL WHERE entity_id = ${a2}`);
-    expect(await get(flagged, `/specimens/${s2}`)).toContain("A field the label needs is empty");
+    const chips = await get(flagged, `/specimens/${s2}`);
+    expect(chips).toContain(`<summary class="chip blocking"`);
+    expect(chips).toContain(en.listings.status.flagMissing.locality);
+    expect(chips).not.toContain(`<h2>${en.record.sample.flags.heading}</h2>`);
   });
 });
 

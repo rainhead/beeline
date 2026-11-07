@@ -109,6 +109,9 @@ export interface SampleDetail {
   taxon_geoprivacy: Geoprivacy | null;
   atlas_code: string | null;
   atlas_name: string | null;
+  /** The program the sample was collected for: its atlas's, else Master Melittology's (`MM`). */
+  program_code: string;
+  program_name: string;
   /** Believed-true coordinates; null together when there is no location row. */
   latitude: number | null;
   longitude: number | null;
@@ -301,6 +304,10 @@ const sampleColumns = (personId: number, reader: Reader) => sql`
        END AS observation_gone_since,
   s.geoprivacy, s.taxon_geoprivacy,
   a.code AS atlas_code, a.name AS atlas_name,
+  -- The program it was collected for: its atlas, else Master Melittology
+  -- itself (CONTEXT.md, Program). A program that is neither, the BLM
+  -- surveys, is stated on the sample when one is collected for it.
+  coalesce(a.code, mm.code) AS program_code, coalesce(a.name, mm.name) AS program_name,
   loc.latitude, loc.longitude, loc.coordinate_uncertainty_m,
   loc.source AS location_source, loc.elevation_m,
   es.description AS elevation_source, es.file_name AS elevation_file,
@@ -351,6 +358,7 @@ const sampleJoins = (reader: Reader) => sql`
   FROM sample s
   LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
   LEFT JOIN program a ON a.entity_id = sa.atlas_id
+  LEFT JOIN program mm ON mm.code = 'MM'
   LEFT JOIN ${ownSamplesSql(reader)} own ON own.sample_id = s.entity_id
   LEFT JOIN observation_field seen ON seen.inat_id = s.inat_observation_id
   LEFT JOIN sample_location loc ON loc.sample_id = s.entity_id

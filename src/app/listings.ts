@@ -459,7 +459,7 @@ export interface SampleRow {
   /**
    * For the Place cell's editor (beeline-7ywr). Whether a label is on paper,
    * after which the locality no longer changes; the names Beeline offers for
-   * the point, best first, one per line (null where there are none or the
+   * the point, best first, one 'name<TAB>basis' per line (null where there are none or the
    * location is withheld); what the observation itself yields, for an
    * iNat-linked sample (likewise withheld); and whether a locality somebody
    * other than the viewer set stands on the sample, which a collector may
@@ -1118,7 +1118,7 @@ export async function listSamples(
         ),
         located(
           hidden,
-          sql<string | null>`(SELECT string_agg(g.locality, chr(10) ORDER BY g.rank)
+          sql<string | null>`(SELECT string_agg(concat(g.locality, chr(9), g.basis), chr(10) ORDER BY g.rank)
                               FROM sample_locality_candidate_current g WHERE g.sample_id = s.entity_id)`,
         ).as("locality_choices"),
         located(

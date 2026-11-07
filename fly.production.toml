@@ -131,8 +131,15 @@ swap_size_mb = 1024
   # promotion burns 27s of CPU in 16s of wall time and every listing scans the
   # QC union.
   size = "shared-cpu-2x"
-  # 3 GB: DuckDB's 1.5 GB plus the process around it, which measured ~250 MB
-  # beyond DuckDB's own limit during a promotion, with room to spare. Serving
-  # needs a fraction of this — 54-62 MB RSS — so the batch work is what the
-  # machine is sized for: 2 GB until the export's growth (beeline-1w2d).
+  # 3 GB: DuckDB's 1.5 GB plus the process around it. Serving needs a fraction
+  # of this — 54-62 MB RSS — so the batch work is what the machine is sized
+  # for: 2 GB until the export's growth (beeline-1w2d). DuckDB's limit does
+  # not bound the process: memory DuckDB does not count, such as what its JSON
+  # functions allocate, lies outside it. On 2026-11-03 the nightly took the
+  # process to 2492 MB, 84% of the machine (beeline-bav5). Most of that was
+  # the incremental syncs refreshing observation_field, which parsed every
+  # observation's JSON about 25 times; parsed once, the refresh adds about
+  # 120 MB where it added about 1.1 GB (measured on a copy of the store,
+  # beeline-dmoi). The night-job step lines log each step's rise, so read
+  # them before changing this.
   memory = "3gb"

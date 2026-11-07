@@ -10,17 +10,37 @@ WHERE rn = 1;
 
 -- Typed extraction over the JSON projection, so downstream rules stay free
 -- of JSON functions. This view is the accepted DuckDB-flavored seam (ADR
--- 0001): json_extract and JSON[] casts would spell differently on Postgres.
+-- 0001): json_transform, JSON[] casts and list_filter's lambdas would spell
+-- differently on Postgres.
 -- The count OFV appears in the wild under two names; sampleId OFV values
 -- include junk ('ID 1') — extraction is verbatim, findings judge validity.
+--
+-- Each load is parsed ONCE, by the json_transform at the bottom, and every
+-- column reads the struct it returns (beeline-dmoi). Only the reading
+-- changed; each column converts its value exactly as it did when it read the
+-- text with its own json_extract, so every JSON leaf a column CASTs is
+-- transformed as "JSON" and the cast stays in the column. The earlier form
+-- parsed the document once per json_extract, about 25 times an observation,
+-- and read the field values through six correlated subqueries that DuckDB
+-- decorrelated into joins keyed on the whole JSON text. On the production
+-- store of 2026-11-07 (65,939 observations, 66 MB of JSON) refreshing
+-- observation_field that way raised the process's peak memory by about
+-- 1.1 GB in 1.3 s. Most of that memory was outside DuckDB's own accounting
+-- and so outside its memory_limit, and the joins alone needed more than
+-- 512 MB of it. Parsed once, the same refresh adds about 120 MB, takes 0.3 s,
+-- completes with memory_limit at 128 MB, and returns the same rows. So do not
+-- add a column as one more json_extract over o.content: add its path to the
+-- structure below and read it from o.j.
 CREATE VIEW observation_current_fields AS
 SELECT o.inat_id,
-  CAST(json_extract_string(o.content, '$.observed_on') AS DATE)          AS observed_on,
-  CAST(json_extract(o.content, '$.geojson.coordinates[1]') AS DOUBLE)    AS latitude,
-  CAST(json_extract(o.content, '$.geojson.coordinates[0]') AS DOUBLE)    AS longitude,
-  CAST(json_extract(o.content, '$.private_geojson.coordinates[1]') AS DOUBLE) AS private_latitude,
-  CAST(json_extract(o.content, '$.private_geojson.coordinates[0]') AS DOUBLE) AS private_longitude,
-  CAST(json_extract(o.content, '$.positional_accuracy') AS INTEGER)      AS positional_accuracy,
+  CAST(o.j.observed_on AS DATE)                                          AS observed_on,
+  -- A GeoJSON point is [longitude, latitude], and a list counts from 1 where
+  -- a JSON path counts from 0: [2] here is what '$.coordinates[1]' was.
+  CAST(o.j.geojson.coordinates[2] AS DOUBLE)                             AS latitude,
+  CAST(o.j.geojson.coordinates[1] AS DOUBLE)                             AS longitude,
+  CAST(o.j.private_geojson.coordinates[2] AS DOUBLE)                     AS private_latitude,
+  CAST(o.j.private_geojson.coordinates[1] AS DOUBLE)                     AS private_longitude,
+  CAST(o.j.positional_accuracy AS INTEGER)                               AS positional_accuracy,
   -- Stored because this view is a faithful shred of the load, NOT because
   -- anything should read it: an obscured public coordinate is a deliberately
   -- shifted pair with an inflated uncertainty, so it is not a weaker
@@ -28,20 +48,20 @@ SELECT o.inat_id,
   -- coordinates are useful, for us or for display (Peter, 2026-08-29) — which
   -- is the same stance that keeps shifted pairs out of the sample layer
   -- entirely (ADR 0003).
-  CAST(json_extract(o.content, '$.public_positional_accuracy') AS INTEGER) AS public_positional_accuracy,
-  nullif(json_extract_string(o.content, '$.geoprivacy'), 'null')         AS geoprivacy,
-  nullif(json_extract_string(o.content, '$.taxon_geoprivacy'), 'null')   AS taxon_geoprivacy,
-  coalesce(CAST(json_extract(o.content, '$.viewer_trusted_by_observer') AS BOOLEAN), false) AS viewer_trusted,
-  CAST(json_extract(o.content, '$.user.id') AS BIGINT)                   AS user_id,
-  json_extract_string(o.content, '$.user.login')                         AS user_login,
-  json_extract_string(o.content, '$.place_guess')                        AS place_guess,
-  CAST(json_extract(o.content, '$.taxon.id') AS BIGINT)                  AS host_taxon_id,
-  json_extract_string(o.content, '$.taxon.name')                         AS host_taxon_name,
+  CAST(o.j.public_positional_accuracy AS INTEGER)                        AS public_positional_accuracy,
+  nullif(o.j.geoprivacy, 'null')                                         AS geoprivacy,
+  nullif(o.j.taxon_geoprivacy, 'null')                                   AS taxon_geoprivacy,
+  coalesce(CAST(o.j.viewer_trusted_by_observer AS BOOLEAN), false) AS viewer_trusted,
+  CAST(o.j.user.id AS BIGINT)                                            AS user_id,
+  o.j.user.login                                                         AS user_login,
+  o.j.place_guess                                                        AS place_guess,
+  CAST(o.j.taxon.id AS BIGINT)                                           AS host_taxon_id,
+  o.j.taxon.name                                                         AS host_taxon_name,
   -- ancestor_ids is self-inclusive, so this is true for Tracheophyta
   -- (iNat taxon 211194) itself; NULL when the taxon is absent or the load
   -- predates ancestor_ids in the projection (clears on the next sync).
-  list_contains(CAST(json_extract(o.content, '$.taxon.ancestor_ids') AS BIGINT[]), 211194) AS host_is_tracheophyte,
-  json_extract_string(o.content, '$.quality_grade')                      AS quality_grade,
+  list_contains(CAST(o.j.taxon.ancestor_ids AS BIGINT[]), 211194) AS host_is_tracheophyte,
+  o.j.quality_grade                                                      AS quality_grade,
   -- Two field names, two eras. 'sampleId' is the 2019-onwards field; the 2018
   -- season used one named 'sample id', which nothing in Beeline or in the
   -- reference implementation has ever read (docs/reference-implementation.md:
@@ -67,23 +87,11 @@ SELECT o.inat_id,
   -- it is the same rule, so it is spelled the same way rather than waiting
   -- for the first one that does.
   coalesce(
-    (SELECT j.j ->> '$.value'
-     FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'sampleId'
-       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1),
-    (SELECT j.j ->> '$.value'
-     FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'sample id'
-       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1))                      AS sample_number_raw,
+    list_filter(o.j.ofvs, lambda j: j ->> '$.name' = 'sampleId' AND nullif(trim(j ->> '$.value'), '') IS NOT NULL)[1] ->> '$.value',
+    list_filter(o.j.ofvs, lambda j: j ->> '$.name' = 'sample id' AND nullif(trim(j ->> '$.value'), '') IS NOT NULL)[1] ->> '$.value')                      AS sample_number_raw,
   coalesce(
-    (SELECT j.j ->> '$.value'
-     FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'numberOfSpecimens'
-       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1),
-    (SELECT j.j ->> '$.value'
-     FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-     WHERE j.j ->> '$.name' = 'Number of bees collected'
-       AND nullif(trim(j.j ->> '$.value'), '') IS NOT NULL LIMIT 1))       AS specimen_count_raw,
+    list_filter(o.j.ofvs, lambda j: j ->> '$.name' = 'numberOfSpecimens' AND nullif(trim(j ->> '$.value'), '') IS NOT NULL)[1] ->> '$.value',
+    list_filter(o.j.ofvs, lambda j: j ->> '$.name' = 'Number of bees collected' AND nullif(trim(j ->> '$.value'), '') IS NOT NULL)[1] ->> '$.value')       AS specimen_count_raw,
   -- How the bee was caught, and the only controlled vocabulary in any of
   -- this: four values across 10,178 observations — net, pan trap, vane trap,
   -- nest block — with no effort smuggled into the string, which is exactly
@@ -97,9 +105,7 @@ SELECT o.inat_id,
   -- observation_field_stale below compares with EXCEPT, which is positional
   -- too — so a TEXT column added in the middle swaps silently with
   -- sample_number_raw and the alarm built for exactly that cannot see it.
-  (SELECT j.j ->> '$.value'
-   FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-   WHERE j.j ->> '$.name' = 'OBA Collection Method' LIMIT 1)             AS collection_method_raw,
+  list_filter(o.j.ofvs, lambda j: j ->> '$.name' = 'OBA Collection Method')[1] ->> '$.value'             AS collection_method_raw,
   -- The locality text, private-preferred, exactly as the coordinate rule and
   -- observation_place prefer their private forms: iNaturalist withholds
   -- place_guess on a private observation and delivers private_place_guess
@@ -107,7 +113,7 @@ SELECT o.inat_id,
   -- was synced without trust (0 of 63,280 loads carry it) — carried because
   -- the reference implementation reads it first and a minted sample's
   -- locality is derived from it (observation_locality, schema/108).
-  nullif(json_extract_string(o.content, '$.private_place_guess'), '')    AS private_place_guess,
+  nullif(o.j.private_place_guess, '')                                    AS private_place_guess,
   -- The floral host's rank, which decides whether its name is italicised.
   -- Not a nicety: TaxonName derives italics from rank because the string
   -- cannot be read for it — 'Onagraceae' (family, upright) and
@@ -115,7 +121,7 @@ SELECT o.inat_id,
   -- the corpus sit at tribe, family, subfamily or subtribe, where italics
   -- would be wrong. Already whitelisted by the sync and sitting in every
   -- stored load; this view simply never read it.
-  json_extract_string(o.content, '$.taxon.rank')                         AS host_taxon_rank,
+  o.j.taxon.rank                                                         AS host_taxon_rank,
   -- The observer's own notes (beeline-hza): iNaturalist's `description`, the
   -- free text under an observation. Blank counts as absent, as it does for
   -- the sample number above — a volunteer who opened the box and typed
@@ -133,9 +139,9 @@ SELECT o.inat_id,
   -- trailing whitespace removed, which is a small edit to what the collector
   -- typed, and this column's whole claim is that it makes none (CodeRabbit,
   -- #83).
-  CASE WHEN trim(coalesce(json_extract_string(o.content, '$.description'), '')) = ''
+  CASE WHEN trim(coalesce(o.j.description, '')) = ''
        THEN NULL
-       ELSE json_extract_string(o.content, '$.description') END           AS notes,
+       ELSE o.j.description END                                            AS notes,
   -- Whether a sample-number field is attached at all, blank or not
   -- (beeline-a04). sample_number_raw above treats blank as absent, and that
   -- is right for the number, but it loses the one thing a blank says: the
@@ -144,10 +150,26 @@ SELECT o.inat_id,
   -- the project with the field attached and empty was put there as a
   -- collection record by someone who left the number for later — 34 in the
   -- open season on the dev store, against 100 settled, none of them samples.
-  EXISTS (SELECT 1
-          FROM (SELECT unnest(CAST(json_extract(o.content, '$.ofvs') AS JSON[])) AS j) j
-          WHERE j.j ->> '$.name' IN ('sampleId', 'sample id'))           AS sample_number_field_attached
-FROM observation_current o;
+  coalesce(len(list_filter(o.j.ofvs, lambda j: j ->> '$.name' IN ('sampleId', 'sample id'))) > 0, false)
+                                                                         AS sample_number_field_attached
+FROM (SELECT inat_id, json_transform(content, '{
+        "observed_on": "VARCHAR",
+        "geojson": {"coordinates": "JSON[]"},
+        "private_geojson": {"coordinates": "JSON[]"},
+        "positional_accuracy": "JSON",
+        "public_positional_accuracy": "JSON",
+        "geoprivacy": "VARCHAR",
+        "taxon_geoprivacy": "VARCHAR",
+        "viewer_trusted_by_observer": "JSON",
+        "user": {"id": "JSON", "login": "VARCHAR"},
+        "place_guess": "VARCHAR",
+        "private_place_guess": "VARCHAR",
+        "taxon": {"id": "JSON", "name": "VARCHAR", "rank": "VARCHAR", "ancestor_ids": "JSON"},
+        "quality_grade": "VARCHAR",
+        "description": "VARCHAR",
+        "ofvs": "JSON[]"
+      }') AS j
+      FROM observation_current) o;
 
 -- The two sample-number fields disagreeing on one observation.
 --

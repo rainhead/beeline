@@ -1768,7 +1768,7 @@ export const en = {
     season: (year: number) => `${year} season`,
     noRecords: "No records yet.",
     /** A program with no ground: why it has no records by geography, in its own terms. */
-    noGround: (code: string) =>
+    noGround: (code: string): string =>
       code === "BLM"
         ? "None by where they were collected: survey samples will come in through the surveys' own field entry, and belong to them by the day they were collected on rather than by where they fell."
         : code === "NWR"
@@ -1798,7 +1798,7 @@ export const en = {
       "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including taxon-obscured ones.",
     archivesMissing:
       "Not written yet. They appear after the next nightly run, or after running the dwc-archives job on Jobs.",
-    archiveNone: (code: string) =>
+    archiveNone: (code: string): string =>
       code === "BLM"
         ? "No archives: survey samples will come in through the surveys' own field entry, and belong to them by the day they were collected on rather than by where they fell."
         : code === "NWR"
@@ -2357,7 +2357,7 @@ export const en = {
     staffHint: "Staff can see and change everything in Beeline, including People.",
     reason: "Why (optional)",
     add: "Add them",
-    addedReason: (staff: boolean) => (staff ? "Program staff" : "Added by their iNaturalist account"),
+    addedReason: (staff: boolean): string => (staff ? "Program staff" : "Added by their iNaturalist account"),
 
     nameBlank: "give them a name",
     nameTaken: (name: string) =>

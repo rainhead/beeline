@@ -155,7 +155,7 @@ describe("where a night job's time goes (beeline-6hud)", () => {
     const stolen = (await stolenMs()) === null ? "" : `, ${D} stolen`;
     expect(lines).toEqual(expect.arrayContaining([
       expect.stringMatching(
-        new RegExp(String.raw`^\[job timed-night\] step 'first chunk' took ${D}: ${D} CPU${stolen}; memory \d+ MB, most since start \d+ MB( \(\+\d+ MB in this step\))?$`),
+        new RegExp(String.raw`^\[job timed-night\] step 'first chunk' took ${D}: ${D} CPU${stolen}; memory \d+ MB, most since start \d+ MB( \(\+\d+ MB in this step\))?; DuckDB counts \d+ MB \(\d+ MB before\)(, \d+ MB spilled to disk)?; Node's heap \d+ MB$`),
       ),
       expect.stringMatching(/^\[job timed-night\] step 'second chunk' took /),
       expect.stringMatching(new RegExp(String.raw`^\[job timed-night\] succeeded in ${D}: done$`)),
@@ -190,6 +190,62 @@ describe("where a night job's time goes (beeline-6hud)", () => {
     expect(describeStep("write the export", 20_700, cpu, null, null, { rss: 1_050 * MB, peakBefore: 2_400 * MB, peakAfter: 2_400 * MB })).toBe(
       "step 'write the export' took 20.7s: 5.0s CPU; memory 1050 MB, most since start 2400 MB",
     );
+  });
+
+  it("says how much DuckDB counts, and Node's heap, so a rise in neither is memory nothing counts (beeline-n41l)", () => {
+    const cpu = { user: 4_000_000, system: 1_000_000 };
+    const MB = 1024 * 1024;
+    // The shape of 'incremental 18521' before beeline-dmoi, measured on a copy
+    // of the production store: the process rose a gigabyte while DuckDB's own
+    // count barely moved and Node's heap did not.
+    const memory = { rss: 1_223 * MB, peakBefore: 237 * MB, peakAfter: 1_246 * MB, heapUsed: 17 * MB };
+    expect(describeStep("incremental 18521", 1_800, cpu, null, null, {
+      ...memory,
+      duckdbBefore: { held: 34 * MB, spilled: 0 },
+      duckdbAfter: { held: 46 * MB, spilled: 0 },
+    })).toBe(
+      "step 'incremental 18521' took 1.8s: 5.0s CPU; memory 1223 MB, most since start 1246 MB (+1009 MB in this step); DuckDB counts 46 MB (34 MB before); Node's heap 17 MB",
+    );
+    // Synthetic: a step that spilled, and one where DuckDB could not be asked.
+    expect(describeStep("write the export", 20_700, cpu, null, null, {
+      ...memory,
+      duckdbBefore: null,
+      duckdbAfter: { held: 1_500 * MB, spilled: 300 * MB },
+    })).toBe(
+      "step 'write the export' took 20.7s: 5.0s CPU; memory 1223 MB, most since start 1246 MB (+1009 MB in this step); DuckDB counts 1500 MB, 300 MB spilled to disk; Node's heap 17 MB",
+    );
+    expect(describeStep("write the export", 20_700, cpu, null, null, { ...memory, duckdbBefore: null, duckdbAfter: null })).toBe(
+      "step 'write the export' took 20.7s: 5.0s CPU; memory 1223 MB, most since start 1246 MB (+1009 MB in this step); Node's heap 17 MB",
+    );
+  });
+
+  it("a step that leaves its transaction aborted still logs, and fails with its own error", async () => {
+    const deps = await jobDeps();
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => void lines.push(line));
+    try {
+      await runJob(deps, {
+        name: "aborted-night",
+        schedule: { kind: "everyMinutes", minutes: 1 },
+        window: "night",
+        run: async (ctx) => {
+          await ctx.step("break the transaction", async () => {
+            await ctx.conn.run("BEGIN TRANSACTION");
+            await ctx.conn.run("SELECT error('the step broke')").catch(() => undefined);
+            throw new Error("the step broke");
+          });
+        },
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    await deps.conn.run("ROLLBACK");
+    const run = await deps.db.selectFrom("job_run").selectAll().executeTakeFirstOrThrow();
+    expect(run.outcome).toBe("failed");
+    expect(run.detail).toBe("the step broke");
+    const step = lines.find((l) => l.startsWith("[job aborted-night] step 'break the transaction'"));
+    expect(step).toMatch(/; memory \d+ MB/);
+    expect(step).not.toMatch(/DuckDB counts/);
   });
 });
 

@@ -1,4 +1,5 @@
 import { legacyExportPath, writeLegacyExport } from "../../legacy-export.js";
+import { assertCopied, copyToOldBeeline, describeCopy } from "../../legacy-copy.js";
 import { BUDGET_WINDOW_HOURS, budgetProblems, describeUsage, measureFlyUsage } from "../../fly-usage.js";
 import { commitDeterminationDrafts } from "../../commit-determinations.js";
 import { describeFetch, ECDYSIS_COLLECTIONS, fetchEcdysis } from "../../fetch-ecdysis.js";
@@ -333,6 +334,7 @@ export function buildJobs(
         | "ecdysis"
         | "ecdysisDir"
         | "driveBackup"
+        | "oldBeeline"
         | "backupsDir"
         | "environment"
         | "release"
@@ -506,6 +508,32 @@ export function buildJobs(
         const problems = budgetProblems(usage);
         if (problems.length > 0) throw new Error(`${problems.join("; ")} — ${describeUsage(usage)}`);
         return describeUsage(usage);
+      },
+    },
+    {
+      // Every specimen printed here, copied into the old Beeline's master
+      // list so volunteers can enter determinations for it there through
+      // February 2027 (beeline-83b8.18). After the 1am commit of volunteers'
+      // drafts, the 2am promotion and the 3am Ecdysis fetch, so the copy
+      // carries the day's work; ahead of the export in this list, because it
+      // takes seconds where the export takes many minutes and a night job may
+      // not start at 5am. Without a login it fails in production, as the
+      // backup does: a copy that succeeds at nothing reads like a copy.
+      name: "legacy-copy",
+      schedule: { kind: "dailyLA", hour: 4 },
+      window: "night",
+      async run(ctx) {
+        if (!config.oldBeeline) {
+          const unset = "OLD_BEELINE_USERNAME and OLD_BEELINE_PASSWORD are not set";
+          if (config.environment !== "production") return `${unset} — nothing copied`;
+          throw new Error(`${unset}: nothing was copied into the old Beeline`);
+        }
+        const credentials = config.oldBeeline;
+        const result = await ctx.step("copy printed specimens", () =>
+          copyToOldBeeline(ctx.conn, credentials, { signal: ctx.signal, log: ctx.log }),
+        );
+        assertCopied(result);
+        return describeCopy(result);
       },
     },
     {

@@ -1,6 +1,8 @@
 import { parseServiceAccountKey, type ServiceAccountKey } from "../drive-service-account.js";
 import type { EcdysisCredentials } from "../fetch-ecdysis.js";
 import type { FlyMetricsTarget } from "../fly-usage.js";
+import type { OldBeelineCredentials } from "../legacy-copy.js";
+import { OLD_BEELINE_ORIGIN } from "./old-beeline.js";
 import { CHANGE_LOG } from "../person-change.js";
 import { SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
 
@@ -128,6 +130,12 @@ export interface AppConfig {
   driveBackup: { key: ServiceAccountKey; folderId: string } | null;
   /** Where a backup run writes its copies and archive before uploading them; emptied after each run. */
   backupsDir: string;
+  /**
+   * The old Beeline's admin login, which the legacy-copy job copies printed
+   * specimens in with (beeline-83b8.18), or null to copy nothing. From the
+   * environment because it is a credential.
+   */
+  oldBeeline: OldBeelineCredentials | null;
 }
 
 /**
@@ -218,6 +226,16 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
   const driveBackup =
     driveKey !== null && backupFolder !== null ? { key: parseServiceAccountKey(driveKey), folderId: backupFolder } : null;
+  const oldUser = env.OLD_BEELINE_USERNAME?.trim() || null;
+  const oldPassword = env.OLD_BEELINE_PASSWORD || null;
+  if ((oldUser === null) !== (oldPassword === null)) {
+    throw new Error("OLD_BEELINE_USERNAME and OLD_BEELINE_PASSWORD must be set together");
+  }
+  // Overridable so a test, or a rehearsal, can point the copy at a server of its own.
+  const oldOrigin = env.OLD_BEELINE_API_ORIGIN?.trim() || OLD_BEELINE_ORIGIN;
+  if (oldOrigin !== new URL(oldOrigin).origin) {
+    throw new Error(`OLD_BEELINE_API_ORIGIN must be a bare origin, got '${oldOrigin}'`);
+  }
   const feedbackEmail = env.BEELINE_FEEDBACK_EMAIL?.trim() || null;
   if (feedbackEmail !== null && !/^[^\s@,?#&]+@[^\s@,?#&]+(,[^\s@,?#&]+@[^\s@,?#&]+)*$/.test(feedbackEmail)) {
     throw new Error(`BEELINE_FEEDBACK_EMAIL must be an address or a comma-separated list of them, got '${feedbackEmail}'`);
@@ -257,5 +275,6 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ecdysisDir: env.BEELINE_ECDYSIS ?? "data/ecdysis",
     driveBackup,
     backupsDir: env.BEELINE_BACKUPS ?? "data/backups",
+    oldBeeline: oldUser !== null && oldPassword !== null ? { origin: oldOrigin, username: oldUser, password: oldPassword } : null,
   };
 }

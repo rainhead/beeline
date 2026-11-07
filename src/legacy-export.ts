@@ -92,6 +92,24 @@ async function stagedColumns(conn: DuckDBConnection): Promise<Set<string> | null
 }
 
 /**
+ * What legacyExportSql reads from this store: its staged columns, and the
+ * rows the export takes a row's own place and method from — promotion's
+ * corrected staging where it has run, the rows as staff left them.
+ */
+export async function legacyExportSources(
+  conn: DuckDBConnection,
+): Promise<{ staging: Set<string> | null; rowSource: string | null }> {
+  const staging = await stagedColumns(conn);
+  const rowSource =
+    staging === null
+      ? null
+      : (await scalar(conn, `SELECT count(*) FROM duckdb_views() WHERE view_name = 'legacy_occurrence_corrected'`)) > 0
+        ? "legacy_occurrence_corrected"
+        : "legacy_occurrence";
+  return { staging, rowSource };
+}
+
+/**
  * A value as the reference's composite_sort writes it. parseFloat reads a
  * leading number and ignores the rest, which try_cast does not, but every
  * field that sorts as a number here is digits or not a number at all.
@@ -133,6 +151,8 @@ const labelInitials = (p: string) => {
 export function legacyExportSql(
   staging: Set<string> | null,
   rowSource: string | null = null,
+  /** A query of specimen ids to restrict the rows to, or null for every specimen (src/legacy-copy.ts). */
+  specimens: string | null = null,
 ): { rows: string; ordered: (table: string) => string } {
   // Without staging (a store built from iNaturalist alone) every staged
   // column is simply NULL: the same query, with the join replaced by nothing.
@@ -393,6 +413,7 @@ rows AS (
   LEFT JOIN specimen_disposition sd ON sd.specimen_id = sp.entity_id
   ${staged}
   ${rowJoins}
+  ${specimens === null ? "" : `WHERE sp.entity_id IN (${specimens})`}
 )
 SELECT * FROM rows`;
   const ordered = (table: string) => `
@@ -443,14 +464,7 @@ const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
  */
 export async function writeLegacyExport(conn: DuckDBConnection, path: string): Promise<{ rows: number; staged: boolean }> {
   await mkdir(dirname(path), { recursive: true });
-  const staging = await stagedColumns(conn);
-  // Promotion's corrected staging, where it has run: the rows as staff left them.
-  const rowSource =
-    staging === null
-      ? null
-      : (await scalar(conn, `SELECT count(*) FROM duckdb_views() WHERE view_name = 'legacy_occurrence_corrected'`)) > 0
-        ? "legacy_occurrence_corrected"
-        : "legacy_occurrence";
+  const { staging, rowSource } = await legacyExportSources(conn);
   const body = `${path}.body.tmp`;
   const whole = `${path}.tmp`;
   const [[threads]] = (await (await conn.run(`SELECT current_setting('threads')`)).getRows()) as [[bigint | number]];

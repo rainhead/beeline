@@ -647,7 +647,7 @@ describe("/jobs page", () => {
     expect(after).toContain("succeeded");
   });
 
-  it("shows each night step's latest run and its highest peak over a week, a month and three months (beeline-e1xg)", async () => {
+  it("shows each night step's latest run beside its peak this week, a month ago and three months ago (beeline-e1xg)", async () => {
     const deps = await jobDeps();
     // Synthetic history: one step on four nights, the oldest past the 90 days.
     const night = async (daysAgo: number, peak: number | null, failed = false) => {
@@ -661,9 +661,12 @@ describe("/jobs page", () => {
         [Number(runId), failed, peak] as never,
       );
     };
-    await night(120, 2_000);
-    await night(60, 1_600);
-    await night(20, 1_500);
+    // Synthetic, and growing: three months ago, a month ago, this week, and
+    // two nights outside every window.
+    await night(120, 900);
+    await night(94, 1_100);
+    await night(60, 1_300);
+    await night(31, 1_350);
     await night(2, 1_470);
     expect(await stepTrend(deps.db)).toEqual([
       expect.objectContaining({
@@ -673,9 +676,9 @@ describe("/jobs page", () => {
         last_failed: false,
         last_peak_mb: 1_470,
         last_duckdb_mb: 980,
-        peak_7d_mb: 1_470,
-        peak_30d_mb: 1_500,
-        peak_90d_mb: 1_600,
+        peak_week_mb: 1_470,
+        peak_month_ago_mb: 1_350,
+        peak_quarter_ago_mb: 1_100,
       }),
     ]);
 
@@ -695,7 +698,7 @@ describe("/jobs page", () => {
     expect(page).toContain("Night steps over time");
     expect(page).toContain("write the export");
     expect(page).toContain("1,470 MB");
-    expect(page).toContain("1,600 MB");
+    expect(page).toContain("1,100 MB");
     expect(page).toContain(">4 s<");
   });
 

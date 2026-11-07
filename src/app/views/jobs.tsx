@@ -94,56 +94,66 @@ export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[]; steps
       {props.steps.length === 0 ? (
         <EmptyState>{m.jobs.noSteps}</EmptyState>
       ) : (
-        <DataTable
-          columns={[
-            m.jobs.colJob,
-            m.jobs.colStep,
-            m.jobs.colLastRun,
-            m.jobs.colTook,
-            m.jobs.colMemory,
-            m.jobs.colDuckDb,
-            m.jobs.colWeek,
-            m.jobs.colMonth,
-            m.jobs.colQuarter,
-          ]}
-        >
-          {props.steps.map((step) => (
-            <tr>
-              <td>
-                <code>{step.job_name}</code>
-              </td>
-              <td>
-                {step.label}
-                {step.last_failed ? (
-                  <>
-                    {" "}
-                    <Chip tone="blocking">{m.jobs.stepFailed}</Chip>
-                  </>
-                ) : null}
-              </td>
-              <td>{m.format.dateTime(step.last_started_at)}</td>
-              <td>{m.jobs.duration(step.last_duration_ms)}</td>
-              <td>
-                <Megabytes m={m} value={step.last_peak_mb} />
-              </td>
-              <td>
-                <Megabytes m={m} value={step.last_duckdb_mb} />
-              </td>
-              <td>
-                <Megabytes m={m} value={step.peak_7d_mb} />
-              </td>
-              <td>
-                <Megabytes m={m} value={step.peak_30d_mb} />
-              </td>
-              <td>
-                <Megabytes m={m} value={step.peak_90d_mb} />
-              </td>
-            </tr>
-          ))}
-        </DataTable>
+        byJob(props.steps).map(([jobName, steps]) => (
+          <>
+            <h3>
+              <code>{jobName}</code>
+            </h3>
+            <DataTable
+              columns={[
+                m.jobs.colStep,
+                m.jobs.colLastRun,
+                m.jobs.colTook,
+                m.jobs.colMemory,
+                m.jobs.colDuckDb,
+                m.jobs.colQuarterAgo,
+                m.jobs.colMonthAgo,
+                m.jobs.colThisWeek,
+              ]}
+            >
+              {steps.map((step) => (
+                <tr>
+                  <td>
+                    {step.label}
+                    {step.last_failed ? (
+                      <>
+                        {" "}
+                        <Chip tone="blocking">{m.jobs.stepFailed}</Chip>
+                      </>
+                    ) : null}
+                  </td>
+                  <td>{m.format.dateTime(step.last_started_at)}</td>
+                  <td>{m.jobs.duration(step.last_duration_ms)}</td>
+                  <td>
+                    <Megabytes m={m} value={step.last_peak_mb} />
+                  </td>
+                  <td>
+                    <Megabytes m={m} value={step.last_duckdb_mb} />
+                  </td>
+                  <td>
+                    <Megabytes m={m} value={step.peak_quarter_ago_mb} />
+                  </td>
+                  <td>
+                    <Megabytes m={m} value={step.peak_month_ago_mb} />
+                  </td>
+                  <td>
+                    <Megabytes m={m} value={step.peak_week_mb} />
+                  </td>
+                </tr>
+              ))}
+            </DataTable>
+          </>
+        ))
       )}
     </>
   );
+}
+
+/** The steps grouped by job, in the order stepTrend returns them. */
+function byJob(steps: StepTrendRow[]): [string, StepTrendRow[]][] {
+  const groups = new Map<string, StepTrendRow[]>();
+  for (const step of steps) groups.set(step.job_name, [...(groups.get(step.job_name) ?? []), step]);
+  return [...groups];
 }
 
 /** A peak is unknown wherever the store was written off Linux; a dash says so rather than a zero. */

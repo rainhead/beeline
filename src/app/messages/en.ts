@@ -1885,8 +1885,13 @@ export const en = {
     colDuckDb: "DuckDB",
     stepFailed: "failed",
     megabytes: (mb: number) => `${n(mb)} MB`,
-    duration: (ms: number) =>
-      ms < 1000 ? `${n(ms)} ms` : ms < 60_000 ? `${n(Math.round(ms / 100) / 10)} s` : `${n(Math.floor(ms / 60_000))} min ${n(Math.round((ms % 60_000) / 1000))} s`,
+    /** Seconds are rounded before they are split, so nothing reads "1 min 60 s". */
+    duration: (ms: number) => {
+      if (ms < 1000) return `${n(ms)} ms`;
+      if (ms < 59_950) return `${n(Math.round(ms / 100) / 10)} s`;
+      const s = Math.round(ms / 1000);
+      return `${n(Math.floor(s / 60))} min ${n(s % 60)} s`;
+    },
   },
 
   /** Print runs (/print-runs, beeline-1kb.2). Staff-facing, English-only. */

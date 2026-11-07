@@ -15,6 +15,7 @@ import {
 } from "../src/app/jobs/framework.js";
 import { lastSyncStart, pipelineTail, refreshPlaces } from "../src/app/jobs/registry.js";
 import { stepTrend } from "../src/app/job-steps.js";
+import { en } from "../src/app/messages/en.js";
 import { createApp } from "../src/app/server.js";
 import { buildTestGazetteer, createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 
@@ -696,6 +697,13 @@ describe("/jobs page", () => {
     expect(page).toContain("1,470 MB");
     expect(page).toContain("1,600 MB");
     expect(page).toContain(">4 s<");
+  });
+
+  it("says a step's length without ever reaching 60 seconds in a minute (CodeRabbit on the step trend)", () => {
+    const d = en.jobs.duration;
+    expect([850, 3_953, 59_949, 59_950, 119_600, 845_000].map(d)).toEqual([
+      "850 ms", "4 s", "59.9 s", "1 min 0 s", "2 min 0 s", "14 min 5 s",
+    ]);
   });
 
   it("outside development, /jobs is admin-only (beeline-6va)", async () => {

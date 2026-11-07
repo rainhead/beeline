@@ -54,6 +54,21 @@ import { LEGACY_EXPORT_COLUMNS, legacyExportSources, legacyExportSql } from "./l
  * one nobody has identified there. Beeline's own volunteer determination,
  * made in new Beeline, then shows there too; once a volunteer has entered
  * one in the old Beeline, theirs stands until beeline-c43w brings it home.
+ * Even on a record nobody has identified, an update sends only volunteer
+ * values that say something, never a blank: a volunteer can save between
+ * the read before a batch and its write, and a blank sent then would erase
+ * their entry and be read back as a faithful copy (found by an adversarial
+ * review of this module, 2026-11-07).
+ *
+ * WHAT THE COPY DOES NOT REPAIR. The hash compares Beeline's row with what
+ * Beeline last sent, not with what the old system holds now. Should the old
+ * system rewrite a copied record itself — its "pull observations" task over
+ * 2026 would rewrite place and coordinates from iNaturalist — the copy does
+ * not notice; `pnpm legacy:copy --all` sends every record again and is the
+ * repair. Nor should the legacy-format export, or any file of Beeline's
+ * rows, ever be uploaded into the old Beeline: its upload keys each row by
+ * its own hash and would make a second record beside the copy, under the
+ * same field number.
  *
  * NOTHING IS TRUSTED UNREAD. Whether a record is new is read from the old
  * system before each batch rather than remembered, so a copy the old system
@@ -261,7 +276,9 @@ function batches(cs: Candidate[]): Candidate[][] {
   let current: Candidate[] = [];
   let bytes = 0;
   for (const c of cs) {
-    const size = JSON.stringify(c.row).length + c.id.length + 16;
+    // In bytes, as the old server counts its limit: a degree sign or an
+    // accented locality is two or three bytes and one character.
+    const size = Buffer.byteLength(JSON.stringify(c.row)) + c.id.length + 16;
     if (current.length > 0 && (current.length >= BATCH_RECORDS || bytes + size > BATCH_BYTES)) {
       out.push(current);
       current = [];
@@ -325,9 +342,16 @@ export async function copyToOldBeeline(
         continue;
       }
       const record: Record<string, string> = { _id: c.id };
-      const writeVolunteer = !held || VOLUNTEER_COLUMNS.every((v) => blank(held[v]));
+      // A volunteer column is written only where the old record has none of
+      // the five, and then only with a value: a blank can only erase, and a
+      // volunteer may save between this read and the write below. Blanks go
+      // only on a record that is new and was never copied, which no
+      // volunteer can have reached; a record copied before but not found by
+      // either number may still exist under a third, and is treated as held.
+      const canFill = !held || VOLUNTEER_COLUMNS.every((v) => blank(held[v]));
+      const fresh = !held && c.lastSha256 === null;
       for (const col of COPIED_COLUMNS) {
-        if (!writeVolunteer && (VOLUNTEER_COLUMNS as readonly string[]).includes(col)) continue;
+        if ((VOLUNTEER_COLUMNS as readonly string[]).includes(col) && !(canFill && (fresh || c.row[col] !== ""))) continue;
         record[col] = c.row[col];
       }
       send.push({ c, record, insert: !held });

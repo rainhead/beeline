@@ -36,6 +36,10 @@ class FakeOldBeeline {
   records = new Map<string, Record<string, unknown>>();
   posts: Record<string, string>[][] = [];
   logins = 0;
+  /** Runs once, after the copy's read and before its write lands: a volunteer saving in between. */
+  beforeNextWrite: (() => void) | null = null;
+  /** A field this server fails to store, so the read-back differs from what was sent. */
+  dropOnWrite: string | null = null;
   server: Server;
 
   constructor() {
@@ -64,12 +68,16 @@ class FakeOldBeeline {
         return send(200, { data, pagination: { hasNextPage: page * per < all.length } });
       }
       if (req.method === "POST") {
-        if (body.length > 100 * 1024) return send(413, { error: "request entity too large" });
+        if (Buffer.byteLength(body) > 100 * 1024) return send(413, { error: "request entity too large" });
         if (!authed) return send(401, { error: "admin only in this stand-in" });
         const { occurrences } = JSON.parse(body) as { occurrences: (Record<string, string> & { _id: string })[] };
         this.posts.push(occurrences);
+        this.beforeNextWrite?.();
+        this.beforeNextWrite = null;
         let anyNew = false;
-        for (const o of occurrences) {
+        for (const sent of occurrences) {
+          const o = { ...sent };
+          if (this.dropOnWrite) delete o[this.dropOnWrite];
           const held = this.records.get(o._id);
           if (held) Object.assign(held, o, { scratch: false });
           else {
@@ -282,6 +290,47 @@ describe("copying printed specimens into the old Beeline", () => {
     expect(r).toMatchObject({ inserted: 0, updated: 1, collisions: [] });
     expect(old.records.get(id)).toMatchObject({ fieldNumber: "26090999", genusVolDet: "Bombus" });
     expect([...old.records.values()].filter((o) => o.fieldNumber === "26090030")).toEqual([]);
+  });
+
+  test("keeps a volunteer's entry saved between the copy's read and its write", async () => {
+    const five = old.records.get(legacyCopyId(printed.get("26090005")!))!;
+    expect(five.familyVolDet).toBe("");
+    // The volunteer saves after the copy has read the batch and seen no entry.
+    old.beforeNextWrite = () => Object.assign(five, { familyVolDet: "Apidae", genusVolDet: "Bombus" });
+    await conn.run(`UPDATE sample SET locality = 'Kings Valley' WHERE sample_number = '41'`);
+    const r = await copyToOldBeeline(conn, creds);
+    expect(r).toMatchObject({ updated: 120, unverified: [] });
+    expect(five).toMatchObject({ locality: "Kings Valley", familyVolDet: "Apidae", genusVolDet: "Bombus" });
+    // No update carried a blank volunteer column at all.
+    for (const post of old.posts) for (const o of post) expect(Object.keys(o).filter((k) => k.endsWith("VolDet"))).toEqual([]);
+  });
+
+  test("fills a record nobody has identified in the old Beeline with the volunteer determination made here", async () => {
+    const forty = printed.get("26090040")!;
+    await conn.run(
+      `INSERT INTO determination (specimen_id, animal_id, verbatim_identification, sex, is_expert, channel, determiner_id)
+       SELECT ${forty}, entity_id, scientific_name, 'female', false, 'in_app', (SELECT min(entity_id) FROM person)
+       FROM animal WHERE rank = 'genus' ORDER BY entity_id LIMIT 1`,
+    );
+    const [[genus]] = (await rows(conn, `SELECT scientific_name FROM animal WHERE rank = 'genus' ORDER BY entity_id LIMIT 1`)) as [[string]];
+    const r = await copyToOldBeeline(conn, creds);
+    expect(r).toMatchObject({ unchanged: 119, updated: 1 });
+    const sent = old.posts.flat().find((o) => o._id === legacyCopyId(forty))!;
+    expect(sent).toMatchObject({ genusVolDet: genus, sexVolDet: "female" });
+    expect(sent).not.toHaveProperty("speciesVolDet");
+    expect(old.records.get(legacyCopyId(forty))).toMatchObject({ genusVolDet: genus, sexVolDet: "female" });
+  });
+
+  test("records nothing the old system did not keep as sent, and fails the night", async () => {
+    old.dropOnWrite = "locality";
+    await conn.run(`UPDATE sample SET locality = 'Blodgett' WHERE sample_number = '41'`);
+    const r = await copyToOldBeeline(conn, creds);
+    old.dropOnWrite = null;
+    expect(r).toMatchObject({ updated: 0 });
+    expect(r.unverified).toHaveLength(120);
+    expect(() => assertCopied(r)).toThrow(/120 not read back as sent/);
+    // Still due, all of it, and copied once the old system keeps what it is sent.
+    expect(await copyToOldBeeline(conn, creds)).toMatchObject({ unchanged: 0, updated: 120, unverified: [] });
   });
 
   test("a refused login fails, naming the old Beeline and not the password", async () => {

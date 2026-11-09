@@ -137,13 +137,15 @@ describe("loading an expert's sheet", () => {
     expect((await determinations()).map((r) => [r[5], r[6], r[7]])).toEqual([[null, null, true]]);
   });
 
-  test("the collector, the date (as a day number or a Roman month) and the family confirm the number, or the row is held", async () => {
+  test("the collector, the date (as a day number or a Roman month) and the family confirm the number, or the row is held; an impossible date is held too", async () => {
     await received([
       row("26000001", { verbatimEventDate: ROMAN_JULY_14 }),
       row("26000002", { lastName: "Someone" }),
       row("26000003", { verbatimEventDate: JULY_14 + 1 }),
       row("26000004", { family: "Andrenidae" }),
       row("26000005", { verbatimEventDate: "sometime" }),
+      row("26000006", { verbatimEventDate: `IX/31/${CURRENT_SEASON}` }),
+      row("26000007", { verbatimEventDate: `XIII/14/${CURRENT_SEASON}` }),
     ]);
     const result = await load();
     expect(result.recorded).toBe(1);
@@ -152,8 +154,10 @@ describe("loading an expert's sheet", () => {
       ["4", "26000003", "date_disagrees"],
       ["5", "26000004", "family_disagrees"],
       ["6", "26000005", "date_unreadable"],
+      ["7", "26000006", "date_unreadable"],
+      ["8", "26000007", "date_unreadable"],
     ]);
-    expect(result.heldBySeason).toEqual({ active: 4, settled: 0, noSpecimen: 0 });
+    expect(result.heldBySeason).toEqual({ active: 6, settled: 0, noSpecimen: 0 });
   });
 
   test("a number no specimen carries, a number twice in the sheet, a name nobody has and a determiner nobody named are held", async () => {

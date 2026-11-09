@@ -127,10 +127,12 @@ const DATE_SQL = (col: string) => `CASE
   WHEN regexp_full_match(${col}, '\\d{5}') THEN DATE '1899-12-30' + CAST(${col} AS INTEGER)
   WHEN regexp_full_match(${col}, '\\d{4}-\\d{2}-\\d{2}') THEN try_cast(${col} AS DATE)
   WHEN regexp_full_match(${col}, '\\d{1,2}/\\d{1,2}/\\d{4}') THEN try_strptime(${col}, '%m/%d/%Y')::DATE
-  WHEN regexp_full_match(${col}, '[IVX]+/\\d{1,2}/\\d{4}') THEN try_cast(make_date(
-         CAST(split_part(${col}, '/', 3) AS INTEGER),
+  -- Through try_strptime rather than make_date, which raises on a day the
+  -- month lacks (IX/31) instead of answering NULL, and would abort the load.
+  WHEN regexp_full_match(${col}, '[IVX]+/\\d{1,2}/\\d{4}') THEN try_strptime(concat_ws('-',
+         split_part(${col}, '/', 3),
          list_position(['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'], split_part(${col}, '/', 1)),
-         CAST(split_part(${col}, '/', 2) AS INTEGER)) AS DATE)
+         split_part(${col}, '/', 2)), '%Y-%m-%d')::DATE
 END`;
 
 /** A family name folded to letters, so O'Loughlin and OLoughlin are one. */

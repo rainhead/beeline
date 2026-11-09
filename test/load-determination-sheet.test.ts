@@ -222,8 +222,9 @@ describe("loading an expert's sheet", () => {
   });
 
   test("the tab is the workbook's first unless one is named", async () => {
-    await received([row("26000001")], "Sheet With A Name");
-    expect((await load()).sheet).toBe("Sheet With A Name");
+    // The workbook stores the name escaped as XML (Bees &amp; Wasps), and read_xlsx wants it decoded.
+    await received([row("26000001")], "Bees & Wasps");
+    expect((await load()).sheet).toBe("Bees & Wasps");
     // JULY_14 is the clean sample's date; were the fixture to move, every date check above would hold for the wrong reason.
     expect(currentSeasonDate(7, 14)).toBe(`${CURRENT_SEASON}-07-14`);
   });

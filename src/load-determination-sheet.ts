@@ -115,7 +115,9 @@ async function firstSheet(path: string): Promise<string> {
   const xml = files["xl/workbook.xml"];
   const name = xml === undefined ? undefined : /<sheet\b[^>]*\bname="([^"]*)"/.exec(strFromU8(xml))?.[1];
   if (name === undefined) throw new Error(`${path}: no sheet named in xl/workbook.xml`);
-  return name.replaceAll("&amp;", "&").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'");
+  // One pass, so &amp;lt; becomes &lt; rather than being decoded twice into <.
+  const entities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+  return name.replace(/&(amp|lt|gt|quot|apos);/g, (_, e: string) => entities[e]!);
 }
 
 /**

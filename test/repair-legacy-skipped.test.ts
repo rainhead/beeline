@@ -125,6 +125,19 @@ describe("repairing what legacy promotion set aside", () => {
     });
   });
 
+  test("refuses, writing nothing, when one specimen has two set-aside records", async () => {
+    // A third print of 2127322's specimen, set aside like the second.
+    await conn.run(`DELETE FROM legacy_duplicate_record WHERE _id = 'd1000004'`);
+    await conn.run(
+      `INSERT INTO legacy_occurrence SELECT * REPLACE ('d1000005' AS _id, '2127008' AS "fieldNumber", '30-Dec-21' AS "dateLabelPrint")
+       FROM legacy_occurrence WHERE _id = 'd1000004'`,
+    );
+    await expect(repairSkippedLegacyRecords(conn)).rejects.toThrow(/2127007 and 2127008/);
+    expect(await rows(conn, `SELECT count(*) FROM legacy_duplicate_record WHERE _id IN ('d1000004', 'd1000005')`)).toEqual([[0n]]);
+    await conn.run(`DELETE FROM legacy_occurrence WHERE _id = 'd1000005'`);
+    await conn.run(`INSERT INTO legacy_duplicate_record (_id, specimen_id) SELECT 'd1000004', entity_id FROM specimen WHERE field_number = '2127322'`);
+  });
+
   test("the legacy-format export still writes one row for each specimen", async () => {
     const path = join(await mkdtemp(join(tmpdir(), "beeline-repair-")), "occurrences.csv");
     const { rows: written } = await writeLegacyExport(conn, path);

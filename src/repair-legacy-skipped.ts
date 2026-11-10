@@ -181,6 +181,20 @@ export async function repairSkippedLegacyRecords(conn: DuckDBConnection, opts: {
       UNION ALL
       SELECT _id, field_number, NULL, sample_id, inat_observation_id, p_specimen_number FROM temp.repair_attach`);
     await conn.run(`DELETE FROM temp.repair_pair WHERE skipped_id IN (SELECT _id FROM temp.repair_new)`);
+    // A specimen printed three times would have two set-aside records, which
+    // could carry two different identifications to it with nothing to say
+    // which stands. None did on the store of 9 November 2026; were one to,
+    // it waits for somebody to look rather than be guessed at.
+    const crowded = (
+      await rowsOf(
+        conn,
+        `SELECT string_agg(skipped_fn, ' and ' ORDER BY skipped_fn) FROM temp.repair_pair
+         GROUP BY specimen_id HAVING count(*) > 1 ORDER BY 1`,
+      )
+    ).map(([fns]) => String(fns));
+    if (crowded.length > 0) {
+      throw new Error(`more than one set-aside record is a second print of the same specimen, so nothing was repaired: ${crowded.join("; ")}`);
+    }
 
     const result: SkippedRepairResult = {
       tied: await scalar(conn, `SELECT count(*) FROM temp.repair_pair`),

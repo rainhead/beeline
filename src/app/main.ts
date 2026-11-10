@@ -211,6 +211,7 @@ const app = createApp({
           gazetteerPath: GAZETTEER_PATH,
         }
       : undefined,
+  derivePaths: { demDir: DEM_DIR, gazetteerPath: GAZETTEER_PATH },
   printRunsDir: config.printRunsDir,
   registryMarkPath: config.registryMarkPath,
 });

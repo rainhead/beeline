@@ -78,6 +78,12 @@ export interface AreaResult {
   outdated: boolean;
   /** Samples whose county was written from their coordinates (stampCounties). */
   countiesStamped: number;
+  /**
+   * Of the samples named in stampSampleIds, those whose country, state and
+   * county are still not those of a county their point lies inside. Empty
+   * otherwise, and when there was no gazetteer, so check gazetteerBuild too.
+   */
+  unsettled?: number[];
 }
 
 export interface DeriveAreaOptions {
@@ -93,6 +99,13 @@ export interface DeriveAreaOptions {
    * its writes to an iNaturalist sync.
    */
   stampCounties?: boolean;
+  /**
+   * Stamp only these samples: what staff taking a printed sample's
+   * observation's location runs at once (beeline-1kb.17.1), so the page that
+   * comes back already has the county and state of the new point, and the
+   * sample log credits the staffer rather than the next night.
+   */
+  stampSampleIds?: readonly number[];
 }
 
 type Conn = DuckDBConnection;
@@ -140,6 +153,12 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
       return result;
     }
     const ecoregions = has.has("ecoregion.code");
+    // Stamping named samples tests only them: whoever asks may not know
+    // their collector's iNaturalist account, and may not have one to know.
+    const narrowTo =
+      opts.stampSampleIds === undefined || opts.stampCounties
+        ? ""
+        : `AND l.sample_id IN (${[...opts.stampSampleIds, -1].map((id) => Number(id)).join(", ")})`;
     const pending = await rows<{ sample_id: number; lat: number; lon: number }>(
       conn,
       `SELECT l.sample_id, l.latitude AS lat, l.longitude AS lon
@@ -151,6 +170,7 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
                 SELECT sc.sample_id FROM sample_collector sc
                 JOIN inat_account a ON a.person_id = sc.person_id
                 WHERE a.inat_user_id = $2::BIGINT))
+          ${narrowTo}
         ORDER BY l.sample_id`,
       [build.build_id, opts.observerUserId ?? null],
     );
@@ -168,7 +188,12 @@ export async function deriveAreas(conn: Conn, gazetteerPath: string, opts: Deriv
     // areas somebody collected in.
     await conn.run(`DELETE FROM area a WHERE NOT EXISTS (
       SELECT 1 FROM sample_area sa WHERE sa.area_source = a.source AND sa.area_source_id = a.source_id)`);
-    if (opts.stampCounties) result.countiesStamped = await stampCounties(conn, G);
+    if (opts.stampCounties) result.countiesStamped = (await stampCounties(conn, G)).stamped.length;
+    else if (opts.stampSampleIds !== undefined && opts.stampSampleIds.length > 0) {
+      const stamp = await stampCounties(conn, G, opts.stampSampleIds);
+      result.countiesStamped = stamp.stamped.length;
+      result.unsettled = stamp.unsettled;
+    }
     return result;
   } finally {
     await conn.run(`DETACH ${G}`);
@@ -310,62 +335,134 @@ ${ecoregions ? `    UNION ALL
  * (beeline-313x, Peter, 2026-10-27), as the gazetteer writes it: the
  * Census's name in the US (Benton, Doña Ana), and in BC the district's name
  * as iNaturalist writes it (Capital, Comox Valley), which a label prints as
- * the province abbreviates it (src/label-text.ts). Only where all of these
- * hold, and nowhere else:
+ * the province abbreviates it (src/label-text.ts); and, where the point lies
+ * inside that county, the state or province and the country too
+ * (beeline-1kb.17.1). On a sample that follows its point, which is either:
  *
- * - the sample has an observation. Every sample still to print does; the rest are
- *   the old system's records, whose county is what the record or a staff
- *   correction says (ADR 0004).
- * - it is from an active season and no label for it has printed. A printed
- *   sample's county is what its labels say, as a printed locality is
- *   (CONTEXT.md, Upstream); and a settled sample with no print recorded was
- *   most likely printed before Beeline kept the record, and will not print
- *   again either way (Peter, 2026-10-27).
+ * - one still to print: it has an observation or was entered in Beeline (the
+ *   rest are the old system's records, whose place is what the record or a
+ *   staff correction says, ADR 0004), it is from an active season, and no
+ *   label for it has printed. A printed sample's place is what its labels
+ *   say, as a printed locality is (CONTEXT.md, Upstream); a settled sample
+ *   with no print recorded was most likely printed before Beeline kept the
+ *   record, and will not print again (Peter, 2026-10-27).
+ * - or one whose point staff set (sample_location_override, beeline-942),
+ *   printed or settled. A person said that is where the bees were caught, so
+ *   a place that disagrees is the record contradicting itself, and on a
+ *   printed sample the labels already disagree with the point and a reprint
+ *   is what staff do next. Sample 797063 printed as USA:CA:NevadaCo; its
+ *   collector moved the pin to Lane County, Oregon, and before this nothing
+ *   could change the state to match (GitHub #298).
+ *
+ * And only where both of these hold:
+ *
  * - it is not frozen into a print run that has not printed. The run holds
- *   its label text from the freeze, so the record keeps the county the
- *   labels will carry (Peter, 2026-10-27).
- * - the sample's state or province is the point's. Where they disagree the
- *   sample is wrong in a way no county can fix, and a BC district on an
- *   Alberta sample would only make it worse.
+ *   its label text from the freeze, so the record keeps the place the labels
+ *   will carry (Peter, 2026-10-27).
  * - the point is in exactly one county.
+ *
+ * The state changes only where the point lies inside the county's outline.
+ * A point on the shore just outside every county takes the nearest within
+ * COUNTY_SHORE_M, which near a land border can be the neighbour's: 500 m
+ * into Alberta is a BC district. So a county found that way is written only
+ * where its state is already the sample's, as before the state followed at
+ * all. Following the state is also what keeps a staff point that is taken
+ * away from leaving its state behind: the sample follows the observation's
+ * point again, and the state goes with it.
+ *
+ * The atlas follows a changed state where geography assigned it, as
+ * promotion's own fill would; a person's assignment stays.
  *
  * Minting still fills an empty county from iNaturalist (ingest/mint-samples.sql),
  * and the next stamp replaces it: so a sample is never without a county
- * waiting for the nightly. Returns how many samples changed.
+ * waiting for the nightly. Returns which samples changed.
  */
-function stampCounties(conn: Conn, G: string): Promise<number> {
+interface StampResult {
+  stamped: number[];
+  /** Of the samples asked about by id, those whose place still is not their point's. */
+  unsettled: number[];
+}
+
+function stampCounties(conn: Conn, G: string, sampleIds?: readonly number[]): Promise<StampResult> {
   // Behind the print runs' lock, so a run cannot be prepared between working
   // out which samples are not frozen and writing their counties: the freeze
   // would compose a label with the old county and the record take the new
   // one (CodeRabbit).
-  return withPrintRunLock(() => stampCountiesUnlocked(conn, G));
+  return withPrintRunLock(() => stampCountiesUnlocked(conn, G, sampleIds));
 }
 
-async function stampCountiesUnlocked(conn: Conn, G: string): Promise<number> {
+async function stampCountiesUnlocked(conn: Conn, G: string, sampleIds?: readonly number[]): Promise<StampResult> {
   // The changes are worked out first and written after, as promotion writes
   // the sample (ingest/mint-samples.sql). DuckDB refused the one-statement
   // form, an UPDATE with these conditions on sample in its WHERE and a
   // RETURNING, as a foreign-key violation on a sample other tables refer to.
+  const only = sampleIds === undefined ? "" : `AND s.entity_id IN (${sampleIds.map((id) => Number(id)).join(", ")})`;
+  // Each located sample's one county, with whether the point is inside it
+  // rather than taken by the shore allowance.
+  await conn.run(`
+    CREATE OR REPLACE TEMP TABLE county_point AS
+    SELECT a.sample_id, any_value(r.county) AS county, any_value(r.state) AS state,
+           any_value(r.country) AS country,
+           bool_or(ST_Intersects(r.geom, ST_Point(l.longitude, l.latitude))) AS inside
+    FROM sample_area_current a
+    JOIN ${G}.region r ON r.source = a.source AND r.source_id = a.source_id
+    JOIN sample_location l ON l.sample_id = a.sample_id
+    WHERE a.kind = 'county' ${sampleIds === undefined ? "" : `AND a.sample_id IN (${sampleIds.map((id) => Number(id)).join(", ")})`}
+    GROUP BY a.sample_id HAVING count(*) = 1`);
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE county_stamp AS
-    SELECT s.entity_id AS sample_id, point.county
-    FROM sample s
-    JOIN (SELECT a.sample_id, any_value(r.county) AS county, any_value(r.state) AS state
-          FROM sample_area_current a JOIN ${G}.region r ON r.source = a.source AND r.source_id = a.source_id
-          WHERE a.kind = 'county'
-          GROUP BY a.sample_id HAVING count(*) = 1) point ON point.sample_id = s.entity_id
-    WHERE (s.inat_observation_id IS NOT NULL
-           OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id))
-      AND s.state_province = point.state
-      AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
-      AND NOT EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = s.entity_id)
-      AND NOT EXISTS (SELECT 1 FROM sample_label_in_progress lp
-                      WHERE lp.sample_id = s.entity_id AND lp.printing_count > 0)
-      AND point.county IS NOT NULL
-      AND s.county IS DISTINCT FROM point.county`);
-  await conn.run(`UPDATE sample SET county = t.county FROM county_stamp t WHERE sample.entity_id = t.sample_id`);
-  const [stamped] = await rows<{ n: number }>(conn, `SELECT count(*)::INTEGER AS n FROM county_stamp`);
-  return stamped?.n ?? 0;
+    SELECT sample_id, county,
+           CASE WHEN inside THEN point_country ELSE country END AS country,
+           CASE WHEN inside THEN point_state ELSE state_province END AS state_province,
+           (inside AND state_province IS DISTINCT FROM point_state) AS state_changed
+    FROM (
+      SELECT s.entity_id AS sample_id, s.country, s.state_province, s.county AS sample_county,
+             point.county, point.country AS point_country, point.state AS point_state, point.inside,
+             (EXISTS (SELECT 1 FROM sample_location_override o WHERE o.sample_id = s.entity_id)
+              OR ((s.inat_observation_id IS NOT NULL
+                   OR EXISTS (SELECT 1 FROM sample_entry e WHERE e.sample_id = s.entity_id))
+                  AND NOT EXISTS (SELECT 1 FROM printed_sample ps WHERE ps.sample_id = s.entity_id)
+                  AND NOT EXISTS (SELECT 1 FROM settled_sample ss WHERE ss.sample_id = s.entity_id))) AS follows
+      FROM sample s
+      JOIN county_point point ON point.sample_id = s.entity_id
+      WHERE point.county IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM sample_label_in_progress lp
+                        WHERE lp.sample_id = s.entity_id AND lp.printing_count > 0)
+        ${only}
+    ) c
+    WHERE follows
+      AND (inside OR c.state_province = point_state)
+      AND (sample_county IS DISTINCT FROM county
+           OR (inside AND (c.state_province IS DISTINCT FROM point_state
+                           OR c.country IS DISTINCT FROM point_country)))`);
+  await conn.run(`UPDATE sample SET county = t.county, state_province = t.state_province, country = t.country
+                  FROM county_stamp t WHERE sample.entity_id = t.sample_id`);
+  // The atlas, where the state moved and geography had placed it.
+  await conn.run(`DELETE FROM sample_atlas
+                  WHERE assigned_by IS NULL
+                    AND sample_id IN (SELECT sample_id FROM county_stamp WHERE state_changed)`);
+  await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id)
+                  SELECT u.sample_id, u.should_be FROM sample_atlas_unfilled u
+                  WHERE u.sample_id IN (SELECT sample_id FROM county_stamp WHERE state_changed)`);
+  const stamped = await rows<{ sample_id: number }>(conn, `SELECT sample_id FROM county_stamp ORDER BY sample_id`);
+  // Of the samples asked about by id, those whose place still is not the
+  // place of a county their point lies inside: frozen into a run, in no
+  // county or two, by the shore, or in a county the gazetteer gives no name.
+  // The caller says so rather than leaving staff to reprint a state the
+  // point contradicts (Fable's review of beeline-1kb.17.1).
+  const unsettled =
+    sampleIds === undefined
+      ? []
+      : await rows<{ sample_id: number }>(
+          conn,
+          `SELECT s.entity_id AS sample_id FROM sample s
+           WHERE s.entity_id IN (${sampleIds.map((id) => Number(id)).join(", ")})
+             AND NOT EXISTS (SELECT 1 FROM county_point p
+                             WHERE p.sample_id = s.entity_id AND p.inside
+                               AND p.county = s.county AND p.state = s.state_province AND p.country = s.country)
+           ORDER BY 1`,
+        );
+  return { stamped: stamped.map((r) => Number(r.sample_id)), unsettled: unsettled.map((r) => Number(r.sample_id)) };
 }
 
 /** One line for the job's detail. */

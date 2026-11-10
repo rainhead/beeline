@@ -144,6 +144,13 @@ export interface SampleDetail {
   /** Coordinates staff set over the observation's (beeline-942), same shape. */
   location_override: LocationOverride | null;
   /**
+   * Where the observation now puts a sample Beeline printed, when that is
+   * more than 100 m from where the sample and its labels say
+   * (sample_location_label_diverged, beeline-1kb.17.1). Null otherwise, and
+   * where the location is withheld.
+   */
+  label_diverged: LabelDiverged | null;
+  /**
    * A locality named from the coordinates (beeline-7i6), offered beside the
    * sample's own and never written into it. Null where there is none for the
    * point the sample has now, or where the location is withheld.
@@ -183,6 +190,15 @@ export interface LocationOverride {
   reason: string | null;
   /** Where the observation now puts it, when that is neither the base nor the override. */
   observation_now: { latitude: number; longitude: number } | null;
+}
+
+export interface LabelDiverged {
+  latitude: number;
+  longitude: number;
+  country: string | null;
+  state_province: string | null;
+  county: string | null;
+  distance_m: number;
 }
 
 export interface LocalityOverride {
@@ -376,7 +392,14 @@ const num = (v: unknown): number | null => (v === null || v === undefined ? null
 
 type RawSample = Omit<
   SampleDetail,
-  "collectors" | "locality_override" | "location_override" | "locality_suggestion" | "locality_alternatives" | "wildernesses" | "ecoregion"
+  | "collectors"
+  | "locality_override"
+  | "location_override"
+  | "label_diverged"
+  | "locality_suggestion"
+  | "locality_alternatives"
+  | "wildernesses"
+  | "ecoregion"
 > & {
   suggested_locality: string | null;
   alternative_localities: string | null;
@@ -407,6 +430,41 @@ async function localityObservationNow(db: Kysely<Database>, sampleId: number): P
     SELECT observation_locality FROM sample_locality_override_diverged
     WHERE sample_id = ${sampleId}`.execute(db);
   return found.rows[0]?.observation_locality ?? null;
+}
+
+/**
+ * Where the observation now puts a sample Beeline printed, if it has moved.
+ * Asked only of a printed sample. The place is a second query, made only
+ * when the first finds something: observation_place works out every
+ * observation's place before it narrows to one, about 140 ms on a
+ * workstation, which every printed sample's page would otherwise pay.
+ */
+async function labelDiverged(db: Kysely<Database>, sampleId: number): Promise<LabelDiverged | null> {
+  const found = await sql<{ observation_latitude: number; observation_longitude: number; distance_m: number }>`
+    SELECT observation_latitude, observation_longitude, distance_m
+    FROM sample_location_label_diverged WHERE sample_id = ${sampleId}`.execute(db);
+  const d = found.rows[0];
+  if (d === undefined) return null;
+  const place = await observationPlaceOf(db, sampleId);
+  return {
+    latitude: Number(d.observation_latitude),
+    longitude: Number(d.observation_longitude),
+    ...place,
+    distance_m: Number(d.distance_m),
+  };
+}
+
+/** The country, state and county iNaturalist gives this sample's observation now; nulls where it gives none. */
+export async function observationPlaceOf(
+  db: Kysely<Database>,
+  sampleId: number,
+): Promise<{ country: string | null; state_province: string | null; county: string | null }> {
+  const found = await sql<{ country_code: string | null; state_province: string | null; county_name: string | null }>`
+    SELECT pl.country_code, pl.state_province, pl.county_name
+    FROM sample s JOIN observation_place pl ON pl.inat_id = s.inat_observation_id
+    WHERE s.entity_id = ${sampleId}`.execute(db);
+  const p = found.rows[0];
+  return { country: p?.country_code ?? null, state_province: p?.state_province ?? null, county: p?.county_name ?? null };
 }
 
 async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDetail> {
@@ -464,6 +522,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
             reason: override_reason,
             observation_now: await localityObservationNow(db, Number(row.sample_id)),
           },
+    label_diverged: hidden || !row.printed ? null : await labelDiverged(db, Number(row.sample_id)),
     printed: Boolean(row.printed),
     sample_id: Number(row.sample_id),
     specimen_count: Number(row.specimen_count),

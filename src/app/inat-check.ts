@@ -160,27 +160,65 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
  * the nightly tries again.
  */
 async function deriveAfterCheck(conn: DuckDBConnection, opts: CheckOptions): Promise<void> {
-  // A nightly that started while this check waited for the lock does it all.
-  if (opts.jobRunning?.()) return;
+  await deriveForObserver(conn, { ...opts, observerUserId: opts.userId, logTag: "inat check" });
+}
+
+/**
+ * The nightly's steps for moved points, for one observer's samples: also
+ * what staff taking a printed sample's observation's location runs
+ * (beeline-1kb.17.1), since a reprint prepared before the nightly would
+ * otherwise print the elevation and county of the point the sample moved
+ * from. Never throws; a step that fails is logged and left to the nightly.
+ * Says whether every sample in stampSampleIds now has its point's country,
+ * state and county, so the page can say when that has to wait.
+ */
+export async function deriveForObserver(
+  conn: DuckDBConnection,
+  opts: {
+    /** Whose samples the locality step names; null skips it, since unnarrowed it would take the whole store. */
+    observerUserId: number | null;
+    demDir?: string;
+    gazetteerPath?: string;
+    jobRunning?: () => boolean;
+    /** Find these samples' areas and write their place from the point (src/derive-area.ts), whoever collected them. */
+    stampSampleIds?: readonly number[];
+    logTag: string;
+  },
+): Promise<{ placeSettled: boolean }> {
+  // A nightly that started meanwhile does it all.
+  if (opts.jobRunning?.()) return { placeSettled: false };
   if (opts.demDir !== undefined) {
     try {
       await deriveElevations(conn, opts.demDir);
     } catch (err) {
-      console.warn(`[inat check] elevations not derived: ${(err as Error).message}`);
+      console.warn(`[${opts.logTag}] elevations not derived: ${(err as Error).message}`);
     }
   }
+  let placeSettled = opts.stampSampleIds === undefined;
   if (opts.gazetteerPath !== undefined) {
-    try {
-      await deriveAreas(conn, opts.gazetteerPath, { observerUserId: opts.userId });
-    } catch (err) {
-      console.warn(`[inat check] areas not found: ${(err as Error).message}`);
+    const narrowed = opts.stampSampleIds !== undefined || opts.observerUserId !== null;
+    if (narrowed) {
+      try {
+        const found = await deriveAreas(conn, opts.gazetteerPath, {
+          observerUserId: opts.stampSampleIds === undefined ? (opts.observerUserId ?? undefined) : undefined,
+          stampSampleIds: opts.stampSampleIds,
+        });
+        if (opts.stampSampleIds !== undefined) {
+          placeSettled = found.gazetteerBuild !== null && !found.outdated && (found.unsettled ?? []).length === 0;
+        }
+      } catch (err) {
+        console.warn(`[${opts.logTag}] areas not found: ${(err as Error).message}`);
+      }
     }
-    try {
-      await deriveLocalities(conn, opts.gazetteerPath, { observerUserId: opts.userId });
-    } catch (err) {
-      console.warn(`[inat check] localities not named: ${(err as Error).message}`);
+    if (opts.observerUserId !== null) {
+      try {
+        await deriveLocalities(conn, opts.gazetteerPath, { observerUserId: opts.observerUserId });
+      } catch (err) {
+        console.warn(`[${opts.logTag}] localities not named: ${(err as Error).message}`);
+      }
     }
   }
+  return { placeSettled };
 }
 
 /** When this observer was last checked from the dashboard, if ever. */

@@ -189,6 +189,42 @@ export async function setStaffCoordinates(
 }
 
 /**
+ * A staff member taking the observation's location for a sample Beeline has
+ * printed, after the collector moved the pin on iNaturalist
+ * (beeline-1kb.17.1, GitHub #298): the staff coordinates write above, with
+ * the observation's point as the value, so promotion leaves it alone and the
+ * page says who chose it. The point is read from the store as it stands,
+ * never from the form, and refused unless the sample is in
+ * sample_location_label_diverged now: the page may be older than the store.
+ * The county, state and country follow the point, as for any point staff
+ * set (src/derive-area.ts); the caller runs that step at once. The labels on
+ * paper are untouched; a reprint is asked for as any other.
+ */
+export async function takeObservationLocation(
+  deps: StaffLocalityDeps & { conn: DuckDBConnection },
+  sample: StaffLocalityTarget,
+  input: { reason: string; author: string },
+): Promise<StaffLocalityResult> {
+  const found = (await (
+    await deps.conn.run(
+      `SELECT observation_latitude, observation_longitude, observation_uncertainty_m
+       FROM sample_location_label_diverged WHERE sample_id = $1`,
+      [sample.entity_id] as never,
+    )
+  ).getRows()) as unknown[][];
+  const d = found[0];
+  if (d === undefined) return { outcome: "unchanged" };
+  return setStaffCoordinates(deps, sample, {
+    latitude: String(d[0]),
+    longitude: String(d[1]),
+    uncertainty: d[2] === null ? "" : String(d[2]),
+    remove: false,
+    note: input.reason,
+    author: input.author,
+  });
+}
+
+/**
  * A collector adopting the locality Beeline names from the sample's
  * coordinates (beeline-7i6), in one click: the staff locality write above,
  * credited to the volunteer, with the suggestion as the value. So it lands

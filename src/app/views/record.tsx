@@ -21,6 +21,7 @@ import {
   Absent,
   AtlasMark,
   Button,
+  Callout,
   Card,
   Chip,
   DataTable,
@@ -283,7 +284,17 @@ export function SampleFacts({
  * pairs are deliberately never brought into the sample layer, so "no
  * coordinates" means none believed rather than none recorded.
  */
-export function WhereCollected({ m, sample, admin = false }: { m: Messages; sample: SampleDetail; admin?: boolean }) {
+export function WhereCollected({
+  m,
+  sample,
+  admin = false,
+  placePending = false,
+}: {
+  m: Messages;
+  sample: SampleDetail;
+  admin?: boolean;
+  placePending?: boolean;
+}) {
   const w = m.record.sample.where;
   // The staff editor belongs on both branches, and matters most on the one
   // with no coordinates: an obscured observation with no trusted access
@@ -424,7 +435,44 @@ export function WhereCollected({ m, sample, admin = false }: { m: Messages; samp
           },
         ]}
       />
+      {admin && placePending ? (
+        <Callout tone="warning">
+          <p>{m.record.sample.staffCoordinates.placePending}</p>
+        </Callout>
+      ) : null}
+      {admin && sample.label_diverged !== null ? <TakeObservationLocation m={m} sample={sample} /> : null}
     </>
+  );
+}
+
+/**
+ * A sample Beeline printed whose observation the collector has since moved
+ * (beeline-1kb.17.1, GitHub #298): where iNaturalist puts it now, and one
+ * button for staff to take that, county and state included. Staff only,
+ * because only staff can reprint, and whether the label or iNaturalist is
+ * the wrong one is a question the page cannot answer for them.
+ */
+function TakeObservationLocation({ m, sample }: { m: Messages; sample: SampleDetail }) {
+  const t = m.record.sample.takeObservationLocation;
+  const d = sample.label_diverged!;
+  const where =
+    d.state_province === null
+      ? null
+      : d.county === null
+        ? d.state_province
+        : d.country === "USA"
+          ? `${d.county} County, ${d.state_province}`
+          : `${d.county}, ${d.state_province}`;
+  const distance = d.distance_m >= 1000 ? `${Math.round(d.distance_m / 1000)} km` : `${Math.round(d.distance_m)} m`;
+  return (
+    <Callout tone="warning">
+      <p>{t.lead(d.latitude, d.longitude, where, distance)}</p>
+      <p>{t.then}</p>
+      <form method="post" action={`/samples/${sample.sample_id}/take-observation-location`}>
+        <TextField id="take-observation-location-note" name="note" label={t.note} hint={t.noteHint} />
+        <Button variant="tonal">{t.action}</Button>
+      </form>
+    </Callout>
   );
 }
 
@@ -773,6 +821,7 @@ export function SamplePage({
   ownsLocality = false,
   trapEditHref,
   entered = false,
+  placePending = false,
 }: {
   m: Messages;
   sample: SampleDetail;
@@ -789,6 +838,12 @@ export function SamplePage({
   trapEditHref?: string;
   /** Whether the sample was entered in Beeline rather than imported (beeline-3vs.2). */
   entered?: boolean;
+  /**
+   * Staff just set the point and its county and state could not be written
+   * from it at once (beeline-1kb.17.1); the page says so, since a reprint
+   * would print the old ones.
+   */
+  placePending?: boolean;
 }) {
   return (
     <>
@@ -814,7 +869,7 @@ export function SamplePage({
         <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} />
       </Card>
       <Card>
-        <WhereCollected m={m} sample={sample} admin={admin} />
+        <WhereCollected m={m} sample={sample} admin={admin} placePending={placePending} />
       </Card>
       <Card>
         <SampleFlags

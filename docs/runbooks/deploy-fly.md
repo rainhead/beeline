@@ -153,10 +153,11 @@ in `fly.production.toml`, is the folder. Set both or neither, as with Ecdysis.
 
 `OLD_BEELINE_USERNAME` and `OLD_BEELINE_PASSWORD` are an admin login on the
 old Beeline at old.melittologist.org, which the `legacy-copy` job copies every
-printed specimen in with (beeline-83b8.18,
+printed specimen in with (beeline-83b8.18) and the `legacy-volunteer-import`
+job reads volunteers' determinations back with (beeline-c43w,
 [the legacy-format export](../architecture/the-legacy-format-export.md)).
-Make the account in the old Beeline's admin page, keep it for this job alone,
-and set both or neither. Without them the job fails every night in production,
+Make the account in the old Beeline's admin page, keep it for these jobs alone,
+and set both or neither. Without them both jobs fail every night in production,
 as the backup does. Try the login first from a workstation with
 `pnpm legacy:copy <store copy> --dry-run`, which signs in and reads the old
 system but sends nothing.

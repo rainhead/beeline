@@ -1,13 +1,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { accessToken, drive } from "./google-drive.js";
+import { parseServiceAccountKey, serviceAccountToken, uploadFile } from "./drive-service-account.js";
 
 /**
  * Files people send Beeline — a taxonomist's determinations, a staff
- * inventory, an atlas lead's corrections — kept in one Drive folder as they
- * arrived, so that whatever a loader takes from one can be traced back to the
- * file itself, and the file read again when a question comes up later.
+ * inventory, an atlas lead's corrections — kept in one folder on the
+ * program's shared drive as they arrived, so that whatever a loader takes
+ * from one can be traced back to the file itself, and the file read again
+ * when a question comes up later.
  *
  * Storing is the first step for any file that arrives by email or by hand:
  * `pnpm received:store <file> --from "<who sent it>" --sent <instant>` uploads
@@ -20,14 +21,24 @@ import { accessToken, drive } from "./google-drive.js";
  * `data/received/<id>/`, the file under its own name and `file.json` beside
  * it. A loader reads that directory: the Drive id, the name and the sent time
  * are its provenance, and what it could not place goes into the same
- * directory. On the production machine the directory goes up whole with
- * `fly ssh sftp`, since the machine cannot sign in to Drive. `data/` is
- * gitignored, and these files stay there: most of them name people.
+ * directory. `data/` is gitignored, and these files stay there: most of them
+ * name people.
+ *
+ * Both act as Beeline's service account, the one the nightly backup uploads
+ * as (src/drive-service-account.ts), and not as whoever is signed in to
+ * gcloud: the shared drive is the program's, and with the `drive.file` scope
+ * the account can read back exactly the files it stored. So the production
+ * machine, which holds the key as `BEELINE_DRIVE_KEY`, fetches a file itself.
+ * A workstation reads the same key from `data/secrets/drive-key.json`.
  */
 
-/** "Beeline received files", in Peter's Drive. */
-export const RECEIVED_FOLDER = "1IrJRV_TMI4gUhs1q2HRcKG6b3aykMVDP";
+/**
+ * "Beeline received files", on the OSU shared drive. Empty until the service
+ * account can create it there: it is a member of databaseBackups alone.
+ */
+export const RECEIVED_FOLDER: string | null = null;
 export const RECEIVED_DIR = "data/received";
+export const WORKSTATION_KEY = "data/secrets/drive-key.json";
 
 /** What a fetched file's file.json holds. */
 export interface ReceivedFile {
@@ -51,6 +62,30 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   ".txt": "text/plain",
 };
 
+/** The service account's token: its key from the environment, as on the server, or from the workstation's file. */
+async function token(): Promise<string> {
+  const fromEnv = process.env.BEELINE_DRIVE_KEY;
+  let json: string;
+  if (fromEnv !== undefined && fromEnv !== "") {
+    json = fromEnv;
+  } else {
+    try {
+      json = await readFile(WORKSTATION_KEY, "utf8");
+    } catch {
+      throw new Error(
+        `no service account key: set BEELINE_DRIVE_KEY, or copy production's into ${WORKSTATION_KEY} (fly ssh console -C 'printenv BEELINE_DRIVE_KEY')`,
+      );
+    }
+  }
+  return serviceAccountToken(parseServiceAccountKey(json));
+}
+
+async function drive(accessToken: string, url: string): Promise<Response> {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(5 * 60_000) });
+  if (!res.ok) throw new Error(`Drive answered ${res.status} for ${url.split("?")[0]}: ${(await res.text()).slice(0, 300)}`);
+  return res;
+}
+
 export interface StoreOptions {
   file: string;
   from: string;
@@ -60,46 +95,30 @@ export interface StoreOptions {
   folder?: string;
 }
 
-export async function storeReceived(opts: StoreOptions): Promise<{ id: string; name: string; webViewLink: string }> {
+export async function storeReceived(opts: StoreOptions): Promise<{ id: string; name: string }> {
   if (opts.from.trim() === "") throw new Error("--from: who sent the file");
   const sent = new Date(opts.sent);
   if (Number.isNaN(sent.getTime())) throw new Error(`--sent: not a date or instant: ${opts.sent}`);
+  const folderId = opts.folder ?? RECEIVED_FOLDER;
+  if (folderId === null) throw new Error("the received-files folder does not exist yet (RECEIVED_FOLDER in src/received-files.ts)");
   const name = basename(opts.file);
-  const mimeType = MIME_BY_EXTENSION[extname(name).toLowerCase()] ?? "application/octet-stream";
   const description = [`Sent by ${opts.from.trim()} on ${sent.toISOString().slice(0, 10)}.`, opts.note?.trim()]
     .filter((s) => s !== undefined && s !== "")
     .join(" ");
-  const metadata = {
+  const stored = await uploadFile(await token(), {
+    folderId,
+    path: opts.file,
     name,
-    mimeType,
-    parents: [opts.folder ?? RECEIVED_FOLDER],
-    modifiedTime: sent.toISOString(),
-    description,
-    appProperties: { from: opts.from.trim(), sent: sent.toISOString() },
-  };
-  const boundary = `beeline-${Date.now()}`;
-  const body = Buffer.concat([
-    Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`),
-    Buffer.from(`--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`),
-    await readFile(opts.file),
-    Buffer.from(`\r\n--${boundary}--\r\n`),
-  ]);
-  const res = await fetch(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink",
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken()}`, "Content-Type": `multipart/related; boundary=${boundary}` },
-      body,
-    },
-  );
-  if (!res.ok) throw new Error(`Drive answered ${res.status} to the upload: ${(await res.text()).slice(0, 300)}`);
-  return (await res.json()) as { id: string; name: string; webViewLink: string };
+    mimeType: MIME_BY_EXTENSION[extname(name).toLowerCase()] ?? "application/octet-stream",
+    metadata: { modifiedTime: sent.toISOString(), description, appProperties: { from: opts.from.trim(), sent: sent.toISOString() } },
+  });
+  return { id: stored.id, name: stored.name };
 }
 
 export async function fetchReceived(id: string, dir = join(RECEIVED_DIR, id)): Promise<ReceivedFile & { dir: string }> {
-  const token = accessToken();
+  const accessToken = await token();
   const q = new URLSearchParams({ fields: "id, name, mimeType, modifiedTime, description, appProperties", supportsAllDrives: "true" });
-  const meta = (await (await drive(token, `https://www.googleapis.com/drive/v3/files/${id}?${q}`)).json()) as {
+  const meta = (await (await drive(accessToken, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?${q}`)).json()) as {
     id: string;
     name: string;
     mimeType: string;
@@ -107,11 +126,10 @@ export async function fetchReceived(id: string, dir = join(RECEIVED_DIR, id)): P
     description?: string;
     appProperties?: { from?: string };
   };
-  if (meta.mimeType.startsWith("application/vnd.google-apps.")) {
-    throw new Error(`${meta.name} is a Google ${meta.mimeType.split(".").at(-1)}, not a file as sent; store the file itself`);
-  }
   if (meta.name.includes("/") || meta.name === "file.json") throw new Error(`a name this directory cannot hold: ${meta.name}`);
-  const bytes = new Uint8Array(await (await drive(token, `https://www.googleapis.com/drive/v3/files/${id}?alt=media&supportsAllDrives=true`)).arrayBuffer());
+  const bytes = new Uint8Array(
+    await (await drive(accessToken, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media&supportsAllDrives=true`)).arrayBuffer(),
+  );
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, meta.name), bytes);
   const file: ReceivedFile = {

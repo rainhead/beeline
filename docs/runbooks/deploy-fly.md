@@ -270,7 +270,7 @@ This is where `pnpm db:reseed`, `pnpm person:apply`,
 goes up with `fly ssh sftp put --app beeline-production` into `data/` and never into git; so does a
 staff inventory file (`data/dispositions/<file>.xlsx`, loaded with
 `pnpm disposition:load data/dispositions/<file>.xlsx data/beeline.duckdb --by "<name>" --on <date>`,
-which leaves what it could not place in `<file>.xlsx.held.csv` beside it), and a directory fetched with `pnpm received:fetch <drive-id>` goes up whole to `data/received/<id>/`, loaded with `pnpm determinations:load data/received/<id> data/beeline.duckdb` after a `--dry-run`. The image
+which leaves what it could not place in `<file>.xlsx.held.csv` beside it), and a file someone sent, stored with `pnpm received:store`, is fetched on the machine itself with `pnpm received:fetch <drive-id>` (the machine's `BEELINE_DRIVE_KEY` is the account that stored it) and loaded with `pnpm determinations:load data/received/<id> data/beeline.duckdb` after a `--dry-run`. The image
 has `curl` and `jq` for asking iNaturalist or Ecdysis something with the
 machine's own secrets, `unzip`, `ps`/`top`/`free` for watching a long run, and
 `less`. It has no editor. It has the `duckdb` command, on exactly the

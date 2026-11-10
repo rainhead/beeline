@@ -1005,6 +1005,7 @@ export function createApp({
           ownsLocality={ownsLocality}
           trapEditHref={trapEditHref}
           entered={entered !== null}
+          placePending={c.get("admin") && c.req.query("place") === "pending"}
         />,
       ),
     );
@@ -1408,6 +1409,7 @@ export function createApp({
     const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, STAFF_READER);
     if (sample === null) return errorResponse(c, "notFound");
     if (sample.inat_observation_id === null) return c.text(m.record.sample.staffCoordinates.noObservation, 409);
+    if (syncJobRunning()) return c.text(m.record.sample.staffCoordinates.busy, 409);
     const body = await c.req.parseBody();
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
     const result = await setStaffCoordinates(
@@ -1424,8 +1426,9 @@ export function createApp({
     );
     if (result.outcome === "invalid") return c.text(result.problem, 400);
     if (result.outcome === "unresolved") return c.text(result.reason, 409);
+    let settled = true;
     if (result.outcome === "saved" || result.outcome === "removed") {
-      await deriveMovedPoint(sample.sample_id, "staff coordinates");
+      settled = await deriveMovedPoint(sample.sample_id, "staff coordinates");
       try {
         await recordSampleChanges(kyselyReader(db), samplePaths, {
           source: "app",
@@ -1437,8 +1440,17 @@ export function createApp({
         console.warn(`could not record the coordinate change: ${(err as Error).message}`);
       }
     }
-    return c.redirect(`/samples/${sample.sample_id}`);
+    return c.redirect(`/samples/${sample.sample_id}${settled ? "" : "?place=pending"}`);
   });
+
+  // The two jobs that rewrite samples wholesale. While one runs, a staff
+  // point is refused rather than written: the job's own area step may
+  // already have passed, and the county and state would then wait a day
+  // with nothing on the page saying so (Fable's review of beeline-1kb.17.1).
+  const syncJobRunning = () => {
+    const running = jobsDep.running?.() ?? null;
+    return running === "nightly-pipeline" || running === "weekly-sweep";
+  };
 
   /**
    * What the nightly does for a point that moved, done at once for a point
@@ -1448,29 +1460,31 @@ export function createApp({
    * the log credits the staffer with all of it rather than crediting the
    * next night with the county. A reprint is usually next, and would
    * otherwise print the old point's elevation and county. Never fails the
-   * request; the nightly does whatever this could not.
+   * request. Says whether the county and state are now the point's; when
+   * not, the page says so, since the nightly may not fix it either (a point
+   * in no county, or on the shore across a border).
    */
-  async function deriveMovedPoint(sampleId: number, logTag: string): Promise<void> {
+  async function deriveMovedPoint(sampleId: number, logTag: string): Promise<boolean> {
     const connection = mintConn ?? conn;
-    if (connection === undefined) return;
+    if (connection === undefined) return false;
     const [collector] = (
       await sql<{ inat_user_id: bigint | null }>`SELECT a.inat_user_id FROM sample_primary_collector pc
         JOIN inat_account a ON a.person_id = pc.person_id WHERE pc.sample_id = ${sampleId}`.execute(db)
     ).rows;
-    await withPromotionLock(() =>
+    const derived = await withPromotionLock(() =>
       deriveForObserver(connection, {
+        // For the locality names only; the areas are found for this sample
+        // whoever collected it.
         observerUserId: collector?.inat_user_id == null ? null : Number(collector.inat_user_id),
         demDir: inatCheck?.demDir,
         gazetteerPath: inatCheck?.gazetteerPath,
         stampSampleIds: [sampleId],
         // Asked inside the lock: the nightly may have started while this waited.
-        jobRunning: () => {
-          const running = jobsDep.running?.() ?? null;
-          return running === "nightly-pipeline" || running === "weekly-sweep";
-        },
+        jobRunning: syncJobRunning,
         logTag,
       }),
     );
+    return derived.placeSettled;
   }
 
   // Staff take the observation's location for a sample Beeline printed,
@@ -1487,6 +1501,7 @@ export function createApp({
     const session = c.get("session");
     const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, STAFF_READER);
     if (sample === null) return errorResponse(c, "notFound");
+    if (syncJobRunning()) return c.text(m.record.sample.staffCoordinates.busy, 409);
     const body = await c.req.parseBody();
     const note = typeof body.note === "string" ? body.note.trim() : "";
     const reason = note === "" ? m.record.sample.takeObservationLocation.reason : note;
@@ -1498,7 +1513,7 @@ export function createApp({
     if (result.outcome === "invalid") return c.text(result.problem, 400);
     if (result.outcome === "unresolved") return c.text(result.reason, 409);
     if (result.outcome === "unchanged") return c.text(m.record.sample.takeObservationLocation.notMoved, 409);
-    await deriveMovedPoint(sample.sample_id, "take observation location");
+    const settled = await deriveMovedPoint(sample.sample_id, "take observation location");
     try {
       await recordSampleChanges(kyselyReader(db), samplePaths, {
         source: "app",
@@ -1509,7 +1524,7 @@ export function createApp({
     } catch (err) {
       console.warn(`could not record the location change: ${(err as Error).message}`);
     }
-    return c.redirect(`/samples/${sample.sample_id}`);
+    return c.redirect(`/samples/${sample.sample_id}${settled ? "" : "?place=pending"}`);
   });
 
   // Staff hold a sample back from printing, or waive a blocking flag they

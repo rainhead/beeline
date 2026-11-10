@@ -1138,6 +1138,11 @@ export const en = {
         uncertainty: "Accuracy, in meters (optional)",
         save: "Save",
         remove: "Follow iNaturalist again",
+        /** After a save whose county and state could not be set from the new point at once (beeline-1kb.17.1). */
+        placePending:
+          "Beeline could not set the county and state from these coordinates just now, so they may not match. Check them before reprinting this sample's labels.",
+        /** Refused while the overnight sync runs, which would undo or race the change. */
+        busy: "Beeline is syncing with iNaturalist right now. Try again once it has finished.",
       },
       /**
        * Staff taking iNaturalist's location for a sample Beeline printed,

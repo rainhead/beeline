@@ -294,11 +294,15 @@ describe("stamping a sample's county from its coordinates (beeline-313x, Peter, 
     const entered = await insertCleanSample(conn, { sample_number: "'7'", kind: "'trap'" }, ALSEA);
     await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
     const r = await deriveAreas(conn, path, { stampCounties: true });
-    expect(r.countiesStamped).toBe(2);
-    expect(describeAreas(r)).toContain("2 county(ies) written from the coordinates");
+    expect(r.countiesStamped).toBe(3);
+    expect(describeAreas(r)).toContain("3 county(ies) written from the coordinates");
     expect(await countyOf(conn, stamped)).toBe("Benton");
     expect(await countyOf(conn, entered)).toBe("Benton");
-    for (const id of [noObservation, settled, printed, otherState, frozen]) {
+    // A sample still to print whose point lies inside an Oregon county is in
+    // Oregon, whatever it said (beeline-1kb.17.1). Before, it was skipped as
+    // wrong in a way no county could fix.
+    expect(await rows(conn, `SELECT state_province, county FROM sample WHERE entity_id = ${otherState}`)).toEqual([["OR", "Benton"]]);
+    for (const id of [noObservation, settled, printed, frozen]) {
       expect(await countyOf(conn, id)).toBe("BentonCo");
     }
     // A second run finds nothing to change.
@@ -381,6 +385,41 @@ describe("stamping a sample's county from its coordinates (beeline-313x, Peter, 
     expect(await place(untouched)).toEqual(["USA", "WA", "Klickitat", null]);
     expect(await place(frozen)).toEqual(["USA", "WA", "Klickitat", null]);
     expect((await deriveAreas(conn, path, { stampCounties: true })).countiesStamped).toBe(0);
+  });
+
+  test("a sample still to print follows its point's state too, so a staff point taken away takes its state with it", async () => {
+    // Fable's review of beeline-1kb.17.1: staff set a point in another state
+    // on a sample still to print, the stamp moved its state, staff removed
+    // the point, and the state stayed behind for good, because the stamp
+    // used to require the sample's state to be the point's already.
+    const path = join(dir, "follows.duckdb");
+    await buildTestGazetteer(path, "build-follows");
+    const conn = await storeWithPerson();
+    const id = await insertCleanSample(conn, { inat_observation_id: "3001", state_province: "'WA'", county: "'Klickitat'" }, ALSEA);
+    expect((await deriveAreas(conn, path, { stampCounties: true })).countiesStamped).toBe(1);
+    expect(await rows(conn, `SELECT state_province, county FROM sample WHERE entity_id = ${id}`)).toEqual([["OR", "Benton"]]);
+  });
+
+  test("a county found by the shore allowance never changes the state", async () => {
+    // 45.005 is about 550 m north of the test county's edge, inside the 1 km
+    // allowance: the point takes Benton without lying in it. Near a land
+    // border that is the neighbour's county, so the state must not follow.
+    const path = join(dir, "shore.duckdb");
+    await buildTestGazetteer(path, "build-shore");
+    const conn = await storeWithPerson();
+    const shore = { latitude: "45.005", longitude: "-123.60" };
+    const other = await insertCleanSample(conn, { inat_observation_id: "4001", state_province: "'WA'", county: "'Klickitat'" }, shore);
+    await conn.run(`INSERT INTO sample_location_override (sample_id, latitude, longitude) VALUES (${other}, 45.005, -123.60)`);
+    await conn.run(`UPDATE sample_location SET source = 'staff_entry' WHERE sample_id = ${other}`);
+    const same = await insertCleanSample(conn, { inat_observation_id: "4002", sample_number: "'2'" }, shore);
+    const r = await deriveAreas(conn, path, { stampSampleIds: [other, same] });
+    expect(r.countiesStamped).toBe(1);
+    expect(await rows(conn, `SELECT entity_id, state_province, county FROM sample ORDER BY 1`)).toEqual([
+      [other, "WA", "Klickitat"],
+      [same, "OR", "Benton"],
+    ]);
+    // Neither lies inside a county, so neither is settled: the page says so.
+    expect(r.unsettled).toEqual([other, same]);
   });
 
   test("leaves every county alone unless asked, as Check iNaturalist now does", async () => {

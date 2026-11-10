@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -12,6 +12,9 @@ import { promoteObservations } from "../src/promote-observations.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
 import { applySampleOverlay } from "../src/apply-sample-overlay.js";
 import { readSampleOverlay } from "../src/sample-overlay.js";
+import { parseCsv } from "../src/corrections.js";
+import { duckdbReader } from "../src/person-change.js";
+import { recordSampleChanges } from "../src/sample-change.js";
 import { canonicalJson } from "../src/sync-inat.js";
 import { loadSpatial, openDuckDb } from "../src/db.js";
 import { buildTestGazetteer, createMemoryDb, currentSeasonDate, insertCleanSample, rows, scratchPaths } from "./helpers.js";
@@ -93,9 +96,15 @@ async function gazetteerWithLane(dir: string): Promise<string> {
  * Lori's sample, printed in California, with the observation since moved to
  * Oregon; signed in as Sam (staff) or Lori.
  */
-async function moved(signedInAs: "sam" | "lori" = "sam") {
+async function moved(
+  signedInAs: "sam" | "lori" = "sam",
+  opts: { loriHasAccount?: boolean; gazetteer?: boolean; running?: string | null } = {},
+) {
   const { instance, conn } = await createMemoryDb();
-  const lori = await person(conn, "Lori Collector", "lori", 1);
+  const lori =
+    (opts.loriHasAccount ?? true)
+      ? await person(conn, "Lori Collector", "lori", 1)
+      : Number(((await rows(conn, `INSERT INTO person (display_name) VALUES ('Lori Collector') RETURNING entity_id`)) as [[number]])[0][0]);
   const sam = await person(conn, "Sam Staff", "samstaff", 2);
   await conn.run(`INSERT INTO person_admin (person_id) VALUES (${sam})`);
   for (const [id, name, level, ancestors] of PLACES) {
@@ -144,7 +153,12 @@ async function moved(signedInAs: "sam" | "lori" = "sam") {
     }),
     conn,
     mintConn: await instance.connect(),
-    inatCheck: { projects: [], token: async () => "unused", gazetteerPath: await gazetteerWithLane(dir) },
+    inatCheck: {
+      projects: [],
+      token: async () => "unused",
+      gazetteerPath: (opts.gazetteer ?? true) ? await gazetteerWithLane(dir) : undefined,
+    },
+    jobs: { list: [], start: async () => false, running: () => opts.running ?? null },
     ...paths,
   });
   return { app, conn, sampleId, ...paths };
@@ -216,6 +230,55 @@ describe("a sample Beeline printed whose observation has moved", () => {
     const { app, sampleId, sampleOverlayPath } = await moved();
     expect((await post(app, `/samples/${sampleId}/take-observation-location`)).status).toBe(302);
     expect((await readSampleOverlay(sampleOverlayPath)).map((r) => r.reason)).toEqual([t.reason]);
+  });
+
+  it("credits the staffer in the sample's history with the point, the county and the state together", async () => {
+    const { app, conn, sampleId, sampleChangesPath, sampleStatePath } = await moved();
+    // The log's first pass only takes a baseline; production's was taken long ago.
+    await recordSampleChanges(duckdbReader(conn), { log: sampleChangesPath, state: sampleStatePath }, { source: "observation_promotion" });
+    expect((await post(app, `/samples/${sampleId}/take-observation-location`, { note: "Lori fixed the pin" })).status).toBe(302);
+    const log = parseCsv(await readFile(sampleChangesPath, "utf8"));
+    const header = log[0]!;
+    const col = (name: string) => header.indexOf(name);
+    const changes = log
+      .slice(1)
+      .filter((r) => r[col("source")] === "app")
+      .map((r) => [r[col("field")], r[col("old_value")], r[col("new_value")], r[col("author")], r[col("reason")]]);
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        ["state_province", "CA", "OR", "samstaff", "Lori fixed the pin"],
+        ["county", "Nevada", "Lane", "samstaff", "Lori fixed the pin"],
+        ["location_source", "inat_public", "staff_entry", "samstaff", "Lori fixed the pin"],
+      ]),
+    );
+    // Nothing about the move is left for a later pass to credit to anyone else.
+    expect(log.slice(1).filter((r) => r[col("source")] !== "app" && ["state_province", "county"].includes(r[col("field")]!))).toEqual([]);
+  });
+
+  it("finds the new county for a sample whose collector has no iNaturalist account", async () => {
+    const { app, conn, sampleId } = await moved("sam", { loriHasAccount: false });
+    const res = await post(app, `/samples/${sampleId}/take-observation-location`);
+    expect(res.headers.get("location")).toBe(`/samples/${sampleId}`);
+    expect(await rows(conn, `SELECT state_province, county FROM sample WHERE entity_id = ${sampleId}`)).toEqual([["OR", "Lane"]]);
+  });
+
+  it("says so on the page when the county and state could not be set from the point", async () => {
+    const { app, conn, sampleId } = await moved("sam", { gazetteer: false });
+    const res = await post(app, `/samples/${sampleId}/take-observation-location`);
+    expect(res.headers.get("location")).toBe(`/samples/${sampleId}?place=pending`);
+    expect(await rows(conn, `SELECT state_province FROM sample WHERE entity_id = ${sampleId}`)).toEqual([["CA"]]);
+    const page = await (await app.request(res.headers.get("location")!)).text();
+    // Up to the apostrophe, which the page escapes.
+    expect(page).toContain(en.record.sample.staffCoordinates.placePending.split("'")[0]);
+  });
+
+  it("is refused while the nightly runs, and writes nothing", async () => {
+    const { app, conn, sampleId, sampleOverlayPath } = await moved("sam", { running: "nightly-pipeline" });
+    const res = await post(app, `/samples/${sampleId}/take-observation-location`);
+    expect(res.status).toBe(409);
+    expect(await res.text()).toBe(en.record.sample.staffCoordinates.busy);
+    expect(await readSampleOverlay(sampleOverlayPath)).toEqual([]);
+    expect(await rows(conn, `SELECT count(*) FROM sample_location_label_diverged`)).toEqual([[1n]]);
   });
 
   it("moves the county and state just the same when staff type the point into the coordinates form", async () => {

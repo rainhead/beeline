@@ -94,3 +94,21 @@ COMMENT ON COLUMN worksheet_determination.file_id IS 'The Google Drive file id â
 COMMENT ON COLUMN worksheet_determination.file_name IS 'The file''s title when it was loaded, for a person looking for it in Drive.';
 COMMENT ON COLUMN worksheet_determination.file_modified_at IS 'Drive''s modifiedTime for the version loaded: an upper bound on when the entry was made, and what orders one determiner''s copies.';
 COMMENT ON COLUMN worksheet_determination.row_number IS 'The spreadsheet row, 1-based as the sheet numbers it.';
+
+-- Old-Beeline records that legacy promotion set aside as a second print of a
+-- specimen it holds (the duplicate_specimen finding, ingest/promote-legacy.sql),
+-- tied back to that specimen by a one-time repair (beeline-iuva). Promotion
+-- kept one record of each pair, often the one nobody had identified, so the
+-- repair carried the set-aside record's determinations to the specimen and
+-- recorded the record here, so that the nightly import of volunteers'
+-- determinations from the old Beeline (src/legacy-volunteer-import.ts)
+-- follows it too. legacy_specimen_number cannot hold it: that table is one
+-- record per specimen, and the legacy-format export makes a row of each.
+CREATE TABLE legacy_duplicate_record (
+  _id         TEXT PRIMARY KEY,
+  specimen_id INTEGER NOT NULL REFERENCES specimen(entity_id),
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE legacy_duplicate_record IS 'An old-Beeline record promotion set aside as a second print of a specimen it holds, tied to that specimen (beeline-iuva): its determinations were carried to the specimen, and the nightly import of volunteers'' determinations from the old Beeline reads it as one of the specimen''s records.';
+COMMENT ON COLUMN legacy_duplicate_record._id IS 'The old record''s id, as in legacy_occurrence.';
+COMMENT ON COLUMN legacy_duplicate_record.recorded_at IS 'When the repair tied it to the specimen.';

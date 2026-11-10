@@ -30,7 +30,9 @@ import { LEGACY_COPY_ID_PREFIX, OldBeelineApi, type OldBeelineCredentials } from
  * though the old system had sent them, which must record nothing.
  *
  * WHICH SPECIMEN. A record the old system made is the specimen promotion made
- * from it, by its `_id` (legacy_specimen_map). A record whose `_id` starts
+ * from it, by its `_id` (legacy_specimen_map), or, for a second print that
+ * promotion set aside, the specimen a repair tied it to
+ * (legacy_duplicate_record, beeline-iuva). A record whose `_id` starts
  * `beeline-specimen-` is Beeline's own copy of a specimen printed here, keyed
  * by the specimen's entity id (src/legacy-copy.ts). A record matching neither
  * is one promotion did not take, a duplicate or a blocked row, and is
@@ -232,7 +234,14 @@ export async function recordOldVolunteerDeterminations(
              an.entity_id                           AS animal_id
       FROM temp.old_vol_record r
       JOIN temp.old_vol_target t USING (_id)
-      LEFT JOIN legacy_specimen_map m ON m._id = r._id
+      LEFT JOIN (
+        SELECT _id, specimen_id, collector_id FROM legacy_specimen_map
+        UNION ALL
+        SELECT d._id, d.specimen_id, pc.person_id
+        FROM legacy_duplicate_record d
+        JOIN specimen sp ON sp.entity_id = d.specimen_id
+        LEFT JOIN sample_primary_collector pc ON pc.sample_id = sp.sample_id
+      ) m ON m._id = r._id
       LEFT JOIN specimen cp
         ON regexp_full_match(r._id, '${LEGACY_COPY_ID_PREFIX}[1-9][0-9]*')
        AND cp.entity_id = try_cast(substr(r._id, ${prefixLength + 1}) AS INTEGER)

@@ -12,9 +12,20 @@ import { pathToFileURL } from "node:url";
  * higher field number (legacy_ranked, ingest/promote-legacy.sql). Measured on
  * the store of 9 November 2026, that was often the record nobody had
  * identified: in 120 of 258 pairs the set-aside record carried an expert's or
- * a volunteer's identification the kept one lacked, and Beeline held none
- * for the specimen. For each set-aside record whose kept partner became a
- * specimen, this
+ * a volunteer's identification the kept one lacked.
+ *
+ * NOT EVERY PAIR IS ONE PIN. Promotion calls two records the same specimen
+ * when they share a collector, date, sample number and specimen number, and
+ * looks at nothing else. Many pairs disagree on how the bee was caught: in
+ * 2019 one collector's sample 1 of 8 August was netted (1925139 onward) and
+ * also pan-trapped (2121499 onward), and the expert identified 1925139 as a
+ * drone and 2121499 as a worker of the same species. Those are two
+ * collections sharing a sample number. So this acts only on a pair that
+ * looks like a reprint: the same method, recorded within a kilometre, and no
+ * sex or caste stated on both records that differs, nor experts who named
+ * different bees. The rest, 144 of 258 on that store, it leaves alone for
+ * somebody to look at (GitHub #303). For each set-aside record of a reprint
+ * whose kept partner became a specimen, this
  *   - carries its expert identification to the specimen if the specimen has
  *     no expert determination, and its volunteer identification if it has no
  *     volunteer determination, as promotion would have recorded them;
@@ -23,23 +34,15 @@ import { pathToFileURL } from "node:url";
  * Which of the two field numbers is on the pin is not decided here: that
  * takes somebody looking at the pins.
  *
- * TWO BEES UNDER ONE NUMBER. Where both records of a pair carry an expert
- * identification and neither names the other's taxon or one of its
- * ancestors, they are two pins that share a sample and specimen number, not
- * one pin printed twice. The set-aside record becomes a specimen of its own
- * in the same sample, numbered after the sample's last, with its own field
- * number and identifications, and a row in legacy_specimen_number as
- * promotion gives every record it takes.
- *
  * A DATE WRITTEN BACKWARDS, ON AN OBSERVATION BEELINE HOLDS. A record refused
  * only for its date (the end before the start, or unreadable), linked to an
  * iNaturalist observation that is already a sample in Beeline with no
- * specimens and the same collector, becomes a specimen of that sample. The
- * sample's date is the observation's, so the record's own date is not
- * needed. On the store of 9 November 2026 this was one trap sample of 2020,
- * 34 specimens on observation 56359335, whose old records say 2 to 1 August
- * where the observation's own fields say the trap went out and came in on
- * 1 August.
+ * specimens and the same collector, and no other sample, becomes a specimen
+ * of that sample. The sample's date is the observation's, so the record's
+ * own date is not needed. On the store of 9 November 2026 this was one net
+ * sample of 2020, 34 specimens on observation 56359335, whose old records
+ * say they were collected from 2 August to 1 August; the observation is
+ * dated 2 August, and its fields put the collecting on 1 August.
  *
  * The identifications are read by promotion's own rules: the views that
  * apply them (legacy_det_taxa, legacy_expert_target, legacy_vol_det_taxa,
@@ -51,11 +54,11 @@ import { pathToFileURL } from "node:url";
 export interface SkippedRepairResult {
   /** Set-aside second prints tied to their specimen. */
   tied: number;
+  /** Pairs left alone because the two records disagree, by what they disagree on. */
+  leftAlone: { reason: string; pairs: number }[];
   /** Identifications carried from them to a specimen that lacked one. */
   carriedExpert: number;
   carriedVolunteer: number;
-  /** Field numbers given a specimen of their own: the second bee of a pair. */
-  separated: { fieldNumber: string; keptFieldNumber: string }[];
   /** Records given a specimen in the sample of their observation. */
   attached: { observation: number; sampleId: number; specimens: number }[];
   /** Determinations recorded for new specimens. */
@@ -80,7 +83,7 @@ async function repoint(conn: DuckDBConnection, view: string, as: string, from: s
 }
 
 const TEMP = [
-  "repair_reading", "repair_volunteer_target", "repair_vol_det_taxa", "repair_expert_target", "repair_det_taxa",
+  "repair_unsure", "repair_reading", "repair_volunteer_target", "repair_vol_det_taxa", "repair_expert_target", "repair_det_taxa",
   "repair_staged", "repair_pair", "repair_attach", "repair_new", "repair_ancestry",
 ];
 
@@ -93,7 +96,21 @@ export async function repairSkippedLegacyRecords(conn: DuckDBConnection, opts: {
     await conn.run(`
       CREATE OR REPLACE TEMP TABLE repair_pair AS
       SELECT rs._id AS skipped_id, rs."fieldNumber" AS skipped_fn, k._id AS kept_id, k."fieldNumber" AS kept_fn,
-             m.specimen_id, sp.sample_id
+             m.specimen_id, sp.sample_id,
+             CASE
+               WHEN nullif(lower(trim(rs."samplingProtocol")), '') IS DISTINCT FROM nullif(lower(trim(k."samplingProtocol")), '')
+                 THEN 'caught by a different method'
+               WHEN rs.p_lat IS NULL OR rs.p_lon IS NULL OR k.p_lat IS NULL OR k.p_lon IS NULL
+                 THEN 'no coordinates to compare'
+               WHEN 6371 * 2 * asin(sqrt(pow(sin(radians(k.p_lat - rs.p_lat) / 2), 2)
+                      + cos(radians(rs.p_lat)) * cos(radians(k.p_lat)) * pow(sin(radians(k.p_lon - rs.p_lon) / 2), 2))) > 1
+                 THEN 'recorded more than a kilometre apart'
+               WHEN legacy_sex_of(rs.sex, rs.caste) <> legacy_sex_of(k.sex, k.caste)
+                 OR legacy_caste_of(rs.caste, rs.sex) <> legacy_caste_of(k.caste, k.sex)
+                 OR legacy_sex_of(rs."sexVolDet", rs."casteVolDet") <> legacy_sex_of(k."sexVolDet", k."casteVolDet")
+                 OR legacy_caste_of(rs."casteVolDet", rs."sexVolDet") <> legacy_caste_of(k."casteVolDet", k."sexVolDet")
+                 THEN 'a different sex or caste'
+             END AS unsure
       FROM legacy_ranked rs
       JOIN legacy_ranked k
         ON k.fn IS NOT DISTINCT FROM rs.fn AND k.ln IS NOT DISTINCT FROM rs.ln AND k.sid = rs.sid
@@ -106,6 +123,9 @@ export async function repairSkippedLegacyRecords(conn: DuckDBConnection, opts: {
         AND NOT EXISTS (SELECT 1 FROM legacy_promotion_finding f
                         WHERE f._id = rs._id AND f.severity = 'blocking' AND f.rule <> 'duplicate_specimen')
       QUALIFY row_number() OVER (PARTITION BY rs._id ORDER BY (k.p_inat_obs_id IS NOT DISTINCT FROM rs.p_inat_obs_id) DESC, k._id) = 1`);
+    // A pair that does not look like one pin printed twice is left alone.
+    await conn.run(`CREATE OR REPLACE TEMP TABLE repair_unsure AS SELECT * FROM temp.repair_pair WHERE unsure IS NOT NULL`);
+    await conn.run(`DELETE FROM temp.repair_pair WHERE unsure IS NOT NULL`);
 
     // Records refused only for their date, on an observation Beeline holds
     // as a sample with no specimens, collected by the same person.
@@ -118,6 +138,7 @@ export async function repairSkippedLegacyRecords(conn: DuckDBConnection, opts: {
         AND NOT EXISTS (SELECT 1 FROM legacy_specimen_number n WHERE n._id = r._id)
         AND (SELECT list(DISTINCT f.rule) FROM legacy_promotion_finding f WHERE f._id = r._id AND f.severity = 'blocking') = ['bad_date']
         AND NOT EXISTS (SELECT 1 FROM specimen sp WHERE sp.sample_id = s.entity_id)
+        AND (SELECT count(*) FROM sample o WHERE o.inat_observation_id = s.inat_observation_id) = 1
         AND EXISTS (SELECT 1 FROM legacy_person_map pm JOIN sample_primary_collector pc ON pc.person_id = pm.person_id
                     WHERE pm.fn IS NOT DISTINCT FROM r.fn AND pm.ln IS NOT DISTINCT FROM r.ln AND pc.sample_id = s.entity_id)`);
 
@@ -157,8 +178,13 @@ export async function repairSkippedLegacyRecords(conn: DuckDBConnection, opts: {
       )
     ).map(([n]) => String(n));
 
-    // Two bees: both records carry an expert identification and neither is
-    // the other's taxon or an ancestor of it.
+    // Experts who named different bees: both records carry an expert
+    // identification and neither is the other's taxon or an ancestor of it.
+    // That pair is not one pin either, but it is not plainly two: sample
+    // 103780's observation says it holds three bees, which Beeline has, so
+    // its set-aside 2012711 (Halictus tripartitus against 2045567's Andrena
+    // lawrencei) is more likely one of those three numbered in another order
+    // than a fourth. So it is left alone too.
     await conn.run(`
       CREATE OR REPLACE TEMP TABLE repair_ancestry AS
       WITH RECURSIVE up(node_id, anc_id) AS (
@@ -167,9 +193,8 @@ export async function repairSkippedLegacyRecords(conn: DuckDBConnection, opts: {
         SELECT up.node_id, a.parent_id FROM up JOIN animal a ON a.entity_id = up.anc_id WHERE a.parent_id IS NOT NULL
       ) SELECT * FROM up`);
     await conn.run(`
-      CREATE OR REPLACE TEMP TABLE repair_new AS
-      SELECT p.skipped_id AS _id, p.skipped_fn AS field_number, p.kept_fn, p.sample_id, NULL::BIGINT AS inat_observation_id,
-             0 AS p_specimen_number
+      INSERT INTO temp.repair_unsure
+      SELECT p.* REPLACE ('the experts named different bees' AS unsure)
       FROM temp.repair_pair p JOIN temp.repair_reading rd ON rd._id = p.skipped_id
       WHERE rd.e_animal IS NOT NULL
         AND EXISTS (SELECT 1 FROM determination d WHERE d.specimen_id = p.specimen_id AND d.is_expert AND d.channel = 'legacy_import')
@@ -177,10 +202,9 @@ export async function repairSkippedLegacyRecords(conn: DuckDBConnection, opts: {
           SELECT 1 FROM determination d
           WHERE d.specimen_id = p.specimen_id AND d.is_expert AND d.channel = 'legacy_import'
             AND (EXISTS (SELECT 1 FROM temp.repair_ancestry x WHERE x.node_id = d.animal_id AND x.anc_id = rd.e_animal)
-                 OR EXISTS (SELECT 1 FROM temp.repair_ancestry x WHERE x.node_id = rd.e_animal AND x.anc_id = d.animal_id)))
-      UNION ALL
-      SELECT _id, field_number, NULL, sample_id, inat_observation_id, p_specimen_number FROM temp.repair_attach`);
-    await conn.run(`DELETE FROM temp.repair_pair WHERE skipped_id IN (SELECT _id FROM temp.repair_new)`);
+                 OR EXISTS (SELECT 1 FROM temp.repair_ancestry x WHERE x.node_id = rd.e_animal AND x.anc_id = d.animal_id)))`);
+    await conn.run(`DELETE FROM temp.repair_pair WHERE skipped_id IN (SELECT skipped_id FROM temp.repair_unsure)`);
+    await conn.run(`CREATE OR REPLACE TEMP TABLE repair_new AS SELECT _id, field_number, sample_id, inat_observation_id, p_specimen_number FROM temp.repair_attach`);
     // A specimen printed three times would have two set-aside records, which
     // could carry two different identifications to it with nothing to say
     // which stands. None did on the store of 9 November 2026; were one to,
@@ -198,6 +222,9 @@ export async function repairSkippedLegacyRecords(conn: DuckDBConnection, opts: {
 
     const result: SkippedRepairResult = {
       tied: await scalar(conn, `SELECT count(*) FROM temp.repair_pair`),
+      leftAlone: (
+        await rowsOf(conn, `SELECT unsure, count(*) FROM temp.repair_unsure GROUP BY 1 ORDER BY 2 DESC, 1`)
+      ).map(([reason, n]) => ({ reason: String(reason), pairs: Number(n) })),
       carriedExpert: await scalar(
         conn,
         `SELECT count(*) FROM temp.repair_pair p JOIN temp.repair_reading rd ON rd._id = p.skipped_id
@@ -208,13 +235,10 @@ export async function repairSkippedLegacyRecords(conn: DuckDBConnection, opts: {
         `SELECT count(*) FROM temp.repair_pair p JOIN temp.repair_reading rd ON rd._id = p.skipped_id
          WHERE rd.v_animal IS NOT NULL AND NOT EXISTS (SELECT 1 FROM determination d WHERE d.specimen_id = p.specimen_id AND NOT d.is_expert)`,
       ),
-      separated: (
-        await rowsOf(conn, `SELECT field_number, kept_fn FROM temp.repair_new WHERE kept_fn IS NOT NULL ORDER BY field_number`)
-      ).map(([f, k]) => ({ fieldNumber: String(f), keptFieldNumber: String(k) })),
       attached: (
         await rowsOf(
           conn,
-          `SELECT inat_observation_id, sample_id, count(*) FROM temp.repair_new WHERE inat_observation_id IS NOT NULL GROUP BY ALL ORDER BY 1`,
+          `SELECT inat_observation_id, sample_id, count(*) FROM temp.repair_new GROUP BY ALL ORDER BY 1`,
         )
       ).map(([o, s, n]) => ({ observation: Number(o), sampleId: Number(s), specimens: Number(n) })),
       newSpecimenDeterminations: await scalar(
@@ -293,7 +317,7 @@ export function describeSkippedRepair(r: SkippedRepairResult): string {
   const verb = r.dryRun ? "would be" : "were";
   const lines = [
     `${r.tied} set-aside second print(s) ${verb} tied to their specimen; ${r.carriedExpert} expert and ${r.carriedVolunteer} volunteer identification(s) ${verb} carried to a specimen that lacked one`,
-    `${r.separated.length} ${verb} made specimens of their own, the second bee of a pair: ${r.separated.map((s) => `${s.fieldNumber} (beside ${s.keptFieldNumber})`).join(", ") || "none"}`,
+    `${r.leftAlone.reduce((a, x) => a + x.pairs, 0)} pair(s) left alone for somebody to look at: ${r.leftAlone.map((x) => `${x.pairs} ${x.reason}`).join(", ") || "none"}`,
     `${r.attached.reduce((a, x) => a + x.specimens, 0)} ${verb} made specimens of the sample of their observation: ${r.attached.map((a) => `${a.specimens} on observation ${a.observation} (sample ${a.sampleId})`).join(", ") || "none"}`,
     `${r.newSpecimenDeterminations} identification(s) ${verb} recorded for the new specimens`,
   ];

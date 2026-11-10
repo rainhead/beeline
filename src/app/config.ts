@@ -132,8 +132,9 @@ export interface AppConfig {
   backupsDir: string;
   /**
    * The old Beeline's admin login, which the legacy-copy job copies printed
-   * specimens in with (beeline-83b8.18), or null to copy nothing. From the
-   * environment because it is a credential.
+   * specimens in with (beeline-83b8.18) and the legacy-volunteer-import job
+   * reads volunteers' determinations back with (beeline-c43w), or null to do
+   * neither. From the environment because it is a credential.
    */
   oldBeeline: OldBeelineCredentials | null;
 }

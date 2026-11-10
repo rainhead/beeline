@@ -7,7 +7,7 @@ import { LEGACY_EXPORT_COLUMNS, legacyExportSources, legacyExportSql } from "./l
  * list (beeline-83b8.18), so volunteers holding a label printed here can
  * enter their determination at old.melittologist.org, which stays open for
  * that through February 2027. Those determinations come back by
- * beeline-c43w.
+ * beeline-c43w (src/legacy-volunteer-import.ts).
  *
  * THROUGH THE OLD SYSTEM'S OWN API, NOT ITS DATABASE. The old server takes a
  * list of occurrences from a signed-in admin (`POST /api/occurrences`) and
@@ -123,7 +123,7 @@ interface Candidate {
 }
 
 /** An old-system occurrence as its API returns it. */
-type OldRecord = Record<string, unknown> & { _id: string };
+export type OldRecord = Record<string, unknown> & { _id: string };
 
 export interface LegacyCopyResult {
   /** Specimens that qualify for a copy. */
@@ -250,6 +250,25 @@ export class OldBeelineApi {
       };
       out.push(...body.data);
       if (!body.pagination?.hasNextPage) return out;
+    }
+  }
+
+  /**
+   * Every record these column tests select, a page at a time. The old server
+   * reads `(non-empty)` and `(empty)` as those tests on a column, and ANDs the
+   * columns together (parseQueryParameters); it sorts each page by its
+   * composite sort and then `_id`, so pages do not overlap while nothing
+   * changes. It caps a page at 5,000 records.
+   */
+  async *pages(filter: Record<string, string>, perPage = 2000): AsyncGenerator<OldRecord[]> {
+    for (let page = 1; ; page++) {
+      const q = new URLSearchParams({ ...filter, per_page: String(perPage), page: String(page) });
+      const body = (await (await this.request(`/api/occurrences?${q}`)).json()) as {
+        data: OldRecord[];
+        pagination?: { hasNextPage?: boolean };
+      };
+      yield body.data;
+      if (!body.pagination?.hasNextPage) return;
     }
   }
 

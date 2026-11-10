@@ -1,5 +1,10 @@
 import { legacyExportPath, writeLegacyExport } from "../../legacy-export.js";
 import { assertCopied, copyToOldBeeline, describeCopy } from "../../legacy-copy.js";
+import {
+  describeVolunteerImport,
+  readOldVolunteerRecords,
+  recordOldVolunteerDeterminations,
+} from "../../legacy-volunteer-import.js";
 import { BUDGET_WINDOW_HOURS, budgetProblems, describeUsage, measureFlyUsage } from "../../fly-usage.js";
 import { commitDeterminationDrafts } from "../../commit-determinations.js";
 import { describeFetch, ECDYSIS_COLLECTIONS, fetchEcdysis } from "../../fetch-ecdysis.js";
@@ -453,6 +458,29 @@ export function buildJobs(
           parts.push(`project ${projectId} (full sweep since ${d1}): ${r.fetched} fetched, ${r.newLoads} new`);
         }
         return pipelineTail(ctx, parts, config.personChangesPath, samplePaths, config.sampleOverlayPath);
+      },
+    },
+    {
+      // The determinations volunteers enter in the old Beeline, which stays
+      // open for them through February 2027 (beeline-c43w). At 1am, ahead of
+      // the commit of this Beeline's drafts in this list, and before the 4am
+      // copy and export, which then carry them. Without a login it fails in
+      // production, as the copy does.
+      name: "legacy-volunteer-import",
+      schedule: { kind: "dailyLA", hour: 1 },
+      window: "night",
+      async run(ctx) {
+        if (!config.oldBeeline) {
+          const unset = "OLD_BEELINE_USERNAME and OLD_BEELINE_PASSWORD are not set";
+          if (config.environment !== "production") return `${unset} — nothing read`;
+          throw new Error(`${unset}: nothing was read from the old Beeline`);
+        }
+        const credentials = config.oldBeeline;
+        const records = await ctx.step("read the old Beeline", () =>
+          readOldVolunteerRecords(credentials, { signal: ctx.signal, log: ctx.log }),
+        );
+        const result = await ctx.step("record what changed", () => recordOldVolunteerDeterminations(ctx.conn, records));
+        return describeVolunteerImport(result);
       },
     },
     {

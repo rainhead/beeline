@@ -26,7 +26,7 @@ How each part of Beeline works, one file per area. Read the file for the area yo
 - [Addressing a person, and admin](addressing-a-person-and-admin.md)
 - [Editing and corrections](editing-and-corrections.md) — `src/corrections.ts`, `ingest/legacy-corrections.csv`
 - [Entering trap samples](entering-trap-samples.md) — `src/trap-sample.ts`, `src/app/views/trap-sample.tsx`
-- [The legacy-format export](the-legacy-format-export.md) — `src/legacy-export.ts`, `src/legacy-copy.ts`, `ingest/collector-aliases.csv`
+- [The legacy-format export](the-legacy-format-export.md) — `src/legacy-export.ts`, `src/legacy-copy.ts`, `src/legacy-volunteer-import.ts`, `ingest/collector-aliases.csv`
 - [Errors and logs](errors-and-logs.md) — `src/app/error-reporting.ts`, `src/app/usage.ts`
 - [Backups](backups.md) — `src/store-backup.ts`, `src/store-snapshot.ts`
 - [Ingestion, jobs, and elevation](ingestion-jobs-and-elevation.md) — `src/app/jobs/`, `src/write-conflict.ts`

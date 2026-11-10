@@ -1837,6 +1837,8 @@ export const en = {
         "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
       "legacy-copy":
         "Copies every specimen printed here into the old Beeline at old.melittologist.org, so volunteers can enter their identifications there until it closes in February 2027. Sends only what changed since the last copy, and never overwrites an identification a volunteer entered there.",
+      "legacy-volunteer-import":
+        "Reads the identifications volunteers entered in the old Beeline at old.melittologist.org and adds each new or changed one here, as the collector's. Names Beeline lacks, specimens whose old records disagree, and identifications removed there are listed in the run, not added.",
       "dwc-archives":
         "Writes a Darwin Core archive for each atlas and for Master Melittology, one per calendar year, for staff to review, and removes any whose year no longer has specimens. Download them from Exports.",
       "ecdysis-fetch":

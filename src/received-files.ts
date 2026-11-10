@@ -33,10 +33,11 @@ import { parseServiceAccountKey, serviceAccountToken, uploadFile } from "./drive
  */
 
 /**
- * "Beeline received files", on the OSU shared drive. Empty until the service
- * account can create it there: it is a member of databaseBackups alone.
+ * "Beeline received files", in the Bee Line folder on the OSU shared drive.
+ * Peter made it, since the service account could not; the account writes to
+ * it because a manager of the drive added it there (2026-11-09).
  */
-export const RECEIVED_FOLDER: string | null = null;
+export const RECEIVED_FOLDER: string | null = "1oXUIHev5BPZbJZSWpjl7V0dJjgwybIkO";
 export const RECEIVED_DIR = "data/received";
 export const WORKSTATION_KEY = "data/secrets/drive-key.json";
 

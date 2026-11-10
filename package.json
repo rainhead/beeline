@@ -19,6 +19,7 @@
     "legacy:export": "tsx src/export-legacy.ts",
     "legacy:copy": "tsx src/copy-legacy.ts",
     "legacy:volunteer-import": "tsx src/import-legacy-volunteer.ts",
+    "legacy:repair-skipped": "tsx src/repair-legacy-skipped.ts",
     "backup:check": "tsx src/check-backup.ts",
     "legacy:compare-export": "tsx src/compare-legacy-export.ts",
     "inat:sync": "tsx src/sync-inat.ts",

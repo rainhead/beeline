@@ -695,6 +695,13 @@ export interface WorksheetDeterminationTable {
   loaded_at: Timestamped;
 }
 
+/** An old-Beeline record promotion set aside as a second print, tied to its specimen (beeline-iuva). */
+export interface LegacyDuplicateRecordTable {
+  _id: string;
+  specimen_id: number;
+  recorded_at: Timestamped;
+}
+
 // schema/045_determination_entry.sql, schema/119 (beeline-bcq)
 
 /** Which taxa record a caste (gyne, worker or drone); the nearest stated ancestor decides. */
@@ -1326,6 +1333,7 @@ export interface Database {
   specimen_catalog_number: SpecimenCatalogNumberTable;
   specimen_disposition: SpecimenDispositionTable;
   worksheet_determination: WorksheetDeterminationTable;
+  legacy_duplicate_record: LegacyDuplicateRecordTable;
   animal_caste: AnimalCasteTable;
   determination_draft: DeterminationDraftTable;
   determination_batch: DeterminationBatchTable;

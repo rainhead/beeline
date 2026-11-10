@@ -1139,6 +1139,23 @@ export const en = {
         save: "Save",
         remove: "Follow iNaturalist again",
       },
+      /**
+       * Staff taking iNaturalist's location for a sample Beeline printed,
+       * after the collector moved the pin (beeline-1kb.17.1, GitHub #298).
+       * Says what moved and by how much, and leaves the reprint to staff:
+       * either side may be the wrong one, and a reprint is always chosen.
+       */
+      takeObservationLocation: {
+        lead: (lat: number, lon: number, place: string | null, distance: string) =>
+          `iNaturalist now puts this observation at ${lat}, ${lon}${place === null ? "" : ` (${place})`}, ${distance} from the coordinates above, which its labels were printed with.`,
+        then: "If iNaturalist is right, use its location here. That sets the county and state from it too. Then mark the labels for reprint.",
+        note: "Note (optional)",
+        noteHint: "Saved with the change, for whoever reads this sample's history.",
+        action: "Use iNaturalist's location",
+        reason: "Taken from the iNaturalist observation, which was moved after the labels printed.",
+        notMoved: "iNaturalist no longer puts this sample anywhere else, so there is nothing to take.",
+        unavailable: "This can't be done right now. Try again in a minute.",
+      },
 
       where: {
         heading: "Where it was collected",

@@ -319,6 +319,70 @@ describe("stamping a sample's county from its coordinates (beeline-313x, Peter, 
     expect(await countyOf(conn, id)).toBe("BentonCo");
   });
 
+  test("a point staff set carries its county, state and atlas, printed or settled, but not into an unprinted run", async () => {
+    // beeline-1kb.17.1, GitHub #298: a printed sample whose point staff moved
+    // across a state line kept the old state and county, and nothing could
+    // change them. Each sample here starts in Washington and has a staff
+    // point in Benton County, Oregon.
+    const path = join(dir, "staff-point.duckdb");
+    await buildTestGazetteer(path, "build-staff-point");
+    const conn = await storeWithPerson();
+    const wa = { state_province: "'WA'", county: "'Klickitat'" };
+    const staffPoint = async (id: number) => {
+      await conn.run(
+        `INSERT INTO sample_location_override (sample_id, latitude, longitude) VALUES (${id}, ${ALSEA.latitude}, ${ALSEA.longitude})`,
+      );
+      await conn.run(`UPDATE sample_location SET source = 'staff_entry' WHERE sample_id = ${id}`);
+    };
+    const printed = await insertCleanSample(conn, { inat_observation_id: "2001", sample_number: "'1'", ...wa, atlas_id: "(SELECT entity_id FROM program WHERE code = 'WaBA')" }, ALSEA);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${printed}, 1)`);
+    await staffPoint(printed);
+    const settled = await insertCleanSample(
+      conn,
+      { inat_observation_id: "2002", sample_number: "'2'", ...wa, date_start: `DATE '${SETTLED_SEASON}-07-14'`, date_end: `DATE '${SETTLED_SEASON}-07-14'` },
+      ALSEA,
+    );
+    await staffPoint(settled);
+    // A person put this one in Washington's atlas; the state follows the point, the atlas stays.
+    const placed = await insertCleanSample(conn, { inat_observation_id: "2003", sample_number: "'3'", ...wa }, ALSEA);
+    await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id, assigned_by) SELECT ${placed}, (SELECT entity_id FROM program WHERE code = 'WaBA'), min(entity_id) FROM person`);
+    await staffPoint(placed);
+    // The same, with no staff point: a printed sample keeps what its labels say.
+    const untouched = await insertCleanSample(conn, { inat_observation_id: "2004", sample_number: "'4'", ...wa }, ALSEA);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${untouched}, 1)`);
+    // Frozen into a run that has not printed: its labels were composed at the freeze.
+    const frozen = await insertCleanSample(conn, { inat_observation_id: "2005", sample_number: "'5'", ...wa }, ALSEA);
+    await staffPoint(frozen);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) VALUES (${frozen}, 1)`);
+    await conn.run(`INSERT INTO print_run (prepared_by) SELECT min(entity_id) FROM person`);
+    await conn.run(
+      `INSERT INTO printed_label (print_run_id, specimen_id, sheet, cell, location_text, coordinates_text, date_text,
+                                  collector_text, method_text, number_text, latitude, longitude, date_start, date_end)
+       SELECT (SELECT max(entity_id) FROM print_run), sp.entity_id, 1, 0, 'USA:WA:KlickitatCo', '44.5 -123.6', 'd',
+              'c', 'net', 'n', 44.5, -123.6, s.date_start, s.date_end
+       FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id WHERE sp.sample_id = ${frozen}`,
+    );
+    const place = async (id: number) =>
+      (await rows(
+        conn,
+        `SELECT s.country, s.state_province, s.county, p.code FROM sample s
+         LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
+         LEFT JOIN program p ON p.entity_id = sa.atlas_id WHERE s.entity_id = ${id}`,
+      ))[0];
+
+    // Asked for one sample, only that one moves.
+    expect((await deriveAreas(conn, path, { stampSampleIds: [printed] })).countiesStamped).toBe(1);
+    expect(await place(printed)).toEqual(["USA", "OR", "Benton", "OBA"]);
+    expect(await place(settled)).toEqual(["USA", "WA", "Klickitat", null]);
+
+    expect((await deriveAreas(conn, path, { stampCounties: true })).countiesStamped).toBe(2);
+    expect(await place(settled)).toEqual(["USA", "OR", "Benton", "OBA"]);
+    expect(await place(placed)).toEqual(["USA", "OR", "Benton", "WaBA"]);
+    expect(await place(untouched)).toEqual(["USA", "WA", "Klickitat", null]);
+    expect(await place(frozen)).toEqual(["USA", "WA", "Klickitat", null]);
+    expect((await deriveAreas(conn, path, { stampCounties: true })).countiesStamped).toBe(0);
+  });
+
   test("leaves every county alone unless asked, as Check iNaturalist now does", async () => {
     const path = join(dir, "nostamp.duckdb");
     await buildTestGazetteer(path, "build-nostamp");

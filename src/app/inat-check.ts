@@ -160,25 +160,51 @@ export async function checkObserver(conn: DuckDBConnection, opts: CheckOptions):
  * the nightly tries again.
  */
 async function deriveAfterCheck(conn: DuckDBConnection, opts: CheckOptions): Promise<void> {
-  // A nightly that started while this check waited for the lock does it all.
+  await deriveForObserver(conn, { ...opts, observerUserId: opts.userId, logTag: "inat check" });
+}
+
+/**
+ * The nightly's steps for moved points, for one observer's samples: also
+ * what staff taking a printed sample's observation's location runs
+ * (beeline-1kb.17.1), since a reprint prepared before the nightly would
+ * otherwise print the elevation of the point the sample moved from. Never
+ * throws; a step that fails is logged and left to the nightly.
+ */
+export async function deriveForObserver(
+  conn: DuckDBConnection,
+  opts: {
+    /** Whose samples the gazetteer steps look at; null skips them, since unnarrowed they would take the whole store. */
+    observerUserId: number | null;
+    demDir?: string;
+    gazetteerPath?: string;
+    jobRunning?: () => boolean;
+    /** Write these samples' county, and state where staff set the point, from the point (src/derive-area.ts). */
+    stampSampleIds?: readonly number[];
+    logTag: string;
+  },
+): Promise<void> {
+  // A nightly that started meanwhile does it all.
   if (opts.jobRunning?.()) return;
   if (opts.demDir !== undefined) {
     try {
       await deriveElevations(conn, opts.demDir);
     } catch (err) {
-      console.warn(`[inat check] elevations not derived: ${(err as Error).message}`);
+      console.warn(`[${opts.logTag}] elevations not derived: ${(err as Error).message}`);
     }
   }
-  if (opts.gazetteerPath !== undefined) {
+  if (opts.gazetteerPath !== undefined && opts.observerUserId !== null) {
     try {
-      await deriveAreas(conn, opts.gazetteerPath, { observerUserId: opts.userId });
+      await deriveAreas(conn, opts.gazetteerPath, {
+        observerUserId: opts.observerUserId,
+        stampSampleIds: opts.stampSampleIds,
+      });
     } catch (err) {
-      console.warn(`[inat check] areas not found: ${(err as Error).message}`);
+      console.warn(`[${opts.logTag}] areas not found: ${(err as Error).message}`);
     }
     try {
-      await deriveLocalities(conn, opts.gazetteerPath, { observerUserId: opts.userId });
+      await deriveLocalities(conn, opts.gazetteerPath, { observerUserId: opts.observerUserId });
     } catch (err) {
-      console.warn(`[inat check] localities not named: ${(err as Error).message}`);
+      console.warn(`[${opts.logTag}] localities not named: ${(err as Error).message}`);
     }
   }
 }

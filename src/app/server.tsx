@@ -115,7 +115,7 @@ import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
-import { checkObserver, lastChecked, nextCheckAt } from "./inat-check.js";
+import { checkObserver, deriveForObserver, lastChecked, nextCheckAt } from "./inat-check.js";
 import { forgetPipelineJwt } from "../inat-jwt.js";
 import { recordPersonChanges } from "../person-change.js";
 import type { CheckNotice } from "./views/qc.js";
@@ -138,7 +138,9 @@ import {
   setStaffCoordinates,
   setStaffLocality,
   standingLocalityAuthor,
+  takeObservationLocation,
 } from "./locality-override.js";
+import { withPromotionLock } from "./promotion-lock.js";
 import { setHold, setWaiver, type QcDecisionResult } from "./qc-decisions.js";
 import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
 import {
@@ -1423,6 +1425,7 @@ export function createApp({
     if (result.outcome === "invalid") return c.text(result.problem, 400);
     if (result.outcome === "unresolved") return c.text(result.reason, 409);
     if (result.outcome === "saved" || result.outcome === "removed") {
+      await deriveMovedPoint(sample.sample_id, "staff coordinates");
       try {
         await recordSampleChanges(kyselyReader(db), samplePaths, {
           source: "app",
@@ -1433,6 +1436,78 @@ export function createApp({
       } catch (err) {
         console.warn(`could not record the coordinate change: ${(err as Error).message}`);
       }
+    }
+    return c.redirect(`/samples/${sample.sample_id}`);
+  });
+
+  /**
+   * What the nightly does for a point that moved, done at once for a point
+   * staff just set (beeline-1kb.17.1): the elevation, the areas, and the
+   * county, state and country from the point, which follow a staff point
+   * printed or not (src/derive-area.ts). Run before the change is logged, so
+   * the log credits the staffer with all of it rather than crediting the
+   * next night with the county. A reprint is usually next, and would
+   * otherwise print the old point's elevation and county. Never fails the
+   * request; the nightly does whatever this could not.
+   */
+  async function deriveMovedPoint(sampleId: number, logTag: string): Promise<void> {
+    const connection = mintConn ?? conn;
+    if (connection === undefined) return;
+    const [collector] = (
+      await sql<{ inat_user_id: bigint | null }>`SELECT a.inat_user_id FROM sample_primary_collector pc
+        JOIN inat_account a ON a.person_id = pc.person_id WHERE pc.sample_id = ${sampleId}`.execute(db)
+    ).rows;
+    await withPromotionLock(() =>
+      deriveForObserver(connection, {
+        observerUserId: collector?.inat_user_id == null ? null : Number(collector.inat_user_id),
+        demDir: inatCheck?.demDir,
+        gazetteerPath: inatCheck?.gazetteerPath,
+        stampSampleIds: [sampleId],
+        // Asked inside the lock: the nightly may have started while this waited.
+        jobRunning: () => {
+          const running = jobsDep.running?.() ?? null;
+          return running === "nightly-pipeline" || running === "weekly-sweep";
+        },
+        logTag,
+      }),
+    );
+  }
+
+  // Staff take the observation's location for a sample Beeline printed,
+  // after the collector moved the pin on iNaturalist (beeline-1kb.17.1,
+  // GitHub #298): the point, and the country, state and county with it.
+  // Then what the nightly would do for the moved point, at once, because a
+  // reprint is the next thing staff do and would otherwise print the old
+  // point's elevation.
+  app.post("/samples/:id/take-observation-location", async (c) => {
+    const m = c.get("m");
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    if (conn === undefined) return c.text(m.record.sample.takeObservationLocation.unavailable, 503);
+    const session = c.get("session");
+    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, STAFF_READER);
+    if (sample === null) return errorResponse(c, "notFound");
+    const body = await c.req.parseBody();
+    const note = typeof body.note === "string" ? body.note.trim() : "";
+    const reason = note === "" ? m.record.sample.takeObservationLocation.reason : note;
+    const result = await takeObservationLocation(
+      { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections },
+      { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality },
+      { reason, author: session.login },
+    );
+    if (result.outcome === "invalid") return c.text(result.problem, 400);
+    if (result.outcome === "unresolved") return c.text(result.reason, 409);
+    if (result.outcome === "unchanged") return c.text(m.record.sample.takeObservationLocation.notMoved, 409);
+    await deriveMovedPoint(sample.sample_id, "take observation location");
+    try {
+      await recordSampleChanges(kyselyReader(db), samplePaths, {
+        source: "app",
+        author: session.login,
+        reason,
+        where: `s.entity_id = ${sample.sample_id}`,
+      });
+    } catch (err) {
+      console.warn(`could not record the location change: ${(err as Error).message}`);
     }
     return c.redirect(`/samples/${sample.sample_id}`);
   });

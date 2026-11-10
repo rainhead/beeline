@@ -21,6 +21,7 @@ import {
   Absent,
   AtlasMark,
   Button,
+  Callout,
   Card,
   Chip,
   DataTable,
@@ -424,7 +425,39 @@ export function WhereCollected({ m, sample, admin = false }: { m: Messages; samp
           },
         ]}
       />
+      {admin && sample.label_diverged !== null ? <TakeObservationLocation m={m} sample={sample} /> : null}
     </>
+  );
+}
+
+/**
+ * A sample Beeline printed whose observation the collector has since moved
+ * (beeline-1kb.17.1, GitHub #298): where iNaturalist puts it now, and one
+ * button for staff to take that, county and state included. Staff only,
+ * because only staff can reprint, and whether the label or iNaturalist is
+ * the wrong one is a question the page cannot answer for them.
+ */
+function TakeObservationLocation({ m, sample }: { m: Messages; sample: SampleDetail }) {
+  const t = m.record.sample.takeObservationLocation;
+  const d = sample.label_diverged!;
+  const where =
+    d.state_province === null
+      ? null
+      : d.county === null
+        ? d.state_province
+        : d.country === "USA"
+          ? `${d.county} County, ${d.state_province}`
+          : `${d.county}, ${d.state_province}`;
+  const distance = d.distance_m >= 1000 ? `${Math.round(d.distance_m / 1000)} km` : `${Math.round(d.distance_m)} m`;
+  return (
+    <Callout tone="warning">
+      <p>{t.lead(d.latitude, d.longitude, where, distance)}</p>
+      <p>{t.then}</p>
+      <form method="post" action={`/samples/${sample.sample_id}/take-observation-location`}>
+        <TextField id="take-observation-location-note" name="note" label={t.note} hint={t.noteHint} />
+        <Button variant="tonal">{t.action}</Button>
+      </form>
+    </Callout>
   );
 }
 

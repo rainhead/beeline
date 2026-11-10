@@ -11,8 +11,8 @@ import { Readable } from "node:stream";
  * gcloud on a workstation; nothing on the server is signed in as a person.
  *
  * Scoped to `drive.file`: the account sees only the files it created itself,
- * so even a key that leaked would reach the backups and nothing else on the
- * drive. Every call says `supportsAllDrives`, without which the API answers
+ * so even a key that leaked would reach the backups and the files people sent
+ * (src/received-files.ts), and nothing else on the drive. Every call says `supportsAllDrives`, without which the API answers
  * as if a shared drive's files did not exist.
  */
 
@@ -111,7 +111,15 @@ async function check(res: Response, what: string): Promise<Response> {
  */
 export async function uploadFile(
   token: string,
-  opts: { folderId: string; path: string; name: string; mimeType: string; signal?: AbortSignal },
+  opts: {
+    folderId: string;
+    path: string;
+    name: string;
+    mimeType: string;
+    /** More of the file's Drive metadata: a description, a modified time, app properties. */
+    metadata?: Record<string, unknown>;
+    signal?: AbortSignal;
+  },
 ): Promise<DriveFile> {
   const { size } = await stat(opts.path);
   const params = new URLSearchParams({ uploadType: "resumable", supportsAllDrives: "true", fields: FILE_FIELDS });
@@ -124,7 +132,7 @@ export async function uploadFile(
         "X-Upload-Content-Type": opts.mimeType,
         "X-Upload-Content-Length": String(size),
       },
-      body: JSON.stringify({ name: opts.name, parents: [opts.folderId], mimeType: opts.mimeType }),
+      body: JSON.stringify({ ...opts.metadata, name: opts.name, parents: [opts.folderId], mimeType: opts.mimeType }),
       signal: withTimeout(opts.signal, 30_000),
     }),
     `starting the upload of ${opts.name}`,

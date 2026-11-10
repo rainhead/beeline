@@ -542,7 +542,11 @@ export async function loadWorksheets(conn: DuckDBConnection, opts: LoadWorksheet
       UPDATE ws_candidate c SET status = CASE
         WHEN EXISTS (
           SELECT 1 FROM worksheet_determination w JOIN determination d ON d.entity_id = w.determination_id
-          WHERE d.specimen_id = c.specimen_id AND d.determiner_id = c.determiner_id AND w.file_modified_at >= c.modified_at) THEN 'already_loaded'
+          -- An expert's sheet loads through this channel too
+          -- (src/load-determination-sheet.ts); it is not one of this
+          -- volunteer's worksheets, whoever determined it.
+          WHERE d.specimen_id = c.specimen_id AND d.determiner_id = c.determiner_id AND NOT d.is_expert
+            AND w.file_modified_at >= c.modified_at) THEN 'already_loaded'
         WHEN EXISTS (
           SELECT 1 FROM determination d
           WHERE d.specimen_id = c.specimen_id AND d.determiner_id = c.determiner_id AND d.channel = 'in_app' AND d.recorded_at > c.modified_at) THEN 'newer_in_beeline'

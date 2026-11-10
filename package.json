@@ -32,7 +32,7 @@
     "locality:gazetteer": "tsx src/build-gazetteer.ts",
     "locality:derive": "tsx src/derive-locality.ts",
     "area:derive": "tsx src/derive-area.ts",
-    "ecdysis:taxonomy":"tsx src/load-ecdysis-taxonomy.ts",
+    "ecdysis:taxonomy": "tsx src/load-ecdysis-taxonomy.ts",
     "taxon:apply": "tsx src/taxon-curation.ts",
     "taxon:fetch-sheet": "tsx src/fetch-taxon-sheet.ts",
     "taxon:decide": "tsx src/taxon-decide.ts",
@@ -41,11 +41,14 @@
     "worksheets:fetch": "tsx src/fetch-worksheets.ts",
     "worksheets:load": "tsx src/load-worksheets.ts",
     "disposition:load": "tsx src/load-dispositions.ts",
+    "determinations:load": "tsx src/load-determination-sheet.ts",
     "person:apply": "tsx src/apply-person-overlay.ts",
     "person:orcids": "tsx src/load-orcids.ts",
     "sample:apply": "tsx src/apply-sample-overlay.ts",
     "bench:pages": "tsx bench/pages.ts",
-    "bench:contention": "tsx bench/contention.ts"
+    "bench:contention": "tsx bench/contention.ts",
+    "received:store": "tsx src/received-files.ts store",
+    "received:fetch": "tsx src/received-files.ts fetch"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

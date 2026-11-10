@@ -11,6 +11,7 @@ How each part of Beeline works, one file per area. Read the file for the area yo
 - [Determinations from Ecdysis](determinations-from-ecdysis.md) — `src/load-ecdysis.ts`, `src/adopt-ecdysis.ts`
 - [Volunteers identifying their own specimens](volunteers-identifying-their-own-specimens.md) — `src/app/determine.ts`, `src/app/views/determine.tsx`
 - [Determinations from worksheets](determinations-from-worksheets.md) — `src/fetch-worksheets.ts`, `src/load-worksheets.ts`
+- [Files people send, and expert determination sheets](files-people-send-and-expert-sheets.md) — `src/received-files.ts`, `src/load-determination-sheet.ts`
 - [Copy](copy.md) — `src/app/messages/`
 - [A value that is not there](a-value-that-is-not-there.md) — `src/app/views/components/text.tsx`
 - [Determinations and names](determinations-and-names.md) — `schema/020`, `schema/115`

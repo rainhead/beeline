@@ -217,6 +217,12 @@ th, td {
    first line above its neighbours'. Baseline rather than top, so a cell
    with a chip, whose padding makes its line taller, lines up too. */
 td { vertical-align: baseline; }
+/* A button's label stays on one line in a table. A cell lines up on its
+   first line of text, but a button that wraps (/jobs's Run now, squeezed by
+   the descriptions beside it) lines up on its last, which pushed every other
+   cell of the row down a line, and the descriptions out of their rows. The
+   table scrolls sideways rather than wrap it. */
+td button, td .button { white-space: nowrap; }
 tbody tr:hover { background: var(--md-sys-color-surface-variant); }
 
 /* The dashboard's table marks the cell a flag is about — place, coordinates,

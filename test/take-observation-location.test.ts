@@ -153,11 +153,7 @@ async function moved(
     }),
     conn,
     mintConn: await instance.connect(),
-    inatCheck: {
-      projects: [],
-      token: async () => "unused",
-      gazetteerPath: (opts.gazetteer ?? true) ? await gazetteerWithLane(dir) : undefined,
-    },
+    derivePaths: { gazetteerPath: (opts.gazetteer ?? true) ? await gazetteerWithLane(dir) : undefined },
     jobs: { list: [], start: async () => false, running: () => opts.running ?? null },
     ...paths,
   });

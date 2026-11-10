@@ -261,6 +261,13 @@ export interface AppDeps {
     demDir?: string;
     gazetteerPath?: string;
   };
+  /**
+   * Where the DEM tiles and the gazetteer are, for what a staff point needs
+   * at once: its elevation, county and state (beeline-1kb.17.1). Separate
+   * from inatCheck, which is absent on an instance that syncs nothing.
+   * Absent ⇒ those wait for the nightly and the page says so.
+   */
+  derivePaths?: { demDir?: string; gazetteerPath?: string };
   /** Where rendered label sheets are kept (config.printRunsDir). */
   printRunsDir?: string;
   /** The registry mark each print run raises (config.registryMarkPath, src/registry-mark.ts). */
@@ -297,6 +304,7 @@ export function createApp({
   printConn,
   mintConn,
   inatCheck,
+  derivePaths,
   printRunsDir,
   registryMarkPath,
   programGovernance,
@@ -1476,8 +1484,8 @@ export function createApp({
         // For the locality names only; the areas are found for this sample
         // whoever collected it.
         observerUserId: collector?.inat_user_id == null ? null : Number(collector.inat_user_id),
-        demDir: inatCheck?.demDir,
-        gazetteerPath: inatCheck?.gazetteerPath,
+        demDir: derivePaths?.demDir,
+        gazetteerPath: derivePaths?.gazetteerPath,
         stampSampleIds: [sampleId],
         // Asked inside the lock: the nightly may have started while this waited.
         jobRunning: syncJobRunning,

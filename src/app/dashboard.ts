@@ -63,6 +63,8 @@ export interface Identification {
   previous: { scientific_name: string; rank: string; qualifier: DeterminationQualifier | null } | null;
   determiner: string | null;
   identified_at: Date;
+  /** True when identified_at is only the latest it could have been: when an expert's sheet stating no day was sent. */
+  identified_on_or_before: boolean;
   /** Whether a later expert has since changed the name again. */
   superseded: boolean;
 }
@@ -135,6 +137,7 @@ export async function latestIdentifications(
       "ei.previous_qualifier",
       sql<string | null>`coalesce(det.display_name, ei.determiner_name)`.as("determiner"),
       "ei.identified_at",
+      "ei.identified_at_is_bound",
       "ei.is_latest",
     ])
     .orderBy("ei.identified_at", "desc")
@@ -156,6 +159,7 @@ export async function latestIdentifications(
         : { scientific_name: r.previous_name, rank: r.previous_rank, qualifier: r.previous_qualifier },
     determiner: r.determiner,
     identified_at: r.identified_at as Date,
+    identified_on_or_before: r.identified_at_is_bound,
     superseded: !r.is_latest,
   }));
 }

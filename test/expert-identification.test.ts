@@ -95,7 +95,7 @@ describe("expert_identification", () => {
     const s = await spec("26000101");
     await expert(s, "Bombus vosnesenskii", "legacy_import", "2026-11-03 22:25:00Z");
     await expert(s, "Bombus vosnesenskii", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-08-12 15:00:00", byName: "L. Best" });
-    expect(await stretches(conn, s)).toEqual([[1n, "Bombus vosnesenskii", null, "L. Best", "2026-08-12T15:00:00Z", true]]);
+    expect(await stretches(conn, s)).toEqual([[1, "Bombus vosnesenskii", null, "L. Best", "2026-08-12T15:00:00Z", true]]);
   });
 
   it("makes a changed name a new identification that remembers the old one", async () => {
@@ -106,9 +106,9 @@ describe("expert_identification", () => {
     // And back again: a name returning is a change too, not the first stretch resuming.
     await expert(s, "Bombus caliginosus", "ecdysis_import", "2026-11-10 11:00:00Z", { enteredAt: "2026-11-09 16:00:00" });
     expect((await stretches(conn, s)).map((r) => [r[0], r[1], r[2], r[5]])).toEqual([
-      [1n, "Bombus caliginosus", null, false],
-      [2n, "Bombus vosnesenskii", "Bombus caliginosus", false],
-      [3n, "Bombus caliginosus", "Bombus vosnesenskii", true],
+      [1, "Bombus caliginosus", null, false],
+      [2, "Bombus vosnesenskii", "Bombus caliginosus", false],
+      [3, "Bombus caliginosus", "Bombus vosnesenskii", true],
     ]);
   });
 
@@ -124,7 +124,7 @@ describe("expert_identification", () => {
     const { conn, spec, expert } = await fixture();
     const s = await spec("26000103");
     await expert(s, "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
-    expect(await stretches(conn, s)).toEqual([[1n, "Bombus mixtus", null, null, null, true]]);
+    expect(await stretches(conn, s)).toEqual([[1, "Bombus mixtus", null, null, null, true]]);
   });
 
   it("dates a sheet by the day it states, at noon UTC, and by when it was sent when it states only a year", async () => {
@@ -135,6 +135,8 @@ describe("expert_identification", () => {
     await expert(b, "Bombus mixtus", "worksheet_import", "2026-11-10 00:34:00Z", { on: "2025-01-01", precision: "year", sentAt: "2026-11-09 18:00:00Z" });
     expect((await stretches(conn, a))[0]![4]).toEqual("2026-03-05T12:00:00Z");
     expect((await stretches(conn, b))[0]![4]).toEqual("2026-11-09T18:00:00Z");
+    // Only the second is a bound: the sheet arrived then, and said no more.
+    expect(await rows(conn, `SELECT specimen_id = ${b}, identified_at_is_bound FROM expert_identification ORDER BY 1`)).toEqual([[false, false], [true, true]]);
   });
 
   it("ignores volunteers' determinations, which are not news to the volunteer", async () => {
@@ -190,6 +192,14 @@ describe("the front page's latest identifications", () => {
     await expert(await spec("26000103"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z", { on: "2025-07-01" });
     const got = await latestIdentifications(db, ada);
     expect(got.map((i) => [i.field_number, i.identified_at.toISOString()])).toEqual([["26000103", "2025-07-01T12:00:00.000Z"]]);
+  });
+
+  it("says only 'on or before' for a sheet that stated no day", async () => {
+    const { db, ada, spec, expert } = await fixture();
+    await expert(await spec("26000101"), "Bombus mixtus", "worksheet_import", "2026-11-10 00:34:00Z", { sentAt: "2026-11-09 18:00:00Z" });
+    await expert(await spec("26000102"), "Bombus mixtus", "worksheet_import", "2026-11-10 00:34:00Z", { on: "2026-03-05", sentAt: "2026-11-09 18:00:00Z" });
+    const got = await latestIdentifications(db, ada);
+    expect(got.map((i) => [i.field_number, i.identified_on_or_before])).toEqual([["26000101", true], ["26000102", false]]);
   });
 
   it("is empty for a person with no specimens", async () => {

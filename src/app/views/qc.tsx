@@ -300,7 +300,7 @@ function Identifications({ m, items }: { m: Messages; items: Identification[] })
               <td>
                 <OrAbsent value={i.determiner} label={t.byUnknown} />
               </td>
-              <td class="nowrap">{m.format.day(i.identified_at)}</td>
+              <td class="nowrap">{i.identified_on_or_before ? t.onOrBefore(m.format.day(i.identified_at)) : m.format.day(i.identified_at)}</td>
             </tr>
           ))}
         </DataTable>

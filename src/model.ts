@@ -234,6 +234,8 @@ export interface ExpertIdentificationView {
   determiner_id: number | null;
   determiner_name: string | null;
   identified_at: Date | null;
+  /** True when identified_at is only the latest it could have been: the time an expert's sheet was sent. */
+  identified_at_is_bound: boolean;
   first_recorded_at: Date;
   last_recorded_at: Date;
   previous_animal_id: number | null;

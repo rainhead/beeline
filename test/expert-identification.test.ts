@@ -112,6 +112,14 @@ describe("expert_identification", () => {
     ]);
   });
 
+  it("credits the person and the name from the same determination", async () => {
+    const { conn, spec, expert, lin } = await fixture();
+    const s = await spec("26000101");
+    await expert(s, "Bombus vosnesenskii", "ecdysis_import", "2026-06-02 08:00:00Z", { enteredAt: "2026-06-02 08:00:00", byName: "R. Rivera" });
+    await expert(s, "Bombus vosnesenskii", "in_app", "2026-11-05 09:00:00Z", { by: lin });
+    expect(await rows(conn, `SELECT determiner_id, determiner_name FROM expert_identification WHERE specimen_id = ${s}`)).toEqual([[null, "R. Rivera"]]);
+  });
+
   it("leaves a name only the old Beeline held undated, since it kept no dates", async () => {
     const { conn, spec, expert } = await fixture();
     const s = await spec("26000103");

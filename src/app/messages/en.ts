@@ -576,8 +576,8 @@ export const en = {
     identifications: {
       heading: "Latest identifications of your bees",
       intro:
-        "When an expert names one of your specimens, or changes the name an expert gave it, it appears here, newest first. Experts identify in batches, often a year or more after the bee was collected.",
-      empty: "No expert has identified any of your specimens yet.",
+        "When an expert names one of your specimens, or changes the name an expert gave it, it appears here, newest first. Experts identify in batches, often a year or more after the bee was collected. Identifications recorded in the old Beeline have no date, so they are only on each specimen's page.",
+      empty: "No dated identifications of your specimens yet.",
       col: { specimen: "Specimen", name: "Identified as", by: "Identified by", when: "Identified" },
       specimen: (sampleNumber: string, specimenNumber: number) => `Sample ${sampleNumber}, specimen ${specimenNumber}`,
       previously: "Previously",

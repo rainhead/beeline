@@ -73,24 +73,21 @@ numbered AS (
 credited AS (
   -- Who to credit: the first determination in the stretch that names
   -- anybody, since the old Beeline's copy of an identification often names
-  -- nobody and Ecdysis's repeat of it does.
+  -- nobody and Ecdysis's repeat of it does. One determination supplies both
+  -- the person and the name, so the two can never belong to different people.
   SELECT n.*,
-         first_value(n.determiner_id) OVER (
+         first_value(n.entity_id) OVER (
            PARTITION BY n.specimen_id, n.stretch
-           ORDER BY CASE WHEN n.determiner_id IS NULL THEN 1 ELSE 0 END, n.recorded_at, n.entity_id
+           ORDER BY CASE WHEN n.determiner_id IS NULL AND n.determiner_name IS NULL THEN 1 ELSE 0 END,
+                    n.recorded_at, n.entity_id
            ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-         ) AS credited_id,
-         first_value(n.determiner_name) OVER (
-           PARTITION BY n.specimen_id, n.stretch
-           ORDER BY CASE WHEN n.determiner_name IS NULL THEN 1 ELSE 0 END, n.recorded_at, n.entity_id
-           ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-         ) AS credited_name
+         ) AS credited_entity_id
   FROM numbered n
 ),
 stretches AS (
   SELECT specimen_id, stretch, animal_id, qualifier,
-         min(credited_id) AS determiner_id,
-         min(credited_name) AS determiner_name,
+         max(CASE WHEN entity_id = credited_entity_id THEN determiner_id END) AS determiner_id,
+         max(CASE WHEN entity_id = credited_entity_id THEN determiner_name END) AS determiner_name,
          min(evidence_at) AS identified_at,
          min(recorded_at) AS first_recorded_at,
          max(recorded_at) AS last_recorded_at
@@ -108,8 +105,8 @@ WINDOW w AS (PARTITION BY s.specimen_id ORDER BY s.stretch);
 
 COMMENT ON VIEW expert_identification IS 'One row per stretch of a specimen''s expert determinations that agree on the name (node and qualifier), in the order Beeline recorded them: when an expert first named the bee, and each time an expert changed the name (beeline-xegx). A repeat of the same name, such as Ecdysis re-recording what the old Beeline held, is not a new row.';
 COMMENT ON COLUMN expert_identification.stretch IS 'The stretch''s place in the specimen''s history, from 1.';
-COMMENT ON COLUMN expert_identification.determiner_id IS 'The first determination in the stretch that names a person Beeline knows.';
-COMMENT ON COLUMN expert_identification.determiner_name IS 'The first determination in the stretch that names anybody, as written.';
+COMMENT ON COLUMN expert_identification.determiner_id IS 'The person Beeline knows, from the first determination in the stretch that names anybody.';
+COMMENT ON COLUMN expert_identification.determiner_name IS 'The name as written, from the same determination as determiner_id.';
 COMMENT ON COLUMN expert_identification.identified_at IS 'The earliest evidence of when the name was given: a stated day (at noon UTC), Ecdysis''s entry time, the time an expert''s sheet was sent, or, made in Beeline, when it was recorded. NULL when only the old Beeline, which kept no dates, ever held it.';
 COMMENT ON COLUMN expert_identification.first_recorded_at IS 'When Beeline first recorded this name for the specimen.';
 COMMENT ON COLUMN expert_identification.previous_animal_id IS 'The name the stretch before said, if any: what an expert changed it from.';

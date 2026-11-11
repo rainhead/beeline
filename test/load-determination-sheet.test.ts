@@ -19,7 +19,8 @@ import { CURRENT_SEASON, createMemoryDb, currentSeasonDate, insertCleanSample, r
 let conn: DuckDBConnection;
 let dir: string;
 
-const COLUMNS = ["fieldNumber", "family", "genus", "specificEpithet", "sex", "identifiedBy", "lastName", "verbatimEventDate", "url"] as const;
+// "ID Date" is the header Idaho's second sheet gave the year of each determination (beeline-e5ao).
+const COLUMNS = ["fieldNumber", "family", "genus", "specificEpithet", "sex", "identifiedBy", "ID Date", "lastName", "verbatimEventDate", "url"] as const;
 type Row = Partial<Record<(typeof COLUMNS)[number], string | number>>;
 
 /** 14 July of the current season as Excel numbers it, the way a date cell reads as text. */
@@ -36,7 +37,7 @@ const FILE: ReceivedFile = {
 };
 
 /** The received directory: the sheet, on a tab named as Idaho's is, and file.json beside it. */
-async function received(rs: Row[], tab = "Determinations"): Promise<void> {
+async function received(rs: Row[], tab = "Determinations", file: ReceivedFile = FILE): Promise<void> {
   // A column is numeric where every value in it is a number, as a date
   // column of day numbers is; one that mixes in text is written as text,
   // which is how the loader reads every cell anyway.
@@ -49,9 +50,9 @@ async function received(rs: Row[], tab = "Determinations"): Promise<void> {
   await conn.run("INSTALL excel; LOAD excel");
   await conn.run(
     `COPY (SELECT ${COLUMNS.map((c, i) => `col${i} AS "${c}"`).join(", ")} FROM (VALUES ${values}) t(${COLUMNS.map((_, i) => `col${i}`).join(", ")}))
-     TO '${join(dir, FILE.name)}' (FORMAT xlsx, HEADER true, SHEET '${tab}')`,
+     TO '${join(dir, file.name)}' (FORMAT xlsx, HEADER true, SHEET '${tab}')`,
   );
-  await writeFile(join(dir, "file.json"), JSON.stringify(FILE));
+  await writeFile(join(dir, "file.json"), JSON.stringify(file));
 }
 
 const row = (fieldNumber: string, more: Row = {}): Row => ({
@@ -67,7 +68,8 @@ const row = (fieldNumber: string, more: Row = {}): Row => ({
   ...more,
 });
 
-const NOW = new Date("2026-11-10T12:00:00Z");
+// In the fixtures' own season, so a determination dated this season is not after today.
+const NOW = new Date(`${CURRENT_SEASON}-11-10T12:00:00Z`);
 const load = (dryRun = false) => loadDeterminationSheet(conn, { dir, now: NOW, dryRun });
 
 const determinations = () =>
@@ -219,6 +221,66 @@ describe("loading an expert's sheet", () => {
     expect((await load()).recorded).toBe(2);
     expect(await load()).toMatchObject({ recorded: 0, alreadyLoaded: 2, createdPeople: [] });
     expect(await determinations()).toHaveLength(2);
+  });
+
+  test("a year or a day of determination is recorded as stated; one after today or before the bee was collected is held", async () => {
+    await received([
+      row("26000001", { "ID Date": String(CURRENT_SEASON) }),
+      row("26000002", { "ID Date": `${CURRENT_SEASON}-08-02` }),
+      row("26000003", { "ID Date": String(CURRENT_SEASON + 1) }),
+      row("26000004", { "ID Date": String(CURRENT_SEASON - 1) }),
+      row("26000005", { "ID Date": `${CURRENT_SEASON}-07-13` }),
+      row("26000006", { "ID Date": "last winter" }),
+    ]);
+    const result = await load();
+    const dates = await rows(
+      conn,
+      `SELECT sp.field_number, CAST(d.determined_on AS VARCHAR), d.determined_on_precision
+       FROM determination d JOIN specimen sp ON sp.entity_id = d.specimen_id ORDER BY 1`,
+    );
+    expect(dates).toEqual([
+      ["26000001", `${CURRENT_SEASON}-01-01`, "year"],
+      ["26000002", `${CURRENT_SEASON}-08-02`, null],
+    ]);
+    expect(await heldRows()).toEqual([
+      ["4", "26000003", "identified_disagrees"],
+      ["5", "26000004", "identified_disagrees"],
+      ["6", "26000005", "identified_disagrees"],
+      ["7", "26000006", "identified_unreadable"],
+    ]);
+    expect(result.held).toMatchObject({ identified_disagrees: 3, identified_unreadable: 1 });
+  });
+
+  test("a later sheet dates the determinations that already stand, and keeps a date already there", async () => {
+    // The first sheet, undated, as Idaho's of 9 November was.
+    await received([row("26000001"), row("26000002")]);
+    expect((await load()).recorded).toBe(2);
+    // One specimen's determination of record came with a date of its own.
+    await conn.run(`
+      UPDATE determination SET determined_on = DATE '${CURRENT_SEASON}-09-01'
+      WHERE specimen_id = (SELECT entity_id FROM specimen WHERE field_number = '26000002')`);
+    const second: ReceivedFile = { ...FILE, id: "1aIdahoDatesDriveId", name: "Idaho Bee Atlas Determination Dates.xlsx" };
+    dir = await mkdtemp(join(tmpdir(), "determination-sheet-"));
+    await received(
+      [row("26000001", { "ID Date": String(CURRENT_SEASON) }), row("26000002", { "ID Date": String(CURRENT_SEASON) })],
+      "Determinations",
+      second,
+    );
+    expect(await load(true)).toMatchObject({ recorded: 0, alreadyRecorded: 2, dated: 1 });
+    expect(await rows(conn, `SELECT count(*) FROM determination WHERE determined_on_precision = 'year'`)).toEqual([[0n]]);
+    const result = await load();
+    expect(result).toMatchObject({ recorded: 0, alreadyRecorded: 2, dated: 1 });
+    expect(result.dateKept).toEqual([{ fieldNumber: "26000002", stands: `${CURRENT_SEASON}-09-01`, sheet: String(CURRENT_SEASON) }]);
+    const dates = await rows(
+      conn,
+      `SELECT sp.field_number, CAST(d.determined_on AS VARCHAR), d.determined_on_precision
+       FROM determination d JOIN specimen sp ON sp.entity_id = d.specimen_id ORDER BY 1`,
+    );
+    expect(dates).toEqual([
+      ["26000001", `${CURRENT_SEASON}-01-01`, "year"],
+      ["26000002", `${CURRENT_SEASON}-09-01`, null],
+    ]);
+    expect(await load()).toMatchObject({ dated: 0 });
   });
 
   test("the tab is the workbook's first unless one is named", async () => {

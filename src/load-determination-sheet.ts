@@ -22,8 +22,9 @@ import { readReceived } from "./received-files.js";
  * the channel already names.
  *
  * Columns are Darwin Core terms, matched by header: `fieldNumber`, `genus`
- * and `identifiedBy` are required, `family`, `specificEpithet` and `sex`
- * are read when present. `recordedBy` or `lastName`, and `eventDate` or
+ * and `identifiedBy` are required, `family`, `specificEpithet`, `sex` and
+ * `dateIdentified` are read when present (`ID Date` is read as the last, the
+ * header Idaho's second sheet gave it). `recordedBy` or `lastName`, and `eventDate` or
  * `verbatimEventDate`, are there to confirm the number: a row whose collector
  * is none of its specimen's collectors, or whose date falls outside its
  * sample's, is held, because a number typed into a sheet is the likeliest
@@ -46,6 +47,14 @@ import { readReceived } from "./received-files.js";
  *   same name, the same determiner, and the same sex where the sheet gives
  *   one — is skipped; anything else is recorded, now, and so supersedes what
  *   was there, an earlier expert's included. The result lists those.
+ * - The date of a determination is a day, or a bare year, which is kept as
+ *   a year (determined_on_precision). A date the row cannot have — after
+ *   today, or wholly before its sample was collected — is held. A row that
+ *   is skipped because its determination already stands gives that
+ *   determination its date when it has none, as the Ecdysis loader fills sex
+ *   and caste: the date is a missing fact about the same event, not a new
+ *   assertion. A date already there is kept, and the result lists any the
+ *   sheet disagrees with (beeline-e5ao).
  *
  * Loading the same file again records nothing it recorded before.
  */
@@ -61,6 +70,8 @@ export const HELD_REASONS = [
   "name_unreadable",
   "name_unknown",
   "family_disagrees",
+  "identified_unreadable",
+  "identified_disagrees",
   "sex_unreadable",
   "determiner_unknown",
 ] as const;
@@ -94,6 +105,10 @@ export interface DeterminationSheetResult {
   supersededExpert: Array<{ fieldNumber: string; was: string; wasBy: string | null; now: string; nowBy: string | null }>;
   alreadyRecorded: number;
   alreadyLoaded: number;
+  /** Determinations that already stood, given the sheet's date where they had none. */
+  dated: number;
+  /** Determinations that already stood with a date other than the sheet's, which is kept. */
+  dateKept: Array<{ fieldNumber: string; stands: string; sheet: string }>;
   held: Record<HeldReason, number>;
   /** Held rows by season: on a sample of an active season, or of a settled one. */
   heldBySeason: { active: number; settled: number; noSpecimen: number };
@@ -146,6 +161,7 @@ export async function loadDeterminationSheet(conn: DuckDBConnection, opts: Deter
   const sheet = opts.sheet ?? (await firstSheet(received.path));
   const heldPath = opts.heldPath ?? join(opts.dir, "held.csv");
   const now = opts.now ?? new Date();
+  const today = now.toISOString().slice(0, 10);
   await conn.run("INSTALL excel; LOAD excel");
   const source = `read_xlsx(${sqlString(received.path)}, sheet = ${sqlString(sheet)}, header = true, all_varchar = true, stop_at_empty = false)`;
   const present = new Set((await all(conn, `DESCRIBE SELECT * FROM ${source}`)).map((r) => String(r[0])));
@@ -166,7 +182,8 @@ export async function loadDeterminationSheet(conn: DuckDBConnection, opts: Deter
       SELECT CAST(ordinality + 1 AS INTEGER) AS row_number,
              ${col("fieldNumber")} AS field_number, ${col("family")} AS family, ${col("genus")} AS genus,
              ${col("specificEpithet")} AS epithet, ${col("sex")} AS sex_text, ${col("identifiedBy")} AS identified_by,
-             ${col("recordedBy", "lastName")} AS collector, ${col("eventDate", "verbatimEventDate")} AS date_text
+             ${col("recordedBy", "lastName")} AS collector, ${col("eventDate", "verbatimEventDate")} AS date_text,
+             ${col("dateIdentified", "ID Date")} AS identified_text
       FROM ${source} WITH ORDINALITY
       WHERE coalesce(${col("fieldNumber")}, ${col("genus")}, ${col("specificEpithet")}, ${col("identifiedBy")}) IS NOT NULL`);
 
@@ -197,6 +214,12 @@ export async function loadDeterminationSheet(conn: DuckDBConnection, opts: Deter
                   ELSE coalesce(sa.name, concat(genus_name, ' ', species_epithet)) END AS name,
              CASE lower(sex_text) WHEN 'female' THEN 'female' WHEN 'male' THEN 'male' WHEN 'gynandromorph' THEN 'gynandromorph' END AS sex,
              ${DATE_SQL("date_text")} AS event_date,
+             CASE WHEN regexp_full_match(identified_text, '\\d{4}') THEN make_date(CAST(identified_text AS INTEGER), 1, 1)
+                  ELSE ${DATE_SQL("identified_text")} END AS identified_on,
+             CASE WHEN regexp_full_match(identified_text, '\\d{4}') THEN 'year' END AS identified_precision,
+             -- The last day the date can mean: a year's is its 31 December.
+             CASE WHEN regexp_full_match(identified_text, '\\d{4}') THEN make_date(CAST(identified_text AS INTEGER), 12, 31)
+                  ELSE ${DATE_SQL("identified_text")} END AS identified_by_end,
              (SELECT count(*) FROM ds_row x WHERE x.field_number = g.field_number) AS times_in_sheet
       FROM g
       LEFT JOIN ds_taxon_alias sa ON sa.rank = 'species' AND sa.alias = concat(g.genus, ' ', g.species_epithet)`);
@@ -230,6 +253,8 @@ export async function loadDeterminationSheet(conn: DuckDBConnection, opts: Deter
         WHEN m.collector IS NOT NULL AND NOT s.collector_matches THEN 'collector_disagrees'
         WHEN m.date_text IS NOT NULL AND m.event_date IS NULL THEN 'date_unreadable'
         WHEN m.event_date IS NOT NULL AND NOT (m.event_date BETWEEN s.date_start AND s.date_end) THEN 'date_disagrees'
+        WHEN m.identified_text IS NOT NULL AND m.identified_on IS NULL THEN 'identified_unreadable'
+        WHEN m.identified_on > DATE ${sqlString(today)} OR m.identified_by_end < s.date_start THEN 'identified_disagrees'
         WHEN NOT m.name_readable THEN 'name_unreadable'
         WHEN m.sex_text IS NOT NULL AND m.sex IS NULL THEN 'sex_unreadable'
         WHEN m.identified_by IS NOT NULL AND m.identified_by NOT IN (SELECT alias FROM ds_determiner_alias) THEN 'determiner_unknown'
@@ -327,9 +352,9 @@ export async function loadDeterminationSheet(conn: DuckDBConnection, opts: Deter
       FROM (SELECT * FROM ds_candidate WHERE outcome = 'recorded' ORDER BY row_number) c`);
     await conn.run(
       `INSERT INTO determination (entity_id, specimen_id, animal_id, verbatim_identification, sex, determiner_id, determiner_name,
-                                  is_expert, channel, recorded_at)
+                                  is_expert, channel, determined_on, determined_on_precision, recorded_at)
        SELECT determination_id, specimen_id, animal_id, verbatim, sex, determiner_id, identified_by,
-              true, 'worksheet_import', $1::TIMESTAMPTZ
+              true, 'worksheet_import', identified_on, identified_precision, $1::TIMESTAMPTZ
        FROM ds_insert`,
       [now.toISOString()] as never,
     );
@@ -338,6 +363,40 @@ export async function loadDeterminationSheet(conn: DuckDBConnection, opts: Deter
        SELECT determination_id, $1, $2, $3::TIMESTAMPTZ, $4, row_number, $5::TIMESTAMPTZ FROM ds_insert`,
       [received.id, received.name, received.modifiedTime, sheet, now.toISOString()] as never,
     );
+
+    // A row skipped because its determination stands: that determination,
+    // and the date it has, to be given the sheet's where it has none.
+    await conn.run(`
+      CREATE OR REPLACE TEMP TABLE ds_dated AS
+      SELECT c.row_number, c.field_number, c.identified_on, c.identified_precision, c.identified_text,
+             d.entity_id AS determination_id, d.determined_on AS stands_on, d.determined_on_precision AS stands_precision
+      FROM ds_candidate c
+      LEFT JOIN determination_of_record r ON c.outcome = 'already_recorded' AND r.specimen_id = c.specimen_id
+      LEFT JOIN (
+        SELECT w.row_number, wd.specimen_id, min(w.determination_id) AS determination_id
+        FROM worksheet_determination w JOIN determination wd ON wd.entity_id = w.determination_id
+        WHERE w.file_id = ${sqlString(received.id)} AND w.sheet = ${sqlString(sheet)}
+        GROUP BY ALL
+      ) l ON c.outcome = 'already_loaded' AND l.row_number = c.row_number AND l.specimen_id = c.specimen_id
+      JOIN determination d ON d.entity_id = coalesce(r.entity_id, l.determination_id)
+      WHERE c.identified_on IS NOT NULL`);
+    const dated = await one(conn, "SELECT count(*) FROM ds_dated WHERE stands_on IS NULL");
+    const dateKept = (
+      await all(
+        conn,
+        `SELECT field_number,
+                CASE WHEN stands_precision = 'year' THEN CAST(year(stands_on) AS VARCHAR) ELSE CAST(stands_on AS VARCHAR) END,
+                identified_text
+         FROM ds_dated
+         WHERE stands_on IS NOT NULL
+           AND (stands_on, stands_precision) IS DISTINCT FROM (identified_on, identified_precision)
+         ORDER BY row_number`,
+      )
+    ).map(([fieldNumber, stands, sheetSays]) => ({ fieldNumber: String(fieldNumber), stands: String(stands), sheet: String(sheetSays) }));
+    await conn.run(`
+      UPDATE determination SET determined_on = x.identified_on, determined_on_precision = x.identified_precision
+      FROM ds_dated x
+      WHERE determination.entity_id = x.determination_id AND determination.determined_on IS NULL`);
 
     const held = Object.fromEntries(HELD_REASONS.map((r) => [r, 0])) as Record<HeldReason, number>;
     for (const [reason, n] of await all(conn, `SELECT outcome, count(*) FROM ds_candidate GROUP BY outcome`)) {
@@ -350,7 +409,11 @@ export async function loadDeterminationSheet(conn: DuckDBConnection, opts: Deter
               coalesce(detail, CASE outcome
                 WHEN 'collector_disagrees' THEN concat('the sheet says ', collector)
                 WHEN 'date_disagrees' THEN concat('the sheet says ', CAST(event_date AS VARCHAR))
-                WHEN 'date_unreadable' THEN date_text END)
+                WHEN 'date_unreadable' THEN date_text
+                WHEN 'identified_unreadable' THEN identified_text
+                WHEN 'identified_disagrees' THEN concat('determined ', identified_text,
+                  CASE WHEN identified_on > DATE ${sqlString(today)} THEN ', after today'
+                       ELSE concat(', before the sample was collected on ', CAST((SELECT s.date_start FROM ds_sample s WHERE s.row_number = ds_candidate.row_number) AS VARCHAR)) END) END)
        FROM ds_candidate WHERE ${isHeld} ORDER BY row_number`,
     );
     const byDeterminer = (
@@ -377,6 +440,8 @@ export async function loadDeterminationSheet(conn: DuckDBConnection, opts: Deter
       supersededExpert,
       alreadyRecorded: await one(conn, "SELECT count(*) FROM ds_candidate WHERE outcome = 'already_recorded'"),
       alreadyLoaded: await one(conn, "SELECT count(*) FROM ds_candidate WHERE outcome = 'already_loaded'"),
+      dated,
+      dateKept,
       held,
       heldBySeason: {
         active: await one(conn, `SELECT count(*) FROM ds_candidate WHERE ${isHeld} AND settled = false`),

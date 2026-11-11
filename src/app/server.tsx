@@ -757,6 +757,7 @@ export function createApp({
           atlas={dashboard.atlas}
           skipped={dashboard.skipped}
           toName={dashboard.toName}
+          identifications={dashboard.identifications}
           check={check}
         />,
       ),

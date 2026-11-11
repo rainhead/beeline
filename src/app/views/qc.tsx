@@ -1,5 +1,6 @@
 import { EMPTY_QUERY, listingHref, MINE } from "../listings.js";
-import { sampleHref, suggestedLocalityHref } from "../record.js";
+import { sampleHref, specimenHref, suggestedLocalityHref } from "../record.js";
+import type { Identification } from "../dashboard.js";
 import { determineHref } from "./determine.js";
 import type { Geoprivacy, QcSeverity } from "../../model.js";
 import type { LocalityBasis } from "../../locality-rule.js";
@@ -16,6 +17,7 @@ import {
   Meta,
   OrAbsent,
   PageHeader,
+  Pill,
   SuggestedLocality,
   TaxonName,
 } from "./components/index.js";
@@ -258,6 +260,55 @@ function Skipped({ m, days }: { m: Messages; days: SkippedDay[] }) {
   );
 }
 
+/**
+ * The latest identifications of the person's bees (beeline-xegx): an expert
+ * naming a specimen, or changing an expert's earlier name, newest first by
+ * when it was identified. Below everything that wants doing, since it asks
+ * nothing of the volunteer.
+ */
+function Identifications({ m, items }: { m: Messages; items: Identification[] }) {
+  const t = m.qc.identifications;
+  return (
+    <>
+      <h2>{t.heading}</h2>
+      <Meta block>{t.intro}</Meta>
+      {items.length === 0 ? (
+        <EmptyState>{t.empty}</EmptyState>
+      ) : (
+        <DataTable columns={[t.col.specimen, t.col.name, t.col.by, t.col.when]}>
+          {items.map((i) => (
+            <tr>
+              <td>
+                <Pill href={specimenHref(i.specimen_id)} mono={i.field_number !== null}>
+                  {i.field_number ?? t.specimen(i.sample_number, i.specimen_number)}
+                </Pill>
+              </td>
+              <td>
+                <TaxonName rank={i.rank} scientificName={i.scientific_name} qualifier={i.qualifier ?? undefined} />
+                {i.previous !== null && (
+                  <Meta block>
+                    {t.previously}{" "}
+                    <TaxonName
+                      rank={i.previous.rank}
+                      scientificName={i.previous.scientific_name}
+                      qualifier={i.previous.qualifier ?? undefined}
+                    />
+                  </Meta>
+                )}
+                {i.superseded && <Meta block>{t.changedSince}</Meta>}
+              </td>
+              <td>
+                <OrAbsent value={i.determiner} label={t.byUnknown} />
+              </td>
+              <td class="nowrap">{m.format.day(i.identified_at)}</td>
+            </tr>
+          ))}
+        </DataTable>
+      )}
+    </>
+  );
+}
+
 /** [3, 5, 6, 7] → ["3", "5–7"]; [3, 4] → ["3", "4"]. */
 export function numberRuns(numbers: readonly number[]): string[] {
   const sorted = [...numbers].sort((a, b) => a - b);
@@ -450,6 +501,8 @@ export function QcHome(props: {
   skipped?: SkippedDay[];
   /** The newest active season's specimens still to be named, with the season the identify screen should open on. */
   toName?: { season: number; unnamed: number } | null;
+  /** The latest expert identifications of the person's bees; absent on proofing surfaces. */
+  identifications?: Identification[];
   /**
    * "Check iNaturalist now" (beeline-yso): absent where the instance cannot
    * check, as on proofing surfaces; otherwise whether the person has an
@@ -532,6 +585,7 @@ export function QcHome(props: {
           <Button variant="tonal">{m.qc.check.button}</Button>
         </form>
       )}
+      {props.identifications !== undefined && <Identifications m={m} items={props.identifications} />}
     </>
   );
 }

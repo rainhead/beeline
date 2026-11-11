@@ -569,6 +569,22 @@ export const en = {
       link: "Identify them",
     },
     /**
+     * The feed of experts' identifications of the person's bees
+     * (beeline-xegx). Identification arrives in batches, often a year or more
+     * after collecting, and until this a volunteer had no way to learn of it.
+     */
+    identifications: {
+      heading: "Latest identifications of your bees",
+      intro:
+        "When an expert names one of your specimens, or changes the name an expert gave it, it appears here, newest first. Experts identify in batches, often a year or more after the bee was collected.",
+      empty: "No expert has identified any of your specimens yet.",
+      col: { specimen: "Specimen", name: "Identified as", by: "Identified by", when: "Identified" },
+      specimen: (sampleNumber: string, specimenNumber: number) => `Sample ${sampleNumber}, specimen ${specimenNumber}`,
+      previously: "Previously",
+      changedSince: "An expert has since changed this name.",
+      byUnknown: "not recorded",
+    },
+    /**
      * Settled seasons stop asking (beeline-2c3.24). Said out loud rather than
      * silently dropped: a flag that vanishes without explanation reads as a
      * bug, and these are still fixable.

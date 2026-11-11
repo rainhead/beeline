@@ -1,6 +1,6 @@
 import { sql, type Kysely } from "kysely";
 import type { LocalityBasis } from "../locality-rule.js";
-import type { Database, Geoprivacy, QcSeverity } from "../model.js";
+import type { Database, DeterminationQualifier, Geoprivacy, QcSeverity } from "../model.js";
 import { entrySeasons } from "./determine.js";
 import { observationGone } from "./listings.js";
 import { DASHBOARD_RULES, type CoCollectors, type DashboardRow, type Finding, type SkippedDay } from "./views/qc.js";
@@ -43,9 +43,124 @@ export interface Dashboard {
    * calls "to name". Null when there are none, so the page says nothing.
    */
   toName: { season: number; unnamed: number } | null;
+  /** The newest expert identifications of this person's bees, newest first (beeline-xegx). */
+  identifications: Identification[];
 }
 
-const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+/**
+ * One line of the front page's feed (beeline-xegx): an expert naming one of
+ * the person's specimens, or changing the name an expert gave it before.
+ */
+export interface Identification {
+  specimen_id: number;
+  field_number: string | null;
+  specimen_number: number;
+  sample_number: string;
+  scientific_name: string;
+  rank: string;
+  qualifier: DeterminationQualifier | null;
+  /** What an expert called it before, when this changed the name; null for the first. */
+  previous: { scientific_name: string; rank: string; qualifier: DeterminationQualifier | null } | null;
+  determiner: string | null;
+  identified_at: Date;
+  /** Whether a later expert has since changed the name again. */
+  superseded: boolean;
+}
+
+/** How many identifications the front page lists. */
+export const IDENTIFICATIONS_SHOWN = 10;
+
+/**
+ * Up to this many specimens, the ones the feed could show are passed to
+ * expert_identification as a list of ids rather than as a subquery. DuckDB
+ * pushes a list of constants into the view, below its window functions, and
+ * computes only those specimens' histories: 11 ms for a collector with the
+ * median 81 specimens on production's store of 2026-11-11, against 92 ms for
+ * the subquery, which computes every specimen's. Past a few thousand the list
+ * itself costs more than the subquery (420 ms for 40,326 against 86 ms).
+ */
+const IDS_INLINE_LIMIT = 2_000;
+
+/**
+ * The person's newest expert identifications, newest first: when an expert
+ * first named each of their bees, and when one changed a name (schema/111).
+ * Ordered by when it was identified, not by when Beeline heard, so the one
+ * night Ecdysis's history arrived does not bury everything under one date.
+ * A name only the old Beeline ever held carries no date and is left out.
+ */
+export async function latestIdentifications(
+  db: Kysely<Database>,
+  personId: number,
+  limit: number = IDENTIFICATIONS_SHOWN,
+  /** Only for tests, which cannot make a person with thousands of specimens cheaply. */
+  inlineLimit: number = IDS_INLINE_LIMIT,
+): Promise<Identification[]> {
+  // Only specimens the feed could show: those with an expert determination
+  // that something can date. That is a superset of what the view dates —
+  // every determination not the old Beeline's carries a time, and one of the
+  // old Beeline's carries one only if it states a date — so nothing is lost,
+  // and it keeps the list short: production's most prolific collector has
+  // 40,326 specimens and 746 of them qualify, which takes the page's query
+  // from 86 ms to 23 ms.
+  const theirs = db
+    .selectFrom("determination as d")
+    .innerJoin("specimen as sp", "sp.entity_id", "d.specimen_id")
+    .innerJoin("sample_collector as mine", "mine.sample_id", "sp.sample_id")
+    .where("mine.person_id", "=", personId)
+    .where("d.is_expert", "=", true)
+    .where((eb) => eb.or([eb("d.channel", "<>", "legacy_import"), eb("d.determined_on", "is not", null)]))
+    .select("d.specimen_id")
+    .distinct();
+  const ids = (await theirs.execute()).map((r) => Number(r.specimen_id));
+  if (ids.length === 0) return [];
+  const found = await db
+    .selectFrom("expert_identification as ei")
+    .innerJoin("specimen as sp", "sp.entity_id", "ei.specimen_id")
+    .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
+    .innerJoin("animal as a", "a.entity_id", "ei.animal_id")
+    .leftJoin("animal as was", "was.entity_id", "ei.previous_animal_id")
+    .leftJoin("person as det", "det.entity_id", "ei.determiner_id")
+    .where("ei.specimen_id", "in", ids.length <= inlineLimit ? ids : theirs)
+    .where("ei.identified_at", "is not", null)
+    .select([
+      "ei.specimen_id",
+      "sp.field_number",
+      "sp.specimen_number",
+      "s.sample_number",
+      "a.scientific_name",
+      "a.rank",
+      "ei.qualifier",
+      "was.scientific_name as previous_name",
+      "was.rank as previous_rank",
+      "ei.previous_qualifier",
+      sql<string | null>`coalesce(det.display_name, ei.determiner_name)`.as("determiner"),
+      "ei.identified_at",
+      "ei.is_latest",
+    ])
+    .orderBy("ei.identified_at", "desc")
+    .orderBy("ei.first_recorded_at", "desc")
+    .orderBy("ei.specimen_id")
+    .limit(limit)
+    .execute();
+  return found.map((r) => ({
+    specimen_id: Number(r.specimen_id),
+    field_number: r.field_number,
+    specimen_number: Number(r.specimen_number),
+    sample_number: r.sample_number,
+    scientific_name: r.scientific_name,
+    rank: r.rank,
+    qualifier: r.qualifier,
+    previous:
+      r.previous_name === null || r.previous_rank === null
+        ? null
+        : { scientific_name: r.previous_name, rank: r.previous_rank, qualifier: r.previous_qualifier },
+    determiner: r.determiner,
+    identified_at: r.identified_at as Date,
+    superseded: !r.is_latest,
+  }));
+}
+
+const num =(v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
 interface RawSampleRow {
   sample_id: number;
@@ -102,7 +217,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
   // locality and place are looked up only for the rows that need one.
   const mine = (col: string) =>
     sql`EXISTS (SELECT 1 FROM sample_collector mine WHERE mine.sample_id = ${sql.ref(col)} AND mine.person_id = ${personId})`;
-  const [samples, findings, placeholders, unnumbered, skipped, partners, sync, season, atlas, seasons] = await Promise.all([
+  const [samples, findings, placeholders, unnumbered, skipped, partners, sync, season, atlas, seasons, identifications] = await Promise.all([
     // Every sample of theirs from an active season, or a settled one whose
     // labels a run already holds; which of them the page shows is decided
     // below, against the findings. Labels are the one other question.
@@ -236,6 +351,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       .select(["a.code", "a.name"])
       .executeTakeFirst(),
     entrySeasons(db, personId, determinerId),
+    latestIdentifications(db, personId),
   ]);
 
   // Where the observations on the page are. The two views derive every
@@ -422,6 +538,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
     atlas: atlas ?? null,
     skipped: [...skippedDays.values()],
     toName: seasonToName(seasons, Number(season.rows[0]?.oldest_active)),
+    identifications,
   };
 }
 

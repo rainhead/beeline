@@ -220,6 +220,27 @@ export interface DeterminationMisplacedQualifierView {
   scientific_name: string;
 }
 
+/**
+ * schema/111: one row per stretch of a specimen's expert determinations that
+ * agree on the name — when an expert first named the bee, and each time one
+ * changed the name (beeline-xegx). identified_at is null when only the old
+ * Beeline, which kept no dates, ever held the name.
+ */
+export interface ExpertIdentificationView {
+  specimen_id: number;
+  stretch: number;
+  animal_id: number;
+  qualifier: DeterminationQualifier | null;
+  determiner_id: number | null;
+  determiner_name: string | null;
+  identified_at: Date | null;
+  first_recorded_at: Date;
+  last_recorded_at: Date;
+  previous_animal_id: number | null;
+  previous_qualifier: DeterminationQualifier | null;
+  is_latest: boolean;
+}
+
 export interface AnimalTable {
   entity_id: Generated<number>;
   parent_id: number | null;
@@ -1357,6 +1378,7 @@ export interface Database {
   settled_sample: SettledSampleView;
   animal_rank: AnimalRankTable;
   determination_misplaced_qualifier: DeterminationMisplacedQualifierView;
+  expert_identification: ExpertIdentificationView;
   sample_primary_collector: SamplePrimaryCollectorView;
   sample_primary_collector_invalid: SamplePrimaryCollectorInvalidView;
   sample_atlas: SampleAtlasTable;

@@ -2589,7 +2589,10 @@ export const en = {
       noFamily: "Not identified to family",
       noGenus: "Not identified to genus",
       toGenusOnly: (count: number) => `${n(count)} identified only to genus`,
-      speciesCount: (count: number) => (count === 1 ? "1 species" : `${n(count)} species`),
+      /** A genus's list folded away: how many names it holds, which may be more than its species ("cf.", "aff.", subspecies). */
+      names: (count: number) => (count === 1 ? "1 name" : `${n(count)} names`),
+      notBees: (count: number) =>
+        `${n(count)} ${count === 1 ? "specimen was" : "specimens were"} identified as something other than a bee, and ${count === 1 ? "is" : "are"} left out.`,
     },
     byYear: {
       heading: "Your bees by year",

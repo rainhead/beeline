@@ -395,8 +395,11 @@ export interface FamilyFound {
 
 /** What the person's identified bees are, by family and genus (beeline-fiay). */
 export interface TaxaFound {
+  /** The person's specimens, less those identified as something other than a bee. */
   collected: number;
   identified: number;
+  /** Specimens identified to a family that is not a bee's, left out of everything else. */
+  notBees: number;
   families: number;
   genera: number;
   species: number;
@@ -406,9 +409,11 @@ export interface TaxaFound {
 /**
  * Which taxa the person's bees are, as far as each is identified: every
  * determination of record rolled up through the name tree to its genus and
- * family. Volunteers' own determinations count, as on the chart by year. A
- * species is counted once whatever its qualifier, so "cf. titusi" and
- * "titusi" are one species found; the list still shows them apart.
+ * family. Volunteers' own determinations count, as on the chart by year, and
+ * specimens identified as something other than a bee are counted apart. A
+ * species is counted once whether or not it is "cf.", which asserts the
+ * species pending confirmation; "aff." and "nr." say it is probably something
+ * else (schema/040), so they add no species found. The list shows them all.
  */
 export async function taxaFound(db: Kysely<Database>, personId: number): Promise<TaxaFound> {
   const [names, totals] = await Promise.all([
@@ -425,11 +430,16 @@ export async function taxaFound(db: Kysely<Database>, personId: number): Promise
   const families = new Map<string, { name: string | null; genera: Map<string, GenusFound> }>();
   const speciesSeen = new Set<number>();
   let identified = 0;
+  let notBees = 0;
   for (const r of names.rows) {
     const bees = Number(r.bees);
-    identified += bees;
     const line = lineage.get(Number(r.animal_id));
     const family = line?.family ?? null;
+    if (family !== null && !BEE_FAMILIES.includes(family)) {
+      notBees += bees;
+      continue;
+    }
+    identified += bees;
     const genus = line?.genus ?? null;
     const fam = families.get(String(family)) ?? { name: family, genera: new Map() };
     families.set(String(family), fam);
@@ -437,7 +447,7 @@ export async function taxaFound(db: Kysely<Database>, personId: number): Promise
     fam.genera.set(String(genus), gen);
     gen.bees += bees;
     if (line?.species !== undefined && line.species !== null && line.self !== null) {
-      speciesSeen.add(line.species);
+      if (r.qualifier !== "aff." && r.qualifier !== "nr.") speciesSeen.add(line.species);
       gen.species.push({ scientific_name: line.self.scientific_name, rank: line.self.rank, qualifier: r.qualifier, bees });
     } else if (genus !== null && line?.atOrBelowGenus) {
       gen.toGenusOnly += bees;
@@ -453,8 +463,9 @@ export async function taxaFound(db: Kysely<Database>, personId: number): Promise
     // Named families first, by how many bees; whatever has no family last.
     .sort((a, b) => (a.name === null ? 1 : 0) - (b.name === null ? 1 : 0) || b.bees - a.bees);
   return {
-    collected: Number(totals.rows[0]?.collected ?? 0),
+    collected: Number(totals.rows[0]?.collected ?? 0) - notBees,
     identified,
+    notBees,
     families: byFamily.filter((f) => f.name !== null).length,
     genera: new Set(byFamily.flatMap((f) => f.genera.flatMap((g) => (g.name === null ? [] : [`${f.name}/${g.name}`])))).size,
     species: speciesSeen.size,

@@ -248,6 +248,7 @@ export function TaxaFoundPage({ m, found }: { m: Messages; found: TaxaFound }) {
             {t.summary(found.identified, found.species, found.genera, found.families)}
             {notYet > 0 && <> {t.notYet(notYet)}</>}
           </p>
+          {found.notBees > 0 && <Meta block>{t.notBees(found.notBees)}</Meta>}
           <Meta block>{t.intro}</Meta>
           {found.byFamily.map((family) => (
             <section class="found-family">
@@ -297,7 +298,7 @@ function GenusRow({ m, genus, max }: { m: Messages; genus: GenusFound; max: numb
           species
         ) : (
           <details>
-            <summary>{t.speciesCount(genus.species.length)}</summary>
+            <summary>{t.names(genus.species.length)}</summary>
             {species}
           </details>
         )}

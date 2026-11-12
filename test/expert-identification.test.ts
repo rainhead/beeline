@@ -436,6 +436,18 @@ describe("what you found", () => {
     );
   });
 
+  it("leaves out what is not a bee, and counts no species for aff. or nr.", async () => {
+    const { db, conn, ada, spec, expert } = await fixture();
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Vespidae')`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('genus', 'Vespula', (SELECT entity_id FROM animal WHERE scientific_name = 'Vespidae'))`);
+    await expert(await spec("26000101"), "Vespula", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000102"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    await conn.run(`UPDATE determination SET qualifier = 'aff.' WHERE specimen_id = ${await spec("26000102")}`);
+    const found = await taxaFound(db, ada);
+    expect([found.collected, found.identified, found.notBees, found.families, found.genera, found.species]).toEqual([4, 1, 1, 1, 1, 0]);
+    expect(found.byFamily.map((f) => f.name)).toEqual(["Apidae"]);
+  });
+
   it("is a tab of Your bees, and each tab marks itself as the current page", async () => {
     const f = await fixture();
     await f.expert(await f.spec("26000101"), "Bombus mixtus", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 17:00:00" });

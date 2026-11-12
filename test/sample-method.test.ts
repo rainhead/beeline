@@ -163,6 +163,33 @@ describe("staff correcting how a sample from the old Beeline was collected", () 
     expect(await sampleRow(conn, sampleId)).toEqual(before);
   });
 
+  it("leaves a field a form left open did not touch, and refuses one it changed over a newer save", async () => {
+    const { app, conn, sampleId, later } = await methodApp("staff");
+    const [[shown]] = (await rows(conn, `SELECT coalesce(protocol, '') FROM sample WHERE entity_id = ${sampleId}`)) as [[string]];
+    const opened = { "base:protocol": shown, "base:date_end": "" };
+    // One staff member corrects the method.
+    await post(app, `/samples/${sampleId}/method`, { ...opened, protocol: "pan traps", date_end: "" });
+    // Another, on a form opened before that, sets only the end date: the method they were shown goes unsaid.
+    const end = later(2);
+    expect((await post(app, `/samples/${sampleId}/method`, { ...opened, protocol: shown, date_end: end })).status).toBe(302);
+    expect((await sampleRow(conn, sampleId))?.slice(0, 2)).toEqual(["trap", "pan traps"]);
+    // And a change to the method from that old form is refused, not written over the first.
+    const res = await post(app, `/samples/${sampleId}/method`, { ...opened, protocol: "vane traps", date_end: end });
+    expect(res.status).toBe(409);
+    expect(await res.text()).toBe(t.conflict);
+    expect((await sampleRow(conn, sampleId))?.[1]).toBe("pan traps");
+  });
+
+  it("keeps the corrections file and the sample agreeing when two saves arrive together", async () => {
+    const { app, conn, sampleId, correctionsPath } = await methodApp("staff");
+    await Promise.all(
+      ["pan traps", "vane traps", "blue vane traps"].map((protocol) => post(app, `/samples/${sampleId}/method`, { protocol, date_end: "" })),
+    );
+    const [[live]] = (await rows(conn, `SELECT protocol FROM sample WHERE entity_id = ${sampleId}`)) as [[string]];
+    const written = (await correctionsIn(correctionsPath)).filter((e) => e.field === "samplingProtocol").map((e) => e.new_value);
+    expect(new Set(written)).toEqual(new Set([live]));
+  });
+
   it("refuses a sample with no old records, and offers it no pencil", async () => {
     const { app, conn } = await methodApp("staff");
     const fresh = await insertCleanSample(conn, { sample_number: "'B-1'" });

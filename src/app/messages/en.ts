@@ -1143,6 +1143,7 @@ export const en = {
           future: "Collecting cannot end on a day that has not come yet.",
         },
         noOldRecords: "This sample was not made from the old Beeline's records, so it cannot be corrected here.",
+        conflict: "Someone changed this sample's method or dates after you opened the form. Reload the page to see what they saved, then make your correction again.",
       },
       staffCoordinates: {
         setBy: (name: string) => `Coordinates set in Beeline by ${name}.`,

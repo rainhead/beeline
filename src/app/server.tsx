@@ -1420,8 +1420,10 @@ export function createApp({
     if (sample === null) return errorResponse(c, "notFound");
     const body = await c.req.parseBody();
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+    const base = (name: string) => (typeof body[`base:${name}`] === "string" ? (body[`base:${name}`] as string) : undefined);
     const note = field("note").trim();
     const result = await setSampleMethod(db, corrections, sample.sample_id, {
+      bases: { protocol: base("protocol"), dateEnd: base("date_end") },
       protocol: field("protocol"),
       dateEnd: field("date_end"),
       note,
@@ -1430,6 +1432,7 @@ export function createApp({
     });
     if (result.outcome === "invalid") return c.text(t.problems[result.problem], 400);
     if (result.outcome === "no_old_records") return c.text(t.noOldRecords, 409);
+    if (result.outcome === "conflict") return c.text(t.conflict, 409);
     if (result.outcome === "saved") {
       try {
         await recordSampleChanges(kyselyReader(db), samplePaths, {

@@ -501,7 +501,10 @@ function MethodEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
     >
       <Meta block>{t.hint}</Meta>
       {sample.printed ? <Meta block>{t.printed}</Meta> : null}
-      <TextField id="method-protocol" name="protocol" label={t.protocol} hint={t.protocolHint} value={sample.protocol} />
+      {/* What the form shows rides along as base:*, so a save can tell a
+          field nobody touched from a stale one (beeline-0br). */}
+      <TextField id="method-protocol" name="protocol" label={t.protocol} hint={t.protocolHint} value={sample.protocol} base={sample.protocol} />
+      <input type="hidden" name="base:date_end" value={sample.kind === "trap" ? iso(sample.date_end) : ""} />
       <Field id="method-date-end" label={t.dateEnd} hint={t.dateEndHint}>
         <input
           id="method-date-end"

@@ -1,5 +1,7 @@
 import { EMPTY_QUERY, listingHref, MINE } from "../listings.js";
 import { sampleHref, suggestedLocalityHref } from "../record.js";
+import type { Batches } from "../your-bees.js";
+import { BatchList } from "./your-bees.js";
 import { determineHref } from "./determine.js";
 import type { Geoprivacy, QcSeverity } from "../../model.js";
 import type { LocalityBasis } from "../../locality-rule.js";
@@ -258,6 +260,23 @@ function Skipped({ m, days }: { m: Messages; days: SkippedDay[] }) {
   );
 }
 
+/**
+ * The newest days experts identified the person's bees (beeline-xegx), as
+ * /bees shows them. Below everything that wants doing, since it asks nothing
+ * of the volunteer. It does not link to /bees yet: nothing does until the
+ * front page is redesigned (docs/architecture/your-bees.md).
+ */
+function Identifications({ m, batches }: { m: Messages; batches: Batches }) {
+  const t = m.qc.identifications;
+  return (
+    <>
+      <h2>{t.heading}</h2>
+      <Meta block>{t.intro}</Meta>
+      {batches.batches.length === 0 ? <EmptyState>{t.empty}</EmptyState> : <BatchList m={m} batches={batches.batches} />}
+    </>
+  );
+}
+
 /** [3, 5, 6, 7] → ["3", "5–7"]; [3, 4] → ["3", "4"]. */
 export function numberRuns(numbers: readonly number[]): string[] {
   const sorted = [...numbers].sort((a, b) => a - b);
@@ -450,6 +469,8 @@ export function QcHome(props: {
   skipped?: SkippedDay[];
   /** The newest active season's specimens still to be named, with the season the identify screen should open on. */
   toName?: { season: number; unnamed: number } | null;
+  /** The newest days experts identified the person's bees; absent on proofing surfaces. */
+  identifications?: Batches;
   /**
    * "Check iNaturalist now" (beeline-yso): absent where the instance cannot
    * check, as on proofing surfaces; otherwise whether the person has an
@@ -532,6 +553,7 @@ export function QcHome(props: {
           <Button variant="tonal">{m.qc.check.button}</Button>
         </form>
       )}
+      {props.identifications !== undefined && <Identifications m={m} batches={props.identifications} />}
     </>
   );
 }

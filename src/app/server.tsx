@@ -115,6 +115,8 @@ import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
+import { beesByYear, identificationBatches } from "./your-bees.js";
+import { YourBeesPage } from "./views/your-bees.js";
 import { checkObserver, deriveForObserver, lastChecked, nextCheckAt } from "./inat-check.js";
 import { forgetPipelineJwt } from "../inat-jwt.js";
 import { recordPersonChanges } from "../person-change.js";
@@ -757,12 +759,24 @@ export function createApp({
           atlas={dashboard.atlas}
           skipped={dashboard.skipped}
           toName={dashboard.toName}
+          identifications={dashboard.identifications}
           check={check}
         />,
       ),
     );
   };
   app.get("/", (c) => dashboardPage(c));
+
+  // "Your bees" (beeline-fiay): the person's bees by collection year, and the
+  // experts' identifications of them a day at a time. A "mine" surface like
+  // the front page, so it follows the switch: while acting for Robert it is
+  // Robert's bees. Staff see a volunteer's by viewing Beeline as them.
+  app.get("/bees", async (c) => {
+    const m = c.get("m");
+    const { personId } = c.get("acting");
+    const [years, batches] = await Promise.all([beesByYear(db, personId), identificationBatches(db, personId)]);
+    return c.html(await page(c, m.yourBees.title, <YourBeesPage m={m} years={years} batches={batches} />));
+  });
 
   // "Check iNaturalist now" (beeline-yso, src/app/inat-check.ts): read this
   // person's observations from this season again and promote, so a fix made

@@ -569,6 +569,16 @@ export const en = {
       link: "Identify them",
     },
     /**
+     * The feed of experts' identifications of the person's bees
+     * (beeline-xegx). Identification arrives in batches, often a year or more
+     * after collecting, and until this a volunteer had no way to learn of it.
+     */
+    identifications: {
+      heading: "Latest identifications of your bees",
+      intro: "Experts identify in batches, often a year or more after the bees were collected. These are the newest days they identified yours.",
+      empty: "No dated identification of your bees by an expert other than you yet.",
+    },
+    /**
      * Settled seasons stop asking (beeline-2c3.24). Said out loud rather than
      * silently dropped: a flag that vanishes without explanation reads as a
      * bug, and these are still fixable.
@@ -2550,6 +2560,71 @@ export const en = {
     staff_hold:
       "Staff are holding this sample back from printing. Their note says why. If it asks you to change something, change it; staff will review and lift the hold.",
   } as Record<string, string>,
+
+  /**
+   * "Your bees" (beeline-fiay, beeline-xegx): a volunteer's own bees by the
+   * year they were collected, and the experts' identifications of them as they
+   * arrived, a day at a time. The start of the student report's replacement.
+   */
+  yourBees: {
+    title: "Your bees",
+    heading: "Your bees",
+    lede: "Every bee you have collected, how far each has been identified, and when experts identified them.",
+    byYear: {
+      heading: "Your bees by year",
+      intro:
+        "Each bar is the bees you collected that year, split by how far each one is identified now. Your own identifications count, and an expert's takes the place of yours where there is one. Specimens identified as something other than a bee are left out.",
+      empty: "None of your samples has specimens recorded yet. They appear here once your samples' labels are printed.",
+      chartLabel: "Bees you collected each year, by how far each is identified",
+      legend: { species: "To species", genus: "To genus", coarser: "Coarser than genus", none: "Not yet identified" },
+      col: { season: "Year", collected: "Collected" },
+      asTable: "Show as a table",
+      title: (season: number | string, collected: number, species: number, genus: number, coarser: number, none: number) =>
+        `${season}: ${n(collected)} bees. ${n(species)} to species, ${n(genus)} to genus, ${n(coarser)} coarser, ${n(none)} not yet identified.`,
+    },
+    batches: {
+      heading: "When experts identified them",
+      intro: "Experts identify in batches, often a year or more after the bees were collected. Each entry is one day's identifications, newest first.",
+      undated: (count: number) =>
+        `${n(count)} of your bees ${count === 1 ? "was" : "were"} identified at a time Beeline does not know, most in the old Beeline, which kept no dates. Those are only on each specimen's page.`,
+      empty: "No dated identification of your bees by an expert other than you yet.",
+      /** An expert's sheet that stated no day: when it arrived is the latest the bees could have been identified. */
+      onOrBefore: (day: string) => `On or before ${day}`,
+      identified: (parts: readonly string[] | string, experts: number) => `${experts > 1 ? "Experts" : "An expert"} identified ${list(parts)}.`,
+      ofSeason: (count: number, season: number | string) => `${n(count)} of your ${season} bees`,
+      kinds: (parts: readonly string[] | string) => {
+        const text = Array.isArray(parts) ? parts.join("; ") : String(parts);
+        return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
+      },
+      /**
+       * What each identification did to the name an expert gave the bee
+       * before. "Your own" is a name the volunteer gave, which Washington's
+       * staff upload to Ecdysis, where it reads as an expert's.
+       */
+      kind: {
+        first: (count: number) => `${n(count)} for the first time`,
+        confirmed: (count: number) => `${n(count)} confirmed`,
+        finer: (count: number, from: string, to: string) => `${n(count)} from ${from} to ${to}`,
+        coarser: (count: number, from: string, to: string) => `${n(count)} back from ${from} to ${to}`,
+        corrected: (count: number) => `${n(count)} corrected`,
+        certainty: (count: number) => `${n(count)} with a change in how sure the identification is`,
+        own: (own: number, count: number) =>
+          own === count
+            ? count === 1
+              ? "(it was your own identification)"
+              : "(all were your own identifications)"
+            : own === 1
+              ? "(1 was your own identification)"
+              : `(${n(own)} were your own identifications)`,
+      },
+      by: (names: readonly string[] | string) => `By ${list(names)}`,
+      names: (count: number) => (count === 1 ? "1 name" : `${n(count)} names`),
+      times: (count: number) => `× ${n(count)}`,
+      /** A specimen with no field number yet, by its place in its sample. */
+      specimen: (sampleNumber: string, specimenNumber: number) => `sample ${sampleNumber}, specimen ${specimenNumber}`,
+      andMore: (count: number) => `and ${n(count)} more`,
+    },
+  },
 
   /**
    * The process, step by step, for a volunteer who has never seen Beeline

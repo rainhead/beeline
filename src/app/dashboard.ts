@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import type { LocalityBasis } from "../locality-rule.js";
 import type { Database, Geoprivacy, QcSeverity } from "../model.js";
+import { identificationBatches, type Batches } from "./your-bees.js";
 import { entrySeasons } from "./determine.js";
 import { observationGone } from "./listings.js";
 import { DASHBOARD_RULES, type CoCollectors, type DashboardRow, type Finding, type SkippedDay } from "./views/qc.js";
@@ -43,7 +44,12 @@ export interface Dashboard {
    * calls "to name". Null when there are none, so the page says nothing.
    */
   toName: { season: number; unnamed: number } | null;
+  /** The newest days experts identified this person's bees (beeline-xegx); the rest are on /bees. */
+  identifications: Batches;
 }
+
+/** How many days of identifications the front page shows before pointing to /bees. */
+export const BATCHES_ON_FRONT_PAGE = 3;
 
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
@@ -102,7 +108,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
   // locality and place are looked up only for the rows that need one.
   const mine = (col: string) =>
     sql`EXISTS (SELECT 1 FROM sample_collector mine WHERE mine.sample_id = ${sql.ref(col)} AND mine.person_id = ${personId})`;
-  const [samples, findings, placeholders, unnumbered, skipped, partners, sync, season, atlas, seasons] = await Promise.all([
+  const [samples, findings, placeholders, unnumbered, skipped, partners, sync, season, atlas, seasons, identifications] = await Promise.all([
     // Every sample of theirs from an active season, or a settled one whose
     // labels a run already holds; which of them the page shows is decided
     // below, against the findings. Labels are the one other question.
@@ -236,6 +242,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       .select(["a.code", "a.name"])
       .executeTakeFirst(),
     entrySeasons(db, personId, determinerId),
+    identificationBatches(db, personId, { maxBatches: BATCHES_ON_FRONT_PAGE, countUndated: false }),
   ]);
 
   // Where the observations on the page are. The two views derive every
@@ -422,6 +429,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
     atlas: atlas ?? null,
     skipped: [...skippedDays.values()],
     toName: seasonToName(seasons, Number(season.rows[0]?.oldest_active)),
+    identifications,
   };
 }
 

@@ -479,12 +479,15 @@ describe("what you found", () => {
     await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) VALUES (${adas}, ${oba}), (${bos}, ${oba})`);
     await expert(await spec("26000101"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
     await expert(await spec("26000201"), "Bombus caliginosus", "legacy_import", "2026-11-03 22:25:00Z");
+    // The same species in and out of the atlas is one entry with both bees.
+    await expert(await spec("26000102"), "Bombus caliginosus", "legacy_import", "2026-11-03 22:25:00Z");
     await expert(await spec("26000301"), "Bombus vosnesenskii", "legacy_import", "2026-11-03 22:25:00Z");
     await conn.run(`UPDATE determination SET qualifier = 'aff.' WHERE specimen_id = ${await spec("26000301")}`);
     const found = await taxaFound(db, ada);
-    // caliginosus was found outside the atlas; vosnesenskii only as aff.
-    expect(found.atlas).toEqual({ names: ["Oregon Bee Atlas"], families: 1, genera: 1, species: 1, yours: { families: 1, genera: 1, species: 1 } });
+    // caliginosus was found both in and outside the atlas; vosnesenskii only as aff.
+    expect(found.atlas).toEqual({ names: ["Oregon Bee Atlas"], families: 1, genera: 1, species: 2, yours: { families: 1, genera: 1, species: 2 } });
     expect(found.species).toBe(2);
+    expect(found.byFamily[0]!.genera[0]!.species.map((x) => [x.scientific_name, x.bees])).toEqual([["Bombus caliginosus", 2], ["Bombus mixtus", 1]]);
     expect(found.byFamily[0]!.genera[0]!.byOthers).toEqual([]);
   });
 

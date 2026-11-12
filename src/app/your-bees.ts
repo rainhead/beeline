@@ -502,7 +502,11 @@ export async function taxaFound(db: Kysely<Database>, personId: number): Promise
     gen.bees += bees;
     if (line?.species !== undefined && line.species !== null && line.self !== null) {
       if (r.qualifier !== "aff." && r.qualifier !== "nr.") speciesSeen.add(line.species);
-      gen.species.push({ scientific_name: line.self.scientific_name, rank: line.self.rank, qualifier: r.qualifier, bees });
+      // One entry per name and qualifier, though the rows come apart by
+      // whether the specimen was collected in the atlas.
+      const same = gen.species.find((x: SpeciesFound) => x.scientific_name === line.self!.scientific_name && x.qualifier === r.qualifier);
+      if (same !== undefined) same.bees += bees;
+      else gen.species.push({ scientific_name: line.self.scientific_name, rank: line.self.rank, qualifier: r.qualifier, bees });
     } else if (genus !== null && line?.atOrBelowGenus) {
       gen.toGenusOnly += bees;
     }

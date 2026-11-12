@@ -215,6 +215,10 @@ COMMENT ON COLUMN specimen.field_number IS 'The number Beeline issues and prints
 -- record he called lost whose bee the inventory found under its other number
 -- is a surplus label, and the remark goes on the specimen that exists. One
 -- row per specimen, replaced by a later load that says something different.
+-- The repair of what legacy promotion set aside writes here too, for records
+-- of earlier years nobody has looked at the pins of: Andony asked that what
+-- is in doubt be said where a taxonomist will read it, rather than wait for
+-- somebody to settle it (GitHub #303).
 CREATE TABLE specimen_disposition (
   specimen_id INTEGER PRIMARY KEY REFERENCES specimen(entity_id),
   disposition TEXT CHECK (disposition IN ('in collection', 'missing')),
@@ -224,12 +228,12 @@ CREATE TABLE specimen_disposition (
   source      TEXT NOT NULL CHECK (source <> ''),
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-COMMENT ON TABLE specimen_disposition IS 'What became of the pin, as a person stated it after looking (dwc:disposition, dwc:occurrenceRemarks). Absent for the ordinary specimen nobody has had cause to remark on. Written by pnpm disposition:load from a staff inventory file; the legacy-format export and the Darwin Core archives carry both columns.';
+COMMENT ON TABLE specimen_disposition IS 'What became of the pin, as a person stated it after looking, or what the old Beeline''s records leave in doubt about it (dwc:disposition, dwc:occurrenceRemarks). Absent for the ordinary specimen nobody has had cause to remark on. Written by pnpm disposition:load from a staff inventory file, and by pnpm legacy:repair-skipped where an old record was placed by an assumption, a specimen printed twice has its identifications under the other number, or another old record shares its numbers but may be a second bee (beeline-iuva); the legacy-format export and the Darwin Core archives carry both columns.';
 COMMENT ON COLUMN specimen_disposition.disposition IS 'Darwin Core''s vocabulary, the two values the inventory can say: in collection (a pin with this label is in a box) or missing (no pin, and the record cannot be matched to one). Null where the remark says something else, such as that a label is still to print.';
 COMMENT ON COLUMN specimen_disposition.remarks IS 'The remark as stated, or as corrected by the load: the words the exports write as occurrenceRemarks.';
-COMMENT ON COLUMN specimen_disposition.stated_by IS 'Who looked: the name given to the load, not a person reference, since the inventory is a file and not an act in Beeline.';
-COMMENT ON COLUMN specimen_disposition.stated_on IS 'The date the statement is good for, given to the load: the inventory''s date rather than the load''s.';
-COMMENT ON COLUMN specimen_disposition.source IS 'The file the remark was read from, by name.';
+COMMENT ON COLUMN specimen_disposition.stated_by IS 'Who looked: the name given to the load, not a person reference, since the inventory is a file and not an act in Beeline. Beeline itself where the remark was read from the old Beeline''s records and nobody has looked.';
+COMMENT ON COLUMN specimen_disposition.stated_on IS 'The date the statement is good for, given to the load: the inventory''s date rather than the load''s. For a remark read from the old Beeline''s records, the day the repair wrote it.';
+COMMENT ON COLUMN specimen_disposition.source IS 'The file the remark was read from, by name, or the command that read it from the old Beeline''s records; pnpm disposition:load holds a row rather than replace a remark of that command''s.';
 
 -- Which iNaturalist observations an imported sample's legacy records came
 -- from. Legacy promotion merges records on (collector, sample number, date),

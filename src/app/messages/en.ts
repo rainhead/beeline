@@ -1326,7 +1326,9 @@ export const en = {
        * What became of the pin, where a staff inventory has said
        * (specimen_disposition, beeline-fud5): the 2025 boxes were gone
        * through in the autumn of 2026, and every record found wanting got a
-       * remark. Shown only on a specimen that has one.
+       * remark. Also what the old Beeline's records leave in doubt about a
+       * specimen of an earlier year, stated by Beeline (beeline-iuva). Shown
+       * only on a specimen that has one.
        */
       disposition: {
         heading: "The pin",

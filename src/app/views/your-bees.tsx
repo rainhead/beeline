@@ -1,7 +1,7 @@
 import type { Messages } from "../messages/index.js";
-import type { Batch, BatchKind, Batches, BatchSpecimen, YearOfBees } from "../your-bees.js";
+import type { Batch, BatchKind, Batches, BatchSpecimen, GenusFound, TaxaFound, YearOfBees } from "../your-bees.js";
 import { specimenHref } from "../record.js";
-import { DataTable, EmptyState, Meta, PageHeader, TaxonName } from "./components/index.js";
+import { DataTable, EmptyState, Meta, PageHeader, Tabs, TaxonName } from "./components/index.js";
 
 /**
  * "Your bees" (beeline-fiay, beeline-xegx): a volunteer's own bees, by the
@@ -15,6 +15,7 @@ export function YourBeesPage({ m, years, batches }: { m: Messages; years: YearOf
   return (
     <>
       <PageHeader title={t.heading} lede={t.lede} />
+      <YourBeesTabs m={m} current="identifications" />
       <h2>{t.byYear.heading}</h2>
       <Meta block>{t.byYear.intro}</Meta>
       {years.length === 0 ? <EmptyState>{t.byYear.empty}</EmptyState> : <YearChart m={m} years={years} />}
@@ -206,4 +207,102 @@ function kindText(m: Messages, k: BatchKind): string {
         ? t.coarser(k.count, k.from ?? "", k.to ?? "")
         : t[k.kind](k.count);
   return k.own > 0 ? `${text} ${t.own(k.own, k.count)}` : text;
+}
+
+/** Where each tab goes; the pages of Your bees, in order. */
+export const YOUR_BEES_TABS = [
+  { key: "identifications", href: "/bees" },
+  { key: "found", href: "/bees/taxa" },
+] as const;
+
+/**
+ * The tabs between the pages of Your bees (beeline-fiay): each a view of the
+ * volunteer's own bees. The student report's other sections join here as tabs
+ * of their own.
+ */
+export function YourBeesTabs({ m, current }: { m: Messages; current: (typeof YOUR_BEES_TABS)[number]["key"] }) {
+  const t = m.yourBees.tabs;
+  return <Tabs label={t.label} tabs={YOUR_BEES_TABS.map((tab) => ({ href: tab.href, label: t[tab.key], current: tab.key === current }))} />;
+}
+
+/**
+ * What the volunteer's bees are (beeline-fiay): every determination of
+ * record rolled up to its genus and family, the families largest first. A
+ * genus's species open, since a big collection has dozens in Lasioglossum.
+ */
+export function TaxaFoundPage({ m, found }: { m: Messages; found: TaxaFound }) {
+  const t = m.yourBees.found;
+  const notYet = found.collected - found.identified;
+  // Every bar is against the biggest genus on the page, whichever family it is in.
+  const biggest = Math.max(1, ...found.byFamily.flatMap((f) => f.genera.map((g) => g.bees)));
+  return (
+    <>
+      <PageHeader title={m.yourBees.heading} lede={m.yourBees.lede} />
+      <YourBeesTabs m={m} current="found" />
+      <h2>{t.heading}</h2>
+      {found.identified === 0 ? (
+        <EmptyState>{t.empty}</EmptyState>
+      ) : (
+        <>
+          <p>
+            {t.summary(found.identified, found.species, found.genera, found.families)}
+            {notYet > 0 && <> {t.notYet(notYet)}</>}
+          </p>
+          <Meta block>{t.intro}</Meta>
+          {found.byFamily.map((family) => (
+            <section class="found-family">
+              <h3>
+                {family.name === null ? t.noFamily : <TaxonName rank="family" scientificName={family.name} />}{" "}
+                <span class="meta">{t.bees(family.bees)}</span>
+              </h3>
+              <DataTable columns={[t.col.genus, t.col.bees, t.col.species]}>
+                {family.genera.map((g) => (
+                  <GenusRow m={m} genus={g} max={biggest} />
+                ))}
+              </DataTable>
+            </section>
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+
+/** How many species a genus row lists before folding them away. */
+const SPECIES_SHOWN_OPEN = 4;
+
+function GenusRow({ m, genus, max }: { m: Messages; genus: GenusFound; max: number }) {
+  const t = m.yourBees.found;
+  const species = (
+    <ul class="found-species">
+      {genus.species.map((s) => (
+        <li>
+          <TaxonName rank={s.rank} scientificName={s.scientific_name} qualifier={s.qualifier ?? undefined} />
+          {s.bees > 1 && <> {m.yourBees.batches.times(s.bees)}</>}
+        </li>
+      ))}
+    </ul>
+  );
+  return (
+    <tr>
+      <td>{genus.name === null ? <Meta>{t.noGenus}</Meta> : <TaxonName rank="genus" scientificName={genus.name} />}</td>
+      <td class="found-bees">
+        {m.format.number(genus.bees)}
+        {/* A bar against the page's biggest genus, so the eye can compare down
+            the column; the number beside it is the value. */}
+        <span class="found-bar" style={`width: ${Math.max(2, Math.round((100 * genus.bees) / Math.max(1, max)))}%`} aria-hidden="true" />
+      </td>
+      <td>
+        {genus.species.length === 0 ? null : genus.species.length <= SPECIES_SHOWN_OPEN ? (
+          species
+        ) : (
+          <details>
+            <summary>{t.speciesCount(genus.species.length)}</summary>
+            {species}
+          </details>
+        )}
+        {genus.toGenusOnly > 0 && genus.name !== null && <Meta block>{t.toGenusOnly(genus.toGenusOnly)}</Meta>}
+      </td>
+    </tr>
+  );
 }

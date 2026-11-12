@@ -368,3 +368,135 @@ async function ancestorsOf(db: Kysely<Database>, ids: number[]): Promise<Map<num
   }
   return map;
 }
+
+/** One species-level name among the person's bees, as its determination of record gives it. */
+export interface SpeciesFound {
+  scientific_name: string;
+  rank: string;
+  qualifier: DeterminationQualifier | null;
+  bees: number;
+}
+
+export interface GenusFound {
+  /** Null for bees whose family is known and whose genus is not. */
+  name: string | null;
+  bees: number;
+  /** Bees identified to this genus (or a subgenus of it) and no further. */
+  toGenusOnly: number;
+  species: SpeciesFound[];
+}
+
+export interface FamilyFound {
+  /** Null for bees identified to something no family is above, such as an order. */
+  name: string | null;
+  bees: number;
+  genera: GenusFound[];
+}
+
+/** What the person's identified bees are, by family and genus (beeline-fiay). */
+export interface TaxaFound {
+  collected: number;
+  identified: number;
+  families: number;
+  genera: number;
+  species: number;
+  byFamily: FamilyFound[];
+}
+
+/**
+ * Which taxa the person's bees are, as far as each is identified: every
+ * determination of record rolled up through the name tree to its genus and
+ * family. Volunteers' own determinations count, as on the chart by year. A
+ * species is counted once whatever its qualifier, so "cf. titusi" and
+ * "titusi" are one species found; the list still shows them apart.
+ */
+export async function taxaFound(db: Kysely<Database>, personId: number): Promise<TaxaFound> {
+  const [names, totals] = await Promise.all([
+    sql<{ animal_id: unknown; qualifier: DeterminationQualifier | null; bees: unknown }>`
+      SELECT d.animal_id, d.qualifier, count(*) AS bees
+      FROM specimen sp JOIN determination_of_record d ON d.specimen_id = sp.entity_id
+      WHERE ${mine(personId)}
+      GROUP BY d.animal_id, d.qualifier`.execute(db),
+    sql<{ collected: unknown }>`SELECT count(*) AS collected FROM specimen sp WHERE ${mine(personId)}`.execute(db),
+  ]);
+  const ids = [...new Set(names.rows.map((r) => Number(r.animal_id)))];
+  const lineage = await lineageOf(db, ids);
+
+  const families = new Map<string, { name: string | null; genera: Map<string, GenusFound> }>();
+  const speciesSeen = new Set<number>();
+  let identified = 0;
+  for (const r of names.rows) {
+    const bees = Number(r.bees);
+    identified += bees;
+    const line = lineage.get(Number(r.animal_id));
+    const family = line?.family ?? null;
+    const genus = line?.genus ?? null;
+    const fam = families.get(String(family)) ?? { name: family, genera: new Map() };
+    families.set(String(family), fam);
+    const gen = fam.genera.get(String(genus)) ?? { name: genus, bees: 0, toGenusOnly: 0, species: [] };
+    fam.genera.set(String(genus), gen);
+    gen.bees += bees;
+    if (line?.species !== undefined && line.species !== null && line.self !== null) {
+      speciesSeen.add(line.species);
+      gen.species.push({ scientific_name: line.self.scientific_name, rank: line.self.rank, qualifier: r.qualifier, bees });
+    } else if (genus !== null && line?.atOrBelowGenus) {
+      gen.toGenusOnly += bees;
+    }
+  }
+  const byFamily: FamilyFound[] = [...families.values()]
+    .map((f) => {
+      const genera = [...f.genera.values()]
+        .map((g) => ({ ...g, species: g.species.sort((a, b) => b.bees - a.bees || a.scientific_name.localeCompare(b.scientific_name)) }))
+        .sort((a, b) => b.bees - a.bees || String(a.name).localeCompare(String(b.name)));
+      return { name: f.name, bees: genera.reduce((s, g) => s + g.bees, 0), genera };
+    })
+    // Named families first, by how many bees; whatever has no family last.
+    .sort((a, b) => (a.name === null ? 1 : 0) - (b.name === null ? 1 : 0) || b.bees - a.bees);
+  return {
+    collected: Number(totals.rows[0]?.collected ?? 0),
+    identified,
+    families: byFamily.filter((f) => f.name !== null).length,
+    genera: new Set(byFamily.flatMap((f) => f.genera.flatMap((g) => (g.name === null ? [] : [`${f.name}/${g.name}`])))).size,
+    species: speciesSeen.size,
+    byFamily,
+  };
+}
+
+interface Lineage {
+  self: { scientific_name: string; rank: string } | null;
+  family: string | null;
+  genus: string | null;
+  /** The species-rank node at or above this name, for counting species once whatever is finer. */
+  species: number | null;
+  /** Whether the name is a genus or anything finer, so "to genus only" can tell a genus from a family. */
+  atOrBelowGenus: boolean;
+}
+
+/** Each name's family, genus and species, read up the tree. */
+async function lineageOf(db: Kysely<Database>, ids: number[]): Promise<Map<number, Lineage>> {
+  const map = new Map<number, Lineage>();
+  if (ids.length === 0) return map;
+  const result = await sql<{ start: unknown; node: unknown; rank: string; scientific_name: string; ordinal: unknown; genus_ordinal: unknown; depth: unknown }>`
+    WITH RECURSIVE up(start, node, depth) AS (
+      SELECT entity_id, entity_id, 0 FROM animal WHERE entity_id IN (${sql.join(ids)})
+      UNION ALL
+      SELECT up.start, a.parent_id, up.depth + 1 FROM up JOIN animal a ON a.entity_id = up.node
+      WHERE a.parent_id IS NOT NULL AND up.depth < 32
+    )
+    SELECT up.start, up.node, a.rank, a.scientific_name, r.ordinal,
+           (SELECT ordinal FROM animal_rank WHERE rank = 'genus') AS genus_ordinal, up.depth
+    FROM up JOIN animal a ON a.entity_id = up.node LEFT JOIN animal_rank r ON r.rank = a.rank`.execute(db);
+  for (const r of result.rows) {
+    const start = Number(r.start);
+    const line = map.get(start) ?? { self: null, family: null, genus: null, species: null, atOrBelowGenus: false };
+    if (Number(r.depth) === 0) {
+      line.self = { scientific_name: r.scientific_name, rank: r.rank };
+      line.atOrBelowGenus = r.ordinal !== null && Number(r.ordinal) >= Number(r.genus_ordinal);
+    }
+    if (r.rank === "family") line.family = r.scientific_name;
+    if (r.rank === "genus") line.genus = r.scientific_name;
+    if (r.rank === "species") line.species = Number(r.node);
+    map.set(start, line);
+  }
+  return map;
+}

@@ -2569,7 +2569,25 @@ export const en = {
   yourBees: {
     title: "Your bees",
     heading: "Your bees",
-    lede: "Every bee you have collected, how far each has been identified, and when experts identified them.",
+    lede: "Every bee you have collected: how far each has been identified, when experts identified them, and what they turned out to be.",
+    tabs: { label: "Your bees", identifications: "Identifications", found: "What you found" },
+    /** The taxa the volunteer's bees are (beeline-fiay), by family and genus. */
+    found: {
+      title: "What you found",
+      heading: "What you found",
+      summary: (identified: number, species: number, genera: number, families: number) =>
+        `Your ${n(identified)} identified ${identified === 1 ? "bee is" : "bees are"} ${n(species)} species in ${n(genera)} ${genera === 1 ? "genus" : "genera"} and ${n(families)} ${families === 1 ? "family" : "families"}.`,
+      notYet: (count: number) => `${n(count)} more ${count === 1 ? "is" : "are"} not identified yet.`,
+      intro:
+        "Each bee is counted as far as it is identified now, under its family and genus. Your own identifications count, and an expert's takes the place of yours where there is one.",
+      empty: "None of your bees has been identified yet.",
+      bees: (count: number) => (count === 1 ? "1 bee" : `${n(count)} bees`),
+      col: { genus: "Genus", bees: "Bees", species: "Species" },
+      noFamily: "Not identified to family",
+      noGenus: "Not identified to genus",
+      toGenusOnly: (count: number) => `${n(count)} identified only to genus`,
+      speciesCount: (count: number) => (count === 1 ? "1 species" : `${n(count)} species`),
+    },
     byYear: {
       heading: "Your bees by year",
       intro:

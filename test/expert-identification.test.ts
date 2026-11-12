@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
-import { beesByYear, classify, identificationBatches } from "../src/app/your-bees.js";
+import { beesByYear, classify, identificationBatches, taxaFound } from "../src/app/your-bees.js";
 import { createApp } from "../src/app/server.js";
 import type { InatClient } from "../src/app/auth.js";
 import { en } from "../src/app/messages/en.js";
@@ -413,5 +413,49 @@ describe("the pages", () => {
     expect(html).toContain("<svg");
     expect(html).toContain(en.yourBees.batches.kinds([en.yourBees.batches.kind.first(1)]));
     expect(html).toContain(en.yourBees.byYear.title(CURRENT_SEASON, 5, 1, 0, 0, 4));
+  });
+});
+
+describe("what you found", () => {
+  it("rolls each bee's name up to its genus and family, counting a species once whatever its qualifier", async () => {
+    const { db, conn, ada, spec, expert, animal } = await fixture();
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('order', 'Hymenoptera')`);
+    await expert(await spec("26000101"), "Bombus mixtus", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 17:00:00" });
+    await expert(await spec("26000102"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    await conn.run(`UPDATE determination SET qualifier = 'cf.' WHERE specimen_id = ${await spec("26000102")}`);
+    await expert(await spec("26000103"), "Bombus", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000201"), "Hymenoptera", "legacy_import", "2026-11-03 22:25:00Z");
+    void animal;
+    const found = await taxaFound(db, ada);
+    expect([found.collected, found.identified, found.families, found.genera, found.species]).toEqual([5, 4, 1, 1, 1]);
+    expect(found.byFamily.map((f) => [f.name, f.bees])).toEqual([["Apidae", 3], [null, 1]]);
+    const bombus = found.byFamily[0]!.genera[0]!;
+    expect([bombus.name, bombus.bees, bombus.toGenusOnly]).toEqual(["Bombus", 3, 1]);
+    expect(bombus.species.map((s) => [s.scientific_name, s.qualifier, s.bees])).toEqual(
+      expect.arrayContaining([["Bombus mixtus", null, 1], ["Bombus mixtus", "cf.", 1]]),
+    );
+  });
+
+  it("is a tab of Your bees, and each tab marks itself as the current page", async () => {
+    const f = await fixture();
+    await f.expert(await f.spec("26000101"), "Bombus mixtus", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 17:00:00" });
+    const unusedInat: InatClient = {
+      authorizeUrl: () => "unused",
+      exchangeCode: () => Promise.reject(new Error("not under test")),
+      identity: () => Promise.reject(new Error("not under test")),
+    };
+    const app = createApp({
+      ...(await scratchPaths()),
+      db: f.db,
+      config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId: f.ada, login: "ada", iconUrl: null }),
+    });
+    const taxa = await (await app.request("/bees/taxa")).text();
+    expect(taxa).toContain(en.yourBees.found.summary(1, 1, 1, 1));
+    expect(taxa).toMatch(/<a href="\/bees\/taxa" aria-current="page">/);
+    const bees = await (await app.request("/bees")).text();
+    expect(bees).toMatch(/<a href="\/bees" aria-current="page">/);
+    expect(bees).toContain('href="/bees/taxa"');
   });
 });

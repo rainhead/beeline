@@ -115,8 +115,8 @@ import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
-import { beesByYear, identificationBatches } from "./your-bees.js";
-import { YourBeesPage } from "./views/your-bees.js";
+import { beesByYear, identificationBatches, taxaFound } from "./your-bees.js";
+import { TaxaFoundPage, YourBeesPage } from "./views/your-bees.js";
 import { checkObserver, deriveForObserver, lastChecked, nextCheckAt } from "./inat-check.js";
 import { forgetPipelineJwt } from "../inat-jwt.js";
 import { recordPersonChanges } from "../person-change.js";
@@ -776,6 +776,14 @@ export function createApp({
     const { personId } = c.get("acting");
     const [years, batches] = await Promise.all([beesByYear(db, personId), identificationBatches(db, personId)]);
     return c.html(await page(c, m.yourBees.title, <YourBeesPage m={m} years={years} batches={batches} />));
+  });
+
+  // What the person's bees are, by family and genus (beeline-fiay): the second
+  // tab of Your bees, and a "mine" surface like the first.
+  app.get("/bees/taxa", async (c) => {
+    const m = c.get("m");
+    const found = await taxaFound(db, c.get("acting").personId);
+    return c.html(await page(c, m.yourBees.found.title, <TaxaFoundPage m={m} found={found} />));
   });
 
   // "Check iNaturalist now" (beeline-yso, src/app/inat-check.ts): read this

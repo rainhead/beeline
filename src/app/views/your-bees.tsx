@@ -167,6 +167,7 @@ export function BatchList({ m, batches }: { m: Messages; batches: Batch[] }) {
                         <SpecimenLink m={m} specimen={s} />
                       </>
                     ))}
+                    {n.specimens.length > SPECIMENS_LINKED && " "}
                     {n.specimens.length > SPECIMENS_LINKED && (
                       <details class="batch-more">
                         <summary>{t.andMore(n.specimens.length - SPECIMENS_LINKED)}</summary>

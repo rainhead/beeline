@@ -1,0 +1,6 @@
+-- Migration for schema/030_samples_specimens.sql: specimen_disposition also
+-- holds remarks the repair of what legacy promotion set aside reads from the
+-- old Beeline's records (beeline-iuva, GitHub #303). Comments only.
+
+COMMENT ON TABLE specimen_disposition IS 'What became of the pin, as a person stated it after looking, or what the old Beeline''s records leave in doubt about it (dwc:disposition, dwc:occurrenceRemarks). Absent for the ordinary specimen nobody has had cause to remark on. Written by pnpm disposition:load from a staff inventory file, and by pnpm legacy:repair-skipped where an old record was placed by an assumption, a specimen printed twice has its identifications under the other number, or another old record shares its numbers but may be a second bee (beeline-iuva); the legacy-format export and the Darwin Core archives carry both columns.';
+COMMENT ON COLUMN specimen_disposition.stated_by IS 'Who looked: the name given to the load, not a person reference, since the inventory is a file and not an act in Beeline. Beeline itself where the remark was read from the old Beeline''s records and nobody has looked.';

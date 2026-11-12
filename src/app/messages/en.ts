@@ -2575,8 +2575,11 @@ export const en = {
     found: {
       title: "What you found",
       heading: "What you found",
+      /** How many bees are identified, and the taxa they cover: separate claims, since a bee named only to genus adds a genus and no species. */
       summary: (identified: number, species: number, genera: number, families: number) =>
-        `Your ${n(identified)} identified ${identified === 1 ? "bee is" : "bees are"} ${n(species)} species in ${n(genera)} ${genera === 1 ? "genus" : "genera"} and ${n(families)} ${families === 1 ? "family" : "families"}.`,
+        `${n(identified)} of your bees ${identified === 1 ? "is" : "are"} identified. ` +
+        `${identified === 1 ? "It covers" : "Between them they cover"} ${n(families)} ${families === 1 ? "family" : "families"}, ` +
+        `${n(genera)} ${genera === 1 ? "genus" : "genera"} and ${species === 0 ? "no species yet" : `${n(species)} species`}.`,
       notYet: (count: number) => `${n(count)} more ${count === 1 ? "is" : "are"} not identified yet.`,
       intro:
         "Each bee is counted as far as it is identified now, under its family and genus. Your own identifications count, and an expert's takes the place of yours where there is one.",

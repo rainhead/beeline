@@ -410,7 +410,14 @@ export interface TaxaFound {
    * families, genera and species have been found there by anybody, the person
    * included. Null when none of their samples is in an atlas.
    */
-  atlas: { names: string[]; families: number; genera: number; species: number } | null;
+  atlas: {
+    names: string[];
+    families: number;
+    genera: number;
+    species: number;
+    /** How many of those the person found there, from their own specimens collected in those atlases. */
+    yours: { families: number; genera: number; species: number };
+  } | null;
   /** The person's specimens, less those identified as something other than a bee. */
   collected: number;
   identified: number;
@@ -445,24 +452,31 @@ export async function taxaFound(db: Kysely<Database>, personId: number): Promise
     ORDER BY p.name`.execute(db);
   const atlasIds = atlases.rows.map((a) => Number(a.atlas_id));
   const [names, totals, others] = await Promise.all([
-    sql<{ animal_id: unknown; qualifier: DeterminationQualifier | null; bees: unknown }>`
-      SELECT d.animal_id, d.qualifier, count(*) AS bees
+    // in_atlas: whether the specimen was collected in one of those atlases,
+    // so the comparison counts only what was found there.
+    sql<{ animal_id: unknown; qualifier: DeterminationQualifier | null; in_atlas: boolean; bees: unknown }>`
+      SELECT d.animal_id, d.qualifier,
+             ${
+               atlasIds.length === 0
+                 ? sql`FALSE`
+                 : sql`EXISTS (SELECT 1 FROM sample_atlas sa WHERE sa.sample_id = sp.sample_id AND sa.atlas_id IN (${sql.join(atlasIds)}))`
+             } AS in_atlas,
+             count(*) AS bees
       FROM specimen sp JOIN determination_of_record d ON d.specimen_id = sp.entity_id
       WHERE ${mine(personId)}
-      GROUP BY d.animal_id, d.qualifier`.execute(db),
+      GROUP BY 1, 2, 3`.execute(db),
     sql<{ collected: unknown }>`SELECT count(*) AS collected FROM specimen sp WHERE ${mine(personId)}`.execute(db),
-    // Others' specimens in those atlases, by their names; "aff." and "nr."
-    // name no species, as above.
+    // Others' specimens in those atlases, by their names. "aff." and "nr."
+    // still place a bee in its family and genus; only the species is withheld.
     atlasIds.length === 0
-      ? Promise.resolve({ rows: [] as { animal_id: unknown; bees: unknown }[] })
-      : sql<{ animal_id: unknown; bees: unknown }>`
-          SELECT d.animal_id, count(*) AS bees
+      ? Promise.resolve({ rows: [] as { animal_id: unknown; qualifier: DeterminationQualifier | null; bees: unknown }[] })
+      : sql<{ animal_id: unknown; qualifier: DeterminationQualifier | null; bees: unknown }>`
+          SELECT d.animal_id, d.qualifier, count(*) AS bees
           FROM specimen sp
           JOIN sample_atlas sa ON sa.sample_id = sp.sample_id
           JOIN determination_of_record d ON d.specimen_id = sp.entity_id
           WHERE sa.atlas_id IN (${sql.join(atlasIds)}) AND NOT ${mine(personId)}
-            AND (d.qualifier IS NULL OR d.qualifier NOT IN ('aff.', 'nr.'))
-          GROUP BY d.animal_id`.execute(db),
+          GROUP BY 1, 2`.execute(db),
   ]);
   const ids = [...new Set([...names.rows, ...others.rows].map((r) => Number(r.animal_id)))];
   const lineage = await lineageOf(db, ids);
@@ -496,26 +510,43 @@ export async function taxaFound(db: Kysely<Database>, personId: number): Promise
   // What others have found that the person has not. Only names placed in a
   // bee family and genus count: a genus or family others have found joins the
   // page with none of the person's bees, and a species of it is listed.
-  const atlasSpecies = new Set(speciesSeen);
-  const atlasGenera = new Set<string>();
-  const atlasFamilies = new Set<string>();
+  /** The families, genera and species a set of names covers, as the summary counts them. */
+  const cover = () => ({ families: new Set<string>(), genera: new Set<string>(), species: new Set<number>() });
+  const add = (into: ReturnType<typeof cover>, animalId: number, qualifier: DeterminationQualifier | null) => {
+    const line = lineage.get(animalId);
+    const family = line?.family ?? null;
+    if (family === null || !BEE_FAMILIES.includes(family)) return null;
+    into.families.add(family);
+    const genus = line?.genus ?? null;
+    if (genus === null) return null;
+    into.genera.add(`${family}/${genus}`);
+    if (line?.species === null || line?.species === undefined || line.speciesName === null) return null;
+    if (qualifier === "aff." || qualifier === "nr.") return null;
+    into.species.add(line.species);
+    return { family, genus, species: line.species, name: line.speciesName };
+  };
+  // Found in the atlases by anybody, and by the person there: only specimens
+  // collected in those atlases, so what the person found elsewhere never
+  // counts toward what the atlas has.
+  const inAtlas = cover();
+  const yoursThere = cover();
+  for (const r of names.rows) {
+    if (!r.in_atlas) continue;
+    add(inAtlas, Number(r.animal_id), r.qualifier);
+    add(yoursThere, Number(r.animal_id), r.qualifier);
+  }
+  const othersGenera = new Set<string>();
   const othersBySpecies = new Map<number, { family: string; genus: string; name: string; bees: number }>();
   for (const r of others.rows) {
+    const placed = add(inAtlas, Number(r.animal_id), r.qualifier);
     const line = lineage.get(Number(r.animal_id));
-    const family = line?.family ?? null;
-    if (family === null || !BEE_FAMILIES.includes(family)) continue;
-    atlasFamilies.add(family);
-    const genus = line?.genus ?? null;
-    if (genus === null) continue;
-    atlasGenera.add(`${family}/${genus}`);
-    if (line?.species === null || line?.species === undefined || line.speciesName === null) continue;
-    atlasSpecies.add(line.species);
-    if (speciesSeen.has(line.species)) continue;
-    const o = othersBySpecies.get(line.species) ?? { family, genus, name: line.speciesName, bees: 0 };
+    if (line?.family != null && line.genus !== null && BEE_FAMILIES.includes(line.family)) othersGenera.add(`${line.family}/${line.genus}`);
+    if (placed === null || speciesSeen.has(placed.species)) continue;
+    const o = othersBySpecies.get(placed.species) ?? { family: placed.family, genus: placed.genus, name: placed.name, bees: 0 };
     o.bees += Number(r.bees);
-    othersBySpecies.set(line.species, o);
+    othersBySpecies.set(placed.species, o);
   }
-  for (const key of atlasGenera) {
+  for (const key of othersGenera) {
     const [family, genus] = key.split("/") as [string, string];
     const fam = families.get(family) ?? { name: family, genera: new Map() };
     families.set(family, fam);
@@ -546,9 +577,10 @@ export async function taxaFound(db: Kysely<Database>, personId: number): Promise
         ? null
         : {
             names: atlases.rows.map((a) => a.name),
-            families: new Set([...atlasFamilies, ...ownFamilies]).size,
-            genera: new Set([...atlasGenera, ...ownGenera]).size,
-            species: atlasSpecies.size,
+            families: inAtlas.families.size,
+            genera: inAtlas.genera.size,
+            species: inAtlas.species.size,
+            yours: { families: yoursThere.families.size, genera: yoursThere.genera.size, species: yoursThere.species.size },
           },
     collected: Number(totals.rows[0]?.collected ?? 0) - notBees,
     identified,

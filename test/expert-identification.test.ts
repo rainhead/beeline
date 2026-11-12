@@ -463,12 +463,55 @@ describe("what you found", () => {
     await expert(await spec("26000302"), "Bombus vosnesenskii", "legacy_import", "2026-11-03 22:25:00Z");
     await expert(await spec("26000303"), "Osmia lignaria", "legacy_import", "2026-11-03 22:25:00Z");
     const found = await taxaFound(db, ada);
-    expect(found.atlas).toEqual({ names: ["Oregon Bee Atlas"], families: 2, genera: 2, species: 3 });
+    expect(found.atlas).toEqual({ names: ["Oregon Bee Atlas"], families: 2, genera: 2, species: 3, yours: { families: 1, genera: 1, species: 1 } });
     expect([found.families, found.genera, found.species]).toEqual([1, 1, 1]);
     expect(found.byFamily.map((f) => [f.name, f.bees, f.genera.map((g) => [g.name, g.bees, g.byOthers.map((o) => [o.scientific_name, o.bees])])])).toEqual([
       ["Apidae", 1, [["Bombus", 1, [["Bombus vosnesenskii", 1]]]]],
       ["Megachilidae", 0, [["Osmia", 0, [["Osmia lignaria", 1]]]]],
     ]);
+  });
+
+  it("counts toward the atlas only what was collected in it, and places aff. in its genus but not its species", async () => {
+    const { db, conn, ada, spec, expert, adas } = await fixture();
+    const bos = await one(conn, `SELECT sample_id FROM specimen WHERE field_number = '26000301'`);
+    const oba = `(SELECT entity_id FROM program WHERE code = 'OBA')`;
+    // Ada's own sample is in the atlas; the one she shares with Bo is not.
+    await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) VALUES (${adas}, ${oba}), (${bos}, ${oba})`);
+    await expert(await spec("26000101"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000201"), "Bombus caliginosus", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000301"), "Bombus vosnesenskii", "legacy_import", "2026-11-03 22:25:00Z");
+    await conn.run(`UPDATE determination SET qualifier = 'aff.' WHERE specimen_id = ${await spec("26000301")}`);
+    const found = await taxaFound(db, ada);
+    // caliginosus was found outside the atlas; vosnesenskii only as aff.
+    expect(found.atlas).toEqual({ names: ["Oregon Bee Atlas"], families: 1, genera: 1, species: 1, yours: { families: 1, genera: 1, species: 1 } });
+    expect(found.species).toBe(2);
+    expect(found.byFamily[0]!.genera[0]!.byOthers).toEqual([]);
+  });
+
+  it("says what the atlas has to a person with nothing identified, and counts bycatch with no table", async () => {
+    const f = await fixture();
+    const { conn, spec, expert, adas } = f;
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Vespidae')`);
+    const bos = await one(conn, `SELECT sample_id FROM specimen WHERE field_number = '26000301'`);
+    const oba = `(SELECT entity_id FROM program WHERE code = 'OBA')`;
+    await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) VALUES (${adas}, ${oba}), (${bos}, ${oba})`);
+    await expert(await spec("26000101"), "Vespidae", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000301"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    const unusedInat: InatClient = {
+      authorizeUrl: () => "unused",
+      exchangeCode: () => Promise.reject(new Error("not under test")),
+      identity: () => Promise.reject(new Error("not under test")),
+    };
+    const app = createApp({
+      ...(await scratchPaths()),
+      db: f.db,
+      config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId: f.ada, login: "ada", iconUrl: null }),
+    });
+    const html = await (await app.request("/bees/taxa")).text();
+    expect(html).toContain(en.yourBees.found.atlasHas(1, 1, 1, ["Oregon Bee Atlas"]));
+    expect(html).toContain(en.yourBees.found.notBees(1));
   });
 
   it("is a tab of Your bees, and each tab marks itself as the current page", async () => {

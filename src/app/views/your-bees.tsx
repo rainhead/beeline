@@ -240,19 +240,35 @@ export function TaxaFoundPage({ m, found }: { m: Messages; found: TaxaFound }) {
       <PageHeader title={m.yourBees.heading} lede={m.yourBees.lede} />
       <YourBeesTabs m={m} current="found" />
       <h2>{t.heading}</h2>
-      {found.byFamily.length === 0 ? (
-        <EmptyState>{t.empty}</EmptyState>
+      {/* What can be said is said whether or not any table follows: a
+          volunteer with nothing identified still sees what their atlas has. */}
+      {found.identified === 0 ? (
+        <EmptyState>
+          {t.empty}
+          {found.atlas !== null && found.atlas.species + found.atlas.genera > 0 && (
+            <> {t.atlasHas(found.atlas.families, found.atlas.genera, found.atlas.species, found.atlas.names)}</>
+          )}
+        </EmptyState>
       ) : (
+        <p>
+          {found.atlas === null
+            ? t.summary(found.identified, found.species, found.genera, found.families)
+            : t.summaryOf(
+                found.identified,
+                found.atlas.yours.families,
+                found.atlas.families,
+                found.atlas.yours.genera,
+                found.atlas.genera,
+                found.atlas.yours.species,
+                found.atlas.species,
+                found.atlas.names,
+              )}
+          {notYet > 0 && <> {t.notYet(notYet)}</>}
+        </p>
+      )}
+      {found.notBees > 0 && <Meta block>{t.notBees(found.notBees)}</Meta>}
+      {found.byFamily.length > 0 && (
         <>
-          <p>
-            {found.identified === 0
-              ? t.empty
-              : found.atlas === null
-                ? t.summary(found.identified, found.species, found.genera, found.families)
-                : t.summaryOf(found.identified, found.families, found.atlas.families, found.genera, found.atlas.genera, found.species, found.atlas.species, found.atlas.names)}
-            {notYet > 0 && found.identified > 0 && <> {t.notYet(notYet)}</>}
-          </p>
-          {found.notBees > 0 && <Meta block>{t.notBees(found.notBees)}</Meta>}
           <Meta block>
             {t.intro}
             {found.atlas !== null && <> {t.introOthers(found.atlas.names)}</>}

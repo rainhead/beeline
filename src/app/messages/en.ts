@@ -2598,6 +2598,8 @@ export const en = {
       introOthers: (atlases: readonly string[] | string) =>
         `Under each genus, the species others in the ${list(atlases)} have found and you have not are folded away, with how many they have collected.`,
       noneYet: "none of yours yet",
+      atlasHas: (families: number, genera: number, species: number, atlases: readonly string[] | string) =>
+        `Others in the ${list(atlases)} have found ${n(families)} ${families === 1 ? "family" : "families"}, ${n(genera)} ${genera === 1 ? "genus" : "genera"} and ${n(species)} species of bee.`,
       othersMore: (count: number) => `${n(count)} more species found by others`,
       othersOnly: (count: number) => `${n(count)} species found by others`,
       byOthers: (bees: number) => (bees === 1 ? "1 by others" : `${n(bees)} by others`),

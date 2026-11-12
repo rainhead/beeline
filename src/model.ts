@@ -241,6 +241,7 @@ export interface ExpertIdentificationView {
   previous_animal_id: number | null;
   previous_qualifier: DeterminationQualifier | null;
   previous_determiner_id: number | null;
+  previous_determiner_name: string | null;
   is_latest: boolean;
 }
 

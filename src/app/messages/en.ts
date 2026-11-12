@@ -578,7 +578,10 @@ export const en = {
       heading: "Latest identifications of your bees",
       intro: "Experts identify in batches, often a year or more after the bees were collected. These are the newest days they identified yours.",
       empty: "No expert identification of your bees has a date yet.",
-      all: "All your bees and their identifications",
+      all: (moreDays: number) =>
+        moreDays > 0
+          ? `${n(moreDays)} more ${moreDays === 1 ? "day" : "days"} of identifications, and your bees by year`
+          : "Your bees by year, and all their identifications",
     },
     /**
      * Settled seasons stop asking (beeline-2c3.24). Said out loud rather than
@@ -2564,16 +2567,6 @@ export const en = {
   } as Record<string, string>,
 
   /**
-   * The process, step by step, for a volunteer who has never seen Beeline
-   * (beeline-kgwd; Peter, 2026-11-03, cutover day): what happens and when, and
-   * what each step needs from them. Every sentence is a fact about how the
-   * system runs today, and nothing promises a timing it does not keep: print
-   * runs are staff's decision, not a schedule. A body is text with links in
-   * it, so each technical word is glossed where it first appears, as the
-   * voice page asks. The order is the specimen's own: field, overnight read,
-   * front page, print run, pinning, identifying, handing in.
-   */
-  /**
    * "Your bees" (beeline-fiay, beeline-xegx): a volunteer's own bees by the
    * year they were collected, and the experts' identifications of them as they
    * arrived, a day at a time. The start of the student report's replacement.
@@ -2602,7 +2595,7 @@ export const en = {
       empty: "No expert identification of your bees has a date yet.",
       /** An expert's sheet that stated no day: when it arrived is the latest the bees could have been identified. */
       onOrBefore: (day: string) => `On or before ${day}`,
-      identified: (parts: readonly string[] | string) => `An expert identified ${list(parts)}.`,
+      identified: (parts: readonly string[] | string, experts: number) => `${experts > 1 ? "Experts" : "An expert"} identified ${list(parts)}.`,
       ofSeason: (count: number, season: number | string) => `${n(count)} of your ${season} bees`,
       kinds: (parts: readonly string[] | string) => {
         const text = Array.isArray(parts) ? parts.join("; ") : String(parts);
@@ -2615,6 +2608,7 @@ export const en = {
        */
       kind: {
         first: (count: number) => `${n(count)} for the first time`,
+        confirmed: (count: number) => `${n(count)} confirmed`,
         finer: (count: number, from: string, to: string) => `${n(count)} from ${from} to ${to}`,
         coarser: (count: number, from: string, to: string) => `${n(count)} back from ${from} to ${to}`,
         corrected: (count: number) => `${n(count)} corrected`,
@@ -2637,6 +2631,16 @@ export const en = {
     },
   },
 
+  /**
+   * The process, step by step, for a volunteer who has never seen Beeline
+   * (beeline-kgwd; Peter, 2026-11-03, cutover day): what happens and when, and
+   * what each step needs from them. Every sentence is a fact about how the
+   * system runs today, and nothing promises a timing it does not keep: print
+   * runs are staff's decision, not a schedule. A body is text with links in
+   * it, so each technical word is glossed where it first appears, as the
+   * voice page asks. The order is the specimen's own: field, overnight read,
+   * front page, print run, pinning, identifying, handing in.
+   */
   howItWorks: {
     title: "How Beeline works",
     heading: "How Beeline works",

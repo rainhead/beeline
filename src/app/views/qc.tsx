@@ -276,7 +276,7 @@ function Identifications({ m, batches }: { m: Messages; batches: Batches }) {
       </Meta>
       {batches.batches.length === 0 ? <EmptyState>{t.empty}</EmptyState> : <BatchList m={m} batches={batches.batches} />}
       <Meta block>
-        <a href="/bees">{t.all}</a>
+        <a href="/bees">{t.all(Math.max(0, batches.days - batches.batches.length))}</a>
       </Meta>
     </>
   );

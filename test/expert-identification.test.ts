@@ -95,7 +95,8 @@ describe("expert_identification", () => {
     const s = await spec("26000101");
     await expert(s, "Bombus vosnesenskii", "legacy_import", "2026-11-03 22:25:00Z");
     await expert(s, "Bombus vosnesenskii", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-08-12 15:00:00", byName: "L. Best" });
-    expect(await stretches(conn, s)).toEqual([[1, "Bombus vosnesenskii", null, "L. Best", "2026-08-12T15:00:00Z", true]]);
+    // Ecdysis's entry time is Pacific wall-clock time: 15:00 there is 22:00 UTC.
+    expect(await stretches(conn, s)).toEqual([[1, "Bombus vosnesenskii", null, "L. Best", "2026-08-12T22:00:00Z", true]]);
     // The old Beeline knew the name at a time it never recorded.
     expect(await rows(conn, `SELECT identified_at_is_bound FROM expert_identification WHERE specimen_id = ${s}`)).toEqual([[true]]);
   });
@@ -162,10 +163,10 @@ describe("identifications in batches (Your bees, and the front page)", () => {
   async function populated() {
     const f = await fixture();
     const { spec, expert, lin, ada, conn, animal } = f;
-    // 20 Oct 2026 in Oregon: two identifications, one entered late in the
-    // evening, which is already the 21st in UTC.
+    // 20 Oct 2026 in Oregon (Ecdysis's entry times are Pacific): one entered
+    // late in the evening, which is already the 21st in UTC.
     await expert(await spec("26000101"), "Bombus vosnesenskii", "legacy_import", "2026-11-03 22:25:00Z");
-    await expert(await spec("26000101"), "Bombus vosnesenskii", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-21 06:30:00", byName: "L. Best" });
+    await expert(await spec("26000101"), "Bombus vosnesenskii", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 23:30:00", byName: "L. Best" });
     await expert(await spec("26000102"), "Bombus caliginosus", "ecdysis_import", "2026-06-02 08:00:00Z", { enteredAt: "2026-06-02 08:00:00", byName: "L. Best" });
     await expert(await spec("26000102"), "Bombus vosnesenskii", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 17:00:00", byName: "L. Best" });
     // Ada's own genus, uploaded to Ecdysis and read back as an expert's, then
@@ -193,9 +194,9 @@ describe("identifications in batches (Your bees, and the front page)", () => {
       // Ecdysis dated it, so that one is only "on or before", late that evening.
       expect(batches.map((b) => [b.identified_at.toISOString(), b.on_or_before])).toEqual([
         ["2026-10-21T06:30:00.000Z", true],
-        ["2026-10-20T17:00:00.000Z", false],
+        ["2026-10-21T00:00:00.000Z", false],
         ["2026-09-01T17:00:00.000Z", false],
-        ["2026-06-02T08:00:00.000Z", false],
+        ["2026-06-02T15:00:00.000Z", false],
       ]);
       const [, oct, sep, jun] = batches;
       expect(oct!.seasons).toEqual([{ season: CURRENT_SEASON, count: 2 }]);
@@ -210,6 +211,30 @@ describe("identifications in batches (Your bees, and the front page)", () => {
       expect(sep!.determiners).toEqual(["Lin Lee"]);
       expect(jun!.kinds.map((k) => k.kind)).toEqual(["first"]);
     }
+  });
+
+  it("shows an expert confirming the volunteer's own name, which is not news until then", async () => {
+    const { db, ada, spec, expert, lin } = await fixture();
+    const s = await spec("26000101");
+    await expert(s, "Bombus mixtus", "ecdysis_import", "2026-03-02 08:00:00Z", { enteredAt: "2026-03-01 10:00:00", by: ada });
+    await expert(s, "Bombus mixtus", "ecdysis_import", "2026-10-02 08:00:00Z", { enteredAt: "2026-10-01 10:00:00", by: lin });
+    const { batches, undated } = await identificationBatches(db, ada);
+    expect(undated).toBe(0);
+    expect(batches.map((b) => [b.identified_at.toISOString(), b.kinds.map((k) => [k.kind, k.count, k.own])])).toEqual([
+      ["2026-10-01T17:00:00.000Z", [["confirmed", 1, 1]]],
+    ]);
+  });
+
+  it("leaves out the person's own name even where it names them only as text", async () => {
+    const { db, ada, spec, expert } = await fixture();
+    await expert(await spec("26000101"), "Bombus mixtus", "ecdysis_import", "2026-03-02 08:00:00Z", { enteredAt: "2026-03-01 10:00:00", byName: "ada adams" });
+    expect((await identificationBatches(db, ada)).batches).toEqual([]);
+  });
+
+  it("dates an Ecdysis identification with no entry time only as 'on or before' its load", async () => {
+    const { db, ada, spec, expert } = await fixture();
+    await expert(await spec("26000101"), "Bombus mixtus", "ecdysis_import", "2026-11-04 11:00:00Z");
+    expect((await identificationBatches(db, ada)).batches.map((b) => b.on_or_before)).toEqual([true]);
   });
 
   it("counts a bee renamed twice in a day once, and lists both names", async () => {
@@ -309,7 +334,7 @@ describe("the pages", () => {
     await f.expert(await f.spec("26000102"), "Bombus vosnesenskii", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 17:00:00", byName: "L. Best" });
     const html = await (await (await app(f.ada, f.db)).request("/")).text();
     const section = html.slice(html.indexOf(en.qc.identifications.heading));
-    expect(section).toContain(en.yourBees.batches.identified([en.yourBees.batches.ofSeason(1, CURRENT_SEASON)]));
+    expect(section).toContain(en.yourBees.batches.identified([en.yourBees.batches.ofSeason(1, CURRENT_SEASON)], 1));
     expect(section).toContain(en.yourBees.batches.kinds([en.yourBees.batches.kind.corrected(1)]));
     expect(section).toContain('href="/bees"');
   });

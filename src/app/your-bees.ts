@@ -25,7 +25,7 @@ export interface YearOfBees {
 }
 
 /** How an identification changed the name a specimen had from an expert before. */
-export type ChangeKind = "first" | "finer" | "coarser" | "corrected" | "certainty";
+export type ChangeKind = "first" | "confirmed" | "finer" | "coarser" | "corrected" | "certainty";
 
 /** How many of a batch's identifications did one kind of thing. */
 export interface BatchKind {
@@ -177,6 +177,11 @@ export async function identificationBatches(
       .then((r) => Number(r.rows[0]?.n ?? 0)),
   ]);
   if (ids.length === 0) return { batches: [], days: 0, undated };
+  // The person's name as written, for determinations that name them but were
+  // not tied to their record, such as an Ecdysis determiner no alias matched.
+  const me = (await db.selectFrom("person").where("entity_id", "=", personId).select("display_name").executeTakeFirst())?.display_name ?? null;
+  const isMe = (id: unknown, name: string | null) =>
+    id !== null ? Number(id) === personId : me !== null && name !== null && name.trim().toLowerCase() === me.trim().toLowerCase();
 
   const rows = await db
     .selectFrom("expert_identification as ei")
@@ -188,9 +193,6 @@ export async function identificationBatches(
     .leftJoin("person as det", "det.entity_id", "ei.determiner_id")
     .where("ei.specimen_id", "in", ids.length <= inlineLimit ? ids : candidates)
     .where("ei.identified_at", "is not", null)
-    // The person's own names are not news to them: Washington's staff upload
-    // volunteers' identifications to Ecdysis, where they read as experts'.
-    .where((eb) => eb.or([eb("ei.determiner_id", "is", null), eb("ei.determiner_id", "<>", personId)]))
     .select([
       "ei.specimen_id",
       "sp.field_number",
@@ -206,6 +208,9 @@ export async function identificationBatches(
       "was.rank as previous_rank",
       "ei.previous_qualifier",
       "ei.previous_determiner_id",
+      "ei.previous_determiner_name",
+      "ei.determiner_id",
+      "ei.determiner_name",
       sql<string | null>`coalesce(det.display_name, ei.determiner_name)`.as("determiner"),
       "ei.identified_at",
       "ei.identified_at_is_bound",
@@ -221,7 +226,10 @@ export async function identificationBatches(
   // A season's count is of bees, not identifications: an expert who renames one
   // bee twice in a day has identified one bee, as the chart by year counts it.
   const byDay = new Map<string, { batch: Batch; kinds: Map<string, BatchKind>; names: Map<string, BatchName>; seasons: Map<number, Set<number>>; determiners: Set<string> }>();
-  for (const r of rows) {
+  // The person's own names are not news to them: Washington's staff upload
+  // volunteers' identifications to Ecdysis, where they read as experts'.
+  const theirs = rows.filter((r) => !isMe(r.determiner_id, r.determiner_name));
+  for (const r of theirs) {
     const at = r.identified_at as Date;
     // An exact day and an "on or before" one are separate entries even on the
     // same date, so neither borrows the other's certainty.
@@ -250,7 +258,7 @@ export async function identificationBatches(
     const kindKey = `${kind}:${ranks.from}:${ranks.to}`;
     const k = day.kinds.get(kindKey) ?? { kind, ...ranks, count: 0, own: 0 };
     k.count++;
-    if (r.previous_determiner_id !== null && Number(r.previous_determiner_id) === personId) k.own++;
+    if (r.previous_animal_id !== null && isMe(r.previous_determiner_id, r.previous_determiner_name)) k.own++;
     day.kinds.set(kindKey, k);
 
     const previous =
@@ -264,7 +272,7 @@ export async function identificationBatches(
     day.names.set(nameKey, n);
   }
   // Every day is counted, even past maxBatches, so the page can say how many it is not showing.
-  const days = new Set(rows.map((r) => `${PACIFIC_DAY.format(r.identified_at as Date)}:${r.identified_at_is_bound}`)).size;
+  const days = new Set(theirs.map((r) => `${PACIFIC_DAY.format(r.identified_at as Date)}:${r.identified_at_is_bound}`)).size;
   const batches = [...byDay.values()].map(({ batch, kinds, names, seasons, determiners }) => ({
     ...batch,
     seasons: [...seasons].map(([season, bees]) => ({ season, count: bees.size })).sort((a, b) => b.season - a.season),
@@ -286,7 +294,9 @@ export function classify(
   ancestors: ReadonlyMap<number, ReadonlySet<number>>,
 ): ChangeKind {
   if (previousId === null) return "first";
-  if (previousId === animalId) return qualifier === previousQualifier ? "first" : "certainty";
+  // The same name from somebody else: the view starts a stretch there only
+  // when the person giving it changes.
+  if (previousId === animalId) return qualifier === previousQualifier ? "confirmed" : "certainty";
   if (ancestors.get(animalId)?.has(previousId)) return "finer";
   if (ancestors.get(previousId)?.has(animalId)) return "coarser";
   return "corrected";

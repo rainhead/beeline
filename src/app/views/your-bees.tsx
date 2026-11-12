@@ -142,7 +142,7 @@ export function BatchList({ m, batches }: { m: Messages; batches: Batch[] }) {
       {batches.map((b) => (
         <li>
           <div class="batch-when">{b.on_or_before ? t.onOrBefore(m.format.day(b.identified_at)) : m.format.day(b.identified_at)}</div>
-          <div>{t.identified(b.seasons.map((s) => t.ofSeason(s.count, s.season)))}</div>
+          <div>{t.identified(b.seasons.map((s) => t.ofSeason(s.count, s.season)), b.determiners.length)}</div>
           <Meta block>{t.kinds(b.kinds.map((k) => kindText(m, k)))}</Meta>
           {b.determiners.length > 0 && <Meta block>{t.by(b.determiners)}</Meta>}
           <details>

@@ -10,14 +10,23 @@
 -- recorded 36,359 in one night (2026-11-04), most of them names volunteers
 -- had already been shown. Consecutive determinations with the same node and
 -- qualifier are therefore one identification; a different node or qualifier
--- starts the next. Expert determinations only: a volunteer's own name for
+-- starts the next, and so does a different person giving the same name where
+-- both are people Beeline knows: an expert confirming a name, most often a
+-- volunteer's own that Washington's staff uploaded to Ecdysis (514 on the store
+-- of 2026-11-11, 469 of them the collector's). Two determinations naming nobody,
+-- or one, stay one stretch, so the old Beeline's unattributed copy of a name
+-- and Ecdysis's repeat of it are still one. Expert determinations only: a volunteer's own name for
 -- their bee is not news to them, and an expert's stays the record whatever
 -- a volunteer says after it (schema/110).
 --
 -- WHEN IT WAS IDENTIFIED, which is what the front page orders by, is the
 -- earliest evidence any of the stretch's determinations carries:
 --   - a day the determiner stated (determined_on with no precision);
---   - the moment it was entered in Ecdysis (ecdysis_identification.entered_at);
+--   - the moment it was entered in Ecdysis (ecdysis_identification.entered_at),
+--     which Symbiota exports as wall-clock time with no zone. It is Pacific
+--     time, the collection's (WSUC, in Pullman): the archive of 2026-11-04
+--     enters nothing before 09:00 or after 21:00. Read as UTC it would put an
+--     entry at 06:30 on the day before;
 --   - the moment the expert's sheet was sent (worksheet_determination.file_modified_at),
 --     used where the sheet stated less than a day. That is only the latest the
 --     identification could have been made, and identified_at_is_bound says so:
@@ -28,14 +37,14 @@
 --     repeated it, the old Beeline knew it at some time it never recorded,
 --     so the later evidence is only the latest the name could have been
 --     given, and is a bound too;
---   - for one made in Beeline or read from Ecdysis without an entry time,
---     the moment Beeline recorded it.
+--   - for one made in Beeline, the moment Beeline recorded it;
+--   - for one read from Ecdysis without an entry time, the moment Beeline
+--     recorded it, which is only a bound, like a sheet's.
 -- Not recorded_at in general: the 4 November load's identifications were
 -- entered in Ecdysis between February and November 2026, and dated by the
 -- load they would all read as that one night. A stated day is placed at noon
 -- UTC, which is the same calendar day in Oregon, since the page shows the
--- day an instant fell on in Pacific time. Ecdysis's entry time arrives with
--- no zone and is read as UTC, as the loader reads it.
+-- day an instant fell on in Pacific time.
 --
 -- The old Beeline's expert determinations carry no date at all (none of
 -- 187,743 on the store of 2026-11-11), so a stretch made only of them has
@@ -49,15 +58,17 @@ WITH evidence AS (
          CASE
            WHEN d.determined_on IS NOT NULL AND d.determined_on_precision IS NULL
              THEN CAST(d.determined_on AS TIMESTAMPTZ) + INTERVAL '12 hours'
-           WHEN ei.entered_at IS NOT NULL THEN CAST(ei.entered_at AS TIMESTAMPTZ)
+           WHEN ei.entered_at IS NOT NULL THEN ei.entered_at AT TIME ZONE 'America/Los_Angeles'
            WHEN wd.file_modified_at IS NOT NULL THEN wd.file_modified_at
            WHEN d.channel IN ('in_app', 'ecdysis_import') THEN d.recorded_at
          END AS evidence_at,
-         -- Only a sheet's sending time is a bound rather than the moment.
+         -- A sheet's sending time, and Beeline's own record of an Ecdysis
+         -- identification with no entry time, are bounds rather than the moment.
          CASE
            WHEN d.determined_on IS NOT NULL AND d.determined_on_precision IS NULL THEN 0
            WHEN ei.entered_at IS NOT NULL THEN 0
            WHEN wd.file_modified_at IS NOT NULL THEN 1
+           WHEN d.channel = 'ecdysis_import' THEN 1
            ELSE 0
          END AS evidence_is_bound
   FROM determination d
@@ -70,6 +81,8 @@ marked AS (
          CASE WHEN lag(e.entity_id) OVER w IS NOT NULL
                 AND lag(e.animal_id) OVER w IS NOT DISTINCT FROM e.animal_id
                 AND lag(e.qualifier) OVER w IS NOT DISTINCT FROM e.qualifier
+                AND (lag(e.determiner_id) OVER w IS NULL OR e.determiner_id IS NULL
+                     OR lag(e.determiner_id) OVER w = e.determiner_id)
               THEN 0 ELSE 1 END AS starts_stretch
   FROM evidence e
   WINDOW w AS (PARTITION BY e.specimen_id ORDER BY e.recorded_at, e.entity_id)
@@ -123,11 +136,12 @@ SELECT s.specimen_id, CAST(s.stretch AS INTEGER) AS stretch, s.animal_id, s.qual
        lag(s.animal_id) OVER w AS previous_animal_id,
        lag(s.qualifier) OVER w AS previous_qualifier,
        lag(s.determiner_id) OVER w AS previous_determiner_id,
+       lag(s.determiner_name) OVER w AS previous_determiner_name,
        s.stretch = max(s.stretch) OVER (PARTITION BY s.specimen_id) AS is_latest
 FROM stretches s
 WINDOW w AS (PARTITION BY s.specimen_id ORDER BY s.stretch);
 
-COMMENT ON VIEW expert_identification IS 'One row per stretch of a specimen''s expert determinations that agree on the name (node and qualifier), in the order Beeline recorded them: when an expert first named the bee, and each time an expert changed the name (beeline-xegx). A repeat of the same name, such as Ecdysis re-recording what the old Beeline held, is not a new row.';
+COMMENT ON VIEW expert_identification IS 'One row per stretch of a specimen''s expert determinations that agree on the name (node and qualifier), in the order Beeline recorded them: when an expert first named the bee, each time an expert changed the name, and each time a different known person confirmed it (beeline-xegx). A repeat of the same name, such as Ecdysis re-recording what the old Beeline held, is not a new row.';
 COMMENT ON COLUMN expert_identification.stretch IS 'The stretch''s place in the specimen''s history, from 1.';
 COMMENT ON COLUMN expert_identification.determiner_id IS 'The person Beeline knows, from the first determination in the stretch that names anybody.';
 COMMENT ON COLUMN expert_identification.determiner_name IS 'The name as written, from the same determination as determiner_id.';
@@ -136,4 +150,5 @@ COMMENT ON COLUMN expert_identification.identified_at_is_bound IS 'True when ide
 COMMENT ON COLUMN expert_identification.first_recorded_at IS 'When Beeline first recorded this name for the specimen.';
 COMMENT ON COLUMN expert_identification.previous_animal_id IS 'The name the stretch before said, if any: what an expert changed it from.';
 COMMENT ON COLUMN expert_identification.previous_determiner_id IS 'Who gave the name the stretch before, if Beeline knows them: a volunteer, where Washington''s staff uploaded the collector''s own identification to Ecdysis, where it reads as an expert''s.';
+COMMENT ON COLUMN expert_identification.previous_determiner_name IS 'Who gave the name the stretch before, as written there.';
 COMMENT ON COLUMN expert_identification.is_latest IS 'Whether this is the expert name the specimen has now, which is its determination of record (schema/110).';

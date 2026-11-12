@@ -33,10 +33,6 @@
 --     none of the 1,832 determinations on the Idaho sheet states a date, and
 --     the page says "on or before" rather than presenting the day the sheet
 --     arrived as the day each bee was identified;
---   - and where the old Beeline held the name before Ecdysis or a sheet
---     repeated it, the old Beeline knew it at some time it never recorded,
---     so the later evidence is only the latest the name could have been
---     given, and is a bound too;
 --   - for one made in Beeline, the moment Beeline recorded it;
 --   - for one read from Ecdysis without an entry time, the moment Beeline
 --     recorded it, which is only a bound, like a sheet's.
@@ -47,10 +43,14 @@
 -- day an instant fell on in Pacific time.
 --
 -- The old Beeline's expert determinations carry no date at all (none of
--- 187,743 on the store of 2026-11-11), so a stretch made only of them has
--- identified_at NULL: it is history that cannot be placed, and the front
--- page leaves it out. Where Ecdysis later repeated the same name, the
--- stretch takes Ecdysis's entry time.
+-- 187,743 on the store of 2026-11-11), so a stretch with one of them in it
+-- has identified_at NULL: the old Beeline knew the name at a time it never
+-- recorded, so a later Ecdysis entry or sheet repeating the name dates only
+-- the repeat, not the identification. It is history that cannot be placed,
+-- and is no news (Peter, 2026-11-12). On that store 20,902 of the 208,645
+-- stretches are dated, against 45,120 if a later repeat dated the old
+-- Beeline's names; an expert confirming such a name, being a different known
+-- person, still starts a stretch of its own and is dated.
 CREATE VIEW expert_identification AS
 WITH evidence AS (
   SELECT d.entity_id, d.specimen_id, d.animal_id, d.qualifier,
@@ -76,15 +76,36 @@ WITH evidence AS (
   LEFT JOIN worksheet_determination wd ON wd.determination_id = d.entity_id
   WHERE d.is_expert
 ),
+-- The last person Beeline knows to have given a name, at or before each
+-- determination, so that a repeat naming nobody between a volunteer's name and
+-- an expert's confirmation of it does not hide the change of person. Portable
+-- without IGNORE NULLS: a running count of determinations that name somebody
+-- groups each with the last one that did, which heads its group.
+known_run AS (
+  SELECT e.*,
+         count(e.determiner_id) OVER (
+           PARTITION BY e.specimen_id ORDER BY e.recorded_at, e.entity_id
+           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+         ) AS known_seq
+  FROM evidence e
+),
+known AS (
+  SELECT k.*,
+         first_value(k.determiner_id) OVER (
+           PARTITION BY k.specimen_id, k.known_seq ORDER BY k.recorded_at, k.entity_id
+           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+         ) AS last_known_id
+  FROM known_run k
+),
 marked AS (
   SELECT e.*,
          CASE WHEN lag(e.entity_id) OVER w IS NOT NULL
                 AND lag(e.animal_id) OVER w IS NOT DISTINCT FROM e.animal_id
                 AND lag(e.qualifier) OVER w IS NOT DISTINCT FROM e.qualifier
-                AND (lag(e.determiner_id) OVER w IS NULL OR e.determiner_id IS NULL
-                     OR lag(e.determiner_id) OVER w = e.determiner_id)
+                AND (lag(e.last_known_id) OVER w IS NULL OR e.determiner_id IS NULL
+                     OR lag(e.last_known_id) OVER w = e.determiner_id)
               THEN 0 ELSE 1 END AS starts_stretch
-  FROM evidence e
+  FROM known e
   WINDOW w AS (PARTITION BY e.specimen_id ORDER BY e.recorded_at, e.entity_id)
 ),
 numbered AS (
@@ -119,12 +140,12 @@ stretches AS (
   SELECT specimen_id, stretch, animal_id, qualifier,
          max(CASE WHEN entity_id = credited_entity_id THEN determiner_id END) AS determiner_id,
          max(CASE WHEN entity_id = credited_entity_id THEN determiner_name END) AS determiner_name,
-         min(evidence_at) AS identified_at,
-         -- A bound: the earliest evidence is one, or the old Beeline, undated,
-         -- held the name before anything dated it.
+         -- Undated where any determination in it is: the old Beeline's.
+         CASE WHEN max(CASE WHEN evidence_at IS NULL THEN 1 ELSE 0 END) = 1 THEN NULL
+              ELSE min(evidence_at) END AS identified_at,
          -- Only a dated identification can be a bound; an undated one is neither.
-         min(evidence_at) IS NOT NULL
-           AND (max(earliest_is_bound) = 1 OR max(CASE WHEN evidence_at IS NULL THEN 1 ELSE 0 END) = 1) AS identified_at_is_bound,
+         max(CASE WHEN evidence_at IS NULL THEN 1 ELSE 0 END) = 0
+           AND max(earliest_is_bound) = 1 AS identified_at_is_bound,
          min(recorded_at) AS first_recorded_at,
          max(recorded_at) AS last_recorded_at
   FROM credited
@@ -145,8 +166,8 @@ COMMENT ON VIEW expert_identification IS 'One row per stretch of a specimen''s e
 COMMENT ON COLUMN expert_identification.stretch IS 'The stretch''s place in the specimen''s history, from 1.';
 COMMENT ON COLUMN expert_identification.determiner_id IS 'The person Beeline knows, from the first determination in the stretch that names anybody.';
 COMMENT ON COLUMN expert_identification.determiner_name IS 'The name as written, from the same determination as determiner_id.';
-COMMENT ON COLUMN expert_identification.identified_at IS 'The earliest evidence of when the name was given: a stated day (at noon UTC), Ecdysis''s entry time, the time an expert''s sheet was sent, or, made in Beeline, when it was recorded. NULL when only the old Beeline, which kept no dates, ever held it.';
-COMMENT ON COLUMN expert_identification.identified_at_is_bound IS 'True when identified_at is only the latest the name could have been given: the time an expert''s sheet was sent, the sheet stating no day, or any dated evidence of a name the old Beeline, which kept no dates, already held.';
+COMMENT ON COLUMN expert_identification.identified_at IS 'The earliest evidence of when the name was given: a stated day (at noon UTC), Ecdysis''s entry time, the time an expert''s sheet was sent, or, made in Beeline, when it was recorded. NULL when the old Beeline, which kept no dates, held the name in the stretch: whatever repeated it later dates only the repeat.';
+COMMENT ON COLUMN expert_identification.identified_at_is_bound IS 'True when identified_at is only the latest the name could have been given: the time an expert''s sheet was sent, the sheet stating no day, or Beeline''s record of an Ecdysis identification that came with no entry time.';
 COMMENT ON COLUMN expert_identification.first_recorded_at IS 'When Beeline first recorded this name for the specimen.';
 COMMENT ON COLUMN expert_identification.previous_animal_id IS 'The name the stretch before said, if any: what an expert changed it from.';
 COMMENT ON COLUMN expert_identification.previous_determiner_id IS 'Who gave the name the stretch before, if Beeline knows them: a volunteer, where Washington''s staff uploaded the collector''s own identification to Ecdysis, where it reads as an expert''s.';

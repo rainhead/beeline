@@ -74,7 +74,11 @@ export interface Batches {
   batches: Batch[];
   /** How many days in all, of which `batches` holds the newest. */
   days: number;
-  /** Specimens an expert named only in the old Beeline, which kept no dates, so they are in no batch. */
+  /**
+   * Specimens an expert has named that are in no batch, because no
+   * identification of them has a date Beeline can use: most were named in the
+   * old Beeline, which kept no dates.
+   */
   undated: number;
 }
 
@@ -171,10 +175,12 @@ export async function identificationBatches(
   inlineLimit: number = IDS_INLINE_LIMIT,
 ): Promise<Batches> {
   // Only specimens the feed could show: those with an expert determination
-  // the view can date. Every determination not the old Beeline's carries a
+  // the view could date. Every determination not the old Beeline's carries a
   // time, and one of the old Beeline's only if it states a day (a year is not
-  // enough: schema/111 dates a stated day and nothing coarser). The same rule
-  // counts the undated below, so a bee is in exactly one of the two. It keeps
+  // enough: schema/111 dates a stated day and nothing coarser). It is a
+  // superset, since the view leaves undated a stretch that also holds an
+  // undated name of the old Beeline's; the undated count below is what is
+  // left over, so a bee is in a batch or counted, never both. It keeps
   // the list short: production's most prolific collector has 40,326
   // specimens and 746 qualify, which takes the query from 86 ms to 23 ms.
   const candidates = db
@@ -187,22 +193,39 @@ export async function identificationBatches(
     )
     .select("d.specimen_id")
     .distinct();
-  const [ids, undated] = await Promise.all([
+  const [ids, named] = await Promise.all([
     candidates.execute().then((rows) => rows.map((r) => Number(r.specimen_id))),
-    // The rest of the person's expert-named specimens: only the old Beeline,
-    // with no date, has named them.
+    // Every specimen of the person's somebody else has named as an expert;
+    // whatever of these is in no batch is undated. Not the person's own names,
+    // which Washington's staff upload to Ecdysis and which are not news to them.
+    // Only names of bees: a wasp caught as bycatch is not a bee identified.
     sql<{ n: unknown }>`
+      WITH RECURSIVE named AS (
+        SELECT d.specimen_id, d.animal_id, d.determiner_id, d.determiner_name
+        FROM determination d JOIN specimen sp ON sp.entity_id = d.specimen_id
+        WHERE ${mine(personId)} AND d.is_expert
+      ),
+      up(start, node) AS (
+        SELECT DISTINCT animal_id, animal_id FROM named
+        UNION
+        SELECT up.start, a.parent_id FROM up JOIN animal a ON a.entity_id = up.node WHERE a.parent_id IS NOT NULL
+      ),
+      not_bee AS (
+        SELECT DISTINCT up.start AS animal_id FROM up JOIN animal a ON a.entity_id = up.node
+        WHERE a.rank = 'family' AND a.scientific_name NOT IN (${sql.join(BEE_FAMILIES)})
+      )
       SELECT count(DISTINCT d.specimen_id) AS n
-      FROM determination d JOIN specimen sp ON sp.entity_id = d.specimen_id
-      WHERE ${mine(personId)} AND d.is_expert
-        AND NOT EXISTS (
-          SELECT 1 FROM determination dated
-          WHERE dated.specimen_id = d.specimen_id AND dated.is_expert
-            AND (dated.channel <> 'legacy_import' OR (dated.determined_on IS NOT NULL AND dated.determined_on_precision IS NULL)))`
+      FROM named d
+      LEFT JOIN person me ON me.entity_id = ${personId}
+      WHERE d.animal_id NOT IN (SELECT animal_id FROM not_bee)
+        AND (d.determiner_id IS NULL OR d.determiner_id <> ${personId})
+        -- coalesce: a determination naming nobody, as the old Beeline's mostly
+        -- do, compares as unknown, and NOT unknown would drop it from the count.
+        AND NOT (d.determiner_id IS NULL AND coalesce(lower(trim(d.determiner_name)) = lower(trim(me.display_name)), false))`
       .execute(db)
       .then((r) => Number(r.rows[0]?.n ?? 0)),
   ]);
-  if (ids.length === 0) return { batches: [], days: 0, undated };
+  if (ids.length === 0) return { batches: [], days: 0, undated: named };
   // The person's name as written, for determinations that name them but were
   // not tied to their record, such as an Ecdysis determiner no alias matched.
   const me = (await db.selectFrom("person").where("entity_id", "=", personId).select("display_name").executeTakeFirst())?.display_name ?? null;
@@ -245,16 +268,24 @@ export async function identificationBatches(
     .orderBy("ei.specimen_id")
     .execute();
 
-  const ancestors = await ancestorsOf(
-    db,
-    rows.flatMap((r) => (r.previous_animal_id === null ? [] : [Number(r.animal_id), Number(r.previous_animal_id)])),
-  );
+  const [ancestors, nonBeeFamilies] = await Promise.all([
+    ancestorsOf(db, rows.flatMap((r) => (r.previous_animal_id === null ? [Number(r.animal_id)] : [Number(r.animal_id), Number(r.previous_animal_id)]))),
+    db
+      .selectFrom("animal")
+      .where("rank", "=", "family")
+      .where("scientific_name", "not in", [...BEE_FAMILIES])
+      .select("entity_id")
+      .execute()
+      .then((found) => new Set(found.map((f) => Number(f.entity_id)))),
+  ]);
+  // A wasp caught as bycatch is not a bee identified, as on the chart.
+  const isBee = (animalId: number) => !nonBeeFamilies.has(animalId) && ![...(ancestors.get(animalId) ?? [])].some((a) => nonBeeFamilies.has(a));
   // A season's count is of bees, not identifications: an expert who renames one
   // bee twice in a day has identified one bee, as the chart by year counts it.
   const byDay = new Map<string, { batch: Batch; kinds: Map<string, BatchKind>; names: Map<string, BatchName>; seasons: Map<number, Set<number>>; determiners: Set<string> }>();
   // The person's own names are not news to them: Washington's staff upload
   // volunteers' identifications to Ecdysis, where they read as experts'.
-  const theirs = rows.filter((r) => !isMe(r.determiner_id, r.determiner_name));
+  const theirs = rows.filter((r) => !isMe(r.determiner_id, r.determiner_name) && isBee(Number(r.animal_id)));
   for (const r of theirs) {
     const at = r.identified_at as Date;
     // An exact day and an "on or before" one are separate entries even on the
@@ -308,7 +339,7 @@ export async function identificationBatches(
       .map((n) => ({ ...n, specimens: n.specimens.sort((a, b) => String(a.field_number).localeCompare(String(b.field_number))) }))
       .sort((a, b) => b.count - a.count || a.scientific_name.localeCompare(b.scientific_name)),
   }));
-  return { batches, days, undated };
+  return { batches, days, undated: Math.max(0, named - new Set(theirs.map((r) => Number(r.specimen_id))).size) };
 }
 
 /** What an identification did to the name before it. */

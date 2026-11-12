@@ -547,6 +547,7 @@ describe("what you found", () => {
     });
     const taxa = await (await app.request("/bees/taxa")).text();
     expect(taxa).toContain(en.yourBees.found.summary(1, 1, 1, 1));
+    expect(taxa).toContain('href="/taxonomy/species/Bombus%20mixtus"');
     expect(taxa).toMatch(/<a href="\/bees\/taxa" aria-current="page">/);
     const bees = await (await app.request("/bees")).text();
     expect(bees).toMatch(/<a href="\/bees" aria-current="page">/);

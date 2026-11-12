@@ -1,6 +1,7 @@
 import type { Messages } from "../messages/index.js";
 import type { Batch, BatchKind, Batches, BatchSpecimen, GenusFound, TaxaFound, YearOfBees } from "../your-bees.js";
 import { specimenHref } from "../record.js";
+import { taxonHref } from "../taxonomy.js";
 import { DataTable, EmptyState, Meta, PageHeader, Tabs, TaxonName } from "./components/index.js";
 
 /**
@@ -305,7 +306,10 @@ function GenusRow({ m, genus, max }: { m: Messages; genus: GenusFound; max: numb
     <ul class="found-species">
       {genus.species.map((s) => (
         <li>
-          <TaxonName rank={s.rank} scientificName={s.scientific_name} qualifier={s.qualifier ?? undefined} />
+          {/* The name's own page, where a volunteer can read what is filed under it. */}
+          <a href={taxonHref(s)}>
+            <TaxonName rank={s.rank} scientificName={s.scientific_name} qualifier={s.qualifier ?? undefined} />
+          </a>
           {s.bees > 1 && <> {m.yourBees.batches.times(s.bees)}</>}
         </li>
       ))}
@@ -321,7 +325,10 @@ function GenusRow({ m, genus, max }: { m: Messages; genus: GenusFound; max: numb
         <ul class="found-species">
           {genus.byOthers.map((o) => (
             <li>
-              <TaxonName rank="species" scientificName={o.scientific_name} /> <span class="meta">{t.byOthers(o.bees)}</span>
+              <a href={taxonHref({ rank: "species", scientific_name: o.scientific_name })}>
+                <TaxonName rank="species" scientificName={o.scientific_name} />
+              </a>{" "}
+              <span class="meta">{t.byOthers(o.bees)}</span>
             </li>
           ))}
         </ul>

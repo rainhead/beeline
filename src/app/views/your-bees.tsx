@@ -1,5 +1,6 @@
 import type { Messages } from "../messages/index.js";
 import type { Batch, BatchKind, Batches, YearOfBees } from "../your-bees.js";
+import { specimenHref } from "../record.js";
 import { DataTable, EmptyState, Meta, PageHeader, TaxonName } from "./components/index.js";
 
 /**
@@ -157,6 +158,17 @@ export function BatchList({ m, batches }: { m: Messages; batches: Batch[] }) {
                   )}
                   <TaxonName rank={n.rank} scientificName={n.scientific_name} qualifier={n.qualifier ?? undefined} />
                   {n.count > 1 && <> {t.times(n.count)}</>}
+                  {/* The specimens themselves, so a volunteer can open the one
+                      that changed and see its whole history. */}
+                  <span class="batch-specimens">
+                    {n.specimens.slice(0, SPECIMENS_LINKED).map((s) => (
+                      <>
+                        {" "}
+                        <a href={specimenHref(s.specimen_id)}>{s.field_number ?? t.specimen(s.sample_number, s.specimen_number)}</a>
+                      </>
+                    ))}
+                    {n.specimens.length > SPECIMENS_LINKED && <> {t.andMore(n.specimens.length - SPECIMENS_LINKED)}</>}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -166,6 +178,9 @@ export function BatchList({ m, batches }: { m: Messages; batches: Batch[] }) {
     </ul>
   );
 }
+
+/** How many of a name's specimens are linked before the rest are counted. */
+const SPECIMENS_LINKED = 10;
 
 function kindText(m: Messages, k: BatchKind): string {
   const t = m.yourBees.batches.kind;

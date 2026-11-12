@@ -2623,12 +2623,17 @@ export const en = {
           own === count
             ? count === 1
               ? "(it was your own identification)"
-              : "(all were your own identification)"
-            : `(${n(own)} ${own === 1 ? "was" : "were"} your own identification)`,
+              : "(all were your own identifications)"
+            : own === 1
+              ? "(1 was your own identification)"
+              : `(${n(own)} were your own identifications)`,
       },
       by: (names: readonly string[] | string) => `By ${list(names)}`,
       names: (count: number) => (count === 1 ? "1 name" : `${n(count)} names`),
       times: (count: number) => `× ${n(count)}`,
+      /** A specimen with no field number yet, by its place in its sample. */
+      specimen: (sampleNumber: string, specimenNumber: number) => `sample ${sampleNumber}, specimen ${specimenNumber}`,
+      andMore: (count: number) => `and ${n(count)} more`,
     },
   },
 

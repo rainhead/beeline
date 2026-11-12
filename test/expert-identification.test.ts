@@ -224,6 +224,20 @@ describe("identifications in batches (Your bees, and the front page)", () => {
     ]);
   });
 
+  it("counts an old Beeline name that states only a year as undated, not as datable", async () => {
+    const { db, ada, spec, expert } = await fixture();
+    await expert(await spec("26000101"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z", { on: "2025-01-01", precision: "year" });
+    expect(await identificationBatches(db, ada)).toEqual({ batches: [], days: 0, undated: 1 });
+  });
+
+  it("lists the specimens each name was given to, for links to them", async () => {
+    const { db, ada, spec, expert } = await fixture();
+    await expert(await spec("26000102"), "Bombus mixtus", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 17:00:00" });
+    await expert(await spec("26000101"), "Bombus mixtus", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 17:30:00" });
+    const [day] = (await identificationBatches(db, ada)).batches;
+    expect(day!.names[0]!.specimens.map((s) => s.field_number)).toEqual(["26000101", "26000102"]);
+  });
+
   it("is empty for a person with no specimens", async () => {
     const { db, lin } = await populated();
     expect(await identificationBatches(db, lin)).toEqual({ batches: [], days: 0, undated: 0 });

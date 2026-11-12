@@ -38,7 +38,17 @@ export interface BatchKind {
   own: number;
 }
 
+/** A specimen an identification named, for a link to its page. */
+export interface BatchSpecimen {
+  specimen_id: number;
+  field_number: string | null;
+  sample_number: string;
+  specimen_number: number;
+}
+
 export interface BatchName {
+  /** The specimens the name was given to that day, in field-number order. */
+  specimens: BatchSpecimen[];
   scientific_name: string;
   rank: string;
   qualifier: DeterminationQualifier | null;
@@ -135,17 +145,20 @@ export async function identificationBatches(
   inlineLimit: number = IDS_INLINE_LIMIT,
 ): Promise<Batches> {
   // Only specimens the feed could show: those with an expert determination
-  // something can date. That is a superset of what the view dates — every
-  // determination not the old Beeline's carries a time, and one of the old
-  // Beeline's carries one only if it states a date — so nothing is lost, and
-  // it keeps the list short: production's most prolific collector has 40,326
+  // the view can date. Every determination not the old Beeline's carries a
+  // time, and one of the old Beeline's only if it states a day (a year is not
+  // enough: schema/111 dates a stated day and nothing coarser). The same rule
+  // counts the undated below, so a bee is in exactly one of the two. It keeps
+  // the list short: production's most prolific collector has 40,326
   // specimens and 746 qualify, which takes the query from 86 ms to 23 ms.
   const candidates = db
     .selectFrom("determination as d")
     .innerJoin("specimen as sp", "sp.entity_id", "d.specimen_id")
     .where(mine(personId))
     .where("d.is_expert", "=", true)
-    .where((eb) => eb.or([eb("d.channel", "<>", "legacy_import"), eb("d.determined_on", "is not", null)]))
+    .where((eb) =>
+      eb.or([eb("d.channel", "<>", "legacy_import"), eb.and([eb("d.determined_on", "is not", null), eb("d.determined_on_precision", "is", null)])]),
+    )
     .select("d.specimen_id")
     .distinct();
   const [ids, undated] = await Promise.all([
@@ -159,7 +172,7 @@ export async function identificationBatches(
         AND NOT EXISTS (
           SELECT 1 FROM determination dated
           WHERE dated.specimen_id = d.specimen_id AND dated.is_expert
-            AND (dated.channel <> 'legacy_import' OR dated.determined_on IS NOT NULL))`
+            AND (dated.channel <> 'legacy_import' OR (dated.determined_on IS NOT NULL AND dated.determined_on_precision IS NULL)))`
       .execute(db)
       .then((r) => Number(r.rows[0]?.n ?? 0)),
   ]);
@@ -169,6 +182,7 @@ export async function identificationBatches(
     .selectFrom("expert_identification as ei")
     .innerJoin("specimen as sp", "sp.entity_id", "ei.specimen_id")
     .innerJoin("sample_season as ss", "ss.sample_id", "sp.sample_id")
+    .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
     .innerJoin("animal as a", "a.entity_id", "ei.animal_id")
     .leftJoin("animal as was", "was.entity_id", "ei.previous_animal_id")
     .leftJoin("person as det", "det.entity_id", "ei.determiner_id")
@@ -179,6 +193,9 @@ export async function identificationBatches(
     .where((eb) => eb.or([eb("ei.determiner_id", "is", null), eb("ei.determiner_id", "<>", personId)]))
     .select([
       "ei.specimen_id",
+      "sp.field_number",
+      "sp.specimen_number",
+      "s.sample_number",
       "ss.season",
       "ei.animal_id",
       "a.scientific_name",
@@ -239,8 +256,9 @@ export async function identificationBatches(
         ? null
         : { scientific_name: r.previous_name, rank: r.previous_rank, qualifier: r.previous_qualifier };
     const nameKey = `${r.previous_animal_id}:${r.previous_qualifier}>${r.animal_id}:${r.qualifier}`;
-    const n = day.names.get(nameKey) ?? { scientific_name: r.scientific_name, rank: r.rank, qualifier: r.qualifier, previous, count: 0 };
+    const n = day.names.get(nameKey) ?? { specimens: [], scientific_name: r.scientific_name, rank: r.rank, qualifier: r.qualifier, previous, count: 0 };
     n.count++;
+    n.specimens.push({ specimen_id: Number(r.specimen_id), field_number: r.field_number, sample_number: r.sample_number, specimen_number: Number(r.specimen_number) });
     day.names.set(nameKey, n);
   }
   // Every day is counted, even past maxBatches, so the page can say how many it is not showing.
@@ -250,7 +268,9 @@ export async function identificationBatches(
     seasons: [...seasons].map(([season, bees]) => ({ season, count: bees.size })).sort((a, b) => b.season - a.season),
     kinds: [...kinds.values()].sort((a, b) => b.count - a.count),
     determiners: [...determiners],
-    names: [...names.values()].sort((a, b) => b.count - a.count || a.scientific_name.localeCompare(b.scientific_name)),
+    names: [...names.values()]
+      .map((n) => ({ ...n, specimens: n.specimens.sort((a, b) => String(a.field_number).localeCompare(String(b.field_number))) }))
+      .sort((a, b) => b.count - a.count || a.scientific_name.localeCompare(b.scientific_name)),
   }));
   return { batches, days, undated };
 }

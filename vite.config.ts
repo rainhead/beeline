@@ -23,6 +23,9 @@ export default defineConfig({
     // without this the suite discovers its tests too and runs every test
     // twice, reporting on code that is not the working tree (beeline-f42).
     exclude: [...configDefaults.exclude, ".claude/**"],
+    // Points TMPDIR at one folder per run and removes it afterwards, so
+    // the stores and files tests write under /tmp do not outlive the run.
+    globalSetup: ["test/global-setup.ts"],
     server: {
       deps: {
         // Ships ESM with extensionless internal imports (bundler-only

@@ -1,5 +1,5 @@
 import type { Messages } from "../messages/index.js";
-import type { Batch, BatchKind, Batches, YearOfBees } from "../your-bees.js";
+import type { Batch, BatchKind, Batches, BatchSpecimen, YearOfBees } from "../your-bees.js";
 import { specimenHref } from "../record.js";
 import { DataTable, EmptyState, Meta, PageHeader, TaxonName } from "./components/index.js";
 
@@ -164,10 +164,20 @@ export function BatchList({ m, batches }: { m: Messages; batches: Batch[] }) {
                     {n.specimens.slice(0, SPECIMENS_LINKED).map((s) => (
                       <>
                         {" "}
-                        <a href={specimenHref(s.specimen_id)}>{s.field_number ?? t.specimen(s.sample_number, s.specimen_number)}</a>
+                        <SpecimenLink m={m} specimen={s} />
                       </>
                     ))}
-                    {n.specimens.length > SPECIMENS_LINKED && <> {t.andMore(n.specimens.length - SPECIMENS_LINKED)}</>}
+                    {n.specimens.length > SPECIMENS_LINKED && (
+                      <details class="batch-more">
+                        <summary>{t.andMore(n.specimens.length - SPECIMENS_LINKED)}</summary>
+                        {n.specimens.slice(SPECIMENS_LINKED).map((s) => (
+                          <>
+                            {" "}
+                            <SpecimenLink m={m} specimen={s} />
+                          </>
+                        ))}
+                      </details>
+                    )}
                   </span>
                 </li>
               ))}
@@ -179,8 +189,12 @@ export function BatchList({ m, batches }: { m: Messages; batches: Batch[] }) {
   );
 }
 
-/** How many of a name's specimens are linked before the rest are counted. */
+/** How many of a name's specimens are linked before the rest fold away. */
 const SPECIMENS_LINKED = 10;
+
+function SpecimenLink({ m, specimen }: { m: Messages; specimen: BatchSpecimen }) {
+  return <a href={specimenHref(specimen.specimen_id)}>{specimen.field_number ?? m.yourBees.batches.specimen(specimen.sample_number, specimen.specimen_number)}</a>;
+}
 
 function kindText(m: Messages, k: BatchKind): string {
   const t = m.yourBees.batches.kind;

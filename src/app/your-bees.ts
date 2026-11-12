@@ -223,7 +223,9 @@ export async function identificationBatches(
   const byDay = new Map<string, { batch: Batch; kinds: Map<string, BatchKind>; names: Map<string, BatchName>; seasons: Map<number, Set<number>>; determiners: Set<string> }>();
   for (const r of rows) {
     const at = r.identified_at as Date;
-    const key = PACIFIC_DAY.format(at);
+    // An exact day and an "on or before" one are separate entries even on the
+    // same date, so neither borrows the other's certainty.
+    const key = `${PACIFIC_DAY.format(at)}:${r.identified_at_is_bound}`;
     let day = byDay.get(key);
     if (day === undefined) {
       if (byDay.size >= maxBatches) continue;
@@ -237,7 +239,7 @@ export async function identificationBatches(
       byDay.set(key, day);
     }
     if (at < day.batch.identified_at) day.batch.identified_at = at;
-    day.batch.on_or_before ||= r.identified_at_is_bound;
+    day.batch.on_or_before = r.identified_at_is_bound;
     const season = day.seasons.get(Number(r.season)) ?? new Set<number>();
     season.add(Number(r.specimen_id));
     day.seasons.set(Number(r.season), season);
@@ -262,7 +264,7 @@ export async function identificationBatches(
     day.names.set(nameKey, n);
   }
   // Every day is counted, even past maxBatches, so the page can say how many it is not showing.
-  const days = new Set(rows.map((r) => PACIFIC_DAY.format(r.identified_at as Date))).size;
+  const days = new Set(rows.map((r) => `${PACIFIC_DAY.format(r.identified_at as Date)}:${r.identified_at_is_bound}`)).size;
   const batches = [...byDay.values()].map(({ batch, kinds, names, seasons, determiners }) => ({
     ...batch,
     seasons: [...seasons].map(([season, bees]) => ({ season, count: bees.size })).sort((a, b) => b.season - a.season),

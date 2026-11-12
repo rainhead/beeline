@@ -24,6 +24,10 @@
 --     none of the 1,832 determinations on the Idaho sheet states a date, and
 --     the page says "on or before" rather than presenting the day the sheet
 --     arrived as the day each bee was identified;
+--   - and where the old Beeline held the name before Ecdysis or a sheet
+--     repeated it, the old Beeline knew it at some time it never recorded,
+--     so the later evidence is only the latest the name could have been
+--     given, and is a bound too;
 --   - for one made in Beeline or read from Ecdysis without an entry time,
 --     the moment Beeline recorded it.
 -- Not recorded_at in general: the 4 November load's identifications were
@@ -103,7 +107,11 @@ stretches AS (
          max(CASE WHEN entity_id = credited_entity_id THEN determiner_id END) AS determiner_id,
          max(CASE WHEN entity_id = credited_entity_id THEN determiner_name END) AS determiner_name,
          min(evidence_at) AS identified_at,
-         max(earliest_is_bound) = 1 AS identified_at_is_bound,
+         -- A bound: the earliest evidence is one, or the old Beeline, undated,
+         -- held the name before anything dated it.
+         -- Only a dated identification can be a bound; an undated one is neither.
+         min(evidence_at) IS NOT NULL
+           AND (max(earliest_is_bound) = 1 OR max(CASE WHEN evidence_at IS NULL THEN 1 ELSE 0 END) = 1) AS identified_at_is_bound,
          min(recorded_at) AS first_recorded_at,
          max(recorded_at) AS last_recorded_at
   FROM credited
@@ -124,7 +132,7 @@ COMMENT ON COLUMN expert_identification.stretch IS 'The stretch''s place in the 
 COMMENT ON COLUMN expert_identification.determiner_id IS 'The person Beeline knows, from the first determination in the stretch that names anybody.';
 COMMENT ON COLUMN expert_identification.determiner_name IS 'The name as written, from the same determination as determiner_id.';
 COMMENT ON COLUMN expert_identification.identified_at IS 'The earliest evidence of when the name was given: a stated day (at noon UTC), Ecdysis''s entry time, the time an expert''s sheet was sent, or, made in Beeline, when it was recorded. NULL when only the old Beeline, which kept no dates, ever held it.';
-COMMENT ON COLUMN expert_identification.identified_at_is_bound IS 'True when identified_at is only the latest the name could have been given: the time an expert''s sheet was sent, the sheet stating no day.';
+COMMENT ON COLUMN expert_identification.identified_at_is_bound IS 'True when identified_at is only the latest the name could have been given: the time an expert''s sheet was sent, the sheet stating no day, or any dated evidence of a name the old Beeline, which kept no dates, already held.';
 COMMENT ON COLUMN expert_identification.first_recorded_at IS 'When Beeline first recorded this name for the specimen.';
 COMMENT ON COLUMN expert_identification.previous_animal_id IS 'The name the stretch before said, if any: what an expert changed it from.';
 COMMENT ON COLUMN expert_identification.previous_determiner_id IS 'Who gave the name the stretch before, if Beeline knows them: a volunteer, where Washington''s staff uploaded the collector''s own identification to Ecdysis, where it reads as an expert''s.';

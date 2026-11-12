@@ -90,12 +90,22 @@ const stretches = (conn: Conn, specimen: number) =>
   );
 
 describe("expert_identification", () => {
-  it("counts Ecdysis repeating the old Beeline's name as one identification, dated and credited by Ecdysis", async () => {
+  it("counts Ecdysis repeating the old Beeline's name as one identification, dated by Ecdysis only as a bound", async () => {
     const { conn, spec, expert } = await fixture();
     const s = await spec("26000101");
     await expert(s, "Bombus vosnesenskii", "legacy_import", "2026-11-03 22:25:00Z");
     await expert(s, "Bombus vosnesenskii", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-08-12 15:00:00", byName: "L. Best" });
     expect(await stretches(conn, s)).toEqual([[1, "Bombus vosnesenskii", null, "L. Best", "2026-08-12T15:00:00Z", true]]);
+    // The old Beeline knew the name at a time it never recorded.
+    expect(await rows(conn, `SELECT identified_at_is_bound FROM expert_identification WHERE specimen_id = ${s}`)).toEqual([[true]]);
+  });
+
+  it("keeps an exact day and an 'on or before' one apart, even on the same date", async () => {
+    const { db, ada, spec, expert } = await fixture();
+    await expert(await spec("26000101"), "Bombus mixtus", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-11-09 19:00:00" });
+    await expert(await spec("26000102"), "Bombus mixtus", "worksheet_import", "2026-11-10 00:34:00Z", { sentAt: "2026-11-09 18:00:00Z" });
+    const { batches } = await identificationBatches(db, ada);
+    expect(batches.map((b) => b.on_or_before).sort()).toEqual([false, true]);
   });
 
   it("makes a changed name a new identification that remembers the old one", async () => {
@@ -176,15 +186,21 @@ describe("identifications in batches (Your bees, and the front page)", () => {
     const { db, ada } = await populated();
     for (const inlineLimit of [2_000, 0]) {
       const { batches, days, undated } = await identificationBatches(db, ada, Number.POSITIVE_INFINITY, inlineLimit);
-      expect(days).toBe(3);
+      expect(days).toBe(4);
       expect(undated).toBe(1);
       // Ada's own genus of 1 July, read back from Ecdysis, is no batch of hers.
-      expect(batches.map((b) => b.identified_at.toISOString())).toEqual(["2026-10-20T17:00:00.000Z", "2026-09-01T17:00:00.000Z", "2026-06-02T08:00:00.000Z"]);
-      const [oct, sep, jun] = batches;
-      expect(oct!.seasons).toEqual([{ season: CURRENT_SEASON, count: 3 }]);
+      // 20 October is two entries: the old Beeline held 26000101's name before
+      // Ecdysis dated it, so that one is only "on or before", late that evening.
+      expect(batches.map((b) => [b.identified_at.toISOString(), b.on_or_before])).toEqual([
+        ["2026-10-21T06:30:00.000Z", true],
+        ["2026-10-20T17:00:00.000Z", false],
+        ["2026-09-01T17:00:00.000Z", false],
+        ["2026-06-02T08:00:00.000Z", false],
+      ]);
+      const [, oct, sep, jun] = batches;
+      expect(oct!.seasons).toEqual([{ season: CURRENT_SEASON, count: 2 }]);
       expect(oct!.kinds.map((k) => [k.kind, k.from, k.to, k.count, k.own])).toEqual(
         expect.arrayContaining([
-          ["first", null, null, 1, 0],
           ["corrected", null, null, 1, 0],
           ["finer", "genus", "species", 1, 1],
         ]),
@@ -210,7 +226,7 @@ describe("identifications in batches (Your bees, and the front page)", () => {
     const { db, ada } = await populated();
     const { batches, days } = await identificationBatches(db, ada, 1);
     expect(batches).toHaveLength(1);
-    expect(days).toBe(3);
+    expect(days).toBe(4);
   });
 
   it("says 'on or before' for a sheet that stated no day, and lists an old Beeline name that states one", async () => {

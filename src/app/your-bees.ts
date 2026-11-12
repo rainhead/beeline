@@ -178,6 +178,7 @@ export async function identificationBatches(
     // volunteers' identifications to Ecdysis, where they read as experts'.
     .where((eb) => eb.or([eb("ei.determiner_id", "is", null), eb("ei.determiner_id", "<>", personId)]))
     .select([
+      "ei.specimen_id",
       "ss.season",
       "ei.animal_id",
       "a.scientific_name",
@@ -200,7 +201,9 @@ export async function identificationBatches(
     db,
     rows.flatMap((r) => (r.previous_animal_id === null ? [] : [Number(r.animal_id), Number(r.previous_animal_id)])),
   );
-  const byDay = new Map<string, { batch: Batch; kinds: Map<string, BatchKind>; names: Map<string, BatchName>; seasons: Map<number, number>; determiners: Set<string> }>();
+  // A season's count is of bees, not identifications: an expert who renames one
+  // bee twice in a day has identified one bee, as the chart by year counts it.
+  const byDay = new Map<string, { batch: Batch; kinds: Map<string, BatchKind>; names: Map<string, BatchName>; seasons: Map<number, Set<number>>; determiners: Set<string> }>();
   for (const r of rows) {
     const at = r.identified_at as Date;
     const key = PACIFIC_DAY.format(at);
@@ -218,7 +221,9 @@ export async function identificationBatches(
     }
     if (at < day.batch.identified_at) day.batch.identified_at = at;
     day.batch.on_or_before ||= r.identified_at_is_bound;
-    day.seasons.set(Number(r.season), (day.seasons.get(Number(r.season)) ?? 0) + 1);
+    const season = day.seasons.get(Number(r.season)) ?? new Set<number>();
+    season.add(Number(r.specimen_id));
+    day.seasons.set(Number(r.season), season);
     if (r.determiner !== null) day.determiners.add(r.determiner);
 
     const kind = classify(Number(r.animal_id), r.qualifier, r.previous_animal_id === null ? null : Number(r.previous_animal_id), r.previous_qualifier, ancestors);
@@ -242,7 +247,7 @@ export async function identificationBatches(
   const days = new Set(rows.map((r) => PACIFIC_DAY.format(r.identified_at as Date))).size;
   const batches = [...byDay.values()].map(({ batch, kinds, names, seasons, determiners }) => ({
     ...batch,
-    seasons: [...seasons].map(([season, count]) => ({ season, count })).sort((a, b) => b.season - a.season),
+    seasons: [...seasons].map(([season, bees]) => ({ season, count: bees.size })).sort((a, b) => b.season - a.season),
     kinds: [...kinds.values()].sort((a, b) => b.count - a.count),
     determiners: [...determiners],
     names: [...names.values()].sort((a, b) => b.count - a.count || a.scientific_name.localeCompare(b.scientific_name)),

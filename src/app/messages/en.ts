@@ -2598,7 +2598,7 @@ export const en = {
       heading: "When experts identified them",
       intro: "Experts identify in batches, often a year or more after the bees were collected. Each entry is one day's identifications, newest first.",
       undated: (count: number) =>
-        `${n(count)} more of your bees were identified in the old Beeline, which kept no dates, so they appear only on each specimen's page.`,
+        `${n(count)} of your bees were identified in the old Beeline, which kept no dates, so they appear only on each specimen's page.`,
       empty: "No expert identification of your bees has a date yet.",
       /** An expert's sheet that stated no day: when it arrived is the latest the bees could have been identified. */
       onOrBefore: (day: string) => `On or before ${day}`,

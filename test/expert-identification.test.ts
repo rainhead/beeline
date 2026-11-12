@@ -196,6 +196,16 @@ describe("identifications in batches (Your bees, and the front page)", () => {
     }
   });
 
+  it("counts a bee renamed twice in a day once, and lists both names", async () => {
+    const { db, ada, spec, expert } = await fixture();
+    const s = await spec("26000101");
+    await expert(s, "Bombus caliginosus", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 17:00:00" });
+    await expert(s, "Bombus vosnesenskii", "ecdysis_import", "2026-11-05 11:00:00Z", { enteredAt: "2026-10-20 18:00:00" });
+    const [day] = (await identificationBatches(db, ada)).batches;
+    expect(day!.seasons).toEqual([{ season: CURRENT_SEASON, count: 1 }]);
+    expect(day!.kinds.map((k) => [k.kind, k.count])).toEqual(expect.arrayContaining([["first", 1], ["corrected", 1]]));
+  });
+
   it("shows the newest days up to the limit, and still counts them all", async () => {
     const { db, ada } = await populated();
     const { batches, days } = await identificationBatches(db, ada, 1);

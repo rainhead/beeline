@@ -115,7 +115,7 @@ import { applyPersonOverlay, resolver } from "../apply-person-overlay.js";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { QcHome } from "./views/qc.js";
 import { loadDashboard } from "./dashboard.js";
-import { beesByYear, identificationBatches, taxaFound } from "./your-bees.js";
+import { beesByYear, collectedOf, identificationBatches, taxaFound } from "./your-bees.js";
 import { TaxaFoundPage, YourBeesPage } from "./views/your-bees.js";
 import { checkObserver, deriveForObserver, lastChecked, nextCheckAt } from "./inat-check.js";
 import { forgetPipelineJwt } from "../inat-jwt.js";
@@ -1633,8 +1633,9 @@ export function createApp({
   });
 
   // The taxonomy (beeline-45v.5). Read by everyone, like the glossary: it
-  // shows names and totals and nobody's records, and the one link into
-  // records it offers lands on a listing that applies its own scope. A name
+  // shows names and totals, and of records only the reader's own (a name's
+  // page lists them, beeline-nstp); its links into records land on a listing
+  // that applies its own scope. A name
   // is addressed by rank and name, the tree's own key, because an entity_id
   // is redrawn by every rebuild. Curation, when it comes, gets its own gate.
   app.get("/taxonomy", async (c) => {
@@ -1656,7 +1657,10 @@ export function createApp({
     const m = c.get("m");
     const node = await loadTaxon(db, c.req.param("rank"), c.req.param("name"));
     if (node === null) return errorResponse(c, "notFound", { message: m.taxonomy.notFound });
-    return c.html(await page(c, node.scientific_name, <TaxonPage m={m} node={node} admin={c.get("admin")} />));
+    // The reader's own specimens of it (beeline-nstp): the one part of the
+    // page that is anybody's records, and only ever the reader's.
+    const collected = await collectedOf(db, c.get("acting").personId, node.entity_id);
+    return c.html(await page(c, node.scientific_name, <TaxonPage m={m} node={node} admin={c.get("admin")} collected={collected} />));
   });
 
   // The programs (beeline-rrit). Read by everyone, like the taxonomy: totals,

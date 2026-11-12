@@ -32,6 +32,9 @@ import {
   Term,
   TextField,
 } from "./components/index.js";
+import { EMPTY_QUERY, MINE, listingHref } from "../listings.js";
+import type { Collected, CollectedGroup } from "../your-bees.js";
+import { SpecimenLinks } from "./your-bees.js";
 
 /**
  * The taxonomy (beeline-45v.5): an index that is both a way into the tree and
@@ -374,7 +377,69 @@ function Reference({ value }: { value: string }) {
   return <>{value}</>;
 }
 
-export function TaxonPage({ m, node, admin }: { m: Messages; node: TaxonNode; admin: boolean }) {
+/**
+ * How many places and plants are shown open, and how many in all before the
+ * rest are left to the listing. A volunteer's specimens of one genus are at
+ * three places and plants at the median and 31 at the 90th percentile, but
+ * the busiest collector's of a family are at over a thousand (production,
+ * 2026-11-12), more than a page should carry.
+ */
+const GROUPS_OPEN = 10;
+const GROUPS_LISTED = 100;
+
+function CollectedList({ m, groups }: { m: Messages; groups: readonly CollectedGroup[] }) {
+  const t = m.taxonomy.yours;
+  return (
+    <ul class="collected">
+      {groups.map((g) => {
+        const where = m.format.place([g.locality, g.county, g.state_province]);
+        return (
+          <li>
+            {where === "" ? t.nowhere(g.specimens.length) : t.from(g.specimens.length, where)}
+            {g.host_name !== null && (
+              <>
+                , {t.off} <TaxonName rank={g.host_rank ?? ""} scientificName={g.host_name} />
+              </>
+            )}
+            , {t.inSeasons(g.seasons.map(String))}.
+            <div>
+              <SpecimenLinks m={m} specimens={g.specimens} />
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * The reader's own specimens of the name or anything below it, by place and
+ * host plant (beeline-nstp): where a volunteer arriving from What you found
+ * sees what of theirs the name covers.
+ */
+function Yours({ m, node, collected }: { m: Messages; node: TaxonNode; collected: Collected }) {
+  const t = m.taxonomy.yours;
+  const { groups } = collected;
+  return (
+    <section aria-labelledby="yours">
+      <h2 id="yours">{t.heading}</h2>
+      <p>{t.summary(collected.total)}</p>
+      <CollectedList m={m} groups={groups.slice(0, GROUPS_OPEN)} />
+      {groups.length > GROUPS_OPEN && (
+        <details class="collected-more">
+          <summary>{t.more(Math.min(groups.length, GROUPS_LISTED) - GROUPS_OPEN)}</summary>
+          <CollectedList m={m} groups={groups.slice(GROUPS_OPEN, GROUPS_LISTED)} />
+          {groups.length > GROUPS_LISTED && <Meta block>{t.notListed(groups.length - GROUPS_LISTED)}</Meta>}
+        </details>
+      )}
+      <Meta block>
+        <a href={listingHref("/specimens", EMPTY_QUERY, { scope: MINE, taxon: node.scientific_name })}>{t.seeThem}</a>
+      </Meta>
+    </section>
+  );
+}
+
+export function TaxonPage({ m, node, admin, collected }: { m: Messages; node: TaxonNode; admin: boolean; collected: Collected }) {
   const t = m.taxonomy;
   return (
     <>
@@ -397,6 +462,7 @@ export function TaxonPage({ m, node, admin }: { m: Messages; node: TaxonNode; ad
           <a href={taxonSpecimensHref(node)}>{t.seeSpecimens}</a>
         </p>
       )}
+      {collected.total > 0 && <Yours m={m} node={node} collected={collected} />}
       <h2>{t.below}</h2>
       {node.children.length === 0 ? <EmptyState>{t.nothingBelow}</EmptyState> : <TaxonTable m={m} rows={node.children} admin={admin} />}
     </>

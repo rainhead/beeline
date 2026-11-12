@@ -63,16 +63,22 @@ const Unknown = ({ m }: { m: Messages }) => <Absent label={m.record.sample.unkno
 const orUnknown = (m: Messages, value: string | null): Child => (value === null || value === "" ? <Unknown m={m} /> : value);
 
 /**
- * Protocols that only restate the kind. Every sample minted from an
- * observation carries "aerial net" (ingest/mint-samples.sql), so showing it
- * beside "Net" says the same thing twice.
+ * Protocols that only restate a net sample's kind. Every sample minted from
+ * an observation carries "aerial net" (ingest/mint-samples.sql), so showing
+ * it beside "Net" says the same thing twice.
  */
-const PROTOCOL_IS_KIND = new Set(["aerial net", "net", "netting", "trap"]);
+const PROTOCOL_IS_NET = new Set(["aerial net", "net", "netting"]);
 
-/** Whether the protocol says more than the kind: the kind of trap, or an old record's own words. */
-export function protocolSaysMore(sample: Pick<SampleDetail, "protocol">): boolean {
+/**
+ * Whether the protocol says more than the kind: the kind of trap, an old
+ * record's own words, or a word that contradicts the kind, such as "aerial
+ * net" on a trap sample, which a staff correction of the end date alone can
+ * leave (beeline-p8y1) and the exports would otherwise say unseen.
+ */
+export function protocolSaysMore(sample: Pick<SampleDetail, "protocol" | "kind">): boolean {
   const protocol = sample.protocol?.trim().toLowerCase() ?? "";
-  return protocol !== "" && !PROTOCOL_IS_KIND.has(protocol);
+  const restatesKind = sample.kind === "trap" ? protocol === "trap" : PROTOCOL_IS_NET.has(protocol);
+  return protocol !== "" && !restatesKind;
 }
 
 /**
@@ -500,7 +506,6 @@ function MethodEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
       cancel={m.listings.samples.placeEdit.cancel}
     >
       <Meta block>{t.hint}</Meta>
-      {sample.printed ? <Meta block>{t.printed}</Meta> : null}
       {/* What the form shows rides along as base:*, so a save can tell a
           field nobody touched from a stale one (beeline-0br). */}
       <TextField id="method-protocol" name="protocol" label={t.protocol} hint={t.protocolHint} value={sample.protocol} base={sample.protocol} />

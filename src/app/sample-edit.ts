@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { upsertCorrections, type CorrectionEvent } from "../corrections.js";
+import { mirrorCorrections } from "./correction-store.js";
 
 /**
  * In-app editing for samples with no iNaturalist observation to fix
@@ -166,6 +167,9 @@ export async function applySampleEdit(
   }
   // Durability before immediacy: if the event write fails, nothing applied.
   await upsertCorrections(correctionsPath, events);
+  // And into the store's correction tables, which the export reads the old
+  // records through (src/app/correction-store.ts).
+  await mirrorCorrections(db, events);
 
   const updates = Object.fromEntries(
     changed.map((f) => {

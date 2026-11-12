@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import { upsertCorrections, type CorrectionEvent } from "../corrections.js";
 import type { Database } from "../model.js";
+import { mirrorCorrections } from "./correction-store.js";
 
 /**
  * Staff correcting how a sample was collected, from the Method row of its
@@ -80,31 +81,8 @@ export async function fromOldRecords(db: Kysely<Database>, sampleId: number): Pr
   return Boolean(found.rows[0]?.e);
 }
 
-/**
- * One save at a time for a sample, from reading it to writing it: two saves
- * interleaving could leave the live sample with one's value and the
- * corrections file with the other's, which a rebuild would then act on
- * (CodeRabbit on PR #314). The app is the one process that writes either.
- */
-const queues = new Map<number, Promise<unknown>>();
-
-export function setSampleMethod(
-  db: Kysely<Database>,
-  correctionsPath: string,
-  sampleId: number,
-  input: MethodInput,
-): Promise<MethodResult> {
-  const run = (queues.get(sampleId) ?? Promise.resolve())
-    .catch(() => {})
-    .then(() => setSampleMethodNow(db, correctionsPath, sampleId, input));
-  queues.set(sampleId, run);
-  void run.finally(() => {
-    if (queues.get(sampleId) === run) queues.delete(sampleId);
-  }).catch(() => {});
-  return run;
-}
-
-async function setSampleMethodNow(
+/** Callers run it inside `onSample` (src/app/sample-queue.ts), with the change log after it. */
+export async function setSampleMethod(
   db: Kysely<Database>,
   correctionsPath: string,
   sampleId: number,
@@ -119,7 +97,9 @@ async function setSampleMethodNow(
 
   const start = isoDate(sample.date_start);
   // What the form would show for this sample now.
-  const liveProtocol = sample.protocol ?? "";
+  // Trimmed, as the form's values are: promotion stores the old records'
+  // words as written, and a stray space would refuse every save as stale.
+  const liveProtocol = (sample.protocol ?? "").trim();
   const liveEnd = sample.kind === "trap" ? isoDate(sample.date_end) : "";
   const touched = (submitted: string, base: string | undefined, live: string) =>
     base === undefined ? submitted !== live : submitted !== base.trim();
@@ -146,7 +126,7 @@ async function setSampleMethodNow(
   const protocol = protocolTouched ? protocolIn : liveProtocol;
   const kind = dateEnd === "" ? "net" : "trap";
   const end = dateEnd === "" ? start : dateEnd;
-  const protocolChanged = protocol !== (sample.protocol ?? "");
+  const protocolChanged = protocol !== liveProtocol;
   const datesChanged = kind !== sample.kind || end !== isoDate(sample.date_end);
   if (!protocolChanged && !datesChanged) return { outcome: "unchanged" };
 
@@ -176,7 +156,10 @@ async function setSampleMethodNow(
     }
   }
   // Durability before immediacy: if the event write fails, nothing applied.
+  // Should a write to the store fail after it, the file is ahead of the
+  // sample until the next save, which is what a rebuild would apply.
   await upsertCorrections(correctionsPath, events);
+  await mirrorCorrections(db, events);
 
   await db
     .updateTable("sample")

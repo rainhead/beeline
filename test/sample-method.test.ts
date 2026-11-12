@@ -10,6 +10,8 @@ import { parseCsv } from "../src/corrections.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
 import { en } from "../src/app/messages/en.js";
+import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
+import { writeLegacyExport } from "../src/legacy-export.js";
 import { duckdbReader } from "../src/person-change.js";
 import { recordSampleChanges } from "../src/sample-change.js";
 import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
@@ -91,7 +93,9 @@ const post = (app: { request: (p: string, init?: RequestInit) => Promise<Respons
 const sampleRow = async (conn: DuckDBConnection, id: number) =>
   (await rows(conn, `SELECT kind, protocol, CAST(date_start AS VARCHAR), CAST(date_end AS VARCHAR) FROM sample WHERE entity_id = ${id}`))[0];
 
-describe("staff correcting how a sample from the old Beeline was collected", () => {
+// Each test promotes the legacy fixture, one or three times, which beside the
+// rest of the suite takes longer than the default limit.
+describe("staff correcting how a sample from the old Beeline was collected", { timeout: 120_000 }, () => {
   it("offers staff the pencil on the Method row, and not the collector", async () => {
     const staff = await methodApp("staff");
     const page = await (await staff.app.request(`/samples/${staff.sampleId}`)).text();
@@ -188,6 +192,71 @@ describe("staff correcting how a sample from the old Beeline was collected", () 
     const [[live]] = (await rows(conn, `SELECT protocol FROM sample WHERE entity_id = ${sampleId}`)) as [[string]];
     const written = (await correctionsIn(correctionsPath)).filter((e) => e.field === "samplingProtocol").map((e) => e.new_value);
     expect(new Set(written)).toEqual(new Set([live]));
+  });
+
+  it("is refused to staff looking as the collector", async () => {
+    const { app, conn, sampleId, later } = await methodApp("staff");
+    const [[name]] = (await rows(
+      conn,
+      `SELECT p.display_name FROM sample_primary_collector pc JOIN person p ON p.entity_id = pc.person_id WHERE pc.sample_id = ${sampleId}`,
+    )) as [[string]];
+    const res = await app.request(`/samples/${sampleId}/method`, {
+      method: "POST",
+      headers: { cookie: `${IMPERSONATING_COOKIE}=${encodeURIComponent(name)}` },
+      body: new URLSearchParams({ protocol: "pan traps", date_end: later(2) }),
+    });
+    expect(res.status).toBe(403);
+    expect((await sampleRow(conn, sampleId))?.[1]).not.toBe("pan traps");
+  });
+
+  it("is what a rebuild from the corrections file makes of the sample", async () => {
+    const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff");
+    await post(app, `/samples/${sampleId}/method`, { protocol: "pan traps", date_end: later(2) });
+    const [[record]] = (await rows(conn, `SELECT min(_id) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[string]];
+    const rebuild = async () => {
+      const rebuilt = await createMemoryDb();
+      await loadLegacyStaging(rebuilt.conn, FIXTURE);
+      await promoteLegacy(rebuilt.conn, { ...FIXTURE_INPUTS, appCorrections: correctionsPath });
+      const [[again]] = (await rows(rebuilt.conn, `SELECT sample_id FROM legacy_specimen_number WHERE _id = '${record}'`)) as [[number]];
+      return sampleRow(rebuilt.conn, Number(again));
+    };
+    expect(await rebuild()).toEqual(await sampleRow(conn, sampleId));
+    // And taken back to a net sample of one day, which the file must say too.
+    await post(app, `/samples/${sampleId}/method`, { protocol: "aerial net", date_end: "" });
+    expect((await sampleRow(conn, sampleId))?.[0]).toBe("net");
+    expect(await rebuild()).toEqual(await sampleRow(conn, sampleId));
+  });
+
+  it("reaches the export of a sample whose old records disagreed, and settles the disagreement", async () => {
+    const { app, conn, sampleId, later } = await methodApp("staff");
+    // One of the sample's records says it was trapped and ended later; the
+    // export writes each record's own method and end date while they disagree.
+    const [[odd]] = (await rows(conn, `SELECT min(_id) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[string]];
+    const [y, m, d] = later(1).split("-").map((p) => String(Number(p)));
+    await conn.run(`UPDATE legacy_occurrence SET "samplingProtocol" = 'pan traps', day2 = '${d}', month2 = '${m}', year2 = '${y}' WHERE _id = '${odd}'`);
+    await conn.run(`INSERT INTO sample_promotion_finding (sample_id, rule_name, details) VALUES (${sampleId}, 'within_sample_disagreement', 'protocol: aerial net, pan traps')`);
+    const end = later(3);
+    await post(app, `/samples/${sampleId}/method`, { protocol: "blue vane traps", date_end: end });
+
+    const path = join(await mkdtemp(join(tmpdir(), "beeline-method-export-")), "occurrences.csv");
+    await writeLegacyExport(conn, path);
+    const [head = [], ...body] = parseCsv(await readFile(path, "utf8"));
+    const col = (name: string) => head.indexOf(name);
+    const numbers = new Set(
+      ((await rows(conn, `SELECT field_number FROM specimen WHERE sample_id = ${sampleId}`)) as [string][]).map(([n]) => n),
+    );
+    const mine = body.filter((r) => numbers.has(r[col("fieldNumber")] ?? ""));
+    expect(mine.length).toBe(numbers.size);
+    const [ey, , ed] = end.split("-").map((p) => String(Number(p)));
+    for (const r of mine) {
+      expect(r[col("samplingProtocol")]).toBe("blue vane traps");
+      expect(r[col("day2")]).toBe(ed);
+      expect(r[col("year2")]).toBe(ey);
+    }
+    // The method's disagreement is settled; the fixture's one over the place is not this form's.
+    expect(await rows(conn, `SELECT details FROM sample_promotion_finding WHERE sample_id = ${sampleId} ORDER BY 1`)).toEqual([
+      ["locality: Corvallis | Philomath"],
+    ]);
   });
 
   it("refuses a sample with no old records, and offers it no pencil", async () => {

@@ -245,6 +245,7 @@ export function TaxaFoundPage({ m, found }: { m: Messages; found: TaxaFound }) {
       {found.identified === 0 ? (
         <EmptyState>
           {t.empty}
+          {notYet > 0 && <> {t.waiting(notYet)}</>}
           {found.atlas !== null && found.atlas.families > 0 && (
             <> {t.atlasHas(found.atlas.families, found.atlas.genera, found.atlas.species, found.atlas.names)}</>
           )}

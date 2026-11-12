@@ -2581,6 +2581,7 @@ export const en = {
         `${identified === 1 ? "It covers" : "Between them they cover"} ${n(families)} ${families === 1 ? "family" : "families"}, ` +
         `${n(genera)} ${genera === 1 ? "genus" : "genera"} and ${species === 0 ? "no species yet" : `${n(species)} species`}.`,
       notYet: (count: number) => `${n(count)} more ${count === 1 ? "is" : "are"} not identified yet.`,
+      waiting: (count: number) => `${n(count)} ${count === 1 ? "is" : "are"} waiting to be identified.`,
       /** Against everything found in the atlases the volunteer collects in, by anybody, the volunteer included. */
       summaryOf: (
         identified: number,
@@ -2604,13 +2605,13 @@ export const en = {
       othersOnly: (count: number) => `${n(count)} species found by others`,
       byOthers: (bees: number) => (bees === 1 ? "1 by others" : `${n(bees)} by others`),
       intro:
-        "Each bee is counted as far as it is identified now, under its family and genus. Your own identifications count, and an expert's takes the place of yours where there is one.",
+        "Each bee is counted as far as it is identified now, under its family and genus. Your own identifications count, and an expert's takes the place of yours where there is one. A name marked aff. or nr., which says the bee is probably something else, is listed but not counted as a species found.",
       empty: "None of your bees has been identified yet.",
       bees: (count: number) => (count === 1 ? "1 bee" : `${n(count)} bees`),
       col: { genus: "Genus", bees: "Bees", species: "Species" },
       noFamily: "Not identified to family",
       noGenus: "Not identified to genus",
-      toGenusOnly: (count: number) => `${n(count)} identified only to genus`,
+      toGenusOnly: (count: number) => `${n(count)} identified only to genus or subgenus`,
       /** A genus's list folded away: how many names it holds, which may be more than its species ("cf.", "aff.", subspecies). */
       names: (count: number) => (count === 1 ? "1 name" : `${n(count)} names`),
       notBees: (count: number) =>

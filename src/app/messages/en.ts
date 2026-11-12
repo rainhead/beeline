@@ -273,7 +273,6 @@ export const en = {
       specimens: "Specimens",
       glossary: "Glossary",
       howItWorks: "How Beeline works",
-      yourBees: "Your bees",
       people: "People",
       design: "Design",
       jobs: "Jobs",
@@ -578,10 +577,6 @@ export const en = {
       heading: "Latest identifications of your bees",
       intro: "Experts identify in batches, often a year or more after the bees were collected. These are the newest days they identified yours.",
       empty: "No dated identification of your bees by an expert other than you yet.",
-      all: (moreDays: number) =>
-        moreDays > 0
-          ? `${n(moreDays)} more ${moreDays === 1 ? "day" : "days"} of identifications, and your bees by year`
-          : "Your bees by year, and all their identifications",
     },
     /**
      * Settled seasons stop asking (beeline-2c3.24). Said out loud rather than

@@ -262,8 +262,9 @@ function Skipped({ m, days }: { m: Messages; days: SkippedDay[] }) {
 
 /**
  * The newest days experts identified the person's bees (beeline-xegx), as
- * /bees shows them, with a link there for the rest. Below everything that
- * wants doing, since it asks nothing of the volunteer.
+ * /bees shows them. Below everything that wants doing, since it asks nothing
+ * of the volunteer. It does not link to /bees yet: nothing does until the
+ * front page is redesigned (docs/architecture/your-bees.md).
  */
 function Identifications({ m, batches }: { m: Messages; batches: Batches }) {
   const t = m.qc.identifications;
@@ -272,9 +273,6 @@ function Identifications({ m, batches }: { m: Messages; batches: Batches }) {
       <h2>{t.heading}</h2>
       <Meta block>{t.intro}</Meta>
       {batches.batches.length === 0 ? <EmptyState>{t.empty}</EmptyState> : <BatchList m={m} batches={batches.batches} />}
-      <Meta block>
-        <a href="/bees">{t.all(Math.max(0, batches.days - batches.batches.length))}</a>
-      </Meta>
     </>
   );
 }

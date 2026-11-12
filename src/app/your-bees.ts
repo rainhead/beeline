@@ -72,8 +72,6 @@ export interface Batch {
 
 export interface Batches {
   batches: Batch[];
-  /** How many days in all, of which `batches` holds the newest. */
-  days: number;
   /**
    * Specimens an expert has named that are in no batch, because no
    * identification of them has a date Beeline can use: most were named in the
@@ -209,7 +207,7 @@ export async function identificationBatches(
     .select("d.specimen_id")
     .distinct();
   const ids = (await specimens.execute()).map((r) => Number(r.specimen_id));
-  if (ids.length === 0) return { batches: [], days: 0, undated: countUndated ? 0 : null };
+  if (ids.length === 0) return { batches: [], undated: countUndated ? 0 : null };
   // The person's name as written, for determinations that name them but were
   // not tied to their record, such as an Ecdysis determiner no alias matched.
   const me = (await db.selectFrom("person").where("entity_id", "=", personId).select("display_name").executeTakeFirst())?.display_name ?? null;
@@ -319,8 +317,6 @@ export async function identificationBatches(
     n.specimens.push({ specimen_id: Number(r.specimen_id), field_number: r.field_number, sample_number: r.sample_number, specimen_number: Number(r.specimen_number) });
     day.names.set(nameKey, n);
   }
-  // Every day is counted, even past maxBatches, so the page can say how many it is not showing.
-  const days = new Set(theirs.map((r) => `${PACIFIC_DAY.format(r.identified_at as Date)}:${r.identified_at_is_bound}`)).size;
   const batches = [...byDay.values()].map(({ batch, kinds, names, seasons, determiners }) => ({
     ...batch,
     seasons: [...seasons].map(([season, bees]) => ({ season, count: bees.size })).sort((a, b) => b.season - a.season),
@@ -332,7 +328,7 @@ export async function identificationBatches(
   }));
   const shown = new Set(theirs.map((r) => Number(r.specimen_id)));
   const undated = countUndated ? new Set(eligible.map((r) => Number(r.specimen_id)).filter((id) => !shown.has(id))).size : null;
-  return { batches, days, undated };
+  return { batches, undated };
 }
 
 /** What an identification did to the name before it. */

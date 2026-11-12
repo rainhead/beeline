@@ -49,7 +49,6 @@ function NavLinks({ m }: { m: Messages }) {
   return (
     <>
       <a href="/how-it-works">{m.layout.nav.howItWorks}</a>
-      <a href="/bees">{m.layout.nav.yourBees}</a>
       <a href="/samples">{m.layout.nav.samples}</a>
       <a href="/specimens">{m.layout.nav.specimens}</a>
     </>

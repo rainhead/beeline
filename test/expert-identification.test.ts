@@ -186,8 +186,8 @@ describe("identifications in batches (Your bees, and the front page)", () => {
   it("groups by the day in Oregon, counts each year's bees, and says what each identification did", async () => {
     const { db, ada } = await populated();
     for (const inlineLimit of [2_000, 0]) {
-      const { batches, days, undated } = await identificationBatches(db, ada, { inlineLimit });
-      expect(days).toBe(3);
+      const { batches, undated } = await identificationBatches(db, ada, { inlineLimit });
+      expect(batches).toHaveLength(3);
       // Ada's own genus of 1 July, read back from Ecdysis, is no batch of hers.
       // 26000101's name the old Beeline held before Ecdysis repeated it, and
       // 26000201's only the old Beeline knows: both undated, so no news.
@@ -240,7 +240,7 @@ describe("identifications in batches (Your bees, and the front page)", () => {
     await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('genus', 'Vespula', (SELECT entity_id FROM animal WHERE scientific_name = 'Vespidae'))`);
     await expert(await spec("26000101"), "Vespula", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-01 10:00:00" });
     await expert(await spec("26000102"), "Vespula", "legacy_import", "2026-11-03 22:25:00Z");
-    expect(await identificationBatches(db, ada)).toEqual({ batches: [], days: 0, undated: 0 });
+    expect(await identificationBatches(db, ada)).toEqual({ batches: [], undated: 0 });
   });
 
   it("never compares a person with whoever gave an earlier name, so the old Beeline's renaming stays undated", async () => {
@@ -263,7 +263,7 @@ describe("identifications in batches (Your bees, and the front page)", () => {
     const s = await spec("26000101");
     await expert(s, "Bombus mixtus", "ecdysis_import", "2026-03-02 08:00:00Z", { enteredAt: "2026-03-01 10:00:00" });
     await expert(s, "Vespula", "legacy_import", "2026-11-03 22:25:00Z");
-    expect(await identificationBatches(db, ada)).toEqual({ batches: [], days: 0, undated: 0 });
+    expect(await identificationBatches(db, ada)).toEqual({ batches: [], undated: 0 });
   });
 
   it("does not count the person's own dated name as undated when a repeat naming nobody follows it", async () => {
@@ -271,7 +271,7 @@ describe("identifications in batches (Your bees, and the front page)", () => {
     const s = await spec("26000101");
     await expert(s, "Bombus mixtus", "ecdysis_import", "2026-03-02 08:00:00Z", { enteredAt: "2026-03-01 10:00:00", by: ada });
     await expert(s, "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
-    expect(await identificationBatches(db, ada)).toEqual({ batches: [], days: 0, undated: 0 });
+    expect(await identificationBatches(db, ada)).toEqual({ batches: [], undated: 0 });
   });
 
   it("does not count the undated where the front page asks it not to", async () => {
@@ -303,11 +303,10 @@ describe("identifications in batches (Your bees, and the front page)", () => {
     expect(day!.kinds.map((k) => [k.kind, k.count])).toEqual(expect.arrayContaining([["first", 1], ["corrected", 1]]));
   });
 
-  it("shows the newest days up to the limit, and still counts them all", async () => {
+  it("shows the newest days up to the limit", async () => {
     const { db, ada } = await populated();
-    const { batches, days } = await identificationBatches(db, ada, { maxBatches: 1 });
+    const { batches } = await identificationBatches(db, ada, { maxBatches: 1 });
     expect(batches).toHaveLength(1);
-    expect(days).toBe(3);
   });
 
   it("says 'on or before' for a sheet that stated no day, and lists an old Beeline name that states one", async () => {
@@ -324,7 +323,7 @@ describe("identifications in batches (Your bees, and the front page)", () => {
   it("counts an old Beeline name that states only a year as undated, not as datable", async () => {
     const { db, ada, spec, expert } = await fixture();
     await expert(await spec("26000101"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z", { on: "2025-01-01", precision: "year" });
-    expect(await identificationBatches(db, ada)).toEqual({ batches: [], days: 0, undated: 1 });
+    expect(await identificationBatches(db, ada)).toEqual({ batches: [], undated: 1 });
   });
 
   it("lists the specimens each name was given to, for links to them", async () => {
@@ -337,7 +336,7 @@ describe("identifications in batches (Your bees, and the front page)", () => {
 
   it("is empty for a person with no specimens", async () => {
     const { db, lin } = await populated();
-    expect(await identificationBatches(db, lin)).toEqual({ batches: [], days: 0, undated: 0 });
+    expect(await identificationBatches(db, lin)).toEqual({ batches: [], undated: 0 });
   });
 
   it("tells finer, coarser, corrected and a change in certainty apart", () => {
@@ -393,7 +392,7 @@ describe("the pages", () => {
     });
   }
 
-  it("puts the newest days on the front page and links to Your bees", async () => {
+  it("puts the newest days on the front page, without linking to Your bees yet", async () => {
     const f = await fixture();
     await f.expert(await f.spec("26000102"), "Bombus caliginosus", "ecdysis_import", "2026-06-02 08:00:00Z", { enteredAt: "2026-06-02 08:00:00", byName: "L. Best" });
     await f.expert(await f.spec("26000102"), "Bombus vosnesenskii", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 17:00:00", byName: "L. Best" });
@@ -401,7 +400,7 @@ describe("the pages", () => {
     const section = html.slice(html.indexOf(en.qc.identifications.heading));
     expect(section).toContain(en.yourBees.batches.identified([en.yourBees.batches.ofSeason(1, CURRENT_SEASON)], 1));
     expect(section).toContain(en.yourBees.batches.kinds([en.yourBees.batches.kind.corrected(1)]));
-    expect(section).toContain('href="/bees"');
+    expect(html).not.toContain('href="/bees"');
   });
 
   it("draws Your bees: the chart by year and every day of identifications", async () => {

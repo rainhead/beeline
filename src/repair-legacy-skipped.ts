@@ -27,7 +27,7 @@ import { pathToFileURL } from "node:url";
  * kept record cites an iNaturalist observation whose own collection method
  * is the set-aside record's, and which counts no more bees than Beeline
  * holds for the sample: the old Beeline wrote "aerial net" on every print
- * it made from an observation, and Pat Wheeler's six pan-trap samples of
+ * it made from an observation, and Pat Wheeler's six trap samples of
  * 2021 were each printed twice, once that way (the copy Beeline kept) and
  * once as "pan traps" carrying the identifications. The independent review
  * of 12 November found it (sample 26 of 16 April 2021: observation
@@ -146,7 +146,7 @@ const unsureCase = (s: string, k: string, opts: { sparse?: boolean; methodVouche
       THEN 'caught by a different method'
     WHEN ${opts.sparse ? "false" : `${s}.p_lat IS NULL OR ${s}.p_lon IS NULL OR ${k}.p_lat IS NULL OR ${k}.p_lon IS NULL`}
       THEN 'no coordinates to compare'
-    WHEN ${km(s, k)} > 1
+    WHEN ${km(s, k)} > 1 AND NOT ${wholeDegree(s, k)}
       THEN 'recorded more than a kilometre apart'
     WHEN legacy_sex_of(${s}.sex, ${s}.caste) <> legacy_sex_of(${k}.sex, ${k}.caste)
       OR legacy_caste_of(${s}.caste, ${s}.sex) <> legacy_caste_of(${k}.caste, ${k}.sex)
@@ -154,6 +154,21 @@ const unsureCase = (s: string, k: string, opts: { sparse?: boolean; methodVouche
       OR legacy_caste_of(${s}."casteVolDet", ${s}."sexVolDet") <> legacy_caste_of(${k}."casteVolDet", ${k}."sexVolDet")
       THEN 'a different sex or caste'
   END`;
+
+/**
+ * Whether two records' coordinates differ only because one gives a latitude
+ * or longitude as a whole degree: the same other coordinate to three
+ * decimals, and the whole degree the other's cut or rounds to. Mark
+ * Gorman's 2039536 says 44.227, -121 where its reprint 2040640 says 44.227,
+ * -121.452, which is not 36 km away but a longitude cut short, and his
+ * 2039541 says -123 for 2040645's -122.854 (the second independent review, 12
+ * November; Peter decided these are reprints).
+ */
+const wholeDegree = (a: string, b: string) => `
+  coalesce((abs(${a}.p_lat - ${b}.p_lat) < 0.001 AND (${a}.p_lon = trunc(${a}.p_lon) OR ${b}.p_lon = trunc(${b}.p_lon))
+            AND (trunc(${a}.p_lon) = trunc(${b}.p_lon) OR round(${a}.p_lon) = round(${b}.p_lon)))
+        OR (abs(${a}.p_lon - ${b}.p_lon) < 0.001 AND (${a}.p_lat = trunc(${a}.p_lat) OR ${b}.p_lat = trunc(${b}.p_lat))
+            AND (trunc(${a}.p_lat) = trunc(${b}.p_lat) OR round(${a}.p_lat) = round(${b}.p_lat))), false)`;
 
 /** A method as a word both the old records and iNaturalist's collection-method field can be compared by. */
 const methodClass = (m: string) => `
@@ -240,27 +255,47 @@ async function writeRemarks(conn: DuckDBConnection, result: SkippedRepairResult,
     JOIN specimen n_sp ON n_sp.sample_id = nb.sample_id AND n_sp.specimen_number = nb.specimen_number`);
   await conn.run(`
     INSERT INTO temp.repair_remark
-    SELECT d.specimen_id, 'pin',
-      concat(
-        CASE WHEN refused.yes
-             THEN concat('Old Beeline also entered this specimen as ', s."fieldNumber", ', with details missing. ')
-             ELSE concat('Old Beeline recorded this specimen twice, as ', k."fieldNumber", ' and ', s."fieldNumber", '. ') END,
-        CASE WHEN ${hasExpert("s")} AND NOT ${hasExpert("k")} AND ${hasVolunteer("s")} AND NOT ${hasVolunteer("k")}
-               THEN 'Its identifications were'
-             WHEN ${hasExpert("s")} AND NOT ${hasExpert("k")} THEN 'Its expert identification was'
-             ELSE 'Its volunteer identification was' END,
-        ' entered under ', s."fieldNumber",
-        CASE WHEN refused.yes THEN '.' ELSE ', so that is probably the number on the pin.' END)
-    FROM legacy_duplicate_record d
-    JOIN legacy_ranked s ON s._id = d._id
-    JOIN legacy_specimen_map m ON m.specimen_id = d.specimen_id
-    JOIN legacy_ranked k ON k._id = m._id
-    -- A record refused for a missing detail, tied as a second entry, makes
-    -- no claim about the pin: Nicole Sanchez's 2018 entries of her 2017
-    -- specimens are bare records whose year was mistyped, not labels.
-    CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM legacy_promotion_finding f
-                                       WHERE f._id = d._id AND f.severity = 'blocking' AND f.rule <> 'duplicate_specimen') AS yes) refused
-    WHERE (${hasExpert("s")} AND NOT ${hasExpert("k")}) OR (${hasVolunteer("s")} AND NOT ${hasVolunteer("k")})`);
+    WITH tie AS (
+      SELECT d.specimen_id, s."fieldNumber" AS s_fn, k."fieldNumber" AS k_fn,
+             lower(trim(s."samplingProtocol")) AS s_method, lower(trim(k."samplingProtocol")) AS k_method,
+             CASE WHEN s.p_date_end IS NOT NULL AND s.p_date_end <> s.p_date_start
+                  THEN concat(strftime(s.p_date_start, '%-d %B'), ' to ', strftime(s.p_date_end, '%-d %B %Y'))
+                  ELSE strftime(s.p_date_start, '%-d %B %Y') END AS s_dates,
+             concat(k."decimalLatitude", ', ', k."decimalLongitude") AS k_point, concat(s."decimalLatitude", ', ', s."decimalLongitude") AS s_point,
+             refused.yes AS refused,
+             ${hasExpert("s")} AND NOT ${hasExpert("k")} AS lacks_expert,
+             ${hasVolunteer("s")} AND NOT ${hasVolunteer("k")} AS lacks_volunteer,
+             NOT refused.yes AND ${methodClass(`s."samplingProtocol"`)} <> ${methodClass(`k."samplingProtocol"`)} AS method_differs,
+             NOT refused.yes AND (s.p_lat <> k.p_lat OR s.p_lon <> k.p_lon) AND ${wholeDegree("s", "k")} AS whole_degree
+      FROM legacy_duplicate_record d
+      JOIN legacy_ranked s ON s._id = d._id
+      JOIN legacy_specimen_map m ON m.specimen_id = d.specimen_id
+      JOIN legacy_ranked k ON k._id = m._id
+      -- A record refused for a missing detail, tied as a second entry, makes
+      -- no claim about the pin: Nicole Sanchez's 2018 entries of her 2017
+      -- specimens are bare records whose year was mistyped, not labels.
+      CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM legacy_promotion_finding f
+                                         WHERE f._id = d._id AND f.severity = 'blocking' AND f.rule <> 'duplicate_specimen') AS yes) refused
+    )
+    SELECT specimen_id, 'pin',
+      concat_ws(' ',
+        CASE WHEN refused THEN concat('Old Beeline also entered this specimen as ', s_fn, ', with details missing.')
+             ELSE concat('Old Beeline recorded this specimen twice, as ', k_fn, ' and ', s_fn, '.') END,
+        -- The sample Beeline holds says what the kept record says; where the
+        -- tie rests on the observation agreeing with the other, say what the
+        -- other says, since the exports would otherwise carry only the default.
+        CASE WHEN method_differs THEN concat(s_fn, ' says ', s_method, ', ', s_dates,
+          ', and the sample''s iNaturalist observation agrees about the method; ', k_fn, ' says ', k_method,
+          ', the old Beeline''s default for a label printed from an observation.') END,
+        CASE WHEN whole_degree THEN concat('Their coordinates differ only where one gives just a whole degree: ',
+          k_point, ' and ', s_point, '.') END,
+        CASE WHEN lacks_expert OR lacks_volunteer THEN concat(
+          CASE WHEN lacks_expert AND lacks_volunteer THEN 'Its identifications were'
+               WHEN lacks_expert THEN 'Its expert identification was'
+               ELSE 'Its volunteer identification was' END,
+          ' entered under ', s_fn, CASE WHEN refused THEN '.' ELSE ', so that is probably the number on the pin.' END) END)
+    FROM tie
+    WHERE lacks_expert OR lacks_volunteer OR method_differs OR whole_degree`);
   await conn.run(`
     INSERT INTO temp.repair_remark
     SELECT u.specimen_id, 'pair',
@@ -328,8 +363,16 @@ export async function repairSkippedLegacyRecords(
       SELECT rs._id AS skipped_id, rs."fieldNumber" AS skipped_fn, k._id AS kept_id, k."fieldNumber" AS kept_fn,
              m.specimen_id, sp.sample_id,
              ${unsureCase("rs", "k", {
+               // The observation gives the set-aside record's method, and
+               // counts exactly as many bees as the set-aside run of that
+               // method has records: a whole second printing of the sample.
                methodVouched: `(${methodClass("o.collection_method_raw")} = ${methodClass(`rs."samplingProtocol"`)}
-                 AND try_cast(o.specimen_count_raw AS INTEGER) <= (SELECT count(*) FROM specimen x WHERE x.sample_id = sp.sample_id))`,
+                 AND try_cast(o.specimen_count_raw AS INTEGER) <= (SELECT count(*) FROM specimen x WHERE x.sample_id = sp.sample_id)
+                 AND try_cast(o.specimen_count_raw AS INTEGER) = (
+                   SELECT count(*) FROM legacy_ranked x
+                   WHERE x.fn IS NOT DISTINCT FROM rs.fn AND x.ln IS NOT DISTINCT FROM rs.ln AND x.sid = rs.sid
+                     AND x.p_date_start = rs.p_date_start AND x.dup_rank > 1
+                     AND ${methodClass(`x."samplingProtocol"`)} = ${methodClass(`rs."samplingProtocol"`)}))`,
              })} AS unsure,
              false AS refused
       FROM legacy_ranked rs
@@ -427,9 +470,9 @@ export async function repairSkippedLegacyRecords(
     // the same collector and sample number lead to it and it counts more
     // specimens than Beeline holds. An observation alone is not enough for a
     // record with no number: the independent review of 12 November found
-    // that three of the four it led to were later printed under another
-    // sample Beeline holds (1905675 is 1924481, its month mistyped; 2006060
-    // and 2006061 are the two specimens of OBAS-00311). Two records claiming
+    // that three of the four it led to are bees Beeline very probably holds
+    // under another sample (1905675 is 1924481, its month mistyped; 2006060
+    // is at the site of OBAS-00311, pan traps over the same days). Two records claiming
     // one number in one sample are left out, both.
     await conn.run(`
       CREATE OR REPLACE TEMP TABLE repair_placed AS

@@ -1241,8 +1241,10 @@ export function SpecimenPage({
       </Card>
 
       {/* What became of the pin, where a staff inventory has said
-          (specimen_disposition, beeline-fud5). The ordinary specimen has
-          no row and no card: there is nothing to say about it. */}
+          (specimen_disposition, beeline-fud5), or what the old Beeline's
+          records leave in doubt about it, as Beeline read them
+          (beeline-iuva). The ordinary specimen has no row and no card:
+          there is nothing to say about it. */}
       {specimen.remarks !== null && (
         <Card>
           <h2>{c.disposition.heading}</h2>

@@ -109,6 +109,6 @@ CREATE TABLE legacy_duplicate_record (
   specimen_id INTEGER NOT NULL REFERENCES specimen(entity_id),
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-COMMENT ON TABLE legacy_duplicate_record IS 'An old-Beeline record promotion set aside as a second print of a specimen it holds, tied to that specimen (beeline-iuva): its determinations were carried to the specimen, and the nightly import of volunteers'' determinations from the old Beeline reads it as one of the specimen''s records.';
+COMMENT ON TABLE legacy_duplicate_record IS 'An old-Beeline record of a specimen Beeline holds that promotion did not take, tied to that specimen (beeline-iuva): a second print promotion set aside, or a record it refused for a missing detail that is a second entry of the specimen. Its determinations were carried to the specimen, and the nightly import of volunteers'' determinations from the old Beeline reads it as one of the specimen''s records.';
 COMMENT ON COLUMN legacy_duplicate_record._id IS 'The old record''s id, as in legacy_occurrence.';
 COMMENT ON COLUMN legacy_duplicate_record.recorded_at IS 'When the repair tied it to the specimen.';

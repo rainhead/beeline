@@ -38,6 +38,15 @@ import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows } from "./helpe
  * and a pair the observation shows to be a reprint (Pat Wheeler's 2021):
  *   2127400 kept, "aerial net" on observation 56390000, which says pan trap and one bee
  *   2127100 set aside, "pan traps", expert and volunteer
+ * and, one guard each (synthetic):
+ *   2127410 / 2127110, whose observation says net: still a pair
+ *   2127420 / 2127120, whose observation counts two bees Beeline lacks: still a pair
+ *   2127430, 2127431 / 2127130, an observation of two but one trap record: still a pair
+ *   2127440 / 2127140, one longitude a whole degree: a reprint
+ *   Cleo_Cortez:18.008.006 and 17.008.006, both specimen 6 of sample 8: both left out
+ *   Cleo_Cortez:20.008.002, specimen 2 of sample 8 but pan-trapped: a pair, not a tie
+ *   Cleo_Cortez:18.009.007, in sample 8 though its field number says 9: left out
+ *   2018999, no day, in June, when sample 8 was May: left out
  */
 const FIXTURE = new URL("./fixtures/legacy-skipped.jsonl", import.meta.url).pathname;
 
@@ -75,7 +84,10 @@ beforeAll(async () => {
     collector_id: "(SELECT entity_id FROM person WHERE display_name = 'Cleo Cortez')",
   });
   // The observation sample 9's kept record was printed from.
-  await conn.run(`INSERT INTO observation_field (inat_id, collection_method_raw, specimen_count_raw) VALUES (56390000, 'pan trap', '1')`);
+  await conn.run(
+    `INSERT INTO observation_field (inat_id, collection_method_raw, specimen_count_raw)
+     VALUES (56390000, 'pan trap', '1'), (56391000, 'net', '1'), (56392000, 'pan trap', '2'), (56393000, 'pan trap', '2')`,
+  );
 });
 
 const remarkOf = async (fieldNumber: string) =>
@@ -87,7 +99,10 @@ const remarkOf = async (fieldNumber: string) =>
 describe("repairing what legacy promotion set aside", () => {
   test("promotion kept one record of each pair, and refused the 2020 sample's", async () => {
     expect(await rows(conn, `SELECT field_number FROM specimen ORDER BY 1`)).toEqual(
-      ["2127319", "2127320", "2127321", "2127322", "2127323", "2127324", "2127325", "2127400", "Cleo_Cortez:18.008.001", "Cleo_Cortez:18.008.002"].map(
+      [
+        ...["2127319", "2127320", "2127321", "2127322", "2127323", "2127324", "2127325", "2127400"],
+        ...["2127410", "2127420", "2127430", "2127431", "2127440", "Cleo_Cortez:18.008.001", "Cleo_Cortez:18.008.002"],
+      ].map(
         (n) => [n],
       ),
     );
@@ -97,32 +112,32 @@ describe("repairing what legacy promotion set aside", () => {
   test("a dry run says what it would do, and does nothing", async () => {
     const r = await repairSkippedLegacyRecords(conn, { dryRun: true });
     expect(r).toEqual({
-      tied: 5,
+      tied: 6,
       tiedRefused: 1,
       leftAlone: [
+        { reason: "caught by a different method", pairs: 5 },
         { reason: "a different sex or caste", pairs: 1 },
-        { reason: "caught by a different method", pairs: 1 },
         { reason: "recorded more than a kilometre apart", pairs: 1 },
         { reason: "the experts named different bees", pairs: 1 },
       ],
-      carriedExpert: 4,
+      carriedExpert: 5,
       carriedVolunteer: 2,
       attached: [{ observation: 56359335, sampleId: observedSample, specimens: 2 }],
       placed: 1,
       newSpecimenDeterminations: 1,
       remarked: [
         { kind: "placed", specimens: 1 },
-        { kind: "pin", specimens: 4 },
-        { kind: "pair", specimens: 4 },
+        { kind: "pin", specimens: 5 },
+        { kind: "pair", specimens: 8 },
       ],
       remarkLeftAlone: [],
       unresolved: [],
       dryRun: true,
     });
-    expect(describeSkippedRepair(r)).toContain("5 set-aside second print(s) would be tied to their specimen");
-    expect(describeSkippedRepair(r)).toContain("9 specimen(s) would be given a remark: 1 placed, 4 pin, 4 pair");
+    expect(describeSkippedRepair(r)).toContain("6 set-aside second print(s) would be tied to their specimen");
+    expect(describeSkippedRepair(r)).toContain("14 specimen(s) would be given a remark: 1 placed, 5 pin, 8 pair");
     expect(await rows(conn, `SELECT count(*) FROM legacy_duplicate_record`)).toEqual([[0n]]);
-    expect(await rows(conn, `SELECT count(*) FROM specimen`)).toEqual([[10n]]);
+    expect(await rows(conn, `SELECT count(*) FROM specimen`)).toEqual([[15n]]);
     expect(await rows(conn, `SELECT count(*) FROM specimen_disposition`)).toEqual([[0n]]);
   });
 
@@ -148,6 +163,7 @@ describe("repairing what legacy promotion set aside", () => {
       ["d1000004", "2127322"],
       ["e4000003", "Cleo_Cortez:18.008.001"],
       ["f5000002", "2127400"],
+      ["g6000009", "2127440"],
     ]);
     // Its "aerial net" is the old Beeline's word for any print made from an
     // observation, and the observation says pan trap: one bee printed twice.
@@ -220,7 +236,9 @@ describe("repairing what legacy promotion set aside", () => {
       ],
     ]);
     expect(await remarkOf("2127400")).toEqual([
-      ["Old Beeline recorded this specimen twice, as 2127400 and 2127100. Its identifications were entered under 2127100, so that is probably the number on the pin."],
+      [
+        "Old Beeline recorded this specimen twice, as 2127400 and 2127100. 2127100 says pan traps, 20 June 2021, and the sample's iNaturalist observation agrees about the method; 2127400 says aerial net, the old Beeline's default for a label printed from an observation. Its identifications were entered under 2127100, so that is probably the number on the pin.",
+      ],
     ]);
     // Its expert's identification refines the kept record's: nothing in doubt.
     expect(await remarkOf("2127322")).toEqual([]);
@@ -246,6 +264,31 @@ describe("repairing what legacy promotion set aside", () => {
     ]);
     expect(await rows(conn, `SELECT DISTINCT disposition, stated_by, CAST(stated_on AS VARCHAR), source FROM specimen_disposition`)).toEqual([
       [null, REMARK_STATED_BY, "2026-11-12", REMARK_SOURCE],
+    ]);
+  });
+
+  test("lets an observation vouch for a method only where it gives that method and counts the whole second printing", async () => {
+    const tiedTo = async (fn: string) =>
+      rows(conn, `SELECT sp.field_number FROM legacy_duplicate_record d JOIN legacy_ranked r ON r._id = d._id JOIN specimen sp ON sp.entity_id = d.specimen_id WHERE r."fieldNumber" = '${fn}'`);
+    for (const fn of ["2127110", "2127120", "2127130"]) expect(await tiedTo(fn)).toEqual([]);
+    for (const kept of ["2127410", "2127420", "2127430"]) expect(await remarkOf(kept)).toEqual([[expect.stringContaining("so it may be a second bee")]]);
+    // A longitude given only as a whole degree is the same place.
+    expect(await tiedTo("2127140")).toEqual([["2127440"]]);
+    expect(await remarkOf("2127440")).toEqual([
+      [
+        "Old Beeline recorded this specimen twice, as 2127440 and 2127140. Their coordinates differ only where one gives just a whole degree: 44.5046, -123.5523 and 44.5046, -123. Its expert identification was entered under 2127140, so that is probably the number on the pin.",
+      ],
+    ]);
+  });
+
+  test("leaves out refused records that two claim, that contradict, or that only a guess would place", async () => {
+    for (const fn of ["Cleo_Cortez:18.008.006", "Cleo_Cortez:17.008.006", "Cleo_Cortez:18.009.007", "2018999", "Cleo_Cortez:20.008.002"]) {
+      expect(await rows(conn, `SELECT count(*) FROM specimen WHERE field_number = '${fn}'`)).toEqual([[0n]]);
+    }
+    expect(await remarkOf("Cleo_Cortez:18.008.002")).toEqual([
+      [
+        "Old Beeline also has field number Cleo_Cortez:20.008.002, a record with details missing that Beeline matched to this specimen, but that record says pan traps and this one net, so it may be a second bee. That record has no identification.",
+      ],
     ]);
   });
 

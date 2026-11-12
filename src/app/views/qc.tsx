@@ -1,6 +1,7 @@
 import { EMPTY_QUERY, listingHref, MINE } from "../listings.js";
-import { sampleHref, specimenHref, suggestedLocalityHref } from "../record.js";
-import type { Identification } from "../dashboard.js";
+import { sampleHref, suggestedLocalityHref } from "../record.js";
+import type { Batches } from "../your-bees.js";
+import { BatchList } from "./your-bees.js";
 import { determineHref } from "./determine.js";
 import type { Geoprivacy, QcSeverity } from "../../model.js";
 import type { LocalityBasis } from "../../locality-rule.js";
@@ -17,7 +18,6 @@ import {
   Meta,
   OrAbsent,
   PageHeader,
-  Pill,
   SuggestedLocality,
   TaxonName,
 } from "./components/index.js";
@@ -261,50 +261,23 @@ function Skipped({ m, days }: { m: Messages; days: SkippedDay[] }) {
 }
 
 /**
- * The latest identifications of the person's bees (beeline-xegx): an expert
- * naming a specimen, or changing an expert's earlier name, newest first by
- * when it was identified. Below everything that wants doing, since it asks
- * nothing of the volunteer.
+ * The newest days experts identified the person's bees (beeline-xegx), as
+ * /bees shows them, with a link there for the rest. Below everything that
+ * wants doing, since it asks nothing of the volunteer.
  */
-function Identifications({ m, items }: { m: Messages; items: Identification[] }) {
+function Identifications({ m, batches }: { m: Messages; batches: Batches }) {
   const t = m.qc.identifications;
   return (
     <>
       <h2>{t.heading}</h2>
-      <Meta block>{t.intro}</Meta>
-      {items.length === 0 ? (
-        <EmptyState>{t.empty}</EmptyState>
-      ) : (
-        <DataTable columns={[t.col.specimen, t.col.name, t.col.by, t.col.when]}>
-          {items.map((i) => (
-            <tr>
-              <td>
-                <Pill href={specimenHref(i.specimen_id)} mono={i.field_number !== null}>
-                  {i.field_number ?? t.specimen(i.sample_number, i.specimen_number)}
-                </Pill>
-              </td>
-              <td>
-                <TaxonName rank={i.rank} scientificName={i.scientific_name} qualifier={i.qualifier ?? undefined} />
-                {i.previous !== null && (
-                  <Meta block>
-                    {t.previously}{" "}
-                    <TaxonName
-                      rank={i.previous.rank}
-                      scientificName={i.previous.scientific_name}
-                      qualifier={i.previous.qualifier ?? undefined}
-                    />
-                  </Meta>
-                )}
-                {i.superseded && <Meta block>{t.changedSince}</Meta>}
-              </td>
-              <td>
-                <OrAbsent value={i.determiner} label={t.byUnknown} />
-              </td>
-              <td class="nowrap">{i.identified_on_or_before ? t.onOrBefore(m.format.day(i.identified_at)) : m.format.day(i.identified_at)}</td>
-            </tr>
-          ))}
-        </DataTable>
-      )}
+      <Meta block>
+        {t.intro}
+        {batches.undated > 0 && <> {m.yourBees.batches.undated(batches.undated)}</>}
+      </Meta>
+      {batches.batches.length === 0 ? <EmptyState>{t.empty}</EmptyState> : <BatchList m={m} batches={batches.batches} />}
+      <Meta block>
+        <a href="/bees">{t.all}</a>
+      </Meta>
     </>
   );
 }
@@ -501,8 +474,8 @@ export function QcHome(props: {
   skipped?: SkippedDay[];
   /** The newest active season's specimens still to be named, with the season the identify screen should open on. */
   toName?: { season: number; unnamed: number } | null;
-  /** The latest expert identifications of the person's bees; absent on proofing surfaces. */
-  identifications?: Identification[];
+  /** The newest days experts identified the person's bees; absent on proofing surfaces. */
+  identifications?: Batches;
   /**
    * "Check iNaturalist now" (beeline-yso): absent where the instance cannot
    * check, as on proofing surfaces; otherwise whether the person has an
@@ -585,7 +558,7 @@ export function QcHome(props: {
           <Button variant="tonal">{m.qc.check.button}</Button>
         </form>
       )}
-      {props.identifications !== undefined && <Identifications m={m} items={props.identifications} />}
+      {props.identifications !== undefined && <Identifications m={m} batches={props.identifications} />}
     </>
   );
 }

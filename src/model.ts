@@ -240,6 +240,7 @@ export interface ExpertIdentificationView {
   last_recorded_at: Date;
   previous_animal_id: number | null;
   previous_qualifier: DeterminationQualifier | null;
+  previous_determiner_id: number | null;
   is_latest: boolean;
 }
 

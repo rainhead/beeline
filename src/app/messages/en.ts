@@ -273,6 +273,7 @@ export const en = {
       specimens: "Specimens",
       glossary: "Glossary",
       howItWorks: "How Beeline works",
+      yourBees: "Your bees",
       people: "People",
       design: "Design",
       jobs: "Jobs",
@@ -575,16 +576,9 @@ export const en = {
      */
     identifications: {
       heading: "Latest identifications of your bees",
-      intro:
-        "When an expert names one of your specimens, or changes the name an expert gave it, it appears here, newest first. Experts identify in batches, often a year or more after the bee was collected. Most identifications recorded in the old Beeline have no date, so those are only on each specimen's page.",
-      empty: "No dated identifications of your specimens yet.",
-      col: { specimen: "Specimen", name: "Identified as", by: "Identified by", when: "Identified" },
-      specimen: (sampleNumber: string, specimenNumber: number) => `Sample ${sampleNumber}, specimen ${specimenNumber}`,
-      previously: "Previously",
-      changedSince: "An expert has since changed this name.",
-      byUnknown: "not recorded",
-      /** An expert's sheet that stated no day: when it arrived is the latest the bee could have been identified. */
-      onOrBefore: (day: string) => `On or before ${day}`,
+      intro: "Experts identify in batches, often a year or more after the bees were collected. These are the newest days they identified yours.",
+      empty: "No expert identification of your bees has a date yet.",
+      all: "All your bees and their identifications",
     },
     /**
      * Settled seasons stop asking (beeline-2c3.24). Said out loud rather than
@@ -2579,6 +2573,65 @@ export const en = {
    * voice page asks. The order is the specimen's own: field, overnight read,
    * front page, print run, pinning, identifying, handing in.
    */
+  /**
+   * "Your bees" (beeline-fiay, beeline-xegx): a volunteer's own bees by the
+   * year they were collected, and the experts' identifications of them as they
+   * arrived, a day at a time. The start of the student report's replacement.
+   */
+  yourBees: {
+    title: "Your bees",
+    heading: "Your bees",
+    lede: "Every bee you have collected, how far each has been identified, and when experts identified them.",
+    byYear: {
+      heading: "Your bees by year",
+      intro:
+        "Each bar is the bees you collected that year, split by how far each one is identified now. Your own identifications count, and an expert's takes the place of yours where there is one.",
+      empty: "You have not collected any specimens yet.",
+      chartLabel: "Bees you collected each year, by how far each is identified",
+      legend: { species: "To species", genus: "To genus", coarser: "Coarser than genus", none: "Not yet identified" },
+      col: { season: "Year", collected: "Collected" },
+      asTable: "Show as a table",
+      title: (season: number | string, collected: number, species: number, genus: number, coarser: number, none: number) =>
+        `${season}: ${n(collected)} bees. ${n(species)} to species, ${n(genus)} to genus, ${n(coarser)} coarser, ${n(none)} not yet identified.`,
+    },
+    batches: {
+      heading: "When experts identified them",
+      intro: "Experts identify in batches, often a year or more after the bees were collected. Each entry is one day's identifications, newest first.",
+      undated: (count: number) =>
+        `${n(count)} more of your bees were identified in the old Beeline, which kept no dates, so they appear only on each specimen's page.`,
+      empty: "No expert identification of your bees has a date yet.",
+      /** An expert's sheet that stated no day: when it arrived is the latest the bees could have been identified. */
+      onOrBefore: (day: string) => `On or before ${day}`,
+      identified: (parts: readonly string[] | string) => `An expert identified ${list(parts)}.`,
+      ofSeason: (count: number, season: number | string) => `${n(count)} of your ${season} bees`,
+      kinds: (parts: readonly string[] | string) => {
+        const text = Array.isArray(parts) ? parts.join("; ") : String(parts);
+        return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
+      },
+      /**
+       * What each identification did to the name an expert gave the bee
+       * before. "Your own" is a name the volunteer gave, which Washington's
+       * staff upload to Ecdysis, where it reads as an expert's.
+       */
+      kind: {
+        first: (count: number) => `${n(count)} for the first time`,
+        finer: (count: number, from: string, to: string) => `${n(count)} from ${from} to ${to}`,
+        coarser: (count: number, from: string, to: string) => `${n(count)} back from ${from} to ${to}`,
+        corrected: (count: number) => `${n(count)} corrected`,
+        certainty: (count: number) => `${n(count)} with a change in how sure the identification is`,
+        own: (own: number, count: number) =>
+          own === count
+            ? count === 1
+              ? "(it was your own identification)"
+              : "(all were your own identification)"
+            : `(${n(own)} ${own === 1 ? "was" : "were"} your own identification)`,
+      },
+      by: (names: readonly string[] | string) => `By ${list(names)}`,
+      names: (count: number) => (count === 1 ? "1 name" : `${n(count)} names`),
+      times: (count: number) => `× ${n(count)}`,
+    },
+  },
+
   howItWorks: {
     title: "How Beeline works",
     heading: "How Beeline works",

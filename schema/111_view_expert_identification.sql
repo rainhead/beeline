@@ -114,6 +114,7 @@ SELECT s.specimen_id, CAST(s.stretch AS INTEGER) AS stretch, s.animal_id, s.qual
        s.identified_at, s.identified_at_is_bound, s.first_recorded_at, s.last_recorded_at,
        lag(s.animal_id) OVER w AS previous_animal_id,
        lag(s.qualifier) OVER w AS previous_qualifier,
+       lag(s.determiner_id) OVER w AS previous_determiner_id,
        s.stretch = max(s.stretch) OVER (PARTITION BY s.specimen_id) AS is_latest
 FROM stretches s
 WINDOW w AS (PARTITION BY s.specimen_id ORDER BY s.stretch);
@@ -126,4 +127,5 @@ COMMENT ON COLUMN expert_identification.identified_at IS 'The earliest evidence 
 COMMENT ON COLUMN expert_identification.identified_at_is_bound IS 'True when identified_at is only the latest the name could have been given: the time an expert''s sheet was sent, the sheet stating no day.';
 COMMENT ON COLUMN expert_identification.first_recorded_at IS 'When Beeline first recorded this name for the specimen.';
 COMMENT ON COLUMN expert_identification.previous_animal_id IS 'The name the stretch before said, if any: what an expert changed it from.';
+COMMENT ON COLUMN expert_identification.previous_determiner_id IS 'Who gave the name the stretch before, if Beeline knows them: a volunteer, where Washington''s staff uploaded the collector''s own identification to Ecdysis, where it reads as an expert''s.';
 COMMENT ON COLUMN expert_identification.is_latest IS 'Whether this is the expert name the specimen has now, which is its determination of record (schema/110).';

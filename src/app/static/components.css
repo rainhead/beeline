@@ -659,3 +659,49 @@ dd > .inline-edit[open] { max-width: 24rem; }
 .combobox-panel li[aria-selected="true"], .combobox-panel li:hover { background: var(--md-sys-color-secondary-container); }
 .combobox-panel li .meta { margin-left: auto; padding-left: var(--space-4); }
 .combobox-panel > .meta { padding: var(--space-2) var(--space-3); margin: 0; }
+
+/* ── Your bees (beeline-fiay) ─────────────────────────────────────────────
+   The chart's ramp is its own, not the theme's: one blue, finest darkest,
+   with grey for "not yet", validated for colour-blind readers and contrast
+   against the surface in both modes (the dataviz skill's validator,
+   2026-11-11). The parts are named by how far a bee is identified, so the
+   legend, the bars and the table read the same names. */
+:root {
+  --chart-species: #1c5cab;
+  --chart-genus: #3987e5;
+  --chart-coarser: #86b6ef;
+  --chart-none: #d9d8d3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --chart-species: #86b6ef;
+    --chart-genus: #3987e5;
+    --chart-coarser: #184f95;
+    --chart-none: #3a3a37;
+  }
+}
+.bee-chart { margin: 0 0 var(--space-6); max-width: 44rem; }
+.bee-chart svg { display: block; width: 100%; height: auto; }
+.bee-chart .grid line { stroke: var(--md-sys-color-outline-variant); stroke-width: 1; }
+.bee-chart .axis text { fill: var(--md-sys-color-on-surface-variant); font-size: 12px; }
+.bee-chart .part-species { fill: var(--chart-species); --swatch: var(--chart-species); }
+.bee-chart .part-genus { fill: var(--chart-genus); --swatch: var(--chart-genus); }
+.bee-chart .part-coarser { fill: var(--chart-coarser); --swatch: var(--chart-coarser); }
+.bee-chart .part-none { fill: var(--chart-none); --swatch: var(--chart-none); }
+.bee-chart-legend {
+  display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4);
+  list-style: none; margin: var(--space-2) 0; padding: 0;
+  color: var(--md-sys-color-on-surface-variant); font-size: 0.875rem;
+}
+.bee-chart-legend li::before {
+  content: ""; display: inline-block; width: 0.7em; height: 0.7em;
+  margin-right: 0.4em; border-radius: 2px; background: var(--swatch);
+}
+.bee-chart details > summary { cursor: pointer; color: var(--md-sys-color-on-surface-variant); font-size: 0.875rem; margin-top: var(--space-2); }
+
+ul.batches { list-style: none; margin: var(--space-2) 0 var(--space-4); padding: 0; }
+ul.batches > li { border-top: 1px solid var(--md-sys-color-outline-variant); padding: var(--space-3) 0; }
+ul.batches .batch-when { font-weight: 600; }
+ul.batches details > summary { cursor: pointer; font-size: 0.875rem; color: var(--md-sys-color-primary); }
+ul.batch-names { columns: 2; margin: var(--space-1-5) 0 0; padding-left: var(--space-5); font-size: 0.875rem; }
+@media (max-width: 40rem) { ul.batch-names { columns: 1; } }

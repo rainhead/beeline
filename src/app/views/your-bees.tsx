@@ -240,21 +240,28 @@ export function TaxaFoundPage({ m, found }: { m: Messages; found: TaxaFound }) {
       <PageHeader title={m.yourBees.heading} lede={m.yourBees.lede} />
       <YourBeesTabs m={m} current="found" />
       <h2>{t.heading}</h2>
-      {found.identified === 0 ? (
+      {found.byFamily.length === 0 ? (
         <EmptyState>{t.empty}</EmptyState>
       ) : (
         <>
           <p>
-            {t.summary(found.identified, found.species, found.genera, found.families)}
-            {notYet > 0 && <> {t.notYet(notYet)}</>}
+            {found.identified === 0
+              ? t.empty
+              : found.atlas === null
+                ? t.summary(found.identified, found.species, found.genera, found.families)
+                : t.summaryOf(found.identified, found.families, found.atlas.families, found.genera, found.atlas.genera, found.species, found.atlas.species, found.atlas.names)}
+            {notYet > 0 && found.identified > 0 && <> {t.notYet(notYet)}</>}
           </p>
           {found.notBees > 0 && <Meta block>{t.notBees(found.notBees)}</Meta>}
-          <Meta block>{t.intro}</Meta>
+          <Meta block>
+            {t.intro}
+            {found.atlas !== null && <> {t.introOthers(found.atlas.names)}</>}
+          </Meta>
           {found.byFamily.map((family) => (
-            <section class="found-family">
+            <section class={family.bees === 0 ? "found-family found-none" : "found-family"}>
               <h3>
                 {family.name === null ? t.noFamily : <TaxonName rank="family" scientificName={family.name} />}{" "}
-                <span class="meta">{t.bees(family.bees)}</span>
+                <span class="meta">{family.bees === 0 ? t.noneYet : t.bees(family.bees)}</span>
               </h3>
               <DataTable columns={[t.col.genus, t.col.bees, t.col.species]}>
                 {family.genera.map((g) => (
@@ -284,14 +291,36 @@ function GenusRow({ m, genus, max }: { m: Messages; genus: GenusFound; max: numb
       ))}
     </ul>
   );
+  // Species others have found and the person has not: muted, with how many
+  // others have, and folded away, since they are what is still out there
+  // rather than what the person did.
+  const byOthers =
+    genus.byOthers.length === 0 ? null : (
+      <details class="found-by-others">
+        <summary>{genus.bees === 0 ? t.othersOnly(genus.byOthers.length) : t.othersMore(genus.byOthers.length)}</summary>
+        <ul class="found-species">
+          {genus.byOthers.map((o) => (
+            <li>
+              <TaxonName rank="species" scientificName={o.scientific_name} /> <span class="meta">{t.byOthers(o.bees)}</span>
+            </li>
+          ))}
+        </ul>
+      </details>
+    );
   return (
-    <tr>
+    <tr class={genus.bees === 0 ? "found-none" : undefined}>
       <td>{genus.name === null ? <Meta>{t.noGenus}</Meta> : <TaxonName rank="genus" scientificName={genus.name} />}</td>
       <td class="found-bees">
-        {m.format.number(genus.bees)}
-        {/* A bar against the page's biggest genus, so the eye can compare down
-            the column; the number beside it is the value. */}
-        <span class="found-bar" style={`width: ${Math.max(2, Math.round((100 * genus.bees) / Math.max(1, max)))}%`} aria-hidden="true" />
+        {genus.bees === 0 ? (
+          <Meta>{t.noneYet}</Meta>
+        ) : (
+          <>
+            {m.format.number(genus.bees)}
+            {/* A bar against the page's biggest genus, so the eye can compare down
+                the column; the number beside it is the value. */}
+            <span class="found-bar" style={`width: ${Math.max(2, Math.round((100 * genus.bees) / Math.max(1, max)))}%`} aria-hidden="true" />
+          </>
+        )}
       </td>
       <td>
         {genus.species.length === 0 ? null : genus.species.length <= SPECIES_SHOWN_OPEN ? (
@@ -303,6 +332,7 @@ function GenusRow({ m, genus, max }: { m: Messages; genus: GenusFound; max: numb
           </details>
         )}
         {genus.toGenusOnly > 0 && genus.name !== null && <Meta block>{t.toGenusOnly(genus.toGenusOnly)}</Meta>}
+        {byOthers}
       </td>
     </tr>
   );

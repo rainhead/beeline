@@ -2581,6 +2581,26 @@ export const en = {
         `${identified === 1 ? "It covers" : "Between them they cover"} ${n(families)} ${families === 1 ? "family" : "families"}, ` +
         `${n(genera)} ${genera === 1 ? "genus" : "genera"} and ${species === 0 ? "no species yet" : `${n(species)} species`}.`,
       notYet: (count: number) => `${n(count)} more ${count === 1 ? "is" : "are"} not identified yet.`,
+      /** Against everything found in the atlases the volunteer collects in, by anybody, the volunteer included. */
+      summaryOf: (
+        identified: number,
+        families: number,
+        allFamilies: number,
+        genera: number,
+        allGenera: number,
+        species: number,
+        allSpecies: number,
+        atlases: readonly string[] | string,
+      ) =>
+        `${n(identified)} of your bees ${identified === 1 ? "is" : "are"} identified. ` +
+        `${identified === 1 ? "It covers" : "Between them they cover"} ${n(families)} of the ${n(allFamilies)} ${allFamilies === 1 ? "family" : "families"}, ` +
+        `${n(genera)} of the ${n(allGenera)} ${allGenera === 1 ? "genus" : "genera"} and ${n(species)} of the ${n(allSpecies)} species found in the ${list(atlases)}.`,
+      introOthers: (atlases: readonly string[] | string) =>
+        `Under each genus, the species others in the ${list(atlases)} have found and you have not are folded away, with how many they have collected.`,
+      noneYet: "none of yours yet",
+      othersMore: (count: number) => `${n(count)} more species found by others`,
+      othersOnly: (count: number) => `${n(count)} species found by others`,
+      byOthers: (bees: number) => (bees === 1 ? "1 by others" : `${n(bees)} by others`),
       intro:
         "Each bee is counted as far as it is identified now, under its family and genus. Your own identifications count, and an expert's takes the place of yours where there is one.",
       empty: "None of your bees has been identified yet.",

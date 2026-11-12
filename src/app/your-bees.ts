@@ -377,13 +377,23 @@ export interface SpeciesFound {
   bees: number;
 }
 
+/** A species others in the person's atlas have found and the person has not. */
+export interface SpeciesByOthers {
+  scientific_name: string;
+  /** How many of others' specimens are identified as it. */
+  bees: number;
+}
+
 export interface GenusFound {
   /** Null for bees whose family is known and whose genus is not. */
   name: string | null;
+  /** The person's own; 0 for a genus only others have found. */
   bees: number;
   /** Bees identified to this genus (or a subgenus of it) and no further. */
   toGenusOnly: number;
   species: SpeciesFound[];
+  /** Species of this genus others in the person's atlas have found and the person has not, most collected first. */
+  byOthers: SpeciesByOthers[];
 }
 
 export interface FamilyFound {
@@ -395,6 +405,12 @@ export interface FamilyFound {
 
 /** What the person's identified bees are, by family and genus (beeline-fiay). */
 export interface TaxaFound {
+  /**
+   * The atlases the person's samples were collected in, and how many
+   * families, genera and species have been found there by anybody, the person
+   * included. Null when none of their samples is in an atlas.
+   */
+  atlas: { names: string[]; families: number; genera: number; species: number } | null;
   /** The person's specimens, less those identified as something other than a bee. */
   collected: number;
   identified: number;
@@ -414,17 +430,41 @@ export interface TaxaFound {
  * species is counted once whether or not it is "cf.", which asserts the
  * species pending confirmation; "aff." and "nr." say it is probably something
  * else (schema/040), so they add no species found. The list shows them all.
+ *
+ * Beside them, what others have found in the atlases the person collects in
+ * (beeline-fiay, Peter 2026-11-12): every species there the person has not
+ * found, under its genus and family, with how many specimens others have of
+ * it, so a volunteer can see what is still out there. 26 ms for the busiest
+ * account on production's store of 2026-11-12, whose samples span three atlases.
  */
 export async function taxaFound(db: Kysely<Database>, personId: number): Promise<TaxaFound> {
-  const [names, totals] = await Promise.all([
+  const atlases = await sql<{ atlas_id: unknown; name: string }>`
+    SELECT DISTINCT p.entity_id AS atlas_id, p.name
+    FROM sample_atlas sa JOIN program p ON p.entity_id = sa.atlas_id
+    WHERE EXISTS (SELECT 1 FROM sample_collector mine WHERE mine.sample_id = sa.sample_id AND mine.person_id = ${personId})
+    ORDER BY p.name`.execute(db);
+  const atlasIds = atlases.rows.map((a) => Number(a.atlas_id));
+  const [names, totals, others] = await Promise.all([
     sql<{ animal_id: unknown; qualifier: DeterminationQualifier | null; bees: unknown }>`
       SELECT d.animal_id, d.qualifier, count(*) AS bees
       FROM specimen sp JOIN determination_of_record d ON d.specimen_id = sp.entity_id
       WHERE ${mine(personId)}
       GROUP BY d.animal_id, d.qualifier`.execute(db),
     sql<{ collected: unknown }>`SELECT count(*) AS collected FROM specimen sp WHERE ${mine(personId)}`.execute(db),
+    // Others' specimens in those atlases, by their names; "aff." and "nr."
+    // name no species, as above.
+    atlasIds.length === 0
+      ? Promise.resolve({ rows: [] as { animal_id: unknown; bees: unknown }[] })
+      : sql<{ animal_id: unknown; bees: unknown }>`
+          SELECT d.animal_id, count(*) AS bees
+          FROM specimen sp
+          JOIN sample_atlas sa ON sa.sample_id = sp.sample_id
+          JOIN determination_of_record d ON d.specimen_id = sp.entity_id
+          WHERE sa.atlas_id IN (${sql.join(atlasIds)}) AND NOT ${mine(personId)}
+            AND (d.qualifier IS NULL OR d.qualifier NOT IN ('aff.', 'nr.'))
+          GROUP BY d.animal_id`.execute(db),
   ]);
-  const ids = [...new Set(names.rows.map((r) => Number(r.animal_id)))];
+  const ids = [...new Set([...names.rows, ...others.rows].map((r) => Number(r.animal_id)))];
   const lineage = await lineageOf(db, ids);
 
   const families = new Map<string, { name: string | null; genera: Map<string, GenusFound> }>();
@@ -443,7 +483,7 @@ export async function taxaFound(db: Kysely<Database>, personId: number): Promise
     const genus = line?.genus ?? null;
     const fam = families.get(String(family)) ?? { name: family, genera: new Map() };
     families.set(String(family), fam);
-    const gen = fam.genera.get(String(genus)) ?? { name: genus, bees: 0, toGenusOnly: 0, species: [] };
+    const gen = fam.genera.get(String(genus)) ?? { name: genus, bees: 0, toGenusOnly: 0, species: [], byOthers: [] };
     fam.genera.set(String(genus), gen);
     gen.bees += bees;
     if (line?.species !== undefined && line.species !== null && line.self !== null) {
@@ -453,21 +493,68 @@ export async function taxaFound(db: Kysely<Database>, personId: number): Promise
       gen.toGenusOnly += bees;
     }
   }
+  // What others have found that the person has not. Only names placed in a
+  // bee family and genus count: a genus or family others have found joins the
+  // page with none of the person's bees, and a species of it is listed.
+  const atlasSpecies = new Set(speciesSeen);
+  const atlasGenera = new Set<string>();
+  const atlasFamilies = new Set<string>();
+  const othersBySpecies = new Map<number, { family: string; genus: string; name: string; bees: number }>();
+  for (const r of others.rows) {
+    const line = lineage.get(Number(r.animal_id));
+    const family = line?.family ?? null;
+    if (family === null || !BEE_FAMILIES.includes(family)) continue;
+    atlasFamilies.add(family);
+    const genus = line?.genus ?? null;
+    if (genus === null) continue;
+    atlasGenera.add(`${family}/${genus}`);
+    if (line?.species === null || line?.species === undefined || line.speciesName === null) continue;
+    atlasSpecies.add(line.species);
+    if (speciesSeen.has(line.species)) continue;
+    const o = othersBySpecies.get(line.species) ?? { family, genus, name: line.speciesName, bees: 0 };
+    o.bees += Number(r.bees);
+    othersBySpecies.set(line.species, o);
+  }
+  for (const key of atlasGenera) {
+    const [family, genus] = key.split("/") as [string, string];
+    const fam = families.get(family) ?? { name: family, genera: new Map() };
+    families.set(family, fam);
+    if (!fam.genera.has(genus)) fam.genera.set(genus, { name: genus, bees: 0, toGenusOnly: 0, species: [], byOthers: [] });
+  }
+  for (const o of othersBySpecies.values()) families.get(o.family)!.genera.get(o.genus)!.byOthers.push({ scientific_name: o.name, bees: o.bees });
+
+  const othersBees = (g: GenusFound) => g.byOthers.reduce((s, o) => s + o.bees, 0);
   const byFamily: FamilyFound[] = [...families.values()]
     .map((f) => {
       const genera = [...f.genera.values()]
-        .map((g) => ({ ...g, species: g.species.sort((a, b) => b.bees - a.bees || a.scientific_name.localeCompare(b.scientific_name)) }))
-        .sort((a, b) => b.bees - a.bees || String(a.name).localeCompare(String(b.name)));
+        .map((g) => ({
+          ...g,
+          species: g.species.sort((a, b) => b.bees - a.bees || a.scientific_name.localeCompare(b.scientific_name)),
+          byOthers: g.byOthers.sort((a, b) => b.bees - a.bees || a.scientific_name.localeCompare(b.scientific_name)),
+        }))
+        .sort((a, b) => b.bees - a.bees || othersBees(b) - othersBees(a) || String(a.name).localeCompare(String(b.name)));
       return { name: f.name, bees: genera.reduce((s, g) => s + g.bees, 0), genera };
     })
-    // Named families first, by how many bees; whatever has no family last.
-    .sort((a, b) => (a.name === null ? 1 : 0) - (b.name === null ? 1 : 0) || b.bees - a.bees);
+    // Named families first, the person's largest first, then those only
+    // others have found; whatever has no family last.
+    .sort((a, b) => (a.name === null ? 1 : 0) - (b.name === null ? 1 : 0) || b.bees - a.bees || String(a.name).localeCompare(String(b.name)));
+  const ownGenera = new Set(byFamily.flatMap((f) => f.genera.flatMap((g) => (g.name === null || g.bees === 0 ? [] : [`${f.name}/${g.name}`]))));
+  const ownFamilies = byFamily.filter((f) => f.name !== null && f.bees > 0).map((f) => String(f.name));
   return {
+    atlas:
+      atlasIds.length === 0
+        ? null
+        : {
+            names: atlases.rows.map((a) => a.name),
+            families: new Set([...atlasFamilies, ...ownFamilies]).size,
+            genera: new Set([...atlasGenera, ...ownGenera]).size,
+            species: atlasSpecies.size,
+          },
     collected: Number(totals.rows[0]?.collected ?? 0) - notBees,
     identified,
     notBees,
-    families: byFamily.filter((f) => f.name !== null).length,
-    genera: new Set(byFamily.flatMap((f) => f.genera.flatMap((g) => (g.name === null ? [] : [`${f.name}/${g.name}`])))).size,
+    families: ownFamilies.length,
+    genera: ownGenera.size,
     species: speciesSeen.size,
     byFamily,
   };
@@ -479,6 +566,7 @@ interface Lineage {
   genus: string | null;
   /** The species-rank node at or above this name, for counting species once whatever is finer. */
   species: number | null;
+  speciesName: string | null;
   /** Whether the name is a genus or anything finer, so "to genus only" can tell a genus from a family. */
   atOrBelowGenus: boolean;
 }
@@ -499,14 +587,17 @@ async function lineageOf(db: Kysely<Database>, ids: number[]): Promise<Map<numbe
     FROM up JOIN animal a ON a.entity_id = up.node LEFT JOIN animal_rank r ON r.rank = a.rank`.execute(db);
   for (const r of result.rows) {
     const start = Number(r.start);
-    const line = map.get(start) ?? { self: null, family: null, genus: null, species: null, atOrBelowGenus: false };
+    const line = map.get(start) ?? { self: null, family: null, genus: null, species: null, speciesName: null, atOrBelowGenus: false };
     if (Number(r.depth) === 0) {
       line.self = { scientific_name: r.scientific_name, rank: r.rank };
       line.atOrBelowGenus = r.ordinal !== null && Number(r.ordinal) >= Number(r.genus_ordinal);
     }
     if (r.rank === "family") line.family = r.scientific_name;
     if (r.rank === "genus") line.genus = r.scientific_name;
-    if (r.rank === "species") line.species = Number(r.node);
+    if (r.rank === "species") {
+      line.species = Number(r.node);
+      line.speciesName = r.scientific_name;
+    }
     map.set(start, line);
   }
   return map;

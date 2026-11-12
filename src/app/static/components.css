@@ -740,3 +740,7 @@ ul.found-species { list-style: none; margin: 0; padding: 0; }
 .found-family table { table-layout: fixed; width: 100%; }
 .found-family th:nth-child(1) { width: 28%; }
 .found-family th:nth-child(2) { width: 22%; }
+/* What others have found and the volunteer has not: present, but quieter. */
+.found-none, .found-none h3 { color: var(--md-sys-color-on-surface-variant); }
+details.found-by-others > summary { cursor: pointer; font-size: 0.875rem; color: var(--md-sys-color-on-surface-variant); margin-top: var(--space-1); }
+details.found-by-others ul.found-species { color: var(--md-sys-color-on-surface-variant); }

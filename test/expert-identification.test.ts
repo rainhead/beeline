@@ -448,6 +448,29 @@ describe("what you found", () => {
     expect(found.byFamily.map((f) => f.name)).toEqual(["Apidae"]);
   });
 
+  it("lists, beside the person's, what others in their atlas have found and they have not", async () => {
+    const { db, conn, ada, spec, expert, adas } = await fixture();
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Megachilidae')`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('genus', 'Osmia', (SELECT entity_id FROM animal WHERE scientific_name = 'Megachilidae'))`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('species', 'Osmia lignaria', (SELECT entity_id FROM animal WHERE scientific_name = 'Osmia'))`);
+    const bos = await one(conn, `SELECT sample_id FROM specimen WHERE field_number = '26000301'`);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${bos}, 2, '26000302'), (${bos}, 3, '26000303')`);
+    const oba = `(SELECT entity_id FROM program WHERE code = 'OBA')`;
+    await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) VALUES (${adas}, ${oba}), (${bos}, ${oba})`);
+    await expert(await spec("26000101"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    // Bo's: one species Ada has, one of her genus she has not, and one of a family she has none of.
+    await expert(await spec("26000301"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000302"), "Bombus vosnesenskii", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000303"), "Osmia lignaria", "legacy_import", "2026-11-03 22:25:00Z");
+    const found = await taxaFound(db, ada);
+    expect(found.atlas).toEqual({ names: ["Oregon Bee Atlas"], families: 2, genera: 2, species: 3 });
+    expect([found.families, found.genera, found.species]).toEqual([1, 1, 1]);
+    expect(found.byFamily.map((f) => [f.name, f.bees, f.genera.map((g) => [g.name, g.bees, g.byOthers.map((o) => [o.scientific_name, o.bees])])])).toEqual([
+      ["Apidae", 1, [["Bombus", 1, [["Bombus vosnesenskii", 1]]]]],
+      ["Megachilidae", 0, [["Osmia", 0, [["Osmia lignaria", 1]]]]],
+    ]);
+  });
+
   it("is a tab of Your bees, and each tab marks itself as the current page", async () => {
     const f = await fixture();
     await f.expert(await f.spec("26000101"), "Bombus mixtus", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 17:00:00" });

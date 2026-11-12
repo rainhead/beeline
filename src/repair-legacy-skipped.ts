@@ -23,8 +23,17 @@ import { pathToFileURL } from "node:url";
  * collections sharing a sample number. So this acts only on a pair that
  * looks like a reprint: the same method, recorded within a kilometre, and no
  * sex or caste stated on both records that differs, nor experts who named
- * different bees. The rest, 144 of 258 on that store, it ties to nothing,
- * and says so on the specimen (REMARKS, below). For each set-aside record of a reprint
+ * different bees. A method that differs is not a difference where the
+ * kept record cites an iNaturalist observation whose own collection method
+ * is the set-aside record's, and which counts no more bees than Beeline
+ * holds for the sample: the old Beeline wrote "aerial net" on every print
+ * it made from an observation, and Pat Wheeler's six pan-trap samples of
+ * 2021 were each printed twice, once that way (the copy Beeline kept) and
+ * once as "pan traps" carrying the identifications. The independent review
+ * of 12 November found it (sample 26 of 16 April 2021: observation
+ * 93297897 says pan trap and 9 bees; 2127318 to 2127326 say aerial net,
+ * 2127003 to 2127011 pan traps, at the same coordinates). The rest it
+ * ties to nothing, and says so on the specimen (REMARKS, below). For each set-aside record of a reprint
  * whose kept partner became a specimen, this
  *   - carries its expert identification to the specimen if the specimen has
  *     no expert determination, and its volunteer identification if it has no
@@ -83,8 +92,8 @@ export interface SkippedRepairResult {
   placed: number;
   /** Specimens given a remark saying what about their old records is in doubt, by what is (specimen_disposition). */
   remarked: { kind: "placed" | "pin" | "pair"; specimens: number }[];
-  /** Specimens that would have had a remark but already carry one from somewhere else, left as they are. */
-  remarkLeftAlone: number;
+  /** Field numbers of specimens that would have had a remark but already carry one from somewhere else, left as they are. */
+  remarkLeftAlone: string[];
   /** Determinations recorded for new specimens. */
   newSpecimenDeterminations: number;
   /** Names that match no taxon, which no determination could be made of. */
@@ -129,12 +138,13 @@ const km = (a: string, b: string) =>
  * specimens carry the expert's identification and nothing else, no method,
  * place or coordinates.
  */
-const unsureCase = (s: string, k: string, sparse = false) => `
+const unsureCase = (s: string, k: string, opts: { sparse?: boolean; methodVouched?: string } = {}) => `
   CASE
     WHEN nullif(lower(trim(${s}."samplingProtocol")), '') IS DISTINCT FROM nullif(lower(trim(${k}."samplingProtocol")), '')
-      ${sparse ? `AND nullif(trim(${s}."samplingProtocol"), '') IS NOT NULL AND nullif(trim(${k}."samplingProtocol"), '') IS NOT NULL` : ""}
+      ${opts.sparse ? `AND nullif(trim(${s}."samplingProtocol"), '') IS NOT NULL AND nullif(trim(${k}."samplingProtocol"), '') IS NOT NULL` : ""}
+      ${opts.methodVouched ? `AND NOT coalesce(${opts.methodVouched}, false)` : ""}
       THEN 'caught by a different method'
-    WHEN ${sparse ? "false" : `${s}.p_lat IS NULL OR ${s}.p_lon IS NULL OR ${k}.p_lat IS NULL OR ${k}.p_lon IS NULL`}
+    WHEN ${opts.sparse ? "false" : `${s}.p_lat IS NULL OR ${s}.p_lon IS NULL OR ${k}.p_lat IS NULL OR ${k}.p_lon IS NULL`}
       THEN 'no coordinates to compare'
     WHEN ${km(s, k)} > 1
       THEN 'recorded more than a kilometre apart'
@@ -144,6 +154,12 @@ const unsureCase = (s: string, k: string, sparse = false) => `
       OR legacy_caste_of(${s}."casteVolDet", ${s}."sexVolDet") <> legacy_caste_of(${k}."casteVolDet", ${k}."sexVolDet")
       THEN 'a different sex or caste'
   END`;
+
+/** A method as a word both the old records and iNaturalist's collection-method field can be compared by. */
+const methodClass = (m: string) => `
+  CASE WHEN contains(lower(${m}), 'vane') THEN 'vane' WHEN contains(lower(${m}), 'pan') THEN 'pan'
+       WHEN contains(lower(${m}), 'nest') THEN 'nest' WHEN contains(lower(${m}), 'net') THEN 'net'
+       ELSE nullif(lower(trim(${m})), '') END`;
 
 /** Who the remarks this repair writes are credited to, and where they came from (specimen_disposition). */
 export const REMARK_STATED_BY = "Beeline, from the old Beeline's records";
@@ -200,9 +216,11 @@ async function writeRemarks(conn: DuckDBConnection, result: SkippedRepairResult,
             WHEN p.p_date_start IS NULL AND p.day = '' AND p.month = '' THEN concat('gives only the year it was collected, ', p.year)
             WHEN p.p_date_start IS NULL AND p.day = '' THEN concat('gives no day of collection, only ', p.month, '/', p.year)
             WHEN p.p_date_start IS NULL THEN concat('gives its collection date as ', p.day, '/', p.month, '/', p.year)
-            WHEN p.year2 <> '' AND (p.p_date_end IS NULL OR p.p_date_end < p.p_date_start)
+            WHEN p.year2 <> '' AND p.p_date_end < p.p_date_start
               THEN concat('gives its collection dates as ', p.day, '/', p.month, '/', p.year, ' to ', p.day2, '/', p.month2, '/', p.year2,
                           ', which end before they start')
+            WHEN p.year2 <> '' AND p.p_date_end IS NULL
+              THEN concat('gives an end of collection that cannot be read, ', p.day2, '/', p.month2, '/', p.year2)
           END,
           CASE WHEN p.sid IS NULL THEN 'has no sample number' END,
           CASE WHEN p.p_specimen_number > 0 THEN NULL
@@ -214,7 +232,7 @@ async function writeRemarks(conn: DuckDBConnection, result: SkippedRepairResult,
              THEN concat('with the collector''s other specimens of sample ', p.sample_number, ' from ', strftime(p.sample_date, '%-d %B %Y'))
              ELSE 'in the sample of its iNaturalist observation' END,
         CASE WHEN p.p_specimen_number > 0 THEN ''
-             WHEN p.number IS NOT NULL THEN concat(', reading its specimen number, ', p.number, ', from its field number')
+             WHEN p.number IS NOT NULL THEN concat(', reading its old specimen number, ', p.number, ', from its field number')
              ELSE ', as the specimen that sample counted but Beeline did not hold' END,
         '.')
     FROM temp.repair_placed p
@@ -223,21 +241,32 @@ async function writeRemarks(conn: DuckDBConnection, result: SkippedRepairResult,
   await conn.run(`
     INSERT INTO temp.repair_remark
     SELECT d.specimen_id, 'pin',
-      concat('Old Beeline recorded this specimen twice, as ', k."fieldNumber", ' and ', s."fieldNumber", '. ',
+      concat(
+        CASE WHEN refused.yes
+             THEN concat('Old Beeline also entered this specimen as ', s."fieldNumber", ', with details missing. ')
+             ELSE concat('Old Beeline recorded this specimen twice, as ', k."fieldNumber", ' and ', s."fieldNumber", '. ') END,
         CASE WHEN ${hasExpert("s")} AND NOT ${hasExpert("k")} AND ${hasVolunteer("s")} AND NOT ${hasVolunteer("k")}
                THEN 'Its identifications were'
              WHEN ${hasExpert("s")} AND NOT ${hasExpert("k")} THEN 'Its expert identification was'
              ELSE 'Its volunteer identification was' END,
-        ' entered under ', s."fieldNumber", ', so that is probably the number on the pin.')
+        ' entered under ', s."fieldNumber",
+        CASE WHEN refused.yes THEN '.' ELSE ', so that is probably the number on the pin.' END)
     FROM legacy_duplicate_record d
     JOIN legacy_ranked s ON s._id = d._id
     JOIN legacy_specimen_map m ON m.specimen_id = d.specimen_id
     JOIN legacy_ranked k ON k._id = m._id
+    -- A record refused for a missing detail, tied as a second entry, makes
+    -- no claim about the pin: Nicole Sanchez's 2018 entries of her 2017
+    -- specimens are bare records whose year was mistyped, not labels.
+    CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM legacy_promotion_finding f
+                                       WHERE f._id = d._id AND f.severity = 'blocking' AND f.rule <> 'duplicate_specimen') AS yes) refused
     WHERE (${hasExpert("s")} AND NOT ${hasExpert("k")}) OR (${hasVolunteer("s")} AND NOT ${hasVolunteer("k")})`);
   await conn.run(`
     INSERT INTO temp.repair_remark
     SELECT u.specimen_id, 'pair',
-      concat('Old Beeline also has field number ', u.skipped_fn, ' for this collector, date, sample number and specimen number, but ',
+      concat('Old Beeline also has field number ', u.skipped_fn,
+        CASE WHEN u.refused THEN ', a record with details missing that Beeline matched to this specimen, but '
+             ELSE ' for this collector, date, sample number and specimen number, but ' END,
         CASE u.unsure
           WHEN 'caught by a different method' THEN concat('that record says ',
             coalesce(nullif(lower(trim(s."samplingProtocol")), ''), 'nothing about the method'), ' and this one ',
@@ -271,11 +300,14 @@ async function writeRemarks(conn: DuckDBConnection, result: SkippedRepairResult,
        GROUP BY 1 ORDER BY CASE kind WHEN 'placed' THEN 1 WHEN 'pin' THEN 2 ELSE 3 END`,
     )
   ).map(([kind, n]) => ({ kind: kind as "placed" | "pin" | "pair", specimens: Number(n) }));
-  result.remarkLeftAlone = await scalar(
-    conn,
-    `SELECT count(DISTINCT r.specimen_id) FROM temp.repair_remark r
-     JOIN specimen_disposition d ON d.specimen_id = r.specimen_id WHERE d.source <> ${sqlString(REMARK_SOURCE)}`,
-  );
+  result.remarkLeftAlone = (
+    await rowsOf(
+      conn,
+      `SELECT DISTINCT sp.field_number FROM temp.repair_remark r
+       JOIN specimen_disposition d ON d.specimen_id = r.specimen_id JOIN specimen sp ON sp.entity_id = r.specimen_id
+       WHERE d.source <> ${sqlString(REMARK_SOURCE)} ORDER BY 1`,
+    )
+  ).map(([fn]) => String(fn));
   await conn.run(`
     INSERT INTO specimen_disposition (specimen_id, disposition, remarks, stated_by, stated_on, source)
     SELECT specimen_id, NULL, remarks, ${sqlString(REMARK_STATED_BY)}, DATE ${sqlString(statedOn)}, ${sqlString(REMARK_SOURCE)}
@@ -294,13 +326,19 @@ export async function repairSkippedLegacyRecords(
     await conn.run(`
       CREATE OR REPLACE TEMP TABLE repair_pair AS
       SELECT rs._id AS skipped_id, rs."fieldNumber" AS skipped_fn, k._id AS kept_id, k."fieldNumber" AS kept_fn,
-             m.specimen_id, sp.sample_id, ${unsureCase("rs", "k")} AS unsure, false AS refused
+             m.specimen_id, sp.sample_id,
+             ${unsureCase("rs", "k", {
+               methodVouched: `(${methodClass("o.collection_method_raw")} = ${methodClass(`rs."samplingProtocol"`)}
+                 AND try_cast(o.specimen_count_raw AS INTEGER) <= (SELECT count(*) FROM specimen x WHERE x.sample_id = sp.sample_id))`,
+             })} AS unsure,
+             false AS refused
       FROM legacy_ranked rs
       JOIN legacy_ranked k
         ON k.fn IS NOT DISTINCT FROM rs.fn AND k.ln IS NOT DISTINCT FROM rs.ln AND k.sid = rs.sid
        AND k.p_date_start = rs.p_date_start AND k.p_specimen_number = rs.p_specimen_number AND k.dup_rank = 1
       JOIN legacy_specimen_map m ON m._id = k._id
       JOIN specimen sp ON sp.entity_id = m.specimen_id
+      LEFT JOIN observation_field o ON o.inat_id = k.p_inat_obs_id AND regexp_matches(k.url, '/observations/[0-9]+$')
       WHERE rs.dup_rank > 1
         AND NOT EXISTS (SELECT 1 FROM legacy_specimen_number n WHERE n._id = rs._id)
         AND NOT EXISTS (SELECT 1 FROM legacy_duplicate_record d WHERE d._id = rs._id)
@@ -382,11 +420,16 @@ export async function repairSkippedLegacyRecords(
       QUALIFY count(*) OVER (PARTITION BY o._id) = 1`);
     await conn.run(`
       INSERT INTO temp.repair_pair (skipped_id, skipped_fn, kept_id, kept_fn, specimen_id, sample_id, unsure, refused)
-      SELECT t._id, r."fieldNumber", t.kept_id, t.kept_fn, t.specimen_id, t.sample_id, ${unsureCase("r", "k", true)}, true
+      SELECT t._id, r."fieldNumber", t.kept_id, t.kept_fn, t.specimen_id, t.sample_id, ${unsureCase("r", "k", { sparse: true })}, true
       FROM temp.repair_loose_twin t JOIN legacy_ranked r ON r._id = t._id JOIN legacy_ranked k ON k._id = t.kept_id`);
     // The rest go into their sample as a specimen of it, if their number is
-    // one no record of the sample carries, or, with no number, if the sample
-    // counts more specimens than Beeline holds for it. Two records claiming
+    // one no record of the sample carries, or, with no number, if records of
+    // the same collector and sample number lead to it and it counts more
+    // specimens than Beeline holds. An observation alone is not enough for a
+    // record with no number: the independent review of 12 November found
+    // that three of the four it led to were later printed under another
+    // sample Beeline holds (1905675 is 1924481, its month mistyped; 2006060
+    // and 2006061 are the two specimens of OBAS-00311). Two records claiming
     // one number in one sample are left out, both.
     await conn.run(`
       CREATE OR REPLACE TEMP TABLE repair_placed AS
@@ -397,7 +440,7 @@ export async function repairSkippedLegacyRecords(
       WHERE l._id NOT IN (SELECT _id FROM temp.repair_loose_twin)
       QUALIFY CASE
         WHEN l.number IS NOT NULL THEN count(*) OVER (PARTITION BY o.sample_id, l.number) = 1
-        ELSE s.specimen_count - (SELECT count(*) FROM specimen sp WHERE sp.sample_id = o.sample_id)
+        ELSE o.by_collector AND s.specimen_count - (SELECT count(*) FROM specimen sp WHERE sp.sample_id = o.sample_id)
              >= count(*) FILTER (WHERE l.number IS NULL) OVER (PARTITION BY o.sample_id)
       END`);
 
@@ -514,7 +557,7 @@ export async function repairSkippedLegacyRecords(
       ).map(([o, s, n]) => ({ observation: Number(o), sampleId: Number(s), specimens: Number(n) })),
       placed: await scalar(conn, `SELECT count(*) FROM temp.repair_placed`),
       remarked: [],
-      remarkLeftAlone: 0,
+      remarkLeftAlone: [],
       newSpecimenDeterminations: await scalar(
         conn,
         `SELECT count(rd.e_animal) + count(rd.v_animal) FROM temp.repair_new n JOIN temp.repair_reading rd USING (_id)`,
@@ -609,7 +652,9 @@ export function describeSkippedRepair(r: SkippedRepairResult): string {
     `${r.placed} record(s) refused for a missing detail ${verb} placed in the one sample they lead to`,
     `${r.newSpecimenDeterminations} identification(s) ${verb} recorded for the new specimens`,
     `${r.remarked.reduce((a, x) => a + x.specimens, 0)} specimen(s) ${verb} given a remark: ${r.remarked.map((x) => `${x.specimens} ${x.kind}`).join(", ") || "none"}` +
-      (r.remarkLeftAlone > 0 ? `; ${r.remarkLeftAlone} already carry another remark and ${verb} left as they are` : ""),
+      (r.remarkLeftAlone.length > 0
+        ? `; ${r.remarkLeftAlone.length} already carry another remark and ${verb} left as they are: ${r.remarkLeftAlone.join(", ")}`
+        : ""),
   ];
   if (r.unresolved.length > 0) lines.push(`names matching no taxon, not recorded: ${r.unresolved.join(", ")}`);
   return lines.join("\n");

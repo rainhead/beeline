@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, test } from "vitest";
 import { HELD_COLUMNS, loadDispositions } from "../src/load-dispositions.js";
+import { REMARK_SOURCE, REMARK_STATED_BY } from "../src/repair-legacy-skipped.js";
 import { CURRENT_SEASON, createMemoryDb, currentSeasonDate, insertCleanSample, rows } from "./helpers.js";
 
 /**
@@ -190,7 +191,14 @@ describe("what is held", () => {
       ada("1", { occurrenceRemarks: LOST }),
     ]);
     const result = await load(path);
-    expect(result.held).toEqual({ no_specimen: 2, number_unknown: 1, ambiguous_number: 0, ambiguous_twin: 0, conflicting_remarks: 0 });
+    expect(result.held).toEqual({
+      no_specimen: 2,
+      number_unknown: 1,
+      ambiguous_number: 0,
+      ambiguous_twin: 0,
+      conflicting_remarks: 0,
+      remarked_from_old_records: 0,
+    });
     expect(await stored()).toEqual([]);
     const held = await heldRows(path);
     expect(held).toHaveLength(3);
@@ -214,6 +222,25 @@ describe("what is held", () => {
     expect(result.held.ambiguous_number).toBe(1);
     expect(await stored()).toEqual([]);
     expect(sample).toBeGreaterThan(0);
+  });
+
+  test("holds a specimen the repair of legacy promotion already remarked on, rather than replace that remark", async () => {
+    await adaSample();
+    const doubt = "Old Beeline also has field number 2127008 for this collector, date, sample number and specimen number, but that record says pan traps and this one net, so it may be a second bee.";
+    await conn.run(
+      `INSERT INTO specimen_disposition (specimen_id, remarks, stated_by, stated_on, source)
+       SELECT entity_id, '${doubt.replaceAll("'", "''")}', '${REMARK_STATED_BY.replaceAll("'", "''")}', DATE '2026-11-12', '${REMARK_SOURCE}'
+       FROM specimen WHERE field_number = '25000101'`,
+    );
+    const path = await file("inventory.csv", [
+      ada("1", { fieldNumber: "25000101", occurrenceRemarks: PRINT }),
+      ada("2", { fieldNumber: "25000102", occurrenceRemarks: PRINT }),
+    ]);
+    const result = await load(path);
+    expect(result.held.remarked_from_old_records).toBe(1);
+    expect(result.specimens.written).toBe(1);
+    expect(await rows(conn, `SELECT d.remarks FROM specimen_disposition d JOIN specimen sp ON sp.entity_id = d.specimen_id WHERE sp.field_number = '25000101'`)).toEqual([[doubt]]);
+    expect((await heldRows(path)).join("\n")).toContain("25000101,PRINT REQUIRED,remarked_from_old_records,");
   });
 
   test("two rows saying the same thing about one specimen are one remark", async () => {

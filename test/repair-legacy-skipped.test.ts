@@ -32,7 +32,12 @@ import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows } from "./helpe
  *     expert's identification: a second record of 18.008.001
  *   Cleo_Cortez:18.008.004, no specimen number and only a year: a gap in sample 8
  *   2127399, specimen 0 in sample 7, which holds all it counts: left out
- *   2050001, specimen 0 on observation 56370000, a sample counting one and holding none
+ *   2050001, specimen 0 on observation 56370000, a sample counting one and
+ *     holding none: left out, since an observation alone does not place a
+ *     record with no number
+ * and a pair the observation shows to be a reprint (Pat Wheeler's 2021):
+ *   2127400 kept, "aerial net" on observation 56390000, which says pan trap and one bee
+ *   2127100 set aside, "pan traps", expert and volunteer
  */
 const FIXTURE = new URL("./fixtures/legacy-skipped.jsonl", import.meta.url).pathname;
 
@@ -69,6 +74,8 @@ beforeAll(async () => {
     specimen_count: "1",
     collector_id: "(SELECT entity_id FROM person WHERE display_name = 'Cleo Cortez')",
   });
+  // The observation sample 9's kept record was printed from.
+  await conn.run(`INSERT INTO observation_field (inat_id, collection_method_raw, specimen_count_raw) VALUES (56390000, 'pan trap', '1')`);
 });
 
 const remarkOf = async (fieldNumber: string) =>
@@ -80,7 +87,7 @@ const remarkOf = async (fieldNumber: string) =>
 describe("repairing what legacy promotion set aside", () => {
   test("promotion kept one record of each pair, and refused the 2020 sample's", async () => {
     expect(await rows(conn, `SELECT field_number FROM specimen ORDER BY 1`)).toEqual(
-      ["2127319", "2127320", "2127321", "2127322", "2127323", "2127324", "2127325", "Cleo_Cortez:18.008.001", "Cleo_Cortez:18.008.002"].map(
+      ["2127319", "2127320", "2127321", "2127322", "2127323", "2127324", "2127325", "2127400", "Cleo_Cortez:18.008.001", "Cleo_Cortez:18.008.002"].map(
         (n) => [n],
       ),
     );
@@ -90,7 +97,7 @@ describe("repairing what legacy promotion set aside", () => {
   test("a dry run says what it would do, and does nothing", async () => {
     const r = await repairSkippedLegacyRecords(conn, { dryRun: true });
     expect(r).toEqual({
-      tied: 4,
+      tied: 5,
       tiedRefused: 1,
       leftAlone: [
         { reason: "a different sex or caste", pairs: 1 },
@@ -98,24 +105,24 @@ describe("repairing what legacy promotion set aside", () => {
         { reason: "recorded more than a kilometre apart", pairs: 1 },
         { reason: "the experts named different bees", pairs: 1 },
       ],
-      carriedExpert: 3,
-      carriedVolunteer: 1,
+      carriedExpert: 4,
+      carriedVolunteer: 2,
       attached: [{ observation: 56359335, sampleId: observedSample, specimens: 2 }],
-      placed: 2,
+      placed: 1,
       newSpecimenDeterminations: 1,
       remarked: [
-        { kind: "placed", specimens: 2 },
-        { kind: "pin", specimens: 3 },
+        { kind: "placed", specimens: 1 },
+        { kind: "pin", specimens: 4 },
         { kind: "pair", specimens: 4 },
       ],
-      remarkLeftAlone: 0,
+      remarkLeftAlone: [],
       unresolved: [],
       dryRun: true,
     });
-    expect(describeSkippedRepair(r)).toContain("4 set-aside second print(s) would be tied to their specimen");
-    expect(describeSkippedRepair(r)).toContain("9 specimen(s) would be given a remark: 2 placed, 3 pin, 4 pair");
+    expect(describeSkippedRepair(r)).toContain("5 set-aside second print(s) would be tied to their specimen");
+    expect(describeSkippedRepair(r)).toContain("9 specimen(s) would be given a remark: 1 placed, 4 pin, 4 pair");
     expect(await rows(conn, `SELECT count(*) FROM legacy_duplicate_record`)).toEqual([[0n]]);
-    expect(await rows(conn, `SELECT count(*) FROM specimen`)).toEqual([[9n]]);
+    expect(await rows(conn, `SELECT count(*) FROM specimen`)).toEqual([[10n]]);
     expect(await rows(conn, `SELECT count(*) FROM specimen_disposition`)).toEqual([[0n]]);
   });
 
@@ -140,6 +147,13 @@ describe("repairing what legacy promotion set aside", () => {
       ["d1000003", "2127321"],
       ["d1000004", "2127322"],
       ["e4000003", "Cleo_Cortez:18.008.001"],
+      ["f5000002", "2127400"],
+    ]);
+    // Its "aerial net" is the old Beeline's word for any print made from an
+    // observation, and the observation says pan trap: one bee printed twice.
+    expect(await dets("2127400")).toEqual([
+      ["Bombus vosnesenskii", true, null, "Lincoln Best", "legacy_import"],
+      ["Bombus", false, null, "Cleo Cortez", "legacy_import"],
     ]);
   });
 
@@ -181,8 +195,9 @@ describe("repairing what legacy promotion set aside", () => {
          WHERE s.entity_id = (SELECT sample_id FROM specimen WHERE field_number = 'Cleo_Cortez:18.008.001') ORDER BY 1`,
       ),
     ).toEqual([[1, "Cleo_Cortez:18.008.001", 3], [2, "Cleo_Cortez:18.008.002", 3], [3, "Cleo_Cortez:18.008.004", 3]]);
-    // The one bee a sample counts and Beeline lacked.
-    expect(await rows(conn, `SELECT specimen_number, field_number FROM specimen WHERE sample_id = ${countedSample}`)).toEqual([[1, "2050001"]]);
+    // A sample counts one bee Beeline lacks, but a record numbered 0 that
+    // only its observation leads to may be a bee printed under another sample.
+    expect(await rows(conn, `SELECT count(*) FROM specimen WHERE sample_id = ${countedSample}`)).toEqual([[0n]]);
     // Sample 7 holds every specimen it counts, so a record numbered 0 is not another.
     expect(await rows(conn, `SELECT count(*) FROM specimen WHERE field_number = '2127399'`)).toEqual([[0n]]);
   });
@@ -190,12 +205,7 @@ describe("repairing what legacy promotion set aside", () => {
   test("says on each specimen what about its old records is in doubt, as occurrenceRemarks", async () => {
     expect(await remarkOf("Cleo_Cortez:18.008.004")).toEqual([
       [
-        "Old Beeline's record of this specimen, field number Cleo_Cortez:18.008.004, gives only the year it was collected, 2018, and has no specimen number, so new Beeline placed it with the collector's other specimens of sample 8 from 15 May 2018, reading its specimen number, 4, from its field number.",
-      ],
-    ]);
-    expect(await remarkOf("2050001")).toEqual([
-      [
-        "Old Beeline's record of this specimen, field number 2050001, gives its specimen number as 0, so new Beeline placed it in the sample of its iNaturalist observation, as the specimen that sample counted but Beeline did not hold.",
+        "Old Beeline's record of this specimen, field number Cleo_Cortez:18.008.004, gives only the year it was collected, 2018, and has no specimen number, so new Beeline placed it with the collector's other specimens of sample 8 from 15 May 2018, reading its old specimen number, 4, from its field number.",
       ],
     ]);
     expect(await remarkOf("2127319")).toEqual([
@@ -206,8 +216,11 @@ describe("repairing what legacy promotion set aside", () => {
     ]);
     expect(await remarkOf("Cleo_Cortez:18.008.001")).toEqual([
       [
-        "Old Beeline recorded this specimen twice, as Cleo_Cortez:18.008.001 and Cleo_Cortez:19.008.001. Its expert identification was entered under Cleo_Cortez:19.008.001, so that is probably the number on the pin.",
+        "Old Beeline also entered this specimen as Cleo_Cortez:19.008.001, with details missing. Its expert identification was entered under Cleo_Cortez:19.008.001.",
       ],
+    ]);
+    expect(await remarkOf("2127400")).toEqual([
+      ["Old Beeline recorded this specimen twice, as 2127400 and 2127100. Its identifications were entered under 2127100, so that is probably the number on the pin."],
     ]);
     // Its expert's identification refines the kept record's: nothing in doubt.
     expect(await remarkOf("2127322")).toEqual([]);
@@ -245,7 +258,7 @@ describe("repairing what legacy promotion set aside", () => {
   test("leaves a specimen's remark from somewhere else as it is", async () => {
     const [[specimen]] = (await rows(conn, `SELECT entity_id FROM specimen WHERE field_number = '2127323'`)) as [[number]];
     await conn.run(`UPDATE specimen_disposition SET source = 'inventory.xlsx', remarks = 'PHANTOM RECORD' WHERE specimen_id = ${specimen}`);
-    expect(await repairSkippedLegacyRecords(conn, { dryRun: true })).toMatchObject({ remarked: [], remarkLeftAlone: 1 });
+    expect(await repairSkippedLegacyRecords(conn, { dryRun: true })).toMatchObject({ remarked: [], remarkLeftAlone: ["2127323"] });
     expect(await remarkOf("2127323")).toEqual([["PHANTOM RECORD"]]);
     await conn.run(`DELETE FROM specimen_disposition WHERE specimen_id = ${specimen}`);
     await repairSkippedLegacyRecords(conn, { statedOn: "2026-11-12" });

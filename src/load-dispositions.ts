@@ -4,6 +4,7 @@ import { basename, extname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { csvCell } from "./app/listings.js";
 import { DEFAULT_DB } from "./person-change.js";
+import { REMARK_SOURCE } from "./repair-legacy-skipped.js";
 
 /**
  * A staff inventory's verdict on each specimen, onto the specimen
@@ -52,7 +53,14 @@ export const DISPOSITIONS = ["in collection", "missing"] as const;
 export type Disposition = (typeof DISPOSITIONS)[number];
 
 /** Why a row was not written, in the held list. */
-export const HELD_REASONS = ["no_specimen", "number_unknown", "ambiguous_number", "ambiguous_twin", "conflicting_remarks"] as const;
+export const HELD_REASONS = [
+  "no_specimen",
+  "number_unknown",
+  "ambiguous_number",
+  "ambiguous_twin",
+  "conflicting_remarks",
+  "remarked_from_old_records",
+] as const;
 export type HeldReason = (typeof HELD_REASONS)[number];
 
 export interface DispositionLoadOptions {
@@ -179,6 +187,14 @@ export async function loadDispositions(conn: DuckDBConnection, opts: Disposition
     await conn.run(`
       UPDATE disp_outcome SET outcome = 'conflicting_remarks'
       WHERE specimen_id IN (SELECT specimen_id FROM disp_conflict)
+        AND (outcome = 'surplus_label' OR (outcome = 'matched' AND remarks IS NOT NULL))`);
+
+    // A specimen the repair of legacy promotion already remarked on, saying
+    // what the old Beeline's records leave in doubt, is held rather than
+    // have that doubt replaced unread: a person merges the two (beeline-iuva).
+    await conn.run(`
+      UPDATE disp_outcome SET outcome = 'remarked_from_old_records'
+      WHERE specimen_id IN (SELECT specimen_id FROM specimen_disposition WHERE source = ${sqlString(REMARK_SOURCE)})
         AND (outcome = 'surplus_label' OR (outcome = 'matched' AND remarks IS NOT NULL))`);
 
     // What each specimen is told: its own remark, as written, and a sentence

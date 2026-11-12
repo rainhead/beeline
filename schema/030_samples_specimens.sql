@@ -232,8 +232,8 @@ COMMENT ON TABLE specimen_disposition IS 'What became of the pin, as a person st
 COMMENT ON COLUMN specimen_disposition.disposition IS 'Darwin Core''s vocabulary, the two values the inventory can say: in collection (a pin with this label is in a box) or missing (no pin, and the record cannot be matched to one). Null where the remark says something else, such as that a label is still to print.';
 COMMENT ON COLUMN specimen_disposition.remarks IS 'The remark as stated, or as corrected by the load: the words the exports write as occurrenceRemarks.';
 COMMENT ON COLUMN specimen_disposition.stated_by IS 'Who looked: the name given to the load, not a person reference, since the inventory is a file and not an act in Beeline. Beeline itself where the remark was read from the old Beeline''s records and nobody has looked.';
-COMMENT ON COLUMN specimen_disposition.stated_on IS 'The date the statement is good for, given to the load: the inventory''s date rather than the load''s.';
-COMMENT ON COLUMN specimen_disposition.source IS 'The file the remark was read from, by name.';
+COMMENT ON COLUMN specimen_disposition.stated_on IS 'The date the statement is good for, given to the load: the inventory''s date rather than the load''s. For a remark read from the old Beeline''s records, the day the repair wrote it.';
+COMMENT ON COLUMN specimen_disposition.source IS 'The file the remark was read from, by name, or the command that read it from the old Beeline''s records; pnpm disposition:load holds a row rather than replace a remark of that command''s.';
 
 -- Which iNaturalist observations an imported sample's legacy records came
 -- from. Legacy promotion merges records on (collector, sample number, date),

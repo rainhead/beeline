@@ -2569,7 +2569,54 @@ export const en = {
   yourBees: {
     title: "Your bees",
     heading: "Your bees",
-    lede: "Every bee you have collected, how far each has been identified, and when experts identified them.",
+    lede: "Every bee you have collected: how far each has been identified, when experts identified them, and what they turned out to be.",
+    tabs: { label: "Your bees", identifications: "Identifications", found: "What you found" },
+    /** The taxa the volunteer's bees are (beeline-fiay), by family and genus. */
+    found: {
+      title: "What you found",
+      heading: "What you found",
+      /** How many bees are identified, and the taxa they cover: separate claims, since a bee named only to genus adds a genus and no species. */
+      summary: (identified: number, species: number, genera: number, families: number) =>
+        `${n(identified)} of your bees ${identified === 1 ? "is" : "are"} identified. ` +
+        `${identified === 1 ? "It covers" : "Between them they cover"} ${n(families)} ${families === 1 ? "family" : "families"}, ` +
+        `${n(genera)} ${genera === 1 ? "genus" : "genera"} and ${species === 0 ? "no species yet" : `${n(species)} species`}.`,
+      notYet: (count: number) => `${n(count)} more ${count === 1 ? "is" : "are"} not identified yet.`,
+      waiting: (count: number) => `${n(count)} ${count === 1 ? "is" : "are"} waiting to be identified.`,
+      /** Against everything found in the atlases the volunteer collects in, by anybody, the volunteer included. */
+      summaryOf: (
+        identified: number,
+        families: number,
+        allFamilies: number,
+        genera: number,
+        allGenera: number,
+        species: number,
+        allSpecies: number,
+        atlases: readonly string[] | string,
+      ) =>
+        `${n(identified)} of your bees ${identified === 1 ? "is" : "are"} identified. ` +
+        `${identified === 1 ? "It covers" : "Between them they cover"} ${n(families)} of the ${n(allFamilies)} ${allFamilies === 1 ? "family" : "families"}, ` +
+        `${n(genera)} of the ${n(allGenera)} ${allGenera === 1 ? "genus" : "genera"} and ${n(species)} of the ${n(allSpecies)} species found in the ${list(atlases)}.`,
+      introOthers: (atlases: readonly string[] | string) =>
+        `Under each genus, the species others in the ${list(atlases)} have found and you have not are folded away, with how many they have collected.`,
+      noneYet: "none of yours yet",
+      atlasHas: (families: number, genera: number, species: number, atlases: readonly string[] | string) =>
+        `Others in the ${list(atlases)} have found ${n(families)} ${families === 1 ? "family" : "families"}, ${n(genera)} ${genera === 1 ? "genus" : "genera"} and ${n(species)} species of bee.`,
+      othersMore: (count: number) => `${n(count)} more species found by others`,
+      othersOnly: (count: number) => `${n(count)} species found by others`,
+      byOthers: (bees: number) => (bees === 1 ? "1 by others" : `${n(bees)} by others`),
+      intro:
+        "Each bee is counted as far as it is identified now, under its family and genus. Your own identifications count, and an expert's takes the place of yours where there is one. A name marked aff. or nr., which says the bee is probably something else, is listed but not counted as a species found.",
+      empty: "None of your bees has been identified yet.",
+      bees: (count: number) => (count === 1 ? "1 bee" : `${n(count)} bees`),
+      col: { genus: "Genus", bees: "Bees", species: "Species" },
+      noFamily: "Not identified to family",
+      noGenus: "Not identified to genus",
+      toGenusOnly: (count: number) => `${n(count)} identified only to genus or subgenus`,
+      /** A genus's list folded away: how many names it holds, which may be more than its species ("cf.", "aff.", subspecies). */
+      names: (count: number) => (count === 1 ? "1 name" : `${n(count)} names`),
+      notBees: (count: number) =>
+        `${n(count)} ${count === 1 ? "specimen was" : "specimens were"} identified as something other than a bee, and ${count === 1 ? "is" : "are"} left out.`,
+    },
     byYear: {
       heading: "Your bees by year",
       intro:

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
-import { beesByYear, classify, identificationBatches } from "../src/app/your-bees.js";
+import { beesByYear, classify, identificationBatches, taxaFound } from "../src/app/your-bees.js";
 import { createApp } from "../src/app/server.js";
 import type { InatClient } from "../src/app/auth.js";
 import { en } from "../src/app/messages/en.js";
@@ -413,5 +413,144 @@ describe("the pages", () => {
     expect(html).toContain("<svg");
     expect(html).toContain(en.yourBees.batches.kinds([en.yourBees.batches.kind.first(1)]));
     expect(html).toContain(en.yourBees.byYear.title(CURRENT_SEASON, 5, 1, 0, 0, 4));
+  });
+});
+
+describe("what you found", () => {
+  it("rolls each bee's name up to its genus and family, counting a species once whatever its qualifier", async () => {
+    const { db, conn, ada, spec, expert, animal } = await fixture();
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('order', 'Hymenoptera')`);
+    await expert(await spec("26000101"), "Bombus mixtus", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 17:00:00" });
+    await expert(await spec("26000102"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    await conn.run(`UPDATE determination SET qualifier = 'cf.' WHERE specimen_id = ${await spec("26000102")}`);
+    await expert(await spec("26000103"), "Bombus", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000201"), "Hymenoptera", "legacy_import", "2026-11-03 22:25:00Z");
+    void animal;
+    const found = await taxaFound(db, ada);
+    expect([found.collected, found.identified, found.families, found.genera, found.species]).toEqual([5, 4, 1, 1, 1]);
+    expect(found.byFamily.map((f) => [f.name, f.bees])).toEqual([["Apidae", 3], [null, 1]]);
+    const bombus = found.byFamily[0]!.genera[0]!;
+    expect([bombus.name, bombus.bees, bombus.toGenusOnly]).toEqual(["Bombus", 3, 1]);
+    expect(bombus.species.map((s) => [s.scientific_name, s.qualifier, s.bees])).toEqual(
+      expect.arrayContaining([["Bombus mixtus", null, 1], ["Bombus mixtus", "cf.", 1]]),
+    );
+  });
+
+  it("leaves out what is not a bee, and counts no species for aff. or nr.", async () => {
+    const { db, conn, ada, spec, expert } = await fixture();
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Vespidae')`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('genus', 'Vespula', (SELECT entity_id FROM animal WHERE scientific_name = 'Vespidae'))`);
+    await expert(await spec("26000101"), "Vespula", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000102"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    await conn.run(`UPDATE determination SET qualifier = 'aff.' WHERE specimen_id = ${await spec("26000102")}`);
+    const found = await taxaFound(db, ada);
+    expect([found.collected, found.identified, found.notBees, found.families, found.genera, found.species]).toEqual([4, 1, 1, 1, 1, 0]);
+    expect(found.byFamily.map((f) => f.name)).toEqual(["Apidae"]);
+  });
+
+  it("lists, beside the person's, what others in their atlas have found and they have not", async () => {
+    const { db, conn, ada, spec, expert, adas } = await fixture();
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Megachilidae')`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('genus', 'Osmia', (SELECT entity_id FROM animal WHERE scientific_name = 'Megachilidae'))`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('species', 'Osmia lignaria', (SELECT entity_id FROM animal WHERE scientific_name = 'Osmia'))`);
+    const bos = await one(conn, `SELECT sample_id FROM specimen WHERE field_number = '26000301'`);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${bos}, 2, '26000302'), (${bos}, 3, '26000303')`);
+    const oba = `(SELECT entity_id FROM program WHERE code = 'OBA')`;
+    await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) VALUES (${adas}, ${oba}), (${bos}, ${oba})`);
+    await expert(await spec("26000101"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    // Bo's: one species Ada has, one of her genus she has not, and one of a family she has none of.
+    await expert(await spec("26000301"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000302"), "Bombus vosnesenskii", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000303"), "Osmia lignaria", "legacy_import", "2026-11-03 22:25:00Z");
+    const found = await taxaFound(db, ada);
+    expect(found.atlas).toEqual({ names: ["Oregon Bee Atlas"], families: 2, genera: 2, species: 3, yours: { families: 1, genera: 1, species: 1 } });
+    expect([found.families, found.genera, found.species]).toEqual([1, 1, 1]);
+    expect(found.byFamily.map((f) => [f.name, f.bees, f.genera.map((g) => [g.name, g.bees, g.byOthers.map((o) => [o.scientific_name, o.bees])])])).toEqual([
+      ["Apidae", 1, [["Bombus", 1, [["Bombus vosnesenskii", 1]]]]],
+      ["Megachilidae", 0, [["Osmia", 0, [["Osmia lignaria", 1]]]]],
+    ]);
+  });
+
+  it("counts toward the atlas only what was collected in it, and places aff. in its genus but not its species", async () => {
+    const { db, conn, ada, spec, expert, adas } = await fixture();
+    const bos = await one(conn, `SELECT sample_id FROM specimen WHERE field_number = '26000301'`);
+    const oba = `(SELECT entity_id FROM program WHERE code = 'OBA')`;
+    // Ada's own sample is in the atlas; the one she shares with Bo is not.
+    await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) VALUES (${adas}, ${oba}), (${bos}, ${oba})`);
+    await expert(await spec("26000101"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000201"), "Bombus caliginosus", "legacy_import", "2026-11-03 22:25:00Z");
+    // The same species in and out of the atlas is one entry with both bees.
+    await expert(await spec("26000102"), "Bombus caliginosus", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000301"), "Bombus vosnesenskii", "legacy_import", "2026-11-03 22:25:00Z");
+    await conn.run(`UPDATE determination SET qualifier = 'aff.' WHERE specimen_id = ${await spec("26000301")}`);
+    const found = await taxaFound(db, ada);
+    // caliginosus was found both in and outside the atlas; vosnesenskii only as aff.
+    expect(found.atlas).toEqual({ names: ["Oregon Bee Atlas"], families: 1, genera: 1, species: 2, yours: { families: 1, genera: 1, species: 2 } });
+    expect(found.species).toBe(2);
+    expect(found.byFamily[0]!.genera[0]!.species.map((x) => [x.scientific_name, x.bees])).toEqual([["Bombus caliginosus", 2], ["Bombus mixtus", 1]]);
+    expect(found.byFamily[0]!.genera[0]!.byOthers).toEqual([]);
+  });
+
+  it("shows a family others named only to family as a row of its own", async () => {
+    const { db, conn, ada, spec, expert, adas } = await fixture();
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Megachilidae')`);
+    const bos = await one(conn, `SELECT sample_id FROM specimen WHERE field_number = '26000301'`);
+    const oba = `(SELECT entity_id FROM program WHERE code = 'OBA')`;
+    await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) VALUES (${adas}, ${oba}), (${bos}, ${oba})`);
+    await expert(await spec("26000101"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000301"), "Megachilidae", "legacy_import", "2026-11-03 22:25:00Z");
+    const found = await taxaFound(db, ada);
+    expect(found.byFamily.map((f) => [f.name, f.bees, f.genera.length])).toEqual([["Apidae", 1, 1], ["Megachilidae", 0, 0]]);
+    expect(found.atlas?.families).toBe(2);
+  });
+
+  it("says what the atlas has to a person with nothing identified, and counts bycatch with no table", async () => {
+    const f = await fixture();
+    const { conn, spec, expert, adas } = f;
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Vespidae')`);
+    const bos = await one(conn, `SELECT sample_id FROM specimen WHERE field_number = '26000301'`);
+    const oba = `(SELECT entity_id FROM program WHERE code = 'OBA')`;
+    await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) VALUES (${adas}, ${oba}), (${bos}, ${oba})`);
+    await expert(await spec("26000101"), "Vespidae", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000301"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    const unusedInat: InatClient = {
+      authorizeUrl: () => "unused",
+      exchangeCode: () => Promise.reject(new Error("not under test")),
+      identity: () => Promise.reject(new Error("not under test")),
+    };
+    const app = createApp({
+      ...(await scratchPaths()),
+      db: f.db,
+      config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId: f.ada, login: "ada", iconUrl: null }),
+    });
+    const html = await (await app.request("/bees/taxa")).text();
+    expect(html).toContain(en.yourBees.found.atlasHas(1, 1, 1, ["Oregon Bee Atlas"]));
+    expect(html).toContain(en.yourBees.found.notBees(1));
+  });
+
+  it("is a tab of Your bees, and each tab marks itself as the current page", async () => {
+    const f = await fixture();
+    await f.expert(await f.spec("26000101"), "Bombus mixtus", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-20 17:00:00" });
+    const unusedInat: InatClient = {
+      authorizeUrl: () => "unused",
+      exchangeCode: () => Promise.reject(new Error("not under test")),
+      identity: () => Promise.reject(new Error("not under test")),
+    };
+    const app = createApp({
+      ...(await scratchPaths()),
+      db: f.db,
+      config: { environment: "sandbox" as const, origin: "http://localhost:3054" },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId: f.ada, login: "ada", iconUrl: null }),
+    });
+    const taxa = await (await app.request("/bees/taxa")).text();
+    expect(taxa).toContain(en.yourBees.found.summary(1, 1, 1, 1));
+    expect(taxa).toContain('href="/taxonomy/species/Bombus%20mixtus"');
+    expect(taxa).toMatch(/<a href="\/bees\/taxa" aria-current="page">/);
+    const bees = await (await app.request("/bees")).text();
+    expect(bees).toMatch(/<a href="\/bees" aria-current="page">/);
+    expect(bees).toContain('href="/bees/taxa"');
   });
 });

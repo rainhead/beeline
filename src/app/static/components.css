@@ -709,3 +709,38 @@ ul.batch-names details.batch-more { display: inline; }
 ul.batch-names details.batch-more > summary { display: inline; cursor: pointer; }
 ul.batch-names { columns: 2; margin: var(--space-1-5) 0 0; padding-left: var(--space-5); font-size: 0.875rem; }
 @media (max-width: 40rem) { ul.batch-names { columns: 1; } }
+
+/* Tabs between pages that are views of one thing (Your bees). Links, so the
+   current one is the page's own address; aria-current marks it. */
+nav.tabs {
+  display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-6);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  margin: var(--space-4) 0 var(--space-6);
+}
+nav.tabs a {
+  padding: var(--space-2) 0; margin-bottom: -1px;
+  color: var(--md-sys-color-on-surface-variant); text-decoration: none;
+  border-bottom: 3px solid transparent;
+}
+nav.tabs a:hover { color: var(--md-sys-color-on-surface); }
+nav.tabs a[aria-current="page"] {
+  color: var(--md-sys-color-on-surface); font-weight: 600;
+  border-bottom-color: var(--md-sys-color-primary);
+}
+
+.found-family { margin-bottom: var(--space-6); }
+.found-family h3 .meta { font-weight: normal; }
+td.found-bees { white-space: nowrap; min-width: 8rem; }
+.found-bar {
+  display: block; height: 4px; margin-top: var(--space-1);
+  border-radius: 2px; background: var(--chart-genus);
+}
+ul.found-species { list-style: none; margin: 0; padding: 0; }
+/* One table per family, so fix the columns to line up from one to the next. */
+.found-family table { table-layout: fixed; width: 100%; }
+.found-family th:nth-child(1) { width: 28%; }
+.found-family th:nth-child(2) { width: 22%; }
+/* What others have found and the volunteer has not: present, but quieter. */
+.found-none, .found-none h3 { color: var(--md-sys-color-on-surface-variant); }
+details.found-by-others > summary { cursor: pointer; font-size: 0.875rem; color: var(--md-sys-color-on-surface-variant); margin-top: var(--space-1); }
+details.found-by-others ul.found-species { color: var(--md-sys-color-on-surface-variant); }

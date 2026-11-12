@@ -2578,7 +2578,7 @@ export const en = {
     byYear: {
       heading: "Your bees by year",
       intro:
-        "Each bar is the bees you collected that year, split by how far each one is identified now. Your own identifications count, and an expert's takes the place of yours where there is one.",
+        "Each bar is the bees you collected that year, split by how far each one is identified now. Your own identifications count, and an expert's takes the place of yours where there is one. Specimens identified as something other than a bee are left out.",
       empty: "You have not collected any specimens yet.",
       chartLabel: "Bees you collected each year, by how far each is identified",
       legend: { species: "To species", genus: "To genus", coarser: "Coarser than genus", none: "Not yet identified" },

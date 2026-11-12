@@ -1,4 +1,5 @@
 import { sql, type Kysely } from "kysely";
+import { BEE_FAMILIES } from "../bee-families.js";
 import type { Database, DeterminationQualifier } from "../model.js";
 
 /**
@@ -94,10 +95,37 @@ const PACIFIC_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_An
 const mine = (personId: number) =>
   sql<boolean>`EXISTS (SELECT 1 FROM sample_collector mine WHERE mine.sample_id = sp.sample_id AND mine.person_id = ${personId})`;
 
+/**
+ * The specimens a person's pages count as bees: everything they collected
+ * except what is identified to a family that is not a bee's (src/bee-families.ts),
+ * so a wasp caught as bycatch is not a bee "to species". On production's store
+ * of 2026-11-11, 990 of 227,115 determinations of record were not bees. A
+ * specimen with no family yet stays in: it may be a bee.
+ */
+const BEES = (personId: number) => sql`
+  mine_records AS (
+    SELECT sp.entity_id AS specimen_id, sp.sample_id, d.entity_id AS determination_id, d.animal_id, d.qualifier
+    FROM specimen sp LEFT JOIN determination_of_record d ON d.specimen_id = sp.entity_id
+    WHERE ${mine(personId)}
+  ),
+  up(start, node) AS (
+    SELECT DISTINCT animal_id, animal_id FROM mine_records WHERE animal_id IS NOT NULL
+    UNION
+    SELECT up.start, a.parent_id FROM up JOIN animal a ON a.entity_id = up.node WHERE a.parent_id IS NOT NULL
+  ),
+  not_bee AS (
+    SELECT DISTINCT up.start AS animal_id FROM up JOIN animal a ON a.entity_id = up.node
+    WHERE a.rank = 'family' AND a.scientific_name NOT IN (${sql.join(BEE_FAMILIES)})
+  ),
+  bees AS (
+    SELECT * FROM mine_records WHERE animal_id IS NULL OR animal_id NOT IN (SELECT animal_id FROM not_bee)
+  )`;
+
 /** The person's bees by the year they were collected, oldest first. */
 export async function beesByYear(db: Kysely<Database>, personId: number): Promise<YearOfBees[]> {
   const result = await sql<{ season: unknown; collected: unknown; species: unknown; genus: unknown; coarser: unknown; none: unknown }>`
-    WITH ranks AS (
+    WITH RECURSIVE ${BEES(personId)},
+    ranks AS (
       SELECT max(CASE WHEN rank = 'species' THEN ordinal END) AS species,
              max(CASE WHEN rank = 'genus' THEN ordinal END) AS genus
       FROM animal_rank
@@ -107,14 +135,12 @@ export async function beesByYear(db: Kysely<Database>, personId: number): Promis
            sum(CASE WHEN r.ordinal >= ranks.species THEN 1 ELSE 0 END) AS species,
            sum(CASE WHEN r.ordinal >= ranks.genus AND r.ordinal < ranks.species THEN 1 ELSE 0 END) AS genus,
            sum(CASE WHEN r.ordinal < ranks.genus THEN 1 ELSE 0 END) AS coarser,
-           sum(CASE WHEN d.entity_id IS NULL THEN 1 ELSE 0 END) AS none
-    FROM specimen sp
+           sum(CASE WHEN b.determination_id IS NULL THEN 1 ELSE 0 END) AS none
+    FROM bees b
     CROSS JOIN ranks
-    JOIN sample_season ss ON ss.sample_id = sp.sample_id
-    LEFT JOIN determination_of_record d ON d.specimen_id = sp.entity_id
-    LEFT JOIN animal a ON a.entity_id = d.animal_id
+    JOIN sample_season ss ON ss.sample_id = b.sample_id
+    LEFT JOIN animal a ON a.entity_id = b.animal_id
     LEFT JOIN animal_rank r ON r.rank = a.rank
-    WHERE ${mine(personId)}
     GROUP BY ss.season
     ORDER BY ss.season`.execute(db);
   return result.rows.map((r) => ({

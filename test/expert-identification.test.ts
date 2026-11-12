@@ -295,6 +295,15 @@ describe("identifications in batches (Your bees, and the front page)", () => {
 });
 
 describe("bees by year", () => {
+  it("leaves out a specimen identified as something other than a bee", async () => {
+    const { db, conn, ada, spec, expert } = await fixture();
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Vespidae')`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('genus', 'Vespula', (SELECT entity_id FROM animal WHERE scientific_name = 'Vespidae'))`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('species', 'Vespula pensylvanica', (SELECT entity_id FROM animal WHERE scientific_name = 'Vespula'))`);
+    await expert(await spec("26000101"), "Vespula pensylvanica", "legacy_import", "2026-11-03 22:25:00Z");
+    expect(await beesByYear(db, ada)).toEqual([{ season: CURRENT_SEASON, collected: 4, species: 0, genus: 0, coarser: 0, none: 4 }]);
+  });
+
   it("counts each year's bees by how far the determination of record goes, volunteers' included", async () => {
     const { db, conn, ada, spec, expert, animal } = await fixture();
     const settled = await insertCleanSample(conn, { collector_id: String(ada), sample_number: "'9'", date_start: `DATE '${SETTLED_SEASON}-06-01'`, date_end: `DATE '${SETTLED_SEASON}-06-01'` });

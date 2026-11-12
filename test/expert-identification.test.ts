@@ -488,6 +488,19 @@ describe("what you found", () => {
     expect(found.byFamily[0]!.genera[0]!.byOthers).toEqual([]);
   });
 
+  it("shows a family others named only to family as a row of its own", async () => {
+    const { db, conn, ada, spec, expert, adas } = await fixture();
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Megachilidae')`);
+    const bos = await one(conn, `SELECT sample_id FROM specimen WHERE field_number = '26000301'`);
+    const oba = `(SELECT entity_id FROM program WHERE code = 'OBA')`;
+    await conn.run(`INSERT INTO sample_atlas (sample_id, atlas_id) VALUES (${adas}, ${oba}), (${bos}, ${oba})`);
+    await expert(await spec("26000101"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(await spec("26000301"), "Megachilidae", "legacy_import", "2026-11-03 22:25:00Z");
+    const found = await taxaFound(db, ada);
+    expect(found.byFamily.map((f) => [f.name, f.bees, f.genera.length])).toEqual([["Apidae", 1, 1], ["Megachilidae", 0, 0]]);
+    expect(found.atlas?.families).toBe(2);
+  });
+
   it("says what the atlas has to a person with nothing identified, and counts bycatch with no table", async () => {
     const f = await fixture();
     const { conn, spec, expert, adas } = f;

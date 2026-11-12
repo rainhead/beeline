@@ -245,7 +245,7 @@ export function TaxaFoundPage({ m, found }: { m: Messages; found: TaxaFound }) {
       {found.identified === 0 ? (
         <EmptyState>
           {t.empty}
-          {found.atlas !== null && found.atlas.species + found.atlas.genera > 0 && (
+          {found.atlas !== null && found.atlas.families > 0 && (
             <> {t.atlasHas(found.atlas.families, found.atlas.genera, found.atlas.species, found.atlas.names)}</>
           )}
         </EmptyState>
@@ -279,11 +279,14 @@ export function TaxaFoundPage({ m, found }: { m: Messages; found: TaxaFound }) {
                 {family.name === null ? t.noFamily : <TaxonName rank="family" scientificName={family.name} />}{" "}
                 <span class="meta">{family.bees === 0 ? t.noneYet : t.bees(family.bees)}</span>
               </h3>
-              <DataTable columns={[t.col.genus, t.col.bees, t.col.species]}>
-                {family.genera.map((g) => (
-                  <GenusRow m={m} genus={g} max={biggest} />
-                ))}
-              </DataTable>
+              {/* A family others named no genus in has no rows to show. */}
+              {family.genera.length > 0 && (
+                <DataTable columns={[t.col.genus, t.col.bees, t.col.species]}>
+                  {family.genera.map((g) => (
+                    <GenusRow m={m} genus={g} max={biggest} />
+                  ))}
+                </DataTable>
+              )}
             </section>
           ))}
         </>

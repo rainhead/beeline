@@ -535,17 +535,23 @@ export async function taxaFound(db: Kysely<Database>, personId: number): Promise
     add(inAtlas, Number(r.animal_id), r.qualifier);
     add(yoursThere, Number(r.animal_id), r.qualifier);
   }
+  const othersFamilies = new Set<string>();
   const othersGenera = new Set<string>();
   const othersBySpecies = new Map<number, { family: string; genus: string; name: string; bees: number }>();
   for (const r of others.rows) {
     const placed = add(inAtlas, Number(r.animal_id), r.qualifier);
     const line = lineage.get(Number(r.animal_id));
-    if (line?.family != null && line.genus !== null && BEE_FAMILIES.includes(line.family)) othersGenera.add(`${line.family}/${line.genus}`);
+    if (line?.family != null && BEE_FAMILIES.includes(line.family)) {
+      othersFamilies.add(line.family);
+      if (line.genus !== null) othersGenera.add(`${line.family}/${line.genus}`);
+    }
     if (placed === null || speciesSeen.has(placed.species)) continue;
     const o = othersBySpecies.get(placed.species) ?? { family: placed.family, genus: placed.genus, name: placed.name, bees: 0 };
     o.bees += Number(r.bees);
     othersBySpecies.set(placed.species, o);
   }
+  // A family others found, even one they named no genus in, is a row too.
+  for (const family of othersFamilies) if (!families.has(family)) families.set(family, { name: family, genera: new Map() });
   for (const key of othersGenera) {
     const [family, genus] = key.split("/") as [string, string];
     const fam = families.get(family) ?? { name: family, genera: new Map() };

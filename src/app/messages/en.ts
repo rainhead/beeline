@@ -1122,6 +1122,28 @@ export const en = {
        * only a person who knows where the bees were caught can say. Changed
        * from a pencil on the Coordinates row, as the place is (beeline-8w8n).
        */
+      /**
+       * Staff correcting how a sample from the old Beeline was collected,
+       * from a pencil on the Method row (beeline-p8y1).
+       */
+      methodEdit: {
+        /** The pencil, for a screen reader: it has no visible words. */
+        open: "Correct how this sample was collected",
+        hint: "This sample was made from the old Beeline's records. A correction here is recorded against those records, with your name.",
+        protocol: "Method, in the record's words",
+        protocolHint: "For example, pan traps, blue vane traps or aerial net.",
+        dateEnd: "Collecting ended",
+        dateEndHint: "Give the day the traps came in to make this a trap sample. Leave it blank for a net sample collected on one day.",
+        note: "Reason (optional)",
+        save: "Save",
+        printed: "This sample's labels are already printed. Correcting it here does not change them.",
+        problems: {
+          date: "The end date is not a date Beeline can read.",
+          before_start: "Collecting cannot end before the day it started.",
+          future: "Collecting cannot end on a day that has not come yet.",
+        },
+        noOldRecords: "This sample was not made from the old Beeline's records, so it cannot be corrected here.",
+      },
       staffCoordinates: {
         setBy: (name: string) => `Coordinates set in Beeline by ${name}.`,
         setByStaff: "Coordinates set in Beeline by staff.",

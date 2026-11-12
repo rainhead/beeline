@@ -133,6 +133,7 @@ import { DesignImagery } from "./views/design/imagery.js";
 import { MessagesProof } from "./views/design/messages-proof.js";
 import { QcProof } from "./views/design/qc-proof.js";
 import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
+import { setSampleMethod } from "./sample-method.js";
 import {
   adoptSuggestedLocality,
   setStaffCoordinates,
@@ -1403,6 +1404,45 @@ export function createApp({
       }
     }
     return c.redirect(back);
+  });
+
+  // How a sample from the old Beeline was collected: its method's words and
+  // the day collecting ended (beeline-p8y1). Staff only, refused while
+  // impersonating; the correction names the old records, so a sample with
+  // none is refused.
+  app.post("/samples/:id/method", async (c) => {
+    const m = c.get("m");
+    const t = m.record.sample.methodEdit;
+    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const session = c.get("session");
+    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, STAFF_READER);
+    if (sample === null) return errorResponse(c, "notFound");
+    const body = await c.req.parseBody();
+    const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+    const note = field("note").trim();
+    const result = await setSampleMethod(db, corrections, sample.sample_id, {
+      protocol: field("protocol"),
+      dateEnd: field("date_end"),
+      note,
+      author: session.login,
+      today: new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date()),
+    });
+    if (result.outcome === "invalid") return c.text(t.problems[result.problem], 400);
+    if (result.outcome === "no_old_records") return c.text(t.noOldRecords, 409);
+    if (result.outcome === "saved") {
+      try {
+        await recordSampleChanges(kyselyReader(db), samplePaths, {
+          source: "app",
+          author: session.login,
+          reason: note || undefined,
+          where: `s.entity_id = ${sample.sample_id}`,
+        });
+      } catch (err) {
+        console.warn(`could not record the method change: ${(err as Error).message}`);
+      }
+    }
+    return c.redirect(sampleHref(sample.sample_id));
   });
 
   // The coordinates, on the same terms (beeline-942). The one case a

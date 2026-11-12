@@ -26,6 +26,7 @@ import {
   Chip,
   DataTable,
   DetailList,
+  Field,
   FindingDetail,
   FlagChips,
   EmptyState,
@@ -141,9 +142,12 @@ export function SampleFacts({
   m,
   sample,
   placeEdit = null,
+  methodEdit = false,
 }: {
   m: Messages;
   sample: SampleDetail;
+  /** Whether the reader may correct the method and end date (staff, on a sample from old records; beeline-p8y1). */
+  methodEdit?: boolean;
   /**
    * Whether the reader may change the locality from the Place row, and
    * whether they may write any name or only one offered (`samplePlaceEdit`).
@@ -164,8 +168,11 @@ export function SampleFacts({
       term: <Term m={m} slug="method">{s.method}</Term>,
       value: (
         <>
-          {sample.kind === "trap" ? <Term m={m} slug="trap-sample">{s.methodTrap}</Term> : s.methodNet}
-          {protocolSaysMore(sample) && <Meta> · {sample.protocol}</Meta>}
+          <span class="inline-edit-text">
+            {sample.kind === "trap" ? <Term m={m} slug="trap-sample">{s.methodTrap}</Term> : s.methodNet}
+            {protocolSaysMore(sample) && <Meta> · {sample.protocol}</Meta>}
+          </span>
+          {methodEdit && <MethodEdit m={m} sample={sample} />}
         </>
       ),
     },
@@ -473,6 +480,39 @@ function TakeObservationLocation({ m, sample }: { m: Messages; sample: SampleDet
         <Button variant="tonal">{t.action}</Button>
       </form>
     </Callout>
+  );
+}
+
+/**
+ * Staff correcting how a sample from the old Beeline was collected
+ * (beeline-p8y1), from a pencil on the Method row: the method's words and the
+ * day collecting ended, which makes it a trap sample (src/app/sample-method.ts).
+ */
+function MethodEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
+  const t = m.record.sample.methodEdit;
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  return (
+    <InlineEdit
+      label={t.open}
+      action={`/samples/${sample.sample_id}/method`}
+      back={sampleHref(sample.sample_id)}
+      save={t.save}
+      cancel={m.listings.samples.placeEdit.cancel}
+    >
+      <Meta block>{t.hint}</Meta>
+      {sample.printed ? <Meta block>{t.printed}</Meta> : null}
+      <TextField id="method-protocol" name="protocol" label={t.protocol} hint={t.protocolHint} value={sample.protocol} />
+      <Field id="method-date-end" label={t.dateEnd} hint={t.dateEndHint}>
+        <input
+          id="method-date-end"
+          name="date_end"
+          type="date"
+          min={iso(sample.date_start)}
+          value={sample.kind === "trap" ? iso(sample.date_end) : ""}
+        />
+      </Field>
+      <TextField id="method-note" name="note" label={t.note} />
+    </InlineEdit>
   );
 }
 
@@ -865,6 +905,7 @@ export function SamplePage({
           m={m}
           sample={sample}
           placeEdit={samplePlaceEdit(sample, { admin, ownsLocality, entered, editsEntered: trapEditHref !== undefined })}
+          methodEdit={admin && sample.from_old_records}
         />
         <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} />
       </Card>

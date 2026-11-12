@@ -21,7 +21,7 @@ export function YourBeesPage({ m, years, batches }: { m: Messages; years: YearOf
       <h2>{t.batches.heading}</h2>
       <Meta block>
         {t.batches.intro}
-        {batches.undated > 0 && <> {t.batches.undated(batches.undated)}</>}
+        {batches.undated !== null && batches.undated > 0 && <> {t.batches.undated(batches.undated)}</>}
       </Meta>
       {batches.batches.length === 0 ? <EmptyState>{t.batches.empty}</EmptyState> : <BatchList m={m} batches={batches.batches} />}
     </>

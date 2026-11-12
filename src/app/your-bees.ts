@@ -77,9 +77,9 @@ export interface Batches {
   /**
    * Specimens an expert has named that are in no batch, because no
    * identification of them has a date Beeline can use: most were named in the
-   * old Beeline, which kept no dates.
+   * old Beeline, which kept no dates. Null where it was not counted.
    */
-  undated: number;
+  undated: number | null;
 }
 
 /**
@@ -170,68 +170,46 @@ export async function beesByYear(db: Kysely<Database>, personId: number): Promis
 export async function identificationBatches(
   db: Kysely<Database>,
   personId: number,
-  maxBatches: number = Number.POSITIVE_INFINITY,
-  /** Only for tests, which cannot make a person with thousands of specimens cheaply. */
-  inlineLimit: number = IDS_INLINE_LIMIT,
+  {
+    maxBatches = Number.POSITIVE_INFINITY,
+    countUndated = true,
+    inlineLimit = IDS_INLINE_LIMIT,
+  }: {
+    /** Only the newest this many days. */
+    maxBatches?: number;
+    /**
+     * Whether to count the bees an expert named with no date to show. It reads
+     * every one of the person's expert-named specimens rather than only the
+     * datable, which for production's busiest account costs 135 ms against
+     * 14 ms for a typical volunteer, so the front page does without it.
+     */
+    countUndated?: boolean;
+    /** Only for tests, which cannot make a person with thousands of specimens cheaply. */
+    inlineLimit?: number;
+  } = {},
 ): Promise<Batches> {
-  // Only specimens the feed could show: those with an expert determination
-  // the view could date. Every determination not the old Beeline's carries a
-  // time, and one of the old Beeline's only if it states a day (a year is not
-  // enough: schema/111 dates a stated day and nothing coarser). It is a
-  // superset, since the view leaves undated a stretch that also holds an
-  // undated name of the old Beeline's; the undated count below is what is
-  // left over, so a bee is in a batch or counted, never both. It keeps
-  // the list short: production's most prolific collector has 40,326
-  // specimens and 746 qualify, which takes the query from 86 ms to 23 ms.
-  const candidates = db
+  // Which specimens to read. Without the undated count, only those the feed
+  // could show: with an expert determination the view could date. Every
+  // determination not the old Beeline's carries a time, and one of the old
+  // Beeline's only if it states a day (a year is not enough: schema/111 dates
+  // a stated day and nothing coarser). That keeps the list short: production's
+  // most prolific collector has 40,326 specimens and 746 qualify, which takes
+  // the query from 86 ms to 23 ms. With the count, every expert-named one, so
+  // the count is of the same stretches the batches are made of.
+  const specimens = db
     .selectFrom("determination as d")
     .innerJoin("specimen as sp", "sp.entity_id", "d.specimen_id")
     .where(mine(personId))
     .where("d.is_expert", "=", true)
-    .where((eb) =>
-      eb.or([eb("d.channel", "<>", "legacy_import"), eb.and([eb("d.determined_on", "is not", null), eb("d.determined_on_precision", "is", null)])]),
+    .$if(!countUndated, (q) =>
+      q.where((eb) =>
+        eb.or([eb("d.channel", "<>", "legacy_import"), eb.and([eb("d.determined_on", "is not", null), eb("d.determined_on_precision", "is", null)])]),
+      ),
     )
     .select("d.specimen_id")
     .distinct();
-  const [ids, named] = await Promise.all([
-    candidates.execute().then((rows) => rows.map((r) => Number(r.specimen_id))),
-    // Every specimen of the person's somebody else has named as an expert;
-    // whatever of these is in no batch is undated. Not the person's own names,
-    // which Washington's staff upload to Ecdysis and which are not news to them.
-    // Only names of bees: a wasp caught as bycatch is not a bee identified.
-    sql<{ n: unknown }>`
-      WITH RECURSIVE named AS (
-        SELECT d.specimen_id, d.animal_id, d.determiner_id, d.determiner_name, d.recorded_at
-        FROM determination d JOIN specimen sp ON sp.entity_id = d.specimen_id
-        WHERE ${mine(personId)} AND d.is_expert
-      ),
-      -- What an expert calls each specimen now: its latest expert name, which
-      -- is its determination of record, read without that view's whole-store window.
-      current_name AS (
-        SELECT n.specimen_id, n.animal_id FROM named n
-        WHERE n.recorded_at = (SELECT max(m.recorded_at) FROM named m WHERE m.specimen_id = n.specimen_id)
-      ),
-      up(start, node) AS (
-        SELECT DISTINCT animal_id, animal_id FROM current_name
-        UNION
-        SELECT up.start, a.parent_id FROM up JOIN animal a ON a.entity_id = up.node WHERE a.parent_id IS NOT NULL
-      ),
-      not_bee AS (
-        SELECT DISTINCT up.start AS animal_id FROM up JOIN animal a ON a.entity_id = up.node
-        WHERE a.rank = 'family' AND a.scientific_name NOT IN (${sql.join(BEE_FAMILIES)})
-      )
-      SELECT count(DISTINCT d.specimen_id) AS n
-      FROM named d
-      LEFT JOIN person me ON me.entity_id = ${personId}
-      WHERE d.specimen_id NOT IN (SELECT specimen_id FROM current_name WHERE animal_id IN (SELECT animal_id FROM not_bee))
-        AND (d.determiner_id IS NULL OR d.determiner_id <> ${personId})
-        -- coalesce: a determination naming nobody, as the old Beeline's mostly
-        -- do, compares as unknown, and NOT unknown would drop it from the count.
-        AND NOT (d.determiner_id IS NULL AND coalesce(lower(trim(d.determiner_name)) = lower(trim(me.display_name)), false))`
-      .execute(db)
-      .then((r) => Number(r.rows[0]?.n ?? 0)),
-  ]);
-  if (ids.length === 0) return { batches: [], days: 0, undated: named };
+  const ids = (await specimens.execute()).map((r) => Number(r.specimen_id));
+  if (ids.length === 0) return { batches: [], days: 0, undated: countUndated ? 0 : null };
   // The person's name as written, for determinations that name them but were
   // not tied to their record, such as an Ecdysis determiner no alias matched.
   const me = (await db.selectFrom("person").where("entity_id", "=", personId).select("display_name").executeTakeFirst())?.display_name ?? null;
@@ -246,7 +224,7 @@ export async function identificationBatches(
     .innerJoin("animal as a", "a.entity_id", "ei.animal_id")
     .leftJoin("animal as was", "was.entity_id", "ei.previous_animal_id")
     .leftJoin("person as det", "det.entity_id", "ei.determiner_id")
-    .where("ei.specimen_id", "in", ids.length <= inlineLimit ? ids : candidates)
+    .where("ei.specimen_id", "in", ids.length <= inlineLimit ? ids : specimens)
     .select([
       "ei.specimen_id",
       "sp.field_number",
@@ -294,9 +272,11 @@ export async function identificationBatches(
   const byDay = new Map<string, { batch: Batch; kinds: Map<string, BatchKind>; names: Map<string, BatchName>; seasons: Map<number, Set<number>>; determiners: Set<string> }>();
   // The person's own names are not news to them: Washington's staff upload
   // volunteers' identifications to Ecdysis, where they read as experts'.
-  const theirs = rows.filter(
-    (r) => r.identified_at !== null && !isMe(r.determiner_id, r.determiner_name) && isBee(Number(r.animal_id)) && !notBeeNow.has(Number(r.specimen_id)),
-  );
+  // A stretch that could be news: an expert's that is not the person's own,
+  // of a bee, on a specimen that is a bee now. Dated, it is in a batch;
+  // undated, its specimen is counted, so a bee is in one or the other.
+  const eligible = rows.filter((r) => !isMe(r.determiner_id, r.determiner_name) && isBee(Number(r.animal_id)) && !notBeeNow.has(Number(r.specimen_id)));
+  const theirs = eligible.filter((r) => r.identified_at !== null);
   for (const r of theirs) {
     const at = r.identified_at as Date;
     // An exact day and an "on or before" one are separate entries even on the
@@ -350,7 +330,9 @@ export async function identificationBatches(
       .map((n) => ({ ...n, specimens: n.specimens.sort((a, b) => String(a.field_number).localeCompare(String(b.field_number))) }))
       .sort((a, b) => b.count - a.count || a.scientific_name.localeCompare(b.scientific_name)),
   }));
-  return { batches, days, undated: Math.max(0, named - new Set(theirs.map((r) => Number(r.specimen_id))).size) };
+  const shown = new Set(theirs.map((r) => Number(r.specimen_id)));
+  const undated = countUndated ? new Set(eligible.map((r) => Number(r.specimen_id)).filter((id) => !shown.has(id))).size : null;
+  return { batches, days, undated };
 }
 
 /** What an identification did to the name before it. */

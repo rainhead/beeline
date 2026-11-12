@@ -270,10 +270,7 @@ function Identifications({ m, batches }: { m: Messages; batches: Batches }) {
   return (
     <>
       <h2>{t.heading}</h2>
-      <Meta block>
-        {t.intro}
-        {batches.undated > 0 && <> {m.yourBees.batches.undated(batches.undated)}</>}
-      </Meta>
+      <Meta block>{t.intro}</Meta>
       {batches.batches.length === 0 ? <EmptyState>{t.empty}</EmptyState> : <BatchList m={m} batches={batches.batches} />}
       <Meta block>
         <a href="/bees">{t.all(Math.max(0, batches.days - batches.batches.length))}</a>

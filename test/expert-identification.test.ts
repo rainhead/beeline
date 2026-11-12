@@ -186,7 +186,7 @@ describe("identifications in batches (Your bees, and the front page)", () => {
   it("groups by the day in Oregon, counts each year's bees, and says what each identification did", async () => {
     const { db, ada } = await populated();
     for (const inlineLimit of [2_000, 0]) {
-      const { batches, days, undated } = await identificationBatches(db, ada, Number.POSITIVE_INFINITY, inlineLimit);
+      const { batches, days, undated } = await identificationBatches(db, ada, { inlineLimit });
       expect(days).toBe(3);
       // Ada's own genus of 1 July, read back from Ecdysis, is no batch of hers.
       // 26000101's name the old Beeline held before Ecdysis repeated it, and
@@ -266,6 +266,21 @@ describe("identifications in batches (Your bees, and the front page)", () => {
     expect(await identificationBatches(db, ada)).toEqual({ batches: [], days: 0, undated: 0 });
   });
 
+  it("does not count the person's own dated name as undated when a repeat naming nobody follows it", async () => {
+    const { db, ada, spec, expert } = await fixture();
+    const s = await spec("26000101");
+    await expert(s, "Bombus mixtus", "ecdysis_import", "2026-03-02 08:00:00Z", { enteredAt: "2026-03-01 10:00:00", by: ada });
+    await expert(s, "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    expect(await identificationBatches(db, ada)).toEqual({ batches: [], days: 0, undated: 0 });
+  });
+
+  it("does not count the undated where the front page asks it not to", async () => {
+    const { db, ada, spec, expert } = await fixture();
+    await expert(await spec("26000101"), "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    expect((await identificationBatches(db, ada, { countUndated: false })).undated).toBeNull();
+    expect((await identificationBatches(db, ada)).undated).toBe(1);
+  });
+
   it("leaves out the person's own name even where it names them only as text", async () => {
     const { db, ada, spec, expert } = await fixture();
     await expert(await spec("26000101"), "Bombus mixtus", "ecdysis_import", "2026-03-02 08:00:00Z", { enteredAt: "2026-03-01 10:00:00", byName: "ada adams" });
@@ -290,7 +305,7 @@ describe("identifications in batches (Your bees, and the front page)", () => {
 
   it("shows the newest days up to the limit, and still counts them all", async () => {
     const { db, ada } = await populated();
-    const { batches, days } = await identificationBatches(db, ada, 1);
+    const { batches, days } = await identificationBatches(db, ada, { maxBatches: 1 });
     expect(batches).toHaveLength(1);
     expect(days).toBe(3);
   });

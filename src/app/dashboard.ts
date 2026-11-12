@@ -242,7 +242,7 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
       .select(["a.code", "a.name"])
       .executeTakeFirst(),
     entrySeasons(db, personId, determinerId),
-    identificationBatches(db, personId, BATCHES_ON_FRONT_PAGE),
+    identificationBatches(db, personId, { maxBatches: BATCHES_ON_FRONT_PAGE, countUndated: false }),
   ]);
 
   // Where the observations on the page are. The two views derive every

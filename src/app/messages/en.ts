@@ -577,7 +577,7 @@ export const en = {
     identifications: {
       heading: "Latest identifications of your bees",
       intro: "Experts identify in batches, often a year or more after the bees were collected. These are the newest days they identified yours.",
-      empty: "No expert identification of your bees has a date yet.",
+      empty: "No dated identification of your bees by an expert other than you yet.",
       all: (moreDays: number) =>
         moreDays > 0
           ? `${n(moreDays)} more ${moreDays === 1 ? "day" : "days"} of identifications, and your bees by year`
@@ -2579,7 +2579,7 @@ export const en = {
       heading: "Your bees by year",
       intro:
         "Each bar is the bees you collected that year, split by how far each one is identified now. Your own identifications count, and an expert's takes the place of yours where there is one. Specimens identified as something other than a bee are left out.",
-      empty: "You have not collected any specimens yet.",
+      empty: "None of your samples has specimens recorded yet. They appear here once your samples' labels are printed.",
       chartLabel: "Bees you collected each year, by how far each is identified",
       legend: { species: "To species", genus: "To genus", coarser: "Coarser than genus", none: "Not yet identified" },
       col: { season: "Year", collected: "Collected" },
@@ -2592,7 +2592,7 @@ export const en = {
       intro: "Experts identify in batches, often a year or more after the bees were collected. Each entry is one day's identifications, newest first.",
       undated: (count: number) =>
         `${n(count)} of your bees ${count === 1 ? "was" : "were"} identified at a time Beeline does not know, most in the old Beeline, which kept no dates. Those are only on each specimen's page.`,
-      empty: "No expert identification of your bees has a date yet.",
+      empty: "No dated identification of your bees by an expert other than you yet.",
       /** An expert's sheet that stated no day: when it arrived is the latest the bees could have been identified. */
       onOrBefore: (day: string) => `On or before ${day}`,
       identified: (parts: readonly string[] | string, experts: number) => `${experts > 1 ? "Experts" : "An expert"} identified ${list(parts)}.`,

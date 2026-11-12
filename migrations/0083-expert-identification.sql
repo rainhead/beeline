@@ -79,23 +79,43 @@ WITH evidence AS (
   LEFT JOIN worksheet_determination wd ON wd.determination_id = d.entity_id
   WHERE d.is_expert
 ),
--- The last person Beeline knows to have given a name, at or before each
--- determination, so that a repeat naming nobody between a volunteer's name and
--- an expert's confirmation of it does not hide the change of person. Portable
--- without IGNORE NULLS: a running count of determinations that name somebody
--- groups each with the last one that did, which heads its group.
-known_run AS (
+-- Runs of one name and qualifier, before people are considered.
+name_marked AS (
   SELECT e.*,
-         count(e.determiner_id) OVER (
-           PARTITION BY e.specimen_id ORDER BY e.recorded_at, e.entity_id
+         CASE WHEN lag(e.entity_id) OVER w IS NOT NULL
+                AND lag(e.animal_id) OVER w IS NOT DISTINCT FROM e.animal_id
+                AND lag(e.qualifier) OVER w IS NOT DISTINCT FROM e.qualifier
+              THEN 0 ELSE 1 END AS new_name
+  FROM evidence e
+  WINDOW w AS (PARTITION BY e.specimen_id ORDER BY e.recorded_at, e.entity_id)
+),
+name_runs AS (
+  SELECT n.*,
+         sum(n.new_name) OVER (
+           PARTITION BY n.specimen_id ORDER BY n.recorded_at, n.entity_id
+           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+         ) AS name_run
+  FROM name_marked n
+),
+-- The last person Beeline knows to have given this name, at or before each
+-- determination, within the run of that name: so a repeat naming nobody
+-- between a volunteer's name and an expert's confirmation of it does not hide
+-- the change of person, and a person who gave an earlier name is never
+-- compared with one who gives the next. Portable without IGNORE NULLS: a
+-- running count of determinations that name somebody groups each with the
+-- last one that did, which heads its group.
+known_run AS (
+  SELECT r.*,
+         count(r.determiner_id) OVER (
+           PARTITION BY r.specimen_id, r.name_run ORDER BY r.recorded_at, r.entity_id
            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
          ) AS known_seq
-  FROM evidence e
+  FROM name_runs r
 ),
 known AS (
   SELECT k.*,
          first_value(k.determiner_id) OVER (
-           PARTITION BY k.specimen_id, k.known_seq ORDER BY k.recorded_at, k.entity_id
+           PARTITION BY k.specimen_id, k.name_run, k.known_seq ORDER BY k.recorded_at, k.entity_id
            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
          ) AS last_known_id
   FROM known_run k

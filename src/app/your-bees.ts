@@ -201,12 +201,18 @@ export async function identificationBatches(
     // Only names of bees: a wasp caught as bycatch is not a bee identified.
     sql<{ n: unknown }>`
       WITH RECURSIVE named AS (
-        SELECT d.specimen_id, d.animal_id, d.determiner_id, d.determiner_name
+        SELECT d.specimen_id, d.animal_id, d.determiner_id, d.determiner_name, d.recorded_at
         FROM determination d JOIN specimen sp ON sp.entity_id = d.specimen_id
         WHERE ${mine(personId)} AND d.is_expert
       ),
+      -- What an expert calls each specimen now: its latest expert name, which
+      -- is its determination of record, read without that view's whole-store window.
+      current_name AS (
+        SELECT n.specimen_id, n.animal_id FROM named n
+        WHERE n.recorded_at = (SELECT max(m.recorded_at) FROM named m WHERE m.specimen_id = n.specimen_id)
+      ),
       up(start, node) AS (
-        SELECT DISTINCT animal_id, animal_id FROM named
+        SELECT DISTINCT animal_id, animal_id FROM current_name
         UNION
         SELECT up.start, a.parent_id FROM up JOIN animal a ON a.entity_id = up.node WHERE a.parent_id IS NOT NULL
       ),
@@ -217,7 +223,7 @@ export async function identificationBatches(
       SELECT count(DISTINCT d.specimen_id) AS n
       FROM named d
       LEFT JOIN person me ON me.entity_id = ${personId}
-      WHERE d.animal_id NOT IN (SELECT animal_id FROM not_bee)
+      WHERE d.specimen_id NOT IN (SELECT specimen_id FROM current_name WHERE animal_id IN (SELECT animal_id FROM not_bee))
         AND (d.determiner_id IS NULL OR d.determiner_id <> ${personId})
         -- coalesce: a determination naming nobody, as the old Beeline's mostly
         -- do, compares as unknown, and NOT unknown would drop it from the count.
@@ -241,7 +247,6 @@ export async function identificationBatches(
     .leftJoin("animal as was", "was.entity_id", "ei.previous_animal_id")
     .leftJoin("person as det", "det.entity_id", "ei.determiner_id")
     .where("ei.specimen_id", "in", ids.length <= inlineLimit ? ids : candidates)
-    .where("ei.identified_at", "is not", null)
     .select([
       "ei.specimen_id",
       "sp.field_number",
@@ -263,6 +268,7 @@ export async function identificationBatches(
       sql<string | null>`coalesce(det.display_name, ei.determiner_name)`.as("determiner"),
       "ei.identified_at",
       "ei.identified_at_is_bound",
+      "ei.is_latest",
     ])
     .orderBy("ei.identified_at", "desc")
     .orderBy("ei.specimen_id")
@@ -278,14 +284,19 @@ export async function identificationBatches(
       .execute()
       .then((found) => new Set(found.map((f) => Number(f.entity_id)))),
   ]);
-  // A wasp caught as bycatch is not a bee identified, as on the chart.
+  // A wasp caught as bycatch is not a bee identified, as on the chart: a
+  // specimen whose current expert name is not a bee's has no bee batches, even
+  // for the bee name it once had.
   const isBee = (animalId: number) => !nonBeeFamilies.has(animalId) && ![...(ancestors.get(animalId) ?? [])].some((a) => nonBeeFamilies.has(a));
+  const notBeeNow = new Set(rows.filter((r) => r.is_latest && !isBee(Number(r.animal_id))).map((r) => Number(r.specimen_id)));
   // A season's count is of bees, not identifications: an expert who renames one
   // bee twice in a day has identified one bee, as the chart by year counts it.
   const byDay = new Map<string, { batch: Batch; kinds: Map<string, BatchKind>; names: Map<string, BatchName>; seasons: Map<number, Set<number>>; determiners: Set<string> }>();
   // The person's own names are not news to them: Washington's staff upload
   // volunteers' identifications to Ecdysis, where they read as experts'.
-  const theirs = rows.filter((r) => !isMe(r.determiner_id, r.determiner_name) && isBee(Number(r.animal_id)));
+  const theirs = rows.filter(
+    (r) => r.identified_at !== null && !isMe(r.determiner_id, r.determiner_name) && isBee(Number(r.animal_id)) && !notBeeNow.has(Number(r.specimen_id)),
+  );
   for (const r of theirs) {
     const at = r.identified_at as Date;
     // An exact day and an "on or before" one are separate entries even on the

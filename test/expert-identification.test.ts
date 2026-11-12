@@ -243,6 +243,29 @@ describe("identifications in batches (Your bees, and the front page)", () => {
     expect(await identificationBatches(db, ada)).toEqual({ batches: [], days: 0, undated: 0 });
   });
 
+  it("never compares a person with whoever gave an earlier name, so the old Beeline's renaming stays undated", async () => {
+    const { conn, spec, expert, lin, ada } = await fixture();
+    const s = await spec("26000101");
+    await expert(s, "Bombus caliginosus", "ecdysis_import", "2026-03-02 08:00:00Z", { enteredAt: "2026-03-01 10:00:00", by: ada });
+    await expert(s, "Bombus mixtus", "legacy_import", "2026-11-03 22:25:00Z");
+    await expert(s, "Bombus mixtus", "ecdysis_import", "2026-11-04 11:00:00Z", { enteredAt: "2026-10-01 10:00:00", by: lin });
+    // Lin's repeat of the old Beeline's name is part of its stretch, not a confirmation, and that stretch has no date.
+    expect((await stretches(conn, s)).map((r) => [r[0], r[1], r[4]])).toEqual([
+      [1, "Bombus caliginosus", "2026-03-01T18:00:00Z"],
+      [2, "Bombus mixtus", null],
+    ]);
+  });
+
+  it("leaves a bee an expert later called a wasp out of the batches and the count", async () => {
+    const { db, conn, ada, spec, expert } = await fixture();
+    await conn.run(`INSERT INTO animal (rank, scientific_name) VALUES ('family', 'Vespidae')`);
+    await conn.run(`INSERT INTO animal (rank, scientific_name, parent_id) VALUES ('genus', 'Vespula', (SELECT entity_id FROM animal WHERE scientific_name = 'Vespidae'))`);
+    const s = await spec("26000101");
+    await expert(s, "Bombus mixtus", "ecdysis_import", "2026-03-02 08:00:00Z", { enteredAt: "2026-03-01 10:00:00" });
+    await expert(s, "Vespula", "legacy_import", "2026-11-03 22:25:00Z");
+    expect(await identificationBatches(db, ada)).toEqual({ batches: [], days: 0, undated: 0 });
+  });
+
   it("leaves out the person's own name even where it names them only as text", async () => {
     const { db, ada, spec, expert } = await fixture();
     await expert(await spec("26000101"), "Bombus mixtus", "ecdysis_import", "2026-03-02 08:00:00Z", { enteredAt: "2026-03-01 10:00:00", byName: "ada adams" });

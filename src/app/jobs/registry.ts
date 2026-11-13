@@ -21,7 +21,7 @@ import { duckdbReader, recordPersonChanges } from "../../person-change.js";
 import { recordSampleChanges, type SampleLogPaths } from "../../sample-change.js";
 import { promoteObservations } from "../../promote-observations.js";
 import { fetchObservationsById, syncINat, type FetchByIdOptions } from "../../sync-inat.js";
-import type { AppConfig } from "../config.js";
+import { DEFAULT_QUERY_COPY_PATH, type AppConfig } from "../config.js";
 import { deploymentPath } from "../../deployment-path.js";
 import { describeManifest, writeProgramArchives } from "../program-archives.js";
 import { purgeIdleSessions } from "../session.js";
@@ -341,6 +341,7 @@ export function buildJobs(
         | "driveBackup"
         | "oldBeeline"
         | "backupsDir"
+        | "queryCopyPath"
         | "environment"
         | "release"
         | "correctionsPath"
@@ -432,6 +433,7 @@ export function buildJobs(
             config.sampleStatePath,
           ],
           release: config.release ?? null,
+          queryCopy: config.queryCopyPath ?? deploymentPath(DEFAULT_QUERY_COPY_PATH),
           drive: config.driveBackup,
           step: ctx.step,
           signal: ctx.signal,

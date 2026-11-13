@@ -1490,6 +1490,8 @@ export const en = {
     jump: {
       label: "Go to field number",
       placeholder: "26019685, or its last few digits",
+      /** Said once the row is found and selected: the row also flashes, which a screen reader cannot see. */
+      found: (fieldNumber: string) => `Selected ${fieldNumber}.`,
       notHere: (typed: string, season: number) =>
         `${typed} isn't among your ${season} specimens. Try another season, or add it to your list under By field number, which looks in every season.`,
     },
@@ -1555,6 +1557,8 @@ export const en = {
       addToBatch: "Add to list",
       removeFromBatch: "Remove from list",
       sexLabel: "Sex of the selected specimens",
+      /** The name box in the bar, for a screen reader: its grey text changes with the count and is not a label. */
+      nameLabel: "Name for the selected specimens",
     },
     table: {
       tickAll: (count: number) => `Select all ${n(count)} shown`,
@@ -1570,6 +1574,11 @@ export const en = {
       onHost: "on",
       viewOnInat: "View on iNaturalist",
       addName: "Add a name",
+      /** What a screen reader calls one row's name button, name box and caste buttons, so rows can be told apart by ear. */
+      addNameTo: (fieldNumber: string) => `Add a name to ${fieldNumber}`,
+      changeName: (name: string, fieldNumber: string) => `${name}: change the name of ${fieldNumber}`,
+      nameOf: (fieldNumber: string) => `Name of ${fieldNumber}`,
+      sexOf: (fieldNumber: string) => `Caste of ${fieldNumber}`,
       /** A specimen whose label never carried a field number, or whose number a canceled print run took back. */
       noNumber: "no field number",
       showMore: (more: number, left: number) => `Show ${n(more)} more (${n(left)} left)`,

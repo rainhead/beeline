@@ -20,6 +20,7 @@ import { NumberIndex, pastedList, type NumberProblem } from "../../../determinat
 import { problemText } from "./problems.js";
 import { loadTaxa, nameTemplate, type PickerTaxon } from "./picker.js";
 import "./picker.js";
+import { deselect, emptySelection, markUsed, selectMore, startsNew, undoUse, type Selection } from "./selection.js";
 
 const m = messagesFor(null);
 const d = m.determine;
@@ -41,7 +42,7 @@ const absent = (label: string) =>
 class DetermineGrid extends LitElement {
   static properties = {
     rows: { state: true },
-    selected: { state: true },
+    selection: { state: true },
     editing: { state: true },
     limit: { state: true },
     lastBulk: { state: true },
@@ -52,10 +53,11 @@ class DetermineGrid extends LitElement {
     flash: { state: true },
   };
   declare rows: EntryRow[];
-  declare selected: Set<number>;
+  /** The ticked rows, and whether they have been named since one was last added (selection.ts). */
+  declare selection: Selection;
   declare editing: number | null;
   declare limit: number;
-  declare lastBulk: { before: Write[]; text: string } | null;
+  declare lastBulk: { before: Write[]; text: string; selection: Selection } | null;
   declare saving: Set<number>;
   declare failed: Map<number, Write>;
   /** The last thing the number boxes or a bulk change did, in words. */
@@ -65,7 +67,6 @@ class DetermineGrid extends LitElement {
 
   data: DeterminePageData;
   taxa = new Map<number, TaxonInfo>();
-  #anchor: number | null = null;
   #queue: Promise<unknown> = Promise.resolve();
   /**
    * The newest write sent for each row and not yet answered. A row reads
@@ -81,7 +82,7 @@ class DetermineGrid extends LitElement {
     this.data = JSON.parse(document.getElementById("determine-data")?.textContent ?? "{}") as DeterminePageData;
     this.rows = this.data.rows ?? [];
     for (const [id, t] of Object.entries(this.data.taxa ?? {})) this.taxa.set(Number(id), t);
-    this.selected = new Set();
+    this.selection = emptySelection;
     this.editing = null;
     this.limit = CHUNK;
     this.lastBulk = null;
@@ -96,6 +97,40 @@ class DetermineGrid extends LitElement {
     return this;
   }
 
+  /**
+   * Keeps what is scrolled to clear of the bar pinned to the top. A browser
+   * scrolls a control into view when it takes focus, but only to the edge of
+   * the window, which is under the bar: tabbing back up the table, two stops
+   * in five were at least partly hidden. `scroll-padding-top` moves that
+   * edge down, and the bar's height changes as it wraps, so it is measured.
+   */
+  #pinned = new ResizeObserver(() => this.#clearPinned());
+
+  /** Which bar is pinned depends on the window's height (determine.css), which resizes neither bar. */
+  #clearPinned = () => {
+    const bar = [...this.querySelectorAll<HTMLElement>(".determine-pinned, .determine-bulk")].find((e) => getComputedStyle(e).position === "sticky");
+    document.documentElement.style.scrollPaddingTop = bar ? `${Math.ceil(bar.getBoundingClientRect().height) + 8}px` : "";
+  };
+
+  override firstUpdated() {
+    for (const e of this.querySelectorAll(".determine-pinned, .determine-bulk")) this.#pinned.observe(e);
+    window.addEventListener("resize", this.#clearPinned);
+    this.#clearPinned();
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this.#pinned.disconnect();
+    window.removeEventListener("resize", this.#clearPinned);
+    document.documentElement.style.scrollPaddingTop = "";
+  }
+
+  /** Close a row's name box and put focus back on the row's name button, not at the top of the page. */
+  #closeEditor(r: EntryRow) {
+    this.editing = null;
+    void this.updateComplete.then(() => this.querySelector<HTMLElement>(`[data-row="${r.id}"] .name-cell`)?.focus());
+  }
+
   override connectedCallback() {
     super.connectedCallback();
     // The season menu is the shell's, a plain GET form: choosing a season goes there.
@@ -108,6 +143,10 @@ class DetermineGrid extends LitElement {
         this.requestUpdate();
       })
       .catch(() => undefined);
+  }
+
+  get selected() {
+    return this.selection.ids;
   }
 
   get #batch() {
@@ -182,14 +221,16 @@ class DetermineGrid extends LitElement {
 
   #bulk(patch: Partial<EntryValue>, text: string) {
     const rows = this.rows.filter((r) => this.selected.has(r.id));
-    this.lastBulk = { before: rows.map((r) => ({ specimenId: r.id, ...this.#current(r) })), text };
+    this.lastBulk = { before: rows.map((r) => ({ specimenId: r.id, ...this.#current(r) })), text, selection: this.selection };
     this.message = "";
+    this.selection = markUsed(this.selection);
     void this.#write(rows, patch);
   }
 
   #undoBulk() {
     if (!this.lastBulk) return;
     void this.#send(this.lastBulk.before);
+    this.selection = undoUse(this.selection, this.lastBulk.selection);
     this.lastBulk = null;
   }
 
@@ -199,26 +240,33 @@ class DetermineGrid extends LitElement {
     void this.#send([{ specimenId: r.id, animalId: p?.animalId ?? null, sex: p?.sex ?? null, caste: p?.caste ?? null }]);
   }
 
+  /**
+   * A name or a sex given in a ticked row's own cell finishes the selection
+   * as one given from the bar does. Otherwise going to ten field numbers and
+   * naming each in its cell leaves all ten ticked, and the next name given
+   * from the bar reaches every one. An Undo of the last bar change must not
+   * reopen it either.
+   */
+  #rowChanged(r: EntryRow) {
+    if (!this.selected.has(r.id)) return;
+    if (this.lastBulk?.selection.ids === this.selection.ids) this.lastBulk = { ...this.lastBulk, selection: markUsed(this.lastBulk.selection) };
+    this.selection = markUsed(this.selection);
+  }
+
   #toggle(list: EntryRow[], index: number, shift: boolean) {
     const id = list[index]!.id;
-    const next = new Set(this.selected);
-    if (shift && this.#anchor !== null) {
-      const from = list.findIndex((r) => r.id === this.#anchor);
-      const [a, b] = from < index ? [from, index] : [index, from];
-      const on = !this.selected.has(id);
-      for (let i = a; i <= b; i++) (on ? next.add(list[i]!.id) : next.delete(list[i]!.id));
-    } else {
-      next.has(id) ? next.delete(id) : next.add(id);
-      this.#anchor = id;
-    }
-    this.selected = next;
+    const sel = this.selection;
+    // A block runs from the row last clicked in this selection, if it is
+    // still listed; a row that starts a new selection starts its block too.
+    const from = shift && sel.anchor !== null && !startsNew(sel, id) ? list.findIndex((r) => r.id === sel.anchor) : -1;
+    const block = from === -1 ? [id] : list.slice(Math.min(from, index), Math.max(from, index) + 1).map((r) => r.id);
+    const anchor = from === -1 ? id : undefined;
+    this.selection = sel.ids.has(id) ? deselect(sel, block, anchor) : selectMore(sel, block, anchor);
   }
 
   #toggleAll(group: EntryRow[]) {
-    const next = new Set(this.selected);
-    const all = group.every((r) => next.has(r.id));
-    for (const r of group) (all ? next.delete(r.id) : next.add(r.id));
-    this.selected = next;
+    const ids = group.map((r) => r.id);
+    this.selection = ids.every((id) => this.selected.has(id)) ? deselect(this.selection, ids) : selectMore(this.selection, ids);
   }
 
   async #batchRequest(body: object) {
@@ -290,7 +338,8 @@ class DetermineGrid extends LitElement {
     try {
       const out = await this.#batchRequest({ remove: ids });
       this.rows = out.rows;
-      this.selected = new Set([...this.selected].filter((id) => out.rows.some((r) => r.id === id)));
+      const left = new Set(out.rows.map((r) => r.id));
+      this.selection = deselect(this.selection, [...this.selected].filter((id) => !left.has(id)));
       if (ids === "all") this.problems = [];
     } catch {
       this.message = d.saveFailed;
@@ -309,9 +358,9 @@ class DetermineGrid extends LitElement {
     const id = entry.ids[0]!;
     const index = this.rows.findIndex((r) => r.id === id);
     if (index >= this.limit) this.limit = index + CHUNK;
-    this.message = "";
+    this.message = d.jump.found(this.rows[index]!.fieldNumber ?? typed);
     this.flash = id;
-    this.selected = new Set([...this.selected, id]);
+    this.selection = selectMore(this.selection, [id], id);
     input.value = "";
     void this.updateComplete.then(() => this.querySelector(`[data-row="${id}"]`)?.scrollIntoView({ block: "center" }));
   }
@@ -359,6 +408,8 @@ class DetermineGrid extends LitElement {
     const t = d.table;
     const cur = this.#current(r);
     const ro = this.data.readOnly;
+    const number = r.fieldNumber ?? t.noNumber;
+    const named = cur.animalId !== null ? this.taxa.get(cur.animalId) : undefined;
     const classes = [this.selected.has(r.id) ? "selected" : "", this.flash === r.id ? "flash" : ""].join(" ");
     return html`<tr data-row=${r.id} class=${classes}>
       <td class="tick">
@@ -370,18 +421,23 @@ class DetermineGrid extends LitElement {
       ${position !== null ? html`<td class="sample" title=${this.#sampleText(r)}>${this.#sampleText(r)}</td>` : nothing}
       <td class="name">
         ${this.editing === r.id
-          ? html`<determine-taxon-picker autofocus
+          ? html`<determine-taxon-picker autofocus label=${t.nameOf(number)}
               @pick=${(e: CustomEvent<PickerTaxon>) => {
                 this.taxa.set(e.detail.id, e.detail);
-                this.editing = null;
+                this.#closeEditor(r);
+                this.#rowChanged(r);
                 void this.#write([r], { animalId: e.detail.id });
               }}
-              @cancel=${() => (this.editing = null)}></determine-taxon-picker>`
-          : html`<button type="button" class="name-cell" ?disabled=${ro} @click=${() => (this.editing = r.id)}>
+              @cancel=${() => this.#closeEditor(r)}></determine-taxon-picker>`
+          : html`<button type="button" class="name-cell" ?disabled=${ro} aria-label=${named ? t.changeName(`${named.name} ${named.rank}`, number) : t.addNameTo(number)}
+              @click=${() => (this.editing = r.id)}>
               ${cur.animalId !== null ? this.#name(cur.animalId) : html`<span class="meta">${t.addName}</span>`}
             </button>`}
       </td>
-      <td>${this.#sexControl(cur.animalId, cur, (sex, caste) => void this.#send([this.#next(r, { sex, caste })]), d.sex.label)}</td>
+      <td>${this.#sexControl(cur.animalId, cur, (sex, caste) => {
+        this.#rowChanged(r);
+        void this.#send([this.#next(r, { sex, caste })]);
+      }, t.sexOf(number))}</td>
       <td class="saved">${this.#saved(r)}</td>
       ${position !== null
         ? html`<td class="tick"><button type="button" class="remove" ?disabled=${ro} aria-label=${d.batch.remove(r.fieldNumber ?? t.noNumber)}
@@ -426,22 +482,22 @@ class DetermineGrid extends LitElement {
     const off = n === 0 || this.data.readOnly;
     return html`<div class="determine-bulk" ?data-empty=${n === 0}>
       <span class="count">${n === 0 ? b.none : html`<strong>${b.ticked(n)}</strong>`}</span>
-      <determine-taxon-picker placeholder=${b.namePlaceholder(n)} ?disabled=${off}
+      <determine-taxon-picker placeholder=${b.namePlaceholder(n)} label=${b.nameLabel} ?disabled=${off}
         @pick=${(e: CustomEvent<PickerTaxon>) => {
           this.taxa.set(e.detail.id, e.detail);
           this.#bulk({ animalId: e.detail.id }, b.named(n, e.detail.name));
         }}></determine-taxon-picker>
       ${this.#sexControl(social ? first!.animalId : null, same, (sex, caste) => this.#bulk({ sex, caste }, b.sexSet(n)), b.sexLabel, off)}
       <span class="done">
+        <span class="meta" role="status">${this.lastBulk?.text ?? ""}</span>
         ${this.lastBulk
-          ? html`<span class="meta">${this.lastBulk.text}</span>
-              <button type="button" class="outlined small" @click=${() => this.#undoBulk()}>${b.undo}</button>`
+          ? html`<button type="button" class="outlined small" @click=${() => this.#undoBulk()}>${b.undo}</button>`
           : nothing}
       </span>
       ${this.#batch
         ? html`<button type="button" class="outlined small" ?disabled=${off} @click=${() => void this.#removeFromBatch(ticked.map((r) => r.id))}>${b.removeFromBatch}</button>`
         : html`<button type="button" class="outlined small" ?disabled=${off} @click=${() => void this.#addTickedToBatch()}>${b.addToBatch}</button>`}
-      <button type="button" class="outlined small" ?disabled=${n === 0} @click=${() => (this.selected = new Set())}>${b.untick}</button>
+      <button type="button" class="outlined small" ?disabled=${n === 0} @click=${() => (this.selection = emptySelection)}>${b.untick}</button>
     </div>`;
   }
 
@@ -502,10 +558,15 @@ class DetermineGrid extends LitElement {
     let index = 0;
     const groups: EntryRow[][] = [];
     if (!batch) for (const r of shown) (groups.length > 0 && groups[groups.length - 1]![0]!.sample.id === r.sample.id ? groups[groups.length - 1]!.push(r) : groups.push([r]));
-    return html`
-      ${this.#toolbar()}
+    // By season, the field number box stays in view with the naming row, so
+    // several numbers can be looked up without scrolling back (GitHub #316).
+    // By field number only the naming row does: that toolbar is tall, and the
+    // rows it adds arrive at the bottom of the list.
+    const controls = html`${this.#toolbar()}
       <p class="determine-message meta" role="status">${this.message}</p>
-      ${this.#bulkBar()}
+      ${this.#bulkBar()}`;
+    return html`
+      ${batch ? controls : html`<div class="determine-pinned">${controls}</div>`}
       <div class="table-scroll">
         <table class=${batch ? "determine-grid batch" : "determine-grid"}>
           <colgroup>

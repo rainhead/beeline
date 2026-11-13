@@ -23,7 +23,11 @@
  *    `pick` event's option: a picker.
  *
  * `free` lets text that is no option stand and submit; without it Enter
- * takes only a highlighted option. Events, all bubbling: `pick` (detail: the
+ * takes only a highlighted option, and the box turns off the computer's own
+ * help with typing (autocorrect, spelling, suggested words): what is typed
+ * only searches the list, and on a Mac the suggestions replaced half a genus
+ * with an English word that matched nothing (`Colle` became `colleges`,
+ * GitHub #316). Events, all bubbling: `pick` (detail: the
  * option) and `cancel` (Escape).
  */
 import { html, LitElement, nothing, type TemplateResult } from "lit";
@@ -38,6 +42,7 @@ export class BeelineCombobox extends LitElement {
     name: {},
     value: {},
     inputId: { attribute: "input-id" },
+    label: {},
     placeholder: {},
     type: {},
     disabled: { type: Boolean },
@@ -56,6 +61,8 @@ export class BeelineCombobox extends LitElement {
   declare name: string;
   declare value: string;
   declare inputId: string;
+  /** The box's name for a screen reader, where the page gives it no <label>. A placeholder is not one. */
+  declare label: string;
   declare placeholder: string;
   declare type: string;
   declare disabled: boolean;
@@ -81,6 +88,7 @@ export class BeelineCombobox extends LitElement {
     this.name = "";
     this.value = "";
     this.inputId = "";
+    this.label = "";
     this.placeholder = "";
     this.type = "text";
     this.disabled = false;
@@ -193,11 +201,16 @@ export class BeelineCombobox extends LitElement {
         name=${this.name || nothing}
         type=${this.type}
         role="combobox"
+        aria-label=${this.label || nothing}
         aria-autocomplete="list"
         aria-expanded=${showPanel ? "true" : "false"}
         aria-controls=${this.#listId}
         aria-activedescendant=${activeId}
         autocomplete="off"
+        autocorrect=${this.free ? nothing : "off"}
+        autocapitalize=${this.free ? nothing : "off"}
+        spellcheck=${this.free ? nothing : "false"}
+        writingsuggestions=${this.free ? nothing : "false"}
         .value=${this.query}
         placeholder=${this.placeholder || nothing}
         ?disabled=${this.disabled}

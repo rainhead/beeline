@@ -71,12 +71,14 @@ export function searchTaxa(taxa: readonly PickerTaxon[], query: string, bycatch:
 export class DetermineTaxonPicker extends LitElement {
   static properties = {
     placeholder: {},
+    label: {},
     autofocus: { type: Boolean },
     disabled: { type: Boolean },
     bycatch: { state: true },
     taxa: { state: true },
   };
   declare placeholder: string;
+  declare label: string;
   declare autofocus: boolean;
   declare disabled: boolean;
   declare bycatch: boolean;
@@ -85,6 +87,7 @@ export class DetermineTaxonPicker extends LitElement {
   constructor() {
     super();
     this.placeholder = m.determine.picker.placeholder;
+    this.label = "";
     this.autofocus = false;
     this.disabled = false;
     this.bycatch = false;
@@ -109,6 +112,7 @@ export class DetermineTaxonPicker extends LitElement {
       type="search"
       clear-on-pick
       placeholder=${this.placeholder}
+      label=${this.label}
       ?autofocus=${this.autofocus}
       ?disabled=${this.disabled}
       empty-text=${this.bycatch ? p.noNames : p.noBees}

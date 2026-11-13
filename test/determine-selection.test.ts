@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { deselect, emptySelection, markUsed, selectMore, startsNew, undoUse } from "../src/app/islands/determine/selection.js";
+import { deselect, emptySelection, holdsWork, markUsed, selectMore, startsNew, undoUse } from "../src/app/islands/determine/selection.js";
 
 const ids = (s: { ids: ReadonlySet<number> }) => [...s.ids].sort((a, b) => a - b);
 
 describe("the selection on Identify your specimens", () => {
+  it("holds work worth asking about before another year opens only while it is ticked and not yet named (beeline-mjml)", () => {
+    expect(holdsWork(emptySelection)).toBe(false);
+    const ticked = selectMore(emptySelection, [1, 2]);
+    expect(holdsWork(ticked)).toBe(true);
+    // Named rows stay ticked, but the next row found starts afresh, so nothing is lost by moving.
+    expect(holdsWork(markUsed(ticked))).toBe(false);
+  });
+
   it("grows as rows are selected, until it is named", () => {
     const s = selectMore(selectMore(emptySelection, [1]), [2, 3]);
     expect(ids(s)).toEqual([1, 2, 3]);

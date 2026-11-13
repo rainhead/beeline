@@ -397,8 +397,12 @@ export async function addToBatch(db: Kysely<Database>, personId: number, determi
   };
 }
 
-/** A specimen found by its field number, and the collection year it is listed under. */
-export type Located = { specimen: number; season: number } | { problem: NumberProblem };
+/**
+ * A specimen found by its field number and the collection year it is listed
+ * under; a range or a list, which names several (the find box takes one); or
+ * what was wrong with the number.
+ */
+export type Located = { specimen: number; season: number } | { several: number } | { problem: NumberProblem };
 
 /**
  * Finds one specimen by a typed field number, or its last few digits, among
@@ -412,6 +416,7 @@ export async function locateSpecimen(db: Kysely<Database>, personId: number, typ
     SELECT entity_id AS id, field_number AS "fieldNumber" FROM specimen WHERE sample_id IN ${reach(personId)}`.execute(db);
   const entry = new NumberIndex(numbered.rows).resolve(typed.trim());
   if (entry.problem !== null) return { problem: entry.problem };
+  if (entry.ids.length !== 1) return { several: entry.ids.length };
   const id = entry.ids[0]!;
   const season = await seasonOf(db, personId, id);
   return season === null ? { problem: { code: "noSpecimens" } } : { specimen: id, season };

@@ -1803,7 +1803,7 @@ export function createApp({
       taxa: await rowTaxa(db, rows),
       readOnly: acting.impersonating,
       batchCount: view === "batch" ? rows.length : await batchSize(db, acting.personId, me),
-      focus: focusSeason === null ? null : specimenAsked,
+      focus: focusSeason !== null && rows.some((r) => r.id === specimenAsked) ? specimenAsked : null,
     } as const;
     return c.html(
       await page(c, m.determine.title, <DeterminePage m={m} seasons={seasons} data={data} />, ["/static/determine.css"]),

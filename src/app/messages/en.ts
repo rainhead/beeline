@@ -1505,6 +1505,8 @@ export const en = {
       /** Said while the box looks for a number in the other years, before the page moves there. */
       looking: (typed: string) => `${typed} isn't among these. Looking in your other years…`,
       lookupFailed: "Couldn't look in your other years. Check your connection, then try again.",
+      /** A range or list typed here: the box goes to one specimen. */
+      oneNumber: "Go to field number takes one number. To gather several, add them to your list under By field number.",
       /**
        * Found in another year while rows here are ticked. Opening that year
        * loads a new page, which clears the ticks, so the screen asks first.

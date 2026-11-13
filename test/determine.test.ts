@@ -244,6 +244,8 @@ describe("finding a number in another year (beeline-mjml)", () => {
     expect(await locateSpecimen(db, ada, " 555 ")).toEqual({ specimen: await spec("2400555"), season: 2024 });
     // A February sample is in its own year's season, as the menu counts it.
     expect(await locateSpecimen(db, ada, "25000900")).toEqual({ specimen: await spec("25000900"), season: 2026 });
+    // A range names several; the box goes to one.
+    expect(await locateSpecimen(db, ada, "26000101-103")).toEqual({ several: 3 });
     // Bo's specimen is not hers to find. (What else a typed number can be is NumberIndex's, tested in determination-numbers.)
     expect(await locateSpecimen(db, ada, "26000201")).toMatchObject({ problem: { code: "notTheirs" } });
   });

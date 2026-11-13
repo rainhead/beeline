@@ -13,14 +13,14 @@
  * prototype/volunteer-determinations).
  */
 import { html, LitElement, nothing, type TemplateResult } from "lit";
-import type { EntryRow, EntryValue } from "../../determine.js";
+import type { EntryRow, EntryValue, Located } from "../../determine.js";
 import type { DeterminePageData } from "../../views/determine.js";
 import { messagesFor } from "../../messages/index.js";
 import { NumberIndex, pastedList, type NumberProblem } from "../../../determination-numbers.js";
 import { problemText } from "./problems.js";
 import { loadTaxa, nameTemplate, type PickerTaxon } from "./picker.js";
 import "./picker.js";
-import { deselect, emptySelection, markUsed, selectMore, startsNew, undoUse, type Selection } from "./selection.js";
+import { deselect, emptySelection, holdsWork, markUsed, selectMore, startsNew, undoUse, type Selection } from "./selection.js";
 
 const m = messagesFor(null);
 const d = m.determine;
@@ -117,8 +117,15 @@ class DetermineGrid extends LitElement {
     for (const e of this.querySelectorAll(".determine-pinned, .determine-bulk")) this.#pinned.observe(e);
     window.addEventListener("resize", this.#clearPinned);
     this.#clearPinned();
-    // Opened at one specimen (?specimen=): select it as the find box would.
-    if (this.data.focus !== null && this.data.focus !== undefined) this.#select(this.data.focus, "");
+    // Opened at one specimen (?specimen=): select it as the find box would,
+    // after the first render so the status line announces it, and put the
+    // cursor back in the find box for the next number.
+    const focus = this.data.focus;
+    if (focus !== null && focus !== undefined)
+      void this.updateComplete.then(() => {
+        this.#select(focus, "");
+        this.querySelector<HTMLInputElement>(".determine-jump input")?.focus({ preventScroll: true });
+      });
   }
 
   override disconnectedCallback() {
@@ -361,7 +368,11 @@ class DetermineGrid extends LitElement {
       this.message = problemText(entry.problem);
       return;
     }
-    if (entry.problem !== null || entry.ids.length !== 1) {
+    if (entry.problem === null && entry.ids.length > 1) {
+      this.message = d.jump.oneNumber;
+      return;
+    }
+    if (entry.problem !== null) {
       void this.#locate(typed);
       return;
     }
@@ -391,8 +402,12 @@ class DetermineGrid extends LitElement {
     try {
       const res = await fetch(`/determinations/locate?number=${encodeURIComponent(typed)}`, { credentials: "same-origin" });
       if (!res.ok) throw new Error(String(res.status));
-      const found = (await res.json()) as { specimen: number; season: number } | { problem: NumberProblem };
+      const found = (await res.json()) as Located;
       if (search !== this.#search) return;
+      if ("several" in found) {
+        this.message = d.jump.oneNumber;
+        return;
+      }
       if ("problem" in found) {
         this.message = problemText(found.problem);
         return;
@@ -400,7 +415,7 @@ class DetermineGrid extends LitElement {
       // Here the box adds what it finds to what is ticked, so the reader may
       // mean to name them together. Moving would drop the ticks without a
       // word, so ask instead.
-      if (this.selected.size > 0) {
+      if (holdsWork(this.selection)) {
         this.message = html`${d.jump.elsewhere(typed, found.season)}
           <button type="button" class="outlined small" @click=${() => void this.#leaveFor(found.specimen, found.season, typed, ++this.#search)}>
             ${d.jump.open(found.season)}</button>`;

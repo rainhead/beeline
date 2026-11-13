@@ -58,6 +58,13 @@ export function deselect(selection: Selection, ids: Iterable<number>, anchor?: n
  * to one of its rows in the row's own cell: either way the person has moved
  * on from choosing rows to naming them.
  */
+/**
+ * Whether opening another year would lose something the reader is still
+ * building (beeline-mjml): ticked rows not yet named. Rows already named
+ * are finished with, since the next row ticked starts afresh anyway.
+ */
+export const holdsWork = (selection: Selection): boolean => selection.ids.size > 0 && !selection.used;
+
 export const markUsed = (selection: Selection): Selection => ({ ...selection, used: selection.ids.size > 0 });
 
 /**

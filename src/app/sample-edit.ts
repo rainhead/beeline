@@ -167,29 +167,30 @@ export async function applySampleEdit(
   }
   // Durability before immediacy: if the event write fails, nothing applied.
   await upsertCorrections(correctionsPath, events);
-  // And into the store's correction tables, which the export reads the old
-  // records through (src/app/correction-store.ts).
-  await mirrorCorrections(db, events);
-
   const updates = Object.fromEntries(
     changed.map((f) => {
       const submitted = (input.values[f.name] ?? "").trim();
       return [f.name, submitted === "" ? null : submitted];
     }),
   );
-  await db.updateTable("sample").set(updates).where("entity_id", "=", sample.entity_id).execute();
-
-  // A within-sample disagreement on an edited field is settled by the edit:
-  // every member row now carries one value, so the stored finding would not
-  // re-derive on rebuild — drop it now rather than making the volunteer
-  // stare at a resolved warning until cutover.
-  for (const f of changed) {
-    await db
-      .deleteFrom("sample_promotion_finding")
-      .where("sample_id", "=", sample.entity_id)
-      .where("rule_name", "=", "within_sample_disagreement")
-      .where("details", "like", `${f.name}: %`)
-      .execute();
-  }
+  // Everything in the store at once (src/app/sample-method.ts says why),
+  // the correction tables included, which the export reads the old records
+  // through (src/app/correction-store.ts).
+  await db.transaction().execute(async (trx) => {
+    await mirrorCorrections(trx, events);
+    await trx.updateTable("sample").set(updates).where("entity_id", "=", sample.entity_id).execute();
+    // A within-sample disagreement on an edited field is settled by the edit:
+    // every member row now carries one value, so the stored finding would not
+    // re-derive on rebuild — drop it now rather than making the volunteer
+    // stare at a resolved warning until cutover.
+    for (const f of changed) {
+      await trx
+        .deleteFrom("sample_promotion_finding")
+        .where("sample_id", "=", sample.entity_id)
+        .where("rule_name", "=", "within_sample_disagreement")
+        .where("details", "like", `${f.name}: %`)
+        .execute();
+    }
+  });
   return { outcome: "saved", changed: changed.map((f) => f.name) };
 }

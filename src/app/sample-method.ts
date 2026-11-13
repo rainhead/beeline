@@ -159,26 +159,29 @@ export async function setSampleMethod(
   // Should a write to the store fail after it, the file is ahead of the
   // sample until the next save, which is what a rebuild would apply.
   await upsertCorrections(correctionsPath, events);
-  await mirrorCorrections(db, events);
-
-  await db
-    .updateTable("sample")
-    .set({
-      ...(protocolChanged ? { protocol: protocol === "" ? null : protocol } : {}),
-      ...(datesChanged ? { kind, date_end: end } : {}),
-    })
-    .where("entity_id", "=", sampleId)
-    .execute();
-
-  // A disagreement among the records over the method is settled by the edit,
-  // as on the collector's form.
-  if (protocolChanged) {
-    await db
-      .deleteFrom("sample_promotion_finding")
-      .where("sample_id", "=", sampleId)
-      .where("rule_name", "=", "within_sample_disagreement")
-      .where("details", "like", "protocol: %")
+  // Everything in the store at once: the correction tables, the sample, and
+  // the settled finding, so neither a failure part-way nor an export reading
+  // between two statements sees half a correction (CodeRabbit on #314).
+  await db.transaction().execute(async (trx) => {
+    await mirrorCorrections(trx, events);
+    await trx
+      .updateTable("sample")
+      .set({
+        ...(protocolChanged ? { protocol: protocol === "" ? null : protocol } : {}),
+        ...(datesChanged ? { kind, date_end: end } : {}),
+      })
+      .where("entity_id", "=", sampleId)
       .execute();
-  }
+    // A disagreement among the records over the method is settled by the
+    // edit, as on the collector's form.
+    if (protocolChanged) {
+      await trx
+        .deleteFrom("sample_promotion_finding")
+        .where("sample_id", "=", sampleId)
+        .where("rule_name", "=", "within_sample_disagreement")
+        .where("details", "like", "protocol: %")
+        .execute();
+    }
+  });
   return { outcome: "saved" };
 }

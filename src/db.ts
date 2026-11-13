@@ -78,6 +78,72 @@ export function openDuckDb(path: string): Promise<DuckDBInstance> {
   return DuckDBInstance.create(path, { ...duckDbConfig(), ...STORE_TIME_ZONE, ...PLANNER });
 }
 
+/**
+ * What {@link openQueryCopy} is given besides the path.
+ */
+export interface QueryCopyBudget {
+  /** DuckDB's memory ceiling for this instance, e.g. "256MB". */
+  memoryLimit: string;
+}
+
+/**
+ * Open the copy of the store that people's SQL runs against
+ * (src/query-copy.ts, beeline-pnqr.4) as an instance of its own, beside the
+ * live one in this process.
+ *
+ * Read-only, so no statement can change the file; with external access off
+ * afterwards, so none can read or write any other file or load an extension;
+ * and with the configuration locked, so none can undo either by a `SET`. The
+ * session zone is the store's UTC, like every other opener here. One thread
+ * and a stated memory limit keep it from taking the machine from the live
+ * instance.
+ *
+ * The temporary directory is a path that cannot be created, on purpose.
+ * Measured on DuckDB 2.0.0: a read-only instance with external access off
+ * still spills a large sort or aggregate to a `.tmp` folder beside the file,
+ * and `max_temp_directory_size` is not enforced there (a 1 MB limit let one
+ * query write 1 GB), so on a small volume that shared with the live store a
+ * runaway query could fill the disk the store writes to. Pointing the
+ * directory below the copy file itself, which is not a folder, makes a query
+ * that needs more than the memory limit fail with an ordinary error saying it
+ * could not create the directory, and writes nothing.
+ *
+ * Even so, DuckDB keeps the database file and its `.wal`, `.wal.checkpoint`
+ * and `.wal.recovery` paths open to statements with external access off, so
+ * `EXPLAIN ANALYZE COPY (...) TO '<copy>'` could overwrite the copy. The
+ * callers' protection is that only a plain SELECT is accepted, and that the
+ * copy sits in a read-only folder (src/store-backup.ts, `keepQueryCopy`).
+ *
+ * The options are set in this order for a reason: the time zone needs the ICU
+ * extension, which cannot be loaded once external access is off, and
+ * `temp_directory` cannot be given after that either, so the lock-down comes
+ * last and is a statement rather than an option.
+ */
+export async function openQueryCopy(path: string, budget: QueryCopyBudget): Promise<DuckDBInstance> {
+  const instance = await DuckDBInstance.create(path, {
+    access_mode: "READ_ONLY",
+    ...STORE_TIME_ZONE,
+    ...PLANNER,
+    memory_limit: budget.memoryLimit,
+    threads: "1",
+    temp_directory: `${path}/no-spill`,
+  });
+  const conn = await instance.connect();
+  try {
+    // No extension is fetched or loaded on demand, whatever a statement names.
+    await conn.run("SET autoinstall_known_extensions = false");
+    await conn.run("SET autoload_known_extensions = false");
+    await conn.run("SET enable_external_access = false");
+    await conn.run("SET lock_configuration = true");
+  } catch (err) {
+    instance.closeSync();
+    throw err;
+  } finally {
+    conn.closeSync();
+  }
+  return instance;
+}
+
 /** The in-memory case (tests, the migration tool's drift check). */
 export function openMemoryDuckDb(): Promise<DuckDBInstance> {
   return DuckDBInstance.create(":memory:", { ...duckDbConfig(), ...STORE_TIME_ZONE, ...PLANNER });

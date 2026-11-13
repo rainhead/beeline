@@ -240,7 +240,12 @@ function testServiceAccount(): ServiceAccountKey {
 describe("a night's backup", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  const run = async (drive: ReturnType<typeof fakeDrive>, now: Date, before?: (dir: string) => Promise<void>) => {
+  const run = async (
+    drive: ReturnType<typeof fakeDrive>,
+    now: Date,
+    before?: (dir: string) => Promise<void>,
+    queryCopy?: (dir: string) => string,
+  ) => {
     vi.stubGlobal("fetch", drive.fetchImpl);
     const { conn, dir, catalog } = await storeWithData();
     await writeFile(join(dir, "person-change.csv"), "when,person_ref\n");
@@ -250,6 +255,7 @@ describe("a night's backup", () => {
       catalog,
       authored: [join(dir, "person-change.csv"), join(dir, "corrections.csv")],
       release: "deployment-test",
+      queryCopy: queryCopy?.(dir),
       drive: { key: testServiceAccount(), folderId: "folder" },
       step: (_label, fn) => fn(),
       now: () => now,
@@ -289,6 +295,62 @@ describe("a night's backup", () => {
     expect(await readFile(join(dir, "restored", "authored", "person-change.csv"), "utf8")).toBe("when,person_ref\n");
     // And the work directory is left empty.
     expect(await readdir(join(dir, "work"))).toEqual([]);
+  });
+
+  it("leaves one plain copy of the store in a read-only folder, replacing the last night's whole", async () => {
+    const drive = fakeDrive("folder", []);
+    const target = (dir: string) => join(dir, "query-copy", "query-copy.duckdb");
+    const { dir } = await run(
+      drive,
+      new Date("2026-10-12T10:00:00Z"),
+      async (d) => {
+        // Last night's copy, and the debris an older run could leave beside it.
+        await mkdir(join(d, "query-copy"));
+        await writeFile(target(d), "last night");
+        await writeFile(`${target(d)}.wal`, "stale");
+        await writeFile(`${target(d)}.partial`, "half");
+      },
+      target,
+    );
+    // An ordinary file the query module can open as it is, without a key.
+    const copy = await (await DuckDBInstance.create(target(dir), { access_mode: "READ_ONLY" })).connect();
+    expect(await rows(copy, "SELECT count(*) FROM animal")).toEqual([[3n]]);
+    expect(await readdir(join(dir, "query-copy"))).toEqual(["query-copy.duckdb"]);
+    // The work directory's own copy is still removed.
+    expect(await readdir(join(dir, "work"))).toEqual([]);
+  });
+
+  it("leaves no query copy when none is asked for", async () => {
+    const { dir } = await run(fakeDrive("folder", []), new Date("2026-10-12T10:00:00Z"));
+    expect(await readdir(dir)).not.toContain("query-copy");
+  });
+
+  it("uploads the archive and then fails the run, naming the step, when the query copy cannot be kept", async () => {
+    const drive = fakeDrive("folder", [backupName(new Date("2026-09-01T10:00:00Z")), backupName(new Date("2026-09-20T10:00:00Z"))]);
+    const failing = run(
+      drive,
+      new Date("2026-10-12T10:00:00Z"),
+      async (d) => writeFile(join(d, "blocked"), "a file, so nothing can be made inside it"),
+      (d) => join(d, "blocked", "query-copy", "query-copy.duckdb"),
+    );
+    await expect(failing).rejects.toThrow(/keep a copy for queries/);
+    await expect(failing).rejects.toThrow(/was uploaded/);
+    // The backup, the purpose of the job, was taken and the retention rule ran.
+    expect(drive.files.some((f) => f.id === "new" && f.name === "beeline-backup-20261012T100000Z.tar.gz")).toBe(true);
+    expect(drive.files.find((f) => f.name === backupName(new Date("2026-09-20T10:00:00Z")))!.trashed).toBe(true);
+  });
+
+  it("refuses to replace the live store with its query copy, and still takes the backup", async () => {
+    const drive = fakeDrive("folder", []);
+    // The store in these tests is in memory, so the protected files are the authored ones.
+    const failing = run(
+      drive,
+      new Date("2026-10-12T10:00:00Z"),
+      undefined,
+      (d) => join(d, "person-change.csv"),
+    );
+    await expect(failing).rejects.toThrow(/refusing to replace/);
+    expect(drive.files.some((f) => f.id === "new")).toBe(true);
   });
 
   it("is refused by backup:check once its manifest or its files have been tampered with", async () => {

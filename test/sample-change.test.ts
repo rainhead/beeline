@@ -622,6 +622,21 @@ describe("the narrowed pass, told what the caller knows", () => {
     expect([...(await readSnapshot(paths.state))!.values()].map((s) => s.sample_number)).toEqual(["1"]);
   });
 
+  it("leaves both rows alone when the new reference has a row another sample has not yet been moved off", async () => {
+    // B moved from 2 to 3 and its entry was never written; then A moves from
+    // 1 to 2. Nobody answers to 1 any more, but the row under 2 is B's, and
+    // writing A over it would leave the full pass to enter B as arriving.
+    const a = await insertCleanSample(conn, {}, null);
+    const b = await insertCleanSample(conn, { sample_number: "'2'" }, null);
+    await record();
+    await conn.run(`UPDATE sample SET sample_number = '3' WHERE entity_id = ${b}`);
+    const was = await sampleReference(read(), a);
+    await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${a}`);
+    const narrowed = await record({ source: "app", author: "ada", where: `s.entity_id = ${a}`, was });
+    expect(narrowed.appended).toBe(0);
+    expect([...(await readSnapshot(paths.state))!.values()].map((s) => s.sample_number).sort()).toEqual(["1", "2"]);
+  });
+
   it("names no reference for a sample that shares its own with another", async () => {
     const id = await insertCleanSample(conn, {}, null);
     await insertCleanSample(conn, {}, null);

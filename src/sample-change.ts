@@ -985,17 +985,26 @@ async function recordPass(
   // reference. A sample whose reference it just moved takes the row under
   // the reference it had, provided no sample in the store still answers to
   // that reference: then the row may be another sample's, and the next full
-  // pass decides. The row under the old reference outranks one under the new,
-  // which can only be what a sample that is gone left behind.
+  // pass decides. A row already under the NEW reference is not this sample's
+  // either, since this sample was somewhere else when it was written. It may
+  // be what a sample that is gone left behind, or the row of a sample that
+  // has moved off that reference with its move not yet recorded, and
+  // patching over it would make the next full pass enter that sample as
+  // arriving (CodeRabbit on this branch). So the pass records nothing then,
+  // not even against that row, and the full pass decides.
   const arrivals = new Set<string>();
   if (opts.where != null && opts.was !== undefined && states.size === 1) {
     const [key] = [...states.keys()] as [string];
     if (opts.was === null) {
       if (!snapshot.has(key) && !contested.has(key)) arrivals.add(key);
     } else if (stateKey(opts.was) !== key && !contested.has(key)) {
-      const row = snapshot.get(stateKey(opts.was));
-      const [stillThere] = row === undefined ? [] : await read(tripleCountSql(opts.was));
-      if (row !== undefined && Number(stillThere?.n ?? 1) === 0) matched.set(key, row);
+      if (snapshot.has(key)) {
+        matched.delete(key);
+      } else {
+        const row = snapshot.get(stateKey(opts.was));
+        const [stillThere] = row === undefined ? [] : await read(tripleCountSql(opts.was));
+        if (row !== undefined && Number(stillThere?.n ?? 1) === 0) matched.set(key, row);
+      }
     }
   }
   const at = opts.at ?? new Date().toISOString();

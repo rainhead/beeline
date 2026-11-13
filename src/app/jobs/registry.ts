@@ -25,6 +25,7 @@ import { DEFAULT_QUERY_COPY_PATH, type AppConfig } from "../config.js";
 import { deploymentPath } from "../../deployment-path.js";
 import { describeManifest, writeProgramArchives } from "../program-archives.js";
 import { purgeIdleSessions } from "../session.js";
+import { revokeOrphanedKeys } from "../api-keys.js";
 import type { Job, JobContext } from "./framework.js";
 
 /** A fresh JWT per run (src/inat-jwt.ts); a failed mint aborts the job. */
@@ -362,6 +363,8 @@ export function buildJobs(
       window: "night",
       async run(ctx) {
         await ctx.step("purge idle sessions", () => purgeIdleSessions(ctx.db));
+        // Keys of accounts no longer linked to anyone (src/app/api-keys.ts).
+        await ctx.step("revoke orphaned API keys", () => revokeOrphanedKeys(ctx.db));
       },
     },
     {

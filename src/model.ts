@@ -160,6 +160,20 @@ export interface SessionTable {
   last_seen_at: Generated<Date>;
 }
 
+/** A personal API key (schema/012, beeline-pnqr.1). */
+export interface ApiKeyTable {
+  /** SHA-256 of the key, lowercase hex; never the key. */
+  key_sha256: string;
+  inat_user_id: BigIntCol;
+  name: string;
+  /** The most the key may do; a staff key still needs its person's person_admin row. */
+  scope: "read" | "edit" | "staff";
+  created_at: Generated<Date>;
+  expires_at: Timestamped;
+  last_used_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  revoked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+}
+
 
 /**
  * When somebody was last here, outliving the session that observed it —
@@ -1455,6 +1469,7 @@ export interface Database {
   animal_curation_stale: AnimalCurationStaleView;
   inat_sign_in: InatSignInTable;
   session: SessionTable;
+  api_key: ApiKeyTable;
   person_activity: PersonActivityTable;
   impersonation: ImpersonationTable;
 }

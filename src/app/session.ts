@@ -12,6 +12,14 @@ export interface Session {
   personId: number;
   /** iNat login: the account join is now inner, so there is always one. */
   login: string;
+  /**
+   * The iNat user the session was issued to, read from the session's own row
+   * as it was resolved. Making an API key checks the person's account is
+   * still this one (src/app/server.tsx, POST /keys). Absent on a session that
+   * did not come from a cookie (the dev login, a test's stand-in), where the
+   * person's account is looked up instead.
+   */
+  inatUserId?: bigint;
   /** iNat profile picture, cached at sign-in; null until they sign in again. */
   iconUrl: string | null;
   /**
@@ -87,7 +95,8 @@ const lifetimeCutoff = sql<Date>`current_timestamp - INTERVAL 90 DAY`;
 const slideDue = sql<Date>`current_timestamp - INTERVAL 5 MINUTE`;
 
 /**
- * Run one of the resolver's own writes, and let it lose.
+ * Run one of the resolver's own writes, and let it lose. The API's key
+ * resolver uses it for the same reason (src/app/api-keys.ts).
  *
  * DuckDB has no row locks: when two transactions update one row, the second
  * does not wait, it fails — `TransactionContext Error: Conflict on update!` —
@@ -106,7 +115,7 @@ const slideDue = sql<Date>`current_timestamp - INTERVAL 5 MINUTE`;
  * Only that class of error. Anything else — a store that will not take a
  * write at all — is still the request's problem.
  */
-async function bookkeeping(write: () => Promise<unknown>): Promise<void> {
+export async function bookkeeping(write: () => Promise<unknown>): Promise<void> {
   try {
     await write();
   } catch (err) {
@@ -199,7 +208,13 @@ export function cookieSessionResolver(db: Kysely<Database>, origin: string): Ses
         .execute(),
     );
     await bookkeeping(() => recordActivity(db, row.inat_user_id));
-    return { personId: row.person_id, login: row.login, iconUrl: row.icon_url, ref: sessionRef(id) };
+    return {
+      personId: row.person_id,
+      login: row.login,
+      inatUserId: BigInt(row.inat_user_id),
+      iconUrl: row.icon_url,
+      ref: sessionRef(id),
+    };
   };
 }
 

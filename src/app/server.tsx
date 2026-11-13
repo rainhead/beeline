@@ -15,6 +15,9 @@ import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
+import { createApi } from "./api.js";
+import { createKey, listKeys, offeredScopes, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
+import { KeysPage } from "./views/keys.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
@@ -345,15 +348,16 @@ export function createApp({
   // config.adminLogins is only the bootstrap seed now, applied at boot to a
   // store that has never granted anything; a revocation here therefore sticks.
   const cookies = cookieJar(config.origin);
-  const isAdmin = async (session: Session) => {
+  const isStaff = async (personId: number) => {
     if (config.environment === "development") return true;
     const row = await db
       .selectFrom("person_admin")
-      .where("person_id", "=", session.personId)
+      .where("person_id", "=", personId)
       .select("person_id")
       .executeTakeFirst();
     return row !== undefined;
   };
+  const isAdmin = (session: Session) => isStaff(session.personId);
   const app = new Hono<AppEnv>();
   // Outermost, so the time it records is the whole request, every middleware
   // after it included, and so it sees the status an error page settled on.
@@ -473,6 +477,11 @@ export function createApp({
   });
   app.use("/static/*", serveStatic({ root: "./src/app" }));
   app.use("/assets/*", serveStatic({ root: "./dist/app" }));
+  // The API (src/app/api.ts), ahead of the old Beeline's redirect of /api/*
+  // and ahead of the session gate: it answers to a key, never to a cookie.
+  // Any other address the old Beeline's redirects answer refuses a request
+  // that carries credentials, so the redirect cannot pass them on.
+  app.route("/api/v1", createApi({ db, isStaff }));
   // The old Beeline's addresses, until it closes (src/app/old-beeline.ts).
   registerOldBeelineRedirects(app);
   registerAuthRoutes(app, {
@@ -767,6 +776,92 @@ export function createApp({
       ),
     );
   };
+  // A person's own API keys (beeline-pnqr.1, src/app/api-keys.ts). Staff only
+  // until the API has something for a collector to read. The admin flag is
+  // off while impersonating, so none of this works then; while acting for
+  // someone under a grant, the list is still the signed-in person's and
+  // nothing can be made or revoked, because a key signs its holder in as its
+  // owner and a delegation does not hand that over.
+  const keyOwner = async (c: Context<AppEnv>) => {
+    const account = await db
+      .selectFrom("inat_account")
+      .select("inat_user_id")
+      .where("person_id", "=", c.get("session").personId)
+      .executeTakeFirst();
+    return account?.inat_user_id ?? null;
+  };
+  const showKeys = async (
+    c: Context<AppEnv>,
+    extra: { created?: { key: string; name: string }; problem?: CreateKeyProblem } = {},
+    status: 200 | 400 = 200,
+  ) => {
+    const owner = await keyOwner(c);
+    const m = c.get("m");
+    // The page may carry a key, which no cache should keep.
+    c.header("cache-control", "no-store");
+    return c.html(
+      await page(
+        c,
+        m.keys.title,
+        <KeysPage
+          m={m}
+          keys={owner === null ? [] : await listKeys(db, owner)}
+          scopes={offeredScopes(await isStaff(c.get("session").personId))}
+          created={extra.created}
+          problem={extra.problem}
+          acting={c.get("acting").actingFor !== null}
+          now={new Date()}
+        />,
+      ),
+      status,
+    );
+  };
+  app.get("/keys", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    return showKeys(c);
+  });
+  app.post("/keys", async (c) => {
+    if (!c.get("admin") || c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
+    // Whose account the session was for when the gate let it in: the iNat
+    // user on the session's own row, so there is no second lookup an account
+    // change could slip in ahead of. A session with no row behind it (the dev
+    // login) has its person's account looked up, before the wait for the form.
+    const signedInAs = c.get("session").inatUserId ?? (await keyOwner(c));
+    const form = await c.req.parseBody();
+    const text = (name: string) => (typeof form[name] === "string" ? (form[name] as string) : "");
+    // In the queue that runs account changes one at a time, with the form
+    // already read, so that whose account this is and the making of the key
+    // cannot have an unlink between them: the unlink revokes the account's
+    // keys, and a key made just after it would otherwise outlive it and work
+    // as whoever the account is linked to next. And refused if the person's
+    // account is not the one the session was for: staff changed it while the
+    // form was arriving, which ended that session, and a session that has
+    // ended must not go on to make a key for the account that replaced it.
+    const made = await oneDecisionAtATime(async () => {
+      const owner = await keyOwner(c);
+      if (owner === null || signedInAs === null || BigInt(owner) !== BigInt(signedInAs)) return null;
+      return createKey(db, {
+        inatUserId: owner,
+        name: text("name"),
+        scope: text("scope"),
+        lifetimeDays: /^\d+$/.test(text("lifetime")) ? Number(text("lifetime")) : NaN,
+        offered: offeredScopes(await isStaff(c.get("session").personId)),
+      });
+    });
+    if (made === null) return c.text(c.get("m").errors.forbidden, 403);
+    if ("problem" in made) return showKeys(c, { problem: made.problem }, 400);
+    // Answered with the page itself and not a redirect: the key exists
+    // nowhere but in this response, so there is nothing a second request
+    // could read it from.
+    return showKeys(c, { created: { key: made.key, name: text("name").trim() } });
+  });
+  app.post("/keys/:ref/revoke", async (c) => {
+    if (!c.get("admin") || c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
+    const owner = await keyOwner(c);
+    if (owner !== null) await revokeKey(db, owner, c.req.param("ref"));
+    return c.redirect("/keys");
+  });
+
   app.get("/", (c) => dashboardPage(c));
 
   // "Your bees" (beeline-fiay): the person's bees by collection year, and the
@@ -2434,6 +2529,40 @@ export function createApp({
     const before = d.personId === null ? undefined : (await stateOf(d.personId)).state;
     const applied = await applyPersonOverlay(conn, d.rows);
     const afterId = await d.findAfter();
+    // Whatever this account was, it stops being it now: a session issued under
+    // the old binding must not survive to be revived under the new one
+    // (beeline-ten), and neither must an API key (src/app/api-keys.ts). Both
+    // sides — the iNat user being taken away and the one being given — so
+    // neither a departing volunteer nor the person inheriting their account
+    // keeps a credential the other made. Done as soon as the store has
+    // changed and before anything else can fail or return: it used to come
+    // last, where a change log that could not be written, or another row of
+    // the same decision being refused, left the credentials standing.
+    //
+    // Only when the account really changed. The account form always sends
+    // the account, so saving it unchanged, or with only its login corrected,
+    // used to sign the person out; with keys it would also have revoked every
+    // one of them for nothing.
+    if (d.rows.some((r) => r.field === "inat_user_id")) {
+      const boundAfter =
+        afterId === null
+          ? undefined
+          : await db
+              .selectFrom("inat_account")
+              .select("inat_user_id")
+              .where("person_id", "=", afterId)
+              .executeTakeFirst();
+      const was = d.boundBefore === null ? null : BigInt(d.boundBefore);
+      const is = boundAfter === undefined ? null : BigInt(boundAfter.inat_user_id);
+      if (was !== is) {
+        for (const uid of [was, is]) {
+          if (uid !== null) {
+            await endSessionsFor(db, uid);
+            await revokeKeysFor(db, uid);
+          }
+        }
+      }
+    }
     // Recorded before the unresolved check, and against the same reference
     // the overlay row used: a decision that half applied still changed
     // somebody, and the history has to show what it did.
@@ -2478,24 +2607,6 @@ export function createApp({
       const hadRow = new Set(stood.map(rowKey));
       await removeOverlayKeys(overlayPath, [...refused].filter((k) => !hadRow.has(k)));
       return { applied: true, problem: applied.unresolved.map((u) => u.reason).join("; "), personId: afterId };
-    }
-    // Whatever this account was, it stops being it now: a session issued under
-    // the old binding must not survive to be revived under the new one
-    // (beeline-ten). Both sides — the iNat user being taken away and the one
-    // being given — so neither a departing volunteer nor the person inheriting
-    // their account keeps a cookie the other made.
-    if (d.rows.some((r) => r.field === "inat_user_id")) {
-      const boundAfter =
-        afterId === null
-          ? undefined
-          : await db
-              .selectFrom("inat_account")
-              .select("inat_user_id")
-              .where("person_id", "=", afterId)
-              .executeTakeFirst();
-      for (const uid of [d.boundBefore, boundAfter?.inat_user_id]) {
-        if (uid !== null && uid !== undefined) await endSessionsFor(db, uid);
-      }
     }
     return { applied: true, problem: null, personId: afterId };
   };

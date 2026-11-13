@@ -4,6 +4,7 @@ How each part of Beeline works, one file per area. Read the file for the area yo
 
 - [Store and schema](store-and-schema.md) — `schema/*.sql`, `migrations/NNNN-slug.sql`
 - [The app process, and its gate](the-app-process-and-its-gate.md) — `src/app/`, `src/app/theme/tokens.ts`
+- [The API and its keys](the-api-and-its-keys.md) — `src/app/api.ts`, `src/app/api-keys.ts`
 - [Browsing: scope, filters, sort](browsing-scope-filters-sort.md) — `src/app/listings.ts`, `src/app/views/listings.tsx`
 - [The front page](the-front-page.md) — `src/app/dashboard.ts`, `src/app/views/qc.tsx`
 - [Your bees](your-bees.md) — `schema/111_view_expert_identification.sql`, `src/app/your-bees.ts`, `src/app/views/your-bees.tsx`

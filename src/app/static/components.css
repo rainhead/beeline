@@ -748,3 +748,7 @@ ul.found-species { list-style: none; margin: 0; padding: 0; }
 .found-none, .found-none h3 { color: var(--md-sys-color-on-surface-variant); }
 details.found-by-others > summary { cursor: pointer; font-size: 0.875rem; color: var(--md-sys-color-on-surface-variant); margin-top: var(--space-1); }
 details.found-by-others ul.found-species { color: var(--md-sys-color-on-surface-variant); }
+
+/* A secret shown once (a new API key): one click selects all of it, and it
+   wraps instead of running off a phone's screen. */
+code.secret { user-select: all; overflow-wrap: anywhere; }

@@ -1,4 +1,5 @@
 import type { Env, Hono } from "hono";
+import { refuseStrayCredentials } from "./api.js";
 
 /**
  * Where the old Beeline runs from cutover (beeline-83b8.12). New Beeline takes
@@ -41,9 +42,12 @@ export function registerOldBeelineRedirects<E extends Env>(app: Hono<E>): void {
     const { pathname, search } = new URL(url);
     return `${OLD_BEELINE_ORIGIN}${pathname}${search}`;
   };
+  // A request carrying credentials is refused and never redirected, so an API
+  // key sent to the wrong path is not passed on to the old Beeline's server
+  // (src/app/api.ts).
   for (const page of OLD_BEELINE_PAGES) {
-    app.get(page, (c) => c.redirect(target(c.req.url), 302));
+    app.get(page, refuseStrayCredentials, (c) => c.redirect(target(c.req.url), 302));
   }
   // The old interface's API, should anything still call it here.
-  app.all("/api/*", (c) => c.redirect(target(c.req.url), 307));
+  app.all("/api/*", refuseStrayCredentials, (c) => c.redirect(target(c.req.url), 307));
 }

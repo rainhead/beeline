@@ -367,18 +367,22 @@ describe("sample corrections: a correction that saves", () => {
         await recordSampleChanges(duckdbReader(s.conn), s.deps.samplePaths, { source: "observation_promotion" });
       });
       const moved = setCoordinates(s.deps, s.sam, s.linked, { ...coordinates, note: "from the field notebook" });
-      // The point is written and entered in the history, and the correction is
-      // waiting on the lock to derive from it; then the check finishes. (Waiting
-      // for the entry, not just the point: a check that ended in the instant
-      // between the two could still take the point for its own, as any writer
-      // that records state after the fact can.)
-      await vi.waitFor(async () =>
-        expect((await readSampleChanges(s.paths.sampleChangesPath)).some((c) => c.author === "samstaff" && c.field.startsWith("location"))).toBe(
-          true,
-        ),
-      );
-      endCheck();
-      await check;
+      try {
+        // The point is written and entered in the history, and the correction is
+        // waiting on the lock to derive from it; then the check finishes. (Waiting
+        // for the entry, not just the point: a check that ended in the instant
+        // between the two could still take the point for its own, as any writer
+        // that records state after the fact can.)
+        await vi.waitFor(async () =>
+          expect(
+            (await readSampleChanges(s.paths.sampleChangesPath)).some((c) => c.author === "samstaff" && c.field.startsWith("location")),
+          ).toBe(true),
+        );
+      } finally {
+        // Whatever happened above, let go of the lock and the sample's turn, or every later test waits on them.
+        endCheck();
+        await check;
+      }
       expect(await moved).toMatchObject({ ok: true });
       const changes = (await readSampleChanges(s.paths.sampleChangesPath)).filter((c) => c.field.startsWith("location"));
       expect(changes.length).toBeGreaterThan(0);

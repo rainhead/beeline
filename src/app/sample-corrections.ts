@@ -267,15 +267,16 @@ export async function adoptLocality(
   const sample = await loadSample(deps.db, sampleId, actor.personId, readerFor(actor));
   if (sample === null || (!sample.mine && !actor.staff)) return refused("not_found");
   if (sample.printed) return refused("printed");
-  const form = await resolveInput(input);
   const writeDeps = { db: deps.db, conn: deps.conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath };
   const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
   // Who set the locality standing over the observation, if anyone: a
   // locality someone else set stands until they change it, so a collector
-  // may not replace it. Staff may replace any.
+  // may not replace it. Staff may replace any. Nothing here reads the form,
+  // so a refusal is made before the form is.
   const standing =
     sample.inat_observation_id === null ? null : await standingLocalityAuthor(deps.sampleOverlayPath, sample.inat_observation_id);
   if (standing !== null && standing !== actor.login && !actor.staff) return refused("set_by_other");
+  const form = await resolveInput(input);
   // The suggestion or one of the alternatives (beeline-4hxe), as the
   // store holds them now: a name the page showed that is no longer
   // offered is refused rather than adopted unseen.
@@ -330,12 +331,14 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
     // locality form let them (beeline-649). A sample entered in Beeline is
     // refused below whoever asks: its own form refuses it too.
     if (sample.printed && !admin) return refused("printed");
-    const form = await resolveInput(input);
     // A sample entered in Beeline has no old Beeline record to correct: its
     // locality is written directly, by whoever may edit it, any name they
-    // like, as on its own form (beeline-3vs.5).
-    if (enteredHere && conn !== undefined && printWriter !== undefined) {
-      if (!(await mayEditTrapSample(conn, sample.sample_id, actor.personId, admin))) return refused("not_found");
+    // like, as on its own form (beeline-3vs.5). Who may edit it does not
+    // depend on the form, so that refusal is made before the form is read.
+    const trap = enteredHere && conn !== undefined && printWriter !== undefined;
+    if (trap && !(await mayEditTrapSample(conn, sample.sample_id, actor.personId, admin))) return refused("not_found");
+    const form = await resolveInput(input);
+    if (trap) {
       const name = form.locality.trim();
       // Blank clears it, as on the form.
       if (name === (sample.locality ?? "")) return { ok: true };

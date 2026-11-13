@@ -13,7 +13,7 @@ import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
 import { duckdbReader } from "../src/person-change.js";
 import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js";
-import { readSampleOverlay } from "../src/sample-overlay.js";
+import { readSampleOverlay, upsertSampleOverlay } from "../src/sample-overlay.js";
 import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 /**
@@ -201,5 +201,19 @@ describe("a refused request is answered without reading its form", () => {
       const res = await h.send(`/samples/999999/${route}`, truncated());
       expect([route, res.status]).toEqual([route, 404]);
     }
+  });
+
+  it("answers a locality somebody else set, and a trap sample the actor may not edit", async () => {
+    const h = await household();
+    await upsertSampleOverlay(h.sampleOverlayPath, [
+      { sample_ref: "inat:998877", field: "locality", base_value: "", value: "Elsewhere", author: "lori", reason: "" },
+    ]);
+    const acting = cookieFor("Robert Pederson");
+    expect((await h.send(`/samples/${h.linked}/suggested-locality`, truncated(acting))).status).toBe(403);
+    // A sample entered in Beeline by somebody else is reachable by the place editor, but not editable.
+    const [[robert]] = (await rows(h.conn, `SELECT entity_id FROM person WHERE display_name = 'Robert Pederson'`)) as [[number]];
+    const entered = await insertCleanSample(h.conn, { collector_id: String(robert), sample_number: "'T-1'" });
+    await h.conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES (${entered}, ${Number(robert)})`);
+    expect((await h.send(`/samples/${entered}/place`, truncated())).status).toBe(404);
   });
 });

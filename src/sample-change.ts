@@ -109,9 +109,11 @@ export interface SampleChange {
  * the writers that never touch a sample — the account backfill binds people
  * and nothing else — so the record page's label map is pinned to exactly the
  * sources that can appear here, and a person-only source cannot be recorded
- * against a sample by a typo.
+ * against a sample by a typo. `api` is a correction made through the API
+ * (beeline-pnqr.6): it has an author, like `app`, and says only which door the
+ * change came through.
  */
-export const SAMPLE_CHANGE_SOURCES = ["app", "legacy_promotion", "observation_promotion", "reconcile", "coordinates"] as const;
+export const SAMPLE_CHANGE_SOURCES = ["app", "api", "legacy_promotion", "observation_promotion", "reconcile", "coordinates"] as const;
 export type SampleChangeSource = (typeof SAMPLE_CHANGE_SOURCES)[number];
 
 const LOG_COLUMNS = [

@@ -1008,6 +1008,8 @@ export const en = {
       colWhat: "What",
       colChange: "Change",
       colWho: "Who",
+      /** Shown beside the author of a change that came through the API rather than a page. */
+      viaApi: "through the API",
       set: "set to",
       cleared: "cleared — was",
       blank: "nothing",
@@ -1038,6 +1040,7 @@ export const en = {
       },
       source: {
         app: "staff",
+        api: "the API",
         legacy_promotion: "the import from old Beeline",
         observation_promotion: "iNaturalist",
         reconcile: "found at startup",

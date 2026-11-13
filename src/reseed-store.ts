@@ -95,6 +95,7 @@ export const CARRIED_TABLES = [
   "inat_sign_in",
   "session",
   "api_key",
+  "api_key_use",
   "person_activity",
   "impersonation",
 ] as const;
@@ -243,16 +244,27 @@ export async function carryStaging(
       await conn.run(`INSERT INTO ecdysis_taxon BY NAME SELECT * FROM old.ecdysis_taxon`);
       await count("ecdysis_taxon");
     }
-    // Who has signed in, their sessions and API keys, when they were last here and who
-    // viewed Beeline as them (schema/012). Keyed by iNat user id and by name,
-    // never by an entity_id, so they come across as they are — and they did
-    // survive a reseed while they lived in the private store, a file a reseed
-    // never touched (beeline-4tdh).
+    // Who has signed in, their sessions, API keys, when they were last here and
+    // who viewed Beeline as them (schema/012). Keyed by iNat user id and by
+    // name, never by an entity_id, so they come across as they are — and they
+    // did survive a reseed while they lived in the private store, a file a
+    // reseed never touched (beeline-4tdh).
     for (const table of ["inat_sign_in", "session", "api_key", "person_activity", "impersonation"]) {
       if (await has(table)) {
         await conn.run(`INSERT INTO ${table} BY NAME SELECT * FROM old.${table}`);
         await count(table);
       }
+    }
+    // What the API keys did comes across too, with one exception to that rule:
+    // the subject of a request about a sample is the sample's entity_id, which
+    // this reseed redraws, so it would name a different sample afterwards. It
+    // is left empty there. A job's name is kept (beeline-pnqr.6).
+    if (await has("api_key_use")) {
+      await conn.run(
+        `INSERT INTO api_key_use BY NAME
+         SELECT * REPLACE (CASE WHEN route LIKE '/api/v1/samples/%' THEN NULL ELSE subject END AS subject) FROM old.api_key_use`,
+      );
+      await count("api_key_use");
     }
 
     const leftBehind = {

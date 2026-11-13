@@ -94,6 +94,21 @@ describe("starting and watching jobs through the API", () => {
     });
   });
 
+  it("records starting a job in the key's record of use, with the caller's reference when it gave one", async () => {
+    const { app, conn, staffKey, idle } = await fixture();
+    const start = (body?: string) => app.request("/api/v1/jobs/quick", { method: "POST", headers: { authorization: `Bearer ${staffKey}` }, body });
+    expect((await start(JSON.stringify({ reference: "gmail:msg-18c2f" }))).status).toBe(202);
+    await idle();
+    expect((await start()).status).toBe(202);
+    await idle();
+    expect((await start(JSON.stringify({ colour: "red" }))).status).toBe(400);
+    expect(await rows(conn, `SELECT route, subject, outcome, reference, status FROM api_key_use ORDER BY used_at`)).toEqual([
+      ["/api/v1/jobs/:name", "quick", "started", "gmail:msg-18c2f", 202],
+      ["/api/v1/jobs/:name", "quick", "started", null, 202],
+      ["/api/v1/jobs/:name", "quick", "invalid_request", null, 400],
+    ]);
+  });
+
   it("answers while the job is still running, and refuses a second job until it ends", async () => {
     const { ask, staffKey, finish, idle, scheduler } = await fixture();
     const started = await ask("/api/v1/jobs/long", staffKey, "POST");

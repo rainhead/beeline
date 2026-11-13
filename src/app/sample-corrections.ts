@@ -440,17 +440,19 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
     if (sample === null) return refused("not_found");
     const enteredHere = conn !== undefined && (await loadTrapSample(conn, sample.sample_id)) !== null;
     if (!sample.mine && !admin && !enteredHere) return refused("not_found");
+    // A sample entered in Beeline has no old Beeline record to correct: its
+    // locality is written directly, by whoever may edit it, any name they
+    // like, as on its own form (beeline-3vs.5). Who may edit it does not
+    // depend on the form, so that refusal is made before the form is read.
+    // It comes before the printed check: a person who may not edit the sample
+    // is told it is not found, and "printed" would say that it exists.
+    const trap = enteredHere && conn !== undefined && printWriter !== undefined;
+    if (trap && !(await mayEditTrapSample(conn, sample.sample_id, actor.personId, admin))) return refused("not_found");
     // A printed sample's locality is what its labels say, so only staff
     // change it, correcting the record before a reprint, as the staff
     // locality form let them (beeline-649). A sample entered in Beeline is
     // refused below whoever asks: its own form refuses it too.
     if (sample.printed && !admin) return refused("printed");
-    // A sample entered in Beeline has no old Beeline record to correct: its
-    // locality is written directly, by whoever may edit it, any name they
-    // like, as on its own form (beeline-3vs.5). Who may edit it does not
-    // depend on the form, so that refusal is made before the form is read.
-    const trap = enteredHere && conn !== undefined && printWriter !== undefined;
-    if (trap && !(await mayEditTrapSample(conn, sample.sample_id, actor.personId, admin))) return refused("not_found");
     return { ready: { sample, trap } };
   };
   return correct(sampleId, input, gates, async ({ sample, trap }, form): Promise<SetPlaceResult> => {

@@ -184,6 +184,10 @@ export interface ApiKeyUseTable {
   route: string;
   /** The sample's id or the job's name, where the route names one. */
   subject: string | null;
+  /** What the handler answered; null where none said. */
+  outcome: string | null;
+  /** The caller's pointer to the request behind the change; null when none was given. */
+  reference: string | null;
   status: number;
 }
 

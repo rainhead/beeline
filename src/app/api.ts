@@ -3,8 +3,8 @@ import { HTTPException } from "hono/http-exception";
 import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { hashKey, keyRateLimiter, keyRef, resolveKey, type KeyHolder } from "./api-keys.js";
-import { inArrivalOrder, registerCorrectionRoutes } from "./api-corrections.js";
-import { bookkeeping } from "./session.js";
+import { BadBody, check, parseObject, referenceOf, registerCorrectionRoutes, smallBody } from "./api-corrections.js";
+import { isWriteConflict } from "../write-conflict.js";
 import type { CorrectionDeps } from "./sample-corrections.js";
 import type { Messages } from "./messages/index.js";
 import { reportAppError } from "./error-reporting.js";
@@ -34,6 +34,17 @@ export type ApiEnv = {
      * taking the rights away stops the key at once.
      */
     staff: boolean;
+    /**
+     * What the handler answered, for the record of the request
+     * (`api_key_use.outcome`): `saved`, `removed`, `unchanged`, `would_save`,
+     * a refusal's name, `recorded_not_applied`, `started`. Unset where no
+     * handler said.
+     */
+    outcome?: string;
+    /** Set by the catch-all: no route answered, so there is nothing to record. */
+    noRoute?: boolean;
+    /** The caller's pointer to the request behind this one (`api_key_use.reference`). */
+    reference?: string;
   };
 };
 
@@ -94,7 +105,10 @@ export const refuseStrayCredentials: MiddlewareHandler = async (c, next) => {
 
 /** Refuses a key that may not do what staff do. */
 const requireStaff: MiddlewareHandler<ApiEnv> = async (c, next) => {
-  if (!c.get("staff")) return apiError(c, 403, "forbidden", "This needs a staff key held by someone who is staff.");
+  if (!c.get("staff")) {
+    c.set("outcome", "forbidden");
+    return apiError(c, 403, "forbidden", "This needs a staff key held by someone who is staff.");
+  }
   await next();
 };
 
@@ -107,34 +121,35 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs, corre
     return apiError(c, 500, "failed", "Something went wrong on Beeline's side.", { reference });
   });
 
-  // Which key made each request that is not a read, written once the request
-  // has been answered (beeline-pnqr.6). First, so that it sees the answer
-  // whoever gave it. A request with no working key has no key to name, and is
-  // not recorded. Losing this write never fails the request: the answer is
-  // already decided, and a write conflict is the one failure expected.
+  // Which key made each request that is not a read, and what came of it,
+  // written once the request has been answered (beeline-pnqr.6). First, so
+  // that it sees the answer whoever gave it. A request with no working key has
+  // no key to name, and one that no route answered has nothing to say, so
+  // neither is recorded. Losing this write never fails the request, since the
+  // answer is already decided, but it is logged, a write conflict included: a
+  // missing row is a gap in the trace from a change to a key.
   api.use(async (c, next) => {
     await next();
-    if (c.req.method === "GET" || c.req.method === "HEAD" || c.get("key") === undefined) return;
+    if (c.req.method === "GET" || c.req.method === "HEAD" || c.get("key") === undefined || c.get("noRoute") === true) return;
     try {
       const subject = c.req.param("id") ?? c.req.param("name");
-      await bookkeeping(() =>
-        db
-          .insertInto("api_key_use")
-          .values({
-            key_sha256: hashKey(bearerKey(c)!),
-            method: c.req.method,
-            route: c.req.routePath,
-            subject: subject === undefined ? null : subject.slice(0, 200),
-            status: c.res.status,
-          })
-          .execute(),
-      );
+      await db
+        .insertInto("api_key_use")
+        .values({
+          key_sha256: hashKey(bearerKey(c)!),
+          method: c.req.method,
+          route: c.req.routePath,
+          subject: subject === undefined ? null : subject.slice(0, 200),
+          outcome: c.get("outcome") ?? null,
+          reference: c.get("reference") ?? null,
+          status: c.res.status,
+        })
+        .execute();
     } catch (err) {
-      console.warn(`[api] could not record the use of key ${c.get("key").ref}: ${(err as Error).message}`);
+      const why = isWriteConflict(err) ? "a write conflict" : (err as Error).message;
+      console.warn(`[api] could not record the use of key ${c.get("key").ref}: ${why}`);
     }
   });
-
-  api.on("POST", "/samples/*", inArrivalOrder);
 
   api.use(async (c, next) => {
     // An answer may hold a person's records, and none is worth caching.
@@ -315,12 +330,30 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs, corre
   // Start a job now. Answers as soon as the run is recorded, while the job
   // goes on, with the run to watch at GET /jobs/runs/<id>. One job runs at a
   // time, so a busy scheduler is a 409 that names what is running.
-  api.post("/jobs/:name", async (c) => {
+  api.post("/jobs/:name", smallBody, async (c) => {
     const name = c.req.param("name");
-    if (jobs?.startRun === undefined) return apiError(c, 404, "not found", `No job is called ${JSON.stringify(name)}.`);
+    // An optional body, `{ "reference": "..." }`: a pointer to the request
+    // behind the start, kept in the record of the key's use. No body, or an
+    // empty one, is as it always was; anything else in it is refused.
+    try {
+      const text = await c.req.text();
+      if (text.trim() !== "") c.set("reference", referenceOf(check(parseObject(text), { reference: "string" })));
+    } catch (err) {
+      if (!(err instanceof BadBody)) throw err;
+      c.set("outcome", "invalid_request");
+      return apiError(c, 400, "invalid_request", err.message);
+    }
+    if (jobs?.startRun === undefined) {
+      c.set("outcome", "not_found");
+      return apiError(c, 404, "not found", `No job is called ${JSON.stringify(name)}.`);
+    }
     const started = await jobs.startRun(name);
-    if (started.status === "unknown") return apiError(c, 404, "not found", `No job is called ${JSON.stringify(name)}.`);
+    if (started.status === "unknown") {
+      c.set("outcome", "not_found");
+      return apiError(c, 404, "not found", `No job is called ${JSON.stringify(name)}.`);
+    }
     if (started.status === "busy") {
+      c.set("outcome", "busy");
       return apiError(
         c,
         409,
@@ -335,6 +368,7 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs, corre
     // Who started it: the run's row has no column for that yet (beeline-pnqr.7), so the log carries it.
     console.log(`[api] ${key.login} started job '${name}' as run ${started.runId} with key ${key.ref}`);
     const run = await db.selectFrom("job_run").select(runColumns).where("entity_id", "=", started.runId).executeTakeFirstOrThrow();
+    c.set("outcome", "started");
     c.header("location", `/api/v1/jobs/runs/${started.runId}`);
     return c.json({ run: describeRun(run, new Set([started.runId])) }, 202);
   });
@@ -344,7 +378,10 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs, corre
 
   // After the key check on purpose: someone without a key learns nothing
   // about which paths exist.
-  api.all("*", (c) => apiError(c, 404, "not found", "No such endpoint."));
+  api.all("*", (c) => {
+    c.set("noRoute", true);
+    return apiError(c, 404, "not found", "No such endpoint.");
+  });
 
   return api;
 }

@@ -2,8 +2,7 @@ import type { Context, Hono, MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { isWriteConflict } from "../write-conflict.js";
-import { apiError, bearerKey, type ApiEnv } from "./api.js";
-import { keyRef } from "./api-keys.js";
+import { apiError, type ApiEnv } from "./api.js";
 import { localityReasonFor, takeLocationDefaultReason } from "./correction-reasons.js";
 import type { Messages } from "./messages/index.js";
 import { EDITABLE_FIELDS, type EditableFieldName } from "./sample-edit.js";
@@ -75,7 +74,7 @@ const REFUSALS = {
   busy: {
     status: 409,
     error: "busy",
-    message: "The nightly run or the weekly sweep is running, and a point cannot be changed until it ends. Try again later.",
+    message: "The nightly run or the weekly sweep is running, and it rewrites samples, so no correction is taken until it ends. Nothing was done. Try again later.",
   },
   not_moved: {
     status: 409,
@@ -105,7 +104,8 @@ type AnyFailure = Extract<
 >;
 
 /** A refused correction as the API answers it. The switch ends in `unreachable`, so a new refusal fails the typecheck. */
-function refusalResponse(c: Context, failure: AnyFailure) {
+function refusalResponse(c: Context<ApiEnv>, failure: AnyFailure) {
+  c.set("outcome", failure.refusal);
   switch (failure.refusal) {
     case "invalid":
       return apiError(c, 422, "invalid", failure.problem);
@@ -133,54 +133,23 @@ function refusalResponse(c: Context, failure: AnyFailure) {
   }
 }
 
-// --- Keeping the order a program sent them in --------------------------------
-
-const tails = new Map<string, Promise<void>>();
-
-/**
- * One correction request at a time for each key, in the order the requests
- * arrived. A correction takes its turn of its sample's queue the moment it is
- * called, so corrections keep the order they are called in, but two requests
- * do not reach that call in the order they arrived: each first looks the key up
- * in the store, and how long that takes varies. Without this, a program that
- * sent a hold and then lifted it, without waiting for the first answer, had
- * them applied in either order (found by the test of the order, one run in
- * about three). It is registered first, so the place in line is taken before
- * anything that waits, and it is for one key's requests only: nobody else's
- * wait for them. The price is that a key's next correction waits for the one
- * ahead, which may itself wait for the nightly's lock after moving a point.
- */
-export const inArrivalOrder: MiddlewareHandler = async (c, next) => {
-  const bearer = bearerKey(c);
-  if (bearer === null) return next();
-  // By the key's reference and not the key, so the key is not held in a map.
-  const header = keyRef(bearer);
-  const ahead = tails.get(header) ?? Promise.resolve();
-  let leave!: () => void;
-  const mine = new Promise<void>((resolve) => (leave = resolve));
-  const tail = ahead.then(() => mine);
-  tails.set(header, tail);
-  await ahead;
-  try {
-    await next();
-  } finally {
-    leave();
-    if (tails.get(header) === tail) tails.delete(header);
-  }
-};
-
 // --- Reading the body ------------------------------------------------------
 
 type Body = Record<string, unknown>;
 type Field = "string" | "boolean" | "text_or_number" | "strings";
 
-class BadBody extends Error {}
+export class BadBody extends Error {}
 
 /** Parse the JSON body as an object, or say why not. Read only after the rules that need no body have passed. */
 async function readBody(c: Context): Promise<Body> {
+  return parseObject(await c.req.text());
+}
+
+/** Parse text as a JSON object, or say why not. */
+export function parseObject(text: string): Body {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await c.req.text());
+    parsed = JSON.parse(text);
   } catch {
     throw new BadBody("The request body must be JSON.");
   }
@@ -189,19 +158,51 @@ async function readBody(c: Context): Promise<Body> {
 }
 
 /**
+ * The caller's reference for the request, if it gave one: the message that
+ * asked for the change, or a link to the issue. One to 500 characters once
+ * trimmed, and an empty one is none. It is recorded with the request
+ * (`api_key_use.reference`) and goes no further: the correction never sees it.
+ */
+export function referenceOf(body: Body): string | undefined {
+  const value = Object.hasOwn(body, "reference") ? body.reference : undefined;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+/** The most characters a value of each kind may have: what a label can hold, and room for a note. */
+const MAX_VALUE_CHARS = 500;
+const MAX_NOTE_CHARS = 2000;
+/** Control characters, which have no place on a printed label: everything below U+0020, and U+007F. */
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
+/**
+ * Check one string a program sent. Text sent here ends up on printed labels
+ * and in the history, so a control character is refused, and each kind of
+ * text has a longest length. The answer names the field.
+ */
+function checkText(label: string, value: string, max: number): void {
+  if (CONTROL.test(value)) throw new BadBody(`${label} must not contain control characters, such as a line break or a tab.`);
+  if (value.length > max) throw new BadBody(`${label} may be at most ${max} characters.`);
+}
+
+/**
  * Check a body against the fields an endpoint takes: no other field, and each
  * of the right type. A misspelt field is refused by name, and is never read as
- * absent. `dry_run` gets its own sentence, since a program that sends it to an
- * endpoint without a dry run would otherwise think it had not written.
+ * absent. The fields are the endpoint's own, not whatever an object inherits,
+ * so `toString` and `__proto__` are unknown fields like any other. `dry_run`
+ * gets its own sentence, since a program that sends it to an endpoint without
+ * a dry run would otherwise think it had not written.
  */
-function check(body: Body, fields: Record<string, Field>, required: string[] = []): Body {
+export function check(body: Body, fields: Record<string, Field>, required: string[] = []): Body {
+  const takes = (name: string) => Object.hasOwn(fields, name);
   for (const name of Object.keys(body)) {
-    if (name === "dry_run" && !("dry_run" in fields)) throw new BadBody("Dry runs exist only for edit. Nothing was done.");
-    if (!(name in fields)) throw new BadBody(`${JSON.stringify(name)} is not a field of this request.`);
+    if (name === "dry_run" && !takes("dry_run")) throw new BadBody("Dry runs exist only for edit. Nothing was done.");
+    if (!takes(name)) throw new BadBody(`${JSON.stringify(name)} is not a field of this request.`);
   }
-  for (const name of required) if (!(name in body)) throw new BadBody(`${JSON.stringify(name)} is required.`);
+  for (const name of required) if (!Object.hasOwn(body, name)) throw new BadBody(`${JSON.stringify(name)} is required.`);
   for (const [name, kind] of Object.entries(fields)) {
-    const value = body[name];
+    const value = Object.hasOwn(body, name) ? body[name] : undefined;
     if (value === undefined) continue;
     const ok =
       kind === "string"
@@ -215,6 +216,14 @@ function check(body: Body, fields: Record<string, Field>, required: string[] = [
       const wants = { string: "a string", boolean: "true or false", text_or_number: "a string or a number", strings: "an object whose values are strings" }[kind];
       throw new BadBody(`${JSON.stringify(name)} must be ${wants}.`);
     }
+    // Text is held to the same limits wherever it sits: a note is longer than a name.
+    const limit = name === "note" ? MAX_NOTE_CHARS : MAX_VALUE_CHARS;
+    // A reference is counted once trimmed, since an empty one is none.
+    if (typeof value === "string") checkText(JSON.stringify(name), name === "reference" ? value.trim() : value, limit);
+    else if (typeof value === "number") continue;
+    else if (kind === "strings") {
+      for (const [field, text] of Object.entries(value as Record<string, string>)) checkText(`${JSON.stringify(field)} in ${name}`, text, limit);
+    }
   }
   return body;
 }
@@ -225,11 +234,11 @@ const isStringMap = (v: unknown): v is Record<string, string> =>
 const EDITABLE = EDITABLE_FIELDS.map((f) => f.name) as readonly string[];
 
 /** The fields of a collector's edit: only the five a sample may be edited by, never another name. */
-function editableFields(name: "values" | "bases", map: Record<string, string> | undefined): Partial<Record<EditableFieldName, string>> {
+function editableFields(map: Record<string, string>): Partial<Record<EditableFieldName, string>> {
   const out: Partial<Record<EditableFieldName, string>> = {};
-  for (const [field, value] of Object.entries(map ?? {})) {
+  for (const [field, value] of Object.entries(map)) {
     if (!EDITABLE.includes(field)) {
-      throw new BadBody(`${JSON.stringify(field)} in ${name} is not a field that can be edited. They are: ${EDITABLE.join(", ")}.`);
+      throw new BadBody(`${JSON.stringify(field)} in values is not a field that can be edited. They are: ${EDITABLE.join(", ")}.`);
     }
     out[field as EditableFieldName] = value;
   }
@@ -237,6 +246,15 @@ function editableFields(name: "values" | "bases", map: Record<string, string> | 
 }
 
 const text = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
+
+/** The body-size cap every endpoint that reads a body has. */
+export const smallBody: MiddlewareHandler<ApiEnv> = bodyLimit({
+  maxSize: MAX_BODY_BYTES,
+  onError: (c) => {
+    c.set("outcome", "too_large");
+    return apiError(c, 413, "too large", `The request body may be at most ${MAX_BODY_BYTES / 1024} KB.`);
+  },
+});
 
 // --- The routes ------------------------------------------------------------
 
@@ -263,30 +281,27 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
       via: "api",
     });
 
-  // A key that may only read corrects nothing. Asked before the body is read
-  // and before any sample is loaded, so it costs the store nothing.
-  api.on("POST", "/samples/*", async (c, next) => {
+  /**
+   * A key that may only read corrects nothing. Asked before the body is read
+   * and before any sample is loaded, so it costs the store nothing. It is part
+   * of each route, and not a check ahead of them, so a refusal is recorded
+   * under the route it was for.
+   */
+  const mayCorrect: MiddlewareHandler<ApiEnv> = async (c, next) => {
     if (key(c).scope === "read") {
+      c.set("outcome", "forbidden");
       return apiError(c, 403, "forbidden", "This key may only read. Make a key that may edit to correct a sample.");
     }
     await next();
-  });
-  api.on(
-    "POST",
-    "/samples/*",
-    bodyLimit({
-      maxSize: MAX_BODY_BYTES,
-      onError: (c) => apiError(c, 413, "too large", `The request body may be at most ${MAX_BODY_BYTES / 1024} KB.`),
-    }),
-  );
-
+  };
   /**
    * One correction endpoint: the sample's id, the body read and checked, the
    * correction called with the input as a value (never a function, so it takes
-   * its turn at once and a program's corrections keep the order they were
-   * sent in), and a refusal or a conflict turned into an answer.
+   * its turn of the sample's queue at once), and a refusal or a conflict turned
+   * into an answer. Requests sent together may be applied in either order; a
+   * program that needs one correction after another waits for the first answer.
    */
-  const endpoint = <Input, Result extends { ok: boolean }>(
+  const endpoint = <Input, Result extends { ok: boolean; outcome?: string }>(
     path: string,
     read: (body: Body) => Input,
     fields: Record<string, Field>,
@@ -294,46 +309,74 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
     call: (deps: CorrectionDeps, actor: Actor, id: number, input: Input) => Promise<Result>,
     answer: (result: Extract<Result, { ok: true }>, input: Input) => Record<string, unknown>,
   ) =>
-    api.post(`/samples/:id/${path}`, async (c) => {
+    api.post(`/samples/:id/${path}`, mayCorrect, smallBody, async (c) => {
       const raw = c.req.param("id");
-      if (!/^[1-9]\d{0,9}$/.test(raw) || Number(raw) > 2_147_483_647) return apiError(c, 404, "not found", "No such sample.");
+      if (!/^[1-9]\d{0,9}$/.test(raw) || Number(raw) > 2_147_483_647) {
+        c.set("outcome", "not_found");
+        return apiError(c, 404, "not found", "No such sample.");
+      }
       const id = Number(raw);
-      if (deps === undefined) return apiError(c, 503, "unavailable", REFUSALS.unavailable.message);
+      if (deps === undefined) {
+        c.set("outcome", "unavailable");
+        return apiError(c, 503, "unavailable", REFUSALS.unavailable.message);
+      }
       let input: Input;
       try {
-        input = read(check(await readBody(c), fields, required));
+        const body = check(await readBody(c), { ...fields, reference: "string" }, required);
+        input = read(body);
+        // Recorded with the request and passed no further, a refusal included.
+        c.set("reference", referenceOf(body));
       } catch (err) {
-        if (err instanceof BadBody) return apiError(c, 400, "invalid_request", err.message);
+        if (err instanceof BadBody) {
+          c.set("outcome", "invalid_request");
+          return apiError(c, 400, "invalid_request", err.message);
+        }
         throw err;
       }
+      // Asked here and not in the functions, so the pages are as they were.
+      // The nightly run and the weekly sweep rewrite samples wholesale and are
+      // the main source of write conflicts, so while one runs the API takes
+      // no correction at all.
+      if (deps.syncJobRunning()) return refusalResponse(c, { ok: false, refusal: "busy" });
       let result: Result;
       try {
         result = await call(deps, actorOf(c), id, input);
       } catch (err) {
         // A save does not retry on a write conflict (docs/architecture/ingestion-jobs-and-elevation.md),
         // so the caller is told and may send it again.
+        // The correction writes its file first and then the store, so by now
+        // the file holds the change and the next promotion applies it.
         if (isWriteConflict(err)) {
-          return apiError(c, 409, "conflict", "Another write to the store got there first. Beeline did not retry. Send the request again if you still want it.");
+          c.set("outcome", "recorded_not_applied");
+          return apiError(
+            c,
+            409,
+            "recorded_not_applied",
+            "Your change is recorded, but Beeline could not finish applying it because another write to the store got there first. It will be applied the next time Beeline brings its records up to date, which is nightly, so it may not be visible yet. Sending the same request again is safe, and applies it now.",
+          );
         }
         throw err;
       }
       if (!result.ok) return refusalResponse(c, result as unknown as AnyFailure);
+      c.set("outcome", (result as { outcome?: string }).outcome);
       return done(c, id, answer(result as Extract<Result, { ok: true }>, input));
     });
 
-  // The collector's edit. `bases` are the values the caller last saw, as the
-  // form's hidden fields are: a field sent equal to its base was never
-  // touched, so a program working from an older read cannot undo a newer save.
-  // A field with no base is compared with what the sample holds now.
+  // The collector's edit. A field sent equal to what the sample holds now is
+  // not a change. (The page's `bases`, which tell a touched field from a stale
+  // prefill, are not offered: a program sends what it means to change.)
   endpoint(
     "edit",
     (b): EditSampleInput => ({
-      values: editableFields("values", b.values as Record<string, string>),
-      bases: editableFields("bases", b.bases as Record<string, string> | undefined),
+      values: editableFields(b.values as Record<string, string>),
+      // A program sends only what it means to change, so there is no stale form
+      // to tell from: with no bases, a field equal to what the sample holds now
+      // is not a change.
+      bases: {},
       note: b.note as string | undefined,
       dryRun: b.dry_run === true,
     }),
-    { values: "strings", bases: "strings", note: "string", dry_run: "boolean" },
+    { values: "strings", note: "string", dry_run: "boolean" },
     ["values"],
     editSample,
     (r, input) => ({ outcome: r.outcome, dry_run: input.dryRun === true, changes: r.changes }),

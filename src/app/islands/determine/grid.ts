@@ -348,9 +348,13 @@ class DetermineGrid extends LitElement {
     }
   }
 
+  /** Counts searches, so a lookup answered after a newer search is ignored. */
+  #search = 0;
+
   #jump(input: HTMLInputElement) {
     const typed = input.value.trim();
     if (typed === "") return;
+    this.#search++;
     const entry = new NumberIndex(this.rows).resolve(typed);
     if (entry.problem?.code === "ambiguous") {
       this.message = problemText(entry.problem);
@@ -381,19 +385,29 @@ class DetermineGrid extends LitElement {
    * Drafts save as they are made, so leaving the page loses nothing.
    */
   async #locate(typed: string) {
+    const search = this.#search;
     this.message = d.jump.looking(typed);
     try {
       const res = await fetch(`/determinations/locate?number=${encodeURIComponent(typed)}`, { credentials: "same-origin" });
       if (!res.ok) throw new Error(String(res.status));
       const found = (await res.json()) as { specimen: number; season: number } | { problem: NumberProblem };
+      if (search !== this.#search) return;
       if ("problem" in found) {
         this.message = problemText(found.problem);
+        return;
+      }
+      // Leave only once every change made here has saved: wait for writes
+      // still in flight, and stay if any failed, so it can be tried again.
+      await this.#queue;
+      if (search !== this.#search) return;
+      if (this.failed.size > 0) {
+        this.message = d.jump.unsaved(typed, found.season);
         return;
       }
       // determineSpecimenHref's address, written out: the view module is server code.
       window.location.assign(`/determinations?specimen=${found.specimen}`);
     } catch {
-      this.message = d.jump.lookupFailed;
+      if (search === this.#search) this.message = d.jump.lookupFailed;
     }
   }
 

@@ -1505,6 +1505,9 @@ export const en = {
       /** Said while the box looks for a number in the other years, before the page moves there. */
       looking: (typed: string) => `${typed} isn't among these. Looking in your other years…`,
       lookupFailed: "Couldn't look in your other years. Check your connection, then try again.",
+      /** Found in another year, but a change here has not saved, so the page stays. */
+      unsaved: (typed: string, season: number) =>
+        `${typed} is among your ${season} specimens, but a change here hasn't saved. Try it again, then look for ${typed} again.`,
     },
     batch: {
       lede:

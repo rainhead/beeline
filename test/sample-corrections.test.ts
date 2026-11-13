@@ -367,9 +367,15 @@ describe("sample corrections: a correction that saves", () => {
         await recordSampleChanges(duckdbReader(s.conn), s.deps.samplePaths, { source: "observation_promotion" });
       });
       const moved = setCoordinates(s.deps, s.sam, s.linked, { ...coordinates, note: "from the field notebook" });
-      // The point is written and waiting on the lock; then the check finishes.
+      // The point is written and entered in the history, and the correction is
+      // waiting on the lock to derive from it; then the check finishes. (Waiting
+      // for the entry, not just the point: a check that ended in the instant
+      // between the two could still take the point for its own, as any writer
+      // that records state after the fact can.)
       await vi.waitFor(async () =>
-        expect(await rows(s.conn, `SELECT source FROM sample_location WHERE sample_id = ${s.linked}`)).toEqual([["staff_entry"]]),
+        expect((await readSampleChanges(s.paths.sampleChangesPath)).some((c) => c.author === "samstaff" && c.field.startsWith("location"))).toBe(
+          true,
+        ),
       );
       endCheck();
       await check;

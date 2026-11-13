@@ -1893,16 +1893,21 @@ export const en = {
       staff: { label: "Staff", means: "do what you can do as staff, for as long as you are staff" },
     },
     /**
-     * Who revoked a key and why, where it was not the owner: "Revoked 12 Nov by
-     * samstaff", "Revoked 12 Nov: the iNaturalist account changed". A key
-     * revoked before the reason was kept says only when.
+     * Who revoked a key and why. On the owner's own page an owner's revocation
+     * says only when ("Revoked 12 Nov"); a staff member's names them ("Revoked
+     * 12 Nov by samstaff"), and a change of account says so ("Revoked 12 Nov
+     * by samstaff: the iNaturalist account changed"). On a person's page, for
+     * staff, it always says who, "by its owner" included. A key revoked before
+     * the reason was kept has neither, and says only when.
      */
     revoked: (
       when: string,
       by: string | null,
       reason: "owner" | "staff" | "account_changed" | "account_gone" | null,
+      audience: "owner" | "staff" = "owner",
     ) => {
-      const who = reason === "owner" || reason === null || by === null ? "" : ` by ${by}`;
+      const who =
+        reason === "owner" ? (audience === "staff" ? " by its owner" : "") : by === null || reason === null ? "" : ` by ${by}`;
       const why =
         reason === "account_changed"
           ? ": the iNaturalist account changed"
@@ -2354,6 +2359,9 @@ export const en = {
     keys: {
       heading: "API keys",
       hint: "The keys this person has made, never the keys themselves. If one may have leaked and this person cannot be reached, revoke it here: it stops working at once, and the list says who revoked it.",
+      earlierHeading: "Made before this account was linked to this person",
+      earlierHint:
+        "These keys were made under this iNaturalist account before it was unlinked or linked to someone else, so they are not this person's. None of them works any more. They are listed so that staff can trace one.",
     },
     leadership: "Program leads",
     leadershipHint:

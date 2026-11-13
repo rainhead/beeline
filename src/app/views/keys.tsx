@@ -13,11 +13,14 @@ export function KeysTable({
   keys,
   revokeAction,
   now,
+  audience = "owner",
 }: {
   m: Messages;
   keys: KeyListing[];
   revokeAction: (ref: string) => string | null;
   now: Date;
+  /** Whose page: the owner's own, or staff looking at somebody else's, which always says who revoked a key. */
+  audience?: "owner" | "staff";
 }) {
   const k = m.keys;
   const working = (key: KeyListing) => key.revokedAt === null && key.expiresAt > now;
@@ -32,7 +35,7 @@ export function KeysTable({
             <td>{m.format.date(key.createdAt)}</td>
             <td>
               {key.revokedAt !== null ? (
-                <Chip>{k.revoked(m.format.date(key.revokedAt), key.revokedBy, key.revokedReason)}</Chip>
+                <Chip>{k.revoked(m.format.date(key.revokedAt), key.revokedBy, key.revokedReason, audience)}</Chip>
               ) : key.expiresAt <= now ? (
                 <Chip>{k.expired(m.format.date(key.expiresAt))}</Chip>
               ) : (
@@ -110,11 +113,9 @@ export function KeysPage({
         <KeysTable m={m} keys={keys} revokeAction={(ref) => (acting ? null : `/keys/${ref}/revoke`)} now={now} />
       )}
       <h2>{k.create.heading}</h2>
-      {!canMake ? (
-        <Callout>{k.create.notYet}</Callout>
-      ) : acting ? (
-        <Callout>{k.create.acting}</Callout>
-      ) : (
+      {acting && <Callout>{k.create.acting}</Callout>}
+      {!canMake && <Callout>{k.create.notYet}</Callout>}
+      {canMake && !acting && (
         <form method="post" action="/keys" class="stack">
           <TextField id="key-name" name="name" label={k.create.name} hint={k.create.nameHint(KEY_NAME_MAX)} />
           <SelectField

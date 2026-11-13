@@ -843,9 +843,34 @@ export function PersonPage({
           keys is /keys. Never the key, which the store does not hold. */}
       {keys.length > 0 && (
         <Card>
-          <h2>{p.keys.heading}</h2>
-          <Meta block>{p.keys.hint}</Meta>
-          <KeysTable m={m} keys={keys} revokeAction={(ref) => `${action}/keys/${ref}/revoke`} now={now} />
+          {keys.some((key) => key.accountChangedAt === null) && (
+            <>
+              <h2>{p.keys.heading}</h2>
+              <Meta block>{p.keys.hint}</Meta>
+              <KeysTable
+                m={m}
+                keys={keys.filter((key) => key.accountChangedAt === null)}
+                revokeAction={(ref) => `${action}/keys/${ref}/revoke`}
+                now={now}
+                audience="staff"
+              />
+            </>
+          )}
+          {/* Made under the account before it changed hands: not this
+              person's, all ended, so no button. Staff may need to trace one. */}
+          {keys.some((key) => key.accountChangedAt !== null) && (
+            <>
+              <h2>{p.keys.earlierHeading}</h2>
+              <Meta block>{p.keys.earlierHint}</Meta>
+              <KeysTable
+                m={m}
+                keys={keys.filter((key) => key.accountChangedAt !== null)}
+                revokeAction={() => null}
+                now={now}
+                audience="staff"
+              />
+            </>
+          )}
         </Card>
       )}
 

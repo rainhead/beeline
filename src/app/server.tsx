@@ -933,9 +933,12 @@ export function createApp({
   // Staff revoking a key of somebody else, from the person's page
   // (beeline-pnqr.9). The person in the URL must be the key's owner, so a
   // reference taken from another page revokes nothing. Staff only, and
-  // refused while viewing Beeline as someone (the admin flag is off then).
+  // refused while viewing Beeline as someone (the admin flag is off then) and
+  // while acting for someone.
   app.post("/people/:id/keys/:ref/revoke", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
+    // Acting for someone: a key cannot be revoked then, here any more than on /keys.
+    if (c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
     const m = c.get("m");
     const person = await personFromUrl(c);
     if (person === null) return errorResponse(c, "notFound", { message: m.people.notFound });
@@ -2263,7 +2266,7 @@ export function createApp({
           atlases={await atlasOptions(db)}
           programs={await programOptions(db)}
           history={await history(person.person_id)}
-          keys={person.inat_user_id === null ? [] : await listKeys(db, person.inat_user_id)}
+          keys={person.inat_user_id === null ? [] : await listKeys(db, person.inat_user_id, "all")}
           now={new Date()}
           notice={notice}
           problem={problem}

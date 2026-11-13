@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { sql, type Kysely } from "kysely";
-import type { Database } from "../model.js";
+import type { Database, RevokedReason } from "../model.js";
 import { bookkeeping } from "./session.js";
 
 /**
@@ -76,6 +76,8 @@ export interface KeyListing {
   /** Login of whoever revoked it; null for a key the nightly job revoked and for keys revoked before this was kept. */
   revokedBy: string | null;
   revokedReason: RevokedReason | null;
+  /** When the account it was made under was unlinked or moved to someone else; null while it stays with its person. */
+  accountChangedAt: Date | null;
 }
 
 /**
@@ -84,7 +86,7 @@ export interface KeyListing {
  * account it was made under (`account_changed`), or the nightly job found
  * that account linked to nobody (`account_gone`).
  */
-export type RevokedReason = "owner" | "staff" | "account_changed" | "account_gone";
+export type { RevokedReason };
 
 export type CreateKeyProblem = "name" | "scope" | "lifetime" | "tooMany";
 
@@ -131,15 +133,35 @@ export async function createKey(
   return { key, ref: keyRef(key) };
 }
 
-/** A person's keys, newest first, including the ones that no longer work. */
-export async function listKeys(db: Kysely<Database>, inatUserId: number | bigint): Promise<KeyListing[]> {
-  const rows = await db
+/**
+ * The keys made under an iNat account, newest first, including the ones that
+ * no longer work. `current` is the keys of the account as its person holds it
+ * now, which is all the person themselves may see; `all` adds the keys made
+ * before the account was unlinked or moved to someone else, which belong to
+ * whoever held it then (`account_changed_at`), and is for staff.
+ */
+export async function listKeys(
+  db: Kysely<Database>,
+  inatUserId: number | bigint,
+  which: "current" | "all" = "current",
+): Promise<KeyListing[]> {
+  let query = db
     .selectFrom("api_key")
-    .select(["key_sha256", "name", "scope", "created_at", "expires_at", "last_used_at", "revoked_at", "revoked_by", "revoked_reason"])
-    .where("inat_user_id", "=", BigInt(inatUserId))
-    .orderBy("created_at", "desc")
-    .orderBy("key_sha256")
-    .execute();
+    .select([
+      "key_sha256",
+      "name",
+      "scope",
+      "created_at",
+      "expires_at",
+      "last_used_at",
+      "revoked_at",
+      "revoked_by",
+      "revoked_reason",
+      "account_changed_at",
+    ])
+    .where("inat_user_id", "=", BigInt(inatUserId));
+  if (which === "current") query = query.where("account_changed_at", "is", null);
+  const rows = await query.orderBy("created_at", "desc").orderBy("key_sha256").execute();
   return rows.map((r) => ({
     ref: r.key_sha256.slice(0, 12),
     name: r.name,
@@ -150,6 +172,7 @@ export async function listKeys(db: Kysely<Database>, inatUserId: number | bigint
     revokedAt: r.revoked_at,
     revokedBy: r.revoked_by,
     revokedReason: r.revoked_reason,
+    accountChangedAt: r.account_changed_at,
   }));
 }
 
@@ -181,44 +204,71 @@ export async function revokeKey(
 }
 
 /**
- * Revoke every key of an iNat account, because the account no longer means
- * what it meant when they were made. The same reason, at the same moment, as
+ * An iNat account no longer means what it meant when its keys were made: end
+ * the keys that work, and mark every key of the account as belonging to
+ * whoever held it before. The same reason, at the same moment, as
  * `endSessionsFor`: a key of an unlinked account resolves to nobody, but
  * linking that account to a different person would otherwise bring the key
- * back to life as that person. `by` is the login of the staff member who
- * changed the account.
+ * back to life as that person.
+ *
+ * Only a working key (not revoked, not expired) is revoked, with `by`, the
+ * login of the staff member who changed the account; a key that had already
+ * ended keeps its own story. Every key of the account not yet marked is
+ * stamped `account_changed_at`, so the next holder sees none of them, and the
+ * names and use of the last holder's keys stay out of the new holder's pages.
+ * One statement, so that no key is revoked and left unstamped or the reverse.
  */
 export async function revokeKeysFor(db: Kysely<Database>, inatUserId: number | bigint, by: string): Promise<void> {
+  const working = sql<boolean>`revoked_at IS NULL AND expires_at > current_timestamp`;
   await db
     .updateTable("api_key")
-    .set({ revoked_at: sql`current_timestamp`, revoked_by: by, revoked_reason: "account_changed" })
+    .set({
+      revoked_at: sql`CASE WHEN ${working} THEN current_timestamp ELSE revoked_at END`,
+      revoked_by: sql`CASE WHEN ${working} THEN ${by} ELSE revoked_by END`,
+      revoked_reason: sql`CASE WHEN ${working} THEN 'account_changed' ELSE revoked_reason END`,
+      account_changed_at: sql`current_timestamp`,
+    })
     .where("inat_user_id", "=", BigInt(inatUserId))
-    .where("revoked_at", "is", null)
+    .where("account_changed_at", "is", null)
     .execute();
 }
 
-/** Whether a person has made any key at all, working or not. One scan of a small table. */
+/**
+ * Whether an account has any key of its own, working or not. Keys made before
+ * the account changed hands do not count: they are not the holder's. One scan
+ * of a small table.
+ */
 export async function hasKeys(db: Kysely<Database>, inatUserId: number | bigint): Promise<boolean> {
   const row = await db
     .selectFrom("api_key")
     .select("key_sha256")
     .where("inat_user_id", "=", BigInt(inatUserId))
+    .where("account_changed_at", "is", null)
     .limit(1)
     .executeTakeFirst();
   return row !== undefined;
 }
 
 /**
- * Revoke the keys of accounts that are no longer linked to anyone. Unlinking
- * through /people revokes them at once; this is for an account that went
- * another way, as when promotion rebuilds `inat_account` without it. Run
- * nightly beside the session purge.
+ * End the keys of accounts that are no longer linked to anyone, and mark all
+ * of those accounts' keys as belonging to whoever held the account before,
+ * as `revokeKeysFor` does. Unlinking through /people does it at once; this is
+ * for an account that went another way, as when promotion rebuilds
+ * `inat_account` without it. Only working keys are revoked (with the reason
+ * `account_gone` and nobody to name); keys already ended keep their own
+ * story. Run nightly beside the session purge.
  */
 export async function revokeOrphanedKeys(db: Kysely<Database>): Promise<void> {
+  const working = sql<boolean>`revoked_at IS NULL AND expires_at > current_timestamp`;
   await db
     .updateTable("api_key")
-    .set({ revoked_at: sql`current_timestamp`, revoked_by: null, revoked_reason: "account_gone" })
-    .where("revoked_at", "is", null)
+    .set({
+      revoked_at: sql`CASE WHEN ${working} THEN current_timestamp ELSE revoked_at END`,
+      revoked_by: sql`CASE WHEN ${working} THEN NULL ELSE revoked_by END`,
+      revoked_reason: sql`CASE WHEN ${working} THEN 'account_gone' ELSE revoked_reason END`,
+      account_changed_at: sql`current_timestamp`,
+    })
+    .where("account_changed_at", "is", null)
     .where(({ not, exists, selectFrom }) =>
       not(
         exists(

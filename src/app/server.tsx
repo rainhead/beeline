@@ -145,6 +145,7 @@ import {
   holdSample,
   readerFor,
   recordTrapChange as recordTrapSampleChange,
+  trapReference,
   setCoordinates,
   setPlace,
   takeLocation,
@@ -156,7 +157,7 @@ import {
 import { setSampleMethod } from "./sample-method.js";
 import { onSample } from "./sample-queue.js";
 import { standingLocalityAuthor } from "./locality-override.js";
-import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT } from "../sample-change.js";
+import { recordSampleChanges, SAMPLE_CHANGE_LOG, SAMPLE_STATE_SNAPSHOT, type SampleReference } from "../sample-change.js";
 import {
   checkTrapSample,
   collectorChoices,
@@ -1299,8 +1300,8 @@ export function createApp({
         sampleId={sampleId}
       />,
     );
-  const recordTrapChange = (c: Context<AppEnv>, sampleId: number) =>
-    recordTrapSampleChange(corrective, c.get("session").login, sampleId);
+  const recordTrapChange = (c: Context<AppEnv>, sampleId: number, was: SampleReference | null | undefined) =>
+    recordTrapSampleChange(corrective, c.get("session").login, sampleId, was);
 
   app.get("/trap-samples/new", async (c) => {
     const refused = await trapGate(c, false);
@@ -1338,7 +1339,8 @@ export function createApp({
       const problems = { sample_number: numberTakenProblem(checked.sample.sample_number) };
       return c.html(await trapPage(c, c.get("m").trapSample.newTitle, form, problems, "/trap-samples/new"), 409);
     }
-    await recordTrapChange(c, id);
+    // Entered in the history as arriving, under whoever entered it.
+    await recordTrapChange(c, id, null);
     return c.redirect(`/samples/${id}`);
   });
 
@@ -1373,8 +1375,11 @@ export function createApp({
     // place editor writes a trap sample's locality too, and without a turn
     // here one author's history entry could record the other's value.
     const updated = await onSample(id, async () => {
+      // How the history names the sample before the save, which may change
+      // its number, start date or first collector.
+      const was = await trapReference(corrective, id);
       const outcome = await updateTrapSample(printWriter!, id, checked.sample);
-      if (outcome !== "printed" && outcome !== "taken") await recordTrapChange(c, id);
+      if (outcome !== "printed" && outcome !== "taken") await recordTrapChange(c, id, was);
       return outcome;
     });
     if (updated === "printed") {

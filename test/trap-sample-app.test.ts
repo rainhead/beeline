@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { createKysely } from "../src/db.js";
+import { duckdbReader } from "../src/person-change.js";
+import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import { createMemoryDb, CURRENT_SEASON, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 /**
@@ -46,7 +48,7 @@ async function trapApp() {
     const post = (path: string, body: URLSearchParams) => app.request(path, { method: "POST", headers: { origin: ORIGIN }, body });
     return { app, post };
   };
-  return { conn, as };
+  return { conn, as, paths };
 }
 
 const entry = (over: Record<string, string> = {}) => {
@@ -170,6 +172,28 @@ describe("entering a trap sample", () => {
     const listing = await (await staff.app.request("/samples?scope=all")).text();
     expect(listing).toContain("inaturalist.org/observations/4242");
     expect(listing).toContain(`href="/samples/${id}/trap"`);
+  });
+
+  it("enters the sample in its history under whoever entered it, and a renumbering under whoever renumbered it", async () => {
+    // Until beeline-7r0g neither was recorded: the next nightly entered the
+    // new sample under nobody's name, and a renumbered one as a second
+    // sample arriving, cut off from what was recorded under its old number.
+    const { as, conn, paths } = await trapApp();
+    const trapper = as("trapper");
+    // The pass the app makes when it starts, which a test's app does not.
+    await recordSampleChanges(duckdbReader(conn), { log: paths.sampleChangesPath, state: paths.sampleStatePath }, { source: "reconcile" });
+    const id = Number((await trapper.post("/trap-samples/new", entry())).headers.get("location")!.split("/")[2]);
+    const made = await readSampleChanges(paths.sampleChangesPath);
+    expect(made.length).toBeGreaterThan(0);
+    expect(made.every((e) => e.author === "trapper" && e.old_value === "" && e.sample_number === "OBAS-00658")).toBe(true);
+
+    const saved = await as("staffer").post(`/samples/${id}/trap`, entry({ sample_number: "OBAS-00659", trap_count: "8" }));
+    expect(saved.status).toBe(302);
+    const after = (await readSampleChanges(paths.sampleChangesPath)).slice(made.length);
+    expect(after.map((e) => [e.sample_number, e.field, e.old_value, e.new_value, e.author])).toEqual([
+      ["OBAS-00658", "sampling_effort", "6 vane traps", "8 vane traps", "staffer"],
+      ["OBAS-00658", "sample_number", "OBAS-00658", "OBAS-00659", "staffer"],
+    ]);
   });
 
   it("links an entered sample's row to its own form, and changes its place directly", async () => {

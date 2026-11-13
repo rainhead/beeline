@@ -12,6 +12,7 @@ import {
   readSnapshot,
   recordSampleChanges,
   sampleHistory,
+  sampleReference,
   type SampleLogPaths,
 } from "../src/sample-change.js";
 
@@ -536,6 +537,95 @@ describe("the authored, narrowed pass", () => {
     expect(swept.appended).toBe(1);
     entries = await readSampleChanges(paths.log);
     expect(entries[1]).toMatchObject({ field: "locality", new_value: "Adair", author: "" });
+  });
+});
+
+/**
+ * A trap sample entered in Beeline has no observation and no corrections
+ * file, so nothing but its reference connects it to its history. Its routes
+ * tell the pass what the pass cannot work out (beeline-7r0g).
+ */
+describe("the narrowed pass, told what the caller knows", () => {
+  const ada = "name:Ada Collector";
+  const day = currentSeasonDate(7, 14);
+
+  it("a sample the caller just made arrives under its author, and the next full pass has nothing to add", async () => {
+    await insertCleanSample(conn, {}, null);
+    await record();
+    const id = await insertCleanSample(conn, { sample_number: "'2'" }, null);
+    const made = await record({ source: "app", author: "ada", where: `s.entity_id = ${id}`, was: null });
+    expect(made.appended).toBeGreaterThan(0);
+    const entries = await readSampleChanges(paths.log);
+    expect(entries.every((e) => e.author === "ada" && e.old_value === "" && e.sample_number === "2")).toBe(true);
+    expect(entries.map((e) => e.field)).toContain("sample_number");
+    expect((await readSnapshot(paths.state))?.size).toBe(2);
+    expect((await record()).appended).toBe(0);
+  });
+
+  it("without being told, the same sample is still left to the next full pass", async () => {
+    await insertCleanSample(conn, {}, null);
+    await record();
+    const id = await insertCleanSample(conn, { sample_number: "'2'" }, null);
+    expect((await record({ source: "app", author: "ada", where: `s.entity_id = ${id}` })).appended).toBe(0);
+  });
+
+  it("a renumbered sample with no observation keeps its history, and the renumbering is the author's", async () => {
+    const id = await insertCleanSample(conn, {}, null);
+    await record();
+    await conn.run(`UPDATE sample SET locality = 'Alsea' WHERE entity_id = ${id}`);
+    await record({ source: "app", author: "ada", where: `s.entity_id = ${id}` });
+
+    const was = await sampleReference(read(), id);
+    expect(was).toEqual({ collector: ada, sample_number: "1", date_start: day });
+    await conn.run(`UPDATE sample SET sample_number = '9', sampling_effort = '8 vane traps' WHERE entity_id = ${id}`);
+    const renumbered = await record({ source: "app", author: "ada", where: `s.entity_id = ${id}`, was });
+    expect(renumbered.appended).toBe(2);
+
+    const history = sampleHistory(await readSampleChanges(paths.log), { collector: ada, sample_number: "9", date_start: day });
+    // Newest first, as the page reads it: the save, then what came before it.
+    expect(history.map((e) => [e.field, e.new_value, e.author])).toEqual([
+      ["sampling_effort", "8 vane traps", "ada"],
+      ["sample_number", "9", "ada"],
+      ["locality", "Alsea", "ada"],
+    ]);
+    // One row, under the new number, and nothing left for a full pass to say.
+    expect([...(await readSnapshot(paths.state))!.values()].map((s) => s.sample_number)).toEqual(["9"]);
+    expect((await record()).appended).toBe(0);
+  });
+
+  it("a new start date and a new number in one save chain as a full pass would file them", async () => {
+    const id = await insertCleanSample(conn, {}, null);
+    await record();
+    const was = await sampleReference(read(), id);
+    const moved = currentSeasonDate(7, 10);
+    await conn.run(`UPDATE sample SET sample_number = '9', date_start = DATE '${moved}' WHERE entity_id = ${id}`);
+    await record({ source: "app", author: "ada", where: `s.entity_id = ${id}`, was });
+    const entries = await readSampleChanges(paths.log);
+    expect(entries.map((e) => [e.sample_number, e.date_start, e.field, e.new_value])).toEqual([
+      ["1", day, "sample_number", "9"],
+      ["9", day, "date_start", moved],
+    ]);
+    expect((await record()).appended).toBe(0);
+  });
+
+  it("leaves the row alone while another sample answers to the old reference", async () => {
+    // The caller's word is only good for a row no sample in the store still
+    // claims: here a second sample took the old number before the pass ran,
+    // and which of the two the row belongs to is the full pass's to decide.
+    const id = await insertCleanSample(conn, {}, null);
+    await record();
+    const was = await sampleReference(read(), id);
+    await conn.run(`UPDATE sample SET sample_number = '9' WHERE entity_id = ${id}`);
+    await insertCleanSample(conn, {}, null);
+    const narrowed = await record({ source: "app", author: "ada", where: `s.entity_id = ${id}`, was });
+    expect(narrowed.appended).toBe(0);
+    expect([...(await readSnapshot(paths.state))!.values()].map((s) => s.sample_number)).toEqual(["1"]);
+  });
+
+  it("names no reference for a sample that shares its own with another", async () => {
+    const id = await insertCleanSample(conn, {}, null);
+    await insertCleanSample(conn, {}, null);
+    expect(await sampleReference(read(), id)).toBeUndefined();
   });
 });
 

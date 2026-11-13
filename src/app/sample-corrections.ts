@@ -2,7 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { kyselyReader } from "../person-change.js";
-import { recordSampleChanges } from "../sample-change.js";
+import { recordSampleChanges, sampleReference, type SampleReference } from "../sample-change.js";
 import { loadTrapSample, mayEditTrapSample, setTrapSampleLocality } from "../trap-sample.js";
 import { deriveForObserver } from "./inat-check.js";
 import { STAFF_READER, type Reader } from "./listings.js";
@@ -195,13 +195,35 @@ async function recordChange(
   }
 }
 
-/** The change log entry for a trap sample entered in Beeline. */
-export async function recordTrapChange(deps: CorrectionDeps, login: string, sampleId: number): Promise<void> {
+/**
+ * How the history names a trap sample entered in Beeline, read before a save
+ * changes it and handed to `recordTrapChange` afterwards. Both inside one
+ * turn of the sample's queue.
+ */
+export const trapReference = (deps: CorrectionDeps, sampleId: number): Promise<SampleReference | undefined> =>
+  sampleReference(kyselyReader(deps.db), sampleId);
+
+/**
+ * The change log entry for a trap sample entered in Beeline. `was` is the
+ * reference the sample had before the save (`trapReference`), or null for a
+ * sample the save made; a save that cannot move the reference, as a change
+ * of locality cannot, leaves it out. The pass needs it because nothing else connects such
+ * a sample to its history once its number, start date or first collector
+ * changes: it has no observation, and no corrections file holds the author
+ * (beeline-7r0g).
+ */
+export async function recordTrapChange(
+  deps: CorrectionDeps,
+  login: string,
+  sampleId: number,
+  was?: SampleReference | null,
+): Promise<void> {
   try {
     await recordSampleChanges(kyselyReader(deps.db), deps.samplePaths, {
       source: "app",
       author: login,
       where: `s.entity_id = ${sampleId}`,
+      was,
     });
   } catch (err) {
     console.warn(`could not record the change to trap sample ${sampleId}: ${(err as Error).message}`);

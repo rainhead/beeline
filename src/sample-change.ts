@@ -794,6 +794,44 @@ export interface SampleRecordOptions {
    * keeps what the last full pass said.
    */
   where?: string;
+  /**
+   * For a pass narrowed to ONE sample, what the caller knows about that
+   * sample that the pass cannot work out: the reference it had before the
+   * change being recorded (`sampleReference`, read before the write), or
+   * `null` where the change made the sample.
+   *
+   * A narrowed pass matches on the reference alone, so without this a sample
+   * whose number, start date or primary collector was just corrected, and a
+   * sample that was just entered, are both left to the next full pass. For a
+   * sample with an observation the full pass follows the link, and only the
+   * author's name is lost. A trap sample entered in Beeline has no
+   * observation and no corrections file, so the full pass recorded a
+   * renumbered one as a second sample arriving, under nobody's name, and
+   * the renumbering itself was never an entry (beeline-7r0g).
+   */
+  was?: SampleReference | null;
+}
+
+/** The three values a sample is named by in the log and the snapshot. */
+export interface SampleReference {
+  collector: string;
+  sample_number: string;
+  date_start: string;
+}
+
+/**
+ * How the store names one sample now, for a caller about to change it
+ * (SampleRecordOptions.was). Undefined where the pass could not speak for
+ * the sample anyway: nobody names its collector, or another sample shares
+ * its reference.
+ */
+export async function sampleReference(read: StateReader, sampleId: number): Promise<SampleReference | undefined> {
+  const { states } = await readSampleStates(read, `s.entity_id = ${sampleId}`);
+  const [state] = [...states.values()];
+  if (state === undefined) return undefined;
+  const ref = { collector: state.collector, sample_number: state.sample_number, date_start: state.date_start };
+  const [row] = await read(tripleCountSql(ref));
+  return Number(row?.n ?? 1) > 1 ? undefined : ref;
 }
 
 export interface SampleRecordResult {
@@ -942,6 +980,24 @@ async function recordPass(
       };
     }
   }
+  // What the caller of a one-sample pass knows (SampleRecordOptions.was).
+  // A sample it just made arrives, where nothing in the snapshot is on its
+  // reference. A sample whose reference it just moved takes the row under
+  // the reference it had, provided no sample in the store still answers to
+  // that reference: then the row may be another sample's, and the next full
+  // pass decides. The row under the old reference outranks one under the new,
+  // which can only be what a sample that is gone left behind.
+  const arrivals = new Set<string>();
+  if (opts.where != null && opts.was !== undefined && states.size === 1) {
+    const [key] = [...states.keys()] as [string];
+    if (opts.was === null) {
+      if (!snapshot.has(key) && !contested.has(key)) arrivals.add(key);
+    } else if (stateKey(opts.was) !== key && !contested.has(key)) {
+      const row = snapshot.get(stateKey(opts.was));
+      const [stillThere] = row === undefined ? [] : await read(tripleCountSql(opts.was));
+      if (row !== undefined && Number(stillThere?.n ?? 1) === 0) matched.set(key, row);
+    }
+  }
   const at = opts.at ?? new Date().toISOString();
   const rows: SampleChange[] = [];
   // The fold follows a move as it meets it, so whatever leaves a triple in
@@ -972,7 +1028,9 @@ async function recordPass(
     // the next full pass will recognise through the weak tiers. The full
     // pass records it then, attributed to itself; only the author's name is
     // lost to the log, and the corrections overlay holds that durably.
-    if (opts.where != null && before === undefined) continue;
+    // The exceptions are the two the caller vouched for above: a sample it
+    // made, and a sample it moved, which by now has its row in `matched`.
+    if (opts.where != null && before === undefined && !arrivals.has(key)) continue;
     // Filed under the triple the LOG knows the sample by — and each mover
     // under the triple as moved by the movers before it (see MOVERS).
     const ref = {
@@ -1049,7 +1107,7 @@ async function recordPass(
       // full pass's to place, and patching it in here would pre-empt that —
       // and where the miss is a deferred relink, its own triple's row is
       // another sample's history, which patching would overwrite.
-      if (before === undefined) continue;
+      if (before === undefined && !arrivals.has(key)) continue;
       if (before !== undefined) next.delete(stateKey(before));
       next.set(key, state);
       touched = true;

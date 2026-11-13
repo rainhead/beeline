@@ -300,6 +300,40 @@ pnpm inat:promote data/beeline.duckdb
 wc -l data/sample-change.csv
 ```
 
+## Asking the store a question while the app runs
+
+A lookup does not need maintenance mode, and does not need a backup
+downloaded. Maintenance mode is for a command that opens the live store, which
+only one process can hold. `pnpm store:query` opens a different file: the copy
+of the store that the nightly backup leaves in `data/query-copy/`
+([Backups](../architecture/backups.md)), which no process holds open. So it
+runs over `fly ssh` with the app serving:
+
+```sh
+fly ssh console --app beeline-production -C "sh -c 'cd /app && pnpm --silent store:query \"SELECT count(*) FROM sample\"'"
+```
+
+A statement with quotes of its own is easier sent on standard input, with `-`
+in place of the statement:
+
+```sh
+fly ssh console --app beeline-production -C "sh -c 'cd /app && pnpm --silent store:query -'" < lookup.sql
+```
+
+It answers one `SELECT`, as a tab-separated table with a header row (`--json`
+for the whole result), and says on standard error how many rows there were and
+when the copy was made. The copy is taken at 3am Pacific, so the answer is up
+to a day old; a question about this minute's data still needs a page of the
+app or maintenance mode. `--rows <n>` and `--timeout <seconds>` raise the
+limits (5,000 rows and 10 seconds by default), and `--explain` prints the plan
+without running the statement. The query runs in a process of its own that is
+killed at the time limit and at 768 MB of memory, so a heavy one cannot take
+the app down with it; it then answers `timeout` or `memory`.
+
+There is no way to do this over HTTP, on purpose (Peter, 2026-11-13): a server
+that accepts SQL from the internet has one key between a stranger and a copy
+of everything, and whoever needs a lookup already has this shell.
+
 ## Re-deriving the model after a promotion change
 
 > **Refused on production from its first print run (3 November 2026).** A

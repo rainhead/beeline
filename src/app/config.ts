@@ -171,6 +171,21 @@ export const ADMIN_LOGINS = [
  */
 export const DEFAULT_QUERY_COPY_PATH = "data/query-copy/query-copy.duckdb";
 
+/**
+ * Where the copy kept for queries is, from the environment alone: the path
+ * the nightly backup writes and `pnpm store:query` reads, worked out in one
+ * place so the two cannot disagree. `BEELINE_QUERY_COPY` if set, otherwise a
+ * `query-copy` folder beside the store named by `BEELINE_DB`.
+ */
+export function queryCopyPathFrom(env: Record<string, string | undefined>): string {
+  return (
+    env.BEELINE_QUERY_COPY ??
+    (env.BEELINE_DB === undefined
+      ? DEFAULT_QUERY_COPY_PATH
+      : join(dirname(env.BEELINE_DB), "query-copy", "query-copy.duckdb"))
+  );
+}
+
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const environment = env.BEELINE_ENV ?? "development";
   if (environment !== "development" && environment !== "sandbox" && environment !== "production") {
@@ -259,9 +274,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`BEELINE_FEEDBACK_EMAIL must be an address or a comma-separated list of them, got '${feedbackEmail}'`);
   }
   const dbPath = env.BEELINE_DB ?? "beeline.duckdb";
-  const queryCopyPath =
-    env.BEELINE_QUERY_COPY ??
-    (env.BEELINE_DB === undefined ? DEFAULT_QUERY_COPY_PATH : join(dirname(dbPath), "query-copy", "query-copy.duckdb"));
+  const queryCopyPath = queryCopyPathFrom(env);
   const clash = queryCopyConflict(queryCopyPath, [dbPath]);
   if (clash !== null) {
     throw new Error(`BEELINE_QUERY_COPY (${queryCopyPath}) is ${clash}: the nightly backup would replace the live store with it`);

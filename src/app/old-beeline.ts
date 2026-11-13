@@ -1,5 +1,4 @@
-import type { Env, Hono } from "hono";
-import { refuseStrayCredentials } from "./api.js";
+import type { Env, Hono, MiddlewareHandler } from "hono";
 
 /**
  * Where the old Beeline runs from cutover (beeline-83b8.12). New Beeline takes
@@ -37,7 +36,18 @@ export const OLD_BEELINE_PAGES = [
  * Temporary redirects (302, and 307 for the API, which keeps the method and
  * body), because the old Beeline goes away.
  */
-export function registerOldBeelineRedirects<E extends Env>(app: Hono<E>): void {
+export function registerOldBeelineRedirects<E extends Env>(
+  app: Hono<E>,
+  /**
+   * Refuses a request that carries credentials (`refuseStrayCredentials`,
+   * src/app/api.ts). Passed in, never imported: this module is imported by
+   * the message catalogue for OLD_BEELINE_ORIGIN, and the catalogue is in
+   * the browser bundle, so anything imported here is dragged into it. The
+   * API imports the store, which a browser cannot load, and importing it
+   * here broke the deploy on 2026-11-13 (beeline-r0fq).
+   */
+  refuseStrayCredentials: MiddlewareHandler,
+): void {
   const target = (url: string) => {
     const { pathname, search } = new URL(url);
     return `${OLD_BEELINE_ORIGIN}${pathname}${search}`;

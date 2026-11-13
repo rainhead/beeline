@@ -10,6 +10,7 @@ import {
   type Json,
 } from "@duckdb/node-api";
 import { writeFileSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { openQueryCopy } from "./db.js";
 import type { QueryColumn, QueryCopyErrorCode } from "./query-copy.js";
 
@@ -42,7 +43,7 @@ export interface WorkerRequest {
 }
 
 export type WorkerReply =
-  | { ok: true; columns: QueryColumn[]; rows: Json[][]; truncatedBy: "rows" | "bytes" | null }
+  | { ok: true; columns: QueryColumn[]; rows: Json[][]; truncatedBy: "rows" | "bytes" | null; copiedAt: string }
   | { ok: false; code: QueryCopyErrorCode; message: string };
 
 class Refusal extends Error {
@@ -130,10 +131,67 @@ function guard(i: number, type: { typeId: DuckDBTypeId; toString(): string }, ma
   if (type.typeId === DuckDBTypeId.BLOB) {
     return `CASE WHEN ${size} > ${maxCellBytes} THEN ${note} ELSE lower(hex(${c})) END`;
   }
-  // The library builds a struct as a plain object and so loses a field named
-  // __proto__; DuckDB's own JSON keeps it, and JSON.parse makes it an own property.
-  if (type.toString().includes("__proto__")) return `to_json(${c})::VARCHAR`;
   return null;
+}
+
+/**
+ * Where a statement's last meaningful character ends: everything after it is
+ * whitespace, semicolons and comments, which cannot sit inside the parentheses
+ * the size guard wraps the statement in (a trailing line comment would swallow
+ * the closing one). A scanner and not a regular expression, because `--`, `;`
+ * and `/*` are ordinary text inside a string, a quoted name or a dollar-quoted
+ * string, and a block comment nests in DuckDB.
+ */
+export function meaningfulEnd(sql: string): number {
+  let end = 0;
+  let i = 0;
+  const n = sql.length;
+  const quoted = (quote: string) => {
+    // From the opening quote; a doubled quote is an escaped one.
+    i++;
+    while (i < n) {
+      if (sql[i] === quote) {
+        if (sql[i + 1] === quote) i += 2;
+        else {
+          i++;
+          return;
+        }
+      } else i++;
+    }
+  };
+  while (i < n) {
+    const ch = sql[i]!;
+    if (/\s/.test(ch) || ch === ";") {
+      i++;
+    } else if (ch === "-" && sql[i + 1] === "-") {
+      while (i < n && sql[i] !== "\n") i++;
+    } else if (ch === "/" && sql[i + 1] === "*") {
+      let depth = 1;
+      i += 2;
+      while (i < n && depth > 0) {
+        if (sql[i] === "/" && sql[i + 1] === "*") {
+          depth++;
+          i += 2;
+        } else if (sql[i] === "*" && sql[i + 1] === "/") {
+          depth--;
+          i += 2;
+        } else i++;
+      }
+    } else if (ch === "'" || ch === '"') {
+      quoted(ch);
+      end = i;
+    } else if (ch === "$") {
+      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i, i + 80));
+      const close = tag === null ? -1 : sql.indexOf(tag[0], i + tag[0].length);
+      if (tag !== null && close >= 0) i = close + tag[0].length;
+      else i++;
+      end = i;
+    } else {
+      i++;
+      end = i;
+    }
+  }
+  return end;
 }
 
 async function prepareOne(conn: DuckDBConnection, sql: string): Promise<DuckDBPreparedStatement> {
@@ -162,8 +220,25 @@ async function prepareOne(conn: DuckDBConnection, sql: string): Promise<DuckDBPr
  */
 export async function executeQuery(req: WorkerRequest, opts: { bypassKindCheck?: boolean } = {}): Promise<WorkerReply> {
   let instance;
+  let copiedAt: string;
   try {
+    // The file the answer comes from is the one opened: if the backup renamed a
+    // new copy in between the two looks, open again, once.
+    const identity = (s: { dev: number; ino: number }) => `${s.dev}:${s.ino}`;
+    let before = await stat(req.path);
     instance = await openQueryCopy(req.path, { memoryLimit: req.memoryLimit });
+    let after = await stat(req.path);
+    if (identity(before) !== identity(after)) {
+      instance.closeSync();
+      before = after;
+      instance = await openQueryCopy(req.path, { memoryLimit: req.memoryLimit });
+      after = await stat(req.path);
+      if (identity(before) !== identity(after)) {
+        instance.closeSync();
+        throw new Error("the copy was replaced twice while it was being opened; try again");
+      }
+    }
+    copiedAt = after.mtime.toISOString();
   } catch (err) {
     return { ok: false, code: "copy-unreadable", message: `The copy of the store could not be opened: ${messageOf(err)}` };
   }
@@ -183,7 +258,19 @@ export async function executeQuery(req: WorkerRequest, opts: { bypassKindCheck?:
     for (let i = 0; i < prepared.columnCount; i++) {
       columns.push({ name: prepared.columnName(i), type: prepared.columnType(i).toString() });
     }
-    const parseAsJson = new Set<number>();
+    // The library builds a struct as a plain object, which loses a field named
+    // __proto__; carrying it some other way (as JSON text) rounds integers above
+    // 2^53. A wrong value is worse than none, so such a result is refused.
+    for (let i = 0; i < prepared.columnCount; i++) {
+      if (prepared.columnType(i).toString().includes("__proto__")) {
+        const name = prepared.columnName(i);
+        prepared.destroySync();
+        throw new Refusal(
+          "not-allowed",
+          `Column ${name} has a struct field named __proto__, which cannot be returned: rename it in the query.`,
+        );
+      }
+    }
     if (req.explain) {
       // The prefix is ours and is not ANALYZE; check that what it made is still one plan.
       prepared.destroySync();
@@ -202,13 +289,11 @@ export async function executeQuery(req: WorkerRequest, opts: { bypassKindCheck?:
       for (let i = 0; i < prepared.columnCount; i++) {
         const g = guard(i, prepared.columnType(i), req.maxCellBytes);
         if (g !== null) guarded = true;
-        if (g?.startsWith("to_json")) parseAsJson.add(i);
         exprs.push(g === null ? `"c${i}"` : `${g} AS "c${i}"`);
       }
       if (guarded) {
         prepared.destroySync();
-        // A trailing semicolon, and any comment after it, cannot sit inside the parentheses.
-        const inner = req.sql.replace(/(\s|;|--[^\n]*(\n|$))+$/, "");
+        const inner = req.sql.slice(0, meaningfulEnd(req.sql));
         const wrapped = `SELECT ${exprs.join(", ")} FROM (${inner}\n) AS q(${columns.map((_, i) => `"c${i}"`).join(", ")})`;
         prepared = await prepareOne(conn, wrapped);
         if (prepared.statementType !== StatementType.SELECT) {
@@ -228,8 +313,8 @@ export async function executeQuery(req: WorkerRequest, opts: { bypassKindCheck?:
           break reading;
         }
         const out = row as Json[];
-        for (const i of parseAsJson) if (typeof out[i] === "string") out[i] = JSON.parse(out[i] as string) as Json;
-        const size = JSON.stringify(out).length;
+        // Bytes as they will travel (UTF-8), not UTF-16 code units: 漢 is one unit and three bytes.
+        const size = Buffer.byteLength(JSON.stringify(out), "utf8");
         if (bytes + size > req.maxBytes) {
           truncatedBy = "bytes";
           break reading;
@@ -238,7 +323,7 @@ export async function executeQuery(req: WorkerRequest, opts: { bypassKindCheck?:
         rows.push(out);
       }
     }
-    return { ok: true, columns, rows, truncatedBy };
+    return { ok: true, columns, rows, truncatedBy, copiedAt };
   } catch (err) {
     if (err instanceof Refusal) return { ok: false, code: err.code, message: err.message };
     return { ok: false, code: "sql", message: messageOf(err) };

@@ -435,6 +435,24 @@ export async function assertSafeQueryCopyPath(target: string, protectedPaths: st
   if (clash !== null) {
     throw new Error(`the query copy would be ${target}, which is ${clash}, a file the app writes: refusing to replace it`);
   }
+  // The folder is kept read-only, so it must be the copy's alone: not the folder
+  // of a file the app writes, and not one that already holds anything else.
+  const folder = dirname(real);
+  const sharedWith = realProtected.find((p) => dirname(p) === folder);
+  if (sharedWith !== undefined) {
+    throw new Error(`the query copy would be in ${folder}, the folder of ${sharedWith}: it needs a folder of its own, which is kept read-only`);
+  }
+  const mine = new Set(SIDE_FILES.map((suffix) => `${basename(real)}${suffix}`).concat(`${basename(real)}.partial`));
+  let present: string[] = [];
+  try {
+    present = await readdir(folder);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  const others = present.filter((name) => !mine.has(name));
+  if (others.length > 0) {
+    throw new Error(`the query copy would be in ${folder}, which holds ${others.slice(0, 3).join(", ")}: it needs a folder of its own, which is kept read-only`);
+  }
 }
 
 /**

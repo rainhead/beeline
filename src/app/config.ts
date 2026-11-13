@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import { queryCopyConflict } from "../query-copy.js";
+import { queryCopyConflict, queryCopyFolderConflict } from "../query-copy.js";
 import { parseServiceAccountKey, type ServiceAccountKey } from "../drive-service-account.js";
 import type { EcdysisCredentials } from "../fetch-ecdysis.js";
 import type { FlyMetricsTarget } from "../fly-usage.js";
@@ -265,6 +265,22 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const clash = queryCopyConflict(queryCopyPath, [dbPath]);
   if (clash !== null) {
     throw new Error(`BEELINE_QUERY_COPY (${queryCopyPath}) is ${clash}: the nightly backup would replace the live store with it`);
+  }
+  const appWrites = [
+    dbPath,
+    env.BEELINE_CORRECTIONS ?? "data/corrections.csv",
+    env.BEELINE_PERSON_OVERLAY ?? "data/person-overlay.csv",
+    env.BEELINE_SAMPLE_OVERLAY ?? "data/sample-overlay.csv",
+    env.BEELINE_PROGRAM_CONTACTS ?? "data/program-contacts.csv",
+    env.BEELINE_PERSON_CHANGES ?? CHANGE_LOG,
+    env.BEELINE_SAMPLE_CHANGES ?? SAMPLE_CHANGE_LOG,
+    env.BEELINE_SAMPLE_STATE ?? SAMPLE_STATE_SNAPSHOT,
+  ];
+  const shared = queryCopyFolderConflict(queryCopyPath, appWrites);
+  if (shared !== null) {
+    throw new Error(
+      `BEELINE_QUERY_COPY (${queryCopyPath}) is in the folder of ${shared}: the copy needs a folder of its own, which is kept read-only`,
+    );
   }
   return {
     port,

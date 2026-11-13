@@ -1,6 +1,6 @@
 import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -12,7 +12,7 @@ import {
   workerEnvironment,
   type QueryCopy,
 } from "../src/query-copy.js";
-import { executeQuery, type WorkerReply, type WorkerRequest } from "../src/query-copy-worker.js";
+import { executeQuery, meaningfulEnd, type WorkerReply, type WorkerRequest } from "../src/query-copy-worker.js";
 import { keepQueryCopy } from "../src/store-backup.js";
 import { snapshotCatalog } from "../src/store-snapshot.js";
 import { createFileDb } from "./helpers.js";
@@ -208,16 +208,18 @@ describe("the values it returns", () => {
     expect(JSON.parse(JSON.stringify(r.rows))).toEqual(r.rows);
   });
 
-  it("keeps a struct field named __proto__", async () => {
-    const r = await okRows("SELECT {'__proto__': 1, 'a': 2} AS s, [{'__proto__': 'x'}] AS l");
-    const [struct, list] = r.rows[0] as [Record<string, unknown>, Record<string, unknown>[]];
-    expect(Object.getOwnPropertyNames(struct).sort()).toEqual(["__proto__", "a"]);
-    expect(Object.getOwnPropertyNames(list[0]!)).toEqual(["__proto__"]);
-    expect(JSON.stringify(r.rows)).toBe('[[{"__proto__":1,"a":2},[{"__proto__":"x"}]]]');
-    // Nothing leaked onto the prototype chain either.
-    expect(({} as Record<string, unknown>).a).toBeUndefined();
-    // The column's type is still the struct's, not the text it was carried as.
-    expect(r.columns[0]!.type).toMatch(/^STRUCT/);
+  it("refuses a result with a struct field named __proto__, which cannot be returned exactly, and keeps big integers in other structs exact", async () => {
+    for (const sql of [
+      "SELECT {'__proto__': 1, 'a': 2} AS s",
+      "SELECT {'__proto__': 1, 'n': 9007199254740993::BIGINT} AS s",
+      "SELECT [{'__proto__': 'x'}] AS l",
+    ]) {
+      const reply = failure(await exec(sql));
+      expect(reply.code, sql).toBe("not-allowed");
+      expect(reply.message, sql).toMatch(/__proto__.*rename it/);
+    }
+    const ok = await okRows("SELECT {'n': 9007199254740993::BIGINT, 'small': 5::BIGINT} AS s");
+    expect(ok.rows).toEqual([[{ n: "9007199254740993", small: 5 }]]);
   });
 
   it("writes a TIMESTAMPTZ in UTC whatever zone the machine is in", async () => {
@@ -248,6 +250,53 @@ describe("the values it returns", () => {
     expect(byBytes.truncatedBy).toBe("bytes");
     expect(byBytes.rows.length).toBeGreaterThan(0);
     expect(byBytes.rows.length).toBeLessThan(10);
+  });
+});
+
+describe("when the copy was made", () => {
+  it("is the modification time of the file the child opened", async () => {
+    const reply = await okRows("SELECT 1");
+    expect(reply.copiedAt).toBe((await stat(copyPath)).mtime.toISOString());
+  });
+});
+
+describe("the size guard's wrapper", () => {
+  // Each of these has a text column, so the statement is wrapped in a projection; the answer must be the statement's own.
+  const cases: [string, unknown[][]][] = [
+    ["SELECT 'a--b'", [["a--b"]]],
+    ["SELECT 'a;b'", [["a;b"]]],
+    ["SELECT 'it''s -- fine'", [["it's -- fine"]]],
+    [`SELECT "odd--name" FROM (SELECT 'v' AS "odd--name")`, [["v"]]],
+    ["SELECT $$ -- not a comment; $$", [[" -- not a comment; "]]],
+    ["SELECT $tag$ a $$ b ; -- c $tag$", [[" a $$ b ; -- c "]]],
+    ["SELECT 'x' -- trailing", [["x"]]],
+    ["SELECT 'x'; /* done */", [["x"]]],
+    ["SELECT 'x' /* a /* nested */ b */ ;", [["x"]]],
+    ["SELECT 'x' /* c */ -- d\n;  -- e", [["x"]]],
+  ];
+  for (const [sql, rows] of cases) {
+    it(`answers ${sql.replaceAll("\n", " ")}`, async () => {
+      const reply = await okRows(sql);
+      expect(reply.rows).toEqual(rows);
+      expect(reply.columns[0]!.type).toBe("VARCHAR");
+    });
+  }
+
+  it("finds the end of the meaningful text", () => {
+    expect(meaningfulEnd("SELECT 1 -- c")).toBe("SELECT 1".length);
+    expect(meaningfulEnd("SELECT 'a--b'")).toBe("SELECT 'a--b'".length);
+    expect(meaningfulEnd("SELECT 1; /* x */ ;")).toBe("SELECT 1".length);
+    expect(meaningfulEnd("SELECT 'unterminated")).toBe("SELECT 'unterminated".length);
+  });
+
+  it("counts a result's size in UTF-8 bytes, not characters", async () => {
+    // 4 rows of 400 characters of three bytes each: over 4,800 bytes in all.
+    const r = await okRows("SELECT repeat('漢', 400) FROM range(4)", { maxBytes: 2_000 });
+    expect(r.truncatedBy).toBe("bytes");
+    expect(r.rows).toHaveLength(1);
+    // A value's size guard counts bytes too: 400 characters is 1,200 bytes, over a 1,000-byte limit.
+    const cell = await okRows("SELECT repeat('漢', 400) AS t", { maxCellBytes: 1_000 });
+    expect(cell.rows).toEqual([["[1200 bytes: too large to return]"]]);
   });
 });
 
@@ -432,20 +481,22 @@ describe("the child process", () => {
   it("is started with none of the app's secrets", async () => {
     process.env.BEELINE_DRIVE_KEY = "sentinel-secret";
     process.env.INAT_API_TOKEN = "sentinel-secret";
-    process.env.NODE_TEST_KEPT = "kept";
+    process.env.NODE_AUTH_TOKEN = "sentinel-secret";
+    process.env.NODE_ENV = "test";
     try {
       const echo = createQueryCopy({ path: copyPath, workerModule: join(import.meta.dirname, "fixtures", "echo-env-worker.mjs") });
       const names = (await echo.run("SELECT 1")).rows[0] as string[];
       expect(names).toContain("PATH");
-      expect(names).toContain("NODE_TEST_KEPT");
+      expect(names).toContain("NODE_ENV");
+      expect(names).not.toContain("NODE_AUTH_TOKEN");
       expect(names).not.toContain("BEELINE_DRIVE_KEY");
       expect(names).not.toContain("INAT_API_TOKEN");
-      expect(names.every((n) => n === "PATH" || n === "HOME" || n === "TZ" || n === "TMPDIR" || n.startsWith("NODE_"))).toBe(true);
+      expect(names.every((n) => ["PATH", "HOME", "TZ", "TMPDIR", "NODE_ENV", "NODE_OPTIONS", "NODE_PATH"].includes(n))).toBe(true);
       expect(workerEnvironment({ PATH: "/bin", SENTRY_DSN: "x", TZ: "UTC", HOME: "/root" })).toEqual({ PATH: "/bin", TZ: "UTC", HOME: "/root" });
     } finally {
       delete process.env.BEELINE_DRIVE_KEY;
       delete process.env.INAT_API_TOKEN;
-      delete process.env.NODE_TEST_KEPT;
+      delete process.env.NODE_AUTH_TOKEN;
     }
   });
 });
@@ -559,6 +610,48 @@ describe("keeping the copy", () => {
     expect(await readdir(own)).not.toContain("beeline.duckdb.partial");
     expect(queryCopyConflict("/a/b/store.duckdb", ["/a/b/store.duckdb"])).toBe("/a/b/store.duckdb");
     expect(queryCopyConflict("/a/b/query-copy/query-copy.duckdb", ["/a/b/store.duckdb"])).toBeNull();
+  });
+});
+
+describe("a folder of its own", () => {
+  it("refuses the folder of the live store or of a file the app writes, leaving its modes as they were", async () => {
+    const own = await mkdtemp(join(tmpdir(), "beeline-query-copy-"));
+    const store = join(own, "beeline.duckdb");
+    await writeFile(store, "the live store");
+    await chmod(own, 0o750);
+    const before = (await stat(own)).mode & 0o777;
+    await expect(keepQueryCopy(sourceSnapshot, join(own, "query-copy.duckdb"), [store])).rejects.toThrow(/folder of .*beeline\.duckdb.*folder of its own/);
+    // Any file the app writes counts, not only the store.
+    const csv = join(own, "corrections.csv");
+    await expect(keepQueryCopy(sourceSnapshot, join(own, "q.duckdb"), [join(tmpdir(), "elsewhere.duckdb"), csv])).rejects.toThrow(/folder of/);
+    expect((await stat(own)).mode & 0o777).toBe(before);
+    expect(await readdir(own)).toEqual(["beeline.duckdb"]);
+  });
+
+  it("refuses a folder that already holds anything but the copy and its own side files", async () => {
+    const own = await mkdtemp(join(tmpdir(), "beeline-query-copy-"));
+    const folder = join(own, "shared");
+    await mkdir(folder);
+    await writeFile(join(folder, "notes.txt"), "someone else's");
+    await chmod(folder, 0o755);
+    await expect(keepQueryCopy(sourceSnapshot, join(folder, "query-copy.duckdb"))).rejects.toThrow(/holds notes\.txt.*folder of its own/);
+    expect((await stat(folder)).mode & 0o777).toBe(0o755);
+    expect(await readdir(folder)).toEqual(["notes.txt"]);
+    // Its own side files are not "anything else".
+    await rm(join(folder, "notes.txt"));
+    await writeFile(join(folder, "query-copy.duckdb.wal"), "stale");
+    await keepQueryCopy(sourceSnapshot, join(folder, "query-copy.duckdb"));
+    readOnlyFolders.push(folder);
+    expect(await readdir(folder)).toEqual(["query-copy.duckdb"]);
+  });
+
+  it("is refused in the configuration too", () => {
+    const base = { BEELINE_ORIGIN: "https://x.org", BEELINE_DB: "/app/data/beeline.duckdb" };
+    expect(() => configFromEnv({ ...base, BEELINE_QUERY_COPY: "/app/data/query-copy.duckdb" })).toThrow(/folder of \/app\/data\/beeline\.duckdb/);
+    expect(() => configFromEnv({ ...base, BEELINE_QUERY_COPY: "/app/other/q.duckdb", BEELINE_CORRECTIONS: "/app/other/corrections.csv" })).toThrow(
+      /folder of \/app\/other\/corrections\.csv/,
+    );
+    expect(configFromEnv({ ...base, BEELINE_QUERY_COPY: "/app/data/query-copy/q.duckdb" }).queryCopyPath).toBe("/app/data/query-copy/q.duckdb");
   });
 });
 

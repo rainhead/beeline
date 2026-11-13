@@ -2,7 +2,7 @@ import type { Json } from "@duckdb/node-api";
 import { fork, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WORKER_FLAG, type WorkerReply, type WorkerRequest } from "./query-copy-worker.js";
 
@@ -154,10 +154,13 @@ const WORKER_MODULE = fileURLToPath(new URL("./query-copy-worker.ts", import.met
  * its extensions under it, and without it cannot set the session's time zone), so a secret (BEELINE_DRIVE_KEY,
  * INAT_*, the Sentry DSN) is not in a process that runs somebody's SQL.
  */
+/** An explicit list: NODE_AUTH_TOKEN and its like are NODE_* too. */
+const CHILD_ENVIRONMENT = ["PATH", "HOME", "TZ", "TMPDIR", "NODE_ENV", "NODE_OPTIONS", "NODE_PATH"];
+
 export function workerEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const kept: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined && (key === "PATH" || key === "HOME" || key === "TZ" || key === "TMPDIR" || key.startsWith("NODE_"))) {
+    if (value !== undefined && CHILD_ENVIRONMENT.includes(key)) {
       kept[key] = value;
     }
   }
@@ -215,9 +218,9 @@ export function createQueryCopy(options: QueryCopyOptions): QueryCopy {
       running = true;
       try {
         const started = Date.now();
-        let copiedAt: string;
         try {
-          copiedAt = (await stat(options.path)).mtime.toISOString();
+          // Only to tell a missing copy from an unreadable one; when the copy was made is the child's to say, of the file it opened.
+          await stat(options.path);
         } catch (err) {
           if ((err as NodeJS.ErrnoException).code === "ENOENT") {
             throw new QueryCopyError(
@@ -243,7 +246,7 @@ export function createQueryCopy(options: QueryCopyOptions): QueryCopy {
           rows: reply.rows,
           truncated: reply.truncatedBy !== null,
           truncatedBy: reply.truncatedBy,
-          copiedAt,
+          copiedAt: reply.copiedAt,
           limits: { timeoutMs, maxRows, maxBytes },
           elapsedMs: Date.now() - started,
         };
@@ -328,4 +331,14 @@ function runInChild(request: WorkerRequest, workerModule: string, timeoutMs: num
     });
     child.send(request);
   });
+}
+
+/**
+ * Whether the query copy's folder is also the folder of a file the app writes,
+ * compared as written. The folder is kept read-only, so sharing it would leave
+ * the app unable to create files there. Returns the file whose folder it is, or null.
+ */
+export function queryCopyFolderConflict(target: string, files: string[]): string | null {
+  const folder = dirname(resolve(target));
+  return files.find((f) => dirname(resolve(f)) === folder) ?? null;
 }

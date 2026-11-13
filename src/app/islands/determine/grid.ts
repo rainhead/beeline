@@ -20,7 +20,7 @@ import { NumberIndex, pastedList, type NumberProblem } from "../../../determinat
 import { problemText } from "./problems.js";
 import { loadTaxa, nameTemplate, type PickerTaxon } from "./picker.js";
 import "./picker.js";
-import { deselect, emptySelection, markUsed, selectMore, undoUse, type Selection } from "./selection.js";
+import { deselect, emptySelection, markUsed, selectMore, startsNew, undoUse, type Selection } from "./selection.js";
 
 const m = messagesFor(null);
 const d = m.determine;
@@ -67,7 +67,6 @@ class DetermineGrid extends LitElement {
 
   data: DeterminePageData;
   taxa = new Map<number, TaxonInfo>();
-  #anchor: number | null = null;
   #queue: Promise<unknown> = Promise.resolve();
   /**
    * The newest write sent for each row and not yet answered. A row reads
@@ -209,14 +208,13 @@ class DetermineGrid extends LitElement {
 
   #toggle(list: EntryRow[], index: number, shift: boolean) {
     const id = list[index]!.id;
-    // A row that starts a new selection starts its block too: the row last
-    // clicked belongs to the selection already named.
-    const starting = this.selection.used && !this.selected.has(id);
-    const from = shift && !starting && this.#anchor !== null ? list.findIndex((r) => r.id === this.#anchor) : -1;
-    // Otherwise a block runs from the row last clicked, if it is still listed.
+    const sel = this.selection;
+    // A block runs from the row last clicked in this selection, if it is
+    // still listed; a row that starts a new selection starts its block too.
+    const from = shift && sel.anchor !== null && !startsNew(sel, id) ? list.findIndex((r) => r.id === sel.anchor) : -1;
     const block = from === -1 ? [id] : list.slice(Math.min(from, index), Math.max(from, index) + 1).map((r) => r.id);
-    if (from === -1) this.#anchor = id;
-    this.selection = this.selected.has(id) ? deselect(this.selection, block) : selectMore(this.selection, block);
+    const anchor = from === -1 ? id : undefined;
+    this.selection = sel.ids.has(id) ? deselect(sel, block, anchor) : selectMore(sel, block, anchor);
   }
 
   #toggleAll(group: EntryRow[]) {
@@ -315,7 +313,7 @@ class DetermineGrid extends LitElement {
     if (index >= this.limit) this.limit = index + CHUNK;
     this.message = "";
     this.flash = id;
-    this.selection = selectMore(this.selection, [id]);
+    this.selection = selectMore(this.selection, [id], id);
     input.value = "";
     void this.updateComplete.then(() => this.querySelector(`[data-row="${id}"]`)?.scrollIntoView({ block: "center" }));
   }

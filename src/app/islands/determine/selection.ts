@@ -14,24 +14,42 @@ export interface Selection {
   ids: ReadonlySet<number>;
   /** A name or a sex has been given to these rows since the selection was last added to. */
   used: boolean;
+  /**
+   * The row a Shift-click's block runs from: the row last clicked or gone to
+   * in this selection. It is part of the selection so that a new selection
+   * never inherits the old one's: a block run from a row of the selection
+   * already named would bring those rows back in.
+   */
+  anchor: number | null;
 }
 
-export const emptySelection: Selection = { ids: new Set(), used: false };
+export const emptySelection: Selection = { ids: new Set(), used: false, anchor: null };
 
-/** Select more rows: into the selection as it stands, or as a new one if that one has been used. */
-export function selectMore(selection: Selection, ids: Iterable<number>): Selection {
-  return { ids: new Set(selection.used ? ids : [...selection.ids, ...ids]), used: false };
+/**
+ * Select more rows: into the selection as it stands, or as a new one if that
+ * one has been used. `anchor` is the row clicked or gone to, if one was;
+ * without it a new selection has none and a continuing one keeps its own.
+ */
+export function selectMore(selection: Selection, ids: Iterable<number>, anchor?: number): Selection {
+  return {
+    ids: new Set(selection.used ? ids : [...selection.ids, ...ids]),
+    used: false,
+    anchor: anchor ?? (selection.used ? null : selection.anchor),
+  };
 }
+
+/** Whether selecting this row would start a new selection, so that no block may run to it from the old one. */
+export const startsNew = (selection: Selection, id: number): boolean => selection.used && !selection.ids.has(id);
 
 /** Take rows out of the selection, which stays the selection it was. */
-export function deselect(selection: Selection, ids: Iterable<number>): Selection {
+export function deselect(selection: Selection, ids: Iterable<number>, anchor?: number): Selection {
   const next = new Set(selection.ids);
   for (const id of ids) next.delete(id);
-  return { ids: next, used: selection.used && next.size > 0 };
+  return { ids: next, used: selection.used && next.size > 0, anchor: anchor ?? selection.anchor };
 }
 
 /** The selection after a name or a sex was given to all of it. */
-export const markUsed = (selection: Selection): Selection => ({ ids: selection.ids, used: selection.ids.size > 0 });
+export const markUsed = (selection: Selection): Selection => ({ ...selection, used: selection.ids.size > 0 });
 
 /**
  * The selection after a naming was undone. If it is still the selection that

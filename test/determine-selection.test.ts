@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deselect, emptySelection, markUsed, selectMore, undoUse } from "../src/app/islands/determine/selection.js";
+import { deselect, emptySelection, markUsed, selectMore, startsNew, undoUse } from "../src/app/islands/determine/selection.js";
 
 const ids = (s: { ids: ReadonlySet<number> }) => [...s.ids].sort((a, b) => a - b);
 
@@ -43,6 +43,25 @@ describe("the selection on Identify your specimens", () => {
     expect(undoUse(begun, before)).toBe(begun);
     const narrowed = deselect(named, [1]);
     expect(undoUse(narrowed, before).used).toBe(true);
+  });
+
+  it("never hands a new selection the old one's anchor, so no block runs back into the named rows", () => {
+    const named = markUsed(selectMore(emptySelection, [1, 2, 3], 1));
+    expect(named.anchor).toBe(1);
+    // A whole sample ticked at once: no row was clicked, so there is no anchor.
+    expect(selectMore(named, [5, 6]).anchor).toBeNull();
+    // Gone to by field number: that row is where a block now runs from.
+    expect(selectMore(named, [8], 8).anchor).toBe(8);
+    // And a Shift-click on a row outside the named selection may not run a block at all.
+    expect(startsNew(named, 6)).toBe(true);
+    expect(startsNew(named, 2)).toBe(false);
+    expect(startsNew(selectMore(named, [8], 8), 10)).toBe(false);
+  });
+
+  it("keeps its anchor while it is added to or narrowed without a click on a row", () => {
+    const s = selectMore(emptySelection, [1], 1);
+    expect(selectMore(s, [5, 6]).anchor).toBe(1);
+    expect(deselect(s, [1]).anchor).toBe(1);
   });
 
   it("is not used when nothing was selected or nothing is left", () => {

@@ -9,12 +9,11 @@ import { createApp } from "../src/app/server.js";
 import { ACTING_COOKIE, IMPERSONATING_COOKIE } from "../src/app/acting.js";
 import { en } from "../src/app/messages/en.js";
 import { parseCsv } from "../src/corrections.js";
-import { loadLegacyStaging } from "../src/load-legacy.js";
-import { promoteLegacy } from "../src/promote-legacy.js";
 import { duckdbReader } from "../src/person-change.js";
 import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import { readSampleOverlay, upsertSampleOverlay } from "../src/sample-overlay.js";
-import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { promotedStore } from "./promoted-store.js";
 
 /**
  * What the pages do with the sample corrections' functions
@@ -29,9 +28,6 @@ const unusedInat: InatClient = {
   exchangeCode: () => Promise.reject(new Error("not under test")),
   identity: () => Promise.reject(new Error("not under test")),
 };
-
-const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
-const CORRECTIONS = new URL("./fixtures/legacy-corrections.csv", import.meta.url).pathname;
 
 const cookieFor = (name: string, cookie = ACTING_COOKIE) => `${cookie}=${encodeURIComponent(name)}`;
 
@@ -112,11 +108,9 @@ describe("acting for somebody under a delegation", () => {
   });
 
   it("records the signed-in person as the author of an edit, on the acted-for person's sample", async () => {
-    const { instance, conn } = await createMemoryDb();
-    await loadLegacyStaging(conn, FIXTURE);
     const dir = await mkdtemp(join(tmpdir(), "beeline-corrections-routes-"));
     const correctionsPath = join(dir, "corrections.csv");
-    await promoteLegacy(conn, { ...FIXTURE_INPUTS, legacyCorrections: CORRECTIONS, appCorrections: correctionsPath });
+    const { instance, conn } = await promotedStore("corrected", { appCorrections: correctionsPath });
     const [[bea]] = (await rows(conn, `SELECT entity_id FROM person WHERE display_name = 'Bea Trapper'`)) as [[number]];
     const [[sampleId]] = (await rows(conn, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00657'`)) as [[number]];
     const gretchen = await person(conn, "Gretchen Pederson", "pandg", 111);

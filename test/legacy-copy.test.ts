@@ -12,15 +12,12 @@ import {
   type OldBeelineCredentials,
 } from "../src/legacy-copy.js";
 import { writeLegacyExport } from "../src/legacy-export.js";
-import { loadLegacyStaging } from "../src/load-legacy.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promoteLegacy } from "../src/promote-legacy.js";
 import { FakeOldBeeline } from "./fake-old-beeline.js";
-import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows } from "./helpers.js";
-
-const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
+import { insertCleanSample, rows } from "./helpers.js";
+import { promotedStore } from "./promoted-store.js";
 
 let conn: DuckDBConnection;
 let old: FakeOldBeeline;
@@ -60,10 +57,8 @@ async function specimen(sampleId: number, n: number, fieldNumber: string | null)
 }
 
 beforeAll(async () => {
-  ({ conn } = await createMemoryDb());
   // The legacy fixture's specimens are imported: the old system has them already.
-  await loadLegacyStaging(conn, FIXTURE);
-  await promoteLegacy(conn, FIXTURE_INPUTS);
+  ({ conn } = await promotedStore("occurrences"));
   // One sample minted here and printed, with enough specimens that the copy
   // needs more than one request: a hundred and twenty.
   const sample = await insertCleanSample(conn, { sample_number: "'41'", inat_observation_id: "374773381", host_name_as_observed: "'Sedum album'", host_rank: "'species'" });

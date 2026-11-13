@@ -57,6 +57,8 @@ import { DeterminePage } from "./views/determine.js";
 import { Jobs } from "./views/jobs.js";
 import { stepTrend } from "./job-steps.js";
 import { Exports } from "./views/exports.js";
+import { HeldBackPage } from "./views/held-back.js";
+import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
 import {
@@ -188,6 +190,7 @@ import {
   STAFF_READER,
   parseListingQuery,
   csvStream,
+  toCsv,
   SAMPLE_CSV_HEADER,
   sampleCsvRow,
   SPECIMEN_CSV_HEADER,
@@ -1993,6 +1996,21 @@ export function createApp({
       "content-length": String(st.size),
       "content-disposition": `attachment; filename="beeline-${download}-dwca.zip"`,
     });
+  });
+
+  // The old Beeline's records new Beeline held back, and why (beeline-cel0),
+  // read live: half a second to a second on the production store.
+  app.get("/exports/held-back", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    return c.html(await page(c, m.heldBack.title, <HeldBackPage m={m} heldBack={await heldBackRecords(db)} />));
+  });
+
+  app.get("/exports/held-back.csv", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const held = await heldBackCsvRows(db);
+    if (held === null) return errorResponse(c, "notFound");
+    return csv(c, toCsv(held.header, held.rows), "beeline-held-back");
   });
 
   app.get("/exports/occurrences.csv", async (c) => {

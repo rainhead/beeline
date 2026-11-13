@@ -1986,6 +1986,52 @@ export const en = {
     checklist: (taxa: number) => `Checklist: ${n(taxa)} ${taxa === 1 ? "name" : "names"}, every year together.`,
     checklistDownload: (program: string) => `Download the ${program} checklist`,
   },
+  /**
+   * The old Beeline's records new Beeline held back, and why (/exports/held-back,
+   * beeline-cel0), for Lincoln Best. Reasons are keyed by promotion's
+   * finding (src/app/held-back.ts, HELD_BACK_RULES).
+   */
+  heldBack: {
+    title: "Held back from the old Beeline",
+    heading: "Held back from the old Beeline",
+    intro:
+      "Records in the old Beeline that new Beeline did not make into specimens, and why. A record was held back when it lacked something Beeline needs to file the bee under a sample: the collector, the sample number, a date it can read, or the specimen number. A record was also held back when it had the same collector, date, sample number and specimen number as one that was kept, which Beeline took for one pin printed twice. Where the two records disagree, so that one may be a second bee, Beeline wrote that on the kept specimen, and it is shown beside the record here. None of these records is in Beeline's listings or exports.",
+    linkFromExports: "Old Beeline records held back, and why",
+    reasonsHeading: "Why they were held back",
+    colReason: "Reason",
+    colActive: (since: number) => `Active seasons (${since} on)`,
+    colSettled: "Settled seasons",
+    colNoYear: "No year written",
+    reasonsNote: "A record can be held back for more than one reason.",
+    reason: {
+      missing_person: "No collector's name",
+      missing_sample_number: "No sample number",
+      bad_date: "A date that cannot be read, or that ends before it starts",
+      bad_specimen_number: "No specimen number, or 0",
+      duplicate_specimen: "The same collector, date, sample and specimen number as a record that was kept",
+    },
+    bare: (fieldNumbers: number, first: string, last: string, records: number) =>
+      `${n(records)} ${records === 1 ? "record holds" : "records hold"} nothing but a field number, ${n(fieldNumbers)} ${fieldNumbers === 1 ? "number" : "numbers"} from ${first} to ${last}: no collector, sample, date or identification. They are in the download but not listed here.`,
+    recordsHeading: "The records",
+    colFieldNumber: "Field number",
+    colCollector: "Collector",
+    colSample: "Sample",
+    colSpecimen: "Specimen",
+    colDate: "Date as written",
+    colIdentification: "Identification",
+    colWhy: "Why",
+    colObservation: "Observation",
+    volunteer: "(volunteer)",
+    notWritten: "not written",
+    dateNote: "Dates are year-month-day as the record wrote them, with ? where it left a part blank.",
+    /** Before the field number, as a link, of the specimen whose remark names the record. */
+    related: "Beeline's note on specimen",
+    download: "Download every held-back record (CSV)",
+    downloadNote: "Every column the old Beeline held for each record, the bare ones included, and why it was held back.",
+    none: "No records are held back.",
+    noStaging:
+      "This copy of Beeline holds no copy of the old Beeline's records, so it cannot say which were held back.",
+  },
   jobs: {
     title: "Jobs",
     heading: "Scheduled jobs",

@@ -40,6 +40,9 @@ export function Exports({
   return (
     <>
       <PageHeader title={e.heading} lede={e.intro} />
+      <p>
+        <a href="/exports/held-back">{m.heldBack.linkFromExports}</a>
+      </p>
       <h2>{e.occurrences}</h2>
       {occurrences === null ? (
         <EmptyState>{e.missing}</EmptyState>

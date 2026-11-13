@@ -582,6 +582,14 @@ export interface Scheduler {
    */
   startRun(name: string): Promise<StartedRun>;
   running(): string | null;
+  /**
+   * The id of the run in hand, or null when nothing is running (or a job has
+   * been picked and its run is not recorded yet). Set in the same turn the
+   * run's row is inserted and cleared only after its outcome is written, so
+   * a run with no outcome that this does not name is one no process will
+   * finish. The API tells `running` from `unfinished` by it (src/app/api.ts).
+   */
+  runningRun(): number | null;
 }
 
 /** What {@link Scheduler.startRun} did. */
@@ -622,6 +630,9 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
     return new Map(rows.map((r) => [r.job_name, { started: r.started, succeeded: r.succeeded }]));
   };
 
+  /** The run in hand: see {@link Scheduler.runningRun}. */
+  let liveRun: number | null = null;
+
   const NEVER: LastRuns = { started: null, succeeded: null };
 
   /**
@@ -654,11 +665,15 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
   /** Run one job, tracked so a shutdown can wait for it. */
   const track = async (job: Job, onStarted?: (runId: number) => void) => {
     busy = job.name;
-    inFlight = runJob(deps, job, shutdown.signal, onStarted);
+    inFlight = runJob(deps, job, shutdown.signal, (runId) => {
+      liveRun = runId;
+      onStarted?.(runId);
+    });
     try {
       await inFlight;
     } finally {
       inFlight = null;
+      liveRun = null;
     }
   };
 
@@ -729,6 +744,7 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
     start: async (name) => (await startRun(name)).status === "started",
     startRun,
     running: () => busy,
+    runningRun: () => liveRun,
   };
 }
 

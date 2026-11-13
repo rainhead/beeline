@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { sql } from "kysely";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
@@ -57,7 +58,7 @@ async function fixture() {
     config: { environment: "sandbox", origin: "http://localhost:3054" },
     inat: unusedInat,
     resolveSession: noSession,
-    jobs: { list: jobs, start: (n) => scheduler.start(n), startRun: (n) => scheduler.startRun(n), running: () => scheduler.running() },
+    jobs: { list: jobs, start: (n) => scheduler.start(n), startRun: (n) => scheduler.startRun(n), running: () => scheduler.running(), runningRun: () => scheduler.runningRun() },
   });
   const key = async (uid: number, scope: string) => {
     const made = await createKey(db, { inatUserId: uid, name: "test", scope, lifetimeDays: 30, offered: KEY_SCOPES });
@@ -94,12 +95,14 @@ describe("starting and watching jobs through the API", () => {
   });
 
   it("answers while the job is still running, and refuses a second job until it ends", async () => {
-    const { ask, staffKey, finish, idle } = await fixture();
+    const { ask, staffKey, finish, idle, scheduler } = await fixture();
     const started = await ask("/api/v1/jobs/long", staffKey, "POST");
     expect(started.status).toBe(202);
     const { run } = (await started.json()) as { run: { id: number; status: string; completed_at: string | null } };
     expect(run.status).toBe("running");
     expect(run.completed_at).toBeNull();
+    // The scheduler names this very run as the one in hand, and lets go of it only when it ends.
+    expect(scheduler.runningRun()).toBe(run.id);
 
     const second = await ask("/api/v1/jobs/quick", staffKey, "POST");
     expect(second.status).toBe(409);
@@ -110,6 +113,7 @@ describe("starting and watching jobs through the API", () => {
 
     finish();
     await idle();
+    expect(scheduler.runningRun()).toBeNull();
     expect(((await (await ask(`/api/v1/jobs/runs/${run.id}`, staffKey)).json()) as { run: { status: string; detail: string } }).run).toMatchObject({
       status: "succeeded",
       detail: "finished",
@@ -169,27 +173,82 @@ describe("starting and watching jobs through the API", () => {
 
   it("does not call a run unfinished because the scheduler moved on while the run was being read", async () => {
     const { db, conn, key } = await fixture();
-    await conn.run(`INSERT INTO job_run (job_name) VALUES ('long')`);
-    const [[id]] = (await rows(conn, `SELECT entity_id FROM job_run`)) as [[number]];
     const staffKey = await key(STAFF_UID, "staff");
+    const insert = async () =>
+      Number(((await rows(conn, `INSERT INTO job_run (job_name) VALUES ('long') RETURNING entity_id`)) as [[number]])[0][0]);
     // A scheduler whose answer changes between the two times one request asks it.
-    for (const answers of [
-      ["long", null], // the job finished after the row was read
-      [null, "long"], // the job started after the scheduler was first asked
-    ]) {
-      const said = [...answers];
-      const api = new Hono().route(
-        "/api/v1",
-        createApi({ db, isStaff: async () => true, jobs: { list: [], running: () => (said.length > 1 ? said.shift()! : said[0]!) } }),
-      );
-      for (const path of [`/api/v1/jobs/runs/${id}`, "/api/v1/jobs/runs"]) {
-        said.splice(0, said.length, ...answers);
-        const body = (await (await api.request(path, { headers: { authorization: `Bearer ${staffKey}` } })).json()) as {
-          run?: { status: string };
-          runs?: { status: string }[];
-        };
-        expect((body.run ?? body.runs![0]!).status, `${path} ${JSON.stringify(answers)}`).toBe("running");
-      }
+    const statusWith = async (path: string, runningRun: () => number | null) => {
+      const api = new Hono().route("/api/v1", createApi({ db, isStaff: async () => true, jobs: { list: [], runningRun } }));
+      const body = (await (await api.request(path, { headers: { authorization: `Bearer ${staffKey}` } })).json()) as {
+        run?: { status: string };
+        runs?: { status: string }[];
+      };
+      return (body.run ?? body.runs![0]!).status;
+    };
+    const answering = (answers: (number | null)[]) => {
+      const left = [...answers];
+      return () => (left.length > 1 ? left.shift()! : left[0]!);
+    };
+
+    const id = await insert();
+    for (const path of [`/api/v1/jobs/runs/${id}`, "/api/v1/jobs/runs?limit=1"]) {
+      // The run finished after its row was read: it was running when read.
+      expect(await statusWith(path, answering([id, null])), path).toBe("running");
+      // The run started after the scheduler was first asked.
+      expect(await statusWith(path, answering([null, id])), path).toBe("running");
+      // Nothing has it in hand, before or after: the process stopped under it.
+      expect(await statusWith(path, answering([null, null])), path).toBe("unfinished");
+    }
+
+    // The run started and finished between the two times the scheduler was
+    // asked: its row showed no outcome when read, and neither answer names
+    // it. It is read once more, and by then says how it ended.
+    for (const which of ["one", "list"] as const) {
+      const runId = await insert();
+      // A store that lets the run complete just after its row is first read:
+      // the scheduler writes a run's outcome before it lets go of the run, so
+      // by the time it answers "nothing in hand" the outcome is in the store.
+      let reads = 0;
+      const afterFirstRead = async <T,>(result: T): Promise<T> => {
+        if (++reads === 1) {
+          await db
+            .updateTable("job_run")
+            .set({ outcome: "succeeded", completed_at: sql`now()`, detail: "done" })
+            .where("entity_id", "=", runId)
+            .execute();
+        }
+        return result;
+      };
+      const watching = (builder: object): object =>
+        new Proxy(builder, {
+          get(target, prop) {
+            const value = Reflect.get(target, prop, target);
+            if (typeof value !== "function") return value;
+            return (...args: unknown[]) => {
+              const out = value.apply(target, args);
+              if (prop === "execute" || prop === "executeTakeFirst") return (out as Promise<unknown>).then(afterFirstRead);
+              return out !== null && typeof out === "object" && !(out instanceof Promise) ? watching(out) : out;
+            };
+          },
+        });
+      const store = new Proxy(db, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop, target);
+          if (typeof value !== "function") return value;
+          return (...args: unknown[]) => {
+            const out = value.apply(target, args);
+            return prop === "selectFrom" && args[0] === "job_run" ? watching(out) : out;
+          };
+        },
+      });
+      const api = new Hono().route("/api/v1", createApi({ db: store, isStaff: async () => true, jobs: { list: [], runningRun: () => null } }));
+      const path = which === "one" ? `/api/v1/jobs/runs/${runId}` : "/api/v1/jobs/runs?limit=1";
+      const body = (await (await api.request(path, { headers: { authorization: `Bearer ${staffKey}` } })).json()) as {
+        run?: { status: string; detail: string };
+        runs?: { status: string; detail: string }[];
+      };
+      expect(body.run ?? body.runs![0]!, which).toMatchObject({ status: "succeeded", detail: "done" });
+      expect(reads, which).toBe(2);
     }
   });
 

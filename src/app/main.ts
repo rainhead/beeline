@@ -193,6 +193,7 @@ const app = createApp({
     start: (name) => scheduler.start(name),
     startRun: (name) => scheduler.startRun(name),
     running: () => scheduler.running(),
+    runningRun: () => scheduler.runningRun(),
   },
   correctionsPath: config.correctionsPath,
   personOverlayPath: config.personOverlayPath,

@@ -219,6 +219,8 @@ export interface JobsDep {
   start(name: string): Promise<boolean>;
   /** `start`, saying which run was recorded, or why nothing started; what the API calls (src/app/api.ts). */
   startRun?(name: string): Promise<import("./jobs/framework.js").StartedRun>;
+  /** The id of the run in hand, if any (Scheduler.runningRun). */
+  runningRun?(): number | null;
   /** The job running now, if any; the dashboard's check waits out the two that read iNaturalist. */
   running?(): string | null;
 }

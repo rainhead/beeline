@@ -4,6 +4,9 @@ import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { hashKey, keyRateLimiter, keyRef, resolveKey, type KeyHolder } from "./api-keys.js";
 import { BadBody, check, parseObject, referenceOf, registerCorrectionRoutes, smallBody } from "./api-corrections.js";
+import { registerReadRoutes, type ReadDeps } from "./api-read.js";
+import { describeApi } from "./api-description.js";
+import { atlasOptions } from "./listings.js";
 import { isWriteConflict } from "../write-conflict.js";
 import type { CorrectionDeps } from "./sample-corrections.js";
 import type { Messages } from "./messages/index.js";
@@ -61,6 +64,11 @@ export interface ApiDeps {
    * answer 503.
    */
   corrections?: { deps: CorrectionDeps; messages: Messages };
+  /**
+   * What reading records needs (src/app/api-read.ts). Absent, the listings and
+   * records answer 503; the counts and the description need only the store.
+   */
+  read?: ReadDeps;
   /** The job registry and the scheduler behind it; absent, the jobs endpoints list nothing and start nothing. */
   jobs?: ApiJobs;
 }
@@ -112,7 +120,7 @@ const requireStaff: MiddlewareHandler<ApiEnv> = async (c, next) => {
   await next();
 };
 
-export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs, corrections }: ApiDeps): Hono<ApiEnv> {
+export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs, corrections, read }: ApiDeps): Hono<ApiEnv> {
   const api = new Hono<ApiEnv>();
 
   api.onError((err, c) => {
@@ -188,6 +196,17 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs, corre
       staff: c.get("staff"),
     });
   });
+
+  // What the API is, for a program or an assistant to read before it asks
+  // anything (beeline-pnqr.2). Behind the same key check as everything else.
+  api.get("/", async (c) => {
+    const origin = read?.origin ?? new URL(c.req.url).origin;
+    return c.json(describeApi(origin, (await atlasOptions(db)).map((a) => a.code)));
+  });
+
+  // Reading samples and specimens as the pages show them (beeline-pnqr.2),
+  // in their own file.
+  registerReadRoutes(api, db, read);
 
   // --- Jobs (beeline-pnqr.5): what the Jobs page shows staff and its Run
   // button does, for a program. Staff keys only, as the page is staff only:

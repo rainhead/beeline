@@ -614,7 +614,7 @@ describe("what a refused correction is answered with", () => {
       const lost = await send();
       const answer = await json(lost);
       expect([lost.status, answer.error]).toEqual([409, "recorded_not_applied"]);
-      expect(answer.message).toContain("Sending the same request again is safe");
+      expect(answer.message).toContain("Sending the same request again applies it now and does not record it twice");
       // The file holds it; the store and the history do not.
       expect(await correctionsFile(w)).toContain("Walla Walla");
       expect(await localityOf(w.conn, w.legacy)).not.toBe("Walla Walla");

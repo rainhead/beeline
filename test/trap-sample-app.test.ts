@@ -180,6 +180,9 @@ describe("entering a trap sample", () => {
     // sample arriving, cut off from what was recorded under its old number.
     const { as, conn, paths } = await trapApp();
     const trapper = as("trapper");
+    // A store that was built, as production's was, so the history believes
+    // the ids it keeps (the store's identity is its first migration's instant).
+    await conn.run("INSERT INTO schema_migration (name) VALUES ('0001-a-store-that-was-built.sql')");
     // The pass the app makes when it starts, which a test's app does not.
     await recordSampleChanges(duckdbReader(conn), { log: paths.sampleChangesPath, state: paths.sampleStatePath }, { source: "reconcile" });
     const id = Number((await trapper.post("/trap-samples/new", entry())).headers.get("location")!.split("/")[2]);

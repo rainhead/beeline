@@ -2,7 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { kyselyReader } from "../person-change.js";
-import { recordSampleChanges, sampleReference, type SampleReference } from "../sample-change.js";
+import { recordSampleChanges } from "../sample-change.js";
 import { loadTrapSample, mayEditTrapSample, setTrapSampleLocality } from "../trap-sample.js";
 import { deriveForObserver } from "./inat-check.js";
 import { STAFF_READER, type Reader } from "./listings.js";
@@ -196,42 +196,23 @@ async function recordChange(
 }
 
 /**
- * How the history names a trap sample entered in Beeline, read before a save
- * changes it and handed to `recordTrapChange` afterwards. Both inside one
- * turn of the sample's queue.
- */
-export async function trapReference(deps: CorrectionDeps, sampleId: number): Promise<SampleReference | undefined> {
-  // The log records and never gates the change: a read that fails is
-  // reported, and the save goes on as it did before the pass could be told.
-  try {
-    return await sampleReference(kyselyReader(deps.db), sampleId);
-  } catch (err) {
-    console.warn(`could not read how the history names trap sample ${sampleId}: ${(err as Error).message}`);
-    return undefined;
-  }
-}
-
-/**
- * The change log entry for a trap sample entered in Beeline. `was` is the
- * reference the sample had before the save (`trapReference`), or null for a
- * sample the save made; a save that cannot move the reference, as a change
- * of locality cannot, leaves it out. The pass needs it because nothing else connects such
- * a sample to its history once its number, start date or first collector
- * changes: it has no observation, and no corrections file holds the author
- * (beeline-7r0g).
+ * The change log entry for a trap sample entered in Beeline. `created` is for
+ * the save that made the sample: it is then entered in its history as
+ * arriving, under whoever entered it, where the pass would otherwise leave a
+ * sample it has no record of to the nightly (beeline-7r0g).
  */
 export async function recordTrapChange(
   deps: CorrectionDeps,
   login: string,
   sampleId: number,
-  was?: SampleReference | null,
+  { created = false }: { created?: boolean } = {},
 ): Promise<void> {
   try {
     await recordSampleChanges(kyselyReader(deps.db), deps.samplePaths, {
       source: "app",
       author: login,
       where: `s.entity_id = ${sampleId}`,
-      was,
+      created,
     });
   } catch (err) {
     console.warn(`could not record the change to trap sample ${sampleId}: ${(err as Error).message}`);

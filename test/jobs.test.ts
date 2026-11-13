@@ -771,8 +771,8 @@ describe("the nightly and a refused sample snapshot (beeline-hrw)", () => {
     // empty, so every row is unclaimed and the pass refuses it.
     const fields = Object.fromEntries(SAMPLE_FIELDS.map((f) => [f, ""])) as Record<(typeof SAMPLE_FIELDS)[number], string>;
     await writeSnapshot(samplePaths.state, [
-      { collector: "name:Ada Adams", sample_number: "8", date_start: "2026-05-15", fields: { ...fields, collector: "name:Ada Adams", sample_number: "8", date_start: "2026-05-15" } },
-      { collector: "name:Cleo Cortez", sample_number: "9", date_start: "2026-04-20", fields: { ...fields, collector: "name:Cleo Cortez", sample_number: "9", date_start: "2026-04-20" } },
+      { id: "", collector: "name:Ada Adams", sample_number: "8", date_start: "2026-05-15", fields: { ...fields, collector: "name:Ada Adams", sample_number: "8", date_start: "2026-05-15" } },
+      { id: "", collector: "name:Cleo Cortez", sample_number: "9", date_start: "2026-04-20", fields: { ...fields, collector: "name:Cleo Cortez", sample_number: "9", date_start: "2026-04-20" } },
     ]);
     const steps: string[] = [];
     const job: Job = {

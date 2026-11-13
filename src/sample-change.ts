@@ -130,7 +130,11 @@ const LOG_HEADER = LOG_COLUMNS.join(",");
 
 /** Snapshot columns: the reference, then every field the log can speak about. */
 const STATE_COLUMNS = ["collector", "sample_number", "date_start", ...NON_MOVERS] as const;
-const STATE_HEADER = STATE_COLUMNS.join(",");
+/** The header before the snapshot carried ids: still read, never written. */
+const STATE_HEADER_WITHOUT_IDS = STATE_COLUMNS.join(",");
+const STATE_HEADER = `sample_id,${STATE_HEADER_WITHOUT_IDS}`;
+/** First cell of the line ahead of the header, which says which store wrote the snapshot. */
+const ORIGIN_MARK = "store";
 
 export const SAMPLE_CHANGE_LOG = "data/sample-change.csv";
 export const SAMPLE_STATE_SNAPSHOT = "data/sample-state.csv";
@@ -164,6 +168,14 @@ const keyOf = (collector: string, number: string, date: string) =>
   `${collector}${SEP}${number}${SEP}${date}`;
 
 export interface SampleState {
+  /**
+   * The store's own id for the sample (`sample.entity_id`), or empty where it
+   * is not known or not to be believed: a snapshot row written before the
+   * snapshot carried ids, or one read from a snapshot another store wrote
+   * (SnapshotOrigin). Never a logged field, and never the reference: the log
+   * is still read by collector, number and start date.
+   */
+  id: string;
   collector: string;
   sample_number: string;
   date_start: string;
@@ -194,7 +206,8 @@ export const SAMPLE_STATE_SQL = `
     FROM person p
     LEFT JOIN inat_account a ON a.person_id = p.entity_id
   )
-  SELECT pr.ref AS collector,
+  SELECT CAST(s.entity_id AS VARCHAR) AS sample_id,
+         pr.ref AS collector,
          s.sample_number,
          CAST(s.date_start AS VARCHAR) AS date_start,
          CAST(s.date_end AS VARCHAR) AS date_end,
@@ -284,6 +297,12 @@ export interface SampleStates {
   /** Samples whose collector no reference names: unrecordable, so counted. */
   unreferenceable: number;
   /**
+   * The id of every sample the query returned, the ones `states` leaves out
+   * included. A snapshot row carrying one of these is that sample's row and
+   * nobody else's, whether or not the pass can record the sample.
+   */
+  liveIds: Set<string>;
+  /**
    * Samples sharing one triple — a live duplicate_sample_number. The
    * reference was measured unique across the corpus, but nothing stops a
    * correction creating a collision, and two samples one reference names are
@@ -301,9 +320,11 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
   const suppressedKeys = new Set<string>();
   const suppressedObservations = new Set<string>();
   const liveCollectors = new Set<string>();
+  const liveIds = new Set<string>();
   let unreferenceable = 0;
   for (const row of rows) {
     const text = (k: string) => String(row[k] ?? "");
+    if (text("sample_id") !== "") liveIds.add(text("sample_id"));
     const collector = row.collector == null ? "" : String(row.collector);
     if (collector === "") {
       unreferenceable++;
@@ -312,6 +333,7 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
     }
     liveCollectors.add(collector);
     const state: SampleState = {
+      id: text("sample_id"),
       collector,
       sample_number: text("sample_number"),
       date_start: text("date_start"),
@@ -341,7 +363,7 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
     if (collector === "") continue;
     if (suppressedKeys.has(keyOf(collector, String(row.sample_number ?? ""), String(row.date_start ?? "")))) colliding++;
   }
-  return { states, suppressedKeys, suppressedObservations, liveCollectors, unreferenceable, colliding };
+  return { states, suppressedKeys, suppressedObservations, liveCollectors, liveIds, unreferenceable, colliding };
 }
 
 // ── The snapshot ─────────────────────────────────────────────────────────
@@ -358,6 +380,57 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
  * the last pass, which is bounded and visible; the arrivals are neither.
  */
 export async function readSnapshot(path: string): Promise<Map<string, SampleState> | null> {
+  return (await readSnapshotFile(path))?.rows ?? null;
+}
+
+/**
+ * Which store wrote a snapshot, and the highest sample id it held then.
+ *
+ * The ids in a snapshot are one store's (ADR 0007's addendum of 2026-11-13).
+ * A dev store is still rebuilt, and a scratch store has been pointed at the
+ * real files by mistake (beeline-hrw), so a pass believes the ids only where
+ * `identity` is its own store's. `highestId` catches the store that keeps
+ * its identity and draws the same ids again: one restored from an earlier
+ * copy, with the snapshot left as it was. Its highest sample id is below the
+ * one written here, and the sample it enters next would take an id the
+ * snapshot already gives to a sample that is gone.
+ */
+export interface SnapshotOrigin {
+  /** Empty where the store has none, or the snapshot does not say. Never believed when empty. */
+  identity: string;
+  highestId: number;
+}
+
+const NO_ORIGIN: SnapshotOrigin = { identity: "", highestId: 0 };
+
+/**
+ * The same two facts about the store a pass is reading. The identity is the
+ * instant its first migration was recorded: `pnpm db:build` and `db:reseed`
+ * stamp every migration as they make a store, so a rebuilt store has a new
+ * one, and a backup carries it. Cast in SQL because the two readers hand a
+ * TIMESTAMPTZ back as different objects, and the app's passes use one and
+ * the nightly's the other.
+ */
+export const STORE_ORIGIN_SQL = `
+  SELECT coalesce((SELECT CAST(epoch_us(min(applied_at)) AS VARCHAR) FROM schema_migration), '') AS identity,
+         (SELECT CAST(coalesce(max(entity_id), 0) AS VARCHAR) FROM sample) AS highest_id`;
+
+export async function readStoreOrigin(read: StateReader): Promise<SnapshotOrigin> {
+  const [row] = await read(STORE_ORIGIN_SQL);
+  return { identity: String(row?.identity ?? ""), highestId: Number(row?.highest_id ?? 0) };
+}
+
+/** Whether a pass over the store may believe the ids in a snapshot. */
+export const idsBelong = (snapshot: SnapshotOrigin, store: SnapshotOrigin): boolean =>
+  store.identity !== "" && snapshot.identity === store.identity && store.highestId >= snapshot.highestId;
+
+export interface SnapshotFile {
+  /** Keyed by triple, as the log is read. */
+  rows: Map<string, SampleState>;
+  origin: SnapshotOrigin;
+}
+
+export async function readSnapshotFile(path: string): Promise<SnapshotFile | null> {
   let text: string;
   try {
     text = await readFile(path, "utf8");
@@ -365,29 +438,40 @@ export async function readSnapshot(path: string): Promise<Map<string, SampleStat
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
-  const headerEnd = text.indexOf("\n");
-  const header = headerEnd === -1 ? text : text.slice(0, headerEnd);
-  if (header.replace(/\r$/, "") !== STATE_HEADER) {
+  // Two shapes are read. The one this code writes: a line saying which store
+  // wrote it, then the header with `sample_id` first. And the one from before
+  // the snapshot carried ids: the header alone, with no ids. That one is
+  // read as it stands, so the pass after the deploy records what was pending
+  // and writes the ids, where re-baselining would have lost the differences.
+  const records = parseCsv(text);
+  const first = records[0] ?? [];
+  const withIds = first[0] === ORIGIN_MARK && first.length === 3;
+  const header = (withIds ? records[1] ?? [] : first).join(",");
+  if (header !== (withIds ? STATE_HEADER : STATE_HEADER_WITHOUT_IDS)) {
     console.warn(
       `${path}: snapshot header does not match this code's columns — re-baselining ` +
         `(changes since the last pass will not be recorded)`,
     );
     return null;
   }
-  const records = parseCsv(text);
+  const origin: SnapshotOrigin = withIds
+    ? { identity: first[1]!, highestId: Number(first[2]) || 0 }
+    : NO_ORIGIN;
+  const columns: readonly string[] = withIds ? ["sample_id", ...STATE_COLUMNS] : STATE_COLUMNS;
   const states = new Map<string, SampleState>();
   let malformed = 0;
-  for (const r of records.slice(1)) {
-    if (r.length !== STATE_COLUMNS.length) {
+  for (const r of records.slice(withIds ? 2 : 1)) {
+    if (r.length !== columns.length) {
       malformed++;
       continue;
     }
-    const row = Object.fromEntries(STATE_COLUMNS.map((c, j) => [c, r[j]!])) as Record<string, string>;
+    const row = Object.fromEntries(columns.map((c, j) => [c, r[j]!])) as Record<string, string>;
     const fields = Object.fromEntries(SAMPLE_FIELDS.map((f) => [f, row[f] ?? ""])) as Record<SampleField, string>;
     fields.collector = row.collector!;
     fields.sample_number = row.sample_number!;
     fields.date_start = row.date_start!;
     const state: SampleState = {
+      id: row.sample_id ?? "",
       collector: row.collector!,
       sample_number: row.sample_number!,
       date_start: row.date_start!,
@@ -398,7 +482,7 @@ export async function readSnapshot(path: string): Promise<Map<string, SampleStat
   // Lenient like the log: the snapshot is restated by every pass, so a
   // dropped row costs one sample one spurious arrival, not its history.
   if (malformed > 0) console.warn(`${path}: skipped ${malformed} unreadable snapshot row(s)`);
-  return states;
+  return { rows: states, origin };
 }
 
 /**
@@ -408,10 +492,17 @@ export async function readSnapshot(path: string): Promise<Map<string, SampleStat
  */
 let tmpCounter = 0;
 
-export async function writeSnapshot(path: string, states: Iterable<SampleState>): Promise<void> {
+export async function writeSnapshot(
+  path: string,
+  states: Iterable<SampleState>,
+  origin: SnapshotOrigin = NO_ORIGIN,
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const rows = [...states].sort((a, b) => (stateKey(a) < stateKey(b) ? -1 : 1));
-  const lines = rows.map((s) => STATE_COLUMNS.map((c) => cell(s.fields[c as SampleField] ?? "")).join(","));
+  const lines = rows.map((s) =>
+    [cell(s.id), ...STATE_COLUMNS.map((c) => cell(s.fields[c as SampleField] ?? ""))].join(","),
+  );
+  const head = `${ORIGIN_MARK},${cell(origin.identity)},${origin.highestId}\n${STATE_HEADER}`;
   // Unique per write: passes are serialized within this process, but a CLI
   // and the app pointed at one store (against ADR 0005) can still race. The
   // unique name means they can never splice two restatements into one file;
@@ -422,7 +513,7 @@ export async function writeSnapshot(path: string, states: Iterable<SampleState>)
   // a duplicate in a log is legible where a lost row is not (the appender's
   // own rule).
   const tmp = `${path}.${process.pid}.${tmpCounter++}.tmp`;
-  await writeFile(tmp, `${STATE_HEADER}\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`);
+  await writeFile(tmp, `${head}\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`);
   await rename(tmp, path);
 }
 
@@ -625,6 +716,32 @@ export interface SampleMatching {
  *
  * Two claimants on one row, and neither claims: iteration order deciding who
  * inherits a history is not an answer.
+ *
+ * Ahead of all three, where the snapshot's ids are this store's (the caller
+ * blanks them otherwise): **a row that carries the id of a sample in the
+ * store is that sample's row**, wherever its reference has moved to, and no
+ * other sample may claim it by any tier. That is what recognises a sample
+ * with no observation after its number or start date is corrected, which is
+ * every trap sample entered in Beeline (beeline-7r0g). A row with no id, or
+ * with the id of a sample that is gone, is matched by the tiers above.
+ *
+ * The id says whose row it is. It does not change how the log is READ, which
+ * is still by reference, so two rules about the reader stand over it:
+ *
+ *   a loop of moves        two samples that swapped numbers cannot be written
+ *                          as two moves, because the reader will not move a
+ *                          history onto a reference it already knows. Each
+ *                          sample in a loop is compared with the row under
+ *                          its reference, as before ids, and that row takes
+ *                          its id when the snapshot is restated.
+ *   a row that stays       no entry is filed for a sample standing on a
+ *                          reference where a row will still sit after this
+ *                          pass: the row of a sample the pass cannot record
+ *                          (on a shared reference, in a contest, or with no
+ *                          collector reference). Entries filed there would
+ *                          be read into that other sample's history, so the
+ *                          sample is held, like a contest, until the row
+ *                          moves (Fable's review of this plan).
  */
 export function matchSamples(
   snapshot: ReadonlyMap<string, SampleState>,
@@ -633,9 +750,22 @@ export function matchSamples(
     directOnly = false,
     suppressedObservations = new Set<string>(),
     liveCollectors: alsoLive = new Set<string>(),
-  }: { directOnly?: boolean; suppressedObservations?: ReadonlySet<string>; liveCollectors?: ReadonlySet<string> } = {},
+    liveIds = new Set<string>(),
+  }: {
+    directOnly?: boolean;
+    suppressedObservations?: ReadonlySet<string>;
+    liveCollectors?: ReadonlySet<string>;
+    /** The id of every sample in the store. A one-sample pass has only its own. */
+    liveIds?: ReadonlySet<string>;
+  } = {},
 ): SampleMatching {
-  const rows = [...snapshot.values()];
+  const byId = new Map<string, SampleState>();
+  for (const row of snapshot.values()) if (row.id !== "") byId.set(row.id, row);
+  if (directOnly) return matchOneSample(snapshot, states, byId);
+  // Rows that are a live sample's own, and so nobody else's to claim.
+  const owned = new Set<SampleState>();
+  for (const row of byId.values()) if (liveIds.has(row.id)) owned.add(row);
+  const rows = [...snapshot.values()].filter((row) => !owned.has(row));
   const byObservation = valueIndex(rows, (s) => s.fields.observation);
   const byNumberDate = valueIndex(rows, (s) => `${s.sample_number}${SEP}${s.date_start}`);
   // Which store sample holds each observation now — the store's answer, not
@@ -655,8 +785,40 @@ export function matchSamples(
   // Samples that can neither take their triple's row nor be told they are not
   // its sample: recorded as nothing, with the row carried, like a contest.
   const held = new Map<SampleState, SampleState>();
+  // By id first. A sample's own row is proposed wherever it sits.
   for (const state of states.values()) {
-    const direct = snapshot.get(stateKey(state));
+    const own = state.id === "" ? undefined : byId.get(state.id);
+    if (own !== undefined) proposed.set(state, own);
+  }
+  // A loop of those moves goes back to the reference (see above). Following
+  // a move from the sample to whoever is leaving the reference it now stands
+  // on comes back to the sample only in a loop.
+  {
+    const leavingFrom = new Map<string, SampleState>();
+    for (const [state, row] of proposed) {
+      if (stateKey(row) !== stateKey(state)) leavingFrom.set(stateKey(row), state);
+    }
+    const looped: SampleState[] = [];
+    for (const start of leavingFrom.values()) {
+      let at = start;
+      for (let step = 0; step < leavingFrom.size; step++) {
+        const next = leavingFrom.get(stateKey(at));
+        if (next === undefined) break;
+        if (next === start) {
+          looped.push(start);
+          break;
+        }
+        at = next;
+      }
+    }
+    for (const state of looped) proposed.set(state, snapshot.get(stateKey(state))!);
+  }
+  for (const state of states.values()) {
+    if (proposed.has(state)) continue;
+    // A row that is another live sample's own is not this one's, whatever
+    // reference it sits under.
+    const under = snapshot.get(stateKey(state));
+    const direct = under !== undefined && owned.has(under) ? undefined : under;
     // Even the triple yields to the link, but only where the link says
     // plainly that this is another sample: this one carries a DIFFERENT
     // observation from the row's, and another store sample now carries the
@@ -776,7 +938,70 @@ export function matchSamples(
     contested.add(stateKey(state));
     contestedRows.add(stateKey(row));
   }
+  // A row that stays holds whoever stands on its reference (see above).
+  // Holding a sample leaves its own row where it is, which may be under the
+  // reference a third sample now stands on, so this repeats until it settles.
+  for (let changed = true; changed; ) {
+    changed = false;
+    const claimed = new Set(matched.values());
+    for (const key of states.keys()) {
+      if (contested.has(key)) continue;
+      const row = snapshot.get(key);
+      if (row === undefined || claimed.has(row)) continue;
+      const stays =
+        contestedRows.has(key) ||
+        owned.has(row) ||
+        (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation));
+      if (!stays) continue;
+      contested.add(key);
+      const own = matched.get(key);
+      if (own !== undefined) {
+        matched.delete(key);
+        contestedRows.add(stateKey(own));
+      }
+      changed = true;
+    }
+  }
   return { matched, contested, contestedRows };
+}
+
+/**
+ * The matching a pass narrowed to one sample may make. It cannot see the
+ * rest of the store, so it grants only what needs no second opinion, and
+ * leaves the rest to the next full pass by matching nothing:
+ *
+ *   its own row, by id      under its reference, or under the reference it
+ *                           had when the reference it has now is free. Where
+ *                           another row sits under the new reference the
+ *                           full pass must record that row's move first, or
+ *                           the reader would refuse this one.
+ *   a row with no id        under its reference, as before ids: unless the
+ *                           observation links differ, which a one-sample
+ *                           pass cannot judge.
+ *
+ * A row under its reference that carries another id is another sample's.
+ */
+function matchOneSample(
+  snapshot: ReadonlyMap<string, SampleState>,
+  states: ReadonlyMap<string, SampleState>,
+  byId: ReadonlyMap<string, SampleState>,
+): SampleMatching {
+  const matched = new Map<string, SampleState>();
+  for (const [key, state] of states) {
+    const direct = snapshot.get(key);
+    const own = state.id === "" ? undefined : byId.get(state.id);
+    if (own !== undefined) {
+      if (own === direct || direct === undefined) matched.set(key, own);
+      continue;
+    }
+    if (direct === undefined || direct.id !== "") continue;
+    const relinked =
+      state.fields.observation !== "" &&
+      direct.fields.observation !== "" &&
+      direct.fields.observation !== state.fields.observation;
+    if (!relinked) matched.set(key, direct);
+  }
+  return { matched, contested: new Set(), contestedRows: new Set() };
 }
 
 // ── Recording ────────────────────────────────────────────────────────────
@@ -795,43 +1020,14 @@ export interface SampleRecordOptions {
    */
   where?: string;
   /**
-   * For a pass narrowed to ONE sample, what the caller knows about that
-   * sample that the pass cannot work out: the reference it had before the
-   * change being recorded (`sampleReference`, read before the write), or
-   * `null` where the change made the sample.
-   *
-   * A narrowed pass matches on the reference alone, so without this a sample
-   * whose number, start date or primary collector was just corrected, and a
-   * sample that was just entered, are both left to the next full pass. For a
-   * sample with an observation the full pass follows the link, and only the
-   * author's name is lost. A trap sample entered in Beeline has no
-   * observation and no corrections file, so the full pass recorded a
-   * renumbered one as a second sample arriving, under nobody's name, and
-   * the renumbering itself was never an entry (beeline-7r0g).
+   * For a pass narrowed to one sample: the caller has just made it. A
+   * one-sample pass otherwise leaves a sample with no snapshot row to the
+   * next full pass, which enters it under nobody's name; a trap sample
+   * entered in Beeline has no corrections file to hold who entered it
+   * (beeline-7r0g). Entered as arriving only where no row is under its
+   * reference and none carries its id.
    */
-  was?: SampleReference | null;
-}
-
-/** The three values a sample is named by in the log and the snapshot. */
-export interface SampleReference {
-  collector: string;
-  sample_number: string;
-  date_start: string;
-}
-
-/**
- * How the store names one sample now, for a caller about to change it
- * (SampleRecordOptions.was). Undefined where the pass could not speak for
- * the sample anyway: nobody names its collector, or another sample shares
- * its reference.
- */
-export async function sampleReference(read: StateReader, sampleId: number): Promise<SampleReference | undefined> {
-  const { states } = await readSampleStates(read, `s.entity_id = ${sampleId}`);
-  const [state] = [...states.values()];
-  if (state === undefined) return undefined;
-  const ref = { collector: state.collector, sample_number: state.sample_number, date_start: state.date_start };
-  const [row] = await read(tripleCountSql(ref));
-  return Number(row?.n ?? 1) > 1 ? undefined : ref;
+  created?: boolean;
 }
 
 export interface SampleRecordResult {
@@ -899,7 +1095,8 @@ async function recordPass(
   opts: SampleRecordOptions,
 ): Promise<SampleRecordResult> {
   const found = await readSampleStates(read, opts.where ?? "");
-  const { states, suppressedKeys, suppressedObservations, liveCollectors, unreferenceable } = found;
+  const { states, suppressedKeys, suppressedObservations, liveCollectors, liveIds, unreferenceable } = found;
+  const store = await readStoreOrigin(read);
   let { colliding } = found;
   // A narrowed pass holds one sample and cannot see a second one on the same
   // triple. Granted the direct hit, it would file this sample's edit as
@@ -918,7 +1115,13 @@ async function recordPass(
       colliding += n;
     }
   }
-  const snapshot = await readSnapshot(paths.state);
+  const file = await readSnapshotFile(paths.state);
+  const snapshot = file?.rows ?? null;
+  // The ids in a snapshot are believed only where this store wrote it and
+  // has not gone back to an earlier copy since (SnapshotOrigin). Otherwise
+  // they are blanked, and the pass is the one it was before ids.
+  const believed = file !== null && idsBelong(file.origin, store);
+  if (snapshot !== null && !believed) for (const row of snapshot.values()) row.id = "";
 
   // First pass: the store as it stands is the baseline, and nothing is an
   // event. (A narrowed first pass must not write a one-sample snapshot that
@@ -929,7 +1132,7 @@ async function recordPass(
   // business, which is why the baseline lives beside the log and not in it.
   if (snapshot === null || snapshot.size === 0) {
     const all = opts.where == null ? states : (await readSampleStates(read)).states;
-    await writeSnapshot(paths.state, all.values());
+    await writeSnapshot(paths.state, all.values(), store);
     return { appended: 0, baselined: true, unreferenceable, colliding, contested: 0, refused: null };
   }
 
@@ -937,7 +1140,18 @@ async function recordPass(
     directOnly: opts.where != null,
     suppressedObservations,
     liveCollectors,
+    liveIds,
   });
+  // A sample the caller says it just made (SampleRecordOptions.created).
+  const arrivals = new Set<string>();
+  if (opts.where != null && opts.created === true) {
+    for (const [key, state] of states) {
+      if (snapshot.has(key)) continue;
+      let known = false;
+      for (const row of snapshot.values()) if (row.id === state.id) known = true;
+      if (!known) arrivals.add(key);
+    }
+  }
 
   // A snapshot this store does not answer to is another store's statement,
   // and a full pass refuses it whole: no entries, no restatement. On
@@ -960,7 +1174,11 @@ async function recordPass(
     for (const row of matched.values()) claimed.add(stateKey(row));
     for (const key of contestedRows) claimed.add(key);
     for (const [key, row] of snapshot) {
-      if (suppressedKeys.has(key) || (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation))) {
+      if (
+        suppressedKeys.has(key) ||
+        (row.id !== "" && liveIds.has(row.id)) ||
+        (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation))
+      ) {
         claimed.add(key);
       }
     }
@@ -978,36 +1196,6 @@ async function recordPass(
           `was left as it was. If this store has replaced that one, delete the snapshot and the next pass ` +
           `re-baselines from it.`,
       };
-    }
-  }
-  // What the caller of a one-sample pass knows (SampleRecordOptions.was).
-  // A sample it just made arrives, where nothing in the snapshot is on its
-  // reference. A sample whose reference it just moved takes the row under
-  // the reference it had, provided no sample in the store still answers to
-  // that reference: then the row may be another sample's, and the next full
-  // pass decides. A row already under the NEW reference is not this sample's
-  // either, since this sample was somewhere else when it was written. It may
-  // be what a sample that is gone left behind, or the row of a sample that
-  // has moved off that reference with its move not yet recorded, and
-  // patching over it would make the next full pass enter that sample as
-  // arriving (CodeRabbit on this branch). So the pass records nothing then,
-  // not even against that row, and the full pass decides.
-  const arrivals = new Set<string>();
-  if (opts.where != null && opts.was !== undefined && states.size === 1) {
-    const [key] = [...states.keys()] as [string];
-    if (opts.was === null) {
-      // A row already on a new sample's reference is some other sample's for
-      // the same reason, so the new sample is not compared against it.
-      if (snapshot.has(key)) matched.delete(key);
-      else if (!contested.has(key)) arrivals.add(key);
-    } else if (stateKey(opts.was) !== key && !contested.has(key)) {
-      if (snapshot.has(key)) {
-        matched.delete(key);
-      } else {
-        const row = snapshot.get(stateKey(opts.was));
-        const [stillThere] = row === undefined ? [] : await read(tripleCountSql(opts.was));
-        if (row !== undefined && Number(stillThere?.n ?? 1) === 0) matched.set(key, row);
-      }
     }
   }
   const at = opts.at ?? new Date().toISOString();
@@ -1040,8 +1228,7 @@ async function recordPass(
     // the next full pass will recognise through the weak tiers. The full
     // pass records it then, attributed to itself; only the author's name is
     // lost to the log, and the corrections overlay holds that durably.
-    // The exceptions are the two the caller vouched for above: a sample it
-    // made, and a sample it moved, which by now has its row in `matched`.
+    // The one exception is a sample the caller has just made.
     if (opts.where != null && before === undefined && !arrivals.has(key)) continue;
     // Filed under the triple the LOG knows the sample by — and each mover
     // under the triple as moved by the movers before it (see MOVERS).
@@ -1089,15 +1276,24 @@ async function recordPass(
   // narrowing keeps its row.
   if (opts.where == null) {
     const next = new Map<string, SampleState>();
+    const recorded = new Set<SampleState>();
     for (const [key, state] of states) {
-      if (!contested.has(key)) next.set(key, state);
+      if (contested.has(key)) continue;
+      next.set(key, state);
+      const before = matched.get(key);
+      if (before !== undefined) recorded.add(before);
     }
     for (const [key, row] of snapshot) {
       if (next.has(key)) continue;
+      // The last of these is new with ids: the row of a sample that is still
+      // in the store and that this pass did not record. Before ids such a
+      // row was dropped unless one of the other three kept it, and the
+      // sample was entered again as arriving once the pass could record it.
       if (
         suppressedKeys.has(key) ||
         contestedRows.has(key) ||
-        (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation))
+        (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation)) ||
+        (row.id !== "" && liveIds.has(row.id) && !recorded.has(row))
       ) {
         next.set(key, row);
       }
@@ -1106,8 +1302,19 @@ async function recordPass(
     // restatement is byte-deterministic, so rewriting 11 MB to say the same
     // thing again is pure cost — and it is the steady case (adversarial
     // review of PR #32).
-    if (rows.length > 0 || next.size !== snapshot.size || [...next.keys()].some((k) => !snapshot.has(k))) {
-      await writeSnapshot(paths.state, next.values());
+    //
+    // Unless the file does not yet say what this store would say of it: it
+    // has no ids, or another store's, or a row is missing its sample's id.
+    // The first pass after the snapshot began carrying ids is usually a
+    // quiet one, and leaving the file alone then would leave it without ids
+    // for the first trap sample renumbered afterwards (Fable's review of
+    // this plan). A store with no identity writes none it could believe, so
+    // its quiet passes still leave the file alone.
+    const idsOwed =
+      store.identity !== "" &&
+      (!believed || [...next].some(([k, row]) => snapshot.get(k)?.id !== row.id));
+    if (idsOwed || rows.length > 0 || next.size !== snapshot.size || [...next.keys()].some((k) => !snapshot.has(k))) {
+      await writeSnapshot(paths.state, next.values(), store);
     }
   } else {
     const next = new Map(snapshot);
@@ -1121,10 +1328,22 @@ async function recordPass(
       // another sample's history, which patching would overwrite.
       if (before === undefined && !arrivals.has(key)) continue;
       if (before !== undefined) next.delete(stateKey(before));
-      next.set(key, state);
+      // Where the file's ids are not this store's, a one-sample pass adds
+      // none of its own under the other store's name.
+      next.set(key, believed ? state : { ...state, id: "" });
       touched = true;
     }
-    if (touched) await writeSnapshot(paths.state, next.values());
+    // The line saying which store wrote the file is the full pass's to
+    // change. A one-sample pass only raises the highest id, for a sample it
+    // has just entered.
+    const origin = file === null ? store : file.origin;
+    if (touched) {
+      await writeSnapshot(
+        paths.state,
+        next.values(),
+        believed ? { ...origin, highestId: Math.max(origin.highestId, store.highestId) } : origin,
+      );
+    }
   }
   return { appended: rows.length, baselined: false, unreferenceable, colliding, contested: contested.size, refused: null };
 }

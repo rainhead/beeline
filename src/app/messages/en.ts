@@ -1739,6 +1739,24 @@ export const en = {
     determinedHere: (count: number, rank: string) =>
       `Counted by current determination, including everything filed below. ${n(count)} ${count === 1 ? "is" : "are"} determined to this ${rank} and no finer.`,
     seeSpecimens: "See these specimens",
+    /**
+     * The reader's own specimens of the name, by where they were collected
+     * and off which plant (beeline-nstp). Only ever the reader's, so "you".
+     */
+    yours: {
+      heading: "Yours",
+      /** "You collected 108 of them.", the count linked to the specimen listing at My records. */
+      collected: "You collected",
+      /** "Them" is the specimens the page counts, so it stays plural when the reader has one. */
+      ofThem: (count: number) => `${n(count)} of them`,
+      from: (count: number, where: string) => `${n(count)} from ${where}`,
+      nowhere: (count: number) => `${n(count)} with no place recorded`,
+      off: "off",
+      inSeasons: (seasons: readonly string[]) => `in ${list(seasons)}`,
+      /** The places and plants past the first few, folded away, the fewest specimens last. */
+      more: (count: number) => `${n(count)} more ${count === 1 ? "place or plant" : "places and plants"}`,
+      notListed: (count: number) => `${n(count)} more, each with fewer specimens, are not listed here.`,
+    },
     below: "Filed below",
     nothingBelow: "Nothing is filed below this name.",
     /** One name's standing, said in full on its own page. */

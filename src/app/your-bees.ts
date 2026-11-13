@@ -644,3 +644,83 @@ async function lineageOf(db: Kysely<Database>, ids: number[]): Promise<Map<numbe
   }
   return map;
 }
+
+/** One place and host plant the person collected a taxon at (beeline-nstp). */
+export interface CollectedGroup {
+  locality: string | null;
+  county: string | null;
+  state_province: string | null;
+  /** The floral host as observed; null for a bee taken off no flower, or none recorded. */
+  host_name: string | null;
+  host_rank: string | null;
+  /** Collection years, newest first. */
+  seasons: number[];
+  specimens: number;
+  /** The first and last collecting days, as ISO dates: the window the listing link is narrowed to. */
+  from: string;
+  to: string;
+}
+
+export interface Collected {
+  total: number;
+  /** The most specimens first. */
+  groups: CollectedGroup[];
+}
+
+/**
+ * The person's own specimens of a taxon or anything filed below it, by the
+ * determination of record as the taxon page counts them, grouped by where
+ * they were collected and off which plant (beeline-nstp). Only the person's
+ * own samples are read, so nothing iNaturalist withholds from others is
+ * shown to anyone but a collector of it.
+ */
+export async function collectedOf(db: Kysely<Database>, personId: number, animalId: number): Promise<Collected> {
+  // The depth guard is the taxon page's own: the tree is not constrained against a cycle.
+  const { rows } = await sql<{
+    locality: string | null;
+    county: string | null;
+    state_province: string | null;
+    host_name: string | null;
+    host_rank: string | null;
+    season: unknown;
+    date_start: Date;
+    date_end: Date;
+  }>`
+    WITH RECURSIVE below(entity_id, depth) AS (
+      SELECT ${animalId}, 0
+      UNION ALL
+      SELECT a.entity_id, below.depth + 1 FROM animal a JOIN below ON a.parent_id = below.entity_id WHERE below.depth < 32
+    )
+    SELECT s.locality, s.county, s.state_province, s.host_name_as_observed AS host_name, s.host_rank, ss.season,
+           s.date_start, s.date_end
+    FROM specimen sp
+    JOIN sample s ON s.entity_id = sp.sample_id
+    JOIN sample_season ss ON ss.sample_id = sp.sample_id
+    JOIN determination_of_record d ON d.specimen_id = sp.entity_id
+    WHERE d.animal_id IN (SELECT entity_id FROM below) AND ${mine(personId)}
+  `.execute(db);
+  const groups = new Map<string, CollectedGroup>();
+  const isoDay = (d: Date) => new Date(d).toISOString().slice(0, 10);
+  for (const r of rows) {
+    const key = JSON.stringify([r.locality, r.county, r.state_province, r.host_name, r.host_rank]);
+    const from = isoDay(r.date_start);
+    const to = isoDay(r.date_end);
+    let g = groups.get(key);
+    if (g === undefined) {
+      g = { locality: r.locality, county: r.county, state_province: r.state_province, host_name: r.host_name, host_rank: r.host_rank, seasons: [], specimens: 0, from, to };
+      groups.set(key, g);
+    }
+    const season = Number(r.season);
+    if (!g.seasons.includes(season)) g.seasons.push(season);
+    g.specimens++;
+    if (from < g.from) g.from = from;
+    if (to > g.to) g.to = to;
+  }
+  const place = (g: CollectedGroup) => [g.locality, g.county, g.state_province, g.host_name].map((s) => s ?? "").join("\t");
+  return {
+    total: rows.length,
+    groups: [...groups.values()]
+      .map((g) => ({ ...g, seasons: g.seasons.sort((a, b) => b - a) }))
+      .sort((a, b) => b.specimens - a.specimens || place(a).localeCompare(place(b))),
+  };
+}

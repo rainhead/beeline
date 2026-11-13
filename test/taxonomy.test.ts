@@ -8,7 +8,7 @@ import { loadEcdysisTaxonomy } from "../src/load-ecdysis-taxonomy.js";
 import { applyTaxonCuration, type TaxonCurationRow } from "../src/taxon-curation.js";
 import { ecdysisTaxonHref, parseTaxonomyQuery, taxonHref, taxonomyHref } from "../src/app/taxonomy.js";
 import { parseCsv } from "../src/corrections.js";
-import { createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
+import { CURRENT_SEASON, createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 
 /**
  * The taxonomy pages (beeline-45v.5).
@@ -432,5 +432,111 @@ describe("the taxonomy pages", () => {
       decided: "any",
       page: 1,
     });
+  });
+});
+
+describe("the reader's own specimens on a name's page (beeline-nstp)", () => {
+  /**
+   * Ada's own sample (Corvallis, the beforeEach's) holds a zonulum, a
+   * Lasioglossum and a Bombus. Bo's sample at Bald Hill, off Rubus, has Ada as
+   * second collector and holds a tenax; Bo's own at Philomath holds a
+   * zonulum, which is not Ada's.
+   */
+  async function collectors() {
+    await conn.run(`INSERT INTO person (entity_id, display_name) VALUES (2, 'Bo Barnes')`);
+    const shared = await insertCleanSample(conn, {
+      collector_id: "2",
+      sample_number: "'2'",
+      locality: "'Bald Hill'",
+      host_name_as_observed: "'Rubus armeniacus'",
+      host_rank: "'species'",
+    });
+    await conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${shared}, 1, 2)`);
+    const bos = await insertCleanSample(conn, { collector_id: "2", sample_number: "'3'", locality: "'Philomath'" });
+    const [[tenax]] = (await (
+      await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${shared}, 1, '26000201') RETURNING entity_id`)
+    ).getRows()) as [[number]];
+    const [[bosZonulum]] = (await (
+      await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${bos}, 1, '26000301') RETURNING entity_id`)
+    ).getRows()) as [[number]];
+    await determine(tenax, "Lasioglossum tenax", "2025-01-10 12:00:00+00", true);
+    await determine(bosZonulum, "Lasioglossum zonulum", "2025-01-10 12:00:00+00", true);
+  }
+
+  it("lists them by place and plant, a second collector's included and nobody else's", async () => {
+    await collectors();
+    const app = await taxonomyApp();
+    const body = await page(app, taxonHref({ rank: "genus", scientific_name: "Lasioglossum" }));
+    const yours = between(body, `<h2 id="yours">`, "</section>");
+    const t = en.taxonomy.yours;
+    expect(yours).toContain(`${t.collected} <a href="${html("/specimens?scope=mine&taxon=Lasioglossum")}">${t.ofThem(3)}</a>.`);
+    // The most specimens first: Ada's own two at Corvallis, then the tenax off Rubus.
+    const corvallis = yours.indexOf(t.from(2, "Corvallis, BentonCo, OR"));
+    const baldHill = yours.indexOf(t.from(1, "Bald Hill, BentonCo, OR"));
+    expect(corvallis).toBeGreaterThan(0);
+    expect(baldHill).toBeGreaterThan(corvallis);
+    // The plant set as a name, italic at species rank.
+    expect(yours.slice(baldHill)).toContain(', off <span class="taxon"><i>Rubus</i> <i>armeniacus</i></span>, in ');
+    expect(yours).toContain(t.inSeasons([String(CURRENT_SEASON)]));
+    expect(yours).not.toContain("Philomath");
+    // The count links to all of Ada's, and the listing agrees about which are hers.
+    const all = await page(app, "/specimens?scope=mine&taxon=Lasioglossum");
+    expect(all).toContain("26000201");
+    expect(all).not.toContain("26000301");
+    // Each line links to the listing narrowed to it: the name, Ada's, the place, the plant and the days.
+    const linkTo = (text: string) => {
+      const href = new RegExp(`<a href="([^"]+)">${text}</a>`).exec(yours)?.[1];
+      expect(href, text).toBeDefined();
+      return href!.replaceAll("&amp;", "&");
+    };
+    const baldHillHref = linkTo(t.from(1, "Bald Hill, BentonCo, OR"));
+    const params = new URL(baldHillHref, "http://x").searchParams;
+    expect(Object.fromEntries(params)).toMatchObject({ scope: "mine", taxon: "Lasioglossum", place: "Bald Hill, BentonCo, OR", host: "Rubus armeniacus" });
+    expect(params.get("from")).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(params.get("to")).toBe(params.get("from"));
+    expect(await page(app, baldHillHref)).toContain("26000201");
+    const corvallisListing = await page(app, linkTo(t.from(2, "Corvallis, BentonCo, OR")));
+    expect(corvallisListing).not.toContain("26000201");
+    expect(corvallisListing).not.toContain("26000301");
+  });
+
+  it("follows the name down, so a species shows only its own", async () => {
+    await collectors();
+    const body = await page(await taxonomyApp(), taxonHref({ rank: "species", scientific_name: "Lasioglossum zonulum" }));
+    const yours = between(body, `<h2 id="yours">`, "</section>");
+    expect(yours).toContain(en.taxonomy.yours.ofThem(1));
+    expect(yours).toContain(en.taxonomy.yours.from(1, "Corvallis, BentonCo, OR"));
+  });
+
+  it("folds away all but the ten places with the most, and leaves past a hundred to the listing", async () => {
+    // 104 more of Ada's samples, each at its own place with one Bombus, and
+    // one more Bombus at Corvallis so that it leads: 105 places in all.
+    await conn.run(`INSERT INTO sample (kind, sample_number, date_start, date_end, specimen_count, country, state_province, county, locality, protocol)
+                    SELECT 'net', CAST(10 + i AS VARCHAR), date_start, date_end, 1, 'USA', 'OR', 'BentonCo', concat('Place ', lpad(CAST(i AS VARCHAR), 3, '0')), 'net'
+                    FROM range(104) t(i), (SELECT date_start, date_end FROM sample LIMIT 1)`);
+    await conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) SELECT entity_id, 1, 1 FROM sample WHERE locality LIKE 'Place %'`);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) SELECT entity_id, 1 FROM sample WHERE locality LIKE 'Place %'`);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number) SELECT entity_id, 4 FROM sample WHERE locality = 'Corvallis'`);
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, is_expert, channel, recorded_at)
+                    SELECT sp.entity_id, ${ids.get("Bombus vosnesenskii")}, true, 'legacy_import', TIMESTAMPTZ '2025-01-10 12:00:00+00'
+                    FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id WHERE s.locality LIKE 'Place %' OR sp.specimen_number = 4`);
+    const body = await page(await taxonomyApp(), taxonHref({ rank: "genus", scientific_name: "Bombus" }));
+    const yours = between(body, `<h2 id="yours">`, "</section>");
+    const t = en.taxonomy.yours;
+    expect(yours).toContain(t.ofThem(106));
+    const open = yours.slice(0, yours.indexOf("<details"));
+    expect(open.indexOf(t.from(2, "Corvallis, BentonCo, OR"))).toBeGreaterThan(0);
+    expect(open).toContain(t.from(1, "Place 008, BentonCo, OR"));
+    expect(open).not.toContain("Place 009");
+    expect(yours).toContain(t.more(90));
+    expect(yours).toContain(t.from(1, "Place 098, BentonCo, OR"));
+    expect(yours).not.toContain("Place 099");
+    expect(yours).toContain(t.notListed(5));
+  });
+
+  it("says nothing of the reader's on a name they have none of", async () => {
+    await collectors();
+    const body = await page(await taxonomyApp(), taxonHref({ rank: "genus", scientific_name: "Xeromelecta" }));
+    expect(body).not.toContain(`id="yours"`);
   });
 });

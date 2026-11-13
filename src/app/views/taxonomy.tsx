@@ -32,6 +32,8 @@ import {
   Term,
   TextField,
 } from "./components/index.js";
+import { EMPTY_QUERY, MINE, listingHref } from "../listings.js";
+import type { Collected, CollectedGroup } from "../your-bees.js";
 
 /**
  * The taxonomy (beeline-45v.5): an index that is both a way into the tree and
@@ -374,7 +376,82 @@ function Reference({ value }: { value: string }) {
   return <>{value}</>;
 }
 
-export function TaxonPage({ m, node, admin }: { m: Messages; node: TaxonNode; admin: boolean }) {
+/**
+ * How many places and plants are shown open, and how many in all before the
+ * rest are left to the listing. A volunteer's specimens of one genus are at
+ * three places and plants at the median and 31 at the 90th percentile, but
+ * the busiest collector's of a family are at over a thousand (production,
+ * 2026-11-12), more than a page should carry.
+ */
+const GROUPS_OPEN = 10;
+const GROUPS_LISTED = 100;
+
+/**
+ * Each group links to the specimen listing narrowed as far as its filters
+ * go: the name, My records, the place and plant, and the first and last
+ * collecting days. The listing matches a place or a plant as words in it
+ * rather than exactly, and has no filter for "no plant", so a link can show
+ * more than its count: a place whose name is part of another's within those
+ * days, or, for a line with no plant, the same place's other plants.
+ */
+function CollectedList({ m, node, groups }: { m: Messages; node: TaxonNode; groups: readonly CollectedGroup[] }) {
+  const t = m.taxonomy.yours;
+  return (
+    <ul class="collected">
+      {groups.map((g) => {
+        const where = m.format.place([g.locality, g.county, g.state_province]);
+        const href = listingHref("/specimens", EMPTY_QUERY, {
+          scope: MINE,
+          taxon: node.scientific_name,
+          place: where,
+          host: g.host_name ?? "",
+          from: g.from,
+          to: g.to,
+        });
+        return (
+          <li>
+            <a href={href}>{where === "" ? t.nowhere(g.specimens) : t.from(g.specimens, where)}</a>
+            {g.host_name !== null && (
+              <>
+                , {t.off} <TaxonName rank={g.host_rank ?? ""} scientificName={g.host_name} />
+              </>
+            )}
+            , {t.inSeasons(g.seasons.map(String))}.
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * The reader's own specimens of the name or anything below it, by place and
+ * host plant (beeline-nstp): where a volunteer arriving from What you found
+ * sees what of theirs the name covers. The count links to them all on the
+ * specimen listing, at My records, and each group to its own part of it.
+ */
+function Yours({ m, node, collected }: { m: Messages; node: TaxonNode; collected: Collected }) {
+  const t = m.taxonomy.yours;
+  const { groups } = collected;
+  return (
+    <section aria-labelledby="yours">
+      <h2 id="yours">{t.heading}</h2>
+      <p>
+        {t.collected} <a href={listingHref("/specimens", EMPTY_QUERY, { scope: MINE, taxon: node.scientific_name })}>{t.ofThem(collected.total)}</a>.
+      </p>
+      <CollectedList m={m} node={node} groups={groups.slice(0, GROUPS_OPEN)} />
+      {groups.length > GROUPS_OPEN && (
+        <details class="collected-more">
+          <summary>{t.more(Math.min(groups.length, GROUPS_LISTED) - GROUPS_OPEN)}</summary>
+          <CollectedList m={m} node={node} groups={groups.slice(GROUPS_OPEN, GROUPS_LISTED)} />
+          {groups.length > GROUPS_LISTED && <Meta block>{t.notListed(groups.length - GROUPS_LISTED)}</Meta>}
+        </details>
+      )}
+    </section>
+  );
+}
+
+export function TaxonPage({ m, node, admin, collected }: { m: Messages; node: TaxonNode; admin: boolean; collected: Collected }) {
   const t = m.taxonomy;
   return (
     <>
@@ -397,6 +474,7 @@ export function TaxonPage({ m, node, admin }: { m: Messages; node: TaxonNode; ad
           <a href={taxonSpecimensHref(node)}>{t.seeSpecimens}</a>
         </p>
       )}
+      {collected.total > 0 && <Yours m={m} node={node} collected={collected} />}
       <h2>{t.below}</h2>
       {node.children.length === 0 ? <EmptyState>{t.nothingBelow}</EmptyState> : <TaxonTable m={m} rows={node.children} admin={admin} />}
     </>

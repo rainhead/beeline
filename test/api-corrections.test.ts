@@ -467,12 +467,15 @@ describe("what a refused correction is answered with", () => {
       db: w.db,
       isStaff: async () => false,
       corrections: {
-        db: conflicting,
-        conn: w.conn,
-        correctionsPath: w.paths.correctionsPath,
-        sampleOverlayPath: w.paths.sampleOverlayPath,
-        samplePaths: { log: w.paths.sampleChangesPath, state: w.paths.sampleStatePath },
-        syncJobRunning: () => false,
+        deps: {
+          db: conflicting,
+          conn: w.conn,
+          correctionsPath: w.paths.correctionsPath,
+          sampleOverlayPath: w.paths.sampleOverlayPath,
+          samplePaths: { log: w.paths.sampleChangesPath, state: w.paths.sampleStatePath },
+          syncJobRunning: () => false,
+        },
+        messages: en,
       },
     });
     const res = await api.request(`/samples/${w.legacy}/edit`, {

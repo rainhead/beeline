@@ -5,7 +5,7 @@ import { isWriteConflict } from "../write-conflict.js";
 import { apiError, bearerKey, type ApiEnv } from "./api.js";
 import { keyRef } from "./api-keys.js";
 import { localityReasonFor, takeLocationDefaultReason } from "./correction-reasons.js";
-import { messagesFor } from "./messages/index.js";
+import type { Messages } from "./messages/index.js";
 import { EDITABLE_FIELDS, type EditableFieldName } from "./sample-edit.js";
 import {
   actorFor,
@@ -243,7 +243,14 @@ const text = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" 
 /** What the API says of a correction that was made, besides the refusals. */
 const done = (c: Context, sampleId: number, body: Record<string, unknown>) => c.json({ sample_id: sampleId, ...body });
 
-export function registerCorrectionRoutes(api: Hono<ApiEnv>, deps: CorrectionDeps | undefined): void {
+/**
+ * `messages` is the catalogue the stored reasons are built from. It is passed
+ * in and not imported, because the catalogue imports the old Beeline's address
+ * from src/app/old-beeline.ts, which imports this API: a cycle that left the
+ * address undefined where the catalogue was read first.
+ */
+export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps: CorrectionDeps; messages: Messages } | undefined): void {
+  const deps = corrections?.deps;
   const key = (c: Context<ApiEnv>) => c.get("key");
   /** Who is acting: the key's person, staff only as far as the gate found, never impersonating. */
   const actorOf = (c: Context<ApiEnv>): Actor =>
@@ -332,12 +339,10 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, deps: CorrectionDeps
     (r, input) => ({ outcome: r.outcome, dry_run: input.dryRun === true, changes: r.changes }),
   );
 
-  const messages = messagesFor(null);
-
   // The place editor: one name, and what the name is decides what is written.
   endpoint(
     "locality",
-    (b) => ({ locality: b.locality as string, reasonFor: localityReasonFor(messages) }),
+    (b) => ({ locality: b.locality as string, reasonFor: localityReasonFor(corrections!.messages) }),
     { locality: "string" },
     ["locality"],
     setPlace,
@@ -361,7 +366,7 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, deps: CorrectionDeps
 
   endpoint(
     "take-observation-location",
-    (b) => ({ note: (b.note as string | undefined) ?? "", defaultReason: takeLocationDefaultReason(messages) }),
+    (b) => ({ note: (b.note as string | undefined) ?? "", defaultReason: takeLocationDefaultReason(corrections!.messages) }),
     { note: "string" },
     [],
     takeLocation,

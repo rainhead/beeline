@@ -6,6 +6,7 @@ import { hashKey, keyRateLimiter, keyRef, resolveKey, type KeyHolder } from "./a
 import { inArrivalOrder, registerCorrectionRoutes } from "./api-corrections.js";
 import { bookkeeping } from "./session.js";
 import type { CorrectionDeps } from "./sample-corrections.js";
+import type { Messages } from "./messages/index.js";
 import { reportAppError } from "./error-reporting.js";
 import type { Job, StartedRun } from "./jobs/framework.js";
 
@@ -42,8 +43,13 @@ export interface ApiDeps {
   isStaff: (personId: number) => Promise<boolean>;
   /** How often one key may ask; the default unless a test says otherwise. */
   limiter?: ReturnType<typeof keyRateLimiter>;
-  /** What the sample corrections need (src/app/api-corrections.ts); absent, they answer 503. */
-  corrections?: CorrectionDeps;
+  /**
+   * What the sample corrections need (src/app/api-corrections.ts): the
+   * functions' dependencies, and the catalogue for the reasons they store
+   * (`messagesFor(null)`: a key has no language of its own). Absent, they
+   * answer 503.
+   */
+  corrections?: { deps: CorrectionDeps; messages: Messages };
   /** The job registry and the scheduler behind it; absent, the jobs endpoints list nothing and start nothing. */
   jobs?: ApiJobs;
 }

@@ -160,5 +160,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     out: (text) => process.stdout.write(text),
     err: (text) => process.stderr.write(text),
   });
-  process.exit(status);
+  // Not process.exit: over ssh standard output is a pipe, and exiting at once
+  // would cut off a large table that is still being written, with status 0.
+  process.exitCode = status;
 }

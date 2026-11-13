@@ -2,8 +2,8 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, readlink, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
@@ -16,6 +16,7 @@ import {
   type DriveFile,
   type ServiceAccountKey,
 } from "./drive-service-account.js";
+import { queryCopyConflict } from "./query-copy.js";
 import { snapshotCatalog, verifySnapshot, type Snapshot } from "./store-snapshot.js";
 
 /**
@@ -271,10 +272,23 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
       stores[copy.file] = { encrypted: copy.key !== null, ...snapshot };
     }
     // Kept as soon as the copy has been verified, before the upload: a night
-    // when Drive is unreachable still leaves queries a fresh copy.
+    // when Drive is unreachable still leaves queries a fresh copy. But a copy
+    // that cannot be kept must not cost the night's backup, which is the
+    // purpose of this job: the failure is remembered, the archive goes up, and
+    // the run fails at the end so /jobs shows it.
+    let keepFailure: Error | null = null;
     if (opts.queryCopy) {
       const keep = opts.queryCopy;
-      await step("keep a copy for queries", () => keepQueryCopy(join(work, STORE_FILES[0]), keep));
+      try {
+        const [[livePath]] = (await (
+          await conn.run("SELECT path FROM duckdb_databases() WHERE database_name = $1", [opts.catalog] as never)
+        ).getRows()) as [[string | null]];
+        await step("keep a copy for queries", () =>
+          keepQueryCopy(join(work, STORE_FILES[0]), keep, [...(livePath ? [livePath] : []), ...opts.authored]),
+        );
+      } catch (err) {
+        keepFailure = err as Error;
+      }
     }
     const [[duckdb]] = (await (await conn.run("SELECT version()")).getRows()) as [[string]];
 
@@ -353,6 +367,9 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
       for (const file of trash) await trashFile(token, file.id, opts.signal);
     });
 
+    if (keepFailure !== null) {
+      throw new Error(`${keepFailure.message} (the archive ${name} was uploaded and old copies binned as usual)`, { cause: keepFailure });
+    }
     const counts = Object.values(stores).flatMap((s) => Object.values(s.tables));
     return {
       name,
@@ -371,6 +388,56 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
 }
 
 /**
+ * The files DuckDB keeps beside a database that a statement may still name
+ * with external access off, and so which the kept copy must never be one of.
+ */
+const SIDE_FILES = ["", ".wal", ".wal.checkpoint", ".wal.recovery"] as const;
+
+/**
+ * A path as the file system will resolve it, though the file, or its folder,
+ * may not exist yet: a link at the end is followed (even a dangling one, which
+ * `rename` would replace the target of), and the folders above are made real.
+ */
+async function realTarget(path: string): Promise<string> {
+  let absolute = resolve(path);
+  for (let hops = 0; hops < 16; hops++) {
+    try {
+      if (!(await lstat(absolute)).isSymbolicLink()) break;
+      absolute = resolve(dirname(absolute), await readlink(absolute));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      break;
+    }
+  }
+  let existing = dirname(absolute);
+  const rest: string[] = [basename(absolute)];
+  for (;;) {
+    try {
+      return join(await realpath(existing), ...rest.reverse());
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT" || dirname(existing) === existing) throw err;
+      rest.push(basename(existing));
+      existing = dirname(existing);
+    }
+  }
+}
+
+/**
+ * Refuse a query-copy path that is the live store, its WAL, or any other file
+ * the app writes. The copy is put in place by rename, so a path that resolved
+ * to the open store would replace it under the running app: CodeRabbit's
+ * critical finding on this change. Symbolic links are resolved first.
+ */
+export async function assertSafeQueryCopyPath(target: string, protectedPaths: string[]): Promise<void> {
+  const real = await realTarget(target);
+  const realProtected = await Promise.all(protectedPaths.map((p) => realTarget(p)));
+  const clash = queryCopyConflict(real, realProtected);
+  if (clash !== null) {
+    throw new Error(`the query copy would be ${target}, which is ${clash}, a file the app writes: refusing to replace it`);
+  }
+}
+
+/**
  * Leave the verified copy of the store at `target` for the query module
  * (src/query-copy.ts) to read, replacing the one from the night before.
  *
@@ -383,24 +450,58 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
  * the work directory because the two may be on different volumes, and a
  * rename across volumes is a copy.
  *
+ * The copy lives in a folder of its own, kept mode 0500 with the file 0400 at
+ * rest, a second layer beneath the query module's checks: DuckDB lets a
+ * statement name the database file and its `.wal*` files with external access
+ * off, and read-only folders turn a write that got that far into an error
+ * (not for root, which the app may be). The folder is opened up only while
+ * this function replaces the file, and closed again whatever happens.
+ *
+ * Order matters for a reader and for a crash: the partial file is created with
+ * mode 0600 (never wider, even for an instant), written, and fsynced; stale
+ * `.wal*` files are removed, so none is ever replayed onto the new file; then
+ * the rename; then the folder is fsynced so the rename survives a power cut.
+ * A leftover partial file from a run that died is removed first.
+ *
  * There is exactly one such copy. For a moment during the replacement there
  * are two, so the volume needs room for one more copy than it holds.
+ *
+ * `protectedPaths` are files the app writes (the live store, the authored
+ * files); a target that is one of them, or a WAL beside one, is refused before
+ * anything is touched.
  */
-export async function keepQueryCopy(source: string, target: string): Promise<void> {
+export async function keepQueryCopy(source: string, target: string, protectedPaths: string[] = []): Promise<void> {
+  await assertSafeQueryCopyPath(target, protectedPaths);
+  const folder = dirname(target);
   const partial = `${target}.partial`;
-  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-  await rm(partial, { force: true });
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  await chmod(folder, 0o700);
   try {
-    await copyFile(source, partial);
-    await chmod(partial, 0o600);
+    await rm(partial, { force: true });
+    // "wx": never an existing file, and 0600 from the moment it exists.
+    await pipeline(createReadStream(source), createWriteStream(partial, { flags: "wx", mode: 0o600 }));
+    const written = await open(partial, "r+");
+    try {
+      await written.sync();
+    } finally {
+      await written.close();
+    }
+    // Written once, read-only from now on; and no WAL of an older file at this path.
+    await chmod(partial, 0o400);
+    for (const suffix of SIDE_FILES.slice(1)) await rm(`${target}${suffix}`, { force: true });
     await rename(partial, target);
+    const dir = await open(folder, "r");
+    try {
+      await dir.sync();
+    } finally {
+      await dir.close();
+    }
   } catch (err) {
     await rm(partial, { force: true });
     throw err;
+  } finally {
+    await chmod(folder, 0o500);
   }
-  // The copy is only ever opened read-only, so it has no WAL; one left by an
-  // older file at this path would be replayed onto the new file.
-  await rm(`${target}.wal`, { force: true });
 }
 
 /**

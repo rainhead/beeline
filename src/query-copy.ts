@@ -1,14 +1,10 @@
-import {
-  DuckDBTypeId,
-  JsonDuckDBValueConverter,
-  StatementType,
-  type DuckDBConnection,
-  type DuckDBInstance,
-  type DuckDBValueConverter,
-  type Json,
-} from "@duckdb/node-api";
-import { stat } from "node:fs/promises";
-import { openQueryCopy } from "./db.js";
+import type { Json } from "@duckdb/node-api";
+import { fork, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { WORKER_FLAG, type WorkerReply, type WorkerRequest } from "./query-copy-worker.js";
 
 /**
  * Run one SQL statement against last night's copy of the store
@@ -21,39 +17,64 @@ import { openQueryCopy } from "./db.js";
  * (whose ids are 32-bit) and stop every insert on a store that is never
  * reseeded. And a write inside a WITH clause is typed SELECT. So the nightly
  * backup job leaves a plain copy beside the store (`keepQueryCopy` in
- * src/store-backup.ts) and this module opens it as a second DuckDB instance in
- * the same process, with the settings in `openQueryCopy` (src/db.ts): read-only,
- * no file or extension access, a memory ceiling, one thread, and the
- * configuration locked. The data is up to a day old.
+ * src/store-backup.ts), and a query reads that. The data is up to a day old,
+ * and every result says when the copy was made (`copiedAt`).
+ *
+ * It does not run inside the app's process either. Review found three ways a
+ * query could hurt the app that no DuckDB setting prevents: a query reached
+ * 16 GB of memory under a 256 MB `memory_limit`; one ignored `interrupt` for
+ * over 30 seconds, so a time limit that relies on it never ends; and a
+ * statement of 50,000 nested subqueries crashed the process. So each query runs
+ * in a child process of its own (src/query-copy-worker.ts, started as
+ * src/label-pdf-worker.ts is, under tsx), which this module kills:
+ *
+ *  - at the time limit, with SIGKILL, so nothing depends on the query's help;
+ *  - when its resident memory passes a ceiling, checked every 50 ms from
+ *    /proc (where there is no /proc there is no memory watchdog, and the time
+ *    limit and the kernel remain);
+ *  - and the kernel is asked to kill it first if the machine runs short
+ *    (`oom_score_adj` 1000).
+ *
+ * A child that dies without answering becomes a `timeout`, `memory` or
+ * `crashed` error here; the app is untouched and the next query starts a fresh
+ * child. One query runs at a time, and `busy` clears when the child has
+ * exited, which a kill guarantees. A process costs a start-up on every query
+ * (measured in docs/architecture/backups.md), which a lookup tool can pay.
+ *
+ * The child gets a minimal environment, so none of the app's secrets are in
+ * a process that runs a stranger's SQL. It opens only the copy, read-only;
+ * ADR 0005's one-writer rule is untouched.
  *
  * What stands between a statement and the copy, each with a test:
  *
- *  1. Exactly one statement, counted by DuckDB's own statement extraction
- *     rather than by looking for semicolons.
- *  2. Only SELECT and EXPLAIN. Everything else (SET, ATTACH, COPY, LOAD,
- *     INSTALL, CREATE, PRAGMA, CALL, INSERT inside or outside a WITH) is
- *     refused before it runs, naming its kind.
- *  3. The instance itself refuses what slips past 1 and 2: `nextval` and a
- *     write in a WITH clause fail on a read-only database, `read_text` and
- *     `read_csv` fail with external access off, and a `SET` fails on a locked
- *     configuration.
- *  4. A time limit, enforced by interrupting the connection, and a cap on the
- *     rows returned, enforced by reading the result a chunk at a time and
- *     abandoning it, so a result of millions of rows is never held in Node.
- *  5. One query at a time. A second is refused, not queued.
- *
- * Each query gets a connection of its own, closed afterwards, so a temporary
- * table or a timed-out query cannot affect the next one.
+ *  1. The parent refuses, before spawning, a statement over 20,000
+ *     characters (a 6 MB one took 4.8 GB to parse), one containing a NUL, and
+ *     limits that are not whole numbers within bounds.
+ *  2. The child counts statements with DuckDB's own extraction, and accepts
+ *     only a SELECT. Not EXPLAIN: `EXPLAIN ANALYZE` runs what it wraps, and
+ *     `EXPLAIN ANALYZE COPY (...) TO '<the copy>'` overwrote it, because DuckDB
+ *     keeps the database file and its `.wal*` paths open with external access
+ *     off. A plan is asked for with `explain: true`, which prefixes EXPLAIN.
+ *  3. The instance refuses what slips past: read-only, no external access, no
+ *     extension loading, configuration locked (src/db.ts, `openQueryCopy`).
+ *  4. The copy is in a folder of its own, mode 0500, and the file 0400
+ *     (`keepQueryCopy`), so even a write that reached the operating system
+ *     fails, except when the app runs as root.
+ *  5. Rows and bytes of result are capped as they are read.
  */
 
 /** Why a query was not answered. `code` is stable; `message` is for a person. */
 export type QueryCopyErrorCode =
   | "no-copy"
+  | "copy-unreadable"
   | "busy"
+  | "invalid"
   | "empty"
   | "not-one-statement"
   | "not-allowed"
   | "timeout"
+  | "memory"
+  | "crashed"
   | "sql";
 
 export class QueryCopyError extends Error {
@@ -75,171 +96,157 @@ export interface QueryColumn {
 
 export interface QueryResult {
   columns: QueryColumn[];
-  /** One array per row, in column order, every value one that JSON can carry (see {@link jsonValue}). */
+  /** One array per row, in column order, every value one that JSON can carry (see `jsonValue` in src/query-copy-worker.ts). */
   rows: Json[][];
-  /** True when the statement had more rows than `maxRows`, so these are only the first ones. */
+  /** True when the answer was cut short: there was more than `maxRows` rows or `maxBytes` bytes. */
   truncated: boolean;
-  /** The limits this run was held to, so a caller can say them. */
-  limits: { timeoutMs: number; maxRows: number };
+  /** Which limit cut it short, or null. */
+  truncatedBy: "rows" | "bytes" | null;
+  /** When the copy was made (the file's modification time), since a failed night leaves an older copy in place. */
+  copiedAt: string;
+  limits: { timeoutMs: number; maxRows: number; maxBytes: number };
   elapsedMs: number;
 }
 
 export interface QueryLimits {
-  /** Milliseconds before the query is interrupted. Default {@link DEFAULT_TIMEOUT_MS}. */
+  /** Milliseconds before the child is killed: a whole number from 100 to 60,000. Default {@link DEFAULT_TIMEOUT_MS}. */
   timeoutMs?: number;
-  /** Rows after which the result is cut short. Default {@link DEFAULT_MAX_ROWS}. */
+  /** Rows after which the result is cut short: a whole number from 1 to 50,000. Default {@link DEFAULT_MAX_ROWS}. */
   maxRows?: number;
+  /** Bytes of JSON after which it is cut short: a whole number from 1,000 to 50 million. Default {@link DEFAULT_MAX_BYTES}. */
+  maxBytes?: number;
+  /** Answer with the query plan instead of the rows. It never runs the statement (no ANALYZE). */
+  explain?: boolean;
 }
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
 export const DEFAULT_MAX_ROWS = 5_000;
+export const DEFAULT_MAX_BYTES = 5_000_000;
 export const DEFAULT_MEMORY_LIMIT = "256MB";
-
-/** The statement kinds that read. Any other is refused by name. */
-const ALLOWED: ReadonlySet<StatementType> = new Set([StatementType.SELECT, StatementType.EXPLAIN]);
-
-const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
-
-/**
- * The one rule for values, so that JSON.stringify can carry every result:
- *
- *  - Integers: a JSON number when it is a safe integer (within 2^53 - 1),
- *    otherwise a decimal string. This is judged per value, so a BIGINT column
- *    can hold both; types up to INTEGER are always numbers.
- *  - DECIMAL: a JSON number when the column is at most 15 digits wide, since
- *    a double then shows every digit exactly (`12.50` arrives as 12.5);
- *    wider columns arrive as exact decimal strings.
- *  - FLOAT and DOUBLE: a number, or the string "NaN", "Infinity" or "-Infinity".
- *  - DATE: `YYYY-MM-DD`. A TIMESTAMP, which means UTC in this store, is
- *    `YYYY-MM-DDTHH:MM:SS[.ffffff]Z`; a TIMESTAMPTZ is the same instant written
- *    in UTC. A value DuckDB cannot write that way (infinity, before year 0)
- *    keeps DuckDB's own text.
- *  - LIST and ARRAY: a JSON array; STRUCT: an object; MAP: an array of
- *    `{key, value}`; the elements follow these rules too.
- *  - BLOB: lowercase hexadecimal, without a prefix.
- *  - Everything else (text, UUID, TIME, ENUM, BIT, INTERVAL): as the
- *    library's own JSON conversion writes it.
- */
-export const jsonValue: DuckDBValueConverter<Json> = (value, type, converter) => {
-  if (value === null || value === undefined) return null;
-  switch (type.typeId) {
-    case DuckDBTypeId.BIGINT:
-    case DuckDBTypeId.UBIGINT:
-    case DuckDBTypeId.HUGEINT:
-    case DuckDBTypeId.UHUGEINT:
-    case DuckDBTypeId.BIGNUM: {
-      const n = BigInt(value as bigint);
-      return n >= -MAX_SAFE && n <= MAX_SAFE ? Number(n) : n.toString();
-    }
-    case DuckDBTypeId.DECIMAL: {
-      const text = String(value);
-      return (type as { width: number }).width <= 15 ? Number(text) : text;
-    }
-    case DuckDBTypeId.TIMESTAMP:
-    case DuckDBTypeId.TIMESTAMP_S:
-    case DuckDBTypeId.TIMESTAMP_MS:
-    case DuckDBTypeId.TIMESTAMP_NS: {
-      // A wall-clock time with no zone, which this store means as UTC.
-      const text = String(value);
-      return /^\d{4,}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)?$/.test(text) ? `${text.replace(" ", "T")}Z` : text;
-    }
-    case DuckDBTypeId.TIMESTAMP_TZ: {
-      // From the instant itself: the library's own text uses the machine's zone.
-      const micros = (value as { micros: bigint }).micros;
-      return isoFromMicros(micros) ?? String(value);
-    }
-    case DuckDBTypeId.BLOB:
-      return Buffer.from((value as { bytes: Uint8Array }).bytes).toString("hex");
-    default:
-      return JsonDuckDBValueConverter(value, type, converter);
-  }
-};
-
-function isoFromMicros(micros: bigint): string | null {
-  const wholeSeconds = micros / 1_000_000n - (micros % 1_000_000n < 0n ? 1n : 0n);
-  const date = new Date(Number(wholeSeconds) * 1000);
-  if (Number.isNaN(date.getTime())) return null;
-  const fraction = String(micros - wholeSeconds * 1_000_000n)
-    .padStart(6, "0")
-    .replace(/0+$/, "");
-  const base = date.toISOString().slice(0, 19);
-  return fraction === "" ? `${base}Z` : `${base}.${fraction}Z`;
-}
+/** Resident memory of the child above which it is killed. The DuckDB limit above is a request; this is the enforcement. */
+export const DEFAULT_RSS_LIMIT_BYTES = 768 * 1024 * 1024;
+export const MAX_STATEMENT_CHARS = 20_000;
+/** A text or blob value larger than this is replaced by a note. */
+export const MAX_CELL_BYTES = 1_000_000;
 
 export interface QueryCopyOptions {
   /** The copy the nightly backup leaves (`queryCopyPath` in src/app/config.ts). */
   path: string;
-  /** DuckDB's memory ceiling for the instance. Default {@link DEFAULT_MEMORY_LIMIT}. */
+  /** DuckDB's memory ceiling inside the child. Default {@link DEFAULT_MEMORY_LIMIT}. */
   memoryLimit?: string;
+  /** Resident memory at which the child is killed. Default {@link DEFAULT_RSS_LIMIT_BYTES}. */
+  rssLimitBytes?: number;
+  /** The longest statement accepted. Default {@link MAX_STATEMENT_CHARS}; tests raise it. */
+  maxStatementChars?: number;
+  /** The module the child runs. Tests substitute one to look at the child's environment. */
+  workerModule?: string;
 }
 
 export interface QueryCopy {
   run(sql: string, limits?: QueryLimits): Promise<QueryResult>;
-  /** Close the instance. A later `run` opens it again. */
-  close(): void;
 }
 
+const WORKER_MODULE = fileURLToPath(new URL("./query-copy-worker.ts", import.meta.url));
+
 /**
- * The query runner for one copy. The instance is opened by the first query,
- * and reopened by the first query after the file at `path` has been replaced
- * (a different inode, modification time or size), closing the old one; the
- * backup job replaces it by rename, so the old file stays readable to the old
- * instance until then.
+ * What the child is given of the app's environment: what node and the
+ * operating system need, and nothing else (HOME is there because DuckDB finds
+ * its extensions under it, and without it cannot set the session's time zone), so a secret (BEELINE_DRIVE_KEY,
+ * INAT_*, the Sentry DSN) is not in a process that runs somebody's SQL.
  */
-export function createQueryCopy(options: QueryCopyOptions): QueryCopy {
-  let open: { instance: DuckDBInstance; identity: string } | null = null;
-  let running = false;
-
-  const closeOpen = () => {
-    if (open !== null) {
-      try {
-        open.instance.closeSync();
-      } finally {
-        open = null;
-      }
+export function workerEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const kept: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined && (key === "PATH" || key === "HOME" || key === "TZ" || key === "TMPDIR" || key.startsWith("NODE_"))) {
+      kept[key] = value;
     }
-  };
-
-  async function instanceFor(): Promise<DuckDBInstance> {
-    let found;
-    try {
-      found = await stat(options.path);
-    } catch (err) {
-      closeOpen();
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        throw new QueryCopyError(
-          "no-copy",
-          "There is no copy of the store to query yet: the nightly backup leaves one, and has not run here.",
-        );
-      }
-      throw err;
-    }
-    const identity = `${found.dev}:${found.ino}:${found.mtimeMs}:${found.size}`;
-    if (open !== null && open.identity !== identity) closeOpen();
-    open ??= {
-      instance: await openQueryCopy(options.path, { memoryLimit: options.memoryLimit ?? DEFAULT_MEMORY_LIMIT }),
-      identity,
-    };
-    return open.instance;
   }
+  return kept;
+}
+
+/** As src/label-pdf-worker.ts: the child needs tsx to read TypeScript, which the app's own `node --import tsx` already has. */
+function workerExecArgv(): string[] {
+  const loaded = process.execArgv.some((arg) => arg === "tsx" || arg.includes("tsx/"));
+  return loaded ? process.execArgv : [...process.execArgv, "--import", "tsx"];
+}
+
+const wholeNumber = (name: string, value: number, min: number, max: number) => {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new QueryCopyError("invalid", `${name} must be a whole number from ${min} to ${max}, not ${String(value)}.`);
+  }
+};
+
+/**
+ * Whether two paths name files that must not both be the query copy and
+ * something else: the same file, or a WAL file DuckDB would put beside it.
+ * Compared as written; callers pass real paths where they can. Returns what
+ * the target collides with, or null.
+ */
+export function queryCopyConflict(target: string, protectedPaths: string[]): string | null {
+  const suffixes = ["", ".wal", ".wal.checkpoint", ".wal.recovery", ".tmp"];
+  const t = resolve(target);
+  for (const p of protectedPaths) {
+    for (const suffix of suffixes) {
+      if (t === resolve(`${p}${suffix}`)) return `${p}${suffix}`;
+    }
+  }
+  return null;
+}
+
+export function createQueryCopy(options: QueryCopyOptions): QueryCopy {
+  let running = false;
+  const rssLimit = options.rssLimitBytes ?? DEFAULT_RSS_LIMIT_BYTES;
+  const maxChars = options.maxStatementChars ?? MAX_STATEMENT_CHARS;
 
   return {
-    close: closeOpen,
     async run(sql, limits = {}) {
       const timeoutMs = limits.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       const maxRows = limits.maxRows ?? DEFAULT_MAX_ROWS;
+      const maxBytes = limits.maxBytes ?? DEFAULT_MAX_BYTES;
+      if (typeof sql !== "string") throw new QueryCopyError("invalid", "The query must be text.");
+      if (sql.length > maxChars) {
+        throw new QueryCopyError("invalid", `The query is ${sql.length} characters; the most accepted is ${maxChars}.`);
+      }
+      if (sql.includes("\0")) throw new QueryCopyError("invalid", "The query contains a NUL character.");
+      wholeNumber("maxRows", maxRows, 1, 50_000);
+      wholeNumber("timeoutMs", timeoutMs, 100, 60_000);
+      wholeNumber("maxBytes", maxBytes, 1_000, 50_000_000);
       if (running) throw new QueryCopyError("busy", "Another query is running; try again when it has finished.");
       running = true;
-      const started = Date.now();
       try {
-        const instance = await instanceFor();
-        const conn = await instance.connect();
+        const started = Date.now();
+        let copiedAt: string;
         try {
-          const result = await runOn(conn, sql, timeoutMs, maxRows);
-          return { ...result, limits: { timeoutMs, maxRows }, elapsedMs: Date.now() - started };
-        } finally {
-          conn.closeSync();
+          copiedAt = (await stat(options.path)).mtime.toISOString();
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+            throw new QueryCopyError(
+              "no-copy",
+              "There is no copy of the store to query yet: the nightly backup leaves one, and has not run here.",
+            );
+          }
+          throw new QueryCopyError("copy-unreadable", `The copy of the store cannot be read: ${(err as Error).message}`, { cause: err });
         }
+        const request: WorkerRequest = {
+          path: options.path,
+          memoryLimit: options.memoryLimit ?? DEFAULT_MEMORY_LIMIT,
+          sql,
+          explain: limits.explain === true,
+          maxRows,
+          maxBytes,
+          maxCellBytes: MAX_CELL_BYTES,
+        };
+        const reply = await runInChild(request, options.workerModule ?? WORKER_MODULE, timeoutMs, rssLimit);
+        if (!reply.ok) throw new QueryCopyError(reply.code, reply.message);
+        return {
+          columns: reply.columns,
+          rows: reply.rows,
+          truncated: reply.truncatedBy !== null,
+          truncatedBy: reply.truncatedBy,
+          copiedAt,
+          limits: { timeoutMs, maxRows, maxBytes },
+          elapsedMs: Date.now() - started,
+        };
       } finally {
         running = false;
       }
@@ -247,67 +254,78 @@ export function createQueryCopy(options: QueryCopyOptions): QueryCopy {
   };
 }
 
-async function runOn(
-  conn: DuckDBConnection,
-  sql: string,
-  timeoutMs: number,
-  maxRows: number,
-): Promise<Pick<QueryResult, "columns" | "rows" | "truncated">> {
-  let timedOut = false;
-  // The clock covers planning and reading as well as executing: an interrupt
-  // stops whichever of them is running.
-  const timer = setTimeout(() => {
-    timedOut = true;
-    conn.interrupt();
-  }, timeoutMs);
-  let result: Awaited<ReturnType<DuckDBConnection["stream"]>> | null = null;
-  try {
-    const statements = await conn.extractStatements(sql).catch((err: unknown) => {
-      if (sql.trim() === "" || /^(\s|--[^\n]*\n?)*$/.test(sql)) {
-        throw new QueryCopyError("empty", "The query is empty.", { cause: err });
-      }
-      throw new QueryCopyError("sql", messageOf(err), { cause: err });
-    });
-    if (statements.count !== 1) {
-      throw new QueryCopyError(
-        "not-one-statement",
-        `Send exactly one statement; this has ${statements.count}.`,
-      );
-    }
-    const prepared = await statements.prepare(0);
-    const kind = prepared.statementType;
-    if (!ALLOWED.has(kind)) {
-      prepared.destroySync();
-      throw new QueryCopyError("not-allowed", `Only SELECT and EXPLAIN statements are allowed, not ${StatementType[kind] ?? kind}.`);
-    }
-    result = await prepared.stream();
-    const columns = result.columnNames().map((name, i) => ({ name, type: result!.columnType(i).toString() }));
-    const rows: Json[][] = [];
-    let truncated = false;
-    reading: for await (const chunk of result.yieldConvertedRows(jsonValue)) {
-      for (const row of chunk) {
-        if (rows.length >= maxRows) {
-          truncated = true;
-          break reading;
-        }
-        rows.push(row as Json[]);
-      }
-    }
-    return { columns, rows, truncated };
-  } catch (err) {
-    if (err instanceof QueryCopyError) throw err;
-    if (timedOut) {
-      throw new QueryCopyError("timeout", `The query ran longer than ${timeoutMs / 1000} seconds and was stopped.`, { cause: err });
-    }
-    throw new QueryCopyError("sql", messageOf(err), { cause: err });
-  } finally {
-    clearTimeout(timer);
-    // A result not read to the end holds the connection until it is closed.
-    result?.closeSync();
-  }
-}
+const PAGE_BYTES = 4096;
+const WATCH_INTERVAL_MS = 50;
 
-/** DuckDB's message without the node wrapper's prefix. */
-function messageOf(err: unknown): string {
-  return (err instanceof Error ? err.message : String(err)).replace(/^Error: /, "");
+/** One child, one request. Resolves once the child has exited, whatever way. */
+function runInChild(request: WorkerRequest, workerModule: string, timeoutMs: number, rssLimit: number): Promise<WorkerReply> {
+  return new Promise<WorkerReply>((resolveReply, reject) => {
+    let child: ChildProcess;
+    try {
+      child = fork(workerModule, [WORKER_FLAG], {
+        execArgv: workerExecArgv(),
+        env: workerEnvironment(process.env),
+        // Its standard error goes where the app's does, so a crash leaves a trace in the log.
+        stdio: ["ignore", "ignore", "inherit", "ipc"],
+      });
+    } catch (err) {
+      reject(new QueryCopyError("crashed", `The query process could not be started: ${(err as Error).message}`, { cause: err }));
+      return;
+    }
+    let reply: WorkerReply | null = null;
+    let killedFor: "timeout" | "memory" | null = null;
+    const kill = (why: "timeout" | "memory") => {
+      if (killedFor === null) {
+        killedFor = why;
+        child.kill("SIGKILL");
+      }
+    };
+    const clock = setTimeout(() => kill("timeout"), timeoutMs);
+    const watch = existsSync("/proc/self/statm")
+      ? setInterval(() => {
+          const pid = child.pid;
+          if (pid === undefined) return;
+          readFile(`/proc/${pid}/statm`, "utf8").then(
+            (text) => {
+              const pages = Number(text.split(" ")[1]);
+              if (Number.isFinite(pages) && pages * PAGE_BYTES > rssLimit) kill("memory");
+            },
+            () => undefined, // already gone
+          );
+        }, WATCH_INTERVAL_MS)
+      : null;
+    child.on("message", (message: WorkerReply) => {
+      reply = message;
+    });
+    child.on("error", (err) => {
+      clearTimeout(clock);
+      if (watch !== null) clearInterval(watch);
+      child.kill("SIGKILL");
+      reject(new QueryCopyError("crashed", `The query process failed: ${err.message}`, { cause: err }));
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(clock);
+      if (watch !== null) clearInterval(watch);
+      if (killedFor === "timeout") {
+        reject(new QueryCopyError("timeout", `The query ran longer than ${timeoutMs / 1000} seconds and was stopped.`));
+      } else if (killedFor === "memory") {
+        reject(
+          new QueryCopyError(
+            "memory",
+            `The query used more than ${Math.round(rssLimit / 1024 / 1024)} MB of memory and was stopped.`,
+          ),
+        );
+      } else if (reply !== null) {
+        resolveReply(reply);
+      } else {
+        reject(
+          new QueryCopyError(
+            "crashed",
+            `The query process ended without an answer (${signal !== null ? `signal ${signal}` : `exit code ${String(code)}`}).`,
+          ),
+        );
+      }
+    });
+    child.send(request);
+  });
 }

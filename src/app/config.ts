@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import { queryCopyConflict } from "../query-copy.js";
 import { parseServiceAccountKey, type ServiceAccountKey } from "../drive-service-account.js";
 import type { EcdysisCredentials } from "../fetch-ecdysis.js";
 import type { FlyMetricsTarget } from "../fly-usage.js";
@@ -134,8 +135,8 @@ export interface AppConfig {
   /**
    * The copy of the store that SQL queries read (beeline-pnqr.4): the nightly
    * backup job replaces it after each good snapshot. It is plain and
-   * unencrypted, and beside the live store unless BEELINE_QUERY_COPY says
-   * otherwise, so it is on the same volume.
+   * unencrypted, in a folder named `query-copy` beside the live store unless
+   * BEELINE_QUERY_COPY says otherwise, so it is on the same volume.
    */
   queryCopyPath: string;
   /**
@@ -161,6 +162,14 @@ export const ADMIN_LOGINS = [
   "karen_wright", // Karen Wright, 6560268
   "beesofcanada", // Lincoln R. Best, 760776
 ];
+
+/**
+ * Where the nightly backup leaves the copy that SQL queries read when neither
+ * BEELINE_QUERY_COPY nor BEELINE_DB says: in a folder of its own, because the
+ * folder is kept read-only (`keepQueryCopy`, src/store-backup.ts). With
+ * BEELINE_DB set, the same folder name beside the store.
+ */
+export const DEFAULT_QUERY_COPY_PATH = "data/query-copy/query-copy.duckdb";
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const environment = env.BEELINE_ENV ?? "development";
@@ -249,9 +258,17 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (feedbackEmail !== null && !/^[^\s@,?#&]+@[^\s@,?#&]+(,[^\s@,?#&]+@[^\s@,?#&]+)*$/.test(feedbackEmail)) {
     throw new Error(`BEELINE_FEEDBACK_EMAIL must be an address or a comma-separated list of them, got '${feedbackEmail}'`);
   }
+  const dbPath = env.BEELINE_DB ?? "beeline.duckdb";
+  const queryCopyPath =
+    env.BEELINE_QUERY_COPY ??
+    (env.BEELINE_DB === undefined ? DEFAULT_QUERY_COPY_PATH : join(dirname(dbPath), "query-copy", "query-copy.duckdb"));
+  const clash = queryCopyConflict(queryCopyPath, [dbPath]);
+  if (clash !== null) {
+    throw new Error(`BEELINE_QUERY_COPY (${queryCopyPath}) is ${clash}: the nightly backup would replace the live store with it`);
+  }
   return {
     port,
-    dbPath: env.BEELINE_DB ?? "beeline.duckdb",
+    dbPath,
     origin: origin ?? `http://localhost:${port}`,
     adminLogins:
       env.BEELINE_ADMIN_LOGINS === undefined
@@ -284,7 +301,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ecdysisDir: env.BEELINE_ECDYSIS ?? "data/ecdysis",
     driveBackup,
     backupsDir: env.BEELINE_BACKUPS ?? "data/backups",
-    queryCopyPath: env.BEELINE_QUERY_COPY ?? join(dirname(env.BEELINE_DB ?? "beeline.duckdb"), "query-copy.duckdb"),
+    queryCopyPath,
     oldBeeline: oldUser !== null && oldPassword !== null ? { origin: oldOrigin, username: oldUser, password: oldPassword } : null,
   };
 }

@@ -108,6 +108,12 @@ export interface QueryCopyBudget {
  * that needs more than the memory limit fail with an ordinary error saying it
  * could not create the directory, and writes nothing.
  *
+ * Even so, DuckDB keeps the database file and its `.wal`, `.wal.checkpoint`
+ * and `.wal.recovery` paths open to statements with external access off, so
+ * `EXPLAIN ANALYZE COPY (...) TO '<copy>'` could overwrite the copy. The
+ * callers' protection is that only a plain SELECT is accepted, and that the
+ * copy sits in a read-only folder (src/store-backup.ts, `keepQueryCopy`).
+ *
  * The options are set in this order for a reason: the time zone needs the ICU
  * extension, which cannot be loaded once external access is off, and
  * `temp_directory` cannot be given after that either, so the lock-down comes
@@ -124,6 +130,9 @@ export async function openQueryCopy(path: string, budget: QueryCopyBudget): Prom
   });
   const conn = await instance.connect();
   try {
+    // No extension is fetched or loaded on demand, whatever a statement names.
+    await conn.run("SET autoinstall_known_extensions = false");
+    await conn.run("SET autoload_known_extensions = false");
     await conn.run("SET enable_external_access = false");
     await conn.run("SET lock_configuration = true");
   } catch (err) {

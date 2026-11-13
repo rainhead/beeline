@@ -10,6 +10,15 @@
 -- place, `src/app/api-keys.ts`, typed in `src/model.ts`, and nothing reads the
 -- column to decide whether a key works. Keys revoked before this migration keep
 -- both columns NULL, which the keys list shows as a plain "Revoked <date>".
+--
+-- No backfill of account_changed_at, because there is nothing to backfill: the
+-- api_key table itself (0085) had not reached production when this was
+-- written (its last deploy was on 13 November 2026, before 0085 was merged),
+-- so the two migrations apply together to a table with no rows. Were keys to
+-- exist first, a key of an account that had already changed hands would stay
+-- unmarked and show in the new holder's list; the store keeps no record of
+-- when an account was linked to tell them apart, so they would have to be
+-- marked by hand from the person change log.
 
 ALTER TABLE api_key ADD COLUMN revoked_by TEXT;
 ALTER TABLE api_key ADD COLUMN revoked_reason TEXT;

@@ -12,6 +12,6 @@ COMMENT ON TABLE api_key_use IS 'One row for each request under /api/v1/ that is
 COMMENT ON COLUMN api_key_use.used_at IS 'When the request was answered.';
 COMMENT ON COLUMN api_key_use.key_sha256 IS 'The key that made the request, by api_key.key_sha256: the full hash and never the key.';
 COMMENT ON COLUMN api_key_use.method IS 'The HTTP method: POST, PUT, PATCH or DELETE.';
-COMMENT ON COLUMN api_key_use.route IS 'The route pattern that answered, such as /api/v1/samples/:id/edit, and never the path, so what a record is called appears only in subject. A request no route answered is recorded with the pattern of the catch-all.';
+COMMENT ON COLUMN api_key_use.route IS 'The route pattern that answered, such as /api/v1/samples/:id/edit, and never the path, so what a record is called appears only in subject. A request that no route answered is recorded with the catch-all''s pattern, /api/v1/*, and one that a check ahead of the routes refused with that check''s, such as /api/v1/samples/*.';
 COMMENT ON COLUMN api_key_use.subject IS 'What the request was about, where the route names one: the sample''s id for a route under /samples/:id, the job''s name for /jobs/:name. NULL otherwise.';
 COMMENT ON COLUMN api_key_use.status IS 'The HTTP status the request was answered with.';

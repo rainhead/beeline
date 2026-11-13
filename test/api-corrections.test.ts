@@ -1,8 +1,10 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import type { Kysely } from "kysely";
-import { createKysely } from "../src/db.js";
+import { createKysely, loadSpatial, openDuckDb } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApi } from "../src/app/api.js";
 import { createKey, hashKey, KEY_SCOPES, offeredScopes } from "../src/app/api-keys.js";
@@ -14,7 +16,10 @@ import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js"
 import { readSampleOverlay, type SampleOverlayRow } from "../src/sample-overlay.js";
 import { en } from "../src/app/messages/en.js";
 import type { Database } from "../src/model.js";
-import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { approveRun, markPrinted, prepareRun } from "../src/print-run.js";
+import { refreshObservationFields } from "../src/refresh-observation-fields.js";
+import { canonicalJson } from "../src/sync-inat.js";
+import { buildTestGazetteer, createMemoryDb, currentSeasonDate, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 /**
  * The sample corrections of the API (beeline-pnqr.6): that a program holding a
@@ -547,5 +552,143 @@ describe("which key made each change", () => {
     const w = await world();
     await w.send(w.keys.sam, "/jobs/nonesuch", "", "POST");
     expect((await w.uses()).map((u) => [u[2], u[3], u[4]])).toEqual([["/api/v1/jobs/:name", "nonesuch", 404]]);
+  });
+});
+
+/**
+ * Taking the observation's location needs a sample Beeline printed whose
+ * observation has since moved, which is a long setup (the case, and its
+ * numbers, are test/take-observation-location.test.ts's: an observation printed
+ * in California and moved to Lane County, Oregon). Here Sam, who is staff, takes
+ * it once through a page and once through the API, each in a store of its own.
+ */
+describe("taking the observation's location", () => {
+  const CALIFORNIA = { lat: 39.059242, lon: -121.137299 };
+  const OREGON = { lat: 43.620977, lon: -122.237981 };
+  const OBSERVATION = 402367157;
+  const PLACES: Array<[number, string, number, number[]]> = [
+    [1, "United States", 0, [97394, 1]],
+    [10, "Oregon", 10, [97394, 1, 10]],
+    [981, "Lane", 20, [97394, 1, 10, 981]],
+  ];
+
+  async function moved() {
+    const { instance, conn } = await createMemoryDb();
+    const lori = await person(conn, "Lori Collector", "lori", 1);
+    const sam = await person(conn, "Sam Staff", "samstaff", 2);
+    await conn.run(`INSERT INTO person_admin (person_id) VALUES (${sam})`);
+    for (const [id, name, level, ancestors] of PLACES) {
+      await conn.run(`INSERT INTO inat_place (inat_place_id, name, admin_level, ancestor_place_ids) VALUES ($1, $2, $3, CAST($4 AS BIGINT[]))`, [
+        id,
+        name,
+        level,
+        `[${ancestors.join(",")}]`,
+      ] as never);
+    }
+    const sampleId = await insertCleanSample(
+      conn,
+      {
+        collector_id: String(lori),
+        sample_number: "'5'",
+        date_start: `DATE '${currentSeasonDate(9, 21)}'`,
+        date_end: `DATE '${currentSeasonDate(9, 21)}'`,
+        specimen_count: "2",
+        inat_observation_id: String(OBSERVATION),
+        state_province: "'CA'",
+        county: "'Nevada'",
+        locality: "'Wolf Mountain'",
+      },
+      { latitude: String(CALIFORNIA.lat), longitude: String(CALIFORNIA.lon), coordinate_uncertainty_m: "NULL", elevation_m: "478" },
+    );
+    const run = (await prepareRun(conn, { atlasId: null, personId: sam, now: new Date() }))!.printRunId;
+    await approveRun(conn, run, { personId: sam, now: new Date() });
+    await markPrinted(conn, run, { personId: sam, now: new Date() });
+    await conn.run("INSERT INTO sync_run (source, authenticated, completed_at) VALUES ('test', true, now())");
+    const o = {
+      id: OBSERVATION,
+      uuid: "uuid-wolf",
+      observed_on: currentSeasonDate(9, 21),
+      geojson: { type: "Point", coordinates: [OREGON.lon, OREGON.lat] },
+      positional_accuracy: null,
+      geoprivacy: null,
+      taxon_geoprivacy: null,
+      obscured: false,
+      place_guess: "Wolf Mountain, OR, USA",
+      place_ids: [1, 10, 981],
+      user: { id: 1, login: "lori", name: "Lori Collector" },
+      ofvs: [{ name: "sampleId", value: "5" }, { name: "numberOfSpecimens", value: "2" }],
+    };
+    await conn.run(
+      `INSERT INTO observation_load (inat_id, sync_run_id, content, content_hash)
+       VALUES ($1, (SELECT max(entity_id) FROM sync_run), $2, $3)`,
+      [OBSERVATION, canonicalJson(o), `hash-${Math.random()}`] as never,
+    );
+    await refreshObservationFields(conn);
+    const dir = await mkdtemp(join(tmpdir(), "beeline-api-take-"));
+    const gazetteerPath = join(dir, "gazetteer.duckdb");
+    await buildTestGazetteer(gazetteerPath, "build-lane");
+    const gz = await openDuckDb(gazetteerPath);
+    const g = await gz.connect();
+    await loadSpatial(g);
+    await g.run(`INSERT INTO region VALUES ('US-OR-41039', 'USA', 'OR', 'Lane', 'census', '41039', 'Lane County', ST_MakeEnvelope(-122.6, 43.4, -121.9, 43.9))`);
+    g.closeSync();
+    gz.closeSync();
+    const paths = await scratchPaths();
+    const db = createKysely(instance);
+    const app = createApp({
+      ...paths,
+      db,
+      config: { environment: "sandbox" as const, origin: ORIGIN },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId: sam, login: "samstaff", inatUserId: BigInt(2), iconUrl: null }),
+      conn,
+      mintConn: await instance.connect(),
+      derivePaths: { gazetteerPath },
+      jobs: { list: [], start: async () => false, running: () => null },
+    });
+    await recordSampleChanges(duckdbReader(conn), { log: paths.sampleChangesPath, state: paths.sampleStatePath }, { source: "observation_promotion" });
+    const made = await createKey(db, { inatUserId: 2, name: "test", scope: "staff", lifetimeDays: 30, offered: KEY_SCOPES });
+    if ("problem" in made) throw new Error(made.problem);
+    return { app, conn, sampleId, paths, key: made.key };
+  }
+
+  it("takes the point as the page does, with the same reason and author, and the history says it came through the API", async () => {
+    const byPage = await moved();
+    const page = await byPage.app.request(`/samples/${byPage.sampleId}/take-observation-location`, { method: "POST", body: new URLSearchParams({}) });
+    expect(page.status).toBe(302);
+
+    const byApi = await moved();
+    const res = await byApi.app.request(`/api/v1/samples/${byApi.sampleId}/take-observation-location`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${byApi.key}` },
+      body: "{}",
+    });
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual({ sample_id: byApi.sampleId, outcome: "saved", settled: true });
+
+    const stored = async (w: { conn: DuckDBConnection; sampleId: number; paths: { sampleOverlayPath: string; sampleChangesPath: string } }) => ({
+      point: (await rows(w.conn, `SELECT round(latitude, 6), round(longitude, 6), source FROM sample_location WHERE sample_id = ${w.sampleId}`))[0],
+      county: (await rows(w.conn, `SELECT county FROM sample WHERE entity_id = ${w.sampleId}`))[0],
+      overlay: (await readSampleOverlay(w.paths.sampleOverlayPath)).map((r) => [r.field, r.value, r.author, r.reason]),
+      history: (await readSampleChanges(w.paths.sampleChangesPath))
+        .filter((c) => c.source !== "observation_promotion")
+        .map((c) => ({ field: c.field, to: c.new_value, author: c.author, reason: c.reason, source: c.source })),
+    });
+    const [p, a] = [await stored(byPage), await stored(byApi)];
+    expect(a.point).toEqual([OREGON.lat, OREGON.lon, "staff_entry"]);
+    expect(a.county).toEqual(["Lane"]);
+    expect(a.overlay).toEqual(p.overlay);
+    expect(a.overlay[0]![3]).toBe(en.record.sample.takeObservationLocation.reason);
+    expect(a.history.length).toBeGreaterThan(0);
+    expect(p.history.every((h) => h.source === "app")).toBe(true);
+    expect(a.history.every((h) => h.source === "api")).toBe(true);
+    expect(a.history.map(({ source: _, ...rest }) => rest)).toEqual(p.history.map(({ source: _, ...rest }) => rest));
+    // Nothing left to take: not_moved.
+    const again = await byApi.app.request(`/api/v1/samples/${byApi.sampleId}/take-observation-location`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${byApi.key}` },
+      body: "{}",
+    });
+    expect([again.status, (await json(again)).error]).toEqual([409, "not_moved"]);
   });
 });

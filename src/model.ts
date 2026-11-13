@@ -174,6 +174,18 @@ export interface ApiKeyTable {
   revoked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
+/** One request under /api/v1/ that was not a read (schema/012, beeline-pnqr.6). */
+export interface ApiKeyUseTable {
+  used_at: Generated<Date>;
+  /** The key that made it, by api_key.key_sha256. */
+  key_sha256: string;
+  method: string;
+  /** The route pattern, never the path. */
+  route: string;
+  /** The sample's id or the job's name, where the route names one. */
+  subject: string | null;
+  status: number;
+}
 
 /**
  * When somebody was last here, outliving the session that observed it —
@@ -1470,6 +1482,7 @@ export interface Database {
   inat_sign_in: InatSignInTable;
   session: SessionTable;
   api_key: ApiKeyTable;
+  api_key_use: ApiKeyUseTable;
   person_activity: PersonActivityTable;
   impersonation: ImpersonationTable;
 }

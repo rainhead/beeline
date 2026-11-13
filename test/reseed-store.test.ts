@@ -92,6 +92,7 @@ beforeAll(async () => {
   await seed.run(
     `INSERT INTO api_key (key_sha256, inat_user_id, name, scope, expires_at) VALUES (repeat('c', 64), 501, 'script', 'read', current_timestamp + INTERVAL 30 DAY)`,
   );
+  await seed.run(`INSERT INTO api_key_use (key_sha256, method, route, subject, status) VALUES (repeat('c', 64), 'POST', '/api/v1/samples/:id/hold', '12', 200)`);
   await seed.run(`INSERT INTO person_activity (inat_user_id) VALUES (501)`);
   await seed.run(`INSERT INTO impersonation (admin_login, person_name) VALUES ('staffer', 'Member Bee')`);
   // Model rows, of the kind promotion derives and this tool must not carry.
@@ -141,6 +142,7 @@ describe("reseeding a store that cannot be blown away", () => {
       inat_sign_in: 1,
       session: 1,
       api_key: 1,
+      api_key_use: 1,
       person_activity: 1,
       impersonation: 1,
     });
@@ -321,6 +323,7 @@ describe("reseeding a store that cannot be blown away", () => {
       inat_sign_in: 0,
       session: 0,
       api_key: 0,
+      api_key_use: 0,
       person_activity: 0,
       impersonation: 0,
     });

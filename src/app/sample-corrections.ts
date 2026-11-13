@@ -277,6 +277,14 @@ export async function adoptLocality(
     sample.inat_observation_id === null ? null : await standingLocalityAuthor(deps.sampleOverlayPath, sample.inat_observation_id);
   if (standing !== null && standing !== actor.login && !actor.staff) return refused("set_by_other");
   const form = await resolveInput(input);
+  // And asked again now that the form is in hand. A form can take a while to
+  // arrive, and someone else may have set the locality meanwhile; the check
+  // above refused early without reading the form, and this one is the check
+  // the write relies on.
+  if (sample.inat_observation_id !== null && !actor.staff) {
+    const standingNow = await standingLocalityAuthor(deps.sampleOverlayPath, sample.inat_observation_id);
+    if (standingNow !== null && standingNow !== actor.login) return refused("set_by_other");
+  }
   // The suggestion or one of the alternatives (beeline-4hxe), as the
   // store holds them now: a name the page showed that is no longer
   // offered is refused rather than adopted unseen.

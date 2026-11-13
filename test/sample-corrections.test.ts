@@ -187,6 +187,17 @@ describe("sample corrections: a correction that saves", () => {
     expect((await readSampleOverlay(s.paths.sampleOverlayPath)).map((r) => [r.field, r.value, r.author])).toEqual([["locality", "Finley NWR", "alice"]]);
   });
 
+  it("does not replace a locality staff set while the collector's form was arriving", async () => {
+    const s = await withSuggestions();
+    // The form is read after the first check; staff save a locality in that gap.
+    const result = await adoptLocality(s.deps, s.alice, s.linked, async () => {
+      expect(await setPlace(s.deps, s.sam, s.linked, { locality: "Staff's name", reasonFor })).toEqual({ ok: true });
+      return { locality: "Finley NWR", reasonFor };
+    });
+    expect(result).toEqual({ ok: false, refusal: "set_by_other" });
+    expect(await localityOf(s.conn, s.linked)).toBe("Staff's name");
+  });
+
   it("writes a place the editor offers, logged under their login", async () => {
     const s = await withSuggestions();
     expect(await setPlace(s.deps, s.alice, s.other, { locality: "Finley NWR", reasonFor })).toEqual({ ok: true });

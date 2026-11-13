@@ -1,7 +1,7 @@
 import type { Messages } from "../messages/index.js";
 import type { ProgramArchive } from "../dwc-archive.js";
-import type { ArchiveEntry, ArchiveManifest, ChecklistEntry } from "../program-archives.js";
-import { governanceFor, LICENSES, type ProgramGovernance } from "../../program-governance.js";
+import { sharedLicense, type AllYearsEntry, type ArchiveEntry, type ArchiveManifest, type ChecklistEntry } from "../program-archives.js";
+import { governanceFor, LICENSES, type LicenseId, type ProgramGovernance } from "../../program-governance.js";
 import { Absent, Callout, DataTable, EmptyState, LinkButton, Meta, PageHeader } from "./components/index.js";
 
 /** The current export file, as the page describes it; null when none has been written. */
@@ -13,7 +13,8 @@ export interface ExportFile {
 /**
  * Files for work outside Beeline. The legacy system's occurrences format
  * (beeline-6q8), which reporting built on that file reads unchanged, and a
- * Darwin Core archive per program and calendar year (beeline-rvun), every one
+ * Darwin Core archive per program and calendar year (beeline-rvun), with one
+ * of every year together beside each program's years (beeline-9bnm), every one
  * written nightly so staff can review it (Peter, 2026-10-23). Admin-gated like
  * /jobs, since both carry names and true coordinates.
  *
@@ -65,6 +66,7 @@ export function Exports({
               program={p}
               entries={archives.entries.filter((a) => a.program === p.code)}
               checklist={archives.checklists?.find((c) => c.program === p.code) ?? null}
+              allYears={archives.allYears?.find((a) => a.program === p.code) ?? null}
               governance={governance}
             />
           ))}
@@ -83,6 +85,7 @@ function ProgramSeasons({
   program,
   entries,
   checklist,
+  allYears,
   governance,
 }: {
   m: Messages;
@@ -90,6 +93,8 @@ function ProgramSeasons({
   entries: ArchiveEntry[];
   /** Null before the first night that wrote checklists. */
   checklist: ChecklistEntry | null;
+  /** Null before the first night that wrote archives of every year. */
+  allYears: AllYearsEntry | null;
   governance: ProgramGovernance;
 }) {
   const e = m.exports;
@@ -114,6 +119,7 @@ function ProgramSeasons({
           </a>
         </p>
       )}
+      {allYears !== null && <AllYears m={m} entry={allYears} name={program.name} license={sharedLicense(governance, program.code, entries.map((a) => a.year))} />}
       <DataTable columns={[e.colYear, e.colSpecimens, e.colLicense, e.colPolicy, e.colArchive]}>
         {[...entries]
           .sort((a, b) => b.year - a.year)
@@ -155,5 +161,32 @@ function ProgramSeasons({
           })}
       </DataTable>
     </section>
+  );
+}
+
+/**
+ * A program's archive of every year (beeline-9bnm), above its years. The
+ * licence is read from the decisions as they stand, as the years' column is,
+ * and the file's own is said where the two differ.
+ */
+function AllYears({ m, entry, name, license }: { m: Messages; entry: AllYearsEntry; name: string; license: LicenseId | null }) {
+  const e = m.exports;
+  return (
+    <p>
+      {e.allYears(entry.specimens, entry.firstYear, entry.lastYear)}{" "}
+      {license === null ? e.allYearsNoLicense : e.allYearsLicense(LICENSES[license].name)}{" "}
+      <a href={`/exports/dwca/${entry.file}`} aria-label={e.allYearsDownload(name)}>
+        {e.downloadSized(fileSize(entry.bytes))}
+      </a>
+      {entry.license !== license && (
+        <Meta block>
+          {entry.license === null
+            ? e.archiveLicenseNone
+            : license === null
+              ? e.allYearsLicenseDropped(LICENSES[entry.license].name)
+              : e.archiveLicenseWas(LICENSES[entry.license].name)}
+        </Meta>
+      )}
+    </p>
   );
 }

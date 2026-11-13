@@ -434,19 +434,19 @@ export class JobInterrupted extends Error {
 
 /**
  * Run one job to completion, recording the run. Never throws: failures land
- * in job_run. `onStarted` is told once the run's row exists, which is the
- * moment /jobs can show it running.
+ * in job_run. `onStarted` is told once the run's row exists, and which row,
+ * which is the moment /jobs can show it running and the API can name it.
  */
 export async function runJob(
   deps: Pick<SchedulerDeps, "db" | "conn" | "budgetMs" | "observe">,
   job: Job,
   signal: AbortSignal = new AbortController().signal,
-  onStarted?: () => void,
+  onStarted?: (runId: number) => void,
 ): Promise<void> {
   const budget = deps.budgetMs ?? 1000;
   const { db, conn } = deps;
   const run = await db.insertInto("job_run").values({ job_name: job.name }).returning("entity_id").executeTakeFirstOrThrow();
-  onStarted?.();
+  onStarted?.(Number(run.entity_id));
   let breaches = 0;
   let steps = 0;
   const ctx: JobContext = {
@@ -575,8 +575,30 @@ export interface Scheduler {
    * False on the same terms as runNow.
    */
   start(name: string): Promise<boolean>;
+  /**
+   * `start`, saying which run it recorded, or why it started nothing. What the
+   * API calls (src/app/api.ts): a program has to be told the run to watch, and
+   * has to tell a name nobody registered from a scheduler that is busy.
+   */
+  startRun(name: string): Promise<StartedRun>;
   running(): string | null;
+  /**
+   * The id of the run in hand, or null when nothing is running (or a job has
+   * been picked and its run is not recorded yet). Set in the same turn the
+   * run's row is inserted and cleared only after its outcome is written, so
+   * a run with no outcome that this does not name is one no process will
+   * finish. The API tells `running` from `unfinished` by it (src/app/api.ts).
+   */
+  runningRun(): number | null;
 }
+
+/** What {@link Scheduler.startRun} did. */
+export type StartedRun =
+  | { status: "started"; runId: number }
+  /** No job has this name. */
+  | { status: "unknown" }
+  /** One job runs at a time, and one is running (or the scheduler is deciding what to run, or stopping). */
+  | { status: "busy"; running: string | null };
 
 export function startScheduler(deps: SchedulerDeps): Scheduler {
   const now = deps.now ?? (() => new Date());
@@ -608,6 +630,9 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
     return new Map(rows.map((r) => [r.job_name, { started: r.started, succeeded: r.succeeded }]));
   };
 
+  /** The run in hand: see {@link Scheduler.runningRun}. */
+  let liveRun: number | null = null;
+
   const NEVER: LastRuns = { started: null, succeeded: null };
 
   /**
@@ -615,19 +640,22 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
    * unknown, the scheduler is stopping, or something is already running.
    * The scheduler stays busy until the run ends, whoever is waiting on it.
    */
-  const launch = async (name: string): Promise<{ started: Promise<void>; ended: Promise<void> } | null> => {
+  const launch = async (
+    name: string,
+  ): Promise<{ started: Promise<number>; ended: Promise<void> } | "unknown" | "busy"> => {
     const job = deps.jobs.find((j) => j.name === name);
-    if (job === undefined || busy !== null || stopping) return null;
+    if (job === undefined) return "unknown";
+    if (busy !== null || stopping) return "busy";
     busy = job.name;
     await reconciled; // never insert a live run the orphan sweep could catch
     // stop() may have resolved during that wait, with nothing in flight
     // for it to await; a job started now would outlive the scheduler.
     if (stopping) {
       busy = null;
-      return null;
+      return "busy";
     }
-    let markStarted!: () => void;
-    const started = new Promise<void>((resolve) => (markStarted = resolve));
+    let markStarted!: (runId: number) => void;
+    const started = new Promise<number>((resolve) => (markStarted = resolve));
     const ended = track(job, markStarted).finally(() => {
       busy = null;
     });
@@ -635,13 +663,17 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
   };
 
   /** Run one job, tracked so a shutdown can wait for it. */
-  const track = async (job: Job, onStarted?: () => void) => {
+  const track = async (job: Job, onStarted?: (runId: number) => void) => {
     busy = job.name;
-    inFlight = runJob(deps, job, shutdown.signal, onStarted);
+    inFlight = runJob(deps, job, shutdown.signal, (runId) => {
+      liveRun = runId;
+      onStarted?.(runId);
+    });
     try {
       await inFlight;
     } finally {
       inFlight = null;
+      liveRun = null;
     }
   };
 
@@ -669,6 +701,22 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
 
   const settle = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref());
 
+  const startRun = async (name: string): Promise<StartedRun> => {
+    // Read before launching: afterwards `busy` is this job's own name.
+    const wasRunning = busy;
+    const run = await launch(name);
+    if (run === "unknown") return { status: "unknown" };
+    if (run === "busy") return { status: "busy", running: wasRunning === "(scheduling)" ? null : wasRunning };
+    // The run's row, or the run's end if it never got one. A failed insert
+    // ends it without starting it, and rejects here — the Run button's
+    // request fails with the error page, as it did when it awaited runNow.
+    const runId = await Promise.race([run.started, run.ended.then(() => null)]);
+    // The run ended without ever getting a row and without rejecting, which
+    // runJob does not do; said plainly rather than answered with a made-up id.
+    if (runId === null) throw new Error(`job '${name}' ended before its run was recorded`);
+    return { status: "started", runId };
+  };
+
   return {
     async stop(opts = {}) {
       stopping = true;
@@ -689,19 +737,14 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
     },
     async runNow(name) {
       const run = await launch(name);
-      if (run === null) return false;
+      if (typeof run === "string") return false;
       await run.ended;
       return true;
     },
-    async start(name) {
-      const run = await launch(name);
-      if (run === null) return false;
-      // The run's row, or the run's end if it never got one. A failed insert
-      // ends it without starting it, and rejects here — the Run button's
-      // request fails with the error page, as it did when it awaited runNow.
-      await Promise.race([run.started, run.ended]);
-      return true;
-    },
+    start: async (name) => (await startRun(name)).status === "started",
+    startRun,
     running: () => busy,
+    runningRun: () => liveRun,
   };
 }
+

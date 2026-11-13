@@ -217,6 +217,10 @@ export interface JobsDep {
   list: Job[];
   /** Start a job now and return once its run is recorded, while it goes on; false if unknown or busy. */
   start(name: string): Promise<boolean>;
+  /** `start`, saying which run was recorded, or why nothing started; what the API calls (src/app/api.ts). */
+  startRun?(name: string): Promise<import("./jobs/framework.js").StartedRun>;
+  /** The id of the run in hand, if any (Scheduler.runningRun). */
+  runningRun?(): number | null;
   /** The job running now, if any; the dashboard's check waits out the two that read iNaturalist. */
   running?(): string | null;
 }
@@ -522,7 +526,7 @@ export function createApp({
   // and ahead of the session gate: it answers to a key, never to a cookie.
   // Any other address the old Beeline's redirects answer refuses a request
   // that carries credentials, so the redirect cannot pass them on.
-  app.route("/api/v1", createApi({ db, isStaff }));
+  app.route("/api/v1", createApi({ db, isStaff, jobs: jobsDep }));
   // The old Beeline's addresses, until it closes (src/app/old-beeline.ts).
   registerOldBeelineRedirects(app);
   registerAuthRoutes(app, {

@@ -179,7 +179,13 @@ function AllYears({ m, entry, name, license }: { m: Messages; entry: AllYearsEnt
         {e.downloadSized(fileSize(entry.bytes))}
       </a>
       {entry.license !== license && (
-        <Meta block>{entry.license === null ? e.archiveLicenseNone : e.archiveLicenseWas(LICENSES[entry.license].name)}</Meta>
+        <Meta block>
+          {entry.license === null
+            ? e.archiveLicenseNone
+            : license === null
+              ? e.allYearsLicenseDropped(LICENSES[entry.license].name)
+              : e.archiveLicenseWas(LICENSES[entry.license].name)}
+        </Meta>
       )}
     </p>
   );

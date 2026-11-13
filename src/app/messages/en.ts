@@ -1993,6 +1993,8 @@ export const en = {
     allYearsLicense: (license: string) => `Every year is under ${license}.`,
     allYearsNoLicense: "It states no licence until every year it holds has the same one.",
     allYearsDownload: (program: string) => `Download the ${program} archive of every year`,
+    /** The file states a licence its years no longer share. */
+    allYearsLicenseDropped: (license: string) => `This file states ${license}; it is rewritten with no licence tonight.`,
   },
   jobs: {
     title: "Jobs",

@@ -24,7 +24,7 @@ import { strFromU8, unzipSync } from "fflate";
 import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
 import { writeProgramArchives } from "../src/app/program-archives.js";
 import type { GovernancePaths } from "../src/program-governance.js";
-import { createMemoryDb, insertCleanSample, CURRENT_SEASON, SETTLED_SEASON, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
   authorizeUrl: () => "unused",
@@ -1224,23 +1224,24 @@ describe("Darwin Core archives, by program and year", () => {
   it("writes each program an archive of every year, with a licence only where its years share one (beeline-9bnm)", async () => {
     const fx = await exportsFixture([OBA_LICENSE], [OBA_POLICY]);
     const { app, db, conn, alice } = await listingApp("staffer", { dir: fx.dir, governance: fx.governance });
-    // A specimen from a settled season beside this season's two.
+    // A specimen from 2024 beside the fixture's two of 2026. Fixed years, as
+    // the fixture's are, since this test asks about years and not seasons.
     const old = await insertCleanSample(conn, {
       collector_id: String(alice),
       atlas_id: "(SELECT entity_id FROM program WHERE code = 'OBA')",
       sample_number: "'A-9'",
       specimen_count: "1",
-      date_start: `DATE '${SETTLED_SEASON}-06-01'`,
-      date_end: `DATE '${SETTLED_SEASON}-06-01'`,
+      date_start: "DATE '2024-06-01'",
+      date_end: "DATE '2024-06-01'",
     });
     await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${old}, 1, 'OBA00009')`);
 
     const manifest = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     expect(manifest.allYears).toContainEqual(
-      expect.objectContaining({ program: "OBA", specimens: 3, firstYear: SETTLED_SEASON, lastYear: CURRENT_SEASON, license: "CC-BY-NC-4.0", file: "OBA-all.zip" }),
+      expect.objectContaining({ program: "OBA", specimens: 3, firstYear: 2024, lastYear: 2026, license: "CC-BY-NC-4.0", file: "OBA-all.zip" }),
     );
     // Beside the years, which are still written one by one.
-    expect(manifest.entries.filter((e) => e.program === "OBA").map((e) => e.year).sort()).toEqual([SETTLED_SEASON, CURRENT_SEASON]);
+    expect(manifest.entries.filter((e) => e.program === "OBA").map((e) => e.year).sort()).toEqual([2024, 2026]);
 
     const res = await app.request("/exports/dwca/OBA-all.zip");
     expect(res.status).toBe(200);
@@ -1253,16 +1254,16 @@ describe("Darwin Core archives, by program and year", () => {
     expect(table(files["identification.txt"]!).length).toBeGreaterThan(1);
 
     const page = await get(app, "/exports");
-    expect(page).toContain(en.exports.allYears(3, SETTLED_SEASON, CURRENT_SEASON));
+    expect(page).toContain(en.exports.allYears(3, 2024, 2026));
     expect(page).toContain(en.exports.allYearsLicense("CC BY-NC 4.0"));
     expect(page).toContain(`aria-label="${en.exports.allYearsDownload("Oregon Bee Atlas")}"`);
 
-    // A licence that changes this season leaves the years without a shared
+    // A licence that changes in 2026 leaves the years without a shared
     // one: the page says so at once, and the next night's file states none.
-    await fx.write([OBA_LICENSE, `OBA,${CURRENT_SEASON},CC-BY-4.0,Test,2026-10-10,https://example.org/oba,Changed`], [OBA_POLICY]);
+    await fx.write([OBA_LICENSE, "OBA,2026,CC-BY-4.0,Test,2026-10-10,https://example.org/oba,Changed"], [OBA_POLICY]);
     const changed = await get(app, "/exports");
     expect(changed).toContain(en.exports.allYearsNoLicense);
-    expect(changed).toContain(en.exports.archiveLicenseWas("CC BY-NC 4.0"));
+    expect(changed).toContain(en.exports.allYearsLicenseDropped("CC BY-NC 4.0"));
     const after = await writeProgramArchives(db, fx.dir, { governance: fx.governance });
     expect(after.allYears!.find((a) => a.program === "OBA")!.license).toBeNull();
     const rewritten = unpack(new Uint8Array(await (await app.request("/exports/dwca/OBA-all.zip")).arrayBuffer()));

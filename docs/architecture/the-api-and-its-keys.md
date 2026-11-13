@@ -16,4 +16,15 @@ Beeline has an API under `/api/v1/` for programs: a script, an AI assistant, an 
 
 **Limits.** One key may make 120 requests a minute, counted in memory and before the key is looked up, so a key over its limit costs the store nothing; past that it is answered 429 with `Retry-After`. The machine's CPU allowance is small, and a script in a loop should be slowed before the pages are. The last-used time is written at most every five minutes and is allowed to lose a write conflict, as a session's slide is.
 
-**For now the page is offered to staff only.** A collector's key would have nothing to read until the read endpoints exist (beeline-pnqr.2). What comes next, each under the same gate: starting and watching jobs (beeline-pnqr.5), and the sample corrections the pages allow (beeline-pnqr.6). Asking the store a question in SQL is deliberately not part of the API (Peter, 2026-11-13): it is a command on the machine, `pnpm store:query`, over `fly ssh` ([Backups](backups.md), beeline-pnqr.4), because a server that accepts SQL from the internet has one key between a stranger and a copy of everything, and the only people who need it already have a shell there.
+**Jobs** (beeline-pnqr.5). A staff key can do what the Jobs page shows staff and its Run button does:
+
+| Request | Answer |
+| --- | --- |
+| `GET /api/v1/jobs` | every registered job with its schedule and latest run, and which job is running |
+| `GET /api/v1/jobs/runs?job=<name>&limit=<n>` | recent runs, newest first |
+| `GET /api/v1/jobs/runs/<id>` | one run: its status, its detail, and the steps a night job recorded |
+| `POST /api/v1/jobs/<name>` | starts the job now; 202 with the run to watch, as soon as the run is recorded |
+
+Starting a job takes no arguments: it is the registered job, run now, as the button runs it. One job runs at a time ([Ingestion, jobs, and elevation](ingestion-jobs-and-elevation.md)), so a start while another runs is answered 409 naming what is running, and a name nobody registered 404; the scheduler's `startRun` tells the two apart and returns the run's id, which the page's `start` never needed. A run's status is `succeeded` or `failed` as recorded, `running` for the one run the scheduler has in hand, and `unfinished` for a run the process stopped under, which nothing will complete. These are for staff keys only, as the page is for staff only: a run's detail is whatever the job or its error said, and that can name people. Who started a run is written to the log (`[api] <login> started job ...`), since `job_run` has no column for it yet (beeline-pnqr.7). The commands that still need maintenance mode are not jobs and cannot be started this way; moving them is beeline-pnqr.7.
+
+**For now the page is offered to staff only.** A collector's key would have nothing to read until the read endpoints exist (beeline-pnqr.2). What comes next under the same gate: the sample corrections the pages allow (beeline-pnqr.6). Asking the store a question in SQL is deliberately not part of the API (Peter, 2026-11-13): it is a command on the machine, `pnpm store:query`, over `fly ssh` ([Backups](backups.md), beeline-pnqr.4), because a server that accepts SQL from the internet has one key between a stranger and a copy of everything, and the only people who need it already have a shell there.

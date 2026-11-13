@@ -188,7 +188,12 @@ const app = createApp({
   config,
   inat,
   resolveSession,
-  jobs: { list: jobs, start: (name) => scheduler.start(name), running: () => scheduler.running() },
+  jobs: {
+    list: jobs,
+    start: (name) => scheduler.start(name),
+    startRun: (name) => scheduler.startRun(name),
+    running: () => scheduler.running(),
+  },
   correctionsPath: config.correctionsPath,
   personOverlayPath: config.personOverlayPath,
   sampleOverlayPath: config.sampleOverlayPath,

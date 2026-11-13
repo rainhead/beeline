@@ -376,13 +376,13 @@ export const en = {
     },
     /**
      * For a volunteer who bookmarked the old Beeline at this address, which it
-     * left at cutover (beeline-83b8.12). Until the old Beeline closes, after
-     * February.
+     * left at cutover (beeline-83b8.12). Until the old Beeline closes at
+     * the end of December 2026.
      */
     oldBeeline: {
       lead: "If you would like to continue using the old interface to enter your determinations, it will be available at",
       label: "old.melittologist.org",
-      tail: " through February 2027.",
+      tail: " through December 2026.",
     },
     joinLead: "To become a volunteer, start with your atlas:",
     failed: "Sign-in failed (state mismatch or missing code). Try again from the sign-in page.",
@@ -1008,6 +1008,8 @@ export const en = {
       colWhat: "What",
       colChange: "Change",
       colWho: "Who",
+      /** Shown beside the author of a change that came through the API rather than a page. */
+      viaApi: "through the API",
       set: "set to",
       cleared: "cleared — was",
       blank: "nothing",
@@ -1038,6 +1040,7 @@ export const en = {
       },
       source: {
         app: "staff",
+        api: "the API",
         legacy_promotion: "the import from old Beeline",
         observation_promotion: "iNaturalist",
         reconcile: "found at startup",
@@ -1954,7 +1957,7 @@ export const en = {
     missing: "Not written yet. It appears after the next nightly run, or after running the legacy-export job on Jobs.",
     archives: "Darwin Core archives, by program and year",
     archivesIntro:
-      "Each program's specimens collected in a calendar year, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got. Each program also has a checklist covering every year: the names its specimens are identified to, with the ranks above them, how many specimens each has and in which years, as a Darwin Core checklist.",
+      "Each program's specimens collected in a calendar year, as a Darwin Core archive: the columns of the specimens CSV, tab-separated, and every identification each specimen has had. A year runs from January to December, as the taxonomists count it, and a sample belongs to the year of its first day. An atlas's archive holds the specimens collected on its ground, and Master Melittology's holds those no atlas covers. Every year is written every night at 4am Pacific, so you can download and review it. Before a year is published, its program has to say under which licence its records leave it and have a privacy policy for that year; the Licence and Privacy policy columns say how far each has got. Each program also has an archive of every year together, which states a licence only when all its years share one, and a checklist covering every year: the names its specimens are identified to, with the ranks above them, how many specimens each has and in which years, as a Darwin Core checklist.",
     archivesCaution:
       "These are for running the program and for checking that GBIF's and Symbiota's tools can read what Beeline writes. Do not upload them to Ecdysis, GBIF or anywhere else until each program has settled what it publishes, under which identifiers, and which records stay embargoed. They hold collectors' names and true coordinates, including taxon-obscured ones.",
     archivesMissing:
@@ -1982,6 +1985,70 @@ export const en = {
     /** A program's checklist, above its years. */
     checklist: (taxa: number) => `Checklist: ${n(taxa)} ${taxa === 1 ? "name" : "names"}, every year together.`,
     checklistDownload: (program: string) => `Download the ${program} checklist`,
+    /** A program's archive of every year together, above its years (beeline-9bnm). */
+    allYears: (specimens: number, first: number, last: number) =>
+      first === last
+        ? `Every year together: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}, all from ${first}.`
+        : `Every year together: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}, ${first} to ${last}.`,
+    allYearsLicense: (license: string) => `Every year is under ${license}.`,
+    allYearsNoLicense: "Its years do not all have the same licence, so none is stated for them together.",
+    allYearsDownload: (program: string) => `Download the ${program} archive of every year`,
+    /** The file states a licence its years no longer share. */
+    allYearsLicenseDropped: (license: string) => `This file states ${license}; it is rewritten with no licence tonight.`,
+  },
+  /**
+   * The old Beeline's records new Beeline held back, and why (/exports/held-back,
+   * beeline-cel0), for Lincoln Best. Reasons are keyed by promotion's
+   * finding (src/app/held-back.ts, HELD_BACK_RULES).
+   */
+  heldBack: {
+    title: "Held back from the old Beeline",
+    heading: "Held back from the old Beeline",
+    intro:
+      "Records in the old Beeline that new Beeline did not make into specimens, and why. A record was held back when it lacked something Beeline needs to file the bee under a sample: the collector, the sample number, a date it can read, or the specimen number. A record was also held back when it had the same collector, date, sample number and specimen number as a record that was kept. Where the two were plainly one pin printed twice, Beeline tied them together and the record is not listed here. The ones listed differ in some way, so the record may be a second bee: Beeline wrote that on the kept specimen, and the note is shown beside the record. Which they are takes somebody looking at the pins. None of these records is in Beeline's listings or exports.",
+    linkFromExports: "Old Beeline records held back, and why",
+    reasonsHeading: "Why they were held back",
+    colReason: "Reason",
+    colActive: (since: number) => `Active seasons (${since} on)`,
+    colSettled: "Settled seasons",
+    colNoYear: "No year written",
+    reasonsNote: "A record can be held back for more than one reason.",
+    reason: {
+      missing_person: "No collector's name",
+      missing_sample_number: "No sample number",
+      bad_date: "A date that cannot be read, or that ends before it starts",
+      bad_specimen_number: "No specimen number, or one below 1",
+      duplicate_specimen: "The same collector, date, sample and specimen number as a record that was kept",
+    },
+    bare: (fieldNumbers: number, first: string, last: string, records: number) =>
+      `${n(records)} ${records === 1 ? "record holds" : "records hold"} nothing but a field number, ${n(fieldNumbers)} ${fieldNumbers === 1 ? "number" : "numbers"} from ${first} to ${last}: no collector, sample, date or identification. They are in the download but not listed here.`,
+    recordsHeading: "The records",
+    colFieldNumber: "Field number",
+    colCollector: "Collector",
+    colSample: "Sample",
+    colSpecimen: "Specimen",
+    colDate: "Date as written",
+    colIdentification: "Identification",
+    colWhy: "Why",
+    colObservation: "Observation",
+    volunteer: "(volunteer)",
+    notWritten: "not written",
+    dateNote: "Dates are year-month-day as the record wrote them, with ? where it left a part blank.",
+    /** Before the field number, as a link, of the specimen whose remark names the record. */
+    related: "Beeline's note on specimen",
+    download: "Download every held-back record (CSV)",
+    downloadNote: "Every column the old Beeline held for each record, the bare ones included, and why it was held back.",
+    none: "No records are held back.",
+    /** A held-back record promotion gave no reason for. None had one on 13 November 2026. */
+    noReason: "No reason recorded",
+    /** Its observation's sample in Beeline, linked, then what it counts and holds. */
+    sampleLink: "Its sample in Beeline",
+    sampleCounts: (counts: number | null, holds: number) =>
+      counts === null
+        ? `holds ${n(holds)} ${holds === 1 ? "specimen" : "specimens"}.`
+        : `counts ${n(counts)} and holds ${n(holds)} ${holds === 1 ? "specimen" : "specimens"}.`,
+    noStaging:
+      "This copy of Beeline holds no copy of the old Beeline's records, so it cannot say which were held back.",
   },
   jobs: {
     title: "Jobs",
@@ -1997,7 +2064,7 @@ export const en = {
       "legacy-export":
         "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
       "legacy-copy":
-        "Copies every specimen printed here into the old Beeline at old.melittologist.org, so volunteers can enter their identifications there until it closes in February 2027. Sends only what changed since the last copy, and never overwrites an identification a volunteer entered there.",
+        "Copies every specimen printed here into the old Beeline at old.melittologist.org, so volunteers can enter their identifications there until it closes at the end of December 2026. Sends only what changed since the last copy, and never overwrites an identification a volunteer entered there.",
       "legacy-volunteer-import":
         "Reads the identifications volunteers entered in the old Beeline at old.melittologist.org and adds each new or changed one here, as the collector's. Names Beeline lacks, specimens whose old records disagree, and identifications removed there are listed in the run, not added.",
       "dwc-archives":
@@ -2879,7 +2946,7 @@ export const en = {
           { href: "/glossary#determination", label: "determination" },
           ". If you prefer the old Beeline's screens, they stay available at ",
           { href: OLD_BEELINE_ORIGIN, label: "old.melittologist.org" },
-          " through February 2027.",
+          " through December 2026.",
         ],
       },
       {

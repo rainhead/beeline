@@ -183,7 +183,7 @@ describe("sample corrections: a correction that saves", () => {
   it("adopts a suggested locality for the collector, logged under their login", async () => {
     const s = await withSuggestions();
     const result = await adoptLocality(s.deps, s.alice, s.linked, { locality: "Finley NWR", reasonFor });
-    expect(result).toEqual({ ok: true, reason: "because" });
+    expect(result).toEqual({ ok: true, outcome: "saved", reason: "because" });
     expect(await localityOf(s.conn, s.linked)).toBe("Finley NWR");
     expect(await logged(s)).toContainEqual(["locality", "Finley NWR", "alice"]);
     expect((await readSampleOverlay(s.paths.sampleOverlayPath)).map((r) => [r.field, r.value, r.author])).toEqual([["locality", "Finley NWR", "alice"]]);
@@ -193,7 +193,7 @@ describe("sample corrections: a correction that saves", () => {
     const s = await withSuggestions();
     // The form is read after the first check; staff save a locality in that gap.
     const result = await adoptLocality(s.deps, s.alice, s.linked, async () => {
-      expect(await setPlace(s.deps, s.sam, s.linked, { locality: "Staff's name", reasonFor })).toEqual({ ok: true });
+      expect(await setPlace(s.deps, s.sam, s.linked, { locality: "Staff's name", reasonFor })).toEqual({ ok: true, outcome: "saved" });
       return { locality: "Finley NWR", reasonFor };
     });
     expect(result).toEqual({ ok: false, refusal: "set_by_other" });
@@ -202,17 +202,17 @@ describe("sample corrections: a correction that saves", () => {
 
   it("writes a place the editor offers, logged under their login", async () => {
     const s = await withSuggestions();
-    expect(await setPlace(s.deps, s.alice, s.other, { locality: "Finley NWR", reasonFor })).toEqual({ ok: true });
+    expect(await setPlace(s.deps, s.alice, s.other, { locality: "Finley NWR", reasonFor })).toEqual({ ok: true, outcome: "saved" });
     expect(await localityOf(s.conn, s.other)).toBe("Finley NWR");
     expect(await logged(s)).toContainEqual(["locality", "Finley NWR", "alice"]);
   });
 
   it("holds a sample and lifts the hold, logged under staff's login", async () => {
     const s = await withSuggestions();
-    expect(await holdSample(s.deps, s.sam, s.linked, { lift: false, note: "date looks a year off" })).toEqual({ ok: true });
+    expect(await holdSample(s.deps, s.sam, s.linked, { lift: false, note: "date looks a year off" })).toEqual({ ok: true, outcome: "saved" });
     expect(await rows(s.conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${s.linked}`)).toEqual([]);
     expect(await logged(s)).toContainEqual(expect.arrayContaining(["samstaff"]));
-    expect(await holdSample(s.deps, s.sam, s.linked, { lift: true, note: "" })).toEqual({ ok: true });
+    expect(await holdSample(s.deps, s.sam, s.linked, { lift: true, note: "" })).toEqual({ ok: true, outcome: "removed" });
     expect(await rows(s.conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${s.linked}`)).toHaveLength(1);
   });
 
@@ -220,7 +220,7 @@ describe("sample corrections: a correction that saves", () => {
     const s = await setup();
     await s.conn.run(`UPDATE sample SET locality = 'Deschutes River SRA' WHERE entity_id = ${s.linked}`);
     expect(await rows(s.conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${s.linked}`)).toEqual([]);
-    expect(await waiveFlag(s.deps, s.sam, s.linked, { rule: "locality_format", remove: false, note: "short enough" })).toEqual({ ok: true });
+    expect(await waiveFlag(s.deps, s.sam, s.linked, { rule: "locality_format", remove: false, note: "short enough" })).toEqual({ ok: true, outcome: "saved" });
     expect(await rows(s.conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${s.linked}`)).toHaveLength(1);
   });
 
@@ -312,21 +312,21 @@ describe("sample corrections: a correction that saves", () => {
         const s = await withSuggestions();
         const first = setPlace(s.deps, s.sam, s.linked, { locality: "First name", reasonFor });
         const second = setPlace(s.deps, s.sam, s.linked, { locality: "Second name", reasonFor });
-        expect(await first).toEqual({ ok: true });
-        expect(await second).toEqual({ ok: true });
+        expect(await first).toEqual({ ok: true, outcome: "saved" });
+        expect(await second).toEqual({ ok: true, outcome: "saved" });
         expect(await localityOf(s.conn, s.linked)).toBe("Second name");
       }
       // A hold and then its lifting leave the sample not held.
       const h = await withSuggestions();
       const held = holdSample(h.deps, h.sam, h.linked, { lift: false, note: "wait" });
       const lifted = holdSample(h.deps, h.sam, h.linked, { lift: true, note: "" });
-      expect([await held, await lifted]).toEqual([{ ok: true }, { ok: true }]);
+      expect([await held, await lifted]).toEqual([{ ok: true, outcome: "saved" }, { ok: true, outcome: "removed" }]);
       expect(await rows(h.conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${h.linked}`)).toHaveLength(1);
       // Staff set a locality, then the collector tries to adopt one: staff's stands and the collector is refused.
       const t = await withSuggestions();
       const staff = setPlace(t.deps, t.sam, t.linked, { locality: "Staff's name", reasonFor });
       const collector = adoptLocality(t.deps, t.alice, t.linked, { locality: "Finley NWR", reasonFor });
-      expect(await staff).toEqual({ ok: true });
+      expect(await staff).toEqual({ ok: true, outcome: "saved" });
       expect(await collector).toEqual({ ok: false, refusal: "set_by_other" });
       expect(await localityOf(t.conn, t.linked)).toBe("Staff's name");
     });
@@ -349,7 +349,7 @@ describe("sample corrections: a correction that saves", () => {
       const adopting = form({ locality: "Finley NWR", reasonFor });
       const collector = adoptLocality(s.deps, s.alice, s.linked, adopting.input);
       await adopting.read;
-      expect(await setPlace(s.deps, s.sam, s.linked, { locality: "Staff's name", reasonFor })).toEqual({ ok: true });
+      expect(await setPlace(s.deps, s.sam, s.linked, { locality: "Staff's name", reasonFor })).toEqual({ ok: true, outcome: "saved" });
       adopting.give();
       expect(await collector).toEqual({ ok: false, refusal: "set_by_other" });
       expect(await localityOf(s.conn, s.linked)).toBe("Staff's name");

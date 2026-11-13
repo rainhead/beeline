@@ -735,6 +735,8 @@ nav.tabs a[aria-current="page"] {
 .found-family { margin-bottom: var(--space-6); }
 .found-family h3 .meta { font-weight: normal; }
 td.found-bees { white-space: nowrap; min-width: 8rem; }
+/* A date as an old record wrote it (/exports/held-back): year-month-day, which wraps at every hyphen otherwise. */
+td.date-written { white-space: nowrap; }
 .found-bar {
   display: block; height: 4px; margin-top: var(--space-1);
   border-radius: 2px; background: var(--chart-genus);

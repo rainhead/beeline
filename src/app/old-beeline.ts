@@ -1,13 +1,14 @@
-import type { Env, Hono } from "hono";
-import { refuseStrayCredentials } from "./api.js";
+import type { Env, Hono, MiddlewareHandler } from "hono";
 
 /**
  * Where the old Beeline runs from cutover (beeline-83b8.12). New Beeline takes
  * melittologist.org on 3 November 2026, and the old system moves here and
- * keeps running, its volunteer determination screens open, through February
- * 2027 (Peter, 2026-11-03): volunteers were not warned about the new
- * interface, so they are not pushed onto it. What they enter there comes into
- * this store by another route (beeline-c43w).
+ * keeps running, its volunteer determination screens open, through December
+ * 2026 (Peter, 2026-11-03, and 2026-11-13: it said February 2027 until
+ * then, but Andony told volunteers on 4 November that it closes on 31
+ * December): volunteers were not warned about the new interface, so they
+ * are not pushed onto it. What they enter there comes into this store by
+ * another route (beeline-c43w).
  *
  * Everything in this file is temporary, and goes when the old Beeline does.
  */
@@ -37,7 +38,18 @@ export const OLD_BEELINE_PAGES = [
  * Temporary redirects (302, and 307 for the API, which keeps the method and
  * body), because the old Beeline goes away.
  */
-export function registerOldBeelineRedirects<E extends Env>(app: Hono<E>): void {
+export function registerOldBeelineRedirects<E extends Env>(
+  app: Hono<E>,
+  /**
+   * Refuses a request that carries credentials (`refuseStrayCredentials`,
+   * src/app/api.ts). Passed in, never imported: this module is imported by
+   * the message catalogue for OLD_BEELINE_ORIGIN, and the catalogue is in
+   * the browser bundle, so anything imported here is dragged into it. The
+   * API imports the store, which a browser cannot load, and importing it
+   * here broke the deploy on 2026-11-13 (beeline-r0fq).
+   */
+  refuseStrayCredentials: MiddlewareHandler,
+): void {
   const target = (url: string) => {
     const { pathname, search } = new URL(url);
     return `${OLD_BEELINE_ORIGIN}${pathname}${search}`;

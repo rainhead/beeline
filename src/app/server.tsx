@@ -15,7 +15,7 @@ import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
-import { createApi } from "./api.js";
+import { createApi, refuseStrayCredentials } from "./api.js";
 import { createKey, hasKeys, listKeys, offeredScopes, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
 import { KeysPage } from "./views/keys.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
@@ -57,6 +57,8 @@ import { DeterminePage } from "./views/determine.js";
 import { Jobs } from "./views/jobs.js";
 import { stepTrend } from "./job-steps.js";
 import { Exports } from "./views/exports.js";
+import { HeldBackPage } from "./views/held-back.js";
+import { heldBackCsvRows, heldBackRecords } from "./held-back.js";
 import { legacyExportPath } from "../legacy-export.js";
 import { PrintRun, PrintRuns } from "./views/print-runs.js";
 import {
@@ -153,6 +155,7 @@ import {
   type Actor,
   type CorrectionDeps,
 } from "./sample-corrections.js";
+import { localityReasonFor, takeLocationDefaultReason } from "./correction-reasons.js";
 import { setSampleMethod } from "./sample-method.js";
 import { onSample } from "./sample-queue.js";
 import { standingLocalityAuthor } from "./locality-override.js";
@@ -187,6 +190,7 @@ import {
   STAFF_READER,
   parseListingQuery,
   csvStream,
+  toCsv,
   SAMPLE_CSV_HEADER,
   sampleCsvRow,
   SPECIMEN_CSV_HEADER,
@@ -526,9 +530,9 @@ export function createApp({
   // and ahead of the session gate: it answers to a key, never to a cookie.
   // Any other address the old Beeline's redirects answer refuses a request
   // that carries credentials, so the redirect cannot pass them on.
-  app.route("/api/v1", createApi({ db, isStaff, jobs: jobsDep }));
+  app.route("/api/v1", createApi({ db, isStaff, jobs: jobsDep, corrections: { deps: corrective, messages: messagesFor(null) } }));
   // The old Beeline's addresses, until it closes (src/app/old-beeline.ts).
-  registerOldBeelineRedirects(app);
+  registerOldBeelineRedirects(app, refuseStrayCredentials);
   registerAuthRoutes(app, {
     db,
     inat,
@@ -1442,7 +1446,7 @@ export function createApp({
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
     const result = await adoptLocality(corrective, actorOf(c), id, async () => {
       body = await c.req.parseBody();
-      return { locality: field("locality"), reasonFor: (basis) => t.reason(t.basis[basis]) };
+      return { locality: field("locality"), reasonFor: localityReasonFor(m) };
     });
     if (result.ok) return c.redirect(field("return") === "home" ? "/" : sampleHref(id));
     switch (result.refusal) {
@@ -1488,7 +1492,7 @@ export function createApp({
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
     const result = await setPlace(corrective, actorOf(c), id, async () => {
       body = await c.req.parseBody();
-      return { locality: field("locality"), reasonFor: (basis) => t.reason(t.basis[basis]) };
+      return { locality: field("locality"), reasonFor: localityReasonFor(m) };
     });
     // Back to the listing or to the sample's own page, whichever it came from.
     const backRaw = field("back");
@@ -1615,7 +1619,7 @@ export function createApp({
     const id = Number(c.req.param("id"));
     const result = await takeLocation(corrective, actorOf(c), id, async () => {
       const body = await c.req.parseBody();
-      return { note: typeof body.note === "string" ? body.note : "", defaultReason: t.reason };
+      return { note: typeof body.note === "string" ? body.note : "", defaultReason: takeLocationDefaultReason(m) };
     });
     if (result.ok) return c.redirect(`/samples/${id}${result.settled ? "" : "?place=pending"}`);
     switch (result.refusal) {
@@ -1964,15 +1968,23 @@ export function createApp({
   // it (src/app/program-archives.ts), whether or not its program has the
   // licence and privacy policy publishing it would need: these are for staff
   // to review (Peter, 2026-10-23). Only a file the manifest names is served.
-  // A program's checklist (beeline-024a) is served the same way, by its own name.
-  app.get("/exports/dwca/:file{[A-Za-z0-9]+-(\\d{4}|checklist)\\.zip}", async (c) => {
+  // A program's checklist (beeline-024a) and its archive of every year
+  // (beeline-9bnm) are served the same way, each by its own name.
+  app.get("/exports/dwca/:file{[A-Za-z0-9]+-(\\d{4}|checklist|all)\\.zip}", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const name = c.req.param("file");
     const manifest = await readArchiveManifest(exportsDir());
     const year = manifest?.entries.find((e) => e.file === name);
     const checklist = manifest?.checklists?.find((e) => e.file === name);
+    const allYears = manifest?.allYears?.find((e) => e.file === name);
     const download =
-      year !== undefined ? `${year.program}-${year.year}` : checklist !== undefined ? `${checklist.program}-checklist` : null;
+      year !== undefined
+        ? `${year.program}-${year.year}`
+        : checklist !== undefined
+          ? `${checklist.program}-checklist`
+          : allYears !== undefined
+            ? `${allYears.program}-all-years`
+            : null;
     if (download === null) return errorResponse(c, "notFound");
     const path = join(archiveDir(exportsDir()), name);
     let handle;
@@ -1993,6 +2005,21 @@ export function createApp({
       "content-length": String(st.size),
       "content-disposition": `attachment; filename="beeline-${download}-dwca.zip"`,
     });
+  });
+
+  // The old Beeline's records new Beeline held back, and why (beeline-cel0),
+  // read live: half a second to a second on the production store.
+  app.get("/exports/held-back", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const m = c.get("m");
+    return c.html(await page(c, m.heldBack.title, <HeldBackPage m={m} heldBack={await heldBackRecords(db)} />));
+  });
+
+  app.get("/exports/held-back.csv", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    const held = await heldBackCsvRows(db, c.get("m"));
+    if (held === null) return errorResponse(c, "notFound");
+    return csv(c, toCsv(held.header, held.rows), "beeline-held-back");
   });
 
   app.get("/exports/occurrences.csv", async (c) => {

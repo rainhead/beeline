@@ -100,6 +100,12 @@ beforeAll(async () => {
   await seed.run(
     `INSERT INTO api_key (key_sha256, inat_user_id, name, scope, expires_at) VALUES (repeat('c', 64), 501, 'script', 'read', current_timestamp + INTERVAL 30 DAY)`,
   );
+  // One about a sample, whose id a reseed redraws, and one about a job, whose name it does not.
+  await seed.run(
+    `INSERT INTO api_key_use (key_sha256, method, route, subject, outcome, reference, status) VALUES
+       (repeat('c', 64), 'POST', '/api/v1/samples/:id/hold', '12', 'saved', 'msg-123', 200),
+       (repeat('c', 64), 'POST', '/api/v1/jobs/:name', 'nightly-pipeline', 'started', NULL, 202)`,
+  );
   await seed.run(`INSERT INTO person_activity (inat_user_id) VALUES (501)`);
   await seed.run(`INSERT INTO impersonation (admin_login, person_name) VALUES ('staffer', 'Member Bee')`);
   // Model rows, of the kind promotion derives and this tool must not carry.
@@ -149,6 +155,7 @@ describe("reseeding a store that cannot be blown away", () => {
       inat_sign_in: 1,
       session: 1,
       api_key: 1,
+      api_key_use: 2,
       person_activity: 1,
       impersonation: 1,
     });
@@ -170,6 +177,13 @@ describe("reseeding a store that cannot be blown away", () => {
       await rows(conn, `SELECT inat_id, absent_since = TIMESTAMPTZ '2026-08-01 12:00:00+00',
                                asked_at = TIMESTAMPTZ '2026-08-02 12:00:00+00' FROM observation_absent`),
     ).toEqual([[370191199n, true, true]]);
+
+    // What a key did comes across, without the number of a sample, which would
+    // name another sample now; a job's name stays.
+    expect(await rows(conn, `SELECT route, subject, outcome, reference, status FROM api_key_use ORDER BY route`)).toEqual([
+      ["/api/v1/jobs/:name", "nightly-pipeline", "started", null, 202],
+      ["/api/v1/samples/:id/hold", null, "saved", "msg-123", 200],
+    ]);
 
     // The whole point: the model is empty, so promotion may run against it.
     expect(await rows(conn, `SELECT count(*) FROM person`)).toEqual([[0n]]);
@@ -332,6 +346,7 @@ describe("reseeding a store that cannot be blown away", () => {
       inat_sign_in: 0,
       session: 0,
       api_key: 0,
+      api_key_use: 0,
       person_activity: 0,
       impersonation: 0,
     });

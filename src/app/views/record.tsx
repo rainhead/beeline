@@ -982,6 +982,7 @@ function SampleHistory({ m, history }: { m: Messages; history: readonly SampleCh
               </td>
               <td>
                 {row.author === "" ? <Meta>{h.source[row.source]}</Meta> : <code>{row.author}</code>}
+                {row.author !== "" && row.source === "api" && <Meta block>{h.viaApi}</Meta>}
                 {row.reason !== "" && <Meta block>{row.reason}</Meta>}
               </td>
             </tr>

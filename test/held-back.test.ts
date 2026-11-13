@@ -84,6 +84,10 @@ describe("the old records new Beeline held back", () => {
     // Left out by the repair, each for its own reason.
     expect(byField("2127399")?.rules).toEqual(["bad_specimen_number"]);
     expect(byField("2050001")?.rules).toEqual(["bad_specimen_number"]);
+    // Its observation is a sample in Beeline that counts one bee and holds none,
+    // which is the case worth a taxonomist's time.
+    expect(byField("2050001")?.sample).toMatchObject({ counts: 1, holds: 0 });
+    expect(byField("2127399")?.sample).toBeNull();
     // A pair the repair would not tie: the set-aside record, with the kept specimen's remark.
     expect(byField("2127010")).toMatchObject({
       rules: ["duplicate_specimen"],
@@ -105,6 +109,9 @@ describe("the old records new Beeline held back", () => {
 
   test("counts the bare records rather than listing them, and splits the reasons by season", () => {
     expect(held.bare).toEqual({ records: 2, fieldNumbers: 1, first: "25100000", last: "25100000" });
+    // The two blank records rank against each other in promotion, but neither
+    // was kept, so neither is called a second print of the other.
+    expect(held.records.every((r) => r.rules.length > 0)).toBe(true);
     expect(held.records.some((r) => r.fieldNumber === "25100000")).toBe(false);
     // Every fixture record is from a settled season.
     const duplicates = held.reasons.find((r) => r.rule === "duplicate_specimen")!;
@@ -121,16 +128,25 @@ describe("the old records new Beeline held back", () => {
     expect(page).toContain("2127010");
     expect(page).toContain(`href="https://www.inaturalist.org/observations/`);
     expect(page).toContain(en.heldBack.bare(1, "25100000", "25100000", 2).replaceAll("'", "&#39;"));
+    expect(page).toContain(en.heldBack.sampleCounts(1, 0));
 
     const res = await app.request("/exports/held-back.csv");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/csv");
     const lines = (await res.text()).replace(/^﻿/, "").trim().split("\n");
     expect(lines[0]!.startsWith("_id,")).toBe(true);
-    expect(lines[0]!.endsWith(",held_back_because")).toBe(true);
+    expect(lines[0]!.endsWith(",held_back_because,beeline_note_specimen,beeline_note,beeline_sample_id,beeline_sample_counts,beeline_sample_holds")).toBe(true);
     // Every listed record and both bare ones.
     expect(lines.length - 1).toBe(held.records.length + 2);
-    expect(lines.find((l) => l.includes(",2127010,"))).toMatch(/,duplicate_specimen$/);
+    // Reasons in the page's words, with the note on the kept specimen.
+    const pair = lines.find((l) => l.includes(",2127010,"))!;
+    // Quoted, since the sentence has commas in it.
+    expect(pair).toContain(`,"${en.heldBack.reason.duplicate_specimen}",2127325,`);
+    expect(pair).toContain("11.1 km apart");
+    const blank = lines.filter((l) => l.includes(",25100000,"));
+    expect(blank).toHaveLength(2);
+    for (const l of blank) expect(l).not.toContain(en.heldBack.reason.duplicate_specimen);
+    expect(lines.find((l) => l.includes(",2050001,"))).toMatch(/,1,0$/);
   });
 
   test("is refused to a volunteer", async () => {

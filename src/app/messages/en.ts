@@ -1995,7 +1995,7 @@ export const en = {
     title: "Held back from the old Beeline",
     heading: "Held back from the old Beeline",
     intro:
-      "Records in the old Beeline that new Beeline did not make into specimens, and why. A record was held back when it lacked something Beeline needs to file the bee under a sample: the collector, the sample number, a date it can read, or the specimen number. A record was also held back when it had the same collector, date, sample number and specimen number as one that was kept, which Beeline took for one pin printed twice. Where the two records disagree, so that one may be a second bee, Beeline wrote that on the kept specimen, and it is shown beside the record here. None of these records is in Beeline's listings or exports.",
+      "Records in the old Beeline that new Beeline did not make into specimens, and why. A record was held back when it lacked something Beeline needs to file the bee under a sample: the collector, the sample number, a date it can read, or the specimen number. A record was also held back when it had the same collector, date, sample number and specimen number as a record that was kept. Where the two were plainly one pin printed twice, Beeline tied them together and the record is not listed here. The ones listed differ in some way, so the record may be a second bee: Beeline wrote that on the kept specimen, and the note is shown beside the record. Which they are takes somebody looking at the pins. None of these records is in Beeline's listings or exports.",
     linkFromExports: "Old Beeline records held back, and why",
     reasonsHeading: "Why they were held back",
     colReason: "Reason",
@@ -2007,7 +2007,7 @@ export const en = {
       missing_person: "No collector's name",
       missing_sample_number: "No sample number",
       bad_date: "A date that cannot be read, or that ends before it starts",
-      bad_specimen_number: "No specimen number, or 0",
+      bad_specimen_number: "No specimen number, or one below 1",
       duplicate_specimen: "The same collector, date, sample and specimen number as a record that was kept",
     },
     bare: (fieldNumbers: number, first: string, last: string, records: number) =>
@@ -2029,6 +2029,14 @@ export const en = {
     download: "Download every held-back record (CSV)",
     downloadNote: "Every column the old Beeline held for each record, the bare ones included, and why it was held back.",
     none: "No records are held back.",
+    /** A held-back record promotion gave no reason for. None had one on 13 November 2026. */
+    noReason: "No reason recorded",
+    /** Its observation's sample in Beeline, linked, then what it counts and holds. */
+    sampleLink: "Its sample in Beeline",
+    sampleCounts: (counts: number | null, holds: number) =>
+      counts === null
+        ? `holds ${n(holds)} ${holds === 1 ? "specimen" : "specimens"}.`
+        : `counts ${n(counts)} and holds ${n(holds)} ${holds === 1 ? "specimen" : "specimens"}.`,
     noStaging:
       "This copy of Beeline holds no copy of the old Beeline's records, so it cannot say which were held back.",
   },

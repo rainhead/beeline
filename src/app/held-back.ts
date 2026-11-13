@@ -1,5 +1,6 @@
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
+import type { Messages } from "./messages/index.js";
 import { REMARK_SOURCE } from "../repair-legacy-skipped.js";
 
 /**
@@ -14,8 +15,9 @@ import { REMARK_SOURCE } from "../repair-legacy-skipped.js";
  * a specimen as a second record (`legacy_duplicate_record`, schema/040).
  * Every other record is held back, and why is the blocking findings
  * promotion recorded for it (`legacy_promotion_finding`): no collector, no
- * sample number, a date that cannot be read, no specimen number, or the same
- * collector, date, sample and specimen number as a record that was kept. On
+ * sample number, a date that cannot be read, no specimen number (or one below
+ * 1), or the same collector, date, sample and specimen number as a record
+ * that was kept. On
  * the production store of 13 November 2026 that was 276 records, every one
  * with a finding.
  *
@@ -58,6 +60,8 @@ export interface HeldBackRecord {
   rules: HeldBackRule[];
   /** The specimen whose remark names this record, if the repair wrote one. */
   related: { specimenId: number; fieldNumber: string; remark: string } | null;
+  /** The sample in Beeline its observation is, with the count it states and the specimens it holds. */
+  sample: { sampleId: number; counts: number | null; holds: number } | null;
 }
 
 /** Records that hold nothing but a field number: counted, not listed. */
@@ -86,7 +90,7 @@ export interface HeldBack {
   activeSince: number;
 }
 
-const NEEDS = ["legacy_occurrence", "legacy_specimen_number", "legacy_duplicate_record", "legacy_promotion_finding"];
+const NEEDS = ["legacy_occurrence", "legacy_parsed", "legacy_specimen_number", "legacy_duplicate_record", "legacy_promotion_finding"];
 
 /** Whether the store holds old-Beeline staging and the views promotion left. */
 export async function hasHeldBackSources(db: Kysely<Database>): Promise<boolean> {
@@ -96,60 +100,86 @@ export async function hasHeldBackSources(db: Kysely<Database>): Promise<boolean>
   return Number(rows[0]?.n ?? 0) === NEEDS.length;
 }
 
-/**
- * The held-back records with their reasons, as a temporary relation every
- * query below reads. A record is bare when it has no collector, sample,
- * specimen number, date or identification: the old system's empty labels.
- */
-const HELD = sql`
-  held AS (
-    SELECT o.*,
-      nullif(trim(concat_ws(' ', nullif(trim(o.firstName), ''), nullif(trim(o.lastName), ''))), '') AS collector,
-      try_cast(o.year AS INTEGER) AS p_year,
-      nullif(trim(coalesce(nullif(o.scientificName, ''), concat_ws(' ', nullif(o.genus, ''), nullif(o.specificEpithet, '')))), '') AS expert,
-      nullif(trim(concat_ws(' ', nullif(o.genusVolDet, ''), nullif(o.speciesVolDet, ''))), '') AS volunteer
-    FROM legacy_occurrence o
-    WHERE o._id NOT IN (SELECT _id FROM legacy_specimen_number)
-      AND o._id NOT IN (SELECT _id FROM legacy_duplicate_record)
-  ),
-  reasons AS (
-    SELECT f._id, list(DISTINCT f.rule ORDER BY f.rule) AS rules
-    FROM legacy_promotion_finding f
-    WHERE f.severity = 'blocking' AND f._id IN (SELECT _id FROM held)
-    GROUP BY f._id
-  ),
-  classed AS (
-    SELECT h.*, coalesce(r.rules, []) AS rules,
-      h.collector IS NULL AND nullif(trim(h.sampleId), '') IS NULL AND nullif(trim(h.specimenId), '') IS NULL
-        AND nullif(trim(h.year), '') IS NULL AND h.expert IS NULL AND h.volunteer IS NULL AS bare
-    FROM held h LEFT JOIN reasons r USING (_id)
-  )`;
+/** One held-back record as the store gives it: every staged column, and what the page derives. */
+type HeldRow = Record<string, unknown> & {
+  _id: string;
+  fieldNumber: string | null;
+  sampleId: string | null;
+  specimenId: string | null;
+  day: string | null;
+  month: string | null;
+  year: string | null;
+  day2: string | null;
+  month2: string | null;
+  year2: string | null;
+  url: string | null;
+  hb_collector: string | null;
+  hb_year: number | null;
+  hb_expert: string | null;
+  hb_volunteer: string | null;
+  hb_rules: HeldBackRule[];
+  hb_bare: boolean;
+  hb_related_id: number | null;
+  hb_related_field_number: string | null;
+  hb_remark: string | null;
+  hb_sample_id: number | null;
+  hb_sample_counts: number | null;
+  hb_sample_holds: number | bigint | null;
+};
 
-/** Every held-back record, with its reasons and what the repair said about it. Null where the store has no staging. */
-export async function heldBackRecords(db: Kysely<Database>): Promise<HeldBack | null> {
-  if (!(await hasHeldBackSources(db))) return null;
-  const { rows: listed } = await sql<{
-    _id: string;
-    fieldNumber: string | null;
-    collector: string | null;
-    sampleId: string | null;
-    specimenId: string | null;
-    day: string | null;
-    month: string | null;
-    year: string | null;
-    day2: string | null;
-    month2: string | null;
-    year2: string | null;
-    p_year: number | null;
-    url: string | null;
-    expert: string | null;
-    volunteer: string | null;
-    rules: HeldBackRule[];
-    related_id: number | null;
-    related_field_number: string | null;
-    remark: string | null;
-  }>`
-    WITH ${HELD},
+/**
+ * Every held-back record in one pass, which the page and the download both
+ * read: the findings view ranks every staged record, so it is evaluated once.
+ *
+ * A record is bare when it has no collector, sample, specimen number, date or
+ * identification: the old system's empty labels.
+ *
+ * `duplicate_specimen` stands only where a record that was carried over has
+ * the same collector, sample, date and specimen number. Promotion also gives
+ * it to records whose numbers are blank, which rank only against each other
+ * (the 177 bare records do), and none of them was kept.
+ *
+ * Where the record cites an iNaturalist observation that is a sample in
+ * Beeline, the sample comes with it, with the count it states and the
+ * specimens it holds: a sample that holds fewer than it counts is where a
+ * held-back record may belong.
+ */
+async function readHeld(db: Kysely<Database>): Promise<HeldRow[]> {
+  const { rows } = await sql<HeldRow>`
+    WITH carried AS (
+      SELECT _id FROM legacy_specimen_number UNION SELECT _id FROM legacy_duplicate_record
+    ),
+    held AS (
+      SELECT o.*,
+        nullif(trim(concat_ws(' ', nullif(trim(o.firstName), ''), nullif(trim(o.lastName), ''))), '') AS hb_collector,
+        try_cast(o.year AS INTEGER) AS hb_year,
+        nullif(trim(coalesce(nullif(o.scientificName, ''), concat_ws(' ', nullif(o.genus, ''), nullif(o.specificEpithet, '')))), '') AS hb_expert,
+        nullif(trim(concat_ws(' ', nullif(o.genusVolDet, ''), nullif(o.speciesVolDet, ''))), '') AS hb_volunteer,
+        try_cast(regexp_extract(o.url, '/observations/([0-9]+)$', 1) AS BIGINT) AS hb_observation
+      FROM legacy_occurrence o
+      WHERE o._id NOT IN (SELECT _id FROM carried)
+    ),
+    findings AS MATERIALIZED (
+      SELECT f._id, f.rule FROM legacy_promotion_finding f
+      WHERE f.severity = 'blocking' AND f._id IN (SELECT _id FROM held)
+    ),
+    reasons AS (
+      SELECT f._id, list(DISTINCT f.rule ORDER BY f.rule) AS hb_rules
+      FROM findings f
+      WHERE f.rule <> 'duplicate_specimen'
+         OR EXISTS (
+           SELECT 1 FROM legacy_parsed me JOIN legacy_parsed k
+             ON k.fn IS NOT DISTINCT FROM me.fn AND k.ln IS NOT DISTINCT FROM me.ln
+            AND k.sid = me.sid AND k.p_date_start = me.p_date_start AND k.p_specimen_number = me.p_specimen_number
+           WHERE me._id = f._id AND k._id IN (SELECT _id FROM carried))
+      GROUP BY f._id
+    ),
+    classed AS (
+      SELECT h.*, coalesce(r.hb_rules, []) AS hb_rules,
+        h.hb_collector IS NULL AND nullif(trim(h.sampleId), '') IS NULL AND nullif(trim(h.specimenId), '') IS NULL
+          AND nullif(trim(h.year), '') IS NULL AND h.hb_expert IS NULL AND h.hb_volunteer IS NULL AS hb_bare
+      FROM held h LEFT JOIN reasons r USING (_id)
+    ),
     remarked AS (
       SELECT c._id, d.specimen_id, sp.field_number, d.remarks,
         row_number() OVER (PARTITION BY c._id ORDER BY d.specimen_id) AS n
@@ -160,29 +190,31 @@ export async function heldBackRecords(db: Kysely<Database>): Promise<HeldBack | 
        AND (strpos(d.remarks, concat('field number ', c.fieldNumber, ' ')) > 0
             OR strpos(d.remarks, concat('field number ', c.fieldNumber, ',')) > 0)
       JOIN specimen sp ON sp.entity_id = d.specimen_id
-      WHERE NOT c.bare
+      WHERE NOT c.hb_bare
+    ),
+    observed AS (
+      SELECT s.inat_observation_id, min(s.entity_id) AS sample_id
+      FROM sample s WHERE s.inat_observation_id IN (SELECT hb_observation FROM classed)
+      GROUP BY s.inat_observation_id
     )
-    SELECT c._id, c.fieldNumber, c.collector, c.sampleId, c.specimenId, c.day, c.month, c.year,
-           c.day2, c.month2, c.year2, c.p_year, c.url, c.expert, c.volunteer, c.rules,
-           r.specimen_id AS related_id, r.field_number AS related_field_number, r.remarks AS remark
-    FROM classed c LEFT JOIN remarked r ON r._id = c._id AND r.n = 1
-    WHERE NOT c.bare
-    ORDER BY c.p_year NULLS LAST, c.fieldNumber, c._id`.execute(db);
+    SELECT c.* EXCLUDE (hb_observation),
+      r.specimen_id AS hb_related_id, r.field_number AS hb_related_field_number, r.remarks AS hb_remark,
+      ob.sample_id AS hb_sample_id, s.specimen_count AS hb_sample_counts,
+      (SELECT count(*) FROM specimen sp WHERE sp.sample_id = ob.sample_id) AS hb_sample_holds
+    FROM classed c
+    LEFT JOIN remarked r ON r._id = c._id AND r.n = 1
+    LEFT JOIN observed ob ON ob.inat_observation_id = c.hb_observation
+    LEFT JOIN sample s ON s.entity_id = ob.sample_id
+    ORDER BY c.hb_year NULLS LAST, c.fieldNumber, c._id`.execute(db);
+  return rows;
+}
 
-  const { rows: bare } = await sql<{ records: number | bigint; field_numbers: number | bigint; first: string; last: string }>`
-    WITH ${HELD}
-    SELECT count(*) AS records, count(DISTINCT fieldNumber) AS field_numbers, min(fieldNumber) AS first, max(fieldNumber) AS last
-    FROM classed WHERE bare`.execute(db);
-
-  const { rows: counts } = await sql<{ rule: HeldBackRule; active: number | bigint; settled: number | bigint; no_year: number | bigint }>`
-    WITH ${HELD}, since AS (SELECT CAST(extract(year FROM active_since) AS INTEGER) AS y FROM season)
-    SELECT rule,
-      count(*) FILTER (WHERE p_year >= (SELECT y FROM since)) AS active,
-      count(*) FILTER (WHERE p_year < (SELECT y FROM since)) AS settled,
-      count(*) FILTER (WHERE p_year IS NULL) AS no_year
-    FROM (SELECT unnest(rules) AS rule, p_year FROM classed WHERE NOT bare)
-    GROUP BY rule`.execute(db);
+/** Every held-back record, with its reasons and what Beeline holds of it. Null where the store has no staging. */
+export async function heldBackRecords(db: Kysely<Database>): Promise<HeldBack | null> {
+  if (!(await hasHeldBackSources(db))) return null;
+  const rows = await readHeld(db);
   const { rows: since } = await sql<{ y: number }>`SELECT CAST(extract(year FROM active_since) AS INTEGER) AS y FROM season`.execute(db);
+  const activeSince = Number(since[0]!.y);
 
   // Year, month, day, as the record wrote each, so 4/5 cannot be read either
   // way round; a part it left blank is a question mark.
@@ -191,6 +223,7 @@ export async function heldBackRecords(db: Kysely<Database>): Promise<HeldBack | 
     return [y, m, d].every((p) => p === "") ? "" : [y, m, d].map((p) => (p === "" ? "?" : p)).join("-");
   };
   const text = (v: string | null) => ((v ?? "").trim() === "" ? null : v!.trim());
+  const listed = rows.filter((r) => !r.hb_bare);
   const records = listed.map((r): HeldBackRecord => {
     const start = written(r.year, r.month, r.day);
     const end = written(r.year2, r.month2, r.day2);
@@ -198,42 +231,76 @@ export async function heldBackRecords(db: Kysely<Database>): Promise<HeldBack | 
     return {
       id: r._id,
       fieldNumber: r.fieldNumber ?? "",
-      collector: r.collector,
+      collector: r.hb_collector,
       sampleNumber: text(r.sampleId),
       specimenNumber: text(r.specimenId),
       date: start === "" && end === "" ? null : end === "" ? start : `${start} to ${end}`,
-      year: r.p_year === null ? null : Number(r.p_year),
+      year: r.hb_year === null ? null : Number(r.hb_year),
       observationId: observation === null ? null : Number(observation[1]),
-      expert: r.expert,
-      volunteer: r.volunteer,
-      rules: [...r.rules],
+      expert: r.hb_expert,
+      volunteer: r.hb_volunteer,
+      rules: [...r.hb_rules],
       related:
-        r.related_id === null ? null : { specimenId: Number(r.related_id), fieldNumber: r.related_field_number!, remark: r.remark! },
+        r.hb_related_id === null
+          ? null
+          : { specimenId: Number(r.hb_related_id), fieldNumber: r.hb_related_field_number!, remark: r.hb_remark! },
+      sample:
+        r.hb_sample_id === null
+          ? null
+          : { sampleId: Number(r.hb_sample_id), counts: r.hb_sample_counts === null ? null : Number(r.hb_sample_counts), holds: Number(r.hb_sample_holds) },
     };
   });
-  const b = bare[0];
+  const bare = rows.filter((r) => r.hb_bare);
+  const numbers = [...new Set(bare.map((r) => r.fieldNumber ?? ""))].sort();
   return {
     records,
-    bare: b === undefined || Number(b.records) === 0 ? null : { records: Number(b.records), fieldNumbers: Number(b.field_numbers), first: b.first, last: b.last },
+    bare: bare.length === 0 ? null : { records: bare.length, fieldNumbers: numbers.length, first: numbers[0]!, last: numbers.at(-1)! },
     reasons: HELD_BACK_RULES.flatMap((rule) => {
-      const c = counts.find((x) => x.rule === rule);
-      return c === undefined ? [] : [{ rule, active: Number(c.active), settled: Number(c.settled), noYear: Number(c.no_year) }];
+      const with_ = records.filter((r) => r.rules.includes(rule));
+      if (with_.length === 0) return [];
+      return [
+        {
+          rule,
+          active: with_.filter((r) => r.year !== null && r.year >= activeSince).length,
+          settled: with_.filter((r) => r.year !== null && r.year < activeSince).length,
+          noYear: with_.filter((r) => r.year === null).length,
+        },
+      ];
     }),
-    activeSince: Number(since[0]!.y),
+    activeSince,
   };
 }
 
-/** The download: every held-back record, bare ones too, with every column the old system held and why it was held back. */
-export async function heldBackCsvRows(db: Kysely<Database>): Promise<{ header: string[]; rows: unknown[][] } | null> {
+/**
+ * The download: every held-back record, bare ones too, with every column the
+ * old system held, then why it was held back in the page's words, the
+ * specimen whose note names it, and the sample its observation is in Beeline.
+ */
+export async function heldBackCsvRows(db: Kysely<Database>, m: Messages): Promise<{ header: string[]; rows: unknown[][] } | null> {
   if (!(await hasHeldBackSources(db))) return null;
   const { rows: columns } = await sql<{ column_name: string }>`
     SELECT column_name FROM information_schema.columns WHERE table_name = 'legacy_occurrence' ORDER BY ordinal_position`.execute(db);
   const names = columns.map((c) => c.column_name);
-  const { rows } = await sql<Record<string, unknown>>`
-    WITH ${HELD}
-    SELECT ${sql.join(names.map((n) => sql.ref(`classed.${n}`)))}, array_to_string(rules, ';') AS held_back_because
-    FROM classed
-    ORDER BY p_year NULLS LAST, fieldNumber, _id`.execute(db);
-  const header = [...names, "held_back_because"];
-  return { header, rows: rows.map((r) => header.map((h) => r[h] ?? null)) };
+  const rows = await readHeld(db);
+  const header = [
+    ...names,
+    "held_back_because",
+    "beeline_note_specimen",
+    "beeline_note",
+    "beeline_sample_id",
+    "beeline_sample_counts",
+    "beeline_sample_holds",
+  ];
+  return {
+    header,
+    rows: rows.map((r) => [
+      ...names.map((n) => r[n] ?? null),
+      r.hb_rules.length === 0 ? m.heldBack.noReason : r.hb_rules.map((rule) => m.heldBack.reason[rule]).join("; "),
+      r.hb_related_field_number,
+      r.hb_remark,
+      r.hb_sample_id === null ? null : Number(r.hb_sample_id),
+      r.hb_sample_counts === null ? null : Number(r.hb_sample_counts),
+      r.hb_sample_id === null ? null : Number(r.hb_sample_holds),
+    ]),
+  };
 }

@@ -2008,7 +2008,7 @@ export function createApp({
 
   app.get("/exports/held-back.csv", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
-    const held = await heldBackCsvRows(db);
+    const held = await heldBackCsvRows(db, c.get("m"));
     if (held === null) return errorResponse(c, "notFound");
     return csv(c, toCsv(held.header, held.rows), "beeline-held-back");
   });

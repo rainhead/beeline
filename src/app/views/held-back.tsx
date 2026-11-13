@@ -81,7 +81,7 @@ function Row({ m, record: r }: { m: Messages; record: HeldBackRecord }) {
         )}
       </td>
       <td>
-        {r.rules.map((rule) => h.reason[rule]).join("; ")}
+        {r.rules.length === 0 ? h.noReason : r.rules.map((rule) => h.reason[rule]).join("; ")}
         {r.related !== null && (
           <Meta block>
             {h.related} <a href={`/specimens/${r.related.specimenId}`}>{r.related.fieldNumber}</a>: {r.related.remark}
@@ -93,6 +93,11 @@ function Row({ m, record: r }: { m: Messages; record: HeldBackRecord }) {
           blank
         ) : (
           <a href={`https://www.inaturalist.org/observations/${r.observationId}`}>{r.observationId}</a>
+        )}
+        {r.sample !== null && (
+          <Meta block>
+            <a href={`/samples/${r.sample.sampleId}`}>{h.sampleLink}</a> {h.sampleCounts(r.sample.counts, r.sample.holds)}
+          </Meta>
         )}
       </td>
     </tr>

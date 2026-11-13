@@ -172,6 +172,10 @@ export interface ApiKeyTable {
   expires_at: Timestamped;
   last_used_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   revoked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** Login of whoever revoked it; NULL while it works, after the nightly job, and for keys revoked before the column. */
+  revoked_by: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Why; NULL while it works and for keys revoked before the column. */
+  revoked_reason: ColumnType<"owner" | "staff" | "account_changed" | "account_gone" | null, string | null | undefined, string | null>;
 }
 
 

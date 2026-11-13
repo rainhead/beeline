@@ -1,4 +1,4 @@
-import { sql, type Kysely, type RawBuilder } from "kysely";
+import { sql, type Kysely, type RawBuilder, type SelectQueryBuilder } from "kysely";
 import { REPRINT_BLOCKER, type ReprintBlocker } from "../print-run.js";
 import { reportError } from "./error-reporting.js";
 import type { CsvTiming } from "./request-timing.js";
@@ -941,15 +941,14 @@ function qcPredicate(status: QcStatus) {
   }
 }
 
-export async function listSamples(
-  db: Kysely<Database>,
-  query: ListingQuery,
-  personId: number,
-  reader: Reader,
-  opts: ListingPageOptions = {},
-): Promise<Page<SampleRow>> {
+/**
+ * The samples a query selects, as this reader may see them: every filter and
+ * the scope applied, nothing selected yet. One definition for the page, the
+ * download, and the API's counts and groupings, so a count cannot be made
+ * from a second copy of the filters and disagree with the listing.
+ */
+async function filteredSamples(db: Kysely<Database>, query: ListingQuery, personId: number, reader: Reader) {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
-  const hidden = withheld(reader);
   const place = placeColumns(reader);
   let base = db
     .selectFrom("sample as s")
@@ -1078,6 +1077,20 @@ export async function listSamples(
   if (qc !== null) base = base.where(qc);
   if (query.flag !== "") base = base.where(flaggedWith(query.flag));
 
+  return base;
+}
+
+export async function listSamples(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  reader: Reader,
+  opts: ListingPageOptions = {},
+): Promise<Page<SampleRow>> {
+  const hidden = withheld(reader);
+  const place = placeColumns(reader);
+  const base = await filteredSamples(db, query, personId, reader);
+
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
   const [rows, count] = await Promise.all([
@@ -1176,15 +1189,15 @@ export interface ListedFlag {
   details: string[];
 }
 
-export async function listSpecimens(
+/** The specimens a query selects, as this reader may see them; see {@link filteredSamples}. */
+async function filteredSpecimens(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,
   reader: Reader,
-  opts: ListingPageOptions = {},
-): Promise<Page<SpecimenRow>> {
+  year?: number,
+) {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
-  const hidden = withheld(reader);
   const place = placeColumns(reader);
   let base = db
     .selectFrom("specimen as sp")
@@ -1267,7 +1280,21 @@ export async function listSpecimens(
   // By the sample's flags, as the severity filter above narrows specimens: a
   // link to /specimens?flag= must not name a filter it does not apply.
   if (query.flag !== "") base = base.where(flaggedWith(query.flag));
-  if (opts.year !== undefined) base = base.where(sql<number>`extract(year from s.date_start)`, "=", opts.year);
+  if (year !== undefined) base = base.where(sql<number>`extract(year from s.date_start)`, "=", year);
+
+  return base;
+}
+
+export async function listSpecimens(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  reader: Reader,
+  opts: ListingPageOptions = {},
+): Promise<Page<SpecimenRow>> {
+  const hidden = withheld(reader);
+  const place = placeColumns(reader);
+  const base = await filteredSpecimens(db, query, personId, reader, opts.year);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1338,6 +1365,72 @@ export async function listSpecimens(
     total: Number(count?.n ?? 0),
     collectors: await collectorsOf(db, specimenRows.map((r) => r.sample_id)),
   };
+}
+
+/**
+ * What a count may be grouped by: the same three for samples and specimens.
+ * `season` is the calendar year of the sample's first day (CONTEXT.md,
+ * Season; `sample_season`, schema/102), `atlas` the code of the atlas the
+ * sample was collected in (none for a sample outside every atlas), and `kind`
+ * net or trap. Each is a column of the sample that every row has or lacks
+ * outright, so grouping by it reveals nothing a reader's withheld location
+ * would.
+ */
+export const COUNT_GROUPS = ["season", "atlas", "kind"] as const;
+export type CountGroup = (typeof COUNT_GROUPS)[number];
+
+/** How many a query selects, and optionally how they divide, without fetching any rows. */
+export interface Counted {
+  total: number;
+  groups: Array<{ key: string | number | null; total: number }>;
+}
+
+const groupExpression = (group: CountGroup): RawBuilder<string | number | null> =>
+  group === "season"
+    ? sql<number>`CAST(extract(year FROM s.date_start) AS INTEGER)`
+    : group === "atlas"
+      ? sql<string | null>`a.code`
+      : sql<string>`s.kind`;
+
+// The two selections are different query builders over the same sample
+// columns, which the grouping reads as `s` and `a`; the builder's own type
+// cannot say that, so it is left open here and the callers are the check.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function countSelection(base: SelectQueryBuilder<any, any, any>, group: CountGroup | undefined): Promise<Counted> {
+  const total = await base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst();
+  if (group === undefined) return { total: Number(total?.n ?? 0), groups: [] };
+  const expression = groupExpression(group);
+  const rows = await base
+    .select([expression.as("key"), sql<number>`count(*)`.as("n")])
+    .groupBy(expression)
+    .orderBy(expression)
+    .execute();
+  return {
+    total: Number(total?.n ?? 0),
+    groups: rows.map((r) => ({ key: r.key as string | number | null, total: Number(r.n) })),
+  };
+}
+
+/** How many samples a query selects, from the same filters as {@link listSamples}. */
+export async function countSamples(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  reader: Reader,
+  group?: CountGroup,
+): Promise<Counted> {
+  return countSelection(await filteredSamples(db, query, personId, reader), group);
+}
+
+/** How many specimens a query selects, from the same filters as {@link listSpecimens}. */
+export async function countSpecimens(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  reader: Reader,
+  group?: CountGroup,
+): Promise<Counted> {
+  return countSelection(await filteredSpecimens(db, query, personId, reader), group);
 }
 
 /**

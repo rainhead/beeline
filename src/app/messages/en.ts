@@ -1505,6 +1505,13 @@ export const en = {
       /** Said while the box looks for a number in the other years, before the page moves there. */
       looking: (typed: string) => `${typed} isn't among these. Looking in your other years…`,
       lookupFailed: "Couldn't look in your other years. Check your connection, then try again.",
+      /**
+       * Found in another year while rows here are ticked. Opening that year
+       * loads a new page, which clears the ticks, so the screen asks first.
+       */
+      elsewhere: (typed: string, season: number) =>
+        `${typed} is among your ${season} specimens. Opening that year clears what you've ticked here. To name specimens from different years together, add them to your list under By field number.`,
+      open: (season: number) => `Open ${season}`,
       /** Found in another year, but a change here has not saved, so the page stays. */
       unsaved: (typed: string, season: number) =>
         `${typed} is among your ${season} specimens, but a change here hasn't saved. Try it again, then look for ${typed} again.`,

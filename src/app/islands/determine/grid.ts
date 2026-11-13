@@ -61,7 +61,8 @@ class DetermineGrid extends LitElement {
   declare saving: Set<number>;
   declare failed: Map<number, Write>;
   /** The last thing the number boxes or a bulk change did, in words. */
-  declare message: string;
+  /** Text, or for a number found in another year while rows are ticked, text with a button. */
+  declare message: string | TemplateResult;
   declare problems: { text: string; why: string }[];
   declare flash: number | null;
 
@@ -396,24 +397,40 @@ class DetermineGrid extends LitElement {
         this.message = problemText(found.problem);
         return;
       }
-      // Leave only once every change made here has saved: wait for writes
-      // still in flight, including any made while waiting, and stay if any
-      // failed, so it can be tried again.
-      let queue: Promise<unknown>;
-      do {
-        queue = this.#queue;
-        await queue;
-      } while (queue !== this.#queue || this.#pending.size > 0);
-      if (search !== this.#search) return;
-      if (this.failed.size > 0) {
-        this.message = d.jump.unsaved(typed, found.season);
+      // Here the box adds what it finds to what is ticked, so the reader may
+      // mean to name them together. Moving would drop the ticks without a
+      // word, so ask instead.
+      if (this.selected.size > 0) {
+        this.message = html`${d.jump.elsewhere(typed, found.season)}
+          <button type="button" class="outlined small" @click=${() => void this.#leaveFor(found.specimen, found.season, typed, ++this.#search)}>
+            ${d.jump.open(found.season)}</button>`;
         return;
       }
-      // determineSpecimenHref's address, written out: the view module is server code.
-      window.location.assign(`/determinations?specimen=${found.specimen}`);
+      await this.#leaveFor(found.specimen, found.season, typed, search);
     } catch {
       if (search === this.#search) this.message = d.jump.lookupFailed;
     }
+  }
+
+  /**
+   * Open another year at one specimen. Leave only once every change made
+   * here has saved: wait for writes still in flight, including any made while
+   * waiting, and stay if any failed, so it can be tried again. A newer search
+   * started meanwhile cancels the move.
+   */
+  async #leaveFor(specimen: number, season: number, typed: string, search: number) {
+    let queue: Promise<unknown>;
+    do {
+      queue = this.#queue;
+      await queue;
+    } while (queue !== this.#queue || this.#pending.size > 0);
+    if (search !== this.#search) return;
+    if (this.failed.size > 0) {
+      this.message = d.jump.unsaved(typed, season);
+      return;
+    }
+    // determineSpecimenHref's address, written out: the view module is server code.
+    window.location.assign(`/determinations?specimen=${specimen}`);
   }
 
   #sexControl(animalId: number | null, current: EntryValue | null, onPick: (sex: EntryValue["sex"], caste: EntryValue["caste"]) => void, label: string, disabled = false) {

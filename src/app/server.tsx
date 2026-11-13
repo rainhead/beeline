@@ -822,16 +822,22 @@ export function createApp({
   });
   app.post("/keys", async (c) => {
     if (!c.get("admin") || c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
+    // Whose account the session was for when the gate let it in, read before
+    // the wait for the form.
+    const signedInAs = await keyOwner(c);
     const form = await c.req.parseBody();
     const text = (name: string) => (typeof form[name] === "string" ? (form[name] as string) : "");
     // In the queue that runs account changes one at a time, with the form
     // already read, so that whose account this is and the making of the key
     // cannot have an unlink between them: the unlink revokes the account's
     // keys, and a key made just after it would otherwise outlive it and work
-    // as whoever the account is linked to next.
+    // as whoever the account is linked to next. And refused if the person's
+    // account is not the one the session was for: staff changed it while the
+    // form was arriving, which ended that session, and a session that has
+    // ended must not go on to make a key for the account that replaced it.
     const made = await oneDecisionAtATime(async () => {
       const owner = await keyOwner(c);
-      if (owner === null) return null;
+      if (owner === null || signedInAs === null || BigInt(owner) !== BigInt(signedInAs)) return null;
       return createKey(db, {
         inatUserId: owner,
         name: text("name"),

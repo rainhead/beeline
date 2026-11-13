@@ -2,7 +2,7 @@ import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
-import { keyRateLimiter, resolveKey, type KeyHolder } from "./api-keys.js";
+import { keyRateLimiter, keyRef, resolveKey, type KeyHolder } from "./api-keys.js";
 import { reportAppError } from "./error-reporting.js";
 
 /**
@@ -85,14 +85,20 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter() }: ApiDeps):
     if (key === null) {
       return unauthorized(c, "Send your API key in an Authorization header: Authorization: Bearer <key>.");
     }
-    const holder = await resolveKey(db, key);
-    if (holder === null) {
-      return unauthorized(c, "This API key does not work. It may have expired or been revoked.");
-    }
-    const wait = limiter.take(holder.ref);
+    // The limit is counted before the key is looked up, so a key that has
+    // used up its minute costs the store nothing more: a script in a loop is
+    // answered from memory. The reference is the start of the key's hash,
+    // which is what the lookup would find it by.
+    const ref = keyRef(key);
+    const wait = limiter.take(ref);
     if (wait > 0) {
       c.header("retry-after", String(wait));
       return apiError(c, 429, "too many requests", `This key is asking too often. Wait ${wait} seconds.`);
+    }
+    const holder = await resolveKey(db, key);
+    if (holder === null) {
+      limiter.forget(ref);
+      return unauthorized(c, "This API key does not work. It may have expired or been revoked.");
     }
     c.set("key", holder);
     c.set("staff", holder.scope === "staff" && (await isStaff(holder.personId)));

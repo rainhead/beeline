@@ -281,5 +281,12 @@ export function keyRateLimiter({ limit = 120, windowMs = 60_000 }: { limit?: num
       w.count += 1;
       return w.count <= limit ? 0 : Math.max(1, Math.ceil((w.start + windowMs - now) / 1000));
     },
+    /**
+     * Stop counting a reference that turned out to name no working key, so
+     * the map holds only real keys and cannot be filled with guesses.
+     */
+    forget(ref: string): void {
+      windows.delete(ref);
+    },
   };
 }

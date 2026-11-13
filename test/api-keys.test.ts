@@ -148,6 +148,33 @@ describe("making and revoking a key on /keys", () => {
     expect((await listKeys(db, STAFF_UID))[0]!.revokedAt).not.toBeNull();
   });
 
+  it("makes no key when the person's account was changed while the form was arriving", async () => {
+    const { app, conn, db, staff } = await fixture();
+    // The body arrives slowly; meanwhile staff give this person a different account.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        await held;
+        controller.enqueue(new TextEncoder().encode("name=late&scope=read&lifetime=30"));
+        controller.close();
+      },
+    });
+    const pending = app.request("/keys", {
+      method: "POST",
+      headers: { origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" },
+      body,
+      // @ts-expect-error Node needs this to send a streamed body; the DOM type lacks it.
+      duplex: "half",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await conn.run(`UPDATE inat_account SET inat_user_id = 999, login = 'someoneelse' WHERE person_id = ${staff}`);
+    release();
+    expect((await pending).status).toBe(403);
+    expect(await listKeys(db, 999)).toEqual([]);
+    expect(await listKeys(db, STAFF_UID)).toEqual([]);
+  });
+
   it("lets one person have only so many working keys", async () => {
     const { post, make, db } = await fixture();
     const made = [];
@@ -279,6 +306,39 @@ describe("the gate for /api/v1", () => {
     expect(third.status).toBe(429);
     expect(Number(third.headers.get("retry-after"))).toBeGreaterThan(0);
     expect((await ask(b.key)).status).toBe(200);
+  });
+
+  it("answers a key over its limit without asking the store", async () => {
+    const { db, make } = await fixture();
+    const a = await make(STAFF_UID);
+    let lookups = 0;
+    // A store that counts what is asked of it: every query the API makes goes through here.
+    const counting = new Proxy(db, {
+      get(target, prop) {
+        if (prop === "selectFrom" || prop === "updateTable") lookups += 1;
+        // Bound to the real store: Kysely's methods read private fields a proxy does not have.
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const app = new Hono().route("/api/v1", createApi({ db: counting, isStaff: async () => true, limiter: keyRateLimiter({ limit: 1 }) }));
+    const ask = () => app.request("/api/v1/me", { headers: { authorization: `Bearer ${a.key}` } });
+    expect((await ask()).status).toBe(200);
+    const before = lookups;
+    expect(before).toBeGreaterThan(0);
+    expect((await ask()).status).toBe(429);
+    expect(lookups).toBe(before);
+  });
+
+  it("does not keep count of keys that do not work", async () => {
+    const limiter = keyRateLimiter({ limit: 1 });
+    const { db } = await fixture();
+    const app = new Hono().route("/api/v1", createApi({ db, isStaff: async () => true, limiter }));
+    const bad = `${KEY_PREFIX}${"z".repeat(43)}`;
+    // Refused as unknown each time, never as too frequent: nothing is remembered about it.
+    for (let i = 0; i < 3; i++) {
+      expect((await app.request("/api/v1/me", { headers: { authorization: `Bearer ${bad}` } })).status).toBe(401);
+    }
   });
 });
 

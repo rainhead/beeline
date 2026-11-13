@@ -42,6 +42,7 @@ export class BeelineCombobox extends LitElement {
     name: {},
     value: {},
     inputId: { attribute: "input-id" },
+    label: {},
     placeholder: {},
     type: {},
     disabled: { type: Boolean },
@@ -60,6 +61,8 @@ export class BeelineCombobox extends LitElement {
   declare name: string;
   declare value: string;
   declare inputId: string;
+  /** The box's name for a screen reader, where the page gives it no <label>. A placeholder is not one. */
+  declare label: string;
   declare placeholder: string;
   declare type: string;
   declare disabled: boolean;
@@ -85,6 +88,7 @@ export class BeelineCombobox extends LitElement {
     this.name = "";
     this.value = "";
     this.inputId = "";
+    this.label = "";
     this.placeholder = "";
     this.type = "text";
     this.disabled = false;
@@ -197,6 +201,7 @@ export class BeelineCombobox extends LitElement {
         name=${this.name || nothing}
         type=${this.type}
         role="combobox"
+        aria-label=${this.label || nothing}
         aria-autocomplete="list"
         aria-expanded=${showPanel ? "true" : "false"}
         aria-controls=${this.#listId}

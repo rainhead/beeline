@@ -73,7 +73,18 @@ export interface KeyListing {
   expiresAt: Date;
   lastUsedAt: Date | null;
   revokedAt: Date | null;
+  /** Login of whoever revoked it; null for a key the nightly job revoked and for keys revoked before this was kept. */
+  revokedBy: string | null;
+  revokedReason: RevokedReason | null;
 }
+
+/**
+ * Why a key was revoked (`api_key.revoked_reason`): its person did (`owner`),
+ * a staff member did on the person's page (`staff`), staff changed the iNat
+ * account it was made under (`account_changed`), or the nightly job found
+ * that account linked to nobody (`account_gone`).
+ */
+export type RevokedReason = "owner" | "staff" | "account_changed" | "account_gone";
 
 export type CreateKeyProblem = "name" | "scope" | "lifetime" | "tooMany";
 
@@ -124,7 +135,7 @@ export async function createKey(
 export async function listKeys(db: Kysely<Database>, inatUserId: number | bigint): Promise<KeyListing[]> {
   const rows = await db
     .selectFrom("api_key")
-    .select(["key_sha256", "name", "scope", "created_at", "expires_at", "last_used_at", "revoked_at"])
+    .select(["key_sha256", "name", "scope", "created_at", "expires_at", "last_used_at", "revoked_at", "revoked_by", "revoked_reason"])
     .where("inat_user_id", "=", BigInt(inatUserId))
     .orderBy("created_at", "desc")
     .orderBy("key_sha256")
@@ -137,22 +148,34 @@ export async function listKeys(db: Kysely<Database>, inatUserId: number | bigint
     expiresAt: r.expires_at,
     lastUsedAt: r.last_used_at,
     revokedAt: r.revoked_at,
+    revokedBy: r.revoked_by,
+    revokedReason: r.revoked_reason,
   }));
 }
 
 /**
- * Revoke one of a person's own keys, named by its reference. The owner is
- * part of the match, so a reference from somebody else's list revokes
- * nothing. Returns whether a working key was revoked.
+ * Revoke one key of a person, named by its reference, and record who did it
+ * and why: the person themselves (`owner`, on /keys) or a staff member on the
+ * person's page (`staff`). `by` is the iNat login of whoever revoked it. The
+ * owner is part of the match, so a reference from somebody else's list revokes
+ * nothing, and only a working key is touched (not revoked, not expired), so a second
+ * revoke leaves the first one's record as it was. Returns whether a working key was revoked.
  */
-export async function revokeKey(db: Kysely<Database>, inatUserId: number | bigint, ref: string): Promise<boolean> {
+export async function revokeKey(
+  db: Kysely<Database>,
+  inatUserId: number | bigint,
+  ref: string,
+  by: { login: string; reason: "owner" | "staff" },
+): Promise<boolean> {
   if (!/^[0-9a-f]{12}$/.test(ref)) return false;
   const result = await db
     .updateTable("api_key")
-    .set({ revoked_at: sql`current_timestamp` })
+    .set({ revoked_at: sql`current_timestamp`, revoked_by: by.login, revoked_reason: by.reason })
     .where("inat_user_id", "=", BigInt(inatUserId))
     .where(sql<boolean>`starts_with(key_sha256, ${ref})`)
     .where("revoked_at", "is", null)
+    // An expired key is already dead, and its row is left as it is.
+    .where("expires_at", ">", sql<Date>`current_timestamp`)
     .executeTakeFirst();
   return Number(result.numUpdatedRows) > 0;
 }
@@ -162,15 +185,27 @@ export async function revokeKey(db: Kysely<Database>, inatUserId: number | bigin
  * what it meant when they were made. The same reason, at the same moment, as
  * `endSessionsFor`: a key of an unlinked account resolves to nobody, but
  * linking that account to a different person would otherwise bring the key
- * back to life as that person.
+ * back to life as that person. `by` is the login of the staff member who
+ * changed the account.
  */
-export async function revokeKeysFor(db: Kysely<Database>, inatUserId: number | bigint): Promise<void> {
+export async function revokeKeysFor(db: Kysely<Database>, inatUserId: number | bigint, by: string): Promise<void> {
   await db
     .updateTable("api_key")
-    .set({ revoked_at: sql`current_timestamp` })
+    .set({ revoked_at: sql`current_timestamp`, revoked_by: by, revoked_reason: "account_changed" })
     .where("inat_user_id", "=", BigInt(inatUserId))
     .where("revoked_at", "is", null)
     .execute();
+}
+
+/** Whether a person has made any key at all, working or not. One scan of a small table. */
+export async function hasKeys(db: Kysely<Database>, inatUserId: number | bigint): Promise<boolean> {
+  const row = await db
+    .selectFrom("api_key")
+    .select("key_sha256")
+    .where("inat_user_id", "=", BigInt(inatUserId))
+    .limit(1)
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 /**
@@ -182,7 +217,7 @@ export async function revokeKeysFor(db: Kysely<Database>, inatUserId: number | b
 export async function revokeOrphanedKeys(db: Kysely<Database>): Promise<void> {
   await db
     .updateTable("api_key")
-    .set({ revoked_at: sql`current_timestamp` })
+    .set({ revoked_at: sql`current_timestamp`, revoked_by: null, revoked_reason: "account_gone" })
     .where("revoked_at", "is", null)
     .where(({ not, exists, selectFrom }) =>
       not(

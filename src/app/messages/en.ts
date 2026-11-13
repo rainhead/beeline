@@ -1867,9 +1867,10 @@ export const en = {
   },
 
   /**
-   * A person's own API keys (/keys, beeline-pnqr.1). Staff only for now, but
-   * written for anyone, since collectors get the page once the API has
-   * something for them to read.
+   * A person's own API keys (/keys, beeline-pnqr.1). Anyone may see their keys
+   * and revoke them; making one is staff only for now, and collectors get that
+   * once the API has something for them to read. Staff also see these keys on
+   * a person's page (beeline-pnqr.9).
    */
   keys: {
     title: "API keys",
@@ -1891,7 +1892,25 @@ export const en = {
       edit: { label: "Edit", means: "see the records you can see, and correct your own samples" },
       staff: { label: "Staff", means: "do what you can do as staff, for as long as you are staff" },
     },
-    revoked: (when: string) => `Revoked ${when}`,
+    /**
+     * Who revoked a key and why, where it was not the owner: "Revoked 12 Nov by
+     * samstaff", "Revoked 12 Nov: the iNaturalist account changed". A key
+     * revoked before the reason was kept says only when.
+     */
+    revoked: (
+      when: string,
+      by: string | null,
+      reason: "owner" | "staff" | "account_changed" | "account_gone" | null,
+    ) => {
+      const who = reason === "owner" || reason === null || by === null ? "" : ` by ${by}`;
+      const why =
+        reason === "account_changed"
+          ? ": the iNaturalist account changed"
+          : reason === "account_gone"
+            ? ": the iNaturalist account is no longer linked to anyone"
+            : "";
+      return `Revoked ${when}${who}${why}`;
+    },
     expired: (when: string) => `Expired ${when}`,
     neverUsed: "Never",
     revoke: "Revoke",
@@ -1914,6 +1933,7 @@ export const en = {
       lifetimeHint: "A key stops working after this, and you make a new one.",
       days: (days: number) => `${days} days`,
       submit: "Make key",
+      notYet: "Making keys is not open to you yet. You can still see the keys you have made and revoke them.",
       acting: "You are acting for someone else. Keys belong to the person signed in, so stop acting for them to make or revoke a key.",
     },
   },
@@ -2327,6 +2347,14 @@ export const en = {
      * raise its questions with. Responsibility, not access, which the hint
      * says because the card sits beside admin rights and could be read as one.
      */
+    /**
+     * The person's API keys (beeline-pnqr.9), shown only when they have made
+     * one. The columns and the revoked line are the keys page's own.
+     */
+    keys: {
+      heading: "API keys",
+      hint: "The keys this person has made, never the keys themselves. If one may have leaked and this person cannot be reached, revoke it here: it stops working at once, and the list says who revoked it.",
+    },
     leadership: "Program leads",
     leadershipHint:
       "The programs this person leads: their work is this person's to take up, and their questions this person's to answer. A program can have several leads. Leading a program grants no access — that is admin rights, below.",

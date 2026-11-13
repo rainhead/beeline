@@ -3,8 +3,63 @@ import { KEY_LIFETIMES_DAYS, KEY_NAME_MAX, type CreateKeyProblem, type KeyListin
 import { Button, Callout, Chip, DataTable, EmptyState, Meta, PageHeader, SelectField, TextField } from "./components/index.js";
 
 /**
+ * A table of keys, for the person's own page and for staff looking at somebody
+ * else's (beeline-pnqr.9): never the key, only its reference. `revokeAction`
+ * gives the address a Revoke button posts to for a working key, or null where
+ * there is to be no button.
+ */
+export function KeysTable({
+  m,
+  keys,
+  revokeAction,
+  now,
+}: {
+  m: Messages;
+  keys: KeyListing[];
+  revokeAction: (ref: string) => string | null;
+  now: Date;
+}) {
+  const k = m.keys;
+  const working = (key: KeyListing) => key.revokedAt === null && key.expiresAt > now;
+  return (
+    <DataTable columns={[k.col.name, k.col.scope, k.col.created, k.col.expires, k.col.lastUsed, k.col.reference, ""]}>
+      {keys.map((key) => {
+        const action = working(key) ? revokeAction(key.ref) : null;
+        return (
+          <tr>
+            <td>{key.name}</td>
+            <td>{k.scope[key.scope].label}</td>
+            <td>{m.format.date(key.createdAt)}</td>
+            <td>
+              {key.revokedAt !== null ? (
+                <Chip>{k.revoked(m.format.date(key.revokedAt), key.revokedBy, key.revokedReason)}</Chip>
+              ) : key.expiresAt <= now ? (
+                <Chip>{k.expired(m.format.date(key.expiresAt))}</Chip>
+              ) : (
+                m.format.date(key.expiresAt)
+              )}
+            </td>
+            <td>{key.lastUsedAt === null ? <Meta>{k.neverUsed}</Meta> : m.format.dateTime(key.lastUsedAt)}</td>
+            <td>
+              <code>{key.ref}</code>
+            </td>
+            <td>
+              {action !== null && (
+                <form method="post" action={action}>
+                  <Button variant="outlined">{k.revoke}</Button>
+                </form>
+              )}
+            </td>
+          </tr>
+        );
+      })}
+    </DataTable>
+  );
+}
+
+/**
  * A person's own API keys (beeline-pnqr.1): the keys they have made, a form
- * to make another, and a button to revoke each. A new key is shown on the
+ * to make another where they may, and a button to revoke each. A new key is shown on the
  * page that answers the form and nowhere after, since the store keeps only
  * its hash.
  *
@@ -15,6 +70,7 @@ export function KeysPage({
   m,
   keys,
   scopes,
+  canMake,
   created,
   problem,
   acting,
@@ -24,6 +80,8 @@ export function KeysPage({
   keys: KeyListing[];
   /** The scopes this person may give a key. */
   scopes: readonly KeyScope[];
+  /** Whether this person may make keys yet (staff only for now); the form is not shown otherwise. */
+  canMake: boolean;
   /** The key just made, to be shown this once. */
   created?: { key: string; name: string };
   problem?: CreateKeyProblem;
@@ -32,7 +90,6 @@ export function KeysPage({
   now: Date;
 }) {
   const k = m.keys;
-  const working = (key: KeyListing) => key.revokedAt === null && key.expiresAt > now;
   return (
     <>
       <PageHeader title={k.heading} lede={k.intro} />
@@ -50,38 +107,12 @@ export function KeysPage({
       {keys.length === 0 ? (
         <EmptyState>{k.none}</EmptyState>
       ) : (
-        <DataTable columns={[k.col.name, k.col.scope, k.col.created, k.col.expires, k.col.lastUsed, k.col.reference, ""]}>
-          {keys.map((key) => (
-            <tr>
-              <td>{key.name}</td>
-              <td>{k.scope[key.scope].label}</td>
-              <td>{m.format.date(key.createdAt)}</td>
-              <td>
-                {key.revokedAt !== null ? (
-                  <Chip>{k.revoked(m.format.date(key.revokedAt))}</Chip>
-                ) : key.expiresAt <= now ? (
-                  <Chip>{k.expired(m.format.date(key.expiresAt))}</Chip>
-                ) : (
-                  m.format.date(key.expiresAt)
-                )}
-              </td>
-              <td>{key.lastUsedAt === null ? <Meta>{k.neverUsed}</Meta> : m.format.dateTime(key.lastUsedAt)}</td>
-              <td>
-                <code>{key.ref}</code>
-              </td>
-              <td>
-                {working(key) && !acting && (
-                  <form method="post" action={`/keys/${key.ref}/revoke`}>
-                    <Button variant="outlined">{k.revoke}</Button>
-                  </form>
-                )}
-              </td>
-            </tr>
-          ))}
-        </DataTable>
+        <KeysTable m={m} keys={keys} revokeAction={(ref) => (acting ? null : `/keys/${ref}/revoke`)} now={now} />
       )}
       <h2>{k.create.heading}</h2>
-      {acting ? (
+      {!canMake ? (
+        <Callout>{k.create.notYet}</Callout>
+      ) : acting ? (
         <Callout>{k.create.acting}</Callout>
       ) : (
         <form method="post" action="/keys" class="stack">

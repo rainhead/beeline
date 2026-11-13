@@ -148,7 +148,7 @@ COMMENT ON COLUMN reprint_request.withdrawn_by IS 'Who took the request back bef
 
 -- What Beeline last copied into the old Beeline for each specimen it printed
 -- (beeline-83b8.18, src/legacy-copy.ts). The old Beeline stays open at
--- old.melittologist.org for volunteer determinations through February 2027,
+-- old.melittologist.org for volunteer determinations through December 2026,
 -- and its screens show only its own master list, so every specimen printed
 -- here is copied there nightly. A specimen imported from the old system is
 -- never copied: it is there already.
@@ -160,7 +160,7 @@ CREATE TABLE legacy_copy (
   last_copied_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (last_copied_at >= first_copied_at)
 );
-COMMENT ON TABLE legacy_copy IS 'A specimen printed by Beeline as last copied into the old Beeline''s master list, so volunteers can enter determinations for it there until February 2027 (beeline-83b8.18, src/legacy-copy.ts). One row per specimen, written only once the old system has been read back and holds what was sent. The old record''s id is not a column because it is derived: beeline-specimen- followed by specimen_id, which is how beeline-c43w tells a record that started here from one the old system made.';
+COMMENT ON TABLE legacy_copy IS 'A specimen printed by Beeline as last copied into the old Beeline''s master list, so volunteers can enter determinations for it there until the end of December 2026 (beeline-83b8.18, src/legacy-copy.ts). One row per specimen, written only once the old system has been read back and holds what was sent. The old record''s id is not a column because it is derived: beeline-specimen- followed by specimen_id, which is how beeline-c43w tells a record that started here from one the old system made.';
 COMMENT ON COLUMN legacy_copy.field_number IS 'The field number the copy carried. Kept because a duplicate repair can give a printed specimen a second number, and the old record is then found by the number it still holds.';
 COMMENT ON COLUMN legacy_copy.content_sha256 IS 'The SHA-256 of the row as sent, in the legacy column order; a night whose row hashes the same sends nothing.';
 COMMENT ON COLUMN legacy_copy.first_copied_at IS 'When the old system first held this specimen.';

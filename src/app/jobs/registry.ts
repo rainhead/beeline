@@ -467,7 +467,7 @@ export function buildJobs(
     },
     {
       // The determinations volunteers enter in the old Beeline, which stays
-      // open for them through February 2027 (beeline-c43w). At 1am, ahead of
+      // open for them through December 2026 (beeline-c43w). At 1am, ahead of
       // the commit of this Beeline's drafts in this list, and before the 4am
       // copy and export, which then carry them. Without a login it fails in
       // production, as the copy does.
@@ -546,7 +546,7 @@ export function buildJobs(
     {
       // Every specimen printed here, copied into the old Beeline's master
       // list so volunteers can enter determinations for it there through
-      // February 2027 (beeline-83b8.18). After the 1am commit of volunteers'
+      // December 2026 (beeline-83b8.18). After the 1am commit of volunteers'
       // drafts, the 2am promotion and the 3am Ecdysis fetch, so the copy
       // carries the day's work; ahead of the export in this list, because it
       // takes seconds where the export takes many minutes and a night job may

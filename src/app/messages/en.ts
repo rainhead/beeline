@@ -376,13 +376,13 @@ export const en = {
     },
     /**
      * For a volunteer who bookmarked the old Beeline at this address, which it
-     * left at cutover (beeline-83b8.12). Until the old Beeline closes, after
-     * February.
+     * left at cutover (beeline-83b8.12). Until the old Beeline closes at
+     * the end of December 2026.
      */
     oldBeeline: {
       lead: "If you would like to continue using the old interface to enter your determinations, it will be available at",
       label: "old.melittologist.org",
-      tail: " through February 2027.",
+      tail: " through December 2026.",
     },
     joinLead: "To become a volunteer, start with your atlas:",
     failed: "Sign-in failed (state mismatch or missing code). Try again from the sign-in page.",
@@ -2010,7 +2010,7 @@ export const en = {
       "legacy-export":
         "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
       "legacy-copy":
-        "Copies every specimen printed here into the old Beeline at old.melittologist.org, so volunteers can enter their identifications there until it closes in February 2027. Sends only what changed since the last copy, and never overwrites an identification a volunteer entered there.",
+        "Copies every specimen printed here into the old Beeline at old.melittologist.org, so volunteers can enter their identifications there until it closes at the end of December 2026. Sends only what changed since the last copy, and never overwrites an identification a volunteer entered there.",
       "legacy-volunteer-import":
         "Reads the identifications volunteers entered in the old Beeline at old.melittologist.org and adds each new or changed one here, as the collector's. Names Beeline lacks, specimens whose old records disagree, and identifications removed there are listed in the run, not added.",
       "dwc-archives":
@@ -2892,7 +2892,7 @@ export const en = {
           { href: "/glossary#determination", label: "determination" },
           ". If you prefer the old Beeline's screens, they stay available at ",
           { href: OLD_BEELINE_ORIGIN, label: "old.melittologist.org" },
-          " through February 2027.",
+          " through December 2026.",
         ],
       },
       {

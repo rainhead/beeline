@@ -4,7 +4,7 @@ import { LEGACY_COPY_ID_PREFIX, OldBeelineApi, type OldBeelineCredentials } from
 /**
  * The determinations volunteers enter in the old Beeline, brought home nightly
  * (beeline-c43w). The old Beeline stays open at old.melittologist.org for
- * volunteer determinations through February 2027, and the only thing that
+ * volunteer determinations through December 2026, and the only thing that
  * changes there until then is its five volunteer columns (familyVolDet,
  * genusVolDet, speciesVolDet, sexVolDet, casteVolDet). Legacy promotion read
  * them once, at cutover; this reads them again every night and records what

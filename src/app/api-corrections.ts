@@ -1,8 +1,9 @@
-import type { Context, Hono } from "hono";
+import type { Context, Hono, MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { isWriteConflict } from "../write-conflict.js";
-import { apiError, type ApiEnv } from "./api.js";
+import { apiError, bearerKey, type ApiEnv } from "./api.js";
+import { keyRef } from "./api-keys.js";
 import { localityReasonFor, takeLocationDefaultReason } from "./correction-reasons.js";
 import { messagesFor } from "./messages/index.js";
 import { EDITABLE_FIELDS, type EditableFieldName } from "./sample-edit.js";
@@ -131,6 +132,42 @@ function refusalResponse(c: Context, failure: AnyFailure) {
       return unreachable(failure);
   }
 }
+
+// --- Keeping the order a program sent them in --------------------------------
+
+const tails = new Map<string, Promise<void>>();
+
+/**
+ * One correction request at a time for each key, in the order the requests
+ * arrived. A correction takes its turn of its sample's queue the moment it is
+ * called, so corrections keep the order they are called in, but two requests
+ * do not reach that call in the order they arrived: each first looks the key up
+ * in the store, and how long that takes varies. Without this, a program that
+ * sent a hold and then lifted it, without waiting for the first answer, had
+ * them applied in either order (found by the test of the order, one run in
+ * about three). It is registered first, so the place in line is taken before
+ * anything that waits, and it is for one key's requests only: nobody else's
+ * wait for them. The price is that a key's next correction waits for the one
+ * ahead, which may itself wait for the nightly's lock after moving a point.
+ */
+export const inArrivalOrder: MiddlewareHandler = async (c, next) => {
+  const bearer = bearerKey(c);
+  if (bearer === null) return next();
+  // By the key's reference and not the key, so the key is not held in a map.
+  const header = keyRef(bearer);
+  const ahead = tails.get(header) ?? Promise.resolve();
+  let leave!: () => void;
+  const mine = new Promise<void>((resolve) => (leave = resolve));
+  const tail = ahead.then(() => mine);
+  tails.set(header, tail);
+  await ahead;
+  try {
+    await next();
+  } finally {
+    leave();
+    if (tails.get(header) === tail) tails.delete(header);
+  }
+};
 
 // --- Reading the body ------------------------------------------------------
 

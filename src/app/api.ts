@@ -3,7 +3,7 @@ import { HTTPException } from "hono/http-exception";
 import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { hashKey, keyRateLimiter, keyRef, resolveKey, type KeyHolder } from "./api-keys.js";
-import { registerCorrectionRoutes } from "./api-corrections.js";
+import { inArrivalOrder, registerCorrectionRoutes } from "./api-corrections.js";
 import { bookkeeping } from "./session.js";
 import type { CorrectionDeps } from "./sample-corrections.js";
 import { reportAppError } from "./error-reporting.js";
@@ -127,6 +127,8 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs, corre
       console.warn(`[api] could not record the use of key ${c.get("key").ref}: ${(err as Error).message}`);
     }
   });
+
+  api.on("POST", "/samples/*", inArrivalOrder);
 
   api.use(async (c, next) => {
     // An answer may hold a person's records, and none is worth caching.

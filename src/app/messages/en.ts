@@ -1725,7 +1725,8 @@ export const en = {
       heading: "Yours",
       /** "You collected 108 of them.", the count linked to the specimen listing at My records. */
       collected: "You collected",
-      ofThem: (count: number) => `${n(count)} of ${count === 1 ? "it" : "them"}`,
+      /** "Them" is the specimens the page counts, so it stays plural when the reader has one. */
+      ofThem: (count: number) => `${n(count)} of them`,
       from: (count: number, where: string) => `${n(count)} from ${where}`,
       nowhere: (count: number) => `${n(count)} with no place recorded`,
       off: "off",

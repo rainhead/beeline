@@ -177,7 +177,8 @@ async function readHeld(db: Kysely<Database>): Promise<HeldRow[]> {
     classed AS (
       SELECT h.*, coalesce(r.hb_rules, []) AS hb_rules,
         h.hb_collector IS NULL AND nullif(trim(h.sampleId), '') IS NULL AND nullif(trim(h.specimenId), '') IS NULL
-          AND nullif(trim(h.year), '') IS NULL AND h.hb_expert IS NULL AND h.hb_volunteer IS NULL AS hb_bare
+          AND nullif(trim(concat(h.day, h.month, h.year, h.day2, h.month2, h.year2)), '') IS NULL
+          AND h.hb_expert IS NULL AND h.hb_volunteer IS NULL AS hb_bare
       FROM held h LEFT JOIN reasons r USING (_id)
     ),
     remarked AS (

@@ -18,7 +18,7 @@ import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, scratchPaths } from 
  * the records test/repair-legacy-skipped.test.ts describes one by one, after
  * promotion and the repair have run on them as they did on production. Two
  * records with nothing but a field number are added, as the old system's
- * empty labels 25100000 onward are on production.
+ * empty labels 25100000 onward are on production, and one with only a month.
  */
 const FIXTURE = new URL("./fixtures/legacy-skipped.jsonl", import.meta.url).pathname;
 
@@ -40,10 +40,12 @@ const byField = (n: string) => held.records.find((r) => r.fieldNumber === n);
 beforeAll(async () => {
   const created = await createMemoryDb();
   conn = created.conn;
-  // The fixture, and two empty labels sharing one field number.
+  // The fixture, two empty labels sharing one field number, and one with a month.
   const lines = (await readFile(FIXTURE, "utf8")).split("\n").filter((l) => l.trim() !== "");
   const blank = Object.fromEntries(Object.keys(JSON.parse(lines[0]!)).map((k) => [k, ""]));
   const bare = ["bare1", "bare2"].map((id) => JSON.stringify({ ...blank, _id: id, fieldNumber: "25100000" }));
+  // Synthetic: nothing but a month, which is not nothing.
+  bare.push(JSON.stringify({ ...blank, _id: "partial", fieldNumber: "25100099", month: "6" }));
   const staged = join(await mkdtemp(join(tmpdir(), "beeline-held-back-")), "legacy.jsonl");
   await writeFile(staged, [...lines, ...bare].join("\n") + "\n");
   await loadLegacyStaging(conn, staged);
@@ -113,6 +115,8 @@ describe("the old records new Beeline held back", () => {
     // was kept, so neither is called a second print of the other.
     expect(held.records.every((r) => r.rules.length > 0)).toBe(true);
     expect(held.records.some((r) => r.fieldNumber === "25100000")).toBe(false);
+    // A record that wrote any part of a date is listed, with what it wrote.
+    expect(byField("25100099")).toMatchObject({ date: "?-6-?", year: null });
     // Every fixture record is from a settled season.
     const duplicates = held.reasons.find((r) => r.rule === "duplicate_specimen")!;
     expect(duplicates.active).toBe(0);

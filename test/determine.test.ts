@@ -7,6 +7,7 @@ import {
   entrySeasons,
   entryTaxa,
   forgetEntryTaxa,
+  locateSpecimen,
   removeFromBatch,
   saveDrafts,
   seasonRows,
@@ -233,6 +234,36 @@ describe("the batch", () => {
     expect((await batchRows(db, ada, ada)).map((r) => r.fieldNumber)).toEqual(["25000900"]);
     await removeFromBatch(db, ada, "all");
     expect(await batchRows(db, ada, ada)).toEqual([]);
+  });
+});
+
+describe("finding a number in another year (beeline-mjml)", () => {
+  it("finds one of the person's specimens in any year, by its number or its last digits", async () => {
+    const { db, ada, spec } = await fixture();
+    expect(await locateSpecimen(db, ada, "2400555")).toEqual({ specimen: await spec("2400555"), season: 2024 });
+    expect(await locateSpecimen(db, ada, " 555 ")).toEqual({ specimen: await spec("2400555"), season: 2024 });
+    // A February sample is in its own year's season, as the menu counts it.
+    expect(await locateSpecimen(db, ada, "25000900")).toEqual({ specimen: await spec("25000900"), season: 2026 });
+    // Bo's specimen is not hers to find. (What else a typed number can be is NumberIndex's, tested in determination-numbers.)
+    expect(await locateSpecimen(db, ada, "26000201")).toMatchObject({ problem: { code: "notTheirs" } });
+  });
+
+  it("answers the find box, and opens the page at the specimen's year with it chosen", async () => {
+    const { app, spec } = await appFixture();
+    const old = await spec("2400555");
+    const found = await app.request("/determinations/locate?number=2400555");
+    expect(await found.json()).toEqual({ specimen: old, season: 2024 });
+    expect(await (await app.request("/determinations/locate?number=26000201")).json()).toMatchObject({ problem: { code: "notTheirs" } });
+
+    const page = await (await app.request(`/determinations?specimen=${old}`)).text();
+    expect(page).toContain('<option value="2024" selected="">');
+    expect(page).toContain(`"focus":${old}`);
+    expect(page).toContain("2400555");
+    // Somebody else's specimen opens nothing of theirs: the usual year, nothing chosen.
+    const theirs = await (await app.request(`/determinations?specimen=${await spec("26000201")}`)).text();
+    expect(theirs).toContain('"focus":null');
+    expect(theirs).not.toContain("26000201");
+    expect(theirs).toContain('<option value="2026" selected="">');
   });
 });
 

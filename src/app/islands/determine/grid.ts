@@ -116,6 +116,8 @@ class DetermineGrid extends LitElement {
     for (const e of this.querySelectorAll(".determine-pinned, .determine-bulk")) this.#pinned.observe(e);
     window.addEventListener("resize", this.#clearPinned);
     this.#clearPinned();
+    // Opened at one specimen (?specimen=): select it as the find box would.
+    if (this.data.focus !== null && this.data.focus !== undefined) this.#select(this.data.focus, "");
   }
 
   override disconnectedCallback() {
@@ -350,19 +352,49 @@ class DetermineGrid extends LitElement {
     const typed = input.value.trim();
     if (typed === "") return;
     const entry = new NumberIndex(this.rows).resolve(typed);
-    if (entry.problem !== null || entry.ids.length !== 1) {
-      this.message =
-        entry.problem?.code === "ambiguous" ? problemText(entry.problem) : d.jump.notHere(typed, this.data.season ?? 0);
+    if (entry.problem?.code === "ambiguous") {
+      this.message = problemText(entry.problem);
       return;
     }
-    const id = entry.ids[0]!;
+    if (entry.problem !== null || entry.ids.length !== 1) {
+      void this.#locate(typed);
+      return;
+    }
+    input.value = "";
+    this.#select(entry.ids[0]!, typed);
+  }
+
+  /** Select a row of this year, scroll it to the middle of the window, and say so. */
+  #select(id: number, typed: string) {
     const index = this.rows.findIndex((r) => r.id === id);
+    if (index < 0) return;
     if (index >= this.limit) this.limit = index + CHUNK;
     this.message = d.jump.found(this.rows[index]!.fieldNumber ?? typed);
     this.flash = id;
     this.selection = selectMore(this.selection, [id], id);
-    input.value = "";
     void this.updateComplete.then(() => this.querySelector(`[data-row="${id}"]`)?.scrollIntoView({ block: "center" }));
+  }
+
+  /**
+   * A number not in this year: ask the server, which looks in every year,
+   * and open the year it is in with the specimen selected (beeline-mjml).
+   * Drafts save as they are made, so leaving the page loses nothing.
+   */
+  async #locate(typed: string) {
+    this.message = d.jump.looking(typed);
+    try {
+      const res = await fetch(`/determinations/locate?number=${encodeURIComponent(typed)}`, { credentials: "same-origin" });
+      if (!res.ok) throw new Error(String(res.status));
+      const found = (await res.json()) as { specimen: number; season: number } | { problem: NumberProblem };
+      if ("problem" in found) {
+        this.message = problemText(found.problem);
+        return;
+      }
+      // determineSpecimenHref's address, written out: the view module is server code.
+      window.location.assign(`/determinations?specimen=${found.specimen}`);
+    } catch {
+      this.message = d.jump.lookupFailed;
+    }
   }
 
   #sexControl(animalId: number | null, current: EntryValue | null, onPick: (sex: EntryValue["sex"], caste: EntryValue["caste"]) => void, label: string, disabled = false) {

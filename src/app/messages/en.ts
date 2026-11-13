@@ -1480,16 +1480,21 @@ export const en = {
     experts:
       "Identifications from experts are not shown here to encourage independent determination. They remain recorded on each specimen's page.",
     readOnly: "You're viewing this as someone else, so nothing here can be changed.",
-    season: "Season",
+    /**
+     * The screen says "collection year" for what the code calls a season,
+     * the calendar year of a sample's first day: to a volunteer "season"
+     * reads as spring or summer (Karla Salp, 2026-11-13, beeline-mjml).
+     */
+    season: "Collection year",
     /** Only without script, beside the season menu. */
     seasonGo: "Show",
     seasonOption: (season: number, unnamed: number) =>
       unnamed === 0 ? String(season) : `${season} · ${n(unnamed)} to name`,
     empty: "You have no specimens yet. A specimen appears here once its label has been printed.",
-    emptySeason: "No specimens from this season.",
+    emptySeason: "No specimens from this year.",
     mode: {
       label: "Work through",
-      bySample: "By season",
+      bySample: "By collection year",
       batch: (count: number) => `By field number (${n(count)})`,
     },
     jump: {
@@ -1497,12 +1502,13 @@ export const en = {
       placeholder: "26019685, or its last few digits",
       /** Said once the row is found and selected: the row also flashes, which a screen reader cannot see. */
       found: (fieldNumber: string) => `Selected ${fieldNumber}.`,
-      notHere: (typed: string, season: number) =>
-        `${typed} isn't among your ${season} specimens. Try another season, or add it to your list under By field number, which looks in every season.`,
+      /** Said while the box looks for a number in the other years, before the page moves there. */
+      looking: (typed: string) => `${typed} isn't among these. Looking in your other years…`,
+      lookupFailed: "Couldn't look in your other years. Check your connection, then try again.",
     },
     batch: {
       lede:
-        "Gather specimens from any season by their field numbers. " +
+        "Gather specimens from any year by their field numbers. " +
         "They're listed in the order you add them, and your list is kept until you clear it.",
       /** How to write numbers, under the box. */
       hint:
@@ -1511,7 +1517,7 @@ export const en = {
       add: "Add field numbers",
       addButton: "Add",
       placeholder: "26019685-697, 26027608 — or scan each label",
-      empty: "Your list is empty. Add field numbers above, or tick rows under By season and add them from there.",
+      empty: "Your list is empty. Add field numbers above, or tick rows under By collection year and add them from there.",
       added: (count: number) => `Added ${n(count)}.`,
       addedSome: (added: number, already: number) =>
         `Added ${n(added)}; ${n(already)} ${already === 1 ? "was" : "were"} already in your list.`,

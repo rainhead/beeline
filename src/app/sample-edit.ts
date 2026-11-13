@@ -133,12 +133,25 @@ export type SampleEditResult =
   /** No staging rows back this sample — nothing durable to anchor on. */
   | { outcome: "no_staging" };
 
-export async function applySampleEdit(
+/**
+ * What a save would change, worked out and not yet written: the correction
+ * events for the overlay file and the values for the live sample row. A dry
+ * run stops here (beeline-pnqr.8).
+ */
+export interface SampleEditPlan {
+  outcome: "planned";
+  changed: EditableFieldName[];
+  events: CorrectionEvent[];
+  /** Column values for the live row; a cleared field is null. */
+  updates: Partial<Record<EditableFieldName, string | null>>;
+}
+
+/** Work out the change an edit makes. Reads the store; writes nothing. */
+export async function planSampleEdit(
   db: Kysely<Database>,
-  correctionsPath: string,
   sample: EditableSample,
   input: SampleEditInput,
-): Promise<SampleEditResult> {
+): Promise<SampleEditPlan | { outcome: "unchanged" } | { outcome: "no_staging" }> {
   // A field absent from the input is untouched; present-but-empty is a
   // deliberate clearing (the form always posts every field).
   const changed = EDITABLE_FIELDS.filter((f) => {
@@ -165,32 +178,54 @@ export async function applySampleEdit(
       events.push({ _id: member._id, field: f.staging, base_value: base, new_value: newValue, author: input.author, reason });
     }
   }
-  // Durability before immediacy: if the event write fails, nothing applied.
-  await upsertCorrections(correctionsPath, events);
   const updates = Object.fromEntries(
     changed.map((f) => {
       const submitted = (input.values[f.name] ?? "").trim();
       return [f.name, submitted === "" ? null : submitted];
     }),
   );
+  return { outcome: "planned", changed: changed.map((f) => f.name), events, updates };
+}
+
+/** Write a planned edit: the overlay file first, then the store. */
+export async function writeSampleEdit(
+  db: Kysely<Database>,
+  correctionsPath: string,
+  sample: EditableSample,
+  plan: SampleEditPlan,
+): Promise<{ outcome: "saved"; changed: EditableFieldName[] }> {
+  // Durability before immediacy: if the event write fails, nothing applied.
+  await upsertCorrections(correctionsPath, plan.events);
   // Everything in the store at once (src/app/sample-method.ts says why),
   // the correction tables included, which the export reads the old records
   // through (src/app/correction-store.ts).
   await db.transaction().execute(async (trx) => {
-    await mirrorCorrections(trx, events);
-    await trx.updateTable("sample").set(updates).where("entity_id", "=", sample.entity_id).execute();
+    await mirrorCorrections(trx, plan.events);
+    await trx.updateTable("sample").set(plan.updates).where("entity_id", "=", sample.entity_id).execute();
     // A within-sample disagreement on an edited field is settled by the edit:
     // every member row now carries one value, so the stored finding would not
     // re-derive on rebuild — drop it now rather than making the volunteer
     // stare at a resolved warning until cutover.
-    for (const f of changed) {
+    for (const name of plan.changed) {
       await trx
         .deleteFrom("sample_promotion_finding")
         .where("sample_id", "=", sample.entity_id)
         .where("rule_name", "=", "within_sample_disagreement")
-        .where("details", "like", `${f.name}: %`)
+        .where("details", "like", `${name}: %`)
         .execute();
     }
   });
-  return { outcome: "saved", changed: changed.map((f) => f.name) };
+  return { outcome: "saved", changed: plan.changed };
+}
+
+/** Plan the edit and write it: the two halves composed. */
+export async function applySampleEdit(
+  db: Kysely<Database>,
+  correctionsPath: string,
+  sample: EditableSample,
+  input: SampleEditInput,
+): Promise<SampleEditResult> {
+  const plan = await planSampleEdit(db, sample, input);
+  if (plan.outcome !== "planned") return plan;
+  return writeSampleEdit(db, correctionsPath, sample, plan);
 }

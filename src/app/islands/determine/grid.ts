@@ -397,8 +397,13 @@ class DetermineGrid extends LitElement {
         return;
       }
       // Leave only once every change made here has saved: wait for writes
-      // still in flight, and stay if any failed, so it can be tried again.
-      await this.#queue;
+      // still in flight, including any made while waiting, and stay if any
+      // failed, so it can be tried again.
+      let queue: Promise<unknown>;
+      do {
+        queue = this.#queue;
+        await queue;
+      } while (queue !== this.#queue || this.#pending.size > 0);
       if (search !== this.#search) return;
       if (this.failed.size > 0) {
         this.message = d.jump.unsaved(typed, found.season);

@@ -2,7 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { kyselyReader } from "../person-change.js";
-import { recordSampleChanges } from "../sample-change.js";
+import { recordSampleChanges, type SampleChangeSource } from "../sample-change.js";
 import { loadTrapSample, mayEditTrapSample, setTrapSampleLocality } from "../trap-sample.js";
 import { deriveForObserver } from "./inat-check.js";
 import { STAFF_READER, type Reader } from "./listings.js";
@@ -17,7 +17,7 @@ import {
 import { withPromotionLock } from "./promotion-lock.js";
 import { setHold, setWaiver, type QcDecisionResult } from "./qc-decisions.js";
 import { loadSample, type LocalitySuggestion } from "./record.js";
-import { applySampleEdit, loadEditableSample, type EditableFieldName } from "./sample-edit.js";
+import { applySampleEdit, loadEditableSample, planSampleEdit, type EditableFieldName, type EditableSample } from "./sample-edit.js";
 import { onSample } from "./sample-queue.js";
 
 /**
@@ -45,7 +45,22 @@ export interface Actor {
   staff: boolean;
   /** Viewing as somebody else: reading is allowed, changing is not. */
   impersonating: boolean;
+  /**
+   * The door the request came through. It is recorded as the `source` of the
+   * history entries the correction makes. Absent means a page.
+   */
+  via?: "page" | "api";
 }
+
+/** The `source` a correction's history entries carry: `app` for a page, `api` for the API. */
+const sourceOf = (actor: Actor): SampleChangeSource => (actor.via === "api" ? "api" : "app");
+
+/**
+ * What a correction did, as the writer reported it: it wrote a value, took one
+ * away, or found nothing to change. An API says it so that a program need not
+ * read the sample again to find out.
+ */
+export type Outcome = "saved" | "removed" | "unchanged";
 
 /**
  * The one way to make an Actor. Impersonation switches staff powers off, so
@@ -170,6 +185,10 @@ function overlayRefusal(result: StaffLocalityResult | QcDecisionResult): Invalid
   return null;
 }
 
+/** What a write that was not refused did. Call it only after `overlayRefusal` and the other refusals have been handled. */
+const outcomeOf = (result: StaffLocalityResult | QcDecisionResult): Outcome =>
+  result.outcome === "saved" || result.outcome === "removed" ? result.outcome : "unchanged";
+
 /**
  * Record what just changed, credited to whoever made it — the fact a later
  * pass over the store could never recover (ADR 0007). Narrowed to this sample.
@@ -179,14 +198,14 @@ function overlayRefusal(result: StaffLocalityResult | QcDecisionResult): Invalid
 async function recordChange(
   deps: CorrectionDeps,
   sampleId: number,
-  author: string,
+  actor: Actor,
   reason: string | undefined,
   what: string,
 ): Promise<void> {
   try {
     await recordSampleChanges(kyselyReader(deps.db), deps.samplePaths, {
-      source: "app",
-      author,
+      source: sourceOf(actor),
+      author: actor.login,
       reason,
       where: `s.entity_id = ${sampleId}`,
     });
@@ -196,10 +215,15 @@ async function recordChange(
 }
 
 /** The change log entry for a trap sample entered in Beeline. */
-export async function recordTrapChange(deps: CorrectionDeps, login: string, sampleId: number): Promise<void> {
+export async function recordTrapChange(
+  deps: CorrectionDeps,
+  login: string,
+  sampleId: number,
+  source: SampleChangeSource = "app",
+): Promise<void> {
   try {
     await recordSampleChanges(kyselyReader(deps.db), deps.samplePaths, {
-      source: "app",
+      source,
       author: login,
       where: `s.entity_id = ${sampleId}`,
     });
@@ -218,11 +242,39 @@ export interface EditSampleInput {
   bases: Partial<Record<EditableFieldName, string>>;
   /** Free text; may be absent. */
   note: string | undefined;
+  /**
+   * Work out what the edit would change, through the same rules and in the
+   * same turn of the sample's queue, and write nothing: no overlay row, no
+   * change to the sample, no history entry (beeline-pnqr.6). Only an API
+   * asks for it.
+   */
+  dryRun?: boolean;
+}
+
+/** One field an edit changes: its value now, and the value after. A cleared field is null. */
+export interface FieldChange {
+  field: EditableFieldName;
+  from: string | null;
+  to: string | null;
 }
 
 export type EditSampleResult =
-  | { ok: true; outcome: "saved" | "unchanged" }
+  | {
+      ok: true;
+      /** `would_save` is the answer to a dry run that found something to change. */
+      outcome: "saved" | "unchanged" | "would_save";
+      /** The fields changed, or that a dry run would change. */
+      changes: FieldChange[];
+    }
   | Refused<"impersonating" | "not_editable" | "no_staging">;
+
+/** The changes an edit makes to these fields, as the plan and the writer both trim them. */
+function fieldChanges(sample: EditableSample, fields: EditableFieldName[], values: EditSampleInput["values"]): FieldChange[] {
+  return fields.map((field) => {
+    const submitted = (values[field] ?? "").trim();
+    return { field, from: sample[field], to: submitted === "" ? null : submitted };
+  });
+}
 
 /**
  * A collector edits a sample with no observation. One at a time for the
@@ -240,12 +292,14 @@ export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number,
     return { ready: sample };
   };
   return correct(sampleId, input, gates, async (sample, form): Promise<EditSampleResult> => {
-    const result = await applySampleEdit(deps.db, deps.correctionsPath, sample, {
-      values: form.values,
-      bases: form.bases,
-      note: form.note ?? "",
-      author: actor.login,
-    });
+    const edit = { values: form.values, bases: form.bases, note: form.note ?? "", author: actor.login };
+    if (form.dryRun === true) {
+      const plan = await planSampleEdit(deps.db, sample, edit);
+      if (plan.outcome === "no_staging") return refused("no_staging");
+      if (plan.outcome === "unchanged") return { ok: true, outcome: "unchanged", changes: [] };
+      return { ok: true, outcome: "would_save", changes: fieldChanges(sample, plan.changed, form.values) };
+    }
+    const result = await applySampleEdit(deps.db, deps.correctionsPath, sample, edit);
     if (result.outcome === "no_staging") return refused("no_staging");
     // Record what just changed, credited to whoever typed it. Narrowed to
     // this sample, so the author is charged with this sample's pending
@@ -260,7 +314,7 @@ export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number,
     if (result.outcome === "saved") {
       try {
         const recorded = await recordSampleChanges(kyselyReader(deps.db), deps.samplePaths, {
-          source: "app",
+          source: sourceOf(actor),
           author: actor.login,
           reason: form.note?.trim() || undefined,
           where: `s.entity_id = ${sample.entity_id}`,
@@ -280,7 +334,11 @@ export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number,
         console.warn(`could not record the sample edit: ${(err as Error).message}`);
       }
     }
-    return { ok: true, outcome: result.outcome };
+    return {
+      ok: true,
+      outcome: result.outcome,
+      changes: result.outcome === "saved" ? fieldChanges(sample, result.changed, form.values) : [],
+    };
   });
 }
 
@@ -295,7 +353,7 @@ export interface AdoptLocalityInput {
 }
 
 export type AdoptLocalityResult =
-  | { ok: true; reason: string }
+  | { ok: true; outcome: Outcome; reason: string }
   | Common
   | Refused<"printed" | "set_by_other" | "changed" | "no_staging">
   | Invalid
@@ -344,9 +402,9 @@ export function adoptLocality(
     if (bad !== null) return bad;
     if (result.outcome === "no_staging") return refused("no_staging");
     if (result.outcome === "saved" || result.outcome === "removed") {
-      await recordChange(deps, sample.sample_id, actor.login, reason, "locality change");
+      await recordChange(deps, sample.sample_id, actor, reason, "locality change");
     }
-    return { ok: true, reason };
+    return { ok: true, outcome: outcomeOf(result), reason };
   });
 }
 
@@ -357,7 +415,7 @@ export interface SetPlaceInput {
 }
 
 export type SetPlaceResult =
-  | { ok: true }
+  | { ok: true; outcome: Outcome }
   | Common
   | Refused<"printed" | "not_yours" | "set_by_other" | "only_offered" | "no_staging">
   | Invalid
@@ -399,10 +457,10 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
     if (trap && printWriter !== undefined) {
       const name = form.locality.trim();
       // Blank clears it, as on the form.
-      if (name === (sample.locality ?? "")) return { ok: true };
+      if (name === (sample.locality ?? "")) return { ok: true, outcome: "unchanged" };
       if ((await setTrapSampleLocality(printWriter, sample.sample_id, name)) === "printed") return refused("printed");
-      await recordTrapChange(deps, actor.login, sample.sample_id);
-      return { ok: true };
+      await recordTrapChange(deps, actor.login, sample.sample_id, sourceOf(actor));
+      return { ok: true, outcome: "saved" };
     }
     const writeDeps = { db, conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath };
     const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
@@ -423,11 +481,11 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
     let reason: string | undefined;
     if (linked && (name === "" || name === observed)) {
       // Follow iNaturalist again: take away whatever locality stands.
-      if (standing === null) return { ok: true };
+      if (standing === null) return { ok: true, outcome: "unchanged" };
       if (standing !== actor.login && !admin) return refused("not_yours");
       result = await setStaffLocality(writeDeps, target, { value: "", remove: true, note: "", author: actor.login });
     } else if (name === "" || name === sample.locality) {
-      return { ok: true };
+      return { ok: true, outcome: "unchanged" };
     } else if (suggestion !== undefined) {
       if (standing !== null && standing !== actor.login && !admin) return refused("set_by_other");
       reason = form.reasonFor(suggestion.basis);
@@ -440,9 +498,9 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
     if (bad !== null) return bad;
     if (result.outcome === "no_staging") return refused("no_staging");
     if (result.outcome === "saved" || result.outcome === "removed") {
-      await recordChange(deps, sample.sample_id, actor.login, reason, "locality change");
+      await recordChange(deps, sample.sample_id, actor, reason, "locality change");
     }
-    return { ok: true };
+    return { ok: true, outcome: outcomeOf(result) };
   });
 }
 
@@ -494,6 +552,7 @@ export interface StaffCoordinatesFormInput {
 export type StaffCoordinatesCorrectionResult =
   | {
       ok: true;
+      outcome: Outcome;
       /** False when the county and state are not yet the point's. */
       settled: boolean;
     }
@@ -543,11 +602,11 @@ export function setCoordinates(
       // county that follow to the same person, and writes nothing if nothing
       // more changed.
       const note = form.note.trim() || undefined;
-      await recordChange(deps, sample.sample_id, actor.login, note, "coordinate change");
+      await recordChange(deps, sample.sample_id, actor, note, "coordinate change");
       settled = await deriveMovedPoint(deps, sample.sample_id, "staff coordinates");
-      await recordChange(deps, sample.sample_id, actor.login, note, "coordinate change");
+      await recordChange(deps, sample.sample_id, actor, note, "coordinate change");
     }
-    return { ok: true, settled };
+    return { ok: true, outcome: outcomeOf(result), settled };
   });
 }
 
@@ -559,7 +618,7 @@ export interface TakeObservationLocationInput {
 }
 
 export type TakeObservationLocationCorrectionResult =
-  | { ok: true; settled: boolean }
+  | { ok: true; outcome: Outcome; settled: boolean }
   | Common
   | StaffOnly
   | Refused<"unavailable" | "busy" | "not_moved">
@@ -601,10 +660,10 @@ export function takeLocation(
     if (bad !== null) return bad;
     if (result.outcome === "unchanged") return refused("not_moved");
     // Recorded before and after deriving, for the reason setCoordinates gives.
-    await recordChange(deps, sample.sample_id, actor.login, reason, "location change");
+    await recordChange(deps, sample.sample_id, actor, reason, "location change");
     const settled = await deriveMovedPoint(deps, sample.sample_id, "take observation location");
-    await recordChange(deps, sample.sample_id, actor.login, reason, "location change");
-    return { ok: true, settled };
+    await recordChange(deps, sample.sample_id, actor, reason, "location change");
+    return { ok: true, outcome: result.outcome === "removed" ? "removed" : "saved", settled };
   });
 }
 
@@ -612,7 +671,7 @@ export function takeLocation(
 // Holds and waivers
 
 export type QcDecisionCorrectionResult =
-  | { ok: true }
+  | { ok: true; outcome: Outcome }
   | Common
   | StaffOnly
   | Refused<"unavailable" | "no_observation">
@@ -656,8 +715,8 @@ function decideQc<Form extends { note: string }>(
     if (result.outcome === "invalid") return { ok: false, refusal: "invalid", problem: result.problem };
     if (result.outcome === "no_observation") return refused("no_observation");
     if (result.outcome === "unresolved") return { ok: false, refusal: "unresolved", reason: result.reason };
-    await recordChange(deps, sample.sample_id, actor.login, form.note.trim() || undefined, `change to sample ${sample.sample_id}`);
-    return { ok: true };
+    await recordChange(deps, sample.sample_id, actor, form.note.trim() || undefined, `change to sample ${sample.sample_id}`);
+    return { ok: true, outcome: result.outcome };
   });
 }
 

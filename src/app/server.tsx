@@ -527,7 +527,7 @@ export function createApp({
   // and ahead of the session gate: it answers to a key, never to a cookie.
   // Any other address the old Beeline's redirects answer refuses a request
   // that carries credentials, so the redirect cannot pass them on.
-  app.route("/api/v1", createApi({ db, isStaff, jobs: jobsDep }));
+  app.route("/api/v1", createApi({ db, isStaff, jobs: jobsDep, corrections: corrective }));
   // The old Beeline's addresses, until it closes (src/app/old-beeline.ts).
   registerOldBeelineRedirects(app);
   registerAuthRoutes(app, {

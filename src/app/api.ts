@@ -2,7 +2,10 @@ import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
-import { keyRateLimiter, keyRef, resolveKey, type KeyHolder } from "./api-keys.js";
+import { hashKey, keyRateLimiter, keyRef, resolveKey, type KeyHolder } from "./api-keys.js";
+import { registerCorrectionRoutes } from "./api-corrections.js";
+import { bookkeeping } from "./session.js";
+import type { CorrectionDeps } from "./sample-corrections.js";
 import { reportAppError } from "./error-reporting.js";
 import type { Job, StartedRun } from "./jobs/framework.js";
 
@@ -39,6 +42,8 @@ export interface ApiDeps {
   isStaff: (personId: number) => Promise<boolean>;
   /** How often one key may ask; the default unless a test says otherwise. */
   limiter?: ReturnType<typeof keyRateLimiter>;
+  /** What the sample corrections need (src/app/api-corrections.ts); absent, they answer 503. */
+  corrections?: CorrectionDeps;
   /** The job registry and the scheduler behind it; absent, the jobs endpoints list nothing and start nothing. */
   jobs?: ApiJobs;
 }
@@ -53,7 +58,7 @@ export interface ApiJobs {
 }
 
 /** An error, in the one shape every failure under /api/ has. */
-export const apiError = (c: Context, status: 400 | 401 | 403 | 404 | 409 | 429 | 500, error: string, message: string, extra: Record<string, unknown> = {}) =>
+export const apiError = (c: Context, status: 400 | 401 | 403 | 404 | 409 | 413 | 422 | 429 | 500 | 503, error: string, message: string, extra: Record<string, unknown> = {}) =>
   c.json({ error, message, ...extra }, status);
 
 const unauthorized = (c: Context, message: string) => {
@@ -87,13 +92,40 @@ const requireStaff: MiddlewareHandler<ApiEnv> = async (c, next) => {
   await next();
 };
 
-export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs }: ApiDeps): Hono<ApiEnv> {
+export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs, corrections }: ApiDeps): Hono<ApiEnv> {
   const api = new Hono<ApiEnv>();
 
   api.onError((err, c) => {
     if (err instanceof HTTPException) return err.getResponse();
     const reference = reportAppError(err, c);
     return apiError(c, 500, "failed", "Something went wrong on Beeline's side.", { reference });
+  });
+
+  // Which key made each request that is not a read, written once the request
+  // has been answered (beeline-pnqr.6). First, so that it sees the answer
+  // whoever gave it. A request with no working key has no key to name, and is
+  // not recorded. Losing this write never fails the request: the answer is
+  // already decided, and a write conflict is the one failure expected.
+  api.use(async (c, next) => {
+    await next();
+    if (c.req.method === "GET" || c.req.method === "HEAD" || c.get("key") === undefined) return;
+    try {
+      const subject = c.req.param("id") ?? c.req.param("name");
+      await bookkeeping(() =>
+        db
+          .insertInto("api_key_use")
+          .values({
+            key_sha256: hashKey(bearerKey(c)!),
+            method: c.req.method,
+            route: c.req.routePath,
+            subject: subject === undefined ? null : subject.slice(0, 200),
+            status: c.res.status,
+          })
+          .execute(),
+      );
+    } catch (err) {
+      console.warn(`[api] could not record the use of key ${c.get("key").ref}: ${(err as Error).message}`);
+    }
   });
 
   api.use(async (c, next) => {
@@ -298,6 +330,9 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs }: Api
     c.header("location", `/api/v1/jobs/runs/${started.runId}`);
     return c.json({ run: describeRun(run, new Set([started.runId])) }, 202);
   });
+
+  // The sample corrections (beeline-pnqr.6), in their own file.
+  registerCorrectionRoutes(api, corrections);
 
   // After the key check on purpose: someone without a key learns nothing
   // about which paths exist.

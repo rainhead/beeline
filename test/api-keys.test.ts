@@ -124,8 +124,6 @@ describe("making and revoking a key on /keys", () => {
       { name: "", scope: "staff", lifetime: "30" },
       { name: "x".repeat(81), scope: "staff", lifetime: "30" },
       { name: "k", scope: "everything", lifetime: "30" },
-      // Not offered until something accepts it, so no key gains the power later.
-      { name: "k", scope: "edit", lifetime: "30" },
       { name: "k", scope: "staff", lifetime: "365" },
       { name: "k", scope: "staff", lifetime: "0x1e" },
       { name: "k", scope: "staff", lifetime: "30; DROP TABLE api_key" },

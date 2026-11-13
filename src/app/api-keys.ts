@@ -27,13 +27,14 @@ export type KeyScope = (typeof KEY_SCOPES)[number];
 /**
  * The scopes a person may give a key they make. Decided here and used for
  * both the form's choices and the check on what the form posts, so the page
- * cannot offer less than the server accepts. `staff` only for someone who is
- * staff now: otherwise a volunteer could make a staff key that starts working
- * the day they are given staff rights. `edit` is left out until something
- * accepts it (beeline-pnqr.6), so no key made today gains a power later that
- * its maker never saw offered.
+ * cannot offer less than the server accepts. `read` and `edit` for anyone;
+ * `staff` only for someone who is staff now, since otherwise a volunteer could
+ * make a staff key that starts working the day they are given staff rights.
+ * `edit` was held back until the sample corrections accepted it
+ * (beeline-pnqr.6), so that no key made earlier gained a power its maker had
+ * never seen offered.
  */
-export const offeredScopes = (staff: boolean): KeyScope[] => (staff ? ["read", "staff"] : ["read"]);
+export const offeredScopes = (staff: boolean): KeyScope[] => (staff ? ["read", "edit", "staff"] : ["read", "edit"]);
 
 /**
  * How long a key may last, in days. The longest is the most a session can

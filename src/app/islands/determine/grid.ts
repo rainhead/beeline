@@ -20,6 +20,7 @@ import { NumberIndex, pastedList, type NumberProblem } from "../../../determinat
 import { problemText } from "./problems.js";
 import { loadTaxa, nameTemplate, type PickerTaxon } from "./picker.js";
 import "./picker.js";
+import { deselect, emptySelection, markUnused, markUsed, selectMore, type Selection } from "./selection.js";
 
 const m = messagesFor(null);
 const d = m.determine;
@@ -41,7 +42,7 @@ const absent = (label: string) =>
 class DetermineGrid extends LitElement {
   static properties = {
     rows: { state: true },
-    selected: { state: true },
+    selection: { state: true },
     editing: { state: true },
     limit: { state: true },
     lastBulk: { state: true },
@@ -52,7 +53,8 @@ class DetermineGrid extends LitElement {
     flash: { state: true },
   };
   declare rows: EntryRow[];
-  declare selected: Set<number>;
+  /** The ticked rows, and whether they have been named since one was last added (selection.ts). */
+  declare selection: Selection;
   declare editing: number | null;
   declare limit: number;
   declare lastBulk: { before: Write[]; text: string } | null;
@@ -81,7 +83,7 @@ class DetermineGrid extends LitElement {
     this.data = JSON.parse(document.getElementById("determine-data")?.textContent ?? "{}") as DeterminePageData;
     this.rows = this.data.rows ?? [];
     for (const [id, t] of Object.entries(this.data.taxa ?? {})) this.taxa.set(Number(id), t);
-    this.selected = new Set();
+    this.selection = emptySelection;
     this.editing = null;
     this.limit = CHUNK;
     this.lastBulk = null;
@@ -108,6 +110,10 @@ class DetermineGrid extends LitElement {
         this.requestUpdate();
       })
       .catch(() => undefined);
+  }
+
+  get selected() {
+    return this.selection.ids;
   }
 
   get #batch() {
@@ -184,6 +190,7 @@ class DetermineGrid extends LitElement {
     const rows = this.rows.filter((r) => this.selected.has(r.id));
     this.lastBulk = { before: rows.map((r) => ({ specimenId: r.id, ...this.#current(r) })), text };
     this.message = "";
+    this.selection = markUsed(this.selection);
     void this.#write(rows, patch);
   }
 
@@ -191,6 +198,7 @@ class DetermineGrid extends LitElement {
     if (!this.lastBulk) return;
     void this.#send(this.lastBulk.before);
     this.lastBulk = null;
+    this.selection = markUnused(this.selection);
   }
 
   /** Back to what the row said before today: its earlier determination, or nothing. */
@@ -201,24 +209,16 @@ class DetermineGrid extends LitElement {
 
   #toggle(list: EntryRow[], index: number, shift: boolean) {
     const id = list[index]!.id;
-    const next = new Set(this.selected);
-    if (shift && this.#anchor !== null) {
-      const from = list.findIndex((r) => r.id === this.#anchor);
-      const [a, b] = from < index ? [from, index] : [index, from];
-      const on = !this.selected.has(id);
-      for (let i = a; i <= b; i++) (on ? next.add(list[i]!.id) : next.delete(list[i]!.id));
-    } else {
-      next.has(id) ? next.delete(id) : next.add(id);
-      this.#anchor = id;
-    }
-    this.selected = next;
+    const from = shift && this.#anchor !== null ? list.findIndex((r) => r.id === this.#anchor) : -1;
+    // A block runs from the row last clicked, if it is still listed.
+    const block = from === -1 ? [id] : list.slice(Math.min(from, index), Math.max(from, index) + 1).map((r) => r.id);
+    if (from === -1) this.#anchor = id;
+    this.selection = this.selected.has(id) ? deselect(this.selection, block) : selectMore(this.selection, block);
   }
 
   #toggleAll(group: EntryRow[]) {
-    const next = new Set(this.selected);
-    const all = group.every((r) => next.has(r.id));
-    for (const r of group) (all ? next.delete(r.id) : next.add(r.id));
-    this.selected = next;
+    const ids = group.map((r) => r.id);
+    this.selection = ids.every((id) => this.selected.has(id)) ? deselect(this.selection, ids) : selectMore(this.selection, ids);
   }
 
   async #batchRequest(body: object) {
@@ -290,7 +290,8 @@ class DetermineGrid extends LitElement {
     try {
       const out = await this.#batchRequest({ remove: ids });
       this.rows = out.rows;
-      this.selected = new Set([...this.selected].filter((id) => out.rows.some((r) => r.id === id)));
+      const left = new Set(out.rows.map((r) => r.id));
+      this.selection = deselect(this.selection, [...this.selected].filter((id) => !left.has(id)));
       if (ids === "all") this.problems = [];
     } catch {
       this.message = d.saveFailed;
@@ -311,7 +312,7 @@ class DetermineGrid extends LitElement {
     if (index >= this.limit) this.limit = index + CHUNK;
     this.message = "";
     this.flash = id;
-    this.selected = new Set([...this.selected, id]);
+    this.selection = selectMore(this.selection, [id]);
     input.value = "";
     void this.updateComplete.then(() => this.querySelector(`[data-row="${id}"]`)?.scrollIntoView({ block: "center" }));
   }
@@ -441,7 +442,7 @@ class DetermineGrid extends LitElement {
       ${this.#batch
         ? html`<button type="button" class="outlined small" ?disabled=${off} @click=${() => void this.#removeFromBatch(ticked.map((r) => r.id))}>${b.removeFromBatch}</button>`
         : html`<button type="button" class="outlined small" ?disabled=${off} @click=${() => void this.#addTickedToBatch()}>${b.addToBatch}</button>`}
-      <button type="button" class="outlined small" ?disabled=${n === 0} @click=${() => (this.selected = new Set())}>${b.untick}</button>
+      <button type="button" class="outlined small" ?disabled=${n === 0} @click=${() => (this.selection = emptySelection)}>${b.untick}</button>
     </div>`;
   }
 
@@ -502,10 +503,15 @@ class DetermineGrid extends LitElement {
     let index = 0;
     const groups: EntryRow[][] = [];
     if (!batch) for (const r of shown) (groups.length > 0 && groups[groups.length - 1]![0]!.sample.id === r.sample.id ? groups[groups.length - 1]!.push(r) : groups.push([r]));
-    return html`
-      ${this.#toolbar()}
+    // By season, the field number box stays in view with the naming row, so
+    // several numbers can be looked up without scrolling back (GitHub #316).
+    // By field number only the naming row does: that toolbar is tall, and the
+    // rows it adds arrive at the bottom of the list.
+    const controls = html`${this.#toolbar()}
       <p class="determine-message meta" role="status">${this.message}</p>
-      ${this.#bulkBar()}
+      ${this.#bulkBar()}`;
+    return html`
+      ${batch ? controls : html`<div class="determine-pinned">${controls}</div>`}
       <div class="table-scroll">
         <table class=${batch ? "determine-grid batch" : "determine-grid"}>
           <colgroup>

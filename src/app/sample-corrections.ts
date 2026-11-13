@@ -200,8 +200,16 @@ async function recordChange(
  * changes it and handed to `recordTrapChange` afterwards. Both inside one
  * turn of the sample's queue.
  */
-export const trapReference = (deps: CorrectionDeps, sampleId: number): Promise<SampleReference | undefined> =>
-  sampleReference(kyselyReader(deps.db), sampleId);
+export async function trapReference(deps: CorrectionDeps, sampleId: number): Promise<SampleReference | undefined> {
+  // The log records and never gates the change: a read that fails is
+  // reported, and the save goes on as it did before the pass could be told.
+  try {
+    return await sampleReference(kyselyReader(deps.db), sampleId);
+  } catch (err) {
+    console.warn(`could not read how the history names trap sample ${sampleId}: ${(err as Error).message}`);
+    return undefined;
+  }
+}
 
 /**
  * The change log entry for a trap sample entered in Beeline. `was` is the

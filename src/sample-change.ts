@@ -996,7 +996,10 @@ async function recordPass(
   if (opts.where != null && opts.was !== undefined && states.size === 1) {
     const [key] = [...states.keys()] as [string];
     if (opts.was === null) {
-      if (!snapshot.has(key) && !contested.has(key)) arrivals.add(key);
+      // A row already on a new sample's reference is some other sample's for
+      // the same reason, so the new sample is not compared against it.
+      if (snapshot.has(key)) matched.delete(key);
+      else if (!contested.has(key)) arrivals.add(key);
     } else if (stateKey(opts.was) !== key && !contested.has(key)) {
       if (snapshot.has(key)) {
         matched.delete(key);

@@ -67,6 +67,56 @@ async function resolveInput<T>(input: Input<T>): Promise<T> {
   return typeof input === "function" ? (input as () => Promise<T>)() : input;
 }
 
+/**
+ * The shape every correction runs in (beeline-4ksk).
+ *
+ *  1. `gates` is asked first, before the form is read: the rules that do not
+ *     depend on the form, so a request that will be refused is refused
+ *     without reading what it sent.
+ *  2. The form is read. That can take a while, and it happens outside the
+ *     sample's queue, so a slow upload does not hold up anyone else's save of
+ *     the sample.
+ *  3. Then one turn of the sample's queue (src/app/sample-queue.ts): `gates`
+ *     is asked again, of the sample as it stands now, and `act` checks what
+ *     depends on the form, writes, and records the change in the sample's
+ *     history.
+ *
+ * The second asking is the one the write relies on; the first only saves
+ * reading a form. Everything from the reload to the history entry is one
+ * turn, so two corrections to one sample cannot interleave: neither can
+ * write between the other's check and its write, and each one's history
+ * entry is taken before the next begins, under its own author. Before this,
+ * only the collector's edit and the place editor took a turn, and the others
+ * could replace each other's value or be recorded under each other's name.
+ *
+ * A caller that already holds the input (an API, which has parsed its
+ * request) skips steps 1 and 2: there is no form to save reading, and the
+ * correction takes its turn at once, in the same tick it was called. That
+ * matters for order. A turn is taken when the form is in hand, so two page
+ * requests that arrive within a few tens of milliseconds of each other may
+ * be applied in either order, as two requests racing over a network may
+ * anyway; but a program that sends one correction and then another, without
+ * waiting, has them applied in the order it sent them.
+ */
+async function correct<Ready, Form, Result extends { ok: boolean }, Refusal extends { ok: false }>(
+  sampleId: number,
+  input: Input<Form>,
+  gates: () => Promise<{ ready: Ready } | Refusal>,
+  act: (ready: Ready, form: Form) => Promise<Result>,
+): Promise<Result | Refusal> {
+  const turn = (form: Form) =>
+    onSample(sampleId, async (): Promise<Result | Refusal> => {
+      const now = await gates();
+      if (!("ready" in now)) return now;
+      return act(now.ready, form);
+    });
+  // No await before the turn is taken, or call order would not be turn order.
+  if (typeof input !== "function") return turn(input);
+  const early = await gates();
+  if (!("ready" in early)) return early;
+  return turn(await resolveInput(input));
+}
+
 /** Ends a switch over every refusal: a refusal left unhandled is a type error. */
 export function unreachable(x: never): never {
   throw new Error(`unhandled refusal: ${JSON.stringify(x)}`);
@@ -183,11 +233,13 @@ export type EditSampleResult =
  * not retry on a write conflict (docs/architecture/ingestion-jobs-and-elevation.md).
  */
 export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<EditSampleInput>): Promise<EditSampleResult> {
-  return onSample(sampleId, async (): Promise<EditSampleResult> => {
+  const gates = async () => {
     if (actor.impersonating) return refused("impersonating");
     const sample = await loadEditableSample(deps.db, sampleId, actor.personId);
     if (sample === undefined) return refused("not_editable");
-    const form = await resolveInput(input);
+    return { ready: sample };
+  };
+  return correct(sampleId, input, gates, async (sample, form): Promise<EditSampleResult> => {
     const result = await applySampleEdit(deps.db, deps.correctionsPath, sample, {
       values: form.values,
       bases: form.bases,
@@ -257,49 +309,45 @@ export type AdoptLocalityResult =
  * never from the form: the form's copy of the name only proves the reader
  * saw what is adopted.
  */
-export async function adoptLocality(
+export function adoptLocality(
   deps: CorrectionDeps,
   actor: Actor,
   sampleId: number,
   input: Input<AdoptLocalityInput>,
 ): Promise<AdoptLocalityResult> {
-  if (actor.impersonating) return refused("impersonating");
-  const sample = await loadSample(deps.db, sampleId, actor.personId, readerFor(actor));
-  if (sample === null || (!sample.mine && !actor.staff)) return refused("not_found");
-  if (sample.printed) return refused("printed");
-  const writeDeps = { db: deps.db, conn: deps.conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath };
-  const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
-  // Who set the locality standing over the observation, if anyone: a
-  // locality someone else set stands until they change it, so a collector
-  // may not replace it. Staff may replace any. Nothing here reads the form,
-  // so a refusal is made before the form is.
-  const standing =
-    sample.inat_observation_id === null ? null : await standingLocalityAuthor(deps.sampleOverlayPath, sample.inat_observation_id);
-  if (standing !== null && standing !== actor.login && !actor.staff) return refused("set_by_other");
-  const form = await resolveInput(input);
-  // And asked again now that the form is in hand. A form can take a while to
-  // arrive, and someone else may have set the locality meanwhile; the check
-  // above refused early without reading the form, and this one is the check
-  // the write relies on.
-  if (sample.inat_observation_id !== null && !actor.staff) {
-    const standingNow = await standingLocalityAuthor(deps.sampleOverlayPath, sample.inat_observation_id);
-    if (standingNow !== null && standingNow !== actor.login) return refused("set_by_other");
-  }
-  // The suggestion or one of the alternatives (beeline-4hxe), as the
-  // store holds them now: a name the page showed that is no longer
-  // offered is refused rather than adopted unseen.
-  const offered = [...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]), ...sample.locality_alternatives];
-  const suggestion = offered.find((o) => o.locality === form.locality);
-  if (suggestion === undefined) return refused("changed");
-  const reason = form.reasonFor(suggestion.basis);
-  const result = await adoptSuggestedLocality(writeDeps, target, { suggestion: suggestion.locality, reason, author: actor.login });
-  const bad = overlayRefusal(result);
-  if (bad !== null) return bad;
-  if (result.outcome === "no_staging") return refused("no_staging");
-  if (result.outcome === "saved" || result.outcome === "removed") {
-    await recordChange(deps, sample.sample_id, actor.login, reason, "locality change");
-  }
-  return { ok: true, reason };
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    const sample = await loadSample(deps.db, sampleId, actor.personId, readerFor(actor));
+    if (sample === null || (!sample.mine && !actor.staff)) return refused("not_found");
+    if (sample.printed) return refused("printed");
+    // Who set the locality standing over the observation, if anyone: a
+    // locality someone else set stands until they change it, so a collector
+    // may not replace it. Staff may replace any. Nothing here reads the form.
+    const standing =
+      sample.inat_observation_id === null ? null : await standingLocalityAuthor(deps.sampleOverlayPath, sample.inat_observation_id);
+    if (standing !== null && standing !== actor.login && !actor.staff) return refused("set_by_other");
+    return { ready: sample };
+  };
+  return correct(sampleId, input, gates, async (sample, form): Promise<AdoptLocalityResult> => {
+    const writeDeps = { db: deps.db, conn: deps.conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath };
+    const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
+    // The suggestion or one of the alternatives (beeline-4hxe), as the
+    // store holds them now, read in this turn and not when the request
+    // arrived: a name the page showed that is no longer offered is refused
+    // rather than adopted unseen.
+    const offered = [...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]), ...sample.locality_alternatives];
+    const suggestion = offered.find((o) => o.locality === form.locality);
+    if (suggestion === undefined) return refused("changed");
+    const reason = form.reasonFor(suggestion.basis);
+    const result = await adoptSuggestedLocality(writeDeps, target, { suggestion: suggestion.locality, reason, author: actor.login });
+    const bad = overlayRefusal(result);
+    if (bad !== null) return bad;
+    if (result.outcome === "no_staging") return refused("no_staging");
+    if (result.outcome === "saved" || result.outcome === "removed") {
+      await recordChange(deps, sample.sample_id, actor.login, reason, "locality change");
+    }
+    return { ok: true, reason };
+  });
 }
 
 export interface SetPlaceInput {
@@ -326,10 +374,10 @@ export type SetPlaceResult =
  * observation, and the change log (src/app/sample-queue.ts).
  */
 export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<SetPlaceInput>): Promise<SetPlaceResult> {
-  return onSample(sampleId, async (): Promise<SetPlaceResult> => {
+  const admin = actor.staff;
+  const { conn, printWriter, db } = deps;
+  const gates = async () => {
     if (actor.impersonating) return refused("impersonating");
-    const admin = actor.staff;
-    const { conn, printWriter, db } = deps;
     const sample = await loadSample(db, sampleId, actor.personId, admin ? STAFF_READER : readerFor(actor));
     if (sample === null) return refused("not_found");
     const enteredHere = conn !== undefined && (await loadTrapSample(conn, sample.sample_id)) !== null;
@@ -345,8 +393,10 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
     // depend on the form, so that refusal is made before the form is read.
     const trap = enteredHere && conn !== undefined && printWriter !== undefined;
     if (trap && !(await mayEditTrapSample(conn, sample.sample_id, actor.personId, admin))) return refused("not_found");
-    const form = await resolveInput(input);
-    if (trap) {
+    return { ready: { sample, trap } };
+  };
+  return correct(sampleId, input, gates, async ({ sample, trap }, form): Promise<SetPlaceResult> => {
+    if (trap && printWriter !== undefined) {
       const name = form.locality.trim();
       // Blank clears it, as on the form.
       if (name === (sample.locality ?? "")) return { ok: true };
@@ -460,32 +510,45 @@ export type StaffCoordinatesCorrectionResult =
  * may already have passed and the county and state would then wait a day
  * with nothing on the page saying so.
  */
-export async function setCoordinates(
+export function setCoordinates(
   deps: CorrectionDeps,
   actor: Actor,
   sampleId: number,
   input: Input<StaffCoordinatesFormInput>,
 ): Promise<StaffCoordinatesCorrectionResult> {
-  if (actor.impersonating) return refused("impersonating");
-  if (!actor.staff) return refused("not_admin");
-  const sample = await loadSample(deps.db, sampleId, actor.personId, STAFF_READER);
-  if (sample === null) return refused("not_found");
-  if (sample.inat_observation_id === null) return refused("no_observation");
-  if (deps.syncJobRunning()) return refused("busy");
-  const form = await resolveInput(input);
-  const result = await setStaffCoordinates(
-    { db: deps.db, conn: deps.conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath },
-    { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality },
-    { ...form, author: actor.login },
-  );
-  const bad = overlayRefusal(result);
-  if (bad !== null) return bad;
-  let settled = true;
-  if (result.outcome === "saved" || result.outcome === "removed") {
-    settled = await deriveMovedPoint(deps, sample.sample_id, "staff coordinates");
-    await recordChange(deps, sample.sample_id, actor.login, form.note.trim() || undefined, "coordinate change");
-  }
-  return { ok: true, settled };
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const sample = await loadSample(deps.db, sampleId, actor.personId, STAFF_READER);
+    if (sample === null) return refused("not_found");
+    if (sample.inat_observation_id === null) return refused("no_observation");
+    if (deps.syncJobRunning()) return refused("busy");
+    return { ready: sample };
+  };
+  return correct(sampleId, input, gates, async (sample, form): Promise<StaffCoordinatesCorrectionResult> => {
+    const result = await setStaffCoordinates(
+      { db: deps.db, conn: deps.conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath },
+      { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality },
+      { ...form, author: actor.login },
+    );
+    const bad = overlayRefusal(result);
+    if (bad !== null) return bad;
+    let settled = true;
+    if (result.outcome === "saved" || result.outcome === "removed") {
+      // Recorded straight after the write, and again after deriving. The
+      // derivation waits for "Check iNaturalist now" if one is running, and
+      // that check ends with a pass over every sample's history under no
+      // author; were this entry left until after, that pass would take the
+      // staff point for its own. The second entry credits the elevation and
+      // county that follow to the same person, and writes nothing if nothing
+      // more changed.
+      const note = form.note.trim() || undefined;
+      await recordChange(deps, sample.sample_id, actor.login, note, "coordinate change");
+      settled = await deriveMovedPoint(deps, sample.sample_id, "staff coordinates");
+      await recordChange(deps, sample.sample_id, actor.login, note, "coordinate change");
+    }
+    return { ok: true, settled };
+  });
 }
 
 export interface TakeObservationLocationInput {
@@ -510,32 +573,39 @@ export type TakeObservationLocationCorrectionResult =
  * would do for the moved point, at once, because a reprint is the next thing
  * staff do and would otherwise print the old point's elevation.
  */
-export async function takeLocation(
+export function takeLocation(
   deps: CorrectionDeps,
   actor: Actor,
   sampleId: number,
   input: Input<TakeObservationLocationInput>,
 ): Promise<TakeObservationLocationCorrectionResult> {
-  if (actor.impersonating) return refused("impersonating");
-  if (!actor.staff) return refused("not_admin");
-  if (deps.conn === undefined) return refused("unavailable");
-  const sample = await loadSample(deps.db, sampleId, actor.personId, STAFF_READER);
-  if (sample === null) return refused("not_found");
-  if (deps.syncJobRunning()) return refused("busy");
-  const form = await resolveInput(input);
-  const note = form.note.trim();
-  const reason = note === "" ? form.defaultReason : note;
-  const result = await takeObservationLocation(
-    { db: deps.db, conn: deps.conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath },
-    { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality },
-    { reason, author: actor.login },
-  );
-  const bad = overlayRefusal(result);
-  if (bad !== null) return bad;
-  if (result.outcome === "unchanged") return refused("not_moved");
-  const settled = await deriveMovedPoint(deps, sample.sample_id, "take observation location");
-  await recordChange(deps, sample.sample_id, actor.login, reason, "location change");
-  return { ok: true, settled };
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const conn = deps.conn;
+    if (conn === undefined) return refused("unavailable");
+    const sample = await loadSample(deps.db, sampleId, actor.personId, STAFF_READER);
+    if (sample === null) return refused("not_found");
+    if (deps.syncJobRunning()) return refused("busy");
+    return { ready: { sample, conn } };
+  };
+  return correct(sampleId, input, gates, async ({ sample, conn }, form): Promise<TakeObservationLocationCorrectionResult> => {
+    const note = form.note.trim();
+    const reason = note === "" ? form.defaultReason : note;
+    const result = await takeObservationLocation(
+      { db: deps.db, conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath },
+      { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality },
+      { reason, author: actor.login },
+    );
+    const bad = overlayRefusal(result);
+    if (bad !== null) return bad;
+    if (result.outcome === "unchanged") return refused("not_moved");
+    // Recorded before and after deriving, for the reason setCoordinates gives.
+    await recordChange(deps, sample.sample_id, actor.login, reason, "location change");
+    const settled = await deriveMovedPoint(deps, sample.sample_id, "take observation location");
+    await recordChange(deps, sample.sample_id, actor.login, reason, "location change");
+    return { ok: true, settled };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -555,7 +625,7 @@ export type QcDecisionCorrectionResult =
  * kept in the sample overlay and applied at once, and recorded in the
  * sample's history under whoever did it.
  */
-async function decideQc<Form extends { note: string }>(
+function decideQc<Form extends { note: string }>(
   deps: CorrectionDeps,
   actor: Actor,
   sampleId: number,
@@ -567,23 +637,28 @@ async function decideQc<Form extends { note: string }>(
     form: Form,
   ) => Promise<QcDecisionResult>,
 ): Promise<QcDecisionCorrectionResult> {
-  if (actor.impersonating) return refused("impersonating");
-  if (!actor.staff) return refused("not_admin");
-  if (deps.conn === undefined) return refused("unavailable");
-  const sample = await loadSample(deps.db, sampleId, actor.personId, STAFF_READER);
-  if (sample === null) return refused("not_found");
-  const form = await resolveInput(input);
-  const result = await decide(
-    { conn: deps.conn, sampleOverlayPath: deps.sampleOverlayPath },
-    { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id },
-    actor.login,
-    form,
-  );
-  if (result.outcome === "invalid") return { ok: false, refusal: "invalid", problem: result.problem };
-  if (result.outcome === "no_observation") return refused("no_observation");
-  if (result.outcome === "unresolved") return { ok: false, refusal: "unresolved", reason: result.reason };
-  await recordChange(deps, sample.sample_id, actor.login, form.note.trim() || undefined, `change to sample ${sample.sample_id}`);
-  return { ok: true };
+  const gates = async () => {
+    if (actor.impersonating) return refused("impersonating");
+    if (!actor.staff) return refused("not_admin");
+    const conn = deps.conn;
+    if (conn === undefined) return refused("unavailable");
+    const sample = await loadSample(deps.db, sampleId, actor.personId, STAFF_READER);
+    if (sample === null) return refused("not_found");
+    return { ready: { sample, conn } };
+  };
+  return correct(sampleId, input, gates, async ({ sample, conn }, form): Promise<QcDecisionCorrectionResult> => {
+    const result = await decide(
+      { conn, sampleOverlayPath: deps.sampleOverlayPath },
+      { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id },
+      actor.login,
+      form,
+    );
+    if (result.outcome === "invalid") return { ok: false, refusal: "invalid", problem: result.problem };
+    if (result.outcome === "no_observation") return refused("no_observation");
+    if (result.outcome === "unresolved") return { ok: false, refusal: "unresolved", reason: result.reason };
+    await recordChange(deps, sample.sample_id, actor.login, form.note.trim() || undefined, `change to sample ${sample.sample_id}`);
+    return { ok: true };
+  });
 }
 
 export function holdSample(

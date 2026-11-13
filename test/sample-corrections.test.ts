@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createKysely } from "../src/db.js";
 import { duckdbReader } from "../src/person-change.js";
@@ -16,6 +16,8 @@ import {
   actorFor,
   type CorrectionDeps,
 } from "../src/app/sample-corrections.js";
+import { withPromotionLock } from "../src/app/promotion-lock.js";
+import { onSample } from "../src/app/sample-queue.js";
 import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 /**
@@ -228,5 +230,200 @@ describe("sample corrections: a correction that saves", () => {
     expect(result).toMatchObject({ ok: true });
     expect(await rows(s.conn, `SELECT round(latitude, 1), source FROM sample_location WHERE sample_id = ${s.linked}`)).toEqual([[44.5, "staff_entry"]]);
     expect((await logged(s)).filter((c) => c[2] === "samstaff").length).toBeGreaterThan(0);
+  });
+
+  /**
+   * One correction at a time for a sample (beeline-4ksk). Before, only the
+   * collector's edit and the place editor took a turn of the sample's queue;
+   * the rest could write between another correction's check and its write,
+   * and be recorded in the history under each other's name.
+   */
+  describe("one at a time for a sample", () => {
+    /** Hold the sample's queue, as a correction in progress does, until released. */
+    const occupy = (sampleId: number) => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      void onSample(sampleId, () => held);
+      return release;
+    };
+    const overlayRows = async (s: Awaited<ReturnType<typeof withSuggestions>>) => (await readSampleOverlay(s.paths.sampleOverlayPath)).length;
+    /**
+     * Long enough that a correction which did not wait would have written:
+     * each takes well under 100 ms here. A slower machine can only make the
+     * wait too short to catch a correction that fails to queue; it cannot fail
+     * a correction that queues.
+     */
+    const longEnoughToWrite = () => new Promise((resolve) => setTimeout(resolve, 400));
+    /**
+     * An input a page would pass: a function, called once the rules that do
+     * not need the form have passed. `read` resolves at that moment, so a
+     * test can change something then, before handing the form over with
+     * `give`, and nothing depends on how long anything takes.
+     */
+    const form = <T,>(value: T) => {
+      let called!: () => void;
+      let give!: () => void;
+      const read = new Promise<void>((resolve) => (called = resolve));
+      const handed = new Promise<void>((resolve) => (give = resolve));
+      return {
+        read,
+        give,
+        input: async () => {
+          called();
+          await handed;
+          return value;
+        },
+      };
+    };
+
+    it("every correction waits for the one in progress before it writes anything", async () => {
+      const corrections: [string, (s: Awaited<ReturnType<typeof withSuggestions>>) => Promise<{ ok: boolean }>][] = [
+        ["adoptLocality", (s) => adoptLocality(s.deps, s.alice, s.linked, { locality: "Finley NWR", reasonFor })],
+        ["setPlace", (s) => setPlace(s.deps, s.alice, s.linked, { locality: "Finley NWR", reasonFor })],
+        ["setCoordinates", (s) => setCoordinates(s.deps, s.sam, s.linked, { ...coordinates, note: "" })],
+        ["holdSample", (s) => holdSample(s.deps, s.sam, s.linked, { lift: false, note: "wait" })],
+        ["waiveFlag", (s) => waiveFlag(s.deps, s.sam, s.linked, { rule: "locality_format", remove: false, note: "fine" })],
+      ];
+      for (const [name, run] of corrections) {
+        const s = await withSuggestions();
+        // A waiver needs a flag to waive: a locality too long for a label.
+        if (name === "waiveFlag") await s.conn.run(`UPDATE sample SET locality = 'Deschutes River SRA' WHERE entity_id = ${s.linked}`);
+        const release = occupy(s.linked);
+        try {
+          let done = false;
+          const pending = run(s).then((r) => ((done = true), r));
+          await longEnoughToWrite();
+          // Still waiting, and nothing of it is in the overlay or the history.
+          expect(done, name).toBe(false);
+          expect(await overlayRows(s), name).toBe(0);
+          expect(await logged(s), name).toEqual([]);
+          release();
+          expect(await pending, name).toMatchObject({ ok: true });
+          expect(await overlayRows(s), name).toBe(1);
+        } finally {
+          release();
+        }
+      }
+    });
+
+    it("applies corrections sent one after another, without waiting, in the order they were sent", async () => {
+      // What a program does: the input is already in hand, so each takes its turn as it is called.
+      for (let i = 0; i < 5; i++) {
+        const s = await withSuggestions();
+        const first = setPlace(s.deps, s.sam, s.linked, { locality: "First name", reasonFor });
+        const second = setPlace(s.deps, s.sam, s.linked, { locality: "Second name", reasonFor });
+        expect(await first).toEqual({ ok: true });
+        expect(await second).toEqual({ ok: true });
+        expect(await localityOf(s.conn, s.linked)).toBe("Second name");
+      }
+      // A hold and then its lifting leave the sample not held.
+      const h = await withSuggestions();
+      const held = holdSample(h.deps, h.sam, h.linked, { lift: false, note: "wait" });
+      const lifted = holdSample(h.deps, h.sam, h.linked, { lift: true, note: "" });
+      expect([await held, await lifted]).toEqual([{ ok: true }, { ok: true }]);
+      expect(await rows(h.conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${h.linked}`)).toHaveLength(1);
+      // Staff set a locality, then the collector tries to adopt one: staff's stands and the collector is refused.
+      const t = await withSuggestions();
+      const staff = setPlace(t.deps, t.sam, t.linked, { locality: "Staff's name", reasonFor });
+      const collector = adoptLocality(t.deps, t.alice, t.linked, { locality: "Finley NWR", reasonFor });
+      expect(await staff).toEqual({ ok: true });
+      expect(await collector).toEqual({ ok: false, refusal: "set_by_other" });
+      expect(await localityOf(t.conn, t.linked)).toBe("Staff's name");
+    });
+
+    it("asks its rules again when its turn comes, of the sample as it then stands", async () => {
+      const s = await withSuggestions();
+      // A page's request: taking the observation's location passes "no sync
+      // is running" before its form is read; the nightly starts while the
+      // form is arriving.
+      const taking = form({ note: "", defaultReason: "moved" });
+      const pending = takeLocation(s.deps, s.sam, s.linked, taking.input);
+      await taking.read;
+      s.setRunning(true);
+      taking.give();
+      expect(await pending).toEqual({ ok: false, refusal: "busy" });
+      s.setRunning(false);
+
+      // A collector adopting a locality passes "nobody else set it" before
+      // the form is read; staff set one while it is arriving.
+      const adopting = form({ locality: "Finley NWR", reasonFor });
+      const collector = adoptLocality(s.deps, s.alice, s.linked, adopting.input);
+      await adopting.read;
+      expect(await setPlace(s.deps, s.sam, s.linked, { locality: "Staff's name", reasonFor })).toEqual({ ok: true });
+      adopting.give();
+      expect(await collector).toEqual({ ok: false, refusal: "set_by_other" });
+      expect(await localityOf(s.conn, s.linked)).toBe("Staff's name");
+    });
+
+    it("credits a staff point to staff even when a check of iNaturalist ends while its elevation is being derived", async () => {
+      const s = await withSuggestions();
+      // "Check iNaturalist now" holds the promotion lock, which deriving the
+      // moved point waits for, and ends with a pass over every sample's
+      // history under no author.
+      let endCheck!: () => void;
+      const checking = new Promise<void>((resolve) => (endCheck = resolve));
+      const check = withPromotionLock(async () => {
+        await checking;
+        await recordSampleChanges(duckdbReader(s.conn), s.deps.samplePaths, { source: "observation_promotion" });
+      });
+      const moved = setCoordinates(s.deps, s.sam, s.linked, { ...coordinates, note: "from the field notebook" });
+      try {
+        // The point is written and entered in the history, and the correction is
+        // waiting on the lock to derive from it; then the check finishes. (Waiting
+        // for the entry, not just the point: a check that ended in the instant
+        // between the two could still take the point for its own, as any writer
+        // that records state after the fact can.)
+        await vi.waitFor(async () =>
+          expect(
+            (await readSampleChanges(s.paths.sampleChangesPath)).some((c) => c.author === "samstaff" && c.field.startsWith("location")),
+          ).toBe(true),
+        );
+      } finally {
+        // Whatever happened above, let go of the lock and the sample's turn, or every later test waits on them.
+        endCheck();
+        await check;
+      }
+      expect(await moved).toMatchObject({ ok: true });
+      const changes = (await readSampleChanges(s.paths.sampleChangesPath)).filter((c) => c.field.startsWith("location"));
+      expect(changes.length).toBeGreaterThan(0);
+      // Every entry about the point is staff's; none fell to the unauthored pass.
+      expect(changes.map((c) => [c.source, c.author])).toEqual(changes.map(() => ["app", "samstaff"]));
+    });
+
+    it("records two corrections made at the same moment each under its own author", async () => {
+      const s = await withSuggestions();
+      // A collector adopts a locality while staff hold the sample: two
+      // corrections that do not touch each other's fields. (Staff moving the
+      // point at the same moment would rightly withdraw the suggestion.)
+      const [adopted, held] = await Promise.all([
+        adoptLocality(s.deps, s.alice, s.linked, { locality: "Finley NWR", reasonFor }),
+        holdSample(s.deps, s.sam, s.linked, { lift: false, note: "date looks a year off" }),
+      ]);
+      expect(adopted).toMatchObject({ ok: true });
+      expect(held).toMatchObject({ ok: true });
+      const entries = await logged(s);
+      // The locality is the collector's and nobody else's; everything else is staff's and nobody else's.
+      expect(entries.filter((c) => c[0] === "locality").map((c) => c[2])).toEqual(["alice"]);
+      const rest = entries.filter((c) => c[0] !== "locality");
+      expect(rest.length).toBeGreaterThan(0);
+      expect(new Set(rest.map((c) => c[2]))).toEqual(new Set(["samstaff"]));
+    });
+
+    it("refuses a suggestion that was withdrawn while the form was arriving", async () => {
+      const s = await withSuggestions();
+      const withdraw = async () => {
+        await s.conn.run(`DELETE FROM sample_locality_candidate WHERE sample_id = ${s.linked}`);
+        return { locality: "Finley NWR", reasonFor };
+      };
+      expect(await adoptLocality(s.deps, s.alice, s.linked, withdraw)).toEqual({ ok: false, refusal: "changed" });
+      // The place editor too: a collector may write only a name that is offered now.
+      const t = await withSuggestions();
+      const withdrawT = async () => {
+        await t.conn.run(`DELETE FROM sample_locality_candidate WHERE sample_id = ${t.linked}`);
+        return { locality: "Finley NWR", reasonFor };
+      };
+      expect(await setPlace(t.deps, t.alice, t.linked, withdrawT)).toEqual({ ok: false, refusal: "only_offered" });
+      expect(await localityOf(t.conn, t.linked)).not.toBe("Finley NWR");
+    });
   });
 });

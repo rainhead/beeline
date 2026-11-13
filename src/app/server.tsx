@@ -1323,7 +1323,15 @@ export function createApp({
     if ("problems" in checked) {
       return c.html(await trapPage(c, m.trapSample.editTitle, form, checked.problems, `/samples/${id}/trap`, id), 400);
     }
-    const updated = await updateTrapSample(printWriter!, id, checked.sample);
+    // One turn of the sample's queue for the write and its history entry, as
+    // every other correction to a sample takes (src/app/sample-queue.ts): the
+    // place editor writes a trap sample's locality too, and without a turn
+    // here one author's history entry could record the other's value.
+    const updated = await onSample(id, async () => {
+      const outcome = await updateTrapSample(printWriter!, id, checked.sample);
+      if (outcome !== "printed" && outcome !== "taken") await recordTrapChange(c, id);
+      return outcome;
+    });
     if (updated === "printed") {
       return errorResponse(c, "notFound", { heading: m.trapSample.notEditableHeading, message: m.trapSample.notEditable });
     }
@@ -1331,7 +1339,6 @@ export function createApp({
       const problems = { sample_number: numberTakenProblem(checked.sample.sample_number) };
       return c.html(await trapPage(c, m.trapSample.editTitle, form, problems, `/samples/${id}/trap`, id), 409);
     }
-    await recordTrapChange(c, id);
     return c.redirect(`/samples/${id}`);
   });
 

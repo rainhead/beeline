@@ -6,8 +6,14 @@
  * then act on, or record both under the first author (CodeRabbit and the
  * independent review on PR #314). The app is the one process that writes
  * any of them (ADR 0005), so a promise chain per sample is the whole lock.
- * Every route that writes a sample's corrections goes through it: the
- * collector's edit form, the staff place editor and the Method pencil.
+ * Everything that corrects a sample goes through it: all seven corrections
+ * in src/app/sample-corrections.ts (beeline-4ksk; until then only the
+ * collector's edit and the place editor did), the Method pencil, and the
+ * edit form of a sample entered in Beeline. What does not: the nightly
+ * promotion and "Check iNaturalist now", which rewrite many samples in one
+ * transaction and record their own history. The
+ * queue does not nest: work running in a sample's turn must not ask for a
+ * turn for the same sample, or it waits for itself.
  */
 const queues = new Map<number, Promise<unknown>>();
 

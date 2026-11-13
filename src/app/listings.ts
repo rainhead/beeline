@@ -555,7 +555,25 @@ export interface ListedCollector {
   orcid: string | null;
 }
 
+/**
+ * Exact lookups, which the API offers beside the filters because the search
+ * box (`q`) matches part of a number: searching for "1" finds every sample
+ * number and field number with a 1 in it. Each is a whole-value match, ignoring
+ * case, and they combine with each other and with the filters. Not part of a
+ * page's query string.
+ */
+export interface ExactLookup {
+  sample_number?: string;
+  /** A specimen's field number; on samples, the samples that have such a specimen. */
+  field_number?: string;
+  /** A specimen's catalogue number (Ecdysis's). */
+  catalog_number?: string;
+  inat_observation_id?: bigint;
+}
+
 export interface ListingPageOptions {
+  /** Whole-value lookups (ExactLookup). */
+  exact?: ExactLookup;
   limit?: number;
   offset?: number;
   /** False skips counting the whole selection; `total` is then 0. */
@@ -947,7 +965,13 @@ function qcPredicate(status: QcStatus) {
  * download, and the API's counts and groupings, so a count cannot be made
  * from a second copy of the filters and disagree with the listing.
  */
-async function filteredSamples(db: Kysely<Database>, query: ListingQuery, personId: number, reader: Reader) {
+async function filteredSamples(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  reader: Reader,
+  exact: ExactLookup = {},
+) {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   const place = placeColumns(reader);
   let base = db
@@ -1060,6 +1084,15 @@ async function filteredSamples(db: Kysely<Database>, query: ListingQuery, person
   }
   if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
+  if (exact.sample_number !== undefined) base = base.where(sql<boolean>`lower(s.sample_number) = ${exact.sample_number.toLowerCase()}`);
+  if (exact.inat_observation_id !== undefined) base = base.where("s.inat_observation_id", "=", exact.inat_observation_id);
+  if (exact.field_number !== undefined) {
+    base = base.where(sql<boolean>`EXISTS (SELECT 1 FROM specimen xs WHERE xs.sample_id = s.entity_id AND lower(xs.field_number) = ${exact.field_number.toLowerCase()})`);
+  }
+  if (exact.catalog_number !== undefined) {
+    base = base.where(sql<boolean>`EXISTS (SELECT 1 FROM specimen xs JOIN specimen_catalog_number xc ON xc.specimen_id = xs.entity_id
+                                           WHERE xs.sample_id = s.entity_id AND lower(xc.catalog_number) = ${exact.catalog_number.toLowerCase()})`);
+  }
   // "Printed" is every label on paper, counted against the specimen count in
   // any season: a settled sample printed only in part is not waiting, since
   // settled samples never print, and is not all printed either (CodeRabbit).
@@ -1089,7 +1122,7 @@ export async function listSamples(
 ): Promise<Page<SampleRow>> {
   const hidden = withheld(reader);
   const place = placeColumns(reader);
-  const base = await filteredSamples(db, query, personId, reader);
+  const base = await filteredSamples(db, query, personId, reader, opts.exact);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1196,6 +1229,7 @@ async function filteredSpecimens(
   personId: number,
   reader: Reader,
   year?: number,
+  exact: ExactLookup = {},
 ) {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   const place = placeColumns(reader);
@@ -1268,6 +1302,12 @@ async function filteredSpecimens(
   if (query.det === "determined") base = base.where("d.specimen_id", "is not", null);
   if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
+  if (exact.sample_number !== undefined) base = base.where(sql<boolean>`lower(s.sample_number) = ${exact.sample_number.toLowerCase()}`);
+  if (exact.inat_observation_id !== undefined) base = base.where("s.inat_observation_id", "=", exact.inat_observation_id);
+  if (exact.field_number !== undefined) base = base.where(sql<boolean>`lower(sp.field_number) = ${exact.field_number.toLowerCase()}`);
+  if (exact.catalog_number !== undefined) {
+    base = base.where(sql<boolean>`EXISTS (SELECT 1 FROM specimen_catalog_number xc WHERE xc.specimen_id = sp.entity_id AND lower(xc.catalog_number) = ${exact.catalog_number.toLowerCase()})`);
+  }
   // A specimen's own label: in a run not yet printed, or numbered by a run
   // since canceled, it is waiting; printed or imported, it is on paper.
   if (query.labels === "waiting") {
@@ -1294,7 +1334,7 @@ export async function listSpecimens(
 ): Promise<Page<SpecimenRow>> {
   const hidden = withheld(reader);
   const place = placeColumns(reader);
-  const base = await filteredSpecimens(db, query, personId, reader, opts.year);
+  const base = await filteredSpecimens(db, query, personId, reader, opts.year, opts.exact);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1395,15 +1435,21 @@ const groupExpression = (group: CountGroup): RawBuilder<string | number | null> 
 // The two selections are different query builders over the same sample
 // columns, which the grouping reads as `s` and `a`; the builder's own type
 // cannot say that, so it is left open here and the callers are the check.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function countSelection(base: SelectQueryBuilder<any, any, any>, group: CountGroup | undefined): Promise<Counted> {
+// The grouping is read from the selection as a subquery: grouping the
+// selection's own joins by an expression made DuckDB fail to bind a column.
+async function countSelection(
+  db: Kysely<Database>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  base: SelectQueryBuilder<any, any, any>,
+  group: CountGroup | undefined,
+): Promise<Counted> {
   const total = await base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst();
   if (group === undefined) return { total: Number(total?.n ?? 0), groups: [] };
-  const expression = groupExpression(group);
-  const rows = await base
-    .select([expression.as("key"), sql<number>`count(*)`.as("n")])
-    .groupBy(expression)
-    .orderBy(expression)
+  const rows = await db
+    .selectFrom(base.select(groupExpression(group).as("group_key")).as("g"))
+    .select(["g.group_key as key", sql<number>`count(*)`.as("n")])
+    .groupBy("g.group_key")
+    .orderBy("g.group_key")
     .execute();
   return {
     total: Number(total?.n ?? 0),
@@ -1418,8 +1464,9 @@ export async function countSamples(
   personId: number,
   reader: Reader,
   group?: CountGroup,
+  exact?: ExactLookup,
 ): Promise<Counted> {
-  return countSelection(await filteredSamples(db, query, personId, reader), group);
+  return countSelection(db, await filteredSamples(db, query, personId, reader, exact), group);
 }
 
 /** How many specimens a query selects, from the same filters as {@link listSpecimens}. */
@@ -1429,8 +1476,9 @@ export async function countSpecimens(
   personId: number,
   reader: Reader,
   group?: CountGroup,
+  exact?: ExactLookup,
 ): Promise<Counted> {
-  return countSelection(await filteredSpecimens(db, query, personId, reader), group);
+  return countSelection(db, await filteredSpecimens(db, query, personId, reader, undefined, exact), group);
 }
 
 /**

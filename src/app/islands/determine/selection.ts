@@ -41,14 +41,23 @@ export function selectMore(selection: Selection, ids: Iterable<number>, anchor?:
 /** Whether selecting this row would start a new selection, so that no block may run to it from the old one. */
 export const startsNew = (selection: Selection, id: number): boolean => selection.used && !selection.ids.has(id);
 
-/** Take rows out of the selection, which stays the selection it was. */
+/**
+ * Take rows out of the selection, which stays the selection it was. A named
+ * selection unticked down to nothing leaves no anchor behind, or a Shift-click
+ * would run a block back from the row just named.
+ */
 export function deselect(selection: Selection, ids: Iterable<number>, anchor?: number): Selection {
   const next = new Set(selection.ids);
   for (const id of ids) next.delete(id);
-  return { ids: next, used: selection.used && next.size > 0, anchor: anchor ?? selection.anchor };
+  const left = next.size > 0;
+  return { ids: next, used: selection.used && left, anchor: selection.used && !left ? null : (anchor ?? selection.anchor) };
 }
 
-/** The selection after a name or a sex was given to all of it. */
+/**
+ * The selection after a name or a sex was given to all of it from the bar, or
+ * to one of its rows in the row's own cell: either way the person has moved
+ * on from choosing rows to naming them.
+ */
 export const markUsed = (selection: Selection): Selection => ({ ...selection, used: selection.ids.size > 0 });
 
 /**

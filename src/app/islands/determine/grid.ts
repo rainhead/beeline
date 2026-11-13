@@ -206,6 +206,19 @@ class DetermineGrid extends LitElement {
     void this.#send([{ specimenId: r.id, animalId: p?.animalId ?? null, sex: p?.sex ?? null, caste: p?.caste ?? null }]);
   }
 
+  /**
+   * A name or a sex given in a ticked row's own cell finishes the selection
+   * as one given from the bar does. Otherwise going to ten field numbers and
+   * naming each in its cell leaves all ten ticked, and the next name given
+   * from the bar reaches every one. An Undo of the last bar change must not
+   * reopen it either.
+   */
+  #rowChanged(r: EntryRow) {
+    if (!this.selected.has(r.id)) return;
+    if (this.lastBulk?.selection.ids === this.selection.ids) this.lastBulk = { ...this.lastBulk, selection: markUsed(this.lastBulk.selection) };
+    this.selection = markUsed(this.selection);
+  }
+
   #toggle(list: EntryRow[], index: number, shift: boolean) {
     const id = list[index]!.id;
     const sel = this.selection;
@@ -376,6 +389,7 @@ class DetermineGrid extends LitElement {
               @pick=${(e: CustomEvent<PickerTaxon>) => {
                 this.taxa.set(e.detail.id, e.detail);
                 this.editing = null;
+                this.#rowChanged(r);
                 void this.#write([r], { animalId: e.detail.id });
               }}
               @cancel=${() => (this.editing = null)}></determine-taxon-picker>`
@@ -383,7 +397,10 @@ class DetermineGrid extends LitElement {
               ${cur.animalId !== null ? this.#name(cur.animalId) : html`<span class="meta">${t.addName}</span>`}
             </button>`}
       </td>
-      <td>${this.#sexControl(cur.animalId, cur, (sex, caste) => void this.#send([this.#next(r, { sex, caste })]), d.sex.label)}</td>
+      <td>${this.#sexControl(cur.animalId, cur, (sex, caste) => {
+        this.#rowChanged(r);
+        void this.#send([this.#next(r, { sex, caste })]);
+      }, d.sex.label)}</td>
       <td class="saved">${this.#saved(r)}</td>
       ${position !== null
         ? html`<td class="tick"><button type="button" class="remove" ?disabled=${ro} aria-label=${d.batch.remove(r.fieldNumber ?? t.noNumber)}

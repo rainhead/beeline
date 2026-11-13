@@ -64,6 +64,16 @@ describe("the selection on Identify your specimens", () => {
     expect(deselect(s, [1]).anchor).toBe(1);
   });
 
+  it("leaves no anchor when a named selection is unticked down to nothing", () => {
+    const named = markUsed(selectMore(emptySelection, [1], 1));
+    // The untick is a click on row 1, which would otherwise become the anchor.
+    const emptied = deselect(named, [1], 1);
+    expect(emptied.anchor).toBeNull();
+    expect(emptied.used).toBe(false);
+    // Unticking the only row of a selection nothing was done to is an ordinary click.
+    expect(deselect(selectMore(emptySelection, [1], 1), [1], 1).anchor).toBe(1);
+  });
+
   it("is not used when nothing was selected or nothing is left", () => {
     expect(markUsed(emptySelection).used).toBe(false);
     expect(deselect(markUsed(selectMore(emptySelection, [1])), [1]).used).toBe(false);

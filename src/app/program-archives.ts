@@ -12,6 +12,7 @@ import {
   readProgramGovernance,
   type GovernancePaths,
   type LicenseId,
+  type ProgramGovernance,
 } from "../program-governance.js";
 import { identificationsOf, programArchives, specimenArchiveStream } from "./dwc-archive.js";
 import { checklistArchive, programChecklist } from "./dwc-checklist.js";
@@ -36,7 +37,11 @@ import { EMPTY_QUERY, listSpecimens, OUTSIDE, STAFF_READER } from "./listings.js
  * removed at the next run.
  *
  * Beside them, each program with specimens gets one checklist covering every
- * year (src/app/dwc-checklist.ts, beeline-024a).
+ * year (src/app/dwc-checklist.ts, beeline-024a), and one archive of every year
+ * together (beeline-9bnm), for whoever wants the whole record in one download
+ * (Lincoln Best, 2026-11-13). Licences are decided a year at a time, so the
+ * archive of every year states one only where every year it holds has the
+ * same licence in force, and none where they differ or any year has none.
  */
 
 export interface ArchiveEntry {
@@ -65,16 +70,45 @@ export interface ChecklistEntry {
   bytes: number;
 }
 
+/** A program's archive of every year together. */
+export interface AllYearsEntry {
+  program: string;
+  /** Specimens the program holds, every year together. */
+  specimens: number;
+  /** The first and last calendar years it holds. */
+  firstYear: number;
+  lastYear: number;
+  /** The licence its `meta.xml` states: the one every year shares, or null where they differ or one has none. */
+  license: LicenseId | null;
+  file: string;
+  bytes: number;
+}
+
 export interface ArchiveManifest {
   writtenAt: string;
   entries: ArchiveEntry[];
   /** Absent from a manifest written before there were checklists. */
   checklists?: ChecklistEntry[];
+  /** Absent from a manifest written before there were archives of every year. */
+  allYears?: AllYearsEntry[];
 }
 
 export const archiveDir = (exportsDir: string) => join(exportsDir, "dwca");
 export const archiveFileName = (program: string, year: number) => `${program}-${year}.zip`;
 export const checklistFileName = (program: string) => `${program}-checklist.zip`;
+export const allYearsFileName = (program: string) => `${program}-all.zip`;
+
+/**
+ * The licence an archive of these years states: the one in force for every
+ * one of them, or null where they differ or any has none. A program's
+ * licence is decided from a year on (src/program-governance.ts), so a
+ * program that changed its licence has no single one for every year.
+ */
+export function sharedLicense(governance: ProgramGovernance, program: string, years: number[]): LicenseId | null {
+  const licenses = new Set(years.map((y) => governanceFor(governance, program, y).license?.license ?? null));
+  const [only] = licenses;
+  return licenses.size === 1 && only !== undefined ? only : null;
+}
 const MANIFEST = "manifest.json";
 
 /** Specimens per program and year, by the same scopes and the same year the archives read. */
@@ -131,6 +165,19 @@ export async function writeProgramArchives(
   const step = opts.step ?? ((_label, fn) => fn());
   const entries: ArchiveEntry[] = [];
   const checklists: ChecklistEntry[] = [];
+  const allYears: AllYearsEntry[] = [];
+  /** One archive of the program's specimens, a year of them or (with no year) every one. */
+  const writeArchive = (scope: string, file: string, license: LicenseId | null, year?: number) =>
+    writeStream(
+      join(dir, file),
+      specimenArchiveStream(
+        async (limit, offset) => {
+          const page = await listSpecimens(db, { ...EMPTY_QUERY, scope }, 0, STAFF_READER, { limit, offset, withTotal: false, year });
+          return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
+        },
+        { license: license === null ? null : LICENSES[license].url },
+      ),
+    );
   for (const program of await programArchives(db)) {
     if (program.scope === null) continue;
     const scope = program.scope;
@@ -154,19 +201,7 @@ export async function writeProgramArchives(
     for (const [year, specimens] of years) {
       const { license, policy } = governanceFor(governance, program.code, year);
       const file = archiveFileName(program.code, year);
-      const query = { ...EMPTY_QUERY, scope };
-      const bytes = await step(`${program.code} ${year}`, () =>
-        writeStream(
-          join(dir, file),
-          specimenArchiveStream(
-            async (limit, offset) => {
-              const page = await listSpecimens(db, query, 0, STAFF_READER, { limit, offset, withTotal: false, year });
-              return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
-            },
-            { license: license === null ? null : LICENSES[license.license].url },
-          ),
-        ),
-      );
+      const bytes = await step(`${program.code} ${year}`, () => writeArchive(scope, file, license?.license ?? null, year));
       entries.push({
         program: program.code,
         name: program.name,
@@ -179,13 +214,27 @@ export async function writeProgramArchives(
         bytes,
       });
     }
+    if (years.length > 0) {
+      const file = allYearsFileName(program.code);
+      const license = sharedLicense(governance, program.code, years.map(([y]) => y));
+      const bytes = await step(`${program.code} every year`, () => writeArchive(scope, file, license));
+      allYears.push({
+        program: program.code,
+        specimens: years.reduce((n, [, count]) => n + count, 0),
+        firstYear: years[0]![0],
+        lastYear: years.at(-1)![0],
+        license,
+        file,
+        bytes,
+      });
+    }
   }
   // Whatever is in the directory and was not written tonight is removed.
-  const written = new Set([...entries, ...checklists].map((e) => e.file));
+  const written = new Set([...entries, ...checklists, ...allYears].map((e) => e.file));
   for (const name of await readdir(dir)) {
     if (name.endsWith(".zip") && !written.has(name)) await rm(join(dir, name), { force: true });
   }
-  const manifest: ArchiveManifest = { writtenAt: (opts.now ?? new Date()).toISOString(), entries, checklists };
+  const manifest: ArchiveManifest = { writtenAt: (opts.now ?? new Date()).toISOString(), entries, checklists, allYears };
   const tmp = join(dir, `${MANIFEST}.tmp`);
   await writeFile(tmp, JSON.stringify(manifest, null, 2));
   await rename(tmp, join(dir, MANIFEST));
@@ -211,5 +260,5 @@ export async function readArchiveManifest(exportsDir: string): Promise<ArchiveMa
 export function describeManifest(m: ArchiveManifest): string {
   const noLicense = m.entries.filter((e) => e.license === null).length;
   const noPolicy = m.entries.filter((e) => !e.policy).length;
-  return `${m.entries.length} program-years written (${m.entries.reduce((n, e) => n + e.specimens, 0)} specimens) and ${(m.checklists ?? []).length} checklists; ${noLicense} without a licence, ${noPolicy} without a privacy policy`;
+  return `${m.entries.length} program-years written (${m.entries.reduce((n, e) => n + e.specimens, 0)} specimens), ${(m.allYears ?? []).length} archives of every year and ${(m.checklists ?? []).length} checklists; ${noLicense} program-years without a licence, ${noPolicy} without a privacy policy`;
 }

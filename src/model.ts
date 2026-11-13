@@ -161,6 +161,9 @@ export interface SessionTable {
 }
 
 /** A personal API key (schema/012, beeline-pnqr.1). */
+/** Why an API key was revoked (schema/012); a deployed store has no CHECK, so this type is the guard. */
+export type RevokedReason = "owner" | "staff" | "account_changed" | "account_gone";
+
 export interface ApiKeyTable {
   /** SHA-256 of the key, lowercase hex; never the key. */
   key_sha256: string;
@@ -172,6 +175,12 @@ export interface ApiKeyTable {
   expires_at: Timestamped;
   last_used_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   revoked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** Login of whoever revoked it; NULL while it works, after the nightly job, and for keys revoked before the column. */
+  revoked_by: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Why; NULL while it works and for keys revoked before the column. */
+  revoked_reason: ColumnType<RevokedReason | null, RevokedReason | null | undefined, RevokedReason | null>;
+  /** Stamped on every key of an account when it is unlinked or moved to someone else; NULL while it stays with its person. */
+  account_changed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 

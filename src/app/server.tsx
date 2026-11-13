@@ -16,7 +16,7 @@ import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
 import { createApi } from "./api.js";
-import { createKey, listKeys, offeredScopes, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
+import { createKey, hasKeys, listKeys, offeredScopes, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
 import { KeysPage } from "./views/keys.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
@@ -681,6 +681,23 @@ export function createApp({
     return `mailto:${config.feedbackEmail}?${query.join("&")}`;
   };
 
+  /**
+   * Whether the account menu links to /keys (beeline-pnqr.9): to staff, who can
+   * make keys, and to anyone who has made one, so that a person who has lost
+   * their staff rights can still find their keys and revoke them. Staff cost
+   * nothing extra. For anyone else it is one lookup, `hasKeys`, on the iNat
+   * user the gate already read from the session row, asked only when a page
+   * is rendered; it stops at the first row of a table that holds a handful
+   * per person. No link while viewing Beeline as someone else, where /keys
+   * refuses.
+   */
+  const showKeysLink = async (c: Context<AppEnv>) => {
+    if (c.get("acting").impersonating) return false;
+    if (c.get("admin")) return true;
+    const owner = c.get("session").inatUserId ?? (await keyOwner(c));
+    return owner !== null && (await hasKeys(db, owner));
+  };
+
   const page = async (
     c: Context<AppEnv>,
     title: string,
@@ -695,6 +712,7 @@ export function createApp({
           styleVersion: await styleVersion(),
           session: c.get("session"),
           admin: c.get("admin"),
+          keysLink: await showKeysLink(c),
           acting: c.get("acting"),
           feedbackHref: feedbackHref(c),
           m: c.get("m"),
@@ -821,9 +839,12 @@ export function createApp({
       ),
     );
   };
-  // A person's own API keys (beeline-pnqr.1, src/app/api-keys.ts). Staff only
-  // until the API has something for a collector to read. The admin flag is
-  // off while impersonating, so none of this works then; while acting for
+  // A person's own API keys (beeline-pnqr.1, src/app/api-keys.ts). Anyone
+  // signed in may open the page, see their keys and revoke them, so that a
+  // person who has lost their staff rights can still end a key that works
+  // (beeline-pnqr.9); making one is staff only until the API has something for
+  // a collector to read. The admin flag is off while impersonating, so making
+  // one does not work then, and the page itself is refused; while acting for
   // someone under a grant, the list is still the signed-in person's and
   // nothing can be made or revoked, because a key signs its holder in as its
   // owner and a delegation does not hand that over.
@@ -852,6 +873,7 @@ export function createApp({
           m={m}
           keys={owner === null ? [] : await listKeys(db, owner)}
           scopes={offeredScopes(await isStaff(c.get("session").personId))}
+          canMake={c.get("admin")}
           created={extra.created}
           problem={extra.problem}
           acting={c.get("acting").actingFor !== null}
@@ -862,7 +884,7 @@ export function createApp({
     );
   };
   app.get("/keys", async (c) => {
-    if (!c.get("admin")) return c.text("Admins only.", 403);
+    if (c.get("acting").impersonating) return c.text(c.get("m").errors.forbidden, 403);
     return showKeys(c);
   });
   app.post("/keys", async (c) => {
@@ -901,10 +923,33 @@ export function createApp({
     return showKeys(c, { created: { key: made.key, name: text("name").trim() } });
   });
   app.post("/keys/:ref/revoke", async (c) => {
-    if (!c.get("admin") || c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
+    if (c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
     const owner = await keyOwner(c);
-    if (owner !== null) await revokeKey(db, owner, c.req.param("ref"));
+    if (owner !== null) {
+      await revokeKey(db, owner, c.req.param("ref"), { login: c.get("session").login, reason: "owner" });
+    }
     return c.redirect("/keys");
+  });
+  // Staff revoking a key of somebody else, from the person's page
+  // (beeline-pnqr.9). The person in the URL must be the key's owner, so a
+  // reference taken from another page revokes nothing. Staff only, and
+  // refused while viewing Beeline as someone (the admin flag is off then) and
+  // while acting for someone.
+  app.post("/people/:id/keys/:ref/revoke", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    // Acting for someone: a key cannot be revoked then, here any more than on /keys.
+    if (c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
+    const m = c.get("m");
+    const person = await personFromUrl(c);
+    if (person === null) return errorResponse(c, "notFound", { message: m.people.notFound });
+    if (person.inat_user_id !== null) {
+      await revokeKey(db, person.inat_user_id, c.req.param("ref"), {
+        login: c.get("session").login,
+        // Staff ending their own key from their own page did it as its owner.
+        reason: person.person_id === c.get("session").personId ? "owner" : "staff",
+      });
+    }
+    return c.redirect(`/people/${encodeURIComponent(personHandle(person))}`);
   });
 
   app.get("/", (c) => dashboardPage(c));
@@ -2221,6 +2266,8 @@ export function createApp({
           atlases={await atlasOptions(db)}
           programs={await programOptions(db)}
           history={await history(person.person_id)}
+          keys={person.inat_user_id === null ? [] : await listKeys(db, person.inat_user_id, "all")}
+          now={new Date()}
           notice={notice}
           problem={problem}
         />,
@@ -2430,7 +2477,7 @@ export function createApp({
         for (const uid of [was, is]) {
           if (uid !== null) {
             await endSessionsFor(db, uid);
-            await revokeKeysFor(db, uid);
+            await revokeKeysFor(db, uid, d.author);
           }
         }
       }

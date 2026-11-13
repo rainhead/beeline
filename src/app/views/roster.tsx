@@ -24,6 +24,8 @@ import {
 import type { PersonChange } from "../../person-change.js";
 import { orcidUrl } from "../../orcid.js";
 import type { Child } from "hono/jsx";
+import type { KeyListing } from "../api-keys.js";
+import { KeysTable } from "./keys.js";
 import {
   Absent,
   AtlasMark,
@@ -578,6 +580,8 @@ export function PersonPage({
   atlases,
   programs,
   history,
+  keys,
+  now,
   notice,
   problem,
 }: {
@@ -587,6 +591,9 @@ export function PersonPage({
   programs: readonly ProgramOption[];
   /** Everything the change log holds about them, newest first (beeline-o22). */
   history: readonly PersonChange[];
+  /** The person's API keys, newest first, including the ones that no longer work. */
+  keys: KeyListing[];
+  now: Date;
   notice?: string;
   problem?: string;
 }) {
@@ -830,6 +837,42 @@ export function PersonPage({
           </p>
         </form>
       </Card>
+
+      {/* Only for a person who has made a key (beeline-pnqr.9). Staff can end
+          one here while its owner cannot be reached; the person's own page of
+          keys is /keys. Never the key, which the store does not hold. */}
+      {keys.length > 0 && (
+        <Card>
+          {keys.some((key) => key.accountChangedAt === null) && (
+            <>
+              <h2>{p.keys.heading}</h2>
+              <Meta block>{p.keys.hint}</Meta>
+              <KeysTable
+                m={m}
+                keys={keys.filter((key) => key.accountChangedAt === null)}
+                revokeAction={(ref) => `${action}/keys/${ref}/revoke`}
+                now={now}
+                audience="staff"
+              />
+            </>
+          )}
+          {/* Made under the account before it changed hands: not this
+              person's, all ended, so no button. Staff may need to trace one. */}
+          {keys.some((key) => key.accountChangedAt !== null) && (
+            <>
+              <h2>{p.keys.earlierHeading}</h2>
+              <Meta block>{p.keys.earlierHint}</Meta>
+              <KeysTable
+                m={m}
+                keys={keys.filter((key) => key.accountChangedAt !== null)}
+                revokeAction={() => null}
+                now={now}
+                audience="staff"
+              />
+            </>
+          )}
+        </Card>
+      )}
 
       {/* Last, under the forms that write to it: history is what you read
           after asking "why is this like that", which is a question you have

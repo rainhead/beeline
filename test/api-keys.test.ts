@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { sql } from "kysely";
 import { describe, expect, it } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
@@ -18,7 +19,7 @@ import {
 } from "../src/app/api-keys.js";
 import { ACTING_COOKIE, IMPERSONATING_COOKIE } from "../src/app/acting.js";
 import { createApp } from "../src/app/server.js";
-import { cookieSessionResolver } from "../src/app/session.js";
+import { cookieSessionResolver, createSession } from "../src/app/session.js";
 import { redact } from "../src/app/error-reporting.js";
 import { OLD_BEELINE_ORIGIN } from "../src/app/old-beeline.js";
 import { createMemoryDb, rows, scratchPaths } from "./helpers.js";
@@ -29,6 +30,8 @@ const unusedInat: InatClient = {
   identity: () => Promise.reject(new Error("not under test")),
 };
 
+/** Revoking as the owner does, for tests that only need a key to stop working. */
+const OWNER = { login: "staff", reason: "owner" } as const;
 const ORIGIN = "http://localhost:3054";
 const STAFF_UID = 111;
 const VOLUNTEER_UID = 222;
@@ -54,6 +57,10 @@ async function fixture({ admin = true, signedIn = true }: { admin?: boolean; sig
   if (admin) await conn.run(`INSERT INTO person_admin (person_id, granted_by) VALUES (${staff}, 'peter')`);
   await conn.run(`INSERT INTO person_delegate (person_id, acts_for_id, granted_by) VALUES (${staff}, ${jane}, 'peter')`);
   const db = createKysely(instance);
+  const cookie = cookieSessionResolver(db, ORIGIN);
+  const who: { current: { personId: number; login: string; inatUserId?: bigint } } = {
+    current: { personId: Number(staff), login: "staff", inatUserId: BigInt(STAFF_UID) },
+  };
   const app = createApp({
     ...(await scratchPaths()),
     db,
@@ -62,9 +69,12 @@ async function fixture({ admin = true, signedIn = true }: { admin?: boolean; sig
     // Signed out, the real resolver: it is the thing that must not learn to
     // read a bearer header, so a stand-in that answers nobody would prove
     // nothing.
+    // With a real session cookie (see `cookieFor`), the real resolver answers;
+    // without one, `who` stands in, and a test may change who that is.
     resolveSession: signedIn
-      ? async () => ({ personId: Number(staff), login: "staff", inatUserId: BigInt(STAFF_UID), iconUrl: null })
-      : cookieSessionResolver(db, ORIGIN),
+      ? async (c) =>
+          c.req.header("cookie")?.includes("beeline_session=") ? cookie(c) : { ...who.current, iconUrl: null }
+      : cookie,
     conn,
   });
   const api = (path: string, key?: string, init: RequestInit = {}) =>
@@ -84,7 +94,9 @@ async function fixture({ admin = true, signedIn = true }: { admin?: boolean; sig
     if ("problem" in made) throw new Error(made.problem);
     return made;
   };
-  return { app, db, conn, api, post, make, staff: Number(staff), volunteer: Number(volunteer) };
+  /** The cookie of a real session for an iNat account, as sign-in would set it. */
+  const cookieFor = async (uid: number) => `beeline_session=${await createSession(db, uid)}`;
+  return { app, db, conn, api, post, make, who, cookieFor, staff: Number(staff), volunteer: Number(volunteer), jane: Number(jane) };
 }
 
 /** The key a page shows after one is made: the only place it ever appears. */
@@ -181,7 +193,7 @@ describe("making and revoking a key on /keys", () => {
     for (let i = 0; i < KEY_LIMIT; i++) made.push(await make(STAFF_UID));
     expect((await post("/keys", { name: "one more", scope: "read", lifetime: "30" })).status).toBe(400);
     // A revoked key no longer counts.
-    await revokeKey(db, STAFF_UID, made[0]!.ref);
+    await revokeKey(db, STAFF_UID, made[0]!.ref, OWNER);
     expect((await post("/keys", { name: "one more", scope: "read", lifetime: "30" })).status).toBe(200);
   });
 
@@ -197,13 +209,6 @@ describe("making and revoking a key on /keys", () => {
     expect(await resolveKey(db, mine.key)).not.toBeNull();
   });
 
-  it("is for staff only, for now", async () => {
-    const { app, post, conn } = await fixture({ admin: false });
-    expect((await app.request("/keys")).status).toBe(403);
-    expect((await post("/keys", { name: "k", scope: "read", lifetime: "30" })).status).toBe(403);
-    expect(await rows(conn, `SELECT count(*)::INTEGER FROM api_key`)).toEqual([[0]]);
-  });
-
   it("makes and revokes nothing while acting for someone else", async () => {
     const { post, make, db, conn } = await fixture();
     const mine = await make(STAFF_UID);
@@ -212,6 +217,321 @@ describe("making and revoking a key on /keys", () => {
     expect((await post(`/keys/${mine.ref}/revoke`, {}, acting)).status).toBe(403);
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM api_key`)).toEqual([[1]]);
     expect(await resolveKey(db, mine.key)).not.toBeNull();
+  });
+});
+
+/** A person's page, as staff see it, with the keys section cut out. */
+const keysSection = (html: string) => /<h2>API keys<\/h2>[\s\S]*?<\/table>/.exec(html)?.[0];
+
+describe("a person who is not staff, on /keys", () => {
+  it("sees their keys and revokes one, and cannot make one", async () => {
+    const { app, post, make, db, conn } = await fixture({ admin: false });
+    const one = await make(STAFF_UID, "read");
+    const two = await make(STAFF_UID, "read");
+    const page = await app.request("/keys");
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain(one.ref);
+    expect(html).toContain(two.ref);
+    expect(html).not.toContain('action="/keys"');
+    expect(html).toContain("Making keys is not open to you yet");
+    expect(shownKey(html)).toBeUndefined();
+
+    expect((await post("/keys", { name: "k", scope: "read", lifetime: "30" })).status).toBe(403);
+    expect(await rows(conn, `SELECT count(*)::INTEGER FROM api_key`)).toEqual([[2]]);
+
+    const res = await post(`/keys/${one.ref}/revoke`);
+    expect(res.status).toBeLessThan(400);
+    expect(await resolveKey(db, one.key)).toBeNull();
+    expect(await resolveKey(db, two.key)).not.toBeNull();
+    const after = await (await app.request("/keys")).text();
+    expect(after).toContain("Revoked");
+  });
+
+  it("is linked to /keys from the account menu when staff, or when they have a key, and not otherwise", async () => {
+    const link = 'href="/keys"';
+    const staff = await fixture();
+    expect(await (await staff.app.request("/")).text()).toContain(link);
+
+    const none = await fixture({ admin: false });
+    expect(await (await none.app.request("/")).text()).not.toContain(link);
+    await none.make(STAFF_UID, "read");
+    expect(await (await none.app.request("/")).text()).toContain(link);
+    // Still there once the key is revoked: the page then says it is revoked.
+    await revokeKey(none.db, STAFF_UID, (await listKeys(none.db, STAFF_UID))[0]!.ref, OWNER);
+    expect(await (await none.app.request("/")).text()).toContain(link);
+    // Not while viewing Beeline as someone else, where /keys refuses.
+    const as = `${IMPERSONATING_COOKIE}=${encodeURIComponent("Vera Volunteer")}`;
+    expect(await (await staff.app.request("/", { headers: { cookie: as } })).text()).not.toContain(link);
+  });
+});
+
+describe("staff and another person's keys", () => {
+  it("shows them on the person's page without the key, and revoking one stops it and says who and why", async () => {
+    const { app, api, post, make, db, volunteer } = await fixture();
+    const a = await make(VOLUNTEER_UID, "read");
+    const b = await make(VOLUNTEER_UID, "read");
+    const html = await (await app.request(`/people/${volunteer}`)).text();
+    const section = keysSection(html)!;
+    expect(section).toContain(a.ref);
+    expect(section).toContain(b.ref);
+    expect(section).toContain(`/people/vera/keys/${a.ref}/revoke`);
+    expect(html).not.toContain(a.key);
+    expect(shownKey(html)).toBeUndefined();
+    expect((await api("/api/v1/me", a.key)).status).toBe(200);
+
+    const res = await post(`/people/${volunteer}/keys/${a.ref}/revoke`);
+    expect(res.status).toBeLessThan(400);
+    expect((await api("/api/v1/me", a.key)).status).toBe(401);
+    expect((await api("/api/v1/me", b.key)).status).toBe(200);
+    const row = (await listKeys(db, VOLUNTEER_UID)).find((k) => k.ref === a.ref)!;
+    expect([row.revokedBy, row.revokedReason]).toEqual(["staff", "staff"]);
+
+    const after = keysSection(await (await app.request(`/people/${volunteer}`)).text())!;
+    expect(after).toContain("Revoked");
+    expect(after).toContain("by staff");
+    expect(after).not.toContain(`/people/vera/keys/${a.ref}/revoke`);
+    expect(after).toContain(`/people/vera/keys/${b.ref}/revoke`);
+  });
+
+  it("show no section for a person with no keys", async () => {
+    const { app, volunteer } = await fixture();
+    expect(keysSection(await (await app.request(`/people/${volunteer}`)).text())).toBeUndefined();
+  });
+
+  it("do not revoke a key that belongs to a different person than the page's", async () => {
+    const { post, make, db, volunteer, staff } = await fixture();
+    const staffKey = await make(STAFF_UID, "read");
+    const res = await post(`/people/${volunteer}/keys/${staffKey.ref}/revoke`);
+    expect(res.status).toBeLessThan(400);
+    expect(await resolveKey(db, staffKey.key)).not.toBeNull();
+    expect((await listKeys(db, STAFF_UID))[0]!.revokedBy).toBeNull();
+    // And the other way round: the page of the key's own owner does it.
+    expect((await post(`/people/${staff}/keys/${staffKey.ref}/revoke`)).status).toBeLessThan(400);
+    expect(await resolveKey(db, staffKey.key)).toBeNull();
+  });
+
+  it("cannot be revoked by a volunteer, or by staff while viewing Beeline as someone", async () => {
+    const volunteerSide = await fixture({ admin: false });
+    const key = await volunteerSide.make(VOLUNTEER_UID, "read");
+    expect((await volunteerSide.post(`/people/${volunteerSide.volunteer}/keys/${key.ref}/revoke`)).status).toBe(403);
+    expect(await resolveKey(volunteerSide.db, key.key)).not.toBeNull();
+
+    const { post, make, db, volunteer } = await fixture();
+    const theirs = await make(VOLUNTEER_UID, "read");
+    const as = `${IMPERSONATING_COOKIE}=${encodeURIComponent("Vera Volunteer")}`;
+    expect((await post(`/people/${volunteer}/keys/${theirs.ref}/revoke`, {}, as)).status).toBe(403);
+    expect(await resolveKey(db, theirs.key)).not.toBeNull();
+  });
+
+  it("has no button for a key already revoked or expired, and a second revoke changes nothing", async () => {
+    const { app, post, make, conn, db, volunteer } = await fixture();
+    const done = await make(VOLUNTEER_UID, "read");
+    const old = await make(VOLUNTEER_UID, "read");
+    await conn.run(`UPDATE api_key SET expires_at = current_timestamp - INTERVAL 1 MINUTE WHERE key_sha256 = '${hashKey(old.key)}'`);
+    await post(`/people/${volunteer}/keys/${done.ref}/revoke`);
+    const first = (await listKeys(db, VOLUNTEER_UID)).find((k) => k.ref === done.ref)!;
+    const section = keysSection(await (await app.request(`/people/${volunteer}`)).text())!;
+    expect(section).not.toContain(`/keys/${done.ref}/revoke`);
+    expect(section).not.toContain(`/keys/${old.ref}/revoke`);
+    // Revoked a second time, by the owner: nothing is overwritten.
+    expect(await revokeKey(db, VOLUNTEER_UID, done.ref, { login: "vera", reason: "owner" })).toBe(false);
+    await post(`/people/${volunteer}/keys/${done.ref}/revoke`);
+    await post(`/people/${volunteer}/keys/${old.ref}/revoke`);
+    const again = await listKeys(db, VOLUNTEER_UID);
+    expect(again.find((k) => k.ref === done.ref)).toEqual(first);
+    expect(again.find((k) => k.ref === old.ref)!.revokedBy).toBeNull();
+  });
+});
+
+describe("who revoked a key, and why", () => {
+  const record = async (db: Awaited<ReturnType<typeof fixture>>["db"], uid: number) => {
+    const [k] = await listKeys(db, uid, "all");
+    return [k!.revokedBy, k!.revokedReason];
+  };
+
+  it("is the owner, on /keys", async () => {
+    const { post, make, db } = await fixture();
+    const key = await make(STAFF_UID);
+    await post(`/keys/${key.ref}/revoke`);
+    expect(await record(db, STAFF_UID)).toEqual(["staff", "owner"]);
+  });
+
+  it("is the staff member who revoked it, on the person's page", async () => {
+    const { post, make, db, volunteer } = await fixture();
+    const key = await make(VOLUNTEER_UID, "read");
+    await post(`/people/${volunteer}/keys/${key.ref}/revoke`);
+    expect(await record(db, VOLUNTEER_UID)).toEqual(["staff", "staff"]);
+  });
+
+  it("is the staff member who unlinked the account, as an account change", async () => {
+    const { post, make, db, volunteer } = await fixture();
+    await make(VOLUNTEER_UID, "read");
+    await post(`/people/${volunteer}/account`, { inat_user_id: "", reason: "wrong person" });
+    expect(await record(db, VOLUNTEER_UID)).toEqual(["staff", "account_changed"]);
+  });
+
+  it("is nobody, when the nightly step finds the account gone", async () => {
+    const { make, db, conn } = await fixture();
+    await make(VOLUNTEER_UID, "read");
+    await conn.run(`DELETE FROM inat_account WHERE inat_user_id = ${VOLUNTEER_UID}`);
+    await revokeOrphanedKeys(db);
+    expect(await record(db, VOLUNTEER_UID)).toEqual([null, "account_gone"]);
+  });
+
+  it("is told on /keys in words, and only when it was not the owner", async () => {
+    const { app, make, db } = await fixture({ admin: false });
+    const owner = await make(STAFF_UID, "read");
+    const changed = await make(STAFF_UID, "read");
+    const gone = await make(STAFF_UID, "read");
+    const byStaff = await make(STAFF_UID, "read");
+    await revokeKey(db, STAFF_UID, owner.ref, { login: "staff", reason: "owner" });
+    await revokeKey(db, STAFF_UID, byStaff.ref, { login: "samstaff", reason: "staff" });
+    await db.updateTable("api_key").set({ revoked_at: sql`current_timestamp`, revoked_by: "samstaff", revoked_reason: "account_changed" }).where("key_sha256", "=", hashKey(changed.key)).execute();
+    await db.updateTable("api_key").set({ revoked_at: sql`current_timestamp`, revoked_reason: "account_gone" }).where("key_sha256", "=", hashKey(gone.key)).execute();
+    const html = await (await app.request("/keys")).text();
+    expect(html).toContain("by samstaff<");
+    expect(html).toContain("by samstaff: the iNaturalist account changed");
+    expect(html).toContain("the iNaturalist account is no longer linked to anyone");
+    expect(html).toMatch(/Revoked [A-Z][a-z]{2} \d+, \d{4}<\/span>/);
+  });
+});
+
+describe("keys of an account that changed hands", () => {
+  const get = (app: Awaited<ReturnType<typeof fixture>>["app"], path: string, cookie: string) =>
+    app.request(path, { headers: { cookie } });
+
+  it("are not shown to the account's new holder, however the old holder's keys had ended", async () => {
+    const { app, post, make, db, conn, volunteer, jane, cookieFor } = await fixture();
+    const working = await make(VOLUNTEER_UID, "read");
+    const byOwner = await make(VOLUNTEER_UID, "read");
+    const expired = await make(VOLUNTEER_UID, "read");
+    await revokeKey(db, VOLUNTEER_UID, byOwner.ref, { login: "vera", reason: "owner" });
+    await conn.run(`UPDATE api_key SET expires_at = current_timestamp - INTERVAL 1 MINUTE WHERE key_sha256 = '${hashKey(expired.key)}'`);
+    const before = await listKeys(db, VOLUNTEER_UID);
+    const ownerRevokedAt = before.find((k) => k.ref === byOwner.ref)!.revokedAt;
+
+    // Staff move the account from Vera to Jane: unlink it, then link it to her.
+    await post(`/people/${volunteer}/account`, { inat_user_id: "", reason: "not Vera's" });
+    const moved = await post(`/people/${jane}/account`, { inat_user_id: String(VOLUNTEER_UID), login: "vera", reason: "Jane's account" });
+    expect(moved.status).toBeLessThan(400);
+    expect(await rows(conn, `SELECT person_id = ${jane} FROM inat_account WHERE inat_user_id = ${VOLUNTEER_UID}`)).toEqual([[true]]);
+
+    // The working key is ended; the two that had already ended keep their own story.
+    const after = await listKeys(db, VOLUNTEER_UID, "all");
+    const of = (ref: string) => after.find((k) => k.ref === ref)!;
+    expect([of(working.ref).revokedBy, of(working.ref).revokedReason]).toEqual(["staff", "account_changed"]);
+    expect([of(byOwner.ref).revokedBy, of(byOwner.ref).revokedReason]).toEqual(["vera", "owner"]);
+    expect(of(byOwner.ref).revokedAt).toEqual(ownerRevokedAt);
+    expect([of(expired.ref).revokedAt, of(expired.ref).revokedReason]).toEqual([null, null]);
+    expect(after.every((k) => k.accountChangedAt !== null)).toBe(true);
+
+    // Jane signs in with a real session. She is not staff.
+    const jc = await cookieFor(VOLUNTEER_UID);
+    const keys = await (await get(app, "/keys", jc)).text();
+    for (const k of [working, byOwner, expired]) expect(keys).not.toContain(k.ref);
+    expect(keys).not.toContain(">test<");
+    expect(keys).toContain("You have not made a key.");
+    expect(await (await get(app, "/", jc)).text()).not.toContain('href="/keys"');
+
+    // Staff see them on Jane's page, marked as made before, with no button.
+    const html = await (await app.request(`/people/${jane}`)).text();
+    expect(html).toContain("Made before this account was linked to this person");
+    for (const k of [working, byOwner, expired]) expect(html).toContain(k.ref);
+    expect(html).not.toContain("/keys/" + working.ref + "/revoke");
+    expect(html).toContain("by its owner");
+    // Vera's page no longer lists them as hers: she has no account now.
+    expect(await (await app.request(`/people/${volunteer}`)).text()).not.toContain(working.ref);
+  });
+
+  it("keep the same story when the person is unlinked and linked again to the same account", async () => {
+    const { app, post, make, db, volunteer, cookieFor } = await fixture();
+    const old = await make(VOLUNTEER_UID, "read");
+    await post(`/people/${volunteer}/account`, { inat_user_id: "", reason: "unlink" });
+    await post(`/people/${volunteer}/account`, { inat_user_id: String(VOLUNTEER_UID), login: "vera", reason: "relink" });
+    const vc = await cookieFor(VOLUNTEER_UID);
+    // Nothing of theirs on /keys, and no link; a key made after the relink is theirs.
+    expect(await (await app.request("/keys", { headers: { cookie: vc } })).text()).not.toContain(old.ref);
+    expect(await (await app.request("/", { headers: { cookie: vc } })).text()).not.toContain('href="/keys"');
+    const fresh = await make(VOLUNTEER_UID, "read");
+    const page = await (await app.request("/keys", { headers: { cookie: vc } })).text();
+    expect(page).toContain(fresh.ref);
+    expect(page).not.toContain(old.ref);
+    expect(await (await app.request("/", { headers: { cookie: vc } })).text()).toContain('href="/keys"');
+    const staffView = await (await app.request(`/people/${volunteer}`)).text();
+    expect(staffView).toContain("Made before this account was linked to this person");
+    expect(staffView).toContain(old.ref);
+    expect((await listKeys(db, VOLUNTEER_UID, "all")).find((k) => k.ref === old.ref)!.revokedReason).toBe("account_changed");
+  });
+
+  it("are stamped by the nightly step too, without restamping a key that had ended", async () => {
+    const { make, db, conn } = await fixture();
+    const expired = await make(VOLUNTEER_UID, "read");
+    const gone = await make(VOLUNTEER_UID, "read");
+    await conn.run(`UPDATE api_key SET expires_at = current_timestamp - INTERVAL 1 MINUTE WHERE key_sha256 = '${hashKey(expired.key)}'`);
+    await conn.run(`DELETE FROM inat_account WHERE inat_user_id = ${VOLUNTEER_UID}`);
+    await revokeOrphanedKeys(db);
+    const all = await listKeys(db, VOLUNTEER_UID, "all");
+    expect(all.every((k) => k.accountChangedAt !== null)).toBe(true);
+    expect(all.find((k) => k.ref === gone.ref)!.revokedReason).toBe("account_gone");
+    expect(all.find((k) => k.ref === expired.ref)!.revokedReason).toBeNull();
+    expect(await listKeys(db, VOLUNTEER_UID)).toEqual([]);
+  });
+});
+
+describe("more on who may see and revoke", () => {
+  it("lets a person who is not staff revoke only their own keys: someone else's reference revokes nothing", async () => {
+    const { post, make, db } = await fixture({ admin: false });
+    const staffs = await make(STAFF_UID, "read");
+    const others = await make(VOLUNTEER_UID, "read");
+    expect((await post(`/keys/${others.ref}/revoke`)).status).toBeLessThan(400);
+    expect(await resolveKey(db, others.key)).not.toBeNull();
+    expect((await listKeys(db, VOLUNTEER_UID))[0]!.revokedAt).toBeNull();
+    expect(await resolveKey(db, staffs.key)).not.toBeNull();
+  });
+
+  it("works for a session with no iNat user on it, and a person with no account has the page and no link", async () => {
+    const { app, make, who, jane, conn, staff } = await fixture({ admin: false });
+    who.current = { personId: staff, login: "staff" };
+    expect(await (await app.request("/")).text()).not.toContain('href="/keys"');
+    const k = await make(STAFF_UID, "read");
+    // The account is looked up from the person when the session carries none.
+    expect(await (await app.request("/")).text()).toContain('href="/keys"');
+    expect(await (await app.request("/keys")).text()).toContain(k.ref);
+    who.current = { personId: jane, login: "jane" };
+    const page = await app.request("/keys");
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("You have not made a key.");
+    expect(await (await app.request("/")).text()).not.toContain('href="/keys"');
+    expect(await rows(conn, `SELECT count(*)::INTEGER FROM inat_account WHERE person_id = ${jane}`)).toEqual([[0]]);
+  });
+
+  it("shows the acting notice as well as the not-yet notice to a person who is not staff acting for someone", async () => {
+    const { app, conn, staff, jane, make } = await fixture({ admin: false });
+    await conn.run(`DELETE FROM person_delegate`);
+    await conn.run(`INSERT INTO person_delegate (person_id, acts_for_id, granted_by) VALUES (${staff}, ${jane}, 'peter')`);
+    const mine = await make(STAFF_UID, "read");
+    const acting = `${ACTING_COOKIE}=${encodeURIComponent("Jane Pope")}`;
+    const html = await (await app.request("/keys", { headers: { cookie: acting } })).text();
+    expect(html).toContain("You are acting for someone else");
+    expect(html).toContain("Making keys is not open to you yet");
+    expect(html).not.toContain(`/keys/${mine.ref}/revoke`);
+  });
+
+  it("refuses staff revoking a key through the person's page while acting for someone", async () => {
+    const { post, make, db, staff } = await fixture();
+    const mine = await make(STAFF_UID);
+    const acting = `${ACTING_COOKIE}=${encodeURIComponent("Jane Pope")}`;
+    expect((await post(`/people/${staff}/keys/${mine.ref}/revoke`, {}, acting)).status).toBe(403);
+    expect(await resolveKey(db, mine.key)).not.toBeNull();
+  });
+
+  it("records the owner when staff revoke their own key from their own person page", async () => {
+    const { post, make, db, staff } = await fixture();
+    const mine = await make(STAFF_UID);
+    await post(`/people/${staff}/keys/${mine.ref}/revoke`);
+    const [k] = await listKeys(db, STAFF_UID);
+    expect([k!.revokedBy, k!.revokedReason]).toEqual(["staff", "owner"]);
   });
 });
 
@@ -236,7 +556,7 @@ describe("the gate for /api/v1", () => {
     expect((await api("/api/v1/me", expired.key)).status).toBe(401);
 
     const revoked = await make(STAFF_UID);
-    expect(await revokeKey(db, STAFF_UID, revoked.ref)).toBe(true);
+    expect(await revokeKey(db, STAFF_UID, revoked.ref, OWNER)).toBe(true);
     expect((await api("/api/v1/me", revoked.key)).status).toBe(401);
 
     const unlinked = await make(VOLUNTEER_UID, "read");
@@ -371,7 +691,7 @@ describe("saving an account that does not change", () => {
     // A different account is a change: the old account's keys go.
     await post(`/people/${volunteer}/account`, { inat_user_id: "4242", login: "newvera", reason: "new account" });
     expect(await resolveKey(db, theirs.key)).toBeNull();
-    expect((await listKeys(db, VOLUNTEER_UID))[0]!.revokedAt).not.toBeNull();
+    expect((await listKeys(db, VOLUNTEER_UID, "all"))[0]!.revokedAt).not.toBeNull();
   });
 });
 
@@ -390,7 +710,7 @@ describe("keys of an account that stops meaning what it meant", () => {
     const mine = await make(STAFF_UID);
     const res = await post(`/people/${volunteer}/account`, { inat_user_id: "", reason: "wrong person" });
     expect(res.status).toBeLessThan(400);
-    expect((await listKeys(db, VOLUNTEER_UID))[0]!.revokedAt).not.toBeNull();
+    expect((await listKeys(db, VOLUNTEER_UID, "all"))[0]!.revokedAt).not.toBeNull();
     expect(await resolveKey(db, theirs.key)).toBeNull();
     expect(await resolveKey(db, mine.key)).not.toBeNull();
   });
@@ -401,7 +721,7 @@ describe("keys of an account that stops meaning what it meant", () => {
     const a = await make(VOLUNTEER_UID, "read");
     const b = await make(VOLUNTEER_UID, "read");
     const other = await make(STAFF_UID);
-    await revokeKeysFor(db, VOLUNTEER_UID);
+    await revokeKeysFor(db, VOLUNTEER_UID, "staff");
     // The account is then linked to another person: the old keys stay dead.
     await conn.run(`DELETE FROM inat_account WHERE inat_user_id = ${STAFF_UID}`);
     await conn.run(`UPDATE inat_account SET person_id = ${staff} WHERE inat_user_id = ${VOLUNTEER_UID}`);
@@ -417,7 +737,7 @@ describe("keys of an account that stops meaning what it meant", () => {
     const kept = await make(STAFF_UID);
     await conn.run(`DELETE FROM inat_account WHERE inat_user_id = ${VOLUNTEER_UID}`);
     await revokeOrphanedKeys(db);
-    expect((await listKeys(db, VOLUNTEER_UID))[0]!.revokedAt).not.toBeNull();
+    expect((await listKeys(db, VOLUNTEER_UID, "all"))[0]!.revokedAt).not.toBeNull();
     expect(await resolveKey(db, kept.key)).not.toBeNull();
     // Linking the account again does not bring the key back.
     await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) SELECT entity_id, ${VOLUNTEER_UID}, 'vera' FROM person WHERE display_name = 'Vera Volunteer'`);

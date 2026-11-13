@@ -15,6 +15,8 @@ export interface PageEnv {
   session: Session;
   /** Whether this session may see the admin surface (/jobs, /people, beeline-6va). */
   admin: boolean;
+  /** Whether the account menu links to /keys: staff, and anyone who has made a key (src/app/server.tsx). */
+  keysLink: boolean;
   /**
    * Whose records `mine` means, and everyone this session could switch to
    * (beeline-oyl). Empty for almost everybody: a grant is a staff decision
@@ -276,8 +278,8 @@ export function Layout(props: {
                   ))}
                 </div>
               )}
-              {/* Staff only until the API has something for a collector to read (beeline-pnqr.1). */}
-              {env.admin && (
+              {/* Staff, who can make keys, and anyone who has made one, so a person who has lost staff rights can still revoke it (beeline-pnqr.9). */}
+              {env.keysLink && (
                 <div class="menu-section">
                   <a href="/keys">{m.layout.apiKeys}</a>
                 </div>

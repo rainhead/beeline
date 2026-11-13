@@ -1867,9 +1867,10 @@ export const en = {
   },
 
   /**
-   * A person's own API keys (/keys, beeline-pnqr.1). Staff only for now, but
-   * written for anyone, since collectors get the page once the API has
-   * something for them to read.
+   * A person's own API keys (/keys, beeline-pnqr.1). Anyone may see their keys
+   * and revoke them; making one is staff only for now, and collectors get that
+   * once the API has something for them to read. Staff also see these keys on
+   * a person's page (beeline-pnqr.9).
    */
   keys: {
     title: "API keys",
@@ -1891,7 +1892,30 @@ export const en = {
       edit: { label: "Edit", means: "see the records you can see, and correct your own samples" },
       staff: { label: "Staff", means: "do what you can do as staff, for as long as you are staff" },
     },
-    revoked: (when: string) => `Revoked ${when}`,
+    /**
+     * Who revoked a key and why. On the owner's own page an owner's revocation
+     * says only when ("Revoked 12 Nov"); a staff member's names them ("Revoked
+     * 12 Nov by samstaff"), and a change of account says so ("Revoked 12 Nov
+     * by samstaff: the iNaturalist account changed"). On a person's page, for
+     * staff, it always says who, "by its owner" included. A key revoked before
+     * the reason was kept has neither, and says only when.
+     */
+    revoked: (
+      when: string,
+      by: string | null,
+      reason: "owner" | "staff" | "account_changed" | "account_gone" | null,
+      audience: "owner" | "staff" = "owner",
+    ) => {
+      const who =
+        reason === "owner" ? (audience === "staff" ? " by its owner" : "") : by === null || reason === null ? "" : ` by ${by}`;
+      const why =
+        reason === "account_changed"
+          ? ": the iNaturalist account changed"
+          : reason === "account_gone"
+            ? ": the iNaturalist account is no longer linked to anyone"
+            : "";
+      return `Revoked ${when}${who}${why}`;
+    },
     expired: (when: string) => `Expired ${when}`,
     neverUsed: "Never",
     revoke: "Revoke",
@@ -1914,6 +1938,7 @@ export const en = {
       lifetimeHint: "A key stops working after this, and you make a new one.",
       days: (days: number) => `${days} days`,
       submit: "Make key",
+      notYet: "Making keys is not open to you yet. You can still see the keys you have made and revoke them.",
       acting: "You are acting for someone else. Keys belong to the person signed in, so stop acting for them to make or revoke a key.",
     },
   },
@@ -2327,6 +2352,17 @@ export const en = {
      * raise its questions with. Responsibility, not access, which the hint
      * says because the card sits beside admin rights and could be read as one.
      */
+    /**
+     * The person's API keys (beeline-pnqr.9), shown only when they have made
+     * one. The columns and the revoked line are the keys page's own.
+     */
+    keys: {
+      heading: "API keys",
+      hint: "The keys this person has made, never the keys themselves. If one may have leaked and this person cannot be reached, revoke it here: it stops working at once, and the list says who revoked it.",
+      earlierHeading: "Made before this account was linked to this person",
+      earlierHint:
+        "These keys were made under this iNaturalist account before it was unlinked or linked to someone else, so they are not this person's. None of them works any more. They are listed so that staff can trace one.",
+    },
     leadership: "Program leads",
     leadershipHint:
       "The programs this person leads: their work is this person's to take up, and their questions this person's to answer. A program can have several leads. Leading a program grants no access — that is admin rights, below.",

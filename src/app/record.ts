@@ -13,6 +13,7 @@ import { labelName } from "../person-name.js";
 import type { LocalityBasis } from "../locality-rule.js";
 import { observationGone, ownSamplesSql, placeColumns, withheld, type ListedCollector, type Reader } from "./listings.js";
 import { readSampleChanges, sampleHistory, SAMPLE_STATE_SQL, type SampleChange } from "../sample-change.js";
+import { fromOldRecords } from "./sample-method.js";
 
 /**
  * One record: the query layer behind /samples/:id and /specimens/:id.
@@ -134,6 +135,8 @@ export interface SampleDetail {
   location_withheld: boolean;
   /** At least one label on paper (schema/155): the locality no longer follows upstream. */
   printed: boolean;
+  /** Built from the old Beeline's records, which a staff correction of its method names (beeline-p8y1). */
+  from_old_records: boolean;
   /**
    * A locality staff set over the observation's (beeline-649), with its
    * provenance: who, why, and — where the observation has since moved to a
@@ -524,6 +527,7 @@ async function hydrate(db: Kysely<Database>, raw: RawSample): Promise<SampleDeta
           },
     label_diverged: hidden || !row.printed ? null : await labelDiverged(db, Number(row.sample_id)),
     printed: Boolean(row.printed),
+    from_old_records: await fromOldRecords(db, Number(row.sample_id)),
     sample_id: Number(row.sample_id),
     specimen_count: Number(row.specimen_count),
     ...(hidden

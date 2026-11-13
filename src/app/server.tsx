@@ -135,6 +135,8 @@ import { DesignImagery } from "./views/design/imagery.js";
 import { MessagesProof } from "./views/design/messages-proof.js";
 import { QcProof } from "./views/design/qc-proof.js";
 import { applySampleEdit, loadEditableSample } from "./sample-edit.js";
+import { setSampleMethod } from "./sample-method.js";
+import { onSample } from "./sample-queue.js";
 import {
   adoptSuggestedLocality,
   setStaffCoordinates,
@@ -1218,69 +1220,73 @@ export function createApp({
     return c.html(await page(c, m.sampleEdit.title, <SampleEditForm m={m} sample={sample} />));
   });
 
-  app.post("/samples/:id/edit", async (c) => {
-    const m = c.get("m");
-    // Impersonation is a way of looking, not of acting (beeline-jjt): the
-    // form renders, since the volunteer would see it, but a save is refused.
-    // Delegation is the mechanism for editing on somebody's behalf.
-    if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
-    // The collector gate follows the switch, but the AUTHOR of the correction
-    // is whoever actually made it — acting for Robert does not make Robert
-    // the one who typed it (beeline-oyl: reach, never credit).
-    const session = c.get("session");
-    const sample = await loadEditableSample(db, Number(c.req.param("id")), c.get("acting").personId);
-    if (sample === undefined) return errorResponse(c, "notFound", { heading: m.sampleEdit.notEditableHeading, message: m.sampleEdit.notEditable });
-    const body = await c.req.parseBody();
-    // Absent fields stay untouched (applySampleEdit's contract); only strings pass.
-    const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : undefined);
-    const names = ["locality", "country", "state_province", "county", "protocol"] as const;
-    const values = Object.fromEntries(names.map((name) => [name, field(name)]).filter(([, v]) => v !== undefined));
-    const bases = Object.fromEntries(
-      names.map((name) => [name, field(`base:${name}`)]).filter(([, v]) => v !== undefined),
-    );
-    const result = await applySampleEdit(db, corrections, sample, {
-      values,
-      bases,
-      note: field("note") ?? "",
-      author: session.login,
-    });
-    if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
-    // Record what just changed, credited to whoever typed it — the fact a
-    // later pass over the store could never recover (ADR 0007). Narrowed to
-    // this sample, so the author is charged with this sample's pending
-    // differences and no other sample's; in the rare case another writer
-    // changed THIS sample and failed to record, that change rides along
-    // under this author's name — the cost of recording state rather than
-    // intent, and bounded to one sample by the narrowing. A failure here is
-    // reported and left for the next pass, which attributes the edit to
-    // itself — the author and reason are not lost with it, because
-    // applySampleEdit durably wrote them to the corrections overlay before
-    // the store was touched. The log records; it never gates the edit.
-    if (result.outcome === "saved") {
-      try {
-        const recorded = await recordSampleChanges(kyselyReader(db), samplePaths, {
-          source: "app",
-          author: session.login,
-          reason: field("note")?.trim() || undefined,
-          where: `s.entity_id = ${sample.entity_id}`,
-        });
-        // A missing snapshot turns this pass into the baseline, which
-        // records the edit as part of "the corpus as it stands" — no entry,
-        // no author. Say so: silence here would hide that the one fact no
-        // later pass can recover went unrecorded (the corrections overlay
-        // still holds it, durably, from applySampleEdit).
-        if (recorded.baselined) {
-          console.warn(
-            `sample edit by '${session.login}' fell on a missing snapshot and was baselined, not recorded; ` +
-              `the corrections overlay carries the attribution`,
-          );
+  // One at a time for the sample: its corrections and the change log
+  // (src/app/sample-queue.ts).
+  app.post("/samples/:id/edit", (c) =>
+    onSample(Number(c.req.param("id")), async () => {
+      const m = c.get("m");
+      // Impersonation is a way of looking, not of acting (beeline-jjt): the
+      // form renders, since the volunteer would see it, but a save is refused.
+      // Delegation is the mechanism for editing on somebody's behalf.
+      if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+      // The collector gate follows the switch, but the AUTHOR of the correction
+      // is whoever actually made it — acting for Robert does not make Robert
+      // the one who typed it (beeline-oyl: reach, never credit).
+      const session = c.get("session");
+      const sample = await loadEditableSample(db, Number(c.req.param("id")), c.get("acting").personId);
+      if (sample === undefined) return errorResponse(c, "notFound", { heading: m.sampleEdit.notEditableHeading, message: m.sampleEdit.notEditable });
+      const body = await c.req.parseBody();
+      // Absent fields stay untouched (applySampleEdit's contract); only strings pass.
+      const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : undefined);
+      const names = ["locality", "country", "state_province", "county", "protocol"] as const;
+      const values = Object.fromEntries(names.map((name) => [name, field(name)]).filter(([, v]) => v !== undefined));
+      const bases = Object.fromEntries(
+        names.map((name) => [name, field(`base:${name}`)]).filter(([, v]) => v !== undefined),
+      );
+      const result = await applySampleEdit(db, corrections, sample, {
+        values,
+        bases,
+        note: field("note") ?? "",
+        author: session.login,
+      });
+      if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
+      // Record what just changed, credited to whoever typed it — the fact a
+      // later pass over the store could never recover (ADR 0007). Narrowed to
+      // this sample, so the author is charged with this sample's pending
+      // differences and no other sample's; in the rare case another writer
+      // changed THIS sample and failed to record, that change rides along
+      // under this author's name — the cost of recording state rather than
+      // intent, and bounded to one sample by the narrowing. A failure here is
+      // reported and left for the next pass, which attributes the edit to
+      // itself — the author and reason are not lost with it, because
+      // applySampleEdit durably wrote them to the corrections overlay before
+      // the store was touched. The log records; it never gates the edit.
+      if (result.outcome === "saved") {
+        try {
+          const recorded = await recordSampleChanges(kyselyReader(db), samplePaths, {
+            source: "app",
+            author: session.login,
+            reason: field("note")?.trim() || undefined,
+            where: `s.entity_id = ${sample.entity_id}`,
+          });
+          // A missing snapshot turns this pass into the baseline, which
+          // records the edit as part of "the corpus as it stands" — no entry,
+          // no author. Say so: silence here would hide that the one fact no
+          // later pass can recover went unrecorded (the corrections overlay
+          // still holds it, durably, from applySampleEdit).
+          if (recorded.baselined) {
+            console.warn(
+              `sample edit by '${session.login}' fell on a missing snapshot and was baselined, not recorded; ` +
+                `the corrections overlay carries the attribution`,
+            );
+          }
+        } catch (err) {
+          console.warn(`could not record the sample edit: ${(err as Error).message}`);
         }
-      } catch (err) {
-        console.warn(`could not record the sample edit: ${(err as Error).message}`);
       }
-    }
-    return c.redirect("/");
-  });
+      return c.redirect("/");
+    }),
+  );
 
   // A collector makes the locality Beeline names from the coordinates the
   // sample's own in one click, from a flag on the front page (beeline-7i6).
@@ -1345,86 +1351,136 @@ export function createApp({
   // own, a collector never over a locality somebody else set, and nobody a
   // printed sample. `back` that is not the listing or a sample's page goes to
   // the listing itself, so the field cannot send anyone elsewhere.
-  app.post("/samples/:id/place", async (c) => {
+  // One at a time for the sample: its corrections, where it has no
+  // observation, and the change log (src/app/sample-queue.ts).
+  app.post("/samples/:id/place", (c) =>
+    onSample(Number(c.req.param("id")), async () => {
+      const m = c.get("m");
+      const t = m.suggestedLocality;
+      if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
+      const admin = c.get("admin");
+      const session = c.get("session");
+      const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, admin ? STAFF_READER : readerOf(c));
+      if (sample === null) return errorResponse(c, "notFound");
+      const enteredHere = conn !== undefined && (await loadTrapSample(conn, sample.sample_id)) !== null;
+      if (!sample.mine && !admin && !enteredHere) return errorResponse(c, "notFound");
+      // A printed sample's locality is what its labels say, so only staff
+      // change it, correcting the record before a reprint, as the staff
+      // locality form let them (beeline-649). A sample entered in Beeline is
+      // refused below whoever asks: its own form refuses it too.
+      if (sample.printed && !admin) return c.text(t.printed, 409);
+      const body = await c.req.parseBody();
+      const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+      const backRaw = field("back");
+      // Back to the listing or to the sample's own page, whichever it came from.
+      const back = /^\/samples(\/\d+)?(\?|$)/.test(backRaw) ? backRaw : "/samples";
+      // A sample entered in Beeline has no old Beeline record to correct: its
+      // locality is written directly, by whoever may edit it, any name they
+      // like, as on its own form (beeline-3vs.5).
+      if (enteredHere && conn !== undefined && printWriter !== undefined) {
+        if (!(await mayEditTrapSample(conn, sample.sample_id, c.get("acting").personId, admin))) return errorResponse(c, "notFound");
+        const name = field("locality").trim();
+        // Blank clears it, as on the form.
+        if (name === (sample.locality ?? "")) return c.redirect(back);
+        if ((await setTrapSampleLocality(printWriter, sample.sample_id, name)) === "printed") return c.text(t.printed, 409);
+        await recordTrapChange(c, sample.sample_id);
+        return c.redirect(back);
+      }
+      const deps = { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections };
+      const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
+      const linked = sample.inat_observation_id !== null;
+      const standing = linked ? await standingLocalityAuthor(sampleOverlay, sample.inat_observation_id!) : null;
+      // What the observation itself yields, as promotion would write it.
+      const observed = linked
+        ? ((
+            await sql<{ locality: string | null }>`SELECT loc.locality FROM sample s
+              LEFT JOIN observation_locality loc ON loc.inat_id = s.inat_observation_id
+              WHERE s.entity_id = ${sample.sample_id}`.execute(db)
+          ).rows[0]?.locality ?? null)
+        : null;
+      const name = field("locality").trim();
+      const offered = [...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]), ...sample.locality_alternatives];
+      const suggestion = offered.find((o) => o.locality === name);
+      let result;
+      let reason: string | undefined;
+      if (linked && (name === "" || name === observed)) {
+        // Follow iNaturalist again: take away whatever locality stands.
+        if (standing === null) return c.redirect(back);
+        if (standing !== session.login && !admin) return c.text(t.notYours, 403);
+        result = await setStaffLocality(deps, target, { value: "", remove: true, note: "", author: session.login });
+      } else if (name === "" || name === sample.locality) {
+        return c.redirect(back);
+      } else if (suggestion !== undefined) {
+        if (standing !== null && standing !== session.login && !admin) return c.text(t.setByOther, 403);
+        reason = t.reason(t.basis[suggestion.basis]);
+        result = await adoptSuggestedLocality(deps, target, { suggestion: suggestion.locality, reason, author: session.login });
+      } else {
+        if (!admin) return c.text(m.listings.samples.placeEdit.onlyOffered, 403);
+        result = await setStaffLocality(deps, target, { value: name, remove: false, note: "", author: session.login });
+      }
+      if (result.outcome === "invalid") return c.text(result.problem, 400);
+      if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
+      if (result.outcome === "unresolved") return c.text(result.reason, 409);
+      if (result.outcome === "saved" || result.outcome === "removed") {
+        try {
+          await recordSampleChanges(kyselyReader(db), samplePaths, {
+            source: "app",
+            author: session.login,
+            reason,
+            where: `s.entity_id = ${sample.sample_id}`,
+          });
+        } catch (err) {
+          console.warn(`could not record the locality change: ${(err as Error).message}`);
+        }
+      }
+      return c.redirect(back);
+    }),
+  );
+
+  // How a sample from the old Beeline was collected: its method's words and
+  // the day collecting ended (beeline-p8y1). Staff only, refused while
+  // impersonating; the correction names the old records, so a sample with
+  // none is refused.
+  app.post("/samples/:id/method", async (c) => {
     const m = c.get("m");
-    const t = m.suggestedLocality;
+    const t = m.record.sample.methodEdit;
     if (c.get("acting").impersonating) return c.text(m.errors.readOnlyImpersonating, 403);
-    const admin = c.get("admin");
+    if (!c.get("admin")) return c.text("Admins only.", 403);
     const session = c.get("session");
-    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, admin ? STAFF_READER : readerOf(c));
+    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, STAFF_READER);
     if (sample === null) return errorResponse(c, "notFound");
-    const enteredHere = conn !== undefined && (await loadTrapSample(conn, sample.sample_id)) !== null;
-    if (!sample.mine && !admin && !enteredHere) return errorResponse(c, "notFound");
-    // A printed sample's locality is what its labels say, so only staff
-    // change it, correcting the record before a reprint, as the staff
-    // locality form let them (beeline-649). A sample entered in Beeline is
-    // refused below whoever asks: its own form refuses it too.
-    if (sample.printed && !admin) return c.text(t.printed, 409);
     const body = await c.req.parseBody();
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
-    const backRaw = field("back");
-    // Back to the listing or to the sample's own page, whichever it came from.
-    const back = /^\/samples(\/\d+)?(\?|$)/.test(backRaw) ? backRaw : "/samples";
-    // A sample entered in Beeline has no old Beeline record to correct: its
-    // locality is written directly, by whoever may edit it, any name they
-    // like, as on its own form (beeline-3vs.5).
-    if (enteredHere && conn !== undefined && printWriter !== undefined) {
-      if (!(await mayEditTrapSample(conn, sample.sample_id, c.get("acting").personId, admin))) return errorResponse(c, "notFound");
-      const name = field("locality").trim();
-      // Blank clears it, as on the form.
-      if (name === (sample.locality ?? "")) return c.redirect(back);
-      if ((await setTrapSampleLocality(printWriter, sample.sample_id, name)) === "printed") return c.text(t.printed, 409);
-      await recordTrapChange(c, sample.sample_id);
-      return c.redirect(back);
-    }
-    const deps = { db, conn, sampleOverlayPath: sampleOverlay, correctionsPath: corrections };
-    const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
-    const linked = sample.inat_observation_id !== null;
-    const standing = linked ? await standingLocalityAuthor(sampleOverlay, sample.inat_observation_id!) : null;
-    // What the observation itself yields, as promotion would write it.
-    const observed = linked
-      ? ((
-          await sql<{ locality: string | null }>`SELECT loc.locality FROM sample s
-            LEFT JOIN observation_locality loc ON loc.inat_id = s.inat_observation_id
-            WHERE s.entity_id = ${sample.sample_id}`.execute(db)
-        ).rows[0]?.locality ?? null)
-      : null;
-    const name = field("locality").trim();
-    const offered = [...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]), ...sample.locality_alternatives];
-    const suggestion = offered.find((o) => o.locality === name);
-    let result;
-    let reason: string | undefined;
-    if (linked && (name === "" || name === observed)) {
-      // Follow iNaturalist again: take away whatever locality stands.
-      if (standing === null) return c.redirect(back);
-      if (standing !== session.login && !admin) return c.text(t.notYours, 403);
-      result = await setStaffLocality(deps, target, { value: "", remove: true, note: "", author: session.login });
-    } else if (name === "" || name === sample.locality) {
-      return c.redirect(back);
-    } else if (suggestion !== undefined) {
-      if (standing !== null && standing !== session.login && !admin) return c.text(t.setByOther, 403);
-      reason = t.reason(t.basis[suggestion.basis]);
-      result = await adoptSuggestedLocality(deps, target, { suggestion: suggestion.locality, reason, author: session.login });
-    } else {
-      if (!admin) return c.text(m.listings.samples.placeEdit.onlyOffered, 403);
-      result = await setStaffLocality(deps, target, { value: name, remove: false, note: "", author: session.login });
-    }
-    if (result.outcome === "invalid") return c.text(result.problem, 400);
-    if (result.outcome === "no_staging") return c.text(m.sampleEdit.noStagingRows, 409);
-    if (result.outcome === "unresolved") return c.text(result.reason, 409);
-    if (result.outcome === "saved" || result.outcome === "removed") {
-      try {
-        await recordSampleChanges(kyselyReader(db), samplePaths, {
-          source: "app",
-          author: session.login,
-          reason,
-          where: `s.entity_id = ${sample.sample_id}`,
-        });
-      } catch (err) {
-        console.warn(`could not record the locality change: ${(err as Error).message}`);
+    const base = (name: string) => (typeof body[`base:${name}`] === "string" ? (body[`base:${name}`] as string) : undefined);
+    const note = field("note").trim();
+    // The save and its entry in the change log, one at a time for the sample.
+    const result = await onSample(sample.sample_id, async () => {
+      const saved = await setSampleMethod(db, corrections, sample.sample_id, {
+        bases: { protocol: base("protocol"), dateEnd: base("date_end") },
+        protocol: field("protocol"),
+        dateEnd: field("date_end"),
+        note,
+        author: session.login,
+        today: new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date()),
+      });
+      if (saved.outcome === "saved") {
+        try {
+          await recordSampleChanges(kyselyReader(db), samplePaths, {
+            source: "app",
+            author: session.login,
+            reason: note || undefined,
+            where: `s.entity_id = ${sample.sample_id}`,
+          });
+        } catch (err) {
+          console.warn(`could not record the method change: ${(err as Error).message}`);
+        }
       }
-    }
-    return c.redirect(back);
+      return saved;
+    });
+    if (result.outcome === "invalid") return c.text(t.problems[result.problem], 400);
+    if (result.outcome === "no_old_records") return c.text(t.noOldRecords, 409);
+    if (result.outcome === "conflict") return c.text(t.conflict, 409);
+    return c.redirect(sampleHref(sample.sample_id));
   });
 
   // The coordinates, on the same terms (beeline-942). The one case a

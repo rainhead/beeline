@@ -26,6 +26,7 @@ import {
   Chip,
   DataTable,
   DetailList,
+  Field,
   FindingDetail,
   FlagChips,
   EmptyState,
@@ -62,16 +63,22 @@ const Unknown = ({ m }: { m: Messages }) => <Absent label={m.record.sample.unkno
 const orUnknown = (m: Messages, value: string | null): Child => (value === null || value === "" ? <Unknown m={m} /> : value);
 
 /**
- * Protocols that only restate the kind. Every sample minted from an
- * observation carries "aerial net" (ingest/mint-samples.sql), so showing it
- * beside "Net" says the same thing twice.
+ * Protocols that only restate a net sample's kind. Every sample minted from
+ * an observation carries "aerial net" (ingest/mint-samples.sql), so showing
+ * it beside "Net" says the same thing twice.
  */
-const PROTOCOL_IS_KIND = new Set(["aerial net", "net", "netting", "trap"]);
+const PROTOCOL_IS_NET = new Set(["aerial net", "net", "netting"]);
 
-/** Whether the protocol says more than the kind: the kind of trap, or an old record's own words. */
-export function protocolSaysMore(sample: Pick<SampleDetail, "protocol">): boolean {
+/**
+ * Whether the protocol says more than the kind: the kind of trap, an old
+ * record's own words, or a word that contradicts the kind, such as "aerial
+ * net" on a trap sample, which a staff correction of the end date alone can
+ * leave (beeline-p8y1) and the exports would otherwise say unseen.
+ */
+export function protocolSaysMore(sample: Pick<SampleDetail, "protocol" | "kind">): boolean {
   const protocol = sample.protocol?.trim().toLowerCase() ?? "";
-  return protocol !== "" && !PROTOCOL_IS_KIND.has(protocol);
+  const restatesKind = sample.kind === "trap" ? protocol === "trap" : PROTOCOL_IS_NET.has(protocol);
+  return protocol !== "" && !restatesKind;
 }
 
 /**
@@ -141,9 +148,12 @@ export function SampleFacts({
   m,
   sample,
   placeEdit = null,
+  methodEdit = false,
 }: {
   m: Messages;
   sample: SampleDetail;
+  /** Whether the reader may correct the method and end date (staff, on a sample from old records; beeline-p8y1). */
+  methodEdit?: boolean;
   /**
    * Whether the reader may change the locality from the Place row, and
    * whether they may write any name or only one offered (`samplePlaceEdit`).
@@ -164,8 +174,11 @@ export function SampleFacts({
       term: <Term m={m} slug="method">{s.method}</Term>,
       value: (
         <>
-          {sample.kind === "trap" ? <Term m={m} slug="trap-sample">{s.methodTrap}</Term> : s.methodNet}
-          {protocolSaysMore(sample) && <Meta> · {sample.protocol}</Meta>}
+          <span class="inline-edit-text">
+            {sample.kind === "trap" ? <Term m={m} slug="trap-sample">{s.methodTrap}</Term> : s.methodNet}
+            {protocolSaysMore(sample) && <Meta> · {sample.protocol}</Meta>}
+          </span>
+          {methodEdit && <MethodEdit m={m} sample={sample} />}
         </>
       ),
     },
@@ -473,6 +486,41 @@ function TakeObservationLocation({ m, sample }: { m: Messages; sample: SampleDet
         <Button variant="tonal">{t.action}</Button>
       </form>
     </Callout>
+  );
+}
+
+/**
+ * Staff correcting how a sample from the old Beeline was collected
+ * (beeline-p8y1), from a pencil on the Method row: the method's words and the
+ * day collecting ended, which makes it a trap sample (src/app/sample-method.ts).
+ */
+function MethodEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
+  const t = m.record.sample.methodEdit;
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  return (
+    <InlineEdit
+      label={t.open}
+      action={`/samples/${sample.sample_id}/method`}
+      back={sampleHref(sample.sample_id)}
+      save={t.save}
+      cancel={m.listings.samples.placeEdit.cancel}
+    >
+      <Meta block>{t.hint}</Meta>
+      {/* What the form shows rides along as base:*, so a save can tell a
+          field nobody touched from a stale one (beeline-0br). */}
+      <TextField id="method-protocol" name="protocol" label={t.protocol} hint={t.protocolHint} value={sample.protocol} base={sample.protocol} />
+      <input type="hidden" name="base:date_end" value={sample.kind === "trap" ? iso(sample.date_end) : ""} />
+      <Field id="method-date-end" label={t.dateEnd} hint={t.dateEndHint}>
+        <input
+          id="method-date-end"
+          name="date_end"
+          type="date"
+          min={iso(sample.date_start)}
+          value={sample.kind === "trap" ? iso(sample.date_end) : ""}
+        />
+      </Field>
+      <TextField id="method-note" name="note" label={t.note} />
+    </InlineEdit>
   );
 }
 
@@ -865,6 +913,7 @@ export function SamplePage({
           m={m}
           sample={sample}
           placeEdit={samplePlaceEdit(sample, { admin, ownsLocality, entered, editsEntered: trapEditHref !== undefined })}
+          methodEdit={admin && sample.from_old_records}
         />
         <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} />
       </Card>

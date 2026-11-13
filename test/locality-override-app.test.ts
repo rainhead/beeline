@@ -7,11 +7,10 @@ import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApp } from "../src/app/server.js";
 import { parseCsv } from "../src/corrections.js";
-import { loadLegacyStaging } from "../src/load-legacy.js";
-import { promoteLegacy } from "../src/promote-legacy.js";
 import { readSampleOverlay } from "../src/sample-overlay.js";
 import { en } from "../src/app/messages/en.js";
-import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { promotedStore } from "./promoted-store.js";
 
 /**
  * Staff writing a locality or coordinates over the observation's
@@ -26,8 +25,6 @@ const unusedInat: InatClient = {
   exchangeCode: () => Promise.reject(new Error("not under test")),
   identity: () => Promise.reject(new Error("not under test")),
 };
-
-const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 
 async function person(conn: DuckDBConnection, name: string, login: string, userId: number): Promise<number> {
   const [[id]] = (await (
@@ -186,10 +183,8 @@ describe("staff writing a locality from the sample page's place editor", () => {
   });
 
   it("goes through the corrections overlay for a sample with no observation", async () => {
-    const { instance, conn } = await createMemoryDb();
-    await loadLegacyStaging(conn, FIXTURE);
     const paths = await scratch();
-    await promoteLegacy(conn, { ...FIXTURE_INPUTS, appCorrections: paths.correctionsPath });
+    const { instance, conn } = await promotedStore("occurrences", { appCorrections: paths.correctionsPath });
     const sam = await person(conn, "Sam Staff", "samstaff", 2);
     await conn.run(`INSERT INTO person_admin (person_id) VALUES (${sam})`);
     const [[sampleId]] = (await rows(conn, `SELECT entity_id FROM sample WHERE sample_number = 'OBAS-00657'`)) as [

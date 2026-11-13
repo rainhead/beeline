@@ -10,10 +10,9 @@ import {
   recordOldVolunteerDeterminations,
   volunteerTargetSql,
 } from "../src/legacy-volunteer-import.js";
-import { loadLegacyStaging } from "../src/load-legacy.js";
-import { promoteLegacy } from "../src/promote-legacy.js";
 import { FakeOldBeeline } from "./fake-old-beeline.js";
-import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows } from "./helpers.js";
+import { insertCleanSample, rows } from "./helpers.js";
+import { promotedStore } from "./promoted-store.js";
 
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 /** Every distinct combination of the five volunteer columns in the old system's pull of 3 November 2026. */
@@ -33,9 +32,7 @@ const newestDetermination = async () =>
 beforeAll(async () => {
   old = new FakeOldBeeline();
   creds = await old.start();
-  ({ conn } = await createMemoryDb());
-  await loadLegacyStaging(conn, FIXTURE);
-  await promoteLegacy(conn, FIXTURE_INPUTS);
+  ({ conn } = await promotedStore("occurrences"));
   baseline = await newestDetermination();
 });
 

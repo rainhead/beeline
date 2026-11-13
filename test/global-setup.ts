@@ -27,6 +27,9 @@ function openUp(dir: string): void {
 export default function setup() {
   const runDir = mkdtempSync(join(tmpdir(), "beeline-test-run-"));
   process.env.TMPDIR = runDir;
+  // Named apart from TMPDIR, which a test may point elsewhere: where the
+  // run's promoted stores are kept (test/promoted-store.ts, beeline-vwn4).
+  process.env.BEELINE_TEST_RUN_DIR = runDir;
   return () => {
     openUp(runDir);
     rmSync(runDir, { recursive: true, force: true });

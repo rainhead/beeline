@@ -63,7 +63,7 @@ async function fixture({ admin = true, signedIn = true }: { admin?: boolean; sig
     // read a bearer header, so a stand-in that answers nobody would prove
     // nothing.
     resolveSession: signedIn
-      ? async () => ({ personId: Number(staff), login: "staff", iconUrl: null })
+      ? async () => ({ personId: Number(staff), login: "staff", inatUserId: BigInt(STAFF_UID), iconUrl: null })
       : cookieSessionResolver(db, ORIGIN),
     conn,
   });
@@ -356,6 +356,22 @@ describe("a key is not a way onto the pages", () => {
       body: "name=k&scope=staff&lifetime=30",
     });
     expect(write.status).toBe(401);
+  });
+});
+
+describe("saving an account that does not change", () => {
+  it("leaves the account's keys working when staff save the same account, or correct only its login", async () => {
+    const { post, make, db, volunteer } = await fixture();
+    const theirs = await make(VOLUNTEER_UID, "read");
+    for (const login of ["vera", "vera_renamed"]) {
+      const res = await post(`/people/${volunteer}/account`, { inat_user_id: String(VOLUNTEER_UID), login, reason: "checked" });
+      expect(res.status).toBeLessThan(400);
+      expect(await resolveKey(db, theirs.key)).not.toBeNull();
+    }
+    // A different account is a change: the old account's keys go.
+    await post(`/people/${volunteer}/account`, { inat_user_id: "4242", login: "newvera", reason: "new account" });
+    expect(await resolveKey(db, theirs.key)).toBeNull();
+    expect((await listKeys(db, VOLUNTEER_UID))[0]!.revokedAt).not.toBeNull();
   });
 });
 

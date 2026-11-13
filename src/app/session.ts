@@ -12,6 +12,14 @@ export interface Session {
   personId: number;
   /** iNat login: the account join is now inner, so there is always one. */
   login: string;
+  /**
+   * The iNat user the session was issued to, read from the session's own row
+   * as it was resolved. Making an API key checks the person's account is
+   * still this one (src/app/server.tsx, POST /keys). Absent on a session that
+   * did not come from a cookie (the dev login, a test's stand-in), where the
+   * person's account is looked up instead.
+   */
+  inatUserId?: bigint;
   /** iNat profile picture, cached at sign-in; null until they sign in again. */
   iconUrl: string | null;
   /**
@@ -200,7 +208,13 @@ export function cookieSessionResolver(db: Kysely<Database>, origin: string): Ses
         .execute(),
     );
     await bookkeeping(() => recordActivity(db, row.inat_user_id));
-    return { personId: row.person_id, login: row.login, iconUrl: row.icon_url, ref: sessionRef(id) };
+    return {
+      personId: row.person_id,
+      login: row.login,
+      inatUserId: BigInt(row.inat_user_id),
+      iconUrl: row.icon_url,
+      ref: sessionRef(id),
+    };
   };
 }
 

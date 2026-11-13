@@ -822,9 +822,11 @@ export function createApp({
   });
   app.post("/keys", async (c) => {
     if (!c.get("admin") || c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
-    // Whose account the session was for when the gate let it in, read before
-    // the wait for the form.
-    const signedInAs = await keyOwner(c);
+    // Whose account the session was for when the gate let it in: the iNat
+    // user on the session's own row, so there is no second lookup an account
+    // change could slip in ahead of. A session with no row behind it (the dev
+    // login) has its person's account looked up, before the wait for the form.
+    const signedInAs = c.get("session").inatUserId ?? (await keyOwner(c));
     const form = await c.req.parseBody();
     const text = (name: string) => (typeof form[name] === "string" ? (form[name] as string) : "");
     // In the queue that runs account changes one at a time, with the form
@@ -2536,6 +2538,11 @@ export function createApp({
     // changed and before anything else can fail or return: it used to come
     // last, where a change log that could not be written, or another row of
     // the same decision being refused, left the credentials standing.
+    //
+    // Only when the account really changed. The account form always sends
+    // the account, so saving it unchanged, or with only its login corrected,
+    // used to sign the person out; with keys it would also have revoked every
+    // one of them for nothing.
     if (d.rows.some((r) => r.field === "inat_user_id")) {
       const boundAfter =
         afterId === null
@@ -2545,10 +2552,14 @@ export function createApp({
               .select("inat_user_id")
               .where("person_id", "=", afterId)
               .executeTakeFirst();
-      for (const uid of [d.boundBefore, boundAfter?.inat_user_id]) {
-        if (uid !== null && uid !== undefined) {
-          await endSessionsFor(db, uid);
-          await revokeKeysFor(db, uid);
+      const was = d.boundBefore === null ? null : BigInt(d.boundBefore);
+      const is = boundAfter === undefined ? null : BigInt(boundAfter.inat_user_id);
+      if (was !== is) {
+        for (const uid of [was, is]) {
+          if (uid !== null) {
+            await endSessionsFor(db, uid);
+            await revokeKeysFor(db, uid);
+          }
         }
       }
     }

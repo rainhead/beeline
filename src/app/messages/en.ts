@@ -1871,7 +1871,7 @@ export const en = {
     none: "You have not made a key.",
     col: {
       name: "Name",
-      scope: "May",
+      scope: "Allows",
       created: "Made",
       expires: "Expires",
       lastUsed: "Last used",

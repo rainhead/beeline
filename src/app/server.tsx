@@ -153,6 +153,7 @@ import {
   type Actor,
   type CorrectionDeps,
 } from "./sample-corrections.js";
+import { localityReasonFor, takeLocationDefaultReason } from "./correction-reasons.js";
 import { setSampleMethod } from "./sample-method.js";
 import { onSample } from "./sample-queue.js";
 import { standingLocalityAuthor } from "./locality-override.js";
@@ -1396,7 +1397,7 @@ export function createApp({
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
     const result = await adoptLocality(corrective, actorOf(c), id, async () => {
       body = await c.req.parseBody();
-      return { locality: field("locality"), reasonFor: (basis) => t.reason(t.basis[basis]) };
+      return { locality: field("locality"), reasonFor: localityReasonFor(m) };
     });
     if (result.ok) return c.redirect(field("return") === "home" ? "/" : sampleHref(id));
     switch (result.refusal) {
@@ -1442,7 +1443,7 @@ export function createApp({
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
     const result = await setPlace(corrective, actorOf(c), id, async () => {
       body = await c.req.parseBody();
-      return { locality: field("locality"), reasonFor: (basis) => t.reason(t.basis[basis]) };
+      return { locality: field("locality"), reasonFor: localityReasonFor(m) };
     });
     // Back to the listing or to the sample's own page, whichever it came from.
     const backRaw = field("back");
@@ -1569,7 +1570,7 @@ export function createApp({
     const id = Number(c.req.param("id"));
     const result = await takeLocation(corrective, actorOf(c), id, async () => {
       const body = await c.req.parseBody();
-      return { note: typeof body.note === "string" ? body.note : "", defaultReason: t.reason };
+      return { note: typeof body.note === "string" ? body.note : "", defaultReason: takeLocationDefaultReason(m) };
     });
     if (result.ok) return c.redirect(`/samples/${id}${result.settled ? "" : "?place=pending"}`);
     switch (result.refusal) {

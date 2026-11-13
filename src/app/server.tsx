@@ -136,6 +136,7 @@ import { MessagesProof } from "./views/design/messages-proof.js";
 import { QcProof } from "./views/design/qc-proof.js";
 import { loadEditableSample } from "./sample-edit.js";
 import {
+  actorFor,
   adoptLocality,
   editSample,
   holdSample,
@@ -144,6 +145,7 @@ import {
   setCoordinates,
   setPlace,
   takeLocation,
+  unreachable,
   waiveFlag,
   type Actor,
   type CorrectionDeps,
@@ -363,13 +365,13 @@ export function createApp({
   const actorOf = (c: Context<AppEnv>): Actor => {
     const acting = c.get("acting");
     const session = c.get("session");
-    return {
+    return actorFor({
       personId: acting.personId,
       signedInPersonId: session.personId,
       login: session.login,
       staff: c.get("admin"),
       impersonating: acting.impersonating,
-    };
+    });
   };
   // One person's state, as the change log describes it. The same query both
   // producers use, so what the screen records and what a rebuild records are
@@ -1248,13 +1250,17 @@ export function createApp({
   app.post("/samples/:id/edit", async (c) => {
     const m = c.get("m");
     const id = Number(c.req.param("id"));
-    const body = await c.req.parseBody();
-    // Absent fields stay untouched (applySampleEdit's contract); only strings pass.
-    const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : undefined);
-    const names = ["locality", "country", "state_province", "county", "protocol"] as const;
-    const values = Object.fromEntries(names.map((name) => [name, field(name)]).filter(([, v]) => v !== undefined));
-    const bases = Object.fromEntries(names.map((name) => [name, field(`base:${name}`)]).filter(([, v]) => v !== undefined));
-    const result = await editSample(corrective, actorOf(c), id, { values, bases, note: field("note") });
+    // Read once the refusals that do not depend on the form have passed.
+    const form = async () => {
+      const body = await c.req.parseBody();
+      // Absent fields stay untouched (applySampleEdit's contract); only strings pass.
+      const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : undefined);
+      const names = ["locality", "country", "state_province", "county", "protocol"] as const;
+      const values = Object.fromEntries(names.map((name) => [name, field(name)]).filter(([, v]) => v !== undefined));
+      const bases = Object.fromEntries(names.map((name) => [name, field(`base:${name}`)]).filter(([, v]) => v !== undefined));
+      return { values, bases, note: field("note") };
+    };
+    const result = await editSample(corrective, actorOf(c), id, form);
     if (result.ok) return c.redirect("/");
     switch (result.refusal) {
       case "impersonating":
@@ -1263,6 +1269,8 @@ export function createApp({
         return errorResponse(c, "notFound", { heading: m.sampleEdit.notEditableHeading, message: m.sampleEdit.notEditable });
       case "no_staging":
         return c.text(m.sampleEdit.noStagingRows, 409);
+      default:
+        return unreachable(result);
     }
   });
 
@@ -1278,11 +1286,11 @@ export function createApp({
     const m = c.get("m");
     const t = m.suggestedLocality;
     const id = Number(c.req.param("id"));
-    const body = await c.req.parseBody();
+    let body: Record<string, unknown> = {};
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
-    const result = await adoptLocality(corrective, actorOf(c), id, {
-      locality: field("locality"),
-      reasonFor: (basis) => t.reason(t.basis[basis]),
+    const result = await adoptLocality(corrective, actorOf(c), id, async () => {
+      body = await c.req.parseBody();
+      return { locality: field("locality"), reasonFor: (basis) => t.reason(t.basis[basis]) };
     });
     if (result.ok) return c.redirect(field("return") === "home" ? "/" : sampleHref(id));
     switch (result.refusal) {
@@ -1302,6 +1310,8 @@ export function createApp({
         return c.text(m.sampleEdit.noStagingRows, 409);
       case "unresolved":
         return c.text(result.reason, 409);
+      default:
+        return unreachable(result);
     }
   });
 
@@ -1322,15 +1332,15 @@ export function createApp({
     const m = c.get("m");
     const t = m.suggestedLocality;
     const id = Number(c.req.param("id"));
-    const body = await c.req.parseBody();
+    let body: Record<string, unknown> = {};
     const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
-    const backRaw = field("back");
-    // Back to the listing or to the sample's own page, whichever it came from.
-    const back = /^\/samples(\/\d+)?(\?|$)/.test(backRaw) ? backRaw : "/samples";
-    const result = await setPlace(corrective, actorOf(c), id, {
-      locality: field("locality"),
-      reasonFor: (basis) => t.reason(t.basis[basis]),
+    const result = await setPlace(corrective, actorOf(c), id, async () => {
+      body = await c.req.parseBody();
+      return { locality: field("locality"), reasonFor: (basis) => t.reason(t.basis[basis]) };
     });
+    // Back to the listing or to the sample's own page, whichever it came from.
+    const backRaw = field("back");
+    const back = /^\/samples(\/\d+)?(\?|$)/.test(backRaw) ? backRaw : "/samples";
     if (result.ok) return c.redirect(back);
     switch (result.refusal) {
       case "impersonating":
@@ -1351,6 +1361,8 @@ export function createApp({
         return c.text(m.sampleEdit.noStagingRows, 409);
       case "unresolved":
         return c.text(result.reason, 409);
+      default:
+        return unreachable(result);
     }
   });
 
@@ -1407,14 +1419,16 @@ export function createApp({
   app.post("/samples/:id/coordinates", async (c) => {
     const m = c.get("m");
     const id = Number(c.req.param("id"));
-    const body = await c.req.parseBody();
-    const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
-    const result = await setCoordinates(corrective, actorOf(c), id, {
-      latitude: field("latitude"),
-      longitude: field("longitude"),
-      uncertainty: field("uncertainty"),
-      remove: field("remove") !== "",
-      note: field("note"),
+    const result = await setCoordinates(corrective, actorOf(c), id, async () => {
+      const body = await c.req.parseBody();
+      const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+      return {
+        latitude: field("latitude"),
+        longitude: field("longitude"),
+        uncertainty: field("uncertainty"),
+        remove: field("remove") !== "",
+        note: field("note"),
+      };
     });
     if (result.ok) return c.redirect(`/samples/${id}${result.settled ? "" : "?place=pending"}`);
     switch (result.refusal) {
@@ -1432,6 +1446,8 @@ export function createApp({
         return c.text(result.problem, 400);
       case "unresolved":
         return c.text(result.reason, 409);
+      default:
+        return unreachable(result);
     }
   });
 
@@ -1445,10 +1461,9 @@ export function createApp({
     const m = c.get("m");
     const t = m.record.sample.takeObservationLocation;
     const id = Number(c.req.param("id"));
-    const body = await c.req.parseBody();
-    const result = await takeLocation(corrective, actorOf(c), id, {
-      note: typeof body.note === "string" ? body.note : "",
-      defaultReason: t.reason,
+    const result = await takeLocation(corrective, actorOf(c), id, async () => {
+      const body = await c.req.parseBody();
+      return { note: typeof body.note === "string" ? body.note : "", defaultReason: t.reason };
     });
     if (result.ok) return c.redirect(`/samples/${id}${result.settled ? "" : "?place=pending"}`);
     switch (result.refusal) {
@@ -1468,6 +1483,8 @@ export function createApp({
         return c.text(result.reason, 409);
       case "not_moved":
         return c.text(t.notMoved, 409);
+      default:
+        return unreachable(result);
     }
   });
 
@@ -1475,12 +1492,8 @@ export function createApp({
   // judge fine (beeline-plu, beeline-1kb.9). The locality form's terms:
   // admin-gated, refused while impersonating, kept in the sample overlay and
   // applied at once, and recorded in the sample's history under whoever did it.
-  const qcDecision = async (c: Context<AppEnv>, decide: (id: number, field: (name: string) => string) => ReturnType<typeof holdSample>) => {
+  const qcResponse = (c: Context<AppEnv>, id: number, result: Awaited<ReturnType<typeof holdSample>>) => {
     const m = c.get("m");
-    const id = Number(c.req.param("id"));
-    const body = await c.req.parseBody();
-    const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
-    const result = await decide(id, field);
     if (result.ok) return c.redirect(`/samples/${id}`);
     switch (result.refusal) {
       case "impersonating":
@@ -1497,18 +1510,30 @@ export function createApp({
         return c.text(m.record.sample.qcDecisions.noObservation, 409);
       case "unresolved":
         return c.text(result.reason, 409);
+      default:
+        return unreachable(result);
     }
   };
 
-  app.post("/samples/:id/hold", (c) =>
-    qcDecision(c, (id, field) => holdSample(corrective, actorOf(c), id, { lift: field("lift") !== "", note: field("note") })),
-  );
+  app.post("/samples/:id/hold", async (c) => {
+    const id = Number(c.req.param("id"));
+    const result = await holdSample(corrective, actorOf(c), id, async () => {
+      const body = await c.req.parseBody();
+      const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+      return { lift: field("lift") !== "", note: field("note") };
+    });
+    return qcResponse(c, id, result);
+  });
 
-  app.post("/samples/:id/waiver", (c) =>
-    qcDecision(c, (id, field) =>
-      waiveFlag(corrective, actorOf(c), id, { rule: field("rule"), remove: field("remove") !== "", note: field("note") }),
-    ),
-  );
+  app.post("/samples/:id/waiver", async (c) => {
+    const id = Number(c.req.param("id"));
+    const result = await waiveFlag(corrective, actorOf(c), id, async () => {
+      const body = await c.req.parseBody();
+      const field = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
+      return { rule: field("rule"), remove: field("remove") !== "", note: field("note") };
+    });
+    return qcResponse(c, id, result);
+  });
 
   // The glossary is volunteer-facing: in the nav for everyone, and the one
   // page whose entire content is message-catalog copy.

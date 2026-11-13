@@ -187,8 +187,13 @@ export async function planSampleEdit(
   return { outcome: "planned", changed: changed.map((f) => f.name), events, updates };
 }
 
-/** Write a planned edit: the overlay file first, then the store. */
-export async function writeSampleEdit(
+/**
+ * Write a planned edit: the overlay file first, then the store. Not exported:
+ * a plan is only valid inside the same per-sample queue turn that made it
+ * (src/app/sample-queue.ts), because a later write from an older plan would
+ * overwrite a newer save.
+ */
+async function writeSampleEdit(
   db: Kysely<Database>,
   correctionsPath: string,
   sample: EditableSample,

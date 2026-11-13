@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createKysely } from "../src/db.js";
+import { duckdbReader } from "../src/person-change.js";
+import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js";
+import { readSampleOverlay } from "../src/sample-overlay.js";
 import {
   adoptLocality,
   editSample,
@@ -10,6 +13,7 @@ import {
   takeLocation,
   waiveFlag,
   type Actor,
+  actorFor,
   type CorrectionDeps,
 } from "../src/app/sample-corrections.js";
 import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
@@ -53,6 +57,8 @@ async function setup() {
   });
   return {
     conn,
+    paths,
+    instance,
     deps,
     linked,
     unlinked,
@@ -128,5 +134,88 @@ describe("sample corrections: refusals", () => {
     const s = await setup();
     const result = await holdSample(s.deps, s.sam, s.linked, { lift: false, note: "" });
     expect(result).toMatchObject({ ok: false, refusal: "invalid" });
+  });
+});
+
+describe("sample corrections: the order of refusals", () => {
+  it("cannot make an actor who is both staff and impersonating, so impersonation is refused first", async () => {
+    const s = await setup();
+    const both = actorFor({ ...s.sam, impersonating: true, staff: true });
+    expect(both.staff).toBe(false);
+    expect(await holdSample(s.deps, both, s.linked, { lift: false, note: "n" })).toEqual({ ok: false, refusal: "impersonating" });
+    expect(await setCoordinates(s.deps, both, s.linked, coordinates)).toEqual({ ok: false, refusal: "impersonating" });
+  });
+
+  it("does not read the input of a refused correction", async () => {
+    const s = await setup();
+    const unread = async () => {
+      throw new Error("the form was read");
+    };
+    expect(await setCoordinates(s.deps, s.alice, s.linked, unread)).toEqual({ ok: false, refusal: "not_admin" });
+    expect(await holdSample(s.deps, s.sam, 999999, unread)).toEqual({ ok: false, refusal: "not_found" });
+    s.setRunning(true);
+    expect(await setCoordinates(s.deps, s.sam, s.linked, unread)).toEqual({ ok: false, refusal: "busy" });
+  });
+});
+
+describe("sample corrections: a correction that saves", () => {
+  async function withSuggestions() {
+    const s = await setup();
+    const other = await insertCleanSample(s.conn, { collector_id: String(s.alice.personId), sample_number: "'A-3'", inat_observation_id: "998878" });
+    for (const id of [s.linked, other]) {
+      await s.conn.run(
+        `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
+         SELECT sample_id, 1, 'Finley NWR', 'refuge', latitude, longitude, 'test', 1, current_timestamp
+         FROM sample_location WHERE sample_id = ${id}`,
+      );
+    }
+    // The change log's first pass only takes a baseline; production's was taken long ago.
+    await recordSampleChanges(duckdbReader(s.conn), s.deps.samplePaths, { source: "observation_promotion" });
+    return { ...s, other };
+  }
+  const logged = async (s: Awaited<ReturnType<typeof withSuggestions>>) =>
+    (await readSampleChanges(s.paths.sampleChangesPath)).filter((c) => c.source === "app").map((c) => [c.field, c.new_value, c.author]);
+  const localityOf = async (conn: DuckDBConnection, id: number) =>
+    ((await rows(conn, `SELECT locality FROM sample WHERE entity_id = ${id}`)) as string[][])[0]![0];
+
+  it("adopts a suggested locality for the collector, logged under their login", async () => {
+    const s = await withSuggestions();
+    const result = await adoptLocality(s.deps, s.alice, s.linked, { locality: "Finley NWR", reasonFor });
+    expect(result).toEqual({ ok: true, reason: "because" });
+    expect(await localityOf(s.conn, s.linked)).toBe("Finley NWR");
+    expect(await logged(s)).toContainEqual(["locality", "Finley NWR", "alice"]);
+    expect((await readSampleOverlay(s.paths.sampleOverlayPath)).map((r) => [r.field, r.value, r.author])).toEqual([["locality", "Finley NWR", "alice"]]);
+  });
+
+  it("writes a place the editor offers, logged under their login", async () => {
+    const s = await withSuggestions();
+    expect(await setPlace(s.deps, s.alice, s.other, { locality: "Finley NWR", reasonFor })).toEqual({ ok: true });
+    expect(await localityOf(s.conn, s.other)).toBe("Finley NWR");
+    expect(await logged(s)).toContainEqual(["locality", "Finley NWR", "alice"]);
+  });
+
+  it("holds a sample and lifts the hold, logged under staff's login", async () => {
+    const s = await withSuggestions();
+    expect(await holdSample(s.deps, s.sam, s.linked, { lift: false, note: "date looks a year off" })).toEqual({ ok: true });
+    expect(await rows(s.conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${s.linked}`)).toEqual([]);
+    expect(await logged(s)).toContainEqual(expect.arrayContaining(["samstaff"]));
+    expect(await holdSample(s.deps, s.sam, s.linked, { lift: true, note: "" })).toEqual({ ok: true });
+    expect(await rows(s.conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${s.linked}`)).toHaveLength(1);
+  });
+
+  it("waives a blocking flag staff judged fine", async () => {
+    const s = await setup();
+    await s.conn.run(`UPDATE sample SET locality = 'Deschutes River SRA' WHERE entity_id = ${s.linked}`);
+    expect(await rows(s.conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${s.linked}`)).toEqual([]);
+    expect(await waiveFlag(s.deps, s.sam, s.linked, { rule: "locality_format", remove: false, note: "short enough" })).toEqual({ ok: true });
+    expect(await rows(s.conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${s.linked}`)).toHaveLength(1);
+  });
+
+  it("sets staff coordinates, logged under staff's login", async () => {
+    const s = await withSuggestions();
+    const result = await setCoordinates(s.deps, s.sam, s.linked, { ...coordinates, note: "from the field notebook" });
+    expect(result).toMatchObject({ ok: true });
+    expect(await rows(s.conn, `SELECT round(latitude, 1), source FROM sample_location WHERE sample_id = ${s.linked}`)).toEqual([[44.5, "staff_entry"]]);
+    expect((await logged(s)).filter((c) => c[2] === "samstaff").length).toBeGreaterThan(0);
   });
 });

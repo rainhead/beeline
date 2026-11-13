@@ -48,6 +48,31 @@ export interface Actor {
 }
 
 /**
+ * The one way to make an Actor. Impersonation switches staff powers off, so
+ * an actor who is impersonating is never staff, whatever the caller says.
+ */
+export function actorFor(who: Actor): Actor {
+  return { ...who, staff: who.staff && !who.impersonating };
+}
+
+/**
+ * A correction's input, as a value or as a function that reads it. A page
+ * passes a function that parses the form, so the body is read only once the
+ * rules that do not depend on it have passed, as it always was; an API
+ * passes a value.
+ */
+export type Input<T> = T | (() => Promise<T>);
+
+async function resolveInput<T>(input: Input<T>): Promise<T> {
+  return typeof input === "function" ? (input as () => Promise<T>)() : input;
+}
+
+/** Ends a switch over every refusal: a refusal left unhandled is a type error. */
+export function unreachable(x: never): never {
+  throw new Error(`unhandled refusal: ${JSON.stringify(x)}`);
+}
+
+/**
  * Who is reading, for the location rule (src/app/listings.ts `withheld`):
  * staff, or whose collecting is theirs. A delegate reads the household's
  * records as the household does, so both people count; impersonation is the
@@ -77,7 +102,8 @@ export interface CorrectionDeps {
   syncJobRunning: () => boolean;
 }
 
-type Refused<Why extends string> = { ok: false; refusal: Why };
+// Distributes over the union, so each refusal is its own member and a switch on `refusal` narrows the result.
+type Refused<Why extends string> = Why extends string ? { ok: false; refusal: Why } : never;
 type Invalid = Refused<"invalid"> & { problem: string };
 type Unresolved = Refused<"unresolved"> & { reason: string };
 
@@ -85,7 +111,7 @@ type Unresolved = Refused<"unresolved"> & { reason: string };
 type Common = Refused<"impersonating" | "not_found">;
 type StaffOnly = Refused<"not_admin">;
 
-const refused = <Why extends string>(refusal: Why): Refused<Why> => ({ ok: false, refusal });
+const refused = <Why extends string>(refusal: Why): Refused<Why> => ({ ok: false, refusal }) as Refused<Why>;
 
 /** The sample's own overlay or corrections write, as it answers, reduced to what a caller needs. */
 function overlayRefusal(result: StaffLocalityResult | QcDecisionResult): Invalid | Unresolved | null {
@@ -156,15 +182,16 @@ export type EditSampleResult =
  * actually made the edit (beeline-oyl: reach, never credit). The save does
  * not retry on a write conflict (docs/architecture/ingestion-jobs-and-elevation.md).
  */
-export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number, input: EditSampleInput): Promise<EditSampleResult> {
+export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<EditSampleInput>): Promise<EditSampleResult> {
   return onSample(sampleId, async (): Promise<EditSampleResult> => {
     if (actor.impersonating) return refused("impersonating");
     const sample = await loadEditableSample(deps.db, sampleId, actor.personId);
     if (sample === undefined) return refused("not_editable");
+    const form = await resolveInput(input);
     const result = await applySampleEdit(deps.db, deps.correctionsPath, sample, {
-      values: input.values,
-      bases: input.bases,
-      note: input.note ?? "",
+      values: form.values,
+      bases: form.bases,
+      note: form.note ?? "",
       author: actor.login,
     });
     if (result.outcome === "no_staging") return refused("no_staging");
@@ -183,7 +210,7 @@ export function editSample(deps: CorrectionDeps, actor: Actor, sampleId: number,
         const recorded = await recordSampleChanges(kyselyReader(deps.db), deps.samplePaths, {
           source: "app",
           author: actor.login,
-          reason: input.note?.trim() || undefined,
+          reason: form.note?.trim() || undefined,
           where: `s.entity_id = ${sample.entity_id}`,
         });
         // A missing snapshot turns this pass into the baseline, which
@@ -234,12 +261,13 @@ export async function adoptLocality(
   deps: CorrectionDeps,
   actor: Actor,
   sampleId: number,
-  input: AdoptLocalityInput,
+  input: Input<AdoptLocalityInput>,
 ): Promise<AdoptLocalityResult> {
   if (actor.impersonating) return refused("impersonating");
   const sample = await loadSample(deps.db, sampleId, actor.personId, readerFor(actor));
   if (sample === null || (!sample.mine && !actor.staff)) return refused("not_found");
   if (sample.printed) return refused("printed");
+  const form = await resolveInput(input);
   const writeDeps = { db: deps.db, conn: deps.conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath };
   const target = { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality };
   // Who set the locality standing over the observation, if anyone: a
@@ -252,9 +280,9 @@ export async function adoptLocality(
   // store holds them now: a name the page showed that is no longer
   // offered is refused rather than adopted unseen.
   const offered = [...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]), ...sample.locality_alternatives];
-  const suggestion = offered.find((o) => o.locality === input.locality);
+  const suggestion = offered.find((o) => o.locality === form.locality);
   if (suggestion === undefined) return refused("changed");
-  const reason = input.reasonFor(suggestion.basis);
+  const reason = form.reasonFor(suggestion.basis);
   const result = await adoptSuggestedLocality(writeDeps, target, { suggestion: suggestion.locality, reason, author: actor.login });
   const bad = overlayRefusal(result);
   if (bad !== null) return bad;
@@ -288,7 +316,7 @@ export type SetPlaceResult =
  * sample. One at a time for the sample: its corrections, where it has no
  * observation, and the change log (src/app/sample-queue.ts).
  */
-export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, input: SetPlaceInput): Promise<SetPlaceResult> {
+export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, input: Input<SetPlaceInput>): Promise<SetPlaceResult> {
   return onSample(sampleId, async (): Promise<SetPlaceResult> => {
     if (actor.impersonating) return refused("impersonating");
     const admin = actor.staff;
@@ -302,12 +330,13 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
     // locality form let them (beeline-649). A sample entered in Beeline is
     // refused below whoever asks: its own form refuses it too.
     if (sample.printed && !admin) return refused("printed");
+    const form = await resolveInput(input);
     // A sample entered in Beeline has no old Beeline record to correct: its
     // locality is written directly, by whoever may edit it, any name they
     // like, as on its own form (beeline-3vs.5).
     if (enteredHere && conn !== undefined && printWriter !== undefined) {
       if (!(await mayEditTrapSample(conn, sample.sample_id, actor.personId, admin))) return refused("not_found");
-      const name = input.locality.trim();
+      const name = form.locality.trim();
       // Blank clears it, as on the form.
       if (name === (sample.locality ?? "")) return { ok: true };
       if ((await setTrapSampleLocality(printWriter, sample.sample_id, name)) === "printed") return refused("printed");
@@ -326,7 +355,7 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
               WHERE s.entity_id = ${sample.sample_id}`.execute(db)
         ).rows[0]?.locality ?? null)
       : null;
-    const name = input.locality.trim();
+    const name = form.locality.trim();
     const offered = [...(sample.locality_suggestion === null ? [] : [sample.locality_suggestion]), ...sample.locality_alternatives];
     const suggestion = offered.find((o) => o.locality === name);
     let result;
@@ -340,7 +369,7 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
       return { ok: true };
     } else if (suggestion !== undefined) {
       if (standing !== null && standing !== actor.login && !admin) return refused("set_by_other");
-      reason = input.reasonFor(suggestion.basis);
+      reason = form.reasonFor(suggestion.basis);
       result = await adoptSuggestedLocality(writeDeps, target, { suggestion: suggestion.locality, reason, author: actor.login });
     } else {
       if (!admin) return refused("only_offered");
@@ -424,7 +453,7 @@ export async function setCoordinates(
   deps: CorrectionDeps,
   actor: Actor,
   sampleId: number,
-  input: StaffCoordinatesFormInput,
+  input: Input<StaffCoordinatesFormInput>,
 ): Promise<StaffCoordinatesCorrectionResult> {
   if (actor.impersonating) return refused("impersonating");
   if (!actor.staff) return refused("not_admin");
@@ -432,17 +461,18 @@ export async function setCoordinates(
   if (sample === null) return refused("not_found");
   if (sample.inat_observation_id === null) return refused("no_observation");
   if (deps.syncJobRunning()) return refused("busy");
+  const form = await resolveInput(input);
   const result = await setStaffCoordinates(
     { db: deps.db, conn: deps.conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath },
     { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality },
-    { ...input, author: actor.login },
+    { ...form, author: actor.login },
   );
   const bad = overlayRefusal(result);
   if (bad !== null) return bad;
   let settled = true;
   if (result.outcome === "saved" || result.outcome === "removed") {
     settled = await deriveMovedPoint(deps, sample.sample_id, "staff coordinates");
-    await recordChange(deps, sample.sample_id, actor.login, input.note.trim() || undefined, "coordinate change");
+    await recordChange(deps, sample.sample_id, actor.login, form.note.trim() || undefined, "coordinate change");
   }
   return { ok: true, settled };
 }
@@ -473,7 +503,7 @@ export async function takeLocation(
   deps: CorrectionDeps,
   actor: Actor,
   sampleId: number,
-  input: TakeObservationLocationInput,
+  input: Input<TakeObservationLocationInput>,
 ): Promise<TakeObservationLocationCorrectionResult> {
   if (actor.impersonating) return refused("impersonating");
   if (!actor.staff) return refused("not_admin");
@@ -481,8 +511,9 @@ export async function takeLocation(
   const sample = await loadSample(deps.db, sampleId, actor.personId, STAFF_READER);
   if (sample === null) return refused("not_found");
   if (deps.syncJobRunning()) return refused("busy");
-  const note = input.note.trim();
-  const reason = note === "" ? input.defaultReason : note;
+  const form = await resolveInput(input);
+  const note = form.note.trim();
+  const reason = note === "" ? form.defaultReason : note;
   const result = await takeObservationLocation(
     { db: deps.db, conn: deps.conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath },
     { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id, locality: sample.locality },
@@ -513,15 +544,16 @@ export type QcDecisionCorrectionResult =
  * kept in the sample overlay and applied at once, and recorded in the
  * sample's history under whoever did it.
  */
-async function decideQc(
+async function decideQc<Form extends { note: string }>(
   deps: CorrectionDeps,
   actor: Actor,
   sampleId: number,
-  note: string,
+  input: Input<Form>,
   decide: (
     writeDeps: { conn: DuckDBConnection; sampleOverlayPath: string },
     sample: { entity_id: number; inat_observation_id: bigint | null },
     author: string,
+    form: Form,
   ) => Promise<QcDecisionResult>,
 ): Promise<QcDecisionCorrectionResult> {
   if (actor.impersonating) return refused("impersonating");
@@ -529,15 +561,17 @@ async function decideQc(
   if (deps.conn === undefined) return refused("unavailable");
   const sample = await loadSample(deps.db, sampleId, actor.personId, STAFF_READER);
   if (sample === null) return refused("not_found");
+  const form = await resolveInput(input);
   const result = await decide(
     { conn: deps.conn, sampleOverlayPath: deps.sampleOverlayPath },
     { entity_id: sample.sample_id, inat_observation_id: sample.inat_observation_id },
     actor.login,
+    form,
   );
   if (result.outcome === "invalid") return { ok: false, refusal: "invalid", problem: result.problem };
   if (result.outcome === "no_observation") return refused("no_observation");
   if (result.outcome === "unresolved") return { ok: false, refusal: "unresolved", reason: result.reason };
-  await recordChange(deps, sample.sample_id, actor.login, note.trim() || undefined, `change to sample ${sample.sample_id}`);
+  await recordChange(deps, sample.sample_id, actor.login, form.note.trim() || undefined, `change to sample ${sample.sample_id}`);
   return { ok: true };
 }
 
@@ -545,10 +579,10 @@ export function holdSample(
   deps: CorrectionDeps,
   actor: Actor,
   sampleId: number,
-  input: { lift: boolean; note: string },
+  input: Input<{ lift: boolean; note: string }>,
 ): Promise<QcDecisionCorrectionResult> {
-  return decideQc(deps, actor, sampleId, input.note, (writeDeps, sample, author) =>
-    setHold(writeDeps, sample, { lift: input.lift, note: input.note, author }),
+  return decideQc(deps, actor, sampleId, input, (writeDeps, sample, author, form) =>
+    setHold(writeDeps, sample, { lift: form.lift, note: form.note, author }),
   );
 }
 
@@ -556,9 +590,9 @@ export function waiveFlag(
   deps: CorrectionDeps,
   actor: Actor,
   sampleId: number,
-  input: { rule: string; remove: boolean; note: string },
+  input: Input<{ rule: string; remove: boolean; note: string }>,
 ): Promise<QcDecisionCorrectionResult> {
-  return decideQc(deps, actor, sampleId, input.note, (writeDeps, sample, author) =>
-    setWaiver(writeDeps, sample, { rule: input.rule, remove: input.remove, note: input.note, author }),
+  return decideQc(deps, actor, sampleId, input, (writeDeps, sample, author, form) =>
+    setWaiver(writeDeps, sample, { rule: form.rule, remove: form.remove, note: form.note, author }),
   );
 }

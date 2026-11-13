@@ -15,6 +15,7 @@ pnpm app:dev                   # web app: tsx watch + vite build --watch (island
 pnpm app:build && pnpm app:start  # web app, production shape
 pnpm bench:pages [store]       # page latency against a copy of a store; --compare=<result.json> (bench/README.md)
 pnpm bench:contention [store]  # pages, edits and the nightly overlapping: latency, and conflicts counted apart
+pnpm store:query "<one SELECT>"  # ask last night's copy of the store a question; on production over fly ssh, with the app running (docs/runbooks/deploy-fly.md)
 ```
 
 Populating a store end to end, from the old system, iNaturalist, elevation tiles, the gazetteer and Ecdysis, and checking a backup: the `populate-store` skill (`.claude/skills/populate-store/SKILL.md`).

@@ -89,6 +89,14 @@ beforeAll(async () => {
   // user id and by name, so they come across as they are (beeline-4tdh).
   await seed.run(`INSERT INTO inat_sign_in (inat_user_id, login) VALUES (501, 'memberbee')`);
   await seed.run(`INSERT INTO session (id_sha256, inat_user_id) VALUES (repeat('b', 64), 501)`);
+  // A store from before who revoked a key, and whose account it was made
+  // under, was kept (migration 0087): its table has none of those columns,
+  // and a reseed must carry its rows with them empty.
+  await seed.run(`DROP TABLE api_key`);
+  await seed.run(
+    `CREATE TABLE api_key (key_sha256 TEXT PRIMARY KEY, inat_user_id BIGINT NOT NULL, name TEXT NOT NULL, scope TEXT NOT NULL,
+       created_at TIMESTAMP NOT NULL DEFAULT current_timestamp, expires_at TIMESTAMP NOT NULL, last_used_at TIMESTAMP, revoked_at TIMESTAMP)`,
+  );
   await seed.run(
     `INSERT INTO api_key (key_sha256, inat_user_id, name, scope, expires_at) VALUES (repeat('c', 64), 501, 'script', 'read', current_timestamp + INTERVAL 30 DAY)`,
   );
@@ -151,6 +159,9 @@ describe("reseeding a store that cannot be blown away", () => {
       person_activity: 1,
       impersonation: 1,
     });
+    expect(await rows(conn, `SELECT inat_user_id, name, revoked_by, revoked_reason, account_changed_at FROM api_key`)).toEqual([
+      [501n, "script", null, null, null],
+    ]);
     // The place cache comes across whole, keeping the instant iNat was
     // actually asked: now() would claim a freshness the reseed did not earn.
     expect(

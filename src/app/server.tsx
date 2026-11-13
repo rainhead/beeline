@@ -15,7 +15,7 @@ import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
-import { createApi } from "./api.js";
+import { createApi, refuseStrayCredentials } from "./api.js";
 import { createKey, hasKeys, listKeys, offeredScopes, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
 import { KeysPage } from "./views/keys.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
@@ -532,7 +532,7 @@ export function createApp({
   // that carries credentials, so the redirect cannot pass them on.
   app.route("/api/v1", createApi({ db, isStaff, jobs: jobsDep, corrections: { deps: corrective, messages: messagesFor(null) } }));
   // The old Beeline's addresses, until it closes (src/app/old-beeline.ts).
-  registerOldBeelineRedirects(app);
+  registerOldBeelineRedirects(app, refuseStrayCredentials);
   registerAuthRoutes(app, {
     db,
     inat,
@@ -1967,15 +1967,23 @@ export function createApp({
   // it (src/app/program-archives.ts), whether or not its program has the
   // licence and privacy policy publishing it would need: these are for staff
   // to review (Peter, 2026-10-23). Only a file the manifest names is served.
-  // A program's checklist (beeline-024a) is served the same way, by its own name.
-  app.get("/exports/dwca/:file{[A-Za-z0-9]+-(\\d{4}|checklist)\\.zip}", async (c) => {
+  // A program's checklist (beeline-024a) and its archive of every year
+  // (beeline-9bnm) are served the same way, each by its own name.
+  app.get("/exports/dwca/:file{[A-Za-z0-9]+-(\\d{4}|checklist|all)\\.zip}", async (c) => {
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const name = c.req.param("file");
     const manifest = await readArchiveManifest(exportsDir());
     const year = manifest?.entries.find((e) => e.file === name);
     const checklist = manifest?.checklists?.find((e) => e.file === name);
+    const allYears = manifest?.allYears?.find((e) => e.file === name);
     const download =
-      year !== undefined ? `${year.program}-${year.year}` : checklist !== undefined ? `${checklist.program}-checklist` : null;
+      year !== undefined
+        ? `${year.program}-${year.year}`
+        : checklist !== undefined
+          ? `${checklist.program}-checklist`
+          : allYears !== undefined
+            ? `${allYears.program}-all-years`
+            : null;
     if (download === null) return errorResponse(c, "notFound");
     const path = join(archiveDir(exportsDir()), name);
     let handle;

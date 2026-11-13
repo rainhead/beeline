@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createKysely } from "../src/db.js";
 import { duckdbReader } from "../src/person-change.js";
@@ -16,6 +16,7 @@ import {
   actorFor,
   type CorrectionDeps,
 } from "../src/app/sample-corrections.js";
+import { withPromotionLock } from "../src/app/promotion-lock.js";
 import { onSample } from "../src/app/sample-queue.js";
 import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
@@ -246,7 +247,34 @@ describe("sample corrections: a correction that saves", () => {
       return release;
     };
     const overlayRows = async (s: Awaited<ReturnType<typeof withSuggestions>>) => (await readSampleOverlay(s.paths.sampleOverlayPath)).length;
-    const tick = () => new Promise((resolve) => setTimeout(resolve, 60));
+    /**
+     * Long enough that a correction which did not wait would have written:
+     * each takes well under 100 ms here. A slower machine can only make the
+     * wait too short to catch a correction that fails to queue; it cannot fail
+     * a correction that queues.
+     */
+    const longEnoughToWrite = () => new Promise((resolve) => setTimeout(resolve, 400));
+    /**
+     * An input a page would pass: a function, called once the rules that do
+     * not need the form have passed. `read` resolves at that moment, so a
+     * test can change something then, before handing the form over with
+     * `give`, and nothing depends on how long anything takes.
+     */
+    const form = <T,>(value: T) => {
+      let called!: () => void;
+      let give!: () => void;
+      const read = new Promise<void>((resolve) => (called = resolve));
+      const handed = new Promise<void>((resolve) => (give = resolve));
+      return {
+        read,
+        give,
+        input: async () => {
+          called();
+          await handed;
+          return value;
+        },
+      };
+    };
 
     it("every correction waits for the one in progress before it writes anything", async () => {
       const corrections: [string, (s: Awaited<ReturnType<typeof withSuggestions>>) => Promise<{ ok: boolean }>][] = [
@@ -261,54 +289,95 @@ describe("sample corrections: a correction that saves", () => {
         // A waiver needs a flag to waive: a locality too long for a label.
         if (name === "waiveFlag") await s.conn.run(`UPDATE sample SET locality = 'Deschutes River SRA' WHERE entity_id = ${s.linked}`);
         const release = occupy(s.linked);
-        let done = false;
-        const pending = run(s).then((r) => ((done = true), r));
-        await tick();
-        // Still waiting, and nothing of it is in the overlay or the history.
-        expect(done, name).toBe(false);
-        expect(await overlayRows(s), name).toBe(0);
-        expect(await logged(s), name).toEqual([]);
-        release();
-        expect(await pending, name).toMatchObject({ ok: true });
-        expect(await overlayRows(s), name).toBe(1);
+        try {
+          let done = false;
+          const pending = run(s).then((r) => ((done = true), r));
+          await longEnoughToWrite();
+          // Still waiting, and nothing of it is in the overlay or the history.
+          expect(done, name).toBe(false);
+          expect(await overlayRows(s), name).toBe(0);
+          expect(await logged(s), name).toEqual([]);
+          release();
+          expect(await pending, name).toMatchObject({ ok: true });
+          expect(await overlayRows(s), name).toBe(1);
+        } finally {
+          release();
+        }
       }
+    });
+
+    it("applies corrections sent one after another, without waiting, in the order they were sent", async () => {
+      // What a program does: the input is already in hand, so each takes its turn as it is called.
+      for (let i = 0; i < 5; i++) {
+        const s = await withSuggestions();
+        const first = setPlace(s.deps, s.sam, s.linked, { locality: "First name", reasonFor });
+        const second = setPlace(s.deps, s.sam, s.linked, { locality: "Second name", reasonFor });
+        expect(await first).toEqual({ ok: true });
+        expect(await second).toEqual({ ok: true });
+        expect(await localityOf(s.conn, s.linked)).toBe("Second name");
+      }
+      // A hold and then its lifting leave the sample not held.
+      const h = await withSuggestions();
+      const held = holdSample(h.deps, h.sam, h.linked, { lift: false, note: "wait" });
+      const lifted = holdSample(h.deps, h.sam, h.linked, { lift: true, note: "" });
+      expect([await held, await lifted]).toEqual([{ ok: true }, { ok: true }]);
+      expect(await rows(h.conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${h.linked}`)).toHaveLength(1);
+      // Staff set a locality, then the collector tries to adopt one: staff's stands and the collector is refused.
+      const t = await withSuggestions();
+      const staff = setPlace(t.deps, t.sam, t.linked, { locality: "Staff's name", reasonFor });
+      const collector = adoptLocality(t.deps, t.alice, t.linked, { locality: "Finley NWR", reasonFor });
+      expect(await staff).toEqual({ ok: true });
+      expect(await collector).toEqual({ ok: false, refusal: "set_by_other" });
+      expect(await localityOf(t.conn, t.linked)).toBe("Staff's name");
     });
 
     it("asks its rules again when its turn comes, of the sample as it then stands", async () => {
       const s = await withSuggestions();
-      // Taking the observation's location passes "no sync is running" when it
-      // arrives; the nightly starts while it waits its turn.
-      const release = occupy(s.linked);
-      const pending = takeLocation(s.deps, s.sam, s.linked, { note: "", defaultReason: "moved" });
-      await tick();
+      // A page's request: taking the observation's location passes "no sync
+      // is running" before its form is read; the nightly starts while the
+      // form is arriving.
+      const taking = form({ note: "", defaultReason: "moved" });
+      const pending = takeLocation(s.deps, s.sam, s.linked, taking.input);
+      await taking.read;
       s.setRunning(true);
-      release();
+      taking.give();
       expect(await pending).toEqual({ ok: false, refusal: "busy" });
-
-      // A collector adopting a locality passes "nobody else set it"; staff set one while the collector waits.
       s.setRunning(false);
-      const hold = occupy(s.linked);
-      const adopting = adoptLocality(s.deps, s.alice, s.linked, { locality: "Finley NWR", reasonFor });
-      await tick();
-      const staff = setPlace(s.deps, s.sam, s.linked, { locality: "Staff's name", reasonFor });
-      await tick();
-      hold();
-      expect(await adopting).toEqual({ ok: true, reason: "because" });
-      // The collector's turn came first and staff's after it: both stand in order, neither lost.
-      expect(await staff).toEqual({ ok: true });
-      expect(await localityOf(s.conn, s.linked)).toBe("Staff's name");
-      // And the other order: staff first, so the collector is refused, not written over staff.
-      const again = await withSuggestions();
-      const hold2 = occupy(again.linked);
-      const staffFirst = setPlace(again.deps, again.sam, again.linked, { locality: "Staff's name", reasonFor });
-      // A turn is taken once the form is in hand, so let staff's request reach the queue before the collector's.
-      await tick();
-      const collector = adoptLocality(again.deps, again.alice, again.linked, { locality: "Finley NWR", reasonFor });
-      await tick();
-      hold2();
-      expect(await staffFirst).toEqual({ ok: true });
+
+      // A collector adopting a locality passes "nobody else set it" before
+      // the form is read; staff set one while it is arriving.
+      const adopting = form({ locality: "Finley NWR", reasonFor });
+      const collector = adoptLocality(s.deps, s.alice, s.linked, adopting.input);
+      await adopting.read;
+      expect(await setPlace(s.deps, s.sam, s.linked, { locality: "Staff's name", reasonFor })).toEqual({ ok: true });
+      adopting.give();
       expect(await collector).toEqual({ ok: false, refusal: "set_by_other" });
-      expect(await localityOf(again.conn, again.linked)).toBe("Staff's name");
+      expect(await localityOf(s.conn, s.linked)).toBe("Staff's name");
+    });
+
+    it("credits a staff point to staff even when a check of iNaturalist ends while its elevation is being derived", async () => {
+      const s = await withSuggestions();
+      // "Check iNaturalist now" holds the promotion lock, which deriving the
+      // moved point waits for, and ends with a pass over every sample's
+      // history under no author.
+      let endCheck!: () => void;
+      const checking = new Promise<void>((resolve) => (endCheck = resolve));
+      const check = withPromotionLock(async () => {
+        await checking;
+        await recordSampleChanges(duckdbReader(s.conn), s.deps.samplePaths, { source: "observation_promotion" });
+      });
+      const moved = setCoordinates(s.deps, s.sam, s.linked, { ...coordinates, note: "from the field notebook" });
+      // The point is written and waiting on the lock; then the check finishes.
+      await vi.waitFor(async () =>
+        expect(await rows(s.conn, `SELECT source FROM sample_location WHERE sample_id = ${s.linked}`)).toEqual([["staff_entry"]]),
+      );
+      endCheck();
+      await check;
+      expect(await moved).toMatchObject({ ok: true });
+      const changes = (await readSampleChanges(s.paths.sampleChangesPath)).filter((c) => c.field.startsWith("location"));
+      expect(changes.length).toBeGreaterThan(0);
+      // Every entry about the point is staff's; none fell to the unauthored pass.
+      expect(changes.map((c) => [c.source, c.author])).toEqual(changes.map(() => ["app", "samstaff"]));
     });
 
     it("records two corrections made at the same moment each under its own author", async () => {

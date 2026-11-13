@@ -88,6 +88,15 @@ async function resolveInput<T>(input: Input<T>): Promise<T> {
  * entry is taken before the next begins, under its own author. Before this,
  * only the collector's edit and the place editor took a turn, and the others
  * could replace each other's value or be recorded under each other's name.
+ *
+ * A caller that already holds the input (an API, which has parsed its
+ * request) skips steps 1 and 2: there is no form to save reading, and the
+ * correction takes its turn at once, in the same tick it was called. That
+ * matters for order. A turn is taken when the form is in hand, so two page
+ * requests that arrive within a few tens of milliseconds of each other may
+ * be applied in either order, as two requests racing over a network may
+ * anyway; but a program that sends one correction and then another, without
+ * waiting, has them applied in the order it sent them.
  */
 async function correct<Ready, Form, Result extends { ok: boolean }, Refusal extends { ok: false }>(
   sampleId: number,
@@ -95,14 +104,17 @@ async function correct<Ready, Form, Result extends { ok: boolean }, Refusal exte
   gates: () => Promise<{ ready: Ready } | Refusal>,
   act: (ready: Ready, form: Form) => Promise<Result>,
 ): Promise<Result | Refusal> {
+  const turn = (form: Form) =>
+    onSample(sampleId, async (): Promise<Result | Refusal> => {
+      const now = await gates();
+      if (!("ready" in now)) return now;
+      return act(now.ready, form);
+    });
+  // No await before the turn is taken, or call order would not be turn order.
+  if (typeof input !== "function") return turn(input);
   const early = await gates();
   if (!("ready" in early)) return early;
-  const form = await resolveInput(input);
-  return onSample(sampleId, async (): Promise<Result | Refusal> => {
-    const now = await gates();
-    if (!("ready" in now)) return now;
-    return act(now.ready, form);
-  });
+  return turn(await resolveInput(input));
 }
 
 /** Ends a switch over every refusal: a refusal left unhandled is a type error. */
@@ -523,8 +535,17 @@ export function setCoordinates(
     if (bad !== null) return bad;
     let settled = true;
     if (result.outcome === "saved" || result.outcome === "removed") {
+      // Recorded straight after the write, and again after deriving. The
+      // derivation waits for "Check iNaturalist now" if one is running, and
+      // that check ends with a pass over every sample's history under no
+      // author; were this entry left until after, that pass would take the
+      // staff point for its own. The second entry credits the elevation and
+      // county that follow to the same person, and writes nothing if nothing
+      // more changed.
+      const note = form.note.trim() || undefined;
+      await recordChange(deps, sample.sample_id, actor.login, note, "coordinate change");
       settled = await deriveMovedPoint(deps, sample.sample_id, "staff coordinates");
-      await recordChange(deps, sample.sample_id, actor.login, form.note.trim() || undefined, "coordinate change");
+      await recordChange(deps, sample.sample_id, actor.login, note, "coordinate change");
     }
     return { ok: true, settled };
   });
@@ -579,6 +600,8 @@ export function takeLocation(
     const bad = overlayRefusal(result);
     if (bad !== null) return bad;
     if (result.outcome === "unchanged") return refused("not_moved");
+    // Recorded before and after deriving, for the reason setCoordinates gives.
+    await recordChange(deps, sample.sample_id, actor.login, reason, "location change");
     const settled = await deriveMovedPoint(deps, sample.sample_id, "take observation location");
     await recordChange(deps, sample.sample_id, actor.login, reason, "location change");
     return { ok: true, settled };

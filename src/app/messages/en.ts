@@ -1991,7 +1991,7 @@ export const en = {
         ? `Every year together: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}, all from ${first}.`
         : `Every year together: ${n(specimens)} ${specimens === 1 ? "specimen" : "specimens"}, ${first} to ${last}.`,
     allYearsLicense: (license: string) => `Every year is under ${license}.`,
-    allYearsNoLicense: "It states no licence until every year it holds has the same one.",
+    allYearsNoLicense: "Its years do not all have the same licence, so none is stated for them together.",
     allYearsDownload: (program: string) => `Download the ${program} archive of every year`,
     /** The file states a licence its years no longer share. */
     allYearsLicenseDropped: (license: string) => `This file states ${license}; it is rewritten with no licence tonight.`,

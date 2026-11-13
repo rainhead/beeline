@@ -23,7 +23,11 @@
  *    `pick` event's option: a picker.
  *
  * `free` lets text that is no option stand and submit; without it Enter
- * takes only a highlighted option. Events, all bubbling: `pick` (detail: the
+ * takes only a highlighted option, and the box turns off the computer's own
+ * help with typing (autocorrect, spelling, suggested words): what is typed
+ * only searches the list, and on a Mac the suggestions replaced half a genus
+ * with an English word that matched nothing (`Colle` became `colleges`,
+ * GitHub #316). Events, all bubbling: `pick` (detail: the
  * option) and `cancel` (Escape).
  */
 import { html, LitElement, nothing, type TemplateResult } from "lit";
@@ -198,6 +202,10 @@ export class BeelineCombobox extends LitElement {
         aria-controls=${this.#listId}
         aria-activedescendant=${activeId}
         autocomplete="off"
+        autocorrect=${this.free ? nothing : "off"}
+        autocapitalize=${this.free ? nothing : "off"}
+        spellcheck=${this.free ? nothing : "false"}
+        writingsuggestions=${this.free ? nothing : "false"}
         .value=${this.query}
         placeholder=${this.placeholder || nothing}
         ?disabled=${this.disabled}

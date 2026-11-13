@@ -33,5 +33,10 @@ export function deselect(selection: Selection, ids: Iterable<number>): Selection
 /** The selection after a name or a sex was given to all of it. */
 export const markUsed = (selection: Selection): Selection => ({ ids: selection.ids, used: selection.ids.size > 0 });
 
-/** The selection after that was undone: the rows are as they were, so it can be added to again. */
-export const markUnused = (selection: Selection): Selection => ({ ids: selection.ids, used: false });
+/**
+ * The selection after a naming was undone. If it is still the selection that
+ * was named, it goes back to how it stood before: added to freely if nothing
+ * else had been done to it, finished with if an earlier name still stands.
+ * A selection begun or narrowed since is left as it is.
+ */
+export const undoUse = (selection: Selection, before: Selection): Selection => (selection.ids === before.ids ? before : selection);

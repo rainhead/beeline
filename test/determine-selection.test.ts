@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deselect, emptySelection, markUnused, markUsed, selectMore } from "../src/app/islands/determine/selection.js";
+import { deselect, emptySelection, markUsed, selectMore, undoUse } from "../src/app/islands/determine/selection.js";
 
 const ids = (s: { ids: ReadonlySet<number> }) => [...s.ids].sort((a, b) => a - b);
 
@@ -24,9 +24,25 @@ describe("the selection on Identify your specimens", () => {
     expect(narrowed.used).toBe(true);
   });
 
-  it("can be added to again after the naming is undone", () => {
-    const undone = markUnused(markUsed(selectMore(emptySelection, [1, 2])));
+  it("can be added to again after its only naming is undone", () => {
+    const before = selectMore(emptySelection, [1, 2]);
+    const undone = undoUse(markUsed(before), before);
     expect(ids(selectMore(undone, [3]))).toEqual([1, 2, 3]);
+  });
+
+  it("is still finished with when a later change is undone and an earlier name stands", () => {
+    const named = markUsed(selectMore(emptySelection, [1, 2]));
+    const sexedThenUndone = undoUse(markUsed(named), named);
+    expect(ids(selectMore(sexedThenUndone, [3]))).toEqual([3]);
+  });
+
+  it("is left alone by an undo if it was begun or narrowed since the naming", () => {
+    const before = selectMore(emptySelection, [1, 2]);
+    const named = markUsed(before);
+    const begun = selectMore(named, [3]);
+    expect(undoUse(begun, before)).toBe(begun);
+    const narrowed = deselect(named, [1]);
+    expect(undoUse(narrowed, before).used).toBe(true);
   });
 
   it("is not used when nothing was selected or nothing is left", () => {

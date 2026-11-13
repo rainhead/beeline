@@ -20,7 +20,7 @@ import { NumberIndex, pastedList, type NumberProblem } from "../../../determinat
 import { problemText } from "./problems.js";
 import { loadTaxa, nameTemplate, type PickerTaxon } from "./picker.js";
 import "./picker.js";
-import { deselect, emptySelection, markUnused, markUsed, selectMore, type Selection } from "./selection.js";
+import { deselect, emptySelection, markUsed, selectMore, undoUse, type Selection } from "./selection.js";
 
 const m = messagesFor(null);
 const d = m.determine;
@@ -57,7 +57,7 @@ class DetermineGrid extends LitElement {
   declare selection: Selection;
   declare editing: number | null;
   declare limit: number;
-  declare lastBulk: { before: Write[]; text: string } | null;
+  declare lastBulk: { before: Write[]; text: string; selection: Selection } | null;
   declare saving: Set<number>;
   declare failed: Map<number, Write>;
   /** The last thing the number boxes or a bulk change did, in words. */
@@ -188,7 +188,7 @@ class DetermineGrid extends LitElement {
 
   #bulk(patch: Partial<EntryValue>, text: string) {
     const rows = this.rows.filter((r) => this.selected.has(r.id));
-    this.lastBulk = { before: rows.map((r) => ({ specimenId: r.id, ...this.#current(r) })), text };
+    this.lastBulk = { before: rows.map((r) => ({ specimenId: r.id, ...this.#current(r) })), text, selection: this.selection };
     this.message = "";
     this.selection = markUsed(this.selection);
     void this.#write(rows, patch);
@@ -197,8 +197,8 @@ class DetermineGrid extends LitElement {
   #undoBulk() {
     if (!this.lastBulk) return;
     void this.#send(this.lastBulk.before);
+    this.selection = undoUse(this.selection, this.lastBulk.selection);
     this.lastBulk = null;
-    this.selection = markUnused(this.selection);
   }
 
   /** Back to what the row said before today: its earlier determination, or nothing. */
@@ -209,8 +209,11 @@ class DetermineGrid extends LitElement {
 
   #toggle(list: EntryRow[], index: number, shift: boolean) {
     const id = list[index]!.id;
-    const from = shift && this.#anchor !== null ? list.findIndex((r) => r.id === this.#anchor) : -1;
-    // A block runs from the row last clicked, if it is still listed.
+    // A row that starts a new selection starts its block too: the row last
+    // clicked belongs to the selection already named.
+    const starting = this.selection.used && !this.selected.has(id);
+    const from = shift && !starting && this.#anchor !== null ? list.findIndex((r) => r.id === this.#anchor) : -1;
+    // Otherwise a block runs from the row last clicked, if it is still listed.
     const block = from === -1 ? [id] : list.slice(Math.min(from, index), Math.max(from, index) + 1).map((r) => r.id);
     if (from === -1) this.#anchor = id;
     this.selection = this.selected.has(id) ? deselect(this.selection, block) : selectMore(this.selection, block);

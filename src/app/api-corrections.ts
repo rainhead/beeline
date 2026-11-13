@@ -352,7 +352,7 @@ export function registerCorrectionRoutes(api: Hono<ApiEnv>, corrections: { deps:
             c,
             409,
             "recorded_not_applied",
-            "Your change is recorded, but Beeline could not finish applying it because another write to the store got there first. It will be applied the next time Beeline brings its records up to date, which is nightly, so it may not be visible yet. Sending the same request again is safe, and applies it now.",
+            "Your change is recorded, but Beeline could not finish applying it because another write to the store got there first. It will be applied the next time Beeline brings its records up to date, which is nightly, so it may not be visible yet. Sending the same request again applies it now and does not record it twice. Like any correction, it replaces what the sample holds at that moment, so if someone else may have corrected the same thing since, check before you send it again.",
           );
         }
         throw err;

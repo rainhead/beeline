@@ -3,10 +3,12 @@ import type { Env, Hono, MiddlewareHandler } from "hono";
 /**
  * Where the old Beeline runs from cutover (beeline-83b8.12). New Beeline takes
  * melittologist.org on 3 November 2026, and the old system moves here and
- * keeps running, its volunteer determination screens open, through February
- * 2027 (Peter, 2026-11-03): volunteers were not warned about the new
- * interface, so they are not pushed onto it. What they enter there comes into
- * this store by another route (beeline-c43w).
+ * keeps running, its volunteer determination screens open, through December
+ * 2026 (Peter, 2026-11-03, and 2026-11-13: it said February 2027 until
+ * then, but Andony told volunteers on 4 November that it closes on 31
+ * December): volunteers were not warned about the new interface, so they
+ * are not pushed onto it. What they enter there comes into this store by
+ * another route (beeline-c43w).
  *
  * Everything in this file is temporary, and goes when the old Beeline does.
  */

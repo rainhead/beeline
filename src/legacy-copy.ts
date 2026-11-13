@@ -6,7 +6,7 @@ import { LEGACY_EXPORT_COLUMNS, legacyExportSources, legacyExportSql } from "./l
  * Every specimen Beeline prints, copied nightly into the old Beeline's master
  * list (beeline-83b8.18), so volunteers holding a label printed here can
  * enter their determination at old.melittologist.org, which stays open for
- * that through February 2027. Those determinations come back by
+ * that through December 2026. Those determinations come back by
  * beeline-c43w (src/legacy-volunteer-import.ts).
  *
  * THROUGH THE OLD SYSTEM'S OWN API, NOT ITS DATABASE. The old server takes a

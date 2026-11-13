@@ -1,0 +1,19 @@
+# The API and its keys
+
+Part of Beeline's architecture notes; the index is [README.md](README.md).
+
+Beeline has an API under `/api/v1/` for programs: a script, an AI assistant, an agent working on the code (`src/app/api.ts`, beeline-pnqr). Every request carries a **personal API key** as a bearer header, and every answer is JSON, errors included. The first endpoint is `GET /api/v1/me`, which says whose key it is and what it may do.
+
+**A key** (`src/app/api-keys.ts`, the `api_key` table in `schema/012`) is made by a person on their own page, `/keys`, reached from the account menu. They name it, choose what it may do and how long it lasts, and see it once: the store keeps only its SHA-256, as it does for a session, so a copy of the table lets nobody in. The key starts with `beeline_` so that one pasted in the wrong place can be recognised. Its first 12 hex digits of the hash are its reference, which the person's list shows and which is safe to record. Like a session, a key is held against the iNat user and resolved through `inat_account` on every request.
+
+**What a key may do** is chosen when it is made, and is a ceiling, not a grant: `read` sees what its person sees, `edit` will also correct its person's own samples (nothing accepts it yet, so the page does not offer it), and `staff` does what its person may do as staff. A staff key acts as one only while its person holds a `person_admin` row, which is asked on every request, so taking the rights away stops the key at once. A key acts as its own person and nobody else: there is no acting for someone and no impersonation through one, and a key cannot be made or revoked while acting for someone, because a key signs its holder in as its owner and a delegation does not hand that over.
+
+**A key stops working** when it expires (7, 30 or 90 days, the longest being a session's own limit), when its person revokes it, or when their iNat account is unlinked: the unlink on `/people` revokes the account's keys where it ends its sessions, and the nightly `session-purge` job revokes the keys of an account that went some other way. Without that, linking the account to a different person would bring the key back as them. A row is kept after its key stops working, so what the key did can still be traced to it.
+
+**Two credentials, two places.** The API is mounted ahead of the session gate and never calls it, so a session cookie means nothing under `/api/v1/`; no page reads a bearer header, so a key means nothing anywhere else. `test/api-keys.test.ts` holds both. The CSRF check does not apply to the API for the same reason: it protects a credential a browser sends by itself.
+
+**The old Beeline's redirect.** Until the old Beeline closes, `/api/*` is redirected to it ([the app process](the-app-process-and-its-gate.md)). `/api/v1/` is registered ahead of that, and a request to any other path under `/api/` that carries an `Authorization` header is answered 401 and not redirected, because some HTTP clients resend that header when a redirect stays within the site, and one mistyped path would hand the key to another server.
+
+**Limits.** One key may make 120 requests a minute, counted in memory; past that it is answered 429 with `Retry-After`. The machine's CPU allowance is small, and a script in a loop should be slowed before the pages are. The last-used time is written at most every five minutes and is allowed to lose a write conflict, as a session's slide is.
+
+**For now the page is offered to staff only.** A collector's key would have nothing to read until the read endpoints exist (beeline-pnqr.2). What comes next, each under the same gate: reading last night's copy of the store with SQL under a separate grant (beeline-pnqr.4), starting and watching jobs (beeline-pnqr.5), and the sample corrections the pages allow (beeline-pnqr.6).

@@ -276,6 +276,12 @@ export function Layout(props: {
                   ))}
                 </div>
               )}
+              {/* Staff only until the API has something for a collector to read (beeline-pnqr.1). */}
+              {env.admin && (
+                <div class="menu-section">
+                  <a href="/keys">{m.layout.apiKeys}</a>
+                </div>
+              )}
               {session.stub === true ? (
                 // A dev-login session has no cookie behind it to end.
                 <div class="menu-identity">{m.layout.devSession}</div>

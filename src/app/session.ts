@@ -87,7 +87,8 @@ const lifetimeCutoff = sql<Date>`current_timestamp - INTERVAL 90 DAY`;
 const slideDue = sql<Date>`current_timestamp - INTERVAL 5 MINUTE`;
 
 /**
- * Run one of the resolver's own writes, and let it lose.
+ * Run one of the resolver's own writes, and let it lose. The API's key
+ * resolver uses it for the same reason (src/app/api-keys.ts).
  *
  * DuckDB has no row locks: when two transactions update one row, the second
  * does not wait, it fails — `TransactionContext Error: Conflict on update!` —
@@ -106,7 +107,7 @@ const slideDue = sql<Date>`current_timestamp - INTERVAL 5 MINUTE`;
  * Only that class of error. Anything else — a store that will not take a
  * write at all — is still the request's problem.
  */
-async function bookkeeping(write: () => Promise<unknown>): Promise<void> {
+export async function bookkeeping(write: () => Promise<unknown>): Promise<void> {
   try {
     await write();
   } catch (err) {

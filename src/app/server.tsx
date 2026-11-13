@@ -15,6 +15,9 @@ import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
+import { createApi, refuseStrayCredentials } from "./api.js";
+import { createKey, KEY_SCOPES, listKeys, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
+import { KeysPage } from "./views/keys.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
 import { Layout, PublicPage } from "./views/layout.js";
@@ -345,15 +348,16 @@ export function createApp({
   // config.adminLogins is only the bootstrap seed now, applied at boot to a
   // store that has never granted anything; a revocation here therefore sticks.
   const cookies = cookieJar(config.origin);
-  const isAdmin = async (session: Session) => {
+  const isStaff = async (personId: number) => {
     if (config.environment === "development") return true;
     const row = await db
       .selectFrom("person_admin")
-      .where("person_id", "=", session.personId)
+      .where("person_id", "=", personId)
       .select("person_id")
       .executeTakeFirst();
     return row !== undefined;
   };
+  const isAdmin = (session: Session) => isStaff(session.personId);
   const app = new Hono<AppEnv>();
   // Outermost, so the time it records is the whole request, every middleware
   // after it included, and so it sees the status an error page settled on.
@@ -473,6 +477,12 @@ export function createApp({
   });
   app.use("/static/*", serveStatic({ root: "./src/app" }));
   app.use("/assets/*", serveStatic({ root: "./dist/app" }));
+  // The API (src/app/api.ts), ahead of the old Beeline's redirect of /api/*
+  // and ahead of the session gate: it answers to a key, never to a cookie.
+  // Any other path under /api/ that arrives with credentials is refused
+  // before the redirect could pass them on.
+  app.route("/api/v1", createApi({ db, isStaff }));
+  app.use("/api/*", refuseStrayCredentials);
   // The old Beeline's addresses, until it closes (src/app/old-beeline.ts).
   registerOldBeelineRedirects(app);
   registerAuthRoutes(app, {
@@ -767,6 +777,75 @@ export function createApp({
       ),
     );
   };
+  // A person's own API keys (beeline-pnqr.1, src/app/api-keys.ts). Staff only
+  // until the API has something for a collector to read. The admin flag is
+  // off while impersonating, so none of this works then; while acting for
+  // someone under a grant, the list is still the signed-in person's and
+  // nothing can be made or revoked, because a key signs its holder in as its
+  // owner and a delegation does not hand that over.
+  const keyOwner = async (c: Context<AppEnv>) => {
+    const account = await db
+      .selectFrom("inat_account")
+      .select("inat_user_id")
+      .where("person_id", "=", c.get("session").personId)
+      .executeTakeFirst();
+    return account?.inat_user_id ?? null;
+  };
+  const showKeys = async (
+    c: Context<AppEnv>,
+    extra: { created?: { key: string; name: string }; problem?: CreateKeyProblem } = {},
+    status: 200 | 400 = 200,
+  ) => {
+    const owner = await keyOwner(c);
+    const m = c.get("m");
+    // The page may carry a key, which no cache should keep.
+    c.header("cache-control", "no-store");
+    return c.html(
+      await page(
+        c,
+        m.keys.title,
+        <KeysPage
+          m={m}
+          keys={owner === null ? [] : await listKeys(db, owner)}
+          scopes={KEY_SCOPES.filter((s) => s !== "edit")}
+          created={extra.created}
+          problem={extra.problem}
+          acting={c.get("acting").actingFor !== null}
+          now={new Date()}
+        />,
+      ),
+      status,
+    );
+  };
+  app.get("/keys", async (c) => {
+    if (!c.get("admin")) return c.text("Admins only.", 403);
+    return showKeys(c);
+  });
+  app.post("/keys", async (c) => {
+    if (!c.get("admin") || c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
+    const owner = await keyOwner(c);
+    if (owner === null) return c.text(c.get("m").errors.forbidden, 403);
+    const form = await c.req.parseBody();
+    const text = (name: string) => (typeof form[name] === "string" ? (form[name] as string) : "");
+    const made = await createKey(db, {
+      inatUserId: owner,
+      name: text("name"),
+      scope: text("scope"),
+      lifetimeDays: Number(text("lifetime")),
+    });
+    if ("problem" in made) return showKeys(c, { problem: made.problem }, 400);
+    // Answered with the page itself and not a redirect: the key exists
+    // nowhere but in this response, so there is nothing a second request
+    // could read it from.
+    return showKeys(c, { created: { key: made.key, name: text("name").trim() } });
+  });
+  app.post("/keys/:ref/revoke", async (c) => {
+    if (!c.get("admin") || c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
+    const owner = await keyOwner(c);
+    if (owner !== null) await revokeKey(db, owner, c.req.param("ref"));
+    return c.redirect("/keys");
+  });
+
   app.get("/", (c) => dashboardPage(c));
 
   // "Your bees" (beeline-fiay): the person's bees by collection year, and the
@@ -2494,7 +2573,11 @@ export function createApp({
               .where("person_id", "=", afterId)
               .executeTakeFirst();
       for (const uid of [d.boundBefore, boundAfter?.inat_user_id]) {
-        if (uid !== null && uid !== undefined) await endSessionsFor(db, uid);
+        if (uid !== null && uid !== undefined) {
+          await endSessionsFor(db, uid);
+          // And their API keys, for the same reason (src/app/api-keys.ts).
+          await revokeKeysFor(db, uid);
+        }
       }
     }
     return { applied: true, problem: null, personId: afterId };

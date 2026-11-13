@@ -150,11 +150,13 @@ export function reportError(err: unknown, tags: Record<string, string> = {}): vo
  * shows (beeline-0kj): eight hex digits, in the log line and as a Sentry tag,
  * so whoever reads the feedback email can find the failure with Sentry or
  * without it. Carries the route pattern (`/samples/:id`, never the id) and
- * the signed-in login, if there is one.
+ * the login of whoever asked, if anyone is signed in or holds the key.
  */
 export function reportAppError(err: Error, c: Context): string {
   const reference = crypto.randomUUID().replaceAll("-", "").slice(0, 8);
-  const session = c.get("session") as { login?: string } | undefined;
+  // A page has a session; a request under /api/v1/ has the holder of its key
+  // (src/app/api.ts). Either names who to reproduce the failure as.
+  const session = (c.get("session") ?? c.get("key")) as { login?: string } | undefined;
   Sentry.withScope((scope) => {
     scope.setTag("route", `${c.req.method} ${c.req.routePath}`);
     scope.setTag("reference", reference);

@@ -345,6 +345,8 @@ export const en = {
       stop: "Stop viewing as them",
     },
     signOut: "Sign out",
+    /** The link to the person's own API keys (/keys), in the account menu. */
+    apiKeys: "API keys",
     /** BEELINE_DEV_LOGIN sessions ignore cookies, so there is nothing to sign out of. */
     devSession: "Signed in by BEELINE_DEV_LOGIN — stop the dev server to change who you are.",
     pageTitle: (title: string) => `${title} · Beeline`,
@@ -1855,6 +1857,56 @@ export const en = {
       `Read back every night at 3am Pacific from Ecdysis, the museum database, dataset ${datasetId}.`,
   },
 
+  /**
+   * A person's own API keys (/keys, beeline-pnqr.1). Staff only for now, but
+   * written for anyone, since collectors get the page once the API has
+   * something for them to read.
+   */
+  keys: {
+    title: "API keys",
+    heading: "API keys",
+    intro:
+      "An API key lets a program of yours, such as a script or an AI assistant, ask Beeline for records as you. Anyone who has one of your keys can do what the key allows, so keep each one where only that program can read it, and revoke it when you stop using it.",
+    yours: "Your keys",
+    none: "You have not made a key.",
+    col: {
+      name: "Name",
+      scope: "May",
+      created: "Made",
+      expires: "Expires",
+      lastUsed: "Last used",
+      reference: "Reference",
+    },
+    scope: {
+      read: { label: "Read", means: "see the records you can see" },
+      edit: { label: "Edit", means: "see the records you can see, and correct your own samples" },
+      staff: { label: "Staff", means: "do what you can do as staff, for as long as you are staff" },
+    },
+    revoked: (when: string) => `Revoked ${when}`,
+    expired: (when: string) => `Expired ${when}`,
+    neverUsed: "Never",
+    revoke: "Revoke",
+    created: {
+      lead: (name: string) => `Your key "${name}" is below. Copy it now: Beeline does not keep it and cannot show it again.`,
+      use: "A program sends it with each request, in a header: Authorization: Bearer followed by the key. Ask /api/v1/me to check that it works.",
+    },
+    problems: {
+      name: "Give the key a name of up to 80 characters.",
+      scope: "Choose what the key may do from the list.",
+      lifetime: "Choose how long the key lasts from the list.",
+    },
+    create: {
+      heading: "Make a key",
+      name: "Name",
+      nameHint: (max: number) => `Where you will use it, so you can tell your keys apart. Up to ${max} characters.`,
+      scope: "What it may do",
+      lifetime: "How long it lasts",
+      lifetimeHint: "A key stops working after this, and you make a new one.",
+      days: (days: number) => `${days} days`,
+      submit: "Make key",
+      acting: "You are acting for someone else. Keys belong to the person signed in, so stop acting for them to make or revoke a key.",
+    },
+  },
   exports: {
     title: "Exports",
     heading: "Exports",

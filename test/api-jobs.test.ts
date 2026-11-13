@@ -1,6 +1,8 @@
+import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createKysely } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
+import { createApi } from "../src/app/api.js";
 import { createKey, KEY_SCOPES } from "../src/app/api-keys.js";
 import { startScheduler, type Job, type Scheduler } from "../src/app/jobs/framework.js";
 import { createApp } from "../src/app/server.js";
@@ -163,6 +165,32 @@ describe("starting and watching jobs through the API", () => {
     const { run } = (await (await ask("/api/v1/jobs/long", staffKey, "POST")).json()) as { run: { id: number } };
     expect(await status(run.id)).toBe("running");
     expect(await status(orphan)).toBe("unfinished");
+  });
+
+  it("does not call a run unfinished because the scheduler moved on while the run was being read", async () => {
+    const { db, conn, key } = await fixture();
+    await conn.run(`INSERT INTO job_run (job_name) VALUES ('long')`);
+    const [[id]] = (await rows(conn, `SELECT entity_id FROM job_run`)) as [[number]];
+    const staffKey = await key(STAFF_UID, "staff");
+    // A scheduler whose answer changes between the two times one request asks it.
+    for (const answers of [
+      ["long", null], // the job finished after the row was read
+      [null, "long"], // the job started after the scheduler was first asked
+    ]) {
+      const said = [...answers];
+      const api = new Hono().route(
+        "/api/v1",
+        createApi({ db, isStaff: async () => true, jobs: { list: [], running: () => (said.length > 1 ? said.shift()! : said[0]!) } }),
+      );
+      for (const path of [`/api/v1/jobs/runs/${id}`, "/api/v1/jobs/runs"]) {
+        said.splice(0, said.length, ...answers);
+        const body = (await (await api.request(path, { headers: { authorization: `Bearer ${staffKey}` } })).json()) as {
+          run?: { status: string };
+          runs?: { status: string }[];
+        };
+        expect((body.run ?? body.runs![0]!).status, `${path} ${JSON.stringify(answers)}`).toBe("running");
+      }
+    }
   });
 
   it("answers 404 for a job nobody registered and for a run that does not exist", async () => {

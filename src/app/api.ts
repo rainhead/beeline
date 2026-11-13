@@ -167,14 +167,28 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs }: Api
     return row?.id == null ? null : Number(row.id);
   };
   /**
+   * Read runs together with which run was live while they were read. The
+   * scheduler is asked on both sides of the read, because the two cannot be
+   * read at one instant: asked only after, a run that finished in between
+   * still shows no outcome in the rows and is no longer live, and would be
+   * called unfinished though it succeeded; asked only before, a run that
+   * started in between would be. A run live at either moment is running.
+   */
+  const withLive = async <T,>(read: () => Promise<T>): Promise<{ value: T; live: ReadonlySet<number> }> => {
+    const before = await liveRunId();
+    const value = await read();
+    const after = await liveRunId();
+    return { value, live: new Set([before, after].filter((id): id is number => id !== null)) };
+  };
+  /**
    * A run as the API describes it. A run with no outcome is `running` if it
    * is the one the scheduler has in hand, and `unfinished` otherwise: the
    * process stopped while it ran, and nothing will ever complete it.
    */
-  const describeRun = (r: RunRow, live: number | null) => ({
+  const describeRun = (r: RunRow, live: ReadonlySet<number>) => ({
     id: Number(r.entity_id),
     job: r.job_name,
-    status: r.outcome ?? (Number(r.entity_id) === live ? "running" : "unfinished"),
+    status: r.outcome ?? (live.has(Number(r.entity_id)) ? "running" : "unfinished"),
     started_at: r.started_at.toISOString(),
     completed_at: r.completed_at?.toISOString() ?? null,
     detail: r.detail,
@@ -183,19 +197,20 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs }: Api
 
   // Every registered job, with its schedule and its latest run.
   api.get("/jobs", async (c) => {
-    const latest = await db
-      .selectFrom("job_run")
-      .select(runColumns)
-      .where(({ eb, selectFrom }) =>
-        eb(
-          "entity_id",
-          "in",
-          selectFrom("job_run as latest").select(({ fn }) => fn.max("latest.entity_id").as("id")).groupBy("latest.job_name"),
-        ),
-      )
-      .execute();
+    const { value: latest, live } = await withLive(() =>
+      db
+        .selectFrom("job_run")
+        .select(runColumns)
+        .where(({ eb, selectFrom }) =>
+          eb(
+            "entity_id",
+            "in",
+            selectFrom("job_run as latest").select(({ fn }) => fn.max("latest.entity_id").as("id")).groupBy("latest.job_name"),
+          ),
+        )
+        .execute(),
+    );
     const byJob = new Map(latest.map((r) => [r.job_name, r]));
-    const live = await liveRunId();
     return c.json({
       running: jobs?.running?.() ?? null,
       jobs: (jobs?.list ?? []).map((j) => {
@@ -214,8 +229,9 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs }: Api
     const job = c.req.query("job");
     let runs = db.selectFrom("job_run").select(runColumns);
     if (job !== undefined) runs = runs.where("job_name", "=", job);
-    const rows = await runs.orderBy("entity_id", "desc").limit(Math.min(Number(limit ?? 20), 200)).execute();
-    const live = await liveRunId();
+    const { value: rows, live } = await withLive(() =>
+      runs.orderBy("entity_id", "desc").limit(Math.min(Number(limit ?? 20), 200)).execute(),
+    );
     return c.json({ runs: rows.map((r) => describeRun(r, live)) });
   });
 
@@ -223,7 +239,9 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs }: Api
   api.get("/jobs/runs/:id", async (c) => {
     const id = c.req.param("id");
     if (!/^[1-9]\d{0,9}$/.test(id) || Number(id) > 2_147_483_647) return apiError(c, 404, "not found", "No such run.");
-    const run = await db.selectFrom("job_run").select(runColumns).where("entity_id", "=", Number(id)).executeTakeFirst();
+    const { value: run, live } = await withLive(() =>
+      db.selectFrom("job_run").select(runColumns).where("entity_id", "=", Number(id)).executeTakeFirst(),
+    );
     if (run === undefined) return apiError(c, 404, "not found", "No such run.");
     const steps = await db
       .selectFrom("job_step")
@@ -233,7 +251,7 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs }: Api
       .execute();
     return c.json({
       run: {
-        ...describeRun(run, await liveRunId()),
+        ...describeRun(run, live),
         steps: steps.map((s) => ({
           number: Number(s.step_number),
           label: s.label,
@@ -269,7 +287,7 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs }: Api
     console.log(`[api] ${key.login} started job '${name}' as run ${started.runId} with key ${key.ref}`);
     const run = await db.selectFrom("job_run").select(runColumns).where("entity_id", "=", started.runId).executeTakeFirstOrThrow();
     c.header("location", `/api/v1/jobs/runs/${started.runId}`);
-    return c.json({ run: describeRun(run, started.runId) }, 202);
+    return c.json({ run: describeRun(run, new Set([started.runId])) }, 202);
   });
 
   // After the key check on purpose: someone without a key learns nothing

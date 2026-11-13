@@ -67,8 +67,6 @@ import {
   runLabels,
   runPdf,
   scopeCounts,
-  specimenLabels,
-  specimenReprint,
 } from "./print-runs.js";
 import {
   approveRun,
@@ -201,17 +199,11 @@ import { archiveDir, readArchiveManifest } from "./program-archives.js";
 import { readProgramGovernance, type GovernancePaths } from "../program-governance.js";
 import { SampleListing, SpecimenListing } from "./views/listings.js";
 import {
-  determinationHistory,
-  listSampleSpecimens,
+  gatherSample,
+  gatherSpecimen,
   loadSample,
-  loadSpecimen,
   parsePage,
-  recordFindings,
-  recordQcDecisions,
-  sampleChangeHistory,
   sampleHref,
-  visibleFindings,
-  visibleHistory,
 } from "./record.js";
 import { SamplePage, SpecimenPage } from "./views/record.js";
 import { AtlasMark } from "./views/components/atlas-mark.js";
@@ -1172,14 +1164,16 @@ export function createApp({
 
   app.get("/samples/:id", async (c) => {
     const m = c.get("m");
-    const sample = await loadSample(db, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
-    if (sample === null) return errorResponse(c, "notFound");
-    const [findings, decisions, specimens, history] = await Promise.all([
-      recordFindings(db, sample.sample_id).then((f) => visibleFindings(f, sample)),
-      recordQcDecisions(db, sample.sample_id),
-      listSampleSpecimens(db, sample.sample_id, parsePage(c.req.query("page"))),
-      sampleChangeHistory(db, samplePaths.log, sample.sample_id).then((h) => visibleHistory(h, sample)),
-    ]);
+    const record = await gatherSample(
+      { db, changesPath: samplePaths.log },
+      Number(c.req.param("id")),
+      c.get("acting").personId,
+      readerOf(c),
+      parsePage(c.req.query("page")),
+    );
+    if (record === null) return errorResponse(c, "notFound");
+    const { sample, findings, specimens, history } = record;
+    const decisions = { hold: record.hold, waivers: record.waivers };
     // A locality this person set is theirs to change again (beeline-7i6).
     const ownsLocality =
       sample.locality_override !== null &&
@@ -1216,14 +1210,9 @@ export function createApp({
 
   app.get("/specimens/:id", async (c) => {
     const m = c.get("m");
-    const specimen = await loadSpecimen(db, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
-    if (specimen === null) return errorResponse(c, "notFound");
-    const [events, findings, labels, reprint] = await Promise.all([
-      determinationHistory(db, specimen.specimen_id),
-      recordFindings(db, specimen.sample.sample_id).then((f) => visibleFindings(f, specimen.sample)),
-      specimenLabels(db, specimen.specimen_id),
-      specimenReprint(db, specimen.specimen_id),
-    ]);
+    const record = await gatherSpecimen({ db, changesPath: samplePaths.log }, Number(c.req.param("id")), c.get("acting").personId, readerOf(c));
+    if (record === null) return errorResponse(c, "notFound");
+    const { specimen, events, findings, labels, reprint } = record;
     const title =
       specimen.field_number === null
         ? m.record.specimen.titleUnnumbered(specimen.specimen_number, specimen.sample.sample_number)

@@ -14,6 +14,7 @@ import type { LocalityBasis } from "../locality-rule.js";
 import { observationGone, ownSamplesSql, placeColumns, withheld, type ListedCollector, type Reader } from "./listings.js";
 import { readSampleChanges, sampleHistory, SAMPLE_STATE_SQL, type SampleChange } from "../sample-change.js";
 import { fromOldRecords } from "./sample-method.js";
+import { specimenLabels, specimenReprint, type SpecimenLabelRow, type SpecimenReprint } from "./print-runs.js";
 
 /**
  * One record: the query layer behind /samples/:id and /specimens/:id.
@@ -867,4 +868,78 @@ export function visibleHistory(changes: SampleChange[], sample: SampleDetail): S
   const hidden = new Set<string>(["location", "location_source", "locality", "hold", "waivers"]);
   if (sample.geoprivacy === "private" || sample.taxon_geoprivacy === "private") hidden.add("county");
   return changes.filter((c) => !hidden.has(c.field));
+}
+
+/** What a record page needs of the store: the database, and the log the history is read from. */
+export interface RecordDeps {
+  db: Kysely<Database>;
+  /** The sample change log (`samplePaths.log`). */
+  changesPath: string;
+}
+
+/** Everything the sample page shows about one sample to one reader. */
+export interface SampleRecord {
+  sample: SampleDetail;
+  /** The sample's findings, their quoted details gone where the location is withheld. */
+  findings: RecordFinding[];
+  hold: RecordHold | null;
+  waivers: RecordWaiver[];
+  /** One page of the sample's specimens. */
+  specimens: SampleSpecimenPage;
+  /** The sample's history, without the entries that would say where it was where the location is withheld. */
+  history: SampleChange[];
+}
+
+/**
+ * The sample page's contents, gathered in one place so that the page and the
+ * API show the same record and apply the same withholding: the sample as the
+ * reader may see it, then its findings, hold, waivers, specimens and history
+ * with `visibleFindings` and `visibleHistory` applied. Null when there is no
+ * such sample; a sample is never withheld whole, only its location is.
+ */
+export async function gatherSample(
+  deps: RecordDeps,
+  sampleId: number,
+  personId: number,
+  reader: Reader,
+  specimenPage: number,
+): Promise<SampleRecord | null> {
+  const sample = await loadSample(deps.db, sampleId, personId, reader);
+  if (sample === null) return null;
+  const [findings, decisions, specimens, history] = await Promise.all([
+    recordFindings(deps.db, sample.sample_id).then((f) => visibleFindings(f, sample)),
+    recordQcDecisions(deps.db, sample.sample_id),
+    listSampleSpecimens(deps.db, sample.sample_id, specimenPage),
+    sampleChangeHistory(deps.db, deps.changesPath, sample.sample_id).then((h) => visibleHistory(h, sample)),
+  ]);
+  return { sample, findings, hold: decisions.hold, waivers: decisions.waivers, specimens, history };
+}
+
+/** Everything the specimen page shows about one specimen to one reader. */
+export interface SpecimenRecord {
+  specimen: SpecimenDetail;
+  /** The determination history, newest first. */
+  events: DeterminationEvent[];
+  /** The sample's findings, as {@link SampleRecord} has them. */
+  findings: RecordFinding[];
+  labels: SpecimenLabelRow[];
+  reprint: SpecimenReprint;
+}
+
+/** The specimen page's contents, gathered as {@link gatherSample} gathers the sample's. */
+export async function gatherSpecimen(
+  deps: RecordDeps,
+  specimenId: number,
+  personId: number,
+  reader: Reader,
+): Promise<SpecimenRecord | null> {
+  const specimen = await loadSpecimen(deps.db, specimenId, personId, reader);
+  if (specimen === null) return null;
+  const [events, findings, labels, reprint] = await Promise.all([
+    determinationHistory(deps.db, specimen.specimen_id),
+    recordFindings(deps.db, specimen.sample.sample_id).then((f) => visibleFindings(f, specimen.sample)),
+    specimenLabels(deps.db, specimen.specimen_id),
+    specimenReprint(deps.db, specimen.specimen_id),
+  ]);
+  return { specimen, events, findings, labels, reprint };
 }

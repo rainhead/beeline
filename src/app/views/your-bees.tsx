@@ -162,7 +162,26 @@ export function BatchList({ m, batches }: { m: Messages; batches: Batch[] }) {
                   {n.count > 1 && <> {t.times(n.count)}</>}
                   {/* The specimens themselves, so a volunteer can open the one
                       that changed and see its whole history. */}
-                  <SpecimenLinks m={m} specimens={n.specimens} />
+                  <span class="batch-specimens">
+                    {n.specimens.slice(0, SPECIMENS_LINKED).map((s) => (
+                      <>
+                        {" "}
+                        <SpecimenLink m={m} specimen={s} />
+                      </>
+                    ))}
+                    {n.specimens.length > SPECIMENS_LINKED && " "}
+                    {n.specimens.length > SPECIMENS_LINKED && (
+                      <details class="batch-more">
+                        <summary>{t.andMore(n.specimens.length - SPECIMENS_LINKED)}</summary>
+                        {n.specimens.slice(SPECIMENS_LINKED).map((s) => (
+                          <>
+                            {" "}
+                            <SpecimenLink m={m} specimen={s} />
+                          </>
+                        ))}
+                      </details>
+                    )}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -170,36 +189,6 @@ export function BatchList({ m, batches }: { m: Messages; batches: Batch[] }) {
         </li>
       ))}
     </ul>
-  );
-}
-
-/**
- * Specimens by field number, each linked to its page, the first few shown and
- * the rest folded away. Also the taxon page's list of the reader's own
- * specimens (beeline-nstp).
- */
-export function SpecimenLinks({ m, specimens }: { m: Messages; specimens: readonly BatchSpecimen[] }) {
-  return (
-    <span class="batch-specimens">
-      {specimens.slice(0, SPECIMENS_LINKED).map((s) => (
-        <>
-          {" "}
-          <SpecimenLink m={m} specimen={s} />
-        </>
-      ))}
-      {specimens.length > SPECIMENS_LINKED && " "}
-      {specimens.length > SPECIMENS_LINKED && (
-        <details class="batch-more">
-          <summary>{m.yourBees.batches.andMore(specimens.length - SPECIMENS_LINKED)}</summary>
-          {specimens.slice(SPECIMENS_LINKED).map((s) => (
-            <>
-              {" "}
-              <SpecimenLink m={m} specimen={s} />
-            </>
-          ))}
-        </details>
-      )}
-    </span>
   );
 }
 

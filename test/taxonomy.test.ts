@@ -478,15 +478,26 @@ describe("the reader's own specimens on a name's page (beeline-nstp)", () => {
     // The plant set as a name, italic at species rank.
     expect(yours.slice(baldHill)).toContain(', off <span class="taxon"><i>Rubus</i> <i>armeniacus</i></span>, in ');
     expect(yours).toContain(t.inSeasons([String(CURRENT_SEASON)]));
-    // Each specimen links to its page, by field number or, lacking one, by sample and number.
-    expect(yours).toContain(">26000201</a>");
-    expect(yours).toContain(en.yourBees.batches.specimen("1", 2));
     expect(yours).not.toContain("Philomath");
-    expect(yours).not.toContain("26000301");
-    // The listing it links to agrees about which are Ada's.
-    const listing = await page(app, "/specimens?scope=mine&taxon=Lasioglossum");
-    expect(listing).toContain("26000201");
-    expect(listing).not.toContain("26000301");
+    // The count links to all of Ada's, and the listing agrees about which are hers.
+    const all = await page(app, "/specimens?scope=mine&taxon=Lasioglossum");
+    expect(all).toContain("26000201");
+    expect(all).not.toContain("26000301");
+    // Each line links to the listing narrowed to it: the name, Ada's, the place, the plant and the days.
+    const linkTo = (text: string) => {
+      const href = new RegExp(`<a href="([^"]+)">${text}</a>`).exec(yours)?.[1];
+      expect(href, text).toBeDefined();
+      return href!.replaceAll("&amp;", "&");
+    };
+    const baldHillHref = linkTo(t.from(1, "Bald Hill, BentonCo, OR"));
+    const params = new URL(baldHillHref, "http://x").searchParams;
+    expect(Object.fromEntries(params)).toMatchObject({ scope: "mine", taxon: "Lasioglossum", place: "Bald Hill, BentonCo, OR", host: "Rubus armeniacus" });
+    expect(params.get("from")).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(params.get("to")).toBe(params.get("from"));
+    expect(await page(app, baldHillHref)).toContain("26000201");
+    const corvallisListing = await page(app, linkTo(t.from(2, "Corvallis, BentonCo, OR")));
+    expect(corvallisListing).not.toContain("26000201");
+    expect(corvallisListing).not.toContain("26000301");
   });
 
   it("follows the name down, so a species shows only its own", async () => {

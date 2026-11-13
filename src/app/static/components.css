@@ -703,14 +703,13 @@ ul.batches { list-style: none; margin: var(--space-2) 0 var(--space-4); padding:
 ul.batches > li { border-top: 1px solid var(--md-sys-color-outline-variant); padding: var(--space-3) 0; }
 ul.batches .batch-when { font-weight: 600; }
 ul.batches details > summary { cursor: pointer; font-size: 0.875rem; color: var(--md-sys-color-primary); }
-.batch-specimens { color: var(--md-sys-color-on-surface-variant); }
-.batch-specimens a { font-variant-numeric: tabular-nums; }
-.batch-specimens details.batch-more { display: inline; }
-.batch-specimens details.batch-more > summary { display: inline; cursor: pointer; color: var(--md-sys-color-primary); }
+ul.batch-names .batch-specimens { color: var(--md-sys-color-on-surface-variant); }
+ul.batch-names .batch-specimens a { font-variant-numeric: tabular-nums; }
+ul.batch-names details.batch-more { display: inline; }
+ul.batch-names details.batch-more > summary { display: inline; cursor: pointer; }
 /* The reader's own specimens of a name, on its taxon page (beeline-nstp). */
 ul.collected { list-style: none; margin: var(--space-2) 0 var(--space-3); padding: 0; }
-ul.collected > li { padding: var(--space-1-5) 0; }
-ul.collected .batch-specimens { font-size: 0.875rem; }
+ul.collected > li { padding: var(--space-1) 0; }
 details.collected-more > summary { cursor: pointer; color: var(--md-sys-color-primary); }
 ul.batch-names { columns: 2; margin: var(--space-1-5) 0 0; padding-left: var(--space-5); font-size: 0.875rem; }
 @media (max-width: 40rem) { ul.batch-names { columns: 1; } }

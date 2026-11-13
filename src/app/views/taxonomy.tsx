@@ -34,7 +34,6 @@ import {
 } from "./components/index.js";
 import { EMPTY_QUERY, MINE, listingHref } from "../listings.js";
 import type { Collected, CollectedGroup } from "../your-bees.js";
-import { SpecimenLinks } from "./your-bees.js";
 
 /**
  * The taxonomy (beeline-45v.5): an index that is both a way into the tree and
@@ -387,24 +386,37 @@ function Reference({ value }: { value: string }) {
 const GROUPS_OPEN = 10;
 const GROUPS_LISTED = 100;
 
-function CollectedList({ m, groups }: { m: Messages; groups: readonly CollectedGroup[] }) {
+/**
+ * Each group links to the specimen listing narrowed as far as its filters
+ * go: the name, My records, the place and plant, and the first and last
+ * collecting days. The listing matches a place or a plant as words in it
+ * rather than exactly, and has no filter for "no plant", so a link can show
+ * more than its count: a place whose name is part of another's within those
+ * days, or, for a line with no plant, the same place's other plants.
+ */
+function CollectedList({ m, node, groups }: { m: Messages; node: TaxonNode; groups: readonly CollectedGroup[] }) {
   const t = m.taxonomy.yours;
   return (
     <ul class="collected">
       {groups.map((g) => {
         const where = m.format.place([g.locality, g.county, g.state_province]);
+        const href = listingHref("/specimens", EMPTY_QUERY, {
+          scope: MINE,
+          taxon: node.scientific_name,
+          place: where,
+          host: g.host_name ?? "",
+          from: g.from,
+          to: g.to,
+        });
         return (
           <li>
-            {where === "" ? t.nowhere(g.specimens.length) : t.from(g.specimens.length, where)}
+            <a href={href}>{where === "" ? t.nowhere(g.specimens) : t.from(g.specimens, where)}</a>
             {g.host_name !== null && (
               <>
                 , {t.off} <TaxonName rank={g.host_rank ?? ""} scientificName={g.host_name} />
               </>
             )}
             , {t.inSeasons(g.seasons.map(String))}.
-            <div>
-              <SpecimenLinks m={m} specimens={g.specimens} />
-            </div>
           </li>
         );
       })}
@@ -416,7 +428,7 @@ function CollectedList({ m, groups }: { m: Messages; groups: readonly CollectedG
  * The reader's own specimens of the name or anything below it, by place and
  * host plant (beeline-nstp): where a volunteer arriving from What you found
  * sees what of theirs the name covers. The count links to them all on the
- * specimen listing, at My records.
+ * specimen listing, at My records, and each group to its own part of it.
  */
 function Yours({ m, node, collected }: { m: Messages; node: TaxonNode; collected: Collected }) {
   const t = m.taxonomy.yours;
@@ -427,11 +439,11 @@ function Yours({ m, node, collected }: { m: Messages; node: TaxonNode; collected
       <p>
         {t.collected} <a href={listingHref("/specimens", EMPTY_QUERY, { scope: MINE, taxon: node.scientific_name })}>{t.ofThem(collected.total)}</a>.
       </p>
-      <CollectedList m={m} groups={groups.slice(0, GROUPS_OPEN)} />
+      <CollectedList m={m} node={node} groups={groups.slice(0, GROUPS_OPEN)} />
       {groups.length > GROUPS_OPEN && (
         <details class="collected-more">
           <summary>{t.more(Math.min(groups.length, GROUPS_LISTED) - GROUPS_OPEN)}</summary>
-          <CollectedList m={m} groups={groups.slice(GROUPS_OPEN, GROUPS_LISTED)} />
+          <CollectedList m={m} node={node} groups={groups.slice(GROUPS_OPEN, GROUPS_LISTED)} />
           {groups.length > GROUPS_LISTED && <Meta block>{t.notListed(groups.length - GROUPS_LISTED)}</Meta>}
         </details>
       )}

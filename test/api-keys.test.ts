@@ -222,8 +222,8 @@ describe("making and revoking a key on /keys", () => {
 const keysSection = (html: string) => /<h2>API keys<\/h2>[\s\S]*?<\/table>/.exec(html)?.[0];
 
 describe("a person who is not staff, on /keys", () => {
-  it("sees their keys and revokes one, and cannot make one", async () => {
-    const { app, post, make, db, conn } = await fixture({ admin: false });
+  it("sees their keys and revokes one, and may make a read key and no other", async () => {
+    const { app, api, post, make, db, conn } = await fixture({ admin: false });
     const one = await make(STAFF_UID, "read");
     const two = await make(STAFF_UID, "read");
     const page = await app.request("/keys");
@@ -231,12 +231,26 @@ describe("a person who is not staff, on /keys", () => {
     const html = await page.text();
     expect(html).toContain(one.ref);
     expect(html).toContain(two.ref);
-    expect(html).not.toContain('action="/keys"');
-    expect(html).toContain("Making keys is not open to you yet");
+    expect(html).toContain('action="/keys"');
+    expect(html).not.toContain("not open to you yet");
     expect(shownKey(html)).toBeUndefined();
+    // Only what a read key is offered: the form's choices are the server's.
+    const choices = /<select[^>]*name="scope"[\s\S]*?<\/select>/.exec(html)![0];
+    expect(choices).toContain('value="read"');
+    expect(choices).not.toContain('value="edit"');
+    expect(choices).not.toContain('value="staff"');
 
-    expect((await post("/keys", { name: "k", scope: "read", lifetime: "30" })).status).toBe(403);
+    for (const scope of ["edit", "staff"]) {
+      expect((await post("/keys", { name: "k", scope, lifetime: "30" })).status).toBe(400);
+    }
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM api_key`)).toEqual([[2]]);
+    const made = await post("/keys", { name: "mine", scope: "read", lifetime: "30" });
+    expect(made.status).toBe(200);
+    const key = shownKey(await made.text())!;
+    expect(await rows(conn, `SELECT count(*)::INTEGER FROM api_key`)).toEqual([[3]]);
+    // It works as that person, on the API, and as a read key.
+    const me = await (await api("/api/v1/me", key)).json();
+    expect(me).toMatchObject({ key: { scope: "read" }, staff: false });
 
     const res = await post(`/keys/${one.ref}/revoke`);
     expect(res.status).toBeLessThan(400);
@@ -246,16 +260,14 @@ describe("a person who is not staff, on /keys", () => {
     expect(after).toContain("Revoked");
   });
 
-  it("is linked to /keys from the account menu when staff, or when they have a key, and not otherwise", async () => {
+  it("is linked to /keys from the account menu for everyone signed in, and not while viewing as someone", async () => {
     const link = 'href="/keys"';
     const staff = await fixture();
     expect(await (await staff.app.request("/")).text()).toContain(link);
 
     const none = await fixture({ admin: false });
-    expect(await (await none.app.request("/")).text()).not.toContain(link);
-    await none.make(STAFF_UID, "read");
     expect(await (await none.app.request("/")).text()).toContain(link);
-    // Still there once the key is revoked: the page then says it is revoked.
+    await none.make(STAFF_UID, "read");
     await revokeKey(none.db, STAFF_UID, (await listKeys(none.db, STAFF_UID))[0]!.ref, OWNER);
     expect(await (await none.app.request("/")).text()).toContain(link);
     // Not while viewing Beeline as someone else, where /keys refuses.
@@ -430,7 +442,6 @@ describe("keys of an account that changed hands", () => {
     for (const k of [working, byOwner, expired]) expect(keys).not.toContain(k.ref);
     expect(keys).not.toContain(">test<");
     expect(keys).toContain("You have not made a key.");
-    expect(await (await get(app, "/", jc)).text()).not.toContain('href="/keys"');
 
     // Staff see them on Jane's page, marked as made before, with no button.
     const html = await (await app.request(`/people/${jane}`)).text();
@@ -448,14 +459,12 @@ describe("keys of an account that changed hands", () => {
     await post(`/people/${volunteer}/account`, { inat_user_id: "", reason: "unlink" });
     await post(`/people/${volunteer}/account`, { inat_user_id: String(VOLUNTEER_UID), login: "vera", reason: "relink" });
     const vc = await cookieFor(VOLUNTEER_UID);
-    // Nothing of theirs on /keys, and no link; a key made after the relink is theirs.
+    // Nothing of theirs on /keys; a key made after the relink is theirs.
     expect(await (await app.request("/keys", { headers: { cookie: vc } })).text()).not.toContain(old.ref);
-    expect(await (await app.request("/", { headers: { cookie: vc } })).text()).not.toContain('href="/keys"');
     const fresh = await make(VOLUNTEER_UID, "read");
     const page = await (await app.request("/keys", { headers: { cookie: vc } })).text();
     expect(page).toContain(fresh.ref);
     expect(page).not.toContain(old.ref);
-    expect(await (await app.request("/", { headers: { cookie: vc } })).text()).toContain('href="/keys"');
     const staffView = await (await app.request(`/people/${volunteer}`)).text();
     expect(staffView).toContain("Made before this account was linked to this person");
     expect(staffView).toContain(old.ref);
@@ -488,23 +497,20 @@ describe("more on who may see and revoke", () => {
     expect(await resolveKey(db, staffs.key)).not.toBeNull();
   });
 
-  it("works for a session with no iNat user on it, and a person with no account has the page and no link", async () => {
+  it("works for a session with no iNat user on it, and a person with no account has the page and an empty list", async () => {
     const { app, make, who, jane, conn, staff } = await fixture({ admin: false });
     who.current = { personId: staff, login: "staff" };
-    expect(await (await app.request("/")).text()).not.toContain('href="/keys"');
     const k = await make(STAFF_UID, "read");
     // The account is looked up from the person when the session carries none.
-    expect(await (await app.request("/")).text()).toContain('href="/keys"');
     expect(await (await app.request("/keys")).text()).toContain(k.ref);
     who.current = { personId: jane, login: "jane" };
     const page = await app.request("/keys");
     expect(page.status).toBe(200);
     expect(await page.text()).toContain("You have not made a key.");
-    expect(await (await app.request("/")).text()).not.toContain('href="/keys"');
     expect(await rows(conn, `SELECT count(*)::INTEGER FROM inat_account WHERE person_id = ${jane}`)).toEqual([[0]]);
   });
 
-  it("shows the acting notice as well as the not-yet notice to a person who is not staff acting for someone", async () => {
+  it("shows the acting notice and no form to a person who is not staff acting for someone", async () => {
     const { app, conn, staff, jane, make } = await fixture({ admin: false });
     await conn.run(`DELETE FROM person_delegate`);
     await conn.run(`INSERT INTO person_delegate (person_id, acts_for_id, granted_by) VALUES (${staff}, ${jane}, 'peter')`);
@@ -512,7 +518,7 @@ describe("more on who may see and revoke", () => {
     const acting = `${ACTING_COOKIE}=${encodeURIComponent("Jane Pope")}`;
     const html = await (await app.request("/keys", { headers: { cookie: acting } })).text();
     expect(html).toContain("You are acting for someone else");
-    expect(html).toContain("Making keys is not open to you yet");
+    expect(html).not.toContain('action="/keys"');
     expect(html).not.toContain(`/keys/${mine.ref}/revoke`);
   });
 

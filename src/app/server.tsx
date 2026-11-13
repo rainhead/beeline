@@ -16,7 +16,7 @@ import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
 import { createApi, refuseStrayCredentials } from "./api.js";
-import { createKey, hasKeys, listKeys, offeredScopes, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
+import { createKey, listKeys, offeredScopes, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
 import { KeysPage } from "./views/keys.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
@@ -686,21 +686,11 @@ export function createApp({
   };
 
   /**
-   * Whether the account menu links to /keys (beeline-pnqr.9): to staff, who can
-   * make keys, and to anyone who has made one, so that a person who has lost
-   * their staff rights can still find their keys and revoke them. Staff cost
-   * nothing extra. For anyone else it is one lookup, `hasKeys`, on the iNat
-   * user the gate already read from the session row, asked only when a page
-   * is rendered; it stops at the first row of a table that holds a handful
-   * per person. No link while viewing Beeline as someone else, where /keys
-   * refuses.
+   * Whether the account menu links to /keys (beeline-pnqr.2): to everyone
+   * signed in, since anyone may make a read key. Not while viewing Beeline as
+   * someone else, where /keys refuses.
    */
-  const showKeysLink = async (c: Context<AppEnv>) => {
-    if (c.get("acting").impersonating) return false;
-    if (c.get("admin")) return true;
-    const owner = c.get("session").inatUserId ?? (await keyOwner(c));
-    return owner !== null && (await hasKeys(db, owner));
-  };
+  const showKeysLink = (c: Context<AppEnv>) => !c.get("acting").impersonating;
 
   const page = async (
     c: Context<AppEnv>,
@@ -716,7 +706,7 @@ export function createApp({
           styleVersion: await styleVersion(),
           session: c.get("session"),
           admin: c.get("admin"),
-          keysLink: await showKeysLink(c),
+          keysLink: showKeysLink(c),
           acting: c.get("acting"),
           feedbackHref: feedbackHref(c),
           m: c.get("m"),
@@ -846,9 +836,9 @@ export function createApp({
   // A person's own API keys (beeline-pnqr.1, src/app/api-keys.ts). Anyone
   // signed in may open the page, see their keys and revoke them, so that a
   // person who has lost their staff rights can still end a key that works
-  // (beeline-pnqr.9); making one is staff only until the API has something for
-  // a collector to read. The admin flag is off while impersonating, so making
-  // one does not work then, and the page itself is refused; while acting for
+  // (beeline-pnqr.9); anyone may make a read key and staff may make the others
+  // (offeredScopes). Making one is refused while impersonating, as the page
+  // itself is; while acting for
   // someone under a grant, the list is still the signed-in person's and
   // nothing can be made or revoked, because a key signs its holder in as its
   // owner and a delegation does not hand that over.
@@ -877,7 +867,6 @@ export function createApp({
           m={m}
           keys={owner === null ? [] : await listKeys(db, owner)}
           scopes={offeredScopes(await isStaff(c.get("session").personId))}
-          canMake={c.get("admin")}
           created={extra.created}
           problem={extra.problem}
           acting={c.get("acting").actingFor !== null}
@@ -892,7 +881,7 @@ export function createApp({
     return showKeys(c);
   });
   app.post("/keys", async (c) => {
-    if (!c.get("admin") || c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
+    if (c.get("acting").impersonating || c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
     // Whose account the session was for when the gate let it in: the iNat
     // user on the session's own row, so there is no second lookup an account
     // change could slip in ahead of. A session with no row behind it (the dev

@@ -62,7 +62,7 @@ export function KeysTable({
 
 /**
  * A person's own API keys (beeline-pnqr.1): the keys they have made, a form
- * to make another where they may, and a button to revoke each. A new key is shown on the
+ * to make another, and a button to revoke each. A new key is shown on the
  * page that answers the form and nowhere after, since the store keeps only
  * its hash.
  *
@@ -73,7 +73,6 @@ export function KeysPage({
   m,
   keys,
   scopes,
-  canMake,
   created,
   problem,
   acting,
@@ -83,8 +82,6 @@ export function KeysPage({
   keys: KeyListing[];
   /** The scopes this person may give a key. */
   scopes: readonly KeyScope[];
-  /** Whether this person may make keys yet (staff only for now); the form is not shown otherwise. */
-  canMake: boolean;
   /** The key just made, to be shown this once. */
   created?: { key: string; name: string };
   problem?: CreateKeyProblem;
@@ -114,8 +111,7 @@ export function KeysPage({
       )}
       <h2>{k.create.heading}</h2>
       {acting && <Callout>{k.create.acting}</Callout>}
-      {!canMake && <Callout>{k.create.notYet}</Callout>}
-      {canMake && !acting && (
+      {!acting && (
         <form method="post" action="/keys" class="stack">
           <TextField id="key-name" name="name" label={k.create.name} hint={k.create.nameHint(KEY_NAME_MAX)} />
           <SelectField

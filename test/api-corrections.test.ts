@@ -147,8 +147,8 @@ const correctionsFile = async (w: World) => readFile(w.paths.correctionsPath, "u
 const printable = async (w: World, id: number) => (await rows(w.conn, `SELECT 1 FROM printable_sample WHERE sample_id = ${id}`)).length === 1;
 
 describe("what a key may do", () => {
-  it("offers edit to everyone, and staff only to someone who is staff", () => {
-    expect(offeredScopes(false)).toEqual(["read", "edit"]);
+  it("offers read to everyone, and edit and staff only to someone who is staff", () => {
+    expect(offeredScopes(false)).toEqual(["read"]);
     expect(offeredScopes(true)).toEqual(["read", "edit", "staff"]);
   });
 

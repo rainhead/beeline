@@ -16,6 +16,7 @@ import {
   actorFor,
   type CorrectionDeps,
 } from "../src/app/sample-corrections.js";
+import { onSample } from "../src/app/sample-queue.js";
 import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 
 /**
@@ -228,5 +229,122 @@ describe("sample corrections: a correction that saves", () => {
     expect(result).toMatchObject({ ok: true });
     expect(await rows(s.conn, `SELECT round(latitude, 1), source FROM sample_location WHERE sample_id = ${s.linked}`)).toEqual([[44.5, "staff_entry"]]);
     expect((await logged(s)).filter((c) => c[2] === "samstaff").length).toBeGreaterThan(0);
+  });
+
+  /**
+   * One correction at a time for a sample (beeline-4ksk). Before, only the
+   * collector's edit and the place editor took a turn of the sample's queue;
+   * the rest could write between another correction's check and its write,
+   * and be recorded in the history under each other's name.
+   */
+  describe("one at a time for a sample", () => {
+    /** Hold the sample's queue, as a correction in progress does, until released. */
+    const occupy = (sampleId: number) => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      void onSample(sampleId, () => held);
+      return release;
+    };
+    const overlayRows = async (s: Awaited<ReturnType<typeof withSuggestions>>) => (await readSampleOverlay(s.paths.sampleOverlayPath)).length;
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 60));
+
+    it("every correction waits for the one in progress before it writes anything", async () => {
+      const corrections: [string, (s: Awaited<ReturnType<typeof withSuggestions>>) => Promise<{ ok: boolean }>][] = [
+        ["adoptLocality", (s) => adoptLocality(s.deps, s.alice, s.linked, { locality: "Finley NWR", reasonFor })],
+        ["setPlace", (s) => setPlace(s.deps, s.alice, s.linked, { locality: "Finley NWR", reasonFor })],
+        ["setCoordinates", (s) => setCoordinates(s.deps, s.sam, s.linked, { ...coordinates, note: "" })],
+        ["holdSample", (s) => holdSample(s.deps, s.sam, s.linked, { lift: false, note: "wait" })],
+        ["waiveFlag", (s) => waiveFlag(s.deps, s.sam, s.linked, { rule: "locality_format", remove: false, note: "fine" })],
+      ];
+      for (const [name, run] of corrections) {
+        const s = await withSuggestions();
+        // A waiver needs a flag to waive: a locality too long for a label.
+        if (name === "waiveFlag") await s.conn.run(`UPDATE sample SET locality = 'Deschutes River SRA' WHERE entity_id = ${s.linked}`);
+        const release = occupy(s.linked);
+        let done = false;
+        const pending = run(s).then((r) => ((done = true), r));
+        await tick();
+        // Still waiting, and nothing of it is in the overlay or the history.
+        expect(done, name).toBe(false);
+        expect(await overlayRows(s), name).toBe(0);
+        expect(await logged(s), name).toEqual([]);
+        release();
+        expect(await pending, name).toMatchObject({ ok: true });
+        expect(await overlayRows(s), name).toBe(1);
+      }
+    });
+
+    it("asks its rules again when its turn comes, of the sample as it then stands", async () => {
+      const s = await withSuggestions();
+      // Taking the observation's location passes "no sync is running" when it
+      // arrives; the nightly starts while it waits its turn.
+      const release = occupy(s.linked);
+      const pending = takeLocation(s.deps, s.sam, s.linked, { note: "", defaultReason: "moved" });
+      await tick();
+      s.setRunning(true);
+      release();
+      expect(await pending).toEqual({ ok: false, refusal: "busy" });
+
+      // A collector adopting a locality passes "nobody else set it"; staff set one while the collector waits.
+      s.setRunning(false);
+      const hold = occupy(s.linked);
+      const adopting = adoptLocality(s.deps, s.alice, s.linked, { locality: "Finley NWR", reasonFor });
+      await tick();
+      const staff = setPlace(s.deps, s.sam, s.linked, { locality: "Staff's name", reasonFor });
+      await tick();
+      hold();
+      expect(await adopting).toEqual({ ok: true, reason: "because" });
+      // The collector's turn came first and staff's after it: both stand in order, neither lost.
+      expect(await staff).toEqual({ ok: true });
+      expect(await localityOf(s.conn, s.linked)).toBe("Staff's name");
+      // And the other order: staff first, so the collector is refused, not written over staff.
+      const again = await withSuggestions();
+      const hold2 = occupy(again.linked);
+      const staffFirst = setPlace(again.deps, again.sam, again.linked, { locality: "Staff's name", reasonFor });
+      // A turn is taken once the form is in hand, so let staff's request reach the queue before the collector's.
+      await tick();
+      const collector = adoptLocality(again.deps, again.alice, again.linked, { locality: "Finley NWR", reasonFor });
+      await tick();
+      hold2();
+      expect(await staffFirst).toEqual({ ok: true });
+      expect(await collector).toEqual({ ok: false, refusal: "set_by_other" });
+      expect(await localityOf(again.conn, again.linked)).toBe("Staff's name");
+    });
+
+    it("records two corrections made at the same moment each under its own author", async () => {
+      const s = await withSuggestions();
+      // A collector adopts a locality while staff hold the sample: two
+      // corrections that do not touch each other's fields. (Staff moving the
+      // point at the same moment would rightly withdraw the suggestion.)
+      const [adopted, held] = await Promise.all([
+        adoptLocality(s.deps, s.alice, s.linked, { locality: "Finley NWR", reasonFor }),
+        holdSample(s.deps, s.sam, s.linked, { lift: false, note: "date looks a year off" }),
+      ]);
+      expect(adopted).toMatchObject({ ok: true });
+      expect(held).toMatchObject({ ok: true });
+      const entries = await logged(s);
+      // The locality is the collector's and nobody else's; everything else is staff's and nobody else's.
+      expect(entries.filter((c) => c[0] === "locality").map((c) => c[2])).toEqual(["alice"]);
+      const rest = entries.filter((c) => c[0] !== "locality");
+      expect(rest.length).toBeGreaterThan(0);
+      expect(new Set(rest.map((c) => c[2]))).toEqual(new Set(["samstaff"]));
+    });
+
+    it("refuses a suggestion that was withdrawn while the form was arriving", async () => {
+      const s = await withSuggestions();
+      const withdraw = async () => {
+        await s.conn.run(`DELETE FROM sample_locality_candidate WHERE sample_id = ${s.linked}`);
+        return { locality: "Finley NWR", reasonFor };
+      };
+      expect(await adoptLocality(s.deps, s.alice, s.linked, withdraw)).toEqual({ ok: false, refusal: "changed" });
+      // The place editor too: a collector may write only a name that is offered now.
+      const t = await withSuggestions();
+      const withdrawT = async () => {
+        await t.conn.run(`DELETE FROM sample_locality_candidate WHERE sample_id = ${t.linked}`);
+        return { locality: "Finley NWR", reasonFor };
+      };
+      expect(await setPlace(t.deps, t.alice, t.linked, withdrawT)).toEqual({ ok: false, refusal: "only_offered" });
+      expect(await localityOf(t.conn, t.linked)).not.toBe("Finley NWR");
+    });
   });
 });

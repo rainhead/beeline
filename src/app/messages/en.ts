@@ -1723,15 +1723,16 @@ export const en = {
      */
     yours: {
       heading: "Yours",
-      summary: (count: number) => `You collected ${n(count)} of ${count === 1 ? "it" : "them"}.`,
+      /** "You collected 108 of them.", the count linked to the specimen listing at My records. */
+      collected: "You collected",
+      ofThem: (count: number) => `${n(count)} of ${count === 1 ? "it" : "them"}`,
       from: (count: number, where: string) => `${n(count)} from ${where}`,
       nowhere: (count: number) => `${n(count)} with no place recorded`,
       off: "off",
       inSeasons: (seasons: readonly string[]) => `in ${list(seasons)}`,
       /** The places and plants past the first few, folded away, the fewest specimens last. */
       more: (count: number) => `${n(count)} more ${count === 1 ? "place or plant" : "places and plants"}`,
-      notListed: (count: number) => `${n(count)} more, each with fewer specimens, are not listed here. They are all among your specimens.`,
-      seeThem: "See them among your specimens",
+      notListed: (count: number) => `${n(count)} more, each with fewer specimens, are not listed here.`,
     },
     below: "Filed below",
     nothingBelow: "Nothing is filed below this name.",

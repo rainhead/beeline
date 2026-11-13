@@ -469,7 +469,7 @@ describe("the reader's own specimens on a name's page (beeline-nstp)", () => {
     const body = await page(app, taxonHref({ rank: "genus", scientific_name: "Lasioglossum" }));
     const yours = between(body, `<h2 id="yours">`, "</section>");
     const t = en.taxonomy.yours;
-    expect(yours).toContain(t.summary(3));
+    expect(yours).toContain(`${t.collected} <a href="${html("/specimens?scope=mine&taxon=Lasioglossum")}">${t.ofThem(3)}</a>.`);
     // The most specimens first: Ada's own two at Corvallis, then the tenax off Rubus.
     const corvallis = yours.indexOf(t.from(2, "Corvallis, BentonCo, OR"));
     const baldHill = yours.indexOf(t.from(1, "Bald Hill, BentonCo, OR"));
@@ -483,7 +483,6 @@ describe("the reader's own specimens on a name's page (beeline-nstp)", () => {
     expect(yours).toContain(en.yourBees.batches.specimen("1", 2));
     expect(yours).not.toContain("Philomath");
     expect(yours).not.toContain("26000301");
-    expect(yours).toContain(`href="${html("/specimens?scope=mine&taxon=Lasioglossum")}"`);
     // The listing it links to agrees about which are Ada's.
     const listing = await page(app, "/specimens?scope=mine&taxon=Lasioglossum");
     expect(listing).toContain("26000201");
@@ -494,7 +493,7 @@ describe("the reader's own specimens on a name's page (beeline-nstp)", () => {
     await collectors();
     const body = await page(await taxonomyApp(), taxonHref({ rank: "species", scientific_name: "Lasioglossum zonulum" }));
     const yours = between(body, `<h2 id="yours">`, "</section>");
-    expect(yours).toContain(en.taxonomy.yours.summary(1));
+    expect(yours).toContain(en.taxonomy.yours.ofThem(1));
     expect(yours).toContain(en.taxonomy.yours.from(1, "Corvallis, BentonCo, OR"));
   });
 
@@ -513,7 +512,7 @@ describe("the reader's own specimens on a name's page (beeline-nstp)", () => {
     const body = await page(await taxonomyApp(), taxonHref({ rank: "genus", scientific_name: "Bombus" }));
     const yours = between(body, `<h2 id="yours">`, "</section>");
     const t = en.taxonomy.yours;
-    expect(yours).toContain(t.summary(106));
+    expect(yours).toContain(t.ofThem(106));
     const open = yours.slice(0, yours.indexOf("<details"));
     expect(open.indexOf(t.from(2, "Corvallis, BentonCo, OR"))).toBeGreaterThan(0);
     expect(open).toContain(t.from(1, "Place 008, BentonCo, OR"));

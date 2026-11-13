@@ -415,7 +415,8 @@ function CollectedList({ m, groups }: { m: Messages; groups: readonly CollectedG
 /**
  * The reader's own specimens of the name or anything below it, by place and
  * host plant (beeline-nstp): where a volunteer arriving from What you found
- * sees what of theirs the name covers.
+ * sees what of theirs the name covers. The count links to them all on the
+ * specimen listing, at My records.
  */
 function Yours({ m, node, collected }: { m: Messages; node: TaxonNode; collected: Collected }) {
   const t = m.taxonomy.yours;
@@ -423,7 +424,9 @@ function Yours({ m, node, collected }: { m: Messages; node: TaxonNode; collected
   return (
     <section aria-labelledby="yours">
       <h2 id="yours">{t.heading}</h2>
-      <p>{t.summary(collected.total)}</p>
+      <p>
+        {t.collected} <a href={listingHref("/specimens", EMPTY_QUERY, { scope: MINE, taxon: node.scientific_name })}>{t.ofThem(collected.total)}</a>.
+      </p>
       <CollectedList m={m} groups={groups.slice(0, GROUPS_OPEN)} />
       {groups.length > GROUPS_OPEN && (
         <details class="collected-more">
@@ -432,9 +435,6 @@ function Yours({ m, node, collected }: { m: Messages; node: TaxonNode; collected
           {groups.length > GROUPS_LISTED && <Meta block>{t.notListed(groups.length - GROUPS_LISTED)}</Meta>}
         </details>
       )}
-      <Meta block>
-        <a href={listingHref("/specimens", EMPTY_QUERY, { scope: MINE, taxon: node.scientific_name })}>{t.seeThem}</a>
-      </Meta>
     </section>
   );
 }

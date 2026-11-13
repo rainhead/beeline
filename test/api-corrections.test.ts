@@ -134,7 +134,7 @@ async function world() {
         .filter((c) => c.sample_number === sampleNumber && c.source !== "observation_promotion")
         .map((c) => ({ field: c.field, to: c.new_value, author: c.author, reason: c.reason, source: c.source })),
     uses: async () =>
-      (await rows(conn, `SELECT key_sha256, method, route, subject, status FROM api_key_use ORDER BY used_at, subject`)) as unknown[][],
+      (await rows(conn, `SELECT key_sha256, method, route, subject, outcome, reference, status FROM api_key_use ORDER BY used_at, subject`)) as unknown[][],
   };
 }
 
@@ -315,16 +315,24 @@ describe("each correction writes what the page's form writes", () => {
     expect(await w.entries("OBAS-00657")).toContainEqual({ field: "locality", to: "Walla Walla", author: w.beaLogin, reason: "in town", source: "api" });
   });
 
-  it("says unchanged when the edit changes nothing, using the bases the caller last saw", async () => {
+  it("says unchanged and writes nothing when the value sent is the one the sample holds, with or without a note", async () => {
     const w = await world();
     const now = (await localityOf(w.conn, w.legacy))!;
-    const same = await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, { values: { locality: now } });
-    expect(await json(same)).toMatchObject({ outcome: "unchanged", changes: [] });
-    // A stale program sends the value it first read as the base, so a newer save is not undone.
+    const before = await correctionsFile(w);
+    for (const body of [{ values: { locality: now } }, { values: { locality: `  ${now} ` }, note: "no change" }, { values: {} }]) {
+      const res = await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, body);
+      expect([JSON.stringify(body), await json(res)]).toEqual([
+        JSON.stringify(body),
+        { sample_id: w.legacy, outcome: "unchanged", dry_run: false, changes: [] },
+      ]);
+    }
+    expect(await correctionsFile(w)).toBe(before);
+    expect(await w.entries("OBAS-00657")).toEqual([]);
+    // Without bases there is no stale form to tell from: a program that reads the sample, and then sends
+    // the value it read after a newer save, is changing the sample back, and says so with `from` and `to`.
     await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, { values: { locality: "Newer" } });
-    const stale = await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, { values: { locality: now }, bases: { locality: now } });
-    expect(await json(stale)).toMatchObject({ outcome: "unchanged" });
-    expect(await localityOf(w.conn, w.legacy)).toBe("Newer");
+    const back = await json(await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, { values: { locality: now } }));
+    expect(back).toMatchObject({ outcome: "saved", changes: [{ field: "locality", from: "Newer", to: now }] });
   });
 });
 
@@ -386,12 +394,69 @@ describe("a request that is not a correction", () => {
       expect([JSON.stringify(body), (await w.send(w.keys.alice, path, body)).status]).toEqual([JSON.stringify(body), 400]);
     }
     const edit = `/samples/${w.legacy}/edit`;
-    for (const body of [{ values: { locality: 5 } }, { values: { colour: "red" } }, { values: { locality: "X" }, bases: { height: "1" } }, { note: "x" }, { values: [] }]) {
+    for (const body of [
+      { values: { locality: 5 } },
+      { values: { colour: "red" } },
+      { values: { toString: "x" } },
+      // `bases` is for a page that must tell a touched field from a stale prefill: a program sends what it means to change.
+      { values: { locality: "X" }, bases: { locality: "Y" } },
+      { note: "x" },
+      { values: [] },
+    ]) {
       expect([JSON.stringify(body), (await w.send(w.keys.bea, edit, body)).status]).toEqual([JSON.stringify(body), 400]);
     }
     expect(await localityOf(w.conn, w.linked)).toBe("Corvallis");
     expect(await overlay(w)).toEqual([]);
     expect(await correctionsFile(w)).not.toContain("x");
+  });
+
+  it("takes only the fields an endpoint has: toString, constructor and __proto__ are refused on each, and nothing is written", async () => {
+    const w = await world();
+    const bodies = (valid: object) => ["toString", "constructor", "__proto__", "hasOwnProperty"].map((name) => `{${JSON.stringify(name)}: "x", ${JSON.stringify(valid).slice(1, -1)}}`);
+    const wrote = async () => [await overlay(w), await correctionsFile(w), await w.entries("A-1"), await w.entries("OBAS-00657")];
+    const before = await wrote();
+    for (const [key, path, valid] of [
+      [w.keys.bea, `/samples/${w.legacy}/edit`, { values: { locality: "X" } }],
+      [w.keys.alice, `/samples/${w.linked}/locality`, { locality: "Finley NWR" }],
+      [w.keys.sam, `/samples/${w.linked}/coordinates`, { latitude: 44.5, longitude: -123.2 }],
+      [w.keys.sam, `/samples/${w.linked}/take-observation-location`, {}],
+      [w.keys.sam, `/samples/${w.linked}/hold`, { note: "x" }],
+      [w.keys.sam, `/samples/${w.linked}/waiver`, { rule: "locality_format", note: "x" }],
+    ] as const) {
+      for (const body of bodies(valid)) {
+        // JSON.parse makes "__proto__" an own property of the body, as a program's would be.
+        const res = await w.send(key, path, body.replace(", }", "}"));
+        expect([path, body, res.status]).toEqual([path, body, 400]);
+        expect((await json(res)).message).toContain("is not a field of this request");
+      }
+    }
+    expect(await wrote()).toEqual(before);
+  });
+
+  it("refuses control characters and over-long text in the text a program sends, naming the field, and writes nothing", async () => {
+    const w = await world();
+    const before = [await overlay(w), await correctionsFile(w)];
+    const refused = async (key: string, path: string, body: object, field: string) => {
+      const res = await w.send(key, path, body);
+      expect([path, JSON.stringify(body).slice(0, 80), res.status]).toEqual([path, JSON.stringify(body).slice(0, 80), 400]);
+      expect((await json(res)).message).toContain(field);
+    };
+    const edit = `/samples/${w.legacy}/edit`;
+    for (const bad of ["a\nb", "tab\there", "nul\u0000", "del\u007f", "esc\u001b"]) {
+      await refused(w.keys.bea, edit, { values: { locality: bad } }, "locality");
+      await refused(w.keys.bea, edit, { values: { locality: "fine" }, note: bad }, "note");
+      await refused(w.keys.alice, `/samples/${w.linked}/locality`, { locality: bad }, "locality");
+      await refused(w.keys.sam, `/samples/${w.linked}/hold`, { note: bad }, "note");
+      await refused(w.keys.sam, `/samples/${w.linked}/coordinates`, { latitude: 44.5, longitude: -123.2, note: bad }, "note");
+      await refused(w.keys.sam, `/samples/${w.linked}/waiver`, { rule: bad, note: "x" }, "rule");
+    }
+    await refused(w.keys.bea, edit, { values: { locality: "x".repeat(501) } }, "500");
+    await refused(w.keys.bea, edit, { values: { locality: "fine" }, note: "n".repeat(2001) }, "2000");
+    await refused(w.keys.sam, `/samples/${w.linked}/hold`, { note: "n".repeat(2001) }, "2000");
+    // At the limits the text is taken.
+    const ok = await w.send(w.keys.bea, edit, { values: { locality: "x".repeat(500) }, note: "n".repeat(2000) });
+    expect(ok.status).toBe(200);
+    expect(before[0]).toEqual([]);
   });
 
   it("is refused with 413 when the body is over 64 KB, and nothing is written", async () => {
@@ -446,19 +511,239 @@ describe("what a refused correction is answered with", () => {
     // unresolved and unavailable are the writer's and the instance's own: see the unit tests of the functions
   });
 
-  it("answers a write conflict with 409 and does not retry", async () => {
+  it("refuses every correction with busy while the nightly run or the weekly sweep runs, and writes nothing", async () => {
     const w = await world();
-    let attempts = 0;
-    const conflicting = new Proxy(w.db, {
+    const all = [
+      [w.keys.bea, `/samples/${w.legacy}/edit`, { values: { locality: "Walla Walla" } }],
+      [w.keys.alice, `/samples/${w.linked}/locality`, { locality: "Finley NWR" }],
+      [w.keys.sam, `/samples/${w.linked}/coordinates`, { latitude: 44.5, longitude: -123.2 }],
+      [w.keys.sam, `/samples/${w.linked}/take-observation-location`, {}],
+      [w.keys.sam, `/samples/${w.linked}/hold`, { note: "x" }],
+      [w.keys.sam, `/samples/${w.linked}/waiver`, { rule: "locality_format", note: "x" }],
+    ] as const;
+    for (const job of ["nightly-pipeline", "weekly-sweep"]) {
+      w.setRunning(job);
+      for (const [key, path, body] of all) {
+        const res = await w.send(key, path, body);
+        expect([job, path, res.status, (await json(res)).error]).toEqual([job, path, 409, "busy"]);
+      }
+    }
+    expect(await overlay(w)).toEqual([]);
+    expect(await correctionsFile(w)).not.toContain("Walla Walla");
+    // A dry run is a correction too, so it is refused as well; a malformed body is still a 400 first.
+    expect((await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, { values: { locality: "X" }, dry_run: true })).status).toBe(409);
+    expect((await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, { values: 5 })).status).toBe(400);
+    // Other jobs do not stop corrections.
+    w.setRunning("session-purge");
+    expect((await w.send(w.keys.sam, `/samples/${w.linked}/hold`, { note: "x" })).status).toBe(200);
+    // The busy refusal is the API's: the pages are as they were.
+    w.setRunning("nightly-pipeline");
+    expect((await w.page(`/samples/${w.other}/place`, { locality: "Finley NWR" })).status).toBe(302);
+  });
+
+  describe("a write conflict while applying a correction", () => {
+    const conflict = () => new Error("TransactionContext Error: Conflict on update!");
+    /** A Kysely whose first transaction loses a write conflict. */
+    const dbLosingOnce = (db: Kysely<Database>) => {
+      let fired = false;
+      return new Proxy(db, {
+        get(target, prop) {
+          if (prop === "transaction" && !fired) {
+            fired = true;
+            return () => ({
+              execute: async () => {
+                throw conflict();
+              },
+            });
+          }
+          const value = Reflect.get(target, prop, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as Kysely<Database>;
+    };
+    /** A connection whose first write to an overlay table loses a write conflict. */
+    const connLosingOnce = (conn: DuckDBConnection) => {
+      let fired = false;
+      return new Proxy(conn, {
+        get(target, prop) {
+          if (prop === "run") {
+            return (sql: string, ...rest: unknown[]) => {
+              if (!fired && /^\s*(DELETE FROM|INSERT INTO) sample_(hold|qc_waiver|locality_override|location_override)\b/.test(sql)) {
+                fired = true;
+                throw conflict();
+              }
+              return (target.run as (...a: unknown[]) => unknown)(sql, ...rest);
+            };
+          }
+          const value = Reflect.get(target, prop, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as DuckDBConnection;
+    };
+    const apiOver = (w: World, deps: { db?: Kysely<Database>; conn?: DuckDBConnection }) =>
+      createApi({
+        db: w.db,
+        isStaff: async (personId) => personId === w.people.sam,
+        corrections: {
+          deps: {
+            db: deps.db ?? w.db,
+            conn: deps.conn ?? w.conn,
+            correctionsPath: w.paths.correctionsPath,
+            sampleOverlayPath: w.paths.sampleOverlayPath,
+            samplePaths: { log: w.paths.sampleChangesPath, state: w.paths.sampleStatePath },
+            syncJobRunning: () => false,
+          },
+          messages: en,
+        },
+      });
+    const post = (api: ReturnType<typeof apiOver>, key: string, path: string, body: object) =>
+      api.request(path, { method: "POST", headers: { authorization: `Bearer ${key}` }, body: JSON.stringify(body) });
+    const apiEntries = async (w: World, sampleNumber: string, field: string) =>
+      (await w.entries(sampleNumber)).filter((e) => e.source === "api" && e.field === field);
+
+    /**
+     * Each of the six writes its file and then the store, so a conflict applying
+     * it leaves the file holding the change. Sent again, it is safe: the file
+     * has one row for it and not two, the store has it, and the history has one
+     * entry under the key's person.
+     */
+    it("says the change is recorded and not yet applied, and sending it again applies it once: edit", async () => {
+      const w = await world();
+      const api = apiOver(w, { db: dbLosingOnce(w.db) });
+      const send = () => post(api, w.keys.bea, `/samples/${w.legacy}/edit`, { values: { locality: "Walla Walla" }, note: "in town" });
+      const lost = await send();
+      const answer = await json(lost);
+      expect([lost.status, answer.error]).toEqual([409, "recorded_not_applied"]);
+      expect(answer.message).toContain("Sending the same request again is safe");
+      // The file holds it; the store and the history do not.
+      expect(await correctionsFile(w)).toContain("Walla Walla");
+      expect(await localityOf(w.conn, w.legacy)).not.toBe("Walla Walla");
+      expect(await apiEntries(w, "OBAS-00657", "locality")).toEqual([]);
+      const again = await send();
+      expect(again.status).toBe(200);
+      expect(await localityOf(w.conn, w.legacy)).toBe("Walla Walla");
+      const events = (await correctionsFile(w)).split("\n").filter((l) => l.includes("Walla Walla"));
+      const stagingRows = Number(((await rows(w.conn, `SELECT count(*) FROM legacy_specimen_number WHERE sample_id = ${w.legacy}`)) as [[bigint]])[0][0]);
+      expect(events.length).toBe(stagingRows);
+      expect(await apiEntries(w, "OBAS-00657", "locality")).toEqual([
+        { field: "locality", to: "Walla Walla", author: w.beaLogin, reason: "in town", source: "api" },
+      ]);
+      const use = (await w.uses()).map((u) => [u[2], u[4], u[6]]);
+      expect(use).toEqual([
+        ["/samples/:id/edit", "recorded_not_applied", 409],
+        ["/samples/:id/edit", "saved", 200],
+      ]);
+    });
+
+    const overlayCases = [
+      ["locality", "alice", (w: World) => `/samples/${w.other}/locality`, { locality: "Finley NWR" }, "A-3", "locality", "inat:998878"],
+      ["coordinates", "sam", (w: World) => `/samples/${w.linked}/coordinates`, { latitude: 44.5, longitude: -123.2 }, "A-1", "location", "inat:998877"],
+      ["hold", "sam", (w: World) => `/samples/${w.linked}/hold`, { note: "date looks a year off" }, "A-1", "hold", "inat:998877"],
+      ["waiver", "sam", (w: World) => `/samples/${w.other}/waiver`, { rule: "locality_format", note: "short enough" }, "A-3", "waivers", "inat:998878"],
+    ] as const;
+    for (const [name, who, path, body, number, field, ref] of overlayCases) {
+      it(`says the change is recorded and not yet applied, and sending it again applies it once: ${name}`, async () => {
+        const w = await world();
+        if (name === "waiver") await w.conn.run(`UPDATE sample SET locality = 'Deschutes River SRA' WHERE entity_id = ${w.other}`);
+        const api = apiOver(w, { conn: connLosingOnce(w.conn) });
+        const key = w.keys[who];
+        const lost = await post(api, key, path(w), body);
+        expect([name, lost.status, (await json(lost)).error]).toEqual([name, 409, "recorded_not_applied"]);
+        const filed = (await overlay(w)).filter((r) => r.sample_ref === ref);
+        expect(filed.length).toBe(1);
+        expect(await apiEntries(w, number, field)).toEqual([]);
+        const again = await post(api, key, path(w), body);
+        expect([name, again.status]).toEqual([name, 200]);
+        // One row in the file, as before, and the store and the history have it once.
+        expect((await overlay(w)).filter((r) => r.sample_ref === ref)).toHaveLength(1);
+        expect(await apiEntries(w, number, field)).toHaveLength(1);
+        expect((await apiEntries(w, number, field)).every((e) => e.author === (who === "alice" ? "alice" : "samstaff"))).toBe(true);
+        const store =
+          name === "locality"
+            ? await rows(w.conn, `SELECT count(*) FROM sample_locality_override WHERE sample_id = ${w.other}`)
+            : name === "coordinates"
+              ? await rows(w.conn, `SELECT count(*) FROM sample_location_override WHERE sample_id = ${w.linked}`)
+              : name === "hold"
+                ? await rows(w.conn, `SELECT count(*) FROM sample_hold WHERE sample_id = ${w.linked}`)
+                : await rows(w.conn, `SELECT count(*) FROM sample_qc_waiver WHERE sample_id = ${w.other}`);
+        expect(store).toEqual([[1n]]);
+        expect((await w.uses()).map((u) => u[4])).toEqual(["recorded_not_applied", "saved"]);
+      });
+    }
+  });
+});
+
+describe("corrections one after another", () => {
+  it("applies corrections in the order they were sent, when each is sent after the last was answered", async () => {
+    const w = await world();
+    const path = `/samples/${w.linked}/hold`;
+    for (let round = 0; round < 4; round++) {
+      expect(await json(await w.send(w.keys.sam, path, { note: "x" }))).toEqual({ sample_id: w.linked, outcome: "saved" });
+      expect(await json(await w.send(w.keys.sam, path, { lift: true }))).toEqual({ sample_id: w.linked, outcome: "removed" });
+      expect(await printable(w, w.linked)).toBe(true);
+    }
+    // Sent together, they may be applied in either order, so nothing here asserts one: only that each
+    // is applied whole, once, and the sample ends in a state one of the two orders leads to.
+    const both = await Promise.all([w.send(w.keys.sam, path, { note: "x" }), w.send(w.keys.sam, path, { lift: true })]);
+    expect(both.map((r) => r.status)).toEqual([200, 200]);
+    expect([true, false]).toContain(await printable(w, w.linked));
+  });
+});
+
+describe("which key made each change", () => {
+  it("records one row for each request that is not a read, with the key, the route, the subject, what came of it and the status", async () => {
+    const w = await world();
+    await w.send(w.keys.sam, `/samples/${w.linked}/hold`, { note: "x" });
+    await w.send(w.keys.alice, `/samples/${w.other}/locality`, { locality: "Nowhere" });
+    await w.send(w.keys.sam, "/samples/999999/hold", { note: "x" });
+    await w.send(w.keys.sam, "/samples/abc/hold", { note: "x" });
+    await w.send(w.keys.sam, `/samples/${w.linked}/hold`, { colour: "x" });
+    await w.send(w.keys.sam, `/samples/${w.linked}/hold`, { lift: true });
+    await w.send(w.keys.sam, `/samples/${w.legacy}/edit`, { values: { locality: "X" }, dry_run: true });
+    // Reads leave nothing; neither does a request with no working key, or to a path no route answers.
+    await w.send(w.keys.sam, "/me", "", "GET");
+    await w.send("beeline_nonsense", `/samples/${w.linked}/hold`, { note: "x" });
+    await w.send(undefined, `/samples/${w.linked}/hold`, { note: "x" });
+    await w.send(w.keys.sam, "/nowhere", {});
+    await w.send(w.keys.sam, `/samples/${w.linked}/nowhere`, {});
+
+    expect((await w.uses()).map(([key, method, route, subject, outcome, , status]) => [key, method, route, subject, outcome, status])).toEqual([
+      [hashKey(w.keys.sam), "POST", "/api/v1/samples/:id/hold", String(w.linked), "saved", 200],
+      [hashKey(w.keys.alice), "POST", "/api/v1/samples/:id/locality", String(w.other), "only_offered", 409],
+      [hashKey(w.keys.sam), "POST", "/api/v1/samples/:id/hold", "999999", "not_found", 404],
+      [hashKey(w.keys.sam), "POST", "/api/v1/samples/:id/hold", "abc", "not_found", 404],
+      [hashKey(w.keys.sam), "POST", "/api/v1/samples/:id/hold", String(w.linked), "invalid_request", 400],
+      [hashKey(w.keys.sam), "POST", "/api/v1/samples/:id/hold", String(w.linked), "removed", 200],
+      [hashKey(w.keys.sam), "POST", "/api/v1/samples/:id/edit", String(w.legacy), "not_editable", 404],
+    ]);
+  });
+
+  it("tells a dry run, a save and a request that changed nothing apart by what came of each", async () => {
+    const w = await world();
+    const edit = `/samples/${w.legacy}/edit`;
+    const now = (await localityOf(w.conn, w.legacy))!;
+    await w.send(w.keys.bea, edit, { values: { locality: "Walla Walla" }, dry_run: true });
+    await w.send(w.keys.bea, edit, { values: { locality: "Walla Walla" } });
+    await w.send(w.keys.bea, edit, { values: { locality: "Walla Walla" } });
+    expect(now).not.toBe("Walla Walla");
+    expect((await w.uses()).map((u) => [u[4], u[6]])).toEqual([
+      ["would_save", 200],
+      ["saved", 200],
+      ["unchanged", 200],
+    ]);
+  });
+
+  it("records the refusal of a key that may only read under the route it was for, and nothing for a path no route has", async () => {
+    const w = await world();
+    await w.send(w.keys.aliceRead, `/samples/${w.linked}/hold`, { note: "x" });
+    expect((await w.uses()).map((u) => [u[2], u[4], u[6]])).toEqual([["/api/v1/samples/:id/hold", "forbidden", 403]]);
+  });
+
+  it("records a request that ends in a 500, with its status", async () => {
+    const w = await world();
+    const broken = new Proxy(w.db, {
       get(target, prop) {
-        if (prop === "transaction") {
-          return () => ({
-            execute: async () => {
-              attempts += 1;
-              throw new Error("TransactionContext Error: Conflict on update!");
-            },
-          });
-        }
+        if (prop === "selectFrom") return () => { throw new Error("the store failed"); };
         const value = Reflect.get(target, prop, target);
         return typeof value === "function" ? value.bind(target) : value;
       },
@@ -468,7 +753,7 @@ describe("what a refused correction is answered with", () => {
       isStaff: async () => false,
       corrections: {
         deps: {
-          db: conflicting,
+          db: broken,
           conn: w.conn,
           correctionsPath: w.paths.correctionsPath,
           sampleOverlayPath: w.paths.sampleOverlayPath,
@@ -478,73 +763,42 @@ describe("what a refused correction is answered with", () => {
         messages: en,
       },
     });
-    const res = await api.request(`/samples/${w.legacy}/edit`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${w.keys.bea}` },
-      body: JSON.stringify({ values: { locality: "Walla Walla" } }),
-    });
-    expect(res.status).toBe(409);
-    expect(await json(res)).toMatchObject({ error: "conflict" });
-    expect(attempts).toBe(1);
-  });
-});
-
-describe("one correction at a time for a sample", () => {
-  it("applies corrections sent without waiting in the order they were sent", async () => {
-    const w = await world();
-    const path = `/samples/${w.linked}/hold`;
-    for (let round = 0; round < 8; round++) {
-      // A hold, then lifting it, sent together: the order decides whether each does anything.
-      const [first, second] = await Promise.all([w.send(w.keys.sam, path, { note: "x" }), w.send(w.keys.sam, path, { lift: true })]);
-      expect([round, await json(first), await json(second)]).toEqual([
-        round,
-        { sample_id: w.linked, outcome: "saved" },
-        { sample_id: w.linked, outcome: "removed" },
-      ]);
-      expect(await printable(w, w.linked)).toBe(true);
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await api.request(`/samples/${w.legacy}/edit`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${w.keys.bea}` },
+        body: JSON.stringify({ values: { locality: "X" } }),
+      });
+      expect(res.status).toBe(500);
+    } finally {
+      quiet.mockRestore();
     }
-  });
-});
-
-describe("which key made each change", () => {
-  it("records one row for each request that is not a read, with the key, the route, the subject and the status", async () => {
-    const w = await world();
-    await w.send(w.keys.sam, `/samples/${w.linked}/hold`, { note: "x" });
-    await w.send(w.keys.alice, `/samples/${w.other}/locality`, { locality: "Nowhere" });
-    await w.send(w.keys.sam, "/samples/999999/hold", { note: "x" });
-    await w.send(w.keys.sam, "/samples/abc/hold", { note: "x" });
-    // Reads leave nothing, and neither does a request with no working key.
-    await w.send(w.keys.sam, "/me", "", "GET");
-    await w.send("beeline_nonsense", `/samples/${w.linked}/hold`, { note: "x" });
-    await w.send(undefined, `/samples/${w.linked}/hold`, { note: "x" });
-
-    const uses = await w.uses();
-    expect(uses.map(([key, method, route, subject, status]) => [key, method, route, subject, status])).toEqual([
-      [hashKey(w.keys.sam), "POST", "/api/v1/samples/:id/hold", String(w.linked), 200],
-      [hashKey(w.keys.alice), "POST", "/api/v1/samples/:id/locality", String(w.other), 409],
-      [hashKey(w.keys.sam), "POST", "/api/v1/samples/:id/hold", "999999", 404],
-      [hashKey(w.keys.sam), "POST", "/api/v1/samples/:id/hold", "abc", 404],
-    ]);
+    expect((await w.uses()).map((u) => [u[2], u[3], u[4], u[6]])).toEqual([["/samples/:id/edit", String(w.legacy), null, 500]]);
   });
 
-  it("records a refused key's scope check too, and an unknown path", async () => {
+  it("never fails a request because the row could not be written, and logs why, a write conflict included", async () => {
     const w = await world();
-    await w.send(w.keys.aliceRead, `/samples/${w.linked}/hold`, { note: "x" });
-    await w.send(w.keys.sam, "/nowhere", {});
-    expect((await w.uses()).map((u) => [u[2], u[4]])).toEqual([
-      ["/api/v1/samples/*", 403],
-      ["/api/v1/*", 404],
-    ]);
-  });
-
-  it("never fails a request because the row could not be written", async () => {
-    const w = await world();
-    await w.conn.run("DROP TABLE api_key_use");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
+      await w.conn.run("DROP TABLE api_key_use");
       const res = await w.send(w.keys.sam, `/samples/${w.linked}/hold`, { note: "x" });
       expect(res.status).toBe(200);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not record the use of key"));
+      // A write conflict is logged as one, and not swallowed.
+      const conflicting = new Proxy(w.db, {
+        get(target, prop) {
+          if (prop === "insertInto") {
+            return () => ({ values: () => ({ execute: async () => { throw new Error("TransactionContext Error: Conflict on update!"); } }) });
+          }
+          const value = Reflect.get(target, prop, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as Kysely<Database>;
+      warn.mockClear();
+      const api = createApi({ db: conflicting, isStaff: async () => false });
+      expect((await api.request("/jobs/nonesuch", { method: "POST", headers: { authorization: `Bearer ${w.keys.bea}` } })).status).toBe(403);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("a write conflict"));
     } finally {
       warn.mockRestore();
     }
@@ -554,7 +808,174 @@ describe("which key made each change", () => {
   it("records starting a job with the job's name as its subject", async () => {
     const w = await world();
     await w.send(w.keys.sam, "/jobs/nonesuch", "", "POST");
-    expect((await w.uses()).map((u) => [u[2], u[3], u[4]])).toEqual([["/api/v1/jobs/:name", "nonesuch", 404]]);
+    expect((await w.uses()).map((u) => [u[2], u[3], u[4], u[6]])).toEqual([["/api/v1/jobs/:name", "nonesuch", "not_found", 404]]);
+  });
+});
+
+describe("a reference to the request behind a change", () => {
+  const sixRequests = (w: World) =>
+    [
+      [w.keys.bea, `/samples/${w.legacy}/edit`, { values: { locality: "Walla Walla" } }],
+      [w.keys.alice, `/samples/${w.other}/locality`, { locality: "Finley NWR" }],
+      [w.keys.sam, `/samples/${w.linked}/coordinates`, { latitude: 44.5, longitude: -123.2 }],
+      [w.keys.sam, `/samples/${w.linked}/take-observation-location`, {}],
+      [w.keys.sam, `/samples/${w.linked}/hold`, { note: "x" }],
+      [w.keys.sam, `/samples/${w.linked}/waiver`, { rule: "locality_format", note: "x" }],
+    ] as const;
+
+  it("is stored with the request for each of the six endpoints, trimmed, and for a dry run", async () => {
+    const w = await world();
+    for (const [key, path, body] of sixRequests(w)) {
+      const res = await w.send(key, path, { ...body, reference: "  gmail:msg-18c2f  " });
+      // Whatever the correction answered: the reference is recorded either way.
+      expect([path, res.status === 400]).toEqual([path, false]);
+    }
+    await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, { values: { locality: "Elsewhere" }, dry_run: true, reference: "https://example.org/issues/7" });
+    const used = await w.uses();
+    expect(used).toHaveLength(7);
+    expect(used.map((u) => u[5])).toEqual([...Array(6).fill("gmail:msg-18c2f"), "https://example.org/issues/7"]);
+    // A refused correction records it too, with the refusal's name as its outcome.
+    expect(used.map((u) => u[4])).toContain("not_moved");
+    expect(used[1]![4]).toBe("saved");
+  });
+
+  it("records a refused correction's reference with the refusal's name, and is NULL when absent or empty", async () => {
+    const w = await world();
+    const refused = await w.send(w.keys.alice, `/samples/${w.linked}/locality`, { locality: "Nowhere", reference: "msg-1" });
+    expect(refused.status).toBe(409);
+    await w.send(w.keys.sam, `/samples/${w.linked}/hold`, { note: "x" });
+    await w.send(w.keys.sam, `/samples/${w.linked}/hold`, { lift: true, reference: "" });
+    await w.send(w.keys.sam, `/samples/${w.linked}/hold`, { note: "y", reference: "   " });
+    expect((await w.uses()).map((u) => [u[4], u[5]])).toEqual([
+      ["only_offered", "msg-1"],
+      ["saved", null],
+      ["removed", null],
+      ["saved", null],
+    ]);
+  });
+
+  it("is not passed to the correction: not in the overlay, the history or the corrections file", async () => {
+    const w = await world();
+    await w.send(w.keys.sam, `/samples/${w.linked}/hold`, { note: "date looks a year off", reference: "gmail:msg-18c2f" });
+    await w.send(w.keys.bea, `/samples/${w.legacy}/edit`, { values: { locality: "Walla Walla" }, note: "in town", reference: "gmail:msg-18c2f" });
+    expect(JSON.stringify(await overlay(w))).not.toContain("msg-18c2f");
+    expect(await correctionsFile(w)).not.toContain("msg-18c2f");
+    expect(JSON.stringify([await w.entries("A-1"), await w.entries("OBAS-00657")])).not.toContain("msg-18c2f");
+    expect(await readFile(w.paths.sampleChangesPath, "utf8")).not.toContain("msg-18c2f");
+  });
+
+  it("is refused with 400 naming the field when it is too long, not a string or has a control character, and nothing is written", async () => {
+    const w = await world();
+    const before = [await overlay(w), await correctionsFile(w)];
+    for (const [key, path, body] of sixRequests(w)) {
+      for (const bad of ["x".repeat(501), 5, null, ["a"], "line\nbreak", "tab\t", "nul\u0000"]) {
+        const res = await w.send(key, path, { ...body, reference: bad });
+        expect([path, JSON.stringify(bad).slice(0, 20), res.status]).toEqual([path, JSON.stringify(bad).slice(0, 20), 400]);
+        expect((await json(res)).message).toContain('"reference"');
+      }
+      // The longest allowed, once trimmed.
+      expect([path, (await w.send(key, path, { ...body, dry_run: undefined, reference: ` ${"x".repeat(500)} ` })).status === 400]).toEqual([path, false]);
+    }
+    expect(before[0]).toEqual([]);
+    // Every request that was a 400 left a row with no reference.
+    expect((await w.uses()).filter((u) => u[6] === 400).every((u) => u[5] === null && u[4] === "invalid_request")).toBe(true);
+  });
+
+  it("is accepted when starting a job, where a missing or empty body is as valid as ever and any other field is a 400", async () => {
+    const w = await world();
+    const post = (body: string | undefined) =>
+      w.app.request("/api/v1/jobs/nonesuch", { method: "POST", headers: { authorization: `Bearer ${w.keys.sam}` }, body });
+    expect((await post(undefined)).status).toBe(404);
+    expect((await post("")).status).toBe(404);
+    expect((await post(JSON.stringify({ reference: "https://example.org/issues/7" }))).status).toBe(404);
+    expect((await post(JSON.stringify({ reference: "" }))).status).toBe(404);
+    for (const bad of [{ note: "x" }, { reference: 5 }, { reference: "x".repeat(501) }, { reference: "a\nb" }, "not json", "[]"]) {
+      expect([JSON.stringify(bad), (await post(typeof bad === "string" ? bad : JSON.stringify(bad))).status]).toEqual([JSON.stringify(bad), 400]);
+    }
+    expect((await w.uses()).map((u) => [u[3], u[4], u[5]])).toEqual([
+      ["nonesuch", "not_found", null],
+      ["nonesuch", "not_found", null],
+      ["nonesuch", "not_found", "https://example.org/issues/7"],
+      ["nonesuch", "not_found", null],
+      ...Array(6).fill(["nonesuch", "invalid_request", null]),
+    ]);
+  });
+});
+
+describe("what a key reaches", () => {
+  it("never acts for anyone: a key whose person holds a delegation gets 404 on the other person's samples", async () => {
+    const w = await world();
+    await w.conn.run(`INSERT INTO person_delegate (person_id, acts_for_id, granted_by) VALUES (${w.people.bob}, ${w.people.alice}, 'peter')`);
+    const res = await w.send(w.keys.bob, `/samples/${w.linked}/locality`, { locality: "Finley NWR" });
+    expect(res.status).toBe(404);
+    expect(await localityOf(w.conn, w.linked)).toBe("Corvallis");
+    // Nor an edit of what a delegate may edit on a page.
+    await w.conn.run(`INSERT INTO person_delegate (person_id, acts_for_id, granted_by) VALUES (${w.people.bob}, ${w.people.bea}, 'peter')`);
+    expect((await w.send(w.keys.bob, `/samples/${w.legacy}/edit`, { values: { locality: "X" } })).status).toBe(404);
+    expect(await overlay(w)).toEqual([]);
+  });
+
+  it("gives a staff key no more of the collector's edit than anyone else has: it is the collector's", async () => {
+    const w = await world();
+    const res = await w.send(w.keys.sam, `/samples/${w.legacy}/edit`, { values: { locality: "X" } });
+    expect([res.status, (await json(res)).error]).toEqual([404, "not found"]);
+    expect(await localityOf(w.conn, w.legacy)).not.toBe("X");
+  });
+});
+
+describe("refusals over HTTP that need a fixture", () => {
+  it("answers printed, no_staging and unresolved with their statuses", async () => {
+    const w = await world();
+    // no_staging: a sample with no observation and no old Beeline record behind it.
+    const bare = await insertCleanSample(w.conn, { collector_id: String(w.people.alice), sample_number: "'A-9'" });
+    const noStaging = await w.send(w.keys.alice, `/samples/${bare}/edit`, { values: { locality: "Elsewhere" } });
+    expect([noStaging.status, (await json(noStaging)).error]).toEqual([409, "no_staging"]);
+    // unresolved: two samples on one observation cannot take an overlay row that names one.
+    await insertCleanSample(w.conn, { collector_id: String(w.people.alice), sample_number: "'A-10'", inat_observation_id: "998877" });
+    const unresolved = await w.send(w.keys.sam, `/samples/${w.linked}/hold`, { note: "x" });
+    expect([unresolved.status, (await json(unresolved)).error]).toEqual([409, "unresolved"]);
+    expect(await overlay(w)).toEqual([]);
+    // printed: once Beeline has printed a sample, its collector may not change the locality.
+    const run = (await prepareRun(w.conn, { atlasId: null, personId: w.people.sam, now: new Date() }))!.printRunId;
+    await approveRun(w.conn, run, { personId: w.people.sam, now: new Date() });
+    await markPrinted(w.conn, run, { personId: w.people.sam, now: new Date() });
+    const printed = await w.send(w.keys.alice, `/samples/${w.other}/locality`, { locality: "Finley NWR" });
+    expect([printed.status, (await json(printed)).error]).toEqual([409, "printed"]);
+  });
+
+  // `changed` is adoptLocality's refusal, and the API has no endpoint for adoptLocality: the place editor adopts an offered name.
+  // `unavailable` needs an instance with no overlay connection, which the pages' tests and the function's own tests cover.
+
+  it("says not found, and not printed, to someone who may not see another person's printed sample entered in Beeline, on the page and the API alike", async () => {
+    const w = await world();
+    const entered = await insertCleanSample(w.conn, { collector_id: String(w.people.alice), sample_number: "'A-20'" });
+    await w.conn.run(`INSERT INTO sample_entry (sample_id, entered_by) VALUES (${entered}, ${w.people.alice})`);
+    const run = (await prepareRun(w.conn, { atlasId: null, personId: w.people.sam, now: new Date() }))!.printRunId;
+    await approveRun(w.conn, run, { personId: w.people.sam, now: new Date() });
+    await markPrinted(w.conn, run, { personId: w.people.sam, now: new Date() });
+    expect((await rows(w.conn, `SELECT 1 FROM printed_sample WHERE sample_id = ${entered}`)).length).toBe(1);
+
+    // The API, with Bob's key. His own sample's collector, Alice, is told it is printed.
+    const byKey = await w.send(w.keys.bob, `/samples/${entered}/locality`, { locality: "Somewhere" });
+    expect([byKey.status, (await json(byKey)).error]).toEqual([404, "not found"]);
+    const owner = await w.send(w.keys.alice, `/samples/${entered}/locality`, { locality: "Somewhere" });
+    expect([owner.status, (await json(owner)).error]).toEqual([409, "printed"]);
+
+    // The page, signed in as Bob.
+    const asBob = createApp({
+      ...w.paths,
+      db: w.db,
+      config: { environment: "sandbox" as const, origin: ORIGIN },
+      inat: unusedInat,
+      resolveSession: async () => ({ personId: w.people.bob, login: "bob", inatUserId: BigInt(UID.bob), iconUrl: null }),
+      conn: w.conn,
+    });
+    const page = await asBob.request(`/samples/${entered}/place`, {
+      method: "POST",
+      headers: { origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ locality: "Somewhere" }).toString(),
+    });
+    expect(page.status).toBe(404);
   });
 });
 
@@ -638,6 +1059,7 @@ describe("taking the observation's location", () => {
     gz.closeSync();
     const paths = await scratchPaths();
     const db = createKysely(instance);
+    const mintConn = await instance.connect();
     const app = createApp({
       ...paths,
       db,
@@ -645,14 +1067,14 @@ describe("taking the observation's location", () => {
       inat: unusedInat,
       resolveSession: async () => ({ personId: sam, login: "samstaff", inatUserId: BigInt(2), iconUrl: null }),
       conn,
-      mintConn: await instance.connect(),
+      mintConn,
       derivePaths: { gazetteerPath },
       jobs: { list: [], start: async () => false, running: () => null },
     });
     await recordSampleChanges(duckdbReader(conn), { log: paths.sampleChangesPath, state: paths.sampleStatePath }, { source: "observation_promotion" });
     const made = await createKey(db, { inatUserId: 2, name: "test", scope: "staff", lifetimeDays: 30, offered: KEY_SCOPES });
     if ("problem" in made) throw new Error(made.problem);
-    return { app, conn, sampleId, paths, key: made.key };
+    return { app, db, conn, mintConn, sam, gazetteerPath, sampleId, paths, key: made.key };
   }
 
   it("takes the point as the page does, with the same reason and author, and the history says it came through the API", async () => {
@@ -693,5 +1115,54 @@ describe("taking the observation's location", () => {
       body: "{}",
     });
     expect([again.status, (await json(again)).error]).toEqual([409, "not_moved"]);
+  });
+
+  it("says the change is recorded and not yet applied when applying it loses a write conflict, and sending it again applies it once: take-observation-location", async () => {
+    const w = await moved();
+    let fired = false;
+    const conn = new Proxy(w.conn, {
+      get(target, prop) {
+        if (prop === "run") {
+          return (sql: string, ...rest: unknown[]) => {
+            if (!fired && /^\s*(DELETE FROM|INSERT INTO) sample_location_override\b/.test(sql)) {
+              fired = true;
+              throw new Error("TransactionContext Error: Conflict on update!");
+            }
+            return (target.run as (...a: unknown[]) => unknown)(sql, ...rest);
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DuckDBConnection;
+    const api = createApi({
+      db: w.db,
+      isStaff: async (personId) => personId === w.sam,
+      corrections: {
+        deps: {
+          db: w.db,
+          conn,
+          mintConn: w.mintConn,
+          correctionsPath: w.paths.correctionsPath,
+          sampleOverlayPath: w.paths.sampleOverlayPath,
+          samplePaths: { log: w.paths.sampleChangesPath, state: w.paths.sampleStatePath },
+          derivePaths: { gazetteerPath: w.gazetteerPath },
+          syncJobRunning: () => false,
+        },
+        messages: en,
+      },
+    });
+    const send = () =>
+      api.request(`/samples/${w.sampleId}/take-observation-location`, { method: "POST", headers: { authorization: `Bearer ${w.key}` }, body: "{}" });
+    const lost = await send();
+    expect([lost.status, (await json(lost)).error]).toEqual([409, "recorded_not_applied"]);
+    expect(await readSampleOverlay(w.paths.sampleOverlayPath)).toHaveLength(1);
+    expect(await rows(w.conn, `SELECT round(latitude, 6) FROM sample_location WHERE sample_id = ${w.sampleId}`)).toEqual([[CALIFORNIA.lat]]);
+    const again = await send();
+    expect(again.status).toBe(200);
+    expect(await readSampleOverlay(w.paths.sampleOverlayPath)).toHaveLength(1);
+    expect(await rows(w.conn, `SELECT round(latitude, 6), source FROM sample_location WHERE sample_id = ${w.sampleId}`)).toEqual([[OREGON.lat, "staff_entry"]]);
+    const mine = (await readSampleChanges(w.paths.sampleChangesPath)).filter((c) => c.source === "api" && c.field === "location");
+    expect(mine.map((c) => c.author)).toEqual(["samstaff"]);
   });
 });

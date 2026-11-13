@@ -181,9 +181,9 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
  * and in the history, so a control character is refused, and each kind of
  * text has a longest length. The answer names the field.
  */
-function checkText(label: string, value: string, max: number): void {
+function checkText(label: string, value: string, max: number, counted: string = value): void {
   if (CONTROL.test(value)) throw new BadBody(`${label} must not contain control characters, such as a line break or a tab.`);
-  if (value.length > max) throw new BadBody(`${label} may be at most ${max} characters.`);
+  if (counted.length > max) throw new BadBody(`${label} may be at most ${max} characters.`);
 }
 
 /**
@@ -219,7 +219,7 @@ export function check(body: Body, fields: Record<string, Field>, required: strin
     // Text is held to the same limits wherever it sits: a note is longer than a name.
     const limit = name === "note" ? MAX_NOTE_CHARS : MAX_VALUE_CHARS;
     // A reference is counted once trimmed, since an empty one is none.
-    if (typeof value === "string") checkText(JSON.stringify(name), name === "reference" ? value.trim() : value, limit);
+    if (typeof value === "string") checkText(JSON.stringify(name), value, limit, name === "reference" ? value.trim() : value);
     else if (typeof value === "number") continue;
     else if (kind === "strings") {
       for (const [field, text] of Object.entries(value as Record<string, string>)) checkText(`${JSON.stringify(field)} in ${name}`, text, limit);

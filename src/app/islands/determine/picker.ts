@@ -22,6 +22,7 @@ export interface PickerTaxon {
 }
 
 let taxaPromise: Promise<PickerTaxon[]> | null = null;
+let pickers = 0;
 
 /** The whole list, fetched once per page and shared by every picker on it. */
 export function loadTaxa(): Promise<PickerTaxon[]> {
@@ -84,6 +85,19 @@ export class DetermineTaxonPicker extends LitElement {
   declare bycatch: boolean;
   declare taxa: PickerTaxon[];
 
+  /**
+   * The box is named a search because of Safari. Safari offers the Mac's
+   * contacts in a box it guesses wants a person, beside our own list, and
+   * ignores `autocomplete="off"`: Apple leaves AutoFill to the person's
+   * settings. Its guess is not documented. On a page of eight variants of
+   * this box (Peter, Safari, 2026-11-13) the only ones that never offered
+   * contacts were the two whose `name` and `id` contain "search"; the others
+   * did so on and off, with or without the word "name" in the grey text or
+   * the label. Nothing submits the box, so the name is only for Safari to
+   * read (GitHub #316, beeline-9u06).
+   */
+  readonly #searchId = `taxon-search-${++pickers}`;
+
   constructor() {
     super();
     this.placeholder = m.determine.picker.placeholder;
@@ -110,6 +124,8 @@ export class DetermineTaxonPicker extends LitElement {
     return html`<beeline-combobox
       class="determine-picker"
       type="search"
+      name="taxon-search"
+      input-id=${this.#searchId}
       clear-on-pick
       placeholder=${this.placeholder}
       label=${this.label}

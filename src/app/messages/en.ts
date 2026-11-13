@@ -1894,6 +1894,7 @@ export const en = {
       name: "Give the key a name of up to 80 characters.",
       scope: "Choose what the key may do from the list.",
       lifetime: "Choose how long the key lasts from the list.",
+      tooMany: "You have 10 working keys, which is the most Beeline allows. Revoke one you no longer use, then make the new one.",
     },
     create: {
       heading: "Make a key",

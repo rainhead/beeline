@@ -56,11 +56,12 @@ export function bearerKey(c: Context): string | null {
 }
 
 /**
- * Refuse a request that carries credentials to a path under /api/ that is not
- * this API's. Without this, the old Beeline's redirect would answer it with a
- * 307 to old.melittologist.org (src/app/old-beeline.ts), and some HTTP
- * clients resend the Authorization header when a redirect stays within the
- * same site, so one mistyped path would hand the key to another server.
+ * Refuse a request that carries credentials to an address the old Beeline's
+ * redirects would answer (src/app/old-beeline.ts): any path under /api/ that
+ * is not this API's, and the old interface's pages. Without this the answer
+ * would be a redirect to old.melittologist.org, and some HTTP clients resend
+ * the Authorization header when a redirect stays within the same site, so one
+ * mistyped path would hand the key to another server.
  */
 export const refuseStrayCredentials: MiddlewareHandler = async (c, next) => {
   if (c.req.header("authorization") === undefined) return next();

@@ -6,6 +6,8 @@ import { createApi } from "../src/app/api.js";
 import {
   createKey,
   hashKey,
+  KEY_LIMIT,
+  KEY_SCOPES,
   KEY_PREFIX,
   keyRateLimiter,
   listKeys,
@@ -14,9 +16,10 @@ import {
   revokeKeysFor,
   revokeOrphanedKeys,
 } from "../src/app/api-keys.js";
-import { ACTING_COOKIE } from "../src/app/acting.js";
+import { ACTING_COOKIE, IMPERSONATING_COOKIE } from "../src/app/acting.js";
 import { createApp } from "../src/app/server.js";
-import { noSession } from "../src/app/session.js";
+import { cookieSessionResolver } from "../src/app/session.js";
+import { redact } from "../src/app/error-reporting.js";
 import { OLD_BEELINE_ORIGIN } from "../src/app/old-beeline.js";
 import { createMemoryDb, rows, scratchPaths } from "./helpers.js";
 
@@ -56,7 +59,13 @@ async function fixture({ admin = true, signedIn = true }: { admin?: boolean; sig
     db,
     config: { environment: "sandbox", origin: ORIGIN },
     inat: unusedInat,
-    resolveSession: signedIn ? async () => ({ personId: Number(staff), login: "staff", iconUrl: null }) : noSession,
+    // Signed out, the real resolver: it is the thing that must not learn to
+    // read a bearer header, so a stand-in that answers nobody would prove
+    // nothing.
+    resolveSession: signedIn
+      ? async () => ({ personId: Number(staff), login: "staff", iconUrl: null })
+      : cookieSessionResolver(db, ORIGIN),
+    conn,
   });
   const api = (path: string, key?: string, init: RequestInit = {}) =>
     app.request(path, { ...init, headers: { ...(key === undefined ? {} : { authorization: `Bearer ${key}` }), ...init.headers } });
@@ -71,7 +80,7 @@ async function fixture({ admin = true, signedIn = true }: { admin?: boolean; sig
       body: new URLSearchParams(body).toString(),
     });
   const make = async (uid: number, scope = "staff", lifetimeDays = 30) => {
-    const made = await createKey(db, { inatUserId: uid, name: "test", scope, lifetimeDays });
+    const made = await createKey(db, { inatUserId: uid, name: "test", scope, lifetimeDays, offered: KEY_SCOPES });
     if ("problem" in made) throw new Error(made.problem);
     return made;
   };
@@ -115,7 +124,10 @@ describe("making and revoking a key on /keys", () => {
       { name: "", scope: "staff", lifetime: "30" },
       { name: "x".repeat(81), scope: "staff", lifetime: "30" },
       { name: "k", scope: "everything", lifetime: "30" },
+      // Not offered until something accepts it, so no key gains the power later.
+      { name: "k", scope: "edit", lifetime: "30" },
       { name: "k", scope: "staff", lifetime: "365" },
+      { name: "k", scope: "staff", lifetime: "0x1e" },
       { name: "k", scope: "staff", lifetime: "30; DROP TABLE api_key" },
     ]) {
       expect((await post("/keys", body)).status).toBe(400);
@@ -134,6 +146,28 @@ describe("making and revoking a key on /keys", () => {
     expect((await api("/api/v1/me", mine.key)).status).toBe(401);
     // Still listed, as revoked, so its use can be traced.
     expect((await listKeys(db, STAFF_UID))[0]!.revokedAt).not.toBeNull();
+  });
+
+  it("lets one person have only so many working keys", async () => {
+    const { post, make, db } = await fixture();
+    const made = [];
+    for (let i = 0; i < KEY_LIMIT; i++) made.push(await make(STAFF_UID));
+    expect((await post("/keys", { name: "one more", scope: "read", lifetime: "30" })).status).toBe(400);
+    // A revoked key no longer counts.
+    await revokeKey(db, STAFF_UID, made[0]!.ref);
+    expect((await post("/keys", { name: "one more", scope: "read", lifetime: "30" })).status).toBe(200);
+  });
+
+  it("does nothing while viewing Beeline as someone else", async () => {
+    const { app, post, make, db } = await fixture();
+    const mine = await make(STAFF_UID);
+    const as = `${IMPERSONATING_COOKIE}=${encodeURIComponent("Vera Volunteer")}`;
+    expect((await app.request("/keys", { headers: { cookie: as } })).status).toBe(403);
+    expect((await post("/keys", { name: "k", scope: "read", lifetime: "30" }, as)).status).toBe(403);
+    expect((await post(`/keys/${mine.ref}/revoke`, {}, as)).status).toBe(403);
+    expect((await listKeys(db, STAFF_UID)).length).toBe(1);
+    expect((await listKeys(db, VOLUNTEER_UID)).length).toBe(0);
+    expect(await resolveKey(db, mine.key)).not.toBeNull();
   });
 
   it("is for staff only, for now", async () => {
@@ -211,7 +245,7 @@ describe("the gate for /api/v1", () => {
   it("refuses credentials sent to any other path under /api/, and does not redirect them to the old Beeline", async () => {
     const { api, make } = await fixture();
     const { key } = await make(STAFF_UID);
-    for (const path of ["/api/me", "/api/v2/me", "/api/tasks"]) {
+    for (const path of ["/api/me", "/api/v2/me", "/api/tasks", "/api", "/tasks", "/admin", "/dashboard", "/datasets", "/scripts"]) {
       const res = await api(path, key, { redirect: "manual" });
       expect(res.status, path).toBe(401);
       expect(res.headers.get("location"), path).toBeNull();
@@ -220,6 +254,9 @@ describe("the gate for /api/v1", () => {
     const old = await api("/api/tasks", undefined, { redirect: "manual" });
     expect(old.status).toBe(307);
     expect(old.headers.get("location")).toBe(`${OLD_BEELINE_ORIGIN}/api/tasks`);
+    const page = await api("/tasks", undefined, { redirect: "manual" });
+    expect(page.status).toBe(302);
+    expect(page.headers.get("location")).toBe(`${OLD_BEELINE_ORIGIN}/tasks`);
   });
 
   it("records when a key was last used", async () => {
@@ -262,7 +299,27 @@ describe("a key is not a way onto the pages", () => {
   });
 });
 
+describe("a key in a log line", () => {
+  it("is redacted, with or without Bearer before it", () => {
+    const key = `${KEY_PREFIX}${"Ab3_-".repeat(8)}xyz`;
+    expect(redact(`lookup failed for ${key} today`)).toBe("lookup failed for [token] today");
+    expect(redact(`Authorization: Bearer ${key}`)).not.toContain(key);
+  });
+});
+
 describe("keys of an account that stops meaning what it meant", () => {
+  it("are revoked when staff unlink the account on /people, before it can be linked to anyone else", async () => {
+    const { post, make, db, volunteer } = await fixture();
+    const theirs = await make(VOLUNTEER_UID, "read");
+    const mine = await make(STAFF_UID);
+    const res = await post(`/people/${volunteer}/account`, { inat_user_id: "", reason: "wrong person" });
+    expect(res.status).toBeLessThan(400);
+    expect((await listKeys(db, VOLUNTEER_UID))[0]!.revokedAt).not.toBeNull();
+    expect(await resolveKey(db, theirs.key)).toBeNull();
+    expect(await resolveKey(db, mine.key)).not.toBeNull();
+  });
+
+
   it("are all revoked when the account is unlinked, so linking it to someone else does not revive them", async () => {
     const { db, make, conn, staff } = await fixture();
     const a = await make(VOLUNTEER_UID, "read");

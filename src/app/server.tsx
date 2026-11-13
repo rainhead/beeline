@@ -15,8 +15,8 @@ import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
-import { createApi, refuseStrayCredentials } from "./api.js";
-import { createKey, KEY_SCOPES, listKeys, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
+import { createApi } from "./api.js";
+import { createKey, listKeys, offeredScopes, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
 import { KeysPage } from "./views/keys.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
 import { normalizeSeed, SEED_COLOR, tokensCss } from "./theme/tokens.js";
@@ -479,10 +479,9 @@ export function createApp({
   app.use("/assets/*", serveStatic({ root: "./dist/app" }));
   // The API (src/app/api.ts), ahead of the old Beeline's redirect of /api/*
   // and ahead of the session gate: it answers to a key, never to a cookie.
-  // Any other path under /api/ that arrives with credentials is refused
-  // before the redirect could pass them on.
+  // Any other address the old Beeline's redirects answer refuses a request
+  // that carries credentials, so the redirect cannot pass them on.
   app.route("/api/v1", createApi({ db, isStaff }));
-  app.use("/api/*", refuseStrayCredentials);
   // The old Beeline's addresses, until it closes (src/app/old-beeline.ts).
   registerOldBeelineRedirects(app);
   registerAuthRoutes(app, {
@@ -807,7 +806,7 @@ export function createApp({
         <KeysPage
           m={m}
           keys={owner === null ? [] : await listKeys(db, owner)}
-          scopes={KEY_SCOPES.filter((s) => s !== "edit")}
+          scopes={offeredScopes(await isStaff(c.get("session").personId))}
           created={extra.created}
           problem={extra.problem}
           acting={c.get("acting").actingFor !== null}
@@ -823,16 +822,25 @@ export function createApp({
   });
   app.post("/keys", async (c) => {
     if (!c.get("admin") || c.get("acting").actingFor !== null) return c.text(c.get("m").errors.forbidden, 403);
-    const owner = await keyOwner(c);
-    if (owner === null) return c.text(c.get("m").errors.forbidden, 403);
     const form = await c.req.parseBody();
     const text = (name: string) => (typeof form[name] === "string" ? (form[name] as string) : "");
-    const made = await createKey(db, {
-      inatUserId: owner,
-      name: text("name"),
-      scope: text("scope"),
-      lifetimeDays: Number(text("lifetime")),
+    // In the queue that runs account changes one at a time, with the form
+    // already read, so that whose account this is and the making of the key
+    // cannot have an unlink between them: the unlink revokes the account's
+    // keys, and a key made just after it would otherwise outlive it and work
+    // as whoever the account is linked to next.
+    const made = await oneDecisionAtATime(async () => {
+      const owner = await keyOwner(c);
+      if (owner === null) return null;
+      return createKey(db, {
+        inatUserId: owner,
+        name: text("name"),
+        scope: text("scope"),
+        lifetimeDays: /^\d+$/.test(text("lifetime")) ? Number(text("lifetime")) : NaN,
+        offered: offeredScopes(await isStaff(c.get("session").personId)),
+      });
     });
+    if (made === null) return c.text(c.get("m").errors.forbidden, 403);
     if ("problem" in made) return showKeys(c, { problem: made.problem }, 400);
     // Answered with the page itself and not a redirect: the key exists
     // nowhere but in this response, so there is nothing a second request
@@ -2513,6 +2521,31 @@ export function createApp({
     const before = d.personId === null ? undefined : (await stateOf(d.personId)).state;
     const applied = await applyPersonOverlay(conn, d.rows);
     const afterId = await d.findAfter();
+    // Whatever this account was, it stops being it now: a session issued under
+    // the old binding must not survive to be revived under the new one
+    // (beeline-ten), and neither must an API key (src/app/api-keys.ts). Both
+    // sides — the iNat user being taken away and the one being given — so
+    // neither a departing volunteer nor the person inheriting their account
+    // keeps a credential the other made. Done as soon as the store has
+    // changed and before anything else can fail or return: it used to come
+    // last, where a change log that could not be written, or another row of
+    // the same decision being refused, left the credentials standing.
+    if (d.rows.some((r) => r.field === "inat_user_id")) {
+      const boundAfter =
+        afterId === null
+          ? undefined
+          : await db
+              .selectFrom("inat_account")
+              .select("inat_user_id")
+              .where("person_id", "=", afterId)
+              .executeTakeFirst();
+      for (const uid of [d.boundBefore, boundAfter?.inat_user_id]) {
+        if (uid !== null && uid !== undefined) {
+          await endSessionsFor(db, uid);
+          await revokeKeysFor(db, uid);
+        }
+      }
+    }
     // Recorded before the unresolved check, and against the same reference
     // the overlay row used: a decision that half applied still changed
     // somebody, and the history has to show what it did.
@@ -2557,28 +2590,6 @@ export function createApp({
       const hadRow = new Set(stood.map(rowKey));
       await removeOverlayKeys(overlayPath, [...refused].filter((k) => !hadRow.has(k)));
       return { applied: true, problem: applied.unresolved.map((u) => u.reason).join("; "), personId: afterId };
-    }
-    // Whatever this account was, it stops being it now: a session issued under
-    // the old binding must not survive to be revived under the new one
-    // (beeline-ten). Both sides — the iNat user being taken away and the one
-    // being given — so neither a departing volunteer nor the person inheriting
-    // their account keeps a cookie the other made.
-    if (d.rows.some((r) => r.field === "inat_user_id")) {
-      const boundAfter =
-        afterId === null
-          ? undefined
-          : await db
-              .selectFrom("inat_account")
-              .select("inat_user_id")
-              .where("person_id", "=", afterId)
-              .executeTakeFirst();
-      for (const uid of [d.boundBefore, boundAfter?.inat_user_id]) {
-        if (uid !== null && uid !== undefined) {
-          await endSessionsFor(db, uid);
-          // And their API keys, for the same reason (src/app/api-keys.ts).
-          await revokeKeysFor(db, uid);
-        }
-      }
     }
     return { applied: true, problem: null, personId: afterId };
   };

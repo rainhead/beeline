@@ -41,6 +41,8 @@ export function redact(text: string): string {
     .replace(/'(?:[^'\\\n]|\\.)*'/g, "'[redacted]'")
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "[token]")
     .replace(/\b(Bearer|Token)\s+[\w.~+/=-]+/gi, "$1 [token]")
+    // A personal API key on its own, with no "Bearer" before it (src/app/api-keys.ts).
+    .replace(/\bbeeline_[\w-]{20,}/g, "[token]")
     .replace(/\b[0-9a-f]{32,}\b/gi, "[token]")
     .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]")
     .replace(/-?\b\d{1,3}\.\d{4,}\b/g, "[coordinate]");

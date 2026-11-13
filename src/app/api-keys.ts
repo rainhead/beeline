@@ -25,12 +25,29 @@ export const KEY_SCOPES = ["read", "edit", "staff"] as const;
 export type KeyScope = (typeof KEY_SCOPES)[number];
 
 /**
- * How long a key may last, in days. The longest is a session's own limit
- * (src/app/session.ts), so a key that leaks stops working as soon as a stolen
- * cookie would.
+ * The scopes a person may give a key they make. Decided here and used for
+ * both the form's choices and the check on what the form posts, so the page
+ * cannot offer less than the server accepts. `staff` only for someone who is
+ * staff now: otherwise a volunteer could make a staff key that starts working
+ * the day they are given staff rights. `edit` is left out until something
+ * accepts it (beeline-pnqr.6), so no key made today gains a power later that
+ * its maker never saw offered.
+ */
+export const offeredScopes = (staff: boolean): KeyScope[] => (staff ? ["read", "staff"] : ["read"]);
+
+/**
+ * How long a key may last, in days. The longest is the most a session can
+ * last however often it is used (src/app/session.ts), so a key that leaks
+ * does not work forever. A key has no idle limit and no signing out, which a
+ * session has; revoking it is the way to end it early.
  */
 export const KEY_LIFETIMES_DAYS = [7, 30, 90] as const;
 export const KEY_NAME_MAX = 80;
+/**
+ * The most working keys one person may have. The limit on requests is counted
+ * per key, so without this a person could multiply it by making more keys.
+ */
+export const KEY_LIMIT = 10;
 
 /**
  * Every key starts with this, so that a key pasted somewhere it should not be
@@ -58,7 +75,7 @@ export interface KeyListing {
   revokedAt: Date | null;
 }
 
-export type CreateKeyProblem = "name" | "scope" | "lifetime";
+export type CreateKeyProblem = "name" | "scope" | "lifetime" | "tooMany";
 
 /**
  * Make a key. Returns the key itself, which is never readable again, or what
@@ -66,12 +83,27 @@ export type CreateKeyProblem = "name" | "scope" | "lifetime";
  */
 export async function createKey(
   db: Kysely<Database>,
-  input: { inatUserId: number | bigint; name: string; scope: string; lifetimeDays: number },
+  input: {
+    inatUserId: number | bigint;
+    name: string;
+    scope: string;
+    lifetimeDays: number;
+    /** The scopes this person may give a key ({@link offeredScopes}). */
+    offered: readonly KeyScope[];
+  },
 ): Promise<{ key: string; ref: string } | { problem: CreateKeyProblem }> {
   const name = input.name.trim();
   if (name.length === 0 || name.length > KEY_NAME_MAX) return { problem: "name" };
-  if (!(KEY_SCOPES as readonly string[]).includes(input.scope)) return { problem: "scope" };
+  if (!(input.offered as readonly string[]).includes(input.scope)) return { problem: "scope" };
   if (!(KEY_LIFETIMES_DAYS as readonly number[]).includes(input.lifetimeDays)) return { problem: "lifetime" };
+  const working = await db
+    .selectFrom("api_key")
+    .select(({ fn }) => fn.countAll<number>().as("n"))
+    .where("inat_user_id", "=", BigInt(input.inatUserId))
+    .where("revoked_at", "is", null)
+    .where("expires_at", ">", sql<Date>`current_timestamp`)
+    .executeTakeFirstOrThrow();
+  if (Number(working.n) >= KEY_LIMIT) return { problem: "tooMany" };
   const key = `${KEY_PREFIX}${randomBytes(32).toString("base64url")}`;
   await db
     .insertInto("api_key")

@@ -15,7 +15,7 @@ import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
-import { createApi } from "./api.js";
+import { createApi, refuseStrayCredentials } from "./api.js";
 import { createKey, hasKeys, listKeys, offeredScopes, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
 import { KeysPage } from "./views/keys.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
@@ -529,7 +529,7 @@ export function createApp({
   // that carries credentials, so the redirect cannot pass them on.
   app.route("/api/v1", createApi({ db, isStaff, jobs: jobsDep, corrections: { deps: corrective, messages: messagesFor(null) } }));
   // The old Beeline's addresses, until it closes (src/app/old-beeline.ts).
-  registerOldBeelineRedirects(app);
+  registerOldBeelineRedirects(app, refuseStrayCredentials);
   registerAuthRoutes(app, {
     db,
     inat,

@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path";
 import { parseServiceAccountKey, type ServiceAccountKey } from "../drive-service-account.js";
 import type { EcdysisCredentials } from "../fetch-ecdysis.js";
 import type { FlyMetricsTarget } from "../fly-usage.js";
@@ -130,6 +131,13 @@ export interface AppConfig {
   driveBackup: { key: ServiceAccountKey; folderId: string } | null;
   /** Where a backup run writes its copies and archive before uploading them; emptied after each run. */
   backupsDir: string;
+  /**
+   * The copy of the store that SQL queries read (beeline-pnqr.4): the nightly
+   * backup job replaces it after each good snapshot. It is plain and
+   * unencrypted, and beside the live store unless BEELINE_QUERY_COPY says
+   * otherwise, so it is on the same volume.
+   */
+  queryCopyPath: string;
   /**
    * The old Beeline's admin login, which the legacy-copy job copies printed
    * specimens in with (beeline-83b8.18) and the legacy-volunteer-import job
@@ -276,6 +284,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ecdysisDir: env.BEELINE_ECDYSIS ?? "data/ecdysis",
     driveBackup,
     backupsDir: env.BEELINE_BACKUPS ?? "data/backups",
+    queryCopyPath: env.BEELINE_QUERY_COPY ?? join(dirname(env.BEELINE_DB ?? "beeline.duckdb"), "query-copy.duckdb"),
     oldBeeline: oldUser !== null && oldPassword !== null ? { origin: oldOrigin, username: oldUser, password: oldPassword } : null,
   };
 }

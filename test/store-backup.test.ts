@@ -17,6 +17,7 @@ import {
   backupTakenAt,
   checkBackup,
   confirmUpload,
+  keepQueryCopy,
   writeArchive,
 } from "../src/store-backup.js";
 import { fillOrder, snapshotCatalog, verifySnapshot } from "../src/store-snapshot.js";
@@ -240,7 +241,12 @@ function testServiceAccount(): ServiceAccountKey {
 describe("a night's backup", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  const run = async (drive: ReturnType<typeof fakeDrive>, now: Date, before?: (dir: string) => Promise<void>) => {
+  const run = async (
+    drive: ReturnType<typeof fakeDrive>,
+    now: Date,
+    before?: (dir: string) => Promise<void>,
+    queryCopy?: (dir: string) => string,
+  ) => {
     vi.stubGlobal("fetch", drive.fetchImpl);
     const { conn, dir, catalog } = await storeWithData();
     await writeFile(join(dir, "person-change.csv"), "when,person_ref\n");
@@ -250,6 +256,7 @@ describe("a night's backup", () => {
       catalog,
       authored: [join(dir, "person-change.csv"), join(dir, "corrections.csv")],
       release: "deployment-test",
+      queryCopy: queryCopy?.(dir),
       drive: { key: testServiceAccount(), folderId: "folder" },
       step: (_label, fn) => fn(),
       now: () => now,
@@ -289,6 +296,48 @@ describe("a night's backup", () => {
     expect(await readFile(join(dir, "restored", "authored", "person-change.csv"), "utf8")).toBe("when,person_ref\n");
     // And the work directory is left empty.
     expect(await readdir(join(dir, "work"))).toEqual([]);
+  });
+
+  it("leaves one plain copy of the store at the query path, replacing the last night's whole", async () => {
+    const drive = fakeDrive("folder", []);
+    const target = (dir: string) => join(dir, "query-copy.duckdb");
+    const { dir } = await run(
+      drive,
+      new Date("2026-10-12T10:00:00Z"),
+      async (d) => {
+        // Last night's copy, and the debris an older run could leave beside it.
+        await writeFile(target(d), "last night");
+        await writeFile(`${target(d)}.wal`, "stale");
+      },
+      target,
+    );
+    // An ordinary file the query module can open as it is, without a key.
+    const copy = await (await DuckDBInstance.create(target(dir), { access_mode: "READ_ONLY" })).connect();
+    expect(await rows(copy, "SELECT count(*) FROM animal")).toEqual([[3n]]);
+    expect(await readdir(dir)).not.toContain("query-copy.duckdb.wal");
+    expect(await readdir(dir)).not.toContain("query-copy.duckdb.partial");
+    // The work directory's own copy is still removed.
+    expect(await readdir(join(dir, "work"))).toEqual([]);
+  });
+
+  it("leaves no query copy when none is asked for, and does not touch the old one on a failed copy", async () => {
+    const { dir } = await run(fakeDrive("folder", []), new Date("2026-10-12T10:00:00Z"));
+    expect(await readdir(dir)).not.toContain("query-copy.duckdb");
+    // A target that cannot be written (its parent is a file) fails the run, naming the step.
+    await writeFile(join(dir, "blocked"), "a file");
+    await expect(
+      keepQueryCopy(join(dir, "work-missing.duckdb"), join(dir, "blocked", "query-copy.duckdb")),
+    ).rejects.toThrow();
+    expect(await readFile(join(dir, "blocked"), "utf8")).toBe("a file");
+  });
+
+  it("takes the query copy's path from the environment, or puts it beside the store", () => {
+    expect(configFromEnv({ BEELINE_ORIGIN: "https://x.org", BEELINE_DB: "/app/data/beeline.duckdb" }).queryCopyPath).toBe(
+      "/app/data/query-copy.duckdb",
+    );
+    expect(configFromEnv({ BEELINE_ORIGIN: "https://x.org", BEELINE_QUERY_COPY: "/elsewhere/q.duckdb" }).queryCopyPath).toBe(
+      "/elsewhere/q.duckdb",
+    );
   });
 
   it("is refused by backup:check once its manifest or its files have been tampered with", async () => {

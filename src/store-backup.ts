@@ -2,8 +2,8 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, isAbsolute, join } from "node:path";
+import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
@@ -29,6 +29,10 @@ import { snapshotCatalog, verifySnapshot, type Snapshot } from "./store-snapshot
  *   authored/*.csv    the overlays and change logs, as they stand on the volume
  *   manifest.json     what the copies held and the hash of every file, which is
  *                     what `pnpm backup:check` checks a downloaded archive against
+ *
+ * The night's verified copy of the store is also left at a fixed path for
+ * SQL queries (`keepQueryCopy`), so the work directory's copy is no longer the
+ * only one.
  *
  * Restoring is extracting it and putting each file back where the app reads
  * it; the copy is an ordinary store the app opens as it is.
@@ -211,6 +215,11 @@ export interface BackupOptions {
   /** The authored files to carry, by their path on this machine. */
   authored: string[];
   release: string | null;
+  /**
+   * Where to leave a copy of the store for SQL queries to read (beeline-pnqr.4),
+   * or null to leave none. See `keepQueryCopy`.
+   */
+  queryCopy?: string | null;
   drive: { key: ServiceAccountKey; folderId: string };
   step: <T>(label: string, fn: () => Promise<T>) => Promise<T>;
   signal?: AbortSignal;
@@ -260,6 +269,12 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
       const snapshot = await step(`copy ${copy.file}`, () => snapshotCatalog(conn, copy.catalog, path, copy.key));
       await step(`reopen ${copy.file}`, () => verifySnapshot(path, copy.key, snapshot));
       stores[copy.file] = { encrypted: copy.key !== null, ...snapshot };
+    }
+    // Kept as soon as the copy has been verified, before the upload: a night
+    // when Drive is unreachable still leaves queries a fresh copy.
+    if (opts.queryCopy) {
+      const keep = opts.queryCopy;
+      await step("keep a copy for queries", () => keepQueryCopy(join(work, STORE_FILES[0]), keep));
     }
     const [[duckdb]] = (await (await conn.run("SELECT version()")).getRows()) as [[string]];
 
@@ -353,6 +368,39 @@ export async function backUp(conn: DuckDBConnection, opts: BackupOptions): Promi
   } finally {
     await rm(work, { recursive: true, force: true });
   }
+}
+
+/**
+ * Leave the verified copy of the store at `target` for the query module
+ * (src/query-copy.ts) to read, replacing the one from the night before.
+ *
+ * It is the store's own snapshot, a plain DuckDB file that is never
+ * encrypted or compressed, whatever the archive that goes to Drive is: the
+ * archive wraps this file, it does not change it. The old copy is replaced
+ * atomically, by writing a file beside it and renaming that over it, so a
+ * reader opens either the whole old file or the whole new one and never half
+ * of one. The new file is written beside the target rather than renamed from
+ * the work directory because the two may be on different volumes, and a
+ * rename across volumes is a copy.
+ *
+ * There is exactly one such copy. For a moment during the replacement there
+ * are two, so the volume needs room for one more copy than it holds.
+ */
+export async function keepQueryCopy(source: string, target: string): Promise<void> {
+  const partial = `${target}.partial`;
+  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+  await rm(partial, { force: true });
+  try {
+    await copyFile(source, partial);
+    await chmod(partial, 0o600);
+    await rename(partial, target);
+  } catch (err) {
+    await rm(partial, { force: true });
+    throw err;
+  }
+  // The copy is only ever opened read-only, so it has no WAL; one left by an
+  // older file at this path would be replayed onto the new file.
+  await rm(`${target}.wal`, { force: true });
 }
 
 /**

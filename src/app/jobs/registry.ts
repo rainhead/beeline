@@ -341,6 +341,7 @@ export function buildJobs(
         | "driveBackup"
         | "oldBeeline"
         | "backupsDir"
+        | "queryCopyPath"
         | "environment"
         | "release"
         | "correctionsPath"
@@ -432,6 +433,7 @@ export function buildJobs(
             config.sampleStatePath,
           ],
           release: config.release ?? null,
+          queryCopy: config.queryCopyPath ?? deploymentPath("data/query-copy.duckdb"),
           drive: config.driveBackup,
           step: ctx.step,
           signal: ctx.signal,

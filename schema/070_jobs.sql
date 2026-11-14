@@ -44,7 +44,7 @@ CREATE TABLE job_step (
 COMMENT ON TABLE job_step IS 'One step of a night job''s run, with what it cost (beeline-e1xg). The console has the same figures for a few days; this keeps them for years, so the growth of the nightly work with the corpus can be seen and acted on before a night fails.';
 COMMENT ON COLUMN job_step.step_number IS 'Order the steps started in within the run, from 1.';
 COMMENT ON COLUMN job_step.stolen_ms IS 'CPU time the host gave to other machines during the step (/proc/stat). Null where that cannot be read, as on a Mac.';
-COMMENT ON COLUMN job_step.failed IS 'True when the step threw: the run''s detail says why.';
+COMMENT ON COLUMN job_step.failed IS 'True when the step threw, which fails the run, or when it is a step that is allowed to fail without failing the run and said it did (beeline-222u): the run''s detail says why either way. So a run with outcome succeeded can hold a failed step, and /jobs and the menu say so.';
 COMMENT ON COLUMN job_step.rss_mb IS 'The process''s resident memory when the step ended.';
 COMMENT ON COLUMN job_step.peak_mb IS 'The most resident memory the process held during this step, read from Linux''s high-water mark after resetting it at the step''s start. Null where the platform cannot reset it (anywhere but Linux), since the only other figure, the peak since the process started, never falls and so says nothing about one step.';
 COMMENT ON COLUMN job_step.duckdb_mb IS 'Memory DuckDB''s own accounting held when the step ended: what memory_limit caps. Not all DuckDB''s memory, since what its JSON functions allocate is uncounted (beeline-dmoi). Null when it could not be read.';

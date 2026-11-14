@@ -35,6 +35,30 @@ import type { Job, JobContext } from "./framework.js";
 const mintJwt = () => mintPipelineJwt();
 
 /**
+ * A step that is allowed to fail without failing the run catches its own
+ * error and returns what the run's detail should say. It calls `onFailure`
+ * as it does, so the step is still recorded as failed and /jobs and the menu
+ * say so (beeline-222u). A stop at the step's own deadline is not a failure:
+ * what is left waits for the next night by design.
+ */
+interface Tolerant {
+  onFailure?: () => void;
+}
+
+/** Run a {@link Tolerant} step, recording it as failed when it says it did. */
+function tolerantStep<T>(ctx: JobContext, label: string, fn: (onFailure: () => void) => Promise<T>): Promise<T> {
+  let failed = false;
+  return ctx.step(
+    label,
+    () =>
+      fn(() => {
+        failed = true;
+      }),
+    () => failed,
+  );
+}
+
+/**
  * The incremental watermark for a source: start of the most recent completed
  * run that asked for everything-updated-since-X. A windowed sweep must not
  * advance it — the sweep proves nothing about edits to observations outside
@@ -84,7 +108,7 @@ const sweepStart = (sweepDays: number) => new Date(Date.now() - sweepDays * 86_4
  */
 export async function refreshPlaces(
   conn: JobContext["conn"],
-  opts: FetchPlacesOptions = {},
+  opts: FetchPlacesOptions & Tolerant = {},
 ): Promise<string> {
   try {
     const r = await fetchPlaces(conn, opts);
@@ -94,6 +118,7 @@ export async function refreshPlaces(
       (r.unresolved.length > 0 ? `, ${r.unresolved.length} gone upstream (${r.unresolved.join(", ")})` : "")
     );
   } catch (err) {
+    opts.onFailure?.();
     return `places fetch failed (${(err as Error).message}); promoting with the cache as it stands`;
   }
 }
@@ -130,7 +155,7 @@ export const NIGHTLY_TAXON_DEADLINE_MS = 8 * 60_000;
  */
 export async function refreshInatTaxa(
   conn: JobContext["conn"],
-  opts: FetchInatTaxaOptions & { deadlineMs?: number } = {},
+  opts: FetchInatTaxaOptions & Tolerant & { deadlineMs?: number } = {},
 ): Promise<string> {
   const deadlineMs = opts.deadlineMs ?? NIGHTLY_TAXON_DEADLINE_MS;
   const deadline = AbortSignal.timeout(deadlineMs);
@@ -157,6 +182,7 @@ export async function refreshInatTaxa(
     if (deadline.aborted) {
       return `taxa fetch stopped after ${Math.round(deadlineMs / 60_000)} minutes; what it had stored stays and the rest waits for tomorrow`;
     }
+    opts.onFailure?.();
     return `taxa fetch failed (${(err as Error).message}); what it had stored stays`;
   }
 }
@@ -182,7 +208,7 @@ export const NIGHTLY_CITED_LIMIT = 2_000;
  */
 export async function refreshCitedObservations(
   conn: JobContext["conn"],
-  opts: Omit<FetchByIdOptions, "ids"> & { limit?: number } = {},
+  opts: Omit<FetchByIdOptions, "ids"> & Tolerant & { limit?: number } = {},
 ): Promise<string> {
   try {
     const rows = (await (
@@ -200,6 +226,7 @@ export async function refreshCitedObservations(
     return `${r.fetched} of ${r.asked} cited observations read by id (${r.newLoads} new)` +
       (r.asked > r.fetched ? `, ${r.asked - r.fetched} gone from iNaturalist` : "");
   } catch (err) {
+    opts.onFailure?.();
     return `cited observations not read (${(err as Error).message}); promoting without them`;
   }
 }
@@ -231,7 +258,7 @@ export const NIGHTLY_TILE_DEADLINE_MS = 15 * 60_000;
 export async function refreshTiles(
   conn: JobContext["conn"],
   demDir: string,
-  opts: FetchTilesOptions & { deadlineMs?: number } = {},
+  opts: FetchTilesOptions & Tolerant & { deadlineMs?: number } = {},
 ): Promise<string | null> {
   // The whole fetch has a deadline as well as each request, since 25 slow
   // downloads just inside their own ten-minute timeouts would hold the
@@ -251,6 +278,7 @@ export async function refreshTiles(
     if (deadline.aborted) {
       return `elevation tile fetch stopped after ${Math.round(deadlineMs / 60_000)} minutes; deriving from the tiles on disk`;
     }
+    opts.onFailure?.();
     return `elevation tile fetch failed (${(err as Error).message}); deriving from the tiles on disk`;
   }
 }
@@ -271,11 +299,13 @@ export async function refreshLocalities(
   conn: JobContext["conn"],
   gazetteerPath: string,
   signal?: AbortSignal,
+  onFailure?: () => void,
 ): Promise<string | null> {
   try {
     return describeLocalities(await deriveLocalities(conn, gazetteerPath, { signal }));
   } catch (err) {
     signal?.throwIfAborted();
+    onFailure?.();
     return `naming localities failed (${(err as Error).message})`;
   }
 }
@@ -292,12 +322,14 @@ export async function refreshAreas(
   conn: JobContext["conn"],
   gazetteerPath: string,
   signal?: AbortSignal,
+  onFailure?: () => void,
 ): Promise<{ detail: string | null; countiesStamped: number }> {
   try {
     const result = await deriveAreas(conn, gazetteerPath, { signal, stampCounties: true });
     return { detail: describeAreas(result), countiesStamped: result.countiesStamped };
   } catch (err) {
     signal?.throwIfAborted();
+    onFailure?.();
     return { detail: `finding areas failed (${(err as Error).message})`, countiesStamped: 0 };
   }
 }
@@ -344,7 +376,7 @@ export async function pipelineTail(
   sampleOverlayPath?: string,
   tiles: FetchTilesOptions & { demDir?: string; gazetteerPath?: string } = {},
 ): Promise<string> {
-  parts.push(await ctx.step("fetch places", () => refreshPlaces(ctx.conn, { signal: ctx.signal })));
+  parts.push(await tolerantStep(ctx, "fetch places", (onFailure) => refreshPlaces(ctx.conn, { signal: ctx.signal, onFailure })));
   const promoted = await ctx.step("promote observations", () =>
     promoteObservations(ctx.conn, { sampleOverlayPath, retry: { signal: ctx.signal } }),
   );
@@ -382,8 +414,8 @@ export async function pipelineTail(
   if (samples.baselined) parts.push("sample change log baselined");
   else if (samples.appended > 0) parts.push(`${samples.appended} sample changes recorded`);
   const demDir = tiles.demDir ?? deploymentPath(DEM_DIR);
-  const fetched = await ctx.step("fetch elevation tiles", () =>
-    refreshTiles(ctx.conn, demDir, { signal: ctx.signal, ...tiles }),
+  const fetched = await tolerantStep(ctx, "fetch elevation tiles", (onFailure) =>
+    refreshTiles(ctx.conn, demDir, { signal: ctx.signal, ...tiles, onFailure }),
   );
   if (fetched !== null) parts.push(fetched);
   const elevation = await ctx.step("derive elevations", () => deriveElevations(ctx.conn, demDir));
@@ -393,7 +425,7 @@ export async function pipelineTail(
       (elevation.missingTiles.length > 0 ? ` (missing tiles: ${elevation.missingTiles.join(", ")})` : ""),
   );
   const gazetteerPath = tiles.gazetteerPath ?? deploymentPath(GAZETTEER_PATH);
-  const areas = await ctx.step("find areas", () => refreshAreas(ctx.conn, gazetteerPath, ctx.signal));
+  const areas = await tolerantStep(ctx, "find areas", (onFailure) => refreshAreas(ctx.conn, gazetteerPath, ctx.signal, onFailure));
   if (areas.detail !== null) parts.push(areas.detail);
   // The counties it wrote are recorded as the coordinates' doing, in a pass
   // of their own, so the next promotion's pass does not credit them to an
@@ -408,12 +440,14 @@ export async function pipelineTail(
     if (stamped.appended > 0) parts.push(`${stamped.appended} county change(s) recorded`);
     refused = stamped.refused;
   }
-  const localities = await ctx.step("name localities", () => refreshLocalities(ctx.conn, gazetteerPath, ctx.signal));
+  const localities = await tolerantStep(ctx, "name localities", (onFailure) =>
+    refreshLocalities(ctx.conn, gazetteerPath, ctx.signal, onFailure),
+  );
   if (localities !== null) parts.push(localities);
   // Last of the store's own steps and ahead of the check below, so a refusal
   // does not stop the cache filling and the cache cannot make the check
   // late; never fails the run (refreshInatTaxa).
-  parts.push(await ctx.step("fetch taxa", () => refreshInatTaxa(ctx.conn, { signal: ctx.signal })));
+  parts.push(await tolerantStep(ctx, "fetch taxa", (onFailure) => refreshInatTaxa(ctx.conn, { signal: ctx.signal, onFailure })));
   // A refused snapshot (beeline-hrw) fails the run — after every store step
   // has done its work, so nothing the nightly is for waits on it — because a
   // refusal is a standing condition that needs a person, and a run marked
@@ -496,7 +530,11 @@ export function buildJobs(
           }
         }
         // Before promotion, which writes what they say onto their samples.
-        parts.push(await ctx.step("read cited observations", () => refreshCitedObservations(ctx.conn, { token, signal: ctx.signal })));
+        parts.push(
+          await tolerantStep(ctx, "read cited observations", (onFailure) =>
+            refreshCitedObservations(ctx.conn, { token, signal: ctx.signal, onFailure }),
+          ),
+        );
         return pipelineTail(ctx, parts, config.personChangesPath, samplePaths, config.sampleOverlayPath);
       },
     },

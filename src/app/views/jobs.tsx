@@ -1,8 +1,10 @@
 import type { JobOutcome } from "../../model.js";
 import type { StepTrendRow } from "../job-steps.js";
+import type { JobTrouble } from "../job-trouble.js";
 import type { Job, Schedule } from "../jobs/framework.js";
 import type { Messages } from "../messages/index.js";
-import { Absent, Button, Chip, DataTable, EmptyState, Meta, OrAbsent, PageHeader } from "./components/index.js";
+import { Absent, Button, Callout, Chip, DataTable, EmptyState, Meta, OrAbsent, PageHeader } from "./components/index.js";
+import { AlertIcon } from "./icons.js";
 
 export interface JobRunRow {
   job_name: string;
@@ -11,6 +13,8 @@ export interface JobRunRow {
   outcome: JobOutcome | null;
   detail: string | null;
   sla_breaches: number;
+  /** Labels of the steps of this run that failed, in the order they ran. */
+  failed_steps: string[];
 }
 
 const scheduleLabel = (m: Messages, s: Schedule) =>
@@ -21,16 +25,69 @@ const scheduleLabel = (m: Messages, s: Schedule) =>
       : m.jobs.weeklyLA(m.jobs.weekdays[s.weekday] ?? String(s.weekday), s.hour);
 
 function Outcome({ m, run }: { m: Messages; run: JobRunRow }) {
+  // A run that finished with a failed step in it did not simply succeed
+  // (beeline-222u): some steps are allowed to fail without failing the run.
+  if (run.outcome === "succeeded" && run.failed_steps.length > 0) {
+    // Which step is in the detail beside it, and at the top of the page.
+    return <Chip tone="blocking">{m.jobs.outcomeStepFailed(run.failed_steps.length)}</Chip>;
+  }
   if (run.outcome === "succeeded") return <Chip tone="success">{m.jobs.outcomeSucceeded}</Chip>;
   if (run.outcome === "failed") return <Chip tone="blocking">{m.jobs.outcomeFailed}</Chip>;
   return <Chip>{m.jobs.outcomeRunning}</Chip>;
 }
 
-export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[]; steps: StepTrendRow[] }) {
+/** One sentence saying what is wrong with a job. */
+function troubleSentence(m: Messages, t: JobTrouble): string {
+  const when = t.startedAt === null ? null : m.format.dateTime(t.startedAt);
+  // Joined here, not in the catalog: a message only interpolates what it is given.
+  const steps = t.failedSteps.join(", ");
+  switch (t.kind) {
+    case "failing":
+      return m.jobs.trouble.failing(when, steps === "" ? null : steps);
+    case "step-failed":
+      return m.jobs.trouble.stepFailed(when, steps);
+    case "overdue":
+      return m.jobs.trouble.overdue(t.lastSucceeded === null ? null : m.format.dateTime(t.lastSucceeded));
+    case "never-run":
+      return m.jobs.trouble.neverRun;
+  }
+}
+
+/**
+ * What is wrong, first on the page and in so many words (beeline-222u): the
+ * tables below held it already, but a failed step sat in the middle of a
+ * detail on a run marked succeeded, and nobody read it for four nights.
+ */
+function Troubles({ m, troubles }: { m: Messages; troubles: JobTrouble[] }) {
+  if (troubles.length === 0) return null;
+  return (
+    <section class="job-troubles" aria-labelledby="job-troubles-heading">
+      <Callout tone="blocking">
+        <h2 id="job-troubles-heading">
+          <AlertIcon /> {m.jobs.trouble.heading(troubles.length)}
+        </h2>
+        <ul>
+          {troubles.map((t) => (
+            <li>
+              <p>
+                <code>{t.name}</code> {troubleSentence(m, t)}
+              </p>
+              {t.detail !== null && t.kind !== "overdue" ? <p class="job-trouble-detail">{t.detail}</p> : null}
+            </li>
+          ))}
+        </ul>
+      </Callout>
+    </section>
+  );
+}
+
+export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[]; steps: StepTrendRow[]; troubles: JobTrouble[] }) {
   const { m } = props;
+  const troubled = new Map(props.troubles.map((t) => [t.name, t]));
   return (
     <>
       <PageHeader title={m.jobs.heading} lede={m.jobs.intro} />
+      <Troubles m={m} troubles={props.troubles} />
 
       <h2>{m.jobs.registered}</h2>
       <DataTable columns={[m.jobs.colJob, m.jobs.colSchedule, m.jobs.colWindow, ""]}>
@@ -38,6 +95,12 @@ export function Jobs(props: { m: Messages; jobs: Job[]; runs: JobRunRow[]; steps
           <tr>
             <td>
               <code>{job.name}</code>
+              {troubled.has(job.name) ? (
+                <>
+                  {" "}
+                  <Chip tone="blocking">{m.jobs.trouble.chip[troubled.get(job.name)!.kind]}</Chip>
+                </>
+              ) : null}
               <Meta block>{m.jobs.descriptions[job.name]}</Meta>
             </td>
             <td>{scheduleLabel(m, job.schedule)}</td>

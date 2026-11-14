@@ -25,8 +25,18 @@ export interface JobContext {
   db: Kysely<Database>;
   conn: DuckDBConnection;
   log(message: string): void;
-  /** Run one chunk of work; timed against the SLA budget for interactive jobs. */
-  step<T>(label: string, fn: () => Promise<T>): Promise<T>;
+  /**
+   * Run one chunk of work; timed against the SLA budget for interactive jobs.
+   *
+   * A step that throws fails the run. Some steps are allowed to fail without
+   * failing it: they catch their own error and return what the run's detail
+   * should say. Such a step passes `failed`, which is asked of what it
+   * returned, so that the step is still recorded as failed (job_step.failed)
+   * and /jobs and the menu can say so (beeline-222u). Without it a step that
+   * failed every night left a run that read as succeeded everywhere but in
+   * the middle of its detail: finding areas did for four nights, beeline-6cur.
+   */
+  step<T>(label: string, fn: () => Promise<T>, failed?: (result: T) => boolean): Promise<T>;
   /**
    * Aborted when the process has been asked to shut down and has run out of
    * patience (beeline-fth). `step()` refuses to start once it is, so a job
@@ -454,7 +464,7 @@ export async function runJob(
     conn,
     log: (message) => console.log(`[job ${job.name}] ${message}`),
     signal,
-    async step(label, fn) {
+    async step(label, fn, failedWhen) {
       // Checked at the boundary and nowhere else: a step that has started is
       // the unit of work worth finishing, and a step that has not is the
       // cheapest place to stop.
@@ -471,7 +481,7 @@ export async function runJob(
       let failed = true;
       try {
         const result = await fn();
-        failed = false;
+        failed = failedWhen?.(result) ?? false;
         return result;
       } finally {
         const ms = performance.now() - t0;

@@ -275,7 +275,7 @@ export const DETERMINATION_PUBLISHED: Publish<DeterminationEvent> = {
 };
 export const LABEL_PUBLISHED: Publish<SpecimenLabelRow> = {
   print_run_id: false, number_text: true, state: true, sheet: true, cell: true, prepared_at: true, printed_at: true,
-  mailed_at: true, canceled_at: true, atlas_code: true, reprint: true, request: true,
+  mailed_at: true, canceled_at: true, atlas_abbreviation: true, reprint: true, request: true,
 };
 export const HISTORY_PUBLISHED: Publish<SampleChange> = {
   at: true, collector: false, sample_number: false, date_start: false, field: true, old_value: true, new_value: true,

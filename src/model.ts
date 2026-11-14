@@ -149,7 +149,7 @@ export interface InatPlaceAbsentTable {
 
 // schema/066_inat_taxa.sql, schema/112_views_inat_taxon.sql (beeline-rfkj.1)
 
-/** An iNaturalist taxon the store refers to, as last read from the API. */
+/** An iNaturalist taxon the store has referred to, as last read from the API. */
 export interface InatTaxonTable {
   inat_taxon_id: BigIntCol;
   name: string;
@@ -183,6 +183,11 @@ export interface InatTaxonAbsentTable {
   asked_at: Generated<Date>;
 }
 
+/** Absent verdicts from the last 30 days, the ones that still count. */
+export interface InatTaxonKnownAbsentView {
+  inat_taxon_id: BigIntCol;
+}
+
 /** Taxa something refers to that the cache has not read and iNaturalist has not refused. */
 export interface InatTaxonUncachedView {
   inat_taxon_id: BigIntCol;
@@ -190,6 +195,11 @@ export interface InatTaxonUncachedView {
 
 /** Stored replacements of retired taxa that are due to be read again. */
 export interface InatTaxonRecheckView {
+  inat_taxon_id: BigIntCol;
+}
+
+/** The stalest thirtieth of the stored taxa, due to be read again. */
+export interface InatTaxonStalestView {
   inat_taxon_id: BigIntCol;
 }
 
@@ -1545,8 +1555,10 @@ export interface Database {
   inat_taxon_ancestor: InatTaxonAncestorTable;
   inat_taxon_replacement: InatTaxonReplacementTable;
   inat_taxon_absent: InatTaxonAbsentTable;
+  inat_taxon_known_absent: InatTaxonKnownAbsentView;
   inat_taxon_uncached: InatTaxonUncachedView;
   inat_taxon_recheck: InatTaxonRecheckView;
+  inat_taxon_stalest: InatTaxonStalestView;
   animal_ecdysis: AnimalEcdysisView;
   animal_ecdysis_match: AnimalEcdysisMatchView;
   animal_ecdysis_stale: AnimalEcdysisStaleView;

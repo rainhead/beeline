@@ -34,9 +34,18 @@ import { DEFAULT_DB } from "./person-change.js";
  *
  * REFRESH. Taxa change upstream (renames, retirements, a new common name).
  * After the worklist, each run reads again the replacements of retired taxa
- * (inat_taxon_recheck, so a chain is followed the night it forms) and the
- * stalest thirtieth of what is stored, by fetched_at, leaving out what was
- * read within the day (a cold fill does not read everything twice).
+ * (inat_taxon_recheck, so a chain is followed the night after it forms) and
+ * the stalest thirtieth of what is stored (inat_taxon_stalest), leaving out
+ * what was read within 12 hours (a cold fill does not read everything twice).
+ * Both rules are views in schema/112. The refresh runs even when the
+ * worklist could not be finished.
+ *
+ * AN ABSENT VERDICT lasts 30 days, and any response that shows the taxon to
+ * exist (as a result or as an ancestor) clears it at once.
+ *
+ * A BATCH THE API REFUSES is asked again in halves, down to single ids; an id
+ * that fails alone is reported in `failed` and the rest carry on. Three
+ * single ids in a row failing means the API is down, and the phase stops.
  *
  * Each fetch of a taxon deletes and re-inserts its ancestor and replacement
  * rows, so a reinstated or re-split taxon leaves nothing stale.
@@ -60,7 +69,7 @@ export interface FetchInatTaxaOptions {
   requestTimeoutMs?: number;
   /** Cap the work in one run — the nightly job's SLA, not a correctness knob. */
   maxRequests?: number;
-  /** Checked before every request, so a shutdown stops at a batch boundary. */
+  /** Checked before every request and passed to it, so a shutdown or a deadline stops the run; the batches already stored stay. */
   signal?: AbortSignal;
   /** Skip the rolling refresh (the worklist is still worked). */
   skipRefresh?: boolean;
@@ -78,6 +87,10 @@ export interface FetchInatTaxaResult {
   ancestorsStored: number;
   /** Ids asked for on THIS run that iNaturalist did not return. */
   unresolved: number[];
+  /** Ids whose request failed even asked alone; not recorded absent, so a later run asks again. */
+  failed: number[];
+  /** What went wrong with the requests, one line each; empty on a clean run. */
+  errors: string[];
   /** True when the cap stopped the run with work left on the worklist. */
   capped: boolean;
 }
@@ -109,6 +122,14 @@ async function ids(conn: DuckDBConnection, sql: string): Promise<number[]> {
   return num(await (await conn.run(sql)).getRows());
 }
 
+/** The cap on requests was reached: the work left waits for the next run. */
+class CapReached extends Error {}
+/** The API is failing in a way splitting the batch did not get round. Reported, not thrown past the run. */
+class RequestFailure extends Error {}
+
+/** Single ids in a row that may fail, each asked alone, before the API is judged down and the phase gives up. */
+const FAILURES_IN_A_ROW = 3;
+
 export async function fetchInatTaxa(
   conn: DuckDBConnection,
   opts: FetchInatTaxaOptions = {},
@@ -125,90 +146,135 @@ export async function fetchInatTaxa(
     refreshed: 0,
     ancestorsStored: 0,
     unresolved: [],
+    failed: [],
+    errors: [],
     capped: false,
   };
   // Every id asked for in this run. A taxon the API returns is stored, and one
   // it does not return is recorded absent, so the worklist shrinks either way;
-  // this guards the loop against ever asking for the same id twice should a
-  // response surprise us.
+  // this keeps the loop from asking for the same id twice, which would
+  // otherwise happen for an id whose request failed.
   const asked = new Set<number>();
+  let failuresInARow = 0;
 
-  async function request(batch: number[], refresh: boolean): Promise<void> {
+  /**
+   * One request for `batch`, and what follows from its answer. A batch the API
+   * refuses is asked again in halves, down to single ids, so that one id it
+   * cannot answer for costs only itself (found by calling it: a single unknown
+   * id answers 404 with an empty list, several answer 200 with the ones it
+   * knows, so this is cover for a failure not yet seen). A single id that
+   * still fails is recorded in `failed`, not as absent, and the rest go on.
+   */
+  async function post(batch: number[], refresh: boolean): Promise<void> {
+    if (result.requested >= cap) throw new CapReached();
     if (result.requested > 0 && delay > 0) await new Promise((r) => setTimeout(r, delay));
-    // After the delay, not before it: a shutdown during the pause must not
-    // start one more request.
+    // After the delay, not before it: a shutdown or the step's deadline during
+    // the pause must not start one more request.
     opts.signal?.throwIfAborted();
     const url =
       `${apiBase}/taxa/${batch.join(",")}?preferred_place_id=${PREFERRED_PLACE_ID}&locale=en` +
       `&per_page=${IDS_PER_REQUEST}&fields=${TAXON_FIELDS}`;
-    const response = await fetchImpl(url, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(opts.requestTimeoutMs ?? 30_000),
-    });
     result.requested += 1;
     for (const id of batch) asked.add(id);
-    if (!response.ok) {
-      throw new Error(`iNat API ${response.status} on /taxa for ${batch.length} ids starting ${batch[0]}`);
+    let status = 0;
+    let results: unknown;
+    let failure: string | null = null;
+    try {
+      const timeout = AbortSignal.timeout(opts.requestTimeoutMs ?? 30_000);
+      const response = await fetchImpl(url, {
+        headers: { Accept: "application/json" },
+        signal: opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout,
+      });
+      status = response.status;
+      const body = (await response.json().catch(() => null)) as { results?: unknown } | null;
+      results = body?.results;
+      if (!Array.isArray(results)) {
+        // A malformed page is a failure, never "zero taxa": recording the whole
+        // batch absent would hide real taxa for a month.
+        failure = response.ok ? "no results array" : `${status}`;
+      } else if (!response.ok && !(status === 404 && results.length === 0)) {
+        failure = `${status}`;
+      }
+    } catch (err) {
+      opts.signal?.throwIfAborted();
+      failure = (err as Error).message;
     }
-    const body = (await response.json()) as { results?: unknown };
-    if (!Array.isArray(body.results)) {
-      // A malformed page is a failure, never "zero taxa": recording the whole
-      // batch absent would hide real taxa until somebody deleted the verdicts.
-      throw new Error(`iNat API returned no results array on /taxa starting ${batch[0]}`);
+    if (failure === null) {
+      failuresInARow = 0;
+      // A 404 with an empty list is the answer for a single id iNaturalist does not have.
+      await store(conn, results as InatTaxonJson[], batch, refresh, result);
+      return;
     }
-    await store(conn, body.results as InatTaxonJson[], batch, refresh, result);
+    const what = `iNat API ${failure} on /taxa for ${batch.length} id(s) starting ${batch[0]}`;
+    if (status === 429) throw new RequestFailure(what);
+    if (batch.length > 1) {
+      const half = Math.ceil(batch.length / 2);
+      await post(batch.slice(0, half), refresh);
+      await post(batch.slice(half), refresh);
+    } else {
+      // Only a single id failing counts towards "the API is down": while a
+      // batch is being narrowed down to the id that spoils it, every request
+      // on the way fails, and that says nothing about the API.
+      failuresInARow += 1;
+      if (failuresInARow >= FAILURES_IN_A_ROW) throw new RequestFailure(what);
+      result.failed.push(batch[0]!);
+      result.errors.push(what);
+    }
   }
 
-  // 1. The worklist, until it is empty.
-  let first = true;
-  for (;;) {
-    const todo = (await ids(conn, "SELECT inat_taxon_id FROM inat_taxon_uncached ORDER BY inat_taxon_id")).filter(
-      (id) => !asked.has(id),
+  const worklist = () =>
+    ids(conn, "SELECT inat_taxon_id FROM inat_taxon_uncached ORDER BY inat_taxon_id").then((all) =>
+      all.filter((id) => !asked.has(id)),
     );
-    if (first) result.missing = todo.length;
-    first = false;
-    if (todo.length === 0) break;
-    if (result.requested >= cap) {
-      result.capped = true;
-      return result;
+
+  /** The worklist, until it is empty. It is recursive: fetching adds ancestors and replacements. */
+  async function drain(count: boolean): Promise<void> {
+    for (;;) {
+      const todo = await worklist();
+      if (count) result.missing = todo.length;
+      count = false;
+      if (todo.length === 0) return;
+      await post(todo.slice(0, IDS_PER_REQUEST), false);
     }
-    await request(todo.slice(0, IDS_PER_REQUEST), false);
   }
 
-  // 2. The refresh: replacements of retired taxa, then the stalest thirtieth.
-  if (!opts.skipRefresh) {
-    const stored = Number(
-      ((await (await conn.run("SELECT count(*) FROM inat_taxon")).getRows()) as Array<[bigint]>)[0]![0],
-    );
-    const stalest = await ids(
-      conn,
-      `SELECT inat_taxon_id FROM inat_taxon
-       WHERE inat_taxon_id NOT IN (SELECT inat_taxon_id FROM inat_taxon_absent)
-         AND fetched_at < now() - INTERVAL '1 day'
-       ORDER BY fetched_at, inat_taxon_id LIMIT ${Math.ceil(stored / 30)}`,
-    );
+  /** The replacements of retired taxa, then the stalest thirtieth (schema/112). */
+  async function refreshPhase(): Promise<void> {
     const recheck = await ids(conn, "SELECT inat_taxon_id FROM inat_taxon_recheck ORDER BY inat_taxon_id");
+    const stalest = await ids(conn, "SELECT inat_taxon_id FROM inat_taxon_stalest ORDER BY inat_taxon_id");
     const refresh = [...new Set([...recheck, ...stalest])].filter((id) => !asked.has(id));
     for (let i = 0; i < refresh.length; i += IDS_PER_REQUEST) {
-      if (result.requested >= cap) {
-        result.capped = true;
-        return result;
-      }
-      await request(refresh.slice(i, i + IDS_PER_REQUEST), true);
+      await post(refresh.slice(i, i + IDS_PER_REQUEST), true);
     }
-    // What a refresh turned up (a newly retired taxon's replacements, a new
-    // ancestor) is on the worklist now; one more pass of it, within the cap.
-    for (;;) {
-      const todo = (await ids(conn, "SELECT inat_taxon_id FROM inat_taxon_uncached ORDER BY inat_taxon_id")).filter(
-        (id) => !asked.has(id),
-      );
-      if (todo.length === 0) break;
-      if (result.requested >= cap) {
-        result.capped = true;
-        return result;
-      }
-      await request(todo.slice(0, IDS_PER_REQUEST), false);
+  }
+
+  /**
+   * A failure of the API ends the phase it happened in and is reported, and
+   * the next phase still runs: a worklist that cannot be finished is no reason
+   * to let the stored taxa go stale. Anything else, the cap, a shutdown or a
+   * database error, ends the run.
+   */
+  async function phase(work: () => Promise<void>): Promise<void> {
+    try {
+      await work();
+    } catch (err) {
+      if (!(err instanceof RequestFailure)) throw err;
+      result.errors.push(err.message);
+      failuresInARow = 0;
     }
+  }
+
+  try {
+    await phase(() => drain(true));
+    if (!opts.skipRefresh) {
+      await phase(refreshPhase);
+      // What a refresh turned up (a newly retired taxon's replacements, a new
+      // ancestor) is on the worklist now; one more pass of it, within the cap.
+      await phase(() => drain(false));
+    }
+  } catch (err) {
+    if (!(err instanceof CapReached)) throw err;
+    result.capped = true;
   }
   return result;
 }
@@ -263,11 +329,19 @@ async function store(
   }
 
   // Ancestors that arrived inside a child's response, to be stored as taxa
-  // unless already stored, retired, or fetched in their own right here.
+  // unless already stored, retired, or fetched in their own right here. A
+  // retired child's lineage is stale (it names the old parent), so nothing is
+  // taken from it; neither is an ancestor the child's ancestor_ids does not
+  // list, since without its place in the lineage it would be stored with only
+  // its own row, which then reads as a complete lineage.
   const candidates = new Map<number, { row: TaxonRow; above: number[] }>();
+  // Every id a response shows to exist, whether asked for or listed as an
+  // ancestor, so a verdict that it was absent can be cleared.
+  const seen = new Set<number>(returned);
   for (const t of taxa) {
+    for (const a of t.ancestors ?? []) if (typeof a?.id === "number") seen.add(a.id);
     const lineage = lineageOf.get(t.id);
-    if (lineage === undefined) continue;
+    if (lineage === undefined || t.is_active === false) continue;
     for (const a of t.ancestors ?? []) {
       if (
         typeof a.id !== "number" || typeof a.name !== "string" || typeof a.rank !== "string" ||
@@ -275,10 +349,12 @@ async function store(
       ) {
         continue;
       }
+      const at = lineage.indexOf(a.id);
+      if (at < 0) continue;
       // The ancestor's own lineage is the part of the child's above it.
       candidates.set(a.id, {
         row: [a.id, a.name, a.rank, a.rank_level, a.parent_id ?? null, true, a.preferred_common_name ?? null],
-        above: lineage.slice(0, Math.max(lineage.indexOf(a.id), 0)),
+        above: lineage.slice(0, at),
       });
     }
   }
@@ -299,8 +375,10 @@ async function store(
       // Lineage and replacements are rewritten whole, so nothing stale stays.
       await conn.run(`DELETE FROM inat_taxon_ancestor WHERE inat_taxon_id IN (${touched.join(", ")})`);
       await conn.run(`DELETE FROM inat_taxon_replacement WHERE retired_taxon_id IN (${[...fetched.keys(), 0].join(", ")})`);
-      await conn.run(`DELETE FROM inat_taxon_absent WHERE inat_taxon_id IN (${touched.join(", ")})`);
     }
+    // A taxon any response shows to exist is not absent, including ancestors
+    // that were already stored and so are not touched above.
+    if (seen.size > 0) await conn.run(`DELETE FROM inat_taxon_absent WHERE inat_taxon_id IN (${[...seen].join(", ")})`);
     await insertRows(conn, UPSERT_HEAD, UPSERT_TAIL, [...fetched.values(), ...fresh.map(([, c]) => c.row)]);
     // Depth counts up from the taxon, and the taxon's own row is depth 0.
     const lineageRows: number[][] = [];
@@ -322,7 +400,7 @@ async function store(
     // night, in the same transaction as the batch. For a refresh the stored
     // row stays: a stale answer beats none, and the verdict keeps the refresh
     // from picking it again every night.
-    const gone = batch.filter((id) => !returned.has(id));
+    const gone = batch.filter((id) => !seen.has(id));
     await insertRows(conn, "INSERT INTO inat_taxon_absent (inat_taxon_id)", "ON CONFLICT (inat_taxon_id) DO UPDATE SET asked_at = now()", gone.map((id) => [id]));
     result.unresolved.push(...gone);
     await conn.run("COMMIT");
@@ -341,6 +419,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const result = await fetchInatTaxa(conn);
   conn.closeSync();
   console.log(JSON.stringify({ ...result, seconds: Math.round((Date.now() - started) / 1000) }, null, 2));
+  if (result.errors.length > 0) {
+    console.error(result.errors.join("\n"));
+    process.exitCode = 1;
+  }
   if (result.unresolved.length > 0) {
     console.warn(
       `${result.unresolved.length} taxon ids iNaturalist did not return, recorded in inat_taxon_absent: ` +

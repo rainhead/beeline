@@ -1,5 +1,6 @@
--- iNaturalist's taxa, cached: the ones the store refers to, their ancestors
--- and the taxa that replaced them (beeline-rfkj.1).
+-- iNaturalist's taxa, cached: the ones the store has referred to, their
+-- ancestors and the taxa that replaced them (beeline-rfkj.1). Nothing leaves
+-- the cache: a taxon that no sample names any more stays.
 --
 -- A floral host is stored as an iNaturalist taxon id and the name and rank as
 -- observed (schema/030). Nothing in the store knows a host's genus, its
@@ -31,14 +32,14 @@ CREATE TABLE inat_taxon (
   preferred_common_name TEXT,
   fetched_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-COMMENT ON TABLE inat_taxon IS 'iNaturalist taxa the store refers to (a sample''s or observation''s floral host), with their ancestors and replacements, read from the iNaturalist API by id (src/fetch-inat-taxa.ts). Reference data, not an entity (ADR 0002). A retired taxon is kept, with is_active false, because samples still name it; inat_taxon_replacement says what replaced it.';
+COMMENT ON TABLE inat_taxon IS 'iNaturalist taxa the store has referred to (a sample''s or observation''s floral host), with their ancestors and replacements, read from the iNaturalist API by id (src/fetch-inat-taxa.ts). Reference data, not an entity (ADR 0002). A retired taxon is kept, with is_active false, because samples still name it. Nothing is deleted from the cache, including taxa that nothing refers to any more; inat_taxon_replacement says what replaced it.';
 COMMENT ON COLUMN inat_taxon.name IS 'The scientific name iNaturalist uses for this taxon today.';
 COMMENT ON COLUMN inat_taxon.rank IS 'The rank as iNaturalist writes it: species, subspecies, variety, genus, section, complex, hybrid and so on. Not narrowed to the ranks the model knows.';
 COMMENT ON COLUMN inat_taxon.rank_level IS 'iNaturalist''s number for the rank, higher for broader ranks (species 10, genus 20, family 30, kingdom 70). Orders ranks without a list of their names.';
 COMMENT ON COLUMN inat_taxon.parent_id IS 'The taxon one step up, as iNaturalist last said. NULL only for the root, Life (48460). A retired taxon''s parent is stale: it need not be an ancestor of the taxon that replaced it, so read lineage from the current taxon.';
 COMMENT ON COLUMN inat_taxon.is_active IS 'False once iNaturalist has retired the taxon (a taxon swap, split or lump). The row stays because stored ids are never rewritten.';
 COMMENT ON COLUMN inat_taxon.preferred_common_name IS 'The English name iNaturalist prefers for Oregon (preferred_place_id=10), or NULL where it has none. Until a program outside Oregon asks otherwise (Madrona against Arbutus), this is the common name.';
-COMMENT ON COLUMN inat_taxon.fetched_at IS 'When this row was read from iNaturalist. Taxa are refreshed, a thirtieth of them each night, so this says how stale the answer is.';
+COMMENT ON COLUMN inat_taxon.fetched_at IS 'When this row was read from iNaturalist. Taxa are refreshed, a thirtieth of them each night (inat_taxon_stalest), so this says how stale the answer is.';
 
 -- A taxon's lineage, one row per ancestor, including the taxon itself.
 --
@@ -74,5 +75,5 @@ CREATE TABLE inat_taxon_absent (
   inat_taxon_id BIGINT PRIMARY KEY,
   asked_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-COMMENT ON TABLE inat_taxon_absent IS 'Taxon ids iNaturalist was asked for and did not return (deleted upstream while a sample still names them). Subtracted from inat_taxon_uncached so the fetcher stops re-asking; delete a row to ask again. A stored taxon that a refresh no longer gets back is recorded here too and keeps its row.';
-COMMENT ON COLUMN inat_taxon_absent.asked_at IS 'When iNaturalist was last asked and answered without it.';
+COMMENT ON TABLE inat_taxon_absent IS 'Taxon ids iNaturalist was asked for and did not return (deleted upstream while a sample still names them). Subtracted from inat_taxon_uncached for 30 days (inat_taxon_known_absent) so the fetcher stops re-asking, then asked again; delete a row to ask sooner. A response that lists the taxon, as itself or as an ancestor, deletes its row. A stored taxon that a refresh no longer gets back is recorded here too and keeps its row.';
+COMMENT ON COLUMN inat_taxon_absent.asked_at IS 'When iNaturalist was last asked and answered without it. Older than 30 days, the verdict no longer counts.';

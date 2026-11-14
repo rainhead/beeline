@@ -806,6 +806,11 @@ describe("the nightly and a refused sample snapshot (beeline-hrw)", () => {
     // machine with no gazetteer says so for each (beeline-9jd4, beeline-7i6).
     expect(steps.indexOf("find areas")).toBe(steps.indexOf("derive elevations") + 1);
     expect(steps.indexOf("name localities")).toBe(steps.indexOf("find areas") + 1);
+    // The taxon cache is filled after the store's other steps and before the
+    // refusal fails the run, so the refusal neither skips it nor waits on it.
+    expect(steps.indexOf("fetch taxa")).toBe(steps.indexOf("name localities") + 1);
+    expect(steps.at(-1)).toBe("fetch taxa");
+    expect(run.detail).toContain("taxa cache complete");
     expect(run.detail).toContain("areas: no gazetteer on this machine");
     expect(run.detail).toContain("localities: no gazetteer on this machine");
     // And the snapshot is untouched: the refusal restates nothing.

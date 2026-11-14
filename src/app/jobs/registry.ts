@@ -97,13 +97,25 @@ export async function refreshPlaces(
 }
 
 /**
- * One night's requests for the taxon cache: about a minute and a quarter at
- * the one-a-second pace. A cold fill on production is about 120 requests, so
- * it takes two nights, and a steady night is the few that the day's new hosts
- * and the rolling refresh need. The cap is what keeps this step clear of the
- * 3am backup (beeline-rfkj.1).
+ * One night's requests for the taxon cache: at most 60, which at the pace the
+ * fetcher keeps (a request every 1.1 seconds, and about 1.7 to 1.9 seconds
+ * each measured on cold fills) is about two minutes. A cold fill on production is
+ * about 120 requests, so it takes two nights, and a steady night is the few
+ * that the day's new hosts and the rolling refresh need.
  */
 export const NIGHTLY_TAXON_REQUESTS = 60;
+
+/**
+ * How long the whole step may take, whatever the requests are doing: the cap
+ * counts requests, and requests can be slow (each may take its own 30 second
+ * timeout, so 60 of them could hold the nightly for 30 minutes). The step is
+ * last of the store's own steps and the 3am backup follows, so this is what
+ * keeps the cache from delaying it (see NIGHTLY_TILE_DEADLINE_MS). Chosen from
+ * the nightly's real length: it starts at 2am and took from 36 seconds to 8
+ * minutes on the 20 nights from 2026-11-04 to 2026-11-13, so even its longest
+ * night plus this ends by about 2:16, 44 minutes before the backup starts.
+ */
+export const NIGHTLY_TAXON_DEADLINE_MS = 8 * 60_000;
 
 /**
  * The iNaturalist taxon cache (schema/066), brought up to date after the
@@ -116,20 +128,34 @@ export const NIGHTLY_TAXON_REQUESTS = 60;
  */
 export async function refreshInatTaxa(
   conn: JobContext["conn"],
-  opts: FetchInatTaxaOptions = {},
+  opts: FetchInatTaxaOptions & { deadlineMs?: number } = {},
 ): Promise<string> {
+  const deadlineMs = opts.deadlineMs ?? NIGHTLY_TAXON_DEADLINE_MS;
+  const deadline = AbortSignal.timeout(deadlineMs);
+  const signal = opts.signal ? AbortSignal.any([deadline, opts.signal]) : deadline;
   try {
-    const r = await fetchInatTaxa(conn, { maxRequests: NIGHTLY_TAXON_REQUESTS, ...opts });
+    const r = await fetchInatTaxa(conn, { maxRequests: NIGHTLY_TAXON_REQUESTS, ...opts, signal });
     const gone = r.unresolved.length > 0 ? `, ${r.unresolved.length} gone upstream (${r.unresolved.join(", ")})` : "";
+    const failed =
+      r.errors.length > 0
+        ? `; ${r.failed.length} taxon id(s) could not be read${r.failed.length > 0 ? ` (${r.failed.join(", ")})` : ""}, ` +
+          `${r.errors.length} request error(s), the first: ${r.errors[0]}`
+        : "";
     if (r.requested === 0) return "taxa cache complete";
     return (
       `${r.cached} taxa read in ${r.requested} request(s) (${r.refreshed} refreshed)` +
       gone +
+      failed +
       (r.capped ? `; stopped at the cap with more to fetch tomorrow` : "")
     );
   } catch (err) {
+    // A shutdown stops the run, as it does at every step boundary.
     opts.signal?.throwIfAborted();
-    return `taxa fetch failed (${(err as Error).message}); the cache stays as it was`;
+    // Batches stored before the failure or the deadline stay stored.
+    if (deadline.aborted) {
+      return `taxa fetch stopped after ${Math.round(deadlineMs / 60_000)} minutes; what it had stored stays and the rest waits for tomorrow`;
+    }
+    return `taxa fetch failed (${(err as Error).message}); what it had stored stays`;
   }
 }
 

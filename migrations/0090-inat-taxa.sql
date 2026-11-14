@@ -4,8 +4,9 @@
 -- The tables start empty. The first nightly fetch (or pnpm inat:fetch-taxa)
 -- fills them from the hosts already on samples and observations.
 
--- iNaturalist's taxa, cached: the ones the store refers to, their ancestors
--- and the taxa that replaced them (beeline-rfkj.1).
+-- iNaturalist's taxa, cached: the ones the store has referred to, their
+-- ancestors and the taxa that replaced them (beeline-rfkj.1). Nothing leaves
+-- the cache: a taxon that no sample names any more stays.
 --
 -- A floral host is stored as an iNaturalist taxon id and the name and rank as
 -- observed (schema/030). Nothing in the store knows a host's genus, its
@@ -37,14 +38,14 @@ CREATE TABLE inat_taxon (
   preferred_common_name TEXT,
   fetched_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-COMMENT ON TABLE inat_taxon IS 'iNaturalist taxa the store refers to (a sample''s or observation''s floral host), with their ancestors and replacements, read from the iNaturalist API by id (src/fetch-inat-taxa.ts). Reference data, not an entity (ADR 0002). A retired taxon is kept, with is_active false, because samples still name it; inat_taxon_replacement says what replaced it.';
+COMMENT ON TABLE inat_taxon IS 'iNaturalist taxa the store has referred to (a sample''s or observation''s floral host), with their ancestors and replacements, read from the iNaturalist API by id (src/fetch-inat-taxa.ts). Reference data, not an entity (ADR 0002). A retired taxon is kept, with is_active false, because samples still name it. Nothing is deleted from the cache, including taxa that nothing refers to any more; inat_taxon_replacement says what replaced it.';
 COMMENT ON COLUMN inat_taxon.name IS 'The scientific name iNaturalist uses for this taxon today.';
 COMMENT ON COLUMN inat_taxon.rank IS 'The rank as iNaturalist writes it: species, subspecies, variety, genus, section, complex, hybrid and so on. Not narrowed to the ranks the model knows.';
 COMMENT ON COLUMN inat_taxon.rank_level IS 'iNaturalist''s number for the rank, higher for broader ranks (species 10, genus 20, family 30, kingdom 70). Orders ranks without a list of their names.';
 COMMENT ON COLUMN inat_taxon.parent_id IS 'The taxon one step up, as iNaturalist last said. NULL only for the root, Life (48460). A retired taxon''s parent is stale: it need not be an ancestor of the taxon that replaced it, so read lineage from the current taxon.';
 COMMENT ON COLUMN inat_taxon.is_active IS 'False once iNaturalist has retired the taxon (a taxon swap, split or lump). The row stays because stored ids are never rewritten.';
 COMMENT ON COLUMN inat_taxon.preferred_common_name IS 'The English name iNaturalist prefers for Oregon (preferred_place_id=10), or NULL where it has none. Until a program outside Oregon asks otherwise (Madrona against Arbutus), this is the common name.';
-COMMENT ON COLUMN inat_taxon.fetched_at IS 'When this row was read from iNaturalist. Taxa are refreshed, a thirtieth of them each night, so this says how stale the answer is.';
+COMMENT ON COLUMN inat_taxon.fetched_at IS 'When this row was read from iNaturalist. Taxa are refreshed, a thirtieth of them each night (inat_taxon_stalest), so this says how stale the answer is.';
 
 -- A taxon's lineage, one row per ancestor, including the taxon itself.
 --
@@ -80,8 +81,8 @@ CREATE TABLE inat_taxon_absent (
   inat_taxon_id BIGINT PRIMARY KEY,
   asked_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-COMMENT ON TABLE inat_taxon_absent IS 'Taxon ids iNaturalist was asked for and did not return (deleted upstream while a sample still names them). Subtracted from inat_taxon_uncached so the fetcher stops re-asking; delete a row to ask again. A stored taxon that a refresh no longer gets back is recorded here too and keeps its row.';
-COMMENT ON COLUMN inat_taxon_absent.asked_at IS 'When iNaturalist was last asked and answered without it.';
+COMMENT ON TABLE inat_taxon_absent IS 'Taxon ids iNaturalist was asked for and did not return (deleted upstream while a sample still names them). Subtracted from inat_taxon_uncached for 30 days (inat_taxon_known_absent) so the fetcher stops re-asking, then asked again; delete a row to ask sooner. A response that lists the taxon, as itself or as an ancestor, deletes its row. A stored taxon that a refresh no longer gets back is recorded here too and keeps its row.';
+COMMENT ON COLUMN inat_taxon_absent.asked_at IS 'When iNaturalist was last asked and answered without it. Older than 30 days, the verdict no longer counts.';
 
 -- The taxa the store refers to but has not yet read from iNaturalist
 -- (beeline-rfkj.1), and the taxa worth reading again.
@@ -99,7 +100,14 @@ COMMENT ON COLUMN inat_taxon_absent.asked_at IS 'When iNaturalist was last asked
 -- changes when it does.
 --
 -- An id iNaturalist was asked for and did not return (inat_taxon_absent) is
--- not missing, it is gone; subtracting it is what lets the view be empty.
+-- not missing, it is gone; subtracting it is what lets the view be empty. The
+-- verdict lasts 30 days (inat_taxon_known_absent), because a taxon deleted by
+-- mistake or brought back should not stay unread for good: after that the id
+-- is asked for again, and recorded again if it is still gone.
+CREATE VIEW inat_taxon_known_absent AS
+SELECT inat_taxon_id FROM inat_taxon_absent
+WHERE asked_at >= now() - INTERVAL '30 days';
+
 CREATE VIEW inat_taxon_uncached AS
 SELECT inat_taxon_id FROM (
   SELECT host_inat_taxon_id AS inat_taxon_id FROM sample
@@ -114,18 +122,37 @@ WHERE inat_taxon_id IS NOT NULL
 EXCEPT
 SELECT inat_taxon_id FROM inat_taxon
 EXCEPT
-SELECT inat_taxon_id FROM inat_taxon_absent;
+SELECT inat_taxon_id FROM inat_taxon_known_absent;
 
--- Stored taxa that stand in for a retired one and so are read again every
--- night, ahead of the rolling refresh: a taxon a retired taxon was replaced
--- by may itself be retired later, and the fetcher can only follow that chain
--- (to the replacement's own replacements, which join the worklist when the
--- row is re-read) if it notices. Only rows older than a day, so a taxon read
--- tonight is not read again tonight.
+-- The two rules for reading a stored taxon again, each defined here so the
+-- fetcher and anything that wants to know what tonight will read agree. Both
+-- leave out a taxon read within 12 hours, so that a taxon read tonight is
+-- not read again tonight and a cold fill does not refresh itself, while a
+-- nightly run, about a day after the last, always finds the taxon due.
+--
+-- inat_taxon_recheck: stored taxa that stand in for a retired one, read
+-- every night, ahead of the rolling refresh. A taxon a retired taxon was
+-- replaced by may itself be retired later, and the fetcher can only follow
+-- that chain (to the replacement's own replacements, which join the worklist
+-- when the row is read again) if it notices.
 CREATE VIEW inat_taxon_recheck AS
 SELECT t.inat_taxon_id
 FROM inat_taxon t
 WHERE t.is_active
-  AND t.fetched_at < now() - INTERVAL '1 day'
+  AND t.fetched_at < now() - INTERVAL '12 hours'
   AND t.inat_taxon_id IN (SELECT replacement_taxon_id FROM inat_taxon_replacement)
-  AND t.inat_taxon_id NOT IN (SELECT inat_taxon_id FROM inat_taxon_absent);
+  AND t.inat_taxon_id NOT IN (SELECT inat_taxon_id FROM inat_taxon_known_absent);
+
+-- inat_taxon_stalest: the rolling refresh, the stalest thirtieth (rounded up)
+-- of the stored taxa not known to be absent, by when each was read, so every
+-- taxon is read again within about a month.
+CREATE VIEW inat_taxon_stalest AS
+SELECT inat_taxon_id FROM (
+  SELECT inat_taxon_id, fetched_at,
+         row_number() OVER (ORDER BY fetched_at, inat_taxon_id) AS place,
+         count(*) OVER () AS total
+  FROM inat_taxon
+  WHERE inat_taxon_id NOT IN (SELECT inat_taxon_id FROM inat_taxon_known_absent)
+) ranked
+WHERE place <= ceil(total / 30.0)
+  AND fetched_at < now() - INTERVAL '12 hours';

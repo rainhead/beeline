@@ -1171,9 +1171,9 @@ function SpecimenLabels({ m, labels, admin }: { m: Messages; labels: readonly Sp
               <tr>
                 <td>
                   {admin ? (
-                    <a href={`/print-runs/${l.print_run_id}`}>{m.printRuns.run.title(l.prepared_at, l.atlas_code)}</a>
+                    <a href={`/print-runs/${l.print_run_id}`}>{m.printRuns.run.title(l.prepared_at, l.atlas_abbreviation)}</a>
                   ) : (
-                    m.printRuns.run.title(l.prepared_at, l.atlas_code)
+                    m.printRuns.run.title(l.prepared_at, l.atlas_abbreviation)
                   )}
                   {l.reprint && (
                     <>
@@ -1264,7 +1264,7 @@ export function SpecimenPage({
           second story about both (beeline-1kb.21). */}
       {specimen.field_number === null &&
         (labels.length > 0 ? (
-          <Meta block>{c.fieldNumberWithdrawn(labels[0]!.number_text, m.printRuns.run.title(labels[0]!.prepared_at, labels[0]!.atlas_code))}</Meta>
+          <Meta block>{c.fieldNumberWithdrawn(labels[0]!.number_text, m.printRuns.run.title(labels[0]!.prepared_at, labels[0]!.atlas_abbreviation))}</Meta>
         ) : (
           <Meta block>{c.fieldNumberNone}</Meta>
         ))}

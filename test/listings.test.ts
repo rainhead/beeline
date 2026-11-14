@@ -324,6 +324,20 @@ describe("sample listing", () => {
     expect(await next.text()).toContain("B-2");
   });
 
+  it("shows Washington as WABA, as the atlas writes it, while its scope stays WaBA (beeline-uiar)", async () => {
+    const { app } = await listingApp("staffer");
+    const page = await get(app, "/samples?scope=WaBA");
+    expect(page).toContain("B-2");
+    expect(page).toContain(">WABA<");
+    expect(page).not.toContain(">WaBA<");
+    const csv = await (await app.request("/samples.csv?scope=WaBA")).text();
+    const [header, first] = csv.split("\n");
+    const atlas = header!.split(",").indexOf("atlas");
+    expect(atlas).toBeGreaterThanOrEqual(0);
+    expect(first!.split(",")[atlas]).toBe("WABA");
+    expect(await get(app, "/programs/WaBA")).toContain(en.programs.meta("WABA", true));
+  });
+
   it("searches sample numbers, collectors, and field numbers", async () => {
     const { app } = await listingApp("staffer");
     expect(await get(app, "/samples?scope=all&q=B-1")).toContain("1 sample");

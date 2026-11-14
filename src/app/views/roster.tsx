@@ -70,7 +70,7 @@ import { columnCopy, type SortKind } from "./listings.js";
  * narrow and already says what it is asking, so the program's answer is one
  * word here and spelled out on the person's own page.
  */
-const membershipCell = (m: Messages, row: { membership: string | null; atlas_code: string | null }) =>
+const membershipCell = (m: Messages, row: { membership: string | null; atlas_abbreviation: string | null }) =>
   row.membership === null ? (
     // Most of the column, so a dash; read aloud in the words the filter
     // already uses for the same state.
@@ -78,7 +78,7 @@ const membershipCell = (m: Messages, row: { membership: string | null; atlas_cod
   ) : row.membership === PROGRAM_MEMBERSHIP ? (
     <>{m.people.membershipProgramShort}</>
   ) : (
-    <OrAbsent value={row.atlas_code} label={m.absence.notRecorded} />
+    <OrAbsent value={row.atlas_abbreviation} label={m.absence.notRecorded} />
   );
 
 type Judged = {

@@ -219,3 +219,30 @@ describe("removing the Oklahoma Bee Atlas (0071)", () => {
     expect(await schemaDrift(conn)).toEqual([]);
   });
 });
+
+describe("abbreviating each program (0089)", () => {
+  test("gives every program its code as its abbreviation, and Washington WABA, on a store whose Washington row is referenced", async () => {
+    // The table arrives with the schema; take it away to stand for a store
+    // from before the migration. Nothing refers to it, so it can go.
+    await conn.run("DROP TABLE program_abbreviation");
+    await conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+    await insertCleanSample(conn, { state_province: "'WA'", atlas_id: "(SELECT entity_id FROM program WHERE code = 'WaBA')" });
+
+    const name = "0089-program-abbreviation.sql";
+    await copyFile(join(MIGRATIONS_DIR, name), join(dir, name));
+    expect(await migrate(conn, { dir })).toEqual([name]);
+
+    expect(
+      await rows(conn, "SELECT p.code, a.abbreviation FROM program p JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE p.code IN ('OBA', 'WaBA', 'MM') ORDER BY p.code"),
+    ).toEqual([
+      ["MM", "MM"],
+      ["OBA", "OBA"],
+      ["WaBA", "WABA"],
+    ]);
+    expect(await rows(conn, "SELECT count(*) FROM program p LEFT JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE a.program_id IS NULL")).toEqual([[0n]]);
+    // The point of the satellite: unlike the code, it can be changed on a referenced program.
+    await conn.run("UPDATE program_abbreviation SET abbreviation = 'WA' WHERE abbreviation = 'WABA'");
+    expect(await schemaDrift(conn)).toEqual([]);
+  });
+});
+

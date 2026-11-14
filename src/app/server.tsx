@@ -2089,7 +2089,7 @@ export function createApp({
     const run = await loadRun(db, id);
     if (run === null) return errorResponse(c, "notFound", { message: m.printRuns.run.notFound });
     const labels = await runLabels(db, id);
-    return c.html(await page(c, m.printRuns.run.title(run.prepared_at, run.atlas_code), <PrintRun m={m} run={run} labels={labels} />));
+    return c.html(await page(c, m.printRuns.run.title(run.prepared_at, run.atlas_abbreviation), <PrintRun m={m} run={run} labels={labels} />));
   };
 
   app.get("/print-runs/:id", async (c) => {

@@ -1844,7 +1844,8 @@ export const en = {
     notMembership: "not recorded",
     notFound: "There is no program with that code.",
     /** The header line under the name. */
-    meta: (code: string, atlas: boolean) => (atlas ? `${code} · a bee atlas` : code),
+    /** abbreviation: as people write it (program_abbreviation), WABA rather than the code WaBA. */
+    meta: (abbreviation: string, atlas: boolean) => (atlas ? `${abbreviation} · a bee atlas` : abbreviation),
     summary: "At a glance",
     members: "Members",
     membersLink: (count: number) => `${n(count)} ${count === 1 ? "person" : "people"}`,

@@ -241,7 +241,7 @@ export function ObserverPage({
                 m.format.place([r.county_name, r.state_province])
               )}
             </td>
-            <td>{r.program_code}</td>
+            <td>{r.program_abbreviation}</td>
             <td class="actions">
               <a
                 class="inat-link"

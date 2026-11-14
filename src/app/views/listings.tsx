@@ -812,7 +812,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                   />
                 </td>
                 <td>
-                  <OrAbsent value={row.atlas_code} label={copy.atlasOutside} spelled />
+                  <OrAbsent value={row.atlas_abbreviation} label={copy.atlasOutside} spelled />
                 </td>
                 {/* Links out, not a value: empty when there is nothing to offer. */}
                 <td class="actions">
@@ -1108,7 +1108,7 @@ export function SpecimenListing(
                   )}
                 </td>
                 <td>
-                  <OrAbsent value={row.atlas_code} label={m.listings.samples.atlasOutside} spelled />
+                  <OrAbsent value={row.atlas_abbreviation} label={m.listings.samples.atlasOutside} spelled />
                 </td>
               </tr>
             ))}

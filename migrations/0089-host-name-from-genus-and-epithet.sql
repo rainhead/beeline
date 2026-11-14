@@ -8,8 +8,13 @@
 -- at rank species. Others hold the whole binomial in genusPlant and nothing
 -- in speciesPlant, so 42 samples of 2023 and 2024 were stored as "Gutierrezia
 -- sarothrae" at rank genus. Production is never re-promoted (ADR 0006), so
--- this recomputes both from the legacy rows each sample was made of, with the
--- rule now in promote-legacy.sql (read it for why the patterns are these).
+-- this recomputes both from the legacy rows linked to each sample in
+-- legacy_specimen_number, with the rule now in promote-legacy.sql (read it
+-- for why the patterns are these). That table can also hold rows linked
+-- after promotion (src/repair-legacy-skipped.ts); where such a row became the
+-- first, the stored host no longer equals the old rule's answer, so the
+-- guard below leaves the sample alone rather than writing a wrong name. On
+-- the 2026-11-13 production store no sample the rule would change has one.
 --
 -- Only a sample is changed that
 --   * has no iNaturalist taxon for its host (a host with one follows its
@@ -64,3 +69,5 @@ WHERE s.entity_id = f.sample_id
   AND f.new_name IS NOT NULL
   AND s.host_name_as_observed IS NOT DISTINCT FROM f.old_name
   AND s.host_rank IS NOT DISTINCT FROM f.old_rank;
+
+COMMENT ON COLUMN sample.host_rank IS 'The rank host_name_as_observed is at, so the name can be printed correctly: italics are derived from rank and the string cannot be read for it — ''Onagraceae'' (family) and ''Chamaenerion'' (genus) are both one word. From iNaturalist''s taxon.rank where the sample has an observation, and where it does not, from which of the legacy plant columns supplied the name, except that a genus beside a bare epithet, or a binomial typed into the genus column, is a species (ingest/promote-legacy.sql, beeline-32ow). Nullable: the legacy import has hosts whose column is unrecoverable, and an unknown rank prints upright rather than guessing.';

@@ -48,10 +48,14 @@ const SHAPES: Shape[] = [
   // multi-word genus, so those stay as typed rather than be guessed at.
   { sid: "113", genus: "salvia", species: "officinalis", name: "officinalis", rank: "species" },
   { sid: "114", genus: "Salvia officinalis", species: "var. alba", name: "var. alba", rank: "species" },
+  // Synthetic: a hyphenated epithet, which the pattern admits on purpose.
+  { sid: "117", genus: "Arctostaphylos", species: "uva-ursi", name: "Arctostaphylos uva-ursi", rank: "species" },
 ];
 
 let conn: DuckDBConnection;
 let migration: string;
+/** Every sample's host straight after promotion with the new rule. */
+let promoted: unknown[][];
 
 const hostOf = async (sid: string) =>
   (await rows(conn, `SELECT host_name_as_observed, host_rank FROM sample WHERE sample_number = '${sid}'`))[0];
@@ -74,7 +78,13 @@ beforeAll(async () => {
   // specimens, so promotion does not read the second as a reprint of the first.
   await insert("host-115a", "9115", { sid: "115", genus: "Salvia", species: "Salvia officinalis" });
   await insert("host-115b", "9215", { sid: "115", genus: "Solidago", species: "canadensis" }, "2");
+  // The shape of production's sample 70084: a first record with no plant
+  // column at all, which promotion passes over, and a second that names the
+  // host as a genus and a bare epithet.
+  await insert("host-116a", "9116", { sid: "116", genus: "", species: "" });
+  await insert("host-116b", "9216", { sid: "116", genus: "Holodiscus", species: "discolor" }, "2");
   await promoteLegacy(conn, FIXTURE_INPUTS);
+  promoted = await rows(conn, `SELECT sample_number, host_name_as_observed, host_rank FROM sample ORDER BY 1`);
   migration = await readFile(`${MIGRATIONS_DIR}0089-host-name-from-genus-and-epithet.sql`, "utf8");
 });
 
@@ -87,6 +97,10 @@ describe("a promoted sample's host", () => {
     expect(await rows(conn, `SELECT count(*) FROM legacy_specimen_number WHERE _id LIKE 'host-115%'`)).toEqual([[2n]]);
     expect(await hostOf("115")).toEqual(["Salvia officinalis", "species"]);
   });
+
+  test("passes over a first record with no plant column", async () => {
+    expect(await hostOf("116")).toEqual(["Holodiscus discolor", "species"]);
+  });
 });
 
 describe("migration 0089, on a store promoted before the rule", () => {
@@ -97,7 +111,8 @@ describe("migration 0089, on a store promoted before the rule", () => {
     FROM (SELECT n.sample_id,
                  arg_min(coalesce(nullif(p."speciesPlant", ''), nullif(p."genusPlant", ''), nullif(p."familyPlant", '')), p._id) AS old_name,
                  arg_min(CASE WHEN nullif(p."speciesPlant", '') IS NOT NULL THEN 'species'
-                              WHEN nullif(p."genusPlant", '') IS NOT NULL THEN 'genus' ELSE 'family' END, p._id) AS old_rank
+                              WHEN nullif(p."genusPlant", '') IS NOT NULL THEN 'genus'
+                              WHEN nullif(p."familyPlant", '') IS NOT NULL THEN 'family' END, p._id) AS old_rank
           FROM legacy_specimen_number n JOIN legacy_occurrence p ON p._id = n._id
           WHERE p._id LIKE 'host-%'
           GROUP BY n.sample_id) o
@@ -109,23 +124,35 @@ describe("migration 0089, on a store promoted before the rule", () => {
     expect(await rows(conn, `SELECT sample_number, host_name_as_observed, host_rank FROM sample ORDER BY 1`)).toEqual(before);
   });
 
+  test("gives every sample what promotion with the rule gives it", async () => {
+    await conn.run(OLD);
+    expect(await hostOf("116")).toEqual(["discolor", "species"]);
+    await conn.run(migration);
+    expect(await rows(conn, `SELECT sample_number, host_name_as_observed, host_rank FROM sample ORDER BY 1`)).toEqual(promoted);
+  });
+
   test("repairs the epithet and the binomial, and nothing else, and does so once", async () => {
     await conn.run(OLD);
     expect(await hostOf("101")).toEqual(["canadensis", "species"]);
     expect(await hostOf("105")).toEqual(["Gutierrezia sarothrae", "genus"]);
+    expect(await hostOf("106")).toEqual(["Ericameria nauseosa", "genus"]);
 
     // A sample with a host taxon follows its observation, so this one is not
     // read from the legacy rows even though they would give it a new name.
     await conn.run(`UPDATE sample SET host_inat_taxon_id = 47605 WHERE sample_number = '102'`);
     // A host somebody has set since promotion is theirs.
     await conn.run(`UPDATE sample SET host_name_as_observed = 'Solidago altissima' WHERE sample_number = '103'`);
+    // So is a rank somebody has set, even where the name is still the old one.
+    await conn.run(`UPDATE sample SET host_rank = 'family' WHERE sample_number = '106'`);
 
     const before = await rows(conn, `SELECT sample_number, host_name_as_observed, host_rank FROM sample ORDER BY 1`);
     await conn.run(migration);
     expect(await hostOf("101")).toEqual(["Solidago canadensis", "species"]);
     expect(await hostOf("104")).toEqual(["Aster subspicatus", "species"]);
     expect(await hostOf("105")).toEqual(["Gutierrezia sarothrae", "species"]);
-    expect(await hostOf("106")).toEqual(["Ericameria nauseosa", "species"]);
+    expect(await hostOf("106")).toEqual(["Ericameria nauseosa", "family"]);
+    expect(await hostOf("116")).toEqual(["Holodiscus discolor", "species"]);
+    expect(await hostOf("117")).toEqual(["Arctostaphylos uva-ursi", "species"]);
     expect(await hostOf("102")).toEqual(["discolor", "species"]);
     expect(await hostOf("103")).toEqual(["Solidago altissima", "species"]);
     // Named from its first record, which needed no repair; its second record's
@@ -135,7 +162,7 @@ describe("migration 0089, on a store promoted before the rule", () => {
     // Every other sample, the ones the rule has no opinion on, is as it was.
     const after = await rows(conn, `SELECT sample_number, host_name_as_observed, host_rank FROM sample ORDER BY 1`);
     const changed = after.filter((r, i) => JSON.stringify(r) !== JSON.stringify(before[i])).map((r) => r[0]);
-    expect(changed).toEqual(["101", "104", "105", "106"]);
+    expect(changed).toEqual(["101", "104", "105", "116", "117"]);
 
     // Running it again changes nothing.
     await conn.run(migration);

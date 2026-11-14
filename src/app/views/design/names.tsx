@@ -238,8 +238,8 @@ export function DesignNames() {
         </li>
         <li>
           <strong>Not by colour alone</strong> (WCAG 1.4.1, use of colour). The dot separates the two names visually;
-          a screen reader hears a comma. The dot and the common name wrap together, so a narrow screen never strands a
-          dot at the end of a line.
+          a screen reader hears a comma. The dot and the common name are kept together: when they do not fit on the
+          line, they move to the next line whole, so a narrow screen never strands a dot at the end of a line.
         </li>
         <li>
           <strong>When iNaturalist now calls the taxon something else,</strong> the common name stays on the first
@@ -251,7 +251,7 @@ export function DesignNames() {
           journals lower-case them, while the APGA guide capitalises each word so they read as names. What matters is
           one rule everywhere. Beeline sets them in sentence case, with capitals only for proper nouns (&ldquo;Oregon
           grape&rdquo;), so &ldquo;silverleaf phacelia&rdquo;, not &ldquo;Silverleaf Phacelia&rdquo;. They are common
-          nouns. iNaturalist&rsquo;s title case is converted (beeline-rfkj.9).
+          nouns. iNaturalist&rsquo;s title case is to be converted (beeline-rfkj.9); until then, iNaturalist&rsquo;s names show in its own title case.
         </li>
       </ul>
 

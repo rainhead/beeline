@@ -108,9 +108,10 @@ export function TaxonName(props: TaxonNameProps) {
         {vernacular ? (
           <>
             {" "}
-            {/* The dot and the name wrap together: the space after the dot is
-                non-breaking, so a narrow screen moves "· woolly sunflower" to
-                the next line whole and never strands a dot at the end of one. */}
+            {/* The dot and the name are one inline block (components.css), with a
+                non-breaking space after the dot: a narrow screen moves "· woolly
+                sunflower" to the next line whole and never strands a dot at the
+                end of one. The ordinary space before it is the break point. */}
             <span class="taxon-vernacular">
               <span aria-hidden="true">·</span>
               <span class="visually-hidden">, </span>

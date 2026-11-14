@@ -69,7 +69,7 @@ COMMENT ON COLUMN plant_name_lookup.name_key IS 'The normalised name that was se
 COMMENT ON COLUMN plant_name_lookup.expected_rank IS 'The rank the name''s shape implies (plant_list_entry_name.expected_rank); the search was restricted to the iNaturalist ranks that stand for it (plant_expected_rank).';
 COMMENT ON COLUMN plant_name_lookup.total_results IS 'How many taxa iNaturalist said matched. Every page of 30 is read until the results run out, because a second taxon of the name on a later page is what makes the name ambiguous, up to a cap of pages (read_in_full).';
 COMMENT ON COLUMN plant_name_lookup.read_in_full IS 'Whether every page of the answer was read. False when the page cap stopped the reading with results left, so a taxon of the name may be among those not read: plant_name_resolution then gives the name no taxon (too many results) rather than judge it on part of the answer.';
-COMMENT ON COLUMN plant_name_lookup.answered IS 'False when iNaturalist refused the request for the name with a 4xx status other than 429, so the row records the refusal and no answer: plant_name_resolution then says "could not be asked", and plant_name_unlooked asks again once the row is 30 days old. A failure that may pass (a 5xx, a network error, a timeout) is never recorded.';
+COMMENT ON COLUMN plant_name_lookup.answered IS 'False when iNaturalist refused the request for the name with a 400, 414 or 422 (any other failure is transient and records nothing), so the row records the refusal and no answer: plant_name_resolution then says "could not be asked", and plant_name_unlooked asks again once the row is 30 days old. A failure that may pass (a 5xx, a network error, a timeout) is never recorded.';
 COMMENT ON COLUMN plant_name_lookup.looked_up_at IS 'When iNaturalist answered, or, where answered is false, when it last refused the name: a name refused again when asked again gets a new time, so it waits another 30 days. A name whose taxon the taxon cache read as retired after this is asked again (plant_name_unlooked).';
 
 CREATE TABLE plant_name_lookup_hit (
@@ -292,8 +292,9 @@ JOIN plant_name_lookup l ON l.name_key = r.name_key AND l.expected_rank = r.expe
 JOIN inat_taxon t ON t.inat_taxon_id = r.inat_taxon_id
 WHERE NOT t.is_active AND t.fetched_at > l.looked_up_at
 UNION
-SELECT name_key, expected_rank FROM plant_name_lookup
-WHERE NOT answered AND looked_up_at < now() - INTERVAL 30 DAY;
+SELECT l.name_key, l.expected_rank FROM plant_name_lookup l
+JOIN plant_list_entry_name n ON n.name_key = l.name_key AND n.expected_rank = l.expected_rank
+WHERE NOT l.answered AND l.looked_up_at < now() - INTERVAL 30 DAY;
 COMMENT ON VIEW plant_name_unlooked IS 'The normalised names of list entries to put to iNaturalist: those it has not been asked about, and those whose taxon the cache has since found retired, asked again so the retirement is noticed, and those that could not be asked 30 days ago or more. The worklist of src/fetch-plant-names.ts. Empty once every name has a current answer, including an empty one.';
 
 -- Each entry with its taxon, if it has one.

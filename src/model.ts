@@ -230,7 +230,7 @@ export interface PlantNameLookupTable {
   total_results: number;
   /** Whether every page was read; false when the page cap stopped the reading with results left. */
   read_in_full: boolean;
-  /** False when the name was given up on after its request failed in several runs. */
+  /** False when iNaturalist refused the query (a 400, 414 or 422); asked again after 30 days. */
   answered: Generated<boolean>;
   looked_up_at: Generated<Date>;
 }

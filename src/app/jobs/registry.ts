@@ -214,7 +214,7 @@ export async function refreshPlantNames(
   try {
     // Any request error marks the step failed (as the taxa step does on main) while the
     // run goes on, so /jobs and the menu say so (beeline-222u). A name iNaturalist refuses
-    // with a 4xx is recorded as could not be asked and is no error (fetch-plant-names.ts),
+    // with a 400, 414 or 422 is recorded as could not be asked and is no error (fetch-plant-names.ts),
     // so only a failure that may pass marks the step.
     const r = await step(
       "ask for plant names",

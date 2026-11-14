@@ -191,8 +191,9 @@ JOIN plant_name_lookup l ON l.name_key = r.name_key AND l.expected_rank = r.expe
 JOIN inat_taxon t ON t.inat_taxon_id = r.inat_taxon_id
 WHERE NOT t.is_active AND t.fetched_at > l.looked_up_at
 UNION
-SELECT name_key, expected_rank FROM plant_name_lookup
-WHERE NOT answered AND looked_up_at < now() - INTERVAL 30 DAY;
+SELECT l.name_key, l.expected_rank FROM plant_name_lookup l
+JOIN plant_list_entry_name n ON n.name_key = l.name_key AND n.expected_rank = l.expected_rank
+WHERE NOT l.answered AND l.looked_up_at < now() - INTERVAL 30 DAY;
 COMMENT ON VIEW plant_name_unlooked IS 'The normalised names of list entries to put to iNaturalist: those it has not been asked about, and those whose taxon the cache has since found retired, asked again so the retirement is noticed, and those that could not be asked 30 days ago or more. The worklist of src/fetch-plant-names.ts. Empty once every name has a current answer, including an empty one.';
 
 -- Each entry with its taxon, if it has one.

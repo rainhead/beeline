@@ -527,6 +527,35 @@ describe("stopping early, dead ends, paging and ranks (synthetic answers)", () =
       expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
     });
 
+    test("a 403 or a 404 is not about the name: nothing is recorded, as for any transient failure", async () => {
+      // An IP block or a withdrawn endpoint would answer every name alike; counting it as a refusal
+      // would set the whole worklist aside for 30 days without failing the step.
+      await addEntries(["Foo bad", "Species", null]);
+      for (const status of [403, 404]) {
+        const r = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: fake(() => new Response("{}", { status })) });
+        expect(r).toMatchObject({ refused: 0, stored: 0 });
+        expect(r.errors).toHaveLength(1);
+      }
+      expect(await rows("SELECT count(*) FROM plant_name_lookup")).toEqual([[0]]);
+    });
+
+    test("a refusal on the re-ask of a name that had an answer replaces the answer", async () => {
+      // The re-ask happens because the old answer's taxon was found retired, so keeping it would ask every night.
+      await dueAgain();
+      const r = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: fake(() => new Response("{}", { status: 422 })) });
+      expect(r).toMatchObject({ refused: 1, errors: [] });
+      expect(await outcome("Foo bar")).toEqual(["could not be asked", null]);
+      expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
+    });
+
+    test("a refused name no longer on the list is not asked again", async () => {
+      await addEntries(["Foo bad", "Species", null]);
+      await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: refusing });
+      await conn.run("DELETE FROM plant_list_entry WHERE scientific_name = 'Foo bad'");
+      await age(31);
+      expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
+    });
+
     test("a 429 is not an answer about the name: nothing is recorded and the run stops", async () => {
       await addEntries(["Foo bad", "Species", null]);
       const r = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: fake(() => new Response("{}", { status: 429 })) });

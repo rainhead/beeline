@@ -32,18 +32,18 @@ import { DEFAULT_DB } from "./person-change.js";
  * fallback ranks of a genus-shaped name (section, subgenus, supertribe; see
  * plant_expected_rank).
  *
- * A NAME THAT ALWAYS FAILS. A name whose request fails in three runs (FAILED_RUNS_BEFORE_GIVING_UP), in
- * runs where the API did answer other names (in the run, or within the week), is recorded as one that could not be asked
- * (plant_name_lookup.answered false). It then shows in plant_list_entry_unmatched, stops failing the step
- * every night, and is asked again after 30 days (plant_name_unlooked).
- *
- * WHEN A REQUEST FAILS. A 4xx status other than 429 is iNaturalist's answer
- * about the name (it refuses the query): the lookup is recorded at once as one
- * that could not be asked (answered = false), which stops it failing the step,
- * and the name is asked again after 30 days. A 5xx, a network error or a
- * timeout is transient: nothing is recorded, the name keeps any answer it had,
- * and it is asked again next run, the step being marked failed. A 429 stops
- * the run.
+ * WHEN A REQUEST FAILS. A 400, 414 or 422 is iNaturalist refusing this query
+ * (measured 2026-11-14: 422 for a query of 3,000 characters, 414 for 9,000):
+ * the lookup is recorded at once as one that could not be asked (answered =
+ * false), which stops it failing the step, and the name is asked again after
+ * 30 days. Every other failure is transient, including the other 4xx (a 401,
+ * 403, 404 or 410 says something about the client or the endpoint, not about
+ * the name, and would come back for every name alike): nothing is recorded,
+ * the name keeps any answer it had, and it is asked again next run, the step
+ * being marked failed. A 429 stops the run. The worklist is in name order and
+ * three transient failures in a row stop the run, so names that fail at the
+ * head of the alphabet hold back the rest until iNaturalist answers them;
+ * none does today.
  *
  * PACE AND BUDGET. A request about every 1.1 seconds, no token, as
  * src/fetch-inat-taxa.ts does; measured on 2026-11-14, 1,404 names took 29
@@ -104,6 +104,9 @@ interface PageJson {
 
 /** Pages read for one name at most: 300 results, far more than any name in the list has had. */
 const MAX_PAGES = 10;
+
+/** The statuses that are iNaturalist refusing this one query, not trouble with the run (see the header). */
+const REFUSAL_STATUSES = new Set([400, 414, 422]);
 
 export async function fetchPlantNames(
   conn: DuckDBConnection,
@@ -176,8 +179,8 @@ export async function fetchPlantNames(
             result.rateLimited = true;
             break names;
           }
-          // Any other 4xx is iNaturalist's answer about this name, not a fault of the run (see below).
-          if (response.status >= 400 && response.status < 500) refusedWith = response.status;
+          // A refusal of this query, not a fault of the run (see the header); any other status is transient.
+          if (REFUSAL_STATUSES.has(response.status)) refusedWith = response.status;
         }
       } catch (err) {
         if (opts.signal?.aborted) {
@@ -199,7 +202,7 @@ export async function fetchPlantNames(
       }
     }
     if (refusedWith !== null) {
-      // A refusal (a 4xx other than 429) is iNaturalist's answer about the name: recorded at once as one that
+      // A refusal (400, 414 or 422) is iNaturalist's answer about the name: recorded at once as one that
       // could not be asked, so it stops failing the step, and asked again after 30 days (plant_name_unlooked).
       // A name that was refused before and is refused again gets a new looked_up_at, so it waits another 30 days.
       opts.log?.(`iNat API ${refusedWith} on /taxa for "${nameKey}": recorded as could not be asked`);

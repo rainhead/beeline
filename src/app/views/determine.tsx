@@ -8,8 +8,9 @@ import { Term } from "./components/term.js";
  * Identify your specimens (beeline-bcq). The page is a shell around one
  * island, `determine-grid`: the grid is the whole interaction — ticking,
  * filling a column, saving as you go — and is no use without script. The
- * shell owns what a URL should hold: which season, and whether you are
- * working by season or by field number (the batch).
+ * shell owns what a URL should hold: which collection year (a season, in
+ * the code), whether you are working by year or by field number (the
+ * batch), and which specimen to open on.
  */
 
 export type DetermineView = "sample" | "batch";
@@ -22,10 +23,15 @@ export interface DeterminePageData {
   taxa: Record<number, { name: string; rank: string; castes: boolean }>;
   readOnly: boolean;
   batchCount: number;
+  /** A specimen to select and scroll to when the page opens (?specimen=), or null. */
+  focus: number | null;
 }
 
 export const determineHref = (view: DetermineView, season: number | null): string =>
   view === "batch" ? "/determinations?view=batch" : season === null ? "/determinations" : `/determinations?season=${season}`;
+
+/** The By season view at the year a specimen is in, with it selected (beeline-mjml). */
+export const determineSpecimenHref = (specimenId: number): string => `/determinations?specimen=${specimenId}`;
 
 export function DeterminePage({ m, seasons, data }: { m: Messages; seasons: EntrySeason[]; data: DeterminePageData }) {
   const d = m.determine;

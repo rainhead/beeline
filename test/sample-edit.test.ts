@@ -10,6 +10,7 @@ import { parseCsv } from "../src/corrections.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
 import { createMemoryDb, FIXTURE_INPUTS, rows, scratchPaths } from "./helpers.js";
+import { promotedStore } from "./promoted-store.js";
 
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 const CORRECTIONS = new URL("./fixtures/legacy-corrections.csv", import.meta.url).pathname;
@@ -37,15 +38,9 @@ async function sampleId(conn: DuckDBConnection, sampleNumber: string): Promise<n
  * sample OBAS-00657 has no iNat observation and both a locality_format
  * finding and a missing county.
  */
-async function editApp(appCsv?: string) {
-  const { instance, conn } = await createMemoryDb();
-  await loadLegacyStaging(conn, FIXTURE);
-  const correctionsPath = appCsv ?? join(await mkdtemp(join(tmpdir(), "beeline-edit-")), "corrections.csv");
-  await promoteLegacy(conn, {
-    ...FIXTURE_INPUTS,
-    legacyCorrections: CORRECTIONS,
-    appCorrections: correctionsPath,
-  });
+async function editApp() {
+  const correctionsPath = join(await mkdtemp(join(tmpdir(), "beeline-edit-")), "corrections.csv");
+  const { instance, conn } = await promotedStore("corrected", { appCorrections: correctionsPath });
   const bea = await personId(conn, "Bea Trapper");
   const beaSample = await sampleId(conn, "OBAS-00657");
   // The fixture collects in July 2025, which is a settled season by now, and

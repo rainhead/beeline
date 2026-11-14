@@ -4,22 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
 import { LEGACY_EXPORT_COLUMNS, writeLegacyExport } from "../src/legacy-export.js";
-import { loadLegacyStaging } from "../src/load-legacy.js";
-import { promoteLegacy } from "../src/promote-legacy.js";
-import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { promotedStore } from "./promoted-store.js";
 import { createKysely } from "../src/db.js";
 import { createApp } from "../src/app/server.js";
-
-const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 
 let conn: DuckDBConnection;
 let path: string;
 let bytes: Buffer;
 
 beforeAll(async () => {
-  ({ conn } = await createMemoryDb());
-  await loadLegacyStaging(conn, FIXTURE);
-  await promoteLegacy(conn, FIXTURE_INPUTS);
+  ({ conn } = await promotedStore("occurrences"));
   path = join(await mkdtemp(join(tmpdir(), "legacy-export-")), "occurrences.csv");
   await writeLegacyExport(conn, path);
   bytes = await readFile(path);

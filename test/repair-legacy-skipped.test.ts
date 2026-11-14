@@ -5,13 +5,15 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { writeLegacyExport } from "../src/legacy-export.js";
 import { readOldVolunteerRecords, recordOldVolunteerDeterminations } from "../src/legacy-volunteer-import.js";
-import { loadLegacyStaging } from "../src/load-legacy.js";
-import { promoteLegacy } from "../src/promote-legacy.js";
 import { describeSkippedRepair, REMARK_SOURCE, REMARK_STATED_BY, repairSkippedLegacyRecords } from "../src/repair-legacy-skipped.js";
 import { FakeOldBeeline } from "./fake-old-beeline.js";
-import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows } from "./helpers.js";
+import { insertCleanSample, rows } from "./helpers.js";
+import { promotedStore } from "./promoted-store.js";
 
 /**
+ * The store promoted from test/fixtures/legacy-skipped.jsonl
+ * (PROMOTED_STORES.skipped in test/promoted-store.ts).
+ *
  * Synthetic records, shaped on what the store of 9 November 2026 showed
  * (beeline-iuva): one collector's sample of 2021 printed twice under two runs
  * of field numbers, whose seven pairs are each kind the repair meets, and a
@@ -48,7 +50,6 @@ import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows } from "./helpe
  *   Cleo_Cortez:18.009.007, in sample 8 though its field number says 9: left out
  *   2018999, no day, in June, when sample 8 was May: left out
  */
-const FIXTURE = new URL("./fixtures/legacy-skipped.jsonl", import.meta.url).pathname;
 
 let conn: DuckDBConnection;
 let observedSample: number;
@@ -67,9 +68,7 @@ const dets = async (fieldNumber: string) =>
   );
 
 beforeAll(async () => {
-  ({ conn } = await createMemoryDb());
-  await loadLegacyStaging(conn, FIXTURE);
-  await promoteLegacy(conn, FIXTURE_INPUTS);
+  ({ conn } = await promotedStore("skipped"));
   // The 2020 sample as the nightly sync made it from its observation, with no specimens.
   observedSample = await insertCleanSample(conn, {
     sample_number: "'02viii20.1'",

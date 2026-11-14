@@ -7,11 +7,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { compareLegacyExport, DIFFERENCE_KIND_SQL, seasonDate, writeDifferences } from "../src/compare-legacy-export.js";
 import { parseRulings, readRulings, RULING_COLUMNS, type Ruling } from "../src/legacy-export-rulings.js";
 import { writeLegacyExport } from "../src/legacy-export.js";
-import { loadLegacyStaging } from "../src/load-legacy.js";
-import { promoteLegacy } from "../src/promote-legacy.js";
-import { createMemoryDb, FIXTURE_INPUTS } from "./helpers.js";
-
-const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
+import { promotedStore } from "./promoted-store.js";
 
 describe("the date a record's season is judged on", () => {
   // The first day, as a sample is judged on date_start: a trap set in
@@ -134,9 +130,7 @@ describe("comparing against rulings", () => {
   // one record's sex recapitalised, another's taxonomic notes filled, and a
   // third record dropped from staging, so the export holds it alone.
   beforeAll(async () => {
-    ({ conn } = await createMemoryDb());
-    await loadLegacyStaging(conn, FIXTURE);
-    await promoteLegacy(conn, FIXTURE_INPUTS);
+    ({ conn } = await promotedStore("occurrences"));
     dir = await mkdtemp(join(tmpdir(), "compare-legacy-"));
     exportPath = join(dir, "occurrences.csv");
     await writeLegacyExport(conn, exportPath);
@@ -236,9 +230,7 @@ describe("what the store knows about a difference", () => {
   // misspelled, a login renamed on iNaturalist, and a sample whose legacy rows
   // named different places.
   beforeAll(async () => {
-    ({ conn } = await createMemoryDb());
-    await loadLegacyStaging(conn, FIXTURE);
-    await promoteLegacy(conn, FIXTURE_INPUTS);
+    ({ conn } = await promotedStore("occurrences"));
     // An expert identification the legacy system never received, as Ecdysis brings.
     await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, is_expert, channel)
       SELECT sp.entity_id, a.entity_id, 'Bombus vosnesenskii', true, 'ecdysis_import'

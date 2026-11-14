@@ -9,8 +9,6 @@ import type { InatClient } from "../src/app/auth.js";
 import { createApi } from "../src/app/api.js";
 import { createKey, hashKey, KEY_SCOPES, offeredScopes } from "../src/app/api-keys.js";
 import { createApp } from "../src/app/server.js";
-import { loadLegacyStaging } from "../src/load-legacy.js";
-import { promoteLegacy } from "../src/promote-legacy.js";
 import { duckdbReader } from "../src/person-change.js";
 import { readSampleChanges, recordSampleChanges } from "../src/sample-change.js";
 import { readSampleOverlay, type SampleOverlayRow } from "../src/sample-overlay.js";
@@ -19,7 +17,8 @@ import type { Database } from "../src/model.js";
 import { approveRun, markPrinted, prepareRun } from "../src/print-run.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
 import { canonicalJson } from "../src/sync-inat.js";
-import { buildTestGazetteer, createMemoryDb, currentSeasonDate, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { buildTestGazetteer, createMemoryDb, currentSeasonDate, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { promotedStore } from "./promoted-store.js";
 
 /**
  * The sample corrections of the API (beeline-pnqr.6): that a program holding a
@@ -40,8 +39,6 @@ const unusedInat: InatClient = {
 };
 
 const ORIGIN = "http://localhost:3054";
-const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
-const CORRECTIONS = new URL("./fixtures/legacy-corrections.csv", import.meta.url).pathname;
 const UID = { alice: 1, bob: 2, sam: 3 } as const;
 
 async function person(conn: DuckDBConnection, name: string, login: string, userId: number): Promise<number> {
@@ -51,10 +48,8 @@ async function person(conn: DuckDBConnection, name: string, login: string, userI
 }
 
 async function world() {
-  const { instance, conn } = await createMemoryDb();
-  await loadLegacyStaging(conn, FIXTURE);
   const paths = await scratchPaths();
-  await promoteLegacy(conn, { ...FIXTURE_INPUTS, legacyCorrections: CORRECTIONS, appCorrections: paths.correctionsPath });
+  const { instance, conn } = await promotedStore("corrected", { appCorrections: paths.correctionsPath });
   const [[beaId]] = (await rows(conn, `SELECT entity_id FROM person WHERE display_name = 'Bea Trapper'`)) as [[number]];
   const bea = Number(beaId);
   // Promotion already bound Bea to an iNat account, whose login the history entries are credited to.

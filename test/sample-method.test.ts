@@ -15,6 +15,7 @@ import { writeLegacyExport } from "../src/legacy-export.js";
 import { duckdbReader } from "../src/person-change.js";
 import { recordSampleChanges } from "../src/sample-change.js";
 import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { promotedStore } from "./promoted-store.js";
 
 /**
  * Staff correcting how a sample from the old Beeline was collected, from the
@@ -35,7 +36,6 @@ const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).
 const t = en.record.sample.methodEdit;
 
 async function methodApp(signedInAs: "staff" | "collector") {
-  const { instance, conn } = await createMemoryDb();
   const dir = await mkdtemp(join(tmpdir(), "beeline-method-"));
   const paths = {
     correctionsPath: join(dir, "corrections.csv"),
@@ -43,8 +43,7 @@ async function methodApp(signedInAs: "staff" | "collector") {
     sampleChangesPath: join(dir, "sample-change.csv"),
     sampleStatePath: join(dir, "sample-state.csv"),
   };
-  await loadLegacyStaging(conn, FIXTURE);
-  await promoteLegacy(conn, { ...FIXTURE_INPUTS, appCorrections: paths.correctionsPath });
+  const { instance, conn } = await promotedStore("occurrences", { appCorrections: paths.correctionsPath });
   // A net sample built from more than one old record, linked to an observation.
   const [[sampleId, collector]] = (await rows(
     conn,

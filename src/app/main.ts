@@ -79,7 +79,7 @@ if (seeded > 0) console.log(`seeded ${seeded} admin(s) from the checked-in list`
 // Old Beeline's plant list (ingest/old-beeline-plant-list.csv, beeline-rfkj.2):
 // a deploy is the only thing that changes the file, and boot is the first
 // moment the store can read the new one, since the app holds it alone
-// (ADR 0005). A load that finds the file unchanged does nothing. A list that
+// (ADR 0005). A load that finds the file unchanged still refreshes the common-name copy, so a refresh that failed last time is made good. A list that
 // cannot be read costs common names, not the service, so it is reported and
 // the boot goes on.
 await loadPlantListAtBoot(() => instance.connect(), { report: (err) => reportError(err, { step: "boot" }) });

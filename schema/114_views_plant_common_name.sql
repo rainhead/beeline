@@ -34,10 +34,12 @@
 CREATE VIEW plant_taxon_common_name AS
 WITH covering AS (
   SELECT a.inat_taxon_id, c.common_name, c.scientific_name, a.depth,
-         row_number() OVER (PARTITION BY a.inat_taxon_id ORDER BY a.depth, c.list_key, c.scientific_name) AS place
+         -- At one depth, an entry written for the current taxon itself comes before one that reaches it
+         -- only through a replacement (an older synonym the list also holds).
+         row_number() OVER (PARTITION BY a.inat_taxon_id ORDER BY a.depth, t.stored_taxon_id IS DISTINCT FROM t.current_taxon_id, c.list_key, c.scientific_name) AS place
   FROM inat_taxon_ancestor a
   LEFT JOIN inat_taxon_current ancestor_now ON ancestor_now.inat_taxon_id = a.ancestor_id
-  JOIN (SELECT t.list_key, t.scientific_name,
+  JOIN (SELECT t.list_key, t.scientific_name, t.inat_taxon_id AS stored_taxon_id,
                CASE WHEN e.inat_taxon_id IS NULL THEN t.inat_taxon_id ELSE e.current_taxon_id END AS current_taxon_id
         FROM plant_list_entry_taxon t
         LEFT JOIN inat_taxon_current e ON e.inat_taxon_id = t.inat_taxon_id) t

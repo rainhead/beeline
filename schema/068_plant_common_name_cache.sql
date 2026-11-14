@@ -4,7 +4,7 @@
 -- plant_taxon_common_name (schema/114) is the definition, and it is correct,
 -- but to say what one taxon is called it first works out which taxon each of
 -- the plant list's 1,405 names is (plant_name_resolution, schema/111). That
--- takes about 20 milliseconds whichever taxon is asked about, as long as
+-- takes about 27 milliseconds whichever taxon is asked about, as long as
 -- reading the view whole (measured 2026-11-14 on a copy of production's
 -- store), and a record page already takes about 130. Filtering the view to one
 -- taxon does not help, because the cost is not in the filtered part.

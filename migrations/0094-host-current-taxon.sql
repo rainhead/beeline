@@ -120,7 +120,11 @@ WITH ends AS (
               WHEN coalesce(e.unread_ends, 0) > 0 THEN 'pending'
               WHEN coalesce(e.active_ends, 0) = 1 AND coalesce(e.dead_ends, 0) = 0 THEN 'replaced'
               WHEN coalesce(e.active_ends, 0) >= 2 THEN 'split'
-              ELSE 'retired' END AS standing
+              ELSE 'retired' END AS standing,
+         -- A split with a dead end beside it: the dead end may be another half,
+         -- so nothing shared is claimed for it, as for one active taxon and a
+         -- dead end (retired).
+         coalesce(e.active_ends, 0) >= 2 AND coalesce(e.dead_ends, 0) > 0 AS split_beside_dead_end
   FROM inat_taxon t
   LEFT JOIN inat_taxon_absent gone ON gone.inat_taxon_id = t.inat_taxon_id
   LEFT JOIN ends e ON e.taxon_id = t.inat_taxon_id
@@ -136,8 +140,10 @@ WITH ends AS (
   -- The taxa that have one current taxon: what an ancestor is resolved with.
   SELECT taxon_id, head_id FROM heads WHERE standing IN ('current', 'replaced')
 ), lineage AS (
-  -- A lineage holds one genus and one family at most, so the lowest id is the
-  -- only one. Joins and aggregates rather than a lookup per row: read for one
+  -- A lineage holds one genus and one family at most, and an ancestor counts
+  -- only where it was stored at that rank and resolves to that rank, so the
+  -- lowest id is the only one: a retired genus replaced by a family is not
+  -- taken for the family. Joins and aggregates rather than a lookup per row: read for one
   -- taxon this costs the same as for all of them, and the aggregates are
   -- cheaper than 5,000 correlated lookups. Only the ancestors stored as a
   -- genus or a family are resolved (a retired genus is stored as a genus), and
@@ -149,8 +155,8 @@ WITH ends AS (
          coalesce(l.ancestors, 0) AS ancestors, coalesce(l.is_plant, false) AS is_plant, coalesce(l.is_vascular, false) AS is_vascular
   FROM heads h
   LEFT JOIN (SELECT a.inat_taxon_id,
-                    min(s.head_id) FILTER (WHERE ct.rank = 'genus') AS genus_id,
-                    min(s.head_id) FILTER (WHERE ct.rank = 'family') AS family_id
+                    min(s.head_id) FILTER (WHERE st.rank = 'genus' AND ct.rank = 'genus') AS genus_id,
+                    min(s.head_id) FILTER (WHERE st.rank = 'family' AND ct.rank = 'family') AS family_id
              FROM inat_taxon_ancestor a
              JOIN inat_taxon st ON st.inat_taxon_id = a.ancestor_id AND st.rank IN ('genus', 'family')
              JOIN single s ON s.taxon_id = a.ancestor_id
@@ -175,15 +181,16 @@ SELECT t.inat_taxon_id, st.standing,
        c.inat_taxon_id AS current_taxon_id, c.name AS current_name, c.rank AS current_rank,
        g.inat_taxon_id AS genus_taxon_id, g.name AS genus_name,
        f.inat_taxon_id AS family_taxon_id, f.name AS family_name,
-       sh.is_plant, sh.is_vascular
+       CASE WHEN NOT st.split_beside_dead_end THEN sh.is_plant END AS is_plant,
+       CASE WHEN NOT st.split_beside_dead_end THEN sh.is_vascular END AS is_vascular
 FROM inat_taxon t
 JOIN standing st ON st.inat_taxon_id = t.inat_taxon_id
 LEFT JOIN shared sh ON sh.taxon_id = t.inat_taxon_id
 -- A split has no current taxon: nothing is picked among its heads.
 LEFT JOIN inat_taxon c ON c.inat_taxon_id = sh.head_id AND st.standing IN ('current', 'replaced')
-LEFT JOIN inat_taxon g ON g.inat_taxon_id = sh.genus_id
-LEFT JOIN inat_taxon f ON f.inat_taxon_id = sh.family_id;
-COMMENT ON VIEW inat_taxon_current IS 'Every cached taxon with what iNaturalist calls it today, resolved when read and never stored. standing: current (not retired), replaced (retired, and the chain of replacements ends at one active taxon, the current taxon), split (replaced by more than one active taxon: no current taxon, nothing picked), retired (no active taxon at the end of any chain, or one and a dead end beside it), pending (a chain reaches a taxon the cache has not read yet) or absent (iNaturalist was asked and answered without it, and stays absent until a fetch returns it). A replacement that is absent is a dead end. The genus, the family, is_plant and is_vascular are those of the current taxon, never of the stored one''s own stale lineage, and a retired ancestor is resolved to its own current taxon (a genus or family only if that is one); for a split, what every active taxon it came to shares, else NULL. Reads only the cache''s tables, never the plant list or plant_taxon_common_name.';
+LEFT JOIN inat_taxon g ON g.inat_taxon_id = sh.genus_id AND NOT st.split_beside_dead_end
+LEFT JOIN inat_taxon f ON f.inat_taxon_id = sh.family_id AND NOT st.split_beside_dead_end;
+COMMENT ON VIEW inat_taxon_current IS 'Every cached taxon with what iNaturalist calls it today, resolved when read and never stored. standing: current (not retired), replaced (retired, and the chain of replacements ends at one active taxon, the current taxon), split (replaced by more than one active taxon: no current taxon, nothing picked), retired (no active taxon at the end of any chain, or one and a dead end beside it), pending (a chain reaches a taxon the cache has not read yet) or absent (iNaturalist was asked and answered without it, and stays absent until a fetch returns it). A replacement that is absent is a dead end. The genus, the family, is_plant and is_vascular are those of the current taxon, never of the stored one''s own stale lineage, and a retired ancestor is resolved to its own current taxon (a genus or family only if that is one); for a split, what every active taxon it came to shares, else NULL, and NULL for a split with a dead end beside it, since the dead end may be another half. Reads only the cache''s tables, never the plant list or plant_taxon_common_name.';
 COMMENT ON COLUMN inat_taxon_current.inat_taxon_id IS 'The cached taxon, as a sample stores it.';
 COMMENT ON COLUMN inat_taxon_current.standing IS 'current, replaced, split, retired, pending or absent: see the view.';
 COMMENT ON COLUMN inat_taxon_current.name IS 'The stored taxon''s own name, as the cache last read it.';
@@ -224,10 +231,12 @@ DROP VIEW plant_taxon_common_name;
 CREATE VIEW plant_taxon_common_name AS
 WITH covering AS (
   SELECT a.inat_taxon_id, c.common_name, c.scientific_name, a.depth,
-         row_number() OVER (PARTITION BY a.inat_taxon_id ORDER BY a.depth, c.list_key, c.scientific_name) AS place
+         -- At one depth, an entry written for the current taxon itself comes before one that reaches it
+         -- only through a replacement (an older synonym the list also holds).
+         row_number() OVER (PARTITION BY a.inat_taxon_id ORDER BY a.depth, t.stored_taxon_id IS DISTINCT FROM t.current_taxon_id, c.list_key, c.scientific_name) AS place
   FROM inat_taxon_ancestor a
   LEFT JOIN inat_taxon_current ancestor_now ON ancestor_now.inat_taxon_id = a.ancestor_id
-  JOIN (SELECT t.list_key, t.scientific_name,
+  JOIN (SELECT t.list_key, t.scientific_name, t.inat_taxon_id AS stored_taxon_id,
                CASE WHEN e.inat_taxon_id IS NULL THEN t.inat_taxon_id ELSE e.current_taxon_id END AS current_taxon_id
         FROM plant_list_entry_taxon t
         LEFT JOIN inat_taxon_current e ON e.inat_taxon_id = t.inat_taxon_id) t
@@ -259,7 +268,7 @@ COMMENT ON VIEW plant_taxon_common_name IS 'The common name of each cached taxon
 -- plant_taxon_common_name (schema/114) is the definition, and it is correct,
 -- but to say what one taxon is called it first works out which taxon each of
 -- the plant list's 1,405 names is (plant_name_resolution, schema/111). That
--- takes about 20 milliseconds whichever taxon is asked about, as long as
+-- takes about 27 milliseconds whichever taxon is asked about, as long as
 -- reading the view whole (measured 2026-11-14 on a copy of production's
 -- store), and a record page already takes about 130. Filtering the view to one
 -- taxon does not help, because the cost is not in the filtered part.

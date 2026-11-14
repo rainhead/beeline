@@ -302,7 +302,7 @@ export function SampleFacts({
  * taxon is not in the cache, or is not yet known (pending) or not found
  * (absent), and the page then reads as it did before.
  */
-export function HostValue({ sample, s }: { sample: SampleDetail; s: Messages["record"]["sample"] }) {
+function HostValue({ sample, s }: { sample: SampleDetail; s: Messages["record"]["sample"] }) {
   // A scientific name, so it is printed like one. Italics come from the rank
   // and never from the string: 'Onagraceae' and 'Chamaenerion' are both one
   // word and only the second is italic. An unknown rank prints upright, which

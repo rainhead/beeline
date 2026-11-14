@@ -156,7 +156,7 @@ describe("inat_taxon_current: standing", () => {
     expect(await current(1)).toEqual(["retired", null, null, null, null, null]);
   });
 
-  test("a split is more than one active taxon, whatever dead end sits beside them, and its genus and family are theirs", async () => {
+  test("a split is more than one active taxon, whatever dead end sits beside them, but claims no shared genus or family beside a dead end", async () => {
     await store([
       ...base,
       { id: 1, name: "Whole", rank: "species", active: false, parent: GENUS_A, replacedBy: [11, 12, 13] },
@@ -164,8 +164,9 @@ describe("inat_taxon_current: standing", () => {
       { id: 12, name: "Alpha b", rank: "species", active: true, parent: GENUS_A },
       { id: 13, name: "Alpha gone", rank: "species", active: false, parent: GENUS_B },
     ]);
-    // The dead end is in another genus and does not count against the two that share one.
-    expect(await current(1)).toEqual(["split", null, null, null, "Alpha", "Familia alpha"]);
+    // The dead end may be another half of the split, so nothing shared is claimed, as for one active
+    // taxon beside a dead end (retired).
+    expect(await current(1)).toEqual(["split", null, null, null, null, null]);
   });
 
   test("a diamond, two branches that come to the same taxon, is replaced by it and not split", async () => {
@@ -245,7 +246,8 @@ describe("inat_taxon_current: standing", () => {
     ]);
     await conn.run("INSERT INTO inat_taxon_absent (inat_taxon_id) VALUES (12)");
     expect((await current(1))![0]).toBe("retired");
-    expect(await current(2)).toEqual(["split", null, null, null, "Alpha", "Familia alpha"]);
+    // A split beside a dead end claims no shared genus or family: the dead end may be another half.
+    expect(await current(2)).toEqual(["split", null, null, null, null, null]);
   });
 
   test("a chain does not go on through a taxon that is absent", async () => {
@@ -299,15 +301,22 @@ describe("inat_taxon_current: lineage through current resolution", () => {
       { id: 120, name: "Split genus", rank: "genus", active: false, parent: FAMILY_A, replacedBy: [GENUS_A, GENUS_B] },
       { id: 121, name: "Lost genus", rank: "genus", active: false, parent: FAMILY_A },
       { id: 122, name: "Genus to section", rank: "genus", active: false, parent: FAMILY_A, replacedBy: [742759] },
+      // The family it came to has a lower id than the stored family, so a rule that took any ancestor
+      // resolving to a family, and then the lowest id, would pick it.
+      { id: 123, name: "Genus to family", rank: "genus", active: false, parent: FAMILY_A, replacedBy: [99] },
+      { id: 99, name: "Familia gamma", rank: "family", active: true },
       { id: 742759, name: "Section gamma", rank: "section", active: true, parent: GENUS_C },
       { id: 1, name: "Split genus one", rank: "species", active: true, parent: 120 },
       { id: 2, name: "Lost genus one", rank: "species", active: true, parent: 121 },
       { id: 3, name: "Sectioned one", rank: "species", active: true, parent: 122 },
+      { id: 4, name: "Familied one", rank: "species", active: true, parent: 123 },
     ]);
     // The family above them is active and is still given.
     expect(await lineageOf(1)).toEqual(["current", null, "Familia alpha", false, false]);
     expect(await lineageOf(2)).toEqual(["current", null, "Familia alpha", false, false]);
     expect(await lineageOf(3)).toEqual(["current", null, "Familia alpha", false, false]);
+    // A genus replaced by a family is not taken for the family: the stored family stays.
+    expect(await lineageOf(4)).toEqual(["current", null, "Familia alpha", false, false]);
   });
 
   test("a retired family is resolved the same way", async () => {

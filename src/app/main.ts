@@ -143,7 +143,7 @@ try {
 }
 // Parse the log now rather than on the first sample page after a deploy,
 // which paid for it (~1.5 s on the sandbox). The nightly's appends then
-// extend this parse instead of discarding it (readSampleChanges).
+// extend this parse instead of discarding it (readSampleLog).
 await readSampleChanges(config.sampleChangesPath).catch((err: Error) =>
   console.warn(`could not read the sample change log: ${err.message}`),
 );

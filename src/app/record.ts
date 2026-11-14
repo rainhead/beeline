@@ -12,7 +12,7 @@ import type { DeterminedOnPrecision,
 import { labelName } from "../person-name.js";
 import type { LocalityBasis } from "../locality-rule.js";
 import { observationGone, ownSamplesSql, placeColumns, withheld, type ListedCollector, type Reader } from "./listings.js";
-import { readSampleChanges, sampleHistory, SAMPLE_STATE_SQL, type SampleChange } from "../sample-change.js";
+import { readSampleLog, sampleHistory, SAMPLE_STATE_SQL, STORE_IDENTITY_SQL, type SampleChange } from "../sample-change.js";
 import { fromOldRecords } from "./sample-method.js";
 import { specimenLabels, specimenReprint, type SpecimenLabelRow, type SpecimenReprint } from "./print-runs.js";
 
@@ -807,12 +807,12 @@ export const specimenHref = (specimenId: number) => `/specimens/${specimenId}`;
 export const suggestedLocalityHref = (sampleId: number) => `/samples/${sampleId}/suggested-locality`;
 
 /**
- * What happened to this sample, newest first (beeline-ewl). Addressed by the
- * reference the STORE derives — collector as the overlay names them, number,
- * start date — which the log's fold has followed every recorded move to. A
- * sample whose collector no reference names has no history to ask for, and
- * an unreadable log answers empty rather than taking the page down: the log
- * records the store, it does not gate it.
+ * What happened to this sample, newest first (beeline-ewl). Its entries are
+ * found by its id in this store, and what was filed before entries carried
+ * ids is joined to them by reference — collector as the overlay names them,
+ * number, start date (sampleHistory, beeline-zytd). An unreadable log answers
+ * empty rather than taking the page down: the log records the store, it does
+ * not gate it.
  */
 export async function sampleChangeHistory(
   db: Kysely<Database>,
@@ -824,12 +824,14 @@ export async function sampleChangeHistory(
       ${sql.raw(SAMPLE_STATE_SQL)}
       WHERE s.entity_id = ${sql.lit(Math.trunc(sampleId))}`.execute(db);
     const row = found.rows[0];
-    if (row === undefined || row.collector === null) return [];
+    if (row === undefined) return [];
+    const origin = await sql<{ identity: string }>`${sql.raw(STORE_IDENTITY_SQL)}`.execute(db);
     // During a live duplicate_sample_number two samples derive this same
     // triple, and the recorder correctly refuses to write for either — but a
-    // reader that answers anyway shows both pages the same carried history,
-    // one of them somebody else's provenance. The history is nobody's to
-    // show until the duplicate is resolved.
+    // reader that answers anyway shows both pages what was filed under the
+    // reference, one of them somebody else's provenance. That part is
+    // nobody's to show until the duplicate is resolved. What was filed with
+    // this sample's own id still is.
     const siblings = await sql<{ n: number }>`
       SELECT count(*) AS n
       FROM sample s
@@ -839,13 +841,17 @@ export async function sampleChangeHistory(
       JOIN sample_primary_collector opc ON opc.sample_id = other.entity_id
                                         AND opc.person_id = pc.person_id
       WHERE s.entity_id = ${sql.lit(Math.trunc(sampleId))}`.execute(db);
-    if (Number(siblings.rows[0]?.n ?? 1) > 1) return [];
-    const changes = await readSampleChanges(changesPath);
-    return sampleHistory(changes, {
-      collector: row.collector,
-      sample_number: row.sample_number,
-      date_start: String(row.date_start),
-    });
+    return sampleHistory(
+      await readSampleLog(changesPath),
+      {
+        store: String(origin.rows[0]?.identity ?? ""),
+        id: String(Math.trunc(sampleId)),
+        collector: row.collector,
+        sample_number: row.sample_number,
+        date_start: String(row.date_start),
+      },
+      Number(siblings.rows[0]?.n ?? 1) > 1,
+    );
   } catch (err) {
     console.warn(`could not read the sample change log: ${(err as Error).message}`);
     return [];

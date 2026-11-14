@@ -9,9 +9,12 @@ import {
   foldSampleChanges,
   parseSampleChanges,
   readSampleChanges,
+  readSampleLog,
   readSnapshot,
+  readStoreOrigin,
   recordSampleChanges,
   sampleHistory,
+  SAMPLE_STATE_SQL,
   type SampleLogPaths,
 } from "../src/sample-change.js";
 
@@ -29,6 +32,30 @@ const read = () => duckdbReader(conn);
 const record = (opts: Parameters<typeof recordSampleChanges>[2] = { source: "reconcile" }) =>
   recordSampleChanges(read(), paths, opts);
 
+/**
+ * The history the page would show for the sample standing on a reference
+ * now: the page has the sample in hand, and asks with its id.
+ */
+const historyAt = async (sample_number: string, date_start: string, collector = "name:Ada Collector") => {
+  const quoted = (v: string) => `'${v.replaceAll("'", "''")}'`;
+  const standing = await read()(
+    `SELECT t.sample_id FROM (${SAMPLE_STATE_SQL}) t
+      WHERE t.collector = ${quoted(collector)} AND t.sample_number = ${quoted(sample_number)}
+        AND t.date_start = ${quoted(date_start)} ORDER BY 1`,
+  );
+  return sampleHistory(
+    await readSampleLog(paths.log),
+    {
+      store: (await readStoreOrigin(read())).identity,
+      id: String(standing[0]?.sample_id ?? ""),
+      collector,
+      sample_number,
+      date_start,
+    },
+    standing.length > 1,
+  );
+};
+
 describe("the baseline lives in the snapshot, not the log", () => {
   it("first pass writes the whole corpus as a snapshot and records nothing", async () => {
     await insertCleanSample(conn);
@@ -36,7 +63,7 @@ describe("the baseline lives in the snapshot, not the log", () => {
     expect(result).toMatchObject({ appended: 0, baselined: true });
     expect(await readSampleChanges(paths.log)).toEqual([]);
     const snapshot = await readSnapshot(paths.state);
-    expect(snapshot?.size).toBe(1);
+    expect(snapshot?.length).toBe(1);
     const [state] = [...snapshot!.values()];
     expect(state).toMatchObject({
       collector: "name:Ada Collector",
@@ -142,35 +169,27 @@ describe("a corrected reference moves, and the history follows", () => {
       ["sample_number", "1"],
     ]);
     // The page asks with the sample's CURRENT reference and gets the whole story.
-    const history = sampleHistory(entries, {
-      collector: "name:Ada Collector",
-      sample_number: "9",
-      date_start: currentSeasonDate(7, 14),
-    });
+    const history = (await historyAt("9", currentSeasonDate(7, 14), "name:Ada Collector"));
     expect(history.map((e) => e.field)).toEqual(["locality", "sample_number"]);
     // Nothing answers to the old triple any more.
     expect(
-      sampleHistory(entries, { collector: "name:Ada Collector", sample_number: "1", date_start: currentSeasonDate(7, 14) }),
+      (await historyAt("1", currentSeasonDate(7, 14), "name:Ada Collector")),
     ).toEqual([]);
   });
 
-  it("two movers in one pass chain: each is filed under the triple as moved so far", async () => {
+  it("two movers in one pass are both filed under the reference the sample had before it", async () => {
     const id = await insertCleanSample(conn, { inat_observation_id: "77" });
     await record();
     await conn.run(`UPDATE sample SET sample_number = '9', date_start = DATE '${currentSeasonDate(7, 20)}',
                            date_end = DATE '${currentSeasonDate(7, 20)}' WHERE entity_id = ${id}`);
     await record();
     const entries = await readSampleChanges(paths.log);
-    const bySample = Object.fromEntries(entries.map((e) => [e.field, [e.sample_number, e.date_start]]));
-    // sample_number filed under the pre-pass triple; date_start under the
-    // triple sample_number has already moved it to.
-    expect(bySample.sample_number).toEqual(["1", currentSeasonDate(7, 14)]);
-    expect(bySample.date_start).toEqual(["9", currentSeasonDate(7, 14)]);
-    const history = sampleHistory(entries, {
-      collector: "name:Ada Collector",
-      sample_number: "9",
-      date_start: currentSeasonDate(7, 20),
-    });
+    // Nothing reads these by reference, so there is no reference in between
+    // for the second to be filed under.
+    expect(entries.map((e) => [e.sample_number, e.date_start, e.sample_id])).toEqual(
+      entries.map(() => ["1", currentSeasonDate(7, 14), String(id)]),
+    );
+    const history = await historyAt("9", currentSeasonDate(7, 20));
     expect(history.map((e) => e.field).sort()).toEqual(["date_end", "date_start", "sample_number"]);
   });
 
@@ -302,12 +321,11 @@ describe("a corrected reference moves, and the history follows", () => {
     expect(result.contested).toBe(0);
 
     const entries = await readSampleChanges(paths.log);
-    const at = (sample_number: string) =>
-      sampleHistory(entries, { collector: "name:Ada Collector", sample_number, date_start: currentSeasonDate(7, 14) });
+    const at = (sample_number: string) => historyAt(sample_number, currentSeasonDate(7, 14));
     // Sample 2 is the sample the log knew, renumbered; nothing else happened to it.
-    expect(at("2").map((e) => [e.field, e.old_value, e.new_value])).toEqual([["sample_number", "1", "2"]]);
+    expect((await at("2")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["sample_number", "1", "2"]]);
     // Sample 1 is a newcomer, and only the newcomer.
-    const newcomer = at("1");
+    const newcomer = await at("1");
     expect(newcomer.find((e) => e.field === "observation")?.new_value).toBe("88");
     expect(newcomer.find((e) => e.field === "locality")?.new_value).toBe("Alsea");
     expect(newcomer.every((e) => e.old_value === "")).toBe(true);
@@ -329,7 +347,7 @@ describe("a corrected reference moves, and the history follows", () => {
     expect(full.contested).toBe(0);
     const entries = await readSampleChanges(paths.log);
     expect(
-      sampleHistory(entries, { collector: "name:Ada Collector", sample_number: "2", date_start: currentSeasonDate(7, 14) }).map(
+      (await historyAt("2", currentSeasonDate(7, 14), "name:Ada Collector")).map(
         (e) => e.field,
       ),
     ).toEqual(["sample_number"]);
@@ -350,9 +368,7 @@ describe("a corrected reference moves, and the history follows", () => {
     const narrowed = await record({ source: "app", author: "ada", where: `s.entity_id = ${two}` });
     expect(narrowed.appended).toBe(0);
     expect(narrowed.colliding).toBeGreaterThan(0);
-    const row = (await readSnapshot(paths.state))!.get(
-      `name:Ada Collector\u001f1\u001f${currentSeasonDate(7, 14)}`,
-    );
+    const row = (await readSnapshot(paths.state))!.find((r) => r.sample_number === "1");
     expect(row?.fields.locality).toBe("Corvallis");
     // Resolving the duplicate leaves sample 1's history as it was.
     await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${two}`);
@@ -368,11 +384,7 @@ describe("a corrected reference moves, and the history follows", () => {
     }) as typeof reader;
   };
   const historyOf = async (sample_number: string) =>
-    sampleHistory(await readSampleChanges(paths.log), {
-      collector: "name:Ada Collector",
-      sample_number,
-      date_start: currentSeasonDate(7, 14),
-    });
+    (await historyAt(sample_number, currentSeasonDate(7, 14), "name:Ada Collector"));
 
   it.each([
     ["the store's order", false],
@@ -394,10 +406,10 @@ describe("a corrected reference moves, and the history follows", () => {
   it.each([
     ["the store's order", false],
     ["the reverse", true],
-  ])("two linked samples that swap numbers fall back to their triples rather than merge (%s)", async (_, reverse) => {
-    // The log cannot record a swap: whichever move is written first lands on
-    // the triple the other still holds. So the pass does what it did before
-    // the link outranked the triple, and reads each triple as relinked.
+  ])("two linked samples that swap numbers are each recorded as renumbered (%s)", async (_, reverse) => {
+    // Each is followed by its observation to its own row. Read by reference,
+    // the log could not say a swap; each entry now says which sample it is
+    // about.
     const a = await insertCleanSample(conn, { inat_observation_id: "77" }, null);
     const b = await insertCleanSample(conn, { sample_number: "'2'", inat_observation_id: "88" }, null);
     await record();
@@ -405,9 +417,10 @@ describe("a corrected reference moves, and the history follows", () => {
     await conn.run(`UPDATE sample SET sample_number = '1' WHERE entity_id = ${b}`);
     await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${a}`);
     const result = await recordSampleChanges(inOrder(reverse), paths, { source: "reconcile" });
-    expect(result.contested).toBe(0);
-    expect((await historyOf("1")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["observation", "77", "88"]]);
-    expect((await historyOf("2")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["observation", "88", "77"]]);
+    expect(result).toMatchObject({ appended: 2, contested: 0 });
+    expect((await historyOf("1")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["sample_number", "2", "1"]]);
+    expect((await historyOf("2")).map((e) => [e.field, e.old_value, e.new_value])).toEqual([["sample_number", "1", "2"]]);
+    expect((await record()).appended).toBe(0);
   });
 
   it("a displacement whose heir took another row falls back to the triple", async () => {
@@ -504,15 +517,11 @@ describe("the authored, narrowed pass", () => {
     const narrowed = await record({ source: "app", author: "ada", where: `s.entity_id = ${id}` });
     // Direct miss (the triple moved): nothing recorded, nothing deleted.
     expect(narrowed.appended).toBe(0);
-    expect((await readSnapshot(paths.state))?.size).toBe(1);
+    expect((await readSnapshot(paths.state))?.length).toBe(1);
     // The full pass follows the observation link and records both changes.
     const full = await record();
     expect(full.appended).toBe(2);
-    const history = sampleHistory(await readSampleChanges(paths.log), {
-      collector: "name:Ada Collector",
-      sample_number: "9",
-      date_start: currentSeasonDate(7, 14),
-    });
+    const history = (await historyAt("9", currentSeasonDate(7, 14), "name:Ada Collector"));
     expect(history.map((e) => e.field).sort()).toEqual(["locality", "sample_number"]);
   });
 
@@ -553,7 +562,7 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     insertCleanSample(conn, { sample_number: `'${number}'`, ...more }, null);
   const numbers = async () => [...(await readSnapshot(paths.state))!.values()].map((s) => s.sample_number).sort();
   const historyOf = async (number: string, date = day) =>
-    sampleHistory(await readSampleChanges(paths.log), { collector: ada, sample_number: number, date_start: date }).map(
+    (await historyAt(number, date, ada)).map(
       (e) => [e.field, e.old_value, e.new_value, e.author],
     );
   const renumber = (id: number, to: string) => conn.run(`UPDATE sample SET sample_number = '${to}' WHERE entity_id = ${id}`);
@@ -595,17 +604,18 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     expect((await record()).appended).toBe(0);
   });
 
-  it("a new start date and a new number in one save are filed as a full pass files them", async () => {
+  it("a new start date and a new number in one save are two entries of one sample", async () => {
     const id = await unlinked("1");
     await record();
     const moved = currentSeasonDate(7, 10);
     await conn.run(`UPDATE sample SET sample_number = '9', date_start = DATE '${moved}' WHERE entity_id = ${id}`);
     await narrowed(id);
     const entries = await readSampleChanges(paths.log);
-    expect(entries.map((e) => [e.sample_number, e.date_start, e.field, e.new_value])).toEqual([
-      ["1", day, "sample_number", "9"],
-      ["9", day, "date_start", moved],
+    expect(entries.map((e) => [e.sample_number, e.date_start, e.field, e.new_value, e.sample_id])).toEqual([
+      ["1", day, "sample_number", "9", String(id)],
+      ["1", day, "date_start", moved, String(id)],
     ]);
+    expect((await historyOf("9", moved)).map((e) => e[0]).sort()).toEqual(["date_start", "sample_number"]);
     expect((await record()).appended).toBe(0);
   });
 
@@ -682,44 +692,54 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     // which told the pass the reference a sample used to have. Each begins
     // with a move that was made and never recorded.
 
-    it("a move onto a number another sample has left, unrecorded: nothing until the full pass, then both in order", async () => {
+    it("a move onto a number another sample has left, unrecorded, is its author's, and the other row stays", async () => {
       const a = await unlinked("1", { locality: "'Alsea'" });
       const b = await unlinked("2", { locality: "'Adair'" });
       await record();
       await renumber(b, "3");
       await renumber(a, "2");
-      expect((await narrowed(a)).appended).toBe(0);
-      expect(await numbers()).toEqual(["1", "2"]);
-      // B's move first, so the reader can move A's history onto 2 after it.
-      expect((await record()).appended).toBe(2);
+      expect((await narrowed(a)).appended).toBe(1);
+      // Two rows under 2: A's, and B's as last recorded.
+      expect(await numbers()).toEqual(["2", "2"]);
+      expect(await historyOf("2")).toEqual([["sample_number", "1", "2", "ada"]]);
+      expect(await historyOf("3")).toEqual([]);
+      expect((await record()).appended).toBe(1);
       expect(await historyOf("3")).toEqual([["sample_number", "2", "3", ""]]);
-      expect(await historyOf("2")).toEqual([["sample_number", "1", "2", ""]]);
+      expect(await historyOf("2")).toEqual([["sample_number", "1", "2", "ada"]]);
       expect(await numbers()).toEqual(["2", "3"]);
+      expect((await record()).appended).toBe(0);
     });
 
-    it("a sample entered on such a number is not compared with the row still there", async () => {
+    it("a sample entered on such a number arrives under its author, and is not compared with the row still there", async () => {
       const b = await unlinked("1");
       await record();
       await renumber(b, "3");
       const made = await unlinked("1", { locality: "'Alsea'" });
-      expect((await narrowed(made, { created: true })).appended).toBe(0);
-      expect(await numbers()).toEqual(["1"]);
-      await record();
-      expect(await historyOf("3")).toEqual([["sample_number", "1", "3", ""]]);
+      expect((await narrowed(made, { created: true })).appended).toBeGreaterThan(0);
+      expect(await numbers()).toEqual(["1", "1"]);
       // The newcomer arrives; nothing says its locality changed from B's.
-      expect((await historyOf("1")).every((e) => e[1] === "")).toBe(true);
+      const arrived = await historyOf("1");
+      expect(arrived.length).toBeGreaterThan(0);
+      expect(arrived.every((e) => e[1] === "" && e[3] === "ada")).toBe(true);
+      expect((await record()).appended).toBe(1);
+      expect(await historyOf("3")).toEqual([["sample_number", "1", "3", ""]]);
+      expect(await historyOf("1")).toEqual(arrived);
+      expect(await numbers()).toEqual(["1", "3"]);
     });
 
-    it("a second move after one that waited takes the sample's own row, not the one it stood on", async () => {
+    it("a second move takes the sample's own row, not the one it stood on", async () => {
       const a = await unlinked("1", { locality: "'Alsea'" });
       const b = await unlinked("2", { locality: "'Adair'" });
       await record();
       await renumber(b, "3");
       await renumber(a, "2");
-      expect((await narrowed(a)).appended).toBe(0);
+      expect((await narrowed(a)).appended).toBe(1);
       await renumber(a, "4");
       expect((await narrowed(a)).appended).toBe(1);
-      expect(await historyOf("4")).toEqual([["sample_number", "1", "4", "ada"]]);
+      expect(await historyOf("4")).toEqual([
+        ["sample_number", "2", "4", "ada"],
+        ["sample_number", "1", "2", "ada"],
+      ]);
       // B's row is still B's, for the full pass to move.
       expect(await numbers()).toEqual(["2", "4"]);
       expect((await record()).appended).toBe(1);
@@ -727,20 +747,21 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     });
   });
 
-  it("two samples that swap numbers are compared by reference, since the log cannot say a swap", async () => {
+  it("two samples that swap numbers are each recorded as renumbered, and keep their histories", async () => {
     const a = await unlinked("1", { locality: "'Alsea'" });
     const b = await unlinked("2", { locality: "'Adair'" });
+    await record();
+    await conn.run(`UPDATE sample SET locality = 'Philomath' WHERE entity_id = ${a}`);
     await record();
     await renumber(a, "x");
     await renumber(b, "1");
     await renumber(a, "2");
-    await record();
-    const entries = await readSampleChanges(paths.log);
-    expect(entries.map((e) => [e.sample_number, e.field, e.old_value, e.new_value]).sort()).toEqual([
-      ["1", "locality", "Alsea", "Adair"],
-      ["2", "locality", "Adair", "Alsea"],
+    expect((await record()).appended).toBe(2);
+    expect(await historyOf("2")).toEqual([
+      ["sample_number", "1", "2", ""],
+      ["locality", "Alsea", "Philomath", ""],
     ]);
-    // Each row now carries the id of the sample on its number.
+    expect(await historyOf("1")).toEqual([["sample_number", "2", "1", ""]]);
     const rows = [...(await readSnapshot(paths.state))!.values()];
     expect(rows.map((r) => [r.sample_number, r.id]).sort()).toEqual([
       ["1", String(b)],
@@ -749,28 +770,27 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     expect((await record()).appended).toBe(0);
   });
 
-  it("a sample standing on the number of a row that stays is held until the row moves", async () => {
+  it("a sample may stand on the number of a row that stays", async () => {
     // T1's row is under 5 and T1 itself has gone to 6, which T2 holds, so
-    // the pass can record neither and both rows stay. T3, entered on 5, must
-    // not be entered in the log there: the log still reads 5 as T1, and
-    // would carry T3's arrival off with T1 when T1's move is recorded.
+    // the pass can record neither and both rows stay. T3 is entered on 5.
+    // Read by reference, the log took 5 for T1 and T3 had to wait; its
+    // entries now say they are T3's.
     const t1 = await unlinked("5");
     const t2 = await unlinked("6");
     await record();
     await renumber(t1, "6");
     const t3 = await unlinked("5", { locality: "'Alsea'" });
-    expect((await narrowed(t3, { created: true })).appended).toBe(0);
-    const held = await record();
-    expect(held).toMatchObject({ appended: 0, contested: 1 });
-    expect(await numbers()).toEqual(["5", "6"]);
-    // The duplicate is resolved: every move is recorded, and then T3 arrives.
+    expect((await narrowed(t3, { created: true })).appended).toBeGreaterThan(0);
+    const arrived = await historyOf("5");
+    expect(arrived.every((e) => e[1] === "" && e[3] === "ada")).toBe(true);
+    expect(await record()).toMatchObject({ appended: 0, contested: 0 });
+    expect(await numbers()).toEqual(["5", "5", "6"]);
+    // The duplicate is resolved, and every move is recorded.
     await renumber(t2, "7");
     await record();
     expect(await historyOf("7")).toEqual([["sample_number", "6", "7", ""]]);
     expect(await historyOf("6")).toEqual([["sample_number", "5", "6", ""]]);
-    const arrived = await historyOf("5");
-    expect(arrived.length).toBeGreaterThan(0);
-    expect(arrived.every((e) => e[1] === "")).toBe(true);
+    expect(await historyOf("5")).toEqual(arrived);
     expect(await numbers()).toEqual(["5", "6", "7"]);
     expect((await record()).appended).toBe(0);
   });
@@ -793,7 +813,7 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
       conn.run(`UPDATE sample SET sample_number = '1', date_start = DATE '${next}', date_end = DATE '${next}' WHERE entity_id = ${id}`);
 
     for (const pass of ["full", "one-sample"] as const) {
-      it(`is filed date first where the number first would pass through another sample (${pass} pass)`, async () => {
+      it(`leaves the sample it passes through its own history (${pass} pass)`, async () => {
         const { four } = await setUp();
         await correct(four);
         if (pass === "full") await record();
@@ -806,20 +826,13 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
           ["locality", "Monroe"],
           ["sample_number", "1"],
         ]);
-        // The date first, under the old number; then the number, under the new date.
-        const moves = (await readSampleChanges(paths.log)).filter((e) => e.field === "date_start" || e.field === "sample_number");
-        expect(moves.map((e) => [e.sample_number, e.date_start, e.field])).toEqual([
-          ["4", day, "date_start"],
-          ["4", next, "sample_number"],
-        ]);
         expect((await record()).appended).toBe(0);
       });
     }
 
-    it("two samples corrected across each other each avoid where the other is going", async () => {
+    it("two samples corrected across each other keep their own histories", async () => {
       // A goes from 4 of the 14th to 1 of the 15th, B from 2 of the 15th to
-      // 1 of the 14th. Number first, each would pass through the other's new
-      // reference, which has no snapshot row yet for either to see.
+      // 1 of the 14th.
       const a = await unlinked("4", { locality: "'Alsea'" });
       const b = await unlinked("2", { locality: "'Adair'", date_start: `DATE '${next}'`, date_end: `DATE '${next}'` });
       await record();
@@ -835,34 +848,26 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
       expect((await record()).appended).toBe(0);
     });
 
-    it("a one-sample pass asks the store who stands between, where the snapshot cannot say", async () => {
-      // Sample 1 of the 14th was entered after the last pass, so it has no
-      // snapshot row. The corrected sample still must not pass through it.
-      const four = await unlinked("4");
-      await record();
-      await unlinked("1");
-      await correct(four);
-      await narrowed(four);
-      const moves = (await readSampleChanges(paths.log)).filter((e) => e.field === "date_start" || e.field === "sample_number");
-      expect(moves.map((e) => [e.sample_number, e.date_start, e.field])).toEqual([
-        ["4", day, "date_start"],
-        ["4", next, "sample_number"],
-      ]);
-    });
-
-    it("is held where either order passes through another sample", async () => {
+    it("is recorded where every reference in between is another sample's", async () => {
+      // Read by reference, either order of the two moves passed through
+      // another sample, and the corrected one was held.
       const { four } = await setUp();
       await unlinked("4", { date_start: `DATE '${next}'`, date_end: `DATE '${next}'` });
       await record();
-      const before = (await readSampleChanges(paths.log)).length;
       await correct(four);
-      expect((await narrowed(four)).appended).toBe(0);
-      expect(await record()).toMatchObject({ appended: 0, contested: 1 });
-      expect((await readSampleChanges(paths.log)).length).toBe(before);
+      expect((await narrowed(four)).appended).toBe(3);
+      expect(await record()).toMatchObject({ appended: 0, contested: 0 });
+      expect((await historyOf("1", next)).map((e) => e[0]).sort()).toEqual([
+        "date_end",
+        "date_start",
+        "locality",
+        "sample_number",
+      ]);
+      expect(await historyOf("1")).toEqual([["locality", "Alsea", "Philomath", ""]]);
     });
   });
 
-  it("a swap between a sample followed by its id and one followed by its observation is compared by reference too", async () => {
+  it("a swap between a sample followed by its id and one followed by its observation is two renumberings", async () => {
     const a = await unlinked("1", { locality: "'Alsea'" });
     const b = await unlinked("2", { locality: "'Adair'", inat_observation_id: "77" });
     await record();
@@ -875,10 +880,9 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     await renumber(a, "2");
     await record();
     const entries = await readSampleChanges(paths.log);
-    expect(entries.map((e) => e.field)).not.toContain("sample_number");
-    expect(entries.filter((e) => e.field === "locality").map((e) => [e.sample_number, e.old_value, e.new_value]).sort()).toEqual([
-      ["1", "Alsea", "Adair"],
-      ["2", "Adair", "Alsea"],
+    expect(entries.map((e) => [e.sample_id, e.field, e.old_value, e.new_value]).sort()).toEqual([
+      [String(a), "sample_number", "1", "2"],
+      [String(b), "sample_number", "2", "1"],
     ]);
     expect((await record()).appended).toBe(0);
   });
@@ -899,7 +903,7 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
       ["1", "collector", "name:Ada Lovelace", "ada"],
       ["2", "collector", "name:Ada Lovelace", ""],
     ]);
-    const history = sampleHistory(entries, { collector: "name:Ada Lovelace", sample_number: "1", date_start: day });
+    const history = (await historyAt("1", day, "name:Ada Lovelace"));
     expect(history.map((e) => e.field)).toEqual(["locality", "collector"]);
     expect((await record()).appended).toBe(0);
   });
@@ -1154,7 +1158,7 @@ describe("what the pass deliberately does not say", () => {
     // And the snapshot dropped the row, so a lookalike arriving later is an
     // arrival, not a resurrection.
     const snapshot = await readSnapshot(paths.state);
-    expect(snapshot?.size).toBe(1);
+    expect(snapshot?.length).toBe(1);
     void rows;
   });
 });
@@ -1211,6 +1215,238 @@ describe("a snapshot another store wrote", () => {
     expect(await record()).toMatchObject({ appended: 0, baselined: true });
     await insertCleanSample(conn);
     expect(await record()).toMatchObject({ appended: 0, baselined: true, refused: null });
-    expect((await readSnapshot(paths.state))?.size).toBe(1);
+    expect((await readSnapshot(paths.state))?.length).toBe(1);
+  });
+});
+
+/**
+ * Every entry says which sample it is about, and a history is read by that
+ * (beeline-zytd, ADR 0007's addendum of 2026-11-14). The logs in the first
+ * group are written by hand, to say exactly what the reader is given; the
+ * second group runs passes over a store.
+ */
+describe("a history is read by the sample's id", () => {
+  const ada = "name:Ada Collector";
+  const day = "2026-07-14";
+  const S = "1793743314352911";
+  const header = "at,collector,sample_number,date_start,field,old_value,new_value,author,source,reason,store,sample_id";
+  /** An entry from before entries carried ids: ten cells. */
+  const old = (at: string, number: string, field: string, was: string, now: string) =>
+    `${at},${ada},${number},${day},${field},${was},${now},,reconcile,`;
+  const entry = (at: string, number: string, field: string, was: string, now: string, id: string, store = S) =>
+    `${old(at, number, field, was, now)},${store},${id}`;
+  const restart = (at: string, lastId: number, store = S) => `${at},,,,ids_restart,,${lastId},,reconcile,,${store},`;
+  const logOf = (...lines: string[]) => {
+    const { changes, restarts, malformed } = parseSampleChanges([header, ...lines].join("\n"));
+    expect(malformed).toBe(0);
+    return { changes, restarts };
+  };
+  const sample = (id: string, number: string, store = S) => ({ store, id, collector: ada, sample_number: number, date_start: day });
+  const told = (history: { field: string; old_value: string; new_value: string }[]) =>
+    history.map((e) => [e.field, e.old_value, e.new_value]);
+
+  it("what was filed by reference before ids is joined to the sample's first entry with one", () => {
+    const log = logOf(
+      old("2026-09-01T00:00:00Z", "1", "locality", "Corvallis", "Alsea"),
+      old("2026-09-02T00:00:00Z", "2", "locality", "Adair", "Monroe"),
+      entry("2026-11-15T00:00:00Z", "1", "sample_number", "1", "9", "7"),
+      entry("2026-11-16T00:00:00Z", "9", "locality", "Alsea", "Philomath", "7"),
+    );
+    expect(told(sampleHistory(log, sample("7", "9")))).toEqual([
+      ["locality", "Alsea", "Philomath"],
+      ["sample_number", "1", "9"],
+      ["locality", "Corvallis", "Alsea"],
+    ]);
+    // A sample nothing has been filed for since is still read by its reference.
+    expect(told(sampleHistory(log, sample("8", "2")))).toEqual([["locality", "Adair", "Monroe"]]);
+    // And a sample that now stands on 1 is not sample 7, whose first entry names 1.
+    expect(sampleHistory(log, sample("12", "1"))).toEqual([]);
+  });
+
+  it("another store's ids are not this store's", () => {
+    const log = logOf(
+      old("2026-09-01T00:00:00Z", "1", "locality", "Corvallis", "Alsea"),
+      entry("2026-11-15T00:00:00Z", "1", "locality", "Alsea", "Philomath", "7", "another-store"),
+    );
+    // The same number in this store is some other sample; what was filed by
+    // reference is still read.
+    expect(told(sampleHistory(log, sample("7", "1")))).toEqual([["locality", "Corvallis", "Alsea"]]);
+    expect(told(sampleHistory(log, sample("7", "1", "another-store")))).toEqual([
+      ["locality", "Alsea", "Philomath"],
+      ["locality", "Corvallis", "Alsea"],
+    ]);
+  });
+
+  it("a sample entered as arriving is shown the whole of that pass and nothing before it", () => {
+    const log = logOf(
+      // On a number a vanished sample's history is still under (beeline-pe4b).
+      old("2026-09-01T00:00:00Z", "1", "locality", "Corvallis", "Alsea"),
+      // The id's earlier holder, in a store since put back.
+      entry("2026-11-10T00:00:00Z", "5", "locality", "Adair", "Monroe", "7"),
+      entry("2026-11-15T00:00:00Z", "1", "kind", "", "net", "7"),
+      entry("2026-11-15T00:00:00Z", "1", "locality", "", "Philomath", "7"),
+      entry("2026-11-15T00:00:00Z", "1", "collector", "", ada, "7"),
+      entry("2026-11-15T00:00:00Z", "1", "sample_number", "", "1", "7"),
+      entry("2026-11-15T00:00:00Z", "1", "date_start", "", day, "7"),
+      entry("2026-11-16T00:00:00Z", "1", "locality", "Philomath", "Kings Valley", "7"),
+    );
+    expect(told(sampleHistory(log, sample("7", "1")))).toEqual([
+      ["locality", "Philomath", "Kings Valley"],
+      ["kind", "", "net"],
+      ["locality", "", "Philomath"],
+      ["collector", "", ada],
+      ["sample_number", "", "1"],
+      ["date_start", "", day],
+    ]);
+  });
+
+  it("two samples whose first entries name one reference are neither shown what was filed under it", () => {
+    const log = logOf(
+      old("2026-09-01T00:00:00Z", "1", "locality", "Corvallis", "Alsea"),
+      entry("2026-11-15T00:00:00Z", "1", "sample_number", "1", "2", "7"),
+      entry("2026-11-16T00:00:00Z", "1", "sample_number", "1", "3", "8"),
+    );
+    expect(told(sampleHistory(log, sample("7", "2")))).toEqual([["sample_number", "1", "2"]]);
+    expect(told(sampleHistory(log, sample("8", "3")))).toEqual([["sample_number", "1", "3"]]);
+  });
+
+  it("a sample sharing its reference is shown its own entries and nothing filed under the reference", () => {
+    const log = logOf(
+      old("2026-09-01T00:00:00Z", "1", "locality", "Corvallis", "Alsea"),
+      entry("2026-11-15T00:00:00Z", "4", "sample_number", "4", "1", "7"),
+    );
+    expect(sampleHistory(log, sample("8", "1"), true)).toEqual([]);
+    expect(told(sampleHistory(log, sample("7", "1"), true))).toEqual([["sample_number", "4", "1"]]);
+  });
+
+  it("after ids begin again, an id above the last one is another sample", () => {
+    const log = logOf(
+      entry("2026-11-10T00:00:00Z", "5", "locality", "Adair", "Monroe", "900"),
+      entry("2026-11-10T00:00:00Z", "6", "locality", "Alsea", "Philomath", "700"),
+      entry("2026-11-10T00:00:00Z", "8", "locality", "Alsea", "Philomath", "900", "another-store"),
+      restart("2026-11-12T00:00:00Z", 800),
+      entry("2026-11-13T00:00:00Z", "1", "county", "Benton", "Linn", "900"),
+    );
+    expect(log.restarts).toEqual([{ before: 3, store: S, lastId: 800 }]);
+    expect(told(sampleHistory(log, sample("900", "1")))).toEqual([["county", "Benton", "Linn"]]);
+    expect(told(sampleHistory(log, sample("700", "6")))).toEqual([["locality", "Alsea", "Philomath"]]);
+    expect(sampleHistory(log, sample("900", "8", "another-store"))).toHaveLength(1);
+  });
+
+  describe("over a store", () => {
+    const today = currentSeasonDate(7, 14);
+    const unlinked = (number: string, more: Record<string, string> = {}) =>
+      insertCleanSample(conn, { sample_number: `'${number}'`, ...more }, null);
+    const at = async (number: string) => told(await historyAt(number, today));
+
+    beforeEach(async () => {
+      await conn.run("INSERT INTO schema_migration (name) VALUES ('0001-a-store-that-was-built.sql')");
+    });
+
+    it("a renumber onto a number a deleted sample once held strands nothing (beeline-pe4b)", async () => {
+      const one = await unlinked("1");
+      const two = await unlinked("2");
+      await record();
+      await conn.run(`UPDATE sample SET locality = 'Alsea' WHERE entity_id = ${two}`);
+      await conn.run(`UPDATE sample SET locality = 'Adair' WHERE entity_id = ${one}`);
+      await record();
+      await conn.run(`DELETE FROM sample_collector WHERE sample_id = ${two}`);
+      await conn.run(`DELETE FROM sample WHERE entity_id = ${two}`);
+      await record();
+      await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${one}`);
+      await unlinked("1", { locality: "'Monroe'" });
+      await record();
+      // The renumbered sample has its own history and none of the deleted one's.
+      expect(await at("2")).toEqual([
+        ["sample_number", "1", "2"],
+        ["locality", "Corvallis", "Adair"],
+      ]);
+      // The newcomer on its old number has only its arrival.
+      const newcomer = await at("1");
+      expect(newcomer.length).toBeGreaterThan(0);
+      expect(newcomer.every((e) => e[1] === "")).toBe(true);
+      // And what is recorded next for the renumbered sample is its own.
+      await conn.run(`UPDATE sample SET locality = 'Philomath' WHERE entity_id = ${one}`);
+      await record();
+      expect((await at("2"))[0]).toEqual(["locality", "Adair", "Philomath"]);
+      expect((await at("1")).every((e) => e[1] === "")).toBe(true);
+    });
+
+    it("the same, where the deleted sample's entry was filed before entries carried ids", async () => {
+      const one = await unlinked("1");
+      await record();
+      await appendFile(
+        paths.log,
+        `at,collector,sample_number,date_start,field,old_value,new_value,author,source,reason\n` +
+          `2026-09-01T00:00:00Z,${ada},2,${today},locality,Corvallis,Alsea,,reconcile,\n`,
+      );
+      await conn.run(`UPDATE sample SET sample_number = '2' WHERE entity_id = ${one}`);
+      await record();
+      expect(await at("2")).toEqual([["sample_number", "1", "2"]]);
+    });
+
+    it("a file made before ids keeps its header, and takes twelve-cell entries after its ten-cell ones", async () => {
+      const id = await unlinked("1");
+      await record();
+      const before =
+        `at,collector,sample_number,date_start,field,old_value,new_value,author,source,reason\n` +
+        `2026-09-01T00:00:00Z,${ada},1,${today},locality,Alsea,Corvallis,,reconcile,\n`;
+      await writeFile(paths.log, before);
+      await conn.run(`UPDATE sample SET locality = 'Adair' WHERE entity_id = ${id}`);
+      await record();
+      const text = await readFile(paths.log, "utf8");
+      expect(text.startsWith(before)).toBe(true);
+      expect(text.slice(before.length).trimEnd().split(",").slice(-2)).toEqual([
+        (await readStoreOrigin(read())).identity,
+        String(id),
+      ]);
+      expect(await at("1")).toEqual([
+        ["locality", "Corvallis", "Adair"],
+        ["locality", "Alsea", "Corvallis"],
+      ]);
+    });
+
+    it("a baseline over a log that has entries says that ids begin again", async () => {
+      const id = await unlinked("1");
+      await record();
+      await conn.run(`UPDATE sample SET locality = 'Adair' WHERE entity_id = ${id}`);
+      await record();
+      await writeFile(paths.state, "");
+      expect((await record()).baselined).toBe(true);
+      const { restarts } = await readSampleLog(paths.log);
+      const { identity, highestId } = await readStoreOrigin(read());
+      expect(restarts).toEqual([{ before: 1, store: identity, lastId: highestId }]);
+      // The sample's id is not above the last one, so its history stands.
+      expect(await at("1")).toEqual([["locality", "Corvallis", "Adair"]]);
+    });
+
+    it("a store put back to an earlier copy says so once, and the entries above its last id are left out", async () => {
+      const id = await unlinked("1");
+      await record();
+      const { identity, highestId } = await readStoreOrigin(read());
+      // The snapshot and the log as a later copy of this store left them: a
+      // sample with a higher id had been entered and edited.
+      const gone = highestId + 1;
+      const text = await readFile(paths.state, "utf8");
+      const [origin, ...rest] = text.split("\n");
+      await writeFile(paths.state, [`${origin!.split(",").slice(0, 2).join(",")},${gone}`, ...rest].join("\n"));
+      await appendFile(
+        paths.log,
+        `at,collector,sample_number,date_start,field,old_value,new_value,author,source,reason,store,sample_id\n` +
+          `2026-11-10T00:00:00Z,${ada},5,${today},locality,Adair,Monroe,,reconcile,,${identity},${gone}\n`,
+      );
+      await conn.run(`UPDATE sample SET locality = 'Adair' WHERE entity_id = ${id}`);
+      await record();
+      expect((await readSampleLog(paths.log)).restarts).toEqual([{ before: 1, store: identity, lastId: highestId }]);
+      // The next sample draws an id above the last one, perhaps the gone sample's.
+      const next = await unlinked("5");
+      await record({ source: "app", author: "ada", where: `s.entity_id = ${next}`, created: true });
+      const log = await readSampleLog(paths.log);
+      const shown = sampleHistory(log, { store: identity, id: String(gone), collector: ada, sample_number: "5", date_start: today });
+      expect(shown.some((e) => e.new_value === "Monroe")).toBe(false);
+      // Said once: the pass wrote the file as this store's.
+      await record();
+      expect((await readSampleLog(paths.log)).restarts).toHaveLength(1);
+    });
   });
 });

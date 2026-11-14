@@ -4,7 +4,9 @@
 [ADR 0004](0004-correction-overlay.md), which it deliberately does not change ·
 first instance is the person change log (beeline-o22) · second is the sample
 change log (beeline-ewl, 2026-08-30 — see the addendum below) · the sample
-snapshot carries ids since cutover (beeline-7r0g, 2026-11-13 — second addendum)
+snapshot carries ids since cutover (beeline-7r0g, 2026-11-13 — second addendum) ·
+so does every sample entry, and a sample's history is read by its id
+(beeline-zytd, 2026-11-14 — third addendum)
 
 ## Context
 
@@ -289,3 +291,21 @@ references. A one-sample pass used to leave such a sample to the full pass;
 it now follows the id, so whoever next edits one of those samples before the
 nightly is entered as the author of its collector change. That is the cost
 the collector's edit already accepts for one sample's other pending changes.
+
+## Addendum: every sample entry carries the sample's id, and a history is read by it (2026-11-14)
+
+The addendum above left the log as it was: entries filed and read by collector, number and start date. Its last four rules about the reader existed only for that. Two samples that swapped numbers were compared by reference; a sample standing on a reference where another sample's row would remain was held; a number and a date corrected in one save were filed in an order that passed through nobody else's reference, or held; and a one-sample pass followed its sample only to a reference no other row sat under. Each was a place where the writer knew whose entry it was filing and the reader could not be told. beeline-pe4b was the same limit seen from the reader: a sample renumbered onto a number that a vanished sample's history still sat under was stranded, and its later entries were filed with the vanished sample.
+
+**Every entry now carries two more cells: the identity of the store that filed it and the sample's id in that store (beeline-zytd). A sample's history is the entries with its id.** Those four rules are gone, and so are the order in which a pass appended its entries and the filing of each moved field under the reference as moved so far. A swap is two samples that each changed number.
+
+- **The id on an entry comes from the store, not the snapshot.** The matching in `matchSamples` still decides which snapshot row a sample is compared with, by id where the snapshot's ids are believed and by the three kinds of evidence where they are not. It no longer decides how the entry is read.
+- **The file is not rewritten.** Production's log held 136,674 entries of ten cells on the day of this change. The parser reads a row of ten cells or of twelve, an existing file keeps its ten-column header, and a new file gets the twelve-column one.
+- **What was filed before ids is joined to a sample once, by reference.** For a sample with entries of its own, the reference is the one on the first of them: its snapshot row sat under that reference when the entry was filed, which is where the older entries for it were filed too. For a sample with none, nothing about it has been recorded since, and the reference is the one the store derives for it now. The older entries are read as before, by `foldSampleChanges`, which nothing files for any more. On production that fold had refused none of the 51 moves it met, so nothing in it is stranded.
+- **Where two samples reach the same older entries, neither is shown them.** That is two samples whose first entries name one reference, or a sample with no entries of its own on a reference that another sample shares or that another sample's first entry names. Each is still shown the entries filed with its own id. Before this, a sample sharing its reference was shown nothing at all.
+- **A sample entered as arriving is shown that pass and what follows it.** A pass enters a sample it has no row for with every field changing from nothing, the collector among them, and no other entry says that of the collector. Nothing older is joined, since the writer did not know the sample, and nothing filed earlier under the same id is shown. If the writer failed to recognise a sample it had recorded before, this leaves a gap where there used to be the earlier entries followed by a second arrival.
+- **A line in the log says when a store's ids begin again.** A store put back to an earlier copy keeps its identity and hands out the ids above its last one a second time, and the entries already filed under those ids are about samples that are gone. A full pass that finds the store's last id below the snapshot's writes a line saying so, with that last id, and the reader leaves out what was filed before the line under any id above it. So does a pass that finds no snapshot over a log that has entries, since it cannot know what the store was when they were filed, and a one-sample pass that finds the sample its caller has just made already has a row elsewhere. This does not cover a sample entered after a store is put back and before any pass has run; the pass the app makes as it starts comes first.
+- **An entry is read only by the store that filed it.** A dev store rebuilt over a kept log (`pnpm db:build` gives it a new identity) no longer shows what the previous store filed with ids; it still shows what was filed before ids. That gives up, for dev stores, the reason this ADR chose a file. Production is never rebuilt. A dev store replaced by a copy of production has production's identity, so delete its log along with its snapshot.
+- **The identity must not change.** It is the instant of the earliest row in `schema_migration`. Nothing deletes those rows today. If migrations are ever squashed, the earliest row's instant has to be kept, or every entry filed with an id disappears from the pages.
+- **This release is not rolled back past.** An older release skips rows of twelve cells as unreadable and reads the rest by reference, so it can show a sample the older entries of another one that has since been renumbered away, and its own passes file ten-cell rows that this reader would then take for entries from before ids.
+
+Left as they were: samples that share collector, number and date are still recorded as nothing (beeline-7eru), though with ids on entries they can now be recorded, which replaces the plan to follow them by observation; and a sample whose collector no reference names is still not recorded.

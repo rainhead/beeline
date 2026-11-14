@@ -279,7 +279,7 @@ export const LABEL_PUBLISHED: Publish<SpecimenLabelRow> = {
 };
 export const HISTORY_PUBLISHED: Publish<SampleChange> = {
   at: true, collector: false, sample_number: false, date_start: false, field: true, old_value: true, new_value: true,
-  author: true, source: true, reason: true,
+  author: true, source: true, reason: true, store: false, sample_id: false,
 };
 
 /** A sample as the API publishes it, with its id and address. */

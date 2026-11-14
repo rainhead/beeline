@@ -20,13 +20,20 @@ import { DEFAULT_DB } from "./person-change.js";
  * would be a day late for no reason; promotion is for rebuilds and
  * production is never rebuilt (ADR 0006).
  *
- * IDEMPOTENT AND OFFLINE. The file's SHA-256 is kept with the list, and a
- * load that finds the same hash changes nothing. A different hash replaces
+ * IDEMPOTENT AND OFFLINE. A SHA-256 of the loader's version and the file's
+ * bytes is kept with the list, and a load that finds the same hash changes
+ * nothing (so a change to the parsing reloads a list whose file did not change). A different hash replaces
  * the list's entries wholesale in one transaction, so an entry removed from
  * the file leaves nothing behind. Nothing here touches the network; the
  * lookups that follow are src/fetch-plant-names.ts.
  */
 export const OLD_BEELINE_LIST = "old-beeline";
+/**
+ * Raise this with any change to how the file is read or what is stored from
+ * it (parsePlantList, the columns kept). It is hashed with the file's bytes, so
+ * a deployed list whose file did not change is read again by the new loader.
+ */
+export const PLANT_LIST_LOADER_VERSION = 1;
 export const OLD_BEELINE_PLANT_LIST_FILE = "ingest/old-beeline-plant-list.csv";
 /** Where the file is, whatever directory the process was started in. */
 const OLD_BEELINE_PLANT_LIST_PATH = fileURLToPath(new URL(`../${OLD_BEELINE_PLANT_LIST_FILE}`, import.meta.url));
@@ -52,22 +59,24 @@ export interface PlantListRow {
 /** The rows of a list file. Strict: a malformed file stops the load rather than loading part of a list. */
 export function parsePlantList(bytes: Buffer): { rows: PlantListRow[]; skippedWithoutName: number } {
   // A byte order mark would otherwise become part of the first header.
-  const text = bytes.toString("utf8").replace(/^﻿/, "");
+  const text = bytes.toString("utf8").replace(/^\uFEFF/, "");
   let parsed: string[][];
   try {
     parsed = parseCsv(text, { strict: true });
   } catch (err) {
     throw new Error(`plant list: ${(err as Error).message}`);
   }
-  const [header, ...records] = parsed.filter((r) => !(r.length === 1 && r[0] === ""));
+  // Numbered before the blank lines are dropped, so a row number is the line a person finds it on.
+  const [head, ...records] = parsed.map((r, i) => ({ r, n: i + 1 })).filter(({ r }) => !(r.length === 1 && r[0] === ""));
+  const header = head?.r;
   if (header === undefined || COLUMNS.some((c, i) => header[i] !== c) || header.length !== COLUMNS.length) {
     throw new Error(`plant list: expected the header ${COLUMNS.join(",")}, found ${header?.join(",") ?? "nothing"}`);
   }
   const rows: PlantListRow[] = [];
   const seen = new Set<string>();
   let skippedWithoutName = 0;
-  records.forEach((r, i) => {
-    if (r.length !== COLUMNS.length) throw new Error(`plant list: row ${i + 2} has ${r.length} fields, expected ${COLUMNS.length}`);
+  records.forEach(({ r, n }) => {
+    if (r.length !== COLUMNS.length) throw new Error(`plant list: row ${n} has ${r.length} fields, expected ${COLUMNS.length}`);
     const cell = (j: number) => (r[j]!.trim() === "" ? null : r[j]!.trim());
     // One row files a family under the Family column and leaves the name
     // empty (Family,Ericaceae,,,heath): the family is then its own name.
@@ -76,11 +85,16 @@ export function parsePlantList(bytes: Buffer): { rows: PlantListRow[]; skippedWi
       skippedWithoutName += 1;
       return;
     }
-    if (seen.has(name)) throw new Error(`plant list: ${name} appears twice (row ${i + 2}); the name is the entry's key`);
+    if (seen.has(name)) throw new Error(`plant list: ${name} appears twice (row ${n}); the name is the entry's key`);
     seen.add(name);
     rows.push({ rank: cell(0), family: cell(1), scientific_name: name, synonym: cell(3), common_name: cell(4) });
   });
   return { rows, skippedWithoutName };
+}
+
+/** What the list's stored hash is: the loader's version, then the file's bytes. */
+export function plantListHash(bytes: Buffer): string {
+  return createHash("sha256").update(`loader ${PLANT_LIST_LOADER_VERSION}\n`).update(bytes).digest("hex");
 }
 
 export async function loadPlantList(
@@ -90,7 +104,7 @@ export async function loadPlantList(
   const path = opts.path ?? OLD_BEELINE_PLANT_LIST_PATH;
   const listKey = opts.listKey ?? OLD_BEELINE_LIST;
   const bytes = await readFile(path);
-  const hash = createHash("sha256").update(bytes).digest("hex");
+  const hash = plantListHash(bytes);
   const { rows, skippedWithoutName } = parsePlantList(bytes);
 
   const have = (await (

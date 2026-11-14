@@ -1,9 +1,12 @@
--- Migration for schema/067, schema/111, schema/112 and schema/113: old Beeline's plant list
+-- Migration for schema/066 (a table comment), schema/067, schema/111, schema/112 and schema/113: old Beeline's plant list
 -- and what iNaturalist said about its names (beeline-rfkj.2).
 --
 -- The tables start empty. The app loads ingest/old-beeline-plant-list.csv at
 -- its next boot, and the plant-names job (or pnpm inat:fetch-plant-names)
 -- fills in the lookups over the following nights.
+
+-- schema/066: the cache now also holds the taxa the plant list's names came to.
+COMMENT ON TABLE inat_taxon IS 'iNaturalist taxa the store has referred to (a sample''s or observation''s floral host, or a taxon that iNaturalist''s answers to the old plant list''s names came to, schema/111), with their ancestors and replacements, read from the iNaturalist API by id (src/fetch-inat-taxa.ts). Reference data, not an entity (ADR 0002). A retired taxon is kept, with is_active false, because samples or list names still lead to it. Nothing is deleted from the cache, including taxa that nothing refers to any more; inat_taxon_replacement says what replaced it.';
 
 -- Old Beeline's plant list, kept in git (ingest/old-beeline-plant-list.csv) and
 -- loaded here, and what iNaturalist said about each of its names
@@ -27,10 +30,10 @@ CREATE TABLE plant_list (
   content_hash TEXT NOT NULL,
   loaded_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-COMMENT ON TABLE plant_list IS 'A list of plant names kept in git and loaded into the store (src/load-plant-list.ts), so far one: old Beeline''s, whose entries are in plant_list_entry. content_hash is what the file said when it was loaded: the load replaces the entries only when the hash differs.';
+COMMENT ON TABLE plant_list IS 'A list of plant names kept in git and loaded into the store (src/load-plant-list.ts), so far one: old Beeline''s, whose entries are in plant_list_entry. content_hash is what the file said when it was loaded: the load replaces the entries only when the hash differs (the hash covers the loader''s version as well as the file).';
 COMMENT ON COLUMN plant_list.list_key IS 'A short name for the list that entries are keyed under: old-beeline.';
 COMMENT ON COLUMN plant_list.source_file IS 'The file in git the entries were read from, as a path from the repository root.';
-COMMENT ON COLUMN plant_list.content_hash IS 'SHA-256 of the file''s bytes at the last load, in hexadecimal.';
+COMMENT ON COLUMN plant_list.content_hash IS 'SHA-256, in hexadecimal, of the loader''s version (src/load-plant-list.ts) followed by the file''s bytes at the last load, so a change to how the file is read reloads a list whose bytes did not change.';
 COMMENT ON COLUMN plant_list.loaded_at IS 'When the entries were last replaced; not moved by a load that found the file unchanged.';
 
 CREATE TABLE plant_list_entry (
@@ -57,6 +60,7 @@ CREATE TABLE plant_name_lookup (
   expected_rank TEXT NOT NULL,
   total_results INTEGER NOT NULL,
   read_in_full  BOOLEAN NOT NULL,
+  answered      BOOLEAN NOT NULL DEFAULT true,
   looked_up_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (name_key, expected_rank)
 );
@@ -65,7 +69,24 @@ COMMENT ON COLUMN plant_name_lookup.name_key IS 'The normalised name that was se
 COMMENT ON COLUMN plant_name_lookup.expected_rank IS 'The rank the name''s shape implies (plant_list_entry_name.expected_rank); the search was restricted to the iNaturalist ranks that stand for it (plant_expected_rank).';
 COMMENT ON COLUMN plant_name_lookup.total_results IS 'How many taxa iNaturalist said matched. Every page of 30 is read until the results run out, because a second taxon of the name on a later page is what makes the name ambiguous, up to a cap of pages (read_in_full).';
 COMMENT ON COLUMN plant_name_lookup.read_in_full IS 'Whether every page of the answer was read. False when the page cap stopped the reading with results left, so a taxon of the name may be among those not read: plant_name_resolution then gives the name no taxon (too many results) rather than judge it on part of the answer.';
-COMMENT ON COLUMN plant_name_lookup.looked_up_at IS 'When iNaturalist answered. A name whose taxon the taxon cache read as retired after this is asked again (plant_name_unlooked).';
+COMMENT ON COLUMN plant_name_lookup.answered IS 'False when the name could not be asked: its request failed in three runs in which iNaturalist answered other names (plant_name_lookup_failure), so the row records the giving up and no answer. plant_name_resolution then says "could not be asked", and plant_name_unlooked asks again once the row is 30 days old.';
+COMMENT ON COLUMN plant_name_lookup.looked_up_at IS 'When iNaturalist answered (or, where answered is false, when the name was given up on). A name whose taxon the taxon cache read as retired after this is asked again (plant_name_unlooked). Moved forward without a new answer when a re-ask of a name with an answer fails three runs in a row, so that the failure does not repeat every night.';
+
+-- How many runs a name's request has failed in, for the bound on retrying a
+-- name that always fails (src/fetch-plant-names.ts). A row is removed when the
+-- name is answered or given up on.
+CREATE TABLE plant_name_lookup_failure (
+  name_key      TEXT NOT NULL,
+  expected_rank TEXT NOT NULL,
+  failed_runs   INTEGER NOT NULL,
+  last_failed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_error    TEXT NOT NULL,
+  PRIMARY KEY (name_key, expected_rank)
+);
+COMMENT ON TABLE plant_name_lookup_failure IS 'Runs of src/fetch-plant-names.ts in which the request for a name failed, counted only where iNaturalist answered some other name in the same run or the week before (an outage fails every name and counts against none). At three the name is recorded as one that could not be asked (plant_name_lookup.answered) and the row is removed. Bookkeeping, not data: nothing reads it but the fetcher.';
+COMMENT ON COLUMN plant_name_lookup_failure.failed_runs IS 'Runs in which this name failed since it was last answered.';
+COMMENT ON COLUMN plant_name_lookup_failure.last_failed_at IS 'When the last of those runs failed.';
+COMMENT ON COLUMN plant_name_lookup_failure.last_error IS 'The HTTP status or error message of the last failure.';
 
 CREATE TABLE plant_name_lookup_hit (
   name_key      TEXT NOT NULL,
@@ -201,8 +222,12 @@ COMMENT ON VIEW plant_list_entry_name IS 'Each entry''s normalised name and the 
 -- plant_name_normal, which ignores it on purpose).
 -- A hit that iNaturalist has retired stands for the taxa it was replaced by;
 -- an active one stands for itself. This is where a replacement chain is read
--- from the lookup's own answer; beeline-rfkj.3 follows a replacement that has
--- itself been retired since, and takes over here.
+-- from the lookup's own answer. beeline-rfkj.3 follows a replacement that has
+-- itself been retired since, in a view of its own in a file after schema/112
+-- that composes on top of this one; nothing here changes when it does.
+-- inat_taxon_current (rfkj.3) must not read plant_taxon_common_name or the
+-- views below, or inat_taxon_uncached (which reads this view) would depend on
+-- itself.
 --
 -- Of a name's hits, fallback ranks (plant_expected_rank) are kept only when it
 -- has none at the shape's own ranks.
@@ -248,6 +273,7 @@ WITH decided AS (
 SELECT w.name_key, w.expected_rank,
        CASE
          WHEN l.name_key IS NULL THEN 'not looked up'
+         WHEN NOT l.answered THEN 'could not be asked'
          WHEN NOT l.read_in_full THEN 'too many results'
          WHEN count(u.hit_taxon_id) = 0 THEN 'no match'
          WHEN count(DISTINCT u.current_taxon_id) = 0 THEN 'retired, no replacement'
@@ -259,14 +285,18 @@ SELECT w.name_key, w.expected_rank,
 FROM (SELECT DISTINCT name_key, expected_rank FROM plant_list_entry_name) w
 LEFT JOIN plant_name_lookup l ON l.name_key = w.name_key AND l.expected_rank = w.expected_rank
 LEFT JOIN used u ON u.name_key = w.name_key AND u.expected_rank = w.expected_rank
-GROUP BY w.name_key, w.expected_rank, l.name_key, l.read_in_full;
-COMMENT ON VIEW plant_name_resolution IS 'The outcome of each name''s lookup: matched (one current taxon, in inat_taxon_id), ambiguous (more than one distinct current taxon, or a retired hit with no replacement beside another hit, none picked), no match, retired with no replacement (every exact hit is a dead end), too many results (the page cap stopped the reading, so no taxon is given on part of the answer), or not looked up yet. An active hit whose own name is the name wins outright over every other hit.';
+GROUP BY w.name_key, w.expected_rank, l.name_key, l.read_in_full, l.answered;
+COMMENT ON VIEW plant_name_resolution IS 'The outcome of each name''s lookup: matched (one current taxon, in inat_taxon_id), ambiguous (more than one distinct current taxon, or a retired hit with no replacement beside another hit, none picked), no match, retired with no replacement (every exact hit is a dead end), too many results (the page cap stopped the reading, so no taxon is given on part of the answer), could not be asked (the request failed in several runs; asked again after 30 days), or not looked up yet. An active hit whose own name is the name wins outright over every other hit.';
 
 -- The questions still to put to iNaturalist, one per name and rank: names it
 -- has not been asked about, and names whose answer is out of date because the
 -- taxon cache has since read the taxon the name came to and found it retired
 -- (read after the question was asked, so the question is put once per
--- retirement and not every night).
+-- retirement and not every night), and names that could not be asked, once
+-- the record of that is 30 days old. A name whose re-ask came back to a taxon
+-- that is still retired is asked again only when the cache next reads that
+-- taxon (its fetched_at moves past the new answer), so a retired taxon that
+-- stays retired costs one question each time the cache refreshes it.
 CREATE VIEW plant_name_unlooked AS
 SELECT DISTINCT name_key, expected_rank FROM plant_list_entry_name
 EXCEPT
@@ -276,8 +306,11 @@ SELECT r.name_key, r.expected_rank
 FROM plant_name_resolution r
 JOIN plant_name_lookup l ON l.name_key = r.name_key AND l.expected_rank = r.expected_rank
 JOIN inat_taxon t ON t.inat_taxon_id = r.inat_taxon_id
-WHERE NOT t.is_active AND t.fetched_at > l.looked_up_at;
-COMMENT ON VIEW plant_name_unlooked IS 'The normalised names of list entries to put to iNaturalist: those it has not been asked about, and those whose taxon the cache has since found retired, asked again so the retirement is noticed. The worklist of src/fetch-plant-names.ts. Empty once every name has a current answer, including an empty one.';
+WHERE NOT t.is_active AND t.fetched_at > l.looked_up_at
+UNION
+SELECT name_key, expected_rank FROM plant_name_lookup
+WHERE NOT answered AND looked_up_at < now() - INTERVAL 30 DAY;
+COMMENT ON VIEW plant_name_unlooked IS 'The normalised names of list entries to put to iNaturalist: those it has not been asked about, and those whose taxon the cache has since found retired, asked again so the retirement is noticed, and those that could not be asked 30 days ago or more. The worklist of src/fetch-plant-names.ts. Empty once every name has a current answer, including an empty one.';
 
 -- Each entry with its taxon, if it has one.
 CREATE VIEW plant_list_entry_taxon AS
@@ -293,7 +326,7 @@ SELECT e.list_key, e.scientific_name, e.rank AS listed_rank, t.expected_rank,
 FROM plant_list_entry e
 LEFT JOIN plant_list_entry_taxon t ON t.list_key = e.list_key AND t.scientific_name = e.scientific_name
 WHERE t.inat_taxon_id IS NULL;
-COMMENT ON VIEW plant_list_entry_unmatched IS 'Entries with no iNaturalist taxon, and why: not looked up yet, no match, ambiguous, retired with no replacement, or no name to look up. The work for a person (or for beeline-rfkj.6): the synonym column is the likeliest way to a match.';
+COMMENT ON VIEW plant_list_entry_unmatched IS 'Entries with no iNaturalist taxon, and why: not looked up yet, could not be asked, no match, ambiguous, retired with no replacement, or no name to look up. The work for a person (or for beeline-rfkj.6): the synonym column is the likeliest way to a match.';
 
 CREATE VIEW plant_list_taxon_shared AS
 SELECT list_key, inat_taxon_id, count(*) AS entries, string_agg(scientific_name, '; ' ORDER BY scientific_name) AS scientific_names
@@ -312,24 +345,25 @@ COMMENT ON VIEW plant_list_taxon_shared IS 'Taxa that two or more entries of one
 -- case, or the scientific name itself written with its capital: 'magnolia' is
 -- a name, 'Magnolia species' is not.
 --
--- A GROUP CELL IS NO NAME (Peter, 2026-11-14). For a taxon above species the
--- list sometimes writes the members of a group where a name belongs: 'Plums,
--- cherries, and allies' for Prunus, 'cucumber, gourd family' for
--- Cucurbitaceae. Cut at the first comma it would read 'Plums' and 'cucumber',
--- and shown whole it is a sentence, so the entry gives no name, and a host
--- takes iNaturalist's name for Oregon instead (plant_taxon_common_name). The
--- rule is the one view below, so it is changed in one place: the entry's name
--- is one word (above species; a species' cell is synonyms, and 'butter and
--- eggs, common toadflax' is one name and then another) and the cell contains
--- ' and ' or ends in ' family' or ' tribe'.
-CREATE VIEW plant_list_entry_group_cell AS
+-- SEVERAL NAMES ABOVE SPECIES ARE NO NAME (Peter, 2026-11-14). For a taxon at
+-- genus rank or above the list sometimes writes several names, or the members
+-- of a group, where one name belongs: 'Plums, cherries, and allies' for
+-- Prunus, 'cucumber, gourd family' for Cucurbitaceae, 'forget-me-not or
+-- borage' for Amsinckia. Cut at the first separator it would show one of them
+-- as if it were the taxon's name, so the entry gives no name, and a host takes
+-- iNaturalist's name for Oregon instead (plant_taxon_common_name), and the
+-- entry does not name the hosts beneath it either. At species rank and below
+-- the cell is synonyms and the first is shown ('butter and eggs, common
+-- toadflax'). The rule is the one view below, so it is changed in one place:
+-- the entry's scientific name is one word (genus or above) and the cell holds
+-- more than one name: a comma, a semicolon, ' or ' or ' and ' separates them.
+CREATE VIEW plant_list_entry_several_names AS
 SELECT list_key, scientific_name, common_name
 FROM plant_list_entry
 WHERE common_name IS NOT NULL
   AND position(' ' IN trim(scientific_name)) = 0
-  AND (regexp_matches(lower(trim(common_name)), ' and ')
-       OR regexp_matches(lower(trim(common_name)), ' (family|tribe)$'));
-COMMENT ON VIEW plant_list_entry_group_cell IS 'Entries whose common-name cell lists the members of a group (Plums, cherries, and allies) and not names for the taxon: a taxon above species whose cell contains " and " or ends in " family" or " tribe". They give no common name (plant_list_entry_common_name).';
+  AND regexp_matches(lower(trim(common_name)), '[,;]| or | and ');
+COMMENT ON VIEW plant_list_entry_several_names IS 'Entries at genus rank or above (a one-word scientific name) whose common-name cell holds more than one name, separated by a comma, a semicolon, " or " or " and " (Plums, cherries, and allies; forget-me-not or borage). They give no common name (plant_list_entry_common_name), so a host takes iNaturalist''s. A species'' or lower entry with several names shows the first and is not listed here.';
 
 CREATE VIEW plant_list_entry_common_name AS
 SELECT list_key, scientific_name, shown AS common_name
@@ -338,7 +372,7 @@ FROM (
          trim(regexp_replace(e.common_name, '[,;].*$', '')) AS shown
   FROM plant_list_entry e
   WHERE e.common_name IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM plant_list_entry_group_cell g WHERE g.list_key = e.list_key AND g.scientific_name = e.scientific_name)
+    AND NOT EXISTS (SELECT 1 FROM plant_list_entry_several_names g WHERE g.list_key = e.list_key AND g.scientific_name = e.scientific_name)
 ) x
 CROSS JOIN LATERAL (
   SELECT lower(regexp_replace(regexp_replace(shown, '^(genus|subtribe|tribe|subfamily|family|order) ', '', 'i'), ' species$', '', 'i')) AS bare
@@ -346,7 +380,7 @@ CROSS JOIN LATERAL (
 WHERE shown <> ''
   AND NOT (bare = lower(sci) AND lower(shown) <> bare)
   AND shown <> sci;
-COMMENT ON VIEW plant_list_entry_common_name IS 'The common name each entry shows: the first of those its cell lists (commas or semicolons separate them). None where the cell is empty, a placeholder (the scientific name with Species after it or a rank word before it, or the scientific name capitalised), or a group''s members (plant_list_entry_group_cell).';
+COMMENT ON VIEW plant_list_entry_common_name IS 'The common name each entry shows: the first of those its cell lists (commas or semicolons separate them). None where the cell is empty, a placeholder (the scientific name with Species after it or a rank word before it, or the scientific name capitalised), or, at genus rank or above, several names (plant_list_entry_several_names).';
 
 -- schema/112: what iNaturalist's answers to the list's names came to join the taxon cache's worklist.
 CREATE OR REPLACE VIEW inat_taxon_uncached AS
@@ -370,10 +404,12 @@ EXCEPT
 SELECT inat_taxon_id FROM inat_taxon_known_absent;
 
 -- The common name of each taxon in the cache (beeline-rfkj.2), in its own file
--- because it will read the view that follows a retired taxon to its current
--- one (inat_taxon_current, beeline-rfkj.3), which belongs after the cache's
--- worklist (schema/112). Nothing is deployed that reads this view, so the
--- file is free to move; once something does, it stays where it is.
+-- after the cache's worklist (schema/112). beeline-rfkj.3 composes on top of
+-- it, in a file after this one: it will resolve a retired host to its current
+-- taxon (inat_taxon_current) and read this view's row for that taxon, whose
+-- own lineage is the current one. So this view never reads
+-- inat_taxon_current, and inat_taxon_current must not read this view, or the
+-- two would depend on each other.
 --
 -- The list's names come from schema/111.
 
@@ -387,8 +423,8 @@ SELECT inat_taxon_id FROM inat_taxon_known_absent;
 -- does not move.
 --
 -- It reads the taxon's own stored lineage, which for a retired taxon is stale
--- (schema/066): resolving a retired host to its current taxon first is
--- beeline-rfkj.3, which replaces `taxon` below.
+-- (schema/066): a retired host is resolved to its current taxon first, and
+-- this view is read for that taxon, by beeline-rfkj.3 in a later file.
 CREATE VIEW plant_taxon_common_name AS
 WITH covering AS (
   SELECT a.inat_taxon_id, c.common_name, c.scientific_name, a.depth,
@@ -414,4 +450,4 @@ SELECT inat_taxon_id,
        CASE WHEN from_list THEN depth END AS list_entry_depth
 FROM chosen
 WHERE CASE WHEN from_list THEN list_name ELSE preferred_common_name END IS NOT NULL;
-COMMENT ON VIEW plant_taxon_common_name IS 'The common name of each cached taxon that has one: the name of the old-Beeline list''s entry for the taxon itself; otherwise iNaturalist''s preferred name for Oregon; otherwise the name of the nearest coarser list entry that covers it (the entry''s taxon is an ancestor; the lowest depth wins), so a genus or family entry names a species only where iNaturalist has no name for it (Peter, 2026-11-14). An entry''s name is the first of those its cell lists; an entry whose cell lists a group''s members gives none (plant_list_entry_group_cell). source says which; list_entry and list_entry_depth say which entry and how far above the taxon it sits (0 is the taxon''s own entry), and are NULL when the name is iNaturalist''s. Reads the taxon''s own stored lineage, so a retired taxon is judged by its stale one until beeline-rfkj.3 resolves it first.';
+COMMENT ON VIEW plant_taxon_common_name IS 'The common name of each cached taxon that has one: the name of the old-Beeline list''s entry for the taxon itself; otherwise iNaturalist''s preferred name for Oregon; otherwise the name of the nearest coarser list entry that covers it (the entry''s taxon is an ancestor; the lowest depth wins), so a genus or family entry names a species only where iNaturalist has no name for it (Peter, 2026-11-14). An entry''s name is the first of those its cell lists; an entry at genus rank or above whose cell lists several names gives none (plant_list_entry_several_names). source says which; list_entry and list_entry_depth say which entry and how far above the taxon it sits (0 is the taxon''s own entry), and are NULL when the name is iNaturalist''s. Reads the taxon''s own stored lineage, so a retired taxon is judged by its stale one; beeline-rfkj.3 reads this view for the retired host''s current taxon instead.';

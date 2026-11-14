@@ -230,7 +230,18 @@ export interface PlantNameLookupTable {
   total_results: number;
   /** Whether every page was read; false when the page cap stopped the reading with results left. */
   read_in_full: boolean;
+  /** False when the name was given up on after its request failed in several runs. */
+  answered: Generated<boolean>;
   looked_up_at: Generated<Date>;
+}
+
+/** Runs in which a name's request failed, for the bound on retrying it. */
+export interface PlantNameLookupFailureTable {
+  name_key: string;
+  expected_rank: string;
+  failed_runs: number;
+  last_failed_at: Generated<Date>;
+  last_error: string;
 }
 
 /** A taxon iNaturalist returned for a lookup, as returned. */
@@ -288,7 +299,7 @@ export interface PlantNameHitCurrentView {
   current_taxon_id: BigIntCol | null;
 }
 
-export type PlantNameOutcome = "not looked up" | "too many results" | "no match" | "retired, no replacement" | "matched" | "ambiguous";
+export type PlantNameOutcome = "not looked up" | "could not be asked" | "too many results" | "no match" | "retired, no replacement" | "matched" | "ambiguous";
 
 export interface PlantNameResolutionView {
   name_key: string;
@@ -323,8 +334,8 @@ export interface PlantListTaxonSharedView {
   scientific_names: string;
 }
 
-/** Entries whose common-name cell lists the members of a group; they give no common name. */
-export interface PlantListEntryGroupCellView {
+/** Entries at genus rank or above whose common-name cell holds several names; they give no common name. */
+export interface PlantListEntrySeveralNamesView {
   list_key: string;
   scientific_name: string;
   common_name: string;
@@ -1702,6 +1713,7 @@ export interface Database {
   plant_list: PlantListTable;
   plant_list_entry: PlantListEntryTable;
   plant_name_lookup: PlantNameLookupTable;
+  plant_name_lookup_failure: PlantNameLookupFailureTable;
   plant_name_lookup_hit: PlantNameLookupHitTable;
   plant_name_lookup_hit_replacement: PlantNameLookupHitReplacementTable;
   plant_name_normal: PlantNameNormalView;
@@ -1713,7 +1725,7 @@ export interface Database {
   plant_list_entry_taxon: PlantListEntryTaxonView;
   plant_list_entry_unmatched: PlantListEntryUnmatchedView;
   plant_list_taxon_shared: PlantListTaxonSharedView;
-  plant_list_entry_group_cell: PlantListEntryGroupCellView;
+  plant_list_entry_several_names: PlantListEntrySeveralNamesView;
   plant_list_entry_common_name: PlantListEntryCommonNameView;
   plant_taxon_common_name: PlantTaxonCommonNameView;
   inat_taxon_recheck: InatTaxonRecheckView;

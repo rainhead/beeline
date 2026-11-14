@@ -32,6 +32,11 @@ import { DEFAULT_DB } from "./person-change.js";
  * fallback ranks of a genus-shaped name (section, subgenus, supertribe; see
  * plant_expected_rank).
  *
+ * A NAME THAT ALWAYS FAILS. A name whose request fails in three runs (FAILED_RUNS_BEFORE_GIVING_UP), in
+ * runs where the API did answer other names (in the run, or within the week), is recorded as one that could not be asked
+ * (plant_name_lookup.answered false). It then shows in plant_list_entry_unmatched, stops failing the step
+ * every night, and is asked again after 30 days (plant_name_unlooked).
+ *
  * PACE AND BUDGET. A request about every 1.1 seconds, no token, as
  * src/fetch-inat-taxa.ts does; measured on 2026-11-14, 1,404 names took 29
  * minutes (1.2 seconds each). The nightly gives it 300 names, about six
@@ -52,7 +57,7 @@ export interface FetchPlantNamesOptions {
   apiBase?: string;
   requestDelayMs?: number;
   requestTimeoutMs?: number;
-  /** Names asked about in this run: the job's budget, not a correctness knob. */
+  /** Requests made in this run, a name's later pages included: the job's budget, not a correctness knob. */
   maxRequests?: number;
   signal?: AbortSignal;
   /** Told of every request error, so a job's log keeps the ones its one-line summary leaves out. */
@@ -62,13 +67,15 @@ export interface FetchPlantNamesOptions {
 export interface FetchPlantNamesResult {
   /** Names on the worklist when the run began. */
   unlooked: number;
-  /** Requests made: a name whose first page held no exact hit and had more results takes more than one. */
+  /** Requests made: a name with more than 30 results takes one for each page. */
   requested: number;
   /** Lookups stored, answered with a hit or without. */
   stored: number;
   errors: string[];
   /** True when the cap or a deadline left names unasked. */
   stoppedEarly: boolean;
+  /** True when iNaturalist answered 429: the job then makes no further call to it, taxa included. */
+  rateLimited: boolean;
 }
 
 interface HitJson {
@@ -97,8 +104,16 @@ export async function fetchPlantNames(
   const delay = opts.requestDelayMs ?? 1_100;
   const cap = opts.maxRequests ?? Infinity;
 
+  // Names that failed in earlier runs go last, so a name that always fails cannot use up the run's chances
+  // (three failures in a row stop it) before the others have been asked.
   const todo = (
-    (await (await conn.run("SELECT name_key, expected_rank FROM plant_name_unlooked ORDER BY name_key, expected_rank")).getRows()) as Array<[string, string]>
+    (await (
+      await conn.run(
+        `SELECT u.name_key, u.expected_rank FROM plant_name_unlooked u
+         LEFT JOIN plant_name_lookup_failure f ON f.name_key = u.name_key AND f.expected_rank = u.expected_rank
+         ORDER BY coalesce(f.failed_runs, 0), u.name_key, u.expected_rank`,
+      )
+    ).getRows()) as Array<[string, string]>
   ).map(([nameKey, expectedRank]) => ({ nameKey, expectedRank }));
   const ranksOf = new Map<string, string[]>();
   for (const [expected, inat] of (await (
@@ -107,31 +122,33 @@ export async function fetchPlantNames(
     ranksOf.set(expected, [...(ranksOf.get(expected) ?? []), inat]);
   }
 
-  const result: FetchPlantNamesResult = { unlooked: todo.length, requested: 0, stored: 0, errors: [], stoppedEarly: false };
+  const result: FetchPlantNamesResult = { unlooked: todo.length, requested: 0, stored: 0, errors: [], stoppedEarly: false, rateLimited: false };
   const fail = (message: string) => {
     result.errors.push(message);
     opts.log?.(message);
   };
   let failuresInARow = 0;
+  // Names that failed in this run; counted against the bound below only if the API answered another name.
+  const failedNames: Array<{ nameKey: string; expectedRank: string; error: string }> = [];
   names: for (const { nameKey, expectedRank } of todo) {
-    // Hits are stored page by page and the lookup row last, so a name whose later page fails is not
-    // recorded as answered; its hits are taken back out (below) and the name is asked again next run.
+    // Every page is read before anything is written, and the name's hits and lookup row are then replaced
+    // in one transaction. So a name asked again (its taxon retired, or its old failure expired) keeps its
+    // old answer through a failed request, a 429, the cap or a shutdown, and a name whose later page fails
+    // is not recorded as answered.
     let total = 0;
     let seen = 0;
     let readInFull = false;
     let failure: string | null = null;
-    await clear(conn, nameKey, expectedRank);
+    const hits: HitJson[] = [];
     for (let page = 1; page <= MAX_PAGES; page++) {
       if (result.requested >= cap) {
         result.stoppedEarly = true;
-        await clear(conn, nameKey, expectedRank);
         break names;
       }
       if (result.requested > 0 && delay > 0) await new Promise((r) => setTimeout(r, delay));
       // After the pause, so a shutdown or a deadline during it starts no request.
       if (opts.signal?.aborted) {
         result.stoppedEarly = true;
-        await clear(conn, nameKey, expectedRank);
         break names;
       }
       const url =
@@ -149,18 +166,17 @@ export async function fetchPlantNames(
         body = (await response.json().catch(() => null)) as PageJson | null;
         if (!response.ok || !Array.isArray(body?.results)) {
           failure = `${response.status}`;
-          // The API is asking us to stop: this run does.
+          // The API is asking us to stop: this run does, and the job makes no more calls to iNaturalist.
           if (response.status === 429) {
             fail(`iNat API 429 on /taxa for "${nameKey}"`);
             result.stoppedEarly = true;
-            await clear(conn, nameKey, expectedRank);
+            result.rateLimited = true;
             break names;
           }
         }
       } catch (err) {
         if (opts.signal?.aborted) {
           result.stoppedEarly = true;
-          await clear(conn, nameKey, expectedRank);
           break names;
         }
         failure = (err as Error).message;
@@ -169,7 +185,7 @@ export async function fetchPlantNames(
       const results = body!.results!;
       total = body!.total_results ?? results.length;
       seen += results.length;
-      await storeHits(conn, nameKey, expectedRank, results);
+      hits.push(...results);
       // Every page, to the end: a second taxon of the name on a later page is what makes it ambiguous,
       // and the views judge only the hits stored. Few names have a second page (Aster, on 2026-11-14).
       if (results.length < HITS_PER_REQUEST || seen >= total) {
@@ -178,9 +194,9 @@ export async function fetchPlantNames(
       }
     }
     if (failure !== null) {
-      // Not recorded as an answer: the name is asked again next run.
-      await clear(conn, nameKey, expectedRank);
+      // Not recorded as an answer: the name is asked again next run (or, after enough runs, given up on).
       fail(`iNat API ${failure} on /taxa for "${nameKey}"`);
+      failedNames.push({ nameKey, expectedRank, error: failure });
       failuresInARow += 1;
       if (failuresInARow >= FAILURES_IN_A_ROW) {
         result.stoppedEarly = true;
@@ -191,10 +207,84 @@ export async function fetchPlantNames(
     failuresInARow = 0;
     // Recorded as answered either way, so the name is not asked again every night; a lookup the page cap
     // cut short reads as 'too many results' and gives the name no taxon (plant_name_resolution).
-    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ($1, $2, $3, $4)", [nameKey, expectedRank, total, readInFull]);
+    await recordAnswer(conn, nameKey, expectedRank, hits, total, readInFull);
     result.stored += 1;
   }
+  // A failure counts toward the bound only when the API has answered some other name lately (in this run, or
+  // in the last week): an outage that fails everything must not use up a name's chances. Once the list is
+  // filled a failing name may be all a run has to ask, so this run's answers alone would never count it.
+  const answeredLately =
+    result.stored > 0 ||
+    ((await (await conn.run("SELECT count(*) FROM plant_name_lookup WHERE answered AND looked_up_at > now() - INTERVAL 7 DAY")).getRows()) as [[bigint]])[0][0] > 0n;
+  if (answeredLately) {
+    for (const f of failedNames) await recordFailure(conn, f.nameKey, f.expectedRank, f.error);
+  }
   return result;
+}
+
+/** Failed runs after which a name is given up on for ASKING_AGAIN_DAYS (plant_name_lookup.answered). */
+export const FAILED_RUNS_BEFORE_GIVING_UP = 3;
+
+/**
+ * Count a run in which the name could not be asked. At the bound the name is recorded as one that could not
+ * be asked, so it stops failing the step every night, and is asked again after 30 days (plant_name_unlooked).
+ * A name that already has an answer keeps it: the lookup is only marked as recent, which defers the next
+ * re-ask until the taxon cache next finds the taxon retired.
+ */
+async function recordFailure(conn: DuckDBConnection, nameKey: string, expectedRank: string, error: string): Promise<void> {
+  await conn.run(
+    `INSERT INTO plant_name_lookup_failure (name_key, expected_rank, failed_runs, last_error) VALUES ($1, $2, 1, $3)
+     ON CONFLICT (name_key, expected_rank) DO UPDATE SET failed_runs = failed_runs + 1, last_error = excluded.last_error, last_failed_at = now()`,
+    [nameKey, expectedRank, error],
+  );
+  const [[runs]] = (await (
+    await conn.run("SELECT failed_runs FROM plant_name_lookup_failure WHERE name_key = $1 AND expected_rank = $2", [nameKey, expectedRank])
+  ).getRows()) as [[number]];
+  if (runs < FAILED_RUNS_BEFORE_GIVING_UP) return;
+  await conn.run("BEGIN TRANSACTION");
+  try {
+    const updated = await conn.run(
+      "UPDATE plant_name_lookup SET looked_up_at = now() WHERE name_key = $1 AND expected_rank = $2 AND answered",
+      [nameKey, expectedRank],
+    );
+    if (updated.rowsChanged === 0) {
+      await conn.run("DELETE FROM plant_name_lookup WHERE name_key = $1 AND expected_rank = $2", [nameKey, expectedRank]);
+      await conn.run(
+        "INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full, answered) VALUES ($1, $2, 0, false, false)",
+        [nameKey, expectedRank],
+      );
+    }
+    await conn.run("DELETE FROM plant_name_lookup_failure WHERE name_key = $1 AND expected_rank = $2", [nameKey, expectedRank]);
+    await conn.run("COMMIT");
+  } catch (err) {
+    await conn.run("ROLLBACK");
+    throw err;
+  }
+}
+
+/** Replace the name's hits and its lookup row with the answer, in one transaction. */
+async function recordAnswer(
+  conn: DuckDBConnection,
+  nameKey: string,
+  expectedRank: string,
+  hits: HitJson[],
+  total: number,
+  readInFull: boolean,
+): Promise<void> {
+  await conn.run("BEGIN TRANSACTION");
+  try {
+    await clear(conn, nameKey, expectedRank);
+    await storeHits(conn, nameKey, expectedRank, hits);
+    await conn.run(
+      "INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ($1, $2, $3, $4)",
+      [nameKey, expectedRank, total, readInFull],
+    );
+    await conn.run("DELETE FROM plant_name_lookup_failure WHERE name_key = $1 AND expected_rank = $2", [nameKey, expectedRank]);
+    await conn.run("COMMIT");
+  } catch (err) {
+    await conn.run("ROLLBACK");
+    throw err;
+  }
 }
 
 /** Take out whatever an earlier or half-finished lookup of the name left, so it is asked from nothing. */
@@ -210,26 +300,19 @@ async function storeHits(conn: DuckDBConnection, nameKey: string, expectedRank: 
       typeof h.id === "number" && typeof h.name === "string" && typeof h.rank === "string" &&
       typeof h.matched_term === "string" && h.matched_term !== "",
   );
-  await conn.run("BEGIN TRANSACTION");
-  try {
-    for (const h of kept) {
+  for (const h of kept) {
+    await conn.run(
+      `INSERT INTO plant_name_lookup_hit (name_key, expected_rank, inat_taxon_id, name, rank, is_active, matched_term)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
+      [nameKey, expectedRank, h.id!, h.name!, h.rank!, h.is_active !== false, h.matched_term!],
+    );
+    for (const r of new Set((h.current_synonymous_taxon_ids ?? []).map(Number))) {
       await conn.run(
-        `INSERT INTO plant_name_lookup_hit (name_key, expected_rank, inat_taxon_id, name, rank, is_active, matched_term)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
-        [nameKey, expectedRank, h.id!, h.name!, h.rank!, h.is_active !== false, h.matched_term!],
+        `INSERT INTO plant_name_lookup_hit_replacement (name_key, expected_rank, inat_taxon_id, replacement_taxon_id)
+         VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+        [nameKey, expectedRank, h.id!, r],
       );
-      for (const r of new Set((h.current_synonymous_taxon_ids ?? []).map(Number))) {
-        await conn.run(
-          `INSERT INTO plant_name_lookup_hit_replacement (name_key, expected_rank, inat_taxon_id, replacement_taxon_id)
-           VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-          [nameKey, expectedRank, h.id!, r],
-        );
-      }
     }
-    await conn.run("COMMIT");
-  } catch (err) {
-    await conn.run("ROLLBACK");
-    throw err;
   }
 }
 

@@ -1,8 +1,10 @@
 -- The common name of each taxon in the cache (beeline-rfkj.2), in its own file
--- because it will read the view that follows a retired taxon to its current
--- one (inat_taxon_current, beeline-rfkj.3), which belongs after the cache's
--- worklist (schema/112). Nothing is deployed that reads this view, so the
--- file is free to move; once something does, it stays where it is.
+-- after the cache's worklist (schema/112). beeline-rfkj.3 composes on top of
+-- it, in a file after this one: it will resolve a retired host to its current
+-- taxon (inat_taxon_current) and read this view's row for that taxon, whose
+-- own lineage is the current one. So this view never reads
+-- inat_taxon_current, and inat_taxon_current must not read this view, or the
+-- two would depend on each other.
 --
 -- The list's names come from schema/111.
 
@@ -16,8 +18,8 @@
 -- does not move.
 --
 -- It reads the taxon's own stored lineage, which for a retired taxon is stale
--- (schema/066): resolving a retired host to its current taxon first is
--- beeline-rfkj.3, which replaces `taxon` below.
+-- (schema/066): a retired host is resolved to its current taxon first, and
+-- this view is read for that taxon, by beeline-rfkj.3 in a later file.
 CREATE VIEW plant_taxon_common_name AS
 WITH covering AS (
   SELECT a.inat_taxon_id, c.common_name, c.scientific_name, a.depth,
@@ -43,4 +45,4 @@ SELECT inat_taxon_id,
        CASE WHEN from_list THEN depth END AS list_entry_depth
 FROM chosen
 WHERE CASE WHEN from_list THEN list_name ELSE preferred_common_name END IS NOT NULL;
-COMMENT ON VIEW plant_taxon_common_name IS 'The common name of each cached taxon that has one: the name of the old-Beeline list''s entry for the taxon itself; otherwise iNaturalist''s preferred name for Oregon; otherwise the name of the nearest coarser list entry that covers it (the entry''s taxon is an ancestor; the lowest depth wins), so a genus or family entry names a species only where iNaturalist has no name for it (Peter, 2026-11-14). An entry''s name is the first of those its cell lists; an entry whose cell lists a group''s members gives none (plant_list_entry_group_cell). source says which; list_entry and list_entry_depth say which entry and how far above the taxon it sits (0 is the taxon''s own entry), and are NULL when the name is iNaturalist''s. Reads the taxon''s own stored lineage, so a retired taxon is judged by its stale one until beeline-rfkj.3 resolves it first.';
+COMMENT ON VIEW plant_taxon_common_name IS 'The common name of each cached taxon that has one: the name of the old-Beeline list''s entry for the taxon itself; otherwise iNaturalist''s preferred name for Oregon; otherwise the name of the nearest coarser list entry that covers it (the entry''s taxon is an ancestor; the lowest depth wins), so a genus or family entry names a species only where iNaturalist has no name for it (Peter, 2026-11-14). An entry''s name is the first of those its cell lists; an entry at genus rank or above whose cell lists several names gives none (plant_list_entry_several_names). source says which; list_entry and list_entry_depth say which entry and how far above the taxon it sits (0 is the taxon''s own entry), and are NULL when the name is iNaturalist''s. Reads the taxon''s own stored lineage, so a retired taxon is judged by its stale one; beeline-rfkj.3 reads this view for the retired host''s current taxon instead.';

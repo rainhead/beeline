@@ -105,8 +105,12 @@ COMMENT ON VIEW plant_list_entry_name IS 'Each entry''s normalised name and the 
 -- plant_name_normal, which ignores it on purpose).
 -- A hit that iNaturalist has retired stands for the taxa it was replaced by;
 -- an active one stands for itself. This is where a replacement chain is read
--- from the lookup's own answer; beeline-rfkj.3 follows a replacement that has
--- itself been retired since, and takes over here.
+-- from the lookup's own answer. beeline-rfkj.3 follows a replacement that has
+-- itself been retired since, in a view of its own in a file after schema/112
+-- that composes on top of this one; nothing here changes when it does.
+-- inat_taxon_current (rfkj.3) must not read plant_taxon_common_name or the
+-- views below, or inat_taxon_uncached (which reads this view) would depend on
+-- itself.
 --
 -- Of a name's hits, fallback ranks (plant_expected_rank) are kept only when it
 -- has none at the shape's own ranks.
@@ -152,6 +156,7 @@ WITH decided AS (
 SELECT w.name_key, w.expected_rank,
        CASE
          WHEN l.name_key IS NULL THEN 'not looked up'
+         WHEN NOT l.answered THEN 'could not be asked'
          WHEN NOT l.read_in_full THEN 'too many results'
          WHEN count(u.hit_taxon_id) = 0 THEN 'no match'
          WHEN count(DISTINCT u.current_taxon_id) = 0 THEN 'retired, no replacement'
@@ -163,14 +168,18 @@ SELECT w.name_key, w.expected_rank,
 FROM (SELECT DISTINCT name_key, expected_rank FROM plant_list_entry_name) w
 LEFT JOIN plant_name_lookup l ON l.name_key = w.name_key AND l.expected_rank = w.expected_rank
 LEFT JOIN used u ON u.name_key = w.name_key AND u.expected_rank = w.expected_rank
-GROUP BY w.name_key, w.expected_rank, l.name_key, l.read_in_full;
-COMMENT ON VIEW plant_name_resolution IS 'The outcome of each name''s lookup: matched (one current taxon, in inat_taxon_id), ambiguous (more than one distinct current taxon, or a retired hit with no replacement beside another hit, none picked), no match, retired with no replacement (every exact hit is a dead end), too many results (the page cap stopped the reading, so no taxon is given on part of the answer), or not looked up yet. An active hit whose own name is the name wins outright over every other hit.';
+GROUP BY w.name_key, w.expected_rank, l.name_key, l.read_in_full, l.answered;
+COMMENT ON VIEW plant_name_resolution IS 'The outcome of each name''s lookup: matched (one current taxon, in inat_taxon_id), ambiguous (more than one distinct current taxon, or a retired hit with no replacement beside another hit, none picked), no match, retired with no replacement (every exact hit is a dead end), too many results (the page cap stopped the reading, so no taxon is given on part of the answer), could not be asked (the request failed in several runs; asked again after 30 days), or not looked up yet. An active hit whose own name is the name wins outright over every other hit.';
 
 -- The questions still to put to iNaturalist, one per name and rank: names it
 -- has not been asked about, and names whose answer is out of date because the
 -- taxon cache has since read the taxon the name came to and found it retired
 -- (read after the question was asked, so the question is put once per
--- retirement and not every night).
+-- retirement and not every night), and names that could not be asked, once
+-- the record of that is 30 days old. A name whose re-ask came back to a taxon
+-- that is still retired is asked again only when the cache next reads that
+-- taxon (its fetched_at moves past the new answer), so a retired taxon that
+-- stays retired costs one question each time the cache refreshes it.
 CREATE VIEW plant_name_unlooked AS
 SELECT DISTINCT name_key, expected_rank FROM plant_list_entry_name
 EXCEPT
@@ -180,8 +189,11 @@ SELECT r.name_key, r.expected_rank
 FROM plant_name_resolution r
 JOIN plant_name_lookup l ON l.name_key = r.name_key AND l.expected_rank = r.expected_rank
 JOIN inat_taxon t ON t.inat_taxon_id = r.inat_taxon_id
-WHERE NOT t.is_active AND t.fetched_at > l.looked_up_at;
-COMMENT ON VIEW plant_name_unlooked IS 'The normalised names of list entries to put to iNaturalist: those it has not been asked about, and those whose taxon the cache has since found retired, asked again so the retirement is noticed. The worklist of src/fetch-plant-names.ts. Empty once every name has a current answer, including an empty one.';
+WHERE NOT t.is_active AND t.fetched_at > l.looked_up_at
+UNION
+SELECT name_key, expected_rank FROM plant_name_lookup
+WHERE NOT answered AND looked_up_at < now() - INTERVAL 30 DAY;
+COMMENT ON VIEW plant_name_unlooked IS 'The normalised names of list entries to put to iNaturalist: those it has not been asked about, and those whose taxon the cache has since found retired, asked again so the retirement is noticed, and those that could not be asked 30 days ago or more. The worklist of src/fetch-plant-names.ts. Empty once every name has a current answer, including an empty one.';
 
 -- Each entry with its taxon, if it has one.
 CREATE VIEW plant_list_entry_taxon AS
@@ -197,7 +209,7 @@ SELECT e.list_key, e.scientific_name, e.rank AS listed_rank, t.expected_rank,
 FROM plant_list_entry e
 LEFT JOIN plant_list_entry_taxon t ON t.list_key = e.list_key AND t.scientific_name = e.scientific_name
 WHERE t.inat_taxon_id IS NULL;
-COMMENT ON VIEW plant_list_entry_unmatched IS 'Entries with no iNaturalist taxon, and why: not looked up yet, no match, ambiguous, retired with no replacement, or no name to look up. The work for a person (or for beeline-rfkj.6): the synonym column is the likeliest way to a match.';
+COMMENT ON VIEW plant_list_entry_unmatched IS 'Entries with no iNaturalist taxon, and why: not looked up yet, could not be asked, no match, ambiguous, retired with no replacement, or no name to look up. The work for a person (or for beeline-rfkj.6): the synonym column is the likeliest way to a match.';
 
 CREATE VIEW plant_list_taxon_shared AS
 SELECT list_key, inat_taxon_id, count(*) AS entries, string_agg(scientific_name, '; ' ORDER BY scientific_name) AS scientific_names
@@ -216,24 +228,25 @@ COMMENT ON VIEW plant_list_taxon_shared IS 'Taxa that two or more entries of one
 -- case, or the scientific name itself written with its capital: 'magnolia' is
 -- a name, 'Magnolia species' is not.
 --
--- A GROUP CELL IS NO NAME (Peter, 2026-11-14). For a taxon above species the
--- list sometimes writes the members of a group where a name belongs: 'Plums,
--- cherries, and allies' for Prunus, 'cucumber, gourd family' for
--- Cucurbitaceae. Cut at the first comma it would read 'Plums' and 'cucumber',
--- and shown whole it is a sentence, so the entry gives no name, and a host
--- takes iNaturalist's name for Oregon instead (plant_taxon_common_name). The
--- rule is the one view below, so it is changed in one place: the entry's name
--- is one word (above species; a species' cell is synonyms, and 'butter and
--- eggs, common toadflax' is one name and then another) and the cell contains
--- ' and ' or ends in ' family' or ' tribe'.
-CREATE VIEW plant_list_entry_group_cell AS
+-- SEVERAL NAMES ABOVE SPECIES ARE NO NAME (Peter, 2026-11-14). For a taxon at
+-- genus rank or above the list sometimes writes several names, or the members
+-- of a group, where one name belongs: 'Plums, cherries, and allies' for
+-- Prunus, 'cucumber, gourd family' for Cucurbitaceae, 'forget-me-not or
+-- borage' for Amsinckia. Cut at the first separator it would show one of them
+-- as if it were the taxon's name, so the entry gives no name, and a host takes
+-- iNaturalist's name for Oregon instead (plant_taxon_common_name), and the
+-- entry does not name the hosts beneath it either. At species rank and below
+-- the cell is synonyms and the first is shown ('butter and eggs, common
+-- toadflax'). The rule is the one view below, so it is changed in one place:
+-- the entry's scientific name is one word (genus or above) and the cell holds
+-- more than one name: a comma, a semicolon, ' or ' or ' and ' separates them.
+CREATE VIEW plant_list_entry_several_names AS
 SELECT list_key, scientific_name, common_name
 FROM plant_list_entry
 WHERE common_name IS NOT NULL
   AND position(' ' IN trim(scientific_name)) = 0
-  AND (regexp_matches(lower(trim(common_name)), ' and ')
-       OR regexp_matches(lower(trim(common_name)), ' (family|tribe)$'));
-COMMENT ON VIEW plant_list_entry_group_cell IS 'Entries whose common-name cell lists the members of a group (Plums, cherries, and allies) and not names for the taxon: a taxon above species whose cell contains " and " or ends in " family" or " tribe". They give no common name (plant_list_entry_common_name).';
+  AND regexp_matches(lower(trim(common_name)), '[,;]| or | and ');
+COMMENT ON VIEW plant_list_entry_several_names IS 'Entries at genus rank or above (a one-word scientific name) whose common-name cell holds more than one name, separated by a comma, a semicolon, " or " or " and " (Plums, cherries, and allies; forget-me-not or borage). They give no common name (plant_list_entry_common_name), so a host takes iNaturalist''s. A species'' or lower entry with several names shows the first and is not listed here.';
 
 CREATE VIEW plant_list_entry_common_name AS
 SELECT list_key, scientific_name, shown AS common_name
@@ -242,7 +255,7 @@ FROM (
          trim(regexp_replace(e.common_name, '[,;].*$', '')) AS shown
   FROM plant_list_entry e
   WHERE e.common_name IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM plant_list_entry_group_cell g WHERE g.list_key = e.list_key AND g.scientific_name = e.scientific_name)
+    AND NOT EXISTS (SELECT 1 FROM plant_list_entry_several_names g WHERE g.list_key = e.list_key AND g.scientific_name = e.scientific_name)
 ) x
 CROSS JOIN LATERAL (
   SELECT lower(regexp_replace(regexp_replace(shown, '^(genus|subtribe|tribe|subfamily|family|order) ', '', 'i'), ' species$', '', 'i')) AS bare
@@ -250,4 +263,4 @@ CROSS JOIN LATERAL (
 WHERE shown <> ''
   AND NOT (bare = lower(sci) AND lower(shown) <> bare)
   AND shown <> sci;
-COMMENT ON VIEW plant_list_entry_common_name IS 'The common name each entry shows: the first of those its cell lists (commas or semicolons separate them). None where the cell is empty, a placeholder (the scientific name with Species after it or a rank word before it, or the scientific name capitalised), or a group''s members (plant_list_entry_group_cell).';
+COMMENT ON VIEW plant_list_entry_common_name IS 'The common name each entry shows: the first of those its cell lists (commas or semicolons separate them). None where the cell is empty, a placeholder (the scientific name with Species after it or a rank word before it, or the scientific name capitalised), or, at genus rank or above, several names (plant_list_entry_several_names).';

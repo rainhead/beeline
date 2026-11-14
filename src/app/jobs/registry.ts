@@ -212,8 +212,10 @@ export async function refreshPlantNames(
   const step: JobContext["step"] = opts.step ?? ((_label, fn) => fn());
   const parts: string[] = [];
   try {
-    // A request error (a 429, a run of failures) leaves the run going but the
-    // step recorded as failed, so /jobs and the menu say so (beeline-222u).
+    // Any request error marks the step failed (as the taxa step does on main) while the
+    // run goes on, so /jobs and the menu say so (beeline-222u). A name that always fails
+    // stops being an error after three runs (fetch-plant-names.ts), so this does not
+    // fail every night for ever.
     const r = await step(
       "ask for plant names",
       () => fetchPlantNames(conn, { maxRequests: NIGHTLY_PLANT_NAME_REQUESTS, ...opts, signal }),
@@ -229,7 +231,8 @@ export async function refreshPlantNames(
             (r.errors.length > 0 ? `; ${r.errors.length} request error(s), the first: ${r.errors[0]}` : "") +
             (r.stoppedEarly ? "; the rest wait for the next run" : ""),
     );
-    if (r.requested > 0) {
+    // After a 429 nothing more is asked of iNaturalist tonight, taxa included.
+    if (r.requested > 0 && !r.rateLimited) {
       // The same fetch options, so a test's or a run's own fetch reaches the taxa too; not apiBase, which is the names' endpoint.
       const { fetchImpl, requestDelayMs, requestTimeoutMs } = opts;
       let taxaFailed = false;

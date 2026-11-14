@@ -8,6 +8,7 @@
 // two taxa claim, a retired subspecies. Taxa and lineages that were not
 // captured are synthetic, and say so.
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,8 +17,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { refreshPlantNames } from "../src/app/jobs/registry.js";
 import type { JobContext } from "../src/app/jobs/framework.js";
 import { parseCsv } from "../src/corrections.js";
-import { fetchPlantNames } from "../src/fetch-plant-names.js";
-import { loadPlantList, loadPlantListAtBoot, OLD_BEELINE_PLANT_LIST_FILE, parsePlantList } from "../src/load-plant-list.js";
+import { FAILED_RUNS_BEFORE_GIVING_UP, fetchPlantNames } from "../src/fetch-plant-names.js";
+import { loadPlantList, loadPlantListAtBoot, plantListHash, OLD_BEELINE_PLANT_LIST_FILE, parsePlantList } from "../src/load-plant-list.js";
 import { createMemoryDb } from "./helpers.js";
 
 const ANSWERS: Record<string, unknown> = JSON.parse(
@@ -126,6 +127,25 @@ describe("loading the list", () => {
     expect((await loadPlantList(conn, { path })).changed).toBe(true);
     // The removed entry is gone, and the kept one says what the file now says.
     expect(await rows("SELECT scientific_name, common_name FROM plant_list_entry")).toEqual([["Rubus idaeus", "raspberry"]]);
+  });
+
+  test("a change to the loader reloads a list whose file did not change: the hash covers the loader's version", async () => {
+    const text = `${HEADER}Species,Rosaceae,Rubus idaeus,,red raspberry\n`;
+    const path = await listFile(text);
+    await loadPlantList(conn, { path });
+    const [[stored]] = (await rows("SELECT content_hash FROM plant_list")) as [[string]];
+    expect(stored).toBe(plantListHash(Buffer.from(text)));
+    expect(stored).not.toBe(createHash("sha256").update(text).digest("hex"));
+    // A store loaded by a loader that hashed the bytes alone is loaded again, though the file is the same.
+    await conn.run("UPDATE plant_list SET content_hash = $1", [createHash("sha256").update(text).digest("hex")]);
+    expect((await loadPlantList(conn, { path })).changed).toBe(true);
+    expect((await loadPlantList(conn, { path })).changed).toBe(false);
+  });
+
+  test("a parse error's row number counts the blank lines above it", async () => {
+    const text = `${HEADER}\nSpecies,Rosaceae,Rubus idaeus,,a\n\nSpecies,Rosaceae,Rubus ursinus,,b,extra\n`;
+    expect(() => parsePlantList(Buffer.from(text))).toThrow(/row 5 has 6 fields/);
+    expect(() => parsePlantList(Buffer.from(`${HEADER}\nSpecies,Rosaceae,Rubus idaeus,,a\n\nSpecies,Rosaceae,Rubus idaeus,,b\n`))).toThrow(/Rubus idaeus appears twice \(row 5\)/);
   });
 
   test("a malformed file changes nothing", async () => {
@@ -430,6 +450,121 @@ describe("stopping early, dead ends, paging and ranks (synthetic answers)", () =
     expect(await outcome("Foo qux")).toEqual(["matched", 5]); // the retired hit has a replacement, which is the other hit
   });
 
+  test("a retired genus beside an active section of the name is retired with no replacement: the dead end stands, the fallback rank is not taken over it", async () => {
+    await addEntries(["Foo", "Genus", null]);
+    await fetchPlantNames(conn, {
+      requestDelayMs: 0,
+      fetchImpl: fake(() => page(2, [hit(1, "Foo", "genus", false), hit(2, "Foo", "section", true)])),
+    });
+    expect(await outcome("Foo")).toEqual(["retired, no replacement", null]);
+  });
+
+  /** Ask once, then have the cache find the taxon retired, so the name is due to be asked again. */
+  async function dueAgain() {
+    await addEntries(["Foo bar", "Species", null]);
+    await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: fake(() => page(1, [hit(1, "Foo bar", "species", true)])) });
+    await conn.run("INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active, fetched_at) VALUES (1, 'Foo bar', 'species', 10, false, now())");
+    expect(await rows("SELECT name_key FROM plant_name_unlooked")).toEqual([["foo bar"]]);
+  }
+
+  test("a name asked again keeps its old answer when the request fails, is rate limited, or hits the cap", async () => {
+    await dueAgain();
+    for (const options of [
+      { fetchImpl: fake(() => new Response("{}", { status: 500 })) },
+      { fetchImpl: fake(() => new Response("{}", { status: 429 })) },
+      { fetchImpl: fake(() => page(1, [])), maxRequests: 0 },
+    ]) {
+      await fetchPlantNames(conn, { requestDelayMs: 0, ...options });
+      expect(await rows("SELECT count(*) FROM plant_name_lookup")).toEqual([[1]]);
+      expect(await rows("SELECT inat_taxon_id FROM plant_name_lookup_hit")).toEqual([[1]]);
+      expect(await outcome("Foo bar")).toEqual(["matched", 1]);
+    }
+  });
+
+  test("a name asked again whose later page fails keeps its old answer", async () => {
+    await dueAgain();
+    const filler = Array.from({ length: 30 }, (_, i) => hit(100 + i, `Other ${i}`, "species", true));
+    await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: fake((_q, pg) => (pg === 1 ? page(40, filler) : new Response("{}", { status: 500 }))) });
+    expect(await rows("SELECT inat_taxon_id FROM plant_name_lookup_hit")).toEqual([[1]]);
+    expect(await outcome("Foo bar")).toEqual(["matched", 1]);
+  });
+
+  describe("a name that always fails", () => {
+    const answering = fake((q) => (q === "foo bad" ? new Response("{}", { status: 500 }) : page(1, [hit(7, "Foo good", "species", true, "Foo good")])));
+    const failedAt = async () => (await rows("SELECT failed_runs FROM plant_name_lookup_failure"))[0]?.[0];
+
+    test("is given up on after three runs in which other names were answered, shows in the unmatched view, and is asked again after 30 days", async () => {
+      expect(FAILED_RUNS_BEFORE_GIVING_UP).toBe(3);
+      await addEntries(["Foo bad", "Species", null], ["Foo good", "Species", null]);
+      const r1 = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answering });
+      expect(r1.errors).toHaveLength(1);
+      expect(await failedAt()).toBe(1);
+      const r2 = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answering });
+      expect(r2.errors).toHaveLength(1);
+      expect(await failedAt()).toBe(2);
+      // The third failure is the last: the name is recorded as one that could not be asked.
+      const r3 = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answering });
+      expect(r3.errors).toHaveLength(1);
+      expect(await rows("SELECT count(*) FROM plant_name_lookup_failure")).toEqual([[0]]);
+      expect(await outcome("Foo bad")).toEqual(["could not be asked", null]);
+      expect(await rows("SELECT outcome FROM plant_list_entry_unmatched WHERE scientific_name = 'Foo bad'")).toEqual([["could not be asked"]]);
+      // The step no longer fails every night.
+      expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
+      const r4 = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answering });
+      expect(r4).toMatchObject({ unlooked: 0, errors: [] });
+      // After 30 days it is asked again, and answered when the API now can.
+      await conn.run("UPDATE plant_name_lookup SET looked_up_at = now() - INTERVAL 31 DAY WHERE NOT answered");
+      expect(await rows("SELECT name_key FROM plant_name_unlooked")).toEqual([["foo bad"]]);
+      await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: fake(() => page(1, [hit(8, "Foo bad", "species", true)])) });
+      expect(await outcome("Foo bad")).toEqual(["matched", 8]);
+    });
+
+    test("an outage that fails every name counts against none", async () => {
+      await addEntries(["Foo bad", "Species", null], ["Foo good", "Species", null]);
+      for (let i = 0; i < 4; i++) await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: fake(() => new Response("{}", { status: 503 })) });
+      expect(await rows("SELECT count(*) FROM plant_name_lookup_failure")).toEqual([[0]]);
+      expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[2]]);
+    });
+
+    test("a name that failed before is asked after the others, so it cannot use up the run's chances", async () => {
+      await addEntries(["Foo bad", "Species", null], ["Foo good", "Species", null]);
+      await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answering });
+      asked.length = 0;
+      await conn.run("INSERT INTO plant_list_entry (list_key, scientific_name, rank) VALUES ('old-beeline', 'Aaa first', 'Species')");
+      await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answering });
+      expect(asked.map((u) => new URL(u).searchParams.get("q"))).toEqual(["aaa first", "foo bad"]);
+    });
+
+    test("a re-asked name with an answer keeps it when it keeps failing", async () => {
+      await dueAgain();
+      await addEntries(["Foo good", "Species", null]);
+      for (let i = 0; i < 3; i++) await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: fake((q) => (q === "foo bar" ? new Response("{}", { status: 500 }) : page(1, [hit(7, "Foo good", "species", true)]))) });
+      expect(await outcome("Foo bar")).toEqual(["matched", 1]);
+      expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
+    });
+  });
+
+  test("after a 429 the job makes no call to iNaturalist for taxa", async () => {
+    await addEntries(["Foo bar", "Species", null], ["Foo baz", "Species", null]);
+    const steps: string[] = [];
+    const calls: string[] = [];
+    await refreshPlantNames(conn, {
+      requestDelayMs: 0,
+      step: async (label, fn) => {
+        steps.push(label);
+        return fn();
+      },
+      // The first name is answered, so there are taxa to read; the second is refused.
+      fetchImpl: (async (input: string | URL | Request) => {
+        const url = new URL(String(input));
+        calls.push(url.pathname);
+        return url.searchParams.get("q") === "foo bar" ? page(1, [hit(1, "Foo bar", "species", true)]) : new Response("{}", { status: 429 });
+      }) as typeof fetch,
+    });
+    expect(steps).toEqual(["ask for plant names"]);
+    expect(calls).toHaveLength(2);
+  });
+
   test("an active hit whose own name is the name wins outright; two such taxa are ambiguous", async () => {
     await addEntries(["Foo bar", "Species", null], ["Foo baz", "Species", null]);
     await fetchPlantNames(conn, {
@@ -456,6 +591,26 @@ describe("stopping early, dead ends, paging and ranks (synthetic answers)", () =
     });
     expect(await outcome("Iris foo")).toEqual(["no match", null]);
     expect(await outcome("Aster bar")).toEqual(["matched", 2]);
+  });
+
+  test("a retired taxon found by its older scientific name counts when that term is capitalised, and not when it is a lower-case (common) name", async () => {
+    await addEntries(["Fragaria vesca", "Species", null]);
+    const answer = (term: string) =>
+      fake(() =>
+        page(2, [
+          hit(50298, "Fragaria vesca", "species", true), // real ids, from the lookup of 2026-11-14
+          hit(286077, "Potentilla vesca", "species", false, term), // real: retired, matched_term "Fragaria vesca"
+        ]),
+      );
+    const seen = async () => (await rows("SELECT hit_taxon_id, own_name FROM plant_name_hit_current ORDER BY 1")).map((r) => r.join("/"));
+    await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answer("Fragaria vesca") });
+    expect(await seen()).toEqual(["50298/true", "286077/false"]);
+    // Active and own-named, so it wins; the retired hit stood for nothing else.
+    expect(await outcome("Fragaria vesca")).toEqual(["matched", 50298]);
+    // Synthetic: the same answer with the term in lower case, as iNaturalist writes a common name.
+    await conn.run("DELETE FROM plant_name_lookup; DELETE FROM plant_name_lookup_hit");
+    await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answer("fragaria vesca") });
+    expect(await seen()).toEqual(["50298/true"]);
   });
 
   test("a hit counts only at a rank the name's shape allows: a genus is not a species of the same name", async () => {
@@ -655,12 +810,11 @@ describe("common names", () => {
     expect(await rows("SELECT scientific_name, common_name FROM plant_list_entry_common_name ORDER BY 1")).toEqual([
       ["Iris", "iris"],
       ["Magnolia", "magnolia"],
-      ["Rhododendron", "rhododendron"],
-    ]);
+    ]); // 'rhododendron, azalea' is two names at genus rank, so no name
   });
 
-  test("a cell that lists a group's members is no name: the entry gives none, and the host takes iNaturalist's", async () => {
-    // Cells lifted from the real file. The species with 'and' in its names is not a group: a species' cell is synonyms.
+  test("a genus-or-above cell that holds several names is no name: the entry gives none, and the host takes iNaturalist's", async () => {
+    // Cells lifted from the real file. A species' cell is synonyms, and the first is shown.
     await addEntries(
       ["Prunus", "Genus", "Plums, cherries, and allies"],
       ["Cichorieae", "Tribe", "lettuce, chicory, dandelion and salsify tribe"],
@@ -668,20 +822,39 @@ describe("common names", () => {
       ["Apiaceae", "Family", "carrot family"],
       ["Carduinae", "Subtribe", "thistles and burdocks"],
       ["Rhododendron", "Genus", "rhododendron, azalea"],
+      ["Amsinckia", "Genus", "forget-me-not or borage"],
+      ["Salvia", "Genus", "sage; salvia"],
+      ["Magnolia", "Genus", "magnolia"],
       ["Linaria vulgaris", "Species", "butter and eggs, common toadflax"],
       ["Myosotis discolor", "Species", "changing forget-me-not, yellow and blue forget-me-not"],
     );
-    expect(await rows("SELECT scientific_name FROM plant_list_entry_group_cell ORDER BY 1")).toEqual([
-      ["Apiaceae"], ["Carduinae"], ["Cichorieae"], ["Cucurbitaceae"], ["Prunus"],
+    expect(await rows("SELECT scientific_name FROM plant_list_entry_several_names ORDER BY 1")).toEqual([
+      ["Amsinckia"], ["Carduinae"], ["Cichorieae"], ["Cucurbitaceae"], ["Prunus"], ["Rhododendron"], ["Salvia"],
     ]);
     expect(await rows("SELECT scientific_name, common_name FROM plant_list_entry_common_name ORDER BY 1")).toEqual([
+      ["Apiaceae", "carrot family"], // one name, so shown, though it names a group
       ["Linaria vulgaris", "butter and eggs"],
+      ["Magnolia", "magnolia"],
       ["Myosotis discolor", "changing forget-me-not"],
-      ["Rhododendron", "rhododendron"],
     ]);
   });
 
-  test("the group rule gives a species under a group's entry iNaturalist's name, or none, and not the cell", async () => {
+  test("an ' or ' cell: at genus rank it gives no name and the host takes iNaturalist's; at species rank the cell is shown as written", async () => {
+    // The rule is plant_list_entry_several_names; this is the behaviour it gives today (Peter, 2026-11-14).
+    await resolveAll([
+      ["Poaceae", "Genus", "grass or sedge"], // synthetic cell
+      ["Urtica dioica", "Species", "stinging nettle or burning nettle"], // synthetic cell: a species' cell is not cut at 'or'
+    ]);
+    await cache([
+      [777001, "Poa synthetic", "species", "synthetic bluegrass (iNaturalist)", [777001, 47434]], // synthetic taxon
+      [777002, "Poa anonyma", "species", null, [777002, 47434]], // synthetic taxon
+    ]);
+    expect(await nameOf(777001)).toEqual(["synthetic bluegrass (iNaturalist)", "inaturalist", null, null]);
+    expect(await nameOf(777002)).toBeUndefined();
+    expect(await rows("SELECT common_name FROM plant_list_entry_common_name WHERE scientific_name = 'Urtica dioica'")).toEqual([["stinging nettle or burning nettle"]]);
+  });
+
+  test("the rule gives a species under a several-names entry iNaturalist's name, or none, and not the cell", async () => {
     await resolveAll([["Poaceae", "Genus", "grasses, sedges, and allies"]]); // synthetic cell, the real list's shape
     await cache([
       [777001, "Poa synthetic", "species", "synthetic bluegrass (iNaturalist)", [777001, 47434]], // synthetic taxon

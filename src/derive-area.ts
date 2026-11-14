@@ -397,17 +397,33 @@ async function stampCountiesUnlocked(conn: Conn, G: string, sampleIds?: readonly
   // form, an UPDATE with these conditions on sample in its WHERE and a
   // RETURNING, as a foreign-key violation on a sample other tables refer to.
   const only = sampleIds === undefined ? "" : `AND s.entity_id IN (${sampleIds.map((id) => Number(id)).join(", ")})`;
+  const onlyThese = (column: string) =>
+    sampleIds === undefined ? "" : `AND ${column} IN (${sampleIds.map((id) => Number(id)).join(", ")})`;
   // Each located sample's one county, with whether the point is inside it
   // rather than taken by the shore allowance.
+  //
+  // The county's names are joined by its keys, without its outline, and
+  // "inside" comes from a join on the outline alone, which DuckDB runs as a
+  // spatial join that reads each outline once. Joining the outline by the
+  // keys and testing it in the SELECT list, as this did at first, put a copy
+  // of the outline on every sample's row: 70,654 samples against outlines of
+  // up to 1 MB needed more than production's 1.5 GB, and the step failed
+  // every night from 11 to 14 November 2026 (beeline-6cur). Written this way
+  // the same store gives the same rows at 400 MB.
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE county_point AS
     SELECT a.sample_id, any_value(r.county) AS county, any_value(r.state) AS state,
            any_value(r.country) AS country,
-           bool_or(ST_Intersects(r.geom, ST_Point(l.longitude, l.latitude))) AS inside
+           bool_or(i.sample_id IS NOT NULL) AS inside
     FROM sample_area_current a
-    JOIN ${G}.region r ON r.source = a.source AND r.source_id = a.source_id
-    JOIN sample_location l ON l.sample_id = a.sample_id
-    WHERE a.kind = 'county' ${sampleIds === undefined ? "" : `AND a.sample_id IN (${sampleIds.map((id) => Number(id)).join(", ")})`}
+    JOIN (SELECT source, source_id, county, state, country FROM ${G}.region) r
+      ON r.source = a.source AND r.source_id = a.source_id
+    LEFT JOIN (SELECT l.sample_id, ri.source, ri.source_id
+               FROM sample_location l
+               JOIN ${G}.region ri ON ST_Intersects(ri.geom, ST_Point(l.longitude, l.latitude))
+               WHERE TRUE ${onlyThese("l.sample_id")}) i
+      ON i.sample_id = a.sample_id AND i.source = a.source AND i.source_id = a.source_id
+    WHERE a.kind = 'county' ${onlyThese("a.sample_id")}
     GROUP BY a.sample_id HAVING count(*) = 1`);
   await conn.run(`
     CREATE OR REPLACE TEMP TABLE county_stamp AS

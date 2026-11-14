@@ -18,31 +18,46 @@
 --     so a host that anyone has changed since promotion is never overwritten.
 -- The second condition also makes this safe to run twice: after a repair the
 -- stored value is the new one, which no longer equals the old one.
+--
+-- The old name, the old rank and the new name must all come from one row:
+-- the row promotion named the host from, which is the lowest _id among the
+-- sample's rows that have any plant column filled (arg_min skips a NULL, so
+-- promotion passed over rows with none). Rows with no plant column are
+-- dropped first and the new name is read with arg_min_null, because the new
+-- rule has no opinion on most rows and plain arg_min would otherwise skip to
+-- a later row that it does have an opinion on.
 UPDATE sample AS s
 SET host_name_as_observed = f.new_name,
     host_rank = 'species'
 FROM (
-  SELECT n.sample_id,
-         arg_min(coalesce(nullif(o.speciesPlant, ''), nullif(o.genusPlant, ''), nullif(o.familyPlant, ''),
-                          nullif(o.orderPlant, ''), nullif(o.phylumPlant, '')), o._id) AS old_name,
-         arg_min(CASE
-           WHEN nullif(o.speciesPlant, '') IS NOT NULL THEN 'species'
-           WHEN nullif(o.genusPlant, '')   IS NOT NULL THEN 'genus'
-           WHEN nullif(o.familyPlant, '')  IS NOT NULL THEN 'family'
-           WHEN nullif(o.orderPlant, '')   IS NOT NULL THEN 'order'
-           WHEN nullif(o.phylumPlant, '')  IS NOT NULL THEN 'phylum'
-         END, o._id) AS old_rank,
-         arg_min(CASE
-           WHEN regexp_full_match(coalesce(o.speciesPlant, ''), '[a-z][a-z-]*')
-            AND regexp_full_match(coalesce(o.genusPlant, ''), '[A-Z][a-z-]+')
-             THEN concat(o.genusPlant, ' ', o.speciesPlant)
-           WHEN nullif(o.speciesPlant, '') IS NULL
-            AND regexp_full_match(coalesce(o.genusPlant, ''), '[A-Z][a-z-]+ [a-z][a-z-]*')
-             THEN o.genusPlant
-         END, o._id) AS new_name
-  FROM legacy_specimen_number n
-  JOIN legacy_occurrence o ON o._id = n._id
-  GROUP BY n.sample_id
+  SELECT sample_id,
+         arg_min(old_name, _id)      AS old_name,
+         arg_min(old_rank, _id)      AS old_rank,
+         arg_min_null(new_name, _id) AS new_name
+  FROM (
+    SELECT n.sample_id, o._id,
+           coalesce(nullif(o.speciesPlant, ''), nullif(o.genusPlant, ''), nullif(o.familyPlant, ''),
+                    nullif(o.orderPlant, ''), nullif(o.phylumPlant, '')) AS old_name,
+           CASE
+             WHEN nullif(o.speciesPlant, '') IS NOT NULL THEN 'species'
+             WHEN nullif(o.genusPlant, '')   IS NOT NULL THEN 'genus'
+             WHEN nullif(o.familyPlant, '')  IS NOT NULL THEN 'family'
+             WHEN nullif(o.orderPlant, '')   IS NOT NULL THEN 'order'
+             WHEN nullif(o.phylumPlant, '')  IS NOT NULL THEN 'phylum'
+           END AS old_rank,
+           CASE
+             WHEN regexp_full_match(coalesce(o.speciesPlant, ''), '[a-z][a-z-]*')
+              AND regexp_full_match(coalesce(o.genusPlant, ''), '[A-Z][a-z-]+')
+               THEN concat(o.genusPlant, ' ', o.speciesPlant)
+             WHEN nullif(o.speciesPlant, '') IS NULL
+              AND regexp_full_match(coalesce(o.genusPlant, ''), '[A-Z][a-z-]+ [a-z][a-z-]*')
+               THEN o.genusPlant
+           END AS new_name
+    FROM legacy_specimen_number n
+    JOIN legacy_occurrence o ON o._id = n._id
+  ) r
+  WHERE old_name IS NOT NULL
+  GROUP BY sample_id
 ) f
 WHERE s.entity_id = f.sample_id
   AND s.host_inat_taxon_id IS NULL

@@ -59,14 +59,21 @@ const hostOf = async (sid: string) =>
 beforeAll(async () => {
   ({ conn } = await createMemoryDb());
   await loadLegacyStaging(conn, FIXTURE);
-  for (const s of SHAPES) {
-    const q = (v: string) => `'${v.replaceAll("'", "''")}'`;
-    await conn.run(`INSERT INTO legacy_occurrence
-      SELECT * REPLACE ('host-${s.sid}' AS _id, ${q("9" + s.sid)} AS "fieldNumber", ${q(s.sid)} AS "sampleId", '' AS url,
+  const q = (v: string) => `'${v.replaceAll("'", "''")}'`;
+  const insert = (id: string, fieldNumber: string, s: Pick<Shape, "sid" | "genus" | "species" | "family">, specimenId = "1") =>
+    conn.run(`INSERT INTO legacy_occurrence
+      SELECT * REPLACE (${q(id)} AS _id, ${q(fieldNumber)} AS "fieldNumber", ${q(s.sid)} AS "sampleId", '' AS url,
+                        ${q(specimenId)} AS "specimenId",
                         ${q(s.genus)} AS "genusPlant", ${q(s.species)} AS "speciesPlant", ${q(s.family ?? "")} AS "familyPlant",
                         '' AS "orderPlant", '' AS "phylumPlant")
       FROM legacy_occurrence WHERE "fieldNumber" = '25000001'`);
-  }
+  for (const s of SHAPES) await insert(`host-${s.sid}`, "9" + s.sid, s);
+  // Synthetic: one sample of two records, the first (lower _id, so the one
+  // the host is named from) already right and the second a bare epithet.
+  // The host is the first record's, before and after the migration. Two
+  // specimens, so promotion does not read the second as a reprint of the first.
+  await insert("host-115a", "9115", { sid: "115", genus: "Salvia", species: "Salvia officinalis" });
+  await insert("host-115b", "9215", { sid: "115", genus: "Solidago", species: "canadensis" }, "2");
   await promoteLegacy(conn, FIXTURE_INPUTS);
   migration = await readFile(`${MIGRATIONS_DIR}0089-host-name-from-genus-and-epithet.sql`, "utf8");
 });
@@ -75,19 +82,25 @@ describe("a promoted sample's host", () => {
   test.each(SHAPES)("$genus | $species is named $name at rank $rank", async (s) => {
     expect(await hostOf(s.sid)).toEqual([s.name, s.rank]);
   });
+
+  test("is named from the sample's first record, not from a later one the new rule rewrites", async () => {
+    expect(await rows(conn, `SELECT count(*) FROM legacy_specimen_number WHERE _id LIKE 'host-115%'`)).toEqual([[2n]]);
+    expect(await hostOf("115")).toEqual(["Salvia officinalis", "species"]);
+  });
 });
 
 describe("migration 0089, on a store promoted before the rule", () => {
   // Put the stored hosts back as the old rule wrote them: the first non-empty
-  // plant column, ranked by its column.
+  // plant column of the sample's first record, ranked by its column.
   const OLD = `
     UPDATE sample SET host_name_as_observed = o.old_name, host_rank = o.old_rank
     FROM (SELECT n.sample_id,
-                 coalesce(nullif(p."speciesPlant", ''), nullif(p."genusPlant", ''), nullif(p."familyPlant", '')) AS old_name,
-                 CASE WHEN nullif(p."speciesPlant", '') IS NOT NULL THEN 'species'
-                      WHEN nullif(p."genusPlant", '') IS NOT NULL THEN 'genus' ELSE 'family' END AS old_rank
+                 arg_min(coalesce(nullif(p."speciesPlant", ''), nullif(p."genusPlant", ''), nullif(p."familyPlant", '')), p._id) AS old_name,
+                 arg_min(CASE WHEN nullif(p."speciesPlant", '') IS NOT NULL THEN 'species'
+                              WHEN nullif(p."genusPlant", '') IS NOT NULL THEN 'genus' ELSE 'family' END, p._id) AS old_rank
           FROM legacy_specimen_number n JOIN legacy_occurrence p ON p._id = n._id
-          WHERE p._id LIKE 'host-%') o
+          WHERE p._id LIKE 'host-%'
+          GROUP BY n.sample_id) o
     WHERE entity_id = o.sample_id`;
 
   test("changes nothing on a store promoted with the rule already in it", async () => {
@@ -115,6 +128,9 @@ describe("migration 0089, on a store promoted before the rule", () => {
     expect(await hostOf("106")).toEqual(["Ericameria nauseosa", "species"]);
     expect(await hostOf("102")).toEqual(["discolor", "species"]);
     expect(await hostOf("103")).toEqual(["Solidago altissima", "species"]);
+    // Named from its first record, which needed no repair; its second record's
+    // epithet must not be read in its place.
+    expect(await hostOf("115")).toEqual(["Salvia officinalis", "species"]);
 
     // Every other sample, the ones the rule has no opinion on, is as it was.
     const after = await rows(conn, `SELECT sample_number, host_name_as_observed, host_rank FROM sample ORDER BY 1`);

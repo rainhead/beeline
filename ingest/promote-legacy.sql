@@ -676,15 +676,42 @@ SELECT
   arg_min(r.locality, r._id)                        AS locality,
   arg_min(r.samplingProtocol, r._id)                AS protocol,
   arg_min(r.p_inat_obs_id, r._id)                   AS inat_obs_id,
-  arg_min(coalesce(
-    nullif(r.speciesPlant, ''), nullif(r.genusPlant, ''), nullif(r.familyPlant, ''),
-    nullif(r.orderPlant, ''), nullif(r.phylumPlant, '')), r._id) AS host_name,
-  -- The rank is not written down anywhere: it is WHICH COLUMN supplied the
-  -- name, which is why this repeats the coalesce order rather than reading a
-  -- field. Same arg_min key as the name above, so both come off the same row.
-  -- Needed because italics are derived from rank and a name cannot be read
-  -- for it (schema/030).
+  -- The host is named from the first of the five plant columns that has
+  -- anything in it, and its rank is WHICH COLUMN supplied it (italics are
+  -- derived from rank and a name cannot be read for it, schema/030) — except
+  -- in the two hand-typed shapes below, where the column is not the rank.
+  -- Same arg_min key for name and rank, so both come off the same row.
+  -- Facts about botanical names, surveyed on the 2026-11-13 production store
+  -- (beeline-32ow): the old Beeline's own plant screens, and iNaturalist
+  -- through it, fill speciesPlant with the whole binomial, "Solidago
+  -- canadensis"; 354 of the 396,877 rows were typed by hand instead, with the
+  -- genus in genusPlant and only the epithet, "canadensis", in speciesPlant.
+  -- Taken as it stands that stored "canadensis" at rank species, which is not
+  -- a name anybody can look up and prints without its genus. And 230 rows
+  -- have the whole binomial in genusPlant and nothing in speciesPlant, which
+  -- stored a two-word name at rank genus, which prints in the wrong style.
+  --   epithet only: speciesPlant is one lower-case word and genusPlant one
+  --                 capitalised word  ->  "Genus epithet", rank species.
+  --   binomial in genusPlant: genusPlant is a capitalised word and a
+  --                 lower-case one, speciesPlant empty  ->  as written, species.
+  -- Everything else is left as it was, including a trinomial, a hybrid and a
+  -- name with stray whitespace in speciesPlant: those are written whole and
+  -- the rules above do not claim to recognise them. Repeated, with the same
+  -- patterns, by migrations/0091-host-name-from-genus-and-epithet.sql, which
+  -- repairs stores that will never be promoted again.
   arg_min(CASE
+    WHEN regexp_full_match(coalesce(r.speciesPlant, ''), '[a-z][a-z-]*')
+     AND regexp_full_match(coalesce(r.genusPlant, ''), '[A-Z][a-z-]+')
+      THEN concat(r.genusPlant, ' ', r.speciesPlant)
+    ELSE coalesce(
+      nullif(r.speciesPlant, ''), nullif(r.genusPlant, ''), nullif(r.familyPlant, ''),
+      nullif(r.orderPlant, ''), nullif(r.phylumPlant, ''))
+  END, r._id)                                       AS host_name,
+  arg_min(CASE
+    WHEN regexp_full_match(coalesce(r.speciesPlant, ''), '[a-z][a-z-]*')
+     AND regexp_full_match(coalesce(r.genusPlant, ''), '[A-Z][a-z-]+')                THEN 'species'
+    WHEN nullif(r.speciesPlant, '') IS NULL
+     AND regexp_full_match(coalesce(r.genusPlant, ''), '[A-Z][a-z-]+ [a-z][a-z-]*')   THEN 'species'
     WHEN nullif(r.speciesPlant, '') IS NOT NULL THEN 'species'
     WHEN nullif(r.genusPlant, '')   IS NOT NULL THEN 'genus'
     WHEN nullif(r.familyPlant, '')  IS NOT NULL THEN 'family'

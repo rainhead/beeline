@@ -1137,9 +1137,11 @@ async function recordPass(
     }
   }
   // The lowest id among samples the caller has just made, less one: the last
-  // id that was handed out before them.
+  // id that was handed out before them. Taken from every sample the narrowed
+  // query returned (`liveIds`), not from `states`, which has just lost a new
+  // sample that shares its number with another (CodeRabbit on this branch).
   const beforeMade = (): number => {
-    const ids = [...states.values()].map((s) => Number(s.id)).filter((n) => n > 0);
+    const ids = [...liveIds].map(Number).filter((n) => n > 0);
     return opts.where != null && opts.created === true && ids.length > 0 ? Math.min(...ids) - 1 : store.highestId;
   };
   const file = await readSnapshotFile(paths.state);

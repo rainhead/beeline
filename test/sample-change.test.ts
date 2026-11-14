@@ -795,6 +795,20 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     expect((await record()).appended).toBe(0);
   });
 
+  it("a sample entered on the number of a deleted one arrives, and is not compared with its row", async () => {
+    const gone = await unlinked("7", { locality: "'Alsea'" });
+    await unlinked("8");
+    await record();
+    await conn.run(`DELETE FROM sample_collector WHERE sample_id = ${gone}`);
+    await conn.run(`DELETE FROM sample WHERE entity_id = ${gone}`);
+    await unlinked("7", { locality: "'Adair'" });
+    await record();
+    const arrived = await historyOf("7");
+    expect(arrived.length).toBeGreaterThan(0);
+    expect(arrived.every((e) => e[1] === "")).toBe(true);
+    expect(await numbers()).toEqual(["7", "8"]);
+  });
+
   it("a row kept for a sample on a shared number stays when another sample moves onto its reference", async () => {
     // A's row has no id and A has gone to a number B holds, so the pass keeps
     // the row by its observation. C then moves onto the row's reference

@@ -812,8 +812,7 @@ export interface SampleMatching {
  * observation after its number or start date is corrected, which is every
  * trap sample entered in Beeline (beeline-7r0g).
  *
- * A row with no id, or with the id of a sample that is gone, is matched in
- * order of how much the evidence is worth, every claim proposed before any
+ * A row with no id is matched in order of how much the evidence is worth, every claim proposed before any
  * is granted (ADR 0007 — deciding one at a time is a different, wrong
  * problem):
  *
@@ -867,7 +866,11 @@ export function matchSamples(
   // Rows that are a live sample's own, and so nobody else's to claim.
   const owned = new Set<SampleState>();
   for (const row of byId.values()) if (liveIds.has(row.id)) owned.add(row);
-  const rows = snapshot.filter((row) => !owned.has(row));
+  // What is left for the evidence below is the rows with no id. A row that
+  // carries the id of a sample that is gone is nobody's: an id that is
+  // believed is one sample's for good, so a newcomer on that sample's
+  // reference is not it (CodeRabbit on this branch).
+  const rows = snapshot.filter((row) => row.id === "");
   const byTriple = valueIndex(rows, stateKey);
   const byObservation = valueIndex(rows, (s) => s.fields.observation);
   const byNumberDate = valueIndex(rows, (s) => `${s.sample_number}${SEP}${s.date_start}`);

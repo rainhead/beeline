@@ -45,8 +45,19 @@ import { REMARK_SOURCE } from "./repair-legacy-skipped.js";
  * two rows that remark differently on one specimen. Those are the worklist
  * for the rest of beeline-fud5, and nothing is guessed at.
  *
- * Loading again changes nothing where the store already says what the file
- * says, and replaces the row where the file now says something else.
+ * Loading the same file again changes nothing where the store already says
+ * what the file says, and replaces the row where the file now says something
+ * else: a corrected file, or a loader that reads it better.
+ *
+ * ANOTHER FILE'S STATEMENT. A specimen has one row, so a file that says
+ * something different from what an earlier file said would replace that
+ * statement and leave no trace of it: a pin reported missing in one
+ * inventory and found in the next would say only that it is in the
+ * collection. Keeping every statement needs a table of them (beeline-k9lz),
+ * which waits until dispositions have a regular source, since no second
+ * inventory is expected (Peter, 2026-11-14). Until then such a row is held,
+ * and the earlier statement stands. `--replace` says the file corrects what
+ * was loaded before, under another name, and is to replace it.
  */
 
 export const DISPOSITIONS = ["in collection", "missing"] as const;
@@ -60,6 +71,7 @@ export const HELD_REASONS = [
   "ambiguous_twin",
   "conflicting_remarks",
   "remarked_from_old_records",
+  "stated_in_another_file",
 ] as const;
 export type HeldReason = (typeof HELD_REASONS)[number];
 
@@ -72,6 +84,8 @@ export interface DispositionLoadOptions {
   statedOn: string;
   /** Where the held rows go; beside the file by default. */
   heldPath?: string;
+  /** The file corrects statements loaded from a file of another name, and replaces them. */
+  replace?: boolean;
   dryRun?: boolean;
 }
 
@@ -228,6 +242,23 @@ export async function loadDispositions(conn: DuckDBConnection, opts: Disposition
              concat_ws(' ', w.remarks, x.sentences) AS remarks
       FROM own w FULL OUTER JOIN surplus x ON x.specimen_id = w.specimen_id`);
 
+    // A statement another file made, which this file would replace: held,
+    // and taken out of what is written (see ANOTHER FILE'S STATEMENT above).
+    // A remark read from the old Beeline's records was held already.
+    if (opts.replace !== true) {
+      await conn.run(`
+        CREATE OR REPLACE TEMP TABLE disp_stated AS
+        SELECT f.specimen_id FROM disp_final f
+        JOIN specimen_disposition d ON d.specimen_id = f.specimen_id
+        WHERE d.source NOT IN (${sqlString(basename(opts.file))}, ${sqlString(REMARK_SOURCE)})
+          AND (d.remarks <> f.remarks OR d.disposition IS DISTINCT FROM f.disposition)`);
+      await conn.run(`
+        UPDATE disp_outcome SET outcome = 'stated_in_another_file'
+        WHERE specimen_id IN (SELECT specimen_id FROM disp_stated)
+          AND (outcome = 'surplus_label' OR (outcome = 'matched' AND remarks IS NOT NULL))`);
+      await conn.run(`DELETE FROM disp_final WHERE specimen_id IN (SELECT specimen_id FROM disp_stated)`);
+    }
+
     const one = async (sql: string) => Number(((await (await conn.run(sql)).getRows()) as [[bigint | number]])[0]![0]);
     const unchanged = await one(`
       SELECT count(*) FROM disp_final f JOIN specimen_disposition d ON d.specimen_id = f.specimen_id
@@ -301,7 +332,7 @@ export async function loadDispositions(conn: DuckDBConnection, opts: Disposition
   }
 }
 
-// CLI: pnpm disposition:load <file> [db] --by "<name>" --on <YYYY-MM-DD> [--sheet <name>] [--held <path>] [--dry-run]
+// CLI: pnpm disposition:load <file> [db] --by "<name>" --on <YYYY-MM-DD> [--sheet <name>] [--held <path>] [--replace] [--dry-run]
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const args = process.argv.slice(2);
   const option = (name: string): string | undefined => {
@@ -312,7 +343,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const positional = args.filter((a, i) => !a.startsWith("--") && !valued.includes(args[i - 1] ?? ""));
   const file = positional[0];
   if (file === undefined) {
-    console.error("usage: pnpm disposition:load <file> [db] --by <name> --on <YYYY-MM-DD> [--sheet <name>] [--held <path>] [--dry-run]");
+    console.error("usage: pnpm disposition:load <file> [db] --by <name> --on <YYYY-MM-DD> [--sheet <name>] [--held <path>] [--replace] [--dry-run]");
     process.exit(2);
   }
   const { openDuckDb } = await import("./db.js");
@@ -325,6 +356,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       statedBy: option("--by") ?? "",
       statedOn: option("--on") ?? "",
       heldPath: option("--held"),
+      replace: args.includes("--replace"),
       dryRun: args.includes("--dry-run"),
     });
     await conn.run("CHECKPOINT");

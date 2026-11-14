@@ -639,7 +639,7 @@ export function sampleOrder(query: ListingQuery, p: PlaceColumns) {
       // Blocking outranks a warning outranks clean, whichever way it runs.
       return sql`${blockingCount} ${dir}, ${warningCount} ${dir}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     case "atlas":
-      return sql`coalesce(ab.abbreviation, a.code) ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+      return sql`coalesce(pab.abbreviation, a.code) ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     default:
       return byDate;
   }
@@ -667,7 +667,7 @@ export function specimenOrder(query: ListingQuery, p: PlaceColumns) {
     case "determined":
       return sql`d.determined_on ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     case "atlas":
-      return sql`coalesce(ab.abbreviation, a.code) ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+      return sql`coalesce(pab.abbreviation, a.code) ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     default:
       return byDate;
   }
@@ -957,7 +957,7 @@ export async function listSamples(
     .selectFrom("sample as s")
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
-    .leftJoin("program_abbreviation as ab", "ab.program_id", "a.entity_id")
+    .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
     // Only `withheld` reads these, and for staff it reads nothing.
     .$if(!reader.staff, (qb) =>
       qb
@@ -1099,7 +1099,7 @@ export async function listSamples(
         "s.specimen_count",
         "s.inat_observation_id",
         observationGone.as("observation_gone"),
-        sql<string | null>`coalesce(ab.abbreviation, a.code)`.as("atlas_abbreviation"),
+        sql<string | null>`coalesce(pab.abbreviation, a.code)`.as("atlas_abbreviation"),
         "s.host_name_as_observed as host_name",
         "s.host_rank",
         located(hidden, sql<number | null>`loc.latitude`).as("latitude"),
@@ -1194,7 +1194,7 @@ export async function listSpecimens(
     .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
-    .leftJoin("program_abbreviation as ab", "ab.program_id", "a.entity_id")
+    .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
     // Only `withheld` reads these, and for staff it reads nothing.
     .$if(!reader.staff, (qb) =>
       qb
@@ -1304,7 +1304,7 @@ export async function listSpecimens(
         sql<string | null>`(SELECT sd.remarks FROM specimen_disposition sd WHERE sd.specimen_id = sp.entity_id)`.as(
           "occurrence_remarks",
         ),
-        sql<string | null>`coalesce(ab.abbreviation, a.code)`.as("atlas_abbreviation"),
+        sql<string | null>`coalesce(pab.abbreviation, a.code)`.as("atlas_abbreviation"),
         "s.host_name_as_observed as host_name",
         "s.host_rank",
         "an.rank as taxon_rank",

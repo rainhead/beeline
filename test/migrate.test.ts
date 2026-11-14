@@ -240,9 +240,9 @@ describe("abbreviating each program (0089)", () => {
       ["WaBA", "WABA"],
     ]);
     expect(await rows(conn, "SELECT count(*) FROM program p LEFT JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE a.program_id IS NULL")).toEqual([[0n]]);
+    expect(await schemaDrift(conn)).toEqual([]);
     // The point of the satellite: unlike the code, it can be changed on a referenced program.
     await conn.run("UPDATE program_abbreviation SET abbreviation = 'WA' WHERE abbreviation = 'WABA'");
-    expect(await schemaDrift(conn)).toEqual([]);
   });
 });
 

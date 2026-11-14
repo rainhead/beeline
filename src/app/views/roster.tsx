@@ -489,7 +489,7 @@ export function Roster({
               <td class="nowrap">{lastSeen(m, row)}</td>
               <td>{membershipCell(m, row)}</td>
               <td>{row.is_admin ? <Chip tone="success">{p.colAdmin}</Chip> : <Absent label={p.notAdmin} />}</td>
-              <td>{row.leads.length === 0 ? <Absent label={p.notALead} /> : row.leads.join(", ")}</td>
+              <td>{row.leads.length === 0 ? <Absent label={p.notALead} /> : row.leads_shown}</td>
             </tr>
           ))}
         </DataTable>

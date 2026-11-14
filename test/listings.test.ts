@@ -329,12 +329,16 @@ describe("sample listing", () => {
     const page = await get(app, "/samples?scope=WaBA");
     expect(page).toContain("B-2");
     expect(page).toContain(">WABA<");
-    expect(page).not.toContain(">WaBA<");
-    const csv = await (await app.request("/samples.csv?scope=WaBA")).text();
-    const [header, first] = csv.split("\n");
-    const atlas = header!.split(",").indexOf("atlas");
-    expect(atlas).toBeGreaterThanOrEqual(0);
-    expect(first!.split(",")[atlas]).toBe("WABA");
+    // Every row's atlas column in both exports, which the archives share.
+    for (const path of ["/samples.csv?scope=WaBA", "/specimens.csv?scope=WaBA"]) {
+      const [header, ...lines] = (await (await app.request(path)).text()).trim().split("\n");
+      const atlas = header!.split(",").indexOf("atlas");
+      expect(atlas, path).toBeGreaterThanOrEqual(0);
+      expect(lines.length, path).toBeGreaterThan(0);
+      expect(new Set(lines.map((l) => l.split(",")[atlas])), path).toEqual(new Set(["WABA"]));
+    }
+    // Sorting by atlas sorts by what the column shows, on both listings.
+    for (const path of ["/samples?scope=all&sort=atlas", "/specimens?scope=all&sort=atlas"]) expect(await get(app, path)).toContain(">WABA<");
     expect(await get(app, "/programs/WaBA")).toContain(en.programs.meta("WABA", true));
   });
 

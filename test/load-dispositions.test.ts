@@ -198,6 +198,7 @@ describe("what is held", () => {
       ambiguous_twin: 0,
       conflicting_remarks: 0,
       remarked_from_old_records: 0,
+      stated_in_another_file: 0,
     });
     expect(await stored()).toEqual([]);
     const held = await heldRows(path);
@@ -256,28 +257,69 @@ describe("what is held", () => {
 });
 
 describe("loading again", () => {
-  test("changes nothing the store already says, and replaces what the file now says differently", async () => {
+  const sources = () =>
+    rows(conn, `SELECT source FROM specimen_disposition d JOIN specimen sp ON sp.entity_id = d.specimen_id ORDER BY sp.field_number`);
+  const twoFiles = async () => {
     await adaSample();
     const first = await file("inventory.csv", [
       ada("1", { fieldNumber: "25000101", occurrenceRemarks: LOST }),
       ada("2", { fieldNumber: "25000102", occurrenceRemarks: PRINT }),
     ]);
     await load(first);
-    expect((await load(first)).specimens).toEqual({ written: 2, inserted: 0, updated: 0, unchanged: 2 });
     const second = await file("inventory-2.csv", [
       ada("1", { fieldNumber: "25000101", occurrenceRemarks: LOST }),
       ada("2", { fieldNumber: "25000102", occurrenceRemarks: PRINTED }),
+      ada("3", { fieldNumber: "25000103", occurrenceRemarks: PRINTED }),
     ]);
-    const result = await load(second, { statedOn: "2026-12-01" });
-    expect(result.specimens).toEqual({ written: 2, inserted: 0, updated: 1, unchanged: 1 });
+    return { first, second };
+  };
+
+  test("the same file changes nothing the store already says, and replaces what the file now says differently", async () => {
+    const { first } = await twoFiles();
+    expect((await load(first)).specimens).toEqual({ written: 2, inserted: 0, updated: 0, unchanged: 2 });
+    // The file, corrected, under its own name.
+    const corrected = await file("inventory.csv", [
+      ada("1", { fieldNumber: "25000101", occurrenceRemarks: LOST }),
+      ada("2", { fieldNumber: "25000102", occurrenceRemarks: PRINTED }),
+    ]);
+    expect((await load(corrected)).specimens).toEqual({ written: 2, inserted: 0, updated: 1, unchanged: 1 });
     expect(await stored()).toEqual([
       ["25000101", "missing", LOST],
       ["25000102", "in collection", PRINTED],
     ]);
-    expect(await rows(conn, `SELECT source FROM specimen_disposition d JOIN specimen sp ON sp.entity_id = d.specimen_id ORDER BY sp.field_number`)).toEqual([
-      ["inventory.csv"],
-      ["inventory-2.csv"],
+  });
+
+  test("another file does not replace what an earlier file said: the row is held, and the earlier statement stands", async () => {
+    // Until every statement is kept (beeline-k9lz), replacing one would lose
+    // it. What the later file agrees with, and what it says of a specimen
+    // nobody had remarked on, are written as ever.
+    const { second } = await twoFiles();
+    const result = await load(second, { statedOn: "2026-12-01" });
+    expect(result.specimens).toEqual({ written: 2, inserted: 1, updated: 0, unchanged: 1 });
+    expect(result.held.stated_in_another_file).toBe(1);
+    expect(await stored()).toEqual([
+      ["25000101", "missing", LOST],
+      ["25000102", null, PRINT],
+      ["25000103", "in collection", PRINTED],
     ]);
+    expect(await sources()).toEqual([["inventory.csv"], ["inventory.csv"], ["inventory-2.csv"]]);
+    const held = await heldRows(second);
+    expect(held).toHaveLength(1);
+    expect(held[0]).toContain("25000102");
+    expect(held[0]).toContain("stated_in_another_file");
+  });
+
+  test("unless the load says the file replaces what was loaded before", async () => {
+    const { second } = await twoFiles();
+    const result = await load(second, { statedOn: "2026-12-01", replace: true });
+    expect(result.specimens).toEqual({ written: 3, inserted: 1, updated: 1, unchanged: 1 });
+    expect(result.held.stated_in_another_file).toBe(0);
+    expect(await stored()).toEqual([
+      ["25000101", "missing", LOST],
+      ["25000102", "in collection", PRINTED],
+      ["25000103", "in collection", PRINTED],
+    ]);
+    expect(await sources()).toEqual([["inventory.csv"], ["inventory-2.csv"], ["inventory-2.csv"]]);
   });
 
   test("a dry run writes nothing and still says what it would do", async () => {

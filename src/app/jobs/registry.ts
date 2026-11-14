@@ -15,6 +15,7 @@ import { deriveLocalities, describeLocalities } from "../../derive-locality.js";
 import { deriveAreas, describeAreas } from "../../derive-area.js";
 import { fetchMissingTiles, type FetchTilesOptions } from "../../fetch-dem.js";
 import { mintPipelineJwt } from "../../inat-jwt.js";
+import { fetchInatTaxa, type FetchInatTaxaOptions } from "../../fetch-inat-taxa.js";
 import { fetchPlaces, type FetchPlacesOptions } from "../../fetch-places.js";
 import type { Database } from "../../model.js";
 import { duckdbReader, recordPersonChanges } from "../../person-change.js";
@@ -92,6 +93,43 @@ export async function refreshPlaces(
     );
   } catch (err) {
     return `places fetch failed (${(err as Error).message}); promoting with the cache as it stands`;
+  }
+}
+
+/**
+ * One night's requests for the taxon cache: about a minute and a quarter at
+ * the one-a-second pace. A cold fill on production is about 120 requests, so
+ * it takes two nights, and a steady night is the few that the day's new hosts
+ * and the rolling refresh need. The cap is what keeps this step clear of the
+ * 3am backup (beeline-rfkj.1).
+ */
+export const NIGHTLY_TAXON_REQUESTS = 60;
+
+/**
+ * The iNaturalist taxon cache (schema/066), brought up to date after the
+ * pipeline has done what the night is for. Nothing in promotion reads it, so
+ * it runs last.
+ *
+ * NEVER FAILS THE RUN, for refreshPlaces's reason, and with less cause to:
+ * a cache that is a night stale costs a page its common name, nothing more.
+ * A shutdown is not a failure to report; it is rethrown for the framework.
+ */
+export async function refreshInatTaxa(
+  conn: JobContext["conn"],
+  opts: FetchInatTaxaOptions = {},
+): Promise<string> {
+  try {
+    const r = await fetchInatTaxa(conn, { maxRequests: NIGHTLY_TAXON_REQUESTS, ...opts });
+    const gone = r.unresolved.length > 0 ? `, ${r.unresolved.length} gone upstream (${r.unresolved.join(", ")})` : "";
+    if (r.requested === 0) return "taxa cache complete";
+    return (
+      `${r.cached} taxa read in ${r.requested} request(s) (${r.refreshed} refreshed)` +
+      gone +
+      (r.capped ? `; stopped at the cap with more to fetch tomorrow` : "")
+    );
+  } catch (err) {
+    opts.signal?.throwIfAborted();
+    return `taxa fetch failed (${(err as Error).message}); the cache stays as it was`;
   }
 }
 
@@ -311,6 +349,10 @@ export async function pipelineTail(
   }
   const localities = await ctx.step("name localities", () => refreshLocalities(ctx.conn, gazetteerPath, ctx.signal));
   if (localities !== null) parts.push(localities);
+  // Last of the store's own steps and ahead of the check below, so a refusal
+  // does not stop the cache filling and the cache cannot make the check
+  // late; never fails the run (refreshInatTaxa).
+  parts.push(await ctx.step("fetch taxa", () => refreshInatTaxa(ctx.conn, { signal: ctx.signal })));
   // A refused snapshot (beeline-hrw) fails the run — after every store step
   // has done its work, so nothing the nightly is for waits on it — because a
   // refusal is a standing condition that needs a person, and a run marked

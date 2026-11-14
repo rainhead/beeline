@@ -16,6 +16,7 @@ pnpm inat:login                             # OAuth sign-in; mints the 24h JWT s
 pnpm inat:sync <projectId> [d1] [d2]        # observation window → append-only loads
 pnpm inat:promote                           # current observation state → samples
 pnpm inat:backfill-accounts                 # resolve legacy logins → iNat accounts
+pnpm inat:fetch-taxa [db]                   # cache the iNat taxa hosts name, with ancestors and replacements; ~120 requests cold, no token
 pnpm elevation:fetch && pnpm elevation:derive  # DEM tiles (SRTM 1-arc-second, Copernicus GLO-30 where SRTM does not reach) → missing elevations
 pnpm locality:fetch && pnpm locality:gazetteer  # public place names and outlines (about 2 GB) → data/gazetteer.duckdb, on a workstation
 pnpm area:derive [db] [gazetteer]              # the areas (federal wildernesses, counties and BC districts, EPA ecoregions) each sample's coordinates lie inside (the nightly runs it)

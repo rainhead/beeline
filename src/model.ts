@@ -147,6 +147,52 @@ export interface InatPlaceAbsentTable {
   asked_at: Generated<Date>;
 }
 
+// schema/066_inat_taxa.sql, schema/112_views_inat_taxon.sql (beeline-rfkj.1)
+
+/** An iNaturalist taxon the store refers to, as last read from the API. */
+export interface InatTaxonTable {
+  inat_taxon_id: BigIntCol;
+  name: string;
+  /** As iNaturalist writes it: species, subspecies, variety, genus, section... */
+  rank: string;
+  rank_level: number;
+  /** Stale on a retired taxon; null only for Life. */
+  parent_id: BigIntCol | null;
+  is_active: boolean;
+  /** iNaturalist's preferred English name for Oregon. */
+  preferred_common_name: string | null;
+  fetched_at: Generated<Date>;
+}
+
+/** A taxon's lineage, itself included at depth 0. */
+export interface InatTaxonAncestorTable {
+  inat_taxon_id: BigIntCol;
+  ancestor_id: BigIntCol;
+  depth: number;
+}
+
+/** What replaced a retired taxon; a split is several rows. */
+export interface InatTaxonReplacementTable {
+  retired_taxon_id: BigIntCol;
+  replacement_taxon_id: BigIntCol;
+}
+
+/** Taxon ids iNaturalist was asked for and did not return. */
+export interface InatTaxonAbsentTable {
+  inat_taxon_id: BigIntCol;
+  asked_at: Generated<Date>;
+}
+
+/** Taxa something refers to that the cache has not read and iNaturalist has not refused. */
+export interface InatTaxonUncachedView {
+  inat_taxon_id: BigIntCol;
+}
+
+/** Stored replacements of retired taxa that are due to be read again. */
+export interface InatTaxonRecheckView {
+  inat_taxon_id: BigIntCol;
+}
+
 // schema/012_sign_in.sql — signing in, and who has been here (beeline-4tdh)
 
 export interface InatSignInTable {
@@ -1495,6 +1541,12 @@ export interface Database {
   observation_place: ObservationPlaceView;
   observation_place_ambiguous: ObservationPlaceAmbiguousView;
   inat_place_uncached: InatPlaceUncachedView;
+  inat_taxon: InatTaxonTable;
+  inat_taxon_ancestor: InatTaxonAncestorTable;
+  inat_taxon_replacement: InatTaxonReplacementTable;
+  inat_taxon_absent: InatTaxonAbsentTable;
+  inat_taxon_uncached: InatTaxonUncachedView;
+  inat_taxon_recheck: InatTaxonRecheckView;
   animal_ecdysis: AnimalEcdysisView;
   animal_ecdysis_match: AnimalEcdysisMatchView;
   animal_ecdysis_stale: AnimalEcdysisStaleView;

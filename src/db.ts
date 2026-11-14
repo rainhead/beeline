@@ -144,6 +144,76 @@ export async function openQueryCopy(path: string, budget: QueryCopyBudget): Prom
   return instance;
 }
 
+/**
+ * The files and folders the statements of one DuckDB instance may reach,
+ * besides the database it was opened on. See {@link limitFileAccess}.
+ */
+export interface StoreFiles {
+  /** Folders whose contents, at any depth, a statement may read and write. */
+  directories: string[];
+  /** Single files a statement may read and write. */
+  files: string[];
+  /** Other DuckDB databases a statement may attach. */
+  databases: string[];
+}
+
+const sqlList = (paths: string[]) => `[${paths.map((p) => `'${p.replaceAll("'", "''")}'`).join(", ")}]`;
+
+/**
+ * Stop the statements of an instance from reaching any file but the ones
+ * named, for as long as the instance is open (beeline-pnqr.3). After this,
+ * `read_text`, `read_csv`, `COPY ... TO`, `ATTACH`, `ST_Read` and the rest are
+ * refused for every other path, so a statement somebody managed to inject
+ * could not read the machine's files (the pipeline's iNaturalist token in
+ * `data/secrets/`, say) or write over them. It limits DuckDB only: what Node
+ * reads and writes is not its business.
+ *
+ * All of this was measured on DuckDB 2.0.0 (2026-11-13):
+ *
+ *  - It binds the whole instance, every connection made before or after, and
+ *    nothing undoes it: `SET enable_external_access = true` and any later
+ *    change to the two lists are refused until the instance is closed.
+ *  - It can only be given as statements. As options to `DuckDBInstance.create`
+ *    the three settings fail with "Failed to set config".
+ *  - DuckDB keeps its own files reachable without being told: the database,
+ *    its `.wal`, `.wal.checkpoint` and `.wal.recovery`, and its spill folder
+ *    (`<database>.tmp`), which a large sort needs or it fails rather than
+ *    spilling.
+ *  - A path is compared after symbolic links and `..` are resolved, on both
+ *    sides, so a link inside an allowed folder that points out of it is
+ *    refused, and a folder allowed by a path through a link works. A folder
+ *    need not exist yet when it is allowed.
+ *  - Attaching a database asks about its `.wal` path as well, even read-only
+ *    and when there is no such file, so each of `databases` is allowed
+ *    together with that path. This does let a statement attach one of them
+ *    read-write and change it; the limit is on which files, not on what is
+ *    done to them.
+ *  - No extension can be loaded afterwards, whether or not it is installed,
+ *    and `INSTALL` and `duckdb_extensions()` fail. So every extension the
+ *    instance will use is loaded before calling this. `LOAD` of one that is
+ *    already loaded still succeeds, which is what lets {@link loadSpatial}
+ *    stay where it is called. The ICU and JSON functions are part of this
+ *    build and need no loading.
+ *  - The spatial extension's readers obey the limit: `ST_Read` of a file
+ *    outside it fails, and of a `/vsicurl/` address is refused by name.
+ *
+ * Relative paths are resolved against the working directory here, by DuckDB,
+ * when the lists are set.
+ */
+export async function limitFileAccess(instance: DuckDBInstance, files: StoreFiles): Promise<void> {
+  const conn = await instance.connect();
+  try {
+    await conn.run(`SET allowed_directories = ${sqlList(files.directories)}`);
+    await conn.run(`SET allowed_paths = ${sqlList([...files.files, ...files.databases.flatMap((d) => [d, `${d}.wal`])])}`);
+    // No extension is fetched or loaded on demand, whatever a statement names.
+    await conn.run("SET autoinstall_known_extensions = false");
+    await conn.run("SET autoload_known_extensions = false");
+    await conn.run("SET enable_external_access = false");
+  } finally {
+    conn.closeSync();
+  }
+}
+
 /** The in-memory case (tests, the migration tool's drift check). */
 export function openMemoryDuckDb(): Promise<DuckDBInstance> {
   return DuckDBInstance.create(":memory:", { ...duckDbConfig(), ...STORE_TIME_ZONE, ...PLANNER });
@@ -152,8 +222,11 @@ export function openMemoryDuckDb(): Promise<DuckDBInstance> {
 /**
  * Load DuckDB's spatial extension on a connection, for the two things that
  * read outlines: building the gazetteer and naming a sample's locality from
- * its coordinates (beeline-7i6). The store holds no geometry, so it is loaded
- * where it is used rather than at every open. The image installs it at build
+ * its coordinates (beeline-7i6). The store holds no geometry, so the tools
+ * load it where it is used rather than at every open. The app loads it once
+ * when it opens the store (`openAppDb`), because nothing can be loaded after
+ * {@link limitFileAccess}; the calls where it is used then find it loaded and
+ * succeed. The image installs it at build
  * time (Dockerfile), so the machine needs no network here; a
  * workstation or CI fetches it into ~/.duckdb on first use.
  */

@@ -1,6 +1,6 @@
 import { DuckDBInstance } from "@duckdb/node-api";
 import type { Kysely } from "kysely";
-import { createKysely, openDuckDb } from "../db.js";
+import { createKysely, limitFileAccess, loadSpatial, openDuckDb, type StoreFiles } from "../db.js";
 import type { Database } from "../model.js";
 import type { AppConfig } from "./config.js";
 
@@ -10,9 +10,35 @@ export interface AppDb {
   close(): Promise<void>;
 }
 
-/** Open the database the app owns (ADR 0005: exactly one process, this one). */
-export async function openAppDb(config: Pick<AppConfig, "dbPath">): Promise<AppDb> {
+/**
+ * Open the database the app owns (ADR 0005: exactly one process, this one),
+ * and limit the files its statements can reach to `files` (beeline-pnqr.3,
+ * `limitFileAccess` in src/db.ts). The limit is set here and not in
+ * `openDuckDb`, which the command-line tools and the tests share: a tool is
+ * given its files as arguments by whoever runs it and answers no requests.
+ *
+ * The spatial extension is loaded first, because nothing can be loaded once
+ * the limit is set. If it cannot be loaded (it is not installed and there is
+ * no network), the app starts all the same and says so: the steps that name
+ * areas and localities then fail each night, as they did before, and nothing
+ * else needs it.
+ */
+export async function openAppDb(config: Pick<AppConfig, "dbPath">, files: StoreFiles): Promise<AppDb> {
   const instance = await openDuckDb(config.dbPath);
+  try {
+    const conn = await instance.connect();
+    try {
+      await loadSpatial(conn);
+    } catch (err) {
+      console.warn(`could not load DuckDB's spatial extension, so areas and localities will not be named: ${(err as Error).message}`);
+    } finally {
+      conn.closeSync();
+    }
+    await limitFileAccess(instance, files);
+  } catch (err) {
+    instance.closeSync();
+    throw err;
+  }
   const db = createKysely(instance);
   return {
     instance,

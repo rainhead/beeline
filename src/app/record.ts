@@ -861,13 +861,20 @@ export function visibleFindings(findings: RecordFinding[], sample: SampleDetail)
   return sample.location_withheld ? findings.map((f) => ({ ...f, details: null })) : findings;
 }
 
-/** The history of where a sample was is part of where it was. */
+/**
+ * The history of where a sample was is part of where it was. Where the
+ * location is withheld, the entries that say where go, and so does the reason
+ * on every entry that stays: a note written for one change can say where the
+ * sample was (staff's coordinate corrections record theirs on the county and
+ * elevation entries too, and a change to the locality and the protocol made
+ * together shares one reason). A blank reason is shown as no reason.
+ */
 export function visibleHistory(changes: SampleChange[], sample: SampleDetail): SampleChange[] {
   if (!sample.location_withheld) return changes;
   // A staff note on a hold or waiver can say where, as an override's can.
   const hidden = new Set<string>(["location", "location_source", "locality", "hold", "waivers"]);
   if (sample.geoprivacy === "private" || sample.taxon_geoprivacy === "private") hidden.add("county");
-  return changes.filter((c) => !hidden.has(c.field));
+  return changes.filter((c) => !hidden.has(c.field)).map((c) => ({ ...c, reason: "" }));
 }
 
 /** What a record page needs of the store: the database, and the log the history is read from. */

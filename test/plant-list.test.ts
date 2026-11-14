@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { refreshPlantNames } from "../src/app/jobs/registry.js";
 import type { JobContext } from "../src/app/jobs/framework.js";
 import { parseCsv } from "../src/corrections.js";
-import { FAILED_RUNS_BEFORE_GIVING_UP, fetchPlantNames } from "../src/fetch-plant-names.js";
+import { fetchPlantNames } from "../src/fetch-plant-names.js";
 import { loadPlantList, loadPlantListAtBoot, plantListHash, OLD_BEELINE_PLANT_LIST_FILE, parsePlantList } from "../src/load-plant-list.js";
 import { createMemoryDb } from "./helpers.js";
 
@@ -489,58 +489,77 @@ describe("stopping early, dead ends, paging and ranks (synthetic answers)", () =
     expect(await outcome("Foo bar")).toEqual(["matched", 1]);
   });
 
-  describe("a name that always fails", () => {
-    const answering = fake((q) => (q === "foo bad" ? new Response("{}", { status: 500 }) : page(1, [hit(7, "Foo good", "species", true, "Foo good")])));
-    const failedAt = async () => (await rows("SELECT failed_runs FROM plant_name_lookup_failure"))[0]?.[0];
+  describe("a name iNaturalist refuses", () => {
+    const refusing = fake((q) => (q === "foo bad" ? new Response("{}", { status: 422 }) : page(1, [hit(7, "Foo good", "species", true, "Foo good")])));
+    const lookup = async () => (await rows("SELECT answered, total_results FROM plant_name_lookup WHERE name_key = 'foo bad'"))[0];
+    const age = (days: number) => conn.run(`UPDATE plant_name_lookup SET looked_up_at = now() - INTERVAL ${days} DAY WHERE NOT answered`);
 
-    test("is given up on after three runs in which other names were answered, shows in the unmatched view, and is asked again after 30 days", async () => {
-      expect(FAILED_RUNS_BEFORE_GIVING_UP).toBe(3);
+    test("a 4xx is recorded at once as could not be asked, shows in the unmatched view, does not fail the step, and is asked again after 30 days", async () => {
       await addEntries(["Foo bad", "Species", null], ["Foo good", "Species", null]);
-      const r1 = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answering });
-      expect(r1.errors).toHaveLength(1);
-      expect(await failedAt()).toBe(1);
-      const r2 = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answering });
-      expect(r2.errors).toHaveLength(1);
-      expect(await failedAt()).toBe(2);
-      // The third failure is the last: the name is recorded as one that could not be asked.
-      const r3 = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answering });
-      expect(r3.errors).toHaveLength(1);
-      expect(await rows("SELECT count(*) FROM plant_name_lookup_failure")).toEqual([[0]]);
+      const log: string[] = [];
+      const r1 = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: refusing, log: (m) => log.push(m) });
+      expect(r1).toMatchObject({ stored: 1, refused: 1, errors: [], stoppedEarly: false });
+      expect(log).toEqual(['iNat API 422 on /taxa for "foo bad": recorded as could not be asked']);
+      expect(await lookup()).toEqual([false, 0]);
       expect(await outcome("Foo bad")).toEqual(["could not be asked", null]);
       expect(await rows("SELECT outcome FROM plant_list_entry_unmatched WHERE scientific_name = 'Foo bad'")).toEqual([["could not be asked"]]);
-      // The step no longer fails every night.
+      // Not asked again for 30 days.
+      await age(29);
       expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
-      const r4 = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answering });
-      expect(r4).toMatchObject({ unlooked: 0, errors: [] });
-      // After 30 days it is asked again, and answered when the API now can.
-      await conn.run("UPDATE plant_name_lookup SET looked_up_at = now() - INTERVAL 31 DAY WHERE NOT answered");
+      asked.length = 0;
+      expect(await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: refusing })).toMatchObject({ unlooked: 0, requested: 0 });
+      expect(asked).toEqual([]);
+      // After 31 days it is asked again, and answered when iNaturalist now answers it.
+      await age(31);
       expect(await rows("SELECT name_key FROM plant_name_unlooked")).toEqual([["foo bad"]]);
       await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: fake(() => page(1, [hit(8, "Foo bad", "species", true)])) });
       expect(await outcome("Foo bad")).toEqual(["matched", 8]);
     });
 
-    test("an outage that fails every name counts against none", async () => {
-      await addEntries(["Foo bad", "Species", null], ["Foo good", "Species", null]);
-      for (let i = 0; i < 4; i++) await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: fake(() => new Response("{}", { status: 503 })) });
-      expect(await rows("SELECT count(*) FROM plant_name_lookup_failure")).toEqual([[0]]);
-      expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[2]]);
-    });
-
-    test("a name that failed before is asked after the others, so it cannot use up the run's chances", async () => {
-      await addEntries(["Foo bad", "Species", null], ["Foo good", "Species", null]);
-      await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answering });
-      asked.length = 0;
-      await conn.run("INSERT INTO plant_list_entry (list_key, scientific_name, rank) VALUES ('old-beeline', 'Aaa first', 'Species')");
-      await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: answering });
-      expect(asked.map((u) => new URL(u).searchParams.get("q"))).toEqual(["aaa first", "foo bad"]);
-    });
-
-    test("a re-asked name with an answer keeps it when it keeps failing", async () => {
-      await dueAgain();
-      await addEntries(["Foo good", "Species", null]);
-      for (let i = 0; i < 3; i++) await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: fake((q) => (q === "foo bar" ? new Response("{}", { status: 500 }) : page(1, [hit(7, "Foo good", "species", true)]))) });
-      expect(await outcome("Foo bar")).toEqual(["matched", 1]);
+    test("refused again when asked again, it is recorded again with a new time, so it waits another 30 days", async () => {
+      await addEntries(["Foo bad", "Species", null]);
+      await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: refusing });
+      await age(31);
+      expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[1]]);
+      const r = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: refusing });
+      expect(r).toMatchObject({ refused: 1, errors: [] });
+      expect(await rows("SELECT answered, looked_up_at > now() - INTERVAL 1 DAY FROM plant_name_lookup")).toEqual([[false, true]]);
       expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
+    });
+
+    test("a 429 is not an answer about the name: nothing is recorded and the run stops", async () => {
+      await addEntries(["Foo bad", "Species", null]);
+      const r = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: fake(() => new Response("{}", { status: 429 })) });
+      expect(r).toMatchObject({ rateLimited: true, refused: 0 });
+      expect(await rows("SELECT count(*) FROM plant_name_lookup")).toEqual([[0]]);
+    });
+
+    test("a 500 is never recorded: the name keeps its previous answer, fails the step, and is asked again next run", async () => {
+      await dueAgain();
+      const failing = fake(() => new Response("{}", { status: 500 }));
+      const r = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: failing });
+      expect(r).toMatchObject({ stored: 0, refused: 0 });
+      expect(r.errors).toHaveLength(1);
+      expect(await outcome("Foo bar")).toEqual(["matched", 1]);
+      expect(await rows("SELECT answered FROM plant_name_lookup")).toEqual([[true]]);
+      expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[1]]);
+    });
+
+    test("a transient failure on a re-ask of a refused name leaves the row as it is: one request each run, never a retry within a run", async () => {
+      await addEntries(["Foo bad", "Species", null]);
+      await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: refusing });
+      await age(31);
+      const before = await rows("SELECT looked_up_at FROM plant_name_lookup");
+      const failing = fake(() => new Response("{}", { status: 503 }));
+      asked.length = 0;
+      for (let night = 0; night < 3; night++) {
+        const r = await fetchPlantNames(conn, { requestDelayMs: 0, fetchImpl: failing });
+        expect(r).toMatchObject({ unlooked: 1, requested: 1, refused: 0 });
+        expect(r.errors).toHaveLength(1);
+      }
+      expect(asked).toHaveLength(3);
+      expect(await rows("SELECT looked_up_at FROM plant_name_lookup")).toEqual(before);
+      expect(await lookup()).toEqual([false, 0]);
     });
   });
 
@@ -822,14 +841,14 @@ describe("common names", () => {
       ["Apiaceae", "Family", "carrot family"],
       ["Carduinae", "Subtribe", "thistles and burdocks"],
       ["Rhododendron", "Genus", "rhododendron, azalea"],
-      ["Amsinckia", "Genus", "forget-me-not or borage"],
+      ["Boraginaceae", "Family", "forget-me-not or borage"],
       ["Salvia", "Genus", "sage; salvia"],
       ["Magnolia", "Genus", "magnolia"],
       ["Linaria vulgaris", "Species", "butter and eggs, common toadflax"],
       ["Myosotis discolor", "Species", "changing forget-me-not, yellow and blue forget-me-not"],
     );
     expect(await rows("SELECT scientific_name FROM plant_list_entry_several_names ORDER BY 1")).toEqual([
-      ["Amsinckia"], ["Carduinae"], ["Cichorieae"], ["Cucurbitaceae"], ["Prunus"], ["Rhododendron"], ["Salvia"],
+      ["Boraginaceae"], ["Carduinae"], ["Cichorieae"], ["Cucurbitaceae"], ["Prunus"], ["Rhododendron"], ["Salvia"],
     ]);
     expect(await rows("SELECT scientific_name, common_name FROM plant_list_entry_common_name ORDER BY 1")).toEqual([
       ["Apiaceae", "carrot family"], // one name, so shown, though it names a group

@@ -37,6 +37,14 @@ import { DEFAULT_DB } from "./person-change.js";
  * (plant_name_lookup.answered false). It then shows in plant_list_entry_unmatched, stops failing the step
  * every night, and is asked again after 30 days (plant_name_unlooked).
  *
+ * WHEN A REQUEST FAILS. A 4xx status other than 429 is iNaturalist's answer
+ * about the name (it refuses the query): the lookup is recorded at once as one
+ * that could not be asked (answered = false), which stops it failing the step,
+ * and the name is asked again after 30 days. A 5xx, a network error or a
+ * timeout is transient: nothing is recorded, the name keeps any answer it had,
+ * and it is asked again next run, the step being marked failed. A 429 stops
+ * the run.
+ *
  * PACE AND BUDGET. A request about every 1.1 seconds, no token, as
  * src/fetch-inat-taxa.ts does; measured on 2026-11-14, 1,404 names took 29
  * minutes (1.2 seconds each). The nightly gives it 300 names, about six
@@ -71,6 +79,8 @@ export interface FetchPlantNamesResult {
   requested: number;
   /** Lookups stored, answered with a hit or without. */
   stored: number;
+  /** Names iNaturalist refused with a 4xx status other than 429, recorded as could not be asked (asked again after 30 days). */
+  refused: number;
   errors: string[];
   /** True when the cap or a deadline left names unasked. */
   stoppedEarly: boolean;
@@ -104,15 +114,9 @@ export async function fetchPlantNames(
   const delay = opts.requestDelayMs ?? 1_100;
   const cap = opts.maxRequests ?? Infinity;
 
-  // Names that failed in earlier runs go last, so a name that always fails cannot use up the run's chances
-  // (three failures in a row stop it) before the others have been asked.
   const todo = (
     (await (
-      await conn.run(
-        `SELECT u.name_key, u.expected_rank FROM plant_name_unlooked u
-         LEFT JOIN plant_name_lookup_failure f ON f.name_key = u.name_key AND f.expected_rank = u.expected_rank
-         ORDER BY coalesce(f.failed_runs, 0), u.name_key, u.expected_rank`,
-      )
+      await conn.run("SELECT name_key, expected_rank FROM plant_name_unlooked ORDER BY name_key, expected_rank")
     ).getRows()) as Array<[string, string]>
   ).map(([nameKey, expectedRank]) => ({ nameKey, expectedRank }));
   const ranksOf = new Map<string, string[]>();
@@ -122,23 +126,22 @@ export async function fetchPlantNames(
     ranksOf.set(expected, [...(ranksOf.get(expected) ?? []), inat]);
   }
 
-  const result: FetchPlantNamesResult = { unlooked: todo.length, requested: 0, stored: 0, errors: [], stoppedEarly: false, rateLimited: false };
+  const result: FetchPlantNamesResult = { unlooked: todo.length, requested: 0, stored: 0, refused: 0, errors: [], stoppedEarly: false, rateLimited: false };
   const fail = (message: string) => {
     result.errors.push(message);
     opts.log?.(message);
   };
   let failuresInARow = 0;
-  // Names that failed in this run; counted against the bound below only if the API answered another name.
-  const failedNames: Array<{ nameKey: string; expectedRank: string; error: string }> = [];
   names: for (const { nameKey, expectedRank } of todo) {
     // Every page is read before anything is written, and the name's hits and lookup row are then replaced
-    // in one transaction. So a name asked again (its taxon retired, or its old failure expired) keeps its
+    // in one transaction. So a name asked again (its taxon retired, or its refusal 30 days old) keeps its
     // old answer through a failed request, a 429, the cap or a shutdown, and a name whose later page fails
     // is not recorded as answered.
     let total = 0;
     let seen = 0;
     let readInFull = false;
     let failure: string | null = null;
+    let refusedWith: number | null = null;
     const hits: HitJson[] = [];
     for (let page = 1; page <= MAX_PAGES; page++) {
       if (result.requested >= cap) {
@@ -173,6 +176,8 @@ export async function fetchPlantNames(
             result.rateLimited = true;
             break names;
           }
+          // Any other 4xx is iNaturalist's answer about this name, not a fault of the run (see below).
+          if (response.status >= 400 && response.status < 500) refusedWith = response.status;
         }
       } catch (err) {
         if (opts.signal?.aborted) {
@@ -193,10 +198,22 @@ export async function fetchPlantNames(
         break;
       }
     }
+    if (refusedWith !== null) {
+      // A refusal (a 4xx other than 429) is iNaturalist's answer about the name: recorded at once as one that
+      // could not be asked, so it stops failing the step, and asked again after 30 days (plant_name_unlooked).
+      // A name that was refused before and is refused again gets a new looked_up_at, so it waits another 30 days.
+      opts.log?.(`iNat API ${refusedWith} on /taxa for "${nameKey}": recorded as could not be asked`);
+      await recordAnswer(conn, nameKey, expectedRank, [], 0, false, false);
+      result.refused += 1;
+      failuresInARow = 0;
+      continue;
+    }
     if (failure !== null) {
-      // Not recorded as an answer: the name is asked again next run (or, after enough runs, given up on).
+      // A 5xx, a network error or a timeout is transient: nothing is recorded, so the name keeps any previous
+      // answer and is asked again next run. A name that was already waiting on a re-ask (its old lookup is
+      // more than 30 days old, or its taxon was found retired) is therefore asked once each run, one request,
+      // and fails the step each night until iNaturalist answers; it is never retried within a run.
       fail(`iNat API ${failure} on /taxa for "${nameKey}"`);
-      failedNames.push({ nameKey, expectedRank, error: failure });
       failuresInARow += 1;
       if (failuresInARow >= FAILURES_IN_A_ROW) {
         result.stoppedEarly = true;
@@ -207,62 +224,13 @@ export async function fetchPlantNames(
     failuresInARow = 0;
     // Recorded as answered either way, so the name is not asked again every night; a lookup the page cap
     // cut short reads as 'too many results' and gives the name no taxon (plant_name_resolution).
-    await recordAnswer(conn, nameKey, expectedRank, hits, total, readInFull);
+    await recordAnswer(conn, nameKey, expectedRank, hits, total, readInFull, true);
     result.stored += 1;
-  }
-  // A failure counts toward the bound only when the API has answered some other name lately (in this run, or
-  // in the last week): an outage that fails everything must not use up a name's chances. Once the list is
-  // filled a failing name may be all a run has to ask, so this run's answers alone would never count it.
-  const answeredLately =
-    result.stored > 0 ||
-    ((await (await conn.run("SELECT count(*) FROM plant_name_lookup WHERE answered AND looked_up_at > now() - INTERVAL 7 DAY")).getRows()) as [[bigint]])[0][0] > 0n;
-  if (answeredLately) {
-    for (const f of failedNames) await recordFailure(conn, f.nameKey, f.expectedRank, f.error);
   }
   return result;
 }
 
-/** Failed runs after which a name is given up on for ASKING_AGAIN_DAYS (plant_name_lookup.answered). */
-export const FAILED_RUNS_BEFORE_GIVING_UP = 3;
-
-/**
- * Count a run in which the name could not be asked. At the bound the name is recorded as one that could not
- * be asked, so it stops failing the step every night, and is asked again after 30 days (plant_name_unlooked).
- * A name that already has an answer keeps it: the lookup is only marked as recent, which defers the next
- * re-ask until the taxon cache next finds the taxon retired.
- */
-async function recordFailure(conn: DuckDBConnection, nameKey: string, expectedRank: string, error: string): Promise<void> {
-  await conn.run(
-    `INSERT INTO plant_name_lookup_failure (name_key, expected_rank, failed_runs, last_error) VALUES ($1, $2, 1, $3)
-     ON CONFLICT (name_key, expected_rank) DO UPDATE SET failed_runs = failed_runs + 1, last_error = excluded.last_error, last_failed_at = now()`,
-    [nameKey, expectedRank, error],
-  );
-  const [[runs]] = (await (
-    await conn.run("SELECT failed_runs FROM plant_name_lookup_failure WHERE name_key = $1 AND expected_rank = $2", [nameKey, expectedRank])
-  ).getRows()) as [[number]];
-  if (runs < FAILED_RUNS_BEFORE_GIVING_UP) return;
-  await conn.run("BEGIN TRANSACTION");
-  try {
-    const updated = await conn.run(
-      "UPDATE plant_name_lookup SET looked_up_at = now() WHERE name_key = $1 AND expected_rank = $2 AND answered",
-      [nameKey, expectedRank],
-    );
-    if (updated.rowsChanged === 0) {
-      await conn.run("DELETE FROM plant_name_lookup WHERE name_key = $1 AND expected_rank = $2", [nameKey, expectedRank]);
-      await conn.run(
-        "INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full, answered) VALUES ($1, $2, 0, false, false)",
-        [nameKey, expectedRank],
-      );
-    }
-    await conn.run("DELETE FROM plant_name_lookup_failure WHERE name_key = $1 AND expected_rank = $2", [nameKey, expectedRank]);
-    await conn.run("COMMIT");
-  } catch (err) {
-    await conn.run("ROLLBACK");
-    throw err;
-  }
-}
-
-/** Replace the name's hits and its lookup row with the answer, in one transaction. */
+/** Replace the name's hits and its lookup row with the answer (or, where answered is false, the refusal), in one transaction. */
 async function recordAnswer(
   conn: DuckDBConnection,
   nameKey: string,
@@ -270,16 +238,16 @@ async function recordAnswer(
   hits: HitJson[],
   total: number,
   readInFull: boolean,
+  answered: boolean,
 ): Promise<void> {
   await conn.run("BEGIN TRANSACTION");
   try {
     await clear(conn, nameKey, expectedRank);
     await storeHits(conn, nameKey, expectedRank, hits);
     await conn.run(
-      "INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ($1, $2, $3, $4)",
-      [nameKey, expectedRank, total, readInFull],
+      "INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full, answered) VALUES ($1, $2, $3, $4, $5)",
+      [nameKey, expectedRank, total, readInFull, answered],
     );
-    await conn.run("DELETE FROM plant_name_lookup_failure WHERE name_key = $1 AND expected_rank = $2", [nameKey, expectedRank]);
     await conn.run("COMMIT");
   } catch (err) {
     await conn.run("ROLLBACK");

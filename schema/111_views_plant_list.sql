@@ -232,21 +232,23 @@ COMMENT ON VIEW plant_list_taxon_shared IS 'Taxa that two or more entries of one
 -- genus rank or above the list sometimes writes several names, or the members
 -- of a group, where one name belongs: 'Plums, cherries, and allies' for
 -- Prunus, 'cucumber, gourd family' for Cucurbitaceae, 'forget-me-not or
--- borage' for Amsinckia. Cut at the first separator it would show one of them
--- as if it were the taxon's name, so the entry gives no name, and a host takes
+-- borage' for Boraginaceae. Cut at the first separator it would show one of
+-- them as if it were the taxon's name, so the entry gives no name, and a host takes
 -- iNaturalist's name for Oregon instead (plant_taxon_common_name), and the
 -- entry does not name the hosts beneath it either. At species rank and below
 -- the cell is synonyms and the first is shown ('butter and eggs, common
 -- toadflax'). The rule is the one view below, so it is changed in one place:
--- the entry's scientific name is one word (genus or above) and the cell holds
--- more than one name: a comma, a semicolon, ' or ' or ' and ' separates them.
+-- the entry's expected rank (plant_list_entry_name) is genus or above, not
+-- species or infraspecific, and the cell holds more than one name: a comma, a
+-- semicolon, ' or ' or ' and ' separates them.
 CREATE VIEW plant_list_entry_several_names AS
-SELECT list_key, scientific_name, common_name
-FROM plant_list_entry
-WHERE common_name IS NOT NULL
-  AND position(' ' IN trim(scientific_name)) = 0
-  AND regexp_matches(lower(trim(common_name)), '[,;]| or | and ');
-COMMENT ON VIEW plant_list_entry_several_names IS 'Entries at genus rank or above (a one-word scientific name) whose common-name cell holds more than one name, separated by a comma, a semicolon, " or " or " and " (Plums, cherries, and allies; forget-me-not or borage). They give no common name (plant_list_entry_common_name), so a host takes iNaturalist''s. A species'' or lower entry with several names shows the first and is not listed here.';
+SELECT e.list_key, e.scientific_name, e.common_name
+FROM plant_list_entry e
+JOIN plant_list_entry_name n ON n.list_key = e.list_key AND n.scientific_name = e.scientific_name
+WHERE e.common_name IS NOT NULL
+  AND n.expected_rank NOT IN ('species', 'infraspecific')
+  AND regexp_matches(lower(trim(e.common_name)), '[,;]| or | and ');
+COMMENT ON VIEW plant_list_entry_several_names IS 'Entries whose expected rank is genus or above (plant_list_entry_name; not species or infraspecific) and whose common-name cell holds more than one name, separated by a comma, a semicolon, " or " or " and " (Plums, cherries, and allies; forget-me-not or borage). They give no common name (plant_list_entry_common_name), so a host takes iNaturalist''s. A species'' or lower entry with several names shows the first and is not listed here.';
 
 CREATE VIEW plant_list_entry_common_name AS
 SELECT list_key, scientific_name, shown AS common_name

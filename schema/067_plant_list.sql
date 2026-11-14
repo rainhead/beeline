@@ -40,7 +40,7 @@ COMMENT ON COLUMN plant_list_entry.scientific_name IS 'The name as the list wrot
 COMMENT ON COLUMN plant_list_entry.rank IS 'The list''s Rank column. Unreliable: use plant_list_entry_name.expected_rank.';
 COMMENT ON COLUMN plant_list_entry.family IS 'The list''s Family column.';
 COMMENT ON COLUMN plant_list_entry.synonym IS 'The list''s Synonym column, other scientific names for the same plant separated by commas. Not read yet: matching a name the list calls a synonym is beeline-rfkj.6.';
-COMMENT ON COLUMN plant_list_entry.common_name IS 'The list''s Common_name column: one or several names separated by commas or semicolons, the first being the one shown. Sometimes a placeholder that is no name (Abelia Species, tribe Cardamineae); plant_list_entry_common_name leaves those out.';
+COMMENT ON COLUMN plant_list_entry.common_name IS 'The list''s Common_name column: one or several names separated by commas or semicolons, the first being the one shown, except at genus rank or above, where several names give none (plant_list_entry_several_names). Sometimes a placeholder that is no name (Abelia Species, tribe Cardamineae); plant_list_entry_common_name leaves those out.';
 
 -- What iNaturalist answered when asked for a normalised name at an expected
 -- rank (src/fetch-plant-names.ts), one row per question, whatever the answer.
@@ -59,24 +59,8 @@ COMMENT ON COLUMN plant_name_lookup.name_key IS 'The normalised name that was se
 COMMENT ON COLUMN plant_name_lookup.expected_rank IS 'The rank the name''s shape implies (plant_list_entry_name.expected_rank); the search was restricted to the iNaturalist ranks that stand for it (plant_expected_rank).';
 COMMENT ON COLUMN plant_name_lookup.total_results IS 'How many taxa iNaturalist said matched. Every page of 30 is read until the results run out, because a second taxon of the name on a later page is what makes the name ambiguous, up to a cap of pages (read_in_full).';
 COMMENT ON COLUMN plant_name_lookup.read_in_full IS 'Whether every page of the answer was read. False when the page cap stopped the reading with results left, so a taxon of the name may be among those not read: plant_name_resolution then gives the name no taxon (too many results) rather than judge it on part of the answer.';
-COMMENT ON COLUMN plant_name_lookup.answered IS 'False when the name could not be asked: its request failed in three runs in which iNaturalist answered other names (plant_name_lookup_failure), so the row records the giving up and no answer. plant_name_resolution then says "could not be asked", and plant_name_unlooked asks again once the row is 30 days old.';
-COMMENT ON COLUMN plant_name_lookup.looked_up_at IS 'When iNaturalist answered (or, where answered is false, when the name was given up on). A name whose taxon the taxon cache read as retired after this is asked again (plant_name_unlooked). Moved forward without a new answer when a re-ask of a name with an answer fails three runs in a row, so that the failure does not repeat every night.';
-
--- How many runs a name's request has failed in, for the bound on retrying a
--- name that always fails (src/fetch-plant-names.ts). A row is removed when the
--- name is answered or given up on.
-CREATE TABLE plant_name_lookup_failure (
-  name_key      TEXT NOT NULL,
-  expected_rank TEXT NOT NULL,
-  failed_runs   INTEGER NOT NULL,
-  last_failed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_error    TEXT NOT NULL,
-  PRIMARY KEY (name_key, expected_rank)
-);
-COMMENT ON TABLE plant_name_lookup_failure IS 'Runs of src/fetch-plant-names.ts in which the request for a name failed, counted only where iNaturalist answered some other name in the same run or the week before (an outage fails every name and counts against none). At three the name is recorded as one that could not be asked (plant_name_lookup.answered) and the row is removed. Bookkeeping, not data: nothing reads it but the fetcher.';
-COMMENT ON COLUMN plant_name_lookup_failure.failed_runs IS 'Runs in which this name failed since it was last answered.';
-COMMENT ON COLUMN plant_name_lookup_failure.last_failed_at IS 'When the last of those runs failed.';
-COMMENT ON COLUMN plant_name_lookup_failure.last_error IS 'The HTTP status or error message of the last failure.';
+COMMENT ON COLUMN plant_name_lookup.answered IS 'False when iNaturalist refused the request for the name with a 4xx status other than 429, so the row records the refusal and no answer: plant_name_resolution then says "could not be asked", and plant_name_unlooked asks again once the row is 30 days old. A failure that may pass (a 5xx, a network error, a timeout) is never recorded.';
+COMMENT ON COLUMN plant_name_lookup.looked_up_at IS 'When iNaturalist answered, or, where answered is false, when it last refused the name: a name refused again when asked again gets a new time, so it waits another 30 days. A name whose taxon the taxon cache read as retired after this is asked again (plant_name_unlooked).';
 
 CREATE TABLE plant_name_lookup_hit (
   name_key      TEXT NOT NULL,

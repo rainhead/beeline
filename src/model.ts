@@ -235,15 +235,6 @@ export interface PlantNameLookupTable {
   looked_up_at: Generated<Date>;
 }
 
-/** Runs in which a name's request failed, for the bound on retrying it. */
-export interface PlantNameLookupFailureTable {
-  name_key: string;
-  expected_rank: string;
-  failed_runs: number;
-  last_failed_at: Generated<Date>;
-  last_error: string;
-}
-
 /** A taxon iNaturalist returned for a lookup, as returned. */
 export interface PlantNameLookupHitTable {
   name_key: string;
@@ -1713,7 +1704,6 @@ export interface Database {
   plant_list: PlantListTable;
   plant_list_entry: PlantListEntryTable;
   plant_name_lookup: PlantNameLookupTable;
-  plant_name_lookup_failure: PlantNameLookupFailureTable;
   plant_name_lookup_hit: PlantNameLookupHitTable;
   plant_name_lookup_hit_replacement: PlantNameLookupHitReplacementTable;
   plant_name_normal: PlantNameNormalView;

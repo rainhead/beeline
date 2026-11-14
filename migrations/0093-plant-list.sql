@@ -50,7 +50,7 @@ COMMENT ON COLUMN plant_list_entry.scientific_name IS 'The name as the list wrot
 COMMENT ON COLUMN plant_list_entry.rank IS 'The list''s Rank column. Unreliable: use plant_list_entry_name.expected_rank.';
 COMMENT ON COLUMN plant_list_entry.family IS 'The list''s Family column.';
 COMMENT ON COLUMN plant_list_entry.synonym IS 'The list''s Synonym column, other scientific names for the same plant separated by commas. Not read yet: matching a name the list calls a synonym is beeline-rfkj.6.';
-COMMENT ON COLUMN plant_list_entry.common_name IS 'The list''s Common_name column: one or several names separated by commas or semicolons, the first being the one shown. Sometimes a placeholder that is no name (Abelia Species, tribe Cardamineae); plant_list_entry_common_name leaves those out.';
+COMMENT ON COLUMN plant_list_entry.common_name IS 'The list''s Common_name column: one or several names separated by commas or semicolons, the first being the one shown, except at genus rank or above, where several names give none (plant_list_entry_several_names). Sometimes a placeholder that is no name (Abelia Species, tribe Cardamineae); plant_list_entry_common_name leaves those out.';
 
 -- What iNaturalist answered when asked for a normalised name at an expected
 -- rank (src/fetch-plant-names.ts), one row per question, whatever the answer.
@@ -69,24 +69,8 @@ COMMENT ON COLUMN plant_name_lookup.name_key IS 'The normalised name that was se
 COMMENT ON COLUMN plant_name_lookup.expected_rank IS 'The rank the name''s shape implies (plant_list_entry_name.expected_rank); the search was restricted to the iNaturalist ranks that stand for it (plant_expected_rank).';
 COMMENT ON COLUMN plant_name_lookup.total_results IS 'How many taxa iNaturalist said matched. Every page of 30 is read until the results run out, because a second taxon of the name on a later page is what makes the name ambiguous, up to a cap of pages (read_in_full).';
 COMMENT ON COLUMN plant_name_lookup.read_in_full IS 'Whether every page of the answer was read. False when the page cap stopped the reading with results left, so a taxon of the name may be among those not read: plant_name_resolution then gives the name no taxon (too many results) rather than judge it on part of the answer.';
-COMMENT ON COLUMN plant_name_lookup.answered IS 'False when the name could not be asked: its request failed in three runs in which iNaturalist answered other names (plant_name_lookup_failure), so the row records the giving up and no answer. plant_name_resolution then says "could not be asked", and plant_name_unlooked asks again once the row is 30 days old.';
-COMMENT ON COLUMN plant_name_lookup.looked_up_at IS 'When iNaturalist answered (or, where answered is false, when the name was given up on). A name whose taxon the taxon cache read as retired after this is asked again (plant_name_unlooked). Moved forward without a new answer when a re-ask of a name with an answer fails three runs in a row, so that the failure does not repeat every night.';
-
--- How many runs a name's request has failed in, for the bound on retrying a
--- name that always fails (src/fetch-plant-names.ts). A row is removed when the
--- name is answered or given up on.
-CREATE TABLE plant_name_lookup_failure (
-  name_key      TEXT NOT NULL,
-  expected_rank TEXT NOT NULL,
-  failed_runs   INTEGER NOT NULL,
-  last_failed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_error    TEXT NOT NULL,
-  PRIMARY KEY (name_key, expected_rank)
-);
-COMMENT ON TABLE plant_name_lookup_failure IS 'Runs of src/fetch-plant-names.ts in which the request for a name failed, counted only where iNaturalist answered some other name in the same run or the week before (an outage fails every name and counts against none). At three the name is recorded as one that could not be asked (plant_name_lookup.answered) and the row is removed. Bookkeeping, not data: nothing reads it but the fetcher.';
-COMMENT ON COLUMN plant_name_lookup_failure.failed_runs IS 'Runs in which this name failed since it was last answered.';
-COMMENT ON COLUMN plant_name_lookup_failure.last_failed_at IS 'When the last of those runs failed.';
-COMMENT ON COLUMN plant_name_lookup_failure.last_error IS 'The HTTP status or error message of the last failure.';
+COMMENT ON COLUMN plant_name_lookup.answered IS 'False when iNaturalist refused the request for the name with a 4xx status other than 429, so the row records the refusal and no answer: plant_name_resolution then says "could not be asked", and plant_name_unlooked asks again once the row is 30 days old. A failure that may pass (a 5xx, a network error, a timeout) is never recorded.';
+COMMENT ON COLUMN plant_name_lookup.looked_up_at IS 'When iNaturalist answered, or, where answered is false, when it last refused the name: a name refused again when asked again gets a new time, so it waits another 30 days. A name whose taxon the taxon cache read as retired after this is asked again (plant_name_unlooked).';
 
 CREATE TABLE plant_name_lookup_hit (
   name_key      TEXT NOT NULL,
@@ -349,21 +333,23 @@ COMMENT ON VIEW plant_list_taxon_shared IS 'Taxa that two or more entries of one
 -- genus rank or above the list sometimes writes several names, or the members
 -- of a group, where one name belongs: 'Plums, cherries, and allies' for
 -- Prunus, 'cucumber, gourd family' for Cucurbitaceae, 'forget-me-not or
--- borage' for Amsinckia. Cut at the first separator it would show one of them
--- as if it were the taxon's name, so the entry gives no name, and a host takes
+-- borage' for Boraginaceae. Cut at the first separator it would show one of
+-- them as if it were the taxon's name, so the entry gives no name, and a host takes
 -- iNaturalist's name for Oregon instead (plant_taxon_common_name), and the
 -- entry does not name the hosts beneath it either. At species rank and below
 -- the cell is synonyms and the first is shown ('butter and eggs, common
 -- toadflax'). The rule is the one view below, so it is changed in one place:
--- the entry's scientific name is one word (genus or above) and the cell holds
--- more than one name: a comma, a semicolon, ' or ' or ' and ' separates them.
+-- the entry's expected rank (plant_list_entry_name) is genus or above, not
+-- species or infraspecific, and the cell holds more than one name: a comma, a
+-- semicolon, ' or ' or ' and ' separates them.
 CREATE VIEW plant_list_entry_several_names AS
-SELECT list_key, scientific_name, common_name
-FROM plant_list_entry
-WHERE common_name IS NOT NULL
-  AND position(' ' IN trim(scientific_name)) = 0
-  AND regexp_matches(lower(trim(common_name)), '[,;]| or | and ');
-COMMENT ON VIEW plant_list_entry_several_names IS 'Entries at genus rank or above (a one-word scientific name) whose common-name cell holds more than one name, separated by a comma, a semicolon, " or " or " and " (Plums, cherries, and allies; forget-me-not or borage). They give no common name (plant_list_entry_common_name), so a host takes iNaturalist''s. A species'' or lower entry with several names shows the first and is not listed here.';
+SELECT e.list_key, e.scientific_name, e.common_name
+FROM plant_list_entry e
+JOIN plant_list_entry_name n ON n.list_key = e.list_key AND n.scientific_name = e.scientific_name
+WHERE e.common_name IS NOT NULL
+  AND n.expected_rank NOT IN ('species', 'infraspecific')
+  AND regexp_matches(lower(trim(e.common_name)), '[,;]| or | and ');
+COMMENT ON VIEW plant_list_entry_several_names IS 'Entries whose expected rank is genus or above (plant_list_entry_name; not species or infraspecific) and whose common-name cell holds more than one name, separated by a comma, a semicolon, " or " or " and " (Plums, cherries, and allies; forget-me-not or borage). They give no common name (plant_list_entry_common_name), so a host takes iNaturalist''s. A species'' or lower entry with several names shows the first and is not listed here.';
 
 CREATE VIEW plant_list_entry_common_name AS
 SELECT list_key, scientific_name, shown AS common_name

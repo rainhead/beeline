@@ -213,9 +213,9 @@ export async function refreshPlantNames(
   const parts: string[] = [];
   try {
     // Any request error marks the step failed (as the taxa step does on main) while the
-    // run goes on, so /jobs and the menu say so (beeline-222u). A name that always fails
-    // stops being an error after three runs (fetch-plant-names.ts), so this does not
-    // fail every night for ever.
+    // run goes on, so /jobs and the menu say so (beeline-222u). A name iNaturalist refuses
+    // with a 4xx is recorded as could not be asked and is no error (fetch-plant-names.ts),
+    // so only a failure that may pass marks the step.
     const r = await step(
       "ask for plant names",
       () => fetchPlantNames(conn, { maxRequests: NIGHTLY_PLANT_NAME_REQUESTS, ...opts, signal }),
@@ -228,6 +228,7 @@ export async function refreshPlantNames(
       r.unlooked === 0
         ? "every plant list name answered"
         : `${r.stored} of ${r.unlooked} plant list names answered` +
+            (r.refused > 0 ? `; ${r.refused} recorded as could not be asked (iNaturalist refused the name)` : "") +
             (r.errors.length > 0 ? `; ${r.errors.length} request error(s), the first: ${r.errors[0]}` : "") +
             (r.stoppedEarly ? "; the rest wait for the next run" : ""),
     );

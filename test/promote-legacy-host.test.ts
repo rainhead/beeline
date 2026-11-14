@@ -85,7 +85,7 @@ beforeAll(async () => {
   await insert("host-116b", "9216", { sid: "116", genus: "Holodiscus", species: "discolor" }, "2");
   await promoteLegacy(conn, FIXTURE_INPUTS);
   promoted = await rows(conn, `SELECT sample_number, host_name_as_observed, host_rank FROM sample ORDER BY 1`);
-  migration = await readFile(`${MIGRATIONS_DIR}0089-host-name-from-genus-and-epithet.sql`, "utf8");
+  migration = await readFile(`${MIGRATIONS_DIR}0091-host-name-from-genus-and-epithet.sql`, "utf8");
 });
 
 describe("a promoted sample's host", () => {
@@ -103,7 +103,7 @@ describe("a promoted sample's host", () => {
   });
 });
 
-describe("migration 0089, on a store promoted before the rule", () => {
+describe("migration 0091, on a store promoted before the rule", () => {
   // Put the stored hosts back as the old rule wrote them: the first non-empty
   // plant column of the sample's first record, ranked by its column.
   const OLD = `

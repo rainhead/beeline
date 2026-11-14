@@ -697,7 +697,7 @@ SELECT
   -- Everything else is left as it was, including a trinomial, a hybrid and a
   -- name with stray whitespace in speciesPlant: those are written whole and
   -- the rules above do not claim to recognise them. Repeated, with the same
-  -- patterns, by migrations/0089-host-name-from-genus-and-epithet.sql, which
+  -- patterns, by migrations/0091-host-name-from-genus-and-epithet.sql, which
   -- repairs stores that will never be promoted again.
   arg_min(CASE
     WHEN regexp_full_match(coalesce(r.speciesPlant, ''), '[a-z][a-z-]*')

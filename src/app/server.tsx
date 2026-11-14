@@ -1298,8 +1298,8 @@ export function createApp({
         sampleId={sampleId}
       />,
     );
-  const recordTrapChange = (c: Context<AppEnv>, sampleId: number) =>
-    recordTrapSampleChange(corrective, c.get("session").login, sampleId);
+  const recordTrapChange = (c: Context<AppEnv>, sampleId: number, made: { created?: boolean } = {}) =>
+    recordTrapSampleChange(corrective, c.get("session").login, sampleId, made);
 
   app.get("/trap-samples/new", async (c) => {
     const refused = await trapGate(c, false);
@@ -1337,7 +1337,11 @@ export function createApp({
       const problems = { sample_number: numberTakenProblem(checked.sample.sample_number) };
       return c.html(await trapPage(c, c.get("m").trapSample.newTitle, form, problems, "/trap-samples/new"), 409);
     }
-    await recordTrapChange(c, id);
+    // Entered in its history as arriving, under whoever entered it.
+    // In the sample's own queue, taken at once: the entry may wait behind a
+    // pass already running, and an edit made meanwhile would otherwise be
+    // read by this pass and entered under whoever made the sample.
+    await onSample(id, () => recordTrapChange(c, id, { created: true }));
     return c.redirect(`/samples/${id}`);
   });
 

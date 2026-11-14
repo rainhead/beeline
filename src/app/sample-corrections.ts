@@ -214,18 +214,24 @@ async function recordChange(
   }
 }
 
-/** The change log entry for a trap sample entered in Beeline. */
+/**
+ * The change log entry for a trap sample entered in Beeline. `created` is for
+ * the save that made the sample: it is then entered in its history as
+ * arriving, under whoever entered it, where the pass would otherwise leave a
+ * sample it has no record of to the nightly (beeline-7r0g).
+ */
 export async function recordTrapChange(
   deps: CorrectionDeps,
   login: string,
   sampleId: number,
-  source: SampleChangeSource = "app",
+  { source = "app", created = false }: { source?: SampleChangeSource; created?: boolean } = {},
 ): Promise<void> {
   try {
     await recordSampleChanges(kyselyReader(deps.db), deps.samplePaths, {
       source,
       author: login,
       where: `s.entity_id = ${sampleId}`,
+      created,
     });
   } catch (err) {
     console.warn(`could not record the change to trap sample ${sampleId}: ${(err as Error).message}`);
@@ -461,7 +467,7 @@ export function setPlace(deps: CorrectionDeps, actor: Actor, sampleId: number, i
       // Blank clears it, as on the form.
       if (name === (sample.locality ?? "")) return { ok: true, outcome: "unchanged" };
       if ((await setTrapSampleLocality(printWriter, sample.sample_id, name)) === "printed") return refused("printed");
-      await recordTrapChange(deps, actor.login, sample.sample_id, sourceOf(actor));
+      await recordTrapChange(deps, actor.login, sample.sample_id, { source: sourceOf(actor) });
       return { ok: true, outcome: "saved" };
     }
     const writeDeps = { db, conn, sampleOverlayPath: deps.sampleOverlayPath, correctionsPath: deps.correctionsPath };

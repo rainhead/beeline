@@ -3,7 +3,8 @@
 **Status:** accepted (2026-08-28) · sits beside
 [ADR 0004](0004-correction-overlay.md), which it deliberately does not change ·
 first instance is the person change log (beeline-o22) · second is the sample
-change log (beeline-ewl, 2026-08-30 — see the addendum below)
+change log (beeline-ewl, 2026-08-30 — see the addendum below) · the sample
+snapshot carries ids since cutover (beeline-7r0g, 2026-11-13 — second addendum)
 
 ## Context
 
@@ -199,3 +200,92 @@ counted — and varies in three places, each a consequence of the corpus being
   the scratch store that caused it leaves the real snapshot standing. A
   store that has genuinely replaced the snapshot's deletes the file and the
   next pass is the baseline.
+
+## Addendum: after cutover, the sample snapshot carries ids (2026-11-13)
+
+The decision above keys nothing by `entity_id` because a rebuild redrew ids.
+Production was cut over on 3 November 2026 and is never rebuilt
+([ADR 0006](0006-migrations-for-deployed-stores.md)), so a sample's id there is now
+permanent. The rule had a cost that cutover also exposed. A trap sample
+entered in Beeline has no observation, so once its number or start date was
+corrected nothing connected it to its history: the next full pass entered it
+as a second sample arriving, and entering one was recorded under nobody's
+name (beeline-7r0g). A first fix told the pass the reference a sample used to
+have; three reviews each found a way the snapshot could be out of step with
+the store and hand one sample's row to another, all of them the same
+question: whose row is this.
+
+**The snapshot now carries each sample's id, and a row whose id is a sample in
+the store is that sample's row.** The log is unchanged: its entries are still
+filed, and still read, by collector, number and start date.
+
+- **The ids are believed only by the store that wrote them.** The snapshot's
+  first line names the store, by the instant its first migration was recorded
+  (`pnpm db:build` and `db:reseed` stamp every migration, so a rebuilt store
+  has a new one), and the last id it had handed out (the last value of
+  `entity_id_seq`, which a deleted sample does not lower). A pass over any other
+  store blanks the ids and matches as it did before them, the refusal of a
+  foreign snapshot included. So does a pass over a store whose last id is
+  below the snapshot's: that store was put back to an earlier copy, and
+  the next sample it enters would take an id the snapshot gives to a sample
+  that is gone. A store with no identity (a test's) is never believed.
+- **That last guard depends on a full pass running before the restored
+  store's ids catch up**, which the pass the app makes as it starts is: it
+  sees the lower last id, matches without ids, and writes the file as the store
+  now is. If that pass fails, a sample entered afterwards can draw an id the
+  snapshot still gives away. A one-sample pass for a sample its caller has
+  just made therefore disbelieves every id when a row under some other
+  reference already carries the new sample's. A full pass after a failed start has no such check: the
+  nightly's own promotion may mint samples on ids the snapshot gives to
+  samples that are gone, and its pass would take those rows for them. A
+  start whose pass fails is logged, and is the thing to look for after a
+  restore. A dev store refreshed from a newer copy of production over an
+  older one, keeping the older snapshot, is the same case with no guard at
+  all; delete the snapshot when replacing a store.
+- **A one-sample pass over a snapshot it does not believe adds no ids** and
+  leaves the first line as it was. The full pass after it writes the store's
+  own.
+- **The id says whose row it is, not how the log is read.** Two rules about
+  the reader therefore stand over it. Two samples that swap numbers are
+  compared by reference, as before, because the reader will not move a
+  history onto a reference it already knows. And no entry is filed for a
+  sample standing on a reference where a row will still sit after the pass,
+  the row of a sample the pass cannot record: the reader would file those
+  entries with that other sample. It is held, and counted, until the row
+  moves. This second rule is applied whether or not the ids are believed, so
+  a pass over a snapshot with no ids holds a few samples it used to record
+  over a contested row.
+- **A number and a start date corrected in one save are filed in whichever
+  order passes through nobody else's reference.** They are two moves, and
+  the reference between them is one the sample never had. Net sample numbers
+  restart each day, so sample 4 of the 14th corrected to sample 1 of the 15th
+  passes through sample 1 of the 14th when the number is filed first, and
+  the reader then carried that sample's history off with the corrected one.
+  That filing is as old as the log; ids made it reachable for samples with
+  no observation and for one-sample passes. A reference is somebody's when a
+  snapshot row is under it or a sample in the store stands on it, which a
+  one-sample pass asks the store. Where every order passes through one, the
+  sample is held.
+- **A one-sample pass follows its sample by id** to a reference nothing else
+  sits under, and enters a sample its caller has just made. Where another
+  row is under the new reference it records nothing and the full pass, which
+  can order the moves, records both.
+- **A row that carries an id is dropped only when its sample is gone from
+  the store.** Before ids, the row of a live sample the pass could not
+  record was dropped unless an observation link or a shared reference kept
+  it, and the sample was entered again as arriving later. A row gets its id
+  when a pass records its sample, so a sample that was already on a shared
+  reference or in a contest when the snapshot first gained ids is kept or
+  dropped as before until it is resolved.
+
+What this does not fix: the reader still refuses to move a history onto a
+reference the log already knows (beeline-pe4b), and now that unlinked moves
+are recorded there are more moves for it to refuse. That needs the log to
+carry ids too, which is the move to a table this ADR already expects.
+
+One cost is new. A person renamed, or pushed onto their account by a
+namesake, moves the collector part of every one of their samples'
+references. A one-sample pass used to leave such a sample to the full pass;
+it now follows the id, so whoever next edits one of those samples before the
+nightly is entered as the author of its collector change. That is the cost
+the collector's edit already accepts for one sample's other pending changes.

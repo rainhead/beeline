@@ -792,29 +792,6 @@ export function matchSamples(
     const own = state.id === "" ? undefined : byId.get(state.id);
     if (own !== undefined) proposed.set(state, own);
   }
-  // A loop of those moves goes back to the reference (see above). Following
-  // a move from the sample to whoever is leaving the reference it now stands
-  // on comes back to the sample only in a loop.
-  {
-    const leavingFrom = new Map<string, SampleState>();
-    for (const [state, row] of proposed) {
-      if (stateKey(row) !== stateKey(state)) leavingFrom.set(stateKey(row), state);
-    }
-    const looped: SampleState[] = [];
-    for (const start of leavingFrom.values()) {
-      let at = start;
-      for (let step = 0; step < leavingFrom.size; step++) {
-        const next = leavingFrom.get(stateKey(at));
-        if (next === undefined) break;
-        if (next === start) {
-          looped.push(start);
-          break;
-        }
-        at = next;
-      }
-    }
-    for (const state of looped) proposed.set(state, snapshot.get(stateKey(state))!);
-  }
   for (const state of states.values()) {
     if (proposed.has(state)) continue;
     // A row that is another live sample's own is not this one's, whatever
@@ -828,15 +805,12 @@ export function matchSamples(
     // what splitting two observations that shared a number leaves behind —
     // and granting the triple made both claim the row, so neither was ever
     // recorded again. A sample that merely lost its link is a different
-    // case and stays contested (the test of two claimants says why). A
-    // narrowed pass cannot see who holds the row's observation, so where the
-    // links differ it defers to the next full pass, as it does for any miss.
+    // case and stays contested (the test of two claimants says why).
     const relinked =
       direct !== undefined &&
       state.fields.observation !== "" &&
       direct.fields.observation !== "" &&
       direct.fields.observation !== state.fields.observation;
-    if (relinked && directOnly) continue;
     // The row's observation belongs to a sample this pass cannot speak for —
     // one on a shared triple, or with no collector reference. It is still
     // evidence that this sample is not the row's, so the row is held for it
@@ -850,14 +824,7 @@ export function matchSamples(
       continue;
     }
     if (direct !== undefined) displaced.set(state, direct);
-    // The weaker tiers exist only for a FULL pass. Their guards — one
-    // observation holder per link, two claimants record nothing — are built
-    // from the whole store, and a pass narrowed to one sample has an empty
-    // holder index and can never see a second claimant, so it would grant a
-    // weak match a full pass refuses and then delete a live sibling's
-    // snapshot row (adversarial review of PR #32). A narrowed miss records
-    // nothing and defers to the next full pass.
-    if (directOnly) continue;
+    // The weaker tiers, which only a full pass has (matchOneSample).
     const byObs = state.fields.observation === "" ? null : byObservation.get(state.fields.observation);
     if (byObs != null) {
       proposed.set(state, byObs);
@@ -925,6 +892,32 @@ export function matchSamples(
     }
   }
 
+  // A loop of moves goes back to the reference (see above). Following a move
+  // from the sample to whoever is leaving the reference it now stands on
+  // comes back to the sample only in a loop. Every proposal is looked at,
+  // not only those made by id: a sample followed by its id and one followed
+  // by its observation can swap numbers too (Fable's review of this branch).
+  {
+    const leavingFrom = new Map<string, SampleState>();
+    for (const [state, row] of proposed) {
+      if (stateKey(row) !== stateKey(state)) leavingFrom.set(stateKey(row), state);
+    }
+    const looped: SampleState[] = [];
+    for (const start of leavingFrom.values()) {
+      let at = start;
+      for (let step = 0; step < leavingFrom.size; step++) {
+        const next = leavingFrom.get(stateKey(at));
+        if (next === undefined) break;
+        if (next === start) {
+          looped.push(start);
+          break;
+        }
+        at = next;
+      }
+    }
+    for (const state of looped) proposed.set(state, snapshot.get(stateKey(state))!);
+  }
+
   const claimants = new Map<SampleState, number>();
   for (const row of proposed.values()) claimants.set(row, (claimants.get(row) ?? 0) + 1);
   const matched = new Map<string, SampleState>();
@@ -938,6 +931,13 @@ export function matchSamples(
   }
   for (const [state, row] of held) {
     contested.add(stateKey(state));
+    contestedRows.add(stateKey(row));
+  }
+  // A move the reader could not follow is not recorded (moverOrder).
+  for (const [key, row] of [...matched]) {
+    if (moverOrder(row, states.get(key)!, snapshot) !== null) continue;
+    matched.delete(key);
+    contested.add(key);
     contestedRows.add(stateKey(row));
   }
   // A row that stays holds whoever stands on its reference (see above).
@@ -983,6 +983,45 @@ export function matchSamples(
  *
  * A row under its reference that carries another id is another sample's.
  */
+/**
+ * The order to file a sample's changed movers in, or null where no order
+ * will do.
+ *
+ * A sample whose number and start date were both corrected is recorded as
+ * two moves, the second filed under the reference the first one made, which
+ * is a reference the sample never had. If another sample is known by that
+ * reference, the reader refuses the first move and then applies the second
+ * to that other sample, carrying its history off: sample 4 of 14 July
+ * corrected to sample 1 of 15 July passes through sample 1 of 14 July, and
+ * net sample numbers restart every day (Fable's review of this branch; the
+ * filing is older than ids, which only made it reachable for more samples).
+ * The reader applies moves one field at a time whatever their order, so the
+ * writer may choose one whose references in between have no snapshot row.
+ * Where every order passes through one, the sample is held, like a contest.
+ */
+export function moverOrder(
+  row: SampleState,
+  state: SampleState,
+  snapshot: ReadonlyMap<string, SampleState>,
+): readonly SampleField[] | null {
+  const moved = MOVERS.filter((f) => row.fields[f] !== state.fields[f]);
+  if (moved.length < 2) return MOVERS;
+  const orders = (fields: readonly SampleField[]): SampleField[][] =>
+    fields.length <= 1
+      ? [[...fields]]
+      : fields.flatMap((f) => orders(fields.filter((g) => g !== f)).map((rest) => [f, ...rest]));
+  for (const order of orders(moved)) {
+    const ref = { collector: row.collector, sample_number: row.sample_number, date_start: row.date_start };
+    let clear = true;
+    for (const field of order.slice(0, -1)) {
+      ref[field as "collector" | "sample_number" | "date_start"] = state.fields[field];
+      if (snapshot.has(stateKey(ref))) clear = false;
+    }
+    if (clear) return order;
+  }
+  return null;
+}
+
 function matchOneSample(
   snapshot: ReadonlyMap<string, SampleState>,
   states: ReadonlyMap<string, SampleState>,
@@ -1002,6 +1041,10 @@ function matchOneSample(
       direct.fields.observation !== "" &&
       direct.fields.observation !== state.fields.observation;
     if (!relinked) matched.set(key, direct);
+  }
+  // A move the reader could not follow waits for the full pass, which holds it.
+  for (const [key, row] of [...matched]) {
+    if (moverOrder(row, states.get(key)!, snapshot) === null) matched.delete(key);
   }
   return { matched, contested: new Set(), contestedRows: new Set() };
 }
@@ -1122,7 +1165,18 @@ async function recordPass(
   // The ids in a snapshot are believed only where this store wrote it and
   // has not gone back to an earlier copy since (SnapshotOrigin). Otherwise
   // they are blanked, and the pass is the one it was before ids.
-  const believed = file !== null && idsBelong(file.origin, store);
+  let believed = file !== null && idsBelong(file.origin, store);
+  // And not where a sample the caller has just made already has a row by its
+  // id. That row is a sample that is gone, in a store put back to an earlier
+  // copy whose ids have since caught up with the snapshot's; believing it
+  // would enter the new sample as the old one, renumbered. The pass the app
+  // makes as it starts sees the lower id and corrects the file first, so
+  // this is for the start where that pass failed (Fable's review of this
+  // branch).
+  if (believed && snapshot !== null && opts.where != null && opts.created === true) {
+    const made = new Set([...states.values()].map((state) => state.id));
+    for (const row of snapshot.values()) if (row.id !== "" && made.has(row.id)) believed = false;
+  }
   if (snapshot !== null && !believed) for (const row of snapshot.values()) row.id = "";
 
   // First pass: the store as it stands is the baseline, and nothing is an
@@ -1147,12 +1201,8 @@ async function recordPass(
   // A sample the caller says it just made (SampleRecordOptions.created).
   const arrivals = new Set<string>();
   if (opts.where != null && opts.created === true) {
-    for (const [key, state] of states) {
-      if (snapshot.has(key)) continue;
-      let known = false;
-      for (const row of snapshot.values()) if (row.id === state.id) known = true;
-      if (!known) arrivals.add(key);
-    }
+    // No row carries its id by now: where one did, the ids were not believed.
+    for (const key of states.keys()) if (!snapshot.has(key)) arrivals.add(key);
   }
 
   // A snapshot this store does not answer to is another store's statement,
@@ -1256,7 +1306,9 @@ async function recordPass(
       });
     };
     for (const field of NON_MOVERS) emit(field);
-    for (const field of MOVERS) {
+    // In an order whose references in between are nobody else's (moverOrder).
+    // The matching has already held a sample for which there is none.
+    for (const field of (before === undefined ? null : moverOrder(before, state, snapshot)) ?? MOVERS) {
       emit(field);
       // The next mover is filed under the reference as moved so far.
       ref[field as "collector" | "sample_number" | "date_start"] = state.fields[field];
@@ -1338,7 +1390,7 @@ async function recordPass(
     // The line saying which store wrote the file is the full pass's to
     // change. A one-sample pass only raises the highest id, for a sample it
     // has just entered.
-    const origin = file === null ? store : file.origin;
+    const origin = file!.origin;
     if (touched) {
       await writeSnapshot(
         paths.state,

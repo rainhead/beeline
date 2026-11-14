@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { type KyselyPlugin } from "kysely";
 import type { DuckDBConnection } from "@duckdb/node-api";
-import { createKysely } from "../src/db.js";
+import { createKysely, loadSpatial } from "../src/db.js";
 import type { InatClient } from "../src/app/auth.js";
 import { createApi } from "../src/app/api.js";
 import { describedRoutes } from "../src/app/api-description.js";
 import { createKey, keyRateLimiter } from "../src/app/api-keys.js";
+import { ReadQueue } from "../src/app/api-queue.js";
 import { plain, sampleJson } from "../src/app/api-read.js";
 import {
   COUNT_GROUPS,
@@ -48,7 +50,7 @@ async function person(conn: DuckDBConnection, name: string, login: string, uid: 
   return Number(id);
 }
 
-async function world() {
+async function world({ extras = false }: { extras?: boolean } = {}) {
   const { instance, conn } = await createMemoryDb();
   const alice = await person(conn, "Alice Adams", "aadams", UID.alice);
   const bob = await person(conn, "Bob Barnes", "bbarnes", UID.bob);
@@ -132,13 +134,56 @@ async function world() {
      VALUES (${b2}, 'place_unabbreviated', 'x', '${SECRET.note}', ${sam}, true)`,
   );
 
+  const extra: Record<string, number> = {};
+  if (extras) {
+    await loadSpatial(conn);
+    // A private observation, with everything the record page can say about where it was.
+    extra.b4 = await insertCleanSample(
+      conn,
+      { collector_id: String(bob), atlas_id: atlas("WaBA"), sample_number: "'B-4'", locality: "'Private Cove'", county: "'Skagit'", state_province: "'WA'", geoprivacy: "'private'", inat_observation_id: "777" },
+      { latitude: "48.7001", longitude: "-122.5002", elevation_m: "1888" },
+    );
+    await conn.run(
+      `INSERT INTO observation_field (inat_id, place_guess, private_place_guess, notes) VALUES (777, 'Guess Harbor, WA', 'Private Guess Cove, WA', 'Observer note')`,
+    );
+    await conn.run(
+      `INSERT INTO sample_locality_candidate (sample_id, rank, locality, basis, latitude, longitude, gazetteer_build, rule_version, derived_at)
+       VALUES (${extra.b4}, 1, 'Candidate One', 'town', 48.7001, -122.5002, 'test', 1, current_timestamp),
+              (${extra.b4}, 2, 'Candidate Two', 'town', 48.7001, -122.5002, 'test', 1, current_timestamp)`,
+    );
+    await conn.run(
+      `INSERT INTO area (source, source_id, kind, name, geom, gazetteer_build) VALUES
+         ('wilderness.net', '1', 'wilderness', 'Hidden Wilderness', ST_GeomFromText('POINT(-122.5 48.7)'), 'test'),
+         ('epa-cec', '2.3', 'ecoregion', 'Hidden Ecoregion', ST_GeomFromText('POINT(-122.5 48.7)'), 'test')`,
+    );
+    await conn.run(`INSERT INTO sample_area_derivation (sample_id, latitude, longitude, gazetteer_build, derived_at) VALUES (${extra.b4}, 48.7001, -122.5002, 'test', current_timestamp)`);
+    await conn.run(
+      `INSERT INTO sample_area (sample_id, area_source, area_source_id) VALUES (${extra.b4}, 'wilderness.net', '1'), (${extra.b4}, 'epa-cec', '2.3')`,
+    );
+    // Staff's two overrides, which say where in a name and in a point.
+    await conn.run(`INSERT INTO sample_locality_override (sample_id, locality, set_by, reason) VALUES (${extra.b4}, 'Override Place', ${sam}, 'Override Reason')`);
+    await conn.run(`INSERT INTO sample_location_override (sample_id, latitude, longitude, set_by, reason) VALUES (${extra.b4}, 48.7001, -122.5002, ${sam}, 'Point Reason')`);
+    // Obscured by the taxon, not the observer.
+    extra.b5 = await insertCleanSample(
+      conn,
+      { collector_id: String(bob), atlas_id: atlas("WaBA"), sample_number: "'B-5'", locality: "'Taxon Meadow'", state_province: "'WA'", taxon_geoprivacy: "'obscured'" },
+      { latitude: "48.9001", longitude: "-122.9002", elevation_m: "1999" },
+    );
+    // Cites an observation Beeline never fetched, so nobody here knows whether it is protected.
+    extra.b6 = await insertCleanSample(
+      conn,
+      { collector_id: String(bob), atlas_id: atlas("WaBA"), sample_number: "'B-6'", locality: "'Unfetched Flats'", state_province: "'WA'", inat_observation_id: "888" },
+      { latitude: "48.8001", longitude: "-122.8002", elevation_m: "1777" },
+    );
+  }
+
   // The history: a baseline, then Bob's locality changed, so the log holds
   // an entry that says where B-2 was.
   const paths = await scratchPaths();
   const logPaths = { log: paths.sampleChangesPath, state: paths.sampleStatePath };
   await recordSampleChanges(duckdbReader(conn), logPaths, { source: "observation_promotion" });
-  await conn.run(`UPDATE sample SET locality = '${SECRET.place} dock' WHERE entity_id = ${b2}`);
-  await recordSampleChanges(duckdbReader(conn), logPaths, { source: "app", author: "bbarnes", reason: "moved" });
+  await conn.run(`UPDATE sample SET locality = '${SECRET.place} dock', county = 'Skagit', protocol = 'hand net' WHERE entity_id = ${b2}`);
+  await recordSampleChanges(duckdbReader(conn), logPaths, { source: "app", author: "bbarnes", reason: SECRET.note });
 
   const db = createKysely(instance);
   const who: { current: Who } = { current: "alice" };
@@ -150,6 +195,8 @@ async function world() {
     inat: unusedInat,
     resolveSession: session,
     conn,
+    // The limit on reading is what a person needs, and most tests here read far more than that.
+    apiLimits: { readLimiter: keyRateLimiter({ limit: 1_000_000 }), limiter: keyRateLimiter({ limit: 1_000_000 }) },
   });
   const keyFor = async (uid: number, scope: string) => {
     const made = await createKey(db, { inatUserId: uid, name: "test", scope, lifetimeDays: 30, offered: ["read", "edit", "staff"] });
@@ -178,7 +225,7 @@ async function world() {
     return res.text();
   };
   const idOf = async (n: string) => Number(((await rows(conn, `SELECT entity_id FROM sample WHERE sample_number = '${n}'`)) as number[][])[0]![0]);
-  return { app, db, conn, paths, logPaths, keys, get, json, page, who, idOf, people: { alice, bob, cleo, sam }, ids: { a1, b1, b2, c1 } };
+  return { app, db, conn, paths, logPaths, keys, get, json, page, who, idOf, people: { alice, bob, cleo, sam }, ids: { a1, b1, b2, c1 }, extra, keyFor, instance };
 }
 
 /** A CSV with quoted cells, as text, to rows of cells. */
@@ -376,7 +423,7 @@ describe("what a key may see", () => {
     // The listing, specimens too.
     const samples = await w.json(w.keys.alice, "/samples?scope=all&page_size=500");
     const b2 = samples.rows.find((r: any) => r.fieldNumber === "B-2");
-    expect(b2).toMatchObject({ locality: null, decimalLatitude: null, decimalLongitude: null, minimumElevationInMeters: null, locationSource: null, location_withheld: true, stateProvince: "WA", county: "BentonCo" });
+    expect(b2).toMatchObject({ locality: null, decimalLatitude: null, decimalLongitude: null, minimumElevationInMeters: null, locationSource: null, location_withheld: true, stateProvince: "WA", county: "Skagit" });
     expect(leaks(samples)).toEqual([]);
     expect(leaks(await w.json(w.keys.alice, "/specimens?scope=all&page_size=500"))).toEqual([]);
     // Filters that would reveal it.
@@ -450,7 +497,7 @@ describe("one record", () => {
     const gathered = await gatherSample({ db: w.db, changesPath: w.paths.sampleChangesPath }, w.ids.a1, w.people.alice, reader, 1);
     expect(gathered).not.toBeNull();
     const body = await w.json(w.keys.alice, `/samples/${w.ids.a1}`);
-    expect(body).toEqual(JSON.parse(JSON.stringify(sampleJson(gathered!, ORIGIN))));
+    expect(body).toEqual(JSON.parse(JSON.stringify(sampleJson(gathered!, ORIGIN, false))));
     expect(body.sample).toMatchObject({ id: w.ids.a1, url: `${ORIGIN}/samples/${w.ids.a1}`, sample_number: "A-1", date_start: `${CURRENT_SEASON}-07-14`, mine: true, inat_observation_id: 123456789 });
     expect(body.specimens).toMatchObject({ total: 2, page: 1, pages: 1, page_size: 50 });
     expect(body.specimens.rows[0]).toMatchObject({ field_number: "OBA00001", scientific_name: "Bombus", url: expect.stringContaining(`${ORIGIN}/specimens/`) });
@@ -508,11 +555,13 @@ describe("the gate, the limit and the record of use", () => {
     const w = await world();
     const api = createApi({ db: w.db, isStaff: async () => false, limiter: keyRateLimiter({ limit: 2 }) });
     const ask = () => api.request("/samples/count", { headers: { authorization: `Bearer ${w.keys.alice}` } });
+    // The first request is counted against the key's reference, before its person is known; the rest against the person.
     expect((await ask()).status).toBe(200);
     expect((await ask()).status).toBe(200);
-    const third = await ask();
-    expect(third.status).toBe(429);
-    expect(third.headers.get("retry-after")).not.toBeNull();
+    expect((await ask()).status).toBe(200);
+    const fourth = await ask();
+    expect(fourth.status).toBe(429);
+    expect(fourth.headers.get("retry-after")).not.toBeNull();
   });
 
   it("says 503 for a listing or a record where the instance cannot read them, and still counts", async () => {
@@ -590,5 +639,325 @@ describe("the description at /api/v1", () => {
         expect(res.status, `${e.route} ${name}`).toBe(200);
       }
     }
+  });
+});
+
+describe("what a reason, a hold and a name may say", () => {
+  it("drops the reason on every history entry that stays, on the page and through the API", async () => {
+    const w = await world();
+    // One change to the locality, the county and the protocol, with one reason that says where.
+    const record = await w.json(w.keys.alice, `/samples/${w.ids.b2}`);
+    const fields = record.history.map((h: any) => h.field);
+    expect(fields).toEqual(expect.arrayContaining(["county", "protocol"]));
+    expect(fields).not.toContain("locality");
+    for (const entry of record.history) expect(entry.reason, entry.field).toBe("");
+    expect(JSON.stringify(record)).not.toContain(SECRET.note);
+    const html = await w.page("alice", `/samples/${w.ids.b2}`);
+    expect(html).not.toContain(SECRET.note);
+    expect(html).toContain("hand net");
+    // The collector and staff keep the reason.
+    for (const key of [w.keys.bob, w.keys.sam]) {
+      const own = await w.json(key, `/samples/${w.ids.b2}`);
+      expect(own.history.filter((h: any) => h.reason === SECRET.note).length).toBeGreaterThanOrEqual(3);
+    }
+    expect(await w.page("bob", `/samples/${w.ids.b2}`)).toContain(SECRET.note);
+  });
+
+  it("drops it where staff made the change as a coordinate correction", async () => {
+    // The change log as setCoordinates writes it: the note on the point's entries and on the county and elevation it moved.
+    const w = await world();
+    const { appendSampleChanges, readSampleChanges } = await import("../src/sample-change.js");
+    const base = (await readSampleChanges(w.paths.sampleChangesPath)).find((c) => c.field === "county")!;
+    await appendSampleChanges(
+      w.paths.sampleChangesPath,
+      ["location", "county", "elevation_m"].map((field, i) => ({
+        ...base,
+        at: new Date(Date.now() + 1000 + i).toISOString(),
+        field: field as never,
+        old_value: "a",
+        new_value: "b",
+        author: "samstaff",
+        source: "app" as const,
+        reason: "it was at the ferry",
+      })),
+    );
+    const alice = await w.json(w.keys.alice, `/samples/${w.ids.b2}`);
+    expect(JSON.stringify(alice)).not.toContain("the ferry");
+    expect(alice.history.every((h: any) => h.reason === "")).toBe(true);
+    expect(await w.page("alice", `/samples/${w.ids.b2}`)).not.toContain("the ferry");
+    expect(JSON.stringify(await w.json(w.keys.sam, `/samples/${w.ids.b2}`))).toContain("the ferry");
+  });
+
+  it("names who placed a hold only to staff", async () => {
+    const w = await world();
+    expect((await w.json(w.keys.alice, `/samples/${w.ids.b2}`)).hold).toMatchObject({ held_by: null });
+    expect((await w.json(w.keys.bob, `/samples/${w.ids.b2}`)).hold).toMatchObject({ held_by: null, reason: SECRET.note });
+    expect((await w.json(w.keys.sam, `/samples/${w.ids.b2}`)).hold).toMatchObject({ held_by: "Sam Staff", reason: SECRET.note });
+    // As the page does.
+    expect(await w.page("bob", `/samples/${w.ids.b2}`)).not.toContain("Sam Staff placed");
+  });
+});
+
+describe("what the API publishes of a record, field by field", () => {
+  it("is a list somebody decided, not a copy of what the page reads", async () => {
+    const w = await world();
+    const sample = await w.json(w.keys.alice, `/samples/${w.ids.a1}`);
+    expect(Object.keys(sample.sample).sort()).toEqual(
+      [
+        "atlas_code", "atlas_name", "collectors", "coordinate_uncertainty_m", "country", "county", "date_end", "date_start", "ecoregion",
+        "elevation_file", "elevation_m", "elevation_source", "elevation_stale", "from_old_records", "geoprivacy", "host_inat_taxon_id",
+        "host_name_as_observed", "host_rank", "id", "inat_observation_id", "kind", "label_diverged", "latitude", "locality",
+        "locality_alternatives", "locality_override", "locality_suggestion", "location_override", "location_source",
+        "location_withheld", "longitude", "mine", "observation_gone_since", "observation_notes", "observation_place_guess", "printed",
+        "program_code", "program_name", "protocol", "sample_id", "sample_number", "sampling_effort", "specimen_count", "state_province",
+        "taxon_geoprivacy", "url", "wildernesses",
+      ].sort(),
+    );
+    expect(Object.keys(sample).sort()).toEqual(["findings", "history", "hold", "sample", "specimens", "waivers"]);
+    expect(Object.keys(sample.specimens.rows[0]).sort()).toEqual(
+      ["authorship", "determiner", "field_number", "id", "is_expert", "label_at", "label_state", "qualifier", "rank", "reprint_requested", "scientific_name", "sex", "specimen_id", "specimen_number", "url"].sort(),
+    );
+    const specimen = await w.json(w.keys.alice, `/specimens/${sample.specimens.rows[0].id}`);
+    expect(Object.keys(specimen.specimen).sort()).toEqual(
+      ["disposition", "field_number", "id", "remarks", "remarks_by", "remarks_on", "specimen_id", "specimen_number", "url"].sort(),
+    );
+    // The sample inside a specimen has none of the specimen's own columns.
+    expect(Object.keys(specimen.sample).sort()).toEqual(Object.keys(sample.sample).sort());
+    for (const own of ["specimen_number", "field_number", "disposition", "remarks"]) expect(specimen.sample).not.toHaveProperty(own);
+    expect(Object.keys(specimen.determinations[0]).sort()).toEqual(
+      ["authorship", "caste", "channel", "determined_on", "determined_on_precision", "determiner", "entity_id", "is_expert", "notes", "of_record", "qualifier", "rank", "recorded_at", "scientific_name", "sex", "verbatim_identification"].sort(),
+    );
+    const withHistory = await w.json(w.keys.bob, `/samples/${w.ids.b2}`);
+    expect(Object.keys(withHistory.history[0]).sort()).toEqual(["author", "at", "field", "new_value", "old_value", "reason", "source"].sort());
+    expect(Object.keys(withHistory.findings[0]).sort()).toEqual(
+      ["detail_taxon_name", "detail_taxon_rank", "details", "field_number", "rule_name", "severity", "specimen_id", "waivable"].sort(),
+    );
+  });
+});
+
+describe("what a volunteer's page and key may not learn, for every kind of withholding", () => {
+  const SECRETS = [
+    "Private Cove", "Candidate One", "Candidate Two", "Hidden Wilderness", "Hidden Ecoregion", "Override Place", "Override Reason", "Point Reason",
+    "Guess Harbor", "Private Guess Cove", "48.7001", "-122.5002", "1888", "Taxon Meadow", "48.9001", "-122.9002", "1999", "Unfetched Flats", "48.8001", "-122.8002", "1777",
+  ];
+  const leaks = (value: unknown) => SECRETS.filter((x) => JSON.stringify(value).includes(x));
+
+  it("keeps a private observation's county, a taxon-obscured point, and a point on an observation never fetched out of every answer", async () => {
+    const w = await world({ extras: true });
+    const all = await w.json(w.keys.alice, "/samples?scope=all&page_size=500");
+    const byNumber = (n: string) => all.rows.find((r: any) => r.fieldNumber === n);
+    // The private observation loses its county as well; the other two keep it.
+    expect(byNumber("B-4")).toMatchObject({ county: null, stateProvince: "WA", locality: null, location_withheld: true });
+    expect(byNumber("B-5")).toMatchObject({ locality: null, decimalLatitude: null, location_withheld: true });
+    expect(byNumber("B-6")).toMatchObject({ locality: null, decimalLatitude: null, location_withheld: true });
+    expect(leaks(all)).toEqual([]);
+    expect(leaks(await w.json(w.keys.alice, "/specimens?scope=all&page_size=500"))).toEqual([]);
+    for (const [n, id] of Object.entries({ "B-4": w.extra.b4, "B-5": w.extra.b5, "B-6": w.extra.b6 })) {
+      const record = await w.json(w.keys.alice, `/samples/${id}`);
+      expect(record.sample, n).toMatchObject({ location_withheld: true, locality: null, observation_place_guess: null, locality_suggestion: null, locality_override: null, location_override: null, ecoregion: null });
+      expect(record.sample.locality_alternatives).toEqual([]);
+      expect(record.sample.wildernesses).toEqual([]);
+      expect(leaks(record), n).toEqual([]);
+      const html = await w.page("alice", `/samples/${id}`);
+      for (const x of SECRETS) expect(html, `${n} ${x}`).not.toContain(x);
+    }
+    // Nor can a filter find them by what they hide.
+    for (const place of ["Private", "Wilderness", "Ecoregion", "Override", "Candidate", "Taxon", "Unfetched", "Skagit"]) {
+      const found = await w.json(w.keys.alice, `/samples?scope=all&place=${place}`);
+      expect(found.rows.map((r: any) => r.fieldNumber).filter((n: string) => ["B-4", "B-5", "B-6"].includes(n)), place).toEqual([]);
+    }
+    expect((await w.json(w.keys.alice, "/samples?scope=all&q=Private")).total).toBe(0);
+  });
+
+  it("shows the same things to the collector and to staff", async () => {
+    const w = await world({ extras: true });
+    for (const key of [w.keys.bob, w.keys.sam]) {
+      const record = await w.json(key, `/samples/${w.extra.b4}`);
+      expect(record.sample).toMatchObject({
+        location_withheld: false,
+        locality: "Private Cove",
+        county: "Skagit",
+        observation_place_guess: "Private Guess Cove, WA",
+        locality_suggestion: { locality: "Candidate One" },
+        locality_override: { locality: "Override Place", reason: "Override Reason" },
+        location_override: { reason: "Point Reason" },
+        ecoregion: "Hidden Ecoregion",
+        wildernesses: ["Hidden Wilderness"],
+      });
+      expect(record.sample.locality_alternatives).toEqual([{ locality: "Candidate Two", basis: "town" }]);
+      expect((await w.json(key, "/samples?scope=all&place=Hidden+Wilderness")).total).toBe(1);
+    }
+  });
+
+  it("sorts by the place a reader may see, so a withheld row sorts as having none", async () => {
+    const w = await world({ extras: true });
+    const places = async (key: string) => (await w.json(key, "/samples?scope=all&sort=place&dir=asc&page_size=500")).rows.map((r: any) => [r.fieldNumber, r.locality]);
+    const forAlice = await places(w.keys.alice);
+    const named = forAlice.filter(([, l]: any) => l !== null).map(([, l]: any) => l.toLowerCase());
+    expect(named).toEqual([...named].sort());
+    // Rows with no locality to show come last, the withheld ones among them, in the order of what is shown.
+    const firstBlank = forAlice.findIndex(([, l]: any) => l === null);
+    expect(forAlice.slice(firstBlank).every(([, l]: any) => l === null)).toBe(true);
+    expect(forAlice.slice(firstBlank).map(([n]: any) => n)).toEqual(expect.arrayContaining(["B-2", "B-4", "B-5", "B-6"]));
+    // Staff sort by the real thing: the Anacortes landing comes first.
+    expect((await places(w.keys.sam))[0][0]).toBe("B-2");
+    // And the order of the withheld rows says nothing about their places: the same however the secret localities read.
+    await w.conn.run(`UPDATE sample SET locality = 'Zzz' WHERE sample_number IN ('B-4', 'B-5', 'B-6', 'B-2')`);
+    expect((await places(w.keys.alice)).map(([n]: any) => n)).toEqual(forAlice.map(([n]: any) => n));
+  });
+});
+
+describe("what the API refuses and answers at the edges", () => {
+  it("refuses search text over 100 characters, naming it, where the page cuts it", async () => {
+    const w = await world();
+    const long = "x".repeat(101);
+    for (const name of ["q", "place", "collector", "taxon", "host"]) {
+      const body = await w.json(w.keys.alice, `/samples?${name}=${long}`, 400);
+      expect(body.message, name).toContain(`${name} may be at most 100`);
+    }
+    expect((await w.json(w.keys.alice, `/samples?q=${"x".repeat(100)}`)).total).toBe(0);
+    who(w, "alice");
+    expect((await w.app.request(`/samples?q=${long}`)).status).toBe(200);
+  });
+
+  it("refuses a repeated parameter on a record, and answers the page of specimens asked for, empty past the end", async () => {
+    const w = await world();
+    await w.json(w.keys.alice, `/samples/${w.ids.a1}?page=1&page=2`, 400);
+    await w.json(w.keys.alice, `/samples/${w.ids.a1}?page=0`, 400);
+    const past = await w.json(w.keys.alice, `/samples/${w.ids.a1}?page=999`);
+    expect(past.specimens).toMatchObject({ total: 2, page: 999, pages: 1, rows: [] });
+    // The page still shows the last page, as it did.
+    expect(await w.page("alice", `/samples/${w.ids.a1}?page=999`)).toContain("OBA00001");
+  });
+
+  it("answers the description at /api/v1/ as well", async () => {
+    const w = await world();
+    const bare = await w.json(w.keys.alice, "");
+    const res = await w.app.request("/api/v1/", { headers: { authorization: `Bearer ${w.keys.alice}` } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(bare);
+    expect((await w.app.request("/api/v1/")).status).toBe(401);
+  });
+
+  it("counts grouped by one query whose groups add up, for every status filter", async () => {
+    const w = await world();
+    for (const kind of ["samples", "specimens"] as const) {
+      for (const f of ["qc=blocking", "qc=warning", "qc=clean", "qc=flagged", "qc=locality", "flag=staff_hold", "qc=blocking&flag=staff_hold"]) {
+        const listed = await w.json(w.keys.alice, `/${kind}?scope=all&${f}&page_size=1`);
+        expect(await w.json(w.keys.alice, `/${kind}/count?scope=all&${f}`), `${kind} ${f}`).toEqual({ total: listed.total });
+        const grouped = await w.json(w.keys.alice, `/${kind}/count?scope=all&${f}&group_by=season`);
+        expect(grouped.total, `${kind} ${f}`).toBe(listed.total);
+        expect(grouped.groups.reduce((n: number, g: any) => n + g.total, 0)).toBe(listed.total);
+      }
+    }
+  });
+});
+
+describe("how much the API lets one person ask of the machine", () => {
+  /** Counts the queries the store is asked, and can refuse some. */
+  const watcher = (refuse?: RegExp) => {
+    const seen = { queries: 0 };
+    const plugin: KyselyPlugin = {
+      transformQuery: (args) => {
+        seen.queries += 1;
+        if (refuse !== undefined && refuse.test(JSON.stringify(args.node))) throw new Error("refused by the test");
+        return args.node;
+      },
+      transformResult: async (args) => args.result,
+    };
+    return { seen, plugin };
+  };
+  const asking = (api: ReturnType<typeof createApi>, key: string, path: string) => api.request(path, { headers: { authorization: `Bearer ${key}` } });
+
+  it("counts a person's keys together, and still answers a key over its limit without asking the store", async () => {
+    const w = await world();
+    const { seen, plugin } = watcher();
+    const api = createApi({ db: w.db.withPlugin(plugin), isStaff: async () => false, limiter: keyRateLimiter({ limit: 2 }) });
+    const keys = [w.keys.alice, await w.keyFor(UID.alice, "read"), await w.keyFor(UID.alice, "read")];
+    // The first request of each key is counted against the key, which is all that is known of it before its lookup.
+    for (const k of keys) expect((await asking(api, k, "/me")).status).toBe(200);
+    // From then on they share one budget of two: the first two of these pass, the third is the person's third.
+    expect((await asking(api, keys[0]!, "/me")).status).toBe(200);
+    expect((await asking(api, keys[1]!, "/me")).status).toBe(200);
+    const queries = seen.queries;
+    const refused = await asking(api, keys[2]!, "/me");
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("retry-after")).not.toBeNull();
+    // Nothing was asked of the store for it.
+    expect(seen.queries).toBe(queries);
+    // Another person is not affected.
+    expect((await asking(api, w.keys.bob, "/me")).status).toBe(200);
+  });
+
+  it("keeps a lower limit for reading, per person, and leaves the rest on the general one", async () => {
+    const w = await world();
+    const api = createApi({ db: w.db, isStaff: async () => false, readLimiter: keyRateLimiter({ limit: 2 }), read: { changesPath: w.paths.sampleChangesPath, origin: ORIGIN } });
+    const keys = [w.keys.alice, await w.keyFor(UID.alice, "read"), await w.keyFor(UID.alice, "read")];
+    for (const k of keys) expect((await asking(api, k, "/samples/count")).status).toBe(200);
+    expect((await asking(api, keys[0]!, "/samples/count")).status).toBe(200);
+    expect((await asking(api, keys[1]!, "/samples/count")).status).toBe(200);
+    const limited = await asking(api, keys[2]!, "/specimens/count");
+    expect(limited.status).toBe(429);
+    expect((await limited.json()).message).toContain("60 requests a minute");
+    // The description and /me are not reading, and the general limit still allows them.
+    expect((await asking(api, keys[2]!, "/me")).status).toBe(200);
+    expect((await asking(api, keys[2]!, "")).status).toBe(200);
+    // The default is 60.
+    const plain60 = createApi({ db: w.db, isStaff: async () => false });
+    // (The first request is counted against the key, the rest against the person: 61 pass, then it stops.)
+    const statuses: number[] = [];
+    for (let i = 0; i < 63; i++) statuses.push((await asking(plain60, w.keys.bob, "/samples/count")).status);
+    expect(statuses.indexOf(429)).toBe(61);
+  });
+
+  it("lets two reads run and twenty wait, turns away the next, and gives each turn back", async () => {
+    const queue = new ReadQueue(2, 20);
+    const turns = await Promise.all([queue.acquire(), queue.acquire()]);
+    expect(turns.every((t) => t !== null)).toBe(true);
+    expect(queue.state).toEqual({ running: 2, waiting: 0 });
+    const waiting = Array.from({ length: 20 }, () => queue.acquire());
+    expect(queue.state).toEqual({ running: 2, waiting: 20 });
+    expect(await queue.acquire()).toBeNull();
+    // Giving a turn back starts the next waiter, in order, and never exceeds two.
+    turns[0]!();
+    turns[0]!();
+    expect(queue.state).toEqual({ running: 2, waiting: 19 });
+    const first = await waiting[0]!;
+    expect(first).not.toBeNull();
+    turns[1]!();
+    for (let i = 1; i < 20; i++) (await waiting[i]!)!();
+    first!();
+    expect(queue.state).toEqual({ running: 0, waiting: 0 });
+    // A client that goes away while waiting leaves the line.
+    const gone = new AbortController();
+    const held = [await queue.acquire(), await queue.acquire()];
+    expect(queue.state.running).toBe(2);
+    const leaver = queue.acquire(gone.signal);
+    gone.abort();
+    expect(await leaver).toBeNull();
+    expect(queue.state.waiting).toBe(0);
+    held.forEach((t) => t!());
+    expect(queue.state).toEqual({ running: 0, waiting: 0 });
+  });
+
+  it("answers 429 when the line is full, never makes the description or /me wait, and gives the turn back after an error", async () => {
+    const w = await world();
+    const queue = new ReadQueue(1, 0);
+    const api = createApi({ db: w.db, isStaff: async () => false, readQueue: queue, read: { changesPath: w.paths.sampleChangesPath, origin: ORIGIN } });
+    const turn = await queue.acquire();
+    const full = await asking(api, w.keys.alice, "/samples/count");
+    expect(full.status).toBe(429);
+    expect(full.headers.get("retry-after")).toBe("2");
+    expect((await full.json()).message).toContain("Try again");
+    expect((await asking(api, w.keys.alice, "/me")).status).toBe(200);
+    expect((await asking(api, w.keys.alice, "")).status).toBe(200);
+    turn!();
+    expect((await asking(api, w.keys.alice, "/samples/count")).status).toBe(200);
+    expect(queue.state).toEqual({ running: 0, waiting: 0 });
+    // A request that fails in the store gives its turn back.
+    const { plugin } = watcher(/atlas_region/);
+    const broken = createApi({ db: w.db.withPlugin(plugin), isStaff: async () => false, readQueue: queue, read: { changesPath: w.paths.sampleChangesPath, origin: ORIGIN } });
+    expect((await asking(broken, w.keys.alice, "/samples/count")).status).toBe(500);
+    expect(queue.state).toEqual({ running: 0, waiting: 0 });
   });
 });

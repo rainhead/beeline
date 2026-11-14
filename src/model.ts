@@ -347,7 +347,7 @@ export interface PlantTaxonCommonNameView {
   list_entry_depth: number | null;
 }
 
-/** A copy of plant_taxon_common_name, refreshed after what changes it (schema/115). */
+/** A copy of plant_taxon_common_name, refreshed after what changes it (schema/068). */
 export interface PlantCommonNameCacheTable {
   inat_taxon_id: BigIntCol;
   common_name: string;
@@ -357,7 +357,7 @@ export interface PlantCommonNameCacheTable {
   refreshed_at: Generated<Date>;
 }
 
-/** Taxa where the copy and the view disagree (schema/115). */
+/** Taxa where the copy and the view disagree (schema/115_view_plant_common_name_stale). */
 export interface PlantCommonNameStaleView {
   inat_taxon_id: BigIntCol;
 }
@@ -373,17 +373,17 @@ export interface SampleHostView extends InatTaxonCurrentNamedView {
   sample_id: BigIntCol;
 }
 
-/** What iNaturalist has done with a stored taxon (schema/114): see inat_taxon_current. */
+/** What iNaturalist has done with a stored taxon (schema/113): see inat_taxon_current. */
 export type HostStanding = "current" | "replaced" | "split" | "retired" | "pending" | "absent";
 
-/** The end of each retired taxon's chain of replacements (schema/114). */
+/** The end of each retired taxon's chain of replacements (schema/113). */
 export interface InatTaxonReplacementEndView {
   retired_taxon_id: BigIntCol;
   end_taxon_id: BigIntCol;
-  end_kind: "active" | "retired" | "unread";
+  end_kind: "active" | "retired" | "absent" | "unread";
 }
 
-/** A cached taxon and what iNaturalist calls it today (schema/114); resolved when read, never stored. */
+/** A cached taxon and what iNaturalist calls it today (schema/113); resolved when read, never stored. */
 export interface InatTaxonCurrentView {
   inat_taxon_id: BigIntCol;
   standing: HostStanding;
@@ -396,6 +396,9 @@ export interface InatTaxonCurrentView {
   genus_name: string | null;
   family_taxon_id: BigIntCol | null;
   family_name: string | null;
+  /** Whether the current taxon's lineage reaches Plantae (47126) and Tracheophyta (211194); null with no current taxon or no lineage. */
+  is_plant: boolean | null;
+  is_vascular: boolean | null;
 }
 
 // schema/012_sign_in.sql — signing in, and who has been here (beeline-4tdh)

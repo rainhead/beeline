@@ -342,7 +342,7 @@ export async function reseedStore(sourcePath: string, targetPath: string): Promi
     await baseline(conn);
     // The lookups are carried and the list they are about is not, so load it
     // here (offline, from git): the carried lookups read as answers at once.
-    await loadPlantList(conn);
+    await loadPlantList(conn, { refresh: false });
     const carried = await carryStaging(conn, sourcePath);
     // The cache and the lookups arrived after the list was loaded.
     await refreshPlantCommonNames(conn);

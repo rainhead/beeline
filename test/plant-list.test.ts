@@ -19,7 +19,7 @@ import type { JobContext } from "../src/app/jobs/framework.js";
 import { parseCsv } from "../src/corrections.js";
 import { fetchPlantNames } from "../src/fetch-plant-names.js";
 import { loadPlantList, loadPlantListAtBoot, plantListHash, OLD_BEELINE_PLANT_LIST_FILE, parsePlantList } from "../src/load-plant-list.js";
-import { refreshPlantCommonNames } from "../src/plant-common-names.js";
+import { refreshPlantCommonNames, thenRefreshPlantCommonNames } from "../src/plant-common-names.js";
 import { createMemoryDb } from "./helpers.js";
 
 const ANSWERS: Record<string, unknown> = JSON.parse(
@@ -212,7 +212,7 @@ describe("loading the list", () => {
   });
 });
 
-describe("the copy of the common names (schema/115)", () => {
+describe("the copy of the common names (schema/068)", () => {
   async function seed() {
     await conn.run("INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active, preferred_common_name) VALUES (51884, 'Urtica dioica', 'species', 10, true, 'iNaturalist nettle')");
     await conn.run("INSERT INTO inat_taxon_ancestor VALUES (51884, 51884, 0)");
@@ -249,6 +249,95 @@ describe("the copy of the common names (schema/115)", () => {
     expect(await stale()).toEqual([51884]);
     await loadPlantListAtBoot(() => instance.connect(), { path, log: () => {} });
     expect(await stale()).toEqual([]);
+  });
+
+  /** The connection, except that writing the copy fails, as a full disk or an interrupted write would, and every attempt is counted. */
+  function failingCopy(real: DuckDBConnection, failing = true) {
+    const attempts = { count: 0 };
+    const proxy = new Proxy(real, {
+      get(target, prop, receiver) {
+        if (prop === "run") {
+          return (sql: string, ...rest: unknown[]) => {
+            if (/INSERT INTO plant_common_name_cache/.test(sql)) {
+              attempts.count++;
+              if (failing) return Promise.reject(new Error("disk full"));
+            }
+            return (target.run as (...a: unknown[]) => Promise<unknown>)(sql, ...rest);
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    return { conn: proxy as DuckDBConnection, attempts };
+  }
+  const nettleCopy = async () => await rows("SELECT common_name FROM plant_common_name_cache WHERE inat_taxon_id = 51884");
+  async function nettleList() {
+    await seed();
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('urtica dioica', 'species', 1, true)");
+    await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('urtica dioica', 'species', 51884, 'Urtica dioica', 'species', true, 'Urtica dioica')");
+    const dir = await mkdtemp(join(tmpdir(), "beeline-plant-list-"));
+    const path = join(dir, "list.csv");
+    await writeFile(path, "Rank,Family,Scientific_name,Synonym,Common_name\nSpecies,Urticaceae,Urtica dioica,,stinging nettle\n");
+    return path;
+  }
+
+  test("a retry with the same file after a refresh that failed refreshes: the list is stored, so its hash matches, and the copy is still put right", async () => {
+    const path = await nettleList();
+    const broken = failingCopy(conn);
+    await expect(loadPlantList(broken.conn, { path })).rejects.toThrow("disk full");
+    // The list was stored before the refresh failed; the copy was not written.
+    expect(await rows("SELECT count(*) FROM plant_list_entry")).toEqual([[1]]);
+    expect(await nettleCopy()).toEqual([]);
+    const retry = await loadPlantList(conn, { path });
+    expect(retry.changed).toBe(false);
+    expect(await nettleCopy()).toEqual([["stinging nettle"]]);
+  });
+
+  test("a boot refreshes the copy once, whether or not the list changed", async () => {
+    const path = await nettleList();
+    const first = failingCopy(await instance.connect(), false);
+    await loadPlantListAtBoot(async () => first.conn, { path, log: () => {} });
+    expect(first.attempts.count).toBe(1);
+    const second = failingCopy(await instance.connect(), false);
+    await loadPlantListAtBoot(async () => second.conn, { path, log: () => {} });
+    expect(second.attempts.count).toBe(1);
+    expect(await nettleCopy()).toEqual([["stinging nettle"]]);
+  });
+
+  test("when the work succeeds and the refresh then fails, the refresh's failure is the failure", async () => {
+    await seed();
+    const broken = failingCopy(conn);
+    await expect(thenRefreshPlantCommonNames(broken.conn, async () => "done")).rejects.toThrow("disk full");
+    expect(broken.attempts.count).toBe(1);
+  });
+
+  test("when the work fails and the refresh fails too, the work's failure is thrown and the refresh's is logged", async () => {
+    await seed();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const broken = failingCopy(conn);
+      await expect(
+        thenRefreshPlantCommonNames(broken.conn, async () => {
+          throw new Error("deadline");
+        }),
+      ).rejects.toThrow("deadline");
+      expect(broken.attempts.count).toBe(1);
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining("disk full"));
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  test("when the work fails and the refresh works, the copy still follows what the work stored", async () => {
+    await seed();
+    await expect(
+      thenRefreshPlantCommonNames(conn, async () => {
+        await conn.run("UPDATE inat_taxon SET preferred_common_name = 'stored before the failure' WHERE inat_taxon_id = 51884");
+        throw new Error("deadline");
+      }),
+    ).rejects.toThrow("deadline");
+    expect(await nettleCopy()).toEqual([["stored before the failure"]]);
   });
 
   test("the plant-names fetch refreshes the copy: a name the lookups newly resolve is a name a page shows", async () => {

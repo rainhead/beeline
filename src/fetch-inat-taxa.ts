@@ -135,7 +135,7 @@ export async function fetchInatTaxa(
   conn: DuckDBConnection,
   opts: FetchInatTaxaOptions = {},
 ): Promise<FetchInatTaxaResult> {
-  // What the cache holds decides what a host is called (schema/115), so the
+  // What the cache holds decides what a host is called (schema/068), so the
   // names follow it, whether the run finished or stopped at its cap or deadline.
   return thenRefreshPlantCommonNames(conn, () => fetchInatTaxaUnrefreshed(conn, opts));
 }

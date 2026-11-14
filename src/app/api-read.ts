@@ -258,7 +258,7 @@ export const SAMPLE_PUBLISHED: Publish<SampleDetail> = {
   locality_alternatives: true, wildernesses: true, ecoregion: true, collectors: true,
   // What iNaturalist calls the host now (beeline-rfkj.3): the page shows it, the API does not yet. What the
   // API and the exports say about a host's current taxon is beeline-rfkj.8's to decide.
-  host_standing: false, host_current_name: false, host_current_rank: false, host_split_within: false,
+  host_standing: false, host_current_name: false, host_current_rank: false, host_split_within_name: false, host_split_within_rank: false,
   host_common_name: false, host_common_name_source: false,
 };
 export const SPECIMEN_PUBLISHED: Publish<Omit<SpecimenDetail, "sample">> = {

@@ -77,33 +77,6 @@ describe("TaxonName", () => {
   it("leaves a family upright", () => {
     expect(render({ rank: "family", scientificName: "Andrenidae" })).toBe(`<span class="taxon">Andrenidae</span>`);
   });
-
-  it("keeps the vernacular subordinate: tooltip by default, parenthetical on request, never leading", () => {
-    const tooltip = render({ rank: "species", scientificName: "Phacelia hastata", vernacular: "silverleaf phacelia" });
-    expect(tooltip).toContain(`title="silverleaf phacelia"`);
-    // In tooltip mode the English name is an attribute, so it never appears
-    // in the rendered text at all.
-    expect(tooltip.replace(/ title="[^"]*"/, "")).not.toContain("silverleaf");
-
-    const beside = render({
-      rank: "species",
-      scientificName: "Phacelia hastata",
-      vernacular: "silverleaf phacelia",
-      vernacularDisplay: "beside",
-    });
-    expect(beside).toContain(`<span class="taxon-vernacular">(silverleaf phacelia)</span>`);
-    expect(beside).not.toContain("title=");
-    // Scientific name leads; the English name assists.
-    expect(beside.indexOf("Phacelia")).toBeLessThan(beside.indexOf("silverleaf"));
-
-    const none = render({
-      rank: "species",
-      scientificName: "Phacelia hastata",
-      vernacular: "silverleaf phacelia",
-      vernacularDisplay: "none",
-    });
-    expect(none).not.toContain("silverleaf");
-  });
 });
 
 /**

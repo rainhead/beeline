@@ -8,8 +8,11 @@
  *
  * The data this reads is `animal` (schema/020_animal.sql): rank,
  * scientific_name, authorship, parent_id — and deliberately no vernacular
- * names. Floral hosts are iNaturalist taxa and do have one; the rule there
- * is that the scientific name is the value and the vernacular only assists.
+ * names. Floral hosts are iNaturalist taxa and do have one; the scientific
+ * name is the value and the common name only assists, so a page shows it on
+ * a line of its own beside the name, outside this component (`HostValue` in
+ * record.tsx), where it can be ordered against what else is said about the
+ * taxon. This component sets a scientific name and nothing else.
  */
 
 /**
@@ -54,16 +57,6 @@ export interface TaxonNameProps {
   /** `animal.authorship`, set upright after the name. */
   authorship?: string | null;
   qualifier?: TaxonQualifier | null;
-  /** English name. Only floral hosts have one; the bee taxonomy carries none. */
-  vernacular?: string | null;
-  /**
-   * Where the vernacular goes. `title` (the default) keeps the scientific
-   * name the only thing on the line and puts the English name in the tooltip;
-   * `beside` adds a muted parenthetical for screens aimed at volunteers who
-   * know plants by their common names. Never `beside` on a label or in an
-   * export.
-   */
-  vernacularDisplay?: "title" | "beside" | "none";
 }
 
 export function isItalicRank(rank: string): boolean {
@@ -71,7 +64,7 @@ export function isItalicRank(rank: string): boolean {
 }
 
 export function TaxonName(props: TaxonNameProps) {
-  const { rank, scientificName, subgenus, authorship, qualifier, vernacular, vernacularDisplay = "title" } = props;
+  const { rank, scientificName, subgenus, authorship, qualifier } = props;
   const italic = isItalicRank(rank);
   const words = scientificName.trim().split(/\s+/);
   const head = words[0] ?? "";
@@ -82,10 +75,7 @@ export function TaxonName(props: TaxonNameProps) {
 
   return (
     <>
-      <span
-        class="taxon"
-        title={vernacular && vernacularDisplay === "title" ? vernacular : undefined}
-      >
+      <span class="taxon">
         <Name>{head}</Name>
         {subgenus ? (
           <>
@@ -109,12 +99,6 @@ export function TaxonName(props: TaxonNameProps) {
           </>
         ) : null}
       </span>
-      {vernacular && vernacularDisplay === "beside" ? (
-        <>
-          {" "}
-          <span class="taxon-vernacular">({vernacular})</span>
-        </>
-      ) : null}
     </>
   );
 }

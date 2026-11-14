@@ -578,15 +578,11 @@ th details.col-menu > .menu-panel {
 }
 
 /* Scientific names. The component decides what is italic; this only makes
-   italics italic and keeps vernacular subordinate. A taxon name is never
+   italics italic. A taxon name is never
    set in mono — see /design/names. */
 .taxon { font-style: normal; }
 .taxon i { font-style: italic; }
 .taxon-authorship { color: var(--md-sys-color-on-surface-variant); }
-.taxon-vernacular {
-  font: var(--md-sys-typescale-label);
-  color: var(--md-sys-color-on-surface-variant);
-}
 
 /* Glossary terms link to their definition on first use (/design/voice). */
 .term {

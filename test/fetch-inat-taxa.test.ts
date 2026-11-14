@@ -566,7 +566,7 @@ describe("the limits of one run", () => {
   });
 });
 
-describe("the common names follow the cache (schema/115)", () => {
+describe("the common names follow the cache (schema/068)", () => {
   // An entry of the old plant list for Symphyotrichum chilense, as its lookup came to it.
   async function listsAster() {
     await conn.run("INSERT INTO plant_list_entry (list_key, scientific_name, rank, common_name) VALUES ('old-beeline', 'Symphyotrichum chilense', 'Species', 'Pacific aster, Chilean aster')");

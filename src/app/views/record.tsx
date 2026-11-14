@@ -290,41 +290,45 @@ export function SampleFacts({
 
 /**
  * The floral host (beeline-rfkj.3): the name as observed, which is what the
- * sample stores, with the host's common name beneath it as a secondary line,
- * and where iNaturalist has since replaced the taxon, what it calls it now.
- * The common name is the current taxon's, so a host that was replaced is
- * named for the plant it now is. Every line but the first is absent while the
- * taxon is not in the cache, and the page then reads as it did before.
+ * sample stores, and under it what iNaturalist says about the taxon today.
+ *
+ * In this order: the name as observed; "now X on iNaturalist" wherever X, the
+ * current name, differs from it (not only where the taxon was replaced: a
+ * taxon can be renamed under the same id, and a replacement can carry the
+ * same name); the common name; and, where there is no current taxon, that
+ * the name was split or is no longer used. The common name comes after the
+ * current name because it is the current taxon's, and so it reads as the name
+ * of the plant just above it. Every line but the first is absent while the
+ * taxon is not in the cache, or is not yet known (pending) or not found
+ * (absent), and the page then reads as it did before.
  */
-function HostValue({ sample, s }: { sample: SampleDetail; s: Messages["record"]["sample"] }) {
+export function HostValue({ sample, s }: { sample: SampleDetail; s: Messages["record"]["sample"] }) {
   // A scientific name, so it is printed like one. Italics come from the rank
   // and never from the string: 'Onagraceae' and 'Chamaenerion' are both one
   // word and only the second is italic. An unknown rank prints upright, which
   // is the honest answer for the legacy hosts whose source column is
   // unrecoverable.
-  const observed = <TaxonName rank={sample.host_rank ?? ""} scientificName={sample.host_name_as_observed ?? ""} />;
-  const standing = sample.host_standing;
+  const observed = sample.host_name_as_observed ?? "";
+  const current = sample.host_current_name;
+  const changed = current !== null && observed !== "" && current.trim().toLowerCase() !== observed.trim().toLowerCase();
   return (
     <>
-      {observed}
+      <TaxonName rank={sample.host_rank ?? ""} scientificName={observed} />
+      {changed ? (
+        <Meta block>{s.hostNow(<TaxonName rank={sample.host_current_rank ?? ""} scientificName={current} />)}</Meta>
+      ) : null}
       {sample.host_common_name === null ? null : <Meta block>{sample.host_common_name}</Meta>}
-      {standing === "replaced" && sample.host_current_name !== null ? (
+      {sample.host_standing === "split" ? (
         <Meta block>
-          {s.hostNow.before} <TaxonName rank={sample.host_current_rank ?? ""} scientificName={sample.host_current_name} /> {s.hostNow.after}
+          {sample.host_split_within_name === null || sample.host_split_within_rank === null
+            ? s.hostSplit
+            : s.hostSplitWithin(
+                sample.host_split_within_rank,
+                <TaxonName rank={sample.host_split_within_rank} scientificName={sample.host_split_within_name} />,
+              )}
         </Meta>
       ) : null}
-      {standing === "split" ? (
-        <Meta block>
-          {sample.host_split_within === null ? (
-            s.hostSplit
-          ) : (
-            <>
-              {s.hostSplitWithin} {sample.host_split_within}
-            </>
-          )}
-        </Meta>
-      ) : null}
-      {standing === "retired" ? <Meta block>{s.hostRetired}</Meta> : null}
+      {sample.host_standing === "retired" ? <Meta block>{s.hostNoLongerUsed}</Meta> : null}
     </>
   );
 }

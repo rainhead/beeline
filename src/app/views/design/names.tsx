@@ -64,19 +64,6 @@ const EXAMPLES: ReadonlyArray<{ props: TaxonNameProps; note: string }> = [
     props: { rank: "suborder", scientificName: "Symphyta" },
     note: "Coarser still, and a complete answer rather than a failed one.",
   },
-  {
-    props: {
-      rank: "species",
-      scientificName: "Phacelia hastata",
-      vernacular: "silverleaf phacelia",
-      vernacularDisplay: "beside",
-    },
-    note: "A floral host on a volunteer-facing screen: scientific name leads, English assists.",
-  },
-  {
-    props: { rank: "species", scientificName: "Phacelia hastata", vernacular: "silverleaf phacelia" },
-    note: "The same host in a dense context — the English name moves to the tooltip. Hover it.",
-  },
 ];
 
 /**
@@ -186,24 +173,16 @@ export function DesignNames() {
         records, prints, and exports is always the scientific name.
       </p>
       <p>
-        That leaves a display choice, and it goes by surface. On a dense screen the English name lives in the tooltip
-        and takes no horizontal space. On a volunteer-facing screen about a floral host — where people genuinely think
-        in common names — it may sit beside the scientific name in a muted parenthetical. It never leads, it never
-        replaces, and it never reaches a printed label or an export.
+        That leaves a display choice. Where a screen shows a floral host, the English name sits on a muted line of its
+        own under the scientific name, and under what iNaturalist now calls the taxon where that differs, so that it
+        reads as the name of the plant the page now says it is. It is not set by the name component, which sets a
+        scientific name and nothing else. It never leads, it never replaces, and it never reaches a printed label or
+        an export.
       </p>
       <p>
         Vernacular names are set in sentence case here, not the title case iNaturalist uses: “silverleaf phacelia”, not
         “Silverleaf Phacelia”. They are common nouns.
       </p>
-
-      <OpenQuestion bead="beeline-ucx">
-        <p>
-          Floral host vernacular names are not available yet. iNaturalist returns{" "}
-          <code>taxon.preferred_common_name</code> and we store the whole payload, but{" "}
-          <code>schema/105_views_observation.sql</code> projects only <code>taxon.name</code>. The projection lands
-          when a screen first needs it.
-        </p>
-      </OpenQuestion>
 
       <OpenQuestion bead="beeline-dys">
         <p>

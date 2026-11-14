@@ -1,12 +1,12 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 
 /**
- * Copy the rows of `plant_taxon_common_name` (schema/113) into
- * `plant_common_name_cache` (schema/115), whole, in one transaction, and say
+ * Copy the rows of `plant_taxon_common_name` (schema/114) into
+ * `plant_common_name_cache` (schema/068), whole, in one transaction, and say
  * how many taxa have a name.
  *
  * A page reads one taxon's name in a lookup there, where working the name out
- * from the plant list takes about 20 milliseconds (schema/115 says why). The
+ * from the plant list takes about 20 milliseconds (schema/068 says why). The
  * copy is only as fresh as the last time this ran, so everything that changes
  * what the view says runs it when it finishes: the list's load
  * (`loadPlantList`), the plant-names fetch and the taxa fetch. A reader that

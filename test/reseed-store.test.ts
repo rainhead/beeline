@@ -193,7 +193,7 @@ describe("reseeding a store that cannot be blown away", () => {
       await rows(conn, `SELECT inat_taxon_id, is_active, fetched_at = TIMESTAMPTZ '2026-08-01 12:00:00+00' FROM inat_taxon`),
     ).toEqual([[322554n, false, true]]);
     expect(await rows(conn, `SELECT count(*) FROM inat_taxon_ancestor`)).toEqual([[2n]]);
-    // The copy of the common names is rebuilt from what came across (schema/115): derived, so not carried.
+    // The copy of the common names is rebuilt from what came across (schema/068): derived, so not carried.
     expect(await rows(conn, `SELECT inat_taxon_id, common_name, source FROM plant_common_name_cache`)).toEqual([
       [322554n, "Pacific aster (subspecies)", "inaturalist"],
     ]);

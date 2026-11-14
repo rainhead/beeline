@@ -113,7 +113,7 @@ export async function fetchPlantNames(
   conn: DuckDBConnection,
   opts: FetchPlantNamesOptions = {},
 ): Promise<FetchPlantNamesResult> {
-  // The lookups decide which taxon each list entry is, and so what a host is called (schema/115).
+  // The lookups decide which taxon each list entry is, and so what a host is called (schema/068).
   return thenRefreshPlantCommonNames(conn, () => fetchPlantNamesUnrefreshed(conn, opts));
 }
 

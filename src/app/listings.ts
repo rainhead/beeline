@@ -971,6 +971,7 @@ async function filteredSamples(
   personId: number,
   reader: Reader,
   exact: ExactLookup = {},
+  rollup = true,
 ) {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   const place = placeColumns(reader);
@@ -988,16 +989,19 @@ async function filteredSamples(
     // Joined whole and blanked in the select (`located`): a condition in the
     // ON that reads `own` cost a volunteer's listing 7.5 s against 0.1 s.
     .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
-    .leftJoin(
-      (eb) =>
-        eb
-          .selectFrom("sample_qc_finding as f")
-          .innerJoin("qc_rule as r", "r.name", "f.rule_name")
-          .where("f.sample_id", "is not", null)
-          .groupBy("f.sample_id")
-          .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS, FLAG_LIST])
-          .as("qc"),
-      (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
+    // The flag roll-up: the listing selects it, and a count needs it only for a status filter.
+    .$if(rollup, (qb) =>
+      qb.leftJoin(
+        (eb) =>
+          eb
+            .selectFrom("sample_qc_finding as f")
+            .innerJoin("qc_rule as r", "r.name", "f.rule_name")
+            .where("f.sample_id", "is not", null)
+            .groupBy("f.sample_id")
+            .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS, FLAG_LIST])
+            .as("qc"),
+        (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
+      ),
     );
 
   if (query.scope === MINE) {
@@ -1230,6 +1234,7 @@ async function filteredSpecimens(
   reader: Reader,
   year?: number,
   exact: ExactLookup = {},
+  rollup = true,
 ) {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
   const place = placeColumns(reader);
@@ -1245,16 +1250,19 @@ async function filteredSpecimens(
         .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
     )
     .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
-    .leftJoin(
-      (eb) =>
-        eb
-          .selectFrom("sample_qc_finding as f")
-          .innerJoin("qc_rule as r", "r.name", "f.rule_name")
-          .where("f.sample_id", "is not", null)
-          .groupBy("f.sample_id")
-          .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS])
-          .as("qc"),
-      (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
+    // The flag roll-up: the listing selects it, and a count needs it only for a status filter.
+    .$if(rollup, (qb) =>
+      qb.leftJoin(
+        (eb) =>
+          eb
+            .selectFrom("sample_qc_finding as f")
+            .innerJoin("qc_rule as r", "r.name", "f.rule_name")
+            .where("f.sample_id", "is not", null)
+            .groupBy("f.sample_id")
+            .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS])
+            .as("qc"),
+        (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
+      ),
     )
     .leftJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")
     .leftJoin("animal as an", "an.entity_id", "d.animal_id")
@@ -1432,29 +1440,38 @@ const groupExpression = (group: CountGroup): RawBuilder<string | number | null> 
       ? sql<string | null>`a.code`
       : sql<string>`s.kind`;
 
+/**
+ * Whether a status filter reads the flag roll-up. A count joins the roll-up
+ * only then: it was most of the 130 ms a count took on a 60,000-sample store
+ * against 1 ms for a bare count, and the roll-up is one of two joins the page's
+ * rows need and a count does not.
+ */
+const needsRollup = (query: ListingQuery) => query.qc !== "any" && query.qc !== "locality";
+
 // The two selections are different query builders over the same sample
 // columns, which the grouping reads as `s` and `a`; the builder's own type
 // cannot say that, so it is left open here and the callers are the check.
-// The grouping is read from the selection as a subquery: grouping the
-// selection's own joins by an expression made DuckDB fail to bind a column.
+// A grouped count is one query: the selection's group key as a subquery,
+// grouped outside it (grouping the selection's own joins by an expression made
+// DuckDB fail to bind a column), and the total is the sum of the groups.
 async function countSelection(
   db: Kysely<Database>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   base: SelectQueryBuilder<any, any, any>,
   group: CountGroup | undefined,
 ): Promise<Counted> {
-  const total = await base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst();
-  if (group === undefined) return { total: Number(total?.n ?? 0), groups: [] };
+  if (group === undefined) {
+    const total = await base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst();
+    return { total: Number(total?.n ?? 0), groups: [] };
+  }
   const rows = await db
     .selectFrom(base.select(groupExpression(group).as("group_key")).as("g"))
     .select(["g.group_key as key", sql<number>`count(*)`.as("n")])
     .groupBy("g.group_key")
     .orderBy("g.group_key")
     .execute();
-  return {
-    total: Number(total?.n ?? 0),
-    groups: rows.map((r) => ({ key: r.key as string | number | null, total: Number(r.n) })),
-  };
+  const groups = rows.map((r) => ({ key: r.key as string | number | null, total: Number(r.n) }));
+  return { total: groups.reduce((n, g) => n + g.total, 0), groups };
 }
 
 /** How many samples a query selects, from the same filters as {@link listSamples}. */
@@ -1466,7 +1483,7 @@ export async function countSamples(
   group?: CountGroup,
   exact?: ExactLookup,
 ): Promise<Counted> {
-  return countSelection(db, await filteredSamples(db, query, personId, reader, exact), group);
+  return countSelection(db, await filteredSamples(db, query, personId, reader, exact, needsRollup(query)), group);
 }
 
 /** How many specimens a query selects, from the same filters as {@link listSpecimens}. */
@@ -1478,7 +1495,7 @@ export async function countSpecimens(
   group?: CountGroup,
   exact?: ExactLookup,
 ): Promise<Counted> {
-  return countSelection(db, await filteredSpecimens(db, query, personId, reader, undefined, exact), group);
+  return countSelection(db, await filteredSpecimens(db, query, personId, reader, undefined, exact, needsRollup(query)), group);
 }
 
 /**

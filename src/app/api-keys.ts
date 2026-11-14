@@ -27,14 +27,14 @@ export type KeyScope = (typeof KEY_SCOPES)[number];
 /**
  * The scopes a person may give a key they make. Decided here and used for
  * both the form's choices and the check on what the form posts, so the page
- * cannot offer less than the server accepts. `read` and `edit` for anyone;
- * `staff` only for someone who is staff now, since otherwise a volunteer could
- * make a staff key that starts working the day they are given staff rights.
- * `edit` was held back until the sample corrections accepted it
- * (beeline-pnqr.6), so that no key made earlier gained a power its maker had
- * never seen offered.
+ * cannot offer less than the server accepts. Anyone signed in may make a
+ * `read` key, which sees only what its person sees and changes nothing. The
+ * `edit` and `staff` keys are for someone who is staff now (the owner's
+ * decision, 2026-11-13): a key that corrects samples is not offered to
+ * collectors, and a staff key must not be makeable by a volunteer who is later
+ * given staff rights.
  */
-export const offeredScopes = (staff: boolean): KeyScope[] => (staff ? ["read", "edit", "staff"] : ["read", "edit"]);
+export const offeredScopes = (staff: boolean): KeyScope[] => (staff ? ["read", "edit", "staff"] : ["read"]);
 
 /**
  * How long a key may last, in days. The longest is the most a session can
@@ -232,22 +232,6 @@ export async function revokeKeysFor(db: Kysely<Database>, inatUserId: number | b
     .where("inat_user_id", "=", BigInt(inatUserId))
     .where("account_changed_at", "is", null)
     .execute();
-}
-
-/**
- * Whether an account has any key of its own, working or not. Keys made before
- * the account changed hands do not count: they are not the holder's. One scan
- * of a small table.
- */
-export async function hasKeys(db: Kysely<Database>, inatUserId: number | bigint): Promise<boolean> {
-  const row = await db
-    .selectFrom("api_key")
-    .select("key_sha256")
-    .where("inat_user_id", "=", BigInt(inatUserId))
-    .where("account_changed_at", "is", null)
-    .limit(1)
-    .executeTakeFirst();
-  return row !== undefined;
 }
 
 /**

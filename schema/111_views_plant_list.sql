@@ -196,12 +196,21 @@ WITH covering AS (
   JOIN plant_list_entry_taxon t ON t.inat_taxon_id = a.ancestor_id
   JOIN plant_list_entry_common_name c ON c.list_key = t.list_key AND c.scientific_name = t.scientific_name
 )
-SELECT taxon.inat_taxon_id,
-       coalesce(cv.common_name, taxon.preferred_common_name) AS common_name,
-       CASE WHEN cv.common_name IS NOT NULL THEN 'list' ELSE 'inaturalist' END AS source,
-       cv.scientific_name AS list_entry,
-       cv.depth AS list_entry_depth
-FROM inat_taxon taxon
-LEFT JOIN covering cv ON cv.inat_taxon_id = taxon.inat_taxon_id AND cv.place = 1
-WHERE coalesce(cv.common_name, taxon.preferred_common_name) IS NOT NULL;
-COMMENT ON VIEW plant_taxon_common_name IS 'The common name of each cached taxon that has one: the first name of the nearest old-Beeline list entry that covers it (the entry''s taxon is the taxon or an ancestor; the lowest depth wins), otherwise iNaturalist''s preferred name for Oregon. source says which; list_entry and list_entry_depth say which entry and how far above the taxon it sits (0 is an entry for the taxon itself, anything more is a coarser entry, a genus or a family, covering a species that has none of its own). Reads the taxon''s own stored lineage, so a retired taxon is judged by its stale one until beeline-rfkj.3 resolves it first.';
+-- The list's name wins only for the taxon's own entry. A coarser entry (a
+-- genus or a family) names a species only where iNaturalist has no name for
+-- it: "mustard" for Sisymbrium altissimum, which iNaturalist calls Tall
+-- Tumblemustard, is worse than either (Peter, 2026-11-14).
+, chosen AS (
+  SELECT taxon.inat_taxon_id, taxon.preferred_common_name, cv.common_name AS list_name, cv.scientific_name, cv.depth,
+         cv.common_name IS NOT NULL AND (cv.depth = 0 OR taxon.preferred_common_name IS NULL) AS from_list
+  FROM inat_taxon taxon
+  LEFT JOIN covering cv ON cv.inat_taxon_id = taxon.inat_taxon_id AND cv.place = 1
+)
+SELECT inat_taxon_id,
+       CASE WHEN from_list THEN list_name ELSE preferred_common_name END AS common_name,
+       CASE WHEN from_list THEN 'list' ELSE 'inaturalist' END AS source,
+       CASE WHEN from_list THEN scientific_name END AS list_entry,
+       CASE WHEN from_list THEN depth END AS list_entry_depth
+FROM chosen
+WHERE CASE WHEN from_list THEN list_name ELSE preferred_common_name END IS NOT NULL;
+COMMENT ON VIEW plant_taxon_common_name IS 'The common name of each cached taxon that has one: the first name of the old-Beeline list''s entry for the taxon itself; otherwise iNaturalist''s preferred name for Oregon; otherwise the first name of the nearest coarser list entry that covers it (the entry''s taxon is an ancestor; the lowest depth wins), so a genus or family entry names a species only where iNaturalist has no name for it (Peter, 2026-11-14). source says which; list_entry and list_entry_depth say which entry and how far above the taxon it sits (0 is the taxon''s own entry), and are NULL when the name is iNaturalist''s. Reads the taxon''s own stored lineage, so a retired taxon is judged by its stale one until beeline-rfkj.3 resolves it first.';

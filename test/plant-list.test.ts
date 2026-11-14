@@ -294,9 +294,15 @@ describe("common names", () => {
     expect(await nameOf(51884)).toEqual(["stinging nettle", "list", "Urtica dioica", 0]);
   });
 
-  test("a subspecies with no entry of its own takes its species' entry, one step up", async () => {
+  test("a subspecies with no entry of its own takes iNaturalist's name for it, not its species' entry", async () => {
     await resolveAll([["Urtica dioica", "Species", "stinging nettle"]]);
     await cache([[51884, "Urtica dioica", "species", null], [1074432, "Urtica dioica gracilis", "subspecies", "California nettle (iNaturalist)"]]);
+    expect(await nameOf(1074432)).toEqual(["California nettle (iNaturalist)", "inaturalist", null, null]);
+  });
+
+  test("a subspecies with no entry of its own and no iNaturalist name takes its species' entry, one step up", async () => {
+    await resolveAll([["Urtica dioica", "Species", "stinging nettle"]]);
+    await cache([[51884, "Urtica dioica", "species", null], [1074432, "Urtica dioica gracilis", "subspecies", null]]);
     expect(await nameOf(1074432)).toEqual(["stinging nettle", "list", "Urtica dioica", 1]);
   });
 
@@ -347,12 +353,16 @@ describe("common names", () => {
     ]);
   });
 
-  test("a family's name covers a species the list has no entry for, ahead of iNaturalist's own", async () => {
-    // The literal rule (Peter, 2026-11-14): the nearest entry wins, and a family is an entry. It is
-    // visible in list_entry_depth so a caller can see how far up the name came from.
+  test("a family's name covers a species the list has no entry for only where iNaturalist has no name", async () => {
+    // Peter, 2026-11-14: a coarser entry's name ("mustard" for Tall Tumblemustard) is worse than
+    // iNaturalist's name for the plant itself, so it is the last resort, not the first.
     await resolveAll([["Poaceae", "Genus", "grass"]]);
-    await cache([[777001, "Poa synthetica", "species", "synthetic bluegrass (iNaturalist)", [777001, 47434]]]); // synthetic taxon
-    expect(await nameOf(777001)).toEqual(["grass", "list", "Poaceae", 1]);
+    await cache([
+      [777001, "Poa synthetica", "species", "synthetic bluegrass (iNaturalist)", [777001, 47434]], // synthetic taxon
+      [777002, "Poa anonyma", "species", null, [777002, 47434]], // synthetic taxon
+    ]);
+    expect(await nameOf(777001)).toEqual(["synthetic bluegrass (iNaturalist)", "inaturalist", null, null]);
+    expect(await nameOf(777002)).toEqual(["grass", "list", "Poaceae", 1]);
   });
 
   test("two entries at one distance are settled the same way every time", async () => {

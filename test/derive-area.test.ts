@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deriveAreas, describeAreas } from "../src/derive-area.js";
-import { openDuckDb } from "../src/db.js";
+import { loadSpatial, openDuckDb } from "../src/db.js";
 import { SETTLED_SEASON, buildTestGazetteer, createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 let dir: string;
@@ -429,5 +429,48 @@ describe("stamping a sample's county from its coordinates (beeline-313x, Peter, 
     const id = await insertCleanSample(conn, { inat_observation_id: "1001" }, ALSEA);
     expect((await deriveAreas(conn, path)).countiesStamped).toBe(0);
     expect(await countyOf(conn, id)).toBe("BentonCo");
+  });
+});
+
+describe("the county stamp's memory (beeline-6cur)", () => {
+  test("many samples in a county with a large outline are stamped within a small memory limit", async () => {
+    // Production failed here every night from 11 to 14 November 2026: the
+    // stamp put a copy of the county's outline on every sample's row, and
+    // 70,654 samples against outlines of up to 1 MB needed more than 1.5 GB.
+    // Here 300 samples, a 1 MB outline and 150 MB do the same.
+    const path = join(dir, "large-outline.duckdb");
+    await buildTestGazetteer(path, "build-large");
+    const instance = await openDuckDb(path);
+    const g = await instance.connect();
+    await loadSpatial(g);
+    // Benton's square, drawn with 15,000 points a side.
+    await g.run(`
+      UPDATE region SET geom = (
+        SELECT ST_MakePolygon(ST_MakeLine(list(ST_Point(x, y) ORDER BY n)))
+        FROM (
+          SELECT i AS n, -124 + 2 * i / 15000.0 AS x, 44.0 AS y FROM range(15000) t(i)
+          UNION ALL SELECT 15000 + i, -122.0, 44 + i / 15000.0 FROM range(15000) t(i)
+          UNION ALL SELECT 30000 + i, -122 - 2 * i / 15000.0, 45.0 FROM range(15000) t(i)
+          UNION ALL SELECT 45000 + i, -124.0, 45 - i / 15000.0 FROM range(15001) t(i)
+        ))`);
+    const [[bytes]] = (await (await g.run(`SELECT octet_length(ST_AsWKB(geom)) FROM region`)).getRows()) as [[bigint]];
+    expect(Number(bytes)).toBeGreaterThan(900_000);
+    g.closeSync();
+    instance.closeSync();
+
+    const conn = await storeWithPerson();
+    for (let i = 0; i < 300; i++) {
+      await insertCleanSample(conn, { sample_number: `'${i + 1}'`, inat_observation_id: String(2000 + i) }, ALSEA);
+    }
+    // The areas are found first, with memory to spare, so that the limit
+    // below is on the stamp alone, as on a night with nothing new to test.
+    expect(await deriveAreas(conn, path)).toMatchObject({ inCounty: 300, countiesStamped: 0 });
+    // An in-memory store spills to .tmp in the working directory, which is
+    // the repository; this keeps what it spills in the test's own folder.
+    await conn.run(`SET temp_directory = '${join(dir, "spill")}'`);
+    await conn.run("SET memory_limit = '150MB'");
+    const r = await deriveAreas(conn, path, { stampCounties: true });
+    expect(r).toMatchObject({ pending: 0, countiesStamped: 300 });
+    expect(await rows(conn, `SELECT DISTINCT county FROM sample`)).toEqual([["Benton"]]);
   });
 });

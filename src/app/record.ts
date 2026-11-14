@@ -823,7 +823,15 @@ export async function sampleChangeHistory(
     const found = await sql<{ collector: string | null; sample_number: string; date_start: string }>`
       ${sql.raw(SAMPLE_STATE_SQL)}
       WHERE s.entity_id = ${sql.lit(Math.trunc(sampleId))}`.execute(db);
-    const row = found.rows[0];
+    // A sample with no primary collector is not in that query, and has no
+    // reference to be read by; what was filed with its id is still its own.
+    const row =
+      found.rows[0] ??
+      (
+        await sql<{ collector: null; sample_number: string; date_start: string }>`
+          SELECT NULL AS collector, s.sample_number, CAST(s.date_start AS VARCHAR) AS date_start
+          FROM sample s WHERE s.entity_id = ${sql.lit(Math.trunc(sampleId))}`.execute(db)
+      ).rows[0];
     if (row === undefined) return [];
     const origin = await sql<{ identity: string }>`${sql.raw(STORE_IDENTITY_SQL)}`.execute(db);
     // During a live duplicate_sample_number two samples derive this same

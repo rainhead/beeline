@@ -1377,8 +1377,14 @@ async function recordPass(
       // none of its own under the other store's name.
       // Nor does it leave a second row with no id under its sample's
       // reference: the full pass could then tell neither from the other,
-      // and would enter the sample again.
-      const replaced = (row: SampleState) => row === before || (!believed && stateKey(row) === key);
+      // and would enter the sample again. A row there with an observation
+      // of its own stays: it is another sample's, which the full pass can
+      // still follow by that observation if the sample has moved, and whose
+      // history it would otherwise begin again (CodeRabbit on this branch).
+      const anothers = (row: SampleState) =>
+        row.fields.observation !== "" && row.fields.observation !== state.fields.observation;
+      const replaced = (row: SampleState) =>
+        row === before || (!believed && stateKey(row) === key && !anothers(row));
       next = [...next.filter((row) => !replaced(row)), believed ? state : { ...state, id: "" }];
       touched = true;
     }

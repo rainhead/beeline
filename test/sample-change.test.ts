@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemoryDb, insertCleanSample, currentSeasonDate, rows } from "./helpers.js";
 import { duckdbReader } from "../src/person-change.js";
+import { createKysely } from "../src/db.js";
+import { sampleChangeHistory } from "../src/app/record.js";
 import {
   foldSampleChanges,
   parseSampleChanges,
@@ -1028,6 +1030,32 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
       expect((await readSnapshot(paths.state))!.some((r) => r.id === String(made))).toBe(false);
     });
 
+    it("a sample just made on the number of a row with another observation leaves that row for its own sample", async () => {
+      // A has moved to 3 since the snapshot was written, and B is entered on
+      // A's old number before any full pass.
+      const a = await unlinked("1", { inat_observation_id: "77" });
+      await unlinked("9");
+      await record();
+      await conn.run(`UPDATE sample SET locality = 'Alsea' WHERE entity_id = ${a}`);
+      await record();
+      const text = await readFile(paths.state, "utf8");
+      const [origin, ...rest] = text.split("\n");
+      const [mark, identity] = origin!.split(",");
+      await writeFile(paths.state, [`${mark},${identity},${1_000_000}`, ...rest].join("\n"));
+      await renumber(a, "3");
+      const b = await unlinked("1", { inat_observation_id: "88" });
+      expect((await narrowed(b, { created: true })).appended).toBeGreaterThan(0);
+      expect(await numbers()).toEqual(["1", "1", "9"]);
+      await record();
+      // A is followed by its observation, and keeps what was recorded before.
+      expect(await historyOf("3")).toEqual([
+        ["sample_number", "1", "3", ""],
+        ["locality", "Corvallis", "Alsea", ""],
+      ]);
+      expect((await historyOf("1")).every((e) => e[1] === "" && e[3] === "ada")).toBe(true);
+      expect((await record()).appended).toBe(0);
+    });
+
     it("the line names the id before the new sample's even where the new sample shares its number", async () => {
       // A sample on a shared number is recorded as nothing, but its id is
       // still one the log may have entries under.
@@ -1502,6 +1530,24 @@ describe("a history is read by the sample's id", () => {
         ["locality", "Corvallis", "Adair"],
         ["locality", "Alsea", "Corvallis"],
       ]);
+    });
+
+    it("the page shows a sample left with no primary collector what was filed with its id", async () => {
+      const made = await createMemoryDb();
+      await made.conn.run("INSERT INTO person (display_name) VALUES ('Ada Collector')");
+      await made.conn.run("INSERT INTO schema_migration (name) VALUES ('0001-a-store-that-was-built.sql')");
+      const id = await insertCleanSample(made.conn);
+      const pass = () => recordSampleChanges(duckdbReader(made.conn), paths, { source: "reconcile" });
+      await pass();
+      await made.conn.run(`UPDATE sample SET locality = 'Alsea' WHERE entity_id = ${id}`);
+      await pass();
+      const db = createKysely(made.instance);
+      const shown = async () => (await sampleChangeHistory(db, paths.log, id)).map((e) => [e.field, e.new_value]);
+      expect(await shown()).toEqual([["locality", "Alsea"]]);
+      await made.conn.run(`DELETE FROM sample_collector WHERE sample_id = ${id}`);
+      expect(await shown()).toEqual([["locality", "Alsea"]]);
+      // And nothing for a sample that is not there.
+      expect(await sampleChangeHistory(db, paths.log, id + 1000)).toEqual([]);
     });
 
     it("a baseline over a log that has entries says that ids begin again", async () => {

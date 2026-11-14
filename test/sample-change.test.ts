@@ -904,6 +904,19 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     expect((await record()).appended).toBe(0);
   });
 
+  it("a sample left with no primary collector keeps its row, and does not arrive again when it has one", async () => {
+    const id = await unlinked("1");
+    await unlinked("2");
+    await unlinked("3");
+    await record();
+    const [[collector]] = (await rows(conn, `SELECT person_id FROM sample_collector WHERE sample_id = ${id}`)) as [[number]];
+    await conn.run(`DELETE FROM sample_collector WHERE sample_id = ${id}`);
+    expect((await record()).appended).toBe(0);
+    expect(await numbers()).toEqual(["1", "2", "3"]);
+    await conn.run(`INSERT INTO sample_collector (sample_id, person_id, position) VALUES (${id}, ${collector}, 1)`);
+    expect((await record()).appended).toBe(0);
+  });
+
   it("deleting the newest sample is not a store put back: the ids are still believed", async () => {
     // The mark is the last id the store handed out, which a delete does not lower.
     const id = await unlinked("1");

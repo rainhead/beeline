@@ -1345,7 +1345,10 @@ export function createApp({
       return c.html(await trapPage(c, c.get("m").trapSample.newTitle, form, problems, "/trap-samples/new"), 409);
     }
     // Entered in its history as arriving, under whoever entered it.
-    await recordTrapChange(c, id, { created: true });
+    // In the sample's own queue, taken at once: the entry may wait behind a
+    // pass already running, and an edit made meanwhile would otherwise be
+    // read by this pass and entered under whoever made the sample.
+    await onSample(id, () => recordTrapChange(c, id, { created: true }));
     return c.redirect(`/samples/${id}`);
   });
 

@@ -358,6 +358,14 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
     }
     states.set(key, state);
   }
+  // A sample with no primary collector is not in the query above at all,
+  // and is still in the store: its row stays until the sample is gone
+  // (CodeRabbit on this branch). Only a full pass uses the set.
+  if (where === "") {
+    for (const row of await read("SELECT CAST(entity_id AS VARCHAR) AS sample_id FROM sample")) {
+      liveIds.add(String(row.sample_id));
+    }
+  }
   // Count the samples, not the keys: a collision is at least two of them.
   let colliding = 0;
   for (const row of rows) {

@@ -555,13 +555,11 @@ describe("the gate, the limit and the record of use", () => {
     const w = await world();
     const api = createApi({ db: w.db, isStaff: async () => false, limiter: keyRateLimiter({ limit: 2 }) });
     const ask = () => api.request("/samples/count", { headers: { authorization: `Bearer ${w.keys.alice}` } });
-    // The first request is counted against the key's reference, before its person is known; the rest against the person.
     expect((await ask()).status).toBe(200);
     expect((await ask()).status).toBe(200);
-    expect((await ask()).status).toBe(200);
-    const fourth = await ask();
-    expect(fourth.status).toBe(429);
-    expect(fourth.headers.get("retry-after")).not.toBeNull();
+    const third = await ask();
+    expect(third.status).toBe(429);
+    expect(third.headers.get("retry-after")).not.toBeNull();
   });
 
   it("says 503 for a listing or a record where the instance cannot read them, and still counts", async () => {
@@ -872,13 +870,11 @@ describe("how much the API lets one person ask of the machine", () => {
   it("counts a person's keys together, and still answers a key over its limit without asking the store", async () => {
     const w = await world();
     const { seen, plugin } = watcher();
-    const api = createApi({ db: w.db.withPlugin(plugin), isStaff: async () => false, limiter: keyRateLimiter({ limit: 2 }) });
+    const api = createApi({ db: w.db.withPlugin(plugin), isStaff: async () => false, limiter: keyRateLimiter({ limit: 4 }) });
     const keys = [w.keys.alice, await w.keyFor(UID.alice, "read"), await w.keyFor(UID.alice, "read")];
-    // The first request of each key is counted against the key, which is all that is known of it before its lookup.
+    // Three keys share one budget of four, from their first requests on.
     for (const k of keys) expect((await asking(api, k, "/me")).status).toBe(200);
-    // From then on they share one budget of two: the first two of these pass, the third is the person's third.
     expect((await asking(api, keys[0]!, "/me")).status).toBe(200);
-    expect((await asking(api, keys[1]!, "/me")).status).toBe(200);
     const queries = seen.queries;
     const refused = await asking(api, keys[2]!, "/me");
     expect(refused.status).toBe(429);
@@ -891,11 +887,9 @@ describe("how much the API lets one person ask of the machine", () => {
 
   it("keeps a lower limit for reading, per person, and leaves the rest on the general one", async () => {
     const w = await world();
-    const api = createApi({ db: w.db, isStaff: async () => false, readLimiter: keyRateLimiter({ limit: 2 }), read: { changesPath: w.paths.sampleChangesPath, origin: ORIGIN } });
+    const api = createApi({ db: w.db, isStaff: async () => false, readLimiter: keyRateLimiter({ limit: 3 }), read: { changesPath: w.paths.sampleChangesPath, origin: ORIGIN } });
     const keys = [w.keys.alice, await w.keyFor(UID.alice, "read"), await w.keyFor(UID.alice, "read")];
     for (const k of keys) expect((await asking(api, k, "/samples/count")).status).toBe(200);
-    expect((await asking(api, keys[0]!, "/samples/count")).status).toBe(200);
-    expect((await asking(api, keys[1]!, "/samples/count")).status).toBe(200);
     const limited = await asking(api, keys[2]!, "/specimens/count");
     expect(limited.status).toBe(429);
     expect((await limited.json()).message).toContain("60 requests a minute");
@@ -904,10 +898,9 @@ describe("how much the API lets one person ask of the machine", () => {
     expect((await asking(api, keys[2]!, "")).status).toBe(200);
     // The default is 60.
     const plain60 = createApi({ db: w.db, isStaff: async () => false });
-    // (The first request is counted against the key, the rest against the person: 61 pass, then it stops.)
     const statuses: number[] = [];
     for (let i = 0; i < 63; i++) statuses.push((await asking(plain60, w.keys.bob, "/samples/count")).status);
-    expect(statuses.indexOf(429)).toBe(61);
+    expect(statuses.indexOf(429)).toBe(60);
   });
 
   it("lets two reads run and twenty wait, turns away the next, and gives each turn back", async () => {

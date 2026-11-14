@@ -227,6 +227,20 @@ export function createApi({
       return unauthorized(c, "This API key does not work. It may have expired or been revoked.");
     }
     owners.set(ref, { owner: String(holder.inatUserId), until: now + OWNER_MEMORY_MS });
+    // A key not remembered has so far been counted against its own reference.
+    // Now that its owner is known the request is counted against the owner too,
+    // so that a person's budget is exactly the limit, however many keys they
+    // have just started. At most one lookup per key a minute is spent on a
+    // request this refuses.
+    if (known === null) {
+      const personBudget = `person:${holder.inatUserId}`;
+      const late = limiter.take(personBudget);
+      const lateRead = isRead(c) ? readLimiter.take(personBudget) : 0;
+      if (late > 0 || lateRead > 0) {
+        c.header("retry-after", String(Math.max(late, lateRead)));
+        return apiError(c, 429, "too many requests", `This key is asking too often. Wait ${Math.max(late, lateRead)} seconds.`);
+      }
+    }
     c.set("key", holder);
     c.set("staff", holder.scope === "staff" && (await isStaff(holder.personId)));
     await next();

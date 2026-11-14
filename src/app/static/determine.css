@@ -6,6 +6,7 @@ main > determine-grid { grid-column: full; padding: 0 var(--space-6); }
 
 .determine-views { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-4); align-items: center; margin: var(--space-4) 0; }
 .determine-season { display: flex; gap: var(--space-2); align-items: center; margin: 0; }
+.determine-season label { white-space: nowrap; }
 
 determine-grid button.small { min-height: 0; padding: var(--space-1) var(--space-2); font: var(--md-sys-typescale-label); }
 determine-grid button[disabled] { opacity: 0.45; cursor: not-allowed; }

@@ -44,9 +44,11 @@ import {
   defaultSeason,
   entrySeasons,
   entryTaxa,
+  locateSpecimen,
   removeFromBatch,
   rowTaxa,
   saveDrafts,
+  seasonOf,
   seasonRows,
   BadRequest,
   UnknownTaxon,
@@ -1787,7 +1789,14 @@ export function createApp({
     const me = determiner(c);
     const seasons = await entrySeasons(db, acting.personId, me);
     const view = c.req.query("view") === "batch" ? "batch" : "sample";
-    const asked = Number(c.req.query("season"));
+    // ?specimen=<id> opens the year that specimen is in, with it selected
+    // (beeline-mjml): where the find box goes for a number in another year,
+    // and what a link to one specimen can use. One the person cannot reach
+    // is ignored, as an unknown season is.
+    const specimenAsked = Number(c.req.query("specimen"));
+    const focusSeason =
+      view === "sample" && Number.isInteger(specimenAsked) && specimenAsked > 0 ? await seasonOf(db, acting.personId, specimenAsked) : null;
+    const asked = focusSeason ?? Number(c.req.query("season"));
     const season = seasons.some((s) => s.season === asked) ? asked : defaultSeason(seasons);
     const rows =
       view === "batch" ? await batchRows(db, acting.personId, me) : season === null ? [] : await seasonRows(db, acting.personId, me, season);
@@ -1798,11 +1807,17 @@ export function createApp({
       taxa: await rowTaxa(db, rows),
       readOnly: acting.impersonating,
       batchCount: view === "batch" ? rows.length : await batchSize(db, acting.personId, me),
+      focus: focusSeason !== null && rows.some((r) => r.id === specimenAsked) ? specimenAsked : null,
     } as const;
     return c.html(
       await page(c, m.determine.title, <DeterminePage m={m} seasons={seasons} data={data} />, ["/static/determine.css"]),
     );
   });
+
+  // A field number in any year (beeline-mjml): the By season find box asks
+  // here when the number is not in the year it shows. A read, so it is open
+  // while impersonating, like the page.
+  app.get("/determinations/locate", async (c) => c.json(await locateSpecimen(db, c.get("acting").personId, c.req.query("number") ?? "")));
 
   // The names change only when the tree is promoted; a few minutes' staleness
   // costs nothing and saves 400 KB on every page of a long sitting.

@@ -2086,6 +2086,8 @@ export const en = {
       "session-purge": "Each night, deletes the sign-in sessions idle for more than 30 days, which have already stopped working.",
       "nightly-pipeline":
         "Pulls every observation changed since the last run (edits and new records, however old the observation), promotes into samples, and fills missing elevations from the DEM tiles on disk.",
+      "plant-names":
+        "Asks iNaturalist which plant each name on the old Beeline's plant list is, 300 names a night, and reads in the plants it finds. A name iNaturalist does not recognise, or matches to two plants, is left unmatched and is listed in the store, not guessed. The list's common names are used for host plants once their names are matched. Start it again from here to get through the list faster.",
       "legacy-export":
         "Writes every specimen as the old system's occurrences file — the same columns, order and format — so reports and uploads built on that file keep working. Download it from Exports.",
       "legacy-copy":

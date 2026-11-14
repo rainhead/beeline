@@ -18,6 +18,7 @@ import { deriveAreas, describeAreas } from "../../derive-area.js";
 import { fetchMissingTiles, type FetchTilesOptions } from "../../fetch-dem.js";
 import { mintPipelineJwt } from "../../inat-jwt.js";
 import { fetchInatTaxa, type FetchInatTaxaOptions } from "../../fetch-inat-taxa.js";
+import { fetchPlantNames, NIGHTLY_PLANT_NAME_REQUESTS, type FetchPlantNamesOptions } from "../../fetch-plant-names.js";
 import { fetchPlaces, type FetchPlacesOptions } from "../../fetch-places.js";
 import type { Database } from "../../model.js";
 import { duckdbReader, recordPersonChanges } from "../../person-change.js";
@@ -188,6 +189,77 @@ export async function refreshInatTaxa(
     opts.onFailure?.();
     return `taxa fetch failed (${(err as Error).message}); what it had stored stays`;
   }
+}
+
+/** How long the plant-names job may run, whatever the requests are doing: it starts at 1am and the pipeline at 2am. */
+export const PLANT_NAMES_DEADLINE_MS = 15 * 60_000;
+
+/**
+ * The old plant list's names put to iNaturalist (src/fetch-plant-names.ts),
+ * then the taxa they led to read into the cache, as the nightly's step does.
+ * The cache's rolling refresh is left to the nightly pipeline, which runs it
+ * an hour later: this job reads only the taxa the names reached.
+ * NEVER FAILS THE RUN, for refreshInatTaxa's reason; a shutdown is rethrown.
+ * `step` records each part as a job step; by default each simply runs.
+ */
+export async function refreshPlantNames(
+  conn: JobContext["conn"],
+  opts: FetchPlantNamesOptions & { deadlineMs?: number; step?: JobContext["step"] } = {},
+): Promise<string> {
+  const deadlineMs = opts.deadlineMs ?? PLANT_NAMES_DEADLINE_MS;
+  const deadline = AbortSignal.timeout(deadlineMs);
+  const signal = opts.signal ? AbortSignal.any([deadline, opts.signal]) : deadline;
+  const step: JobContext["step"] = opts.step ?? ((_label, fn) => fn());
+  const parts: string[] = [];
+  try {
+    // Any request error marks the step failed (as the taxa step does on main) while the
+    // run goes on, so /jobs and the menu say so (beeline-222u). A name iNaturalist refuses
+    // with a 400, 414 or 422 is recorded as could not be asked and is no error (fetch-plant-names.ts),
+    // so only a failure that may pass marks the step.
+    const r = await step(
+      "ask for plant names",
+      () => fetchPlantNames(conn, { maxRequests: NIGHTLY_PLANT_NAME_REQUESTS, ...opts, signal }),
+      (result) => result.errors.length > 0,
+    );
+    // A shutdown that landed after the step began, before any request, returns quietly from the
+    // fetch; it must still end this job as a shutdown, not as a run that finished.
+    opts.signal?.throwIfAborted();
+    parts.push(
+      r.unlooked === 0
+        ? "every plant list name answered"
+        : `${r.stored} of ${r.unlooked} plant list names answered` +
+            (r.refused > 0 ? `; ${r.refused} recorded as could not be asked (iNaturalist refused the name)` : "") +
+            (r.errors.length > 0 ? `; ${r.errors.length} request error(s), the first: ${r.errors[0]}` : "") +
+            (r.stoppedEarly ? "; the rest wait for the next run" : ""),
+    );
+    // After a 429 nothing more is asked of iNaturalist tonight, taxa included.
+    if (r.requested > 0 && !r.rateLimited) {
+      // The same fetch options, so a test's or a run's own fetch reaches the taxa too; not apiBase, which is the names' endpoint.
+      const { fetchImpl, requestDelayMs, requestTimeoutMs } = opts;
+      let taxaFailed = false;
+      parts.push(
+        await step(
+          "fetch taxa the names reached",
+          () =>
+            refreshInatTaxa(conn, {
+              fetchImpl, requestDelayMs, requestTimeoutMs, signal: opts.signal, skipRefresh: true,
+              onFailure: () => {
+                taxaFailed = true;
+              },
+            }),
+          () => taxaFailed,
+        ),
+      );
+    }
+  } catch (err) {
+    opts.signal?.throwIfAborted();
+    parts.push(
+      deadline.aborted
+        ? `plant names stopped after ${Math.round(deadlineMs / 60_000)} minutes; what was stored stays`
+        : `plant names failed (${(err as Error).message}); what was stored stays`,
+    );
+  }
+  return parts.join("; ");
 }
 
 /** How many cited observations one night may ask iNaturalist for: ten requests. */
@@ -642,6 +714,26 @@ export function buildJobs(
       async run(ctx) {
         const { committed, unchanged, waiting } = await ctx.step("commit drafts", () => commitDeterminationDrafts(ctx.conn));
         return `${committed} determination(s) recorded, ${unchanged} draft(s) unchanged and dropped, ${waiting} waiting for a name`;
+      },
+    },
+    {
+      // Which iNaturalist taxon each name of the old plant list is
+      // (beeline-rfkj.2): 300 names a night, so the list's 1,400 are answered
+      // in five nights, or at once by starting this from /jobs as often as it
+      // takes. At 1am, ahead of the 2am pipeline, so the taxa the names lead
+      // to are read here and not left for that night's cap. It runs after the
+      // two jobs above it in this list: over the 30 days to 2026-11-14 the
+      // volunteer import took 1 minute (at most 1:03) and the commit under a
+      // second, so this starts about 1:02. Its own deadline (15 minutes) plus
+      // the taxa step's (8) ends it by about 1:25 at the latest, 35 minutes
+      // before the pipeline; a slow import eats into that margin one for one.
+      // Never fails the run: names that stay unasked cost a host its list
+      // name for another night, nothing more.
+      name: "plant-names",
+      schedule: { kind: "dailyLA", hour: 1 },
+      window: "night",
+      async run(ctx) {
+        return refreshPlantNames(ctx.conn, { signal: ctx.signal, log: ctx.log, step: ctx.step });
       },
     },
     {

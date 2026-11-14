@@ -32,7 +32,7 @@ CREATE TABLE inat_taxon (
   preferred_common_name TEXT,
   fetched_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-COMMENT ON TABLE inat_taxon IS 'iNaturalist taxa the store has referred to (a sample''s or observation''s floral host), with their ancestors and replacements, read from the iNaturalist API by id (src/fetch-inat-taxa.ts). Reference data, not an entity (ADR 0002). A retired taxon is kept, with is_active false, because samples still name it. Nothing is deleted from the cache, including taxa that nothing refers to any more; inat_taxon_replacement says what replaced it.';
+COMMENT ON TABLE inat_taxon IS 'iNaturalist taxa the store has referred to (a sample''s or observation''s floral host, or a taxon that iNaturalist''s answers to the old plant list''s names came to, schema/111), with their ancestors and replacements, read from the iNaturalist API by id (src/fetch-inat-taxa.ts). Reference data, not an entity (ADR 0002). A retired taxon is kept, with is_active false, because samples or list names still lead to it. Nothing is deleted from the cache, including taxa that nothing refers to any more; inat_taxon_replacement says what replaced it.';
 COMMENT ON COLUMN inat_taxon.name IS 'The scientific name iNaturalist uses for this taxon today.';
 COMMENT ON COLUMN inat_taxon.rank IS 'The rank as iNaturalist writes it: species, subspecies, variety, genus, section, complex, hybrid and so on. Not narrowed to the ranks the model knows.';
 COMMENT ON COLUMN inat_taxon.rank_level IS 'iNaturalist''s number for the rank, higher for broader ranks (species 10, genus 20, family 30, kingdom 70). Orders ranks without a list of their names.';

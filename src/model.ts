@@ -203,6 +203,150 @@ export interface InatTaxonStalestView {
   inat_taxon_id: BigIntCol;
 }
 
+// schema/067_plant_list.sql, schema/111_views_plant_list.sql (beeline-rfkj.2)
+
+/** A plant list kept in git and loaded into the store. */
+export interface PlantListTable {
+  list_key: string;
+  source_file: string;
+  content_hash: string;
+  loaded_at: Generated<Date>;
+}
+
+/** One row of a plant list as the file wrote it; an empty cell is null. */
+export interface PlantListEntryTable {
+  list_key: string;
+  scientific_name: string;
+  rank: string | null;
+  family: string | null;
+  synonym: string | null;
+  common_name: string | null;
+}
+
+/** A question put to iNaturalist's taxa search for a normalised name at an expected rank. */
+export interface PlantNameLookupTable {
+  name_key: string;
+  expected_rank: string;
+  total_results: number;
+  /** Whether every page was read; false when the page cap stopped the reading with results left. */
+  read_in_full: boolean;
+  /** False when iNaturalist refused the query (a 400, 414 or 422); asked again after 30 days. */
+  answered: Generated<boolean>;
+  looked_up_at: Generated<Date>;
+}
+
+/** A taxon iNaturalist returned for a lookup, as returned. */
+export interface PlantNameLookupHitTable {
+  name_key: string;
+  expected_rank: string;
+  inat_taxon_id: BigIntCol;
+  name: string;
+  rank: string;
+  is_active: boolean;
+  matched_term: string;
+}
+
+/** What a retired hit was replaced by, as the lookup's answer said. */
+export interface PlantNameLookupHitReplacementTable {
+  name_key: string;
+  expected_rank: string;
+  inat_taxon_id: BigIntCol;
+  replacement_taxon_id: BigIntCol;
+}
+
+/** Every plant name the list wrote or iNaturalist matched, normalised. */
+export interface PlantNameNormalView {
+  raw_name: string;
+  name_key: string;
+}
+
+export interface PlantExpectedRankView {
+  expected_rank: string;
+  inat_rank: string;
+  /** Counts only where the name has no hit at the expected rank's own ranks. */
+  fallback: boolean;
+}
+
+export interface PlantListEntryNameView {
+  list_key: string;
+  scientific_name: string;
+  name_key: string;
+  expected_rank: string;
+}
+
+export interface PlantNameUnlookedView {
+  name_key: string;
+  expected_rank: string;
+}
+
+export interface PlantNameHitCurrentView {
+  name_key: string;
+  expected_rank: string;
+  hit_taxon_id: BigIntCol;
+  hit_is_active: boolean;
+  /** The hit's own name is the name asked for, and not only an older name of it that matched. */
+  own_name: boolean;
+  /** Where the hit stands for a taxon: itself, its replacements, or NULL for a retired taxon with none. */
+  current_taxon_id: BigIntCol | null;
+}
+
+export type PlantNameOutcome = "not looked up" | "could not be asked" | "too many results" | "no match" | "retired, no replacement" | "matched" | "ambiguous";
+
+export interface PlantNameResolutionView {
+  name_key: string;
+  expected_rank: string;
+  outcome: PlantNameOutcome;
+  inat_taxon_id: BigIntCol | null;
+}
+
+export interface PlantListEntryTaxonView {
+  list_key: string;
+  scientific_name: string;
+  name_key: string;
+  expected_rank: string;
+  outcome: PlantNameOutcome;
+  inat_taxon_id: BigIntCol | null;
+}
+
+export interface PlantListEntryUnmatchedView {
+  list_key: string;
+  scientific_name: string;
+  listed_rank: string | null;
+  expected_rank: string | null;
+  outcome: PlantNameOutcome | "no name";
+  synonym: string | null;
+  common_name: string | null;
+}
+
+export interface PlantListTaxonSharedView {
+  list_key: string;
+  inat_taxon_id: BigIntCol;
+  entries: BigIntCol;
+  scientific_names: string;
+}
+
+/** Entries at genus rank or above whose common-name cell holds several names; they give no common name. */
+export interface PlantListEntrySeveralNamesView {
+  list_key: string;
+  scientific_name: string;
+  common_name: string;
+}
+
+export interface PlantListEntryCommonNameView {
+  list_key: string;
+  scientific_name: string;
+  common_name: string;
+}
+
+/** A cached taxon's common name: its own list entry's, else iNaturalist's for Oregon, else the nearest coarser list entry's. */
+export interface PlantTaxonCommonNameView {
+  inat_taxon_id: BigIntCol;
+  common_name: string;
+  source: "list" | "inaturalist";
+  list_entry: string | null;
+  list_entry_depth: number | null;
+}
+
 // schema/012_sign_in.sql — signing in, and who has been here (beeline-4tdh)
 
 export interface InatSignInTable {
@@ -1557,6 +1701,23 @@ export interface Database {
   inat_taxon_absent: InatTaxonAbsentTable;
   inat_taxon_known_absent: InatTaxonKnownAbsentView;
   inat_taxon_uncached: InatTaxonUncachedView;
+  plant_list: PlantListTable;
+  plant_list_entry: PlantListEntryTable;
+  plant_name_lookup: PlantNameLookupTable;
+  plant_name_lookup_hit: PlantNameLookupHitTable;
+  plant_name_lookup_hit_replacement: PlantNameLookupHitReplacementTable;
+  plant_name_normal: PlantNameNormalView;
+  plant_expected_rank: PlantExpectedRankView;
+  plant_list_entry_name: PlantListEntryNameView;
+  plant_name_unlooked: PlantNameUnlookedView;
+  plant_name_hit_current: PlantNameHitCurrentView;
+  plant_name_resolution: PlantNameResolutionView;
+  plant_list_entry_taxon: PlantListEntryTaxonView;
+  plant_list_entry_unmatched: PlantListEntryUnmatchedView;
+  plant_list_taxon_shared: PlantListTaxonSharedView;
+  plant_list_entry_several_names: PlantListEntrySeveralNamesView;
+  plant_list_entry_common_name: PlantListEntryCommonNameView;
+  plant_taxon_common_name: PlantTaxonCommonNameView;
   inat_taxon_recheck: InatTaxonRecheckView;
   inat_taxon_stalest: InatTaxonStalestView;
   animal_ecdysis: AnimalEcdysisView;

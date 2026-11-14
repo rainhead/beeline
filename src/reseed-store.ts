@@ -3,6 +3,7 @@ import { openDuckDb } from "./db.js";
 import { rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { applySchema } from "./schema.js";
+import { loadPlantList } from "./load-plant-list.js";
 import {
   refuseReseedOfPrintedFile,
   refuseReseedOfPrintedStore,
@@ -93,6 +94,9 @@ export const CARRIED_TABLES = [
   "inat_taxon_ancestor",
   "inat_taxon_replacement",
   "inat_taxon_absent",
+  "plant_name_lookup",
+  "plant_name_lookup_hit",
+  "plant_name_lookup_hit_replacement",
   "observation_absent",
   "inat_user_orcid",
   "ecdysis_taxon",
@@ -239,6 +243,15 @@ export async function carryStaging(
         await count(table);
       }
     }
+    // What iNaturalist said about the old plant list's names (schema/067,
+    // beeline-rfkj.2): about 1,400 requests, 29 minutes, to ask again. The
+    // list itself is not carried: reseedStore loads it from git.
+    for (const table of ["plant_name_lookup", "plant_name_lookup_hit", "plant_name_lookup_hit_replacement"]) {
+      if (await has(table)) {
+        await conn.run(`INSERT INTO ${table} BY NAME SELECT * FROM old.${table}`);
+        await count(table);
+      }
+    }
     // Same terms as the places' verdicts, for observations (beeline-wcc6):
     // keyed by iNat's id, and its instants are when iNat answered. Dropped,
     // the flag on every sample citing a deleted observation would vanish
@@ -326,6 +339,9 @@ export async function reseedStore(sourcePath: string, targetPath: string): Promi
     // migrations rather than run them, exactly as db:build does.
     const { baseline } = await import("./migrate.js");
     await baseline(conn);
+    // The lookups are carried and the list they are about is not, so load it
+    // here (offline, from git): the carried lookups read as answers at once.
+    await loadPlantList(conn);
     return await carryStaging(conn, sourcePath);
   } finally {
     conn.closeSync();

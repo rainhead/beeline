@@ -10,6 +10,8 @@ import { commitDeterminationDrafts } from "../../commit-determinations.js";
 import { describeFetch, ECDYSIS_COLLECTIONS, fetchEcdysis } from "../../fetch-ecdysis.js";
 import { backUp, describeBackup } from "../../store-backup.js";
 import type { Kysely } from "kysely";
+import type { StoreFiles } from "../../db.js";
+import { DEFAULT_DETERMINER_ALIASES } from "../../load-ecdysis.js";
 import { deriveElevations } from "../../derive-elevation.js";
 import { deriveLocalities, describeLocalities } from "../../derive-locality.js";
 import { deriveAreas, describeAreas } from "../../derive-area.js";
@@ -298,6 +300,39 @@ export async function refreshAreas(
     signal?.throwIfAborted();
     return { detail: `finding areas failed (${(err as Error).message})`, countiesStamped: 0 };
   }
+}
+
+/**
+ * Every file the app's DuckDB statements read or write besides the store
+ * itself, which is all they are allowed to reach (beeline-pnqr.3,
+ * `limitFileAccess` in src/db.ts). The rest of what the app keeps under
+ * `data/` is read and written by Node and is deliberately not here: the
+ * overlays and change logs, the elevation tiles, the print runs, and
+ * `data/secrets/`, which holds the pipeline's iNaturalist token.
+ *
+ * A job or a page that makes DuckDB touch a new file (`read_csv`, `COPY`,
+ * `ATTACH`, `ST_Read`) must add it here, or the statement fails with
+ * "file system operations are disabled by configuration".
+ * test/store-file-limit.test.ts runs each of these under the limit.
+ */
+export function storeFiles(
+  config: Pick<AppConfig, "exportsDir" | "backupsDir" | "ecdysisDir">,
+  gazetteerPath: string = GAZETTEER_PATH,
+): StoreFiles {
+  return {
+    directories: [
+      // The legacy export: `COPY ... TO` its body file (writeLegacyExport).
+      config.exportsDir,
+      // The nightly backup attaches its copy of the store in a `run-` folder here (snapshotCatalog).
+      config.backupsDir,
+      // The Ecdysis archive is unpacked into a folder here and read with read_csv (loadEcdysis).
+      config.ecdysisDir,
+    ],
+    // The spellings of determiners' names, read with the Ecdysis archive.
+    files: [DEFAULT_DETERMINER_ALIASES],
+    // Attached read-only to name areas and localities (deriveAreas, deriveLocalities).
+    databases: [gazetteerPath],
+  };
 }
 
 /** Fetch places, promote, elevation, areas and localities, shared by both sync jobs. Exported for its test. */

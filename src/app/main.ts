@@ -9,7 +9,7 @@ import { readSampleChanges, recordSampleChanges } from "../sample-change.js";
 import { ensureSampleOverlayFile } from "../sample-overlay.js";
 import { ensureProgramContactsFile } from "../program-contacts.js";
 import { startScheduler } from "./jobs/framework.js";
-import { buildJobs, DEM_DIR, GAZETTEER_PATH } from "./jobs/registry.js";
+import { buildJobs, DEM_DIR, GAZETTEER_PATH, storeFiles } from "./jobs/registry.js";
 import { createApp } from "./server.js";
 import { flushErrorReporting, initErrorReporting, jobCheckIns, reportError } from "./error-reporting.js";
 import { checkRegistryMark, currentCatalog } from "../registry-mark.js";
@@ -22,7 +22,7 @@ const config = configFromEnv();
 // open, the boot-time reconciliation — is reported (beeline-8w6.1).
 const reporting = initErrorReporting(config);
 if (reporting) console.log(`reporting errors to Sentry as ${config.environment}${config.release ? ` (${config.release})` : ""}`);
-const { db, instance, close } = await openAppDb(config);
+const { db, instance, close } = await openAppDb(config, storeFiles(config));
 
 // Before anything reads or writes the store: refuse one that holds fewer
 // print runs or minted field numbers than this deployment has seen

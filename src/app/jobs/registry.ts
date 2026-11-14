@@ -168,6 +168,9 @@ export async function refreshInatTaxa(
         ? `; ${r.failed.length} taxon id(s) could not be read${r.failed.length > 0 ? ` (${r.failed.join(", ")})` : ""}, ` +
           `${r.errors.length} request error(s), the first: ${r.errors[0]}`
         : "";
+    // A request that failed is caught inside the fetch and listed, not
+    // thrown, so this is where the step learns of it (CodeRabbit on #342).
+    if (r.errors.length > 0) opts.onFailure?.();
     if (r.requested === 0) return "taxa cache complete";
     return (
       `${r.cached} taxa read in ${r.requested} request(s) (${r.refreshed} refreshed)` +

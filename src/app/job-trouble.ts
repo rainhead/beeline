@@ -55,14 +55,17 @@ export async function latestRuns(db: Kysely<Database>): Promise<Map<string, Late
     finished_started: Date | null;
     finished_detail: string | null;
   }>`
+    -- arg_max_null, not arg_max, for what may be null: arg_max skips a row
+    -- whose value is null, and would pair an older run's error with a newer
+    -- run that left no detail, or call a job failing while it runs again.
     SELECT job_name,
            max(started_at) AS started,
            max(started_at) FILTER (WHERE outcome = 'succeeded') AS succeeded,
-           arg_max(outcome, started_at) AS outcome,
-           arg_max(detail, started_at) AS detail,
+           arg_max_null(outcome, started_at) AS outcome,
+           arg_max_null(detail, started_at) AS detail,
            arg_max(entity_id, started_at) FILTER (WHERE completed_at IS NOT NULL) AS finished_run_id,
            max(started_at) FILTER (WHERE completed_at IS NOT NULL) AS finished_started,
-           arg_max(detail, started_at) FILTER (WHERE completed_at IS NOT NULL) AS finished_detail
+           arg_max_null(detail, started_at) FILTER (WHERE completed_at IS NOT NULL) AS finished_detail
     FROM job_run
     GROUP BY job_name`.execute(db);
   const date = (value: Date | null) => (value === null ? null : new Date(value));

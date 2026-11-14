@@ -1879,7 +1879,10 @@ export const en = {
     title: "API keys",
     heading: "API keys",
     intro:
-      "An API key lets a program of yours, such as a script or an AI assistant, ask Beeline about the samples and specimens you can see here. A key that only reads can look at those records and change nothing. Anyone who has one of your keys can see what you can see, so keep each one where only that program can read it, and revoke it when you stop using it.",
+      "An API key lets a program of yours, such as a script or an AI assistant, ask Beeline about the samples and specimens you can see here. A key that only reads can look at those records and change nothing. Anyone who has one of your keys can see everything you can see on Beeline, so keep each one where only that program can read it, and revoke it when you stop using it.",
+    /** For staff, who may make keys that change things as well. */
+    introStaff:
+      "An API key lets a program of yours, such as a script or an AI assistant, ask Beeline for records as you. What a key can do depends on what you choose when you make it. Anyone who has one of your keys can do whatever it allows: a read key shows them records, an edit key can also correct your own samples, and a staff key can do what you can do as staff. Keep each one where only that program can read it, and revoke it when you stop using it.",
     yours: "Your keys",
     none: "You have not made a key.",
     col: {
@@ -1892,6 +1895,8 @@ export const en = {
     },
     scope: {
       read: { label: "Read", means: "see the records you can see on Beeline, and change nothing" },
+      /** What a read key means for staff: it does not use their staff rights. */
+      readStaff: "see the records a volunteer can see, not what you see as staff, and change nothing",
       edit: { label: "Edit", means: "see the records you can see, and correct your own samples" },
       staff: { label: "Staff", means: "do what you can do as staff, for as long as you are staff" },
     },

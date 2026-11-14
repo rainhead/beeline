@@ -92,7 +92,7 @@ export function KeysPage({
   const k = m.keys;
   return (
     <>
-      <PageHeader title={k.heading} lede={k.intro} />
+      <PageHeader title={k.heading} lede={scopes.length > 1 ? k.introStaff : k.intro} />
       {created !== undefined && (
         <Callout tone="success">
           <p>{k.created.lead(created.name)}</p>
@@ -119,7 +119,7 @@ export function KeysPage({
             name="scope"
             label={k.create.scope}
             value={scopes[0]!}
-            options={scopes.map((s) => [s, `${k.scope[s].label}: ${k.scope[s].means}`] as const)}
+            options={scopes.map((s) => [s, `${k.scope[s].label}: ${s === "read" && scopes.length > 1 ? k.scope.readStaff : k.scope[s].means}`] as const)}
           />
           <SelectField
             id="key-lifetime"

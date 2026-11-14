@@ -278,7 +278,7 @@ export function Layout(props: {
                   ))}
                 </div>
               )}
-              {/* Staff, who can make keys, and anyone who has made one, so a person who has lost staff rights can still revoke it (beeline-pnqr.9). */}
+              {/* Everyone signed in: anyone may make a read key, and a person who has lost staff rights can still revoke the others (beeline-pnqr.2, beeline-pnqr.9). */}
               {env.keysLink && (
                 <div class="menu-section">
                   <a href="/keys">{m.layout.apiKeys}</a>

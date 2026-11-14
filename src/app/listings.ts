@@ -1,4 +1,4 @@
-import { sql, type Kysely, type RawBuilder } from "kysely";
+import { sql, type Kysely, type RawBuilder, type SelectQueryBuilder } from "kysely";
 import { REPRINT_BLOCKER, type ReprintBlocker } from "../print-run.js";
 import { reportError } from "./error-reporting.js";
 import type { CsvTiming } from "./request-timing.js";
@@ -187,6 +187,26 @@ export const SORT_KEYS = [
   "determiner",
   "determined",
 ] as const;
+/**
+ * The sorts each listing has a column for (`sampleOrder` and `specimenOrder`
+ * below). A sort the listing lacks falls back to the default order on the
+ * page, where a URL is sometimes typed by hand; the API refuses it, since a
+ * program that asked for an order and silently got another has no way to
+ * know.
+ */
+export const SAMPLE_SORT_KEYS = ["date", "number", "collector", "place", "host", "specimens", "flags", "atlas"] as const satisfies readonly SortKey[];
+export const SPECIMEN_SORT_KEYS = [
+  "date",
+  "field",
+  "number",
+  "collector",
+  "place",
+  "host",
+  "determination",
+  "determiner",
+  "determined",
+  "atlas",
+] as const satisfies readonly SortKey[];
 export type SortDirection = "asc" | "desc";
 export const DEFAULT_SORT: SortKey = "date";
 /** Newest first is the default for dates; everything else reads A–Z or smallest first. */
@@ -440,7 +460,8 @@ export interface SampleRow {
   inat_observation_id: bigint | null;
   /** iNaturalist no longer has the observation (`observationGone`): nothing to link to. */
   observation_gone: boolean;
-  atlas_code: string | null;
+  /** The atlas as people abbreviate it (program_abbreviation): WABA, OBA. Shown, never used as a key. */
+  atlas_abbreviation: string | null;
   host_name: string | null;
   host_rank: string | null;
   latitude: number | null;
@@ -513,7 +534,8 @@ export interface SpecimenRow {
   /** What became of the pin, where a staff inventory has said (specimen_disposition, beeline-fud5). */
   disposition: string | null;
   occurrence_remarks: string | null;
-  atlas_code: string | null;
+  /** The atlas as people abbreviate it (program_abbreviation): WABA, OBA. Shown, never used as a key. */
+  atlas_abbreviation: string | null;
   /** The sample's floral host, as the observation named it — a column here as on the samples listing. */
   host_name: string | null;
   host_rank: string | null;
@@ -555,7 +577,25 @@ export interface ListedCollector {
   orcid: string | null;
 }
 
+/**
+ * Exact lookups, which the API offers beside the filters because the search
+ * box (`q`) matches part of a number: searching for "1" finds every sample
+ * number and field number with a 1 in it. Each is a whole-value match, ignoring
+ * case, and they combine with each other and with the filters. Not part of a
+ * page's query string.
+ */
+export interface ExactLookup {
+  sample_number?: string;
+  /** A specimen's field number; on samples, the samples that have such a specimen. */
+  field_number?: string;
+  /** A specimen's catalogue number (Ecdysis's). */
+  catalog_number?: string;
+  inat_observation_id?: bigint;
+}
+
 export interface ListingPageOptions {
+  /** Whole-value lookups (ExactLookup). */
+  exact?: ExactLookup;
   limit?: number;
   offset?: number;
   /** False skips counting the whole selection; `total` is then 0. */
@@ -637,7 +677,7 @@ export function sampleOrder(query: ListingQuery, p: PlaceColumns) {
       // Blocking outranks a warning outranks clean, whichever way it runs.
       return sql`${blockingCount} ${dir}, ${warningCount} ${dir}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     case "atlas":
-      return sql`a.code ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+      return sql`coalesce(pab.abbreviation, a.code) ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     default:
       return byDate;
   }
@@ -665,7 +705,7 @@ export function specimenOrder(query: ListingQuery, p: PlaceColumns) {
     case "determined":
       return sql`d.determined_on ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     case "atlas":
-      return sql`a.code ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
+      return sql`coalesce(pab.abbreviation, a.code) ${dir} ${nulls}, s.date_start DESC, ${BY_SAMPLE_NUMBER}`;
     default:
       return byDate;
   }
@@ -941,20 +981,27 @@ function qcPredicate(status: QcStatus) {
   }
 }
 
-export async function listSamples(
+/**
+ * The samples a query selects, as this reader may see them: every filter and
+ * the scope applied, nothing selected yet. One definition for the page, the
+ * download, and the API's counts and groupings, so a count cannot be made
+ * from a second copy of the filters and disagree with the listing.
+ */
+async function filteredSamples(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,
   reader: Reader,
-  opts: ListingPageOptions = {},
-): Promise<Page<SampleRow>> {
+  exact: ExactLookup = {},
+  rollup = true,
+) {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
-  const hidden = withheld(reader);
   const place = placeColumns(reader);
   let base = db
     .selectFrom("sample as s")
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
+    .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
     // Only `withheld` reads these, and for staff it reads nothing.
     .$if(!reader.staff, (qb) =>
       qb
@@ -965,16 +1012,19 @@ export async function listSamples(
     // Joined whole and blanked in the select (`located`): a condition in the
     // ON that reads `own` cost a volunteer's listing 7.5 s against 0.1 s.
     .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
-    .leftJoin(
-      (eb) =>
-        eb
-          .selectFrom("sample_qc_finding as f")
-          .innerJoin("qc_rule as r", "r.name", "f.rule_name")
-          .where("f.sample_id", "is not", null)
-          .groupBy("f.sample_id")
-          .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS, FLAG_LIST])
-          .as("qc"),
-      (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
+    // The flag roll-up: the listing selects it, and a count needs it only for a status filter.
+    .$if(rollup, (qb) =>
+      qb.leftJoin(
+        (eb) =>
+          eb
+            .selectFrom("sample_qc_finding as f")
+            .innerJoin("qc_rule as r", "r.name", "f.rule_name")
+            .where("f.sample_id", "is not", null)
+            .groupBy("f.sample_id")
+            .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS, FLAG_LIST])
+            .as("qc"),
+        (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
+      ),
     );
 
   if (query.scope === MINE) {
@@ -1061,6 +1111,15 @@ export async function listSamples(
   }
   if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
+  if (exact.sample_number !== undefined) base = base.where(sql<boolean>`lower(s.sample_number) = ${exact.sample_number.toLowerCase()}`);
+  if (exact.inat_observation_id !== undefined) base = base.where("s.inat_observation_id", "=", exact.inat_observation_id);
+  if (exact.field_number !== undefined) {
+    base = base.where(sql<boolean>`EXISTS (SELECT 1 FROM specimen xs WHERE xs.sample_id = s.entity_id AND lower(xs.field_number) = ${exact.field_number.toLowerCase()})`);
+  }
+  if (exact.catalog_number !== undefined) {
+    base = base.where(sql<boolean>`EXISTS (SELECT 1 FROM specimen xs JOIN specimen_catalog_number xc ON xc.specimen_id = xs.entity_id
+                                           WHERE xs.sample_id = s.entity_id AND lower(xc.catalog_number) = ${exact.catalog_number.toLowerCase()})`);
+  }
   // "Printed" is every label on paper, counted against the specimen count in
   // any season: a settled sample printed only in part is not waiting, since
   // settled samples never print, and is not all printed either (CodeRabbit).
@@ -1077,6 +1136,20 @@ export async function listSamples(
   const qc = qcPredicate(query.qc);
   if (qc !== null) base = base.where(qc);
   if (query.flag !== "") base = base.where(flaggedWith(query.flag));
+
+  return base;
+}
+
+export async function listSamples(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  reader: Reader,
+  opts: ListingPageOptions = {},
+): Promise<Page<SampleRow>> {
+  const hidden = withheld(reader);
+  const place = placeColumns(reader);
+  const base = await filteredSamples(db, query, personId, reader, opts.exact);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1096,7 +1169,7 @@ export async function listSamples(
         "s.specimen_count",
         "s.inat_observation_id",
         observationGone.as("observation_gone"),
-        "a.code as atlas_code",
+        sql<string | null>`coalesce(pab.abbreviation, a.code)`.as("atlas_abbreviation"),
         "s.host_name_as_observed as host_name",
         "s.host_rank",
         located(hidden, sql<number | null>`loc.latitude`).as("latitude"),
@@ -1176,21 +1249,24 @@ export interface ListedFlag {
   details: string[];
 }
 
-export async function listSpecimens(
+/** The specimens a query selects, as this reader may see them; see {@link filteredSamples}. */
+async function filteredSpecimens(
   db: Kysely<Database>,
   query: ListingQuery,
   personId: number,
   reader: Reader,
-  opts: ListingPageOptions = {},
-): Promise<Page<SpecimenRow>> {
+  year?: number,
+  exact: ExactLookup = {},
+  rollup = true,
+) {
   const animals = query.taxon === "" ? null : await taxonIds(db, query.taxon);
-  const hidden = withheld(reader);
   const place = placeColumns(reader);
   let base = db
     .selectFrom("specimen as sp")
     .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
+    .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
     // Only `withheld` reads these, and for staff it reads nothing.
     .$if(!reader.staff, (qb) =>
       qb
@@ -1198,16 +1274,19 @@ export async function listSpecimens(
         .leftJoin("observation_field as seen", "seen.inat_id", "s.inat_observation_id"),
     )
     .leftJoin("sample_location as loc", "loc.sample_id", "s.entity_id")
-    .leftJoin(
-      (eb) =>
-        eb
-          .selectFrom("sample_qc_finding as f")
-          .innerJoin("qc_rule as r", "r.name", "f.rule_name")
-          .where("f.sample_id", "is not", null)
-          .groupBy("f.sample_id")
-          .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS])
-          .as("qc"),
-      (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
+    // The flag roll-up: the listing selects it, and a count needs it only for a status filter.
+    .$if(rollup, (qb) =>
+      qb.leftJoin(
+        (eb) =>
+          eb
+            .selectFrom("sample_qc_finding as f")
+            .innerJoin("qc_rule as r", "r.name", "f.rule_name")
+            .where("f.sample_id", "is not", null)
+            .groupBy("f.sample_id")
+            .select(["f.sample_id as sample_id", ...QC_COUNT_SELECTIONS])
+            .as("qc"),
+        (join) => join.onRef("qc.sample_id", "=", "s.entity_id"),
+      ),
     )
     .leftJoin("determination_of_record as d", "d.specimen_id", "sp.entity_id")
     .leftJoin("animal as an", "an.entity_id", "d.animal_id")
@@ -1255,6 +1334,12 @@ export async function listSpecimens(
   if (query.det === "determined") base = base.where("d.specimen_id", "is not", null);
   if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
+  if (exact.sample_number !== undefined) base = base.where(sql<boolean>`lower(s.sample_number) = ${exact.sample_number.toLowerCase()}`);
+  if (exact.inat_observation_id !== undefined) base = base.where("s.inat_observation_id", "=", exact.inat_observation_id);
+  if (exact.field_number !== undefined) base = base.where(sql<boolean>`lower(sp.field_number) = ${exact.field_number.toLowerCase()}`);
+  if (exact.catalog_number !== undefined) {
+    base = base.where(sql<boolean>`EXISTS (SELECT 1 FROM specimen_catalog_number xc WHERE xc.specimen_id = sp.entity_id AND lower(xc.catalog_number) = ${exact.catalog_number.toLowerCase()})`);
+  }
   // A specimen's own label: in a run not yet printed, or numbered by a run
   // since canceled, it is waiting; printed or imported, it is on paper.
   if (query.labels === "waiting") {
@@ -1267,7 +1352,21 @@ export async function listSpecimens(
   // By the sample's flags, as the severity filter above narrows specimens: a
   // link to /specimens?flag= must not name a filter it does not apply.
   if (query.flag !== "") base = base.where(flaggedWith(query.flag));
-  if (opts.year !== undefined) base = base.where(sql<number>`extract(year from s.date_start)`, "=", opts.year);
+  if (year !== undefined) base = base.where(sql<number>`extract(year from s.date_start)`, "=", year);
+
+  return base;
+}
+
+export async function listSpecimens(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  reader: Reader,
+  opts: ListingPageOptions = {},
+): Promise<Page<SpecimenRow>> {
+  const hidden = withheld(reader);
+  const place = placeColumns(reader);
+  const base = await filteredSpecimens(db, query, personId, reader, opts.year, opts.exact);
 
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? (query.page - 1) * PAGE_SIZE;
@@ -1300,7 +1399,7 @@ export async function listSpecimens(
         sql<string | null>`(SELECT sd.remarks FROM specimen_disposition sd WHERE sd.specimen_id = sp.entity_id)`.as(
           "occurrence_remarks",
         ),
-        "a.code as atlas_code",
+        sql<string | null>`coalesce(pab.abbreviation, a.code)`.as("atlas_abbreviation"),
         "s.host_name_as_observed as host_name",
         "s.host_rank",
         "an.rank as taxon_rank",
@@ -1338,6 +1437,89 @@ export async function listSpecimens(
     total: Number(count?.n ?? 0),
     collectors: await collectorsOf(db, specimenRows.map((r) => r.sample_id)),
   };
+}
+
+/**
+ * What a count may be grouped by: the same three for samples and specimens.
+ * `season` is the calendar year of the sample's first day (CONTEXT.md,
+ * Season; `sample_season`, schema/102), `atlas` the code of the atlas the
+ * sample was collected in (none for a sample outside every atlas), and `kind`
+ * net or trap. Each is a column of the sample that every row has or lacks
+ * outright, so grouping by it reveals nothing a reader's withheld location
+ * would.
+ */
+export const COUNT_GROUPS = ["season", "atlas", "kind"] as const;
+export type CountGroup = (typeof COUNT_GROUPS)[number];
+
+/** How many a query selects, and optionally how they divide, without fetching any rows. */
+export interface Counted {
+  total: number;
+  groups: Array<{ key: string | number | null; total: number }>;
+}
+
+const groupExpression = (group: CountGroup): RawBuilder<string | number | null> =>
+  group === "season"
+    ? sql<number>`CAST(extract(year FROM s.date_start) AS INTEGER)`
+    : group === "atlas"
+      ? sql<string | null>`a.code`
+      : sql<string>`s.kind`;
+
+/**
+ * Whether a status filter reads the flag roll-up. A count joins the roll-up
+ * only then: it was most of the 130 ms a count took on a 60,000-sample store
+ * against 1 ms for a bare count, and the roll-up is one of two joins the page's
+ * rows need and a count does not.
+ */
+const needsRollup = (query: ListingQuery) => query.qc !== "any" && query.qc !== "locality";
+
+// The two selections are different query builders over the same sample
+// columns, which the grouping reads as `s` and `a`; the builder's own type
+// cannot say that, so it is left open here and the callers are the check.
+// A grouped count is one query: the selection's group key as a subquery,
+// grouped outside it (grouping the selection's own joins by an expression made
+// DuckDB fail to bind a column), and the total is the sum of the groups.
+async function countSelection(
+  db: Kysely<Database>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  base: SelectQueryBuilder<any, any, any>,
+  group: CountGroup | undefined,
+): Promise<Counted> {
+  if (group === undefined) {
+    const total = await base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst();
+    return { total: Number(total?.n ?? 0), groups: [] };
+  }
+  const rows = await db
+    .selectFrom(base.select(groupExpression(group).as("group_key")).as("g"))
+    .select(["g.group_key as key", sql<number>`count(*)`.as("n")])
+    .groupBy("g.group_key")
+    .orderBy("g.group_key")
+    .execute();
+  const groups = rows.map((r) => ({ key: r.key as string | number | null, total: Number(r.n) }));
+  return { total: groups.reduce((n, g) => n + g.total, 0), groups };
+}
+
+/** How many samples a query selects, from the same filters as {@link listSamples}. */
+export async function countSamples(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  reader: Reader,
+  group?: CountGroup,
+  exact?: ExactLookup,
+): Promise<Counted> {
+  return countSelection(db, await filteredSamples(db, query, personId, reader, exact, needsRollup(query)), group);
+}
+
+/** How many specimens a query selects, from the same filters as {@link listSpecimens}. */
+export async function countSpecimens(
+  db: Kysely<Database>,
+  query: ListingQuery,
+  personId: number,
+  reader: Reader,
+  group?: CountGroup,
+  exact?: ExactLookup,
+): Promise<Counted> {
+  return countSelection(db, await filteredSpecimens(db, query, personId, reader, undefined, exact, needsRollup(query)), group);
 }
 
 /**
@@ -1633,7 +1815,7 @@ export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => 
   r.kind,
   r.specimen_count,
   r.host_rank,
-  r.atlas_code,
+  r.atlas_abbreviation,
   r.location_source,
   r.geoprivacy,
   r.taxon_geoprivacy,
@@ -1739,7 +1921,7 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   dateIdentified(r.determined_on, r.determined_on_precision),
   r.sample_number,
   r.specimen_number,
-  r.atlas_code,
+  r.atlas_abbreviation,
   r.host_rank,
   r.location_source,
   r.geoprivacy,

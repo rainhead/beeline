@@ -91,6 +91,12 @@ export interface ProgramTable {
   name: string;
 }
 
+/** schema/010: how a program is abbreviated wherever a person reads it; its code where they agree (beeline-uiar). */
+export interface ProgramAbbreviationTable {
+  program_id: number;
+  abbreviation: string;
+}
+
 /** schema/010: who leads a program — responsibility, never access (beeline-7c1). */
 export interface ProgramLeadTable {
   program_id: number;
@@ -1376,6 +1382,7 @@ export interface Database {
   person_admin: PersonAdminTable;
   person_delegate: PersonDelegateTable;
   program: ProgramTable;
+  program_abbreviation: ProgramAbbreviationTable;
   program_lead: ProgramLeadTable;
   atlas_printing: AtlasPrintingTable;
   atlas_taxon_obscured_printing: AtlasTaxonObscuredPrintingTable;

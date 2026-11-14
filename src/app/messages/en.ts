@@ -1844,7 +1844,8 @@ export const en = {
     notMembership: "not recorded",
     notFound: "There is no program with that code.",
     /** The header line under the name. */
-    meta: (code: string, atlas: boolean) => (atlas ? `${code} · a bee atlas` : code),
+    /** abbreviation: as people write it (program_abbreviation), WABA rather than the code WaBA. */
+    meta: (abbreviation: string, atlas: boolean) => (atlas ? `${abbreviation} · a bee atlas` : abbreviation),
     summary: "At a glance",
     members: "Members",
     membersLink: (count: number) => `${n(count)} ${count === 1 ? "person" : "people"}`,
@@ -1897,7 +1898,10 @@ export const en = {
     title: "API keys",
     heading: "API keys",
     intro:
-      "An API key lets a program of yours, such as a script or an AI assistant, ask Beeline for records as you. Anyone who has one of your keys can do what the key allows, so keep each one where only that program can read it, and revoke it when you stop using it.",
+      "An API key lets a program of yours, such as a script or an AI assistant, ask Beeline about the samples and specimens you can see here. A key that only reads can look at those records and change nothing. Anyone who has one of your keys can see everything you can see on Beeline, so keep each one where only that program can read it, and revoke it when you stop using it.",
+    /** For staff, who may make keys that change things as well. */
+    introStaff:
+      "An API key lets a program of yours, such as a script or an AI assistant, ask Beeline for records as you. What a key can do depends on what you choose when you make it. Anyone who has one of your keys can do whatever it allows: a read key shows them records, an edit key can also correct your own samples, and a staff key can do what you can do as staff. Keep each one where only that program can read it, and revoke it when you stop using it.",
     yours: "Your keys",
     none: "You have not made a key.",
     col: {
@@ -1909,7 +1913,9 @@ export const en = {
       reference: "Reference",
     },
     scope: {
-      read: { label: "Read", means: "see the records you can see" },
+      read: { label: "Read", means: "see the records you can see on Beeline, and change nothing" },
+      /** What a read key means for staff: it does not use their staff rights. */
+      readStaff: "see the records a volunteer can see, not what you see as staff, and change nothing",
       edit: { label: "Edit", means: "see the records you can see, and correct your own samples" },
       staff: { label: "Staff", means: "do what you can do as staff, for as long as you are staff" },
     },
@@ -1959,7 +1965,6 @@ export const en = {
       lifetimeHint: "A key stops working after this, and you make a new one.",
       days: (days: number) => `${days} days`,
       submit: "Make key",
-      notYet: "Making keys is not open to you yet. You can still see the keys you have made and revoke them.",
       acting: "You are acting for someone else. Keys belong to the person signed in, so stop acting for them to make or revoke a key.",
     },
   },
@@ -2169,10 +2174,11 @@ export const en = {
       scopeLabel: "Whose labels",
       /** The unscoped run: every atlas that does not print its own, plus samples outside any atlas. */
       program: "Everyone Oregon prints for",
-      programCovers: (codes: readonly string[]) =>
-        codes.length === 0
+      /** The atlases as people write them (program_abbreviation): WABA, not WaBA. */
+      programCovers: (atlases: readonly string[]) =>
+        atlases.length === 0
           ? "Covers samples outside every atlas; each atlas prints its own."
-          : `Covers ${list(codes)}, and samples outside every atlas.`,
+          : `Covers ${list(atlases)}, and samples outside every atlas.`,
       waiting: (labels: number, samples: number, reprints = 0) =>
         `${
           labels === 0

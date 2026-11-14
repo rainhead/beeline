@@ -1,3 +1,4 @@
+import { en } from "../src/app/messages/en.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -111,6 +112,8 @@ describe("the print-run screens", () => {
     // No atlas prints its own labels, so no atlas is a scope of its own.
     expect(body).not.toContain("Oregon Bee Atlas —");
     expect(body).not.toContain("Washington Bee Atlas —");
+    // The hint names the atlases Oregon prints for as people write them: WABA, not the code WaBA (beeline-uiar).
+    expect(body).toContain(en.printRuns.prepare.programCovers(["OBA", "WABA", "BC", "ID", "NM"]).replaceAll("'", "&#39;"));
     await staff.conn.run(`INSERT INTO atlas_printing SELECT entity_id FROM program WHERE code = 'WaBA'`);
     const flagged = await (await staff.app.request("/print-runs")).text();
     expect(flagged).toContain("Washington Bee Atlas — nothing waiting");

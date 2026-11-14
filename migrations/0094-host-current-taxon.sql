@@ -102,9 +102,10 @@ COMMENT ON COLUMN inat_taxon_replacement_end.end_kind IS 'active, retired, absen
 -- the same resolution: it is replaced by what it came to when that is one taxon
 -- of the same rank, and is no genus or family otherwise. For a split there is no
 -- current taxon, but a genus or a family is given where every active taxon the
--- split came to shares it, so a count by genus can still use it. is_plant and
--- is_vascular say whether the lineage reaches Plantae (47126) and Tracheophyta
--- (211194); for a split, whether every one of them does.
+-- split came to shares it, so a count by genus can still use it, unless a dead
+-- end sits beside them, which may be another half. is_plant and is_vascular say
+-- whether the lineage reaches Plantae (47126) and Tracheophyta (211194); for a
+-- split, whether every one of them does, on the same terms.
 CREATE VIEW inat_taxon_current AS
 WITH ends AS (
   SELECT retired_taxon_id AS taxon_id,
@@ -141,11 +142,11 @@ WITH ends AS (
   SELECT taxon_id, head_id FROM heads WHERE standing IN ('current', 'replaced')
 ), lineage AS (
   -- A lineage holds one genus and one family at most, and an ancestor counts
-  -- only where it was stored at that rank and resolves to that rank, so the
-  -- lowest id is the only one: a retired genus replaced by a family is not
-  -- taken for the family. Joins and aggregates rather than a lookup per row: read for one
-  -- taxon this costs the same as for all of them, and the aggregates are
-  -- cheaper than 5,000 correlated lookups. Only the ancestors stored as a
+  -- only where it was stored at that rank and resolves to that rank (a retired
+  -- genus replaced by a family is not taken for the family), so the lowest id
+  -- is the only one. Joins and aggregates rather than a lookup per row: read
+  -- for one taxon this costs the same as for all of them, and the aggregates
+  -- are cheaper than 5,000 correlated lookups. Only the ancestors stored as a
   -- genus or a family are resolved (a retired genus is stored as a genus), and
   -- Plantae and Tracheophyta are read off the whole lineage separately, so
   -- the join that resolves ancestors carries about three rows per taxon and
@@ -198,11 +199,11 @@ COMMENT ON COLUMN inat_taxon_current.rank IS 'The stored taxon''s own rank.';
 COMMENT ON COLUMN inat_taxon_current.current_taxon_id IS 'The taxon iNaturalist means by it now: itself when current, the end of the chain when replaced; NULL when split, retired, pending or absent.';
 COMMENT ON COLUMN inat_taxon_current.current_name IS 'The current taxon''s name.';
 COMMENT ON COLUMN inat_taxon_current.current_rank IS 'The current taxon''s rank, which italics follow: a species replaced by a genus is set as a genus.';
-COMMENT ON COLUMN inat_taxon_current.genus_taxon_id IS 'The genus of the current taxon (the taxon itself at genus rank), never a retired taxon. For a split, the genus all its active taxa share. NULL where the taxon is above a genus, the cache lacks the lineage, a retired genus came to no single genus, or a split spans genera.';
+COMMENT ON COLUMN inat_taxon_current.genus_taxon_id IS 'The genus of the current taxon (the taxon itself at genus rank), never a retired taxon. For a split, the genus all its active taxa share. NULL where the taxon is above a genus, the cache lacks the lineage, a retired genus came to no single genus, a split spans genera, or a split has a dead end beside its active taxa.';
 COMMENT ON COLUMN inat_taxon_current.genus_name IS 'The name of genus_taxon_id.';
 COMMENT ON COLUMN inat_taxon_current.family_taxon_id IS 'The family of the current taxon, on the terms of genus_taxon_id.';
 COMMENT ON COLUMN inat_taxon_current.family_name IS 'The name of family_taxon_id.';
-COMMENT ON COLUMN inat_taxon_current.is_plant IS 'Whether the current taxon''s lineage reaches Plantae (iNaturalist 47126), the taxon itself included. For a split, whether every taxon it came to does. NULL where there is no current taxon or the cache holds no lineage for it.';
+COMMENT ON COLUMN inat_taxon_current.is_plant IS 'Whether the current taxon''s lineage reaches Plantae (iNaturalist 47126), the taxon itself included. For a split, whether every active taxon it came to does, and NULL for a split with a dead end beside them. NULL where there is no current taxon or the cache holds no lineage for it.';
 COMMENT ON COLUMN inat_taxon_current.is_vascular IS 'Whether the lineage reaches Tracheophyta (iNaturalist 211194), on the terms of is_plant.';
 
 -- plant_taxon_common_name, made again over inat_taxon_current (schema/114).
@@ -212,9 +213,11 @@ DROP VIEW plant_taxon_common_name;
 -- entry that covers it. An entry covers a taxon when the entry's own taxon is
 -- that taxon or one of its ancestors (inat_taxon_ancestor, which includes the
 -- taxon at depth 0); the nearest is the lowest depth, and an entry with no
--- usable name does not cover, since it has nothing to say. Two entries at one
--- depth (plant_list_taxon_shared) are settled by scientific name so the answer
--- does not move.
+-- usable name does not cover, since it has nothing to say. Of two entries at
+-- one depth, one written for the current taxon itself comes before one that
+-- reaches it only through a replacement (an older synonym the list also holds),
+-- even from a later list; then the list and the scientific name settle it, so
+-- the answer does not move.
 --
 -- An entry is the taxon it is today: its stored taxon is resolved through
 -- inat_taxon_current first, so an entry whose taxon iNaturalist has replaced

@@ -460,6 +460,14 @@ describe("a list entry follows its taxon's replacement", () => {
     expect(await commonName(3)).toBeUndefined();
   });
 
+  test("an entry written for the current taxon comes before an older synonym's entry that reaches it through a replacement", async () => {
+    await store(taxa);
+    // Synthetic: the synonym's entry sorts first by scientific name, so ordering by name alone would pick it.
+    await listEntry("Aardvark old", "synonym's name", 10);
+    await listEntry("Alpha new", "current name", 1);
+    expect(await commonName(1)).toEqual(["current name", "Alpha new", 0]);
+  });
+
   test("an entry whose taxon was split, or has nothing to replace it, covers nothing", async () => {
     await store([
       ...taxa,

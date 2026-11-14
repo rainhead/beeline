@@ -15,9 +15,11 @@
 -- entry that covers it. An entry covers a taxon when the entry's own taxon is
 -- that taxon or one of its ancestors (inat_taxon_ancestor, which includes the
 -- taxon at depth 0); the nearest is the lowest depth, and an entry with no
--- usable name does not cover, since it has nothing to say. Two entries at one
--- depth (plant_list_taxon_shared) are settled by scientific name so the answer
--- does not move.
+-- usable name does not cover, since it has nothing to say. Of two entries at
+-- one depth, one written for the current taxon itself comes before one that
+-- reaches it only through a replacement (an older synonym the list also holds),
+-- even from a later list; then the list and the scientific name settle it, so
+-- the answer does not move.
 --
 -- An entry is the taxon it is today: its stored taxon is resolved through
 -- inat_taxon_current first, so an entry whose taxon iNaturalist has replaced

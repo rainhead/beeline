@@ -26,6 +26,14 @@ import { DEFAULT_DB } from "./person-change.js";
  * Three columns in both files rather than an encoded key, because a sample
  * number is free text and no separator survives it.
  *
+ * Since production's ids became permanent, the reference is no longer how a
+ * sample is told from another. The snapshot carries each sample's id
+ * (beeline-7r0g), and so does every entry, with the identity of the store
+ * that filed it; a sample's history is the entries with its id
+ * (beeline-zytd, ADR 0007's addenda of 2026-11-13 and 2026-11-14). The
+ * reference is still filed on every entry: it joins a sample to the entries
+ * from before they carried ids, and the file stays legible.
+ *
  * Every writer is covered the ADR's way: entries are produced by comparing
  * the store against the snapshot, through one function reading one query, so
  * a writer that forgets is caught by the next pass and attributed to that
@@ -38,8 +46,9 @@ import { DEFAULT_DB } from "./person-change.js";
  * provenance (elevation_source), and self-heals on a moved coordinate
  * (beeline-x5c); logging it would record the derive job doing its job.
  *
- * The last three are the components of the reference itself, and their order
- * here is load-bearing — see MOVERS.
+ * The last three are the components of the reference itself (MOVERS). They
+ * are filed last, and the reader relies on the collector not being the first
+ * entry of an arrival (sinceArrival).
  */
 export const SAMPLE_FIELDS = [
   "kind",
@@ -69,17 +78,12 @@ export const SAMPLE_FIELDS = [
 export type SampleField = (typeof SAMPLE_FIELDS)[number];
 
 /**
- * The fields that ARE the reference. A change to one moves it, and the log
- * follows — forward only, in file order, never onto a triple it already
- * knows a sample by (ADR 0007's rename rule, ported).
- *
- * Where the person log has one moving field and simply says it last, this
- * has three, and emitting them all under the pre-pass triple would strand
- * every mover after the first: the fold moves the record on the first one
- * and the second, still filed under the old triple, would start a fresh
- * half-empty sample. So the WRITER files each mover under the triple as
- * already moved by the movers before it, in this order, and the fold stays
- * as simple as the person one: look the entry's triple up, apply, move on.
+ * The fields that ARE the reference. Among the entries filed before entries
+ * carried ids, a change to one moves the reference, and the reader of those
+ * entries follows — forward only, in file order, never onto a triple it
+ * already knows a sample by (ADR 0007's rename rule, ported; see
+ * foldSampleChanges). An entry that carries an id is not read that way, and
+ * a change to one of these is then a change like any other.
  */
 export const MOVERS: readonly SampleField[] = ["collector", "sample_number", "date_start"];
 
@@ -102,6 +106,37 @@ export interface SampleChange {
   author: string;
   source: SampleChangeSource;
   reason: string;
+  /**
+   * Which store's sample the entry is about: the store's identity
+   * (SnapshotOrigin.identity) and the sample's id in it. Both are empty on an
+   * entry filed before entries carried ids (ADR 0007's addendum of
+   * 2026-11-14), and such an entry is read by its reference. An id is read
+   * only by the store that filed it.
+   */
+  store: string;
+  sample_id: string;
+}
+
+/**
+ * A line in the log that is not about a sample: from here on, the ids above
+ * `lastId` in `store` are being handed out again. A store put back to an
+ * earlier copy keeps its identity and draws the same ids a second time, so
+ * the entries filed before this line under those ids are about samples that
+ * are gone, and the reader leaves them out (sampleHistory).
+ */
+export interface IdsRestart {
+  /** How many entries precede it in the file. */
+  before: number;
+  store: string;
+  lastId: number;
+}
+
+/** What the `field` cell of such a line says. Never a sample's field. */
+const IDS_RESTART = "ids_restart";
+
+export interface SampleLog {
+  changes: SampleChange[];
+  restarts: IdsRestart[];
 }
 
 /**
@@ -127,8 +162,16 @@ const LOG_COLUMNS = [
   "author",
   "source",
   "reason",
+  "store",
+  "sample_id",
 ] as const;
 const LOG_HEADER = LOG_COLUMNS.join(",");
+/**
+ * An entry filed before entries carried ids has the first ten cells and no
+ * more. The file such entries are in is never rewritten, so both widths are
+ * read for good, and that file keeps the ten-column header it was made with.
+ */
+const LOG_WIDTH_WITHOUT_IDS = LOG_COLUMNS.length - 2;
 
 /** Snapshot columns: the reference, then every field the log can speak about. */
 const STATE_COLUMNS = ["collector", "sample_number", "date_start", ...NON_MOVERS] as const;
@@ -174,8 +217,9 @@ export interface SampleState {
    * The store's own id for the sample (`sample.entity_id`), or empty where it
    * is not known or not to be believed: a snapshot row written before the
    * snapshot carried ids, or one read from a snapshot another store wrote
-   * (SnapshotOrigin). Never a logged field, and never the reference: the log
-   * is still read by collector, number and start date.
+   * (SnapshotOrigin). Never a logged field. Each entry filed for the sample
+   * carries it (SampleChange.sample_id), taken from the store and not from
+   * the snapshot.
    */
   id: string;
   collector: string;
@@ -389,7 +433,7 @@ export async function readSampleStates(read: StateReader, where = ""): Promise<S
  * (adversarial review of PR #32). Re-baselining costs the changes made since
  * the last pass, which is bounded and visible; the arrivals are neither.
  */
-export async function readSnapshot(path: string): Promise<Map<string, SampleState> | null> {
+export async function readSnapshot(path: string): Promise<SampleState[] | null> {
   return (await readSnapshotFile(path))?.rows ?? null;
 }
 
@@ -432,8 +476,11 @@ const NO_ORIGIN: SnapshotOrigin = { identity: "", highestId: 0 };
  * Limited to the store's own catalog, since an attached database may carry
  * a sequence of the same name.
  */
+export const STORE_IDENTITY_SQL = `
+  SELECT coalesce((SELECT CAST(epoch_us(min(applied_at)) AS VARCHAR) FROM schema_migration), '') AS identity`;
+
 export const STORE_ORIGIN_SQL = `
-  SELECT coalesce((SELECT CAST(epoch_us(min(applied_at)) AS VARCHAR) FROM schema_migration), '') AS identity,
+  SELECT (${STORE_IDENTITY_SQL}) AS identity,
          (SELECT CAST(coalesce(max(last_value), 0) AS VARCHAR) FROM duckdb_sequences()
           WHERE database_name = current_database() AND sequence_name = 'entity_id_seq') AS highest_id`;
 
@@ -447,9 +494,15 @@ export const idsBelong = (snapshot: SnapshotOrigin, store: SnapshotOrigin): bool
   store.identity !== "" && snapshot.identity === store.identity && store.highestId >= snapshot.highestId;
 
 export interface SnapshotFile {
-  /** Keyed by triple, as the log is read. */
-  rows: Map<string, SampleState>;
+  /**
+   * One row per sample last recorded. Two rows may be under one reference:
+   * a sample the last pass recorded there, and the row of another sample
+   * that had moved off it and that the pass could not record.
+   */
+  rows: SampleState[];
   origin: SnapshotOrigin;
+  /** The rows as the file has them, to tell whether a restatement would differ. */
+  body: string;
 }
 
 export async function readSnapshotFile(path: string): Promise<SnapshotFile | null> {
@@ -480,7 +533,7 @@ export async function readSnapshotFile(path: string): Promise<SnapshotFile | nul
     ? { identity: first[1]!, highestId: Number(first[2]) || 0 }
     : NO_ORIGIN;
   const columns: readonly string[] = withIds ? ["sample_id", ...STATE_COLUMNS] : STATE_COLUMNS;
-  const states = new Map<string, SampleState>();
+  const states: SampleState[] = [];
   let malformed = 0;
   for (const r of records.slice(withIds ? 2 : 1)) {
     if (r.length !== columns.length) {
@@ -499,18 +552,32 @@ export async function readSnapshotFile(path: string): Promise<SnapshotFile | nul
       date_start: row.date_start!,
       fields,
     };
-    states.set(stateKey(state), state);
+    states.push(state);
   }
   // Lenient like the log: the snapshot is restated by every pass, so a
   // dropped row costs one sample one spurious arrival, not its history.
   if (malformed > 0) console.warn(`${path}: skipped ${malformed} unreadable snapshot row(s)`);
-  return { rows: states, origin };
+  // What follows the header line, where the file is one this code writes.
+  const body = withIds ? text.slice(text.indexOf("\n", text.indexOf("\n") + 1) + 1) : "";
+  return { rows: states, origin, body };
+}
+
+/** The snapshot's rows as text: sorted by triple and then id, so that two
+ * identical states produce byte-identical files. */
+function snapshotBody(states: Iterable<SampleState>): string {
+  const rows = [...states].sort((a, b) => {
+    const ka = stateKey(a);
+    const kb = stateKey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  return rows
+    .map((s) => `${[cell(s.id), ...STATE_COLUMNS.map((c) => cell(s.fields[c as SampleField] ?? ""))].join(",")}\n`)
+    .join("");
 }
 
 /**
  * Restate the snapshot — whole file, temp-and-rename, so a crash leaves the
- * previous statement rather than half of one. Sorted by triple so that two
- * identical states produce byte-identical files.
+ * previous statement rather than half of one.
  */
 let tmpCounter = 0;
 
@@ -520,10 +587,6 @@ export async function writeSnapshot(
   origin: SnapshotOrigin = NO_ORIGIN,
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const rows = [...states].sort((a, b) => (stateKey(a) < stateKey(b) ? -1 : 1));
-  const lines = rows.map((s) =>
-    [cell(s.id), ...STATE_COLUMNS.map((c) => cell(s.fields[c as SampleField] ?? ""))].join(","),
-  );
   const head = `${ORIGIN_MARK},${cell(origin.identity)},${origin.highestId}\n${STATE_HEADER}`;
   // Unique per write: passes are serialized within this process, but a CLI
   // and the app pointed at one store (against ADR 0005) can still race. The
@@ -535,7 +598,7 @@ export async function writeSnapshot(
   // a duplicate in a log is legible where a lost row is not (the appender's
   // own rule).
   const tmp = `${path}.${process.pid}.${tmpCounter++}.tmp`;
-  await writeFile(tmp, `${head}\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`);
+  await writeFile(tmp, `${head}\n${snapshotBody(states)}`);
   await rename(tmp, path);
 }
 
@@ -545,27 +608,34 @@ export function formatSampleChanges(rows: readonly SampleChange[]): string {
   return rows.map((r) => LOG_COLUMNS.map((c) => cell(r[c])).join(",")).join("\n");
 }
 
+const formatRestart = (at: string, store: string, lastId: number, source: SampleChangeSource): string =>
+  [at, "", "", "", IDS_RESTART, "", String(lastId), "", source, "", store, ""].map(cell).join(",");
+
 /** Lenient, like the person log and for its reason: appending cannot erase,
  * so a bad row can only cost itself, and refusing would take the record page
  * down with it. */
-export function parseSampleChanges(text: string): { changes: SampleChange[]; malformed: number } {
+export function parseSampleChanges(text: string): SampleLog & { malformed: number } {
   const records = parseCsv(text);
-  if (records.length === 0) return { changes: [], malformed: 0 };
   const changes: SampleChange[] = [];
+  const restarts: IdsRestart[] = [];
   let malformed = 0;
   for (const r of records.slice(1)) {
-    if (r.length !== LOG_COLUMNS.length) {
+    if (r.length !== LOG_COLUMNS.length && r.length !== LOG_WIDTH_WITHOUT_IDS) {
       malformed++;
       continue;
     }
-    const row = Object.fromEntries(LOG_COLUMNS.map((c, j) => [c, r[j]!])) as unknown as SampleChange;
+    const row = Object.fromEntries(LOG_COLUMNS.map((c, j) => [c, r[j] ?? ""])) as unknown as SampleChange;
+    if ((row.field as string) === IDS_RESTART && /^\d+$/.test(row.new_value)) {
+      restarts.push({ before: changes.length, store: row.store, lastId: Number(row.new_value) });
+      continue;
+    }
     if (!(SAMPLE_FIELDS as readonly string[]).includes(row.field)) {
       malformed++;
       continue;
     }
     changes.push(row);
   }
-  return { changes, malformed };
+  return { changes, restarts, malformed };
 }
 
 // The record page folds the whole log per request, which the person page's
@@ -575,7 +645,7 @@ export function parseSampleChanges(text: string): { changes: SampleChange[]; mal
 // because the nightly appends every night and the log is 15 MB on the
 // sandbox: re-parsing it fell to whoever opened the first sample page of the
 // day, at about 1.5 s.
-const readCache = new Map<string, { mtimeMs: number; size: number; changes: SampleChange[]; whole: boolean }>();
+const readCache = new Map<string, { mtimeMs: number; size: number; log: SampleLog; whole: boolean }>();
 
 /**
  * Whether the text ends between two records: on a newline, and outside any
@@ -591,38 +661,46 @@ const endsWhole = (text: string): boolean => {
   return quotes % 2 === 0;
 };
 
+const NO_LOG: SampleLog = { changes: [], restarts: [] };
+
+/** The log's entries, in file order. */
 export async function readSampleChanges(path: string): Promise<SampleChange[]> {
+  return (await readSampleLog(path)).changes;
+}
+
+/** The whole log: its entries, and the lines that say ids began again. */
+export async function readSampleLog(path: string): Promise<SampleLog> {
   try {
     const s = await stat(path);
     const hit = readCache.get(path);
-    if (hit !== undefined && hit.mtimeMs === s.mtimeMs && hit.size === s.size) return hit.changes;
-    const { changes, whole } = await readSampleChangesUncached(path);
+    if (hit !== undefined && hit.mtimeMs === s.mtimeMs && hit.size === s.size) return hit.log;
+    const { log, whole } = await readSampleLogUncached(path);
     // Cached only if nothing wrote to the file while it was read: a read that
     // straddled an append would otherwise file the appended rows under the
     // size from before it, and the append would then extend them a second
     // time (CodeRabbit).
     const after = await stat(path);
     if (after.mtimeMs === s.mtimeMs && after.size === s.size) {
-      readCache.set(path, { mtimeMs: s.mtimeMs, size: s.size, changes, whole });
+      readCache.set(path, { mtimeMs: s.mtimeMs, size: s.size, log, whole });
     }
-    return changes;
+    return log;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return NO_LOG;
     throw err;
   }
 }
 
-async function readSampleChangesUncached(path: string): Promise<{ changes: SampleChange[]; whole: boolean }> {
+async function readSampleLogUncached(path: string): Promise<{ log: SampleLog; whole: boolean }> {
   let text: string;
   try {
     text = await readFile(path, "utf8");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { changes: [], whole: true };
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { log: NO_LOG, whole: true };
     throw err;
   }
-  const { changes, malformed } = parseSampleChanges(text);
+  const { changes, restarts, malformed } = parseSampleChanges(text);
   if (malformed > 0) console.warn(`${path}: skipped ${malformed} unreadable row(s)`);
-  return { changes, whole: endsWhole(text) };
+  return { log: { changes, restarts }, whole: endsWhole(text) };
 }
 
 const writeQueues = new Map<string, Promise<void>>();
@@ -640,7 +718,7 @@ async function extendReadCache(
   path: string,
   before: { mtimeMs: number; size: number },
   appended: string,
-  rows: readonly SampleChange[],
+  lines: string,
 ): Promise<void> {
   const hit = readCache.get(path);
   readCache.delete(path);
@@ -648,8 +726,13 @@ async function extendReadCache(
   try {
     const after = await stat(path);
     if (after.size !== before.size + Buffer.byteLength(appended)) return;
-    const { changes } = parseSampleChanges(`${LOG_HEADER}\n${formatSampleChanges(rows)}\n`);
-    readCache.set(path, { mtimeMs: after.mtimeMs, size: after.size, changes: hit.changes.concat(changes), whole: true });
+    const more = parseSampleChanges(`${LOG_HEADER}\n${lines}\n`);
+    const held = hit.log.changes.length;
+    const log: SampleLog = {
+      changes: hit.log.changes.concat(more.changes),
+      restarts: hit.log.restarts.concat(more.restarts.map((r) => ({ ...r, before: r.before + held }))),
+    };
+    readCache.set(path, { mtimeMs: after.mtimeMs, size: after.size, log, whole: true });
   } catch {
     // The entry is already gone; the next read parses the file.
   }
@@ -659,6 +742,10 @@ async function extendReadCache(
  * person log does and for its reason. */
 export async function appendSampleChanges(path: string, rows: readonly SampleChange[]): Promise<void> {
   if (rows.length === 0) return;
+  return appendLines(path, formatSampleChanges(rows));
+}
+
+async function appendLines(path: string, lines: string): Promise<void> {
   const queued = (writeQueues.get(path) ?? Promise.resolve()).then(async () => {
     await mkdir(dirname(path), { recursive: true });
     try {
@@ -679,9 +766,9 @@ export async function appendSampleChanges(path: string, rows: readonly SampleCha
         await handle.close();
       }
     }
-    const appended = `${terminated ? "" : "\n"}${formatSampleChanges(rows)}\n`;
+    const appended = `${terminated ? "" : "\n"}${lines}\n`;
     await appendFile(path, appended);
-    await extendReadCache(path, before, appended, rows);
+    await extendReadCache(path, before, appended, lines);
   });
   writeQueues.set(path, queued.catch(() => {}));
   return queued;
@@ -711,18 +798,29 @@ export interface SampleMatching {
    * buries the contest — the next pass direct-matches the fresh rows, finds
    * no difference, and the unattributable transition is never recorded by
    * any pass (adversarial review of PR #32). */
-  contestedRows: Set<string>;
+  contestedRows: Set<SampleState>;
 }
 
 /**
- * Which snapshot row each store sample is, where the evidence says. In order
- * of how much the evidence is worth, every claim proposed before any is
- * granted (ADR 0007 — deciding one at a time is a different, wrong problem):
+ * Which snapshot row each store sample is, where the evidence says: the row
+ * the pass compares the sample with, to find what changed.
+ *
+ * First, where the snapshot's ids are this store's (the caller blanks them
+ * otherwise): **a row that carries the id of a sample in the store is that
+ * sample's row**, wherever its reference has moved to, and no other sample
+ * may claim it by any tier below. That is what recognises a sample with no
+ * observation after its number or start date is corrected, which is every
+ * trap sample entered in Beeline (beeline-7r0g).
+ *
+ * A row with no id is matched in order of how much the evidence is worth, every claim proposed before any
+ * is granted (ADR 0007 — deciding one at a time is a different, wrong
+ * problem):
  *
  *   the triple itself      the ordinary case — nothing moved. Refused when
  *                          this sample carries a different observation from
  *                          the row's and another sample now carries the
- *                          row's: the link outranks the triple there.
+ *                          row's: the link outranks the triple there. And
+ *                          nobody's where two such rows are under one triple.
  *   the observation link   the reference moved around a stable link: a staff
  *                          correction to the number or date, a collector
  *                          whose person_ref changed when an account was
@@ -739,62 +837,41 @@ export interface SampleMatching {
  * Two claimants on one row, and neither claims: iteration order deciding who
  * inherits a history is not an answer.
  *
- * Ahead of all three, where the snapshot's ids are this store's (the caller
- * blanks them otherwise): **a row that carries the id of a sample in the
- * store is that sample's row**, wherever its reference has moved to, and no
- * other sample may claim it by any tier. That is what recognises a sample
- * with no observation after its number or start date is corrected, which is
- * every trap sample entered in Beeline (beeline-7r0g). A row with no id, or
- * with the id of a sample that is gone, is matched by the tiers above.
- *
- * The id says whose row it is. It does not change how the log is READ, which
- * is still by reference, so two rules about the reader stand over it:
- *
- *   a loop of moves        two samples that swapped numbers cannot be written
- *                          as two moves, because the reader will not move a
- *                          history onto a reference it already knows. Each
- *                          sample in a loop is compared with the row under
- *                          its reference, as before ids, and that row takes
- *                          its id when the snapshot is restated.
- *   a row that stays       no entry is filed for a sample standing on a
- *                          reference where a row will still sit after this
- *                          pass: the row of a sample the pass cannot record
- *                          (on a shared reference, in a contest, or with no
- *                          collector reference). Entries filed there would
- *                          be read into that other sample's history, so the
- *                          sample is held, like a contest, until the row
- *                          moves (Fable's review of this plan).
+ * The matching decides only which row a sample is compared with. How an
+ * entry is read does not depend on it: every entry carries its sample's id
+ * (ADR 0007's addendum of 2026-11-14), so two samples that swapped numbers
+ * are two samples that each changed number, and a sample may stand on a
+ * reference another sample's row is still under. Until entries carried ids
+ * the reader followed references, and this function held such samples back.
  */
 export function matchSamples(
-  snapshot: ReadonlyMap<string, SampleState>,
+  snapshot: readonly SampleState[],
   states: ReadonlyMap<string, SampleState>,
   {
     directOnly = false,
     suppressedObservations = new Set<string>(),
     liveCollectors: alsoLive = new Set<string>(),
     liveIds = new Set<string>(),
-    taken = (key: string) => snapshot.has(key) || (!directOnly && states.has(key)),
   }: {
     directOnly?: boolean;
     suppressedObservations?: ReadonlySet<string>;
     liveCollectors?: ReadonlySet<string>;
     /** The id of every sample in the store. A one-sample pass has only its own. */
     liveIds?: ReadonlySet<string>;
-    /**
-     * Whether a reference is somebody's, for moverOrder. A full pass can
-     * tell from the snapshot and its own states; a one-sample pass has to
-     * ask the store, and passes what it found.
-     */
-    taken?: (key: string) => boolean;
   } = {},
 ): SampleMatching {
   const byId = new Map<string, SampleState>();
-  for (const row of snapshot.values()) if (row.id !== "") byId.set(row.id, row);
-  if (directOnly) return matchOneSample(snapshot, states, byId, taken);
+  for (const row of snapshot) if (row.id !== "") byId.set(row.id, row);
+  if (directOnly) return matchOneSample(snapshot, states, byId);
   // Rows that are a live sample's own, and so nobody else's to claim.
   const owned = new Set<SampleState>();
   for (const row of byId.values()) if (liveIds.has(row.id)) owned.add(row);
-  const rows = [...snapshot.values()].filter((row) => !owned.has(row));
+  // What is left for the evidence below is the rows with no id. A row that
+  // carries the id of a sample that is gone is nobody's: an id that is
+  // believed is one sample's for good, so a newcomer on that sample's
+  // reference is not it (CodeRabbit on this branch).
+  const rows = snapshot.filter((row) => row.id === "");
+  const byTriple = valueIndex(rows, stateKey);
   const byObservation = valueIndex(rows, (s) => s.fields.observation);
   const byNumberDate = valueIndex(rows, (s) => `${s.sample_number}${SEP}${s.date_start}`);
   // Which store sample holds each observation now — the store's answer, not
@@ -821,10 +898,7 @@ export function matchSamples(
   }
   for (const state of states.values()) {
     if (proposed.has(state)) continue;
-    // A row that is another live sample's own is not this one's, whatever
-    // reference it sits under.
-    const under = snapshot.get(stateKey(state));
-    const direct = under !== undefined && owned.has(under) ? undefined : under;
+    const direct = byTriple.get(stateKey(state)) ?? undefined;
     // Even the triple yields to the link, but only where the link says
     // plainly that this is another sample: this one carries a DIFFERENT
     // observation from the row's, and another store sample now carries the
@@ -851,7 +925,6 @@ export function matchSamples(
       continue;
     }
     if (direct !== undefined) displaced.set(state, direct);
-    // The weaker tiers, which only a full pass has (matchOneSample).
     const byObs = state.fields.observation === "" ? null : byObservation.get(state.fields.observation);
     if (byObs != null) {
       proposed.set(state, byObs);
@@ -876,120 +949,45 @@ export function matchSamples(
     proposed.set(state, byPair);
   }
 
-  // A displacement stands only where it leaves one clear history per sample.
-  // Where the moves form a loop — two linked samples that swapped numbers —
-  // the log, which a reader follows from one triple to the next, cannot
-  // record a swap without folding the two histories into one, so the sample
-  // goes back to its triple, which is what the pass did before the link
-  // outranked it. So it does where the holder of the row's observation
-  // settled on another row: the row's history then has no other heir. But
-  // where that holder's own claim is contested, it may yet be the row's
-  // sample, so this one is held and the row carried until that is settled
-  // (Fable's review of PR #157). Each change can unsettle another
-  // displacement, so this repeats until nothing changes.
+  // A displacement stands only where the sample holding the row's
+  // observation took that row and nobody else claims it. Where that holder
+  // settled on another row, the row's history has no other heir and the
+  // sample goes back to its triple. But where that holder's own claim is
+  // contested, it may yet be the row's sample, so this one is held and the
+  // row carried until that is settled (Fable's review of PR #157). Each
+  // change can unsettle another displacement, so this repeats until nothing
+  // changes.
   for (let changed = displaced.size > 0; changed; ) {
     changed = false;
     const claims = new Map<SampleState, number>();
     for (const row of proposed.values()) claims.set(row, (claims.get(row) ?? 0) + 1);
-    const leaving = new Map<string, SampleState>();
-    for (const [state, row] of proposed) {
-      if (stateKey(row) !== stateKey(state)) leaving.set(stateKey(row), state);
-    }
-    const inLoop = (start: SampleState) => {
-      let at = start;
-      for (let step = 0; step < leaving.size; step++) {
-        const next = leaving.get(stateKey(at));
-        if (next === undefined) return false;
-        if (next === start) return true;
-        at = next;
-      }
-      return false;
-    };
     for (const [state, row] of displaced) {
       const heir = holder.get(row.fields.observation)!;
       const heirRow = proposed.get(heir);
-      const loop = inLoop(state);
-      if (heirRow === row && claims.get(row) === 1 && !loop) continue;
+      if (heirRow === row && claims.get(row) === 1) continue;
       displaced.delete(state);
       changed = true;
-      if (!loop && (held.has(heir) || (heirRow !== undefined && (claims.get(heirRow) ?? 0) > 1))) {
+      if (held.has(heir) || (heirRow !== undefined && (claims.get(heirRow) ?? 0) > 1)) {
         proposed.delete(state);
         held.set(state, row);
       } else proposed.set(state, row);
     }
   }
 
-  // A loop of moves goes back to the reference (see above). Following a move
-  // from the sample to whoever is leaving the reference it now stands on
-  // comes back to the sample only in a loop. Every proposal is looked at,
-  // not only those made by id: a sample followed by its id and one followed
-  // by its observation can swap numbers too (Fable's review of this branch).
-  {
-    const leavingFrom = new Map<string, SampleState>();
-    for (const [state, row] of proposed) {
-      if (stateKey(row) !== stateKey(state)) leavingFrom.set(stateKey(row), state);
-    }
-    const looped: SampleState[] = [];
-    for (const start of leavingFrom.values()) {
-      let at = start;
-      for (let step = 0; step < leavingFrom.size; step++) {
-        const next = leavingFrom.get(stateKey(at));
-        if (next === undefined) break;
-        if (next === start) {
-          looped.push(start);
-          break;
-        }
-        at = next;
-      }
-    }
-    for (const state of looped) proposed.set(state, snapshot.get(stateKey(state))!);
-  }
-
   const claimants = new Map<SampleState, number>();
   for (const row of proposed.values()) claimants.set(row, (claimants.get(row) ?? 0) + 1);
   const matched = new Map<string, SampleState>();
   const contested = new Set<string>();
-  const contestedRows = new Set<string>();
+  const contestedRows = new Set<SampleState>();
   for (const [state, row] of proposed) {
     if ((claimants.get(row) ?? 0) > 1) {
       contested.add(stateKey(state));
-      contestedRows.add(stateKey(row));
+      contestedRows.add(row);
     } else matched.set(stateKey(state), row);
   }
   for (const [state, row] of held) {
     contested.add(stateKey(state));
-    contestedRows.add(stateKey(row));
-  }
-  // A move the reader could not follow is not recorded (moverOrder).
-  for (const [key, row] of [...matched]) {
-    if (moverOrder(row, states.get(key)!, taken) !== null) continue;
-    matched.delete(key);
-    contested.add(key);
-    contestedRows.add(stateKey(row));
-  }
-  // A row that stays holds whoever stands on its reference (see above).
-  // Holding a sample leaves its own row where it is, which may be under the
-  // reference a third sample now stands on, so this repeats until it settles.
-  for (let changed = true; changed; ) {
-    changed = false;
-    const claimed = new Set(matched.values());
-    for (const key of states.keys()) {
-      if (contested.has(key)) continue;
-      const row = snapshot.get(key);
-      if (row === undefined || claimed.has(row)) continue;
-      const stays =
-        contestedRows.has(key) ||
-        owned.has(row) ||
-        (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation));
-      if (!stays) continue;
-      contested.add(key);
-      const own = matched.get(key);
-      if (own !== undefined) {
-        matched.delete(key);
-        contestedRows.add(stateKey(own));
-      }
-      changed = true;
-    }
+    contestedRows.add(row);
   }
   return { matched, contested, contestedRows };
 }
@@ -999,86 +997,31 @@ export function matchSamples(
  * rest of the store, so it grants only what needs no second opinion, and
  * leaves the rest to the next full pass by matching nothing:
  *
- *   its own row, by id      under its reference, or under the reference it
- *                           had when the reference it has now is free. Where
- *                           another row sits under the new reference the
- *                           full pass must record that row's move first, or
- *                           the reader would refuse this one.
- *   a row with no id        under its reference, as before ids: unless the
- *                           observation links differ, which a one-sample
- *                           pass cannot judge.
- *
- * A row under its reference that carries another id is another sample's.
+ *   its own row, by id      wherever the row sits.
+ *   a row with no id        the only such row under its reference, as before
+ *                           ids: unless the observation links differ, which
+ *                           a one-sample pass cannot judge.
  */
-/**
- * The order to file a sample's changed movers in, or null where no order
- * will do.
- *
- * A sample whose number and start date were both corrected is recorded as
- * two moves, the second filed under the reference the first one made, which
- * is a reference the sample never had. If another sample is known by that
- * reference, the reader refuses the first move and then applies the second
- * to that other sample, carrying its history off: sample 4 of 14 July
- * corrected to sample 1 of 15 July passes through sample 1 of 14 July, and
- * net sample numbers restart every day (Fable's review of this branch; the
- * filing is older than ids, which only made it reachable for more samples).
- * The reader applies moves one field at a time whatever their order, so the
- * writer may choose one whose references in between are nobody's. Where
- * every order passes through somebody's, the sample is held, like a contest.
- *
- * `taken` says whether a reference is somebody's: one a snapshot row is
- * under, and one a sample in the store stands on now, since that sample's
- * own entries may be filed there in this same pass (CodeRabbit on this
- * branch: two samples corrected across each other each passed through
- * where the other was going).
- */
-export function moverOrder(
-  row: SampleState,
-  state: SampleState,
-  taken: (key: string) => boolean,
-): readonly SampleField[] | null {
-  const moved = MOVERS.filter((f) => row.fields[f] !== state.fields[f]);
-  if (moved.length < 2) return MOVERS;
-  const orders = (fields: readonly SampleField[]): SampleField[][] =>
-    fields.length <= 1
-      ? [[...fields]]
-      : fields.flatMap((f) => orders(fields.filter((g) => g !== f)).map((rest) => [f, ...rest]));
-  for (const order of orders(moved)) {
-    const ref = { collector: row.collector, sample_number: row.sample_number, date_start: row.date_start };
-    let clear = true;
-    for (const field of order.slice(0, -1)) {
-      ref[field as "collector" | "sample_number" | "date_start"] = state.fields[field];
-      if (taken(stateKey(ref))) clear = false;
-    }
-    if (clear) return order;
-  }
-  return null;
-}
-
 function matchOneSample(
-  snapshot: ReadonlyMap<string, SampleState>,
+  snapshot: readonly SampleState[],
   states: ReadonlyMap<string, SampleState>,
   byId: ReadonlyMap<string, SampleState>,
-  taken: (key: string) => boolean,
 ): SampleMatching {
   const matched = new Map<string, SampleState>();
   for (const [key, state] of states) {
-    const direct = snapshot.get(key);
     const own = state.id === "" ? undefined : byId.get(state.id);
     if (own !== undefined) {
-      if (own === direct || direct === undefined) matched.set(key, own);
+      matched.set(key, own);
       continue;
     }
-    if (direct === undefined || direct.id !== "") continue;
+    const under = snapshot.filter((row) => stateKey(row) === key);
+    if (under.length !== 1 || under[0]!.id !== "") continue;
+    const direct = under[0]!;
     const relinked =
       state.fields.observation !== "" &&
       direct.fields.observation !== "" &&
       direct.fields.observation !== state.fields.observation;
     if (!relinked) matched.set(key, direct);
-  }
-  // A move the reader could not follow waits for the full pass, which holds it.
-  for (const [key, row] of [...matched]) {
-    if (moverOrder(row, states.get(key)!, taken) === null) matched.delete(key);
   }
   return { matched, contested: new Set(), contestedRows: new Set() };
 }
@@ -1103,8 +1046,9 @@ export interface SampleRecordOptions {
    * one-sample pass otherwise leaves a sample with no snapshot row to the
    * next full pass, which enters it under nobody's name; a trap sample
    * entered in Beeline has no corrections file to hold who entered it
-   * (beeline-7r0g). Entered as arriving only where no row is under its
-   * reference and none carries its id.
+   * (beeline-7r0g). Entered as arriving unless a row already carries its
+   * id, and never compared with a row that does not: a sample just made is
+   * no earlier row's sample, whatever sits under its reference.
    */
   created?: boolean;
 }
@@ -1176,13 +1120,15 @@ async function recordPass(
   const found = await readSampleStates(read, opts.where ?? "");
   const { states, suppressedKeys, suppressedObservations, liveCollectors, liveIds, unreferenceable } = found;
   const store = await readStoreOrigin(read);
+  const at = opts.at ?? new Date().toISOString();
   let { colliding } = found;
   // A narrowed pass holds one sample and cannot see a second one on the same
-  // triple. Granted the direct hit, it would file this sample's edit as
-  // changes to the other's history and restate the row with this sample's
-  // state, so that resolving the duplicate later reports the other sample
-  // changing back to what it always was. Ask the store, and suppress the
-  // sample as a full pass would.
+  // triple. A full pass records neither of two samples one reference names,
+  // so ask the store, and suppress the sample as a full pass would.
+  // The samples this pass was narrowed to, by id, before any is set aside
+  // for sharing its number: a sample just made is new whether or not the
+  // pass can record it.
+  const narrowedTo = new Map([...states].map(([key, state]) => [state.id, key]));
   if (opts.where != null) {
     for (const [key, state] of [...states]) {
       const [row] = await read(tripleCountSql(state));
@@ -1194,32 +1140,56 @@ async function recordPass(
       colliding += n;
     }
   }
+  // The lowest id among samples the caller has just made, less one: the last
+  // id that was handed out before them. Taken from every sample the narrowed
+  // query returned (`liveIds`), not from `states`, which has just lost a new
+  // sample that shares its number with another (CodeRabbit on this branch).
+  const beforeMade = (): number => {
+    const ids = [...liveIds].map(Number).filter((n) => n > 0);
+    return opts.where != null && opts.created === true && ids.length > 0 ? Math.min(...ids) - 1 : store.highestId;
+  };
   const file = await readSnapshotFile(paths.state);
   const snapshot = file?.rows ?? null;
   // The ids in a snapshot are believed only where this store wrote it and
   // has not gone back to an earlier copy since (SnapshotOrigin). Otherwise
-  // they are blanked, and the pass is the one it was before ids.
+  // they are blanked, and each sample is matched as it was before ids.
   let believed = file !== null && idsBelong(file.origin, store);
+  // Where the store has gone back, its ids above the last one it now has
+  // will be drawn again, and the log says so once (IdsRestart). Only a full
+  // pass writes the store's own first line afterwards, so only a full pass
+  // says it, below, once it knows it will.
+  const wentBack =
+    file !== null && store.identity !== "" && file.origin.identity === store.identity && store.highestId < file.origin.highestId;
   // And not where a sample the caller has just made already has a row by its
   // id. That row is a sample that is gone, in a store put back to an earlier
   // copy whose ids have since caught up with the snapshot's; believing it
   // would enter the new sample as the old one, renumbered. The pass the app
   // makes as it starts sees the lower id and corrects the file first, so
-  // this is for the start where that pass failed (Fable's review of this
-  // branch).
+  // this is for the start where that pass failed (Fable's review of
+  // beeline-7r0g).
   //
   // A row with its id under the new sample's OWN reference is something
   // else, and ordinary: a full pass that was already waiting its turn read
   // the store after the sample was written and entered it first. The ids
-  // stand, and this pass finds nothing left to say (CodeRabbit on this
+  // stand, and this pass finds nothing left to say (CodeRabbit on that
   // branch: disbelieving there blanked every id in the file).
+  let staleId = false;
   if (believed && snapshot !== null && opts.where != null && opts.created === true) {
-    const made = new Map([...states].map(([key, state]) => [state.id, key]));
-    for (const [key, row] of snapshot) {
-      if (row.id !== "" && made.has(row.id) && made.get(row.id) !== key) believed = false;
+    const made = narrowedTo;
+    if (snapshot.some((row) => row.id !== "" && made.has(row.id) && made.get(row.id) !== stateKey(row))) {
+      believed = false;
+      staleId = true;
+      // The entries already filed under the new sample's id are that gone
+      // sample's too.
+      await appendLines(paths.log, formatRestart(at, store.identity, beforeMade(), opts.source));
     }
   }
-  if (snapshot !== null && !believed) for (const row of snapshot.values()) row.id = "";
+  // A sample made in a store that has gone back, before any full pass has
+  // said so: its id may be one the log already has entries under.
+  else if (wentBack && opts.where != null && opts.created === true) {
+    await appendLines(paths.log, formatRestart(at, store.identity, beforeMade(), opts.source));
+  }
+  if (snapshot !== null && !believed) for (const row of snapshot) row.id = "";
 
   // First pass: the store as it stands is the baseline, and nothing is an
   // event. (A narrowed first pass must not write a one-sample snapshot that
@@ -1228,47 +1198,40 @@ async function recordPass(
   // no history for this one to continue, and diffing a corpus against it
   // would write the whole corpus into the log as arrivals — the baseline's
   // business, which is why the baseline lives beside the log and not in it.
-  if (snapshot === null || snapshot.size === 0) {
+  if (snapshot === null || snapshot.length === 0) {
     const all = opts.where == null ? states : (await readSampleStates(read)).states;
+    // A baseline over a log that already has entries does not know what the
+    // store was when they were filed. If it was put back to an earlier copy
+    // and its snapshot deleted, the ids above its last one will be drawn
+    // again (Fable's review of this plan).
+    if ((await readSampleLog(paths.log)).changes.length > 0) {
+      await appendLines(paths.log, formatRestart(at, store.identity, beforeMade(), opts.source));
+    }
     await writeSnapshot(paths.state, all.values(), store);
     return { appended: 0, baselined: true, unreferenceable, colliding, contested: 0, refused: null };
   }
 
-  // Which references are somebody's, for the order a sample's movers are
-  // filed in (moverOrder). A one-sample pass cannot see the samples standing
-  // on the references between its sample's old one and its new one, so it
-  // asks the store about each.
-  const standing = new Set<string>();
-  if (opts.where != null) {
-    for (const state of states.values()) {
-      const own = [...snapshot.values()].find((row) => row.id !== "" && row.id === state.id);
-      if (own === undefined) continue;
-      const moved = MOVERS.filter((f) => own.fields[f] !== state.fields[f]) as ("collector" | "sample_number" | "date_start")[];
-      if (moved.length < 2) continue;
-      // Every reference with some, not all, of the moved fields changed.
-      for (let mask = 1; mask < (1 << moved.length) - 1; mask++) {
-        const ref = { collector: own.collector, sample_number: own.sample_number, date_start: own.date_start };
-        moved.forEach((f, i) => {
-          if (mask & (1 << i)) ref[f] = state.fields[f];
-        });
-        const [row] = await read(tripleCountSql(ref));
-        if (Number(row?.n ?? 0) > 0) standing.add(stateKey(ref));
-      }
-    }
-  }
-  const taken = (key: string) => snapshot.has(key) || standing.has(key) || (opts.where == null && states.has(key));
   const { matched, contested, contestedRows } = matchSamples(snapshot, states, {
     directOnly: opts.where != null,
     suppressedObservations,
     liveCollectors,
     liveIds,
-    taken,
   });
-  // A sample the caller says it just made (SampleRecordOptions.created).
+  // A sample the caller says it just made (SampleRecordOptions.created). It
+  // is nobody's row but one that carries its id, and no row does by now:
+  // where one did under another reference, the ids were not believed. Over
+  // a snapshot whose ids are not believed, a row under its reference is a
+  // sample that is gone, or one that has moved off it; compared with that
+  // row, the new sample would be entered as its author's edits to it
+  // (Fable's review of this branch).
   const arrivals = new Set<string>();
   if (opts.where != null && opts.created === true) {
-    // No row carries its id by now: where one did, the ids were not believed.
-    for (const key of states.keys()) if (!snapshot.has(key)) arrivals.add(key);
+    for (const [key, state] of states) {
+      const row = matched.get(key);
+      if (row !== undefined && row.id !== "" && row.id === state.id) continue;
+      matched.delete(key);
+      arrivals.add(key);
+    }
   }
 
   // A snapshot this store does not answer to is another store's statement,
@@ -1288,19 +1251,18 @@ async function recordPass(
   // snapshot's re-baselines by deleting the file, which the message says.
   // A narrowed pass cannot judge this: it holds one sample.
   if (opts.where == null) {
-    const claimed = new Set<string>();
-    for (const row of matched.values()) claimed.add(stateKey(row));
-    for (const key of contestedRows) claimed.add(key);
-    for (const [key, row] of snapshot) {
+    const claimed = new Set<SampleState>(matched.values());
+    for (const row of contestedRows) claimed.add(row);
+    for (const row of snapshot) {
       if (
-        suppressedKeys.has(key) ||
+        suppressedKeys.has(stateKey(row)) ||
         (row.id !== "" && liveIds.has(row.id)) ||
         (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation))
       ) {
-        claimed.add(key);
+        claimed.add(row);
       }
     }
-    const unclaimed = snapshot.size - claimed.size;
+    const unclaimed = snapshot.length - claimed.size;
     if (unclaimed > claimed.size) {
       return {
         appended: 0,
@@ -1309,55 +1271,34 @@ async function recordPass(
         colliding,
         contested: contested.size,
         refused:
-          `${paths.state} is another store's snapshot: ${unclaimed} of its ${snapshot.size} rows name samples ` +
+          `${paths.state} is another store's snapshot: ${unclaimed} of its ${snapshot.length} rows name samples ` +
           `this store does not hold, against ${claimed.size} it does. Nothing was recorded and the snapshot ` +
           `was left as it was. If this store has replaced that one, delete the snapshot and the next pass ` +
           `re-baselines from it.`,
       };
     }
+    if (wentBack) await appendLines(paths.log, formatRestart(at, store.identity, store.highestId, opts.source));
   }
-  const at = opts.at ?? new Date().toISOString();
   const rows: SampleChange[] = [];
-  // The fold follows a move as it meets it, so whatever leaves a triple in
-  // this pass is recorded before whatever arrives on it: a sample moving
-  // onto a triple after the one moving off it, and every arrival after every
-  // move. Ahead of the move, the newcomer's entries would be carried off
-  // into the departing sample's history. matchSamples leaves no loop of
-  // moves, and `done` would stop one anyway.
-  const leaving = new Map<string, string>();
-  for (const [key, row] of matched) if (stateKey(row) !== key) leaving.set(stateKey(row), key);
-  const order: string[] = [];
-  const done = new Set<string>();
-  const visit = (key: string) => {
-    if (done.has(key)) return;
-    done.add(key);
-    const departing = leaving.get(key);
-    if (departing !== undefined) visit(departing);
-    order.push(key);
-  };
-  for (const key of matched.keys()) visit(key);
-  for (const key of states.keys()) if (!matched.has(key)) order.push(key);
-  for (const key of order) {
-    const state = states.get(key)!;
+  for (const [key, state] of states) {
     if (contested.has(key)) continue;
     const before = matched.get(key);
-    // A narrowed pass that cannot match its sample DIRECTLY defers whole:
-    // recording it as an arrival would start a second history for a sample
-    // the next full pass will recognise through the weak tiers. The full
+    // A narrowed pass that cannot match its sample defers whole: recording
+    // it as an arrival would enter a sample the next full pass will
+    // recognise through the weak tiers as arriving a second time. The full
     // pass records it then, attributed to itself; only the author's name is
     // lost to the log, and the corrections overlay holds that durably.
     // The one exception is a sample the caller has just made.
     if (opts.where != null && before === undefined && !arrivals.has(key)) continue;
-    // Filed under the triple the LOG knows the sample by — and each mover
-    // under the triple as moved by the movers before it (see MOVERS).
-    const ref = {
-      collector: before?.collector ?? state.collector,
-      sample_number: before?.sample_number ?? state.sample_number,
-      date_start: before?.date_start ?? state.date_start,
-    };
-    const emit = (field: SampleField) => {
+    // Every entry says which sample it is about (`store`, `sample_id`), and
+    // that is how it is read. The reference beside them is the one the
+    // sample had before this pass. It joins a sample's first entry here to
+    // what was filed by reference before entries carried ids (sampleHistory),
+    // and keeps the file legible.
+    const ref = before ?? state;
+    for (const field of SAMPLE_FIELDS) {
       const was = before?.fields[field] ?? ABSENT;
-      if (was === state.fields[field]) return;
+      if (was === state.fields[field]) continue;
       rows.push({
         at,
         collector: ref.collector,
@@ -1369,15 +1310,9 @@ async function recordPass(
         author: opts.author ?? "",
         source: opts.source,
         reason: opts.reason ?? "",
+        store: store.identity,
+        sample_id: state.id,
       });
-    };
-    for (const field of NON_MOVERS) emit(field);
-    // In an order whose references in between are nobody else's (moverOrder).
-    // The matching has already held a sample for which there is none.
-    for (const field of (before === undefined ? null : moverOrder(before, state, taken)) ?? MOVERS) {
-      emit(field);
-      // The next mover is filed under the reference as moved so far.
-      ref[field as "collector" | "sample_number" | "date_start"] = state.fields[field];
     }
   }
 
@@ -1386,71 +1321,71 @@ async function recordPass(
   // Restate the snapshot. The rule is: **a pass may only restate what it
   // recorded.** A full pass writes the state of every sample it recorded and
   // carries forward, unchanged, the rows of everything it could not speak
-  // for — colliding triples, suppressed observation links and number-date
-  // pairs, and the rows contested claimants were reaching for. Restating a
-  // contested sample's current state would bury the contest: the next pass
-  // direct-matches the fresh row, finds no difference, and the transition is
-  // never recorded by any pass. A truly vanished sample is in none of those
-  // sets and loses its row. A narrowed pass patches: matched rows move to
-  // their new triple, new samples arrive, and everything outside the
-  // narrowing keeps its row.
+  // for — colliding triples, suppressed observation links, the rows
+  // contested claimants were reaching for, and the row of any sample still
+  // in the store. Restating a contested sample's current state would bury
+  // the contest: the next pass direct-matches the fresh row, finds no
+  // difference, and the transition is never recorded by any pass. A truly
+  // vanished sample is in none of those sets and loses its row. A carried
+  // row may sit under the reference a recorded sample now stands on, and
+  // both are kept. A narrowed pass patches: a matched row is replaced by its
+  // sample's state, new samples arrive, and everything outside the narrowing
+  // keeps its row.
   if (opts.where == null) {
-    const next = new Map<string, SampleState>();
+    const next: SampleState[] = [];
     const recorded = new Set<SampleState>();
     for (const [key, state] of states) {
       if (contested.has(key)) continue;
-      next.set(key, state);
+      next.push(state);
       const before = matched.get(key);
       if (before !== undefined) recorded.add(before);
     }
-    for (const [key, row] of snapshot) {
-      if (next.has(key)) continue;
-      // The last of these is new with ids: the row of a sample that is still
-      // in the store and that this pass did not record. Before ids such a
-      // row was dropped unless one of the other three kept it, and the
-      // sample was entered again as arriving once the pass could record it.
+    for (const row of snapshot) {
+      if (recorded.has(row)) continue;
       if (
-        suppressedKeys.has(key) ||
-        contestedRows.has(key) ||
-        (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation)) ||
-        (row.id !== "" && liveIds.has(row.id) && !recorded.has(row))
+        (row.id !== "" && liveIds.has(row.id)) ||
+        suppressedKeys.has(stateKey(row)) ||
+        contestedRows.has(row) ||
+        (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation))
       ) {
-        next.set(key, row);
+        next.push(row);
       }
     }
-    // Nothing recorded and nothing moved: leave the file alone. The
-    // restatement is byte-deterministic, so rewriting 11 MB to say the same
-    // thing again is pure cost — and it is the steady case (adversarial
-    // review of PR #32).
-    //
-    // Unless the file does not yet say what this store would say of it: it
-    // has no ids, or another store's, or a row is missing its sample's id.
-    // The first pass after the snapshot began carrying ids is usually a
-    // quiet one, and leaving the file alone then would leave it without ids
-    // for the first trap sample renumbered afterwards (Fable's review of
-    // this plan). A store with no identity writes none it could believe, so
-    // its quiet passes still leave the file alone.
-    const idsOwed =
-      store.identity !== "" &&
-      (!believed || [...next].some(([k, row]) => snapshot.get(k)?.id !== row.id));
-    if (idsOwed || rows.length > 0 || next.size !== snapshot.size || [...next.keys()].some((k) => !snapshot.has(k))) {
-      await writeSnapshot(paths.state, next.values(), store);
+    // Nothing to say that the file does not already say: leave it alone.
+    // The restatement is byte-deterministic, so rewriting 11 MB to say the
+    // same thing again is pure cost — and it is the steady case (adversarial
+    // review of PR #32). A file whose first line is not this store's is
+    // rewritten even so: it has no ids, or another store's.
+    const body = snapshotBody(next);
+    if ((store.identity !== "" && !believed) || body !== file!.body) {
+      await writeSnapshot(paths.state, next, store);
     }
   } else {
-    const next = new Map(snapshot);
-    let touched = false;
+    let next = snapshot;
+    // A file found to give a new sample's id to another is written without
+    // its ids even where this pass records nothing, or a later pass would
+    // believe them and follow that id to the other sample's row.
+    let touched = staleId;
     for (const [key, state] of states) {
       if (contested.has(key)) continue;
       const before = matched.get(key);
-      // The same deferral as the emit loop: an unmatched sample is the next
-      // full pass's to place, and patching it in here would pre-empt that —
-      // and where the miss is a deferred relink, its own triple's row is
-      // another sample's history, which patching would overwrite.
+      // The same deferral as the entries above: an unmatched sample is the
+      // next full pass's to place, and patching it in here would pre-empt
+      // that.
       if (before === undefined && !arrivals.has(key)) continue;
-      if (before !== undefined) next.delete(stateKey(before));
       // Where the file's ids are not this store's, a one-sample pass adds
       // none of its own under the other store's name.
-      next.set(key, believed ? state : { ...state, id: "" });
+      // Nor does it leave a second row with no id under its sample's
+      // reference: the full pass could then tell neither from the other,
+      // and would enter the sample again. A row there with an observation
+      // of its own stays: it is another sample's, which the full pass can
+      // still follow by that observation if the sample has moved, and whose
+      // history it would otherwise begin again (CodeRabbit on this branch).
+      const anothers = (row: SampleState) =>
+        row.fields.observation !== "" && row.fields.observation !== state.fields.observation;
+      const replaced = (row: SampleState) =>
+        row === before || (!believed && stateKey(row) === key && !anothers(row));
+      next = [...next.filter((row) => !replaced(row)), believed ? state : { ...state, id: "" }];
       touched = true;
     }
     // The line saying which store wrote the file is the full pass's to
@@ -1460,7 +1395,7 @@ async function recordPass(
     if (touched) {
       await writeSnapshot(
         paths.state,
-        next.values(),
+        next,
         believed ? { ...origin, highestId: Math.max(origin.highestId, store.highestId) } : origin,
       );
     }
@@ -1471,10 +1406,12 @@ async function recordPass(
 // ── Reading one sample's history ─────────────────────────────────────────
 
 /**
- * Fold the log in file order, following moved references — the person log's
- * lastKnown, with the writer's mover discipline making one dumb fold serve
- * three moving fields. Never onto a triple already known: two samples whose
- * keys swap must not merge (ADR 0007).
+ * Fold the entries filed before entries carried ids, in file order,
+ * following moved references — the person log's lastKnown. The writer of
+ * that time filed each mover under the reference as moved by the movers
+ * before it, so one lookup per entry serves three moving fields. Never onto
+ * a triple already known: two samples whose keys swap must not merge
+ * (ADR 0007). Nothing new is filed this way, so what this reads is fixed.
  */
 export function foldSampleChanges(changes: readonly SampleChange[]): Map<string, SampleChange[]> {
   const byKey = new Map<string, SampleChange[]>();
@@ -1499,21 +1436,131 @@ export function foldSampleChanges(changes: readonly SampleChange[]): Map<string,
 }
 
 /**
- * One sample's history, newest first, addressed by the triple the STORE
- * derives for it — the record page has the sample in hand and asks with its
- * current reference, which the fold has followed every recorded move to.
+ * A sample's entries from where it last arrived. A pass enters a sample it
+ * has no row for as arriving: every field from nothing, the collector among
+ * them, which no other entry does. The entries before that pass under the
+ * same id are not known to be this sample's: either the writer could not
+ * recognise it and entered it again, which leaves a gap, or the id was
+ * handed out twice and they are about a sample that is gone.
+ */
+function sinceArrival(entries: readonly SampleChange[]): { entries: readonly SampleChange[]; arrived: boolean } {
+  let arrival = -1;
+  entries.forEach((e, i) => {
+    if (e.field === "collector" && e.old_value === "") arrival = i;
+  });
+  if (arrival === -1) return { entries, arrived: false };
+  // The collector is not the first field a pass files for a sample, so the
+  // arrival begins with the first entry of that pass, which shares its instant.
+  while (arrival > 0 && entries[arrival - 1]!.at === entries[arrival]!.at) arrival--;
+  return { entries: entries.slice(arrival), arrived: true };
+}
+
+interface HistoryIndex {
+  /** The entries with no id, folded by reference. */
+  older: Map<string, SampleChange[]>;
+  /** store → sample id → that sample's entries, in file order. */
+  byId: Map<string, Map<string, SampleChange[]>>;
+  /**
+   * store → reference → how many samples' first entry names it, among
+   * samples not entered as arriving. Such a sample's snapshot row was under
+   * that reference when its first entry was filed, so what was filed by
+   * reference before then is its own, unless a second sample says the same.
+   */
+  joining: Map<string, Map<string, number>>;
+}
+
+// One index per parse of the log. The parse is cached and extended across
+// this process's appends (readSampleLog), each of which makes a new object.
+const indexes = new WeakMap<SampleLog, HistoryIndex>();
+
+function historyIndex(log: SampleLog): HistoryIndex {
+  const hit = indexes.get(log);
+  if (hit !== undefined) return hit;
+  const byId = new Map<string, Map<string, SampleChange[]>>();
+  const withoutIds: SampleChange[] = [];
+  // From a restart on, the ids above its last one are other samples.
+  const restart = ({ store, lastId }: IdsRestart) => {
+    const ids = byId.get(store);
+    if (ids === undefined) return;
+    for (const id of [...ids.keys()]) if (Number(id) > lastId) ids.delete(id);
+  };
+  let next = 0;
+  log.changes.forEach((c, i) => {
+    while (next < log.restarts.length && log.restarts[next]!.before <= i) restart(log.restarts[next++]!);
+    if (c.sample_id === "") {
+      withoutIds.push(c);
+      return;
+    }
+    let ids = byId.get(c.store);
+    if (ids === undefined) byId.set(c.store, (ids = new Map()));
+    const entries = ids.get(c.sample_id);
+    if (entries === undefined) ids.set(c.sample_id, [c]);
+    else entries.push(c);
+  });
+  while (next < log.restarts.length) restart(log.restarts[next++]!);
+  const joining = new Map<string, Map<string, number>>();
+  for (const [store, ids] of byId) {
+    const refs = new Map<string, number>();
+    for (const entries of ids.values()) {
+      if (sinceArrival(entries).arrived) continue;
+      const key = stateKey(entries[0]!);
+      refs.set(key, (refs.get(key) ?? 0) + 1);
+    }
+    joining.set(store, refs);
+  }
+  const index = { older: foldSampleChanges(withoutIds), byId, joining };
+  indexes.set(log, index);
+  return index;
+}
+
+/**
+ * One sample's history, newest first: the entries filed with its id in this
+ * store, after whatever was filed by reference before entries carried ids.
  *
- * The caller must first ask whether the triple names this sample ALONE
- * (sampleChangeHistory does): during a live duplicate_sample_number two
- * samples derive the same triple, and answering both pages with the carried
- * history would show one sample the other's provenance on the very screen
- * staff would use to untangle them (adversarial review of PR #32).
+ * The older part is joined at one reference. For a sample with entries of
+ * its own, that is the reference on the first of them, which is where its
+ * snapshot row sat when entries began carrying ids. For a sample with none,
+ * nothing about it has been recorded since, and the reference is the one the
+ * store derives for it now. Two samples that join at one reference are both
+ * shown nothing older, since it is one history and cannot be both theirs. A
+ * sample with no entries of its own is shown nothing older where another
+ * sample's first entry names its reference, which proves that sample was
+ * there, or where the caller says another sample stands on its reference
+ * (`shared`): during a live duplicate_sample_number the writer records
+ * neither, and showing both pages the carried history would show one sample
+ * the other's provenance on the very screen staff would use to untangle
+ * them (adversarial review of PR #32).
+ *
+ * A sample entered as arriving is shown nothing from before that
+ * (sinceArrival), and entries under ids another store filed are not shown
+ * at all.
  */
 export function sampleHistory(
-  changes: readonly SampleChange[],
-  ref: { collector: string; sample_number: string; date_start: string },
+  log: SampleLog,
+  sample: {
+    store: string;
+    id: string;
+    /** Null where no reference names the sample's collector. */
+    collector: string | null;
+    sample_number: string;
+    date_start: string;
+  },
+  shared = false,
 ): SampleChange[] {
-  const folded = foldSampleChanges(changes);
-  const entries = folded.get(keyOf(ref.collector, ref.sample_number, ref.date_start)) ?? [];
-  return [...entries].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+  const index = historyIndex(log);
+  const { entries: own, arrived } = sinceArrival(index.byId.get(sample.store)?.get(sample.id) ?? []);
+  let older: readonly SampleChange[] = [];
+  if (!arrived) {
+    const first = own[0];
+    const joining = (key: string) => index.joining.get(sample.store)?.get(key) ?? 0;
+    if (first !== undefined) {
+      const key = stateKey(first);
+      if (joining(key) === 1) older = index.older.get(key) ?? [];
+    } else if (sample.collector !== null && !shared) {
+      const key = keyOf(sample.collector, sample.sample_number, sample.date_start);
+      if (joining(key) === 0) older = index.older.get(key) ?? [];
+    }
+  }
+  // Stable, so entries of one instant keep the order they were filed in.
+  return [...older, ...own].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
 }

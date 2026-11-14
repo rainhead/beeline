@@ -1013,6 +1013,21 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
       expect((await historyOf("7")).every((e) => e[1] === "" && e[3] === "ada")).toBe(true);
     });
 
+    it("a new sample that shares its number, whose id the snapshot gives to another, is still not believed to be that one", async () => {
+      const gone = await unlinked("7");
+      await unlinked("50");
+      await record();
+      const made = await unlinked("50");
+      const text = await readFile(paths.state, "utf8");
+      await writeFile(paths.state, text.replace(`\n${gone},`, `\n${made},`));
+      const pass = await narrowed(made, { created: true });
+      expect(pass.colliding).toBeGreaterThan(0);
+      const { identity } = await readStoreOrigin(read());
+      expect((await readSampleLog(paths.log)).restarts).toEqual([{ before: 0, store: identity, lastId: made - 1 }]);
+      // No row is left carrying the new sample's id for a later pass to follow.
+      expect((await readSnapshot(paths.state))!.some((r) => r.id === String(made))).toBe(false);
+    });
+
     it("the line names the id before the new sample's even where the new sample shares its number", async () => {
       // A sample on a shared number is recorded as nothing, but its id is
       // still one the log may have entries under.

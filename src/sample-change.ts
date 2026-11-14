@@ -1125,6 +1125,10 @@ async function recordPass(
   // A narrowed pass holds one sample and cannot see a second one on the same
   // triple. A full pass records neither of two samples one reference names,
   // so ask the store, and suppress the sample as a full pass would.
+  // The samples this pass was narrowed to, by id, before any is set aside
+  // for sharing its number: a sample just made is new whether or not the
+  // pass can record it.
+  const narrowedTo = new Map([...states].map(([key, state]) => [state.id, key]));
   if (opts.where != null) {
     for (const [key, state] of [...states]) {
       const [row] = await read(tripleCountSql(state));
@@ -1169,10 +1173,12 @@ async function recordPass(
   // the store after the sample was written and entered it first. The ids
   // stand, and this pass finds nothing left to say (CodeRabbit on that
   // branch: disbelieving there blanked every id in the file).
+  let staleId = false;
   if (believed && snapshot !== null && opts.where != null && opts.created === true) {
-    const made = new Map([...states].map(([key, state]) => [state.id, key]));
+    const made = narrowedTo;
     if (snapshot.some((row) => row.id !== "" && made.has(row.id) && made.get(row.id) !== stateKey(row))) {
       believed = false;
+      staleId = true;
       // The entries already filed under the new sample's id are that gone
       // sample's too.
       await appendLines(paths.log, formatRestart(at, store.identity, beforeMade(), opts.source));
@@ -1356,7 +1362,10 @@ async function recordPass(
     }
   } else {
     let next = snapshot;
-    let touched = false;
+    // A file found to give a new sample's id to another is written without
+    // its ids even where this pass records nothing, or a later pass would
+    // believe them and follow that id to the other sample's row.
+    let touched = staleId;
     for (const [key, state] of states) {
       if (contested.has(key)) continue;
       const before = matched.get(key);

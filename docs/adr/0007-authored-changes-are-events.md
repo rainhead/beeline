@@ -222,19 +222,20 @@ filed, and still read, by collector, number and start date.
 - **The ids are believed only by the store that wrote them.** The snapshot's
   first line names the store, by the instant its first migration was recorded
   (`pnpm db:build` and `db:reseed` stamp every migration, so a rebuilt store
-  has a new one), and the highest sample id it held. A pass over any other
+  has a new one), and the last id it had handed out (the last value of
+  `entity_id_seq`, which a deleted sample does not lower). A pass over any other
   store blanks the ids and matches as it did before them, the refusal of a
-  foreign snapshot included. So does a pass over a store whose highest sample
-  id is below the snapshot's: that store was put back to an earlier copy, and
+  foreign snapshot included. So does a pass over a store whose last id is
+  below the snapshot's: that store was put back to an earlier copy, and
   the next sample it enters would take an id the snapshot gives to a sample
   that is gone. A store with no identity (a test's) is never believed.
 - **That last guard depends on a full pass running before the restored
   store's ids catch up**, which the pass the app makes as it starts is: it
-  sees the lower id, matches without ids, and writes the file as the store
+  sees the lower last id, matches without ids, and writes the file as the store
   now is. If that pass fails, a sample entered afterwards can draw an id the
   snapshot still gives away. A one-sample pass for a sample its caller has
-  just made therefore disbelieves every id when a row already carries the
-  new sample's. A full pass after a failed start has no such check: the
+  just made therefore disbelieves every id when a row under some other
+  reference already carries the new sample's. A full pass after a failed start has no such check: the
   nightly's own promotion may mint samples on ids the snapshot gives to
   samples that are gone, and its pass would take those rows for them. A
   start whose pass fails is logged, and is the thing to look for after a
@@ -261,8 +262,10 @@ filed, and still read, by collector, number and start date.
   passes through sample 1 of the 14th when the number is filed first, and
   the reader then carried that sample's history off with the corrected one.
   That filing is as old as the log; ids made it reachable for samples with
-  no observation and for one-sample passes. Where every order passes through
-  a reference with a snapshot row, the sample is held.
+  no observation and for one-sample passes. A reference is somebody's when a
+  snapshot row is under it or a sample in the store stands on it, which a
+  one-sample pass asks the store. Where every order passes through one, the
+  sample is held.
 - **A one-sample pass follows its sample by id** to a reference nothing else
   sits under, and enters a sample its caller has just made. Where another
   row is under the new reference it records nothing and the full pass, which

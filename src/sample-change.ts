@@ -386,16 +386,22 @@ export async function readSnapshot(path: string): Promise<Map<string, SampleStat
 }
 
 /**
- * Which store wrote a snapshot, and the highest sample id it held then.
+ * Which store wrote a snapshot, and the last id that store had handed out.
  *
  * The ids in a snapshot are one store's (ADR 0007's addendum of 2026-11-13).
  * A dev store is still rebuilt, and a scratch store has been pointed at the
  * real files by mistake (beeline-hrw), so a pass believes the ids only where
  * `identity` is its own store's. `highestId` catches the store that keeps
  * its identity and draws the same ids again: one restored from an earlier
- * copy, with the snapshot left as it was. Its highest sample id is below the
- * one written here, and the sample it enters next would take an id the
+ * copy, with the snapshot left as it was. The last id it handed out is below
+ * the one written here, and the sample it enters next would take an id the
  * snapshot already gives to a sample that is gone.
+ *
+ * It is the last value of `entity_id_seq`, which every entity draws from,
+ * and not the highest sample id: that falls when the newest sample is
+ * deleted, which is no restore, and stands still while people, specimens
+ * and print runs go on drawing ids (CodeRabbit on this branch). Nothing
+ * deletes a sample today.
  */
 export interface SnapshotOrigin {
   /** Empty where the store has none, or the snapshot does not say. Never believed when empty. */
@@ -412,10 +418,16 @@ const NO_ORIGIN: SnapshotOrigin = { identity: "", highestId: 0 };
  * one, and a backup carries it. Cast in SQL because the two readers hand a
  * TIMESTAMPTZ back as different objects, and the app's passes use one and
  * the nightly's the other.
+ *
+ * `duckdb_sequences()` is DuckDB's own; a port asks its engine for the
+ * sequence's last value instead (`pg_sequences.last_value` in Postgres).
+ * Limited to the store's own catalog, since an attached database may carry
+ * a sequence of the same name.
  */
 export const STORE_ORIGIN_SQL = `
   SELECT coalesce((SELECT CAST(epoch_us(min(applied_at)) AS VARCHAR) FROM schema_migration), '') AS identity,
-         (SELECT CAST(coalesce(max(entity_id), 0) AS VARCHAR) FROM sample) AS highest_id`;
+         (SELECT CAST(coalesce(max(last_value), 0) AS VARCHAR) FROM duckdb_sequences()
+          WHERE database_name = current_database() AND sequence_name = 'entity_id_seq') AS highest_id`;
 
 export async function readStoreOrigin(read: StateReader): Promise<SnapshotOrigin> {
   const [row] = await read(STORE_ORIGIN_SQL);
@@ -753,17 +765,24 @@ export function matchSamples(
     suppressedObservations = new Set<string>(),
     liveCollectors: alsoLive = new Set<string>(),
     liveIds = new Set<string>(),
+    taken = (key: string) => snapshot.has(key) || (!directOnly && states.has(key)),
   }: {
     directOnly?: boolean;
     suppressedObservations?: ReadonlySet<string>;
     liveCollectors?: ReadonlySet<string>;
     /** The id of every sample in the store. A one-sample pass has only its own. */
     liveIds?: ReadonlySet<string>;
+    /**
+     * Whether a reference is somebody's, for moverOrder. A full pass can
+     * tell from the snapshot and its own states; a one-sample pass has to
+     * ask the store, and passes what it found.
+     */
+    taken?: (key: string) => boolean;
   } = {},
 ): SampleMatching {
   const byId = new Map<string, SampleState>();
   for (const row of snapshot.values()) if (row.id !== "") byId.set(row.id, row);
-  if (directOnly) return matchOneSample(snapshot, states, byId);
+  if (directOnly) return matchOneSample(snapshot, states, byId, taken);
   // Rows that are a live sample's own, and so nobody else's to claim.
   const owned = new Set<SampleState>();
   for (const row of byId.values()) if (liveIds.has(row.id)) owned.add(row);
@@ -935,7 +954,7 @@ export function matchSamples(
   }
   // A move the reader could not follow is not recorded (moverOrder).
   for (const [key, row] of [...matched]) {
-    if (moverOrder(row, states.get(key)!, snapshot) !== null) continue;
+    if (moverOrder(row, states.get(key)!, taken) !== null) continue;
     matched.delete(key);
     contested.add(key);
     contestedRows.add(stateKey(row));
@@ -996,13 +1015,19 @@ export function matchSamples(
  * net sample numbers restart every day (Fable's review of this branch; the
  * filing is older than ids, which only made it reachable for more samples).
  * The reader applies moves one field at a time whatever their order, so the
- * writer may choose one whose references in between have no snapshot row.
- * Where every order passes through one, the sample is held, like a contest.
+ * writer may choose one whose references in between are nobody's. Where
+ * every order passes through somebody's, the sample is held, like a contest.
+ *
+ * `taken` says whether a reference is somebody's: one a snapshot row is
+ * under, and one a sample in the store stands on now, since that sample's
+ * own entries may be filed there in this same pass (CodeRabbit on this
+ * branch: two samples corrected across each other each passed through
+ * where the other was going).
  */
 export function moverOrder(
   row: SampleState,
   state: SampleState,
-  snapshot: ReadonlyMap<string, SampleState>,
+  taken: (key: string) => boolean,
 ): readonly SampleField[] | null {
   const moved = MOVERS.filter((f) => row.fields[f] !== state.fields[f]);
   if (moved.length < 2) return MOVERS;
@@ -1015,7 +1040,7 @@ export function moverOrder(
     let clear = true;
     for (const field of order.slice(0, -1)) {
       ref[field as "collector" | "sample_number" | "date_start"] = state.fields[field];
-      if (snapshot.has(stateKey(ref))) clear = false;
+      if (taken(stateKey(ref))) clear = false;
     }
     if (clear) return order;
   }
@@ -1026,6 +1051,7 @@ function matchOneSample(
   snapshot: ReadonlyMap<string, SampleState>,
   states: ReadonlyMap<string, SampleState>,
   byId: ReadonlyMap<string, SampleState>,
+  taken: (key: string) => boolean,
 ): SampleMatching {
   const matched = new Map<string, SampleState>();
   for (const [key, state] of states) {
@@ -1044,7 +1070,7 @@ function matchOneSample(
   }
   // A move the reader could not follow waits for the full pass, which holds it.
   for (const [key, row] of [...matched]) {
-    if (moverOrder(row, states.get(key)!, snapshot) === null) matched.delete(key);
+    if (moverOrder(row, states.get(key)!, taken) === null) matched.delete(key);
   }
   return { matched, contested: new Set(), contestedRows: new Set() };
 }
@@ -1200,11 +1226,35 @@ async function recordPass(
     return { appended: 0, baselined: true, unreferenceable, colliding, contested: 0, refused: null };
   }
 
+  // Which references are somebody's, for the order a sample's movers are
+  // filed in (moverOrder). A one-sample pass cannot see the samples standing
+  // on the references between its sample's old one and its new one, so it
+  // asks the store about each.
+  const standing = new Set<string>();
+  if (opts.where != null) {
+    for (const state of states.values()) {
+      const own = [...snapshot.values()].find((row) => row.id !== "" && row.id === state.id);
+      if (own === undefined) continue;
+      const moved = MOVERS.filter((f) => own.fields[f] !== state.fields[f]) as ("collector" | "sample_number" | "date_start")[];
+      if (moved.length < 2) continue;
+      // Every reference with some, not all, of the moved fields changed.
+      for (let mask = 1; mask < (1 << moved.length) - 1; mask++) {
+        const ref = { collector: own.collector, sample_number: own.sample_number, date_start: own.date_start };
+        moved.forEach((f, i) => {
+          if (mask & (1 << i)) ref[f] = state.fields[f];
+        });
+        const [row] = await read(tripleCountSql(ref));
+        if (Number(row?.n ?? 0) > 0) standing.add(stateKey(ref));
+      }
+    }
+  }
+  const taken = (key: string) => snapshot.has(key) || standing.has(key) || (opts.where == null && states.has(key));
   const { matched, contested, contestedRows } = matchSamples(snapshot, states, {
     directOnly: opts.where != null,
     suppressedObservations,
     liveCollectors,
     liveIds,
+    taken,
   });
   // A sample the caller says it just made (SampleRecordOptions.created).
   const arrivals = new Set<string>();
@@ -1316,7 +1366,7 @@ async function recordPass(
     for (const field of NON_MOVERS) emit(field);
     // In an order whose references in between are nobody else's (moverOrder).
     // The matching has already held a sample for which there is none.
-    for (const field of (before === undefined ? null : moverOrder(before, state, snapshot)) ?? MOVERS) {
+    for (const field of (before === undefined ? null : moverOrder(before, state, taken)) ?? MOVERS) {
       emit(field);
       // The next mover is filed under the reference as moved so far.
       ref[field as "collector" | "sample_number" | "date_start"] = state.fields[field];

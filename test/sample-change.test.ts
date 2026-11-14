@@ -816,6 +816,40 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
       });
     }
 
+    it("two samples corrected across each other each avoid where the other is going", async () => {
+      // A goes from 4 of the 14th to 1 of the 15th, B from 2 of the 15th to
+      // 1 of the 14th. Number first, each would pass through the other's new
+      // reference, which has no snapshot row yet for either to see.
+      const a = await unlinked("4", { locality: "'Alsea'" });
+      const b = await unlinked("2", { locality: "'Adair'", date_start: `DATE '${next}'`, date_end: `DATE '${next}'` });
+      await record();
+      await conn.run(`UPDATE sample SET locality = 'Philomath' WHERE entity_id = ${a}`);
+      await conn.run(`UPDATE sample SET locality = 'Monroe' WHERE entity_id = ${b}`);
+      await record();
+      await correct(a);
+      await conn.run(`UPDATE sample SET sample_number = '1', date_start = DATE '${day}', date_end = DATE '${day}' WHERE entity_id = ${b}`);
+      await record();
+      const localities = async (date: string) => (await historyOf("1", date)).filter((e) => e[0] === "locality").map((e) => e[2]);
+      expect(await localities(next)).toEqual(["Philomath"]);
+      expect(await localities(day)).toEqual(["Monroe"]);
+      expect((await record()).appended).toBe(0);
+    });
+
+    it("a one-sample pass asks the store who stands between, where the snapshot cannot say", async () => {
+      // Sample 1 of the 14th was entered after the last pass, so it has no
+      // snapshot row. The corrected sample still must not pass through it.
+      const four = await unlinked("4");
+      await record();
+      await unlinked("1");
+      await correct(four);
+      await narrowed(four);
+      const moves = (await readSampleChanges(paths.log)).filter((e) => e.field === "date_start" || e.field === "sample_number");
+      expect(moves.map((e) => [e.sample_number, e.date_start, e.field])).toEqual([
+        ["4", day, "date_start"],
+        ["4", next, "sample_number"],
+      ]);
+    });
+
     it("is held where either order passes through another sample", async () => {
       const { four } = await setUp();
       await unlinked("4", { date_start: `DATE '${next}'`, date_end: `DATE '${next}'` });
@@ -868,6 +902,20 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     const history = sampleHistory(entries, { collector: "name:Ada Lovelace", sample_number: "1", date_start: day });
     expect(history.map((e) => e.field)).toEqual(["locality", "collector"]);
     expect((await record()).appended).toBe(0);
+  });
+
+  it("deleting the newest sample is not a store put back: the ids are still believed", async () => {
+    // The mark is the last id the store handed out, which a delete does not lower.
+    const id = await unlinked("1");
+    await unlinked("2");
+    await unlinked("3");
+    const newest = await unlinked("4");
+    await record();
+    await conn.run(`DELETE FROM sample_collector WHERE sample_id = ${newest}`);
+    await conn.run(`DELETE FROM sample WHERE entity_id = ${newest}`);
+    await renumber(id, "9");
+    expect((await record()).appended).toBe(1);
+    expect(await historyOf("9")).toEqual([["sample_number", "1", "9", ""]]);
   });
 
   describe("ids that are not this store's are not believed", () => {
@@ -934,7 +982,8 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
       await writeFile(paths.state, [`${mark},${identity},${id + 1000}`, ...rest].join("\n"));
       await restarts(id);
       // That pass wrote the file as this store's, so the next move is followed.
-      expect((await readFile(paths.state, "utf8")).split("\n")[0]).toBe(`${mark},${identity},${id + 2}`);
+      const lastId = (await rows(conn, "SELECT last_value FROM duckdb_sequences() WHERE sequence_name = 'entity_id_seq'"))[0]![0];
+      expect((await readFile(paths.state, "utf8")).split("\n")[0]).toBe(`${mark},${identity},${lastId}`);
       await renumber(id, "10");
       expect((await record()).appended).toBe(1);
       expect((await historyOf("10"))[0]).toEqual(["sample_number", "9", "10", ""]);

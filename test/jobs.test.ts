@@ -782,9 +782,9 @@ describe("the nightly and a refused sample snapshot (beeline-hrw)", () => {
       run: (ctx: JobContext) => {
         const wrapped: JobContext = {
           ...ctx,
-          step: (label, fn) => {
+          step: (label, fn, failed) => {
             steps.push(label);
-            return ctx.step(label, fn);
+            return ctx.step(label, fn, failed);
           },
         };
         return pipelineTail(wrapped, [], join(dir, "person-change.csv"), samplePaths, undefined, {

@@ -210,6 +210,25 @@ main > * {
    nothing following it. */
 .menu-panel > :last-child { border-bottom: none; margin-bottom: 0; }
 
+/* A menu row with something wrong behind it: the alert symbol beside "Jobs"
+   when a job is failing (beeline-222u). The words stay the row's colour and
+   only the symbol takes the error colour, so the row still reads as a link. */
+.menu-panel a.menu-alert .icon { color: var(--md-sys-color-error); vertical-align: text-bottom; }
+/* That row is inside a closed menu, so the button that opens the menu
+   carries a dot. */
+.nav-menu.has-alert > summary { position: relative; }
+.nav-menu.has-alert > summary::after {
+  content: "";
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: var(--radius-full);
+  background: var(--md-sys-color-error);
+  border: 2px solid var(--md-sys-color-surface-variant);
+}
+
 /* A heading inside a menu panel. Distinct from .menu-identity, which says
    who you are: this labels a group of choices. */
 .menu-heading {

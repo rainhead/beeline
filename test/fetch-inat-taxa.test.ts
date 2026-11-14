@@ -299,7 +299,12 @@ describe("what comes back empty, and how a run ends", () => {
     // Failed is not absent: the next run asks again.
     expect(await q("SELECT count(*) FROM inat_taxon_absent")).toEqual([[0n]]);
     expect(await uncached()).toEqual([56861]);
-    expect(await refreshInatTaxa(conn, { fetchImpl: failing, requestDelayMs: 0 })).toMatch(/1 taxon id\(s\) could not be read \(56861\).*503/);
+    // And the step is told it failed, so /jobs and the menu say so (beeline-222u).
+    let failures = 0;
+    expect(await refreshInatTaxa(conn, { fetchImpl: failing, requestDelayMs: 0, onFailure: () => (failures += 1) })).toMatch(
+      /1 taxon id\(s\) could not be read \(56861\).*503/,
+    );
+    expect(failures).toBe(1);
     const garbled = (async () => new Response(JSON.stringify({ error: "x" }))) as typeof fetch;
     expect(await refreshInatTaxa(conn, { fetchImpl: garbled, requestDelayMs: 0 })).toMatch(/no results array/);
     expect(await q("SELECT count(*) FROM inat_taxon_absent")).toEqual([[0n]]);
@@ -361,7 +366,10 @@ describe("what comes back empty, and how a run ends", () => {
     await host(1, 56861);
     expect(await refreshInatTaxa(conn, opts())).toMatch(/^2 taxa read in 2 request\(s\) \(0 refreshed\)/);
     await host(2, 322554);
-    expect(await refreshInatTaxa(conn, { ...opts(), maxRequests: 1 })).toMatch(/stopped at the cap/);
+    // A stop at the cap is by design and is not a failure.
+    let failures = 0;
+    expect(await refreshInatTaxa(conn, { ...opts(), maxRequests: 1, onFailure: () => (failures += 1) })).toMatch(/stopped at the cap/);
+    expect(failures).toBe(0);
   });
 });
 

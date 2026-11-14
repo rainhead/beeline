@@ -28,11 +28,24 @@ function Outcome({ m, run }: { m: Messages; run: JobRunRow }) {
   // A run that finished with a failed step in it did not simply succeed
   // (beeline-222u): some steps are allowed to fail without failing the run.
   if (run.outcome === "succeeded" && run.failed_steps.length > 0) {
-    // Which step is in the detail beside it, and at the top of the page.
-    return <Chip tone="blocking">{m.jobs.outcomeStepFailed(run.failed_steps.length)}</Chip>;
+    // Named under the chip, so an old run still says which once a later
+    // night has worked and the list at the top of the page is gone.
+    return (
+      <>
+        <Chip tone="blocking">{m.jobs.outcomeStepFailed(run.failed_steps.length)}</Chip>
+        <Meta block>{run.failed_steps.join(", ")}</Meta>
+      </>
+    );
   }
   if (run.outcome === "succeeded") return <Chip tone="success">{m.jobs.outcomeSucceeded}</Chip>;
-  if (run.outcome === "failed") return <Chip tone="blocking">{m.jobs.outcomeFailed}</Chip>;
+  if (run.outcome === "failed") {
+    return (
+      <>
+        <Chip tone="blocking">{m.jobs.outcomeFailed}</Chip>
+        {run.failed_steps.length > 0 ? <Meta block>{run.failed_steps.join(", ")}</Meta> : null}
+      </>
+    );
+  }
   return <Chip>{m.jobs.outcomeRunning}</Chip>;
 }
 

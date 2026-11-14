@@ -37,6 +37,7 @@ interface LatestRun extends LastOutcome {
   finishedRunId: number | null;
   finishedStarted: Date | null;
   finishedDetail: string | null;
+  finishedOutcome: LastOutcome["outcome"];
 }
 
 /**
@@ -54,6 +55,7 @@ export async function latestRuns(db: Kysely<Database>): Promise<Map<string, Late
     finished_run_id: number | null;
     finished_started: Date | null;
     finished_detail: string | null;
+    finished_outcome: LastOutcome["outcome"];
   }>`
     -- arg_max_null, not arg_max, for what may be null: arg_max skips a row
     -- whose value is null, and would pair an older run's error with a newer
@@ -65,7 +67,8 @@ export async function latestRuns(db: Kysely<Database>): Promise<Map<string, Late
            arg_max_null(detail, started_at) AS detail,
            arg_max(entity_id, started_at) FILTER (WHERE completed_at IS NOT NULL) AS finished_run_id,
            max(started_at) FILTER (WHERE completed_at IS NOT NULL) AS finished_started,
-           arg_max_null(detail, started_at) FILTER (WHERE completed_at IS NOT NULL) AS finished_detail
+           arg_max_null(detail, started_at) FILTER (WHERE completed_at IS NOT NULL) AS finished_detail,
+           arg_max_null(outcome, started_at) FILTER (WHERE completed_at IS NOT NULL) AS finished_outcome
     FROM job_run
     GROUP BY job_name`.execute(db);
   const date = (value: Date | null) => (value === null ? null : new Date(value));
@@ -80,6 +83,7 @@ export async function latestRuns(db: Kysely<Database>): Promise<Map<string, Late
         finishedRunId: r.finished_run_id === null ? null : Number(r.finished_run_id),
         finishedStarted: date(r.finished_started),
         finishedDetail: r.finished_detail,
+        finishedOutcome: r.finished_outcome,
       },
     ]),
   );
@@ -129,7 +133,10 @@ export async function jobTroubles(db: Kysely<Database>, jobs: Job[], now: Date):
         },
       ];
     }
-    if (failedSteps.length === 0) return [];
+    // Only of a run that succeeded. While a job runs again after a failed
+    // run, the health check finds nothing wrong, and that run's failed step
+    // is not a step that was allowed to fail (CodeRabbit).
+    if (failedSteps.length === 0 || seen?.finishedOutcome !== "succeeded") return [];
     return [
       {
         name: health.name,

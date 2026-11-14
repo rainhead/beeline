@@ -147,9 +147,17 @@ describe("jobTroubles", () => {
     });
     await deps.conn.run(
       `INSERT INTO job_run (job_name, started_at, completed_at, outcome, detail)
-       VALUES ('nightly-pipeline', now() - INTERVAL 3 HOUR, now() - INTERVAL 3 HOUR, 'succeeded', 'fine'),
-              ('nightly-pipeline', now() - INTERVAL 2 HOUR, now() - INTERVAL 2 HOUR, 'failed', 'an old failure'),
-              ('nightly-pipeline', now() - INTERVAL 1 MINUTE, NULL, NULL, NULL)`,
+       VALUES ('nightly-pipeline', now() - INTERVAL 3 HOUR, now() - INTERVAL 3 HOUR, 'succeeded', 'fine')`,
+    );
+    // The failed run, with the step it threw at: not a step that was allowed to fail.
+    await runJob(deps, nightly(async (ctx) => {
+      await ctx.step("promote observations", async () => {
+        throw new Error("an old failure");
+      });
+    }));
+    await deps.conn.run(
+      `INSERT INTO job_run (job_name, started_at, completed_at, outcome, detail)
+       VALUES ('nightly-pipeline', now() + INTERVAL 1 MINUTE, NULL, NULL, NULL)`,
     );
     // The health check's rule: a run in progress is not a failure, and the job last succeeded today.
     expect(await jobTroubles(deps.db, [failing], now)).toEqual([]);

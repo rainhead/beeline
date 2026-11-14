@@ -546,8 +546,9 @@ describe("the limits of one run", () => {
     }) as typeof fetch;
     const line = await refreshInatTaxa(conn, { fetchImpl, requestDelayMs: 0, deadlineMs: 10 });
     expect(line).toMatch(/taxa fetch stopped after/);
-    // Whatever it stored before the deadline stays.
-    expect(await q("SELECT count(*) FROM inat_taxon")).not.toEqual([[0n]]);
+    // Whether a batch was stored before so short a deadline depends on how
+    // fast the worklist query ran; the cancellation test above holds that
+    // stored batches stay.
     const controller = new AbortController();
     const stopping = (async (input: string | URL | Request, init?: RequestInit) => {
       controller.abort(new Error("shutting down"));

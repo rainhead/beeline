@@ -583,6 +583,15 @@ th details.col-menu > .menu-panel {
 .taxon { font-style: normal; }
 .taxon i { font-style: italic; }
 .taxon-authorship { color: var(--md-sys-color-on-surface-variant); }
+/* The English name, on the scientific name's line: upright even inside an
+   italic context, secondary colour, regular weight. Positioned so the hidden
+   comma inside it is placed against it (see .absent). */
+.taxon-vernacular {
+  position: relative;
+  font-style: normal;
+  font-weight: normal;
+  color: var(--md-sys-color-on-surface-variant);
+}
 
 /* Glossary terms link to their definition on first use (/design/voice). */
 .term {

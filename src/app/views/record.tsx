@@ -292,15 +292,14 @@ export function SampleFacts({
  * The floral host (beeline-rfkj.3): the name as observed, which is what the
  * sample stores, and under it what iNaturalist says about the taxon today.
  *
- * In this order: the name as observed; "now X on iNaturalist" wherever X, the
- * current name, differs from it (not only where the taxon was replaced: a
- * taxon can be renamed under the same id, and a replacement can carry the
- * same name); the common name; and, where there is no current taxon, that
- * the name was split or is no longer used. The common name comes after the
- * current name because it is the current taxon's, and so it reads as the name
- * of the plant just above it. Every line but the first is absent while the
- * taxon is not in the cache, or is not yet known (pending) or not found
- * (absent), and the page then reads as it did before.
+ * In this order: the name as observed, with the common name after it on the
+ * same line (TaxonName's `vernacular`; it is the current taxon's); then "now
+ * X on iNaturalist" wherever X, the current name, differs from it (not only
+ * where the taxon was replaced: a taxon can be renamed under the same id, and
+ * a replacement can carry the same name); and, where there is no current
+ * taxon, that the name was split or is no longer used. Every line but the
+ * first is absent while the taxon is not in the cache, or is not yet known
+ * (pending) or not found (absent), and the page then reads as it did before.
  */
 function HostValue({ sample, s }: { sample: SampleDetail; s: Messages["record"]["sample"] }) {
   // A scientific name, so it is printed like one. Italics come from the rank
@@ -313,11 +312,10 @@ function HostValue({ sample, s }: { sample: SampleDetail; s: Messages["record"][
   const changed = current !== null && observed !== "" && current.trim().toLowerCase() !== observed.trim().toLowerCase();
   return (
     <>
-      <TaxonName rank={sample.host_rank ?? ""} scientificName={observed} />
+      <TaxonName rank={sample.host_rank ?? ""} scientificName={observed} vernacular={sample.host_common_name} />
       {changed ? (
         <Meta block>{s.hostNow(<TaxonName rank={sample.host_current_rank ?? ""} scientificName={current} />)}</Meta>
       ) : null}
-      {sample.host_common_name === null ? null : <Meta block>{sample.host_common_name}</Meta>}
       {sample.host_standing === "split" ? (
         <Meta block>
           {sample.host_split_within_name === null || sample.host_split_within_rank === null

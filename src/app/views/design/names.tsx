@@ -106,6 +106,35 @@ const PEOPLE: ReadonlyArray<{ person: PersonNameParts; note: string }> = [
   },
 ];
 
+/** The English name beside the scientific one: the rule for each shape it takes. */
+const VERNACULAR_EXAMPLES: ReadonlyArray<{ props: TaxonNameProps; note: string }> = [
+  {
+    props: { rank: "species", scientificName: "Eriophyllum lanatum", vernacular: "woolly sunflower" },
+    note: "The ordinary case. The scientific name leads and is italic; the common name is upright and muted.",
+  },
+  {
+    props: {
+      rank: "species",
+      scientificName: "Symphyotrichum chilense",
+      authorship: "(Nees) G.L.Nesom",
+      vernacular: "Pacific aster",
+    },
+    note: "With authorship, which comes before the dot.",
+  },
+  {
+    props: { rank: "species", scientificName: "Phacelia hastata", vernacular: "silverleaf phacelia" },
+    note: "Sentence case, as stored, not iNaturalist's “Silverleaf Phacelia”.",
+  },
+  {
+    props: { rank: "family", scientificName: "Onagraceae", vernacular: "evening primrose family" },
+    note: "Above genus the scientific name is upright, and the pair still reads in the same order.",
+  },
+  {
+    props: { rank: "species", scientificName: "Mahonia aquifolium" },
+    note: "No common name: the scientific name alone, and no dot.",
+  },
+];
+
 export function DesignNames() {
   return (
     <DesignPage
@@ -173,16 +202,58 @@ export function DesignNames() {
         records, prints, and exports is always the scientific name.
       </p>
       <p>
-        That leaves a display choice. Where a screen shows a floral host, the English name sits on a muted line of its
-        own under the scientific name, and under what iNaturalist now calls the taxon where that differs, so that it
-        reads as the name of the plant the page now says it is. It is not set by the name component, which sets a
-        scientific name and nothing else. It never leads, it never replaces, and it never reaches a printed label or
-        an export.
+        Where a screen shows a host&rsquo;s common name, it follows the scientific name on the same line: the scientific
+        name, any authorship, a middle dot, then the common name, upright, in the muted colour and in sentence case.
+        The scientific name leads because it is what Beeline records; the common name is a gloss. It is set by{" "}
+        <code>TaxonName</code>, through its <code>vernacular</code> prop, so every page and listing does it one way.
+        It never leads, it never replaces the scientific name, and it never reaches a printed label or an export.
       </p>
-      <p>
-        Vernacular names are set in sentence case here, not the title case iNaturalist uses: “silverleaf phacelia”, not
-        “Silverleaf Phacelia”. They are common nouns.
-      </p>
+      <Specimen>
+        <dl class="reference">
+          {VERNACULAR_EXAMPLES.map((e) => (
+            <>
+              <dt style="font-family: inherit; font-size: 1rem">
+                <TaxonName {...e.props} />
+              </dt>
+              <dd class="meta">{e.note}</dd>
+            </>
+          ))}
+        </dl>
+      </Specimen>
+      <ul>
+        <li>
+          <strong>Not in parentheses.</strong> In a scientific name, parentheses already mean something: a subgenus (
+          <i>Bombus (Pyrobombus)</i>), and in botany the author of the basionym (<i>Symphyotrichum chilense</i> (Nees)
+          G.L.Nesom). &ldquo;Symphyotrichum chilense (Pacific aster)&rdquo; makes the reader work out which kind of
+          bracket it is.
+        </li>
+        <li>
+          <strong>Not in quotation marks.</strong> Single quotes mark a cultivar (<i>Salvia officinalis</i>{" "}
+          &lsquo;Tricolor&rsquo;), and the American Public Gardens Association&rsquo;s guide to plant names in
+          publications discourages quoting common names for that reason.
+        </li>
+        <li>
+          <strong>Never italic.</strong> A common name is not a scientific name, wherever it is set, including inside
+          an italic context.
+        </li>
+        <li>
+          <strong>Not by colour alone</strong> (WCAG 1.4.1, use of colour). The dot separates the two names visually;
+          a screen reader hears a comma. The dot and the common name wrap together, so a narrow screen never strands a
+          dot at the end of a line.
+        </li>
+        <li>
+          <strong>When iNaturalist now calls the taxon something else,</strong> the common name stays on the first
+          line, and the next line says what iNaturalist calls it now. The common name is the current plant&rsquo;s,
+          which for a replacement is the same plant under another name.
+        </li>
+        <li>
+          <strong>One case rule.</strong> There is no code for common names, and guides disagree: many scientific
+          journals lower-case them, while the APGA guide capitalises each word so they read as names. What matters is
+          one rule everywhere. Beeline sets them in sentence case, with capitals only for proper nouns (&ldquo;Oregon
+          grape&rdquo;), so &ldquo;silverleaf phacelia&rdquo;, not &ldquo;Silverleaf Phacelia&rdquo;. They are common
+          nouns. iNaturalist&rsquo;s title case is converted (beeline-rfkj.9).
+        </li>
+      </ul>
 
       <OpenQuestion bead="beeline-dys">
         <p>
@@ -236,6 +307,10 @@ export function DesignNames() {
           </>,
           "Treat a genus-rank determination as a complete answer and set it “Bombus sp.”, not “Bombus (unknown)”.",
           "Keep authorship when the data has it — it disambiguates homonyms.",
+          <>
+            Pair a common name with its scientific name on one line through <code>TaxonName</code>&rsquo;s{" "}
+            <code>vernacular</code> prop.
+          </>,
           "Say why a name is uncertain with cf. or aff. rather than dropping to genus.",
           <>
             Abbreviate a person's name through <code>labelName()</code>, and fix a wrong one with{" "}
@@ -247,6 +322,8 @@ export function DesignNames() {
           "Don't italicise sp., spp., cf., aff., s. str. or s. lat.",
           "Don't put cf. after the epithet, or sp. before it.",
           "Don't lead with an English name, and don't put one on a label or in an export.",
+          "Don't put a common name in parentheses or quotation marks after a scientific name.",
+          "Don't separate a scientific and a common name by colour alone.",
           "Don't set a scientific name in monospace, even inside a technical detail string.",
           "Don't split a family name at print time — particles and second surnames belong to it.",
         ]}

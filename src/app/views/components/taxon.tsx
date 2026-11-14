@@ -9,10 +9,10 @@
  * The data this reads is `animal` (schema/020_animal.sql): rank,
  * scientific_name, authorship, parent_id — and deliberately no vernacular
  * names. Floral hosts are iNaturalist taxa and do have one; the scientific
- * name is the value and the common name only assists, so a page shows it on
- * a line of its own beside the name, outside this component (`HostValue` in
- * record.tsx), where it can be ordered against what else is said about the
- * taxon. This component sets a scientific name and nothing else.
+ * name is the value and the common name only assists, so it is an optional
+ * `vernacular` prop that follows the name on the same line, after a middle
+ * dot (/design/names, "English names"). It is one way, here, so that every
+ * page and listing lays it out alike.
  */
 
 /**
@@ -57,6 +57,13 @@ export interface TaxonNameProps {
   /** `animal.authorship`, set upright after the name. */
   authorship?: string | null;
   qualifier?: TaxonQualifier | null;
+  /**
+   * The English name, already in sentence case. Set after the scientific name
+   * and its authorship, upright, in the secondary colour, after a middle dot
+   * that is hidden from screen readers, which hear a comma instead. Absent or
+   * empty, nothing is added: no dot.
+   */
+  vernacular?: string | null;
 }
 
 export function isItalicRank(rank: string): boolean {
@@ -64,7 +71,7 @@ export function isItalicRank(rank: string): boolean {
 }
 
 export function TaxonName(props: TaxonNameProps) {
-  const { rank, scientificName, subgenus, authorship, qualifier } = props;
+  const { rank, scientificName, subgenus, authorship, qualifier, vernacular } = props;
   const italic = isItalicRank(rank);
   const words = scientificName.trim().split(/\s+/);
   const head = words[0] ?? "";
@@ -96,6 +103,20 @@ export function TaxonName(props: TaxonNameProps) {
           <>
             {" "}
             <span class="taxon-authorship">{authorship}</span>
+          </>
+        ) : null}
+        {vernacular ? (
+          <>
+            {" "}
+            {/* The dot and the name wrap together: the space after the dot is
+                non-breaking, so a narrow screen moves "· woolly sunflower" to
+                the next line whole and never strands a dot at the end of one. */}
+            <span class="taxon-vernacular">
+              <span aria-hidden="true">·</span>
+              <span class="visually-hidden">, </span>
+              {"\u00a0"}
+              {vernacular}
+            </span>
           </>
         ) : null}
       </span>

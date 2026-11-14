@@ -293,6 +293,15 @@ describe("app scaffold", () => {
     expect(body).toContain("<i>Andrena</i> sp.");
   });
 
+  it("the names guide shows a common name beside the scientific one through TaxonName, not as a line of its own", async () => {
+    const app = await appOnMemoryDb("testuser");
+    const body = await (await app.request("/design/names")).text();
+    expect(body).toContain(
+      `<span class="taxon"><i>Eriophyllum</i> <i>lanatum</i> <span class="taxon-vernacular"><span aria-hidden="true">\u00b7</span><span class="visually-hidden">, </span>\u00a0woolly sunflower</span></span>`,
+    );
+    expect(body).not.toContain("line of its own");
+  });
+
   it("the pattern library's old paths redirect", async () => {
     const app = await appOnMemoryDb("testuser");
     for (const [from, to] of [

@@ -503,26 +503,39 @@ describe("the floral host on the sample page", () => {
   const hostRow = (body: string) => body.slice(body.indexOf("Floral host"), body.indexOf("iNaturalist observation", body.indexOf("Floral host")));
   /** What the host says under its scientific name, one entry for each line, as markup. */
   const lines = (row: string) => [...row.matchAll(/<p class="meta">(.*?)<\/p>/g)].map((m) => m[1]);
-  const observedName = (row: string) => row.match(/<span class="taxon">(.*?)<\/span>(?=<p|<\/dd>|$)/)?.[1];
+  /** The host's own line: everything in its value before the first line under it. */
+  const firstLine = (row: string) => row.match(/<dd[^>]*>(.*?)(?=<p class="meta">|<\/dd>)/)?.[1];
+  /** A scientific name, as TaxonName sets it, with no common name. */
+  const NAME = (inner: string) => `<span class="taxon">${inner}</span>`;
+  /**
+   * A scientific name followed on the same line by its common name: a dot hidden from screen readers, a comma
+   * only they hear, and a non-breaking space joining the dot to the name so the two wrap together. Upright
+   * and muted by the taxon-vernacular class, never in brackets or quotation marks.
+   */
+  const NAMED = (inner: string, common: string) =>
+    `<span class="taxon">${inner} <span class="taxon-vernacular"><span aria-hidden="true">\u00b7</span><span class="visually-hidden">, </span>\u00a0${common}</span></span>`;
   const NOW = (name: string) => `now <span class="taxon">${name}</span> on iNaturalist`;
 
-  it("shows the list's common name under the scientific name, and nothing else", async () => {
+  it("shows the list's common name after the scientific name on the same line, and nothing else", async () => {
     const row = hostRow(await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha, { oregon: "iNaturalist's name" })], [["Alpha one", "listed one, other name", 1]]));
-    expect(observedName(row)).toBe("<i>Alpha</i> <i>one</i>");
-    expect(lines(row)).toEqual(["listed one"]);
+    expect(firstLine(row)).toBe(NAMED("<i>Alpha</i> <i>one</i>", "listed one"));
+    expect(lines(row)).toEqual([]);
   });
 
   it("shows iNaturalist's name for Oregon where the list has none", async () => {
     const row = hostRow(await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha, { oregon: "alpha plant" })]));
-    expect(lines(row)).toEqual(["alpha plant"]);
-  });
-
-  it("shows no line for a host with no name at all", async () => {
-    const row = hostRow(await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha)]));
+    expect(firstLine(row)).toBe(NAMED("<i>Alpha</i> <i>one</i>", "alpha plant"));
     expect(lines(row)).toEqual([]);
   });
 
-  it("says what iNaturalist calls a replaced host now, directly under its name and before the common name, which is the current taxon's", async () => {
+  it("shows the scientific name alone, with no dot, for a host with no common name at all", async () => {
+    const row = hostRow(await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha)]));
+    expect(firstLine(row)).toBe(NAME("<i>Alpha</i> <i>one</i>"));
+    expect(row).not.toContain("\u00b7");
+    expect(lines(row)).toEqual([]);
+  });
+
+  it("says what iNaturalist calls a replaced host now, directly under its name, which is followed by the common name, the current taxon's", async () => {
     // The stored host is the retired subspecies 322554 and the observer's name for it. Its own Oregon name is
     // not shown: the common name is the current taxon's.
     const row = hostRow(
@@ -532,8 +545,8 @@ describe("the floral host on the sample page", () => {
         [["Beta ascendens", "listed beta", 79294]],
       ),
     );
-    expect(observedName(row)).toBe("<i>Alpha</i> <i>oldname</i>");
-    expect(lines(row)).toEqual([NOW("<i>Beta</i> <i>ascendens</i>"), "listed beta"]);
+    expect(firstLine(row)).toBe(NAMED("<i>Alpha</i> <i>oldname</i>", "listed beta"));
+    expect(lines(row)).toEqual([NOW("<i>Beta</i> <i>ascendens</i>")]);
   });
 
   it("sets the current name by the current taxon's rank, not the stored one's", async () => {
@@ -546,14 +559,16 @@ describe("the floral host on the sample page", () => {
     const row = hostRow(
       await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha, { active: false, replacedBy: [2] }), species(2, "Alpha two", alpha, { active: false, replacedBy: [3] }), species(3, "Beta three", beta, { oregon: "three" })]),
     );
-    expect(lines(row)).toEqual([NOW("<i>Beta</i> <i>three</i>"), "three"]);
+    expect(firstLine(row)).toBe(NAMED("<i>Alpha</i> <i>one</i>", "three"));
+    expect(lines(row)).toEqual([NOW("<i>Beta</i> <i>three</i>")]);
   });
 
   it("says nothing about a name where the replacement has the same name, in any case", async () => {
     // A taxon replaced by another that carries the same name (a retired duplicate): "now Alpha one" under
     // "Alpha one" says nothing, so only the common name is shown.
     const same = hostRow(await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha, { active: false, replacedBy: [2] }), species(2, "alpha one", alpha, { oregon: "alpha plant" })]));
-    expect(lines(same)).toEqual(["alpha plant"]);
+    expect(firstLine(same)).toBe(NAMED("<i>Alpha</i> <i>one</i>", "alpha plant"));
+    expect(lines(same)).toEqual([]);
     // Nor where the observed name differs from the current name only in case.
     const upper = hostRow(await withHost({ id: 3, name: "ALPHA THREE", rank: "species" }, [...lineage, species(3, "Alpha three", alpha)]));
     expect(lines(upper)).toEqual([]);
@@ -562,8 +577,8 @@ describe("the floral host on the sample page", () => {
   it("says what iNaturalist calls the host now when the taxon was renamed under the same id", async () => {
     // Current, not replaced: the cache has read the new name for the id the sample stores.
     const row = hostRow(await withHost({ id: 4, name: "Alpha oldspelling", rank: "species" }, [...lineage, species(4, "Beta newname", beta, { oregon: "newname plant" })]));
-    expect(observedName(row)).toBe("<i>Alpha</i> <i>oldspelling</i>");
-    expect(lines(row)).toEqual([NOW("<i>Beta</i> <i>newname</i>"), "newname plant"]);
+    expect(firstLine(row)).toBe(NAMED("<i>Alpha</i> <i>oldspelling</i>", "newname plant"));
+    expect(lines(row)).toEqual([NOW("<i>Beta</i> <i>newname</i>")]);
   });
 
   it("says a host was split, into which genus when they share one, and sets the genus as a genus", async () => {
@@ -601,7 +616,7 @@ describe("the floral host on the sample page", () => {
   it("adds nothing while a replacement has not been read yet, or where iNaturalist no longer has the taxon", async () => {
     // Pending: replaced by a taxon the cache has not read. Whatever it will come to is not known.
     const pending = hostRow(await withHost({ id: 1, name: "Alpha pending", rank: "species" }, [...lineage, species(1, "Alpha pending", alpha, { active: false, replacedBy: [999] })]));
-    expect(observedName(pending)).toBe("<i>Alpha</i> <i>pending</i>");
+    expect(firstLine(pending)).toBe(NAME("<i>Alpha</i> <i>pending</i>"));
     expect(lines(pending)).toEqual([]);
     // Absent: iNaturalist was asked for the taxon and did not return it, though its row says it is active.
     const t = await recordApp();
@@ -611,19 +626,19 @@ describe("the floral host on the sample page", () => {
     await refreshPlantCommonNames(t.conn);
     await t.conn.run(`UPDATE sample SET host_inat_taxon_id = 2, host_name_as_observed = 'Alpha absent', host_rank = 'species' WHERE entity_id = ${t.aliceSample}`);
     const absent = hostRow(await get(t.app, `/samples/${t.aliceSample}`));
-    expect(observedName(absent)).toBe("<i>Alpha</i> <i>absent</i>");
+    expect(firstLine(absent)).toBe(NAME("<i>Alpha</i> <i>absent</i>"));
     expect(lines(absent)).toEqual([]);
   });
 
   it("falls back to the name as observed while the taxon is not in the cache", async () => {
     const row = hostRow(await withHost({ id: 999, name: "Alpha elsewhere", rank: "species" }, lineage));
-    expect(observedName(row)).toBe("<i>Alpha</i> <i>elsewhere</i>");
+    expect(firstLine(row)).toBe(NAME("<i>Alpha</i> <i>elsewhere</i>"));
     expect(lines(row)).toEqual([]);
   });
 
   it("shows only the name for a host that has a name and no id", async () => {
     const row = hostRow(await withHost({ id: null, name: "Alpha namedonly", rank: "species" }, [...lineage, species(1, "Alpha namedonly", alpha, { oregon: "must not appear" })]));
-    expect(observedName(row)).toBe("<i>Alpha</i> <i>namedonly</i>");
+    expect(firstLine(row)).toBe(NAME("<i>Alpha</i> <i>namedonly</i>"));
     expect(lines(row)).toEqual([]);
   });
 
@@ -636,7 +651,9 @@ describe("the floral host on the sample page", () => {
     await refreshPlantCommonNames(t.conn);
     await t.conn.run(`UPDATE sample SET host_inat_taxon_id = 2, host_name_as_observed = 'Alpha old', host_rank = 'species' WHERE entity_id = ${t.aliceSample}`);
     const [[specimenId]] = (await (await t.conn.run(`SELECT min(entity_id) FROM specimen WHERE sample_id = ${t.aliceSample}`)).getRows()) as [[number]];
-    expect(lines(hostRow(await get(t.app, `/specimens/${specimenId}`)))).toEqual([NOW("<i>Alpha</i> <i>one</i>"), "alpha plant"]);
+    const row = hostRow(await get(t.app, `/specimens/${specimenId}`));
+    expect(firstLine(row)).toBe(NAMED("<i>Alpha</i> <i>old</i>", "alpha plant"));
+    expect(lines(row)).toEqual([NOW("<i>Alpha</i> <i>one</i>")]);
   });
 });
 

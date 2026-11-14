@@ -9,9 +9,10 @@
 -- each batch until it is empty. The view is also what anything asking "is the
 -- cache complete" reads, so the definition of missing is stated once.
 --
--- beeline-rfkj.2 adds the old plant list's entries as one more branch of the
--- first SELECT below (a UNION of its resolved taxon ids). Nothing else here
--- changes when it does.
+-- The taxa the old plant list's entries resolved to (plant_list_entry_taxon,
+-- schema/111, beeline-rfkj.2) are one more branch of the first SELECT below,
+-- so each is read with its ancestors, which is what lets a list entry cover
+-- the hosts beneath it.
 --
 -- An id iNaturalist was asked for and did not return (inat_taxon_absent) is
 -- not missing, it is gone; subtracting it is what lets the view be empty. The
@@ -27,6 +28,8 @@ SELECT inat_taxon_id FROM (
   SELECT host_inat_taxon_id AS inat_taxon_id FROM sample
   UNION
   SELECT host_taxon_id FROM observation_field
+  UNION
+  SELECT inat_taxon_id FROM plant_list_entry_taxon
   UNION
   SELECT ancestor_id FROM inat_taxon_ancestor
   UNION

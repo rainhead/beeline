@@ -93,6 +93,9 @@ export const CARRIED_TABLES = [
   "inat_taxon_ancestor",
   "inat_taxon_replacement",
   "inat_taxon_absent",
+  "plant_name_lookup",
+  "plant_name_lookup_hit",
+  "plant_name_lookup_hit_replacement",
   "observation_absent",
   "inat_user_orcid",
   "ecdysis_taxon",
@@ -234,6 +237,15 @@ export async function carryStaging(
     // copies. (Reseeding serves dev stores only: production is never
     // reseeded, ADR 0006.)
     for (const table of ["inat_taxon", "inat_taxon_ancestor", "inat_taxon_replacement", "inat_taxon_absent"]) {
+      if (await has(table)) {
+        await conn.run(`INSERT INTO ${table} BY NAME SELECT * FROM old.${table}`);
+        await count(table);
+      }
+    }
+    // What iNaturalist said about the old plant list's names (schema/067,
+    // beeline-rfkj.2): about 1,400 requests, 45 minutes, to ask again. The
+    // list itself is not carried: the app loads it from git at boot.
+    for (const table of ["plant_name_lookup", "plant_name_lookup_hit", "plant_name_lookup_hit_replacement"]) {
       if (await has(table)) {
         await conn.run(`INSERT INTO ${table} BY NAME SELECT * FROM old.${table}`);
         await count(table);

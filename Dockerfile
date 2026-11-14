@@ -71,7 +71,7 @@ RUN arch="${TARGETARCH:-amd64}" \
 #   src/        the server itself, and src/app/static, which it serves
 #   schema/     db:migrate --check's comparison against schema/*.sql
 #   migrations/ applied by the entrypoint before the app starts
-#   ingest/     the git-curated person overlay, read on every boot
+#   ingest/     the git-curated person overlay and the plant list, read on every boot
 #   dist/app    the built islands, located through Vite's manifest
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml ./

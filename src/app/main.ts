@@ -6,6 +6,7 @@ import { CURATED_OVERLAY, mergeOverlays, readOverlay } from "../person-overlay.j
 import { cachedPipelineJwt } from "../inat-jwt.js";
 import { kyselyReader, recordPersonChanges } from "../person-change.js";
 import { readSampleChanges, recordSampleChanges } from "../sample-change.js";
+import { loadPlantList } from "../load-plant-list.js";
 import { ensureSampleOverlayFile } from "../sample-overlay.js";
 import { ensureProgramContactsFile } from "../program-contacts.js";
 import { startScheduler } from "./jobs/framework.js";
@@ -74,6 +75,25 @@ const decisions = mergeOverlays(
 );
 const seeded = await seedAdmins(db, config.adminLogins, decisions);
 if (seeded > 0) console.log(`seeded ${seeded} admin(s) from the checked-in list`);
+
+// Old Beeline's plant list (ingest/old-beeline-plant-list.csv, beeline-rfkj.2):
+// a deploy is the only thing that changes the file, and boot is the first
+// moment the store can read the new one, since the app holds it alone
+// (ADR 0005). A load that finds the file unchanged does nothing. A list that
+// cannot be read costs common names, not the service, so it is reported and
+// the boot goes on.
+{
+  const listConn = await instance.connect();
+  try {
+    const loaded = await loadPlantList(listConn);
+    if (loaded.changed) console.log(`plant list loaded: ${loaded.entries} entries (${loaded.skippedWithoutName} without a name skipped)`);
+  } catch (err) {
+    console.error(`could not load the plant list: ${String(err)}`);
+    reportError(err, { step: "boot" });
+  } finally {
+    listConn.closeSync();
+  }
+}
 
 // Reconcile the change log with the store before serving anything
 // (beeline-o22). Coverage is the point: a rebuild promoted while the app was

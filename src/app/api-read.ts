@@ -31,7 +31,22 @@ import {
   type ListingQuery,
   type Reader,
 } from "./listings.js";
-import { gatherSample, gatherSpecimen, parsePage, type RecordDeps, type SampleRecord, type SpecimenRecord } from "./record.js";
+import type { SampleChange } from "../sample-change.js";
+import type { SpecimenLabelRow } from "./print-runs.js";
+import {
+  gatherSample,
+  gatherSpecimen,
+  parsePage,
+  SPECIMEN_PAGE_SIZE,
+  type DeterminationEvent,
+  type RecordDeps,
+  type RecordFinding,
+  type SampleDetail,
+  type SampleRecord,
+  type SampleSpecimenRow,
+  type SpecimenDetail,
+  type SpecimenRecord,
+} from "./record.js";
 
 /**
  * Reading records through the API (beeline-pnqr.2).
@@ -85,6 +100,9 @@ export const EXACT_LOOKUPS = ["sample_number", "field_number", "catalog_number",
 export const LISTING_PARAMETERS = [...LISTING_FILTERS, ...LISTING_ORDER, "page", "page_size", ...EXACT_LOOKUPS] as const;
 export const COUNT_PARAMETERS = [...LISTING_FILTERS, ...EXACT_LOOKUPS, "group_by"] as const;
 export const SAMPLE_RECORD_PARAMETERS = ["page"] as const;
+
+/** The longest search text the pages keep (`text` in src/app/listings.ts). */
+const MAX_TEXT_CHARS = 100;
 
 /** A problem with a request's parameters, said in a sentence. */
 class BadRequest extends Error {}
@@ -140,6 +158,11 @@ function readQuery(
   }
   const page = params.get("page");
   if (page !== null && !/^[1-9]\d{0,3}$|^10000$/.test(page)) throw new BadRequest("page must be a whole number from 1 to 10000.");
+  // The pages cut these at 100 characters and carry on. A program is told
+  // instead, since a cut search term finds something other than what it asked for.
+  for (const name of ["q", "place", "collector", "taxon", "host"]) {
+    if ((params.get(name) ?? "").trim().length > MAX_TEXT_CHARS) throw new BadRequest(`${name} may be at most ${MAX_TEXT_CHARS} characters.`);
+  }
 
   const exact: ExactLookup = {};
   for (const name of ["sample_number", "field_number", "catalog_number"] as const) {
@@ -206,53 +229,127 @@ const rowOf = (header: readonly string[], cells: readonly unknown[]) =>
 // --- A record -------------------------------------------------------------------
 
 /**
+ * Which fields of a row the API publishes, decided one by one. A column added
+ * to what a page reads is not published until someone lists it here as `true`
+ * (or as `false`, to say it was considered and kept back): the typecheck fails
+ * until every key of the row type has an entry, and the tests hold each
+ * object's exact set of keys. Nested objects (the collectors, an override) are
+ * published whole.
+ */
+type Publish<T> = { [K in keyof T]-?: boolean };
+
+const pick = <T extends object>(row: T, spec: Publish<T>) =>
+  Object.fromEntries(
+    (Object.keys(spec) as Array<keyof T & string>).filter((k) => spec[k]).map((k) => [k, plain(row[k], k)]),
+  );
+
+export const SAMPLE_PUBLISHED: Publish<SampleDetail> = {
+  sample_id: true, kind: true, sample_number: true, date_start: true, date_end: true, specimen_count: true,
+  locality: true, county: true, state_province: true, country: true, protocol: true, sampling_effort: true,
+  inat_observation_id: true, observation_gone_since: true, host_inat_taxon_id: true, host_name_as_observed: true,
+  host_rank: true, observation_place_guess: true, observation_notes: true, geoprivacy: true, taxon_geoprivacy: true,
+  atlas_code: true, atlas_name: true, program_code: true, program_name: true, latitude: true, longitude: true,
+  coordinate_uncertainty_m: true, location_source: true, elevation_m: true, elevation_source: true, elevation_file: true,
+  elevation_stale: true, mine: true, location_withheld: true, printed: true, from_old_records: true,
+  locality_override: true, location_override: true, label_diverged: true, locality_suggestion: true,
+  locality_alternatives: true, wildernesses: true, ecoregion: true, collectors: true,
+};
+export const SPECIMEN_PUBLISHED: Publish<Omit<SpecimenDetail, "sample">> = {
+  specimen_id: true, specimen_number: true, field_number: true, disposition: true, remarks: true, remarks_by: true, remarks_on: true,
+};
+export const SPECIMEN_ROW_PUBLISHED: Publish<SampleSpecimenRow> = {
+  specimen_id: true, specimen_number: true, field_number: true, label_state: true, label_at: true, reprint_requested: true,
+  rank: true, scientific_name: true, authorship: true, qualifier: true, sex: true, determiner: true, is_expert: true,
+};
+export const FINDING_PUBLISHED: Publish<RecordFinding> = {
+  rule_name: true, details: true, detail_taxon_name: true, detail_taxon_rank: true, severity: true, specimen_id: true,
+  field_number: true, waivable: true,
+};
+export const DETERMINATION_PUBLISHED: Publish<DeterminationEvent> = {
+  entity_id: true, rank: true, scientific_name: true, authorship: true, qualifier: true, verbatim_identification: true,
+  sex: true, caste: true, determiner: true, is_expert: true, channel: true, determined_on: true, determined_on_precision: true,
+  recorded_at: true, notes: true, of_record: true,
+};
+export const LABEL_PUBLISHED: Publish<SpecimenLabelRow> = {
+  print_run_id: false, number_text: true, state: true, sheet: true, cell: true, prepared_at: true, printed_at: true,
+  mailed_at: true, canceled_at: true, atlas_code: true, reprint: true, request: true,
+};
+export const HISTORY_PUBLISHED: Publish<SampleChange> = {
+  at: true, collector: false, sample_number: false, date_start: false, field: true, old_value: true, new_value: true,
+  author: true, source: true, reason: true,
+};
+
+/** A sample as the API publishes it, with its id and address. */
+const sampleOf = (sample: SampleDetail, origin: string) => ({
+  ...pick(sample, SAMPLE_PUBLISHED),
+  id: sample.sample_id,
+  url: `${origin}/samples/${sample.sample_id}`,
+});
+
+/**
  * The sample record as JSON. Where the location is withheld from this reader
  * the sample's own fields already say so (`location_withheld: true` and nothing
- * below the county or state), and so do the findings and the history, as on the
- * page. Two texts the page shows regardless are left out here: a hold's reason
- * and a waiver's finding and reason, which staff write and which can say where
- * the sample was (the history drops the same entries for the same reason).
+ * below the county or state), and the findings and the history have lost what
+ * would say where (`visibleFindings`, `visibleHistory`, including the reason on
+ * each entry that stays). Three more things are left out here that the page
+ * does not show to this reader either: the reason of a hold and the text of a
+ * waiver where the location is withheld (the page shows a hold's reason only as
+ * the staff_hold finding's detail, already blanked, and drops a waiver's text),
+ * and who placed a hold unless the reader is staff.
+ *
+ * `requestedPage` is the page of specimens asked for. The page clamps a page
+ * past the end to the last; the API answers the page asked for, empty, with
+ * the real number of pages, so a program that walks pages can tell when it has
+ * reached the end.
  */
-export function sampleJson(record: SampleRecord, origin: string) {
-  const { sample } = record;
-  const withheld = sample.location_withheld;
+export function sampleJson(record: SampleRecord, origin: string, staff: boolean, requestedPage = record.specimens.page) {
+  const withheld = record.sample.location_withheld;
+  const pastEnd = requestedPage > record.specimens.pages;
   return {
-    sample: { ...(plain(sample) as object), id: sample.sample_id, url: `${origin}/samples/${sample.sample_id}` },
-    findings: plain(record.findings),
-    hold: record.hold === null ? null : plain({ ...record.hold, reason: withheld ? null : record.hold.reason, reason_withheld: withheld }),
-    waivers: record.waivers.map((w) =>
-      plain({ ...w, finding: withheld ? null : w.finding, reason: withheld ? null : w.reason, text_withheld: withheld }),
-    ),
+    sample: sampleOf(record.sample, origin),
+    findings: record.findings.map((f) => pick(f, FINDING_PUBLISHED)),
+    hold:
+      record.hold === null
+        ? null
+        : {
+            reason: withheld ? null : record.hold.reason,
+            reason_withheld: withheld,
+            held_by: staff ? record.hold.held_by : null,
+          },
+    waivers: record.waivers.map((w) => ({
+      rule_name: w.rule_name,
+      finding: withheld ? null : w.finding,
+      reason: withheld ? null : w.reason,
+      text_withheld: withheld,
+      waived_by: w.waived_by,
+      in_force: w.in_force,
+    })),
     specimens: {
       total: record.specimens.total,
-      page: record.specimens.page,
+      page: pastEnd ? requestedPage : record.specimens.page,
       pages: record.specimens.pages,
-      page_size: 50,
-      rows: record.specimens.rows.map((r) => ({
-        ...(plain(r) as object),
-        id: r.specimen_id,
-        url: `${origin}/specimens/${r.specimen_id}`,
-      })),
+      page_size: SPECIMEN_PAGE_SIZE,
+      rows: pastEnd
+        ? []
+        : record.specimens.rows.map((r) => ({
+            ...pick(r, SPECIMEN_ROW_PUBLISHED),
+            id: r.specimen_id,
+            url: `${origin}/specimens/${r.specimen_id}`,
+          })),
     },
-    history: record.history.map((h) =>
-      plain({ at: h.at, field: h.field, old_value: h.old_value, new_value: h.new_value, author: h.author, source: h.source, reason: h.reason }),
-    ),
+    history: record.history.map((h) => pick(h, HISTORY_PUBLISHED)),
   };
 }
 
 /** The specimen record as JSON, under the same rules as {@link sampleJson}. */
 export function specimenJson(record: SpecimenRecord, origin: string) {
   const { specimen } = record;
-  const { sample: _sample, ...own } = specimen;
   return {
-    specimen: { ...(plain(own) as object), id: specimen.specimen_id, url: `${origin}/specimens/${specimen.specimen_id}` },
-    sample: { ...(plain(specimen.sample) as object), id: specimen.sample.sample_id, url: `${origin}/samples/${specimen.sample.sample_id}` },
-    determinations: plain(record.events),
-    findings: plain(record.findings),
-    labels: record.labels.map((l) => {
-      const { print_run_id: _run, ...rest } = l;
-      return plain(rest);
-    }),
+    specimen: { ...pick(specimen, SPECIMEN_PUBLISHED), id: specimen.specimen_id, url: `${origin}/specimens/${specimen.specimen_id}` },
+    sample: sampleOf(specimen.sample, origin),
+    determinations: record.events.map((e) => pick(e, DETERMINATION_PUBLISHED)),
+    findings: record.findings.map((f) => pick(f, FINDING_PUBLISHED)),
+    labels: record.labels.map((l) => pick(l, LABEL_PUBLISHED)),
     reprint: plain(record.reprint),
   };
 }
@@ -338,10 +435,13 @@ export function registerReadRoutes(api: Hono<ApiEnv>, db: Kysely<Database>, read
       if (kind === "samples") {
         let specimenPage = 1;
         try {
+          const seen = new Set<string>();
           for (const [name] of params(c)) {
             if (!(SAMPLE_RECORD_PARAMETERS as readonly string[]).includes(name)) {
               throw new BadRequest(`Unknown parameter ${JSON.stringify(name)}. This endpoint takes: ${SAMPLE_RECORD_PARAMETERS.join(", ")}.`);
             }
+            if (seen.has(name)) throw new BadRequest(`The parameter ${JSON.stringify(name)} was sent more than once.`);
+            seen.add(name);
           }
           const page = params(c).get("page");
           if (page !== null && !/^[1-9]\d{0,3}$|^10000$/.test(page)) throw new BadRequest("page must be a whole number from 1 to 10000.");
@@ -350,7 +450,7 @@ export function registerReadRoutes(api: Hono<ApiEnv>, db: Kysely<Database>, read
           return refuse(c, err);
         }
         const record = await gatherSample(deps, Number(raw), personOf(c), readerOf(c), specimenPage);
-        return record === null ? notFound() : c.json(sampleJson(record, read.origin));
+        return record === null ? notFound() : c.json(sampleJson(record, read.origin, readerOf(c).staff, specimenPage));
       }
       for (const [name] of params(c)) {
         return apiError(c, 400, "invalid_request", `Unknown parameter ${JSON.stringify(name)}. This endpoint takes none.`);

@@ -15,7 +15,7 @@ import { parseOrcid } from "../orcid.js";
 import { messagesFor, type Messages } from "./messages/index.js";
 import type { AppConfig } from "./config.js";
 import { deleteSession, endSessionsFor, type AppEnv, type Session, type SessionResolver } from "./session.js";
-import { createApi, refuseStrayCredentials } from "./api.js";
+import { createApi, refuseStrayCredentials, type ApiDeps } from "./api.js";
 import { createKey, listKeys, offeredScopes, revokeKey, revokeKeysFor, type CreateKeyProblem } from "./api-keys.js";
 import { KeysPage } from "./views/keys.js";
 import { resolveActing, startActing, stopActing, startImpersonating, stopImpersonating } from "./acting.js";
@@ -228,6 +228,8 @@ export interface AppDeps {
   resolveSession: SessionResolver;
   /** The job registry; absent in tests that don't exercise /jobs. */
   jobs?: JobsDep;
+  /** The API's request limits and the line its reads share; the defaults unless a test sets them (src/app/api.ts). */
+  apiLimits?: Pick<ApiDeps, "limiter" | "readLimiter" | "readQueue">;
   /** App-written correction store for in-app sample edits (config.correctionsPath). */
   correctionsPath?: string;
   /** App-written store of staff decisions about people (ADR 0004 overlay). */
@@ -308,6 +310,7 @@ export function createApp({
   inat,
   resolveSession,
   jobs,
+  apiLimits,
   correctionsPath,
   personOverlayPath,
   sampleOverlayPath,
@@ -522,13 +525,19 @@ export function createApp({
   // and ahead of the session gate: it answers to a key, never to a cookie.
   // Any other address the old Beeline's redirects answer refuses a request
   // that carries credentials, so the redirect cannot pass them on.
-  app.route("/api/v1", createApi({
+  const apiApp = createApi({
+      ...apiLimits,
       db,
       isStaff,
       jobs: jobsDep,
       corrections: { deps: corrective, messages: messagesFor(null) },
       read: { changesPath: samplePaths.log, origin: config.origin },
-    }));
+    });
+  // The description answers at /api/v1/ too, which the router takes for another
+  // address. Ahead of the mount, whose catch-all would answer it first.
+  app.on(["GET", "HEAD"], "/api/v1/", (c) => apiApp.fetch(new Request(new URL("/", c.req.url), c.req.raw)));
+  app.route("/api/v1", apiApp);
+
   // The old Beeline's addresses, until it closes (src/app/old-beeline.ts).
   registerOldBeelineRedirects(app, refuseStrayCredentials);
   registerAuthRoutes(app, {

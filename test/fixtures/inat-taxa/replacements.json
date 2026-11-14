@@ -1,0 +1,255 @@
+{
+ "total_results": 3,
+ "page": 1,
+ "per_page": 30,
+ "results": [
+  {
+   "id": 79294,
+   "name": "Symphyotrichum ascendens",
+   "rank": "species",
+   "rank_level": 10,
+   "parent_id": 1416870,
+   "is_active": true,
+   "preferred_common_name": "western aster",
+   "ancestor_ids": [
+    48460,
+    47126,
+    211194,
+    47125,
+    47124,
+    47605,
+    47604,
+    632790,
+    461542,
+    972608,
+    56112,
+    1416870
+   ],
+   "current_synonymous_taxon_ids": null,
+   "ancestors": [
+    {
+     "id": 47126,
+     "name": "Plantae",
+     "rank": "kingdom",
+     "rank_level": 70,
+     "parent_id": 48460,
+     "is_active": true,
+     "preferred_common_name": "Plants"
+    },
+    {
+     "id": 211194,
+     "name": "Tracheophyta",
+     "rank": "phylum",
+     "rank_level": 60,
+     "parent_id": 47126,
+     "is_active": true,
+     "preferred_common_name": "Vascular Plants"
+    },
+    {
+     "id": 47125,
+     "name": "Angiospermae",
+     "rank": "subphylum",
+     "rank_level": 57,
+     "parent_id": 211194,
+     "is_active": true,
+     "preferred_common_name": "flowering plants"
+    },
+    {
+     "id": 47124,
+     "name": "Magnoliopsida",
+     "rank": "class",
+     "rank_level": 50,
+     "parent_id": 47125,
+     "is_active": true,
+     "preferred_common_name": "Dicots"
+    },
+    {
+     "id": 47605,
+     "name": "Asterales",
+     "rank": "order",
+     "rank_level": 40,
+     "parent_id": 47124,
+     "is_active": true,
+     "preferred_common_name": "Sunflowers, Bellflowers, Fanflowers, and Allies"
+    },
+    {
+     "id": 47604,
+     "name": "Asteraceae",
+     "rank": "family",
+     "rank_level": 30,
+     "parent_id": 47605,
+     "is_active": true,
+     "preferred_common_name": "Sunflowers, Daisies, Asters, and Allies"
+    },
+    {
+     "id": 632790,
+     "name": "Asteroideae",
+     "rank": "subfamily",
+     "rank_level": 27,
+     "parent_id": 47604,
+     "is_active": true
+    },
+    {
+     "id": 461542,
+     "name": "Astereae",
+     "rank": "tribe",
+     "rank_level": 25,
+     "parent_id": 632790,
+     "is_active": true,
+     "preferred_common_name": "asters and allies"
+    },
+    {
+     "id": 972608,
+     "name": "Symphyotrichinae",
+     "rank": "subtribe",
+     "rank_level": 24,
+     "parent_id": 461542,
+     "is_active": true
+    },
+    {
+     "id": 56112,
+     "name": "Symphyotrichum",
+     "rank": "genus",
+     "rank_level": 20,
+     "parent_id": 972608,
+     "is_active": true,
+     "preferred_common_name": "American asters"
+    },
+    {
+     "id": 1416870,
+     "name": "Ascendentes",
+     "rank": "subgenus",
+     "rank_level": 15,
+     "parent_id": 56112,
+     "is_active": true,
+     "preferred_common_name": "allopolyploid asters"
+    }
+   ]
+  },
+  {
+   "id": 742759,
+   "name": "Dodecatheon",
+   "rank": "section",
+   "rank_level": 13,
+   "parent_id": 742748,
+   "is_active": true,
+   "preferred_common_name": "Shooting Stars",
+   "ancestor_ids": [
+    48460,
+    47126,
+    211194,
+    47125,
+    47124,
+    47181,
+    48064,
+    791934,
+    791968,
+    55820,
+    742748
+   ],
+   "current_synonymous_taxon_ids": null,
+   "ancestors": [
+    {
+     "id": 47126,
+     "name": "Plantae",
+     "rank": "kingdom",
+     "rank_level": 70,
+     "parent_id": 48460,
+     "is_active": true,
+     "preferred_common_name": "Plants"
+    },
+    {
+     "id": 211194,
+     "name": "Tracheophyta",
+     "rank": "phylum",
+     "rank_level": 60,
+     "parent_id": 47126,
+     "is_active": true,
+     "preferred_common_name": "Vascular Plants"
+    },
+    {
+     "id": 47125,
+     "name": "Angiospermae",
+     "rank": "subphylum",
+     "rank_level": 57,
+     "parent_id": 211194,
+     "is_active": true,
+     "preferred_common_name": "flowering plants"
+    },
+    {
+     "id": 47124,
+     "name": "Magnoliopsida",
+     "rank": "class",
+     "rank_level": 50,
+     "parent_id": 47125,
+     "is_active": true,
+     "preferred_common_name": "Dicots"
+    },
+    {
+     "id": 47181,
+     "name": "Ericales",
+     "rank": "order",
+     "rank_level": 40,
+     "parent_id": 47124,
+     "is_active": true,
+     "preferred_common_name": "Heathers, Balsams, Primroses, and Allies"
+    },
+    {
+     "id": 48064,
+     "name": "Primulaceae",
+     "rank": "family",
+     "rank_level": 30,
+     "parent_id": 47181,
+     "is_active": true,
+     "preferred_common_name": "primrose family"
+    },
+    {
+     "id": 791934,
+     "name": "Primuloideae",
+     "rank": "subfamily",
+     "rank_level": 27,
+     "parent_id": 48064,
+     "is_active": true,
+     "preferred_common_name": "primrose subfamily"
+    },
+    {
+     "id": 791968,
+     "name": "Primuleae",
+     "rank": "tribe",
+     "rank_level": 25,
+     "parent_id": 791934,
+     "is_active": true
+    },
+    {
+     "id": 55820,
+     "name": "Primula",
+     "rank": "genus",
+     "rank_level": 20,
+     "parent_id": 791968,
+     "is_active": true,
+     "preferred_common_name": "Primroses"
+    },
+    {
+     "id": 742748,
+     "name": "Auriculastrum",
+     "rank": "subgenus",
+     "rank_level": 15,
+     "parent_id": 55820,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "id": 48460,
+   "name": "Life",
+   "rank": "stateofmatter",
+   "rank_level": 100,
+   "parent_id": null,
+   "is_active": true,
+   "preferred_common_name": "life",
+   "ancestor_ids": [],
+   "current_synonymous_taxon_ids": null,
+   "ancestors": []
+  }
+ ]
+}

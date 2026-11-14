@@ -26,6 +26,7 @@
     "inat:sync": "tsx src/sync-inat.ts",
     "inat:promote": "tsx src/promote-observations.ts",
     "inat:fetch-places": "tsx src/fetch-places.ts",
+    "inat:fetch-taxa": "tsx src/fetch-inat-taxa.ts",
     "inat:fetch-orcids": "tsx src/fetch-inat-orcids.ts",
     "inat:backfill-accounts": "tsx src/backfill-inat-accounts.ts",
     "inat:login": "tsx src/inat-login.ts",

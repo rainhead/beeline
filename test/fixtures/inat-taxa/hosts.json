@@ -1,0 +1,619 @@
+{
+ "total_results": 6,
+ "page": 1,
+ "per_page": 30,
+ "results": [
+  {
+   "id": 56861,
+   "name": "Symphyotrichum chilense",
+   "rank": "species",
+   "rank_level": 10,
+   "parent_id": 1416880,
+   "is_active": true,
+   "preferred_common_name": "Pacific Aster",
+   "ancestor_ids": [
+    48460,
+    47126,
+    211194,
+    47125,
+    47124,
+    47605,
+    47604,
+    632790,
+    461542,
+    972608,
+    56112,
+    1416869,
+    1416880
+   ],
+   "current_synonymous_taxon_ids": null,
+   "ancestors": [
+    {
+     "id": 47126,
+     "name": "Plantae",
+     "rank": "kingdom",
+     "rank_level": 70,
+     "parent_id": 48460,
+     "is_active": true,
+     "preferred_common_name": "Plants"
+    },
+    {
+     "id": 211194,
+     "name": "Tracheophyta",
+     "rank": "phylum",
+     "rank_level": 60,
+     "parent_id": 47126,
+     "is_active": true,
+     "preferred_common_name": "Vascular Plants"
+    },
+    {
+     "id": 47125,
+     "name": "Angiospermae",
+     "rank": "subphylum",
+     "rank_level": 57,
+     "parent_id": 211194,
+     "is_active": true,
+     "preferred_common_name": "flowering plants"
+    },
+    {
+     "id": 47124,
+     "name": "Magnoliopsida",
+     "rank": "class",
+     "rank_level": 50,
+     "parent_id": 47125,
+     "is_active": true,
+     "preferred_common_name": "Dicots"
+    },
+    {
+     "id": 47605,
+     "name": "Asterales",
+     "rank": "order",
+     "rank_level": 40,
+     "parent_id": 47124,
+     "is_active": true,
+     "preferred_common_name": "Sunflowers, Bellflowers, Fanflowers, and Allies"
+    },
+    {
+     "id": 47604,
+     "name": "Asteraceae",
+     "rank": "family",
+     "rank_level": 30,
+     "parent_id": 47605,
+     "is_active": true,
+     "preferred_common_name": "Sunflowers, Daisies, Asters, and Allies"
+    },
+    {
+     "id": 632790,
+     "name": "Asteroideae",
+     "rank": "subfamily",
+     "rank_level": 27,
+     "parent_id": 47604,
+     "is_active": true
+    },
+    {
+     "id": 461542,
+     "name": "Astereae",
+     "rank": "tribe",
+     "rank_level": 25,
+     "parent_id": 632790,
+     "is_active": true,
+     "preferred_common_name": "asters and allies"
+    },
+    {
+     "id": 972608,
+     "name": "Symphyotrichinae",
+     "rank": "subtribe",
+     "rank_level": 24,
+     "parent_id": 461542,
+     "is_active": true
+    },
+    {
+     "id": 56112,
+     "name": "Symphyotrichum",
+     "rank": "genus",
+     "rank_level": 20,
+     "parent_id": 972608,
+     "is_active": true,
+     "preferred_common_name": "American asters"
+    },
+    {
+     "id": 1416869,
+     "name": "Symphyotrichum",
+     "rank": "subgenus",
+     "rank_level": 15,
+     "parent_id": 56112,
+     "is_active": true,
+     "preferred_common_name": "common American asters"
+    },
+    {
+     "id": 1416880,
+     "name": "Occidentales",
+     "rank": "section",
+     "rank_level": 13,
+     "parent_id": 1416869,
+     "is_active": true,
+     "preferred_common_name": "foliaceous asters"
+    }
+   ]
+  },
+  {
+   "id": 322554,
+   "name": "Aster chilensis adscendens",
+   "rank": "subspecies",
+   "rank_level": 5,
+   "parent_id": 56861,
+   "is_active": false,
+   "preferred_common_name": "Western Aster",
+   "ancestor_ids": [
+    48460,
+    47126,
+    211194,
+    47125,
+    47124,
+    47605,
+    47604,
+    632790,
+    461542,
+    972608,
+    56112,
+    1416869,
+    1416880,
+    56861
+   ],
+   "current_synonymous_taxon_ids": [
+    79294
+   ],
+   "ancestors": [
+    {
+     "id": 47126,
+     "name": "Plantae",
+     "rank": "kingdom",
+     "rank_level": 70,
+     "parent_id": 48460,
+     "is_active": true,
+     "preferred_common_name": "Plants"
+    },
+    {
+     "id": 211194,
+     "name": "Tracheophyta",
+     "rank": "phylum",
+     "rank_level": 60,
+     "parent_id": 47126,
+     "is_active": true,
+     "preferred_common_name": "Vascular Plants"
+    },
+    {
+     "id": 47125,
+     "name": "Angiospermae",
+     "rank": "subphylum",
+     "rank_level": 57,
+     "parent_id": 211194,
+     "is_active": true,
+     "preferred_common_name": "flowering plants"
+    },
+    {
+     "id": 47124,
+     "name": "Magnoliopsida",
+     "rank": "class",
+     "rank_level": 50,
+     "parent_id": 47125,
+     "is_active": true,
+     "preferred_common_name": "Dicots"
+    },
+    {
+     "id": 47605,
+     "name": "Asterales",
+     "rank": "order",
+     "rank_level": 40,
+     "parent_id": 47124,
+     "is_active": true,
+     "preferred_common_name": "Sunflowers, Bellflowers, Fanflowers, and Allies"
+    },
+    {
+     "id": 47604,
+     "name": "Asteraceae",
+     "rank": "family",
+     "rank_level": 30,
+     "parent_id": 47605,
+     "is_active": true,
+     "preferred_common_name": "Sunflowers, Daisies, Asters, and Allies"
+    },
+    {
+     "id": 632790,
+     "name": "Asteroideae",
+     "rank": "subfamily",
+     "rank_level": 27,
+     "parent_id": 47604,
+     "is_active": true
+    },
+    {
+     "id": 461542,
+     "name": "Astereae",
+     "rank": "tribe",
+     "rank_level": 25,
+     "parent_id": 632790,
+     "is_active": true,
+     "preferred_common_name": "asters and allies"
+    },
+    {
+     "id": 972608,
+     "name": "Symphyotrichinae",
+     "rank": "subtribe",
+     "rank_level": 24,
+     "parent_id": 461542,
+     "is_active": true
+    },
+    {
+     "id": 56112,
+     "name": "Symphyotrichum",
+     "rank": "genus",
+     "rank_level": 20,
+     "parent_id": 972608,
+     "is_active": true,
+     "preferred_common_name": "American asters"
+    },
+    {
+     "id": 1416869,
+     "name": "Symphyotrichum",
+     "rank": "subgenus",
+     "rank_level": 15,
+     "parent_id": 56112,
+     "is_active": true,
+     "preferred_common_name": "common American asters"
+    },
+    {
+     "id": 1416880,
+     "name": "Occidentales",
+     "rank": "section",
+     "rank_level": 13,
+     "parent_id": 1416869,
+     "is_active": true,
+     "preferred_common_name": "foliaceous asters"
+    },
+    {
+     "id": 56861,
+     "name": "Symphyotrichum chilense",
+     "rank": "species",
+     "rank_level": 10,
+     "parent_id": 1416880,
+     "is_active": true,
+     "preferred_common_name": "Pacific Aster"
+    }
+   ]
+  },
+  {
+   "id": 887293,
+   "name": "Dodecatheon",
+   "rank": "genus",
+   "rank_level": 20,
+   "parent_id": 48064,
+   "is_active": false,
+   "ancestor_ids": [
+    48460,
+    47126,
+    211194,
+    47125,
+    47124,
+    47181,
+    48064
+   ],
+   "current_synonymous_taxon_ids": [
+    742759
+   ],
+   "ancestors": [
+    {
+     "id": 47126,
+     "name": "Plantae",
+     "rank": "kingdom",
+     "rank_level": 70,
+     "parent_id": 48460,
+     "is_active": true,
+     "preferred_common_name": "Plants"
+    },
+    {
+     "id": 211194,
+     "name": "Tracheophyta",
+     "rank": "phylum",
+     "rank_level": 60,
+     "parent_id": 47126,
+     "is_active": true,
+     "preferred_common_name": "Vascular Plants"
+    },
+    {
+     "id": 47125,
+     "name": "Angiospermae",
+     "rank": "subphylum",
+     "rank_level": 57,
+     "parent_id": 211194,
+     "is_active": true,
+     "preferred_common_name": "flowering plants"
+    },
+    {
+     "id": 47124,
+     "name": "Magnoliopsida",
+     "rank": "class",
+     "rank_level": 50,
+     "parent_id": 47125,
+     "is_active": true,
+     "preferred_common_name": "Dicots"
+    },
+    {
+     "id": 47181,
+     "name": "Ericales",
+     "rank": "order",
+     "rank_level": 40,
+     "parent_id": 47124,
+     "is_active": true,
+     "preferred_common_name": "Heathers, Balsams, Primroses, and Allies"
+    },
+    {
+     "id": 48064,
+     "name": "Primulaceae",
+     "rank": "family",
+     "rank_level": 30,
+     "parent_id": 47181,
+     "is_active": true,
+     "preferred_common_name": "primrose family"
+    }
+   ]
+  },
+  {
+   "id": 1415100,
+   "name": "Cleomella serrulata",
+   "rank": "species",
+   "rank_level": 10,
+   "parent_id": 72058,
+   "is_active": true,
+   "preferred_common_name": "Rocky Mountain Beeplant",
+   "ancestor_ids": [
+    48460,
+    47126,
+    211194,
+    47125,
+    47124,
+    71275,
+    71409,
+    72058
+   ],
+   "current_synonymous_taxon_ids": null,
+   "ancestors": [
+    {
+     "id": 47126,
+     "name": "Plantae",
+     "rank": "kingdom",
+     "rank_level": 70,
+     "parent_id": 48460,
+     "is_active": true,
+     "preferred_common_name": "Plants"
+    },
+    {
+     "id": 211194,
+     "name": "Tracheophyta",
+     "rank": "phylum",
+     "rank_level": 60,
+     "parent_id": 47126,
+     "is_active": true,
+     "preferred_common_name": "Vascular Plants"
+    },
+    {
+     "id": 47125,
+     "name": "Angiospermae",
+     "rank": "subphylum",
+     "rank_level": 57,
+     "parent_id": 211194,
+     "is_active": true,
+     "preferred_common_name": "flowering plants"
+    },
+    {
+     "id": 47124,
+     "name": "Magnoliopsida",
+     "rank": "class",
+     "rank_level": 50,
+     "parent_id": 47125,
+     "is_active": true,
+     "preferred_common_name": "Dicots"
+    },
+    {
+     "id": 71275,
+     "name": "Brassicales",
+     "rank": "order",
+     "rank_level": 40,
+     "parent_id": 47124,
+     "is_active": true,
+     "preferred_common_name": "Mustards, Capers, and Allies"
+    },
+    {
+     "id": 71409,
+     "name": "Cleomaceae",
+     "rank": "family",
+     "rank_level": 30,
+     "parent_id": 71275,
+     "is_active": true,
+     "preferred_common_name": "Spider Flower Family"
+    },
+    {
+     "id": 72058,
+     "name": "Cleomella",
+     "rank": "genus",
+     "rank_level": 20,
+     "parent_id": 71409,
+     "is_active": true,
+     "preferred_common_name": "stinkweed"
+    }
+   ]
+  },
+  {
+   "id": 148304,
+   "name": "Cleome serrulata",
+   "rank": "species",
+   "rank_level": 10,
+   "parent_id": 56751,
+   "is_active": false,
+   "preferred_common_name": "Rocky Mountain beeplant",
+   "ancestor_ids": [
+    48460,
+    47126,
+    211194,
+    47125,
+    47124,
+    71275,
+    71409,
+    56751
+   ],
+   "current_synonymous_taxon_ids": [
+    1415100
+   ],
+   "ancestors": [
+    {
+     "id": 47126,
+     "name": "Plantae",
+     "rank": "kingdom",
+     "rank_level": 70,
+     "parent_id": 48460,
+     "is_active": true,
+     "preferred_common_name": "Plants"
+    },
+    {
+     "id": 211194,
+     "name": "Tracheophyta",
+     "rank": "phylum",
+     "rank_level": 60,
+     "parent_id": 47126,
+     "is_active": true,
+     "preferred_common_name": "Vascular Plants"
+    },
+    {
+     "id": 47125,
+     "name": "Angiospermae",
+     "rank": "subphylum",
+     "rank_level": 57,
+     "parent_id": 211194,
+     "is_active": true,
+     "preferred_common_name": "flowering plants"
+    },
+    {
+     "id": 47124,
+     "name": "Magnoliopsida",
+     "rank": "class",
+     "rank_level": 50,
+     "parent_id": 47125,
+     "is_active": true,
+     "preferred_common_name": "Dicots"
+    },
+    {
+     "id": 71275,
+     "name": "Brassicales",
+     "rank": "order",
+     "rank_level": 40,
+     "parent_id": 47124,
+     "is_active": true,
+     "preferred_common_name": "Mustards, Capers, and Allies"
+    },
+    {
+     "id": 71409,
+     "name": "Cleomaceae",
+     "rank": "family",
+     "rank_level": 30,
+     "parent_id": 71275,
+     "is_active": true,
+     "preferred_common_name": "Spider Flower Family"
+    },
+    {
+     "id": 56751,
+     "name": "Cleome",
+     "rank": "genus",
+     "rank_level": 20,
+     "parent_id": 71409,
+     "is_active": true,
+     "preferred_common_name": "Spider Flowers"
+    }
+   ]
+  },
+  {
+   "id": 78444,
+   "name": "Peritoma serrulata",
+   "rank": "species",
+   "rank_level": 10,
+   "parent_id": 72284,
+   "is_active": false,
+   "preferred_common_name": "Rocky Mountain Beeplant",
+   "ancestor_ids": [
+    48460,
+    47126,
+    211194,
+    47125,
+    47124,
+    71275,
+    71409,
+    72284
+   ],
+   "current_synonymous_taxon_ids": [
+    1415100
+   ],
+   "ancestors": [
+    {
+     "id": 47126,
+     "name": "Plantae",
+     "rank": "kingdom",
+     "rank_level": 70,
+     "parent_id": 48460,
+     "is_active": true,
+     "preferred_common_name": "Plants"
+    },
+    {
+     "id": 211194,
+     "name": "Tracheophyta",
+     "rank": "phylum",
+     "rank_level": 60,
+     "parent_id": 47126,
+     "is_active": true,
+     "preferred_common_name": "Vascular Plants"
+    },
+    {
+     "id": 47125,
+     "name": "Angiospermae",
+     "rank": "subphylum",
+     "rank_level": 57,
+     "parent_id": 211194,
+     "is_active": true,
+     "preferred_common_name": "flowering plants"
+    },
+    {
+     "id": 47124,
+     "name": "Magnoliopsida",
+     "rank": "class",
+     "rank_level": 50,
+     "parent_id": 47125,
+     "is_active": true,
+     "preferred_common_name": "Dicots"
+    },
+    {
+     "id": 71275,
+     "name": "Brassicales",
+     "rank": "order",
+     "rank_level": 40,
+     "parent_id": 47124,
+     "is_active": true,
+     "preferred_common_name": "Mustards, Capers, and Allies"
+    },
+    {
+     "id": 71409,
+     "name": "Cleomaceae",
+     "rank": "family",
+     "rank_level": 30,
+     "parent_id": 71275,
+     "is_active": true,
+     "preferred_common_name": "Spider Flower Family"
+    },
+    {
+     "id": 72284,
+     "name": "Peritoma",
+     "rank": "genus",
+     "rank_level": 20,
+     "parent_id": 71409,
+     "is_active": false
+    }
+   ]
+  }
+ ]
+}

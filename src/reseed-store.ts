@@ -51,7 +51,7 @@ import {
 
 /**
  * What comes across: the staged legacy dump, the iNat sync history, the job
- * log, and the places cache. Everything else in the store is a pure function
+ * log, and the places and taxa caches. Everything else in the store is a pure function
  * of these, and promotion recomputes it.
  *
  * inat_place is here because it is the one carried table promotion CANNOT
@@ -89,6 +89,10 @@ export const CARRIED_TABLES = [
   "job_run",
   "inat_place",
   "inat_place_absent",
+  "inat_taxon",
+  "inat_taxon_ancestor",
+  "inat_taxon_replacement",
+  "inat_taxon_absent",
   "observation_absent",
   "inat_user_orcid",
   "ecdysis_taxon",
@@ -221,6 +225,19 @@ export async function carryStaging(
     if (await has("inat_place_absent")) {
       await conn.run(`INSERT INTO inat_place_absent BY NAME SELECT * FROM old.inat_place_absent`);
       await count("inat_place_absent");
+    }
+    // The iNaturalist taxon cache (schema/066, beeline-rfkj.1), on the same
+    // terms as inat_place: keyed by iNat's own ids, filled by an outbound
+    // fetch nothing in the store can recompute, and fetched_at says when iNat
+    // was actually asked. Not carrying it would cost about 120 requests to
+    // refill, and a gap in which no host has a name; carrying it is four
+    // copies. (Reseeding serves dev stores only: production is never
+    // reseeded, ADR 0006.)
+    for (const table of ["inat_taxon", "inat_taxon_ancestor", "inat_taxon_replacement", "inat_taxon_absent"]) {
+      if (await has(table)) {
+        await conn.run(`INSERT INTO ${table} BY NAME SELECT * FROM old.${table}`);
+        await count(table);
+      }
     }
     // Same terms as the places' verdicts, for observations (beeline-wcc6):
     // keyed by iNat's id, and its instants are when iNat answered. Dropped,

@@ -66,6 +66,12 @@ beforeAll(async () => {
     `INSERT INTO inat_place_absent (inat_place_id, asked_at)
      VALUES (117476, TIMESTAMPTZ '2026-08-01 12:00:00+00')`,
   );
+  // The taxon cache (beeline-rfkj.1): the same argument, four tables.
+  await seed.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, parent_id, is_active, fetched_at)
+     VALUES (322554, 'Aster chilensis adscendens', 'subspecies', 5, 56861, false, TIMESTAMPTZ '2026-08-01 12:00:00+00')`);
+  await seed.run(`INSERT INTO inat_taxon_ancestor VALUES (322554, 322554, 0), (322554, 56861, 1)`);
+  await seed.run(`INSERT INTO inat_taxon_replacement VALUES (322554, 79294)`);
+  await seed.run(`INSERT INTO inat_taxon_absent (inat_taxon_id, asked_at) VALUES (99999999, TIMESTAMPTZ '2026-08-01 12:00:00+00')`);
   // And the same verdict on an observation a sample cites (beeline-wcc6).
   await seed.run(
     `INSERT INTO observation_absent (inat_id, absent_since, asked_at)
@@ -149,6 +155,10 @@ describe("reseeding a store that cannot be blown away", () => {
       job_run: 1,
       inat_place: 1,
       inat_place_absent: 1,
+      inat_taxon: 1,
+      inat_taxon_ancestor: 2,
+      inat_taxon_replacement: 1,
+      inat_taxon_absent: 1,
       observation_absent: 1,
       inat_user_orcid: 1,
       ecdysis_taxon: 2,
@@ -173,6 +183,12 @@ describe("reseeding a store that cannot be blown away", () => {
     expect(
       await rows(conn, `SELECT inat_place_id, asked_at = TIMESTAMPTZ '2026-08-01 12:00:00+00' FROM inat_place_absent`),
     ).toEqual([[117476n, true]]);
+    expect(
+      await rows(conn, `SELECT inat_taxon_id, is_active, fetched_at = TIMESTAMPTZ '2026-08-01 12:00:00+00' FROM inat_taxon`),
+    ).toEqual([[322554n, false, true]]);
+    expect(await rows(conn, `SELECT count(*) FROM inat_taxon_ancestor`)).toEqual([[2n]]);
+    expect(await rows(conn, `SELECT replacement_taxon_id FROM inat_taxon_replacement`)).toEqual([[79294n]]);
+    expect(await rows(conn, `SELECT inat_taxon_id FROM inat_taxon_absent`)).toEqual([[99999999n]]);
     expect(
       await rows(conn, `SELECT inat_id, absent_since = TIMESTAMPTZ '2026-08-01 12:00:00+00',
                                asked_at = TIMESTAMPTZ '2026-08-02 12:00:00+00' FROM observation_absent`),
@@ -340,6 +356,10 @@ describe("reseeding a store that cannot be blown away", () => {
       job_run: 0,
       inat_place: 0,
       inat_place_absent: 0,
+      inat_taxon: 0,
+      inat_taxon_ancestor: 0,
+      inat_taxon_replacement: 0,
+      inat_taxon_absent: 0,
       observation_absent: 0,
       inat_user_orcid: 0,
       ecdysis_taxon: 0,

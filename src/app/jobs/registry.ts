@@ -219,6 +219,9 @@ export async function refreshPlantNames(
       () => fetchPlantNames(conn, { maxRequests: NIGHTLY_PLANT_NAME_REQUESTS, ...opts, signal }),
       (result) => result.errors.length > 0,
     );
+    // A shutdown that landed after the step began, before any request, returns quietly from the
+    // fetch; it must still end this job as a shutdown, not as a run that finished.
+    opts.signal?.throwIfAborted();
     parts.push(
       r.unlooked === 0
         ? "every plant list name answered"

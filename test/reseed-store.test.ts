@@ -72,7 +72,7 @@ beforeAll(async () => {
   await seed.run(`INSERT INTO inat_taxon_ancestor VALUES (322554, 322554, 0), (322554, 56861, 1)`);
   await seed.run(`INSERT INTO inat_taxon_replacement VALUES (322554, 79294)`);
   await seed.run(`INSERT INTO inat_taxon_absent (inat_taxon_id, asked_at) VALUES (99999999, TIMESTAMPTZ '2026-08-01 12:00:00+00')`);
-  await seed.run(`INSERT INTO plant_name_lookup (name_key, expected_rank, total_results) VALUES ('mentha piperita', 'species', 3)`);
+  await seed.run(`INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('mentha piperita', 'species', 3, true)`);
   await seed.run(`INSERT INTO plant_name_lookup_hit VALUES ('mentha piperita', 'species', 181525, 'Mentha × piperita', 'hybrid', true, 'Mentha × piperita')`);
   await seed.run(`INSERT INTO plant_name_lookup_hit_replacement VALUES ('mentha piperita', 'species', 361371, 181525)`);
   // And the same verdict on an observation a sample cites (beeline-wcc6).

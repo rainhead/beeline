@@ -12,7 +12,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { refreshPlantNames } from "../src/app/jobs/registry.js";
 import type { JobContext } from "../src/app/jobs/framework.js";
 import { parseCsv } from "../src/corrections.js";
@@ -31,6 +31,11 @@ let asked: string[];
 beforeEach(async () => {
   ({ conn, instance } = await createMemoryDb());
   asked = [];
+});
+
+afterEach(() => {
+  conn.closeSync();
+  instance.closeSync();
 });
 
 const rows = async (sql: string) =>
@@ -498,6 +503,37 @@ describe("stopping early, dead ends, paging and ranks (synthetic answers)", () =
     expect(await outcome("Foo qux")).toEqual(["ambiguous", null]);
     expect(r.requested).toBe(7);
     expect(await rows("SELECT total_results FROM plant_name_lookup ORDER BY 1")).toEqual([[32], [35], [65]]);
+  });
+
+  test("a lookup the page cap cuts short gives the name no taxon, and is not asked again every night", async () => {
+    await addEntries(["Foo bar", "Species", null]);
+    let n = 0;
+    // Synthetic: 400 results, the name's own taxon on page 1, and pages full to the cap of ten.
+    const r = await fetchPlantNames(conn, {
+      requestDelayMs: 0,
+      fetchImpl: fake((_q, pg) => {
+        n += 1;
+        const hits = Array.from({ length: 30 }, (_, i) => hit(pg * 100 + i, `Other ${pg * 100 + i}`, "species", true, `Other ${pg * 100 + i}`));
+        return page(400, pg === 1 ? [hit(1, "Foo bar", "species", true), ...hits.slice(1)] : hits);
+      }),
+    });
+    expect(n).toBe(10);
+    expect(r.stored).toBe(1);
+    expect(await outcome("Foo bar")).toEqual(["too many results", null]);
+    expect(await rows("SELECT read_in_full FROM plant_name_lookup")).toEqual([[false]]);
+    expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
+  });
+
+  test("a shutdown after the names step begins, before any request, ends the job as a shutdown", async () => {
+    await addEntries(["Foo bar", "Species", null]);
+    const controller = new AbortController();
+    const step: JobContext["step"] = async (_label, fn) => {
+      controller.abort(new Error("shutting down"));
+      return fn();
+    };
+    await expect(
+      refreshPlantNames(conn, { fetchImpl: fake(() => page(0, [])), requestDelayMs: 0, signal: controller.signal, step }),
+    ).rejects.toThrow(/shutting down/);
   });
 
   test("a later page that fails leaves no half-answer behind", async () => {

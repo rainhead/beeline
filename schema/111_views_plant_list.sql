@@ -152,18 +152,19 @@ WITH decided AS (
 SELECT w.name_key, w.expected_rank,
        CASE
          WHEN l.name_key IS NULL THEN 'not looked up'
+         WHEN NOT l.read_in_full THEN 'too many results'
          WHEN count(u.hit_taxon_id) = 0 THEN 'no match'
          WHEN count(DISTINCT u.current_taxon_id) = 0 THEN 'retired, no replacement'
          WHEN count(DISTINCT u.current_taxon_id) = 1 AND count(*) FILTER (WHERE u.current_taxon_id IS NULL) = 0 THEN 'matched'
          ELSE 'ambiguous'
        END AS outcome,
-       CASE WHEN count(DISTINCT u.current_taxon_id) = 1 AND count(*) FILTER (WHERE u.current_taxon_id IS NULL) = 0
+       CASE WHEN l.read_in_full AND count(DISTINCT u.current_taxon_id) = 1 AND count(*) FILTER (WHERE u.current_taxon_id IS NULL) = 0
             THEN min(u.current_taxon_id) END AS inat_taxon_id
 FROM (SELECT DISTINCT name_key, expected_rank FROM plant_list_entry_name) w
 LEFT JOIN plant_name_lookup l ON l.name_key = w.name_key AND l.expected_rank = w.expected_rank
 LEFT JOIN used u ON u.name_key = w.name_key AND u.expected_rank = w.expected_rank
-GROUP BY w.name_key, w.expected_rank, l.name_key;
-COMMENT ON VIEW plant_name_resolution IS 'The outcome of each name''s lookup: matched (one current taxon, in inat_taxon_id), ambiguous (more than one distinct current taxon, or a retired hit with no replacement beside another hit, none picked), no match, retired with no replacement (every exact hit is a dead end), or not looked up yet. An active hit whose own name is the name wins outright over every other hit.';
+GROUP BY w.name_key, w.expected_rank, l.name_key, l.read_in_full;
+COMMENT ON VIEW plant_name_resolution IS 'The outcome of each name''s lookup: matched (one current taxon, in inat_taxon_id), ambiguous (more than one distinct current taxon, or a retired hit with no replacement beside another hit, none picked), no match, retired with no replacement (every exact hit is a dead end), too many results (the page cap stopped the reading, so no taxon is given on part of the answer), or not looked up yet. An active hit whose own name is the name wins outright over every other hit.';
 
 -- The questions still to put to iNaturalist, one per name and rank: names it
 -- has not been asked about, and names whose answer is out of date because the

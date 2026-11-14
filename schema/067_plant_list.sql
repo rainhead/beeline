@@ -49,13 +49,15 @@ CREATE TABLE plant_name_lookup (
   name_key      TEXT NOT NULL,
   expected_rank TEXT NOT NULL,
   total_results INTEGER NOT NULL,
+  read_in_full  BOOLEAN NOT NULL,
   looked_up_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (name_key, expected_rank)
 );
 COMMENT ON TABLE plant_name_lookup IS 'A question put to iNaturalist''s taxa search (v1 /taxa, is_active=any, under Plantae) for a normalised name at an expected rank, and when. One row even when the answer was nothing. Filled over the network by src/fetch-plant-names.ts and carried by db:reseed, since nothing in the store can recompute it. Delete a row to ask again.';
 COMMENT ON COLUMN plant_name_lookup.name_key IS 'The normalised name that was searched for (plant_name_normal.name_key).';
 COMMENT ON COLUMN plant_name_lookup.expected_rank IS 'The rank the name''s shape implies (plant_list_entry_name.expected_rank); the search was restricted to the iNaturalist ranks that stand for it (plant_expected_rank).';
-COMMENT ON COLUMN plant_name_lookup.total_results IS 'How many taxa iNaturalist said matched, which can be more than the hits kept: pages of 30 are read until a hit is the name asked for or the results run out.';
+COMMENT ON COLUMN plant_name_lookup.total_results IS 'How many taxa iNaturalist said matched. Every page of 30 is read until the results run out, because a second taxon of the name on a later page is what makes the name ambiguous, up to a cap of pages (read_in_full).';
+COMMENT ON COLUMN plant_name_lookup.read_in_full IS 'Whether every page of the answer was read. False when the page cap stopped the reading with results left, so a taxon of the name may be among those not read: plant_name_resolution then gives the name no taxon (too many results) rather than judge it on part of the answer.';
 COMMENT ON COLUMN plant_name_lookup.looked_up_at IS 'When iNaturalist answered. A name whose taxon the taxon cache read as retired after this is asked again (plant_name_unlooked).';
 
 CREATE TABLE plant_name_lookup_hit (

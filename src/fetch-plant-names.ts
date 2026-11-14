@@ -23,10 +23,12 @@ import { DEFAULT_DB } from "./person-change.js";
  * WHAT IS KEPT. Every hit with a matched_term, as given (plant_name_lookup_hit),
  * and the replacements a retired hit carried. Which hits count is decided on
  * read (plant_name_hit_current): the name, or an older name of the taxon, at
- * an allowed rank. A page is 30 hits; later pages are read only while no hit
- * is the name asked for and results remain (one name of the 1,404 had more
- * than 30 on 2026-11-14, Aster, and found its genus on the first page), and
- * `total_results` records how many there were. The search also asks for the
+ * an allowed rank. A page is 30 hits, and every page is read until the
+ * results run out, because a second taxon of the name on a later page is what
+ * makes it ambiguous (one name of the 1,404 had more than 30 on 2026-11-14,
+ * Aster, with 48). `total_results` records how many there were, and
+ * `read_in_full` whether the page cap stopped the reading first, in which
+ * case the name is given no taxon. The search also asks for the
  * fallback ranks of a genus-shaped name (section, subgenus, supertribe; see
  * plant_expected_rank).
  *
@@ -116,6 +118,7 @@ export async function fetchPlantNames(
     // recorded as answered; its hits are taken back out (below) and the name is asked again next run.
     let total = 0;
     let seen = 0;
+    let readInFull = false;
     let failure: string | null = null;
     await clear(conn, nameKey, expectedRank);
     for (let page = 1; page <= MAX_PAGES; page++) {
@@ -169,7 +172,10 @@ export async function fetchPlantNames(
       await storeHits(conn, nameKey, expectedRank, results);
       // Every page, to the end: a second taxon of the name on a later page is what makes it ambiguous,
       // and the views judge only the hits stored. Few names have a second page (Aster, on 2026-11-14).
-      if (results.length < HITS_PER_REQUEST || seen >= total) break;
+      if (results.length < HITS_PER_REQUEST || seen >= total) {
+        readInFull = true;
+        break;
+      }
     }
     if (failure !== null) {
       // Not recorded as an answer: the name is asked again next run.
@@ -183,7 +189,9 @@ export async function fetchPlantNames(
       continue;
     }
     failuresInARow = 0;
-    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results) VALUES ($1, $2, $3)", [nameKey, expectedRank, total]);
+    // Recorded as answered either way, so the name is not asked again every night; a lookup the page cap
+    // cut short reads as 'too many results' and gives the name no taxon (plant_name_resolution).
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ($1, $2, $3, $4)", [nameKey, expectedRank, total, readInFull]);
     result.stored += 1;
   }
   return result;

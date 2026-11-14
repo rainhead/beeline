@@ -228,6 +228,8 @@ export interface PlantNameLookupTable {
   name_key: string;
   expected_rank: string;
   total_results: number;
+  /** Whether every page was read; false when the page cap stopped the reading with results left. */
+  read_in_full: boolean;
   looked_up_at: Generated<Date>;
 }
 
@@ -286,7 +288,7 @@ export interface PlantNameHitCurrentView {
   current_taxon_id: BigIntCol | null;
 }
 
-export type PlantNameOutcome = "not looked up" | "no match" | "retired, no replacement" | "matched" | "ambiguous";
+export type PlantNameOutcome = "not looked up" | "too many results" | "no match" | "retired, no replacement" | "matched" | "ambiguous";
 
 export interface PlantNameResolutionView {
   name_key: string;

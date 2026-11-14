@@ -167,8 +167,9 @@ export async function fetchPlantNames(
       total = body!.total_results ?? results.length;
       seen += results.length;
       await storeHits(conn, nameKey, expectedRank, results);
-      // Enough once the name's own taxon is among the hits, or when the results have run out.
-      if (results.length < HITS_PER_REQUEST || seen >= total || (await hasExactHit(conn, nameKey, expectedRank))) break;
+      // Every page, to the end: a second taxon of the name on a later page is what makes it ambiguous,
+      // and the views judge only the hits stored. Few names have a second page (Aster, on 2026-11-14).
+      if (results.length < HITS_PER_REQUEST || seen >= total) break;
     }
     if (failure !== null) {
       // Not recorded as an answer: the name is asked again next run.
@@ -186,14 +187,6 @@ export async function fetchPlantNames(
     result.stored += 1;
   }
   return result;
-}
-
-/** Whether the hits stored so far include a taxon that is the name asked for (the one rule, in plant_name_hit_current). */
-async function hasExactHit(conn: DuckDBConnection, nameKey: string, expectedRank: string): Promise<boolean> {
-  const [[n]] = (await (
-    await conn.run("SELECT count(*) FROM plant_name_hit_current WHERE name_key = $1 AND expected_rank = $2", [nameKey, expectedRank])
-  ).getRows()) as [[bigint]];
-  return n > 0n;
 }
 
 /** Take out whatever an earlier or half-finished lookup of the name left, so it is asked from nothing. */

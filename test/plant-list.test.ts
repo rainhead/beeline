@@ -459,21 +459,25 @@ describe("stopping early, dead ends, paging and ranks (synthetic answers)", () =
     expect(new URL(asked[0]!).searchParams.get("rank")).toBe("genus,subgenus,section,supertribe");
   });
 
-  test("more than 30 results: later pages are read until the name's own taxon turns up or the results run out", async () => {
-    await addEntries(["Foo bar", "Species", null], ["Foo baz", "Species", null]);
-    const filler = (from: number) => Array.from({ length: 30 }, (_, i) => hit(from + i, `Other ${from + i}`, "species", true, `Other ${from + i}`));
+  test("more than 30 results: every page is read, so a taxon of the name on a later page is seen", async () => {
+    await addEntries(["Foo bar", "Species", null], ["Foo baz", "Species", null], ["Foo qux", "Species", null]);
+    const filler = (from: number, n = 30) => Array.from({ length: n }, (_, i) => hit(from + i, `Other ${from + i}`, "species", true, `Other ${from + i}`));
     const r = await fetchPlantNames(conn, {
       requestDelayMs: 0,
       fetchImpl: fake((q, pg) =>
         q === "foo bar"
           ? pg === 1 ? page(35, filler(100)) : page(35, [hit(1, "Foo bar", "species", true)])
-          : page(65, pg === 1 ? filler(200) : pg === 2 ? filler(300) : [hit(9, "Other 9", "species", true)]),
+          : q === "foo qux"
+            ? pg === 1 ? page(32, [hit(7, "Foo qux", "species", true), ...filler(400, 29)]) : page(32, [hit(8, "Foo qux", "species", true), hit(9, "Other 9", "species", true)])
+            : page(65, pg === 1 ? filler(200) : pg === 2 ? filler(300) : [hit(9, "Other 9", "species", true)]),
       ),
     });
     expect(await outcome("Foo bar")).toEqual(["matched", 1]);
     expect(await outcome("Foo baz")).toEqual(["no match", null]); // three pages, and the results ran out
-    expect(r.requested).toBe(5);
-    expect(await rows("SELECT total_results FROM plant_name_lookup ORDER BY 1")).toEqual([[35], [65]]);
+    // The name's own taxon is on page 1, and a second taxon of that name is on page 2.
+    expect(await outcome("Foo qux")).toEqual(["ambiguous", null]);
+    expect(r.requested).toBe(7);
+    expect(await rows("SELECT total_results FROM plant_name_lookup ORDER BY 1")).toEqual([[32], [35], [65]]);
   });
 
   test("a later page that fails leaves no half-answer behind", async () => {

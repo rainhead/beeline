@@ -35,4 +35,4 @@ How each part of Beeline works, one file per area. Read the file for the area yo
 - [Ingestion, jobs, and elevation](ingestion-jobs-and-elevation.md) — `src/app/jobs/`, `src/write-conflict.ts`
 - [Localities from coordinates](localities-from-coordinates.md) — `src/locality-rule.ts`, `src/derive-locality.ts`, `ingest/gazetteer.sql`
 - [Areas](areas.md) — `schema/038`, `src/derive-area.ts`
-- [Plant taxa](plant-taxa.md) — `schema/066`, `schema/067`, `schema/111`, `schema/112`, `src/fetch-inat-taxa.ts`, `src/load-plant-list.ts`, `src/fetch-plant-names.ts`, `ingest/old-beeline-plant-list.csv`
+- [Plant taxa](plant-taxa.md) — `schema/066`, `schema/067`, `schema/111`, `schema/112`, `schema/113`, `src/fetch-inat-taxa.ts`, `src/load-plant-list.ts`, `src/fetch-plant-names.ts`, `ingest/old-beeline-plant-list.csv`

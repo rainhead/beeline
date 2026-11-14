@@ -22,8 +22,13 @@ import { DEFAULT_DB } from "./person-change.js";
  *
  * WHAT IS KEPT. Every hit with a matched_term, as given (plant_name_lookup_hit),
  * and the replacements a retired hit carried. Which hits count is decided on
- * read (plant_name_hit_current): an exact matched_term at an allowed rank.
- * The first 30 hits are read; `total_results` records when there were more.
+ * read (plant_name_hit_current): the name, or an older name of the taxon, at
+ * an allowed rank. A page is 30 hits; later pages are read only while no hit
+ * is the name asked for and results remain (one name of the 1,404 had more
+ * than 30 on 2026-11-14, Aster, and found its genus on the first page), and
+ * `total_results` records how many there were. The search also asks for the
+ * fallback ranks of a genus-shaped name (section, subgenus, supertribe; see
+ * plant_expected_rank).
  *
  * PACE AND BUDGET. A request about every 1.1 seconds, no token, as
  * src/fetch-inat-taxa.ts does; measured on 2026-11-14, 1,404 names took 29
@@ -48,11 +53,14 @@ export interface FetchPlantNamesOptions {
   /** Names asked about in this run: the job's budget, not a correctness knob. */
   maxRequests?: number;
   signal?: AbortSignal;
+  /** Told of every request error, so a job's log keeps the ones its one-line summary leaves out. */
+  log?: (message: string) => void;
 }
 
 export interface FetchPlantNamesResult {
   /** Names on the worklist when the run began. */
   unlooked: number;
+  /** Requests made: a name whose first page held no exact hit and had more results takes more than one. */
   requested: number;
   /** Lookups stored, answered with a hit or without. */
   stored: number;
@@ -69,6 +77,14 @@ interface HitJson {
   matched_term?: string | null;
   current_synonymous_taxon_ids?: number[] | null;
 }
+
+interface PageJson {
+  total_results?: number;
+  results?: HitJson[];
+}
+
+/** Pages read for one name at most: 300 results, far more than any name in the list has had. */
+const MAX_PAGES = 10;
 
 export async function fetchPlantNames(
   conn: DuckDBConnection,
@@ -90,51 +106,74 @@ export async function fetchPlantNames(
   }
 
   const result: FetchPlantNamesResult = { unlooked: todo.length, requested: 0, stored: 0, errors: [], stoppedEarly: false };
+  const fail = (message: string) => {
+    result.errors.push(message);
+    opts.log?.(message);
+  };
   let failuresInARow = 0;
-  for (const { nameKey, expectedRank } of todo) {
-    if (result.requested >= cap) {
-      result.stoppedEarly = true;
-      break;
-    }
-    if (result.requested > 0 && delay > 0) await new Promise((r) => setTimeout(r, delay));
-    // After the pause, so a shutdown or a deadline during it starts no request.
-    if (opts.signal?.aborted) {
-      result.stoppedEarly = true;
-      break;
-    }
-    const url =
-      `${apiBase}?q=${encodeURIComponent(nameKey)}&taxon_id=${PLANTAE}&is_active=any` +
-      `&rank=${encodeURIComponent((ranksOf.get(expectedRank) ?? [expectedRank]).join(","))}` +
-      `&per_page=${HITS_PER_REQUEST}&locale=en`;
-    result.requested += 1;
+  names: for (const { nameKey, expectedRank } of todo) {
+    // Hits are stored page by page and the lookup row last, so a name whose later page fails is not
+    // recorded as answered; its hits are taken back out (below) and the name is asked again next run.
+    let total = 0;
+    let seen = 0;
     let failure: string | null = null;
-    let body = null as { total_results?: number; results?: HitJson[] } | null;
-    try {
-      const timeout = AbortSignal.timeout(opts.requestTimeoutMs ?? 30_000);
-      const response = await fetchImpl(url, {
-        headers: { Accept: "application/json" },
-        signal: opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout,
-      });
-      body = (await response.json().catch(() => null)) as typeof body;
-      if (!response.ok || !Array.isArray(body?.results)) {
-        failure = `${response.status}`;
-        // The API is asking us to stop: this run does.
-        if (response.status === 429) {
-          result.errors.push(`iNat API 429 on /taxa for "${nameKey}"`);
-          result.stoppedEarly = true;
-          break;
-        }
+    await clear(conn, nameKey, expectedRank);
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      if (result.requested >= cap) {
+        result.stoppedEarly = true;
+        await clear(conn, nameKey, expectedRank);
+        break names;
       }
-    } catch (err) {
+      if (result.requested > 0 && delay > 0) await new Promise((r) => setTimeout(r, delay));
+      // After the pause, so a shutdown or a deadline during it starts no request.
       if (opts.signal?.aborted) {
         result.stoppedEarly = true;
-        break;
+        await clear(conn, nameKey, expectedRank);
+        break names;
       }
-      failure = (err as Error).message;
+      const url =
+        `${apiBase}?q=${encodeURIComponent(nameKey)}&taxon_id=${PLANTAE}&is_active=any` +
+        `&rank=${encodeURIComponent((ranksOf.get(expectedRank) ?? [expectedRank]).join(","))}` +
+        `&per_page=${HITS_PER_REQUEST}&page=${page}&locale=en`;
+      result.requested += 1;
+      let body = null as PageJson | null;
+      try {
+        const timeout = AbortSignal.timeout(opts.requestTimeoutMs ?? 30_000);
+        const response = await fetchImpl(url, {
+          headers: { Accept: "application/json" },
+          signal: opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout,
+        });
+        body = (await response.json().catch(() => null)) as PageJson | null;
+        if (!response.ok || !Array.isArray(body?.results)) {
+          failure = `${response.status}`;
+          // The API is asking us to stop: this run does.
+          if (response.status === 429) {
+            fail(`iNat API 429 on /taxa for "${nameKey}"`);
+            result.stoppedEarly = true;
+            await clear(conn, nameKey, expectedRank);
+            break names;
+          }
+        }
+      } catch (err) {
+        if (opts.signal?.aborted) {
+          result.stoppedEarly = true;
+          await clear(conn, nameKey, expectedRank);
+          break names;
+        }
+        failure = (err as Error).message;
+      }
+      if (failure !== null) break;
+      const results = body!.results!;
+      total = body!.total_results ?? results.length;
+      seen += results.length;
+      await storeHits(conn, nameKey, expectedRank, results);
+      // Enough once the name's own taxon is among the hits, or when the results have run out.
+      if (results.length < HITS_PER_REQUEST || seen >= total || (await hasExactHit(conn, nameKey, expectedRank))) break;
     }
     if (failure !== null) {
       // Not recorded as an answer: the name is asked again next run.
-      result.errors.push(`iNat API ${failure} on /taxa for "${nameKey}"`);
+      await clear(conn, nameKey, expectedRank);
+      fail(`iNat API ${failure} on /taxa for "${nameKey}"`);
       failuresInARow += 1;
       if (failuresInARow >= FAILURES_IN_A_ROW) {
         result.stoppedEarly = true;
@@ -143,19 +182,28 @@ export async function fetchPlantNames(
       continue;
     }
     failuresInARow = 0;
-    await store(conn, nameKey, expectedRank, body!.total_results ?? body!.results!.length, body!.results!);
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results) VALUES ($1, $2, $3)", [nameKey, expectedRank, total]);
     result.stored += 1;
   }
   return result;
 }
 
-async function store(
-  conn: DuckDBConnection,
-  nameKey: string,
-  expectedRank: string,
-  total: number,
-  hits: HitJson[],
-): Promise<void> {
+/** Whether the hits stored so far include a taxon that is the name asked for (the one rule, in plant_name_hit_current). */
+async function hasExactHit(conn: DuckDBConnection, nameKey: string, expectedRank: string): Promise<boolean> {
+  const [[n]] = (await (
+    await conn.run("SELECT count(*) FROM plant_name_hit_current WHERE name_key = $1 AND expected_rank = $2", [nameKey, expectedRank])
+  ).getRows()) as [[bigint]];
+  return n > 0n;
+}
+
+/** Take out whatever an earlier or half-finished lookup of the name left, so it is asked from nothing. */
+async function clear(conn: DuckDBConnection, nameKey: string, expectedRank: string): Promise<void> {
+  for (const t of ["plant_name_lookup_hit_replacement", "plant_name_lookup_hit", "plant_name_lookup"]) {
+    await conn.run(`DELETE FROM ${t} WHERE name_key = $1 AND expected_rank = $2`, [nameKey, expectedRank]);
+  }
+}
+
+async function storeHits(conn: DuckDBConnection, nameKey: string, expectedRank: string, hits: HitJson[]): Promise<void> {
   const kept = hits.filter(
     (h) =>
       typeof h.id === "number" && typeof h.name === "string" && typeof h.rank === "string" &&
@@ -163,15 +211,6 @@ async function store(
   );
   await conn.run("BEGIN TRANSACTION");
   try {
-    // Asked again after a delete of the lookup row: start from nothing.
-    for (const t of ["plant_name_lookup_hit_replacement", "plant_name_lookup_hit", "plant_name_lookup"]) {
-      await conn.run(`DELETE FROM ${t} WHERE name_key = $1 AND expected_rank = $2`, [nameKey, expectedRank]);
-    }
-    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results) VALUES ($1, $2, $3)", [
-      nameKey,
-      expectedRank,
-      total,
-    ]);
     for (const h of kept) {
       await conn.run(
         `INSERT INTO plant_name_lookup_hit (name_key, expected_rank, inat_taxon_id, name, rank, is_active, matched_term)
@@ -196,7 +235,7 @@ async function store(
 /** Names asked about in one night: about six minutes at the pace kept. */
 export const NIGHTLY_PLANT_NAME_REQUESTS = 300;
 
-// CLI: pnpm inat:fetch-plant-names [db] — all of the worklist, about 45 minutes cold.
+// CLI: pnpm inat:fetch-plant-names [db] — all of the worklist, about 29 minutes cold.
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const instance = await openDuckDb(process.argv[2] ?? DEFAULT_DB);
   const conn = await instance.connect();

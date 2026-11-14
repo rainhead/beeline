@@ -1,7 +1,7 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseCsv } from "./corrections.js";
 import { openDuckDb } from "./db.js";
 import { DEFAULT_DB } from "./person-change.js";
@@ -28,6 +28,8 @@ import { DEFAULT_DB } from "./person-change.js";
  */
 export const OLD_BEELINE_LIST = "old-beeline";
 export const OLD_BEELINE_PLANT_LIST_FILE = "ingest/old-beeline-plant-list.csv";
+/** Where the file is, whatever directory the process was started in. */
+const OLD_BEELINE_PLANT_LIST_PATH = fileURLToPath(new URL(`../${OLD_BEELINE_PLANT_LIST_FILE}`, import.meta.url));
 
 const COLUMNS = ["Rank", "Family", "Scientific_name", "Synonym", "Common_name"] as const;
 
@@ -35,7 +37,7 @@ export interface LoadPlantListResult {
   /** False when the file's hash was the one already loaded. */
   changed: boolean;
   entries: number;
-  /** Rows with no scientific name, which cannot be keyed and are not loaded. */
+  /** Rows with no name to key them by (no Scientific_name, and no Family on a Family row), which are not loaded. */
   skippedWithoutName: number;
 }
 
@@ -51,7 +53,13 @@ export interface PlantListRow {
 export function parsePlantList(bytes: Buffer): { rows: PlantListRow[]; skippedWithoutName: number } {
   // A byte order mark would otherwise become part of the first header.
   const text = bytes.toString("utf8").replace(/^﻿/, "");
-  const [header, ...records] = parseCsv(text).filter((r) => !(r.length === 1 && r[0] === ""));
+  let parsed: string[][];
+  try {
+    parsed = parseCsv(text, { strict: true });
+  } catch (err) {
+    throw new Error(`plant list: ${(err as Error).message}`);
+  }
+  const [header, ...records] = parsed.filter((r) => !(r.length === 1 && r[0] === ""));
   if (header === undefined || COLUMNS.some((c, i) => header[i] !== c) || header.length !== COLUMNS.length) {
     throw new Error(`plant list: expected the header ${COLUMNS.join(",")}, found ${header?.join(",") ?? "nothing"}`);
   }
@@ -61,7 +69,9 @@ export function parsePlantList(bytes: Buffer): { rows: PlantListRow[]; skippedWi
   records.forEach((r, i) => {
     if (r.length !== COLUMNS.length) throw new Error(`plant list: row ${i + 2} has ${r.length} fields, expected ${COLUMNS.length}`);
     const cell = (j: number) => (r[j]!.trim() === "" ? null : r[j]!.trim());
-    const name = cell(2);
+    // One row files a family under the Family column and leaves the name
+    // empty (Family,Ericaceae,,,heath): the family is then its own name.
+    const name = cell(2) ?? (cell(0) === "Family" ? cell(1) : null);
     if (name === null) {
       skippedWithoutName += 1;
       return;
@@ -77,7 +87,7 @@ export async function loadPlantList(
   conn: DuckDBConnection,
   opts: { path?: string; listKey?: string } = {},
 ): Promise<LoadPlantListResult> {
-  const path = opts.path ?? OLD_BEELINE_PLANT_LIST_FILE;
+  const path = opts.path ?? OLD_BEELINE_PLANT_LIST_PATH;
   const listKey = opts.listKey ?? OLD_BEELINE_LIST;
   const bytes = await readFile(path);
   const hash = createHash("sha256").update(bytes).digest("hex");
@@ -103,7 +113,7 @@ export async function loadPlantList(
       `INSERT INTO plant_list (list_key, source_file, content_hash) VALUES ($1, $2, $3)
        ON CONFLICT (list_key) DO UPDATE SET source_file = excluded.source_file,
          content_hash = excluded.content_hash, loaded_at = now()`,
-      [listKey, path, hash],
+      [listKey, opts.path ?? OLD_BEELINE_PLANT_LIST_FILE, hash],
     );
     await conn.run("COMMIT");
   } catch (err) {
@@ -111,6 +121,41 @@ export async function loadPlantList(
     throw err;
   }
   return { changed: true, entries: rows.length, skippedWithoutName };
+}
+
+/**
+ * The boot's load (src/app/main.ts), here so a test can run it. A list that
+ * cannot be read costs common names and not the service, so a failure is
+ * reported and swallowed; the boot goes on. When the list changed, says how
+ * many of its names iNaturalist has not been asked about yet, which is the
+ * work the plant-names job has ahead of it.
+ */
+export async function loadPlantListAtBoot(
+  connect: () => Promise<DuckDBConnection>,
+  opts: { path?: string; log?: (message: string) => void; report?: (err: unknown) => void } = {},
+): Promise<LoadPlantListResult | null> {
+  const log = opts.log ?? console.log;
+  const report = opts.report ?? (() => {});
+  try {
+    const conn = await connect();
+    try {
+      const loaded = await loadPlantList(conn, { path: opts.path });
+      if (loaded.changed) {
+        const [[unlooked]] = (await (await conn.run("SELECT count(*) FROM plant_name_unlooked")).getRows()) as [[bigint]];
+        log(
+          `plant list loaded: ${loaded.entries} entries (${loaded.skippedWithoutName} without a name skipped); ` +
+            `${unlooked} name(s) not yet looked up in iNaturalist, which the plant-names job does a night at a time`,
+        );
+      }
+      return loaded;
+    } finally {
+      conn.closeSync();
+    }
+  } catch (err) {
+    console.error(`could not load the plant list: ${String(err)}`);
+    report(err);
+    return null;
+  }
 }
 
 // CLI: pnpm plant:load [db]

@@ -2,6 +2,7 @@ import { openDuckDb } from "./db.js";
 import { rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { applySchema } from "./schema.js";
+import { loadPlantList } from "./load-plant-list.js";
 import { refuseToReplacePrintedStore, StoreRefused } from "./registry-guard.js";
 
 // The schema lives in ./schema.ts; re-exported here because callers (tests,
@@ -22,6 +23,10 @@ export async function buildStore(target: string): Promise<string[]> {
   const conn = await instance.connect();
   try {
     await applySchema(conn);
+    // The plant list is a file in git and needs no network, so a rebuilt
+    // store has its common names without booting the app (the app does the
+    // same at every boot, and finds the file unchanged).
+    await loadPlantList(conn);
     // A database built from the schema is current by construction (ADR 0006):
     // stamp every migration so none of them ever runs against it.
     const { baseline } = await import("./migrate.js");

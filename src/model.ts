@@ -259,6 +259,8 @@ export interface PlantNameNormalView {
 export interface PlantExpectedRankView {
   expected_rank: string;
   inat_rank: string;
+  /** Counts only where the name has no hit at the expected rank's own ranks. */
+  fallback: boolean;
 }
 
 export interface PlantListEntryNameView {
@@ -277,6 +279,10 @@ export interface PlantNameHitCurrentView {
   name_key: string;
   expected_rank: string;
   hit_taxon_id: BigIntCol;
+  hit_is_active: boolean;
+  /** The hit's own name is the name asked for, and not only an older name of it that matched. */
+  own_name: boolean;
+  /** Where the hit stands for a taxon: itself, its replacements, or NULL for a retired taxon with none. */
   current_taxon_id: BigIntCol | null;
 }
 
@@ -315,13 +321,20 @@ export interface PlantListTaxonSharedView {
   scientific_names: string;
 }
 
+/** Entries whose common-name cell lists the members of a group; they give no common name. */
+export interface PlantListEntryGroupCellView {
+  list_key: string;
+  scientific_name: string;
+  common_name: string;
+}
+
 export interface PlantListEntryCommonNameView {
   list_key: string;
   scientific_name: string;
   common_name: string;
 }
 
-/** A cached taxon's common name: the nearest list entry's, else iNaturalist's for Oregon. */
+/** A cached taxon's common name: its own list entry's, else iNaturalist's for Oregon, else the nearest coarser list entry's. */
 export interface PlantTaxonCommonNameView {
   inat_taxon_id: BigIntCol;
   common_name: string;
@@ -1698,6 +1711,7 @@ export interface Database {
   plant_list_entry_taxon: PlantListEntryTaxonView;
   plant_list_entry_unmatched: PlantListEntryUnmatchedView;
   plant_list_taxon_shared: PlantListTaxonSharedView;
+  plant_list_entry_group_cell: PlantListEntryGroupCellView;
   plant_list_entry_common_name: PlantListEntryCommonNameView;
   plant_taxon_common_name: PlantTaxonCommonNameView;
   inat_taxon_recheck: InatTaxonRecheckView;

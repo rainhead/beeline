@@ -55,7 +55,8 @@ CREATE TABLE plant_name_lookup (
 COMMENT ON TABLE plant_name_lookup IS 'A question put to iNaturalist''s taxa search (v1 /taxa, is_active=any, under Plantae) for a normalised name at an expected rank, and when. One row even when the answer was nothing. Filled over the network by src/fetch-plant-names.ts and carried by db:reseed, since nothing in the store can recompute it. Delete a row to ask again.';
 COMMENT ON COLUMN plant_name_lookup.name_key IS 'The normalised name that was searched for (plant_name_normal.name_key).';
 COMMENT ON COLUMN plant_name_lookup.expected_rank IS 'The rank the name''s shape implies (plant_list_entry_name.expected_rank); the search was restricted to the iNaturalist ranks that stand for it (plant_expected_rank).';
-COMMENT ON COLUMN plant_name_lookup.total_results IS 'How many taxa iNaturalist said matched, which can be more than the hits kept: only the first 30 are read.';
+COMMENT ON COLUMN plant_name_lookup.total_results IS 'How many taxa iNaturalist said matched, which can be more than the hits kept: pages of 30 are read until a hit is the name asked for or the results run out.';
+COMMENT ON COLUMN plant_name_lookup.looked_up_at IS 'When iNaturalist answered. A name whose taxon the taxon cache read as retired after this is asked again (plant_name_unlooked).';
 
 CREATE TABLE plant_name_lookup_hit (
   name_key      TEXT NOT NULL,
@@ -67,8 +68,11 @@ CREATE TABLE plant_name_lookup_hit (
   matched_term  TEXT NOT NULL,
   PRIMARY KEY (name_key, expected_rank, inat_taxon_id)
 );
-COMMENT ON TABLE plant_name_lookup_hit IS 'A taxon iNaturalist returned for a lookup, as it was returned: name and rank as they are today, and matched_term, the name or older name that the search matched. Most hits are not the name asked for (a search for a genus returns its species); plant_name_hit_current keeps the ones whose name or matched_term is exactly the name.';
+COMMENT ON TABLE plant_name_lookup_hit IS 'A taxon iNaturalist returned for a lookup, as it was returned: name and rank as they are today, and matched_term, the name or older name that the search matched. Most hits are not the name asked for (a search for a genus returns its species); plant_name_hit_current keeps the ones that are the name asked for.';
 COMMENT ON COLUMN plant_name_lookup_hit.inat_taxon_id IS 'An iNaturalist taxon id; need not be in inat_taxon yet.';
+COMMENT ON COLUMN plant_name_lookup_hit.name IS 'The scientific name iNaturalist uses for the taxon today, as it was returned (with the hybrid sign, without var. or ssp.).';
+COMMENT ON COLUMN plant_name_lookup_hit.rank IS 'The taxon''s rank as iNaturalist writes it: species, hybrid, subspecies, genus, section and so on.';
+COMMENT ON COLUMN plant_name_lookup_hit.is_active IS 'False where iNaturalist had retired the taxon when it answered; the replacements it named are in plant_name_lookup_hit_replacement.';
 COMMENT ON COLUMN plant_name_lookup_hit.matched_term IS 'iNaturalist''s matched_term: the name of this taxon, or of an older name of it, that the search matched.';
 
 CREATE TABLE plant_name_lookup_hit_replacement (

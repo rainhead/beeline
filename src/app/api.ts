@@ -4,6 +4,7 @@ import type { Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { hashKey, keyRateLimiter, keyRef, resolveKey, type KeyHolder } from "./api-keys.js";
 import { BadBody, check, parseObject, referenceOf, registerCorrectionRoutes, smallBody } from "./api-corrections.js";
+import { ReadQueue } from "./api-queue.js";
 import { registerReadRoutes, type ReadDeps } from "./api-read.js";
 import { describeApi } from "./api-description.js";
 import { atlasOptions } from "./listings.js";
@@ -55,8 +56,15 @@ export interface ApiDeps {
   db: Kysely<Database>;
   /** Whether a person holds staff rights now (person_admin; everyone in development). */
   isStaff: (personId: number) => Promise<boolean>;
-  /** How often one key may ask; the default unless a test says otherwise. */
+  /**
+   * How often one person may ask, all their keys together; the default unless
+   * a test says otherwise.
+   */
   limiter?: ReturnType<typeof keyRateLimiter>;
+  /** The lower limit on reading listings, counts and records, per person (60 a minute by default). */
+  readLimiter?: ReturnType<typeof keyRateLimiter>;
+  /** The line the read endpoints share (two at a time, twenty waiting by default). */
+  readQueue?: ReadQueue;
   /**
    * What the sample corrections need (src/app/api-corrections.ts): the
    * functions' dependencies, and the catalogue for the reasons they store
@@ -120,8 +128,25 @@ const requireStaff: MiddlewareHandler<ApiEnv> = async (c, next) => {
   await next();
 };
 
-export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs, corrections, read }: ApiDeps): Hono<ApiEnv> {
+/** Whether a request reads records through the endpoints that cost the store most: the listings, counts and records. */
+const isRead = (c: Context) => c.req.method === "GET" && /^(\/api\/v1)?\/(samples|specimens)(\/|$)/.test(new URL(c.req.url).pathname);
+
+/** How long the owner of a working key is remembered, so that a key's requests are counted against its person before the store is asked. */
+const OWNER_MEMORY_MS = 60_000;
+
+export function createApi({
+  db,
+  isStaff,
+  limiter = keyRateLimiter(),
+  readLimiter = keyRateLimiter({ limit: 60 }),
+  readQueue = new ReadQueue(),
+  jobs,
+  corrections,
+  read,
+}: ApiDeps): Hono<ApiEnv> {
   const api = new Hono<ApiEnv>();
+  /** key reference → who owns it, for as long as that is remembered. */
+  const owners = new Map<string, { owner: string; until: number }>();
 
   api.onError((err, c) => {
     if (err instanceof HTTPException) return err.getResponse();
@@ -166,24 +191,61 @@ export function createApi({ db, isStaff, limiter = keyRateLimiter(), jobs, corre
     if (key === null) {
       return unauthorized(c, "Send your API key in an Authorization header: Authorization: Bearer <key>.");
     }
-    // The limit is counted before the key is looked up, so a key that has
-    // used up its minute costs the store nothing more: a script in a loop is
-    // answered from memory. The reference is the start of the key's hash,
-    // which is what the lookup would find it by.
+    // The limit is counted before the key is looked up, so a key over its
+    // limit costs the store nothing more: a script in a loop is answered from
+    // memory. It is counted against the key's person, so that ten keys share
+    // one budget. Who owns a key is known only after a lookup, so the owner of
+    // each working key is remembered in memory for a minute after it, and
+    // requests in that time are counted against the owner without asking the
+    // store. A key not remembered is counted against its own reference, which
+    // is the start of its hash, until its first lookup succeeds.
     const ref = keyRef(key);
-    const wait = limiter.take(ref);
+    const now = Date.now();
+    if (owners.size > 1000) for (const [k, o] of owners) if (o.until <= now) owners.delete(k);
+    const remembered = owners.get(ref);
+    const known = remembered !== undefined && remembered.until > now ? remembered.owner : null;
+    const budget = known === null ? ref : `person:${known}`;
+    const wait = limiter.take(budget);
     if (wait > 0) {
       c.header("retry-after", String(wait));
       return apiError(c, 429, "too many requests", `This key is asking too often. Wait ${wait} seconds.`);
     }
+    if (isRead(c)) {
+      const readWait = readLimiter.take(budget);
+      if (readWait > 0) {
+        c.header("retry-after", String(readWait));
+        return apiError(c, 429, "too many requests", `Reading records is limited to 60 requests a minute for each person, all their keys together. Wait ${readWait} seconds.`);
+      }
+    }
     const holder = await resolveKey(db, key);
     if (holder === null) {
-      limiter.forget(ref);
+      owners.delete(ref);
+      if (known === null) {
+        limiter.forget(ref);
+        readLimiter.forget(ref);
+      }
       return unauthorized(c, "This API key does not work. It may have expired or been revoked.");
     }
+    owners.set(ref, { owner: String(holder.inatUserId), until: now + OWNER_MEMORY_MS });
     c.set("key", holder);
     c.set("staff", holder.scope === "staff" && (await isStaff(holder.personId)));
     await next();
+  });
+
+  // The read endpoints share one short line, whoever asks. A turn is given
+  // back on every path, an error and a client that went away included.
+  api.use(async (c, next) => {
+    if (!isRead(c)) return next();
+    const release = await readQueue.acquire(c.req.raw.signal);
+    if (release === null) {
+      c.header("retry-after", "2");
+      return apiError(c, 429, "too many requests", "Beeline is answering as many readers as it can at once. Try again in a couple of seconds.");
+    }
+    try {
+      await next();
+    } finally {
+      release();
+    }
   });
 
   // Who the key belongs to and what it may do: the first thing a program

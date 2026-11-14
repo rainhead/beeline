@@ -14,6 +14,7 @@ import { join } from "node:path";
 import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { refreshPlantNames } from "../src/app/jobs/registry.js";
+import type { JobContext } from "../src/app/jobs/framework.js";
 import { parseCsv } from "../src/corrections.js";
 import { fetchPlantNames } from "../src/fetch-plant-names.js";
 import { loadPlantList, loadPlantListAtBoot, OLD_BEELINE_PLANT_LIST_FILE, parsePlantList } from "../src/load-plant-list.js";
@@ -365,6 +366,25 @@ describe("stopping early, dead ends, paging and ranks (synthetic answers)", () =
     const again = await fetchPlantNames(conn, { fetchImpl: flaky, requestDelayMs: 0 });
     expect(again.stoppedEarly).toBe(false);
     expect(again.stored).toBe(1); // only 5 names: fail, fail, ok, fail, fail
+  });
+
+  test("the job records its names step as failed after a 429, though the run carries on, and not after a deadline", async () => {
+    await addEntries(["Foo bar", "Species", null]);
+    const recorded: Array<[string, boolean]> = [];
+    const step: JobContext["step"] = async (label, fn, failed) => {
+      const result = await fn();
+      recorded.push([label, failed ? failed(result) : false]);
+      return result;
+    };
+    const detail = await refreshPlantNames(conn, { fetchImpl: fake(() => new Response("{}", { status: 429 })), requestDelayMs: 0, step });
+    expect(detail).toContain("429");
+    expect(recorded[0]).toEqual(["ask for plant names", true]);
+
+    recorded.length = 0;
+    const hang = (async (_input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener("abort", () => reject(new Error("aborted"))))) as typeof fetch;
+    await refreshPlantNames(conn, { fetchImpl: hang, requestDelayMs: 0, deadlineMs: 20, step });
+    expect(recorded[0]).toEqual(["ask for plant names", false]);
   });
 
   test("an aborted signal stops the run before the next request, and a deadline stops the job's run", async () => {

@@ -212,8 +212,12 @@ export async function refreshPlantNames(
   const step: JobContext["step"] = opts.step ?? ((_label, fn) => fn());
   const parts: string[] = [];
   try {
-    const r = await step("ask for plant names", () =>
-      fetchPlantNames(conn, { maxRequests: NIGHTLY_PLANT_NAME_REQUESTS, ...opts, signal }),
+    // A request error (a 429, a run of failures) leaves the run going but the
+    // step recorded as failed, so /jobs and the menu say so (beeline-222u).
+    const r = await step(
+      "ask for plant names",
+      () => fetchPlantNames(conn, { maxRequests: NIGHTLY_PLANT_NAME_REQUESTS, ...opts, signal }),
+      (result) => result.errors.length > 0,
     );
     parts.push(
       r.unlooked === 0
@@ -225,9 +229,18 @@ export async function refreshPlantNames(
     if (r.requested > 0) {
       // The same fetch options, so a test's or a run's own fetch reaches the taxa too; not apiBase, which is the names' endpoint.
       const { fetchImpl, requestDelayMs, requestTimeoutMs } = opts;
+      let taxaFailed = false;
       parts.push(
-        await step("fetch taxa the names reached", () =>
-          refreshInatTaxa(conn, { fetchImpl, requestDelayMs, requestTimeoutMs, signal: opts.signal, skipRefresh: true }),
+        await step(
+          "fetch taxa the names reached",
+          () =>
+            refreshInatTaxa(conn, {
+              fetchImpl, requestDelayMs, requestTimeoutMs, signal: opts.signal, skipRefresh: true,
+              onFailure: () => {
+                taxaFailed = true;
+              },
+            }),
+          () => taxaFailed,
         ),
       );
     }

@@ -13,14 +13,14 @@
  * prototype/volunteer-determinations).
  */
 import { html, LitElement, nothing, type TemplateResult } from "lit";
-import type { EntryRow, EntryValue } from "../../determine.js";
+import type { EntryRow, EntryValue, Located } from "../../determine.js";
 import type { DeterminePageData } from "../../views/determine.js";
 import { messagesFor } from "../../messages/index.js";
 import { NumberIndex, pastedList, type NumberProblem } from "../../../determination-numbers.js";
 import { problemText } from "./problems.js";
 import { loadTaxa, nameTemplate, type PickerTaxon } from "./picker.js";
 import "./picker.js";
-import { deselect, emptySelection, markUsed, selectMore, startsNew, undoUse, type Selection } from "./selection.js";
+import { deselect, emptySelection, holdsWork, markUsed, selectMore, startsNew, undoUse, type Selection } from "./selection.js";
 
 const m = messagesFor(null);
 const d = m.determine;
@@ -61,7 +61,8 @@ class DetermineGrid extends LitElement {
   declare saving: Set<number>;
   declare failed: Map<number, Write>;
   /** The last thing the number boxes or a bulk change did, in words. */
-  declare message: string;
+  /** Text, or for a number found in another year while rows are ticked, text with a button. */
+  declare message: string | TemplateResult;
   declare problems: { text: string; why: string }[];
   declare flash: number | null;
 
@@ -116,6 +117,15 @@ class DetermineGrid extends LitElement {
     for (const e of this.querySelectorAll(".determine-pinned, .determine-bulk")) this.#pinned.observe(e);
     window.addEventListener("resize", this.#clearPinned);
     this.#clearPinned();
+    // Opened at one specimen (?specimen=): select it as the find box would,
+    // after the first render so the status line announces it, and put the
+    // cursor back in the find box for the next number.
+    const focus = this.data.focus;
+    if (focus !== null && focus !== undefined)
+      void this.updateComplete.then(() => {
+        this.#select(focus, "");
+        this.querySelector<HTMLInputElement>(".determine-jump input")?.focus({ preventScroll: true });
+      });
   }
 
   override disconnectedCallback() {
@@ -346,23 +356,96 @@ class DetermineGrid extends LitElement {
     }
   }
 
+  /** Counts searches, so a lookup answered after a newer search is ignored. */
+  #search = 0;
+
   #jump(input: HTMLInputElement) {
     const typed = input.value.trim();
     if (typed === "") return;
+    this.#search++;
     const entry = new NumberIndex(this.rows).resolve(typed);
-    if (entry.problem !== null || entry.ids.length !== 1) {
-      this.message =
-        entry.problem?.code === "ambiguous" ? problemText(entry.problem) : d.jump.notHere(typed, this.data.season ?? 0);
+    if (entry.problem?.code === "ambiguous") {
+      this.message = problemText(entry.problem);
       return;
     }
-    const id = entry.ids[0]!;
+    if (entry.problem === null && entry.ids.length > 1) {
+      this.message = d.jump.oneNumber;
+      return;
+    }
+    if (entry.problem !== null) {
+      void this.#locate(typed);
+      return;
+    }
+    input.value = "";
+    this.#select(entry.ids[0]!, typed);
+  }
+
+  /** Select a row of this year, scroll it to the middle of the window, and say so. */
+  #select(id: number, typed: string) {
     const index = this.rows.findIndex((r) => r.id === id);
+    if (index < 0) return;
     if (index >= this.limit) this.limit = index + CHUNK;
     this.message = d.jump.found(this.rows[index]!.fieldNumber ?? typed);
     this.flash = id;
     this.selection = selectMore(this.selection, [id], id);
-    input.value = "";
     void this.updateComplete.then(() => this.querySelector(`[data-row="${id}"]`)?.scrollIntoView({ block: "center" }));
+  }
+
+  /**
+   * A number not in this year: ask the server, which looks in every year,
+   * and open the year it is in with the specimen selected (beeline-mjml).
+   * Drafts save as they are made, so leaving the page loses nothing.
+   */
+  async #locate(typed: string) {
+    const search = this.#search;
+    this.message = d.jump.looking(typed);
+    try {
+      const res = await fetch(`/determinations/locate?number=${encodeURIComponent(typed)}`, { credentials: "same-origin" });
+      if (!res.ok) throw new Error(String(res.status));
+      const found = (await res.json()) as Located;
+      if (search !== this.#search) return;
+      if ("several" in found) {
+        this.message = d.jump.oneNumber;
+        return;
+      }
+      if ("problem" in found) {
+        this.message = problemText(found.problem);
+        return;
+      }
+      // Here the box adds what it finds to what is ticked, so the reader may
+      // mean to name them together. Moving would drop the ticks without a
+      // word, so ask instead.
+      if (holdsWork(this.selection)) {
+        this.message = html`${d.jump.elsewhere(typed, found.season)}
+          <button type="button" class="outlined small" @click=${() => void this.#leaveFor(found.specimen, found.season, typed, ++this.#search)}>
+            ${d.jump.open(found.season)}</button>`;
+        return;
+      }
+      await this.#leaveFor(found.specimen, found.season, typed, search);
+    } catch {
+      if (search === this.#search) this.message = d.jump.lookupFailed;
+    }
+  }
+
+  /**
+   * Open another year at one specimen. Leave only once every change made
+   * here has saved: wait for writes still in flight, including any made while
+   * waiting, and stay if any failed, so it can be tried again. A newer search
+   * started meanwhile cancels the move.
+   */
+  async #leaveFor(specimen: number, season: number, typed: string, search: number) {
+    let queue: Promise<unknown>;
+    do {
+      queue = this.#queue;
+      await queue;
+    } while (queue !== this.#queue || this.#pending.size > 0);
+    if (search !== this.#search) return;
+    if (this.failed.size > 0) {
+      this.message = d.jump.unsaved(typed, season);
+      return;
+    }
+    // determineSpecimenHref's address, written out: the view module is server code.
+    window.location.assign(`/determinations?specimen=${specimen}`);
   }
 
   #sexControl(animalId: number | null, current: EntryValue | null, onPick: (sex: EntryValue["sex"], caste: EntryValue["caste"]) => void, label: string, disabled = false) {

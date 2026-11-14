@@ -2,7 +2,7 @@ import { sql, type Kysely, type RawBuilder } from "kysely";
 import type { Database, DraftCaste, DraftSex } from "../model.js";
 import { BEE_FAMILIES } from "../bee-families.js";
 import { observationGone } from "./listings.js";
-import { NumberIndex, type NumberEntry } from "../determination-numbers.js";
+import { NumberIndex, type NumberEntry, type NumberProblem } from "../determination-numbers.js";
 
 /**
  * Volunteers naming their own specimens (beeline-bcq): what the entry screen
@@ -395,6 +395,39 @@ export async function addToBatch(db: Kysely<Database>, personId: number, determi
     already: named.length - fresh.length,
     named,
   };
+}
+
+/**
+ * A specimen found by its field number and the collection year it is listed
+ * under; a range or a list, which names several (the find box takes one); or
+ * what was wrong with the number.
+ */
+export type Located = { specimen: number; season: number } | { several: number } | { problem: NumberProblem };
+
+/**
+ * Finds one specimen by a typed field number, or its last few digits, among
+ * every specimen the person can reach in any year (beeline-mjml). The By
+ * season view looks in the year it shows first; this is where it looks when
+ * the number is in another, so finding specimens from several years does not
+ * mean switching the menu between them.
+ */
+export async function locateSpecimen(db: Kysely<Database>, personId: number, typed: string): Promise<Located> {
+  const numbered = await sql<{ id: number; fieldNumber: string | null }>`
+    SELECT entity_id AS id, field_number AS "fieldNumber" FROM specimen WHERE sample_id IN ${reach(personId)}`.execute(db);
+  const entry = new NumberIndex(numbered.rows).resolve(typed.trim());
+  if (entry.problem !== null) return { problem: entry.problem };
+  if (entry.ids.length !== 1) return { several: entry.ids.length };
+  const id = entry.ids[0]!;
+  const season = await seasonOf(db, personId, id);
+  return season === null ? { problem: { code: "noSpecimens" } } : { specimen: id, season };
+}
+
+/** The collection year of a specimen the person can reach, or null if they cannot reach it. */
+export async function seasonOf(db: Kysely<Database>, personId: number, specimenId: number): Promise<number | null> {
+  const result = await sql<{ season: number }>`
+    SELECT ss.season FROM specimen sp JOIN sample_season ss ON ss.sample_id = sp.sample_id
+    WHERE sp.entity_id = ${specimenId} AND sp.sample_id IN ${reach(personId)}`.execute(db);
+  return result.rows[0]?.season ?? null;
 }
 
 /** Add specimens already on screen (ticked in the by-sample view) to the batch. */

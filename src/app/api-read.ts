@@ -23,7 +23,8 @@ import {
   QC_STATUSES,
   SAMPLE_CSV_HEADER,
   sampleCsvRow,
-  SORT_KEYS,
+  SAMPLE_SORT_KEYS,
+  SPECIMEN_SORT_KEYS,
   SPECIMEN_CSV_HEADER,
   specimenCsvRow,
   type CountGroup,
@@ -129,6 +130,8 @@ function readQuery(
   params: URLSearchParams,
   allowed: readonly string[],
   atlasCodes: readonly string[],
+  /** The sorts this listing has: a sort only the other listing has is refused, not quietly replaced by the default order. */
+  sortKeys: readonly string[],
 ): { query: ListingQuery; exact: ExactLookup } {
   const seen = new Set<string>();
   for (const [name] of params) {
@@ -150,7 +153,7 @@ function readQuery(
   oneOf("det", DETERMINATION_STATES);
   oneOf("labels", LABEL_FILTERS);
   oneOf("kind", KIND_FILTERS);
-  oneOf("sort", SORT_KEYS);
+  oneOf("sort", sortKeys);
   oneOf("dir", ["asc", "desc"]);
   for (const name of ["from", "to"]) {
     const v = params.get(name);
@@ -367,6 +370,7 @@ export function registerReadRoutes(api: Hono<ApiEnv>, db: Kysely<Database>, read
 
   for (const kind of ["samples", "specimens"] as const) {
     const header = kind === "samples" ? SAMPLE_CSV_HEADER : SPECIMEN_CSV_HEADER;
+    const sortKeys = kind === "samples" ? SAMPLE_SORT_KEYS : SPECIMEN_SORT_KEYS;
 
     // The listing, one page of it: what the page shows, as data.
     api.get(`/${kind}`, async (c) => {
@@ -374,7 +378,7 @@ export function registerReadRoutes(api: Hono<ApiEnv>, db: Kysely<Database>, read
       let parsed: ReturnType<typeof readQuery>;
       let pageSize: number;
       try {
-        parsed = readQuery(params(c), LISTING_PARAMETERS, await atlasCodes());
+        parsed = readQuery(params(c), LISTING_PARAMETERS, await atlasCodes(), sortKeys);
         pageSize = readPageSize(params(c));
       } catch (err) {
         return refuse(c, err);
@@ -415,7 +419,7 @@ export function registerReadRoutes(api: Hono<ApiEnv>, db: Kysely<Database>, read
       let parsed: ReturnType<typeof readQuery>;
       let group: CountGroup | undefined;
       try {
-        parsed = readQuery(params(c), COUNT_PARAMETERS, await atlasCodes());
+        parsed = readQuery(params(c), COUNT_PARAMETERS, await atlasCodes(), sortKeys);
         group = readGroup(params(c));
       } catch (err) {
         return refuse(c, err);

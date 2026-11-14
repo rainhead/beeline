@@ -187,6 +187,26 @@ export const SORT_KEYS = [
   "determiner",
   "determined",
 ] as const;
+/**
+ * The sorts each listing has a column for (`sampleOrder` and `specimenOrder`
+ * below). A sort the listing lacks falls back to the default order on the
+ * page, where a URL is sometimes typed by hand; the API refuses it, since a
+ * program that asked for an order and silently got another has no way to
+ * know.
+ */
+export const SAMPLE_SORT_KEYS = ["date", "number", "collector", "place", "host", "specimens", "flags", "atlas"] as const satisfies readonly SortKey[];
+export const SPECIMEN_SORT_KEYS = [
+  "date",
+  "field",
+  "number",
+  "collector",
+  "place",
+  "host",
+  "determination",
+  "determiner",
+  "determined",
+  "atlas",
+] as const satisfies readonly SortKey[];
 export type SortDirection = "asc" | "desc";
 export const DEFAULT_SORT: SortKey = "date";
 /** Newest first is the default for dates; everything else reads A–Z or smallest first. */

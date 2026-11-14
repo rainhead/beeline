@@ -14,6 +14,8 @@ import {
   SAMPLE_CSV_HEADER,
   SORT_KEYS,
   SPECIMEN_CSV_HEADER,
+  SAMPLE_SORT_KEYS,
+  SPECIMEN_SORT_KEYS,
 } from "../src/app/listings.js";
 import { gatherSample } from "../src/app/record.js";
 import { createApp } from "../src/app/server.js";
@@ -354,6 +356,13 @@ describe("the listings", () => {
       const body = await w.json(w.keys.alice, `/samples?${bad}`, 400);
       expect(body.message, bad).toContain(bad.split("=")[0]!);
     }
+    // A sort only the other listing has is refused too: the page falls back to
+    // the default order, and a program would not know it had.
+    for (const path of ["/samples?sort=field", "/samples?sort=determined", "/specimens?sort=flags", "/specimens?sort=specimens"]) {
+      expect((await w.json(w.keys.alice, path, 400)).message, path).toContain("sort");
+    }
+    await w.json(w.keys.alice, "/samples?sort=flags");
+    await w.json(w.keys.alice, "/specimens?sort=field");
     // The page ignores the same things, which is why this is said in the docs.
     who(w, "alice");
     expect((await w.app.request("/samples?colour=red&qc=flaged")).status).toBe(200);
@@ -600,6 +609,23 @@ describe("the description at /api/v1", () => {
     expect(body).toMatchObject({ name: "Beeline API", version: "v1", base_url: `${ORIGIN}/api/v1` });
   });
 
+  it("says for each listing the sorts it has, who reads as staff, and the limits as they are counted", async () => {
+    const w = await world();
+    const body = await w.json(w.keys.alice, "");
+    const endpoint = (route: string) => body.endpoints.find((e: any) => e.method === "GET" && e.route === route);
+    expect(endpoint("/samples").parameters.sort.values).toEqual([...SAMPLE_SORT_KEYS]);
+    expect(endpoint("/specimens").parameters.sort.values).toEqual([...SPECIMEN_SORT_KEYS]);
+    expect(body.reading.rule).toContain("Only a staff key reads as staff");
+    // Per person, with a lower limit for reading and the line reads share.
+    expect(body.limits).toMatchObject({
+      requests_per_minute_per_person: 120,
+      read_requests_per_minute_per_person: 60,
+      reads_in_flight: 2,
+      reads_waiting: 20,
+    });
+    expect(body.limits.requests_per_minute_per_key).toBeUndefined();
+  });
+
   it("lists every route the router registers, and no other", async () => {
     const w = await world();
     const api = createApi({ db: w.db, isStaff: async () => false, corrections: undefined, read: { changesPath: "", origin: ORIGIN } });
@@ -614,7 +640,7 @@ describe("the description at /api/v1", () => {
     const body = await w.json(w.keys.alice, "");
     const samples = body.endpoints.find((e: any) => e.method === "GET" && e.route === "/samples");
     expect(samples.path).toBe("/api/v1/samples");
-    expect(samples.parameters.sort.values).toEqual([...SORT_KEYS]);
+    expect(samples.parameters.sort.values).toEqual([...SAMPLE_SORT_KEYS]);
     expect(samples.parameters.flag.values).toEqual([...QC_RULE_NAMES]);
     expect(samples.parameters.scope.values).toEqual(expect.arrayContaining(["mine", "all", "outside", "OBA", "WaBA"]));
     expect(Object.keys(samples.parameters)).toEqual(expect.arrayContaining(["page_size", "inat_observation_id", "field_number", "catalog_number", "sample_number"]));

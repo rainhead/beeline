@@ -565,3 +565,38 @@ describe("the limits of one run", () => {
     await expect(refreshInatTaxa(conn, { fetchImpl: stopping, requestDelayMs: 0, signal: controller.signal })).rejects.toThrow(/shutting down/);
   });
 });
+
+describe("the common names follow the cache (schema/115)", () => {
+  // An entry of the old plant list for Symphyotrichum chilense, as its lookup came to it.
+  async function listsAster() {
+    await conn.run("INSERT INTO plant_list_entry (list_key, scientific_name, rank, common_name) VALUES ('old-beeline', 'Symphyotrichum chilense', 'Species', 'Pacific aster, Chilean aster')");
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('symphyotrichum chilense', 'species', 1, true)");
+    await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('symphyotrichum chilense', 'species', 56861, 'Symphyotrichum chilense', 'species', true, 'Symphyotrichum chilense')");
+  }
+  const copy = () => q("SELECT inat_taxon_id, common_name, source FROM plant_common_name_cache WHERE inat_taxon_id = 56861");
+
+  test("a run that reads a taxon refreshes the copy of its name, so a page finds it", async () => {
+    await listsAster();
+    await host(1, 56861);
+    expect(await copy()).toEqual([]);
+    await fetchInatTaxa(conn, { ...opts(), skipRefresh: true });
+    expect(await copy()).toEqual([[56861n, "Pacific aster", "list"]]);
+    expect(await q("SELECT count(*) FROM plant_common_name_stale")).toEqual([[0n]]);
+  });
+
+  test("a run that stops at its deadline refreshes the copy for the batches it stored", async () => {
+    await listsAster();
+    await host(1, 56861);
+    await manyHosts(70);
+    const controller = new AbortController();
+    const inner = api();
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const response = await inner(input, init);
+      controller.abort(new Error("deadline"));
+      return response;
+    }) as typeof fetch;
+    await expect(fetchInatTaxa(conn, { fetchImpl, requestDelayMs: 0, signal: controller.signal, skipRefresh: true })).rejects.toThrow(/deadline/);
+    expect(await copy()).toEqual([[56861n, "Pacific aster", "list"]]);
+    expect(await q("SELECT count(*) FROM plant_common_name_stale")).toEqual([[0n]]);
+  });
+});

@@ -2,6 +2,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { pathToFileURL } from "node:url";
 import { openDuckDb } from "./db.js";
 import { DEFAULT_DB } from "./person-change.js";
+import { thenRefreshPlantCommonNames } from "./plant-common-names.js";
 
 /**
  * Ask iNaturalist which taxon each name of the old plant list is
@@ -111,6 +112,14 @@ const REFUSAL_STATUSES = new Set([400, 414, 422]);
 export async function fetchPlantNames(
   conn: DuckDBConnection,
   opts: FetchPlantNamesOptions = {},
+): Promise<FetchPlantNamesResult> {
+  // The lookups decide which taxon each list entry is, and so what a host is called (schema/115).
+  return thenRefreshPlantCommonNames(conn, () => fetchPlantNamesUnrefreshed(conn, opts));
+}
+
+async function fetchPlantNamesUnrefreshed(
+  conn: DuckDBConnection,
+  opts: FetchPlantNamesOptions,
 ): Promise<FetchPlantNamesResult> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const apiBase = opts.apiBase ?? TAXA_SEARCH_URL;

@@ -19,6 +19,7 @@ import type { JobContext } from "../src/app/jobs/framework.js";
 import { parseCsv } from "../src/corrections.js";
 import { fetchPlantNames } from "../src/fetch-plant-names.js";
 import { loadPlantList, loadPlantListAtBoot, plantListHash, OLD_BEELINE_PLANT_LIST_FILE, parsePlantList } from "../src/load-plant-list.js";
+import { refreshPlantCommonNames } from "../src/plant-common-names.js";
 import { createMemoryDb } from "./helpers.js";
 
 const ANSWERS: Record<string, unknown> = JSON.parse(
@@ -129,6 +130,22 @@ describe("loading the list", () => {
     expect(await rows("SELECT scientific_name, common_name FROM plant_list_entry")).toEqual([["Rubus idaeus", "raspberry"]]);
   });
 
+  test("loading the list refreshes the copy of the common names, so a changed list changes the names a page shows", async () => {
+    // Urtica dioica (51884) was looked up and cached before the list arrives.
+    await conn.run("INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active, preferred_common_name) VALUES (51884, 'Urtica dioica', 'species', 10, true, 'iNaturalist nettle')");
+    await conn.run("INSERT INTO inat_taxon_ancestor VALUES (51884, 51884, 0)");
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('urtica dioica', 'species', 1, true)");
+    await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('urtica dioica', 'species', 51884, 'Urtica dioica', 'species', true, 'Urtica dioica')");
+    const name = async () => await rows("SELECT common_name, source FROM plant_common_name_cache WHERE inat_taxon_id = 51884");
+    const path = await listFile(`${HEADER}Species,Urticaceae,Urtica dioica,,stinging nettle\n`);
+    await loadPlantList(conn, { path });
+    expect(await name()).toEqual([["stinging nettle", "list"]]);
+    await writeFile(path, `${HEADER}Species,Urticaceae,Urtica dioica,,burning nettle\n`);
+    await loadPlantList(conn, { path });
+    expect(await name()).toEqual([["burning nettle", "list"]]);
+    expect(await rows("SELECT count(*) FROM plant_common_name_stale")).toEqual([[0]]);
+  });
+
   test("a change to the loader reloads a list whose file did not change: the hash covers the loader's version", async () => {
     const text = `${HEADER}Species,Rosaceae,Rubus idaeus,,red raspberry\n`;
     const path = await listFile(text);
@@ -192,6 +209,55 @@ describe("loading the list", () => {
     expect(loaded).toMatchObject({ changed: true, entries: 2 });
     expect(logged).toHaveLength(1);
     expect(logged[0]).toContain("2 name(s) not yet looked up");
+  });
+});
+
+describe("the copy of the common names (schema/115)", () => {
+  async function seed() {
+    await conn.run("INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active, preferred_common_name) VALUES (51884, 'Urtica dioica', 'species', 10, true, 'iNaturalist nettle')");
+    await conn.run("INSERT INTO inat_taxon_ancestor VALUES (51884, 51884, 0)");
+  }
+  const stale = async () => (await rows("SELECT inat_taxon_id FROM plant_common_name_stale")).flat();
+
+  test("the copy is the view, and the stale view says where they part", async () => {
+    await seed();
+    expect(await refreshPlantCommonNames(conn)).toBe(1);
+    expect(await stale()).toEqual([]);
+    // iNaturalist's name changes under the copy: stale, until the next refresh.
+    await conn.run("UPDATE inat_taxon SET preferred_common_name = 'stinging nettle' WHERE inat_taxon_id = 51884");
+    expect(await stale()).toEqual([51884]);
+    // A taxon that lost its name is left over in the copy.
+    await refreshPlantCommonNames(conn);
+    await conn.run("UPDATE inat_taxon SET preferred_common_name = NULL WHERE inat_taxon_id = 51884");
+    expect(await stale()).toEqual([51884]);
+    await refreshPlantCommonNames(conn);
+    expect(await stale()).toEqual([]);
+    expect(await rows("SELECT count(*) FROM plant_common_name_cache")).toEqual([[0]]);
+  });
+
+  test("a boot whose list did not change still refreshes the copy", async () => {
+    await seed();
+    const dir = await mkdtemp(join(tmpdir(), "beeline-plant-list-"));
+    const path = join(dir, "list.csv");
+    await writeFile(path, "Rank,Family,Scientific_name,Synonym,Common_name\nSpecies,Urticaceae,Urtica dioica,,stinging nettle\n");
+    await loadPlantListAtBoot(() => instance.connect(), { path, log: () => {} });
+    // The list is loaded and the copy refreshed. Now the copy is lost (a crash between a write and its refresh), and
+    // the next boot, which finds the list unchanged, puts it right.
+    await conn.run("DELETE FROM plant_common_name_cache");
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('urtica dioica', 'species', 1, true)");
+    await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('urtica dioica', 'species', 51884, 'Urtica dioica', 'species', true, 'Urtica dioica')");
+    expect(await stale()).toEqual([51884]);
+    await loadPlantListAtBoot(() => instance.connect(), { path, log: () => {} });
+    expect(await stale()).toEqual([]);
+  });
+
+  test("the plant-names fetch refreshes the copy: a name the lookups newly resolve is a name a page shows", async () => {
+    await seed();
+    await addEntries(["Urtica dioica", "Species", "stinging nettle"]);
+    expect(await rows("SELECT count(*) FROM plant_common_name_cache")).toEqual([[0]]);
+    await fetchPlantNames(conn, { fetchImpl: api(), requestDelayMs: 0 });
+    expect(await rows("SELECT common_name, source FROM plant_common_name_cache WHERE inat_taxon_id = 51884")).toEqual([["stinging nettle", "list"]]);
+    expect(await stale()).toEqual([]);
   });
 });
 

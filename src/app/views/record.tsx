@@ -255,7 +255,7 @@ export function SampleFacts({
           // 'Chamaenerion' are both one word and only the second is italic.
           // An unknown rank prints upright, which is the honest answer for
           // the legacy hosts whose source column is unrecoverable.
-          value: <TaxonName rank={sample.host_rank ?? ""} scientificName={sample.host_name_as_observed} />,
+          value: <HostValue sample={sample} s={s} />,
         },
     {
       term: <Term m={m} slug="observation">{s.observation}</Term>,
@@ -286,6 +286,47 @@ export function SampleFacts({
     sample.observation_notes === null ? null : { term: s.notes, value: sample.observation_notes },
   ];
   return <DetailList items={items} />;
+}
+
+/**
+ * The floral host (beeline-rfkj.3): the name as observed, which is what the
+ * sample stores, with the host's common name beneath it as a secondary line,
+ * and where iNaturalist has since replaced the taxon, what it calls it now.
+ * The common name is the current taxon's, so a host that was replaced is
+ * named for the plant it now is. Every line but the first is absent while the
+ * taxon is not in the cache, and the page then reads as it did before.
+ */
+function HostValue({ sample, s }: { sample: SampleDetail; s: Messages["record"]["sample"] }) {
+  // A scientific name, so it is printed like one. Italics come from the rank
+  // and never from the string: 'Onagraceae' and 'Chamaenerion' are both one
+  // word and only the second is italic. An unknown rank prints upright, which
+  // is the honest answer for the legacy hosts whose source column is
+  // unrecoverable.
+  const observed = <TaxonName rank={sample.host_rank ?? ""} scientificName={sample.host_name_as_observed ?? ""} />;
+  const standing = sample.host_standing;
+  return (
+    <>
+      {observed}
+      {sample.host_common_name === null ? null : <Meta block>{sample.host_common_name}</Meta>}
+      {standing === "replaced" && sample.host_current_name !== null ? (
+        <Meta block>
+          {s.hostNow.before} <TaxonName rank={sample.host_current_rank ?? ""} scientificName={sample.host_current_name} /> {s.hostNow.after}
+        </Meta>
+      ) : null}
+      {standing === "split" ? (
+        <Meta block>
+          {sample.host_split_within === null ? (
+            s.hostSplit
+          ) : (
+            <>
+              {s.hostSplitWithin} {sample.host_split_within}
+            </>
+          )}
+        </Meta>
+      ) : null}
+      {standing === "retired" ? <Meta block>{s.hostRetired}</Meta> : null}
+    </>
+  );
 }
 
 /**

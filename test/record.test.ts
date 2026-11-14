@@ -5,6 +5,7 @@ import { createApp } from "../src/app/server.js";
 import { ACTING_COOKIE } from "../src/app/acting.js";
 import { determinationHistory, visibleFindings, visibleHistory, type RecordFinding, type SampleDetail } from "../src/app/record.js";
 import type { SampleChange } from "../src/sample-change.js";
+import { refreshPlantCommonNames } from "../src/plant-common-names.js";
 import { createMemoryDb, insertCleanSample, scratchPaths } from "./helpers.js";
 import { en } from "../src/app/messages/en.js";
 
@@ -452,6 +453,153 @@ describe("the sample page", () => {
     expect(chips).toContain(`<summary class="chip blocking"`);
     expect(chips).toContain(en.listings.status.flagMissing.locality);
     expect(chips).not.toContain(`<h2>${en.record.sample.flags.heading}</h2>`);
+  });
+});
+
+/**
+ * The floral host as iNaturalist knows it now (schema/114, schema/115,
+ * beeline-rfkj.3). The sample stores the taxon id it was given and the name
+ * as observed; the page reads what iNaturalist calls that taxon today. The
+ * taxa are synthetic, with the ids of the real cases where there is one
+ * (322554 replaced by 79294, 1588297 split in three).
+ */
+describe("the floral host on the sample page", () => {
+  type Taxon = { id: number; name: string; rank: string; active: boolean; parent?: number; replacedBy?: number[]; oregon?: string | null };
+
+  async function withHost(host: { id: number | null; name: string; rank: string }, taxa: Taxon[], listed: Array<[scientific: string, common: string, id: number]> = []) {
+    const t = await recordApp();
+    const byId = new Map(taxa.map((x) => [x.id, x]));
+    for (const x of taxa) {
+      await t.conn.run(
+        `INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, parent_id, is_active, preferred_common_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [x.id, x.name, x.rank, x.rank === "genus" ? 20 : x.rank === "family" ? 30 : 10, x.parent ?? null, x.active, x.oregon ?? null],
+      );
+      for (const r of x.replacedBy ?? []) await t.conn.run("INSERT INTO inat_taxon_replacement VALUES ($1, $2)", [x.id, r]);
+      let depth = 0;
+      for (let at: Taxon | undefined = x; at; at = at.parent === undefined ? undefined : byId.get(at.parent)) {
+        await t.conn.run("INSERT INTO inat_taxon_ancestor VALUES ($1, $2, $3)", [x.id, at.id, depth++]);
+      }
+    }
+    for (const [scientific, common, id] of listed) {
+      await t.conn.run("INSERT INTO plant_list_entry (list_key, scientific_name, rank, common_name) VALUES ('old-beeline', $1, 'Species', $2)", [scientific, common]);
+      await t.conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ($1, 'species', 1, true)", [scientific.toLowerCase()]);
+      await t.conn.run("INSERT INTO plant_name_lookup_hit VALUES ($1, 'species', $2, $3, 'species', true, $3)", [scientific.toLowerCase(), id, scientific]);
+    }
+    await refreshPlantCommonNames(t.conn);
+    await t.conn.run(
+      `UPDATE sample SET host_inat_taxon_id = ${host.id === null ? "NULL" : host.id}, host_name_as_observed = '${host.name}', host_rank = '${host.rank}'
+       WHERE entity_id = ${t.aliceSample}`,
+    );
+    return get(t.app, `/samples/${t.aliceSample}`);
+  }
+
+  const family: Taxon = { id: 100, name: "Familia alpha", rank: "family", active: true };
+  const alpha: Taxon = { id: 110, name: "Alpha", rank: "genus", active: true, parent: 100 };
+  const beta: Taxon = { id: 111, name: "Beta", rank: "genus", active: true, parent: 100 };
+  const species = (id: number, name: string, parent: Taxon, over: Partial<Taxon> = {}): Taxon => ({ id, name, rank: "species", active: true, parent: parent.id, ...over });
+  const lineage = [family, alpha, beta];
+  /** The row of the page that holds the host, up to the next row. */
+  const hostRow = (body: string) => body.slice(body.indexOf("Floral host"), body.indexOf("iNaturalist observation", body.indexOf("Floral host")));
+
+  it("shows the list's common name under the scientific name", async () => {
+    const body = hostRow(await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha, { oregon: "iNaturalist's name" })], [["Alpha one", "listed one, other name", 1]]));
+    expect(body).toContain("<i>Alpha</i>");
+    expect(body).toContain("listed one");
+    expect(body).not.toContain("iNaturalist&#39;s name");
+    expect(body).not.toContain("on iNaturalist");
+  });
+
+  it("shows iNaturalist's name for Oregon where the list has none", async () => {
+    const body = hostRow(await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha, { oregon: "alpha plant" })]));
+    expect(body).toContain("alpha plant");
+  });
+
+  it("shows no common line for a host with no name at all", async () => {
+    const body = hostRow(await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha)]));
+    expect(body).not.toContain('class="meta"');
+  });
+
+  it("says what iNaturalist calls a replaced host now, and names the plant it is now", async () => {
+    // The stored host is the retired subspecies 322554 and the observer's name for it. Its own Oregon name is
+    // not shown: the common name is the current taxon's.
+    const body = hostRow(
+      await withHost(
+        { id: 322554, name: "Alpha oldname", rank: "subspecies" },
+        [...lineage, species(79294, "Beta ascendens", beta, { oregon: "western beta" }), species(322554, "Alpha oldname", alpha, { active: false, replacedBy: [79294], oregon: "old alpha" })],
+        [["Beta ascendens", "listed beta", 79294]],
+      ),
+    );
+    expect(body).toContain("Alpha");
+    expect(body).toContain("oldname");
+    expect(body).toContain("listed beta");
+    expect(body).not.toContain("old alpha");
+    expect(body).toContain("now");
+    expect(body).toContain("<i>Beta</i> <i>ascendens</i>");
+    expect(body).toContain("on iNaturalist");
+  });
+
+  it("sets the current name by the current taxon's rank, not the stored one's", async () => {
+    // A species replaced by a family-rank taxon is set upright.
+    const body = hostRow(
+      await withHost(
+        { id: 5, name: "Alpha five", rank: "species" },
+        [...lineage, species(5, "Alpha five", alpha, { active: false, replacedBy: [100] })],
+      ),
+    );
+    expect(body).toContain(`now <span class="taxon">Familia alpha</span> on iNaturalist`);
+    expect(body).not.toContain("<i>Familia");
+  });
+
+  it("follows a chain of replacements to the end", async () => {
+    const body = hostRow(
+      await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha, { active: false, replacedBy: [2] }), species(2, "Alpha two", alpha, { active: false, replacedBy: [3] }), species(3, "Beta three", beta, { oregon: "three" })]),
+    );
+    expect(body).toContain("<i>Beta</i> <i>three</i>");
+    expect(body).toContain("three");
+  });
+
+  it("says a host was split, and into which genus when they share one", async () => {
+    const taxa = [...lineage, species(1588297, "Alpha whole", alpha, { active: false, replacedBy: [11, 12] }), species(11, "Alpha a", alpha), species(12, "Alpha b", alpha)];
+    const within = hostRow(await withHost({ id: 1588297, name: "Alpha whole", rank: "species" }, taxa));
+    expect(within).toContain("split into several taxa on iNaturalist, all in Alpha");
+    expect(within).not.toContain("now ");
+  });
+
+  it("says a host was split without naming a genus when the new taxa are in different families", async () => {
+    const other: Taxon = { id: 101, name: "Familia beta", rank: "family", active: true };
+    const gamma: Taxon = { id: 112, name: "Gamma", rank: "genus", active: true, parent: 101 };
+    const taxa = [...lineage, other, gamma, species(1, "Alpha whole", alpha, { active: false, replacedBy: [11, 12] }), species(11, "Alpha a", alpha), species(12, "Gamma b", gamma)];
+    const across = hostRow(await withHost({ id: 1, name: "Alpha whole", rank: "species" }, taxa));
+    expect(across).toContain("split into several taxa on iNaturalist");
+    expect(across).not.toContain("all in");
+  });
+
+  it("says a host was retired with no replacement", async () => {
+    const body = hostRow(await withHost({ id: 1, name: "Alpha gone", rank: "species" }, [...lineage, species(1, "Alpha gone", alpha, { active: false })]));
+    expect(body).toContain("retired on iNaturalist, with no replacement");
+  });
+
+  it("falls back to the name as observed while the taxon is not in the cache", async () => {
+    const body = hostRow(await withHost({ id: 999, name: "Alpha elsewhere", rank: "species" }, lineage));
+    expect(body).toContain("<i>Alpha</i> <i>elsewhere</i>");
+    expect(body).not.toContain('class="meta"');
+  });
+
+  it("shows only the name for a host that has a name and no id", async () => {
+    const body = hostRow(await withHost({ id: null, name: "Alpha namedonly", rank: "species" }, [...lineage, species(1, "Alpha namedonly", alpha, { oregon: "must not appear" })]));
+    expect(body).toContain("<i>namedonly</i>");
+    expect(body).not.toContain("must not appear");
+  });
+
+  it("shows the same on the specimen page", async () => {
+    const t = await recordApp();
+    await t.conn.run("INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, parent_id, is_active, preferred_common_name) VALUES (1, 'Alpha one', 'species', 10, NULL, true, 'alpha plant')");
+    await t.conn.run("INSERT INTO inat_taxon_ancestor VALUES (1, 1, 0)");
+    await refreshPlantCommonNames(t.conn);
+    await t.conn.run(`UPDATE sample SET host_inat_taxon_id = 1, host_name_as_observed = 'Alpha one', host_rank = 'species' WHERE entity_id = ${t.aliceSample}`);
+    const [[specimenId]] = (await (await t.conn.run(`SELECT min(entity_id) FROM specimen WHERE sample_id = ${t.aliceSample}`)).getRows()) as [[number]];
+    expect(await get(t.app, `/specimens/${specimenId}`)).toContain("alpha plant");
   });
 });
 

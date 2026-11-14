@@ -1,8 +1,9 @@
 -- The common name of each taxon in the cache (beeline-rfkj.2), in its own file
 -- after the cache's worklist (schema/112). beeline-rfkj.3 composes on top of
--- it, in a file after this one: it will resolve a retired host to its current
--- taxon (inat_taxon_current) and read this view's row for that taxon, whose
--- own lineage is the current one. So this view never reads
+-- it, in files after this one: it resolves a retired host to its current taxon
+-- (inat_taxon_current, schema/114) and reads this view's row for that taxon,
+-- whose own lineage is the current one, from a copy of this view that the
+-- writers keep fresh (plant_common_name_cache, schema/115). So this view never reads
 -- inat_taxon_current, and inat_taxon_current must not read this view, or the
 -- two would depend on each other.
 --

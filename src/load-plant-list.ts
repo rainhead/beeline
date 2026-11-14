@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseCsv } from "./corrections.js";
 import { openDuckDb } from "./db.js";
 import { DEFAULT_DB } from "./person-change.js";
+import { refreshPlantCommonNames } from "./plant-common-names.js";
 
 /**
  * Load old Beeline's plant list from git into the store (schema/067,
@@ -134,6 +135,8 @@ export async function loadPlantList(
     await conn.run("ROLLBACK");
     throw err;
   }
+  // The list's own common names are what a host is called (schema/115).
+  await refreshPlantCommonNames(conn);
   return { changed: true, entries: rows.length, skippedWithoutName };
 }
 
@@ -154,6 +157,9 @@ export async function loadPlantListAtBoot(
     const conn = await connect();
     try {
       const loaded = await loadPlantList(conn, { path: opts.path });
+      // A list that did not change still gets its names refreshed: the copy is
+      // only as fresh as the last refresh, and a boot is the cheap time to be sure.
+      if (!loaded.changed) await refreshPlantCommonNames(conn);
       if (loaded.changed) {
         const [[unlooked]] = (await (await conn.run("SELECT count(*) FROM plant_name_unlooked")).getRows()) as [[bigint]];
         log(

@@ -1095,6 +1095,17 @@ export const en = {
       /** The program the sample was collected for (beeline-8w8n): its atlas, else Master Melittology itself. */
       program: "Program",
       host: "Floral host",
+      /**
+       * Under the host, where iNaturalist has replaced the taxon the sample
+       * names (beeline-rfkj.3). The name is set apart so it can be italicised
+       * from its own rank, so the sentence is in two halves around it:
+       * "now Symphyotrichum chilense on iNaturalist".
+       */
+      hostNow: { before: "now", after: "on iNaturalist" },
+      /** iNaturalist split the taxon into several, so none is chosen. The family or genus they share follows hostSplitWithin. */
+      hostSplit: "split into several taxa on iNaturalist",
+      hostSplitWithin: "split into several taxa on iNaturalist, all in",
+      hostRetired: "retired on iNaturalist, with no replacement",
       observation: "iNaturalist observation",
       /** Trap samples usually have none, and that is not a gap. */
       observationNone: "None. This sample is not linked to an iNaturalist observation, so it is corrected here in Beeline.",

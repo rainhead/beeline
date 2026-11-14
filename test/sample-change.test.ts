@@ -795,6 +795,29 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     expect((await record()).appended).toBe(0);
   });
 
+  it("a row kept for a sample on a shared number stays when another sample moves onto its reference", async () => {
+    // A's row has no id and A has gone to a number B holds, so the pass keeps
+    // the row by its observation. C then moves onto the row's reference
+    // (CodeRabbit on this branch: the row was dropped, and A arrived again).
+    const a = await unlinked("1", { inat_observation_id: "77" });
+    await unlinked("2");
+    const c = await unlinked("3");
+    await record();
+    const text = await readFile(paths.state, "utf8");
+    expect(text).toContain(`\n${a},`);
+    await writeFile(paths.state, text.replace(`\n${a},`, "\n,"));
+    await renumber(a, "2");
+    await record();
+    await renumber(c, "1");
+    expect((await record()).appended).toBe(1);
+    expect(await numbers()).toEqual(["1", "1", "2"]);
+    await renumber(a, "4");
+    await record();
+    expect(await historyOf("4")).toEqual([["sample_number", "1", "4", ""]]);
+    expect(await historyOf("1")).toEqual([["sample_number", "3", "1", ""]]);
+    expect((await record()).appended).toBe(0);
+  });
+
   describe("a number and a start date corrected in one save", () => {
     // Recorded as two moves, and the reference between them is one the
     // sample never had. Net sample numbers restart every day, so "really
@@ -947,6 +970,33 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
       expect((await narrowed(made, { created: true })).appended).toBeGreaterThan(0);
       const entries = await readSampleChanges(paths.log);
       expect(entries.every((e) => e.old_value === "" && e.sample_number === "50" && e.author === "ada")).toBe(true);
+      // The log says that ids from the new sample's on are being handed out
+      // again, and the file is left with no id this pass did not believe.
+      const { identity } = await readStoreOrigin(read());
+      expect((await readSampleLog(paths.log)).restarts).toEqual([{ before: 0, store: identity, lastId: made - 1 }]);
+      expect((await readSnapshot(paths.state))!.map((r) => r.id)).toEqual(["", ""]);
+    });
+
+    it("a sample just made on the number of a row whose id is not believed arrives, and is not compared with it", async () => {
+      // A store put back, the pass at its start failed, and a lost sample is
+      // entered again under its old number.
+      const lost = await unlinked("7", { locality: "'Alsea'" });
+      await record();
+      await conn.run(`DELETE FROM sample_collector WHERE sample_id = ${lost}`);
+      await conn.run(`DELETE FROM sample WHERE entity_id = ${lost}`);
+      const text = await readFile(paths.state, "utf8");
+      const [origin, ...rest] = text.split("\n");
+      const [mark, identity] = origin!.split(",");
+      await writeFile(paths.state, [`${mark},${identity},${lost + 1000}`, ...rest].join("\n"));
+      const made = await unlinked("7", { locality: "'Adair'" });
+      expect((await narrowed(made, { created: true })).appended).toBeGreaterThan(0);
+      const entries = await readSampleChanges(paths.log);
+      expect(entries.every((e) => e.old_value === "" && e.author === "ada" && e.sample_id === String(made))).toBe(true);
+      expect((await readSampleLog(paths.log)).restarts).toEqual([{ before: 0, store: identity, lastId: made - 1 }]);
+      // One row under the number, and the full pass has nothing to add but its own line.
+      expect(await numbers()).toEqual(["7"]);
+      expect((await record()).appended).toBe(0);
+      expect((await historyOf("7")).every((e) => e[1] === "" && e[3] === "ada")).toBe(true);
     });
 
     it("a one-sample pass adds no ids of its own, and the full pass after it writes this store's", async () => {
@@ -1029,7 +1079,10 @@ describe("the file", () => {
   });
 
   it("reads, through its cache, exactly what a fresh parse of the file says, whoever appended", async () => {
-    const fresh = async () => parseSampleChanges(await readFile(paths.log, "utf8")).changes;
+    const fresh = async () => {
+      const { changes, restarts } = parseSampleChanges(await readFile(paths.log, "utf8"));
+      return { changes, restarts };
+    };
     const id = await insertCleanSample(conn);
     await record();
     await conn.run(`UPDATE sample SET locality = 'Adair' WHERE entity_id = ${id}`);
@@ -1039,15 +1092,15 @@ describe("the file", () => {
     // This process's own append extends the cache.
     await conn.run(`UPDATE sample SET locality = 'Alsea' WHERE entity_id = ${id}`);
     await record();
-    expect(await readSampleChanges(paths.log)).toEqual(await fresh());
+    expect(await readSampleLog(paths.log)).toEqual(await fresh());
     expect((await readSampleChanges(paths.log)).map((c) => c.new_value)).toEqual(["Adair", "Alsea"]);
 
     // Somebody else's append, and an unterminated last line, are read from the file.
     await appendFile(paths.log, "2026-08-30T12:00:00Z,name:Ada Collector,1,2026-07-14,locality,Alsea,Blodgett,,reconcile,");
-    expect(await readSampleChanges(paths.log)).toEqual(await fresh());
+    expect(await readSampleLog(paths.log)).toEqual(await fresh());
     await conn.run(`UPDATE sample SET locality = 'Burnt Woods' WHERE entity_id = ${id}`);
     await record();
-    expect(await readSampleChanges(paths.log)).toEqual(await fresh());
+    expect(await readSampleLog(paths.log)).toEqual(await fresh());
     expect((await readSampleChanges(paths.log)).map((c) => c.new_value)).toEqual(["Adair", "Alsea", "Blodgett", "Burnt Woods"]);
 
     // A write cut off inside a quoted value: the next append continues that
@@ -1056,7 +1109,7 @@ describe("the file", () => {
     await readSampleChanges(paths.log);
     await conn.run(`UPDATE sample SET locality = 'Blodgett' WHERE entity_id = ${id}`);
     await record();
-    expect(await readSampleChanges(paths.log)).toEqual(await fresh());
+    expect(await readSampleLog(paths.log)).toEqual(await fresh());
   });
 
   it("drops its cache rather than extend a record cut off after a line break inside a quoted value", async () => {
@@ -1426,7 +1479,7 @@ describe("a history is read by the sample's id", () => {
       const { identity, highestId } = await readStoreOrigin(read());
       // The snapshot and the log as a later copy of this store left them: a
       // sample with a higher id had been entered and edited.
-      const gone = highestId + 1;
+      const gone = highestId + 500;
       const text = await readFile(paths.state, "utf8");
       const [origin, ...rest] = text.split("\n");
       await writeFile(paths.state, [`${origin!.split(",").slice(0, 2).join(",")},${gone}`, ...rest].join("\n"));
@@ -1438,12 +1491,11 @@ describe("a history is read by the sample's id", () => {
       await conn.run(`UPDATE sample SET locality = 'Adair' WHERE entity_id = ${id}`);
       await record();
       expect((await readSampleLog(paths.log)).restarts).toEqual([{ before: 1, store: identity, lastId: highestId }]);
-      // The next sample draws an id above the last one, perhaps the gone sample's.
-      const next = await unlinked("5");
-      await record({ source: "app", author: "ada", where: `s.entity_id = ${next}`, created: true });
       const log = await readSampleLog(paths.log);
-      const shown = sampleHistory(log, { store: identity, id: String(gone), collector: ada, sample_number: "5", date_start: today });
-      expect(shown.some((e) => e.new_value === "Monroe")).toBe(false);
+      const asked = { store: identity, id: String(gone), collector: ada, sample_number: "5", date_start: today };
+      expect(sampleHistory(log, asked)).toEqual([]);
+      // Without the line, the entry would be shown.
+      expect(sampleHistory({ changes: log.changes, restarts: [] }, asked)).toHaveLength(1);
       // Said once: the pass wrote the file as this store's.
       await record();
       expect((await readSampleLog(paths.log)).restarts).toHaveLength(1);

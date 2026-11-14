@@ -1043,9 +1043,9 @@ export interface SampleRecordOptions {
    * one-sample pass otherwise leaves a sample with no snapshot row to the
    * next full pass, which enters it under nobody's name; a trap sample
    * entered in Beeline has no corrections file to hold who entered it
-   * (beeline-7r0g). Entered as arriving where no row carries its id; and,
-   * over a snapshot whose ids are not believed, only where no row is under
-   * its reference either.
+   * (beeline-7r0g). Entered as arriving unless a row already carries its
+   * id, and never compared with a row that does not: a sample just made is
+   * no earlier row's sample, whatever sits under its reference.
    */
   created?: boolean;
 }
@@ -1173,6 +1173,11 @@ async function recordPass(
       await appendLines(paths.log, formatRestart(at, store.identity, beforeMade(), opts.source));
     }
   }
+  // A sample made in a store that has gone back, before any full pass has
+  // said so: its id may be one the log already has entries under.
+  else if (wentBack && opts.where != null && opts.created === true) {
+    await appendLines(paths.log, formatRestart(at, store.identity, beforeMade(), opts.source));
+  }
   if (snapshot !== null && !believed) for (const row of snapshot) row.id = "";
 
   // First pass: the store as it stands is the baseline, and nothing is an
@@ -1203,13 +1208,16 @@ async function recordPass(
   });
   // A sample the caller says it just made (SampleRecordOptions.created). It
   // is nobody's row but one that carries its id, and no row does by now:
-  // where one did under another reference, the ids were not believed.
+  // where one did under another reference, the ids were not believed. Over
+  // a snapshot whose ids are not believed, a row under its reference is a
+  // sample that is gone, or one that has moved off it; compared with that
+  // row, the new sample would be entered as its author's edits to it
+  // (Fable's review of this branch).
   const arrivals = new Set<string>();
   if (opts.where != null && opts.created === true) {
     for (const [key, state] of states) {
       const row = matched.get(key);
       if (row !== undefined && row.id !== "" && row.id === state.id) continue;
-      if (!believed && snapshot.some((r) => stateKey(r) === key)) continue;
       matched.delete(key);
       arrivals.add(key);
     }
@@ -1315,24 +1323,16 @@ async function recordPass(
   if (opts.where == null) {
     const next: SampleState[] = [];
     const recorded = new Set<SampleState>();
-    const stated = new Set<string>();
     for (const [key, state] of states) {
       if (contested.has(key)) continue;
       next.push(state);
-      stated.add(key);
       const before = matched.get(key);
       if (before !== undefined) recorded.add(before);
     }
     for (const row of snapshot) {
       if (recorded.has(row)) continue;
-      const live = row.id !== "" && liveIds.has(row.id);
-      // A row with no live id under a reference a recorded sample now stands
-      // on was that reference's before the sample was matched elsewhere, and
-      // nothing else keeps it: without an id it would be taken for the
-      // sample's own by the next pass that does not believe the ids.
-      if (!live && stated.has(stateKey(row)) && !contestedRows.has(row)) continue;
       if (
-        live ||
+        (row.id !== "" && liveIds.has(row.id)) ||
         suppressedKeys.has(stateKey(row)) ||
         contestedRows.has(row) ||
         (row.fields.observation !== "" && suppressedObservations.has(row.fields.observation))
@@ -1361,7 +1361,11 @@ async function recordPass(
       if (before === undefined && !arrivals.has(key)) continue;
       // Where the file's ids are not this store's, a one-sample pass adds
       // none of its own under the other store's name.
-      next = [...next.filter((row) => row !== before), believed ? state : { ...state, id: "" }];
+      // Nor does it leave a second row with no id under its sample's
+      // reference: the full pass could then tell neither from the other,
+      // and would enter the sample again.
+      const replaced = (row: SampleState) => row === before || (!believed && stateKey(row) === key);
+      next = [...next.filter((row) => !replaced(row)), believed ? state : { ...state, id: "" }];
       touched = true;
     }
     // The line saying which store wrote the file is the full pass's to

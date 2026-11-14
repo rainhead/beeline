@@ -622,6 +622,23 @@ describe("a snapshot that carries ids, read by the store that wrote it", () => {
     expect((await record()).appended).toBe(0);
   });
 
+  it("a sample a full pass entered before its maker's pass ran keeps the file's ids", async () => {
+    // The nightly was waiting its turn, read the store after the sample was
+    // written, and entered it under nobody's name. The maker's pass then
+    // finds a row with the new sample's id under its own reference, which is
+    // no sign of another store.
+    const other = await unlinked("1");
+    await record();
+    const made = await unlinked("2");
+    expect((await record()).appended).toBeGreaterThan(0);
+    expect((await narrowed(made, { created: true })).appended).toBe(0);
+    const ids = [...(await readSnapshot(paths.state))!.values()].map((r) => r.id).sort();
+    expect(ids).toEqual([String(other), String(made)].sort());
+    // So a renumbering after it is still followed.
+    await renumber(other, "9");
+    expect((await narrowed(other)).appended).toBe(1);
+  });
+
   it("a snapshot from before ids gains them on the next pass, with nothing lost and nothing invented", async () => {
     const id = await unlinked("1");
     await unlinked("2");

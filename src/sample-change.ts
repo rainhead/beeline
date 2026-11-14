@@ -1173,9 +1173,17 @@ async function recordPass(
   // makes as it starts sees the lower id and corrects the file first, so
   // this is for the start where that pass failed (Fable's review of this
   // branch).
+  //
+  // A row with its id under the new sample's OWN reference is something
+  // else, and ordinary: a full pass that was already waiting its turn read
+  // the store after the sample was written and entered it first. The ids
+  // stand, and this pass finds nothing left to say (CodeRabbit on this
+  // branch: disbelieving there blanked every id in the file).
   if (believed && snapshot !== null && opts.where != null && opts.created === true) {
-    const made = new Set([...states.values()].map((state) => state.id));
-    for (const row of snapshot.values()) if (row.id !== "" && made.has(row.id)) believed = false;
+    const made = new Map([...states].map(([key, state]) => [state.id, key]));
+    for (const [key, row] of snapshot) {
+      if (row.id !== "" && made.has(row.id) && made.get(row.id) !== key) believed = false;
+    }
   }
   if (snapshot !== null && !believed) for (const row of snapshot.values()) row.id = "";
 

@@ -529,6 +529,23 @@ th details.col-menu > .menu-panel {
 .callout.blocking { border-left-color: var(--md-sys-color-error); }
 .callout.success { border-left-color: var(--md-sys-color-success); }
 
+/* What is wrong with the jobs, first on /jobs (beeline-222u). The one
+   callout that is an alert and carries a symbol: it fills with the error
+   container colour so it cannot be read past, where an ordinary callout is
+   an aside with a rule down its side. */
+.job-troubles .callout {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+  border-color: var(--md-sys-color-error);
+}
+.job-troubles h2 { font: var(--md-sys-typescale-title); margin: 0 0 var(--space-2); }
+.job-troubles h2 .icon { vertical-align: text-bottom; }
+.job-troubles ul { margin: 0; padding-left: var(--space-5); }
+.job-troubles li + li { margin-top: var(--space-3); }
+.job-troubles li p { margin: 0; }
+/* The run's own words: an error message, often long and unbroken. */
+.job-trouble-detail { font: var(--md-sys-typescale-label); overflow-wrap: anywhere; white-space: pre-wrap; }
+
 /* Empty states say what would be here and why it isn't. Never an apology,
    and never a bare dash (/design/voice). */
 .empty {

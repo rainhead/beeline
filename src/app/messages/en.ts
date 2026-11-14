@@ -318,6 +318,8 @@ export const en = {
     },
     /** The hamburger button left of the brand: reference pages and staff tools, and the nav on narrow screens. */
     menu: "Menu",
+    /** Said beside "Jobs" in the menu, and on the menu's button, when a job has something wrong (beeline-222u). */
+    jobsFailing: "a job is failing",
     /** The avatar button that opens the account menu. */
     account: (login: string) => `Account: ${login}`,
     /**
@@ -2119,7 +2121,29 @@ export const en = {
     colBreaches: "SLA breaches",
     colDetail: "Detail",
     outcomeSucceeded: "succeeded",
+    /** A run that finished, with steps in it that failed and were allowed to. */
+    outcomeStepFailed: (steps: number) => (steps === 1 ? "a step failed" : `${n(steps)} steps failed`),
     outcomeFailed: "failed",
+    /** What is wrong, said first on the page and beside each job (beeline-222u). */
+    trouble: {
+      heading: (count: number) => (count === 1 ? "1 job needs attention" : `${n(count)} jobs need attention`),
+      /** `steps` is the failed steps' names, already joined, or null when none was recorded. */
+      failing: (when: string | null, steps: string | null) =>
+        `failed in its last run${when === null ? "" : `, started ${when}`}.${steps === null ? "" : ` It failed at: ${steps}.`}`,
+      stepFailed: (when: string | null, steps: string) =>
+        `finished its last run${when === null ? "" : `, started ${when}`}, but part of it failed: ${steps}.`,
+      overdue: (lastSucceeded: string | null) =>
+        lastSucceeded === null
+          ? "has not succeeded for longer than its schedule allows."
+          : `has not succeeded since ${lastSucceeded}, which is longer than its schedule allows.`,
+      neverRun: "has never run.",
+      chip: {
+        failing: "failing",
+        "step-failed": "a step is failing",
+        overdue: "overdue",
+        "never-run": "never run",
+      },
+    },
     outcomeRunning: "running…",
     durationSeconds: (s: number) => `${n(s)}s`,
     /** A run with no end yet: said, since a blank duration reads as one that failed to record. */

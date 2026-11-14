@@ -3,7 +3,7 @@ import type { Messages } from "../messages/index.js";
 import type { CreditedSource } from "../messages/en.js";
 import type { Session } from "../session.js";
 import type { Acting } from "../acting.js";
-import { FeedbackIcon, MenuIcon, PersonIcon } from "./icons.js";
+import { AlertIcon, FeedbackIcon, MenuIcon, PersonIcon } from "./icons.js";
 
 export interface PageEnv {
   /** Stamp appended to stylesheet URLs so a CSS change is not cached past it. */
@@ -15,6 +15,12 @@ export interface PageEnv {
   session: Session;
   /** Whether this session may see the admin surface (/jobs, /people, beeline-6va). */
   admin: boolean;
+  /**
+   * Whether a job has something wrong (src/app/job-trouble.ts): an alert
+   * beside "Jobs" in the menu and a mark on the menu's button, for admins,
+   * who are the only ones with a Jobs link (beeline-222u).
+   */
+  jobsFailing: boolean;
   /** Whether the account menu links to /keys: staff, and anyone who has made a key (src/app/server.tsx). */
   keysLink: boolean;
   /**
@@ -63,7 +69,7 @@ function NavLinks({ m }: { m: Messages }) {
  * may use it (beeline-45v.5). Each item is still shown only to whoever may
  * open it. Never the account menu: that one is about the person signed in.
  */
-function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
+function MoreLinks({ m, admin, jobsFailing }: { m: Messages; admin: boolean; jobsFailing: boolean }) {
   return (
     <nav class="menu-section" aria-label={m.layout.more}>
       {[
@@ -85,9 +91,16 @@ function MoreLinks({ m, admin }: { m: Messages; admin: boolean }) {
         // Alphabetical by the words on screen, so a renamed or translated
         // label keeps its place rather than the order this list is typed in.
         .sort((a, b) => a.label.localeCompare(b.label, m.locale))
-        .map((link) => (
-          <a href={link.href}>{link.label}</a>
-        ))}
+        .map((link) =>
+          link.href === "/jobs" && jobsFailing ? (
+            <a href={link.href} class="menu-alert">
+              {link.label} <AlertIcon />
+              <span class="visually-hidden">{m.layout.jobsFailing}</span>
+            </a>
+          ) : (
+            <a href={link.href}>{link.label}</a>
+          ),
+        )}
     </nav>
   );
 }
@@ -227,8 +240,13 @@ export function Layout(props: {
         {/* The dropdowns are <details> so they work with no JavaScript at all;
             the islands bundle adds outside-click/Escape dismissal on top. */}
         <header>
-          <details class="menu nav-menu">
-            <summary aria-label={m.layout.menu} title={m.layout.menu}>
+          {/* The alert beside "Jobs" is inside a closed menu, so the button
+              that opens it carries a mark too, and says why. */}
+          <details class={env.admin && env.jobsFailing ? "menu nav-menu has-alert" : "menu nav-menu"}>
+            <summary
+              aria-label={env.admin && env.jobsFailing ? `${m.layout.menu}: ${m.layout.jobsFailing}` : m.layout.menu}
+              title={env.admin && env.jobsFailing ? `${m.layout.menu}: ${m.layout.jobsFailing}` : m.layout.menu}
+            >
               <MenuIcon />
             </summary>
             <div class="menu-panel">
@@ -237,7 +255,7 @@ export function Layout(props: {
               <nav class="menu-section nav-records" aria-label={m.layout.records}>
                 <NavLinks m={m} />
               </nav>
-              <MoreLinks m={m} admin={env.admin} />
+              <MoreLinks m={m} admin={env.admin} jobsFailing={env.jobsFailing} />
             </div>
           </details>
           {/* The brand and the nav share a baseline: the header centres its

@@ -57,6 +57,7 @@ import {
 } from "./determine.js";
 import { DeterminePage } from "./views/determine.js";
 import { Jobs } from "./views/jobs.js";
+import { failedStepsOf, jobTroubles } from "./job-trouble.js";
 import { stepTrend } from "./job-steps.js";
 import { Exports } from "./views/exports.js";
 import { HeldBackPage } from "./views/held-back.js";
@@ -701,6 +702,25 @@ export function createApp({
    */
   const showKeysLink = (c: Context<AppEnv>) => !c.get("acting").impersonating;
 
+  /**
+   * Whether any job has something wrong, for the alert beside "Jobs" in the
+   * menu (beeline-222u). Every page an admin opens asks, so the answer is
+   * kept for half a minute; /jobs itself asks afresh and refreshes it. A
+   * store that cannot say is no reason to fail the page that asked.
+   */
+  let jobsAlert: { at: number; failing: boolean } | null = null;
+  const JOBS_ALERT_MS = 30_000;
+  const jobsFailing = async (): Promise<boolean> => {
+    if (jobsAlert !== null && Date.now() - jobsAlert.at < JOBS_ALERT_MS) return jobsAlert.failing;
+    try {
+      jobsAlert = { at: Date.now(), failing: (await jobTroubles(db, jobsDep.list, new Date())).length > 0 };
+      return jobsAlert.failing;
+    } catch (err) {
+      console.warn(`could not read the jobs' health for the menu: ${(err as Error).message}`);
+      return false;
+    }
+  };
+
   const page = async (
     c: Context<AppEnv>,
     title: string,
@@ -715,6 +735,7 @@ export function createApp({
           styleVersion: await styleVersion(),
           session: c.get("session"),
           admin: c.get("admin"),
+          jobsFailing: c.get("admin") ? await jobsFailing() : false,
           keysLink: showKeysLink(c),
           acting: c.get("acting"),
           feedbackHref: feedbackHref(c),
@@ -1930,12 +1951,29 @@ export function createApp({
     const m = c.get("m");
     const runs = await db
       .selectFrom("job_run")
-      .select(["job_name", "started_at", "completed_at", "outcome", "detail", "sla_breaches"])
+      .select(["entity_id", "job_name", "started_at", "completed_at", "outcome", "detail", "sla_breaches"])
       .orderBy("started_at", "desc")
       .limit(20)
       .execute();
     const steps = await stepTrend(db);
-    return c.html(await page(c, m.jobs.title, <Jobs m={m} jobs={jobsDep.list} runs={runs} steps={steps} />));
+    // Asked afresh, not from the menu's half-minute memory: this is the page
+    // somebody opens to see whether what they just ran worked.
+    const troubles = await jobTroubles(db, jobsDep.list, new Date());
+    jobsAlert = { at: Date.now(), failing: troubles.length > 0 };
+    const failedSteps = await failedStepsOf(db, runs.map((r) => Number(r.entity_id)));
+    return c.html(
+      await page(
+        c,
+        m.jobs.title,
+        <Jobs
+          m={m}
+          jobs={jobsDep.list}
+          runs={runs.map((r) => ({ ...r, failed_steps: failedSteps.get(Number(r.entity_id)) ?? [] }))}
+          steps={steps}
+          troubles={troubles}
+        />,
+      ),
+    );
   });
 
   // --- Exports (beeline-6q8). The legacy-format occurrences file the

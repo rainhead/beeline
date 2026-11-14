@@ -15,7 +15,8 @@ import { REPRINT_BLOCKER, type ReprintBlocker } from "../print-run.js";
 export interface RunListRow {
   print_run_id: number;
   state: PrintRunState;
-  atlas_code: string | null;
+  /** The run's scope as people abbreviate it (program_abbreviation), or null for the program's run. */
+  atlas_abbreviation: string | null;
   prepared_by: string;
   prepared_at: Date;
   approved_at: Date | null;
@@ -36,10 +37,11 @@ export async function listRuns(db: Kysely<Database>): Promise<RunListRow[]> {
     .innerJoin("print_run_state as s", "s.print_run_id", "r.entity_id")
     .innerJoin("person as p", "p.entity_id", "r.prepared_by")
     .leftJoin("program as a", "a.entity_id", "r.atlas_id")
+    .leftJoin("program_abbreviation as ab", "ab.program_id", "a.entity_id")
     .select([
       "r.entity_id as print_run_id",
       "s.state",
-      "a.code as atlas_code",
+      sql<string | null>`coalesce(ab.abbreviation, a.code)`.as("atlas_abbreviation"),
       "p.display_name as prepared_by",
       "r.prepared_at",
       "r.approved_at",
@@ -62,6 +64,8 @@ export async function listRuns(db: Kysely<Database>): Promise<RunListRow[]> {
 export interface ScopeOption {
   atlas_id: number;
   code: string;
+  /** As people abbreviate it (program_abbreviation): what the hint lists. */
+  abbreviation: string;
   name: string;
   /** Prints its own labels: the unscoped run leaves it alone, and only such an atlas can be a run's scope. */
   own: boolean;
@@ -87,7 +91,7 @@ export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
     .select(sql<number>`count(DISTINCT specimen_id)`.as("n"))
     .executeTakeFirstOrThrow();
   const atlases = await sql<ScopeOption>`
-    SELECT a.entity_id AS atlas_id, a.code, a.name,
+    SELECT a.entity_id AS atlas_id, a.code, coalesce(ab.abbreviation, a.code) AS abbreviation, a.name,
            (ap.atlas_id IS NOT NULL) AS own,
            count(p.sample_id) AS samples,
            coalesce(sum(p.pending_count), 0) AS labels,
@@ -97,9 +101,10 @@ export async function scopeCounts(db: Kysely<Database>): Promise<ScopeCounts> {
     FROM program a
     JOIN (SELECT DISTINCT atlas_id FROM atlas_region WHERE atlas_id IS NOT NULL) reg ON reg.atlas_id = a.entity_id
     LEFT JOIN atlas_printing ap ON ap.atlas_id = a.entity_id
+    LEFT JOIN program_abbreviation ab ON ab.program_id = a.entity_id
     LEFT JOIN sample_atlas sa ON sa.atlas_id = a.entity_id
     LEFT JOIN pending_print_sample p ON p.sample_id = sa.sample_id
-    GROUP BY a.entity_id, a.code, a.name, ap.atlas_id
+    GROUP BY a.entity_id, a.code, ab.abbreviation, a.name, ap.atlas_id
     ORDER BY a.entity_id`.execute(db);
   return {
     program: {
@@ -203,11 +208,12 @@ export async function loadRun(db: Kysely<Database>, printRunId: number): Promise
     .innerJoin("print_run_state as s", "s.print_run_id", "r.entity_id")
     .innerJoin("person as p", "p.entity_id", "r.prepared_by")
     .leftJoin("program as a", "a.entity_id", "r.atlas_id")
+    .leftJoin("program_abbreviation as ab", "ab.program_id", "a.entity_id")
     .where("r.entity_id", "=", printRunId)
     .select([
       "r.entity_id as print_run_id",
       "s.state",
-      "a.code as atlas_code",
+      sql<string | null>`coalesce(ab.abbreviation, a.code)`.as("atlas_abbreviation"),
       "a.name as atlas_name",
       "p.display_name as prepared_by",
       "r.prepared_at",
@@ -415,8 +421,8 @@ export interface SpecimenLabelRow {
   printed_at: Date | null;
   mailed_at: Date | null;
   canceled_at: Date | null;
-  /** The run's scope, for its name: an atlas's code, or null for the program's run. */
-  atlas_code: string | null;
+  /** The run's scope, for its name: an atlas as people abbreviate it, or null for the program's run. */
+  atlas_abbreviation: string | null;
   /** A reprint, with the request it answered where one can be found (gh-218). */
   reprint: boolean;
   request: ReprintRequestRow | null;
@@ -435,6 +441,7 @@ export async function specimenLabels(db: Kysely<Database>, specimenId: number): 
     .selectFrom("specimen_label as l")
     .innerJoin("print_run as r", "r.entity_id", "l.print_run_id")
     .leftJoin("program as a", "a.entity_id", "r.atlas_id")
+    .leftJoin("program_abbreviation as ab", "ab.program_id", "a.entity_id")
     .where("l.specimen_id", "=", specimenId)
     .select([
       "l.print_run_id",
@@ -446,7 +453,7 @@ export async function specimenLabels(db: Kysely<Database>, specimenId: number): 
       "l.printed_at",
       "l.mailed_at",
       "l.canceled_at",
-      "a.code as atlas_code",
+      sql<string | null>`coalesce(ab.abbreviation, a.code)`.as("atlas_abbreviation"),
       "l.reprint",
     ])
     .orderBy("l.prepared_at", "desc")

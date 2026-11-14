@@ -57,9 +57,13 @@ export interface RosterRow {
    */
   membership: MembershipKind | null;
   atlas_code: string | null;
+  /** The atlas as people abbreviate it (program_abbreviation), for display; atlas_code is the key. */
+  atlas_abbreviation: string | null;
   is_admin: boolean;
   /** The codes of the programs they lead, alphabetical; empty for almost everybody (beeline-7c1). */
   leads: string[];
+  /** The same, as people write them (WABA, not WaBA), joined for the roster's Leads column. */
+  leads_shown: string;
   /** Records backing the bound login, null when there is nothing to weigh. */
   bound_records: number | null;
   /** The best-attested account on their records, and its count. */
@@ -236,6 +240,17 @@ const lastVisitSql = sql`greatest(
 const lastLoginSql = sql`(
   SELECT t.last_login_at FROM inat_sign_in t WHERE t.inat_user_id = a.inat_user_id)`;
 
+/** The programs they lead as people write them (program_abbreviation), for the roster's column; leadsSql holds the codes. */
+// The programs and their abbreviations are joined in a subquery of their own:
+// an outer join inside this correlated subquery made DuckDB 2.0 fail to bind
+// p.entity_id ("Failed to bind column reference").
+const leadsShownSql = sql`coalesce((
+  SELECT array_to_string(list(pw.shown ORDER BY pw.code), ', ')
+  FROM program_lead pl
+  JOIN (SELECT pr.entity_id, pr.code, coalesce(ab.abbreviation, pr.code) AS shown
+        FROM program pr LEFT JOIN program_abbreviation ab ON ab.program_id = pr.entity_id) pw ON pw.entity_id = pl.program_id
+  WHERE pl.person_id = p.entity_id), '')`;
+
 /**
  * The programs they lead, as the overlay spells them: codes, alphabetical,
  * joined with ';' — so the person page's form and the file it writes say the
@@ -335,8 +350,10 @@ export async function listRoster(
              (SELECT count(*) FROM sample_collector sc WHERE sc.person_id = p.entity_id) AS samples,
              CASE WHEN pm.person_id IS NULL THEN NULL WHEN atl.code = 'MM' THEN 'program' ELSE 'atlas' END AS membership,
              CASE WHEN atl.code <> 'MM' THEN atl.code END AS atlas_code,
+             CASE WHEN atl.code <> 'MM' THEN coalesce(atlab.abbreviation, atl.code) END AS atlas_abbreviation,
              (adm.person_id IS NOT NULL) AS is_admin,
              ${leadsSql} AS leads,
+             ${leadsShownSql} AS leads_shown,
              ${boundRecords} AS bound_records,
              best.top_login,
              best.top_uid,
@@ -351,6 +368,7 @@ export async function listRoster(
       LEFT JOIN inat_account a ON a.person_id = p.entity_id
       LEFT JOIN person_membership pm ON pm.person_id = p.entity_id
       LEFT JOIN program atl ON atl.entity_id = pm.program_id
+      LEFT JOIN program_abbreviation atlab ON atlab.program_id = atl.entity_id
       LEFT JOIN person_admin adm ON adm.person_id = p.entity_id
       LEFT JOIN best ON best.person_id = p.entity_id
     ),
@@ -508,7 +526,8 @@ export interface LoginWeight {
   bound: boolean;
 }
 
-export interface PersonDetail extends RosterRow {
+/** A roster row, less what only the roster's own columns show. */
+export interface PersonDetail extends Omit<RosterRow, "atlas_abbreviation" | "leads_shown"> {
   given_name: string | null;
   family_name: string | null;
   label_name: string | null;

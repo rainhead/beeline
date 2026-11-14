@@ -50,6 +50,8 @@ export interface SeasonCounts {
 
 export interface ProgramSummary {
   code: string;
+  /** As people abbreviate it (program_abbreviation): WABA where the code is WaBA. */
+  abbreviation: string;
   name: string;
   /** The atlas this program is; null for Master Melittology and the BLM surveys. */
   atlasCode: string | null;
@@ -80,6 +82,7 @@ export interface ProgramDetail extends ProgramSummary {
 interface ProgramRow {
   program_id: number;
   code: string;
+  abbreviation: string;
   name: string;
   atlas_id: number | null;
   atlas_code: string | null;
@@ -97,10 +100,11 @@ async function programRows(db: Kysely<Database>, code?: string): Promise<Program
   // and its scope is decided below. atlas_id and atlas_code are the program's
   // own where it has ground, which is what the rest of this file reads.
   const { rows } = await sql<ProgramRow>`
-    SELECT p.entity_id AS program_id, p.code, p.name,
+    SELECT p.entity_id AS program_id, p.code, coalesce(ab.abbreviation, p.code) AS abbreviation, p.name,
            CASE WHEN g.atlas_id IS NOT NULL THEN p.entity_id END AS atlas_id,
            CASE WHEN g.atlas_id IS NOT NULL THEN p.code END AS atlas_code
     FROM program p
+    LEFT JOIN program_abbreviation ab ON ab.program_id = p.entity_id
     LEFT JOIN (SELECT DISTINCT atlas_id FROM atlas_region WHERE atlas_id IS NOT NULL) g ON g.atlas_id = p.entity_id
     ${where}
     -- The programs with ground first, then the rest, each by name.
@@ -186,6 +190,7 @@ function summarize(
   const isMember = p.atlas_code !== null || p.code === CATCH_ALL_PROGRAM;
   return {
     code: p.code,
+    abbreviation: p.abbreviation,
     name: p.name,
     atlasCode: p.atlas_code,
     scope,

@@ -102,6 +102,25 @@ INSERT INTO program (code, name) VALUES
   ('BLM',  'BLM surveys'),
   ('NWR',  'National Wildlife Refuges');
 
+-- How a program is abbreviated wherever a person reads it (beeline-uiar):
+-- pages, print-run titles, and the atlas column of the exports. Usually its
+-- code, but not always: Washington's code is WaBA and the atlas writes WABA
+-- (Karla Salp, 2026-11-13). The code cannot simply change, since it is a
+-- unique column on a row that samples, print runs and memberships refer to,
+-- and DuckDB refuses to update such a column (duckdb/duckdb#20246); nor can
+-- a column be added to program for the same reason. So the abbreviation is a
+-- satellite, which nothing refers to and an UPDATE can change. Every program
+-- has one (a test checks); a read takes the code where it finds none, so a
+-- program added without one shows its code rather than vanishing.
+CREATE TABLE program_abbreviation (
+  program_id   INTEGER PRIMARY KEY REFERENCES program(entity_id),
+  abbreviation TEXT UNIQUE NOT NULL
+);
+COMMENT ON TABLE program_abbreviation IS 'How each program is abbreviated wherever a person reads it: pages, print-run titles, the atlas column of the exports (beeline-uiar). Usually its code; Washington''s is WABA where its code is WaBA. A satellite of program because the code, a key, cannot be updated in place (duckdb/duckdb#20246). URLs, cookies, the overlay and file names keep the code.';
+COMMENT ON COLUMN program_abbreviation.abbreviation IS 'The program''s short name as people write it: WABA, OBA, MM.';
+INSERT INTO program_abbreviation (program_id, abbreviation)
+SELECT entity_id, CASE code WHEN 'WaBA' THEN 'WABA' ELSE code END FROM program;
+
 -- Which atlases print their own labels: a row is the flag, the way a
 -- person_admin row is. None today — Oregon prints for the whole program, so
 -- a print run with no atlas covers every atlas absent from this table, plus

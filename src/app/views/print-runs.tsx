@@ -39,8 +39,8 @@ export function StateChip({ m, state }: { m: Messages; state: PrintRunState }) {
   return <Chip tone={TONE[state]}>{m.printRuns.state[state] ?? state}</Chip>;
 }
 
-function Scope({ m, run }: { m: Messages; run: Pick<RunListRow, "atlas_code"> }) {
-  return run.atlas_code === null ? <Meta>{m.printRuns.scopeProgram}</Meta> : <>{run.atlas_code}</>;
+function Scope({ m, run }: { m: Messages; run: Pick<RunListRow, "atlas_abbreviation"> }) {
+  return run.atlas_abbreviation === null ? <Meta>{m.printRuns.scopeProgram}</Meta> : <>{run.atlas_abbreviation}</>;
 }
 
 /** A date the run has not reached yet is said, never left blank. */
@@ -61,7 +61,7 @@ export function PrintRuns({
   nothingPrepared?: boolean;
 }) {
   const p = m.printRuns;
-  const covered = scope.atlases.filter((a) => !a.own).map((a) => a.code);
+  const covered = scope.atlases.filter((a) => !a.own).map((a) => a.abbreviation);
   const waiting = (labels: number, samples: number, reprints: number) =>
     labels === 0 && reprints === 0 ? p.prepare.nothingWaiting : p.prepare.waiting(labels, samples, reprints);
   const options: ReadonlyArray<readonly [string, Child]> = [
@@ -117,7 +117,7 @@ export function PrintRuns({
           {runs.map((run) => (
             <tr>
               <td>
-                <a href={printRunHref(run.print_run_id)}>{p.run.title(run.prepared_at, run.atlas_code)}</a>
+                <a href={printRunHref(run.print_run_id)}>{p.run.title(run.prepared_at, run.atlas_abbreviation)}</a>
               </td>
               <td>
                 <Scope m={m} run={run} />
@@ -198,7 +198,7 @@ export function PrintRun({ m, run, labels }: { m: Messages; run: RunDetail; labe
         <a href="/print-runs">{r.back}</a>
       </p>
       <PageHeader
-        title={r.title(run.prepared_at, run.atlas_code)}
+        title={r.title(run.prepared_at, run.atlas_abbreviation)}
         lede={
           <>
             {run.atlas_name === null ? r.scopeProgram : r.scopeAtlas(run.atlas_name)}{" "}

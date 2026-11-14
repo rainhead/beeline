@@ -180,7 +180,7 @@ export function ProgramPage({ m, program, admin }: { m: Messages; program: Progr
       <Breadcrumbs label={p.title} trail={[{ href: "/programs", label: p.title }]} />
       <PageHeader
         title={program.name}
-        meta={p.meta(program.code, program.atlasCode !== null)}
+        meta={p.meta(program.abbreviation, program.atlasCode !== null)}
         mark={program.atlasCode === null ? undefined : <AtlasMark code={program.atlasCode} name={program.name} href={null} />}
       />
       <PhotoCarousel m={m} photos={PROGRAM_PHOTOS[program.code] ?? []} />

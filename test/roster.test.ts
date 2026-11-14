@@ -908,7 +908,8 @@ describe("recording who leads a program", () => {
     await add("adacollects", "WaBA", "MM");
     await add("staffer", "OBA");
     const all = await (await ctx.app.request("/people")).text();
-    expect(all).toContain("<td>MM, WaBA</td>");
+    // The column says WABA, as the atlas writes it; the filter below still takes the code (beeline-uiar).
+    expect(all).toContain("<td>MM, WABA</td>");
     const washington = await (await ctx.app.request("/people?lead=WaBA")).text();
     expect(washington).toContain(">Ada Collector<");
     expect(washington).not.toContain(">Staff Person<");

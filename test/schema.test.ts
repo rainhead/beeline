@@ -469,3 +469,12 @@ describe("updating a row an incoming foreign key references", () => {
     expect(await rows(db, `SELECT count(*) FROM pin_child WHERE parent_id = ${id}`)).toEqual([[1n]]);
   });
 });
+
+describe("program abbreviations (beeline-uiar)", () => {
+  test("a fresh build gives every program one: its code, or WABA for Washington", async () => {
+    const { conn: fresh } = await createMemoryDb();
+    expect(await rows(fresh, "SELECT count(*) FROM program p LEFT JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE a.program_id IS NULL")).toEqual([[0n]]);
+    expect(await rows(fresh, "SELECT count(*) FROM program p JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE a.abbreviation <> p.code")).toEqual([[1n]]);
+    expect(await rows(fresh, "SELECT a.abbreviation FROM program p JOIN program_abbreviation a ON a.program_id = p.entity_id WHERE p.code = 'WaBA'")).toEqual([["WABA"]]);
+  });
+});

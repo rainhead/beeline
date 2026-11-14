@@ -1844,7 +1844,8 @@ export const en = {
     notMembership: "not recorded",
     notFound: "There is no program with that code.",
     /** The header line under the name. */
-    meta: (code: string, atlas: boolean) => (atlas ? `${code} · a bee atlas` : code),
+    /** abbreviation: as people write it (program_abbreviation), WABA rather than the code WaBA. */
+    meta: (abbreviation: string, atlas: boolean) => (atlas ? `${abbreviation} · a bee atlas` : abbreviation),
     summary: "At a glance",
     members: "Members",
     membersLink: (count: number) => `${n(count)} ${count === 1 ? "person" : "people"}`,
@@ -2173,10 +2174,11 @@ export const en = {
       scopeLabel: "Whose labels",
       /** The unscoped run: every atlas that does not print its own, plus samples outside any atlas. */
       program: "Everyone Oregon prints for",
-      programCovers: (codes: readonly string[]) =>
-        codes.length === 0
+      /** The atlases as people write them (program_abbreviation): WABA, not WaBA. */
+      programCovers: (atlases: readonly string[]) =>
+        atlases.length === 0
           ? "Covers samples outside every atlas; each atlas prints its own."
-          : `Covers ${list(codes)}, and samples outside every atlas.`,
+          : `Covers ${list(atlases)}, and samples outside every atlas.`,
       waiting: (labels: number, samples: number, reprints = 0) =>
         `${
           labels === 0

@@ -70,6 +70,8 @@ export interface UnclaimedRecord {
   state_province: string | null;
   county_name: string | null;
   program_code: string;
+  /** The program as people abbreviate it (program_abbreviation), for display. */
+  program_abbreviation: string;
 }
 
 export interface UnclaimedListing {
@@ -330,8 +332,11 @@ export async function observerDetail(db: Kysely<Database>, userId: number): Prom
     state_province: string | null;
     county_name: string | null;
     program_code: string;
+    program_abbreviation: string;
   }>`
-    SELECT inat_id, sample_number, specimen_count, observed_on, state_province, county_name, program_code
+    SELECT inat_id, sample_number, specimen_count, observed_on, state_province, county_name, program_code,
+           coalesce((SELECT ab.abbreviation FROM program pr JOIN program_abbreviation ab ON ab.program_id = pr.entity_id
+                     WHERE pr.code = unclaimed_record.program_code), program_code) AS program_abbreviation
     FROM unclaimed_record
     WHERE user_id = ${userId}
     ORDER BY observed_on DESC, try_cast(sample_number AS INTEGER) NULLS LAST, sample_number, inat_id`.execute(db);

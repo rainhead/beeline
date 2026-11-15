@@ -106,11 +106,11 @@ const PEOPLE: ReadonlyArray<{ person: PersonNameParts; note: string }> = [
   },
 ];
 
-/** The English name beside the scientific one: the rule for each shape it takes. */
+/** The English name in the scientific one's tooltip: the rule for each shape it takes. */
 const VERNACULAR_EXAMPLES: ReadonlyArray<{ props: TaxonNameProps; note: string }> = [
   {
     props: { rank: "species", scientificName: "Eriophyllum lanatum", vernacular: "woolly sunflower" },
-    note: "The ordinary case. The scientific name leads and is italic; the common name is upright and muted.",
+    note: "The ordinary case. Hover for the common name: the screen shows the scientific name, italic, and nothing more.",
   },
   {
     props: {
@@ -119,19 +119,19 @@ const VERNACULAR_EXAMPLES: ReadonlyArray<{ props: TaxonNameProps; note: string }
       authorship: "(Nees) G.L.Nesom",
       vernacular: "Pacific aster",
     },
-    note: "With authorship, which comes before the dot.",
+    note: "With authorship, which the screen shows after the name. Hover for the common name.",
   },
   {
     props: { rank: "species", scientificName: "Phacelia hastata", vernacular: "silverleaf phacelia" },
-    note: "Sentence case, as stored, not iNaturalist's “Silverleaf Phacelia”.",
+    note: "Sentence case, as stored, not iNaturalist's “Silverleaf Phacelia”. Hover for the common name.",
   },
   {
     props: { rank: "family", scientificName: "Onagraceae", vernacular: "evening primrose family" },
-    note: "Above genus the scientific name is upright, and the pair still reads in the same order.",
+    note: "Above genus the scientific name is upright. Hover for the common name.",
   },
   {
     props: { rank: "species", scientificName: "Mahonia aquifolium" },
-    note: "No common name: the scientific name alone, and no dot.",
+    note: "No common name: the scientific name alone, with no tooltip.",
   },
 ];
 
@@ -202,11 +202,14 @@ export function DesignNames() {
         records, prints, and exports is always the scientific name.
       </p>
       <p>
-        Where a screen shows a host&rsquo;s common name, it follows the scientific name on the same line: the scientific
-        name, any authorship, a middle dot, then the common name, upright, in the muted colour and in sentence case.
-        The scientific name leads because it is what Beeline records; the common name is a gloss. It is set by{" "}
-        <code>TaxonName</code>, through its <code>vernacular</code> prop, so every page and listing does it one way.
-        It never leads, it never replaces the scientific name, and it never reaches a printed label or an export.
+        The scientific name is what the screen shows. A host&rsquo;s common name is in the name&rsquo;s tooltip (a{" "}
+        <code>title</code> attribute) and is read out by screen readers, so it costs no space (Peter, 2026-11-15). It
+        is set by <code>TaxonName</code>, through its <code>vernacular</code> prop, so every page and listing does it
+        one way. It never leads, and it never replaces the scientific name. It never reaches a printed label or the
+        Darwin Core archive, which goes to Ecdysis and GBIF. The listings&rsquo; downloads and the API carry it only as
+        a column of its own beside the scientific name, so a program reading them can ignore it. The known limit:
+        phones and tablets do not show a <code>title</code> tooltip, so there the common name can be reached only
+        through the host filter, which finds a host by it, and through the downloads.
       </p>
       <Specimen>
         <dl class="reference">
@@ -237,13 +240,8 @@ export function DesignNames() {
           an italic context.
         </li>
         <li>
-          <strong>Not by colour alone</strong> (WCAG 1.4.1, use of colour). The dot separates the two names visually;
-          a screen reader hears a comma. The dot and the common name are kept together: when they do not fit on the
-          line, they move to the next line whole, so a narrow screen never strands a dot at the end of a line.
-        </li>
-        <li>
-          <strong>When iNaturalist now calls the taxon something else,</strong> the common name stays on the first
-          line, and the next line says what iNaturalist calls it now. The common name is the current plant&rsquo;s,
+          <strong>When iNaturalist now calls the taxon something else,</strong> the common name stays in the tooltip of
+          the first line, and the next line says what iNaturalist calls it now. The common name is the current plant&rsquo;s,
           which for a replacement is the same plant under another name.
         </li>
         <li>
@@ -308,8 +306,8 @@ export function DesignNames() {
           "Treat a genus-rank determination as a complete answer and set it “Bombus sp.”, not “Bombus (unknown)”.",
           "Keep authorship when the data has it — it disambiguates homonyms.",
           <>
-            Pair a common name with its scientific name on one line through <code>TaxonName</code>&rsquo;s{" "}
-            <code>vernacular</code> prop.
+            Put a common name in the scientific name&rsquo;s tooltip through <code>TaxonName</code>&rsquo;s{" "}
+            <code>vernacular</code> option.
           </>,
           "Say why a name is uncertain with cf. or aff. rather than dropping to genus.",
           <>
@@ -323,7 +321,7 @@ export function DesignNames() {
           "Don't put cf. after the epithet, or sp. before it.",
           "Don't lead with an English name, and don't put one on a label or in an export.",
           "Don't put a common name in parentheses or quotation marks after a scientific name.",
-          "Don't separate a scientific and a common name by colour alone.",
+          "Don't set a common name inline beside the scientific name.",
           "Don't set a scientific name in monospace, even inside a technical detail string.",
           "Don't split a family name at print time — particles and second surnames belong to it.",
         ]}

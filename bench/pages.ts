@@ -6,7 +6,7 @@ import { args, environment, openBench, rows, samples, sessionFor, statusCounts, 
 /**
  * How long each page takes, one request at a time, against a copy of a store.
  *
- *   pnpm bench:pages [store.duckdb] [--n=15] [--out=file.json] [--compare=baseline.json]
+ *   pnpm bench:pages [store.duckdb] [--n=15] [--out=file.json] [--compare=baseline.json] [--only=text]
  *
  * The cases are the pages people actually open, as the two kinds of people
  * who open them: the store's most prolific collector, for whom `mine` is as
@@ -24,6 +24,11 @@ interface Case {
   name: string;
   who: "volunteer" | "staff";
   path: string;
+  /**
+   * A whole-corpus download, tens of seconds long: run only when `--only` names it, so that a plain run does
+   * not grow by the 16 requests of an ordinary case times that long.
+   */
+  onlyWhenNamed?: true;
 }
 
 async function cases(bench: Bench): Promise<Case[]> {
@@ -45,6 +50,15 @@ async function cases(bench: Bench): Promise<Case[]> {
        JOIN animal a ON a.entity_id = d.animal_id
        JOIN animal g ON g.entity_id = a.parent_id AND g.rank = 'genus'
       GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`,
+  );
+  // Hosts (beeline-rfkj.4): the genus most samples name as observed, and the common name most samples' hosts have.
+  // The first finds the same rows before and after the change; the second finds none before it, since the filter
+  // did not read common names, so its time is the cost of the filter and not of a bigger answer.
+  const hostGenus = await one(
+    `SELECT split_part(host_name_as_observed, ' ', 1) FROM sample WHERE host_name_as_observed IS NOT NULL GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`,
+  );
+  const hostCommon = await one(
+    `SELECT c.common_name FROM plant_common_name_cache c JOIN sample s ON s.host_inat_taxon_id = c.inat_taxon_id GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`,
   );
   const state = await one(`SELECT state_province FROM sample WHERE state_province IS NOT NULL GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`);
   const run = await one(`SELECT print_run_id FROM printed_label GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`);
@@ -72,6 +86,11 @@ async function cases(bench: Bench): Promise<Case[]> {
     { name: "samples, all, last page", who: "staff", path: "/samples?scope=all&page=100000" },
     state ? { name: "samples, all, by place", who: "staff", path: `/samples?scope=all&place=${enc(state)}` } : null,
     { name: "samples, all, search", who: "staff", path: "/samples?scope=all&q=26" },
+    hostGenus ? { name: "samples, all, by host name", who: "staff", path: `/samples?scope=all&host=${enc(hostGenus)}` } : null,
+    hostCommon ? { name: "samples, all, by host common name", who: "staff", path: `/samples?scope=all&host=${enc(hostCommon)}` } : null,
+    hostCommon ? { name: "specimens, all, by host common name", who: "staff", path: `/specimens?scope=all&host=${enc(hostCommon)}` } : null,
+    { name: "samples.csv, all", who: "staff", path: "/samples.csv?scope=all", onlyWhenNamed: true },
+    { name: "specimens.csv, all", who: "staff", path: "/specimens.csv?scope=all", onlyWhenNamed: true },
     { name: "specimens, all", who: "staff", path: "/specimens?scope=all" },
     genus ? { name: "specimens, all, by genus", who: "staff", path: `/specimens?scope=all&taxon=${enc(genus)}` } : null,
     { name: "specimens, all, undetermined", who: "staff", path: "/specimens?scope=all&det=undetermined" },
@@ -100,12 +119,18 @@ interface CaseResult extends Case, Summary {
 const { positional, flags } = args(process.argv.slice(2));
 const source = positional[0] ?? "beeline.duckdb";
 const n = Number(flags.n ?? 15);
+// --only=<text>: just the cases whose "who name" contains the text, in any case, for a quick comparison of a few
+// pages. Plain text rather than a pattern, so nothing typed on the command line becomes a regular expression. It
+// matches by containment, so `--only=all` pulls the whole-corpus downloads in too. A plain run leaves those
+// downloads out and runs the sample-edit write; with --only, the write runs only if its name contains the text.
+const onlyText = typeof flags.only === "string" ? flags.only.toLowerCase() : undefined;
+const only = onlyText === undefined ? undefined : { test: (s: string) => s.toLowerCase().includes(onlyText) };
 
 const bench = await openBench(source);
 try {
   const env = await environment(bench, source);
   const results: CaseResult[] = [];
-  for (const c of await cases(bench)) {
+  for (const c of (await cases(bench)).filter((c) => (only === undefined ? c.onlyWhenNamed !== true : only.test(`${c.who} ${c.name}`)))) {
     const who: Subject = bench[c.who];
     const cold = await timed(bench, who, c.path);
     const runs = [];
@@ -137,7 +162,7 @@ try {
       WHERE s.inat_observation_id IS NULL
       GROUP BY ALL ORDER BY count(*) DESC, a.person_id LIMIT 1`,
   );
-  if (ed !== undefined) {
+  if (ed !== undefined && (only === undefined || only.test("volunteer save a sample edit"))) {
     // The copy has no change snapshot yet, and a save that falls on a missing
     // one becomes the baseline pass — a different, one-off cost.
     await recordSampleChanges(

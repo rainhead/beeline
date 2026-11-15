@@ -256,10 +256,14 @@ export const SAMPLE_PUBLISHED: Publish<SampleDetail> = {
   elevation_stale: true, mine: true, location_withheld: true, printed: true, from_old_records: true,
   locality_override: true, location_override: true, label_diverged: true, locality_suggestion: true,
   locality_alternatives: true, wildernesses: true, ecoregion: true, collectors: true,
-  // What iNaturalist calls the host now (beeline-rfkj.3): the page shows it, the API does not yet. What the
-  // API and the exports say about a host's current taxon is beeline-rfkj.8's to decide.
-  host_standing: false, host_current_name: false, host_current_rank: false, host_split_within_name: false, host_split_within_rank: false,
-  host_common_name: false, host_common_name_source: false,
+  // What iNaturalist calls the host now (beeline-rfkj.3). The current name, the family and the common name are
+  // published, so that a sample's record and the listings' rows (beeline-rfkj.4) say the same about a host. The
+  // rest is what only the record page uses to word its notes under the host: whether the taxon is replaced, split
+  // or retired, the current name's rank, what a split came to and where the common name came from. Whether those
+  // are published too is beeline-rfkj.8's to decide.
+  host_current_name: true, host_family: true, host_common_name: true,
+  host_standing: false, host_current_rank: false, host_split_within_name: false, host_split_within_rank: false,
+  host_common_name_source: false,
 };
 export const SPECIMEN_PUBLISHED: Publish<Omit<SpecimenDetail, "sample">> = {
   specimen_id: true, specimen_number: true, field_number: true, disposition: true, remarks: true, remarks_by: true, remarks_on: true,

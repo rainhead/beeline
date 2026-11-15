@@ -79,23 +79,27 @@ describe("TaxonName", () => {
   });
 
   describe("vernacular", () => {
-    const dotAndName = (name: string) =>
-      `<span class="taxon-vernacular"><span aria-hidden="true">\u00b7</span><span class="visually-hidden">, </span>\u00a0${name}</span>`;
+    // The common name is the title of the element, and follows the name as hidden text for screen readers.
+    const hidden = (name: string) => `<span class="visually-hidden">, ${name}</span>`;
+    /** What a person sees: the markup without the title attribute and the hidden text. */
+    const visible = (html: string) => html.replace(/ title="[^"]*"/, "").replace(/<span class="visually-hidden">.*?<\/span>/g, "");
 
     it("adds nothing without a vernacular name, or with an empty one", () => {
       const plain = render({ rank: "species", scientificName: "Phacelia hastata" });
       expect(render({ rank: "species", scientificName: "Phacelia hastata", vernacular: null })).toBe(plain);
       expect(render({ rank: "species", scientificName: "Phacelia hastata", vernacular: "" })).toBe(plain);
-      expect(plain).not.toContain("\u00b7");
+      expect(plain).not.toContain("title=");
+      expect(plain).not.toContain("visually-hidden");
     });
 
-    it("follows the scientific name on its line after a hidden dot, with a comma for screen readers and a non-breaking space", () => {
-      expect(render({ rank: "species", scientificName: "Phacelia hastata", vernacular: "silverleaf phacelia" })).toBe(
-        `<span class="taxon"><i>Phacelia</i> <i>hastata</i> ${dotAndName("silverleaf phacelia")}</span>`,
-      );
+    it("is the title of the scientific name and hidden text after it, and shows nothing", () => {
+      const html = render({ rank: "species", scientificName: "Phacelia hastata", vernacular: "silverleaf phacelia" });
+      expect(html).toBe(`<span class="taxon" title="silverleaf phacelia"><i>Phacelia</i> <i>hastata</i>${hidden("silverleaf phacelia")}</span>`);
+      expect(visible(html)).toBe(`<span class="taxon"><i>Phacelia</i> <i>hastata</i></span>`);
+      expect(visible(html)).not.toContain("silverleaf");
     });
 
-    it("comes after the authorship, and the scientific name still leads", () => {
+    it("sits after the authorship, which stays visible", () => {
       const html = render({
         rank: "species",
         scientificName: "Symphyotrichum chilense",
@@ -103,16 +107,17 @@ describe("TaxonName", () => {
         vernacular: "Pacific aster",
       });
       expect(html).toBe(
-        `<span class="taxon"><i>Symphyotrichum</i> <i>chilense</i> <span class="taxon-authorship">(Nees) G.L.Nesom</span> ${dotAndName("Pacific aster")}</span>`,
+        `<span class="taxon" title="Pacific aster"><i>Symphyotrichum</i> <i>chilense</i> <span class="taxon-authorship">(Nees) G.L.Nesom</span>${hidden("Pacific aster")}</span>`,
       );
     });
 
     it("keeps the name out of the italics, and out of brackets and quotation marks, at every rank", () => {
       for (const rank of ["species", "genus", "family"]) {
         const html = render({ rank, scientificName: "Eriophyllum lanatum", vernacular: "woolly sunflower" });
-        // The only <i> elements are the scientific name's own, closed before the dot.
-        expect(html.slice(html.indexOf("taxon-vernacular"))).not.toContain("<i>");
-        expect(html).not.toMatch(/[("'\u201c]\u00a0?woolly|woolly sunflower[)"'\u201d]/);
+        // The only <i> elements are the scientific name's own, closed before the hidden text.
+        expect(html.slice(html.indexOf("visually-hidden"))).not.toContain("<i>");
+        expect(visible(html)).not.toMatch(/[("'\u201c]\u00a0?woolly|woolly sunflower[)"'\u201d]/);
+        expect(html).not.toContain("(woolly");
       }
     });
   });

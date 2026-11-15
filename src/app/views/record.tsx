@@ -152,7 +152,11 @@ export function SampleFacts({
 }: {
   m: Messages;
   sample: SampleDetail;
-  /** Whether the reader may correct the method and end date (staff, on a sample from old records; beeline-p8y1). */
+  /**
+   * Whether the reader may correct the method and dates: staff, on a sample
+   * from old records (beeline-p8y1) or a trap sample entered in Beeline past
+   * its own form (beeline-0wbq).
+   */
   methodEdit?: boolean;
   /**
    * Whether the reader may change the locality from the Place row, and
@@ -534,13 +538,15 @@ function TakeObservationLocation({ m, sample }: { m: Messages; sample: SampleDet
 }
 
 /**
- * Staff correcting how a sample from the old Beeline was collected
- * (beeline-p8y1), from a pencil on the Method row: the method's words and the
- * day collecting ended, which makes it a trap sample (src/app/sample-method.ts).
+ * Staff correcting how and when a sample was collected (beeline-p8y1,
+ * beeline-0wbq), from a pencil on the Method row: the method's words, the day
+ * collecting ended, which makes an old sample a trap sample, and the day it
+ * started where iNaturalist does not hold it (src/app/sample-method.ts).
  */
 function MethodEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
   const t = m.record.sample.methodEdit;
   const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const startEditable = sample.inat_observation_id === null;
   return (
     <InlineEdit
       label={t.open}
@@ -549,17 +555,25 @@ function MethodEdit({ m, sample }: { m: Messages; sample: SampleDetail }) {
       save={t.save}
       cancel={m.listings.samples.placeEdit.cancel}
     >
-      <Meta block>{t.hint}</Meta>
+      <Meta block>{sample.from_old_records ? t.hint : t.hintEntered}</Meta>
       {/* What the form shows rides along as base:*, so a save can tell a
           field nobody touched from a stale one (beeline-0br). */}
       <TextField id="method-protocol" name="protocol" label={t.protocol} hint={t.protocolHint} value={sample.protocol} base={sample.protocol} />
+      {startEditable && (
+        <>
+          <input type="hidden" name="base:date_start" value={iso(sample.date_start)} />
+          <Field id="method-date-start" label={t.dateStart} hint={t.dateStartHint}>
+            <input id="method-date-start" name="date_start" type="date" value={iso(sample.date_start)} required />
+          </Field>
+        </>
+      )}
       <input type="hidden" name="base:date_end" value={sample.kind === "trap" ? iso(sample.date_end) : ""} />
       <Field id="method-date-end" label={t.dateEnd} hint={t.dateEndHint}>
         <input
           id="method-date-end"
           name="date_end"
           type="date"
-          min={iso(sample.date_start)}
+          min={startEditable ? undefined : iso(sample.date_start)}
           value={sample.kind === "trap" ? iso(sample.date_end) : ""}
         />
       </Field>
@@ -913,6 +927,7 @@ export function SamplePage({
   ownsLocality = false,
   trapEditHref,
   entered = false,
+  enteredPastItsForm = false,
   placePending = false,
 }: {
   m: Messages;
@@ -928,6 +943,8 @@ export function SamplePage({
   ownsLocality?: boolean;
   /** Where this reader edits the sample, when it was entered in Beeline and they may (beeline-3vs.2). */
   trapEditHref?: string;
+  /** Entered in Beeline, and its labels printed or frozen, so its own form no longer opens (beeline-0wbq). */
+  enteredPastItsForm?: boolean;
   /** Whether the sample was entered in Beeline rather than imported (beeline-3vs.2). */
   entered?: boolean;
   /**
@@ -957,7 +974,7 @@ export function SamplePage({
           m={m}
           sample={sample}
           placeEdit={samplePlaceEdit(sample, { admin, ownsLocality, entered, editsEntered: trapEditHref !== undefined })}
-          methodEdit={admin && sample.from_old_records}
+          methodEdit={admin && (sample.from_old_records || enteredPastItsForm)}
         />
         <SampleActions m={m} sample={sample} trapEditHref={trapEditHref} />
       </Card>

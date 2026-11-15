@@ -1167,8 +1167,12 @@ export const en = {
        */
       methodEdit: {
         /** The pencil, for a screen reader: it has no visible words. */
-        open: "Correct how this sample was collected",
+        open: "Correct how and when this sample was collected",
         hint: "Old Beeline holds records of this sample. A correction here is recorded against those records, with your name.",
+        /** For a trap sample entered in Beeline, once its own form no longer opens. */
+        hintEntered: "This sample's labels are printed or about to be, so its own form no longer opens. A correction here changes the sample; ask for a reprint if the labels should change too.",
+        dateStart: "Collecting started",
+        dateStartHint: "The day collecting began, or the day of a net sample.",
         protocol: "Method, in the record's words",
         protocolHint: "For example, pan traps, blue vane traps or aerial net.",
         dateEnd: "Collecting ended",
@@ -1177,10 +1181,13 @@ export const en = {
         save: "Save",
         problems: {
           date: "The end date is not a date Beeline can read.",
+          start_date: "The start date is not a date Beeline can read.",
           before_start: "Collecting cannot end before the day it started.",
           future: "Collecting cannot end on a day that has not come yet.",
+          start_future: "Collecting cannot start on a day that has not come yet.",
+          start_observation: "This sample's start date comes from its iNaturalist observation, so it is corrected there.",
         },
-        noOldRecords: "Old Beeline holds no records of this sample, so it cannot be corrected here.",
+        noOldRecords: "Old Beeline holds no records of this sample and it was not entered in Beeline, so it cannot be corrected here.",
         conflict: "Someone changed this sample's method or dates after you opened the form. Reload the page to see what they saved, then make your correction again.",
       },
       staffCoordinates: {

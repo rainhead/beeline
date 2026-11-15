@@ -433,13 +433,18 @@ describe("the file of proper nouns", () => {
 
   test("every keep row of the file, as a name by itself, comes out as the file spells it, and a lower row comes out in lower case", async () => {
     await loadPlantList(conn);
-    const all = (await rows("SELECT word, treatment FROM plant_proper_noun ORDER BY word")) as Array<[string, string]>;
-    const wrong: string[] = [];
-    for (const [word, treatment] of all) {
-      const got = await converted(word.toUpperCase());
-      const want = treatment === "keep" ? word : word.toLowerCase();
-      if (got !== want) wrong.push(`${word} -> ${got}`);
-    }
+    // Every row as one taxon's name, written in capitals, read back in one query rather than one per row:
+    // the view is evaluated over every cached taxon, so a query per row took seconds per hundred rows.
+    await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active, preferred_common_name)
+      SELECT 500000 + row_number() OVER (ORDER BY word), concat('Synthetica row', row_number() OVER (ORDER BY word)), 'species', 10, true, upper(word)
+      FROM plant_proper_noun`);
+    const wrong = await rows(`
+      SELECT concat(n.word, ' -> ', coalesce(c.common_name, 'nothing'))
+      FROM (SELECT word, treatment, 500000 + row_number() OVER (ORDER BY word) AS id FROM plant_proper_noun) n
+      LEFT JOIN plant_inat_common_name c ON c.inat_taxon_id = n.id
+      WHERE c.common_name IS DISTINCT FROM CASE WHEN n.treatment = 'keep' THEN n.word ELSE lower(n.word) END
+      ORDER BY 1`);
+    expect(await rows("SELECT count(*) FROM plant_proper_noun")).not.toEqual([[0]]);
     expect(wrong).toEqual([]);
   });
 });

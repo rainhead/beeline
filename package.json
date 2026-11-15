@@ -20,6 +20,7 @@
     "legacy:copy": "tsx src/copy-legacy.ts",
     "legacy:volunteer-import": "tsx src/import-legacy-volunteer.ts",
     "legacy:repair-skipped": "tsx src/repair-legacy-skipped.ts",
+    "legacy:carry-over": "tsx src/carry-over-legacy.ts",
     "backup:check": "tsx src/check-backup.ts",
     "store:query": "tsx src/store-query.ts",
     "legacy:compare-export": "tsx src/compare-legacy-export.ts",

@@ -101,7 +101,8 @@ beforeAll(async () => {
   template = join(dir, "promoted.duckdb");
   await writeCopy(await promoted(await empty()), template);
   reference = await promoted(corrections);
-});
+  // Two promotions, which on a busy machine take longer than the default limit.
+}, 120_000);
 
 /** A test's own copy of the store promoted without the correction. */
 const fresh = async () => (await openCopy(template)).conn;

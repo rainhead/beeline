@@ -183,6 +183,13 @@ export interface InatTaxonAbsentTable {
   asked_at: Generated<Date>;
 }
 
+/** Taxa that, as an observation's taxon, mean it names no floral host (Homo sapiens, a user's flag; beeline-rfkj.11). */
+export interface InatTaxonNotAHostTable {
+  inat_taxon_id: BigIntCol;
+  name: string;
+  reason: string;
+}
+
 /** Absent verdicts from the last 30 days, the ones that still count. */
 export interface InatTaxonKnownAbsentView {
   inat_taxon_id: BigIntCol;
@@ -686,6 +693,15 @@ export interface SampleElevationStaleView {
   elevation_m: number;
   elevation_latitude: number;
   elevation_longitude: number;
+}
+
+/** schema/105: an observation's floral host as a sample takes it, none where the taxon means no host. */
+export interface ObservationHostView {
+  inat_id: BigIntCol;
+  host_taxon_id: BigIntCol | null;
+  host_taxon_name: string | null;
+  host_taxon_rank: string | null;
+  host_is_tracheophyte: boolean | null;
 }
 
 /** schema/105: a linked sample whose geoprivacy flags no longer say what its observation does. */
@@ -1754,6 +1770,7 @@ export interface Database {
   sample_number_gap: SampleNumberGapView;
   sample_elevation_unsupportable: SampleElevationUnsupportableView;
   sample_elevation_stale: SampleElevationStaleView;
+  observation_host: ObservationHostView;
   sample_geoprivacy_stale: SampleGeoprivacyStaleView;
   sample_elevation_pending: SampleElevationPendingView;
   sample_locality_candidate_current: SampleLocalityCandidateCurrentView;
@@ -1792,6 +1809,7 @@ export interface Database {
   inat_taxon_ancestor: InatTaxonAncestorTable;
   inat_taxon_replacement: InatTaxonReplacementTable;
   inat_taxon_absent: InatTaxonAbsentTable;
+  inat_taxon_not_a_host: InatTaxonNotAHostTable;
   inat_taxon_known_absent: InatTaxonKnownAbsentView;
   inat_taxon_uncached: InatTaxonUncachedView;
   plant_list: PlantListTable;

@@ -157,7 +157,9 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
     // yet. Coordinates by the rule promotion applies: the private pair when
     // trust delivers one, the public pair when nothing obscures it, and
     // otherwise none — a shifted pair is not a reading. Locality and place
-    // are looked up afterwards, for these rows alone.
+    // are looked up afterwards, for these rows alone. The host is the one a
+    // sample would take (observation_host): none where the taxon is a user's
+    // flag such as Homo sapiens (beeline-rfkj.11), here and in the next query.
     sql<RawObservationRow & { sample_number: string }>`
       SELECT f.inat_id AS inat_observation_id,
              trim(f.sample_number_raw) AS sample_number,
@@ -171,8 +173,9 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
              f.positional_accuracy AS coordinate_uncertainty_m,
              nullif(f.geoprivacy, 'open') AS geoprivacy,
              nullif(f.taxon_geoprivacy, 'open') AS taxon_geoprivacy,
-             f.host_taxon_name AS host_name, f.host_taxon_rank AS host_rank, f.host_taxon_id
+             h.host_taxon_name AS host_name, h.host_taxon_rank AS host_rank, h.host_taxon_id
       FROM observation_field f
+      JOIN observation_host h ON h.inat_id = f.inat_id
       JOIN inat_account a ON a.inat_user_id = f.user_id AND a.person_id = ${personId}
       CROSS JOIN season
       WHERE try_cast(f.specimen_count_raw AS INTEGER) = 0
@@ -195,11 +198,12 @@ export async function loadDashboard(db: Kysely<Database>, personId: number, dete
              f.positional_accuracy AS coordinate_uncertainty_m,
              nullif(f.geoprivacy, 'open') AS geoprivacy,
              nullif(f.taxon_geoprivacy, 'open') AS taxon_geoprivacy,
-             f.host_taxon_name AS host_name, f.host_taxon_rank AS host_rank, f.host_taxon_id,
+             h.host_taxon_name AS host_name, h.host_taxon_rank AS host_rank, h.host_taxon_id,
              try_cast(f.specimen_count_raw AS INTEGER) AS specimen_count,
              u.notes
       FROM observation_unnumbered u
       JOIN observation_field f ON f.inat_id = u.inat_id
+      JOIN observation_host h ON h.inat_id = f.inat_id
       CROSS JOIN season
       WHERE u.person_id = ${personId}
         AND u.observed_on >= season.active_since

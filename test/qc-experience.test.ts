@@ -314,6 +314,22 @@ describe("the front page", () => {
     expect(body).not.toContain("Sample 4 ");
   });
 
+  it("shows no host for an observation identified as Homo sapiens, as the sample it becomes will have none", async () => {
+    // A user's flag on iNaturalist, not a host (beeline-rfkj.11); 43584 is its real id.
+    const { app, conn, alice } = await qcApp();
+    await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${alice}, 501, 'alice')`);
+    await conn.run(
+      `INSERT INTO observation_field (inat_id, observed_on, user_id, user_login, sample_number_raw, specimen_count_raw,
+                                      host_taxon_id, host_taxon_name, host_taxon_rank, host_is_tracheophyte)
+       VALUES (777001, DATE '${currentSeasonDate(8, 30)}', 501, 'alice', '12', '0', 43584, 'Homo sapiens', 'species', false),
+              (777004, DATE '${currentSeasonDate(8, 31)}', 501, 'alice', '13', '0', 47604, 'Rubus', 'genus', true)`,
+    );
+    const body = await (await app.request("/")).text();
+    expect(body).toContain("Sample 12");
+    expect(body).not.toContain("Homo sapiens");
+    expect(body).toContain("Rubus");
+  });
+
   it("asks about an observation in the project with its sample number left blank", async () => {
     const { app, conn, alice } = await qcApp();
     await conn.run(`INSERT INTO inat_account (person_id, inat_user_id, login) VALUES (${alice}, 501, 'alice')`);

@@ -604,6 +604,45 @@ describe("descriptive fields are a fill-only refresh", () => {
       .toEqual([null, "Ericameria nauseosa"]);
   });
 
+  // Homo sapiens is how an iNaturalist user flags an observation as not one of anything (Peter,
+  // 2026-11-15, beeline-rfkj.11): no host, not a host that is not a plant. 43584 is its real id;
+  // the ancestry is shortened, keeping what matters, that Tracheophyta (211194) is not in it.
+  const human = { id: 43584, name: "Homo sapiens", rank: "species", ancestor_ids: [48460, 1, 2, 40151, 43583, 43584] };
+  const bee = { id: 57669, name: "Andrena", rank: "genus", ancestor_ids: [48460, 1, 47120, 47158, 57669] };
+  const hostFinding = (sampleId: number) =>
+    count(`SELECT count(*) FROM qc_finding WHERE rule_name = 'non_tracheophyte_host' AND sample_id = ${sampleId}`);
+
+  test("an observation identified as Homo sapiens mints a sample with no host, and the host rule is silent", async () => {
+    await stage(obs(7, { taxon: human }));
+    await promoteObservations(conn);
+    const [[minted]] = (await rows(conn, "SELECT entity_id FROM sample")) as [[number]];
+    expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed, host_rank FROM sample WHERE entity_id = ${minted}`))
+      .toEqual([null, null, null]);
+    expect(await hostFinding(minted)).toBe(0);
+    // The projection still says what iNaturalist said: only the sample's reading of it changes.
+    expect(await one("SELECT host_taxon_id, host_taxon_name FROM observation_field WHERE inat_id = 7")).toEqual([43584n, "Homo sapiens"]);
+  });
+
+  test("an observation that turns Homo sapiens leaves a plant host as it is", async () => {
+    const kept = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'",
+      host_name_as_observed: "'Rubus'", host_inat_taxon_id: "47604", host_rank: "'genus'",
+    });
+    await stage(obs(7, { taxon: human }));
+    await promoteObservations(conn);
+    expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed, host_rank FROM sample WHERE entity_id = ${kept}`))
+      .toEqual([47604n, "Rubus", "genus"]);
+    expect(await hostFinding(kept)).toBe(0);
+  });
+
+  test("the bee identified as the observation's subject is still a host that is not a plant", async () => {
+    await stage(obs(7, { taxon: bee }));
+    await promoteObservations(conn);
+    const [[minted]] = (await rows(conn, "SELECT entity_id FROM sample")) as [[number]];
+    expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed FROM sample WHERE entity_id = ${minted}`)).toEqual([57669n, "Andrena"]);
+    expect(await hostFinding(minted)).toBe(1);
+  });
+
   test("an atlas a human assigned is not moved by the lookup", async () => {
     // A row with a NULL atlas and assigned_by set is a person stating
     // "belongs to none" — the one state the CHECK admits a NULL atlas for —

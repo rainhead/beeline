@@ -195,7 +195,8 @@ export async function refreshInatTaxa(
 export const PLANT_NAMES_DEADLINE_MS = 15 * 60_000;
 
 /**
- * The old plant list's names put to iNaturalist (src/fetch-plant-names.ts),
+ * Plant names put to iNaturalist (src/fetch-plant-names.ts): the old plant
+ * list's, and the hosts of samples that have a name and no host id,
  * then the taxa they led to read into the cache, as the nightly's step does.
  * The cache's rolling refresh is left to the nightly pipeline, which runs it
  * an hour later: this job reads only the taxa the names reached.
@@ -226,8 +227,9 @@ export async function refreshPlantNames(
     opts.signal?.throwIfAborted();
     parts.push(
       r.unlooked === 0
-        ? "every plant list name answered"
-        : `${r.stored} of ${r.unlooked} plant list names answered` +
+        ? "every plant name answered"
+        : `${r.stored} plant names answered of the ${r.unlooked} waiting ` +
+            `(of those waiting, ${r.unlookedOnList} on the plant list and ${r.unlookedHostsOnly} only samples' hosts)` +
             (r.refused > 0 ? `; ${r.refused} recorded as could not be asked (iNaturalist refused the name)` : "") +
             (r.errors.length > 0 ? `; ${r.errors.length} request error(s), the first: ${r.errors[0]}` : "") +
             (r.stoppedEarly ? "; the rest wait for the next run" : ""),

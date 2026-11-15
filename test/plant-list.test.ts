@@ -17,14 +17,17 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { refreshPlantNames } from "../src/app/jobs/registry.js";
 import type { JobContext } from "../src/app/jobs/framework.js";
 import { parseCsv } from "../src/corrections.js";
-import { fetchPlantNames } from "../src/fetch-plant-names.js";
+import { countUnlookedPlantNames, fetchPlantNames } from "../src/fetch-plant-names.js";
 import { loadPlantList, loadPlantListAtBoot, plantListHash, OLD_BEELINE_PLANT_LIST_FILE, parsePlantList } from "../src/load-plant-list.js";
 import { refreshPlantCommonNames, thenRefreshPlantCommonNames } from "../src/plant-common-names.js";
-import { createMemoryDb } from "./helpers.js";
+import { createMemoryDb, insertCleanSample } from "./helpers.js";
 
-const ANSWERS: Record<string, unknown> = JSON.parse(
-  readFileSync(new URL("./fixtures/plant-names/answers.json", import.meta.url), "utf8"),
-);
+// host-answers.json holds the answers for the host names (beeline-rfkj.5), captured from the same
+// endpoint on 2026-11-15 and cut down to the fields the fetcher reads.
+const ANSWERS: Record<string, unknown> = {
+  ...JSON.parse(readFileSync(new URL("./fixtures/plant-names/answers.json", import.meta.url), "utf8")),
+  ...JSON.parse(readFileSync(new URL("./fixtures/plant-names/host-answers.json", import.meta.url), "utf8")),
+};
 
 let conn: DuckDBConnection;
 let instance: DuckDBInstance;
@@ -208,7 +211,7 @@ describe("loading the list", () => {
     const loaded = await loadPlantListAtBoot(() => instance.connect(), { path, log: (m) => logged.push(m) });
     expect(loaded).toMatchObject({ changed: true, entries: 2 });
     expect(logged).toHaveLength(1);
-    expect(logged[0]).toContain("2 name(s) not yet looked up");
+    expect(logged[0]).toContain("not yet looked up in iNaturalist: 2 on the plant list and 0 only samples' hosts");
   });
 });
 
@@ -373,6 +376,140 @@ describe("normalising a name and inferring its rank", () => {
   });
 });
 
+describe("the hosts of samples that have a name and no iNaturalist id (beeline-rfkj.5)", () => {
+  // The host names are lifted from production's store of 2026-11-15, except where a test says otherwise.
+  async function host(name: string, rank: string | null, taxonId: number | null = null) {
+    const [[people]] = (await rows("SELECT count(*) FROM person")) as [[number]];
+    if (people === 0) await conn.run("INSERT INTO person (display_name) VALUES ('Collector')");
+    const [[samples]] = (await rows("SELECT count(*) FROM sample")) as [[number]];
+    const number = String(samples + 1);
+    await insertCleanSample(conn, {
+      sample_number: `'${number}'`,
+      host_name_as_observed: `'${name.replaceAll("'", "''")}'`,
+      host_rank: rank === null ? "NULL" : `'${rank}'`,
+      host_inat_taxon_id: taxonId === null ? "NULL" : String(taxonId),
+    });
+  }
+  const resolution = async () =>
+    Object.fromEntries(
+      (await rows("SELECT name_key, outcome, inat_taxon_id, by_own_name FROM plant_name_resolution")).map(([k, ...rest]) => [k, rest]),
+    );
+
+  test("each is normalised and shaped by the list's rule, and looked up: a line break, a mangled hybrid sign, a family, a name that is none", async () => {
+    await host("Agastache \nurticifolia", "species");
+    await host("Reynoutria Ã— bohemica", "species");
+    await host("Asteraceae", "family");
+    await host("Grass cover crop", "order");
+    const shapes = Object.fromEntries((await rows("SELECT raw_name, name_key, expected_rank FROM plant_name_shape")).map(([n, ...r]) => [n, r]));
+    expect(shapes).toEqual({
+      "Agastache \nurticifolia": ["agastache urticifolia", "species"],
+      "Reynoutria Ã— bohemica": ["reynoutria bohemica", "species"],
+      Asteraceae: ["asteraceae", "family"],
+      "Grass cover crop": ["grass cover crop", "infraspecific"], // filed as an order; the shape is what is asked
+    });
+    const r = await fetchPlantNames(conn, { fetchImpl: api(), requestDelayMs: 0 });
+    expect(r).toMatchObject({ unlooked: 4, unlookedOnList: 0, unlookedHostsOnly: 4, stored: 4, errors: [] });
+    expect(asked.map((u) => new URL(u).searchParams.get("q"))).toContain("reynoutria bohemica");
+    expect(await resolution()).toEqual({
+      "agastache urticifolia": ["matched", 63316, true],
+      // iNaturalist files it as a hybrid, with the sign that the sample's text had mangled.
+      "reynoutria bohemica": ["matched", 850784, true],
+      asteraceae: ["matched", 47604, true],
+      "grass cover crop": ["no match", null, null],
+    });
+    // The taxa they came to join the taxon cache's worklist, to be read with their ancestors.
+    expect(await rows("SELECT inat_taxon_id FROM inat_taxon_uncached WHERE inat_taxon_id IN (63316, 850784, 47604) ORDER BY 1")).toEqual([
+      [47604],
+      [63316],
+      [850784],
+    ]);
+  });
+
+  test("a sample that has a host id is not asked about: its id is its host", async () => {
+    await host("Urtica dioica", "species", 51884);
+    expect(await rows("SELECT count(*) FROM plant_name_wanted")).toEqual([[0]]);
+    expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
+  });
+
+  test("a name the list and a host share is asked once, and counted as the list's", async () => {
+    await addEntries(["Mentha piperita", "Species", "peppermint"]);
+    await host("Mentha piperita", "species");
+    await host("mentha  piperita", "species"); // synthetic: another spelling of the same name
+    await host("Agastache urticifolia", "species");
+    expect(await countUnlookedPlantNames(conn)).toEqual({ onList: 1, hostsOnly: 1 });
+    const r = await fetchPlantNames(conn, { fetchImpl: api(), requestDelayMs: 0 });
+    expect(r).toMatchObject({ unlooked: 2, unlookedOnList: 1, unlookedHostsOnly: 1, requested: 2 });
+    expect(asked.filter((u) => u.includes("q=mentha"))).toHaveLength(1);
+    expect((await resolution())["mentha piperita"]).toEqual(["matched", 181525, true]);
+    expect(await countUnlookedPlantNames(conn)).toEqual({ onList: 0, hostsOnly: 0 });
+  });
+
+  test("a doubtful or open name keeps its tail and comes to no match, though iNaturalist's search returns the name it qualifies", async () => {
+    // Synthetic host names: none of production's has such a tail (2026-11-15). The answers are iNaturalist's.
+    await host("Salix sp.", "genus");
+    await host("Salix?", "genus");
+    expect(await rows("SELECT raw_name, name_key, expected_rank FROM plant_name_shape ORDER BY 1")).toEqual([
+      ["Salix sp.", "salix sp.", "species"],
+      ["Salix?", "salix?", "genus"],
+    ]);
+    await fetchPlantNames(conn, { fetchImpl: api(), requestDelayMs: 0 });
+    // iNaturalist answered 'salix?' with the genus, subgenus and section Salix; none is the name asked for.
+    expect(await resolution()).toEqual({ "salix sp.": ["no match", null, null], "salix?": ["no match", null, null] });
+  });
+
+  test("a common name typed as a host matches only through matched_term, and by_own_name says so; two plants of one common name are ambiguous", async () => {
+    // Synthetic host names (no such host on production, 2026-11-15); iNaturalist's answers, which write a
+    // common name with a capital first letter, so the capital-letter guard does not keep these out.
+    await host("Dull Oregon-grape", "species");
+    await host("Oregon grape", "species");
+    await addEntries(["Aster chilensis", "Species", null]);
+    await fetchPlantNames(conn, { fetchImpl: api(), requestDelayMs: 0 });
+    const r = await resolution();
+    expect(r["dull oregon-grape"]).toEqual(["matched", 75756, false]); // Berberis nervosa
+    expect(r["oregon grape"]).toEqual(["ambiguous", null, null]); // Berberis aquifolium and Berberis repens
+    // An older scientific name reads the same way: Symphyotrichum chilense matched as Aster chilensis.
+    expect(r["aster chilensis"]).toEqual(["matched", 56861, false]);
+  });
+
+  test("a host whose sample gains an id leaves the worklist, and its lookup stays, still feeding the taxon cache", async () => {
+    await host("Agastache urticifolia", "species");
+    await fetchPlantNames(conn, { fetchImpl: api(), requestDelayMs: 0 });
+    await conn.run("UPDATE sample SET host_inat_taxon_id = 63316");
+    expect(await rows("SELECT count(*) FROM plant_name_shape")).toEqual([[0]]);
+    expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
+    expect(await rows("SELECT name_key FROM plant_name_lookup")).toEqual([["agastache urticifolia"]]);
+    expect(await rows("SELECT count(*) FROM inat_taxon_uncached WHERE inat_taxon_id = 63316")).toEqual([[1]]);
+  });
+
+  test("a host name iNaturalist refused is asked again after 30 days, as a list name is", async () => {
+    await host("Agastache urticifolia", "species");
+    const refusing = (async () => new Response("{}", { status: 422 })) as typeof fetch;
+    expect(await fetchPlantNames(conn, { fetchImpl: refusing, requestDelayMs: 0 })).toMatchObject({ refused: 1 });
+    expect((await resolution())["agastache urticifolia"]).toEqual(["could not be asked", null, null]);
+    expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
+    await conn.run("UPDATE plant_name_lookup SET looked_up_at = now() - INTERVAL 31 DAY");
+    expect(await rows("SELECT name_key FROM plant_name_unlooked")).toEqual([["agastache urticifolia"]]);
+  });
+
+  test("the plant list's names are asked before the hosts', whatever the alphabet says", async () => {
+    await host("Agastache urticifolia", "species");
+    await addEntries(["Urtica dioica", "Species", null]);
+    await fetchPlantNames(conn, { fetchImpl: api(), requestDelayMs: 0 });
+    expect(asked.map((u) => new URL(u).searchParams.get("q"))).toEqual(["urtica dioica", "agastache urticifolia"]);
+  });
+
+  test("the normalisation changes no name of the real list: collapsing all whitespace and the mangled sign touch none of its keys", async () => {
+    await loadPlantList(conn);
+    // The rule as it was before beeline-rfkj.5, written out to compare against.
+    const changed = await rows(`
+      SELECT n.raw_name FROM plant_name_normal n JOIN plant_list_entry e ON e.scientific_name = n.raw_name
+      WHERE n.name_key <> trim(regexp_replace(regexp_replace(regexp_replace(lower(n.raw_name), '×', ' ', 'g'),
+                                                             '(^| )(var|ssp|subsp)\\.', '', 'g'), ' +', ' ', 'g'))`);
+    expect(changed).toEqual([]);
+    expect(await rows("SELECT count(*) FROM plant_list_entry_name")).toEqual([[1405]]);
+  });
+});
+
 describe("looking names up", () => {
   async function lookUp() {
     await addEntries(...REAL_ROWS);
@@ -491,7 +628,7 @@ describe("looking names up", () => {
         return fn();
       },
     });
-    expect(detail).toContain("1 of 1 plant list names answered");
+    expect(detail).toContain("1 plant names answered of the 1 waiting (of those waiting, 1 on the plant list and 0 only samples' hosts)");
     expect(await rows("SELECT count(*) FROM plant_name_lookup")).toEqual([[1]]);
     // The taxa read went through the same fetch, and a taxon the name led to is in the cache.
     expect(await rows("SELECT name FROM inat_taxon WHERE inat_taxon_id = 51884")).toEqual([["Taxon 51884"]]);
@@ -581,7 +718,7 @@ describe("stopping early, dead ends, paging and ranks (synthetic answers)", () =
     const hang = (async (_input: string | URL | Request, init?: RequestInit) =>
       new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener("abort", () => reject(new Error("aborted"))))) as typeof fetch;
     const detail = await refreshPlantNames(conn, { fetchImpl: hang, requestDelayMs: 0, deadlineMs: 20 });
-    expect(detail).toContain("0 of 1 plant list names answered");
+    expect(detail).toContain("0 plant names answered of the 1 waiting");
     expect(detail).toContain("the rest wait for the next run");
     expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[1]]);
   });

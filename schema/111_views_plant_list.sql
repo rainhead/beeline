@@ -1,38 +1,81 @@
--- Matching old Beeline's plant list to iNaturalist taxa, and the common names
--- that follows (beeline-rfkj.2). The tables are in schema/067; the cache of
--- taxa the matches point into is schema/066.
+-- Matching plant names to iNaturalist taxa, and the common names that follow:
+-- the names of old Beeline's plant list (beeline-rfkj.2), and the floral hosts
+-- of samples that have a name and no iNaturalist id (beeline-rfkj.5). The
+-- tables are in schema/067; the cache of taxa the matches point into is
+-- schema/066.
 --
 -- Everything here is resolved on read from rows that keep what their source
--- said. Nothing is stored on an entry, so a taxon swap upstream, or a better
--- lookup later (beeline-rfkj.6), changes the answer without a repair.
+-- said. Nothing is stored on an entry or a sample, so a taxon swap upstream,
+-- or a better lookup later (beeline-rfkj.6), changes the answer without a
+-- repair.
 
--- THE ONE NORMALISATION. A plant name, as the list or iNaturalist wrote it,
--- reduced to what two spellings of the same name share:
+-- THE NAMES TO MATCH. Two sources ask the same question of iNaturalist, which
+-- taxon a scientific name is, and are answered by the same lookups:
+--   list  the plant list's scientific names;
+--   host  the host name of each sample that has a name and no iNaturalist id:
+--         3,159 samples and 862 names on production's store of 2026-11-15,
+--         nearly all from the seasons before iNaturalist carried the host
+--         (old Beeline's speciesPlant, schema/030). A sample with an id is
+--         not here: its id is its host (sample_host, schema/116).
+-- A name in both is one row per source here and one lookup (the lookup is
+-- keyed by the normalised name, not by where it came from). A host name that
+-- later leaves (its sample gains an id) keeps its lookup, whose hits go on
+-- feeding the taxon cache's worklist (inat_taxon_uncached): a few taxa read
+-- for nothing, which is harmless and cheaper than tracking who still wants
+-- them.
+CREATE VIEW plant_name_wanted AS
+SELECT scientific_name AS raw_name, 'list' AS source FROM plant_list_entry
+UNION
+SELECT host_name_as_observed, 'host' FROM sample
+WHERE host_inat_taxon_id IS NULL AND host_name_as_observed IS NOT NULL;
+COMMENT ON VIEW plant_name_wanted IS 'Every name to be matched to an iNaturalist taxon, as written, with where it came from: list (a plant list entry''s scientific name) or host (the host name of a sample that has no host id). A name from both sources has a row for each.';
+
+-- THE ONE NORMALISATION. A plant name, as the list, a sample or iNaturalist
+-- wrote it, reduced to what two spellings of the same name share:
 --   - case is ignored;
 --   - the hybrid sign is dropped, because the list writes Mentha piperita
---     where iNaturalist writes Mentha × piperita;
+--     where iNaturalist writes Mentha × piperita. A sign mangled by being
+--     read in the wrong character set, 'Ã—' (the UTF-8 bytes of × read as
+--     Windows-1252), is the hybrid sign too: one sample writes Reynoutria
+--     Ã— bohemica (production, 2026-11-15);
 --   - var., ssp. and subsp. are dropped, because iNaturalist writes a
 --     trinomial without them (Carduus pycnocephalus cinereus);
---   - runs of spaces become one.
--- The two kinds of name it is applied to are the list's scientific names and
--- what iNaturalist returned (the name of a hit, and its matched_term), so the
--- rule is stated once here and both sides cannot drift. An 'x' written as a hybrid sign is not
--- handled: the list has none (checked on 2026-11-13).
+--   - any run of whitespace becomes one space: one sample's host is
+--     'Agastache' and 'urticifolia' with a space and a line break between.
+-- The kinds of name it is applied to are the names to match and what
+-- iNaturalist returned (the name of a hit, and its matched_term), so the
+-- rule is stated once here and the sides cannot drift. An 'x' written as a
+-- hybrid sign is not handled: neither the list nor a host name has one
+-- (checked on 2026-11-13 and 2026-11-15).
+--
+-- The signs are replaced before lower() so that no engine's case folding of
+-- 'Ã' decides whether the mangled sign is found (a C-locale Postgres leaves it
+-- as it is). [[:space:]] is ASCII whitespace in DuckDB (RE2) and may also take
+-- a no-break space in Postgres, depending on the locale; no name in the list
+-- or the hosts holds any whitespace outside ASCII (2026-11-15), so the two
+-- engines agree on every name there is.
+--
+-- A doubtful or open name is not trimmed: 'Salix sp.', 'Salix spp.', 'Salix
+-- cf. scouleri' and 'Salix?' keep their tails, and so never equal the name of
+-- a hit (plant_name_hit_current) and come to no match, for a person to decide
+-- (beeline-rfkj.6). None of the list's names or the hosts has such a tail
+-- (2026-11-15), iNaturalist never writes one, and reading 'cf.' or '?' as the
+-- name it qualifies would assert what the collector doubted.
 CREATE VIEW plant_name_normal AS
 SELECT raw_name,
        trim(regexp_replace(
          regexp_replace(
-           regexp_replace(lower(raw_name), '×', ' ', 'g'),
-           '(^| )(var|ssp|subsp)\.', '', 'g'),
-         ' +', ' ', 'g')) AS name_key
+           lower(regexp_replace(raw_name, '×|Ã—', ' ', 'g')),
+           '(^|[[:space:]])(var|ssp|subsp)\.', ' ', 'g'),
+         '[[:space:]]+', ' ', 'g')) AS name_key
 FROM (
-  SELECT scientific_name AS raw_name FROM plant_list_entry
+  SELECT raw_name FROM plant_name_wanted
   UNION
   SELECT matched_term FROM plant_name_lookup_hit
   UNION
   SELECT name FROM plant_name_lookup_hit
 ) raw;
-COMMENT ON VIEW plant_name_normal IS 'Every plant name the list wrote or iNaturalist returned (a hit''s name and its matched_term), with its normalised form. The one place the rule is written down: case ignored, the hybrid sign and var./ssp./subsp. dropped, spaces collapsed.';
+COMMENT ON VIEW plant_name_normal IS 'Every plant name to be matched (plant_name_wanted) or that iNaturalist returned (a hit''s name and its matched_term), with its normalised form. The one place the rule is written down: case ignored, the hybrid sign (and its mangled form Ã—) and var./ssp./subsp. dropped, whitespace collapsed.';
 
 -- Which iNaturalist ranks stand for each expected rank. A binomial can be a
 -- species or a hybrid (iNaturalist files Mentha × piperita as a hybrid); a
@@ -60,17 +103,22 @@ SELECT * FROM (VALUES
   ('subtribe',      'subtribe',    false),
   ('order',         'order',       false)
 ) AS t(expected_rank, inat_rank, fallback);
-COMMENT ON VIEW plant_expected_rank IS 'The iNaturalist ranks that satisfy each expected rank (plant_list_entry_name.expected_rank). fallback ranks count only for a name with no hit at the expected rank''s own ranks: a genus-shaped name may be a section, subgenus or supertribe when there is no genus of that name.';
+COMMENT ON VIEW plant_expected_rank IS 'The iNaturalist ranks that satisfy each expected rank (plant_name_shape.expected_rank). fallback ranks count only for a name with no hit at the expected rank''s own ranks: a genus-shaped name may be a section, subgenus or supertribe when there is no genus of that name.';
 
--- Each entry's normalised name, and the rank its shape implies. The list's
--- Rank column is not read: it files families and tribes as genera and genera
--- as species (measured 2026-11-13, 1,368 of 1,405 rows match a current
--- iNaturalist name exactly at the shape's rank). One word is a taxon above
--- species, told apart by its ending (-aceae a family, -oideae a subfamily,
--- -eae a tribe, -inae a subtribe, -ales an order, anything else a genus); two
--- words are a species or hybrid; more are below species.
-CREATE VIEW plant_list_entry_name AS
-SELECT e.list_key, e.scientific_name, n.name_key,
+-- Each name to match, normalised, and the rank its shape implies. THE ONE
+-- RULE for the rank, for the list's names and the hosts' alike. No rank
+-- written beside a name is read. The list's Rank column files families and
+-- tribes as genera and genera as species (measured 2026-11-13, 1,368 of 1,405
+-- rows match a current iNaturalist name exactly at the shape's rank); a
+-- sample's host_rank agrees with the shape on every id-less host but one
+-- (production, 2026-11-15: 'Grass cover crop', filed as an order, which is
+-- no name at any rank). One word is a taxon above species, told apart by its
+-- ending (-aceae a family, -oideae a subfamily, -eae a tribe, -inae a
+-- subtribe, -ales an order, anything else a genus); two words are a species or
+-- hybrid; more are below species. A name that normalises to nothing has no
+-- row.
+CREATE VIEW plant_name_shape AS
+SELECT n.raw_name, n.name_key,
        CASE
          WHEN words = 1 AND regexp_matches(n.name_key, 'aceae$') THEN 'family'
          WHEN words = 1 AND regexp_matches(n.name_key, 'oideae$') THEN 'subfamily'
@@ -81,11 +129,17 @@ SELECT e.list_key, e.scientific_name, n.name_key,
          WHEN words = 2 THEN 'species'
          ELSE 'infraspecific'
        END AS expected_rank
-FROM plant_list_entry e
-JOIN plant_name_normal n ON n.raw_name = e.scientific_name
-CROSS JOIN LATERAL (SELECT length(n.name_key) - length(replace(n.name_key, ' ', '')) + 1 AS words) w
+FROM (SELECT DISTINCT raw_name FROM plant_name_wanted) w
+JOIN plant_name_normal n ON n.raw_name = w.raw_name
+CROSS JOIN LATERAL (SELECT length(n.name_key) - length(replace(n.name_key, ' ', '')) + 1 AS words) c
 WHERE n.name_key <> '';
-COMMENT ON VIEW plant_list_entry_name IS 'Each entry''s normalised name and the rank its shape implies: one word is above species (the ending says which rank), two words a species or hybrid, more a subspecies, variety or form. An entry with no name has no row.';
+COMMENT ON VIEW plant_name_shape IS 'Each name to match (plant_name_wanted), as written, with its normalised name and the rank its shape implies: one word is above species (the ending says which rank), two words a species or hybrid, more a subspecies, variety or form. The one rule for both sources; a name that normalises to nothing has no row.';
+
+CREATE VIEW plant_list_entry_name AS
+SELECT e.list_key, e.scientific_name, s.name_key, s.expected_rank
+FROM plant_list_entry e
+JOIN plant_name_shape s ON s.raw_name = e.scientific_name;
+COMMENT ON VIEW plant_list_entry_name IS 'Each entry''s normalised name and the rank its shape implies (plant_name_shape). An entry with no name has no row.';
 
 -- The hits that are the name asked for: the hit's own name or its matched_term
 -- is exactly the name (after normalisation) and the rank is one the name's
@@ -97,12 +151,17 @@ COMMENT ON VIEW plant_list_entry_name IS 'Each entry''s normalised name and the 
 -- list's current names unmatched). The name is what the taxon is called
 -- today; matched_term is what makes an older name findable (Aster chilensis,
 -- now Symphyotrichum chilense). matched_term is also where iNaturalist puts a
--- common name that matched, so it counts only when it is written as a
--- scientific name, with a capital first letter. Of the hits in the 1,404
--- lookups of 2026-11-14, 35 have a lower-case matched_term and none had been
--- taken for a name, so this guards against a case not yet seen, and the capital letter is the cheapest test
--- that is true of every scientific name (the case is read here, not in
--- plant_name_normal, which ignores it on purpose).
+-- common name that matched, so it counts only when it begins with a capital
+-- letter, as every scientific name does (the case is read here, not in
+-- plant_name_normal, which ignores it on purpose). That keeps out a common
+-- name written in lower case (35 of the hits in the 1,404 lookups of
+-- 2026-11-14), but NOT one iNaturalist capitalises, which is most of them:
+-- asked for 'oregon grape', it returned Berberis aquifolium with matched_term
+-- 'Oregon grape' (2026-11-15). The list's names are scientific, so this never
+-- mattered for them; a host name was typed by a volunteer, and a common name
+-- typed as a host can match this way. plant_name_resolution.by_own_name says
+-- when a name's taxon came only through matched_term, so such a match can be
+-- told apart from one through the taxon's own name (beeline-rfkj.5).
 -- A hit that iNaturalist has retired stands for the taxa it was replaced by;
 -- an active one stands for itself. This is where a replacement chain is read
 -- from the lookup's own answer, one step. A replacement that has itself been
@@ -149,6 +208,12 @@ COMMENT ON VIEW plant_name_hit_current IS 'The hits of each lookup that are the 
 --      taxa are no answer; and a retired hit with no replacement is a dead end
 --      the name might have meant, so it makes the name ambiguous and no
 --      other hit is picked over it. Only dead ends: 'retired, no replacement'.
+-- by_own_name says whether a matched name came to its taxon through a hit's
+-- own name or only through its matched_term. The second is how an older name
+-- finds its taxon, but also how a common name typed where a scientific name
+-- belongs would ('Oregon Grape', capitalised like one): a host is a name a
+-- volunteer typed, where the list's names were curated, so these are the
+-- matches to look over before a host is read through them (beeline-rfkj.5).
 CREATE VIEW plant_name_resolution AS
 WITH decided AS (
   SELECT c.*, bool_or(c.hit_is_active AND c.own_name) OVER (PARTITION BY c.name_key, c.expected_rank) AS has_winner
@@ -167,12 +232,14 @@ SELECT w.name_key, w.expected_rank,
          ELSE 'ambiguous'
        END AS outcome,
        CASE WHEN l.read_in_full AND count(DISTINCT u.current_taxon_id) = 1 AND count(*) FILTER (WHERE u.current_taxon_id IS NULL) = 0
-            THEN min(u.current_taxon_id) END AS inat_taxon_id
-FROM (SELECT DISTINCT name_key, expected_rank FROM plant_list_entry_name) w
+            THEN min(u.current_taxon_id) END AS inat_taxon_id,
+       CASE WHEN l.read_in_full AND count(DISTINCT u.current_taxon_id) = 1 AND count(*) FILTER (WHERE u.current_taxon_id IS NULL) = 0
+            THEN bool_or(u.own_name) END AS by_own_name
+FROM (SELECT DISTINCT name_key, expected_rank FROM plant_name_shape) w
 LEFT JOIN plant_name_lookup l ON l.name_key = w.name_key AND l.expected_rank = w.expected_rank
 LEFT JOIN used u ON u.name_key = w.name_key AND u.expected_rank = w.expected_rank
 GROUP BY w.name_key, w.expected_rank, l.name_key, l.read_in_full, l.answered;
-COMMENT ON VIEW plant_name_resolution IS 'The outcome of each name''s lookup: matched (one current taxon, in inat_taxon_id), ambiguous (more than one distinct current taxon, or a retired hit with no replacement beside another hit, none picked), no match, retired with no replacement (every exact hit is a dead end), too many results (the page cap stopped the reading, so no taxon is given on part of the answer), could not be asked (the request failed in several runs; asked again after 30 days), or not looked up yet. An active hit whose own name is the name wins outright over every other hit.';
+COMMENT ON VIEW plant_name_resolution IS 'The outcome of each name''s lookup: matched (one current taxon, in inat_taxon_id), ambiguous (more than one distinct current taxon, or a retired hit with no replacement beside another hit, none picked), no match, retired with no replacement (every exact hit is a dead end), too many results (the page cap stopped the reading, so no taxon is given on part of the answer), could not be asked (the request failed in several runs; asked again after 30 days), or not looked up yet. An active hit whose own name is the name wins outright over every other hit. by_own_name, for a matched name only: true when a hit whose own name is the name gave the taxon, false when only matched_term did, that is an older name of the taxon (Aster chilensis, now Symphyotrichum chilense) or a common name written with capitals, which is worth a look before a host is read through it.';
 
 -- The questions still to put to iNaturalist, one per name and rank: names it
 -- has not been asked about, and names whose answer is out of date because the
@@ -184,7 +251,7 @@ COMMENT ON VIEW plant_name_resolution IS 'The outcome of each name''s lookup: ma
 -- taxon (its fetched_at moves past the new answer), so a retired taxon that
 -- stays retired costs one question each time the cache refreshes it.
 CREATE VIEW plant_name_unlooked AS
-SELECT DISTINCT name_key, expected_rank FROM plant_list_entry_name
+SELECT DISTINCT name_key, expected_rank FROM plant_name_shape
 EXCEPT
 SELECT name_key, expected_rank FROM plant_name_lookup
 UNION
@@ -195,9 +262,9 @@ JOIN inat_taxon t ON t.inat_taxon_id = r.inat_taxon_id
 WHERE NOT t.is_active AND t.fetched_at > l.looked_up_at
 UNION
 SELECT l.name_key, l.expected_rank FROM plant_name_lookup l
-JOIN plant_list_entry_name n ON n.name_key = l.name_key AND n.expected_rank = l.expected_rank
+JOIN (SELECT DISTINCT name_key, expected_rank FROM plant_name_shape) n ON n.name_key = l.name_key AND n.expected_rank = l.expected_rank
 WHERE NOT l.answered AND l.looked_up_at < now() - INTERVAL 30 DAY;
-COMMENT ON VIEW plant_name_unlooked IS 'The normalised names of list entries to put to iNaturalist: those it has not been asked about, and those whose taxon the cache has since found retired, asked again so the retirement is noticed, and those that could not be asked 30 days ago or more. The worklist of src/fetch-plant-names.ts. Empty once every name has a current answer, including an empty one.';
+COMMENT ON VIEW plant_name_unlooked IS 'The normalised names to put to iNaturalist (plant_name_shape: the list''s names and the hosts of samples with no host id): those it has not been asked about, and those whose taxon the cache has since found retired, asked again so the retirement is noticed, and those that could not be asked 30 days ago or more. The worklist of src/fetch-plant-names.ts. Empty once every name has a current answer, including an empty one.';
 
 -- Each entry with its taxon, if it has one.
 CREATE VIEW plant_list_entry_taxon AS

@@ -694,17 +694,24 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     return out;
   };
 
-  it("shows the common name after the scientific name, and none where there is none", async () => {
+  /** What a person sees of a page: without titles and hidden text, and so without any common name. */
+  const seen = (html: string) => html.replace(/ title="[^"]*"/g, "").replace(/<span class="visually-hidden">.*?<\/span>/g, "");
+
+  it("puts the common name in the scientific name's tooltip, shows it nowhere, and has none where there is none", async () => {
     const { app } = await hostApp();
     const body = await get(app, "/samples?scope=all");
-    expect(body).toMatch(/<i>Alpha<\/i> <i>oldname<\/i> <span class="taxon-vernacular">[^]*?woolly alpha<\/span>/);
+    expect(body).toContain(`<span class="taxon" title="woolly alpha"><i>Alpha</i> <i>oldname</i><span class="visually-hidden">, woolly alpha</span></span>`);
     // Named for the plant the host is now, though its row says Alpha vetus.
-    expect(body).toMatch(/<i>Alpha<\/i> <i>vetus<\/i> <span class="taxon-vernacular">[^]*?new alpha<\/span>/);
-    // A split, and a name with no id, have no common name.
-    expect(body).toMatch(/<i>Splitus<\/i> <i>vetus<\/i><\/span><\/td>/);
-    expect(body).toMatch(/<i>Plain<\/i> <i>name<\/i><\/span><\/td>/);
+    expect(body).toContain(`<span class="taxon" title="new alpha"><i>Alpha</i> <i>vetus</i><span class="visually-hidden">, new alpha</span></span>`);
+    // A split, and a name with no id, have no common name and no tooltip.
+    expect(body).toMatch(/<span class="taxon"><i>Splitus<\/i> <i>vetus<\/i><\/span><\/td>/);
+    expect(body).toMatch(/<span class="taxon"><i>Plain<\/i> <i>name<\/i><\/span><\/td>/);
+    // Nothing of a common name is visible.
+    expect(seen(body)).not.toContain("woolly alpha");
+    expect(seen(body)).not.toContain("new alpha");
     const specimens = await get(app, "/specimens?scope=all");
-    expect(specimens).toContain("woolly alpha");
+    expect(specimens).toContain(`title="woolly alpha"`);
+    expect(seen(specimens)).not.toContain("woolly alpha");
   });
 
   it("names a host as the view does, including one iNaturalist has said is absent, which has no current taxon", async () => {

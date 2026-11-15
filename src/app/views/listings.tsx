@@ -659,7 +659,6 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
       ) : (
         <>
           <DataTable
-            hostColumn
             columns={[
               column({ ...col, label: copy.colSample, sort: "number", kind: "number" }),
               dateColumn({ ...col, label: copy.colDate }),
@@ -787,7 +786,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                     />
                   )}
                 </td>
-                <td class="host-cell">
+                <td>
                   {row.host_name === null ? (
                     <Absent label={m.absence.none} />
                   ) : (
@@ -979,7 +978,6 @@ export function SpecimenListing(
       ) : (
         <>
           <DataTable
-            hostColumn
             columns={[
               ...(marking ? [tickColumn] : []),
               // The number is what the label carries, so whether it is on
@@ -1070,7 +1068,7 @@ export function SpecimenListing(
                 <td>
                   <PlaceCell m={m} row={row} />
                 </td>
-                <td class="host-cell">
+                <td>
                   {/* As on the samples listing: a bee off no flower has no
                       host, and that is complete rather than missing. */}
                   {row.host_name === null ? (

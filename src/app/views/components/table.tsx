@@ -33,18 +33,15 @@ const isSpec = (column: Child | TableColumn): column is TableColumn =>
 export function DataTable({
   columns,
   children,
-  hostColumn = false,
 }: {
   /** Heading cells. A column with no heading (an actions column) passes "". */
   columns: ReadonlyArray<Child | TableColumn>;
   /** The `<tr>` rows. */
   children: Child;
-  /** The table has a host-plant column, which gets a minimum width and so narrower cell padding (components.css, `.has-host`). */
-  hostColumn?: boolean;
 }) {
   return (
     <div class="table-scroll">
-      <table class={hostColumn ? "has-host" : undefined}>
+      <table>
         <thead>
           <tr>
             {columns.map((column) => {

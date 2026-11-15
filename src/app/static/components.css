@@ -583,34 +583,6 @@ th details.col-menu > .menu-panel {
 .taxon { font-style: normal; }
 .taxon i { font-style: italic; }
 .taxon-authorship { color: var(--md-sys-color-on-surface-variant); }
-/* The English name, on the scientific name's line: upright even inside an
-   italic context, secondary colour, regular weight. An inline block, so the
-   dot and the name move to the next line whole when they do not fit; the
-   ordinary space before it is the break point, and a name longer than the
-   line still wraps inside itself (max-width). Positioned so the hidden
-   comma inside it is placed against it (see .absent). */
-.taxon-vernacular {
-  display: inline-block;
-  max-width: 100%;
-  position: relative;
-  font-style: normal;
-  font-weight: normal;
-  color: var(--md-sys-color-on-surface-variant);
-}
-
-/* The host column of a listing: wide enough that a scientific name and a
-   common name after it take two lines and not four or five (beeline-rfkj.4:
-   "Aster / chilensis / · common / California / aster" in a column the other
-   columns had squeezed). In the auto table layout a cell's min-width is the
-   column's. The specimens listing has ten columns and no room at a laptop's
-   1280px for a wider one, so a table with a host column (`.has-host`, set by
-   DataTable) takes 0.75rem of padding each side instead of 1rem, which pays for
-   it without a sideways scroll. Only from 64rem up: on a phone the table
-   scrolls sideways anyway and a wider column would only lengthen that. */
-@media (min-width: 64rem) {
-  td.host-cell { min-width: 11rem; }
-  table.has-host :is(th, td) { padding-inline: var(--space-3); }
-}
 
 /* Glossary terms link to their definition on first use (/design/voice). */
 .term {

@@ -635,6 +635,39 @@ describe("descriptive fields are a fill-only refresh", () => {
     expect(await hostFinding(kept)).toBe(0);
   });
 
+  test("an observation that turns Homo sapiens clears a host the taxon cache knows is no plant, and keeps one it knows is", async () => {
+    // The bee identified as the subject, then the flag: kept, the sample would print with the bee
+    // as its host and the rule, which reads the flagged observation, would no longer say so.
+    const lineage = async (id: number, ancestors: number[]) => {
+      for (const [depth, a] of [id, ...ancestors].entries()) {
+        await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (${id}, ${a}, ${depth})`);
+      }
+    };
+    await lineage(57669, [47158, 47120, 1, 48460]);
+    await lineage(47604, [211194, 47126, 48460]);
+    const wasBee = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'",
+      host_name_as_observed: "'Andrena'", host_inat_taxon_id: "57669", host_rank: "'genus'",
+    });
+    const wasPlant = await insertCleanSample(conn, {
+      inat_observation_id: "8", sample_number: "'8'",
+      host_name_as_observed: "'Rubus'", host_inat_taxon_id: "47604", host_rank: "'genus'",
+    });
+    // A bee the cache has not read: nothing says it is no plant, so it stays.
+    const unread = await insertCleanSample(conn, {
+      inat_observation_id: "9", sample_number: "'9'",
+      host_name_as_observed: "'Apis mellifera'", host_inat_taxon_id: "47219", host_rank: "'species'",
+    });
+    await stage(obs(7, { taxon: human }));
+    await stage(obs(8, { ofvs: ofvs("8", "3"), taxon: human }));
+    await stage(obs(9, { ofvs: ofvs("9", "3"), taxon: human }));
+    await promoteObservations(conn);
+    const host = (id: number) => one(`SELECT host_inat_taxon_id, host_name_as_observed, host_rank FROM sample WHERE entity_id = ${id}`);
+    expect(await host(wasBee)).toEqual([null, null, null]);
+    expect(await host(wasPlant)).toEqual([47604n, "Rubus", "genus"]);
+    expect(await host(unread)).toEqual([47219n, "Apis mellifera", "species"]);
+  });
+
   test("the bee identified as the observation's subject is still a host that is not a plant", async () => {
     await stage(obs(7, { taxon: bee }));
     await promoteObservations(conn);

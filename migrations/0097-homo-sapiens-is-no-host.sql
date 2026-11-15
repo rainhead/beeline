@@ -14,13 +14,17 @@
 -- no plant. On production's store of 2026-11-15 that is 47 samples: 46
 -- settled ones with host id 43584 (34 of them printed), and one sample of
 -- 2026 with the name and no id, promoted from old Beeline's plant columns. No
--- label prints the host, so nothing on paper changes. The values need not be
--- kept here: the observations still say Homo sapiens (observation_field is
--- untouched), and the app's first boot after this migration records each
--- change in the sample history with its old value (source "reconcile",
--- src/app/main.ts).
+-- label prints the host, so nothing on paper changes. None of the 47 had
+-- held a plant that the flag replaced: the legacy rows of the 34 that came
+-- from old Beeline name Homo sapiens or nothing, and the sample history since
+-- it began (27 September 2026) shows no host going from a plant to Homo
+-- sapiens. The values need not be kept here: the observations still say Homo
+-- sapiens (observation_field is untouched), and the app's first boot after
+-- this migration records each change in the sample history with its old
+-- value (source "reconcile", src/app/main.ts), which should report 47.
 --
--- Safe to run twice: the second time no sample holds such a host.
+-- The UPDATE is safe to run twice: the second time no sample holds such a
+-- host. The DDL before it is not, like any migration's.
 
 -- Taxa that, given as an observation's taxon, mean the observation names NO
 -- host, rather than a host that is not a plant (beeline-rfkj.11). Homo
@@ -31,7 +35,9 @@
 -- Seeded here, so another such taxon is a row and not code. Applied where a
 -- host is written (observation_host, schema/105; ingest/promote-legacy.sql by
 -- name), never at read time, because a sample's host columns are read in a
--- dozen places and one missed reader would send the flag to GBIF.
+-- dozen places and one missed reader would send the flag to GBIF. (The export
+-- to old Beeline still gives old Beeline's own rows back their own plant
+-- columns, Homo sapiens included, as it does every column it imported.)
 CREATE TABLE inat_taxon_not_a_host (
   inat_taxon_id BIGINT PRIMARY KEY,
   name          TEXT NOT NULL UNIQUE,

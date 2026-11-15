@@ -87,7 +87,9 @@ COMMENT ON COLUMN inat_taxon_absent.asked_at IS 'When iNaturalist was last asked
 -- Seeded here, so another such taxon is a row and not code. Applied where a
 -- host is written (observation_host, schema/105; ingest/promote-legacy.sql by
 -- name), never at read time, because a sample's host columns are read in a
--- dozen places and one missed reader would send the flag to GBIF.
+-- dozen places and one missed reader would send the flag to GBIF. (The export
+-- to old Beeline still gives old Beeline's own rows back their own plant
+-- columns, Homo sapiens included, as it does every column it imported.)
 CREATE TABLE inat_taxon_not_a_host (
   inat_taxon_id BIGINT PRIMARY KEY,
   name          TEXT NOT NULL UNIQUE,

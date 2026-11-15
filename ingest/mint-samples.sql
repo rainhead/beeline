@@ -259,6 +259,30 @@ WHERE sample.inat_observation_id = f.inat_id
     OR sample.host_name_as_observed IS DISTINCT FROM f.host_taxon_name
     OR sample.host_rank             IS DISTINCT FROM f.host_taxon_rank);
 
+-- The flag keeps a plant, but not a host that is no plant. Before the flag,
+-- the observation may have been identified as the bee (Apis mellifera), which
+-- the sample took as its host and qc_rule_non_tracheophyte_host blocked; that
+-- rule reads observation_host, so once the observation is flagged it goes
+-- quiet, and the sample would print with the bee as its host. So where the
+-- observation is flagged and the taxon cache knows the stored host's lineage
+-- and Tracheophyta (211194) is not in it, the host is cleared. Lineage, not
+-- standing: being a vascular plant does not change when iNaturalist retires a
+-- taxon. A host with no id is kept, and so is one the cache has not read
+-- yet, until it has: every sample's host id is on the cache's worklist
+-- (inat_taxon_uncached), so the nightly step reads it and the next promotion
+-- clears it.
+UPDATE sample SET
+  host_inat_taxon_id    = NULL,
+  host_name_as_observed = NULL,
+  host_rank             = NULL
+FROM observation_field f
+JOIN inat_taxon_not_a_host x ON x.inat_taxon_id = f.host_taxon_id
+WHERE sample.inat_observation_id = f.inat_id
+  AND sample.host_inat_taxon_id IN (
+    SELECT inat_taxon_id FROM inat_taxon_ancestor
+    GROUP BY inat_taxon_id
+    HAVING NOT bool_or(ancestor_id = 211194));
+
 -- The atlas joins the refresh now (beeline-6e9). It could not while it was a
 -- column on sample: DuckDB will not update an INDEXED column on a row an
 -- incoming foreign key references — measured and pinned in test/schema.test.ts

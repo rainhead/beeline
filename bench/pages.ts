@@ -6,7 +6,7 @@ import { args, environment, openBench, rows, samples, sessionFor, statusCounts, 
 /**
  * How long each page takes, one request at a time, against a copy of a store.
  *
- *   pnpm bench:pages [store.duckdb] [--n=15] [--out=file.json] [--compare=baseline.json] [--only=regex]
+ *   pnpm bench:pages [store.duckdb] [--n=15] [--out=file.json] [--compare=baseline.json] [--only=text]
  *
  * The cases are the pages people actually open, as the two kinds of people
  * who open them: the store's most prolific collector, for whom `mine` is as
@@ -25,7 +25,7 @@ interface Case {
   who: "volunteer" | "staff";
   path: string;
   /**
-   * A whole-corpus download, tens of seconds long: run only when `--only` matches it, so that a plain run does
+   * A whole-corpus download, tens of seconds long: run only when `--only` names it, so that a plain run does
    * not grow by the 16 requests of an ordinary case times that long.
    */
   onlyWhenNamed?: true;
@@ -119,10 +119,12 @@ interface CaseResult extends Case, Summary {
 const { positional, flags } = args(process.argv.slice(2));
 const source = positional[0] ?? "beeline.duckdb";
 const n = Number(flags.n ?? 15);
-// --only=<regex>: just the cases whose "who name" matches, for a quick comparison of a few pages. It matches by
-// pattern, so `--only=all` pulls the whole-corpus downloads in too. A plain run leaves those downloads out and runs
-// the sample-edit write; with --only, the write runs only if the pattern matches it.
-const only = typeof flags.only === "string" ? new RegExp(flags.only) : undefined;
+// --only=<text>: just the cases whose "who name" contains the text, in any case, for a quick comparison of a few
+// pages. Plain text rather than a pattern, so nothing typed on the command line becomes a regular expression. It
+// matches by containment, so `--only=all` pulls the whole-corpus downloads in too. A plain run leaves those
+// downloads out and runs the sample-edit write; with --only, the write runs only if its name contains the text.
+const onlyText = typeof flags.only === "string" ? flags.only.toLowerCase() : undefined;
+const only = onlyText === undefined ? undefined : { test: (s: string) => s.toLowerCase().includes(onlyText) };
 
 const bench = await openBench(source);
 try {

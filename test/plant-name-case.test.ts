@@ -140,6 +140,11 @@ describe("a word keeps its capital: rule 2, a possessive", () => {
     expect(await converted("Coast Nettle (iNaturalist)")).toBe("coast nettle (iNaturalist)");
   });
 
+  test("a capital after the apostrophe of a word that begins in lower case goes too", async () => {
+    expect(await converted("Mountain Four O'Clock")).toBe("mountain four o'clock");
+    expect(await converted("Mountain four o'Clock")).toBe("mountain four o'clock");
+  });
+
   test("a curly apostrophe counts", async () => {
     expect(await converted("Royal Jacob’s Ladder")).toBe("royal Jacob’s ladder");
   });
@@ -155,6 +160,53 @@ describe("a word keeps its capital: rule 3, the file says keep", () => {
   test("the file beats the possessive rule and the list", async () => {
     await noun("Baby's", "lower");
     expect(await converted("Baby's Breath")).toBe("baby's breath");
+  });
+});
+
+describe("a phrase of several words keeps its capitals", () => {
+  test("without a row for it, the second word of a place loses its capital", async () => {
+    expect(await converted("Rocky Mountain maple")).toBe("rocky mountain maple");
+  });
+
+  test("a phrase at the start, in the middle and at the end of a name", async () => {
+    await noun("Rocky Mountain", "keep", "a range");
+    await noun("Great Valley", "keep", "a valley in California");
+    expect(await converted("Rocky Mountain Maple")).toBe("Rocky Mountain maple");
+    expect(await converted("Rocky Mountain pussytoes")).toBe("Rocky Mountain pussytoes");
+    expect(await converted("Showy Rocky Mountain Maple")).toBe("showy Rocky Mountain maple");
+    expect(await converted("Narrowleaf Great Valley")).toBe("narrowleaf Great Valley");
+    expect(await converted("Great Valley gumweed")).toBe("Great Valley gumweed");
+  });
+
+  test("a phrase is found whatever case the name has it in, and is set as the file spells it", async () => {
+    await noun("Rocky Mountain", "keep", "a range");
+    expect(await converted("rocky mountain bee plant")).toBe("Rocky Mountain bee plant");
+    expect(await converted("ROCKY MOUNTAIN Maple")).toBe("Rocky Mountain maple");
+  });
+
+  test("a phrase overlapping a hyphenated word: the hyphen ends the phrase and the other part is judged alone", async () => {
+    await noun("Rocky Mountain", "keep", "a range");
+    await noun("Blue Mountain", "keep", "a range in Oregon");
+    expect(await converted("Rocky Mountain-Ash")).toBe("Rocky Mountain-ash");
+    expect(await converted("Wild-Blue Mountain Aster")).toBe("wild-Blue Mountain aster");
+  });
+
+  test("a phrase is not found inside a longer word, and two words that merely sit near each other are not a phrase", async () => {
+    await noun("Rocky Mountain", "keep", "a range");
+    expect(await converted("Rocky Mountainous Maple")).toBe("rocky mountainous maple");
+    expect(await converted("Rocky, Mountain Maple")).toBe("rocky, mountain maple");
+    expect(await converted("Rockys Mountain Maple")).toBe("rockys mountain maple");
+  });
+});
+
+describe("an eponym that iNaturalist wrote in lower case", () => {
+  test("a keep row restores the capital, with the apostrophe as written", async () => {
+    expect(await converted("bebb's willow")).toBe("bebb's willow");
+    await noun("Bebb's", "keep", "Michael Schuck Bebb, a botanist");
+    await noun("Wilkes'", "keep", "Charles Wilkes, who led the United States Exploring Expedition");
+    expect(await converted("bebb's willow")).toBe("Bebb's willow");
+    expect(await converted("Bebb's Willow")).toBe("Bebb's willow");
+    expect(await converted("wilkes' cryptantha")).toBe("Wilkes' cryptantha");
   });
 });
 
@@ -192,7 +244,12 @@ describe("the file of proper nouns", () => {
     expect(() => parseProperNouns(Buffer.from("Word,Reason\n"))).toThrow(/header/);
     expect(() => parseProperNouns(Buffer.from(`${h}Utah,keep\n`))).toThrow(/row 2/);
     expect(() => parseProperNouns(Buffer.from(`${h}Utah,sometimes,because\n`))).toThrow(/keep or lower, not sometimes/);
-    expect(() => parseProperNouns(Buffer.from(`${h}Utah,keep,a state\nUtah,keep,again\n`))).toThrow(/Utah appears twice \(row 3\)/);
+    expect(() => parseProperNouns(Buffer.from(`${h}Utah,keep,a state\nUtah,keep,again\n`))).toThrow(/Utah appears twice, ignoring case \(row 3\)/);
+    expect(() => parseProperNouns(Buffer.from(`${h}Utah,keep,a state\nutah,keep,again\n`))).toThrow(/appears twice, ignoring case/);
+    expect(() => parseProperNouns(Buffer.from(`${h}Rocky Mountain,lower,because\n`))).toThrow(/only a keep row may hold a phrase/);
+    expect(() => parseProperNouns(Buffer.from(`${h}Rocky  Mountain,keep,a range\n`))).toThrow(/single spaces/);
+    expect(() => parseProperNouns(Buffer.from(`${h}Mountain-ash,keep,x\n`))).toThrow(/hyphen/);
+    expect(parseProperNouns(Buffer.from(`${h}Rocky Mountain,keep,a range\n`))).toEqual([{ word: "Rocky Mountain", treatment: "keep", reason: "a range" }]);
     expect(parseProperNouns(Buffer.from(`${h}Utah,keep,"a state, in the west"\n`))).toEqual([{ word: "Utah", treatment: "keep", reason: "a state, in the west" }]);
   });
 

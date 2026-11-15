@@ -53,8 +53,8 @@ CREATE TABLE plant_proper_noun (
   reason    TEXT NOT NULL
 );
 COMMENT ON TABLE plant_proper_noun IS 'Hand-kept exceptions to how iNaturalist''s common names are set in sentence case (src/load-plant-list.ts loads ingest/plant-proper-nouns.csv, replacing the rows). Read by plant_inat_common_name (schema/114). Beyond what the old plant list shows, a word that is a proper noun keeps its capital, and a possessive that is not an eponym loses it.';
-COMMENT ON COLUMN plant_proper_noun.word IS 'The word as iNaturalist capitalises it (Utah, Shepherd''s), without a hyphen: the parts of a hyphenated word are judged one at a time.';
-COMMENT ON COLUMN plant_proper_noun.treatment IS 'keep: the word is a proper noun and keeps its capital. lower: the word is a possessive that would keep its capital by the possessive rule (plant_inat_common_name) and should not, because it is not an eponym (shepherd''s purse).';
+COMMENT ON COLUMN plant_proper_noun.word IS 'The word as it is to be written (Utah, Shepherd''s), without a hyphen: the parts of a hyphenated word are judged one at a time. For a keep row, a phrase of words separated by single spaces is allowed (Rocky Mountain), matched on consecutive words; a word or phrase is matched whatever case the name has it in and is set as written here, so a keep row also restores an eponym that iNaturalist wrote in lower case (Bebb''s). No two rows differ only in case.';
+COMMENT ON COLUMN plant_proper_noun.treatment IS 'keep: the word or phrase is a proper noun and is set as written here. lower: the word is a possessive that would keep its capital by the possessive rule (plant_inat_common_name) and should not, because it is not an eponym (shepherd''s purse).';
 COMMENT ON COLUMN plant_proper_noun.reason IS 'Why, in a few words, with an example.';
 
 -- What iNaturalist answered when asked for a normalised name at an expected

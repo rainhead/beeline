@@ -257,8 +257,9 @@ export function DesignNames() {
           &ldquo;California&rdquo;), a possessive that is an eponym (&ldquo;Nuttall&rsquo;s&rdquo;,
           &ldquo;Douglas&rsquo;&rdquo;), or a word in a short hand-kept file. The list&rsquo;s own names are not
           converted. The words of a hyphenated name are judged one at a time (&ldquo;Douglas-fir&rdquo;,
-          &ldquo;love-in-a-mist&rdquo;). What it cannot do is keep the second word of a place name written as two
-          words, such as &ldquo;Rocky Mountain&rdquo;, where it is a common noun elsewhere.
+          &ldquo;love-in-a-mist&rdquo;). A place written as several words keeps its capitals as a phrase in the same file
+          (&ldquo;Rocky Mountain maple&rdquo;), and an eponym that iNaturalist wrote in lower case gets its capital
+          back from the file too (&ldquo;Bebb&rsquo;s willow&rdquo;).
         </li>
       </ul>
 

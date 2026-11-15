@@ -20,8 +20,8 @@ CREATE TABLE plant_proper_noun (
   reason    TEXT NOT NULL
 );
 COMMENT ON TABLE plant_proper_noun IS 'Hand-kept exceptions to how iNaturalist''s common names are set in sentence case (src/load-plant-list.ts loads ingest/plant-proper-nouns.csv, replacing the rows). Read by plant_inat_common_name (schema/114). Beyond what the old plant list shows, a word that is a proper noun keeps its capital, and a possessive that is not an eponym loses it.';
-COMMENT ON COLUMN plant_proper_noun.word IS 'The word as iNaturalist capitalises it (Utah, Shepherd''s), without a hyphen: the parts of a hyphenated word are judged one at a time.';
-COMMENT ON COLUMN plant_proper_noun.treatment IS 'keep: the word is a proper noun and keeps its capital. lower: the word is a possessive that would keep its capital by the possessive rule (plant_inat_common_name) and should not, because it is not an eponym (shepherd''s purse).';
+COMMENT ON COLUMN plant_proper_noun.word IS 'The word as it is to be written (Utah, Shepherd''s), without a hyphen: the parts of a hyphenated word are judged one at a time. For a keep row, a phrase of words separated by single spaces is allowed (Rocky Mountain), matched on consecutive words; a word or phrase is matched whatever case the name has it in and is set as written here, so a keep row also restores an eponym that iNaturalist wrote in lower case (Bebb''s). No two rows differ only in case.';
+COMMENT ON COLUMN plant_proper_noun.treatment IS 'keep: the word or phrase is a proper noun and is set as written here. lower: the word is a possessive that would keep its capital by the possessive rule (plant_inat_common_name) and should not, because it is not an eponym (shepherd''s purse).';
 COMMENT ON COLUMN plant_proper_noun.reason IS 'Why, in a few words, with an example.';
 
 -- iNaturalist's common names, set in sentence case (beeline-rfkj.9). iNaturalist
@@ -44,7 +44,13 @@ COMMENT ON COLUMN plant_proper_noun.reason IS 'Why, in a few words, with an exam
 --      lower-case spellings in iNaturalist's own names are no guide: they
 --      include "bird's" but also "greene's" and "scouler's"; or
 --   3. ingest/plant-proper-nouns.csv says keep (plant_proper_noun): the
---      proper nouns the list never uses.
+--      proper nouns the list never uses. A row may be a phrase of several
+--      words ("Rocky Mountain"), matched on consecutive words, so that the
+--      second word of a place keeps its capital where it is a common noun
+--      elsewhere. A keep row sets its word or phrase as the file spells it
+--      whatever case the name had it in, which restores the eponyms that
+--      iNaturalist wrote in lower case ("bebb's"). A phrase is found once
+--      in a name, the first time.
 -- The parts of a hyphenated word are judged one at a time, since a word is a
 -- run of letters and apostrophes: "Douglas-fir" keeps Douglas only if a rule
 -- above keeps it, "Love-in-a-mist" becomes "love-in-a-mist". A name of a taxon
@@ -94,31 +100,49 @@ COMMENT ON VIEW plant_list_proper_noun IS 'Words the old plant list''s common na
 
 CREATE VIEW plant_inat_common_name AS
 WITH tokens AS (
-  -- Each name as alternating words (letters and apostrophes) and what lies between them, numbered
-  SELECT t.inat_taxon_id, u.token, u.pos
+  -- Each name as alternating words (letters and apostrophes) and what lies between them, numbered,
+  -- with the 1-based character where each begins
+  SELECT t.inat_taxon_id, t.preferred_common_name AS name, u.token, u.pos,
+         1 + CAST(coalesce(sum(length(u.token)) OVER (PARTITION BY t.inat_taxon_id ORDER BY u.pos ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS BIGINT) AS starts_at
   FROM inat_taxon t,
   LATERAL (SELECT unnest(tk) AS token, generate_subscripts(tk, 1) AS pos
            FROM (SELECT regexp_extract_all(t.preferred_common_name, '[\p{L}''’]+|[^\p{L}''’]+') AS tk)) u
   WHERE t.preferred_common_name IS NOT NULL
     AND t.rank NOT IN ('section', 'subsection', 'subgenus', 'series', 'subseries')
     AND t.preferred_common_name <> t.name
+), phrase_hit AS (
+  -- Where a phrase of the file is in a name, whatever case the name has it in, between two characters that are not letters
+  SELECT t.inat_taxon_id, p.word AS phrase, strpos(lower(t.preferred_common_name), lower(p.word)) AS found_at
+  FROM inat_taxon t
+  JOIN plant_proper_noun p ON p.treatment = 'keep' AND strpos(p.word, ' ') > 0
+  WHERE t.preferred_common_name IS NOT NULL
+    AND strpos(lower(t.preferred_common_name), lower(p.word)) > 0
+    AND NOT regexp_matches(substr(' ' || t.preferred_common_name || ' ', strpos(lower(t.preferred_common_name), lower(p.word)), 1), '[\p{L}''’]')
+    AND NOT regexp_matches(substr(' ' || t.preferred_common_name || ' ', strpos(lower(t.preferred_common_name), lower(p.word)) + length(p.word) + 1, 1), '[\p{L}''’]')
 ), judged AS (
-  SELECT k.inat_taxon_id, k.token, k.pos,
-         regexp_matches(k.token, '^\p{Lu}')
-           AND (f.treatment = 'keep'
-                OR (f.word IS NULL
-                    AND (l.word IS NOT NULL
-                         OR regexp_matches(k.token, '\p{L}[''’]s?$')))) AS keeps_capital
+  SELECT k.inat_taxon_id, k.pos,
+         CASE
+           -- Inside a phrase of the file: the phrase's own spelling
+           WHEN h.phrase IS NOT NULL THEN substr(h.phrase, k.starts_at - h.found_at + 1, length(k.token))
+           -- A word the file keeps, whatever case the name wrote it in
+           WHEN f.treatment = 'keep' THEN f.word
+           -- A word that does not begin with a capital stays as written, except that a capital after its apostrophe (o'Clock) goes
+           WHEN NOT regexp_matches(k.token, '^\p{Lu}') THEN CASE WHEN regexp_matches(k.token, '[''’]') THEN lower(k.token) ELSE k.token END
+           WHEN f.word IS NULL AND (l.word IS NOT NULL OR regexp_matches(k.token, '\p{L}[''’]s?$')) THEN k.token
+           ELSE lower(k.token)
+         END AS shown
   FROM tokens k
-  LEFT JOIN plant_proper_noun f ON f.word = k.token
+  LEFT JOIN LATERAL (
+    SELECT phrase, found_at FROM phrase_hit h
+    WHERE h.inat_taxon_id = k.inat_taxon_id AND k.starts_at >= h.found_at AND k.starts_at < h.found_at + length(h.phrase)
+    LIMIT 1) h ON true
+  LEFT JOIN plant_proper_noun f ON lower(f.word) = lower(k.token) AND strpos(f.word, ' ') = 0
   LEFT JOIN plant_list_proper_noun l ON l.word = k.token
 )
-SELECT t.inat_taxon_id,
-       string_agg(CASE WHEN j.keeps_capital OR NOT regexp_matches(j.token, '^\p{Lu}') THEN j.token ELSE lower(j.token) END, '' ORDER BY j.pos) AS common_name
-FROM judged j
-JOIN inat_taxon t ON t.inat_taxon_id = j.inat_taxon_id
-GROUP BY t.inat_taxon_id;
-COMMENT ON VIEW plant_inat_common_name IS 'iNaturalist''s preferred common name of each taxon that has one, in sentence case: every word in lower case except proper nouns (rules at the top of schema/114). Taxa at section, subsection, subgenus or series rank, and a name that is the taxon''s own scientific name, are not here: plant_taxon_common_name gives those as iNaturalist wrote them. A name already in sentence case comes out unchanged, apart from its first word, which loses its capital like any other.';
+SELECT inat_taxon_id, string_agg(shown, '' ORDER BY pos) AS common_name
+FROM judged
+GROUP BY inat_taxon_id;
+COMMENT ON VIEW plant_inat_common_name IS 'iNaturalist''s preferred common name of each taxon that has one, in sentence case: every word in lower case except proper nouns (rules at the top of schema/114). A phrase of the file (Rocky Mountain) and a word the file keeps are set as the file spells them, whatever case the name had them in. Taxa at section, subsection, subgenus or series rank, and a name that is the taxon''s own scientific name, are not here: plant_taxon_common_name gives those as iNaturalist wrote them. A name already in sentence case comes out unchanged, apart from its first word, which loses its capital like any other.';
 
 DROP VIEW plant_taxon_common_name;
 -- One row per cached taxon that has a common name: the taxon's own list

@@ -114,8 +114,11 @@ export function parseProperNouns(bytes: Buffer): ProperNounRow[] {
     const [word, treatment, reason] = r.map((c) => c.trim());
     if (r.length !== 3 || !word || !reason) throw new Error(`plant proper nouns: row ${i + 2} needs a word, a treatment and a reason`);
     if (treatment !== "keep" && treatment !== "lower") throw new Error(`plant proper nouns: row ${i + 2}: treatment must be keep or lower, not ${treatment}`);
-    if (seen.has(word)) throw new Error(`plant proper nouns: ${word} appears twice (row ${i + 2})`);
-    seen.add(word);
+    if (word.includes("-")) throw new Error(`plant proper nouns: row ${i + 2}: ${word} has a hyphen; the parts of a hyphenated word are judged one at a time`);
+    if (/\s/.test(word) && (treatment !== "keep" || / {2}|\t/.test(word) || word !== word.trim()))
+      throw new Error(`plant proper nouns: row ${i + 2}: only a keep row may hold a phrase, and its words are separated by single spaces`);
+    if (seen.has(word.toLowerCase())) throw new Error(`plant proper nouns: ${word} appears twice, ignoring case (row ${i + 2})`);
+    seen.add(word.toLowerCase());
     return { word, treatment, reason };
   });
 }

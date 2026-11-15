@@ -254,16 +254,18 @@ export function DesignNames() {
           nouns. iNaturalist&rsquo;s names, which it writes in title case or in sentence case without any rule we can
           rely on, and the old plant list&rsquo;s own names, some of which are in title case too, are converted when the
           name is chosen (beeline-rfkj.9): every word loses its capital, <em>including the first word</em>, unless it
-          is a proper noun. That is a word or a phrase in a hand-kept file of 295 rows (&ldquo;Oregon&rdquo;,
+          is a proper noun. That is a word or a phrase in a hand-kept file, <code>ingest/plant-proper-nouns.csv</code> (&ldquo;Oregon&rdquo;,
           &ldquo;Great Basin&rdquo;, &ldquo;Rocky Mountain&rdquo;), the abbreviation St or Mt, or a possessive:{" "}
           <strong>every possessive keeps its capital</strong> (&ldquo;Nuttall&rsquo;s&rdquo;,
           &ldquo;Douglas&rsquo;&rdquo;), because nearly all are eponyms, unless the file lowers it (&ldquo;shepherd&rsquo;s
           purse&rdquo;). Nothing is learned from the data, so a diff of the file is what changes a name. The words of a
           hyphenated name are judged one at a time (&ldquo;Douglas-fir&rdquo;, &ldquo;love-in-a-mist&rdquo;), so a
-          place with a hyphen inside it, such as Trans-Pecos, is not kept. A place written as several words is a phrase
-          in the same file (&ldquo;Rocky Mountain maple&rdquo;); a plural is a row of its own. An eponym that iNaturalist
+          place with a hyphen inside it, such as Trans-Pecos, is kept only as a phrase of that file. A place written as
+          several words is a phrase in the same file (&ldquo;Rocky Mountain maple&rdquo;); a plural is a row of its own. An eponym that iNaturalist
           wrote in lower case gets its capital back from the file (&ldquo;Bebb&rsquo;s willow&rdquo;). The names of
-          section, subsection, subgenus, series and subseries are scientific names and are left as written.
+          section, subsection, subgenus, series and subseries are scientific names and are left as written. To fix a
+          name that shows a wrong capital, add a row to the file with a reason; it takes effect at the next deploy&rsquo;s
+          boot.
         </li>
       </ul>
 

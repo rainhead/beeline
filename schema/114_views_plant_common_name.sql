@@ -36,14 +36,15 @@
 -- between them, so a hyphen ends a word and each part of "Douglas-fir" is
 -- judged alone. Every word is set in lower case, except that it keeps its
 -- capital when
---   1. it is in a phrase that ingest/plant-proper-nouns.csv says keep, of
---      several words ("Rocky Mountain", "Great Basin"), matched on whole
---      consecutive words so that the second word of a place keeps its
---      capital where it is a common noun elsewhere, wherever the phrase
---      occurs in the name (every occurrence), in whatever case the name has
---      it, and set as the file spells it; a phrase is not found next to a
---      hyphen, since then it is part of a longer compound ("Blue
---      Mountain-heath"); or
+--   1. it is in a phrase that ingest/plant-proper-nouns.csv says keep, that
+--      is a row of more than one word as they are cut here ("Rocky
+--      Mountain", "Great Basin", and "Trans-Pecos", whose hyphen is part of
+--      the phrase), matched on whole consecutive words so that the second
+--      word of a place keeps its capital where it is a common noun
+--      elsewhere, wherever the phrase occurs in the name (every occurrence),
+--      in whatever case the name has it, and set as the file spells it; a
+--      phrase is not found next to a hyphen that is not part of it, since
+--      then it is part of a longer compound ("Blue Mountain-heath"); or
 --   2. it is a word the file says keep (Utah, Oregon, Chinese), likewise set
 --      as the file spells it, which also restores the eponyms iNaturalist
 --      wrote in lower case ("bebb's"); or
@@ -52,10 +53,13 @@
 --      says lower ("Shepherd's", "Devil's", "Lady's"): the file beats the
 --      possessive rule. A word that ends in a bare apostrophe after another
 --      letter ("O'" in "Jack-O'-Lantern") is not a possessive; or
---   4. it is the abbreviation St or Mt ("St. John's wort", "St John's wort"), a word of its own
---      that does not follow a digit (not the st of 1st).
+--   4. it is the abbreviation St or Mt, followed by a period or by a single
+--      space ("St. John's wort", "St John's wort"), a word of its own that
+--      does not follow a digit (not the st of 1st).
 -- Both the file and the names are compared with the curly apostrophe folded
--- to the straight one, and a word is shown with the apostrophe the name wrote.
+-- to the straight one, and a word or phrase of the file is set with the
+-- apostrophe that the name wrote at that place (the file's letters
+-- otherwise), so the displayed text keeps the source's character.
 -- Nothing is learned from the data: a word keeps its capital only for a reason
 -- that is written in the file, so that the behaviour is the same after
 -- iNaturalist's names change, and a diff of the file is what changes it.
@@ -63,7 +67,8 @@
 -- What is left alone: the ranks section, subsection, subgenus, series and
 -- subseries (their names are scientific names); a name that is the taxon's
 -- own scientific name; a list name that is the entry's own scientific name
--- (plant_list_entry_common_name already leaves those out); and a name that begins with a rank ("section Salicaster"), whose capital is scientific.
+-- (plant_list_entry_common_name already leaves those out); and a name that begins with a rank ("section Salicaster")
+-- or holds the abbreviation of one ("Acer ser. Acer"), whose capitals are scientific.
 
 CREATE VIEW plant_name_to_set AS
 SELECT DISTINCT common_name AS name
@@ -75,8 +80,10 @@ FROM (
   UNION ALL
   SELECT common_name FROM plant_list_entry_common_name
 )
--- A rank before a scientific name ("section Salicaster") is no common name, and its capital is a scientific one
-WHERE NOT regexp_matches(common_name, '^(genus|subtribe|tribe|subfamily|family|order|section|subsection|subgenus|series|subseries|superfamily|class) ', 'i');
+-- A rank before a scientific name ("section Salicaster"), or an abbreviation of one inside it ("Acer ser. Acer", which iNaturalist gives a taxon of
+-- rank complex), is no common name, and its capitals are scientific ones
+WHERE NOT regexp_matches(common_name, '^(genus|subtribe|tribe|subfamily|family|order|section|subsection|subgenus|series|subseries|superfamily|class) ', 'i')
+  AND NOT regexp_matches(common_name, ' (subg|sect|subsect|ser|subser)\. ', 'i');
 COMMENT ON VIEW plant_name_to_set IS 'Every distinct common name that is set in sentence case: iNaturalist''s preferred common names of the taxa whose names are not scientific names, and the names the plant list shows (plant_list_entry_common_name).';
 
 CREATE VIEW plant_name_sentence_case AS
@@ -88,9 +95,9 @@ WITH names AS (
   FROM names n,
   LATERAL (SELECT unnest(n.tk) AS token, generate_subscripts(n.tk, 1) AS pos) u
 ), phrase AS (
-  SELECT word AS phrase, regexp_extract_all(word, '[\p{L}''’]+|[^\p{L}''’]+') AS ptk
-  FROM plant_proper_noun
-  WHERE treatment = 'keep' AND strpos(word, ' ') > 0
+  SELECT phrase, ptk
+  FROM (SELECT word AS phrase, regexp_extract_all(word, '[\p{L}''’]+|[^\p{L}''’]+') AS ptk FROM plant_proper_noun WHERE treatment = 'keep')
+  WHERE len(ptk) > 1
 ), phrase_hit AS (
   -- Where a phrase of the file is in a name: whole words, in any case, with the apostrophes folded, and not touching a hyphen
   SELECT n.name, k.pos AS first_pos, p.phrase, p.ptk, len(p.ptk) AS size
@@ -104,9 +111,9 @@ WITH names AS (
   SELECT k.name, k.pos,
          CASE
            -- Inside a phrase of the file: the phrase's own spelling. Of phrases that overlap, the earlier one, then the first by spelling
-           WHEN h.phrase IS NOT NULL THEN h.ptk[k.pos - h.first_pos + 1]
+           WHEN h.phrase IS NOT NULL THEN CASE WHEN k.token LIKE '%’%' THEN replace(h.ptk[k.pos - h.first_pos + 1], '''', '’') ELSE replace(h.ptk[k.pos - h.first_pos + 1], '’', '''') END
            -- A word the file keeps, whatever case the name wrote it in
-           WHEN f.treatment = 'keep' THEN f.word
+           WHEN f.treatment = 'keep' THEN CASE WHEN k.token LIKE '%’%' THEN replace(f.word, '''', '’') ELSE replace(f.word, '’', '''') END
            -- St and Mt, with or without the period, but not the st of 1st
            WHEN lower(k.token) IN ('st', 'mt') AND (k.next_token LIKE '.%' OR k.next_token = ' ') AND NOT coalesce(regexp_matches(k.prev_token, '[0-9]$'), false)
              THEN upper(k.token[1]) || lower(k.token[2:])
@@ -122,12 +129,12 @@ WITH names AS (
     WHERE h.name = k.name AND k.pos >= h.first_pos AND k.pos < h.first_pos + h.size
     ORDER BY h.first_pos, h.phrase
     LIMIT 1) h ON true
-  LEFT JOIN plant_proper_noun f ON lower(replace(f.word, '’', '''')) = lower(replace(k.token, '’', '''')) AND strpos(f.word, ' ') = 0
+  LEFT JOIN plant_proper_noun f ON lower(replace(f.word, '’', '''')) = lower(replace(k.token, '’', '''')) AND NOT regexp_matches(f.word, '[^\p{L}''’]')
 )
 SELECT name, string_agg(shown, '' ORDER BY pos) AS common_name
 FROM judged
 GROUP BY name;
-COMMENT ON VIEW plant_name_sentence_case IS 'Each name of plant_name_to_set in sentence case: every word in lower case except proper nouns (the rules at the top of schema/114). A phrase of ingest/plant-proper-nouns.csv and a word it keeps are set as the file spells them, whatever case the name had them in; a possessive keeps its capital unless the file says lower; St and Mt keep theirs. A name already in sentence case comes out unchanged apart from its first word, which loses its capital like any other. Nothing is learned from the data.';
+COMMENT ON VIEW plant_name_sentence_case IS 'Each name of plant_name_to_set in sentence case: every word in lower case except proper nouns (the rules at the top of schema/114). A phrase of ingest/plant-proper-nouns.csv and a word it keeps are set as the file spells them (with the apostrophe the name wrote), whatever case the name had them in; a possessive keeps its capital unless the file says lower; St and Mt keep theirs. A name already in sentence case comes out unchanged apart from its first word, which loses its capital like any other. Nothing is learned from the data.';
 
 CREATE VIEW plant_inat_common_name AS
 SELECT t.inat_taxon_id, coalesce(c.common_name, t.preferred_common_name) AS common_name

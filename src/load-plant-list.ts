@@ -104,29 +104,38 @@ export interface ProperNounRow {
 /** The rows of the proper-noun file. Strict, like the list: a bad row stops the load. */
 export function parseProperNouns(bytes: Buffer): ProperNounRow[] {
   const text = bytes.toString("utf8").replace(/^\uFEFF/, "");
-  const parsed = parseCsv(text, { strict: true }).filter((r) => !(r.length === 1 && r[0] === ""));
-  const [header, ...records] = parsed;
+  let parsed: string[][];
+  try {
+    parsed = parseCsv(text, { strict: true });
+  } catch (err) {
+    throw new Error(`plant proper nouns: ${(err as Error).message}`);
+  }
+  // Numbered before the blank lines are dropped, as parsePlantList does, so a row number is the line a person finds it on.
+  const [head, ...numbered] = parsed.map((r, i) => ({ r, n: i + 1 })).filter(({ r }) => !(r.length === 1 && r[0] === ""));
+  const header = head?.r;
   if (header?.join(",") !== "Word,Treatment,Reason") {
     throw new Error(`plant proper nouns: expected the header Word,Treatment,Reason, found ${header?.join(",") ?? "nothing"}`);
   }
   const seen = new Set<string>();
-  return records.map((r, i) => {
+  return numbered.map(({ r, n }) => {
     // Only ordinary spaces and tabs are trimmed: a non-breaking space at an edge is a fault to refuse, not to hide.
     const [word, treatment, reason] = r.map((c) => c.replace(/^[ \t]+|[ \t]+$/g, ""));
-    if (r.length !== 3 || !word || !reason) throw new Error(`plant proper nouns: row ${i + 2} needs a word, a treatment and a reason`);
-    if (treatment !== "keep" && treatment !== "lower") throw new Error(`plant proper nouns: row ${i + 2}: treatment must be keep or lower, not ${treatment}`);
-    // Letters, with apostrophes inside or at the end ("Banks'"); a phrase has single ordinary spaces between its words, and a period may end a word
-    // inside it ("Mount St. Helens"). No hyphen (the parts of a hyphenated word are judged one at a time), no digit, no other kind of space (a
-    // non-breaking space would make a row that no name can match), so a row that could never match is refused.
+    if (r.length !== 3 || !word || !reason) throw new Error(`plant proper nouns: row ${n} needs a word, a treatment and a reason`);
+    if (treatment !== "keep" && treatment !== "lower") throw new Error(`plant proper nouns: row ${n}: treatment must be keep or lower, not ${treatment}`);
+    // Letters, with apostrophes inside or at the end ("Banks'"); a phrase has single ordinary spaces or single hyphens between its words ("Trans-Pecos",
+    // which the view reads as a phrase because it is more than one word as it cuts a name), and a period may end a word inside it ("Mount St. Helens").
+    // No digit, no other kind of space (a non-breaking space would make a row that no name can match), so a row that could never match is refused.
     const WORD = String.raw`\p{L}+(?:['’]\p{L}*)*`;
-    if (!new RegExp(`^${WORD}(?:\\.? ${WORD})*$`, "u").test(word))
-      throw new Error(`plant proper nouns: row ${i + 2}: ${JSON.stringify(word)} is not a word or a phrase of words (letters and apostrophes, single ordinary spaces, no hyphen)`);
-    if (word.includes(" ") && treatment !== "keep") throw new Error(`plant proper nouns: row ${i + 2}: only a keep row may hold a phrase`);
+    if (!new RegExp(`^${WORD}(?:(?:\\.? |-)${WORD})*$`, "u").test(word))
+      throw new Error(`plant proper nouns: row ${n}: ${JSON.stringify(word)} is not a word or a phrase of words (letters and apostrophes, single ordinary spaces, a single hyphen only between two words)`);
+    if (/[^\p{L}'’]/u.test(word) && treatment !== "keep") throw new Error(`plant proper nouns: row ${n}: only a keep row may hold a phrase`);
+    // A keep row sets the word as written, and a name's capitals are only restored from a row that has one: "oregon,keep" would keep nothing.
+    if (treatment === "keep" && !/\p{Lu}/u.test(word)) throw new Error(`plant proper nouns: row ${n}: a keep row needs a capital letter (${word} has none), since it is what the name is set to`);
     // A lower row only matters for a possessive: any other word is lower-cased already.
     if (treatment === "lower" && !/(\p{L}['’]s|s['’])$/u.test(word))
-      throw new Error(`plant proper nouns: row ${i + 2}: a lower row is for a possessive (Shepherd's, Ladies'), and ${word} is not one`);
+      throw new Error(`plant proper nouns: row ${n}: a lower row is for a possessive (Shepherd's, Ladies'), and ${word} is not one`);
     const folded = word.toLowerCase().replace(/’/g, "'");
-    if (seen.has(folded)) throw new Error(`plant proper nouns: ${word} appears twice, ignoring case and the kind of apostrophe (row ${i + 2})`);
+    if (seen.has(folded)) throw new Error(`plant proper nouns: ${word} appears twice, ignoring case and the kind of apostrophe (row ${n})`);
     seen.add(folded);
     return { word, treatment, reason };
   });

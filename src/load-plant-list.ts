@@ -34,9 +34,11 @@ export const OLD_BEELINE_LIST = "old-beeline";
  * it (parsePlantList, the columns kept). It is hashed with the file's bytes, so
  * a deployed list whose file did not change is read again by the new loader.
  */
-export const PLANT_LIST_LOADER_VERSION = 1;
+export const PLANT_LIST_LOADER_VERSION = 2;
 export const OLD_BEELINE_PLANT_LIST_FILE = "ingest/old-beeline-plant-list.csv";
 /** Where the file is, whatever directory the process was started in. */
+export const PLANT_PROPER_NOUNS_FILE = "ingest/plant-proper-nouns.csv";
+const PLANT_PROPER_NOUNS_PATH = fileURLToPath(new URL(`../${PLANT_PROPER_NOUNS_FILE}`, import.meta.url));
 const OLD_BEELINE_PLANT_LIST_PATH = fileURLToPath(new URL(`../${OLD_BEELINE_PLANT_LIST_FILE}`, import.meta.url));
 
 const COLUMNS = ["Rank", "Family", "Scientific_name", "Synonym", "Common_name"] as const;
@@ -93,9 +95,39 @@ export function parsePlantList(bytes: Buffer): { rows: PlantListRow[]; skippedWi
   return { rows, skippedWithoutName };
 }
 
-/** What the list's stored hash is: the loader's version, then the file's bytes. */
-export function plantListHash(bytes: Buffer): string {
-  return createHash("sha256").update(`loader ${PLANT_LIST_LOADER_VERSION}\n`).update(bytes).digest("hex");
+export interface ProperNounRow {
+  word: string;
+  treatment: "keep" | "lower";
+  reason: string;
+}
+
+/** The rows of the proper-noun file. Strict, like the list: a bad row stops the load. */
+export function parseProperNouns(bytes: Buffer): ProperNounRow[] {
+  const text = bytes.toString("utf8").replace(/^\uFEFF/, "");
+  const parsed = parseCsv(text, { strict: true }).filter((r) => !(r.length === 1 && r[0] === ""));
+  const [header, ...records] = parsed;
+  if (header?.join(",") !== "Word,Treatment,Reason") {
+    throw new Error(`plant proper nouns: expected the header Word,Treatment,Reason, found ${header?.join(",") ?? "nothing"}`);
+  }
+  const seen = new Set<string>();
+  return records.map((r, i) => {
+    const [word, treatment, reason] = r.map((c) => c.trim());
+    if (r.length !== 3 || !word || !reason) throw new Error(`plant proper nouns: row ${i + 2} needs a word, a treatment and a reason`);
+    if (treatment !== "keep" && treatment !== "lower") throw new Error(`plant proper nouns: row ${i + 2}: treatment must be keep or lower, not ${treatment}`);
+    if (seen.has(word)) throw new Error(`plant proper nouns: ${word} appears twice (row ${i + 2})`);
+    seen.add(word);
+    return { word, treatment, reason };
+  });
+}
+
+/** What the list's stored hash is: the loader's version, then the list's bytes, then the proper nouns' bytes. */
+export function plantListHash(bytes: Buffer, properNounBytes: Buffer = Buffer.alloc(0)): string {
+  return createHash("sha256")
+    .update(`loader ${PLANT_LIST_LOADER_VERSION}\n`)
+    .update(bytes)
+    .update("\nproper nouns\n")
+    .update(properNounBytes)
+    .digest("hex");
 }
 
 /**
@@ -108,13 +140,15 @@ export function plantListHash(bytes: Buffer): string {
  */
 export async function loadPlantList(
   conn: DuckDBConnection,
-  opts: { path?: string; listKey?: string; refresh?: boolean } = {},
+  opts: { path?: string; properNounsPath?: string; listKey?: string; refresh?: boolean } = {},
 ): Promise<LoadPlantListResult> {
   const path = opts.path ?? OLD_BEELINE_PLANT_LIST_PATH;
   const listKey = opts.listKey ?? OLD_BEELINE_LIST;
   const bytes = await readFile(path);
-  const hash = plantListHash(bytes);
+  const properNounBytes = await readFile(opts.properNounsPath ?? PLANT_PROPER_NOUNS_PATH);
+  const hash = plantListHash(bytes, properNounBytes);
   const { rows, skippedWithoutName } = parsePlantList(bytes);
+  const properNouns = parseProperNouns(properNounBytes);
 
   const have = (await (
     await conn.run("SELECT content_hash FROM plant_list WHERE list_key = $1", [listKey])
@@ -134,6 +168,10 @@ export async function loadPlantList(
         `INSERT INTO plant_list_entry (list_key, scientific_name, rank, family, synonym, common_name) VALUES ${values.join(", ")}`,
         [listKey, ...part.flatMap((p) => [p.scientific_name, p.rank, p.family, p.synonym, p.common_name])] as never[],
       );
+    }
+    await conn.run("DELETE FROM plant_proper_noun");
+    for (const n of properNouns) {
+      await conn.run("INSERT INTO plant_proper_noun (word, treatment, reason) VALUES ($1, $2, $3)", [n.word, n.treatment, n.reason]);
     }
     await conn.run(
       `INSERT INTO plant_list (list_key, source_file, content_hash) VALUES ($1, $2, $3)

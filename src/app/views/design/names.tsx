@@ -123,7 +123,7 @@ const VERNACULAR_EXAMPLES: ReadonlyArray<{ props: TaxonNameProps; note: string }
   },
   {
     props: { rank: "species", scientificName: "Phacelia hastata", vernacular: "silverleaf phacelia" },
-    note: "Sentence case, as stored, not iNaturalist's “Silverleaf Phacelia”.",
+    note: "Sentence case, not iNaturalist's “Silverleaf Phacelia”, which is converted when the name is chosen.",
   },
   {
     props: { rank: "family", scientificName: "Onagraceae", vernacular: "evening primrose family" },
@@ -251,7 +251,14 @@ export function DesignNames() {
           journals lower-case them, while the APGA guide capitalises each word so they read as names. What matters is
           one rule everywhere. Beeline sets them in sentence case, with capitals only for proper nouns (&ldquo;Oregon
           grape&rdquo;), so &ldquo;silverleaf phacelia&rdquo;, not &ldquo;Silverleaf Phacelia&rdquo;. They are common
-          nouns. iNaturalist&rsquo;s title case is to be converted (beeline-rfkj.9); until then, iNaturalist&rsquo;s names show in its own title case.
+          nouns. iNaturalist&rsquo;s names, which it writes in title case or in sentence case without any rule we can
+          rely on, are converted when the name is chosen (beeline-rfkj.9): every word loses its capital unless it is a
+          proper noun, which is a word the old plant list capitalises inside a name (&ldquo;Oregon&rdquo;,
+          &ldquo;California&rdquo;), a possessive that is an eponym (&ldquo;Nuttall&rsquo;s&rdquo;,
+          &ldquo;Douglas&rsquo;&rdquo;), or a word in a short hand-kept file. The list&rsquo;s own names are not
+          converted. The words of a hyphenated name are judged one at a time (&ldquo;Douglas-fir&rdquo;,
+          &ldquo;love-in-a-mist&rdquo;). What it cannot do is keep the second word of a place name written as two
+          words, such as &ldquo;Rocky Mountain&rdquo;, where it is a common noun elsewhere.
         </li>
       </ul>
 

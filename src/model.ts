@@ -223,6 +223,29 @@ export interface PlantListEntryTable {
   common_name: string | null;
 }
 
+/** A hand-kept exception to how iNaturalist's common names are set in sentence case (ingest/plant-proper-nouns.csv). */
+export interface PlantProperNounTable {
+  word: string;
+  treatment: "keep" | "lower";
+  reason: string;
+}
+
+/** A word the plant list's common names capitalise inside a name otherwise in sentence case, learned from the list. */
+export interface PlantListProperNounView {
+  word: string;
+}
+
+/** A word the list or iNaturalist writes beginning with a lower-case letter, in lower case. */
+export interface PlantLowercaseWordView {
+  word: string;
+}
+
+/** iNaturalist's preferred common name of a taxon in sentence case, proper nouns kept. */
+export interface PlantInatCommonNameView {
+  inat_taxon_id: BigIntCol;
+  common_name: string;
+}
+
 /** A question put to iNaturalist's taxa search for a normalised name at an expected rank. */
 export interface PlantNameLookupTable {
   name_key: string;
@@ -1757,6 +1780,10 @@ export interface Database {
   inat_taxon_uncached: InatTaxonUncachedView;
   plant_list: PlantListTable;
   plant_list_entry: PlantListEntryTable;
+  plant_proper_noun: PlantProperNounTable;
+  plant_list_proper_noun: PlantListProperNounView;
+  plant_lowercase_word: PlantLowercaseWordView;
+  plant_inat_common_name: PlantInatCommonNameView;
   plant_name_lookup: PlantNameLookupTable;
   plant_name_lookup_hit: PlantNameLookupHitTable;
   plant_name_lookup_hit_replacement: PlantNameLookupHitReplacementTable;

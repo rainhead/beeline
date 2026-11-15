@@ -42,6 +42,21 @@ COMMENT ON COLUMN plant_list_entry.family IS 'The list''s Family column.';
 COMMENT ON COLUMN plant_list_entry.synonym IS 'The list''s Synonym column, other scientific names for the same plant separated by commas. Not read yet: matching a name the list calls a synonym is beeline-rfkj.6.';
 COMMENT ON COLUMN plant_list_entry.common_name IS 'The list''s Common_name column: one or several names separated by commas or semicolons, the first being the one shown, except at genus rank or above, where several names give none (plant_list_entry_several_names). Sometimes a placeholder that is no name (Abelia Species, tribe Cardamineae); plant_list_entry_common_name leaves those out.';
 
+-- Words that iNaturalist's common names capitalise and that keep the capital
+-- when Beeline sets them in sentence case (beeline-rfkj.9), from
+-- ingest/plant-proper-nouns.csv. The words the plant list itself capitalises
+-- are learned from it (plant_list_proper_noun, schema/114), so this holds only
+-- what the list never says.
+CREATE TABLE plant_proper_noun (
+  word      TEXT PRIMARY KEY,
+  treatment TEXT NOT NULL CHECK (treatment IN ('keep', 'lower')),
+  reason    TEXT NOT NULL
+);
+COMMENT ON TABLE plant_proper_noun IS 'Hand-kept exceptions to how iNaturalist''s common names are set in sentence case (src/load-plant-list.ts loads ingest/plant-proper-nouns.csv, replacing the rows). Read by plant_inat_common_name (schema/114). Beyond what the old plant list shows, a word that is a proper noun keeps its capital, and a possessive that is not an eponym loses it.';
+COMMENT ON COLUMN plant_proper_noun.word IS 'The word as iNaturalist capitalises it (Utah, Shepherd''s), without a hyphen: the parts of a hyphenated word are judged one at a time.';
+COMMENT ON COLUMN plant_proper_noun.treatment IS 'keep: the word is a proper noun and keeps its capital. lower: the word is a possessive that would keep its capital by the possessive rule (plant_inat_common_name) and should not, because it is not an eponym (shepherd''s purse).';
+COMMENT ON COLUMN plant_proper_noun.reason IS 'Why, in a few words, with an example.';
+
 -- What iNaturalist answered when asked for a normalised name at an expected
 -- rank (src/fetch-plant-names.ts), one row per question, whatever the answer.
 -- A name with no row has not been asked yet (plant_name_unlooked).

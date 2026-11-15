@@ -12,7 +12,11 @@ import { parseCsv } from "./corrections.js";
  * would make of the corrected records, in one transaction:
  *
  * 1. Every row of `ingest/legacy-corrections.csv` the store's own correction
- *    table lacks is added to it (`legacy_correction`). Promotion reads that
+ *    table lacks, for a record still held back, is added to it
+ *    (`legacy_correction`). A row for a record already carried over is listed
+ *    and not added: that record is corrected on its sample's page, and a row
+ *    here would change what the export writes for it while its sample stayed
+ *    as it was. Promotion reads that
  *    file only when it builds a store, so production never saw a row added
  *    since; `legacy_occurrence_corrected`, and every view promotion left over
  *    it, read the table. A record and field the table already corrects is
@@ -32,16 +36,18 @@ import { parseCsv } from "./corrections.js";
  * A group is refused, and named in the result, rather than guessed at where
  * this would have to decide something promotion decided with more evidence:
  * a sample of that collector, number and day already exists (the records
- * may belong in it); any of its field numbers is already a specimen's; its
- * records disagree about the place, the point or the method; a record names
- * a plant, or carries an expert's or a volunteer's identification, which
- * this does not yet carry over; or a collector has no person in Beeline.
+ * may belong in it); another record of the sample is still held back; any of
+ * its field numbers is already a specimen's; its records disagree about the
+ * place, the point, the method or the dates; a record cites an iNaturalist
+ * observation, names a plant, or carries an expert's or a volunteer's
+ * identification, none of which this carries over yet; or a collector has no
+ * person in Beeline.
  *
  * The first records it was written for: Lincoln Best's trap sample
  * OBAS-01087 (18 records) and Paul Moschetti's sample 13 of 2019 (2), whose
  * end dates were written before their start (Peter, 2026-11-15). The sample
- * change log records the new samples at its next pass, as it did after the
- * earlier repair (src/repair-legacy-skipped.ts).
+ * change log records the new samples at its next full pass, which the app
+ * makes as it starts (src/sample-change.ts).
  */
 
 export interface CarriedSample {
@@ -63,6 +69,8 @@ export interface RefusedGroup {
 
 export interface CarryOverResult {
   correctionsAdded: number;
+  /** Rows of the file not added to the store, and why. */
+  correctionsNotAdded: { id: string; field: string; why: string }[];
   samples: CarriedSample[];
   refused: RefusedGroup[];
   dryRun: boolean;
@@ -89,15 +97,27 @@ export async function carryOverLegacyRecords(
     // 1. The file's corrections the store lacks, by record and field.
     await conn.run(`CREATE OR REPLACE TEMP TABLE carry_file (_id VARCHAR, field VARCHAR, base_value VARCHAR, new_value VARCHAR, author VARCHAR, reason VARCHAR)`);
     for (const e of events) await conn.run(`INSERT INTO temp.carry_file VALUES ($1, $2, $3, $4, $5, $6)`, e.slice(0, 6) as never);
-    const [added] = await rowsOf(
-      conn,
-      `SELECT count(*)::INTEGER AS n FROM temp.carry_file f
-       WHERE NOT EXISTS (SELECT 1 FROM legacy_correction c WHERE c._id = f._id AND c.field = f.field)`,
-    );
+    // Only for a record still held back: a record already carried over is
+    // corrected on its sample's page, and a row here would change what the
+    // export writes for that record while the sample stayed as it was.
+    await conn.run(`
+      CREATE OR REPLACE TEMP TABLE carry_new AS
+      SELECT f.*,
+             f._id IN (SELECT _id FROM legacy_specimen_number UNION SELECT _id FROM legacy_duplicate_record) AS carried,
+             f._id IN (SELECT _id FROM legacy_occurrence) AS staged
+      FROM temp.carry_file f
+      WHERE NOT EXISTS (SELECT 1 FROM legacy_correction c WHERE c._id = f._id AND c.field = f.field)`);
+    const [added] = await rowsOf(conn, `SELECT count(*)::INTEGER AS n FROM temp.carry_new WHERE staged AND NOT carried`);
+    const notAdded = (
+      await rowsOf(
+        conn,
+        `SELECT _id, field, CASE WHEN NOT staged THEN 'no old record has this id' ELSE 'the record is already a specimen; correct it on its sample''s page' END AS why
+         FROM temp.carry_new WHERE NOT staged OR carried ORDER BY _id, field`,
+      )
+    ).map((r) => ({ id: String(r._id), field: String(r.field), why: String(r.why) }));
     await conn.run(`
       INSERT INTO legacy_correction (_id, field, base_value, new_value, author, reason)
-      SELECT f._id, f.field, f.base_value, f.new_value, f.author, f.reason FROM temp.carry_file f
-      WHERE NOT EXISTS (SELECT 1 FROM legacy_correction c WHERE c._id = f._id AND c.field = f.field)`);
+      SELECT _id, field, base_value, new_value, author, reason FROM temp.carry_new WHERE staged AND NOT carried`);
 
     // 2. Held-back records nothing holds back now, grouped as promotion
     // groups them: by collector, sample number and start day.
@@ -139,20 +159,28 @@ export async function carryOverLegacyRecords(
               (SELECT p.display_name FROM person p WHERE p.entity_id = g.person_id) AS collector,
               string_agg(g."fieldNumber", ',' ORDER BY g.p_specimen_number, g._id) AS field_numbers,
               CASE
+                -- Its start as it stands, or as its old records give it, since staff may have moved it since.
                 WHEN EXISTS (SELECT 1 FROM sample s JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
                              WHERE pc.person_id = g.person_id AND s.sample_number = g.sid AND s.date_start = g.p_date_start)
+                  OR EXISTS (SELECT 1 FROM legacy_specimen_number n JOIN legacy_parsed k ON k._id = n._id
+                             JOIN legacy_person_map m ON m.fn IS NOT DISTINCT FROM k.fn AND m.ln IS NOT DISTINCT FROM k.ln
+                             WHERE m.person_id = g.person_id AND k.sid = g.sid AND k.p_date_start = g.p_date_start)
                   THEN 'a sample of this collector, number and day already exists'
                 WHEN EXISTS (SELECT 1 FROM temp.carry_held h
                              WHERE h.blocked AND h.person_id = g.person_id AND h.sid = g.sid AND h.p_date_start = g.p_date_start)
                   THEN 'another record of this sample is still held back'
                 WHEN bool_or(EXISTS (SELECT 1 FROM specimen sp WHERE sp.field_number = nullif(g."fieldNumber", '')))
                   THEN 'a field number is already a specimen''s'
-                WHEN count(DISTINCT concat_ws('|', g.country, g.stateProvince, g.county, g.locality, g.p_lat, g.p_lon,
-                                                  g.p_uncertainty, g.p_elevation, g.samplingProtocol, g.p_date_end, g.p_inat_obs_id)) > 1
+                -- A struct, so a blank against a value is a difference (concat_ws would skip it).
+                WHEN count(DISTINCT {'country': g.country, 'state': g.stateProvince, 'county': g.county, 'locality': g.locality,
+                                     'lat': g.p_lat, 'lon': g.p_lon, 'uncertainty': g.p_uncertainty, 'elevation': g.p_elevation,
+                                     'protocol': g.samplingProtocol, 'end': g.p_date_end}) > 1
                   THEN 'its records disagree about the place, the point, the method or the dates'
+                WHEN bool_or(g.p_inat_obs_id IS NOT NULL OR coalesce(g.url, '') <> '')
+                  THEN 'a record cites an iNaturalist observation, which this does not link yet'
                 WHEN bool_or(concat(g.genusPlant, g.speciesPlant, g.familyPlant, g.orderPlant, g.phylumPlant) <> '')
                   THEN 'a record names a plant, which this does not carry over yet'
-                WHEN bool_or(concat(g.family, g.genus, g.specificEpithet, g.scientificName,
+                WHEN bool_or(concat(g."order", g.family, g.genus, g.specificEpithet, g.scientificName,
                                     g.familyVolDet, g.genusVolDet, g.speciesVolDet) <> '')
                   THEN 'a record carries an identification, which this does not carry over yet'
                 WHEN bool_or(EXISTS (SELECT 1 FROM temp.carry_collector c WHERE c._id = g._id AND c.person_id IS NULL))
@@ -261,11 +289,12 @@ export async function carryOverLegacyRecords(
       samples.push({ ...key, sampleId, dateEnd: String(made!.date_end) });
     }
     await conn.run("DROP TABLE IF EXISTS temp.carry_file");
+    await conn.run("DROP TABLE IF EXISTS temp.carry_new");
     await conn.run("DROP TABLE IF EXISTS temp.carry_record");
     await conn.run("DROP TABLE IF EXISTS temp.carry_held");
     await conn.run("DROP TABLE IF EXISTS temp.carry_collector");
     await conn.run(opts.dryRun ? "ROLLBACK" : "COMMIT");
-    return { correctionsAdded: Number(added?.n ?? 0), samples, refused, dryRun: opts.dryRun ?? false };
+    return { correctionsAdded: Number(added?.n ?? 0), correctionsNotAdded: notAdded, samples, refused, dryRun: opts.dryRun ?? false };
   } catch (err) {
     await conn.run("ROLLBACK").catch(() => {});
     throw err;
@@ -276,6 +305,7 @@ export async function carryOverLegacyRecords(
 export function describeCarryOver(r: CarryOverResult): string {
   const verb = r.dryRun ? "would be" : "were";
   const lines = [`${r.correctionsAdded} correction(s) from ${LEGACY_CORRECTIONS} ${verb} added to the store`];
+  for (const c of r.correctionsNotAdded) lines.push(`  not added: ${c.id} ${c.field}: ${c.why}`);
   lines.push(`${r.samples.length} sample(s) ${verb} made, with ${r.samples.reduce((n, s) => n + s.fieldNumbers.length, 0)} specimen(s)`);
   for (const s of r.samples) {
     lines.push(`  ${s.collector}, sample ${s.sampleNumber}, ${s.dateStart} to ${s.dateEnd}: ${s.fieldNumbers.join(", ")}${r.dryRun ? "" : ` (sample ${s.sampleId})`}`);

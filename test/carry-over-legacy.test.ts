@@ -22,6 +22,9 @@ import { openCopy, writeCopy } from "./promoted-store.js";
  *     are not carried over yet.
  *   T-3, one record with no specimen number, which no correction touches:
  *     held back as before.
+ *   T-4 and T-5, written the same way and corrected, one citing an
+ *     iNaturalist observation and one identified only to order: still held
+ *     back, since neither is carried over yet.
  * and T-0, an ordinary sample of his that promotion takes, so that he is a
  * person in Beeline, as he is on production.
  */
@@ -82,6 +85,8 @@ beforeAll(async () => {
       await trap("carry-2", "2461833", "T-1", "2"),
       await trap("carry-3", "2461900", "T-2", "1", { genus: "Bombus", specificEpithet: "mixtus", identifiedBy: "Lincoln Best" }),
       await trap("carry-4", "2461950", "T-3", "", { day2: "", month2: "", year2: "" }),
+      await trap("carry-5", "2461960", "T-4", "1", { url: "https://www.inaturalist.org/observations/250009999" }),
+      await trap("carry-6", "2461970", "T-5", "1", { order: "Hymenoptera" }),
     ].join("\n") + "\n",
   );
   corrections = join(dir, "corrections.csv");
@@ -89,7 +94,7 @@ beforeAll(async () => {
     corrections,
     [
       "_id,field,base_value,new_value,author,reason",
-      ...["carry-1", "carry-2", "carry-3"].map((id) => `${id},month2,7,8,Test,"the month is mistyped"`),
+      ...["carry-1", "carry-2", "carry-3", "carry-5", "carry-6"].map((id) => `${id},month2,7,8,Test,"the month is mistyped"`),
     ].join("\n") + "\n",
   );
   // Promotion costs seconds however few the records, so twice for the file, not once a test.
@@ -153,12 +158,15 @@ describe("carrying over old records a correction made whole", { timeout: 120_000
     expect(await rows(conn, `SELECT _id FROM legacy_specimen_number WHERE _id LIKE 'carry-%'`)).toEqual([["carry-0"]]);
 
     const result = await carryOverLegacyRecords(conn, { correctionsCsv: corrections });
-    expect(result.correctionsAdded).toBe(3);
+    expect(result.correctionsAdded).toBe(5);
+    expect(result.correctionsNotAdded).toEqual([]);
     expect(result.samples).toEqual([
       expect.objectContaining({ collector: "Lincoln Best", sampleNumber: "T-1", dateStart: "2018-08-19", dateEnd: "2018-08-23", fieldNumbers: ["2461832", "2461833"] }),
     ]);
     expect(result.refused).toEqual([
       expect.objectContaining({ sampleNumber: "T-2", fieldNumbers: ["2461900"], why: expect.stringContaining("identification") }),
+      expect.objectContaining({ sampleNumber: "T-4", fieldNumbers: ["2461960"], why: expect.stringContaining("iNaturalist observation") }),
+      expect.objectContaining({ sampleNumber: "T-5", fieldNumbers: ["2461970"], why: expect.stringContaining("identification") }),
     ]);
 
     const made = await sampleOf(conn, "carry-1");
@@ -189,6 +197,22 @@ describe("carrying over old records a correction made whole", { timeout: 120_000
     expect(await rows(conn, `SELECT count(*) FROM specimen WHERE field_number = '2461832'`)).toEqual([[1n]]);
   });
 
+  it("adds no correction for a record already carried over, or for one that does not exist", async () => {
+    const conn = await fresh();
+    const file = join(await mkdtemp(join(tmpdir(), "beeline-carry-file-")), "corrections.csv");
+    await writeFile(
+      file,
+      ["_id,field,base_value,new_value,author,reason", "carry-0,locality,Big Lake,Elsewhere,Test,carried", "no-such,day,1,2,Test,typo"].join("\n") + "\n",
+    );
+    const result = await carryOverLegacyRecords(conn, { correctionsCsv: file });
+    expect(result.correctionsAdded).toBe(0);
+    expect(result.correctionsNotAdded).toEqual([
+      { id: "carry-0", field: "locality", why: expect.stringContaining("already a specimen") },
+      { id: "no-such", field: "day", why: expect.stringContaining("no old record") },
+    ]);
+    expect(await rows(conn, `SELECT count(*) FROM legacy_correction WHERE _id IN ('carry-0', 'no-such')`)).toEqual([[0n]]);
+  });
+
   it("leaves a group alone whose sample already exists, and a correction an in-app edit already made", async () => {
     const conn = await fresh();
     // A sample of Lincoln Best's, numbered T-1, on 19 August 2018, made by someone since.
@@ -202,7 +226,7 @@ describe("carrying over old records a correction made whole", { timeout: 120_000
     // And an in-app correction of one record's month, which wins over the file.
     await conn.run(`INSERT INTO legacy_correction VALUES ('carry-2', 'month2', '7', '8', 'staff', 'in the app')`);
     const result = await carryOverLegacyRecords(conn, { correctionsCsv: corrections });
-    expect(result.correctionsAdded).toBe(2);
+    expect(result.correctionsAdded).toBe(4);
     expect(result.samples).toEqual([]);
     expect(result.refused.map((g) => [g.sampleNumber, g.why])).toContainEqual(["T-1", expect.stringContaining("already exists")]);
     expect(await rows(conn, `SELECT author FROM legacy_correction WHERE _id = 'carry-2' AND field = 'month2'`)).toEqual([["staff"]]);

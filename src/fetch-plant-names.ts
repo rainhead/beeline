@@ -5,8 +5,10 @@ import { DEFAULT_DB } from "./person-change.js";
 import { thenRefreshPlantCommonNames } from "./plant-common-names.js";
 
 /**
- * Ask iNaturalist which taxon each name of the old plant list is
- * (schema/067, schema/111, beeline-rfkj.2). One request per normalised name
+ * Ask iNaturalist which taxon each plant name is (schema/067, schema/111):
+ * the names of the old plant list (beeline-rfkj.2) and the host names of
+ * samples that have no host id (beeline-rfkj.5), the two sources read through
+ * plant_name_wanted, so a name both hold is one question. One request per normalised name
  * and expected rank, answered whatever the answer, so a name with no match is
  * asked about once and not every night.
  *
@@ -49,7 +51,8 @@ import { thenRefreshPlantCommonNames } from "./plant-common-names.js";
  * PACE AND BUDGET. A request about every 1.1 seconds, no token, as
  * src/fetch-inat-taxa.ts does; measured on 2026-11-14, 1,404 names took 29
  * minutes (1.2 seconds each). The nightly gives it 300 names, about six
- * minutes, so the first fill takes five nights; staff can run it at once from
+ * minutes, so the first fill takes five nights, and the hosts' names (about
+ * 860 on production on 2026-11-15) three more; staff can run it at once from
  * /jobs (the plant-names job), as many times as it takes. The ids it finds join the taxon cache's worklist
  * (inat_taxon_uncached) and are read with their ancestors by the next run of
  * src/fetch-inat-taxa.ts, which the same job runs once the names are done.
@@ -76,6 +79,10 @@ export interface FetchPlantNamesOptions {
 export interface FetchPlantNamesResult {
   /** Names on the worklist when the run began. */
   unlooked: number;
+  /** Of those, the names the plant list holds (a host may write the same name). */
+  unlookedOnList: number;
+  /** Of those, the names only a sample's host holds (beeline-rfkj.5). */
+  unlookedHostsOnly: number;
   /** Requests made: a name with more than 30 results takes one for each page. */
   requested: number;
   /** Lookups stored, answered with a hit or without. */
@@ -103,6 +110,27 @@ interface PageJson {
   results?: HitJson[];
 }
 
+/**
+ * The worklist (plant_name_unlooked), each name with whether the plant list holds it, so a run can say
+ * how many of its names are the list's and how many only samples' hosts (a name in both is the list's).
+ */
+const UNLOOKED_BY_SOURCE = `
+  SELECT u.name_key, u.expected_rank, coalesce(bool_or(w.source = 'list'), false) AS on_list
+  FROM plant_name_unlooked u
+  LEFT JOIN plant_name_shape s ON s.name_key = u.name_key AND s.expected_rank = u.expected_rank
+  LEFT JOIN plant_name_wanted w ON w.raw_name = s.raw_name
+  GROUP BY u.name_key, u.expected_rank`;
+
+/** How many names are waiting to be put to iNaturalist, the plant list's and those only hosts hold. */
+export async function countUnlookedPlantNames(conn: DuckDBConnection): Promise<{ onList: number; hostsOnly: number }> {
+  const [[onList, hostsOnly]] = (await (
+    await conn.run(
+      `SELECT count(*) FILTER (WHERE on_list), count(*) FILTER (WHERE NOT on_list) FROM (${UNLOOKED_BY_SOURCE}) t`,
+    )
+  ).getRows()) as [[bigint, bigint]];
+  return { onList: Number(onList), hostsOnly: Number(hostsOnly) };
+}
+
 /** Pages read for one name at most: 300 results, far more than any name in the list has had. */
 const MAX_PAGES = 10;
 
@@ -127,10 +155,10 @@ async function fetchPlantNamesUnrefreshed(
   const cap = opts.maxRequests ?? Infinity;
 
   const todo = (
-    (await (
-      await conn.run("SELECT name_key, expected_rank FROM plant_name_unlooked ORDER BY name_key, expected_rank")
-    ).getRows()) as Array<[string, string]>
-  ).map(([nameKey, expectedRank]) => ({ nameKey, expectedRank }));
+    (await (await conn.run(`${UNLOOKED_BY_SOURCE} ORDER BY name_key, expected_rank`)).getRows()) as Array<
+      [string, string, boolean]
+    >
+  ).map(([nameKey, expectedRank, onList]) => ({ nameKey, expectedRank, onList }));
   const ranksOf = new Map<string, string[]>();
   for (const [expected, inat] of (await (
     await conn.run("SELECT expected_rank, inat_rank FROM plant_expected_rank")
@@ -138,7 +166,18 @@ async function fetchPlantNamesUnrefreshed(
     ranksOf.set(expected, [...(ranksOf.get(expected) ?? []), inat]);
   }
 
-  const result: FetchPlantNamesResult = { unlooked: todo.length, requested: 0, stored: 0, refused: 0, errors: [], stoppedEarly: false, rateLimited: false };
+  const onList = todo.filter((t) => t.onList).length;
+  const result: FetchPlantNamesResult = {
+    unlooked: todo.length,
+    unlookedOnList: onList,
+    unlookedHostsOnly: todo.length - onList,
+    requested: 0,
+    stored: 0,
+    refused: 0,
+    errors: [],
+    stoppedEarly: false,
+    rateLimited: false,
+  };
   const fail = (message: string) => {
     result.errors.push(message);
     opts.log?.(message);

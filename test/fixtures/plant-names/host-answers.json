@@ -1,0 +1,267 @@
+{
+ "agastache urticifolia|species,hybrid": {
+  "total_results": 1,
+  "page": 1,
+  "per_page": 30,
+  "results": [
+   {
+    "id": 63316,
+    "name": "Agastache urticifolia",
+    "rank": "species",
+    "is_active": true,
+    "matched_term": "Agastache urticifolia",
+    "current_synonymous_taxon_ids": null
+   }
+  ]
+ },
+ "reynoutria bohemica|species,hybrid": {
+  "total_results": 1,
+  "page": 1,
+  "per_page": 30,
+  "results": [
+   {
+    "id": 850784,
+    "name": "Reynoutria × bohemica",
+    "rank": "hybrid",
+    "is_active": true,
+    "matched_term": "Reynoutria × bohemica",
+    "current_synonymous_taxon_ids": null
+   }
+  ]
+ },
+ "grass cover crop|subspecies,variety,form,infrahybrid": {
+  "total_results": 0,
+  "page": 1,
+  "per_page": 30,
+  "results": []
+ },
+ "asteraceae|family": {
+  "total_results": 1,
+  "page": 1,
+  "per_page": 30,
+  "results": [
+   {
+    "id": 47604,
+    "name": "Asteraceae",
+    "rank": "family",
+    "is_active": true,
+    "matched_term": "Asteraceae",
+    "current_synonymous_taxon_ids": null
+   }
+  ]
+ },
+ "oregon grape|species,hybrid": {
+  "total_results": 10,
+  "page": 1,
+  "per_page": 30,
+  "results": [
+   {
+    "id": 126887,
+    "name": "Berberis aquifolium",
+    "rank": "species",
+    "is_active": true,
+    "matched_term": "Oregon grape",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 75756,
+    "name": "Berberis nervosa",
+    "rank": "species",
+    "is_active": true,
+    "matched_term": "Dull Oregon-grape",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 133104,
+    "name": "Berberis repens",
+    "rank": "species",
+    "is_active": true,
+    "matched_term": "Oregon grape",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 857208,
+    "name": "Berberis japonica",
+    "rank": "species",
+    "is_active": true,
+    "matched_term": "Japanese Oregon-grape",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 924652,
+    "name": "Berberis piperiana",
+    "rank": "species",
+    "is_active": true,
+    "matched_term": "Piper's Oregon-grape",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 418227,
+    "name": "Berberis pumila",
+    "rank": "species",
+    "is_active": true,
+    "matched_term": "Pygmy Oregon Grape",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 784533,
+    "name": "Berberis × decumbens",
+    "rank": "hybrid",
+    "is_active": true,
+    "matched_term": "Newmarket Oregon Grape",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 127605,
+    "name": "Mahonia aquifolium",
+    "rank": "species",
+    "is_active": false,
+    "matched_term": "Oregon Grape",
+    "current_synonymous_taxon_ids": [
+     126887
+    ]
+   },
+   {
+    "id": 126631,
+    "name": "Mahonia nervosa",
+    "rank": "species",
+    "is_active": false,
+    "matched_term": "Dull Oregon grape",
+    "current_synonymous_taxon_ids": [
+     75756
+    ]
+   },
+   {
+    "id": 63946,
+    "name": "Mahonia repens",
+    "rank": "species",
+    "is_active": false,
+    "matched_term": "oregon grape",
+    "current_synonymous_taxon_ids": [
+     133104
+    ]
+   }
+  ]
+ },
+ "salix sp.|species,hybrid": {
+  "total_results": 6,
+  "page": 1,
+  "per_page": 30,
+  "results": [
+   {
+    "id": 168362,
+    "name": "Salix sphenophylla",
+    "rank": "species",
+    "is_active": true,
+    "matched_term": "Salix sphenophylla",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 1180339,
+    "name": "Salix × speciosa",
+    "rank": "hybrid",
+    "is_active": true,
+    "matched_term": "Salix × speciosa",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 785858,
+    "name": "Salix spathulifolia",
+    "rank": "species",
+    "is_active": true,
+    "matched_term": "Salix spathulifolia",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 1237295,
+    "name": "Salix spodiophylla",
+    "rank": "species",
+    "is_active": true,
+    "matched_term": "Salix spodiophylla",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 57260,
+    "name": "Salix speciosa",
+    "rank": "species",
+    "is_active": false,
+    "matched_term": "Salix speciosa",
+    "current_synonymous_taxon_ids": [
+     1180339
+    ]
+   },
+   {
+    "id": 1237327,
+    "name": "Salix sphaeronymphe",
+    "rank": "species",
+    "is_active": true,
+    "matched_term": "Salix sphaeronymphe",
+    "current_synonymous_taxon_ids": null
+   }
+  ]
+ },
+ "salix?|genus,subgenus,section,supertribe": {
+  "total_results": 4,
+  "page": 1,
+  "per_page": 30,
+  "results": [
+   {
+    "id": 53453,
+    "name": "Salix",
+    "rank": "genus",
+    "is_active": true,
+    "matched_term": "Salix",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 1237138,
+    "name": "Salix",
+    "rank": "subgenus",
+    "is_active": true,
+    "matched_term": "Salix",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 1237164,
+    "name": "Salix",
+    "rank": "section",
+    "is_active": true,
+    "matched_term": "Salix",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 1237180,
+    "name": "Denticulatae",
+    "rank": "section",
+    "is_active": true,
+    "matched_term": "Salix sect. Denticulatae",
+    "current_synonymous_taxon_ids": null
+   }
+  ]
+ },
+ "dull oregon-grape|species,hybrid": {
+  "total_results": 2,
+  "page": 1,
+  "per_page": 30,
+  "results": [
+   {
+    "id": 75756,
+    "name": "Berberis nervosa",
+    "rank": "species",
+    "is_active": true,
+    "matched_term": "Dull Oregon-grape",
+    "current_synonymous_taxon_ids": null
+   },
+   {
+    "id": 126631,
+    "name": "Mahonia nervosa",
+    "rank": "species",
+    "is_active": false,
+    "matched_term": "Dull Oregon grape",
+    "current_synonymous_taxon_ids": [
+     75756
+    ]
+   }
+  ]
+ }
+}

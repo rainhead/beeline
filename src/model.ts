@@ -278,10 +278,23 @@ export interface PlantNameLookupHitReplacementTable {
   replacement_taxon_id: BigIntCol;
 }
 
-/** Every plant name the list wrote or iNaturalist matched, normalised. */
+/** A name to match to an iNaturalist taxon: a plant list entry's, or the host of a sample with no host id (beeline-rfkj.5). */
+export interface PlantNameWantedView {
+  raw_name: string;
+  source: "list" | "host";
+}
+
+/** Every plant name to match or that iNaturalist matched, normalised. */
 export interface PlantNameNormalView {
   raw_name: string;
   name_key: string;
+}
+
+/** Each name to match with its normalised name and the rank its shape implies: the one rule for list and host names. */
+export interface PlantNameShapeView {
+  raw_name: string;
+  name_key: string;
+  expected_rank: string;
 }
 
 export interface PlantExpectedRankView {
@@ -321,6 +334,8 @@ export interface PlantNameResolutionView {
   expected_rank: string;
   outcome: PlantNameOutcome;
   inat_taxon_id: BigIntCol | null;
+  /** For a matched name: a hit's own name gave the taxon (true), or only its matched_term did (false: an older name, or a common name). */
+  by_own_name: boolean | null;
 }
 
 export interface PlantListEntryTaxonView {
@@ -1788,7 +1803,9 @@ export interface Database {
   plant_name_lookup: PlantNameLookupTable;
   plant_name_lookup_hit: PlantNameLookupHitTable;
   plant_name_lookup_hit_replacement: PlantNameLookupHitReplacementTable;
+  plant_name_wanted: PlantNameWantedView;
   plant_name_normal: PlantNameNormalView;
+  plant_name_shape: PlantNameShapeView;
   plant_expected_rank: PlantExpectedRankView;
   plant_list_entry_name: PlantListEntryNameView;
   plant_name_unlooked: PlantNameUnlookedView;

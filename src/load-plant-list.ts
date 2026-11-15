@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseCsv } from "./corrections.js";
 import { openDuckDb } from "./db.js";
+import { countUnlookedPlantNames } from "./fetch-plant-names.js";
 import { DEFAULT_DB } from "./person-change.js";
 import { refreshPlantCommonNames } from "./plant-common-names.js";
 
@@ -229,10 +230,11 @@ export async function loadPlantListAtBoot(
     try {
       const loaded = await loadPlantList(conn, { path: opts.path });
       if (loaded.changed) {
-        const [[unlooked]] = (await (await conn.run("SELECT count(*) FROM plant_name_unlooked")).getRows()) as [[bigint]];
+        const unlooked = await countUnlookedPlantNames(conn);
         log(
           `plant list loaded: ${loaded.entries} entries (${loaded.skippedWithoutName} without a name skipped); ` +
-            `${unlooked} name(s) not yet looked up in iNaturalist, which the plant-names job does a night at a time`,
+            `plant names not yet looked up in iNaturalist: ${unlooked.onList} on the plant list and ` +
+            `${unlooked.hostsOnly} only samples' hosts, which the plant-names job does a night at a time`,
         );
       }
       return loaded;

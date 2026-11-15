@@ -129,6 +129,12 @@ const CORRECTABLE_COLUMNS = [
 /** Written from the date, so a corrected date changes them too. */
 const DATE_DERIVED_COLUMNS = ["verbatimEventDate", "startDayofYear", "endDayofYear"];
 const DATE_FIELDS = ["day", "month", "year", "day2", "month2", "year2"];
+/** What a specimen takes from its sample rather than its own record: the place, point, dates and number. */
+const SAMPLE_COLUMNS = [
+  "sampleId", ...DATE_FIELDS, ...DATE_DERIVED_COLUMNS, "decimalLatitude", "decimalLongitude",
+  "coordinateUncertaintyInMeters", "coordinateSource", "verbatimElevation", "country", "stateProvince", "county",
+  "locality", "samplingProtocol", "url", "occurrenceRemarks",
+];
 /** The volunteer's identification, which the old Beeline kept beside the expert's. */
 const VOLUNTEER_COLUMNS = ["familyVolDet", "genusVolDet", "speciesVolDet", "sexVolDet", "casteVolDet"];
 /** Sex and caste, the expert's and the volunteer's: each the column it is read from, and the column it is read with. */
@@ -493,14 +499,22 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
           SELECT 1 FROM legacy_occurrence o JOIN legacy_occurrence_corrected c ON c._id = o._id
           WHERE o."fieldNumber" = d.field_number
             AND (${CORRECTABLE_COLUMNS.map((c) => `(d."column" = ${sqlString(c)} AND c."${c}" = d.exported AND c."${c}" IS DISTINCT FROM o."${c}")`).join("\n              OR ")}))`);
-    // And the columns written from a date a correction changed.
+    // And the columns written from a date a correction changed, where the
+    // date the export wrote is the corrected one: then they follow from it,
+    // and any other value of theirs is something else (CodeRabbit on #352).
+    const dateAgrees = (f: string) => {
+      const n = (x: string) => (f.startsWith("month") ? `try_cast(${monthNumber(x)} AS INTEGER)` : `try_cast(trim(${x}) AS INTEGER)`);
+      return `${n(`c."${f}"`)} IS NOT DISTINCT FROM ${n(`p."e_${f}"`)}`;
+    };
     await conn.run(`
       UPDATE cmp_value_difference d SET kind = 'staff_correction'
       WHERE d."column" IN (${list(DATE_DERIVED_COLUMNS)}) AND d.kind IN ('changed', 'filled', 'blanked')
         AND EXISTS (
           SELECT 1 FROM legacy_occurrence o JOIN legacy_occurrence_corrected c ON c._id = o._id
+          JOIN cmp_pairs p ON p."e_fieldNumber" = o."fieldNumber"
           WHERE o."fieldNumber" = d.field_number
-            AND (${DATE_FIELDS.map((c) => `c."${c}" IS DISTINCT FROM o."${c}"`).join(" OR ")}))`);
+            AND (${DATE_FIELDS.map((c) => `c."${c}" IS DISTINCT FROM o."${c}"`).join(" OR ")})
+            AND ${DATE_FIELDS.map(dateAgrees).join(" AND ")})`);
   }
   // A legacy record that contradicts itself about its pair's order: its name
   // columns list them in the order Beeline wrote and its recordedBy in the
@@ -554,11 +568,13 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
   // A record promotion held back and the one-time repair placed in the one
   // sample it led to (beeline-iuva, GitHub #303): its point, dates and sample
   // number are its sample's, since the record's own were what held it back
-  // or disagreed. Read off the blocking finding promotion still gives it.
+  // or disagreed. Read off the blocking finding promotion still gives it, and
+  // only for those columns: a later identification of the specimen keeps a
+  // kind of its own (CodeRabbit on #352).
   if ((await one(conn, `SELECT count(*) FROM duckdb_views() WHERE view_name = 'legacy_promotion_finding'`)) > 0) {
     await conn.run(`
       UPDATE cmp_value_difference d SET kind = 'repair_placed'
-      WHERE d.kind IN ('changed', 'filled', 'blanked')
+      WHERE d.kind IN ('changed', 'filled', 'blanked') AND d."column" IN (${list(SAMPLE_COLUMNS)})
         AND EXISTS (
           SELECT 1 FROM legacy_occurrence o
           JOIN legacy_specimen_number n ON n._id = o._id
@@ -603,19 +619,39 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
               FROM determination WHERE NOT is_expert GROUP BY specimen_id) v ON v.specimen_id = sp.entity_id
         WHERE sp.field_number = d.field_number AND v.channel <> 'legacy_import')`);
   // An identification carried from the specimen's other old record: a second
-  // print that the one-time repair tied to the specimen (beeline-iuva), where
-  // the identification had been entered.
+  // print that the one-time repair tied to it (beeline-iuva), where the
+  // identification had been entered. Only where that record supplies the
+  // value (CodeRabbit on #352): a name as it wrote it (a genus written with
+  // its subgenus, Lasioglossum (Dialictus), is the genus), a sex or caste as
+  // promotion reads its pair, and the columns the model writes from a name
+  // (family, rank, the name in full, who determined it) only beside a genus
+  // that qualifies.
   if ((await one(conn, `SELECT count(*) FROM duckdb_tables() WHERE table_name = 'legacy_duplicate_record'`)) > 0) {
-    for (const col of [...IDENTIFICATION_COLUMNS, ...VOLUNTEER_COLUMNS, "sex", "caste"]) {
-      await conn.run(`
-        UPDATE cmp_value_difference d SET kind = 'second_print'
-        WHERE d."column" = ${sqlString(col)} AND d.kind IN ('changed', 'filled')
-          AND EXISTS (
+    const tied = (cond: string) => `EXISTS (
             SELECT 1 FROM specimen sp
             JOIN legacy_duplicate_record r ON r.specimen_id = sp.entity_id
             JOIN legacy_occurrence o ON o._id = r._id
-            WHERE sp.field_number = d.field_number AND trim(o."${col}") <> '' AND d.exported <> '')`);
+            WHERE sp.field_number = d.field_number AND ${cond})`;
+    const hasMacros = (await one(conn, `SELECT count(*) FROM duckdb_functions() WHERE function_name = 'legacy_sex_of'`)) > 0;
+    for (const col of ["genus", "specificEpithet", "familyVolDet", "genusVolDet", "speciesVolDet"]) {
+      await conn.run(`
+        UPDATE cmp_value_difference d SET kind = 'second_print'
+        WHERE d."column" = ${sqlString(col)} AND d.kind IN ('changed', 'filled')
+          AND ${tied(`lower(${withoutSubgenus(`trim(o."${col}")`)}) = lower(${withoutSubgenus("trim(d.exported)")}) AND d.exported <> ''`)}`);
     }
+    if (hasMacros) {
+      for (const { column, macro, with: other } of SEX_CASTE) {
+        await conn.run(`
+          UPDATE cmp_value_difference d SET kind = 'second_print'
+          WHERE d."column" = ${sqlString(column)} AND d.kind IN ('changed', 'filled')
+            AND ${tied(`coalesce(${macro}(o."${column}", o."${other}"), '') = d.exported AND d.exported <> ''`)}`);
+      }
+    }
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'second_print'
+      WHERE d."column" IN ('family', 'taxonRank', 'scientificName', 'subgenus', 'identifiedBy') AND d.kind IN ('changed', 'filled')
+        AND EXISTS (SELECT 1 FROM cmp_value_difference g
+                    WHERE g.field_number = d.field_number AND g."column" = 'genus' AND g.kind = 'second_print')`);
   }
   // Sex and caste in the model's vocabulary, by promotion's own reading of
   // the legacy pair (ingest/promote-determinations.sql): an abbreviation

@@ -77,6 +77,20 @@ const fold = (s: string) => s.normalize("NFKD").replace(/[^\p{L}\p{N}]/gu, "").t
  * sample already (Peter, 2026-11-04). Derived rather than granted, so nobody
  * has to be set up first; a grant for someone new to trapping is beeline-3vs.1.
  */
+/**
+ * A trap sample's effort as the old records wrote it: the count and the trap
+ * kind, plural where there is more than one ('6 vane traps'). Staff correcting
+ * the method on the sample page may already have written it plural.
+ */
+export const trapEffort = (count: number, method: string): string =>
+  `${count} ${method}${count === 1 || /s$/i.test(method) ? "" : "s"}`;
+
+/** The trap count an effort written by trapEffort starts with, or null. */
+export const trapCountOf = (effort: string | null): number | null => {
+  const found = /^(\d+) /.exec(effort ?? "");
+  return found === null ? null : Number(found[1]);
+};
+
 export async function mayEnterTrapSamples(conn: DuckDBConnection, personId: number | null, admin: boolean): Promise<boolean> {
   if (admin) return true;
   if (personId === null) return false;
@@ -256,7 +270,7 @@ export async function checkTrapSample(
       date_end: end!,
       protocol: method,
       // Effort as the old records wrote it ('6 vane traps'), from its own field.
-      sampling_effort: trapCount === null ? null : `${trapCount} ${method}${trapCount === 1 ? "" : "s"}`,
+      sampling_effort: trapCount === null ? null : trapEffort(trapCount, method),
       specimen_count: specimens!,
       latitude: latitude!,
       longitude: longitude!,

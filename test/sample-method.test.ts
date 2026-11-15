@@ -331,7 +331,8 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
         sample_number: "'OBAS-09999'",
         date_start: `DATE '${currentSeasonDate(6, 1)}'`,
         date_end: `DATE '${currentSeasonDate(6, 8)}'`,
-        protocol: "'blue vane traps'",
+        protocol: "'blue vane trap'",
+        sampling_effort: "'6 blue vane traps'",
       });
       await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
       // A specimen no run minted a number for is on paper (printed_sample,
@@ -342,11 +343,14 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
       expect(page).toContain(t.hintEntered.replaceAll("'", "&#39;"));
 
       const start = currentSeasonDate(5, 30);
-      const res = await post(app, `/samples/${entered}/method`, { protocol: "blue vane traps", date_start: start, date_end: "" });
+      const res = await post(app, `/samples/${entered}/method`, { protocol: "blue vane trap", date_start: start, date_end: "" });
       expect(res.status).toBe(302);
       // A trap sample stays one; with no end given it ends on the day it started.
-      expect(await sampleRow(conn, entered)).toEqual(["trap", "blue vane traps", start, start]);
+      expect(await sampleRow(conn, entered)).toEqual(["trap", "blue vane trap", start, start]);
       expect(await correctionsIn(correctionsPath)).toEqual([]);
+      // A new method keeps the trap count, as the trap form writes it.
+      await post(app, `/samples/${entered}/method`, { protocol: "pan trap", date_start: start, date_end: "" });
+      expect(await rows(conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${entered}`)).toEqual([["pan trap", "6 pan traps"]]);
     });
   });
 

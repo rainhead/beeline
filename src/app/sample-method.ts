@@ -2,6 +2,7 @@ import { sql, type Kysely } from "kysely";
 import { upsertCorrections, type CorrectionEvent } from "../corrections.js";
 import type { Database } from "../model.js";
 import { mirrorCorrections } from "./correction-store.js";
+import { trapCountOf, trapEffort } from "../trap-sample.js";
 
 /**
  * Staff correcting how a sample was collected, from the Method row of its
@@ -172,7 +173,15 @@ export async function setSampleMethod(
     ...(datesChanged ? { kind, date_start: start, date_end: end } : {}),
   };
   if (entered) {
-    await db.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
+    // The trap form writes the effort as the count and the trap kind, so a
+    // new method rewrites it with the same count (CodeRabbit on this branch).
+    let effort = {};
+    if (protocolChanged) {
+      const current = await db.selectFrom("sample").where("entity_id", "=", sampleId).select("sampling_effort").executeTakeFirst();
+      const count = trapCountOf(current?.sampling_effort ?? null);
+      if (count !== null) effort = { sampling_effort: protocol === "" ? null : trapEffort(count, protocol) };
+    }
+    await db.updateTable("sample").set({ ...update, ...effort }).where("entity_id", "=", sampleId).execute();
     return { outcome: "saved" };
   }
 

@@ -184,6 +184,7 @@ import {
   CSV_ROW_LIMIT,
   EMPTY_QUERY,
   exportFilename,
+  hostNamesOnce,
   listSamples,
   listSpecimens,
   type Reader,
@@ -1120,7 +1121,7 @@ export function createApp({
     const m = c.get("m");
     const { personId, admin, reader, atlases, query, homeAtlas } = await listingRequest(c);
     countListingView(listingAttributes("samples", "page", query, viewer(c)));
-    const results = await listSamples(db, query, personId, reader);
+    const results = await listSamples(db, query, personId, reader, { hostNames: "common" });
     return c.html(
       await page(
         c,
@@ -1142,9 +1143,11 @@ export function createApp({
     const { personId, reader, query } = await listingRequest(c);
     countListingView(listingAttributes("samples", "csv", query, viewer(c)));
     // The whole selection, a page at a time: no cap, no truncation line.
+    const hostNames = hostNamesOnce(db);
     const body = csvStream(
       SAMPLE_CSV_HEADER,
-      (limit, offset) => listSamples(db, query, personId, reader, { limit, offset, withTotal: false, withFlagWords: false }),
+      async (limit, offset) =>
+        listSamples(db, query, personId, reader, { limit, offset, withTotal: false, withFlagWords: false, hostNames: await hostNames() }),
       sampleCsvRow,
       csvGenerationTiming("samples"),
     );
@@ -1163,7 +1166,7 @@ export function createApp({
     const m = c.get("m");
     const { personId, admin, reader, atlases, query, homeAtlas } = await listingRequest(c);
     countListingView(listingAttributes("specimens", "page", query, viewer(c)));
-    const results = await listSpecimens(db, query, personId, reader);
+    const results = await listSpecimens(db, query, personId, reader, { hostNames: "common" });
     return c.html(
       await page(
         c,
@@ -1185,9 +1188,10 @@ export function createApp({
   app.get("/specimens.csv", async (c) => {
     const { personId, reader, query } = await listingRequest(c);
     countListingView(listingAttributes("specimens", "csv", query, viewer(c)));
+    const hostNames = hostNamesOnce(db);
     const body = csvStream(
       SPECIMEN_CSV_HEADER,
-      (limit, offset) => listSpecimens(db, query, personId, reader, { limit, offset, withTotal: false }),
+      async (limit, offset) => listSpecimens(db, query, personId, reader, { limit, offset, withTotal: false, hostNames: await hostNames() }),
       specimenCsvRow,
       csvGenerationTiming("specimens"),
     );

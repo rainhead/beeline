@@ -21,6 +21,7 @@ import { gatherSample } from "../src/app/record.js";
 import { createApp } from "../src/app/server.js";
 import { duckdbReader } from "../src/person-change.js";
 import { recordSampleChanges } from "../src/sample-change.js";
+import { refreshPlantCommonNames } from "../src/plant-common-names.js";
 import { CURRENT_SEASON, createMemoryDb, insertCleanSample, rows, SETTLED_SEASON, scratchPaths } from "./helpers.js";
 
 /**
@@ -722,6 +723,23 @@ describe("what a reason, a hold and a name may say", () => {
   });
 });
 
+describe("a host on the record and in the listing (beeline-rfkj.4)", () => {
+  it("says the same about a host in a sample's record as in the listing's row", async () => {
+    const w = await world();
+    const { conn } = w;
+    await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, parent_id, is_active) VALUES (100, 'Familia alpha', 'family', 30, NULL, true)`);
+    await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, parent_id, is_active, preferred_common_name) VALUES (1, 'Alpha lanata', 'species', 10, 100, true, 'Woolly alpha')`);
+    await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (100, 100, 0), (1, 1, 0), (1, 100, 1)`);
+    await refreshPlantCommonNames(conn);
+    await conn.run(`UPDATE sample SET host_inat_taxon_id = 1, host_name_as_observed = 'Alpha oldname', host_rank = 'species' WHERE entity_id = ${w.ids.a1}`);
+    const record = (await w.json(w.keys.alice, `/samples/${w.ids.a1}`)).sample;
+    const listed = (await w.json(w.keys.alice, "/samples?scope=all")).rows.find((r: any) => r.id === w.ids.a1);
+    expect(listed).toMatchObject({ hostCurrentName: "Alpha lanata", hostFamily: "Familia alpha", hostCommonName: "Woolly alpha" });
+    expect(record).toMatchObject({ host_current_name: listed.hostCurrentName, host_family: listed.hostFamily, host_common_name: listed.hostCommonName });
+    expect(String(record.host_inat_taxon_id)).toBe(String(listed.hostInatTaxonId));
+  });
+});
+
 describe("what the API publishes of a record, field by field", () => {
   it("is a list somebody decided, not a copy of what the page reads", async () => {
     const w = await world();
@@ -729,8 +747,8 @@ describe("what the API publishes of a record, field by field", () => {
     expect(Object.keys(sample.sample).sort()).toEqual(
       [
         "atlas_code", "atlas_name", "collectors", "coordinate_uncertainty_m", "country", "county", "date_end", "date_start", "ecoregion",
-        "elevation_file", "elevation_m", "elevation_source", "elevation_stale", "from_old_records", "geoprivacy", "host_inat_taxon_id",
-        "host_name_as_observed", "host_rank", "id", "inat_observation_id", "kind", "label_diverged", "latitude", "locality",
+        "elevation_file", "elevation_m", "elevation_source", "elevation_stale", "from_old_records", "geoprivacy", "host_common_name",
+        "host_current_name", "host_family", "host_inat_taxon_id", "host_name_as_observed", "host_rank", "id", "inat_observation_id", "kind", "label_diverged", "latitude", "locality",
         "locality_alternatives", "locality_override", "locality_suggestion", "location_override", "location_source",
         "location_withheld", "longitude", "mine", "observation_gone_since", "observation_notes", "observation_place_guess", "printed",
         "program_code", "program_name", "protocol", "sample_id", "sample_number", "sampling_effort", "specimen_count", "state_province",

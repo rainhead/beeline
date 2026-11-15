@@ -464,6 +464,11 @@ export interface SampleRow {
   atlas_abbreviation: string | null;
   host_name: string | null;
   host_rank: string | null;
+  host_inat_taxon_id: bigint | null;
+  /** What iNaturalist calls the host now, its family and its common name (HostNames); null where it has none. */
+  host_current_name: string | null;
+  host_family: string | null;
+  host_common_name: string | null;
   latitude: number | null;
   longitude: number | null;
   coordinate_uncertainty_m: number | null;
@@ -539,6 +544,10 @@ export interface SpecimenRow {
   /** The sample's floral host, as the observation named it — a column here as on the samples listing. */
   host_name: string | null;
   host_rank: string | null;
+  host_inat_taxon_id: bigint | null;
+  host_current_name: string | null;
+  host_family: string | null;
+  host_common_name: string | null;
   taxon_rank: string | null;
   scientific_name: string | null;
   authorship: string | null;
@@ -607,6 +616,14 @@ export interface ListingPageOptions {
    */
   withFlagWords?: boolean;
   /**
+   * How to read a host's names (nameHosts). `all`, the default, reads the
+   * current name, family and common name of the hosts on the page from the
+   * view; `common`, for the pages, only the common name, which is cheaper;
+   * and a map from {@link readHostNames}, for a download, which reads the view
+   * once for every page of the file.
+   */
+  hostNames?: "common" | "all" | HostNameMap;
+  /**
    * Only samples collected in this calendar year, judged on their first day
    * (no sample on the dev store spans New Year). Not a listing filter — the
    * listings have none, by design — but the grain the program archives are
@@ -627,6 +644,121 @@ export interface Page<Row> {
 }
 
 const like = (term: string) => `%${term.toLowerCase()}%`;
+
+/**
+ * Whether a sample's floral host answers to a name typed in the host box
+ * (beeline-rfkj.4): the name as the observation gave it, which every sample
+ * with a host has, or what iNaturalist calls the host now, or its common name,
+ * each in part and in either case. The last two are read through
+ * inat_taxon_current_named, once for the whole query, as the set of stored
+ * taxon ids they belong to, so that a host that was replaced is found by the
+ * name it has now and by its current taxon's common name. A split, retired or
+ * pending host has neither, and so is found only by the name as observed,
+ * which is why that one stays in the filter and is not replaced by them.
+ */
+const hostMatches = (term: string) =>
+  sql<boolean>`(lower(s.host_name_as_observed) LIKE ${like(term)}
+    OR s.host_inat_taxon_id IN (SELECT h.inat_taxon_id FROM inat_taxon_current_named h
+                                WHERE lower(h.current_name) LIKE ${like(term)} OR lower(h.common_name) LIKE ${like(term)}))`;
+
+/** What a listing says about a row's host beyond the name as observed. */
+interface HostNames {
+  host_inat_taxon_id: bigint | null;
+  host_current_name: string | null;
+  host_family: string | null;
+  host_common_name: string | null;
+}
+
+/** What iNaturalist now calls a cached host taxon, its family and its common name; each null where it has none. */
+interface NamedHost {
+  name: string | null;
+  family: string | null;
+  common: string | null;
+}
+
+/**
+ * Every cached taxon's current name, family and common name, read once.
+ * A download reads this once and gives it to every page of the file
+ * ({@link HostNameMap}), so the whole file is one snapshot of the names and
+ * does not pay for the view again with each page.
+ */
+export type HostNameMap = Map<bigint, NamedHost>;
+export async function readHostNames(db: Kysely<Database>): Promise<HostNameMap> {
+  const found = await db
+    .selectFrom("inat_taxon_current_named as h")
+    .select(["h.inat_taxon_id", "h.current_name", "h.family_name", "h.common_name"])
+    .execute();
+  return new Map(found.map((h) => [BigInt(h.inat_taxon_id), { name: h.current_name, family: h.family_name, common: h.common_name }]));
+}
+
+/**
+ * A function that reads the host names the first time it is called and gives
+ * the same map afterwards: for a download, whose pages are separate calls.
+ */
+export const hostNamesOnce = (db: Kysely<Database>): (() => Promise<HostNameMap>) => {
+  let names: Promise<HostNameMap> | undefined;
+  return () => (names ??= readHostNames(db));
+};
+
+/**
+ * Fill in each row's host current name, family and common name, in reads for
+ * the hosts on the page, not in a join of the page's own query (which would
+ * resolve the whole cache for every row it sorts). A host the cache has not
+ * read has none of them and its row keeps only the name as observed.
+ *
+ * `common` is for the pages, which show only the common name. A host that
+ * iNaturalist has not retired, and has not said is absent, is its own current
+ * taxon (inat_taxon_current: standing `current` is exactly that), so its name
+ * is one lookup in plant_common_name_cache, about 2 milliseconds for a page.
+ * Only a host that is retired or absent goes through inat_taxon_current_named,
+ * which resolves the whole cache whatever it is asked for (about 19
+ * milliseconds); a page rarely has one. `all` is for the API, which also gives
+ * the current name and family, and reads the view for the hosts on the page.
+ * A {@link HostNameMap} is for a download: no read at all, the names having
+ * been read once for the whole file.
+ */
+async function nameHosts(db: Kysely<Database>, rows: HostNames[], detail: "common" | "all" | HostNameMap): Promise<void> {
+  let byId: HostNameMap;
+  if (detail instanceof Map) {
+    byId = detail;
+  } else {
+    byId = new Map();
+    const ids = [...new Set(rows.flatMap((r) => (r.host_inat_taxon_id === null ? [] : [BigInt(r.host_inat_taxon_id)])))];
+    if (ids.length > 0) {
+      let viaView = ids;
+      if (detail === "common") {
+        const direct = await db
+          .selectFrom("inat_taxon as t")
+          .leftJoin("plant_common_name_cache as n", "n.inat_taxon_id", "t.inat_taxon_id")
+          .where("t.inat_taxon_id", "in", ids)
+          .where("t.is_active", "=", true)
+          .where(({ not, exists, selectFrom }) =>
+            not(exists(selectFrom("inat_taxon_absent as a").select("a.inat_taxon_id").whereRef("a.inat_taxon_id", "=", "t.inat_taxon_id"))),
+          )
+          .select(["t.inat_taxon_id", "n.common_name"])
+          .execute();
+        for (const d of direct) byId.set(BigInt(d.inat_taxon_id), { name: null, family: null, common: d.common_name });
+        // What is left is retired or absent, whose current taxon needs working out. A taxon the cache does not
+        // hold has no row in the view, so asking for it finds nothing.
+        viaView = ids.filter((id) => !byId.has(id));
+      }
+      if (viaView.length > 0) {
+        const found = await db
+          .selectFrom("inat_taxon_current_named as h")
+          .where("h.inat_taxon_id", "in", viaView)
+          .select(["h.inat_taxon_id", "h.current_name", "h.family_name", "h.common_name"])
+          .execute();
+        for (const h of found) byId.set(BigInt(h.inat_taxon_id), { name: h.current_name, family: h.family_name, common: h.common_name });
+      }
+    }
+  }
+  for (const r of rows) {
+    const h = r.host_inat_taxon_id === null ? undefined : byId.get(BigInt(r.host_inat_taxon_id));
+    r.host_current_name = h?.name ?? null;
+    r.host_family = h?.family ?? null;
+    r.host_common_name = h?.common ?? null;
+  }
+}
 /** An ISO date from the query string, compared as a DATE rather than text. */
 const asDate = (iso: string) => sql<Date>`CAST(${iso} AS DATE)`;
 
@@ -1109,7 +1241,7 @@ async function filteredSamples(
         exists(selectFrom("specimen as sp").select("sp.entity_id").whereRef("sp.sample_id", "=", "s.entity_id")),
       );
   }
-  if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
+  if (query.host !== "") base = base.where(hostMatches(query.host));
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
   if (exact.sample_number !== undefined) base = base.where(sql<boolean>`lower(s.sample_number) = ${exact.sample_number.toLowerCase()}`);
   if (exact.inat_observation_id !== undefined) base = base.where("s.inat_observation_id", "=", exact.inat_observation_id);
@@ -1172,6 +1304,7 @@ export async function listSamples(
         sql<string | null>`coalesce(pab.abbreviation, a.code)`.as("atlas_abbreviation"),
         "s.host_name_as_observed as host_name",
         "s.host_rank",
+        "s.host_inat_taxon_id",
         located(hidden, sql<number | null>`loc.latitude`).as("latitude"),
         located(hidden, sql<number | null>`loc.longitude`).as("longitude"),
         located(hidden, sql<number | null>`loc.coordinate_uncertainty_m`).as("coordinate_uncertainty_m"),
@@ -1216,6 +1349,7 @@ export async function listSamples(
     opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
   ]);
   const sampleRows = rows as unknown as Array<SampleRow & { flag_list: string | null }>;
+  await nameHosts(db, sampleRows, opts.hostNames ?? "all");
   const ids = sampleRows.map((r) => r.sample_id);
   const findings = new Map(sampleRows.map((r) => [r.sample_id, parseFlags(r.flag_list)] as const));
   // Where the location is withheld from this reader, a finding's words go,
@@ -1332,7 +1466,7 @@ async function filteredSpecimens(
   if (animals !== null) base = base.where("d.animal_id", "in", animals.length === 0 ? [-1] : animals);
   if (query.det === "undetermined") base = base.where("d.specimen_id", "is", null);
   if (query.det === "determined") base = base.where("d.specimen_id", "is not", null);
-  if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
+  if (query.host !== "") base = base.where(hostMatches(query.host));
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
   if (exact.sample_number !== undefined) base = base.where(sql<boolean>`lower(s.sample_number) = ${exact.sample_number.toLowerCase()}`);
   if (exact.inat_observation_id !== undefined) base = base.where("s.inat_observation_id", "=", exact.inat_observation_id);
@@ -1402,6 +1536,7 @@ export async function listSpecimens(
         sql<string | null>`coalesce(pab.abbreviation, a.code)`.as("atlas_abbreviation"),
         "s.host_name_as_observed as host_name",
         "s.host_rank",
+        "s.host_inat_taxon_id",
         "an.rank as taxon_rank",
         "an.scientific_name",
         "an.authorship",
@@ -1432,6 +1567,7 @@ export async function listSpecimens(
     opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
   ]);
   const specimenRows = rows as unknown as SpecimenRow[];
+  await nameHosts(db, specimenRows, opts.hostNames ?? "all");
   return {
     rows: specimenRows,
     total: Number(count?.n ?? 0),
@@ -1793,6 +1929,11 @@ export const SAMPLE_CSV_HEADER = [
   "taxonGeoprivacy",
   "qcStatus",
   "inatObservationId",
+  // Added last, so a reader that finds the columns above by position still does (beeline-rfkj.4).
+  "hostInatTaxonId",
+  "hostCurrentName",
+  "hostFamily",
+  "hostCommonName",
 ] as const;
 
 export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => [
@@ -1821,6 +1962,10 @@ export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => 
   r.taxon_geoprivacy,
   qcLabel(r),
   r.inat_observation_id,
+  r.host_inat_taxon_id,
+  r.host_current_name,
+  r.host_family,
+  r.host_common_name,
 ];
 
 /** dwc:dateIdentified, as Darwin Core would have it: a year-only date is the year, not January 1st. */
@@ -1881,6 +2026,11 @@ export const SPECIMEN_OWN_COLUMNS = [
   "geoprivacy",
   "taxonGeoprivacy",
   "identifiedByExpert",
+  // Added last, so a reader that finds the columns above by position still does (beeline-rfkj.4).
+  "hostInatTaxonId",
+  "hostCurrentName",
+  "hostFamily",
+  "hostCommonName",
 ] as const;
 
 export const SPECIMEN_CSV_HEADER = [...SPECIMEN_DWC_COLUMNS, ...SPECIMEN_OWN_COLUMNS] as const;
@@ -1927,4 +2077,8 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.geoprivacy,
   r.taxon_geoprivacy,
   r.is_expert === null ? null : String(r.is_expert),
+  r.host_inat_taxon_id,
+  r.host_current_name,
+  r.host_family,
+  r.host_common_name,
 ];

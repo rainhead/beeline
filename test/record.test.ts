@@ -508,34 +508,38 @@ describe("the floral host on the sample page", () => {
   /** A scientific name, as TaxonName sets it, with no common name. */
   const NAME = (inner: string) => `<span class="taxon">${inner}</span>`;
   /**
-   * A scientific name followed on the same line by its common name: a dot hidden from screen readers, a comma
-   * only they hear, and a non-breaking space joining the dot to the name so the two wrap together. Upright
-   * and muted by the taxon-vernacular class, never in brackets or quotation marks.
+   * A scientific name with its common name in the title of the name, and after it as hidden text for screen
+   * readers, which do not announce a title reliably. Nothing of it is visible.
    */
   const NAMED = (inner: string, common: string) =>
-    `<span class="taxon">${inner} <span class="taxon-vernacular"><span aria-hidden="true">\u00b7</span><span class="visually-hidden">, </span>\u00a0${common}</span></span>`;
+    `<span class="taxon" title="${common}">${inner}<span class="visually-hidden">, ${common}</span></span>`;
+  /** What a person sees of a value: without titles and hidden text, and so without any common name. */
+  const seen = (html: string) => html.replace(/ title="[^"]*"/g, "").replace(/<span class="visually-hidden">.*?<\/span>/g, "");
   const NOW = (name: string) => `now <span class="taxon">${name}</span> on iNaturalist`;
 
-  it("shows the list's common name after the scientific name on the same line, and nothing else", async () => {
+  it("puts the list's common name in the scientific name's tooltip, and shows nothing else", async () => {
     const row = hostRow(await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha, { oregon: "iNaturalist's name" })], [["Alpha one", "listed one, other name", 1]]));
     expect(firstLine(row)).toBe(NAMED("<i>Alpha</i> <i>one</i>", "listed one"));
+    expect(seen(firstLine(row) ?? "")).toBe(NAME("<i>Alpha</i> <i>one</i>"));
     expect(lines(row)).toEqual([]);
   });
 
   it("shows iNaturalist's name for Oregon where the list has none", async () => {
     const row = hostRow(await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha, { oregon: "alpha plant" })]));
     expect(firstLine(row)).toBe(NAMED("<i>Alpha</i> <i>one</i>", "alpha plant"));
+    expect(seen(firstLine(row) ?? "")).not.toContain("alpha plant");
     expect(lines(row)).toEqual([]);
   });
 
-  it("shows the scientific name alone, with no dot, for a host with no common name at all", async () => {
+  it("shows the scientific name alone, with no tooltip, for a host with no common name at all", async () => {
     const row = hostRow(await withHost({ id: 1, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha)]));
     expect(firstLine(row)).toBe(NAME("<i>Alpha</i> <i>one</i>"));
-    expect(row).not.toContain("\u00b7");
+    expect(row).not.toContain("title=");
+    expect(row).not.toContain("visually-hidden");
     expect(lines(row)).toEqual([]);
   });
 
-  it("says what iNaturalist calls a replaced host now, directly under its name, which is followed by the common name, the current taxon's", async () => {
+  it("says what iNaturalist calls a replaced host now, directly under its name, whose tooltip is the common name, the current taxon's", async () => {
     // The stored host is the retired subspecies 322554 and the observer's name for it. Its own Oregon name is
     // not shown: the common name is the current taxon's.
     const row = hostRow(
@@ -546,6 +550,7 @@ describe("the floral host on the sample page", () => {
       ),
     );
     expect(firstLine(row)).toBe(NAMED("<i>Alpha</i> <i>oldname</i>", "listed beta"));
+    expect(seen(row)).not.toContain("listed beta");
     expect(lines(row)).toEqual([NOW("<i>Beta</i> <i>ascendens</i>")]);
   });
 

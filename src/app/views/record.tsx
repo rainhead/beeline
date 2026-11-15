@@ -292,8 +292,9 @@ export function SampleFacts({
  * The floral host (beeline-rfkj.3): the name as observed, which is what the
  * sample stores, and under it what iNaturalist says about the taxon today.
  *
- * In this order: the name as observed, with the common name after it on the
- * same line (TaxonName's `vernacular`; it is the current taxon's); then "now
+ * In this order: the name as observed, with the common name in its tooltip
+ * and read by screen readers (TaxonName's `vernacular`; it is the current
+ * taxon's); then "now
  * X on iNaturalist" wherever X, the current name, differs from it (not only
  * where the taxon was replaced: a taxon can be renamed under the same id, and
  * a replacement can carry the same name); and, where there is no current

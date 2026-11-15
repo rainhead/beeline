@@ -790,7 +790,7 @@ export const en = {
       taxon: "Taxon",
       taxonHint: "A family, genus, or species — anything below it matches too",
       host: "Host plant",
-      hostHint: "The plant the bee was collected from, as the observation names it",
+      hostHint: "The plant the bee was collected from, as the observation names it. Also finds the name iNaturalist uses now and the common name. Part of a name will do",
       det: "Determination",
       detAny: "Any",
       detDetermined: "Determined",

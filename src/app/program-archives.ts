@@ -16,7 +16,7 @@ import {
 } from "../program-governance.js";
 import { identificationsOf, programArchives, specimenArchiveStream } from "./dwc-archive.js";
 import { checklistArchive, programChecklist } from "./dwc-checklist.js";
-import { EMPTY_QUERY, listSpecimens, OUTSIDE, STAFF_READER } from "./listings.js";
+import { EMPTY_QUERY, hostNamesOnce, listSpecimens, OUTSIDE, STAFF_READER } from "./listings.js";
 
 /**
  * The program archives, one per program per year, written nightly
@@ -167,17 +167,21 @@ export async function writeProgramArchives(
   const checklists: ChecklistEntry[] = [];
   const allYears: AllYearsEntry[] = [];
   /** One archive of the program's specimens, a year of them or (with no year) every one. */
-  const writeArchive = (scope: string, file: string, license: LicenseId | null, year?: number) =>
-    writeStream(
+  const writeArchive = (scope: string, file: string, license: LicenseId | null, year?: number) => {
+    const hostNames = hostNamesOnce(db);
+    return writeStream(
       join(dir, file),
       specimenArchiveStream(
         async (limit, offset) => {
-          const page = await listSpecimens(db, { ...EMPTY_QUERY, scope }, 0, STAFF_READER, { limit, offset, withTotal: false, year });
+          const page = await listSpecimens(db, { ...EMPTY_QUERY, scope }, 0, STAFF_READER, {
+            limit, offset, withTotal: false, year, hostNames: await hostNames(),
+          });
           return { ...page, identifications: await identificationsOf(db, page.rows.map((r) => r.specimen_id)) };
         },
         { license: license === null ? null : LICENSES[license].url },
       ),
     );
+  };
   for (const program of await programArchives(db)) {
     if (program.scope === null) continue;
     const scope = program.scope;

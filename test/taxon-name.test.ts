@@ -78,31 +78,43 @@ describe("TaxonName", () => {
     expect(render({ rank: "family", scientificName: "Andrenidae" })).toBe(`<span class="taxon">Andrenidae</span>`);
   });
 
-  it("keeps the vernacular subordinate: tooltip by default, parenthetical on request, never leading", () => {
-    const tooltip = render({ rank: "species", scientificName: "Phacelia hastata", vernacular: "silverleaf phacelia" });
-    expect(tooltip).toContain(`title="silverleaf phacelia"`);
-    // In tooltip mode the English name is an attribute, so it never appears
-    // in the rendered text at all.
-    expect(tooltip.replace(/ title="[^"]*"/, "")).not.toContain("silverleaf");
+  describe("vernacular", () => {
+    const dotAndName = (name: string) =>
+      `<span class="taxon-vernacular"><span aria-hidden="true">\u00b7</span><span class="visually-hidden">, </span>\u00a0${name}</span>`;
 
-    const beside = render({
-      rank: "species",
-      scientificName: "Phacelia hastata",
-      vernacular: "silverleaf phacelia",
-      vernacularDisplay: "beside",
+    it("adds nothing without a vernacular name, or with an empty one", () => {
+      const plain = render({ rank: "species", scientificName: "Phacelia hastata" });
+      expect(render({ rank: "species", scientificName: "Phacelia hastata", vernacular: null })).toBe(plain);
+      expect(render({ rank: "species", scientificName: "Phacelia hastata", vernacular: "" })).toBe(plain);
+      expect(plain).not.toContain("\u00b7");
     });
-    expect(beside).toContain(`<span class="taxon-vernacular">(silverleaf phacelia)</span>`);
-    expect(beside).not.toContain("title=");
-    // Scientific name leads; the English name assists.
-    expect(beside.indexOf("Phacelia")).toBeLessThan(beside.indexOf("silverleaf"));
 
-    const none = render({
-      rank: "species",
-      scientificName: "Phacelia hastata",
-      vernacular: "silverleaf phacelia",
-      vernacularDisplay: "none",
+    it("follows the scientific name on its line after a hidden dot, with a comma for screen readers and a non-breaking space", () => {
+      expect(render({ rank: "species", scientificName: "Phacelia hastata", vernacular: "silverleaf phacelia" })).toBe(
+        `<span class="taxon"><i>Phacelia</i> <i>hastata</i> ${dotAndName("silverleaf phacelia")}</span>`,
+      );
     });
-    expect(none).not.toContain("silverleaf");
+
+    it("comes after the authorship, and the scientific name still leads", () => {
+      const html = render({
+        rank: "species",
+        scientificName: "Symphyotrichum chilense",
+        authorship: "(Nees) G.L.Nesom",
+        vernacular: "Pacific aster",
+      });
+      expect(html).toBe(
+        `<span class="taxon"><i>Symphyotrichum</i> <i>chilense</i> <span class="taxon-authorship">(Nees) G.L.Nesom</span> ${dotAndName("Pacific aster")}</span>`,
+      );
+    });
+
+    it("keeps the name out of the italics, and out of brackets and quotation marks, at every rank", () => {
+      for (const rank of ["species", "genus", "family"]) {
+        const html = render({ rank, scientificName: "Eriophyllum lanatum", vernacular: "woolly sunflower" });
+        // The only <i> elements are the scientific name's own, closed before the dot.
+        expect(html.slice(html.indexOf("taxon-vernacular"))).not.toContain("<i>");
+        expect(html).not.toMatch(/[("'\u201c]\u00a0?woolly|woolly sunflower[)"'\u201d]/);
+      }
+    });
   });
 });
 

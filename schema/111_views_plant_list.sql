@@ -105,11 +105,14 @@ COMMENT ON VIEW plant_list_entry_name IS 'Each entry''s normalised name and the 
 -- plant_name_normal, which ignores it on purpose).
 -- A hit that iNaturalist has retired stands for the taxa it was replaced by;
 -- an active one stands for itself. This is where a replacement chain is read
--- from the lookup's own answer. beeline-rfkj.3 follows a replacement that has
--- itself been retired since, in a view of its own in a file after schema/112
--- that composes on top of this one; nothing here changes when it does.
--- inat_taxon_current (rfkj.3) must not read plant_taxon_common_name or the
--- views below, or inat_taxon_uncached (which reads this view) would depend on
+-- from the lookup's own answer, one step. A replacement that has itself been
+-- retired since is not followed here: the entry's taxon stays the one the
+-- lookup named, and plant_taxon_common_name (schema/114, beeline-rfkj.3)
+-- takes it through inat_taxon_current (schema/113) when it works out what the
+-- entry covers, which follows the chain to its end. Nothing here changes when
+-- it does.
+-- inat_taxon_current must not read plant_taxon_common_name or the views
+-- below, or inat_taxon_uncached (which reads this view) would depend on
 -- itself.
 --
 -- Of a name's hits, fallback ranks (plant_expected_rank) are kept only when it

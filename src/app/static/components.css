@@ -578,13 +578,23 @@ th details.col-menu > .menu-panel {
 }
 
 /* Scientific names. The component decides what is italic; this only makes
-   italics italic and keeps vernacular subordinate. A taxon name is never
+   italics italic. A taxon name is never
    set in mono — see /design/names. */
 .taxon { font-style: normal; }
 .taxon i { font-style: italic; }
 .taxon-authorship { color: var(--md-sys-color-on-surface-variant); }
+/* The English name, on the scientific name's line: upright even inside an
+   italic context, secondary colour, regular weight. An inline block, so the
+   dot and the name move to the next line whole when they do not fit; the
+   ordinary space before it is the break point, and a name longer than the
+   line still wraps inside itself (max-width). Positioned so the hidden
+   comma inside it is placed against it (see .absent). */
 .taxon-vernacular {
-  font: var(--md-sys-typescale-label);
+  display: inline-block;
+  max-width: 100%;
+  position: relative;
+  font-style: normal;
+  font-weight: normal;
   color: var(--md-sys-color-on-surface-variant);
 }
 

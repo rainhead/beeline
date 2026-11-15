@@ -5,6 +5,7 @@
  * Views never carry literal user-facing prose; they render from here.
  */
 
+import type { Child } from "hono/jsx";
 import type { TaxonQualifier } from "../views/components/taxon.js";
 import type { LocalityBasis } from "../../locality-rule.js";
 import type { OutOfDateField } from "../../model.js";
@@ -1095,6 +1096,27 @@ export const en = {
       /** The program the sample was collected for (beeline-8w8n): its atlas, else Master Melittology itself. */
       program: "Program",
       host: "Floral host",
+      /**
+       * Directly under the host's scientific name, whenever iNaturalist's
+       * current name for the taxon differs from the name the sample was
+       * recorded with, whatever the reason (the taxon was replaced, or
+       * renamed under the same id): "now Symphyotrichum chilense on
+       * iNaturalist". A function of the name, which arrives already set in
+       * italics or not by its rank, so a translation can put the words
+       * round it in its own order.
+       */
+      hostNow: (name: Child): Child[] => ["now ", name, " on iNaturalist"],
+      /** iNaturalist replaced the taxon with several, so none is chosen. */
+      hostSplit: "split into several names on iNaturalist",
+      /** The same, where the new names all lie in one genus or family. `name` is set by its rank. */
+      hostSplitWithin: (rank: "genus" | "family", name: Child): Child[] => [
+        "split into several names on iNaturalist, all in the ",
+        rank,
+        " ",
+        name,
+      ],
+      /** iNaturalist stopped using the taxon and nothing single replaces it. */
+      hostNoLongerUsed: "no longer used on iNaturalist",
       observation: "iNaturalist observation",
       /** Trap samples usually have none, and that is not a gap. */
       observationNone: "None. This sample is not linked to an iNaturalist observation, so it is corrected here in Beeline.",

@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseCsv } from "./corrections.js";
 import { openDuckDb } from "./db.js";
 import { DEFAULT_DB } from "./person-change.js";
+import { refreshPlantCommonNames } from "./plant-common-names.js";
 
 /**
  * Load old Beeline's plant list from git into the store (schema/067,
@@ -97,9 +98,17 @@ export function plantListHash(bytes: Buffer): string {
   return createHash("sha256").update(`loader ${PLANT_LIST_LOADER_VERSION}\n`).update(bytes).digest("hex");
 }
 
+/**
+ * Load the list, and refresh the copy of the common names (schema/068)
+ * whether or not the list changed. A list that did not change still gets
+ * its names refreshed because a load that stored the list and then failed to
+ * refresh leaves the copy behind, and a retry with the same file finds the
+ * same hash: the retry is when the copy is put right. `refresh: false` is for
+ * a caller that refreshes itself later (`db:reseed`).
+ */
 export async function loadPlantList(
   conn: DuckDBConnection,
-  opts: { path?: string; listKey?: string } = {},
+  opts: { path?: string; listKey?: string; refresh?: boolean } = {},
 ): Promise<LoadPlantListResult> {
   const path = opts.path ?? OLD_BEELINE_PLANT_LIST_PATH;
   const listKey = opts.listKey ?? OLD_BEELINE_LIST;
@@ -110,7 +119,10 @@ export async function loadPlantList(
   const have = (await (
     await conn.run("SELECT content_hash FROM plant_list WHERE list_key = $1", [listKey])
   ).getRows()) as Array<[string]>;
-  if (have[0]?.[0] === hash) return { changed: false, entries: rows.length, skippedWithoutName };
+  if (have[0]?.[0] === hash) {
+    if (opts.refresh !== false) await refreshPlantCommonNames(conn);
+    return { changed: false, entries: rows.length, skippedWithoutName };
+  }
 
   await conn.run("BEGIN TRANSACTION");
   try {
@@ -134,6 +146,8 @@ export async function loadPlantList(
     await conn.run("ROLLBACK");
     throw err;
   }
+  // The list's own common names are what a host is called (schema/068).
+  if (opts.refresh !== false) await refreshPlantCommonNames(conn);
   return { changed: true, entries: rows.length, skippedWithoutName };
 }
 

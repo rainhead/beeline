@@ -347,6 +347,60 @@ export interface PlantTaxonCommonNameView {
   list_entry_depth: number | null;
 }
 
+/** A copy of plant_taxon_common_name, refreshed after what changes it (schema/068). */
+export interface PlantCommonNameCacheTable {
+  inat_taxon_id: BigIntCol;
+  common_name: string;
+  source: "list" | "inaturalist";
+  list_entry: string | null;
+  list_entry_depth: number | null;
+  refreshed_at: Generated<Date>;
+}
+
+/** Taxa where the copy and the view disagree (schema/115_view_plant_common_name_stale). */
+export interface PlantCommonNameStaleView {
+  inat_taxon_id: BigIntCol;
+}
+
+/** A cached taxon with what iNaturalist calls it today and that taxon's common name (schema/116). */
+export interface InatTaxonCurrentNamedView extends InatTaxonCurrentView {
+  common_name: string | null;
+  common_name_source: "list" | "inaturalist" | null;
+}
+
+/** A sample's host (inat_taxon_id is the stored id), resolved to its current taxon when read (schema/116); one row for each sample whose host id is cached. */
+export interface SampleHostView extends InatTaxonCurrentNamedView {
+  sample_id: BigIntCol;
+}
+
+/** What iNaturalist has done with a stored taxon (schema/113): see inat_taxon_current. */
+export type HostStanding = "current" | "replaced" | "split" | "retired" | "pending" | "absent";
+
+/** The end of each retired taxon's chain of replacements (schema/113). */
+export interface InatTaxonReplacementEndView {
+  retired_taxon_id: BigIntCol;
+  end_taxon_id: BigIntCol;
+  end_kind: "active" | "retired" | "absent" | "unread";
+}
+
+/** A cached taxon and what iNaturalist calls it today (schema/113); resolved when read, never stored. */
+export interface InatTaxonCurrentView {
+  inat_taxon_id: BigIntCol;
+  standing: HostStanding;
+  name: string;
+  rank: string;
+  current_taxon_id: BigIntCol | null;
+  current_name: string | null;
+  current_rank: string | null;
+  genus_taxon_id: BigIntCol | null;
+  genus_name: string | null;
+  family_taxon_id: BigIntCol | null;
+  family_name: string | null;
+  /** Whether the current taxon's lineage reaches Plantae (47126) and Tracheophyta (211194); null with no current taxon or no lineage. */
+  is_plant: boolean | null;
+  is_vascular: boolean | null;
+}
+
 // schema/012_sign_in.sql — signing in, and who has been here (beeline-4tdh)
 
 export interface InatSignInTable {
@@ -1718,6 +1772,12 @@ export interface Database {
   plant_list_entry_several_names: PlantListEntrySeveralNamesView;
   plant_list_entry_common_name: PlantListEntryCommonNameView;
   plant_taxon_common_name: PlantTaxonCommonNameView;
+  inat_taxon_replacement_end: InatTaxonReplacementEndView;
+  inat_taxon_current: InatTaxonCurrentView;
+  plant_common_name_cache: PlantCommonNameCacheTable;
+  plant_common_name_stale: PlantCommonNameStaleView;
+  inat_taxon_current_named: InatTaxonCurrentNamedView;
+  sample_host: SampleHostView;
   inat_taxon_recheck: InatTaxonRecheckView;
   inat_taxon_stalest: InatTaxonStalestView;
   animal_ecdysis: AnimalEcdysisView;

@@ -4,6 +4,7 @@ import { rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { applySchema } from "./schema.js";
 import { loadPlantList } from "./load-plant-list.js";
+import { refreshPlantCommonNames } from "./plant-common-names.js";
 import {
   refuseReseedOfPrintedFile,
   refuseReseedOfPrintedStore,
@@ -341,8 +342,11 @@ export async function reseedStore(sourcePath: string, targetPath: string): Promi
     await baseline(conn);
     // The lookups are carried and the list they are about is not, so load it
     // here (offline, from git): the carried lookups read as answers at once.
-    await loadPlantList(conn);
-    return await carryStaging(conn, sourcePath);
+    await loadPlantList(conn, { refresh: false });
+    const carried = await carryStaging(conn, sourcePath);
+    // The cache and the lookups arrived after the list was loaded.
+    await refreshPlantCommonNames(conn);
+    return carried;
   } finally {
     conn.closeSync();
   }

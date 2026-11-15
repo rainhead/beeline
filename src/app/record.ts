@@ -5,6 +5,7 @@ import type { DeterminedOnPrecision,
   DeterminationChannel,
   DeterminationQualifier,
   Geoprivacy,
+  HostStanding,
   LocationSource,
   QcSeverity,
   SampleKind,
@@ -99,6 +100,24 @@ export interface SampleDetail {
   host_inat_taxon_id: bigint | null;
   host_name_as_observed: string | null;
   host_rank: string | null;
+  /**
+   * What iNaturalist calls the host now (schema/113, beeline-rfkj.3), read
+   * when the page is built and never stored. All null while the host's taxon
+   * is not in the cache (or the sample names none by id): the page then shows
+   * the name as observed, as it did before.
+   */
+  host_standing: HostStanding | null;
+  host_current_name: string | null;
+  host_current_rank: string | null;
+  /**
+   * For a split host only: the genus every taxon it came to shares, else
+   * the family they share, with its rank so the page sets it as a name.
+   */
+  host_split_within_name: string | null;
+  host_split_within_rank: "genus" | "family" | null;
+  /** The common name of the host's current taxon, and where it came from. */
+  host_common_name: string | null;
+  host_common_name_source: "list" | "inaturalist" | null;
   /** place_guess as the observation carries it — private-preferred. */
   observation_place_guess: string | null;
   /**
@@ -319,6 +338,10 @@ const sampleColumns = (personId: number, reader: Reader) => sql`
   s.state_province, s.country,
   s.protocol, s.sampling_effort,
   s.inat_observation_id, s.host_inat_taxon_id, s.host_name_as_observed, s.host_rank,
+  sh.standing AS host_standing, sh.current_name AS host_current_name, sh.current_rank AS host_current_rank,
+  CASE WHEN sh.standing = 'split' THEN coalesce(sh.genus_name, sh.family_name) END AS host_split_within_name,
+  CASE WHEN sh.standing <> 'split' THEN NULL WHEN sh.genus_name IS NOT NULL THEN 'genus' WHEN sh.family_name IS NOT NULL THEN 'family' END AS host_split_within_rank,
+  sh.common_name AS host_common_name, sh.common_name_source AS host_common_name_source,
   CASE WHEN ${observationGone}
        THEN (SELECT CAST(ab.absent_since AS DATE) FROM observation_absent ab WHERE ab.inat_id = s.inat_observation_id)
        END AS observation_gone_since,
@@ -377,6 +400,7 @@ const sampleColumns = (personId: number, reader: Reader) => sql`
 const sampleJoins = (reader: Reader) => sql`
   FROM sample s
   LEFT JOIN sample_atlas sa ON sa.sample_id = s.entity_id
+  LEFT JOIN sample_host sh ON sh.sample_id = s.entity_id
   LEFT JOIN program a ON a.entity_id = sa.atlas_id
   LEFT JOIN program mm ON mm.code = 'MM'
   LEFT JOIN ${ownSamplesSql(reader)} own ON own.sample_id = s.entity_id

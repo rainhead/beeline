@@ -2,6 +2,7 @@ import { DuckDBConnection } from "@duckdb/node-api";
 import { pathToFileURL } from "node:url";
 import { openDuckDb } from "./db.js";
 import { DEFAULT_DB } from "./person-change.js";
+import { thenRefreshPlantCommonNames } from "./plant-common-names.js";
 
 /**
  * Fill and refresh the iNaturalist taxon cache (schema/066, beeline-rfkj.1):
@@ -133,6 +134,15 @@ const FAILURES_IN_A_ROW = 3;
 export async function fetchInatTaxa(
   conn: DuckDBConnection,
   opts: FetchInatTaxaOptions = {},
+): Promise<FetchInatTaxaResult> {
+  // What the cache holds decides what a host is called (schema/068), so the
+  // names follow it, whether the run finished or stopped at its cap or deadline.
+  return thenRefreshPlantCommonNames(conn, () => fetchInatTaxaUnrefreshed(conn, opts));
+}
+
+async function fetchInatTaxaUnrefreshed(
+  conn: DuckDBConnection,
+  opts: FetchInatTaxaOptions,
 ): Promise<FetchInatTaxaResult> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const apiBase = opts.apiBase ?? "https://api.inaturalist.org/v2";

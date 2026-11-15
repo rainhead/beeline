@@ -57,7 +57,7 @@ SELECT host_name FROM (
   EXCEPT
   SELECT host_name, inat_taxon_id FROM host_name_taxon
 ) left_over;
-COMMENT ON VIEW host_name_taxon_stale IS 'Host names where host_name_taxon_cache disagrees with host_name_taxon: a name missing from the copy, one it should no longer hold, or one whose taxon changed. Empty when a refresh has run since the last change. Reads the whole definition, so it is for tests and for a person checking, not for a page.';
+COMMENT ON VIEW host_name_taxon_stale IS 'Host names where host_name_taxon_cache disagrees with host_name_taxon: a name missing from the copy, one it should no longer hold, or one whose taxon changed. Empty when a refresh has run since the last change to the plant list, the lookups, the taxon cache or a host name with no id; minting, which gives a sample an id and so takes its name out of host_name_taxon, does not refresh, so the name stays in the copy until the next refresh, read by nothing (every reader joins it only for a sample with no id). Reads the whole definition, so it is for tests and for a person checking, not for a page.';
 
 -- A thin layer over it: the sample's host, one row for each sample whose host
 -- is in the cache, by its id or, with no id, by the taxon its name comes to
@@ -86,33 +86,52 @@ COMMENT ON COLUMN sample_host.resolved_by IS 'id: the sample''s own host id, an 
 
 -- The worklist for hand decisions on host names (beeline-rfkj.6): each
 -- sample with a host name and no id that is not read through a taxon, or is
--- read through one that is not a vascular plant, and why. The outcomes are
+-- read through one a person should look at, and why. The outcomes are
 -- plant_name_resolution's (not looked up, could not be asked, too many
 -- results, no match, retired with no replacement, ambiguous), and:
 --   matched by another name   the taxon came only through matched_term, an
---                             older name or a common name (host_name_taxon)
+--                             older name or a common name (host_name_taxon);
+--                             not read
+--   taxon not read yet        the name came to a taxon the taxon cache has
+--                             not read, or whose replacement it has not read
+--                             (pending); not read until it has, which the
+--                             nightly taxa step does
 --   not a vascular plant      read through its taxon, which is a plant but
 --                             not a vascular one (a moss): the lookups search
 --                             plants only, so it can never be an animal
+--   other taxa had this name  read through its taxon, the active one of that
+--                             name, but another hit of the lookup, a retired
+--                             or an older name, stands for a different taxon:
+--                             a name written years ago may have meant the
+--                             other (Mimulus, which iNaturalist has since
+--                             split, on 6 samples of 2018 to 2020)
 --   no name                   the name is only whitespace
--- With each sample's season and whether it has settled, so a count can be
--- split as AGENTS.md asks. Reads the name views whole, so it is for a person
--- and for tests, not for a page.
+-- So every sample with a host name and no id is read (sample_host), or is
+-- here, or both. With each sample's season and whether it has settled, so a
+-- count can be split as AGENTS.md asks. Reads the name views whole, so it is
+-- for a person and for tests, not for a page.
 CREATE VIEW sample_host_unresolved AS
-SELECT s.entity_id AS sample_id, s.host_name_as_observed AS host_name, sh.name_key, sh.expected_rank,
-       CASE WHEN sh.raw_name IS NULL THEN 'no name'
-            WHEN r.outcome = 'matched' AND NOT r.by_own_name THEN 'matched by another name'
-            WHEN r.outcome = 'matched' THEN 'not a vascular plant'
-            ELSE r.outcome
-       END AS outcome,
-       r.inat_taxon_id AS candidate_taxon_id,
-       CAST(EXTRACT(YEAR FROM s.date_start) AS INTEGER) AS season,
-       s.date_start < season.active_since AS settled
-FROM sample s
-CROSS JOIN season
-LEFT JOIN plant_name_shape sh ON sh.raw_name = s.host_name_as_observed
-LEFT JOIN plant_name_resolution r ON r.name_key = sh.name_key AND r.expected_rank = sh.expected_rank
-LEFT JOIN inat_taxon_current c ON c.inat_taxon_id = r.inat_taxon_id
-WHERE s.host_inat_taxon_id IS NULL AND s.host_name_as_observed IS NOT NULL
-  AND NOT (r.outcome IS NOT DISTINCT FROM 'matched' AND r.by_own_name IS NOT DISTINCT FROM true AND c.is_vascular IS NOT FALSE);
-COMMENT ON VIEW sample_host_unresolved IS 'Samples with a host name and no host id that are not read through a taxon, or are read through one that is not a vascular plant, with why (outcome: plant_name_resolution''s, or matched by another name, not a vascular plant, no name), the taxon a match came to (candidate_taxon_id), the season and whether it has settled. The worklist for hand decisions on host names (beeline-rfkj.6).';
+WITH judged AS (
+  SELECT s.entity_id AS sample_id, s.host_name_as_observed AS host_name, sh.name_key, sh.expected_rank,
+         CASE WHEN sh.raw_name IS NULL THEN 'no name'
+              WHEN r.outcome <> 'matched' THEN r.outcome
+              WHEN NOT r.by_own_name THEN 'matched by another name'
+              WHEN c.inat_taxon_id IS NULL OR c.standing = 'pending' THEN 'taxon not read yet'
+              WHEN c.is_vascular IS FALSE THEN 'not a vascular plant'
+              WHEN EXISTS (SELECT 1 FROM plant_name_hit_current o
+                           WHERE o.name_key = r.name_key AND o.expected_rank = r.expected_rank
+                             AND o.current_taxon_id <> r.inat_taxon_id)
+                THEN 'other taxa had this name'
+         END AS outcome,
+         r.inat_taxon_id AS candidate_taxon_id,
+         CAST(EXTRACT(YEAR FROM s.date_start) AS INTEGER) AS season,
+         s.date_start < season.active_since AS settled
+  FROM sample s
+  CROSS JOIN season
+  LEFT JOIN plant_name_shape sh ON sh.raw_name = s.host_name_as_observed
+  LEFT JOIN plant_name_resolution r ON r.name_key = sh.name_key AND r.expected_rank = sh.expected_rank
+  LEFT JOIN inat_taxon_current c ON c.inat_taxon_id = r.inat_taxon_id
+  WHERE s.host_inat_taxon_id IS NULL AND s.host_name_as_observed IS NOT NULL
+)
+SELECT * FROM judged WHERE outcome IS NOT NULL;
+COMMENT ON VIEW sample_host_unresolved IS 'Samples with a host name and no host id that are not read through a taxon, or are read through one a person should look at, with why (outcome: plant_name_resolution''s, or matched by another name, taxon not read yet, not a vascular plant, other taxa had this name, no name), the taxon a match came to (candidate_taxon_id), the season and whether it has settled. The worklist for hand decisions on host names (beeline-rfkj.6).';

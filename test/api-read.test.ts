@@ -753,6 +753,8 @@ describe("a host on the record and in the listing (beeline-rfkj.4)", () => {
     const record = (await w.json(w.keys.alice, `/samples/${w.ids.a1}`)).sample;
     const listed = (await w.json(w.keys.alice, "/samples?scope=all")).rows.find((r: any) => r.id === w.ids.a1);
     expect(listed).toMatchObject({ hostInatTaxonId: null, hostCurrentName: "Alpha lanata", hostFamily: "Familia alpha", hostCommonName: "woolly alpha" });
+    // The taxon the name came to is carried internally and never published.
+    expect(JSON.stringify(listed)).not.toContain("host_name_taxon");
     expect(record).toMatchObject({ host_inat_taxon_id: null, host_current_name: "Alpha lanata", host_family: "Familia alpha", host_common_name: "woolly alpha" });
   });
 });

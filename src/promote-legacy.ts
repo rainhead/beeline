@@ -191,8 +191,12 @@ export async function promoteLegacy(
   const registerSql = await readFile(`${INGEST_DIR}promote-register.sql`, "utf8");
   await conn.run(registerSql.replaceAll("{{REGISTER_SOURCE}}", registerSource(usernameRegister)));
   // Promotion is the one writer of a host name with no id, which a page reads through the copy of the
-  // taxon each such name comes to (host_name_taxon_cache, beeline-rfkj.5), so the copy follows it.
-  await refreshPlantCommonNames(conn);
+  // taxon each such name comes to (host_name_taxon_cache, beeline-rfkj.5), so the copy follows it. A
+  // refresh that fails costs pages their host names until the next one (the app's boot runs one), and
+  // must not fail a promotion whose writes are done, so it is reported, as the boot reports it.
+  await refreshPlantCommonNames(conn).catch((err: unknown) =>
+    console.error(`could not refresh the plant name copies after promotion: ${String(err)}`),
+  );
 
   return {
     staged: await scalar("SELECT count(*) FROM legacy_occurrence"),

@@ -83,6 +83,10 @@ beforeAll(async () => {
   // host as a genus and a bare epithet.
   await insert("host-116a", "9116", { sid: "116", genus: "", species: "" });
   await insert("host-116b", "9216", { sid: "116", genus: "Holodiscus", species: "discolor" }, "2");
+  // A lookup the plant names job had stored for one of the names (synthetic taxon id), so the copy promotion
+  // refreshes has something in it (beeline-rfkj.5).
+  await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('solidago canadensis', 'species', 1, true)");
+  await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('solidago canadensis', 'species', 999001, 'Solidago canadensis', 'species', true, 'Solidago canadensis')");
   await promoteLegacy(conn, FIXTURE_INPUTS);
   promoted = await rows(conn, `SELECT sample_number, host_name_as_observed, host_rank FROM sample ORDER BY 1`);
   migration = await readFile(`${MIGRATIONS_DIR}0091-host-name-from-genus-and-epithet.sql`, "utf8");
@@ -100,6 +104,11 @@ describe("a promoted sample's host", () => {
 
   test("passes over a first record with no plant column", async () => {
     expect(await hostOf("116")).toEqual(["Holodiscus discolor", "species"]);
+  });
+
+  test("leaves the copy of the taxon each host name comes to as fresh as its definition, being its one writer of a name with no id", async () => {
+    expect(await rows(conn, "SELECT host_name, inat_taxon_id FROM host_name_taxon_cache")).toEqual([["Solidago canadensis", 999001n]]);
+    expect(await rows(conn, "SELECT count(*) FROM host_name_taxon_stale")).toEqual([[0n]]);
   });
 });
 

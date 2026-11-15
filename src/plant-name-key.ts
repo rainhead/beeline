@@ -4,7 +4,7 @@
  * it already holds and would otherwise read the whole view to do it. Case is
  * ignored, the hybrid sign (and its mangled form 'Ã—', the UTF-8 bytes of ×
  * read as Windows-1252) and var./ssp./subsp. are dropped, and any whitespace
- * becomes one space. test/plant-name-key.test.ts holds the two to the same
+ * becomes one space. test/host-name-taxon.test.ts holds the two to the same
  * answers, so a change to one that is not made to the other fails there.
  *
  * Used where a host's name as observed is compared with what iNaturalist calls

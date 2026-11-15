@@ -439,13 +439,13 @@ export interface HostNameTaxonStaleView {
   host_name: string;
 }
 
-/** schema/116: samples with a host name and no id that are not read through a vascular plant, and why. */
+/** schema/116: samples with a host name and no id that are not read through a taxon, or should be looked at, and why. */
 export interface SampleHostUnresolvedView {
   sample_id: BigIntCol;
   host_name: string;
   name_key: string | null;
   expected_rank: string | null;
-  outcome: PlantNameOutcome | "matched by another name" | "not a vascular plant" | "no name";
+  outcome: PlantNameOutcome | "matched by another name" | "taxon not read yet" | "not a vascular plant" | "other taxa had this name" | "no name";
   candidate_taxon_id: BigIntCol | null;
   season: number;
   settled: boolean;

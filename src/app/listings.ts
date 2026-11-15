@@ -659,24 +659,24 @@ const like = (term: string) => `%${term.toLowerCase()}%`;
  * pending host has neither, and so is found only by the name as observed,
  * which is why that one stays in the filter and is not replaced by them. A
  * host with a name and no id answers through the taxon its name comes to
- * (hostNameTaxon), as it does on the page.
+ * (the host name join, below), as it does on the page.
  */
 const hostMatches = (term: string) =>
   sql<boolean>`(lower(s.host_name_as_observed) LIKE ${like(term)}
-    OR coalesce(s.host_inat_taxon_id, ${hostNameTaxon}) IN (SELECT h.inat_taxon_id FROM inat_taxon_current_named h
+    OR coalesce(s.host_inat_taxon_id, hnt.inat_taxon_id) IN (SELECT h.inat_taxon_id FROM inat_taxon_current_named h
                                 WHERE lower(h.current_name) LIKE ${like(term)} OR lower(h.common_name) LIKE ${like(term)}))`;
 
-/**
- * For a sample with a host name and no host id, the taxon its name comes to
- * (beeline-rfkj.5): one lookup in host_name_taxon_cache by the name exactly as
- * the sample holds it. NULL for a sample with an id, whose id is its host, and
- * for a name that does not resolve. Carried beside the id, never in place of
- * it: hostInatTaxonId in the downloads is the id the sample holds, its
- * identification on iNaturalist, so a host found by name has none there, and
- * only its current name, family and common name are filled.
- */
-const hostNameTaxon = sql<bigint | null>`(SELECT hc.inat_taxon_id FROM host_name_taxon_cache hc
-  WHERE s.host_inat_taxon_id IS NULL AND hc.host_name = s.host_name_as_observed)`;
+// THE HOST NAME JOIN (beeline-rfkj.5). For a sample with a host name and no
+// host id, the taxon its name comes to: both listings' queries (listSamples,
+// listSpecimens) join host_name_taxon_cache as `hnt` on the name exactly as
+// the sample holds it, only for a sample with no id, whose id would otherwise
+// be its host. A join on the copy's key, so it adds no row; written as a
+// correlated subquery instead it cost the host filter 70 to 85 milliseconds
+// (pnpm bench:pages, 2026-11-15). The taxon is carried beside the id
+// (host_name_taxon_id), never in place of it: hostInatTaxonId in the
+// downloads is the id the sample holds, its identification on iNaturalist,
+// so a host found by name has none there, and only its current name, family
+// and common name are filled.
 
 /** What a listing says about a row's host beyond the name as observed. */
 interface HostNames {
@@ -1158,6 +1158,9 @@ async function filteredSamples(
   const place = placeColumns(reader);
   let base = db
     .selectFrom("sample as s")
+    .leftJoin("host_name_taxon_cache as hnt", (join) =>
+      join.onRef("hnt.host_name", "=", "s.host_name_as_observed").on("s.host_inat_taxon_id", "is", null),
+    )
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
     .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
@@ -1332,7 +1335,7 @@ export async function listSamples(
         "s.host_name_as_observed as host_name",
         "s.host_rank",
         "s.host_inat_taxon_id",
-        hostNameTaxon.as("host_name_taxon_id"),
+        "hnt.inat_taxon_id as host_name_taxon_id",
         located(hidden, sql<number | null>`loc.latitude`).as("latitude"),
         located(hidden, sql<number | null>`loc.longitude`).as("longitude"),
         located(hidden, sql<number | null>`loc.coordinate_uncertainty_m`).as("coordinate_uncertainty_m"),
@@ -1426,6 +1429,9 @@ async function filteredSpecimens(
   let base = db
     .selectFrom("specimen as sp")
     .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
+    .leftJoin("host_name_taxon_cache as hnt", (join) =>
+      join.onRef("hnt.host_name", "=", "s.host_name_as_observed").on("s.host_inat_taxon_id", "is", null),
+    )
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
     .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
@@ -1565,7 +1571,7 @@ export async function listSpecimens(
         "s.host_name_as_observed as host_name",
         "s.host_rank",
         "s.host_inat_taxon_id",
-        hostNameTaxon.as("host_name_taxon_id"),
+        "hnt.inat_taxon_id as host_name_taxon_id",
         "an.rank as taxon_rank",
         "an.scientific_name",
         "an.authorship",

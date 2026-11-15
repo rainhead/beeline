@@ -88,6 +88,29 @@ describe("a sample's host read by its name", () => {
     ]);
   });
 
+  test("a name that came to a taxon the cache has not read is not read yet, and is listed, so no sample falls between the two", async () => {
+    const { conn, sample } = await store();
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('gamma nil', 'species', 1, true)");
+    await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('gamma nil', 'species', 9, 'Gamma nil', 'species', true, 'Gamma nil')");
+    const unread = await sample("1", "NULL", "'Gamma nil'");
+    await refreshPlantCommonNames(conn);
+    expect(await rows(conn, `SELECT count(*) FROM sample_host WHERE sample_id = ${unread}`)).toEqual([[0n]]);
+    expect(await rows(conn, "SELECT sample_id, outcome, candidate_taxon_id FROM sample_host_unresolved")).toEqual([[unread, "taxon not read yet", 9n]]);
+  });
+
+  test("a name another taxon once had is read through the active taxon of that name, and listed for a person", async () => {
+    // The shape of Mimulus on production (2026-11-15): the active genus of the name, and a retired one of the
+    // same name that iNaturalist replaced by another genus. The lookup's rule takes the active one.
+    const { conn, sample } = await store();
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('beta', 'genus', 2, true)");
+    await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('beta', 'genus', 2, 'Beta', 'genus', true, 'Beta'), ('beta', 'genus', 8, 'Beta', 'genus', false, 'Beta')");
+    await conn.run("INSERT INTO plant_name_lookup_hit_replacement VALUES ('beta', 'genus', 8, 1)");
+    const once = await sample("1", "NULL", "'Beta'");
+    await refreshPlantCommonNames(conn);
+    expect(await rows(conn, `SELECT resolved_by, inat_taxon_id FROM sample_host WHERE sample_id = ${once}`)).toEqual([["name", 2n]]);
+    expect(await rows(conn, "SELECT sample_id, outcome, candidate_taxon_id FROM sample_host_unresolved")).toEqual([[once, "other taxa had this name", 2n]]);
+  });
+
   test("a name whose taxon is a plant but not a vascular one is read, and listed for a person", async () => {
     // Synthetic: no host name on production resolves to a moss (2026-11-15), but the lookups search all plants.
     const { conn, sample } = await store();

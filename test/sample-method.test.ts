@@ -14,7 +14,7 @@ import { IMPERSONATING_COOKIE } from "../src/app/acting.js";
 import { writeLegacyExport } from "../src/legacy-export.js";
 import { duckdbReader } from "../src/person-change.js";
 import { recordSampleChanges } from "../src/sample-change.js";
-import { createMemoryDb, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
+import { createMemoryDb, currentSeasonDate, FIXTURE_INPUTS, insertCleanSample, rows, scratchPaths } from "./helpers.js";
 import { promotedStore } from "./promoted-store.js";
 
 /**
@@ -35,7 +35,7 @@ const unusedInat: InatClient = {
 const FIXTURE = new URL("./fixtures/legacy-occurrences.jsonl", import.meta.url).pathname;
 const t = en.record.sample.methodEdit;
 
-async function methodApp(signedInAs: "staff" | "collector") {
+async function methodApp(signedInAs: "staff" | "collector", opts: { observation?: boolean } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "beeline-method-"));
   const paths = {
     correctionsPath: join(dir, "corrections.csv"),
@@ -52,9 +52,13 @@ async function methodApp(signedInAs: "staff" | "collector") {
      JOIN sample_primary_collector pc ON pc.sample_id = s.entity_id
      WHERE s.kind = 'net' GROUP BY s.entity_id HAVING count(*) > 1 ORDER BY s.entity_id LIMIT 1`,
   )) as [[number, number]];
-  await conn.run(`UPDATE sample SET inat_observation_id = 93297897 WHERE entity_id = ${sampleId}`);
+  // Linked to an observation, as Pat Wheeler's are, unless the test wants one iNaturalist does not hold.
+  await conn.run(`UPDATE sample SET inat_observation_id = ${opts.observation === false ? "NULL" : "93297897"} WHERE entity_id = ${sampleId}`);
   const [[staff]] = (await rows(conn, `INSERT INTO person (display_name) VALUES ('Sam Staff') RETURNING entity_id`)) as [[number]];
   await conn.run(`INSERT INTO person_admin (person_id) VALUES (${staff})`);
+  // A store that was built, as production was, so the change log believes
+  // its sample ids and follows a sample whose start date moves (src/sample-change.ts, idsBelong).
+  await conn.run("INSERT INTO schema_migration (name) VALUES ('0001-a-store-that-was-built.sql')");
   // The store as it stood, so the edit is recorded as a change rather than
   // taken for the first snapshot.
   await recordSampleChanges(duckdbReader(conn), { log: paths.sampleChangesPath, state: paths.sampleStatePath }, { source: "observation_promotion" });
@@ -256,6 +260,103 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
     expect(await rows(conn, `SELECT details FROM sample_promotion_finding WHERE sample_id = ${sampleId} ORDER BY 1`)).toEqual([
       ["locality: Corvallis | Philomath"],
     ]);
+  });
+
+  describe("the start date, where iNaturalist does not hold it (beeline-0wbq)", () => {
+    it("is offered only on a sample with no observation", async () => {
+      const linked = await methodApp("staff");
+      const withObservation = await (await linked.app.request(`/samples/${linked.sampleId}`)).text();
+      expect(withObservation).toContain(t.dateEnd);
+      expect(withObservation).not.toContain(`name="date_start"`);
+      const res = await post(linked.app, `/samples/${linked.sampleId}/method`, { protocol: "aerial net", date_end: "", date_start: linked.later(-3) });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe(t.problems.start_observation);
+
+      const unlinked = await methodApp("staff", { observation: false });
+      expect(await (await unlinked.app.request(`/samples/${unlinked.sampleId}`)).text()).toContain(`name="date_start"`);
+    });
+
+    it("moves the sample and every old record's start, and a net sample's end with it", async () => {
+      const { app, conn, sampleId, later, correctionsPath, sampleChangesPath } = await methodApp("staff", { observation: false });
+      const [[records]] = (await rows(conn, `SELECT count(*) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[bigint]];
+      const [[protocol]] = (await rows(conn, `SELECT coalesce(protocol, '') FROM sample WHERE entity_id = ${sampleId}`)) as [[string]];
+      const start = later(-3);
+      const res = await post(app, `/samples/${sampleId}/method`, { protocol, date_end: "", date_start: start, note: "the field book says so" });
+      expect(res.status).toBe(302);
+      expect(await sampleRow(conn, sampleId)).toEqual(["net", protocol || null, start, start]);
+
+      const events = await correctionsIn(correctionsPath);
+      const [y, mo, d] = start.split("-").map((p) => String(Number(p)));
+      for (const [field, value] of [["day", d], ["month", mo], ["year", y]] as const) {
+        const of = events.filter((e) => e.field === field);
+        expect(of).toHaveLength(Number(records));
+        for (const e of of) expect(e).toMatchObject({ new_value: value, author: "samstaff", reason: "the field book says so" });
+      }
+      // Only the start was corrected: a net sample's end is its start, and its records say nothing of an end.
+      expect(events.filter((e) => ["day2", "month2", "year2", "samplingProtocol"].includes(e.field ?? ""))).toEqual([]);
+      expect(await readFile(sampleChangesPath, "utf8")).toContain(start);
+    });
+
+    it("refuses a start it cannot read, one after the end, and one not yet come", async () => {
+      const { app, conn, sampleId, later } = await methodApp("staff", { observation: false });
+      const before = await sampleRow(conn, sampleId);
+      const cases: [Record<string, string>, string][] = [
+        [{ date_start: "16/4/2021", date_end: "" }, t.problems.start_date],
+        [{ date_start: later(3), date_end: later(1) }, t.problems.before_start],
+        [{ date_start: "2999-01-01", date_end: "" }, t.problems.start_future],
+      ];
+      for (const [dates, problem] of cases) {
+        const res = await post(app, `/samples/${sampleId}/method`, { protocol: "pan traps", ...dates });
+        expect(res.status).toBe(400);
+        expect(await res.text()).toBe(problem);
+      }
+      expect(await sampleRow(conn, sampleId)).toEqual(before);
+    });
+
+    it("is what a rebuild from the corrections file makes of the sample", async () => {
+      const { app, conn, sampleId, later, correctionsPath } = await methodApp("staff", { observation: false });
+      await post(app, `/samples/${sampleId}/method`, { protocol: "pan traps", date_start: later(-3), date_end: later(-1) });
+      const [[record]] = (await rows(conn, `SELECT min(_id) FROM legacy_specimen_number WHERE sample_id = ${sampleId}`)) as [[string]];
+      const rebuilt = await createMemoryDb();
+      await loadLegacyStaging(rebuilt.conn, FIXTURE);
+      await promoteLegacy(rebuilt.conn, { ...FIXTURE_INPUTS, appCorrections: correctionsPath });
+      const [[again]] = (await rows(rebuilt.conn, `SELECT sample_id FROM legacy_specimen_number WHERE _id = '${record}'`)) as [[number]];
+      expect(await sampleRow(rebuilt.conn, Number(again))).toEqual(await sampleRow(conn, sampleId));
+    });
+
+    it("changes a trap sample entered in Beeline directly, once its own form no longer opens", async () => {
+      const { app, conn, correctionsPath } = await methodApp("staff");
+      const entered = await insertCleanSample(conn, {
+        kind: "'trap'",
+        sample_number: "'OBAS-09999'",
+        date_start: `DATE '${currentSeasonDate(6, 1)}'`,
+        date_end: `DATE '${currentSeasonDate(6, 8)}'`,
+        protocol: "'blue vane trap'",
+        sampling_effort: "'6 blue vane traps'",
+      });
+      await conn.run(`INSERT INTO sample_entry (sample_id) VALUES (${entered})`);
+      // A specimen no run minted a number for is on paper (printed_sample,
+      // schema/101), which is what closes the trap form.
+      await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${entered}, 1, 'TEST0001')`);
+      const page = await (await app.request(`/samples/${entered}`)).text();
+      expect(page).toContain(`/samples/${entered}/method`);
+      expect(page).toContain(t.hintEntered.replaceAll("'", "&#39;"));
+
+      const start = currentSeasonDate(5, 30);
+      const res = await post(app, `/samples/${entered}/method`, { protocol: "blue vane trap", date_start: start, date_end: "" });
+      expect(res.status).toBe(302);
+      // A trap sample stays one; with no end given it ends on the day it started.
+      expect(await sampleRow(conn, entered)).toEqual(["trap", "blue vane trap", start, start]);
+      expect(await correctionsIn(correctionsPath)).toEqual([]);
+      // A new method keeps the trap count, as the trap form writes it.
+      await post(app, `/samples/${entered}/method`, { protocol: "pan trap", date_start: start, date_end: "" });
+      expect(await rows(conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${entered}`)).toEqual([["pan trap", "6 pan traps"]]);
+      // And a blank method is refused, so the count is never lost.
+      const blank = await post(app, `/samples/${entered}/method`, { protocol: "", date_start: start, date_end: "" });
+      expect(blank.status).toBe(400);
+      expect(await blank.text()).toBe(t.problems.method_required);
+      expect(await rows(conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${entered}`)).toEqual([["pan trap", "6 pan traps"]]);
+    });
   });
 
   it("refuses a sample with no old records, and offers it no pencil", async () => {

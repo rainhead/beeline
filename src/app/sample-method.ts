@@ -2,6 +2,7 @@ import { sql, type Kysely } from "kysely";
 import { upsertCorrections, type CorrectionEvent } from "../corrections.js";
 import type { Database } from "../model.js";
 import { mirrorCorrections } from "./correction-store.js";
+import { trapCountOf, trapEffort } from "../trap-sample.js";
 
 /**
  * Staff correcting how a sample was collected, from the Method row of its
@@ -23,9 +24,20 @@ import { mirrorCorrections } from "./correction-store.js";
  * exactly when its records give an end date (CONTEXT.md, *Trap sample*), so
  * an end date given here makes it one, and none makes it a net sample
  * collected on its start day, which is what a rebuild would make of the
- * corrected records. The start date is not editable: promotion groups records
- * into samples by it, so a corrected start could move records between
- * samples on a rebuild.
+ * corrected records.
+ *
+ * The start date is editable where iNaturalist does not hold it: on a sample
+ * with no observation (Peter, 2026-11-15, beeline-0wbq). Promotion groups
+ * old records into samples by their start date, so a corrected start moves
+ * every record of the sample together, and a development store rebuilt from
+ * the corrections makes the same sample, or merges it into another of the
+ * collector's with that number and day, which is then what the records say.
+ * Production is never promoted again (ADR 0006).
+ *
+ * A trap sample entered in Beeline has no old records to name. It is edited
+ * on its own form (src/trap-sample.ts) until its labels print or are frozen
+ * into a run; after that, this form changes its method and dates on the
+ * sample directly, and it stays a trap sample whatever the end date.
  */
 
 export interface MethodInput {
@@ -33,6 +45,8 @@ export interface MethodInput {
   protocol: string;
   /** The day collecting ended, YYYY-MM-DD; blank for a net sample collected on one day. */
   dateEnd: string;
+  /** The day collecting started, YYYY-MM-DD; absent where the form did not offer it. */
+  dateStart?: string;
   note: string;
   /** iNat login of whoever is signed in — never the person acted for. */
   author: string;
@@ -45,13 +59,13 @@ export interface MethodInput {
    * sample's is refused rather than written over the newer correction
    * (beeline-0br, as on the collector's form).
    */
-  bases?: { protocol?: string; dateEnd?: string };
+  bases?: { protocol?: string; dateEnd?: string; dateStart?: string };
 }
 
 export type MethodResult =
   | { outcome: "saved" }
   | { outcome: "unchanged" }
-  | { outcome: "invalid"; problem: "date" | "before_start" | "future" }
+  | { outcome: "invalid"; problem: "date" | "start_date" | "before_start" | "future" | "start_future" | "start_observation" | "method_required" }
   /** Someone changed a field this form touched since it was opened. */
   | { outcome: "conflict" }
   /** No old record behind this sample: nothing durable to name. */
@@ -60,6 +74,9 @@ export type MethodResult =
 interface Member {
   _id: string;
   samplingProtocol: string | null;
+  day: string | null;
+  month: string | null;
+  year: string | null;
   day2: string | null;
   month2: string | null;
   year2: string | null;
@@ -91,49 +108,89 @@ export async function setSampleMethod(
   const sample = await db
     .selectFrom("sample")
     .where("entity_id", "=", sampleId)
-    .select(["entity_id", "kind", "protocol", "date_start", "date_end"])
+    .select(["entity_id", "kind", "protocol", "date_start", "date_end", "inat_observation_id"])
     .executeTakeFirst();
   if (sample === undefined) return { outcome: "no_old_records" };
 
-  const start = isoDate(sample.date_start);
   // What the form would show for this sample now.
   // Trimmed, as the form's values are: promotion stores the old records'
   // words as written, and a stray space would refuse every save as stale.
+  const liveStart = isoDate(sample.date_start);
   const liveProtocol = (sample.protocol ?? "").trim();
   const liveEnd = sample.kind === "trap" ? isoDate(sample.date_end) : "";
   const touched = (submitted: string, base: string | undefined, live: string) =>
     base === undefined ? submitted !== live : submitted !== base.trim();
+  const stale = (isTouched: boolean, base: string | undefined, live: string) =>
+    isTouched && base !== undefined && base.trim() !== live;
   const protocolIn = input.protocol.trim();
   const endIn = input.dateEnd.trim();
+  const startIn = input.dateStart?.trim();
   const protocolTouched = touched(protocolIn, input.bases?.protocol, liveProtocol);
   const endTouched = touched(endIn, input.bases?.dateEnd, liveEnd);
+  const startTouched = startIn !== undefined && touched(startIn, input.bases?.dateStart, liveStart);
   if (
-    (protocolTouched && input.bases?.protocol !== undefined && input.bases.protocol.trim() !== liveProtocol) ||
-    (endTouched && input.bases?.dateEnd !== undefined && input.bases.dateEnd.trim() !== liveEnd)
+    stale(protocolTouched, input.bases?.protocol, liveProtocol) ||
+    stale(endTouched, input.bases?.dateEnd, liveEnd) ||
+    stale(startTouched, input.bases?.dateStart, liveStart)
   ) {
     return { outcome: "conflict" };
   }
-  const dateEnd = endTouched ? endIn : liveEnd;
-  if (dateEnd !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(dateEnd)) return { outcome: "invalid", problem: "date" };
+  // iNaturalist holds the start of a sample with an observation.
+  if (startTouched && sample.inat_observation_id !== null) return { outcome: "invalid", problem: "start_observation" };
   // A date that does not read back as written does not exist (30 February).
-  if (dateEnd !== "") {
-    const parsed = new Date(`${dateEnd}T00:00:00Z`);
-    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== dateEnd) return { outcome: "invalid", problem: "date" };
-  }
+  const readable = (d: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+    const parsed = new Date(`${d}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === d;
+  };
+  const start = startTouched ? startIn! : liveStart;
+  if (!readable(start)) return { outcome: "invalid", problem: "start_date" };
+  if (start > input.today) return { outcome: "invalid", problem: "start_future" };
+  const dateEnd = endTouched ? endIn : liveEnd;
+  if (dateEnd !== "" && !readable(dateEnd)) return { outcome: "invalid", problem: "date" };
   if (dateEnd !== "" && dateEnd < start) return { outcome: "invalid", problem: "before_start" };
   if (dateEnd !== "" && dateEnd > input.today) return { outcome: "invalid", problem: "future" };
 
+  const oldRecords = await fromOldRecords(db, sampleId);
+  const entered =
+    !oldRecords &&
+    (await db.selectFrom("sample_entry").where("sample_id", "=", sampleId).select("sample_id").executeTakeFirst()) !== undefined;
+  if (!oldRecords && !entered) return { outcome: "no_old_records" };
+
   const protocol = protocolTouched ? protocolIn : liveProtocol;
-  const kind = dateEnd === "" ? "net" : "trap";
+  // The trap form never makes a trap sample without its method, and the
+  // effort it writes holds the trap count beside it, so neither is lost here.
+  if (entered && protocol === "") return { outcome: "invalid", problem: "method_required" };
+  // A trap sample entered in Beeline stays one; an old sample's kind follows its end date.
+  const kind: "net" | "trap" = entered ? "trap" : dateEnd === "" ? "net" : "trap";
   const end = dateEnd === "" ? start : dateEnd;
   const protocolChanged = protocol !== liveProtocol;
-  const datesChanged = kind !== sample.kind || end !== isoDate(sample.date_end);
+  const startChanged = start !== liveStart;
+  const endChanged = kind !== sample.kind || (kind === "trap" ? end !== isoDate(sample.date_end) : false);
+  // A net sample's end is its start, so a new start moves it too.
+  const datesChanged = startChanged || endChanged;
   if (!protocolChanged && !datesChanged) return { outcome: "unchanged" };
 
-  if (!(await fromOldRecords(db, sampleId))) return { outcome: "no_old_records" };
+  const update = {
+    ...(protocolChanged ? { protocol: protocol === "" ? null : protocol } : {}),
+    ...(datesChanged ? { kind, date_start: start, date_end: end } : {}),
+  };
+  if (entered) {
+    // The trap form writes the effort as the count and the trap kind, so a
+    // new method rewrites it with the same count (CodeRabbit on this branch).
+    let effort = {};
+    if (protocolChanged) {
+      const current = await db.selectFrom("sample").where("entity_id", "=", sampleId).select("sampling_effort").executeTakeFirst();
+      const count = trapCountOf(current?.sampling_effort ?? null);
+      if (count !== null) effort = { sampling_effort: trapEffort(count, protocol) };
+    }
+    await db.updateTable("sample").set({ ...update, ...effort }).where("entity_id", "=", sampleId).execute();
+    return { outcome: "saved" };
+  }
+
   const members = (
     await sql<Member>`
-      SELECT o._id, o."samplingProtocol" AS "samplingProtocol", o.day2, o.month2, o.year2
+      SELECT o._id, o."samplingProtocol" AS "samplingProtocol", o.day, o.month, o.year, o.day2, o.month2, o.year2
       FROM legacy_specimen_number n
       JOIN legacy_occurrence o ON o._id = n._id
       WHERE n.sample_id = ${sampleId}
@@ -142,14 +199,21 @@ export async function setSampleMethod(
   if (members.length === 0) return { outcome: "no_old_records" };
 
   // The old records write a date as three columns, without leading zeros.
-  const [y, mo, d] = dateEnd === "" ? ["", "", ""] : dateEnd.split("-").map((p) => String(Number(p)));
+  const parts = (d: string) => d.split("-").map((p) => String(Number(p)));
+  const [sy, smo, sd] = parts(start);
+  const [y, mo, d] = dateEnd === "" ? ["", "", ""] : parts(dateEnd);
   const reason = input.note.trim() !== "" ? input.note.trim() : "edited in Beeline";
   const events: CorrectionEvent[] = [];
   for (const member of members) {
     const event = (field: keyof Member, value: string) =>
       events.push({ _id: member._id, field, base_value: member[field] ?? "", new_value: value, author: input.author, reason });
     if (protocolChanged) event("samplingProtocol", protocol);
-    if (datesChanged) {
+    if (startChanged) {
+      event("day", sd!);
+      event("month", smo!);
+      event("year", sy!);
+    }
+    if (endChanged) {
       event("day2", d!);
       event("month2", mo!);
       event("year2", y!);
@@ -164,14 +228,7 @@ export async function setSampleMethod(
   // between two statements sees half a correction (CodeRabbit on #314).
   await db.transaction().execute(async (trx) => {
     await mirrorCorrections(trx, events);
-    await trx
-      .updateTable("sample")
-      .set({
-        ...(protocolChanged ? { protocol: protocol === "" ? null : protocol } : {}),
-        ...(datesChanged ? { kind, date_end: end } : {}),
-      })
-      .where("entity_id", "=", sampleId)
-      .execute();
+    await trx.updateTable("sample").set(update).where("entity_id", "=", sampleId).execute();
     // A disagreement among the records over the method is settled by the
     // edit, as on the collector's form.
     if (protocolChanged) {

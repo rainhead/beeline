@@ -1244,6 +1244,7 @@ export function createApp({
           ownsLocality={ownsLocality}
           trapEditHref={trapEditHref}
           entered={entered !== null}
+          enteredPastItsForm={entered !== null && !entered.editable}
           placePending={c.get("admin") && c.req.query("place") === "pending"}
         />,
       ),
@@ -1545,10 +1546,11 @@ export function createApp({
     }
   });
 
-  // How a sample from the old Beeline was collected: its method's words and
-  // the day collecting ended (beeline-p8y1). Staff only, refused while
-  // impersonating; the correction names the old records, so a sample with
-  // none is refused.
+  // How and when a sample was collected: its method's words, the day
+  // collecting ended (beeline-p8y1) and, where iNaturalist does not hold it,
+  // the day it started (beeline-0wbq). Staff only, refused while
+  // impersonating; for a sample from the old Beeline, whose records the
+  // correction names, or a trap sample entered in Beeline past its own form.
   app.post("/samples/:id/method", async (c) => {
     const m = c.get("m");
     const t = m.record.sample.methodEdit;
@@ -1564,9 +1566,11 @@ export function createApp({
     // The save and its entry in the change log, one at a time for the sample.
     const result = await onSample(sample.sample_id, async () => {
       const saved = await setSampleMethod(db, corrections, sample.sample_id, {
-        bases: { protocol: base("protocol"), dateEnd: base("date_end") },
+        bases: { protocol: base("protocol"), dateEnd: base("date_end"), dateStart: base("date_start") },
         protocol: field("protocol"),
         dateEnd: field("date_end"),
+        // Offered only on a sample with no observation; absent, it is not touched.
+        ...(typeof body.date_start === "string" ? { dateStart: body.date_start } : {}),
         note,
         author: session.login,
         today: new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date()),

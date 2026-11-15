@@ -740,6 +740,9 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     const sampleCsv = parseCsv(await (await app.request("/samples.csv?scope=all")).text());
     const head = sampleCsv[0]!;
     for (const h of ["associatedTaxa", "hostRank", "hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"]) expect(head).toContain(h);
+    // They come after every column that was there before, so a spreadsheet or script reading those by position still works.
+    expect(head.slice(-5)).toEqual(["inatObservationId", "hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"]);
+    expect(head.indexOf("hostRank")).toBe(18);
     const host = (n: string) => {
       const r = sampleCsv.find((l) => l[0] === n)!;
       return ["hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"].map((h) => r[head.indexOf(h)]);
@@ -754,9 +757,80 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
 
     const specimenCsv = parseCsv(await (await app.request("/specimens.csv?scope=all")).text());
     const shead = specimenCsv[0]!;
+    expect(shead.slice(-5)).toEqual(["identifiedByExpert", "hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"]);
     const spec = specimenCsv.find((l) => l.includes("OBA00001"))!;
     expect(spec[shead.indexOf("hostCommonName")]).toBe("woolly alpha");
     expect(spec[shead.indexOf("hostFamily")]).toBe("Familia alpha");
+  });
+
+  it("finds a host by a common name written with capitals, whatever case is typed", async () => {
+    const { app, conn } = await hostApp();
+    await taxon(conn, { id: 7, name: "Alpha capitalis", rank: "species", active: true, parent: 110, oregon: "Showy Alpha" });
+    await refreshPlantCommonNames(conn);
+    await conn.run(`UPDATE sample SET host_inat_taxon_id = 7, host_name_as_observed = 'Alpha showy', host_rank = 'species' WHERE sample_number = 'B-3'`);
+    const find = async (term: string) => numbers(await get(app, `/samples?scope=all&host=${encodeURIComponent(term)}`));
+    // The stored name has capitals and the search none: the filter must lower the stored one as well.
+    expect(await find("showy alpha")).toEqual(["B-3"]);
+    expect(await find("SHOWY")).toEqual(["B-3"]);
+    expect(await find("wy alp")).toEqual(["B-3"]);
+  });
+
+  describe("a host with no current name", () => {
+    /** D-1: a taxon iNaturalist is replacing with one not read yet (pending). D-2: retired with nothing. D-3: an id the cache never read. */
+    async function noNameApp() {
+      const fx = await hostApp();
+      const { conn } = fx;
+      await taxon(conn, { id: 20, name: "Pendingus", rank: "species", active: false, parent: 110, replacedBy: [9999] });
+      await taxon(conn, { id: 21, name: "Retiredus", rank: "species", active: false, parent: 110 });
+      await refreshPlantCommonNames(conn);
+      const make = async (n: string, id: number, name: string) => {
+        const sample = await insertCleanSample(conn, { sample_number: `'${n}'`, host_inat_taxon_id: String(id), host_name_as_observed: `'${name}'`, host_rank: "'species'" });
+        await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number) VALUES (${sample}, 1, 'F-${n}')`);
+      };
+      await make("D-1", 20, "Pending obs");
+      await make("D-2", 21, "Retired obs");
+      await make("D-3", 888, "Uncached obs");
+      return fx;
+    }
+    // A sample's number on /samples, and its field number on /specimens, are the pills.
+    const dnumbers = (body: string) => [...new Set([...body.matchAll(/class="pill">(?:F-)?(D-\d)</g)].map((m) => m[1]!))].sort();
+
+    it("shows the name as observed alone on the pages", async () => {
+      const { app } = await noNameApp();
+      for (const listing of ["samples", "specimens"]) {
+        const body = await get(app, `/${listing}?scope=all&host=obs`);
+        expect(dnumbers(body)).toEqual(["D-1", "D-2", "D-3"]);
+        for (const name of ["Pending", "Retired", "Uncached"]) {
+          expect(body).toMatch(new RegExp(`<i>${name}</i> <i>obs</i></span></td>`));
+        }
+      }
+    });
+
+    it("gives its id and nothing else in the CSV", async () => {
+      const { app } = await noNameApp();
+      for (const [file, key] of [["samples", "fieldNumber"], ["specimens", "sampleNumber"]] as const) {
+        const csv = parseCsv(await (await app.request(`/${file}.csv?scope=all`)).text());
+        const head = csv[0]!;
+        for (const [n, id] of [["D-1", "20"], ["D-2", "21"], ["D-3", "888"]] as const) {
+          const r = csv.find((l) => l[head.indexOf(key)] === n)!;
+          expect(["hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"].map((h) => r[head.indexOf(h)])).toEqual([id, "", "", ""]);
+          expect(r[head.indexOf("associatedTaxa")]).toContain("obs");
+        }
+      }
+    });
+
+    it("is found by the name as observed, and by no name that only iNaturalist knows it by", async () => {
+      const { app } = await noNameApp();
+      for (const listing of ["samples", "specimens"]) {
+        const find = async (term: string) => dnumbers(await get(app, `/${listing}?scope=all&host=${encodeURIComponent(term)}`));
+        expect(await find("pending obs")).toEqual(["D-1"]);
+        expect(await find("retired obs")).toEqual(["D-2"]);
+        expect(await find("uncached")).toEqual(["D-3"]);
+        // The taxon's own cached name is not a name it answers to once it has no current taxon.
+        expect(await find("pendingus")).toEqual([]);
+        expect(await find("retiredus")).toEqual([]);
+      }
+    });
   });
 
   it("puts id, current name and family in the Darwin Core archive as Beeline's own columns, and never the common name", async () => {
@@ -780,6 +854,8 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     expect(files["meta.xml"]).not.toContain("hostCommonName");
     expect(rows[0]!.join("\t")).not.toContain("woolly alpha");
     expect(rows.every((r) => r.length === header!.length)).toBe(true);
+    // The archive's existing columns keep their positions: the host's three come after all of them.
+    expect(header!.slice(-4)).toEqual(["identifiedByExpert", "hostInatTaxonId", "hostCurrentName", "hostFamily"]);
     // Darwin Core's family and vernacularName describe the bee, so these are declared as nothing.
     for (const own of ["hostInatTaxonId", "hostCurrentName", "hostFamily"]) {
       expect(files["meta.xml"]).not.toContain(`terms/${own}`);

@@ -467,7 +467,6 @@ export interface SampleRow {
   host_inat_taxon_id: bigint | null;
   /** What iNaturalist calls the host now, its family and its common name (HostNames); null where it has none. */
   host_current_name: string | null;
-  host_current_rank: string | null;
   host_family: string | null;
   host_common_name: string | null;
   latitude: number | null;
@@ -547,7 +546,6 @@ export interface SpecimenRow {
   host_rank: string | null;
   host_inat_taxon_id: bigint | null;
   host_current_name: string | null;
-  host_current_rank: string | null;
   host_family: string | null;
   host_common_name: string | null;
   taxon_rank: string | null;
@@ -618,11 +616,13 @@ export interface ListingPageOptions {
    */
   withFlagWords?: boolean;
   /**
-   * How much of a host's names to read (nameHosts). `all`, the default, gives
-   * the current name, rank, family and common name that a download carries;
-   * `common`, for the pages, only the common name, which is cheaper.
+   * How to read a host's names (nameHosts). `all`, the default, reads the
+   * current name, family and common name of the hosts on the page from the
+   * view; `common`, for the pages, only the common name, which is cheaper;
+   * and a map from {@link readHostNames}, for a download, which reads the view
+   * once for every page of the file.
    */
-  hostNames?: "common" | "all";
+  hostNames?: "common" | "all" | HostNameMap;
   /**
    * Only samples collected in this calendar year, judged on their first day
    * (no sample on the dev store spans New Year). Not a listing filter — the
@@ -665,10 +665,40 @@ const hostMatches = (term: string) =>
 interface HostNames {
   host_inat_taxon_id: bigint | null;
   host_current_name: string | null;
-  host_current_rank: string | null;
   host_family: string | null;
   host_common_name: string | null;
 }
+
+/** What iNaturalist now calls a cached host taxon, its family and its common name; each null where it has none. */
+interface NamedHost {
+  name: string | null;
+  family: string | null;
+  common: string | null;
+}
+
+/**
+ * Every cached taxon's current name, family and common name, read once.
+ * A download reads this once and gives it to every page of the file
+ * ({@link HostNameMap}), so the whole file is one snapshot of the names and
+ * does not pay for the view again with each page.
+ */
+export type HostNameMap = Map<bigint, NamedHost>;
+export async function readHostNames(db: Kysely<Database>): Promise<HostNameMap> {
+  const found = await db
+    .selectFrom("inat_taxon_current_named as h")
+    .select(["h.inat_taxon_id", "h.current_name", "h.family_name", "h.common_name"])
+    .execute();
+  return new Map(found.map((h) => [BigInt(h.inat_taxon_id), { name: h.current_name, family: h.family_name, common: h.common_name }]));
+}
+
+/**
+ * A function that reads the host names the first time it is called and gives
+ * the same map afterwards: for a download, whose pages are separate calls.
+ */
+export const hostNamesOnce = (db: Kysely<Database>): (() => Promise<HostNameMap>) => {
+  let names: Promise<HostNameMap> | undefined;
+  return () => (names ??= readHostNames(db));
+};
 
 /**
  * Fill in each row's host current name, family and common name, in reads for
@@ -682,48 +712,49 @@ interface HostNames {
  * is one lookup in plant_common_name_cache, about 2 milliseconds for a page.
  * Only a host that is retired or absent goes through inat_taxon_current_named,
  * which resolves the whole cache whatever it is asked for (about 19
- * milliseconds); a page rarely has one. `all` is for the downloads and the
- * API, which also give the current name, rank and family, and so read the view
- * for every host on the page.
+ * milliseconds); a page rarely has one. `all` is for the API, which also gives
+ * the current name and family, and reads the view for the hosts on the page.
+ * A {@link HostNameMap} is for a download: no read at all, the names having
+ * been read once for the whole file.
  */
-async function nameHosts(db: Kysely<Database>, rows: HostNames[], detail: "common" | "all"): Promise<void> {
-  const ids = [...new Set(rows.flatMap((r) => (r.host_inat_taxon_id === null ? [] : [BigInt(r.host_inat_taxon_id)])))];
-  type Named = { name: string | null; rank: string | null; family: string | null; common: string | null };
-  const byId = new Map<bigint, Named>();
-  if (ids.length > 0) {
-    let viaView = ids;
-    if (detail === "common") {
-      const direct = await db
-        .selectFrom("inat_taxon as t")
-        .leftJoin("plant_common_name_cache as n", "n.inat_taxon_id", "t.inat_taxon_id")
-        .where("t.inat_taxon_id", "in", ids)
-        .where("t.is_active", "=", true)
-        .where(({ not, exists, selectFrom }) =>
-          not(exists(selectFrom("inat_taxon_absent as a").select("a.inat_taxon_id").whereRef("a.inat_taxon_id", "=", "t.inat_taxon_id"))),
-        )
-        .select(["t.inat_taxon_id", "n.common_name"])
-        .execute();
-      for (const d of direct) byId.set(BigInt(d.inat_taxon_id), { name: null, rank: null, family: null, common: d.common_name });
-      // What is left: a taxon the cache holds that is retired or absent, whose current taxon needs working out.
-      // One the cache does not hold has no row in the view either.
-      const known = await db.selectFrom("inat_taxon").where("inat_taxon_id", "in", ids).select("inat_taxon_id").execute();
-      viaView = known.map((k) => BigInt(k.inat_taxon_id)).filter((id) => !byId.has(id));
-    }
-    if (viaView.length > 0) {
-      const found = await db
-        .selectFrom("inat_taxon_current_named as h")
-        .where("h.inat_taxon_id", "in", viaView)
-        .select(["h.inat_taxon_id", "h.current_name", "h.current_rank", "h.family_name", "h.common_name"])
-        .execute();
-      for (const h of found) {
-        byId.set(BigInt(h.inat_taxon_id), { name: h.current_name, rank: h.current_rank, family: h.family_name, common: h.common_name });
+async function nameHosts(db: Kysely<Database>, rows: HostNames[], detail: "common" | "all" | HostNameMap): Promise<void> {
+  let byId: HostNameMap;
+  if (detail instanceof Map) {
+    byId = detail;
+  } else {
+    byId = new Map();
+    const ids = [...new Set(rows.flatMap((r) => (r.host_inat_taxon_id === null ? [] : [BigInt(r.host_inat_taxon_id)])))];
+    if (ids.length > 0) {
+      let viaView = ids;
+      if (detail === "common") {
+        const direct = await db
+          .selectFrom("inat_taxon as t")
+          .leftJoin("plant_common_name_cache as n", "n.inat_taxon_id", "t.inat_taxon_id")
+          .where("t.inat_taxon_id", "in", ids)
+          .where("t.is_active", "=", true)
+          .where(({ not, exists, selectFrom }) =>
+            not(exists(selectFrom("inat_taxon_absent as a").select("a.inat_taxon_id").whereRef("a.inat_taxon_id", "=", "t.inat_taxon_id"))),
+          )
+          .select(["t.inat_taxon_id", "n.common_name"])
+          .execute();
+        for (const d of direct) byId.set(BigInt(d.inat_taxon_id), { name: null, family: null, common: d.common_name });
+        // What is left is retired or absent, whose current taxon needs working out. A taxon the cache does not
+        // hold has no row in the view, so asking for it finds nothing.
+        viaView = ids.filter((id) => !byId.has(id));
+      }
+      if (viaView.length > 0) {
+        const found = await db
+          .selectFrom("inat_taxon_current_named as h")
+          .where("h.inat_taxon_id", "in", viaView)
+          .select(["h.inat_taxon_id", "h.current_name", "h.family_name", "h.common_name"])
+          .execute();
+        for (const h of found) byId.set(BigInt(h.inat_taxon_id), { name: h.current_name, family: h.family_name, common: h.common_name });
       }
     }
   }
   for (const r of rows) {
     const h = r.host_inat_taxon_id === null ? undefined : byId.get(BigInt(r.host_inat_taxon_id));
     r.host_current_name = h?.name ?? null;
-    r.host_current_rank = h?.rank ?? null;
     r.host_family = h?.family ?? null;
     r.host_common_name = h?.common ?? null;
   }
@@ -1892,16 +1923,17 @@ export const SAMPLE_CSV_HEADER = [
   "kind",
   "specimenCount",
   "hostRank",
-  "hostInatTaxonId",
-  "hostCurrentName",
-  "hostFamily",
-  "hostCommonName",
   "atlas",
   "locationSource",
   "geoprivacy",
   "taxonGeoprivacy",
   "qcStatus",
   "inatObservationId",
+  // Added last, so a reader that finds the columns above by position still does (beeline-rfkj.4).
+  "hostInatTaxonId",
+  "hostCurrentName",
+  "hostFamily",
+  "hostCommonName",
 ] as const;
 
 export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => [
@@ -1924,16 +1956,16 @@ export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => 
   r.kind,
   r.specimen_count,
   r.host_rank,
-  r.host_inat_taxon_id,
-  r.host_current_name,
-  r.host_family,
-  r.host_common_name,
   r.atlas_abbreviation,
   r.location_source,
   r.geoprivacy,
   r.taxon_geoprivacy,
   qcLabel(r),
   r.inat_observation_id,
+  r.host_inat_taxon_id,
+  r.host_current_name,
+  r.host_family,
+  r.host_common_name,
 ];
 
 /** dwc:dateIdentified, as Darwin Core would have it: a year-only date is the year, not January 1st. */
@@ -1990,14 +2022,15 @@ export const SPECIMEN_OWN_COLUMNS = [
   "specimenNumber",
   "atlas",
   "hostRank",
-  "hostInatTaxonId",
-  "hostCurrentName",
-  "hostFamily",
-  "hostCommonName",
   "locationSource",
   "geoprivacy",
   "taxonGeoprivacy",
   "identifiedByExpert",
+  // Added last, so a reader that finds the columns above by position still does (beeline-rfkj.4).
+  "hostInatTaxonId",
+  "hostCurrentName",
+  "hostFamily",
+  "hostCommonName",
 ] as const;
 
 export const SPECIMEN_CSV_HEADER = [...SPECIMEN_DWC_COLUMNS, ...SPECIMEN_OWN_COLUMNS] as const;
@@ -2040,12 +2073,12 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.specimen_number,
   r.atlas_abbreviation,
   r.host_rank,
-  r.host_inat_taxon_id,
-  r.host_current_name,
-  r.host_family,
-  r.host_common_name,
   r.location_source,
   r.geoprivacy,
   r.taxon_geoprivacy,
   r.is_expert === null ? null : String(r.is_expert),
+  r.host_inat_taxon_id,
+  r.host_current_name,
+  r.host_family,
+  r.host_common_name,
 ];

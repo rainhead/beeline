@@ -115,6 +115,8 @@ export interface SampleDetail {
    */
   host_split_within_name: string | null;
   host_split_within_rank: "genus" | "family" | null;
+  /** The family of the host's current taxon, as the listings' hostFamily column gives it. */
+  host_family: string | null;
   /** The common name of the host's current taxon, and where it came from. */
   host_common_name: string | null;
   host_common_name_source: "list" | "inaturalist" | null;
@@ -341,6 +343,7 @@ const sampleColumns = (personId: number, reader: Reader) => sql`
   sh.standing AS host_standing, sh.current_name AS host_current_name, sh.current_rank AS host_current_rank,
   CASE WHEN sh.standing = 'split' THEN coalesce(sh.genus_name, sh.family_name) END AS host_split_within_name,
   CASE WHEN sh.standing <> 'split' THEN NULL WHEN sh.genus_name IS NOT NULL THEN 'genus' WHEN sh.family_name IS NOT NULL THEN 'family' END AS host_split_within_rank,
+  sh.family_name AS host_family,
   sh.common_name AS host_common_name, sh.common_name_source AS host_common_name_source,
   CASE WHEN ${observationGone}
        THEN (SELECT CAST(ab.absent_since AS DATE) FROM observation_absent ab WHERE ab.inat_id = s.inat_observation_id)

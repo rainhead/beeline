@@ -24,6 +24,11 @@ interface Case {
   name: string;
   who: "volunteer" | "staff";
   path: string;
+  /**
+   * A whole-corpus download, tens of seconds long: run only when `--only` matches it, so that a plain run does
+   * not grow by the 16 requests of an ordinary case times that long.
+   */
+  onlyWhenNamed?: true;
 }
 
 async function cases(bench: Bench): Promise<Case[]> {
@@ -84,8 +89,8 @@ async function cases(bench: Bench): Promise<Case[]> {
     hostGenus ? { name: "samples, all, by host name", who: "staff", path: `/samples?scope=all&host=${enc(hostGenus)}` } : null,
     hostCommon ? { name: "samples, all, by host common name", who: "staff", path: `/samples?scope=all&host=${enc(hostCommon)}` } : null,
     hostCommon ? { name: "specimens, all, by host common name", who: "staff", path: `/specimens?scope=all&host=${enc(hostCommon)}` } : null,
-    { name: "samples.csv, all", who: "staff", path: "/samples.csv?scope=all" },
-    { name: "specimens.csv, all", who: "staff", path: "/specimens.csv?scope=all" },
+    { name: "samples.csv, all", who: "staff", path: "/samples.csv?scope=all", onlyWhenNamed: true },
+    { name: "specimens.csv, all", who: "staff", path: "/specimens.csv?scope=all", onlyWhenNamed: true },
     { name: "specimens, all", who: "staff", path: "/specimens?scope=all" },
     genus ? { name: "specimens, all, by genus", who: "staff", path: `/specimens?scope=all&taxon=${enc(genus)}` } : null,
     { name: "specimens, all, undetermined", who: "staff", path: "/specimens?scope=all&det=undetermined" },
@@ -114,14 +119,15 @@ interface CaseResult extends Case, Summary {
 const { positional, flags } = args(process.argv.slice(2));
 const source = positional[0] ?? "beeline.duckdb";
 const n = Number(flags.n ?? 15);
-// --only=<regex>: just the cases whose "who name" matches, for a quick comparison of a few pages.
+// --only=<regex>: just the cases whose "who name" matches, for a quick comparison of a few pages. It is also the
+// only way to run the whole-corpus downloads and the sample-edit write, which a plain run leaves out.
 const only = typeof flags.only === "string" ? new RegExp(flags.only) : undefined;
 
 const bench = await openBench(source);
 try {
   const env = await environment(bench, source);
   const results: CaseResult[] = [];
-  for (const c of (await cases(bench)).filter((c) => only === undefined || only.test(`${c.who} ${c.name}`))) {
+  for (const c of (await cases(bench)).filter((c) => (only === undefined ? c.onlyWhenNamed !== true : only.test(`${c.who} ${c.name}`)))) {
     const who: Subject = bench[c.who];
     const cold = await timed(bench, who, c.path);
     const runs = [];
@@ -153,7 +159,7 @@ try {
       WHERE s.inat_observation_id IS NULL
       GROUP BY ALL ORDER BY count(*) DESC, a.person_id LIMIT 1`,
   );
-  if (ed !== undefined) {
+  if (ed !== undefined && (only === undefined || only.test("volunteer save a sample edit"))) {
     // The copy has no change snapshot yet, and a save that falls on a missing
     // one becomes the baseline pass — a different, one-off cost.
     await recordSampleChanges(

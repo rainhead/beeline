@@ -786,7 +786,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                     />
                   )}
                 </td>
-                <td>
+                <td class="host-cell">
                   {row.host_name === null ? (
                     <Absent label={m.absence.none} />
                   ) : (
@@ -1068,7 +1068,7 @@ export function SpecimenListing(
                 <td>
                   <PlaceCell m={m} row={row} />
                 </td>
-                <td>
+                <td class="host-cell">
                   {/* As on the samples listing: a bee off no flower has no
                       host, and that is complete rather than missing. */}
                   {row.host_name === null ? (

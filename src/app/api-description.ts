@@ -69,7 +69,7 @@ const COLUMN_MEANING: Record<(typeof SAMPLE_CSV_HEADER)[number] | (typeof SPECIM
   hostInatTaxonId: "The iNaturalist taxon id of the floral host, as the observation gave it; empty where the host has no id.",
   hostCurrentName: "What iNaturalist calls the floral host now, which differs from associatedTaxa where iNaturalist has since renamed or replaced it; empty where it has no single current name (split, retired) or Beeline has not yet read the taxon.",
   hostFamily: "The family of the floral host as iNaturalist now has it; empty where there is none.",
-  hostCommonName: "The floral host's common name: old Beeline's plant list's, else iNaturalist's for Oregon. Empty where there is none.",
+  hostCommonName: "The common name of the host as iNaturalist now has it (the current taxon, which is the stored one unless iNaturalist has replaced it). It is the plant list's name for that taxon where the list has one, else iNaturalist's name for Oregon, else the name of the nearest coarser entry in the list. Empty where there is none, and for a split or retired host.",
   atlas: "The code of the atlas the sample was collected in; empty outside every atlas.",
   locationSource: "Where the coordinates came from. Empty where the location is withheld.",
   geoprivacy: "The observer's iNaturalist geoprivacy setting for the observation: obscured or private. Empty when open.",
@@ -88,7 +88,7 @@ const FILTER_MEANING: Record<string, string> = {
   collector: "A collector's name or iNaturalist login. Matches anyone on the sample, not only the primary collector.",
   member: `Whose collectors belong to which program: an atlas code, ${PROGRAM_MEMBERSHIP} (Master Melittology), or ${MEMBER_UNRECORDED}.`,
   taxon: "A taxon name. Anything below it in the taxonomy matches too, so a family name finds its genera.",
-  host: "Part of the floral host's name.",
+  host: "Part of the floral host's name, in any case. It matches the name as the observation gave it, what iNaturalist calls the host now, or its common name, so a row can be found by a name it does not show.",
   det: "Whether the determination of record exists. On samples, undetermined means at least one specimen is still waiting for a name.",
   labels: "Whether labels are on paper: waiting, or printed.",
   kind: "net, or trap.",
@@ -154,7 +154,7 @@ const ENDPOINTS: Endpoint[] = [
     needs: "any key",
     parameters: parametersOf(LISTING_PARAMETERS, SAMPLE_SORT_KEYS),
     answers:
-      "{ total, page, page_size, pages, rows }. Each row has the columns of the samples CSV under their Darwin Core or Beeline names (see columns.samples), plus id, url (the sample's page) and location_withheld.",
+      "{ total, page, page_size, pages, rows }. Each row has the columns of the samples CSV under their Darwin Core or Beeline names (see columns.samples; the host's id, current name, family and common name come last), plus id, url (the sample's page) and location_withheld.",
   },
   {
     method: "GET",
@@ -180,7 +180,7 @@ const ENDPOINTS: Endpoint[] = [
     needs: "any key",
     parameters: parametersOf(LISTING_PARAMETERS, SPECIMEN_SORT_KEYS),
     answers:
-      "{ total, page, page_size, pages, rows }. Each row has the columns of the specimens CSV (see columns.specimens), plus id, url, sample_id, sample_url and location_withheld.",
+      "{ total, page, page_size, pages, rows }. Each row has the columns of the specimens CSV (see columns.specimens; the host's id, current name, family and common name come last), plus id, url, sample_id, sample_url and location_withheld.",
   },
   {
     method: "GET",

@@ -445,7 +445,7 @@ export interface SampleHostUnresolvedView {
   host_name: string;
   name_key: string | null;
   expected_rank: string | null;
-  outcome: PlantNameOutcome | "matched by another name" | "taxon not read yet" | "not a vascular plant" | "other taxa had this name" | "no name";
+  outcome: PlantNameOutcome | "matched by another name" | "not copied yet" | "taxon not read yet" | "not a vascular plant" | "other taxa had this name" | "no name";
   candidate_taxon_id: BigIntCol | null;
   season: number;
   settled: boolean;

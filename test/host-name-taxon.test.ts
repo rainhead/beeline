@@ -76,6 +76,12 @@ describe("a sample's host read by its name", () => {
     await sample("1", "NULL", "'Alpha lanata'");
     await sample("2", "NULL", "'Beta vulgaris'");
     expect(await rows(conn, "SELECT host_name FROM host_name_taxon_stale")).toEqual([["Alpha lanata"]]);
+    // Until a refresh, the name resolves but a page cannot read it: listed, so it is not lost between the two.
+    expect(await rows(conn, "SELECT count(*) FROM sample_host")).toEqual([[0n]]);
+    expect(await rows(conn, "SELECT host_name, outcome FROM sample_host_unresolved ORDER BY 1")).toEqual([
+      ["Alpha lanata", "not copied yet"],
+      ["Beta vulgaris", "not looked up"],
+    ]);
     await refreshPlantCommonNames(conn);
     expect(await rows(conn, "SELECT host_name, inat_taxon_id FROM host_name_taxon_cache")).toEqual([["Alpha lanata", 1n]]);
     // The job asks for the other name, iNaturalist answers with taxon 2, and the job's own refresh takes it in.

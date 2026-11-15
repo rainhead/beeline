@@ -92,6 +92,10 @@ COMMENT ON COLUMN sample_host.resolved_by IS 'id: the sample''s own host id, an 
 --   matched by another name   the taxon came only through matched_term, an
 --                             older name or a common name (host_name_taxon);
 --                             not read
+--   not copied yet            the name resolves, but the copy a page reads
+--                             (host_name_taxon_cache) does not hold it yet: a
+--                             refresh failed or has not run since; not read
+--                             until the next one (the app's boot runs one)
 --   taxon not read yet        the name came to a taxon the taxon cache has
 --                             not read, or whose replacement it has not read
 --                             (pending); not read until it has, which the
@@ -116,6 +120,8 @@ WITH judged AS (
          CASE WHEN sh.raw_name IS NULL THEN 'no name'
               WHEN r.outcome <> 'matched' THEN r.outcome
               WHEN NOT r.by_own_name THEN 'matched by another name'
+              WHEN NOT EXISTS (SELECT 1 FROM host_name_taxon_cache hc WHERE hc.host_name = s.host_name_as_observed)
+                THEN 'not copied yet'
               WHEN c.inat_taxon_id IS NULL OR c.standing = 'pending' THEN 'taxon not read yet'
               WHEN c.is_vascular IS FALSE THEN 'not a vascular plant'
               WHEN EXISTS (SELECT 1 FROM plant_name_hit_current o
@@ -134,4 +140,4 @@ WITH judged AS (
   WHERE s.host_inat_taxon_id IS NULL AND s.host_name_as_observed IS NOT NULL
 )
 SELECT * FROM judged WHERE outcome IS NOT NULL;
-COMMENT ON VIEW sample_host_unresolved IS 'Samples with a host name and no host id that are not read through a taxon, or are read through one a person should look at, with why (outcome: plant_name_resolution''s, or matched by another name, taxon not read yet, not a vascular plant, other taxa had this name, no name), the taxon a match came to (candidate_taxon_id), the season and whether it has settled. The worklist for hand decisions on host names (beeline-rfkj.6).';
+COMMENT ON VIEW sample_host_unresolved IS 'Samples with a host name and no host id that are not read through a taxon, or are read through one a person should look at, with why (outcome: plant_name_resolution''s, or matched by another name, not copied yet, taxon not read yet, not a vascular plant, other taxa had this name, no name), the taxon a match came to (candidate_taxon_id), the season and whether it has settled. The worklist for hand decisions on host names (beeline-rfkj.6).';

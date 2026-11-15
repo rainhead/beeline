@@ -27,7 +27,7 @@ COMMENT ON COLUMN plant_proper_noun.reason IS 'Why, in a few words, with an exam
 
 -- iNaturalist's and the list's common names, set in sentence case
 -- (beeline-rfkj.9). iNaturalist writes many of them in title case
--- ("Silverleaf Phacelia"), the old plant list does too in some 60 rows
+-- ("Western Water Hemlock"), the old plant list does too in some 60 rows
 -- ("Common Fiddleneck"), and Beeline's style (src/app/views/design/names.tsx)
 -- is capitals only for proper nouns ("silverleaf phacelia", "Oregon grape").
 -- Neither source is changed: inat_taxon.preferred_common_name and

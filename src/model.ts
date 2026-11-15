@@ -223,6 +223,30 @@ export interface PlantListEntryTable {
   common_name: string | null;
 }
 
+/** A word or phrase that keeps a capital, or a possessive that loses it, when common names are set in sentence case (ingest/plant-proper-nouns.csv). */
+export interface PlantProperNounTable {
+  word: string;
+  treatment: "keep" | "lower";
+  reason: string;
+}
+
+/** A common name that is set in sentence case: iNaturalist's, and the plant list's. */
+export interface PlantNameToSetView {
+  name: string;
+}
+
+/** A common name of plant_name_to_set in sentence case, proper nouns kept. */
+export interface PlantNameSentenceCaseView {
+  name: string;
+  common_name: string;
+}
+
+/** iNaturalist's preferred common name of a taxon in sentence case, proper nouns kept. */
+export interface PlantInatCommonNameView {
+  inat_taxon_id: BigIntCol;
+  common_name: string;
+}
+
 /** A question put to iNaturalist's taxa search for a normalised name at an expected rank. */
 export interface PlantNameLookupTable {
   name_key: string;
@@ -1757,6 +1781,10 @@ export interface Database {
   inat_taxon_uncached: InatTaxonUncachedView;
   plant_list: PlantListTable;
   plant_list_entry: PlantListEntryTable;
+  plant_proper_noun: PlantProperNounTable;
+  plant_name_to_set: PlantNameToSetView;
+  plant_name_sentence_case: PlantNameSentenceCaseView;
+  plant_inat_common_name: PlantInatCommonNameView;
   plant_name_lookup: PlantNameLookupTable;
   plant_name_lookup_hit: PlantNameLookupHitTable;
   plant_name_lookup_hit_replacement: PlantNameLookupHitReplacementTable;

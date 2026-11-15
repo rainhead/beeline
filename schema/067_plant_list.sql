@@ -42,6 +42,21 @@ COMMENT ON COLUMN plant_list_entry.family IS 'The list''s Family column.';
 COMMENT ON COLUMN plant_list_entry.synonym IS 'The list''s Synonym column, other scientific names for the same plant separated by commas. Not read yet: matching a name the list calls a synonym is beeline-rfkj.6.';
 COMMENT ON COLUMN plant_list_entry.common_name IS 'The list''s Common_name column: one or several names separated by commas or semicolons, the first being the one shown, except at genus rank or above, where several names give none (plant_list_entry_several_names). Sometimes a placeholder that is no name (Abelia Species, tribe Cardamineae); plant_list_entry_common_name leaves those out.';
 
+-- The words and phrases that keep a capital when Beeline sets common names in
+-- sentence case (beeline-rfkj.9), from ingest/plant-proper-nouns.csv: every
+-- proper noun of iNaturalist's names and of the old plant list's. Nothing is
+-- learned from the data, so the file is the whole behaviour and a diff of it
+-- is what changes a name.
+CREATE TABLE plant_proper_noun (
+  word      TEXT PRIMARY KEY,
+  treatment TEXT NOT NULL CHECK (treatment IN ('keep', 'lower')),
+  reason    TEXT NOT NULL
+);
+COMMENT ON TABLE plant_proper_noun IS 'The words that keep a capital when common names are set in sentence case, and the possessives that do not (src/load-plant-list.ts loads ingest/plant-proper-nouns.csv, replacing all the rows; one list, so the file is the whole table). Read by plant_name_sentence_case (schema/114).';
+COMMENT ON COLUMN plant_proper_noun.word IS 'The word as it is to be written (Utah, Shepherd''s), one word, since the parts of a hyphenated name are judged one at a time; or, for a keep row, a phrase: words separated by single spaces or a single hyphen (Rocky Mountain, Trans-Pecos), matched on consecutive words. A word or phrase is matched whatever case the name has it in, with the curly apostrophe read as the straight one, and is set as written here but with the apostrophe the name wrote, so a keep row also restores an eponym that iNaturalist wrote in lower case (Bebb''s). A keep row has a capital letter. No two rows differ only in case.';
+COMMENT ON COLUMN plant_proper_noun.treatment IS 'keep: the word or phrase is a proper noun and is set as written here. lower: the word is a possessive that would keep its capital by the possessive rule (plant_name_sentence_case) and should not, because it is not an eponym (shepherd''s purse).';
+COMMENT ON COLUMN plant_proper_noun.reason IS 'Why, in a few words, with an example.';
+
 -- What iNaturalist answered when asked for a normalised name at an expected
 -- rank (src/fetch-plant-names.ts), one row per question, whatever the answer.
 -- A name with no row has not been asked yet (plant_name_unlooked).

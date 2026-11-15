@@ -734,7 +734,7 @@ describe("a host on the record and in the listing (beeline-rfkj.4)", () => {
     await conn.run(`UPDATE sample SET host_inat_taxon_id = 1, host_name_as_observed = 'Alpha oldname', host_rank = 'species' WHERE entity_id = ${w.ids.a1}`);
     const record = (await w.json(w.keys.alice, `/samples/${w.ids.a1}`)).sample;
     const listed = (await w.json(w.keys.alice, "/samples?scope=all")).rows.find((r: any) => r.id === w.ids.a1);
-    expect(listed).toMatchObject({ hostCurrentName: "Alpha lanata", hostFamily: "Familia alpha", hostCommonName: "Woolly alpha" });
+    expect(listed).toMatchObject({ hostCurrentName: "Alpha lanata", hostFamily: "Familia alpha", hostCommonName: "woolly alpha" });
     expect(record).toMatchObject({ host_current_name: listed.hostCurrentName, host_family: listed.hostFamily, host_common_name: listed.hostCommonName });
     expect(String(record.host_inat_taxon_id)).toBe(String(listed.hostInatTaxonId));
   });

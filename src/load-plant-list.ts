@@ -34,9 +34,11 @@ export const OLD_BEELINE_LIST = "old-beeline";
  * it (parsePlantList, the columns kept). It is hashed with the file's bytes, so
  * a deployed list whose file did not change is read again by the new loader.
  */
-export const PLANT_LIST_LOADER_VERSION = 1;
+export const PLANT_LIST_LOADER_VERSION = 2;
 export const OLD_BEELINE_PLANT_LIST_FILE = "ingest/old-beeline-plant-list.csv";
-/** Where the file is, whatever directory the process was started in. */
+export const PLANT_PROPER_NOUNS_FILE = "ingest/plant-proper-nouns.csv";
+/** Where the files are, whatever directory the process was started in. */
+const PLANT_PROPER_NOUNS_PATH = fileURLToPath(new URL(`../${PLANT_PROPER_NOUNS_FILE}`, import.meta.url));
 const OLD_BEELINE_PLANT_LIST_PATH = fileURLToPath(new URL(`../${OLD_BEELINE_PLANT_LIST_FILE}`, import.meta.url));
 
 const COLUMNS = ["Rank", "Family", "Scientific_name", "Synonym", "Common_name"] as const;
@@ -93,9 +95,60 @@ export function parsePlantList(bytes: Buffer): { rows: PlantListRow[]; skippedWi
   return { rows, skippedWithoutName };
 }
 
-/** What the list's stored hash is: the loader's version, then the file's bytes. */
-export function plantListHash(bytes: Buffer): string {
-  return createHash("sha256").update(`loader ${PLANT_LIST_LOADER_VERSION}\n`).update(bytes).digest("hex");
+export interface ProperNounRow {
+  word: string;
+  treatment: "keep" | "lower";
+  reason: string;
+}
+
+/** The rows of the proper-noun file. Strict, like the list: a bad row stops the load. */
+export function parseProperNouns(bytes: Buffer): ProperNounRow[] {
+  const text = bytes.toString("utf8").replace(/^\uFEFF/, "");
+  let parsed: string[][];
+  try {
+    parsed = parseCsv(text, { strict: true });
+  } catch (err) {
+    throw new Error(`plant proper nouns: ${(err as Error).message}`);
+  }
+  // Numbered before the blank lines are dropped, as parsePlantList does, so a row number is the line a person finds it on.
+  const [head, ...numbered] = parsed.map((r, i) => ({ r, n: i + 1 })).filter(({ r }) => !(r.length === 1 && r[0] === ""));
+  const header = head?.r;
+  if (header?.join(",") !== "Word,Treatment,Reason") {
+    throw new Error(`plant proper nouns: expected the header Word,Treatment,Reason, found ${header?.join(",") ?? "nothing"}`);
+  }
+  const seen = new Set<string>();
+  return numbered.map(({ r, n }) => {
+    // Only ordinary spaces and tabs are trimmed: a non-breaking space at an edge is a fault to refuse, not to hide.
+    const [word, treatment, reason] = r.map((c) => c.replace(/^[ \t]+|[ \t]+$/g, ""));
+    if (r.length !== 3 || !word || !reason) throw new Error(`plant proper nouns: row ${n} needs a word, a treatment and a reason`);
+    if (treatment !== "keep" && treatment !== "lower") throw new Error(`plant proper nouns: row ${n}: treatment must be keep or lower, not ${treatment}`);
+    // Letters, with apostrophes inside or at the end ("Banks'"); a phrase has single ordinary spaces or single hyphens between its words ("Trans-Pecos",
+    // which the view reads as a phrase because it is more than one word as it cuts a name), and a period may end a word inside it ("Mount St. Helens").
+    // No digit, no other kind of space (a non-breaking space would make a row that no name can match), so a row that could never match is refused.
+    const WORD = String.raw`\p{L}+(?:['’]\p{L}*)*`;
+    if (!new RegExp(`^${WORD}(?:(?:\\.? |-)${WORD})*$`, "u").test(word))
+      throw new Error(`plant proper nouns: row ${n}: ${JSON.stringify(word)} is not a word or a phrase of words (letters and apostrophes, single ordinary spaces, a single hyphen only between two words)`);
+    if (/[^\p{L}'’]/u.test(word) && treatment !== "keep") throw new Error(`plant proper nouns: row ${n}: only a keep row may hold a phrase`);
+    // A keep row sets the word as written, and a name's capitals are only restored from a row that has one: "oregon,keep" would keep nothing.
+    if (treatment === "keep" && !/\p{Lu}/u.test(word)) throw new Error(`plant proper nouns: row ${n}: a keep row needs a capital letter (${word} has none), since it is what the name is set to`);
+    // A lower row only matters for a possessive: any other word is lower-cased already.
+    if (treatment === "lower" && !/(\p{L}['’]s|s['’])$/u.test(word))
+      throw new Error(`plant proper nouns: row ${n}: a lower row is for a possessive (Shepherd's, Ladies'), and ${word} is not one`);
+    const folded = word.toLowerCase().replace(/’/g, "'");
+    if (seen.has(folded)) throw new Error(`plant proper nouns: ${word} appears twice, ignoring case and the kind of apostrophe (row ${n})`);
+    seen.add(folded);
+    return { word, treatment, reason };
+  });
+}
+
+/** What the list's stored hash is: the loader's version, then the list's bytes, then the proper nouns' bytes. */
+export function plantListHash(bytes: Buffer, properNounBytes: Buffer = Buffer.alloc(0)): string {
+  return createHash("sha256")
+    .update(`loader ${PLANT_LIST_LOADER_VERSION}\n`)
+    .update(bytes)
+    .update("\nproper nouns\n")
+    .update(properNounBytes)
+    .digest("hex");
 }
 
 /**
@@ -108,13 +161,15 @@ export function plantListHash(bytes: Buffer): string {
  */
 export async function loadPlantList(
   conn: DuckDBConnection,
-  opts: { path?: string; listKey?: string; refresh?: boolean } = {},
+  opts: { path?: string; properNounsPath?: string; listKey?: string; refresh?: boolean } = {},
 ): Promise<LoadPlantListResult> {
   const path = opts.path ?? OLD_BEELINE_PLANT_LIST_PATH;
   const listKey = opts.listKey ?? OLD_BEELINE_LIST;
   const bytes = await readFile(path);
-  const hash = plantListHash(bytes);
+  const properNounBytes = await readFile(opts.properNounsPath ?? PLANT_PROPER_NOUNS_PATH);
+  const hash = plantListHash(bytes, properNounBytes);
   const { rows, skippedWithoutName } = parsePlantList(bytes);
+  const properNouns = parseProperNouns(properNounBytes);
 
   const have = (await (
     await conn.run("SELECT content_hash FROM plant_list WHERE list_key = $1", [listKey])
@@ -134,6 +189,11 @@ export async function loadPlantList(
         `INSERT INTO plant_list_entry (list_key, scientific_name, rank, family, synonym, common_name) VALUES ${values.join(", ")}`,
         [listKey, ...part.flatMap((p) => [p.scientific_name, p.rank, p.family, p.synonym, p.common_name])] as never[],
       );
+    }
+    // All the rows, not one list's: the file of proper nouns belongs to no list and there is one of it, so a load replaces it whole.
+    await conn.run("DELETE FROM plant_proper_noun");
+    for (const n of properNouns) {
+      await conn.run("INSERT INTO plant_proper_noun (word, treatment, reason) VALUES ($1, $2, $3)", [n.word, n.treatment, n.reason]);
     }
     await conn.run(
       `INSERT INTO plant_list (list_key, source_file, content_hash) VALUES ($1, $2, $3)

@@ -123,7 +123,7 @@ const VERNACULAR_EXAMPLES: ReadonlyArray<{ props: TaxonNameProps; note: string }
   },
   {
     props: { rank: "species", scientificName: "Phacelia hastata", vernacular: "silverleaf phacelia" },
-    note: "Sentence case, as stored, not iNaturalist's “Silverleaf Phacelia”. Hover for the common name.",
+    note: "Sentence case, as every common name is set here, whichever case its source wrote it in. Hover for the common name.",
   },
   {
     props: { rank: "family", scientificName: "Onagraceae", vernacular: "evening primrose family" },
@@ -248,8 +248,22 @@ export function DesignNames() {
           <strong>One case rule.</strong> There is no code for common names, and guides disagree: many scientific
           journals lower-case them, while the APGA guide capitalises each word so they read as names. What matters is
           one rule everywhere. Beeline sets them in sentence case, with capitals only for proper nouns (&ldquo;Oregon
-          grape&rdquo;), so &ldquo;silverleaf phacelia&rdquo;, not &ldquo;Silverleaf Phacelia&rdquo;. They are common
-          nouns. iNaturalist&rsquo;s title case is to be converted (beeline-rfkj.9); until then, iNaturalist&rsquo;s names show in its own title case.
+          grape&rdquo;), so &ldquo;western water hemlock&rdquo;, not &ldquo;Western Water Hemlock&rdquo;. They are common
+          nouns. iNaturalist&rsquo;s names, which it writes in title case or in sentence case without any rule we can
+          rely on, and the old plant list&rsquo;s own names, some of which are in title case too, are converted when the
+          name is chosen (beeline-rfkj.9): every word loses its capital, <em>including the first word</em>, unless it
+          is a proper noun. That is a word or a phrase in a hand-kept file, <code>ingest/plant-proper-nouns.csv</code> (&ldquo;Oregon&rdquo;,
+          &ldquo;Great Basin&rdquo;, &ldquo;Rocky Mountain&rdquo;), the abbreviation St or Mt, or a possessive:{" "}
+          <strong>every possessive keeps its capital</strong> (&ldquo;Nuttall&rsquo;s&rdquo;,
+          &ldquo;Douglas&rsquo;&rdquo;), because nearly all are eponyms, unless the file lowers it (&ldquo;shepherd&rsquo;s
+          purse&rdquo;). Nothing is learned from the data, so a diff of the file is what changes a name. The words of a
+          hyphenated name are judged one at a time (&ldquo;Douglas-fir&rdquo;, &ldquo;love-in-a-mist&rdquo;), so a
+          place with a hyphen inside it, such as Trans-Pecos, is kept only as a phrase of that file. A place written as
+          several words is a phrase in the same file (&ldquo;Rocky Mountain maple&rdquo;); a plural is a row of its own. An eponym that iNaturalist
+          wrote in lower case gets its capital back from the file (&ldquo;Bebb&rsquo;s willow&rdquo;). The names of
+          section, subsection, subgenus, series and subseries are scientific names and are left as written. To fix a
+          name that shows a wrong capital, add a row to the file with a reason; it takes effect at the next deploy&rsquo;s
+          boot.
         </li>
       </ul>
 

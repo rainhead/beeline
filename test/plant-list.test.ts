@@ -151,7 +151,7 @@ describe("loading the list", () => {
     const path = await listFile(text);
     await loadPlantList(conn, { path });
     const [[stored]] = (await rows("SELECT content_hash FROM plant_list")) as [[string]];
-    expect(stored).toBe(plantListHash(Buffer.from(text)));
+    expect(stored).toBe(plantListHash(Buffer.from(text), readFileSync("ingest/plant-proper-nouns.csv")));
     expect(stored).not.toBe(createHash("sha256").update(text).digest("hex"));
     // A store loaded by a loader that hashed the bytes alone is loaded again, though the file is the same.
     await conn.run("UPDATE plant_list SET content_hash = $1", [createHash("sha256").update(text).digest("hex")]);
@@ -952,16 +952,16 @@ describe("common names", () => {
     ]);
     await cache([
       [51884, "Urtica dioica", "species", "stinging nettle (iNaturalist)"],
-      [1074432, "Urtica dioica gracilis", "subspecies", "California nettle (iNaturalist)"],
+      [1074432, "Urtica dioica gracilis", "subspecies", "coast nettle (iNaturalist)"],
     ]);
-    expect(await nameOf(1074432)).toEqual(["Northwest nettle", "list", "Urtica dioica gracilis", 0]);
+    expect(await nameOf(1074432)).toEqual(["northwest nettle", "list", "Urtica dioica gracilis", 0]);
     expect(await nameOf(51884)).toEqual(["stinging nettle", "list", "Urtica dioica", 0]);
   });
 
   test("a subspecies with no entry of its own takes iNaturalist's name for it, not its species' entry", async () => {
     await resolveAll([["Urtica dioica", "Species", "stinging nettle"]]);
-    await cache([[51884, "Urtica dioica", "species", null], [1074432, "Urtica dioica gracilis", "subspecies", "California nettle (iNaturalist)"]]);
-    expect(await nameOf(1074432)).toEqual(["California nettle (iNaturalist)", "inaturalist", null, null]);
+    await cache([[51884, "Urtica dioica", "species", null], [1074432, "Urtica dioica gracilis", "subspecies", "coast nettle (iNaturalist)"]]);
+    expect(await nameOf(1074432)).toEqual(["coast nettle (iNaturalist)", "inaturalist", null, null]);
   });
 
   test("a subspecies with no entry of its own and no iNaturalist name takes its species' entry, one step up", async () => {
@@ -993,7 +993,7 @@ describe("common names", () => {
     // entry of its own under it takes iNaturalist's name and not 'Abelia Species'. Genus Abelia is ambiguous
     // in the real answer (a retired genus points elsewhere), so the entry has no taxon in any case.
     expect(await rows("SELECT common_name FROM plant_list_entry_common_name ORDER BY 1")).toEqual([["glossy abelia"], ["grass"]]);
-    await cache([[553157, "Abelia chinensis", "species", "Chinese abelia (iNaturalist)", [553157, 155567]]]);
+    await cache([[553157, "Abelia chinensis", "species", "glossy abelia (iNaturalist)", [553157, 155567]]]);
     expect(await nameOf(553157)).toEqual(["glossy abelia", "list", "Abelia chinensis", 0]);
   });
 

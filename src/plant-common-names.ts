@@ -2,8 +2,12 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 
 /**
  * Copy the rows of `plant_taxon_common_name` (schema/114) into
- * `plant_common_name_cache` (schema/068), whole, in one transaction, and say
- * how many taxa have a name.
+ * `plant_common_name_cache` (schema/068), and those of `host_name_taxon`
+ * (schema/116) into `host_name_taxon_cache`, whole, in one transaction, and
+ * say how many taxa have a name. Both copies follow the plant list, the name
+ * lookups and the taxon cache; the second also follows the host names of
+ * samples with no host id, which only legacy promotion writes, so it runs
+ * this too.
  *
  * A page reads one taxon's name in a lookup there, where working the name out
  * from the plant list takes about 20 milliseconds (schema/068 says why). The
@@ -21,6 +25,10 @@ export async function refreshPlantCommonNames(conn: DuckDBConnection): Promise<n
       `INSERT INTO plant_common_name_cache (inat_taxon_id, common_name, source, list_entry, list_entry_depth)
        SELECT inat_taxon_id, common_name, source, list_entry, list_entry_depth FROM plant_taxon_common_name`,
     );
+    // The taxon each host name comes to (beeline-rfkj.5): the same inputs change it, so the same writers
+    // refresh it, in the same swap.
+    await conn.run("DELETE FROM host_name_taxon_cache");
+    await conn.run("INSERT INTO host_name_taxon_cache (host_name, inat_taxon_id) SELECT host_name, inat_taxon_id FROM host_name_taxon");
     const [[n]] = (await (await conn.run("SELECT count(*) FROM plant_common_name_cache")).getRows()) as [[bigint]];
     await conn.run("COMMIT");
     return Number(n);

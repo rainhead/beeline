@@ -417,6 +417,38 @@ export interface InatTaxonCurrentNamedView extends InatTaxonCurrentView {
 /** A sample's host (inat_taxon_id is the stored id), resolved to its current taxon when read (schema/116); one row for each sample whose host id is cached. */
 export interface SampleHostView extends InatTaxonCurrentNamedView {
   sample_id: BigIntCol;
+  /** id: the sample's own host id; name: no id, found through its host name's lookup (beeline-rfkj.5). */
+  resolved_by: "id" | "name";
+}
+
+/** schema/068: the taxon each host name of a sample with no host id resolves to, copied from host_name_taxon. */
+export interface HostNameTaxonCacheTable {
+  host_name: string;
+  inat_taxon_id: BigIntCol;
+  refreshed_at: Generated<Date>;
+}
+
+/** schema/116: the definition host_name_taxon_cache copies. */
+export interface HostNameTaxonView {
+  host_name: string;
+  inat_taxon_id: BigIntCol;
+}
+
+/** schema/116: host names where the copy and its definition part. */
+export interface HostNameTaxonStaleView {
+  host_name: string;
+}
+
+/** schema/116: samples with a host name and no id that are not read through a vascular plant, and why. */
+export interface SampleHostUnresolvedView {
+  sample_id: BigIntCol;
+  host_name: string;
+  name_key: string | null;
+  expected_rank: string | null;
+  outcome: PlantNameOutcome | "matched by another name" | "not a vascular plant" | "no name";
+  candidate_taxon_id: BigIntCol | null;
+  season: number;
+  settled: boolean;
 }
 
 /** What iNaturalist has done with a stored taxon (schema/113): see inat_taxon_current. */
@@ -1841,6 +1873,10 @@ export interface Database {
   plant_common_name_stale: PlantCommonNameStaleView;
   inat_taxon_current_named: InatTaxonCurrentNamedView;
   sample_host: SampleHostView;
+  host_name_taxon_cache: HostNameTaxonCacheTable;
+  host_name_taxon: HostNameTaxonView;
+  host_name_taxon_stale: HostNameTaxonStaleView;
+  sample_host_unresolved: SampleHostUnresolvedView;
   inat_taxon_recheck: InatTaxonRecheckView;
   inat_taxon_stalest: InatTaxonStalestView;
   animal_ecdysis: AnimalEcdysisView;

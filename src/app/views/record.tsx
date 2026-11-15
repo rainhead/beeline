@@ -16,6 +16,7 @@ import {
   type SpecimenDetail,
 } from "../record.js";
 import { programHref } from "../programs.js";
+import { plantNameKey } from "../../plant-name-key.js";
 import type { ListedFlag } from "../listings.js";
 import {
   Absent,
@@ -293,7 +294,8 @@ export function SampleFacts({
 }
 
 /**
- * The floral host (beeline-rfkj.3): the name as observed, which is what the
+ * The floral host (beeline-rfkj.3), found by its id or, with none, by its
+ * name (beeline-rfkj.5): the name as observed, which is what the
  * sample stores, and under it what iNaturalist says about the taxon today.
  *
  * In this order: the name as observed, with the common name in its tooltip
@@ -301,7 +303,9 @@ export function SampleFacts({
  * taxon's); then "now
  * X on iNaturalist" wherever X, the current name, differs from it (not only
  * where the taxon was replaced: a taxon can be renamed under the same id, and
- * a replacement can carry the same name); and, where there is no current
+ * a replacement can carry the same name), compared as the name lookups
+ * compare names (plantNameKey), so a hybrid written without its sign, a line
+ * break or a "var." is no new name; and, where there is no current
  * taxon, that the name was split or is no longer used. Every line but the
  * first is absent while the taxon is not in the cache, or is not yet known
  * (pending) or not found (absent), and the page then reads as it did before.
@@ -314,7 +318,7 @@ function HostValue({ sample, s }: { sample: SampleDetail; s: Messages["record"][
   // unrecoverable.
   const observed = sample.host_name_as_observed ?? "";
   const current = sample.host_current_name;
-  const changed = current !== null && observed !== "" && current.trim().toLowerCase() !== observed.trim().toLowerCase();
+  const changed = current !== null && observed !== "" && plantNameKey(current) !== plantNameKey(observed);
   return (
     <>
       <TaxonName rank={sample.host_rank ?? ""} scientificName={observed} vernacular={sample.host_common_name} />

@@ -466,8 +466,18 @@ describe("the sample page", () => {
 describe("the floral host on the sample page", () => {
   type Taxon = { id: number; name: string; rank: string; active: boolean; parent?: number; replacedBy?: number[]; oregon?: string | null };
 
-  async function withHost(host: { id: number | null; name: string; rank: string }, taxa: Taxon[], listed: Array<[scientific: string, common: string, id: number]> = []) {
+  async function withHost(
+    host: { id: number | null; name: string; rank: string },
+    taxa: Taxon[],
+    listed: Array<[scientific: string, common: string, id: number]> = [],
+    /** Lookups of a host's name, as the plant names job stores iNaturalist's answer: the normalised name came to the hit, by its own name. */
+    lookups: Array<[nameKey: string, id: number, hitName: string]> = [],
+  ) {
     const t = await recordApp();
+    for (const [key, id, hitName] of lookups) {
+      await t.conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ($1, 'species', 1, true)", [key]);
+      await t.conn.run("INSERT INTO plant_name_lookup_hit VALUES ($1, 'species', $2, $3, 'species', true, $3)", [key, id, hitName]);
+    }
     const byId = new Map(taxa.map((x) => [x.id, x]));
     for (const x of taxa) {
       await t.conn.run(
@@ -486,11 +496,13 @@ describe("the floral host on the sample page", () => {
       await t.conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ($1, 'species', 1, true)", [scientific.toLowerCase()]);
       await t.conn.run("INSERT INTO plant_name_lookup_hit VALUES ($1, 'species', $2, $3, 'species', true, $3)", [scientific.toLowerCase(), id, scientific]);
     }
-    await refreshPlantCommonNames(t.conn);
     await t.conn.run(
       `UPDATE sample SET host_inat_taxon_id = ${host.id === null ? "NULL" : host.id}, host_name_as_observed = '${host.name}', host_rank = '${host.rank}'
        WHERE entity_id = ${t.aliceSample}`,
     );
+    // After the host is set: a host with a name and no id is read through the copy of the taxon its name
+    // comes to, which the refresh fills from the samples' host names as they stand (beeline-rfkj.5).
+    await refreshPlantCommonNames(t.conn);
     return get(t.app, `/samples/${t.aliceSample}`);
   }
 
@@ -552,6 +564,36 @@ describe("the floral host on the sample page", () => {
     expect(firstLine(row)).toBe(NAMED("<i>Alpha</i> <i>oldname</i>", "listed beta"));
     expect(seen(row)).not.toContain("listed beta");
     expect(lines(row)).toEqual([NOW("<i>Beta</i> <i>ascendens</i>")]);
+  });
+
+  describe("a host with a name and no id, read through the taxon its name comes to (beeline-rfkj.5)", () => {
+    it("has its common name in the tooltip, like a host with an id", async () => {
+      const row = hostRow(
+        await withHost({ id: null, name: "Alpha one", rank: "species" }, [...lineage, species(1, "Alpha one", alpha, { oregon: "alpha plant" })], [], [["alpha one", 1, "Alpha one"]]),
+      );
+      expect(firstLine(row)).toBe(NAMED("<i>Alpha</i> <i>one</i>", "alpha plant"));
+      expect(lines(row)).toEqual([]);
+    });
+
+    it("is not renamed by iNaturalist's spelling of the same name: a hybrid sign, a line break, a case", async () => {
+      // Old Beeline writes a hybrid without its sign, as its plant list does (Mentha piperita for Mentha × piperita).
+      const taxa = [...lineage, species(2, "Alpha × hybrida", alpha, { oregon: "hybrid alpha" })];
+      const row = hostRow(await withHost({ id: null, name: "alpha  Hybrida", rank: "species" }, taxa, [], [["alpha hybrida", 2, "Alpha × hybrida"]]));
+      expect(firstLine(row)).toBe(NAMED("<i>alpha</i> <i>Hybrida</i>", "hybrid alpha"));
+      expect(lines(row)).toEqual([]);
+    });
+
+    it("says what iNaturalist calls it now when the taxon its name came to has since been replaced", async () => {
+      const taxa = [...lineage, species(79294, "Beta ascendens", beta), species(322554, "Alpha oldname", alpha, { active: false, replacedBy: [79294] })];
+      const row = hostRow(await withHost({ id: null, name: "Alpha oldname", rank: "species" }, taxa, [], [["alpha oldname", 322554, "Alpha oldname"]]));
+      expect(lines(row)).toEqual([NOW("<i>Beta</i> <i>ascendens</i>")]);
+    });
+
+    it("shows the name alone where the name matched no taxon", async () => {
+      const row = hostRow(await withHost({ id: null, name: "Alpha unknown", rank: "species" }, [...lineage], [], [["alpha unknown", 999, "Alpha other"]]));
+      expect(firstLine(row)).toBe(NAME("<i>Alpha</i> <i>unknown</i>"));
+      expect(lines(row)).toEqual([]);
+    });
   });
 
   it("sets the current name by the current taxon's rank, not the stored one's", async () => {

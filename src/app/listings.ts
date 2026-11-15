@@ -465,6 +465,8 @@ export interface SampleRow {
   host_name: string | null;
   host_rank: string | null;
   host_inat_taxon_id: bigint | null;
+  /** For a host with no id, the taxon its name comes to (host_name_taxon_cache); never published. */
+  host_name_taxon_id: bigint | null;
   /** What iNaturalist calls the host now, its family and its common name (HostNames); null where it has none. */
   host_current_name: string | null;
   host_family: string | null;
@@ -545,6 +547,7 @@ export interface SpecimenRow {
   host_name: string | null;
   host_rank: string | null;
   host_inat_taxon_id: bigint | null;
+  host_name_taxon_id: bigint | null;
   host_current_name: string | null;
   host_family: string | null;
   host_common_name: string | null;
@@ -654,16 +657,31 @@ const like = (term: string) => `%${term.toLowerCase()}%`;
  * taxon ids they belong to, so that a host that was replaced is found by the
  * name it has now and by its current taxon's common name. A split, retired or
  * pending host has neither, and so is found only by the name as observed,
- * which is why that one stays in the filter and is not replaced by them.
+ * which is why that one stays in the filter and is not replaced by them. A
+ * host with a name and no id answers through the taxon its name comes to
+ * (hostNameTaxon), as it does on the page.
  */
 const hostMatches = (term: string) =>
   sql<boolean>`(lower(s.host_name_as_observed) LIKE ${like(term)}
-    OR s.host_inat_taxon_id IN (SELECT h.inat_taxon_id FROM inat_taxon_current_named h
+    OR coalesce(s.host_inat_taxon_id, ${hostNameTaxon}) IN (SELECT h.inat_taxon_id FROM inat_taxon_current_named h
                                 WHERE lower(h.current_name) LIKE ${like(term)} OR lower(h.common_name) LIKE ${like(term)}))`;
+
+/**
+ * For a sample with a host name and no host id, the taxon its name comes to
+ * (beeline-rfkj.5): one lookup in host_name_taxon_cache by the name exactly as
+ * the sample holds it. NULL for a sample with an id, whose id is its host, and
+ * for a name that does not resolve. Carried beside the id, never in place of
+ * it: hostInatTaxonId in the downloads is the id the sample holds, its
+ * identification on iNaturalist, so a host found by name has none there, and
+ * only its current name, family and common name are filled.
+ */
+const hostNameTaxon = sql<bigint | null>`(SELECT hc.inat_taxon_id FROM host_name_taxon_cache hc
+  WHERE s.host_inat_taxon_id IS NULL AND hc.host_name = s.host_name_as_observed)`;
 
 /** What a listing says about a row's host beyond the name as observed. */
 interface HostNames {
   host_inat_taxon_id: bigint | null;
+  host_name_taxon_id: bigint | null;
   host_current_name: string | null;
   host_family: string | null;
   host_common_name: string | null;
@@ -714,16 +732,24 @@ export const hostNamesOnce = (db: Kysely<Database>): (() => Promise<HostNameMap>
  * which resolves the whole cache whatever it is asked for (about 19
  * milliseconds); a page rarely has one. `all` is for the API, which also gives
  * the current name and family, and reads the view for the hosts on the page.
+ * A host with no id is named through the taxon its name comes to
+ * (host_name_taxon_id) in each case, as the record page names it.
  * A {@link HostNameMap} is for a download: no read at all, the names having
  * been read once for the whole file.
  */
+/** The taxon a row's host is read through: its id, or, with none, the taxon its name comes to. */
+const hostTaxon = (r: HostNames): bigint | null => {
+  const id = r.host_inat_taxon_id ?? r.host_name_taxon_id;
+  return id === null ? null : BigInt(id);
+};
+
 async function nameHosts(db: Kysely<Database>, rows: HostNames[], detail: "common" | "all" | HostNameMap): Promise<void> {
   let byId: HostNameMap;
   if (detail instanceof Map) {
     byId = detail;
   } else {
     byId = new Map();
-    const ids = [...new Set(rows.flatMap((r) => (r.host_inat_taxon_id === null ? [] : [BigInt(r.host_inat_taxon_id)])))];
+    const ids = [...new Set(rows.flatMap((r) => (hostTaxon(r) === null ? [] : [hostTaxon(r)!])))];
     if (ids.length > 0) {
       let viaView = ids;
       if (detail === "common") {
@@ -753,7 +779,8 @@ async function nameHosts(db: Kysely<Database>, rows: HostNames[], detail: "commo
     }
   }
   for (const r of rows) {
-    const h = r.host_inat_taxon_id === null ? undefined : byId.get(BigInt(r.host_inat_taxon_id));
+    const id = hostTaxon(r);
+    const h = id === null ? undefined : byId.get(id);
     r.host_current_name = h?.name ?? null;
     r.host_family = h?.family ?? null;
     r.host_common_name = h?.common ?? null;
@@ -1305,6 +1332,7 @@ export async function listSamples(
         "s.host_name_as_observed as host_name",
         "s.host_rank",
         "s.host_inat_taxon_id",
+        hostNameTaxon.as("host_name_taxon_id"),
         located(hidden, sql<number | null>`loc.latitude`).as("latitude"),
         located(hidden, sql<number | null>`loc.longitude`).as("longitude"),
         located(hidden, sql<number | null>`loc.coordinate_uncertainty_m`).as("coordinate_uncertainty_m"),
@@ -1537,6 +1565,7 @@ export async function listSpecimens(
         "s.host_name_as_observed as host_name",
         "s.host_rank",
         "s.host_inat_taxon_id",
+        hostNameTaxon.as("host_name_taxon_id"),
         "an.rank as taxon_rank",
         "an.scientific_name",
         "an.authorship",

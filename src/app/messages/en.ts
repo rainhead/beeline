@@ -1186,6 +1186,7 @@ export const en = {
           future: "Collecting cannot end on a day that has not come yet.",
           start_future: "Collecting cannot start on a day that has not come yet.",
           start_observation: "This sample's start date comes from its iNaturalist observation, so it is corrected there.",
+          method_required: "A trap sample entered in Beeline needs its method, as its own form does.",
         },
         noOldRecords: "Old Beeline holds no records of this sample and it was not entered in Beeline, so it cannot be corrected here.",
         conflict: "Someone changed this sample's method or dates after you opened the form. Reload the page to see what they saved, then make your correction again.",

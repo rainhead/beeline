@@ -351,6 +351,11 @@ describe("staff correcting how a sample from the old Beeline was collected", { t
       // A new method keeps the trap count, as the trap form writes it.
       await post(app, `/samples/${entered}/method`, { protocol: "pan trap", date_start: start, date_end: "" });
       expect(await rows(conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${entered}`)).toEqual([["pan trap", "6 pan traps"]]);
+      // And a blank method is refused, so the count is never lost.
+      const blank = await post(app, `/samples/${entered}/method`, { protocol: "", date_start: start, date_end: "" });
+      expect(blank.status).toBe(400);
+      expect(await blank.text()).toBe(t.problems.method_required);
+      expect(await rows(conn, `SELECT protocol, sampling_effort FROM sample WHERE entity_id = ${entered}`)).toEqual([["pan trap", "6 pan traps"]]);
     });
   });
 

@@ -65,7 +65,7 @@ export interface MethodInput {
 export type MethodResult =
   | { outcome: "saved" }
   | { outcome: "unchanged" }
-  | { outcome: "invalid"; problem: "date" | "start_date" | "before_start" | "future" | "start_future" | "start_observation" }
+  | { outcome: "invalid"; problem: "date" | "start_date" | "before_start" | "future" | "start_future" | "start_observation" | "method_required" }
   /** Someone changed a field this form touched since it was opened. */
   | { outcome: "conflict" }
   /** No old record behind this sample: nothing durable to name. */
@@ -158,6 +158,9 @@ export async function setSampleMethod(
   if (!oldRecords && !entered) return { outcome: "no_old_records" };
 
   const protocol = protocolTouched ? protocolIn : liveProtocol;
+  // The trap form never makes a trap sample without its method, and the
+  // effort it writes holds the trap count beside it, so neither is lost here.
+  if (entered && protocol === "") return { outcome: "invalid", problem: "method_required" };
   // A trap sample entered in Beeline stays one; an old sample's kind follows its end date.
   const kind: "net" | "trap" = entered ? "trap" : dateEnd === "" ? "net" : "trap";
   const end = dateEnd === "" ? start : dateEnd;
@@ -179,7 +182,7 @@ export async function setSampleMethod(
     if (protocolChanged) {
       const current = await db.selectFrom("sample").where("entity_id", "=", sampleId).select("sampling_effort").executeTakeFirst();
       const count = trapCountOf(current?.sampling_effort ?? null);
-      if (count !== null) effort = { sampling_effort: protocol === "" ? null : trapEffort(count, protocol) };
+      if (count !== null) effort = { sampling_effort: trapEffort(count, protocol) };
     }
     await db.updateTable("sample").set({ ...update, ...effort }).where("entity_id", "=", sampleId).execute();
     return { outcome: "saved" };

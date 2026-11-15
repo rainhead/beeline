@@ -43,10 +43,11 @@ import { thenRefreshPlantCommonNames } from "./plant-common-names.js";
  * 403, 404 or 410 says something about the client or the endpoint, not about
  * the name, and would come back for every name alike): nothing is recorded,
  * the name keeps any answer it had, and it is asked again next run, the step
- * being marked failed. A 429 stops the run. The worklist is in name order and
- * three transient failures in a row stop the run, so names that fail at the
- * head of the alphabet hold back the rest until iNaturalist answers them;
- * none does today.
+ * being marked failed. A 429 stops the run. The worklist puts the plant
+ * list's names first, so a new entry of the curated list is not kept waiting
+ * behind the hosts' names, then goes in name order; three transient failures
+ * in a row stop the run, so names that fail at the head of the worklist hold
+ * back the rest until iNaturalist answers them; none does today.
  *
  * PACE AND BUDGET. A request about every 1.1 seconds, no token, as
  * src/fetch-inat-taxa.ts does; measured on 2026-11-14, 1,404 names took 29
@@ -155,7 +156,7 @@ async function fetchPlantNamesUnrefreshed(
   const cap = opts.maxRequests ?? Infinity;
 
   const todo = (
-    (await (await conn.run(`${UNLOOKED_BY_SOURCE} ORDER BY name_key, expected_rank`)).getRows()) as Array<
+    (await (await conn.run(`${UNLOOKED_BY_SOURCE} ORDER BY on_list DESC, name_key, expected_rank`)).getRows()) as Array<
       [string, string, boolean]
     >
   ).map(([nameKey, expectedRank, onList]) => ({ nameKey, expectedRank, onList }));

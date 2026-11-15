@@ -228,8 +228,8 @@ export async function refreshPlantNames(
     parts.push(
       r.unlooked === 0
         ? "every plant name answered"
-        : `${r.stored} of ${r.unlooked} plant names answered ` +
-            `(${r.unlookedOnList} on the plant list, ${r.unlookedHostsOnly} only samples' hosts)` +
+        : `${r.stored} plant names answered of the ${r.unlooked} waiting ` +
+            `(of those waiting, ${r.unlookedOnList} on the plant list and ${r.unlookedHostsOnly} only samples' hosts)` +
             (r.refused > 0 ? `; ${r.refused} recorded as could not be asked (iNaturalist refused the name)` : "") +
             (r.errors.length > 0 ? `; ${r.errors.length} request error(s), the first: ${r.errors[0]}` : "") +
             (r.stoppedEarly ? "; the rest wait for the next run" : ""),

@@ -471,6 +471,33 @@ describe("the hosts of samples that have a name and no iNaturalist id (beeline-r
     expect(r["aster chilensis"]).toEqual(["matched", 56861, false]);
   });
 
+  test("a host whose sample gains an id leaves the worklist, and its lookup stays, still feeding the taxon cache", async () => {
+    await host("Agastache urticifolia", "species");
+    await fetchPlantNames(conn, { fetchImpl: api(), requestDelayMs: 0 });
+    await conn.run("UPDATE sample SET host_inat_taxon_id = 63316");
+    expect(await rows("SELECT count(*) FROM plant_name_shape")).toEqual([[0]]);
+    expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
+    expect(await rows("SELECT name_key FROM plant_name_lookup")).toEqual([["agastache urticifolia"]]);
+    expect(await rows("SELECT count(*) FROM inat_taxon_uncached WHERE inat_taxon_id = 63316")).toEqual([[1]]);
+  });
+
+  test("a host name iNaturalist refused is asked again after 30 days, as a list name is", async () => {
+    await host("Agastache urticifolia", "species");
+    const refusing = (async () => new Response("{}", { status: 422 })) as typeof fetch;
+    expect(await fetchPlantNames(conn, { fetchImpl: refusing, requestDelayMs: 0 })).toMatchObject({ refused: 1 });
+    expect((await resolution())["agastache urticifolia"]).toEqual(["could not be asked", null, null]);
+    expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[0]]);
+    await conn.run("UPDATE plant_name_lookup SET looked_up_at = now() - INTERVAL 31 DAY");
+    expect(await rows("SELECT name_key FROM plant_name_unlooked")).toEqual([["agastache urticifolia"]]);
+  });
+
+  test("the plant list's names are asked before the hosts', whatever the alphabet says", async () => {
+    await host("Agastache urticifolia", "species");
+    await addEntries(["Urtica dioica", "Species", null]);
+    await fetchPlantNames(conn, { fetchImpl: api(), requestDelayMs: 0 });
+    expect(asked.map((u) => new URL(u).searchParams.get("q"))).toEqual(["urtica dioica", "agastache urticifolia"]);
+  });
+
   test("the normalisation changes no name of the real list: collapsing all whitespace and the mangled sign touch none of its keys", async () => {
     await loadPlantList(conn);
     // The rule as it was before beeline-rfkj.5, written out to compare against.
@@ -601,7 +628,7 @@ describe("looking names up", () => {
         return fn();
       },
     });
-    expect(detail).toContain("1 of 1 plant names answered (1 on the plant list, 0 only samples' hosts)");
+    expect(detail).toContain("1 plant names answered of the 1 waiting (of those waiting, 1 on the plant list and 0 only samples' hosts)");
     expect(await rows("SELECT count(*) FROM plant_name_lookup")).toEqual([[1]]);
     // The taxa read went through the same fetch, and a taxon the name led to is in the cache.
     expect(await rows("SELECT name FROM inat_taxon WHERE inat_taxon_id = 51884")).toEqual([["Taxon 51884"]]);
@@ -691,7 +718,7 @@ describe("stopping early, dead ends, paging and ranks (synthetic answers)", () =
     const hang = (async (_input: string | URL | Request, init?: RequestInit) =>
       new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener("abort", () => reject(new Error("aborted"))))) as typeof fetch;
     const detail = await refreshPlantNames(conn, { fetchImpl: hang, requestDelayMs: 0, deadlineMs: 20 });
-    expect(detail).toContain("0 of 1 plant names answered");
+    expect(detail).toContain("0 plant names answered of the 1 waiting");
     expect(detail).toContain("the rest wait for the next run");
     expect(await rows("SELECT count(*) FROM plant_name_unlooked")).toEqual([[1]]);
   });

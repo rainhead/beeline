@@ -54,6 +54,13 @@ COMMENT ON VIEW plant_name_wanted IS 'Every name to be matched to an iNaturalist
 -- hybrid sign is not handled: neither the list nor a host name has one
 -- (checked on 2026-11-13 and 2026-11-15).
 --
+-- The signs are replaced before lower() so that no engine's case folding of
+-- 'Ã' decides whether the mangled sign is found (a C-locale Postgres leaves it
+-- as it is). [[:space:]] is ASCII whitespace in DuckDB (RE2) and may also take
+-- a no-break space in Postgres, depending on the locale; no name in the list
+-- or the hosts holds any whitespace outside ASCII (2026-11-15), so the two
+-- engines agree on every name there is.
+--
 -- A doubtful or open name is not trimmed: 'Salix sp.', 'Salix spp.', 'Salix
 -- cf. scouleri' and 'Salix?' keep their tails, and so never equal the name of
 -- a hit (plant_name_hit_current) and come to no match, for a person to decide
@@ -64,7 +71,7 @@ CREATE VIEW plant_name_normal AS
 SELECT raw_name,
        trim(regexp_replace(
          regexp_replace(
-           regexp_replace(lower(raw_name), '×|ã—', ' ', 'g'),
+           lower(regexp_replace(raw_name, '×|Ã—', ' ', 'g')),
            '(^|[[:space:]])(var|ssp|subsp)\.', ' ', 'g'),
          '[[:space:]]+', ' ', 'g')) AS name_key
 FROM (

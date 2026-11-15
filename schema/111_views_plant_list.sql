@@ -48,6 +48,13 @@ COMMENT ON VIEW plant_name_wanted IS 'Every name to be matched to an iNaturalist
 -- hybrid sign is not handled: neither the list nor a host name has one
 -- (checked on 2026-11-13 and 2026-11-15).
 --
+-- The signs are replaced before lower() so that no engine's case folding of
+-- 'Ã' decides whether the mangled sign is found (a C-locale Postgres leaves it
+-- as it is). [[:space:]] is ASCII whitespace in DuckDB (RE2) and may also take
+-- a no-break space in Postgres, depending on the locale; no name in the list
+-- or the hosts holds any whitespace outside ASCII (2026-11-15), so the two
+-- engines agree on every name there is.
+--
 -- A doubtful or open name is not trimmed: 'Salix sp.', 'Salix spp.', 'Salix
 -- cf. scouleri' and 'Salix?' keep their tails, and so never equal the name of
 -- a hit (plant_name_hit_current) and come to no match, for a person to decide
@@ -58,7 +65,7 @@ CREATE VIEW plant_name_normal AS
 SELECT raw_name,
        trim(regexp_replace(
          regexp_replace(
-           regexp_replace(lower(raw_name), '×|ã—', ' ', 'g'),
+           lower(regexp_replace(raw_name, '×|Ã—', ' ', 'g')),
            '(^|[[:space:]])(var|ssp|subsp)\.', ' ', 'g'),
          '[[:space:]]+', ' ', 'g')) AS name_key
 FROM (
@@ -144,12 +151,17 @@ COMMENT ON VIEW plant_list_entry_name IS 'Each entry''s normalised name and the 
 -- list's current names unmatched). The name is what the taxon is called
 -- today; matched_term is what makes an older name findable (Aster chilensis,
 -- now Symphyotrichum chilense). matched_term is also where iNaturalist puts a
--- common name that matched, so it counts only when it is written as a
--- scientific name, with a capital first letter. Of the hits in the 1,404
--- lookups of 2026-11-14, 35 have a lower-case matched_term and none had been
--- taken for a name, so this guards against a case not yet seen, and the capital letter is the cheapest test
--- that is true of every scientific name (the case is read here, not in
--- plant_name_normal, which ignores it on purpose).
+-- common name that matched, so it counts only when it begins with a capital
+-- letter, as every scientific name does (the case is read here, not in
+-- plant_name_normal, which ignores it on purpose). That keeps out a common
+-- name written in lower case (35 of the hits in the 1,404 lookups of
+-- 2026-11-14), but NOT one iNaturalist capitalises, which is most of them:
+-- asked for 'oregon grape', it returned Berberis aquifolium with matched_term
+-- 'Oregon grape' (2026-11-15). The list's names are scientific, so this never
+-- mattered for them; a host name was typed by a volunteer, and a common name
+-- typed as a host can match this way. plant_name_resolution.by_own_name says
+-- when a name's taxon came only through matched_term, so such a match can be
+-- told apart from one through the taxon's own name (beeline-rfkj.5).
 -- A hit that iNaturalist has retired stands for the taxa it was replaced by;
 -- an active one stands for itself. This is where a replacement chain is read
 -- from the lookup's own answer, one step. A replacement that has itself been

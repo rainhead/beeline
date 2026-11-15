@@ -287,7 +287,10 @@ describe("the list's own names are set in sentence case too", () => {
   test("the list's possessives follow the same rule", async () => {
     await noun("Shepherd's", "lower");
     expect(await listed("Shepherd's Purse")).toBe("shepherd's purse");
+    // With no row, Queen is the first word and a common noun; the real file keeps the phrase.
     expect(await listed("Queen Anne's lace")).toBe("queen Anne's lace");
+    await noun("Queen Anne's", "keep", "a person's name and title");
+    expect(await listed("Queen Anne's lace")).toBe("Queen Anne's lace");
   });
 
   test("the name a taxon shows comes from the list, converted, and iNaturalist's is converted beside it", async () => {

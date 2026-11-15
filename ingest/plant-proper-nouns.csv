@@ -195,6 +195,7 @@ Portuguese,keep,"a nationality, region or people named as an adjective (American
 Puget Sound,keep,"a place of two words named in a plant's name (Santa Barbara ceanothus, Yolla Bolly bedstraw)"
 Pye,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
 Q,keep,"an initial or numeral that is part of the name (Q-tips, eupolypods I)"
+Queen Anne's,keep,"a person's name and title in a plant's name (Queen Anne's lace); a phrase, since queen alone is a common noun (snow queen)"
 Robert,keep,a proper noun the old plant list writes with a capital (herb Robert)
 Roberts,keep,"a person's name or title in a plant's name (Douglas-fir, creeping Jenny, Queen Anne's lace)"
 Rocky Mountain,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
@@ -243,6 +244,7 @@ Utah,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra 
 Van Houtte's,keep,"an eponym with a particle, Louis van Houtte (Van Houtte's spirea)"
 Vancouver,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Vancouver Island,keep,"a river, valley, island or county named in a plant's name (Columbia River onion, Vancouver Island beggarticks); the last word is a common noun elsewhere"
+Venus,keep,"a goddess named in a plant's name (Venus penstemon, Venus's looking-glass)"
 Virginia,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Wallowa,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Wanapum,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"

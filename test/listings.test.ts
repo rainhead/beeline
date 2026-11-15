@@ -24,6 +24,7 @@ import { strFromU8, unzipSync } from "fflate";
 import { specimenArchiveStream, type IdentificationRow } from "../src/app/dwc-archive.js";
 import { writeProgramArchives } from "../src/app/program-archives.js";
 import type { GovernancePaths } from "../src/program-governance.js";
+import { refreshPlantCommonNames } from "../src/plant-common-names.js";
 import { createMemoryDb, insertCleanSample, CURRENT_SEASON, rows, scratchPaths } from "./helpers.js";
 
 const unusedInat: InatClient = {
@@ -623,6 +624,163 @@ describe("the host plant column", () => {
     const all = await get(app, "/specimens?scope=all");
     expect(all).toContain("WABA0001");
     expect(all).not.toMatch(/<td><\/td>/);
+  });
+});
+
+describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
+  /** Stores one taxon with its lineage: itself at depth 0, then the parent's. */
+  async function taxon(
+    conn: Awaited<ReturnType<typeof createMemoryDb>>["conn"],
+    t: { id: number; name: string; rank: string; active: boolean; parent?: number; oregon?: string; replacedBy?: number[] },
+  ) {
+    await conn.run(
+      `INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, parent_id, is_active, preferred_common_name)
+       VALUES (${t.id}, '${t.name}', '${t.rank}', ${t.rank === "family" ? 30 : t.rank === "genus" ? 20 : 10}, ${t.parent ?? "NULL"}, ${t.active}, ${t.oregon === undefined ? "NULL" : `'${t.oregon}'`})`,
+    );
+    await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (${t.id}, ${t.id}, 0)`);
+    if (t.parent !== undefined) {
+      await conn.run(`INSERT INTO inat_taxon_ancestor SELECT ${t.id}, ancestor_id, depth + 1 FROM inat_taxon_ancestor WHERE inat_taxon_id = ${t.parent}`);
+    }
+    for (const r of t.replacedBy ?? []) await conn.run(`INSERT INTO inat_taxon_replacement VALUES (${t.id}, ${r})`);
+  }
+
+  /**
+   * A-1 observed under an older name of taxon 1; B-1 under taxon 2, which iNaturalist
+   * replaced with 3; B-2 under taxon 4, split into 5 and 6; C-1 under a name and no id;
+   * A-2 under no host at all.
+   */
+  async function hostApp(exports: Parameters<typeof listingApp>[1] = {}) {
+    const fx = await listingApp("staffer", exports);
+    const { conn } = fx;
+    await taxon(conn, { id: 100, name: "Familia alpha", rank: "family", active: true });
+    await taxon(conn, { id: 110, name: "Alpha", rank: "genus", active: true, parent: 100 });
+    await taxon(conn, { id: 1, name: "Alpha lanata", rank: "species", active: true, parent: 110, oregon: "woolly alpha" });
+    await taxon(conn, { id: 3, name: "Alpha novus", rank: "species", active: true, parent: 110, oregon: "new alpha" });
+    await taxon(conn, { id: 2, name: "Alpha vetus", rank: "species", active: false, parent: 110, replacedBy: [3] });
+    await taxon(conn, { id: 5, name: "Alpha five", rank: "species", active: true, parent: 110 });
+    await taxon(conn, { id: 6, name: "Alpha six", rank: "species", active: true, parent: 110 });
+    await taxon(conn, { id: 4, name: "Splitus", rank: "species", active: false, parent: 110, replacedBy: [5, 6] });
+    await refreshPlantCommonNames(conn);
+    const host = (sample: string, id: number | null, name: string | null) =>
+      conn.run(
+        `UPDATE sample SET host_inat_taxon_id = ${id ?? "NULL"}, host_name_as_observed = ${name === null ? "NULL" : `'${name}'`},
+                           host_rank = ${name === null ? "NULL" : "'species'"} WHERE sample_number = '${sample}'`,
+      );
+    await host("A-1", 1, "Alpha oldname");
+    await host("B-1", 2, "Alpha vetus");
+    await host("B-2", 4, "Splitus vetus");
+    await host("C-1", null, "Plain name");
+    return fx;
+  }
+  const numbers = (body: string) => [...new Set([...body.matchAll(/class="pill">([A-C]-\d)</g)].map((m) => m[1]!))].sort();
+  /** RFC 4180, enough for these files: quoted cells may hold commas and doubled quotes. */
+  const parseCsv = (text: string) => {
+    const out: string[][] = [];
+    let row: string[] = [];
+    let cell = "";
+    let quoted = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
+      if (quoted) {
+        if (ch === '"' && text[i + 1] === '"') (cell += '"', i++);
+        else if (ch === '"') quoted = false;
+        else cell += ch;
+      } else if (ch === '"') quoted = true;
+      else if (ch === ",") (row.push(cell), (cell = ""));
+      else if (ch === "\n") (row.push(cell), out.push(row), (row = []), (cell = ""));
+      else cell += ch;
+    }
+    if (cell !== "" || row.length > 0) (row.push(cell), out.push(row));
+    return out;
+  };
+
+  it("shows the common name after the scientific name, and none where there is none", async () => {
+    const { app } = await hostApp();
+    const body = await get(app, "/samples?scope=all");
+    expect(body).toMatch(/<i>Alpha<\/i> <i>oldname<\/i> <span class="taxon-vernacular">[^]*?woolly alpha<\/span>/);
+    // Named for the plant the host is now, though its row says Alpha vetus.
+    expect(body).toMatch(/<i>Alpha<\/i> <i>vetus<\/i> <span class="taxon-vernacular">[^]*?new alpha<\/span>/);
+    // A split, and a name with no id, have no common name.
+    expect(body).toMatch(/<i>Splitus<\/i> <i>vetus<\/i><\/span><\/td>/);
+    expect(body).toMatch(/<i>Plain<\/i> <i>name<\/i><\/span><\/td>/);
+    const specimens = await get(app, "/specimens?scope=all");
+    expect(specimens).toContain("woolly alpha");
+  });
+
+  it("names a host as the view does, including one iNaturalist has said is absent, which has no current taxon", async () => {
+    const { app, conn } = await hostApp();
+    // Taxon 1 stays active in the cache but iNaturalist answered without it: standing absent, no name.
+    await conn.run(`INSERT INTO inat_taxon_absent (inat_taxon_id) VALUES (1)`);
+    const body = await get(app, "/samples?scope=all");
+    expect(body).not.toContain("woolly alpha");
+    expect(body).toContain("new alpha");
+    // The download reads the view for every host, and agrees.
+    const csv = await (await app.request("/samples.csv?scope=all")).text();
+    expect(csv).not.toContain("woolly alpha");
+  });
+
+  it("finds a host by its common name, by what iNaturalist calls it now, or by the name as observed, in any case", async () => {
+    const { app } = await hostApp();
+    const find = async (term: string, listing = "samples") => numbers(await get(app, `/${listing}?scope=all&host=${encodeURIComponent(term)}`));
+    expect(await find("WOOLLY")).toEqual(["A-1"]);
+    expect(await find("lanata")).toEqual(["A-1"]);
+    expect(await find("oldname")).toEqual(["A-1"]);
+    // The replaced host answers to its current taxon's names and to its own.
+    expect(await find("new alpha")).toEqual(["B-1"]);
+    expect(await find("Alpha Novus")).toEqual(["B-1"]);
+    expect(await find("alpha vetus")).toEqual(["B-1"]);
+    // A split host has neither a current nor a common name: only the name as observed finds it.
+    expect(await find("splitus")).toEqual(["B-2"]);
+    expect(await find("plain")).toEqual(["C-1"]);
+    expect(await find("woolly", "specimens")).toEqual(["A-1"]);
+  });
+
+  it("adds the host's id, current name, family and common name to the CSV, beside the name as observed", async () => {
+    const { app } = await hostApp();
+    const sampleCsv = parseCsv(await (await app.request("/samples.csv?scope=all")).text());
+    const head = sampleCsv[0]!;
+    for (const h of ["associatedTaxa", "hostRank", "hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"]) expect(head).toContain(h);
+    const host = (n: string) => {
+      const r = sampleCsv.find((l) => l[0] === n)!;
+      return ["hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"].map((h) => r[head.indexOf(h)]);
+    };
+    expect(host("A-1")).toEqual(["1", "Alpha lanata", "Familia alpha", "woolly alpha"]);
+    // The name as observed is still where it was.
+    expect(sampleCsv.find((l) => l[0] === "A-1")![head.indexOf("associatedTaxa")]).toContain("Alpha oldname");
+    expect(host("B-1")).toEqual(["2", "Alpha novus", "Familia alpha", "new alpha"]);
+    // A split has neither a current nor a common name, though its genus's family is known.
+    expect(host("B-2")).toEqual(["4", "", "Familia alpha", ""]);
+    expect(host("C-1")).toEqual(["", "", "", ""]);
+
+    const specimenCsv = parseCsv(await (await app.request("/specimens.csv?scope=all")).text());
+    const shead = specimenCsv[0]!;
+    const spec = specimenCsv.find((l) => l.includes("OBA00001"))!;
+    expect(spec[shead.indexOf("hostCommonName")]).toBe("woolly alpha");
+    expect(spec[shead.indexOf("hostFamily")]).toBe("Familia alpha");
+  });
+
+  it("puts them in the Darwin Core archive as Beeline's own columns, with no term of their own", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "beeline-dwca-"));
+    const governance = { licenses: join(dir, "licenses.csv"), policies: join(dir, "policies.csv") };
+    await writeFile(governance.licenses, "program,from_year,license,decided_by,decided_on,source,reason\nOBA,2017,CC-BY-NC-4.0,Test,2026-10-10,https://example.org/oba,Published under it\n");
+    await writeFile(governance.policies, "program,from_year,url,decided_by,decided_on,reason\nOBA,2026,https://example.org/oba-privacy,Test,2026-10-10,Agreed\n");
+    const { app, db } = await hostApp({ dir, governance });
+    await writeProgramArchives(db, dir, { governance });
+    const res = await app.request("/exports/dwca/OBA-2026.zip");
+    expect(res.status).toBe(200);
+    const files = Object.fromEntries(
+      Object.entries(unzipSync(new Uint8Array(await res.arrayBuffer()))).map(([n, d]) => [n, strFromU8(d)]),
+    );
+    const [header, ...rows] = files["occurrence.txt"]!.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
+    const cell = (name: string) => rows[0]![header!.indexOf(name)];
+    expect(cell("associatedTaxa")).toContain("Alpha oldname");
+    expect([cell("hostInatTaxonId"), cell("hostCurrentName"), cell("hostFamily"), cell("hostCommonName")]).toEqual(["1", "Alpha lanata", "Familia alpha", "woolly alpha"]);
+    // Darwin Core's family and vernacularName describe the bee, so these are declared as nothing.
+    for (const own of ["hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"]) {
+      expect(files["meta.xml"]).not.toContain(`terms/${own}`);
+      expect(files["meta.xml"]).toContain(own);
+    }
+    expect(files["meta.xml"]).not.toContain("terms/vernacularName");
   });
 });
 

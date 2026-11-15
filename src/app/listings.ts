@@ -464,6 +464,12 @@ export interface SampleRow {
   atlas_abbreviation: string | null;
   host_name: string | null;
   host_rank: string | null;
+  host_inat_taxon_id: bigint | null;
+  /** What iNaturalist calls the host now, its family and its common name (HostNames); null where it has none. */
+  host_current_name: string | null;
+  host_current_rank: string | null;
+  host_family: string | null;
+  host_common_name: string | null;
   latitude: number | null;
   longitude: number | null;
   coordinate_uncertainty_m: number | null;
@@ -539,6 +545,11 @@ export interface SpecimenRow {
   /** The sample's floral host, as the observation named it — a column here as on the samples listing. */
   host_name: string | null;
   host_rank: string | null;
+  host_inat_taxon_id: bigint | null;
+  host_current_name: string | null;
+  host_current_rank: string | null;
+  host_family: string | null;
+  host_common_name: string | null;
   taxon_rank: string | null;
   scientific_name: string | null;
   authorship: string | null;
@@ -607,6 +618,12 @@ export interface ListingPageOptions {
    */
   withFlagWords?: boolean;
   /**
+   * How much of a host's names to read (nameHosts). `all`, the default, gives
+   * the current name, rank, family and common name that a download carries;
+   * `common`, for the pages, only the common name, which is cheaper.
+   */
+  hostNames?: "common" | "all";
+  /**
    * Only samples collected in this calendar year, judged on their first day
    * (no sample on the dev store spans New Year). Not a listing filter — the
    * listings have none, by design — but the grain the program archives are
@@ -627,6 +644,90 @@ export interface Page<Row> {
 }
 
 const like = (term: string) => `%${term.toLowerCase()}%`;
+
+/**
+ * Whether a sample's floral host answers to a name typed in the host box
+ * (beeline-rfkj.4): the name as the observation gave it, which every sample
+ * with a host has, or what iNaturalist calls the host now, or its common name,
+ * each in part and in either case. The last two are read through
+ * inat_taxon_current_named, once for the whole query, as the set of stored
+ * taxon ids they belong to, so that a host that was replaced is found by the
+ * name it has now and by its current taxon's common name. A split, retired or
+ * pending host has neither, and so is found only by the name as observed,
+ * which is why that one stays in the filter and is not replaced by them.
+ */
+const hostMatches = (term: string) =>
+  sql<boolean>`(lower(s.host_name_as_observed) LIKE ${like(term)}
+    OR s.host_inat_taxon_id IN (SELECT h.inat_taxon_id FROM inat_taxon_current_named h
+                                WHERE lower(h.current_name) LIKE ${like(term)} OR lower(h.common_name) LIKE ${like(term)}))`;
+
+/** What a listing says about a row's host beyond the name as observed. */
+interface HostNames {
+  host_inat_taxon_id: bigint | null;
+  host_current_name: string | null;
+  host_current_rank: string | null;
+  host_family: string | null;
+  host_common_name: string | null;
+}
+
+/**
+ * Fill in each row's host current name, family and common name, in reads for
+ * the hosts on the page, not in a join of the page's own query (which would
+ * resolve the whole cache for every row it sorts). A host the cache has not
+ * read has none of them and its row keeps only the name as observed.
+ *
+ * `common` is for the pages, which show only the common name. A host that
+ * iNaturalist has not retired, and has not said is absent, is its own current
+ * taxon (inat_taxon_current: standing `current` is exactly that), so its name
+ * is one lookup in plant_common_name_cache, about 2 milliseconds for a page.
+ * Only a host that is retired or absent goes through inat_taxon_current_named,
+ * which resolves the whole cache whatever it is asked for (about 19
+ * milliseconds); a page rarely has one. `all` is for the downloads and the
+ * API, which also give the current name, rank and family, and so read the view
+ * for every host on the page.
+ */
+async function nameHosts(db: Kysely<Database>, rows: HostNames[], detail: "common" | "all"): Promise<void> {
+  const ids = [...new Set(rows.flatMap((r) => (r.host_inat_taxon_id === null ? [] : [BigInt(r.host_inat_taxon_id)])))];
+  type Named = { name: string | null; rank: string | null; family: string | null; common: string | null };
+  const byId = new Map<bigint, Named>();
+  if (ids.length > 0) {
+    let viaView = ids;
+    if (detail === "common") {
+      const direct = await db
+        .selectFrom("inat_taxon as t")
+        .leftJoin("plant_common_name_cache as n", "n.inat_taxon_id", "t.inat_taxon_id")
+        .where("t.inat_taxon_id", "in", ids)
+        .where("t.is_active", "=", true)
+        .where(({ not, exists, selectFrom }) =>
+          not(exists(selectFrom("inat_taxon_absent as a").select("a.inat_taxon_id").whereRef("a.inat_taxon_id", "=", "t.inat_taxon_id"))),
+        )
+        .select(["t.inat_taxon_id", "n.common_name"])
+        .execute();
+      for (const d of direct) byId.set(BigInt(d.inat_taxon_id), { name: null, rank: null, family: null, common: d.common_name });
+      // What is left: a taxon the cache holds that is retired or absent, whose current taxon needs working out.
+      // One the cache does not hold has no row in the view either.
+      const known = await db.selectFrom("inat_taxon").where("inat_taxon_id", "in", ids).select("inat_taxon_id").execute();
+      viaView = known.map((k) => BigInt(k.inat_taxon_id)).filter((id) => !byId.has(id));
+    }
+    if (viaView.length > 0) {
+      const found = await db
+        .selectFrom("inat_taxon_current_named as h")
+        .where("h.inat_taxon_id", "in", viaView)
+        .select(["h.inat_taxon_id", "h.current_name", "h.current_rank", "h.family_name", "h.common_name"])
+        .execute();
+      for (const h of found) {
+        byId.set(BigInt(h.inat_taxon_id), { name: h.current_name, rank: h.current_rank, family: h.family_name, common: h.common_name });
+      }
+    }
+  }
+  for (const r of rows) {
+    const h = r.host_inat_taxon_id === null ? undefined : byId.get(BigInt(r.host_inat_taxon_id));
+    r.host_current_name = h?.name ?? null;
+    r.host_current_rank = h?.rank ?? null;
+    r.host_family = h?.family ?? null;
+    r.host_common_name = h?.common ?? null;
+  }
+}
 /** An ISO date from the query string, compared as a DATE rather than text. */
 const asDate = (iso: string) => sql<Date>`CAST(${iso} AS DATE)`;
 
@@ -1109,7 +1210,7 @@ async function filteredSamples(
         exists(selectFrom("specimen as sp").select("sp.entity_id").whereRef("sp.sample_id", "=", "s.entity_id")),
       );
   }
-  if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
+  if (query.host !== "") base = base.where(hostMatches(query.host));
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
   if (exact.sample_number !== undefined) base = base.where(sql<boolean>`lower(s.sample_number) = ${exact.sample_number.toLowerCase()}`);
   if (exact.inat_observation_id !== undefined) base = base.where("s.inat_observation_id", "=", exact.inat_observation_id);
@@ -1172,6 +1273,7 @@ export async function listSamples(
         sql<string | null>`coalesce(pab.abbreviation, a.code)`.as("atlas_abbreviation"),
         "s.host_name_as_observed as host_name",
         "s.host_rank",
+        "s.host_inat_taxon_id",
         located(hidden, sql<number | null>`loc.latitude`).as("latitude"),
         located(hidden, sql<number | null>`loc.longitude`).as("longitude"),
         located(hidden, sql<number | null>`loc.coordinate_uncertainty_m`).as("coordinate_uncertainty_m"),
@@ -1216,6 +1318,7 @@ export async function listSamples(
     opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
   ]);
   const sampleRows = rows as unknown as Array<SampleRow & { flag_list: string | null }>;
+  await nameHosts(db, sampleRows, opts.hostNames ?? "all");
   const ids = sampleRows.map((r) => r.sample_id);
   const findings = new Map(sampleRows.map((r) => [r.sample_id, parseFlags(r.flag_list)] as const));
   // Where the location is withheld from this reader, a finding's words go,
@@ -1332,7 +1435,7 @@ async function filteredSpecimens(
   if (animals !== null) base = base.where("d.animal_id", "in", animals.length === 0 ? [-1] : animals);
   if (query.det === "undetermined") base = base.where("d.specimen_id", "is", null);
   if (query.det === "determined") base = base.where("d.specimen_id", "is not", null);
-  if (query.host !== "") base = base.where(sql<boolean>`lower(s.host_name_as_observed) LIKE ${like(query.host)}`);
+  if (query.host !== "") base = base.where(hostMatches(query.host));
   if (query.kind !== "any") base = base.where("s.kind", "=", query.kind);
   if (exact.sample_number !== undefined) base = base.where(sql<boolean>`lower(s.sample_number) = ${exact.sample_number.toLowerCase()}`);
   if (exact.inat_observation_id !== undefined) base = base.where("s.inat_observation_id", "=", exact.inat_observation_id);
@@ -1402,6 +1505,7 @@ export async function listSpecimens(
         sql<string | null>`coalesce(pab.abbreviation, a.code)`.as("atlas_abbreviation"),
         "s.host_name_as_observed as host_name",
         "s.host_rank",
+        "s.host_inat_taxon_id",
         "an.rank as taxon_rank",
         "an.scientific_name",
         "an.authorship",
@@ -1432,6 +1536,7 @@ export async function listSpecimens(
     opts.withTotal === false ? Promise.resolve(undefined) : base.select(({ fn }) => fn.countAll().as("n")).executeTakeFirst(),
   ]);
   const specimenRows = rows as unknown as SpecimenRow[];
+  await nameHosts(db, specimenRows, opts.hostNames ?? "all");
   return {
     rows: specimenRows,
     total: Number(count?.n ?? 0),
@@ -1787,6 +1892,10 @@ export const SAMPLE_CSV_HEADER = [
   "kind",
   "specimenCount",
   "hostRank",
+  "hostInatTaxonId",
+  "hostCurrentName",
+  "hostFamily",
+  "hostCommonName",
   "atlas",
   "locationSource",
   "geoprivacy",
@@ -1815,6 +1924,10 @@ export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => 
   r.kind,
   r.specimen_count,
   r.host_rank,
+  r.host_inat_taxon_id,
+  r.host_current_name,
+  r.host_family,
+  r.host_common_name,
   r.atlas_abbreviation,
   r.location_source,
   r.geoprivacy,
@@ -1877,6 +1990,10 @@ export const SPECIMEN_OWN_COLUMNS = [
   "specimenNumber",
   "atlas",
   "hostRank",
+  "hostInatTaxonId",
+  "hostCurrentName",
+  "hostFamily",
+  "hostCommonName",
   "locationSource",
   "geoprivacy",
   "taxonGeoprivacy",
@@ -1923,6 +2040,10 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.specimen_number,
   r.atlas_abbreviation,
   r.host_rank,
+  r.host_inat_taxon_id,
+  r.host_current_name,
+  r.host_family,
+  r.host_common_name,
   r.location_source,
   r.geoprivacy,
   r.taxon_geoprivacy,

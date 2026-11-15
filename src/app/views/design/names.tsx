@@ -206,7 +206,7 @@ export function DesignNames() {
         name, any authorship, a middle dot, then the common name, upright, in the muted colour and in sentence case.
         The scientific name leads because it is what Beeline records; the common name is a gloss. It is set by{" "}
         <code>TaxonName</code>, through its <code>vernacular</code> prop, so every page and listing does it one way.
-        It never leads, it never replaces the scientific name, and it never reaches a printed label or an export.
+        It never leads, it never replaces the scientific name, and it never reaches a printed label. A download carries it only as a column of its own beside the scientific name (beeline-rfkj.4), so a program reading the file can ignore it; the listings set it as every screen does, after the name, even where the column is narrow.
       </p>
       <Specimen>
         <dl class="reference">

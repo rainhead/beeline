@@ -1120,7 +1120,7 @@ export function createApp({
     const m = c.get("m");
     const { personId, admin, reader, atlases, query, homeAtlas } = await listingRequest(c);
     countListingView(listingAttributes("samples", "page", query, viewer(c)));
-    const results = await listSamples(db, query, personId, reader);
+    const results = await listSamples(db, query, personId, reader, { hostNames: "common" });
     return c.html(
       await page(
         c,
@@ -1163,7 +1163,7 @@ export function createApp({
     const m = c.get("m");
     const { personId, admin, reader, atlases, query, homeAtlas } = await listingRequest(c);
     countListingView(listingAttributes("specimens", "page", query, viewer(c)));
-    const results = await listSpecimens(db, query, personId, reader);
+    const results = await listSpecimens(db, query, personId, reader, { hostNames: "common" });
     return c.html(
       await page(
         c,

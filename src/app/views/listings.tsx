@@ -790,7 +790,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
                   {row.host_name === null ? (
                     <Absent label={m.absence.none} />
                   ) : (
-                    <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} />
+                    <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} vernacular={row.host_common_name} />
                   )}
                 </td>
                 <td>{row.kind === "trap" ? f.methodTrap : f.methodNet}</td>
@@ -1074,7 +1074,7 @@ export function SpecimenListing(
                   {row.host_name === null ? (
                     <Absent label={m.absence.none} />
                   ) : (
-                    <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} />
+                    <TaxonName rank={row.host_rank ?? ""} scientificName={row.host_name} vernacular={row.host_common_name} />
                   )}
                 </td>
                 <td>

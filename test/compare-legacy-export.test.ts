@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
 import { compareLegacyExport, DIFFERENCE_KIND_SQL, seasonDate, writeDifferences } from "../src/compare-legacy-export.js";
-import { parseRulings, readRulings, RULING_COLUMNS, type Ruling } from "../src/legacy-export-rulings.js";
+import { parseRulings, readRulings, RULING_COLUMNS, rulingProblem, type Ruling } from "../src/legacy-export-rulings.js";
 import { writeLegacyExport } from "../src/legacy-export.js";
 import { promotedStore } from "./promoted-store.js";
 
@@ -127,27 +127,28 @@ describe("comparing against rulings", () => {
   let numbers: string[];
 
   // Differences are planted by editing staging after the export is written:
-  // one record's sex recapitalised, another's taxonomic notes filled, and a
-  // third record dropped from staging, so the export holds it alone.
+  // one record's method recapitalised, another's taxonomic notes filled, and
+  // a third record dropped from staging, so the export holds it alone. Not
+  // the sex, whose capitals are the sex and caste vocabulary's to explain.
   beforeAll(async () => {
     ({ conn } = await promotedStore("occurrences"));
     dir = await mkdtemp(join(tmpdir(), "compare-legacy-"));
     exportPath = join(dir, "occurrences.csv");
     await writeLegacyExport(conn, exportPath);
     numbers = ((await conn.runAndReadAll(
-      `SELECT "fieldNumber" FROM legacy_occurrence WHERE sex <> '' AND "fieldNumber" <> '' ORDER BY 1`,
+      `SELECT "fieldNumber" FROM legacy_occurrence WHERE "samplingProtocol" <> '' AND "fieldNumber" <> '' ORDER BY 1 LIMIT 1`,
     )).getRows() as [string][]).map(([n]) => n);
     const other = ((await conn.runAndReadAll(
-      `SELECT "fieldNumber" FROM legacy_occurrence WHERE sex = '' AND "fieldNumber" <> '' ORDER BY 1 LIMIT 2`,
+      `SELECT "fieldNumber" FROM legacy_occurrence WHERE "fieldNumber" <> '' AND "fieldNumber" <> '${numbers[0]}' ORDER BY 1 DESC LIMIT 2`,
     )).getRows() as [string][]).map(([n]) => n);
     numbers.push(...other);
-    await conn.run(`UPDATE legacy_occurrence SET sex = upper(sex) WHERE "fieldNumber" = '${numbers[0]}'`);
+    await conn.run(`UPDATE legacy_occurrence SET "samplingProtocol" = upper("samplingProtocol") WHERE "fieldNumber" = '${numbers[0]}'`);
     await conn.run(`UPDATE legacy_occurrence SET "taxonomicNotes" = 'planted' WHERE "fieldNumber" = '${numbers.at(-2)}'`);
     await conn.run(`DELETE FROM legacy_occurrence WHERE "fieldNumber" = '${numbers.at(-1)}'`);
   });
 
   const ruling = (o: Partial<Ruling>): Ruling => ({
-    field_number: "", column: "sex", kind: "", outcome: "expected", reason: "test", source: "test",
+    field_number: "", column: "samplingProtocol", kind: "", outcome: "expected", reason: "test", source: "test",
     decided_by: "test", decided_on: "2026-10-04", ...o,
   });
 
@@ -165,7 +166,7 @@ describe("comparing against rulings", () => {
 
   test("finds each planted difference, with its kind", async () => {
     const found = await unexplained([]);
-    expect(found).toContain(`${numbers[0]} sex case`);
+    expect(found).toContain(`${numbers[0]} samplingProtocol case`);
     expect(found).toContain(`${numbers.at(-2)} taxonomicNotes blanked`);
     expect(found).toContain(`${numbers.at(-1)} (record) not_in_legacy`);
   });
@@ -173,7 +174,7 @@ describe("comparing against rulings", () => {
   test("a ruling explains exactly the differences it names and nothing else", async () => {
     const before = await unexplained([]);
     const after = await unexplained([ruling({ field_number: numbers[0]!, kind: "case" })]);
-    expect(before.filter((d) => !after.includes(d))).toEqual([`${numbers[0]} sex case`]);
+    expect(before.filter((d) => !after.includes(d))).toEqual([`${numbers[0]} samplingProtocol case`]);
     expect(after.filter((d) => !before.includes(d))).toEqual([]);
   });
 
@@ -181,6 +182,21 @@ describe("comparing against rulings", () => {
     const rulings = [ruling({ outcome: "expected" }), ruling({ field_number: numbers[0]!, outcome: "beeline-wrong" })];
     const r = await compareLegacyExport(conn, exportPath, rulings);
     expect(r.rulings.map((x) => [x.ruling.outcome, x.active + x.settled])).toEqual([["expected", 0], ["beeline-wrong", 1]]);
+  });
+
+  test("a ruling with no column covers its kind in every column, below a ruling naming the column", async () => {
+    const before = await unexplained([]);
+    const after = await unexplained([ruling({ column: "", kind: "case" })]);
+    expect(before.filter((d) => !after.includes(d))).toContain(`${numbers[0]} samplingProtocol case`);
+    const r = await compareLegacyExport(conn, exportPath, [
+      ruling({ column: "", kind: "case", outcome: "expected" }),
+      ruling({ kind: "case", outcome: "beeline-wrong" }),
+    ]);
+    expect(r.rulings.map((x) => [x.ruling.column, x.ruling.outcome, x.active + x.settled])).toEqual([
+      ["", "expected", expect.any(Number)],
+      ["samplingProtocol", "beeline-wrong", 1],
+    ]);
+    expect(rulingProblem(ruling({ column: "", kind: "" }))).toContain("must name a kind");
   });
 
   test("a beeline-wrong ruling that matches nothing is retired, any other matches nothing", async () => {
@@ -195,13 +211,15 @@ describe("comparing against rulings", () => {
   test("every kind is counted in records, under its outcome, with a record to look at", async () => {
     const r = await compareLegacyExport(conn, exportPath, [ruling({ kind: "case", outcome: "expected" })]);
     const byKind = (kind: string, outcome: string) => r.kinds.find((k) => k.kind === kind && k.outcome === outcome);
-    // The recapitalised sex: one record, explained, quoted with its number.
-    const sex = byKind("case", "expected")!;
-    expect(sex.active + sex.settled).toBe(1);
-    expect(sex.columns).toEqual(["sex"]);
-    expect(sex.examples).toEqual([{ column: "sex", exported: expect.any(String), legacy: expect.any(String), n: 1, fieldNumber: numbers[0] }]);
-    expect(sex.fieldNumbers).toEqual([numbers[0]]);
-    expect(byKind("case", "unexplained")?.columns ?? []).not.toContain("sex");
+    // The recapitalised method: one record, explained, quoted with its number.
+    const method = byKind("case", "expected")!;
+    expect(method.active + method.settled).toBe(1);
+    expect(method.columns).toEqual(["samplingProtocol"]);
+    expect(method.examples).toEqual([
+      { column: "samplingProtocol", exported: expect.any(String), legacy: expect.any(String), n: 1, fieldNumber: numbers[0] },
+    ]);
+    expect(method.fieldNumbers).toEqual([numbers[0]]);
+    expect(byKind("case", "unexplained")?.columns ?? []).not.toContain("samplingProtocol");
     // The record dropped from staging: a record kind quotes no pair, only the number.
     const dropped = byKind("not_in_legacy", "unexplained")!;
     expect(dropped.columns).toEqual(["(record)"]);
@@ -353,5 +371,73 @@ describe("what the store knows about a difference", () => {
       ["25000009", "firstNameInitial", "label_name"],
       ["25000009", "genus", "subgenus_form"],
     ]);
+  });
+});
+
+describe("identifications, sex and caste, and reprints (beeline-eznn)", () => {
+  let conn: DuckDBConnection;
+  let dir: string;
+  let exportPath: string;
+
+  // Synthetic, in the shapes the production store showed on 2026-11-15:
+  // an Ecdysis identification giving a sex the old record had otherwise
+  // (2310599), a volunteer's identification from a worksheet, the old
+  // Beeline's capitalised sex, and a label new Beeline printed again.
+  beforeAll(async () => {
+    ({ conn } = await promotedStore("occurrences"));
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, sex, is_expert, channel)
+      SELECT sp.entity_id, a.entity_id, 'Bombus vosnesenskii', 'female', true, 'ecdysis_import'
+      FROM specimen sp, animal a WHERE sp.field_number = '25000005' AND a.scientific_name = 'Bombus vosnesenskii'`);
+    await conn.run(`INSERT INTO determination (specimen_id, animal_id, verbatim_identification, sex, is_expert, channel)
+      SELECT sp.entity_id, a.entity_id, 'Bombus', 'male', false, 'worksheet_import'
+      FROM specimen sp, animal a WHERE sp.field_number = '25000002' AND a.scientific_name = 'Bombus'`);
+    // Printed again in a run of new Beeline's, which minted no number for it.
+    const [[staff]] = (await conn.runAndReadAll(`SELECT min(entity_id) FROM person`)).getRows() as [[number]];
+    await conn.run(`INSERT INTO print_run (prepared_by, prepared_at, approved_by, approved_at, printed_by, printed_at)
+      VALUES (${staff}, TIMESTAMP '2026-11-04 11:00:00', ${staff}, TIMESTAMP '2026-11-04 11:30:00', ${staff}, TIMESTAMP '2026-11-04 12:00:00')`);
+    await conn.run(`INSERT INTO printed_label (print_run_id, specimen_id, sheet, cell, location_text, coordinates_text, date_text,
+                                               collector_text, method_text, number_text, latitude, longitude, date_start, date_end)
+      SELECT (SELECT max(entity_id) FROM print_run), sp.entity_id, 1, 0, 'here', '0 0', 'then', 'Ada', 'net', sp.field_number,
+             0, 0, s.date_start, s.date_end
+      FROM specimen sp JOIN sample s ON s.entity_id = sp.sample_id WHERE sp.field_number = '25000009'`);
+    dir = await mkdtemp(join(tmpdir(), "compare-ident-"));
+    exportPath = join(dir, "occurrences.csv");
+    await writeLegacyExport(conn, exportPath);
+    // The old records as they stood: a male where the expert now says female,
+    // no volunteer identification, a capitalised sex, an older print date.
+    await conn.run(`UPDATE legacy_occurrence SET sex = 'male' WHERE "fieldNumber" = '25000005'`);
+    await conn.run(`UPDATE legacy_occurrence SET "genusVolDet" = '', "sexVolDet" = '' WHERE "fieldNumber" = '25000002'`);
+    await conn.run(`UPDATE legacy_occurrence SET sex = upper(sex) WHERE "fieldNumber" = '25000001' AND sex <> ''`);
+    await conn.run(`UPDATE legacy_occurrence SET "dateLabelPrint" = '11-Aug-25' WHERE "fieldNumber" = '25000009'`);
+  });
+
+  test("tells a newer identification and a reprint from a spelling of the old record's", async () => {
+    await compareLegacyExport(conn, exportPath, []);
+    const path = join(dir, "differences.csv");
+    await writeDifferences(conn, [], path);
+    const kinds = (await conn.runAndReadAll(
+      `SELECT field_number, "column", kind FROM read_csv('${path}', header = true, all_varchar = true)
+       WHERE (field_number = '25000005' AND "column" = 'sex')
+          OR (field_number = '25000002' AND "column" IN ('genusVolDet', 'sexVolDet'))
+          OR (field_number = '25000001' AND "column" = 'sex')
+          OR (field_number = '25000009' AND "column" = 'dateLabelPrint')
+       ORDER BY ALL`,
+    )).getRows() as [string, string, string][];
+    expect(kinds).toEqual([
+      ["25000001", "sex", "sex_caste_vocabulary"],
+      ["25000002", "genusVolDet", "newer_volunteer_determination"],
+      ["25000002", "sexVolDet", "newer_volunteer_determination"],
+      ["25000005", "sex", "newer_determination"],
+      ["25000009", "dateLabelPrint", "reprinted"],
+    ]);
+  });
+
+  test("the checked-in rulings explain each of them", async () => {
+    const rulings = await readRulings(new URL("../ingest/legacy-export-rulings.csv", import.meta.url).pathname);
+    const r = await compareLegacyExport(conn, exportPath, rulings);
+    const left = r.unexplained.groups.filter((g) =>
+      ["sex_caste_vocabulary", "newer_volunteer_determination", "newer_determination", "reprinted"].includes(g.kind),
+    );
+    expect(left).toEqual([]);
   });
 });

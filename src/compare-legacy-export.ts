@@ -120,7 +120,24 @@ const MONTH_COLUMNS = ["month", "month2"];
 const DATE_COLUMNS = ["day", "year", "day2", "year2", "verbatimEventDate", ...MONTH_COLUMNS];
 const NAME_COLUMNS = ["genus", "subgenus", "specificEpithet", "scientificName", "genusVolDet", "speciesVolDet"];
 const COLLECTOR_COLUMNS = ["recordedBy", "firstName", "lastName", "firstNameInitial"];
-const CORRECTABLE_COLUMNS = ["county", "locality", "stateProvince", "country", "samplingProtocol"];
+/** Every column legacy_occurrence_corrected reads through the corrections (ingest/promote-legacy.sql). */
+const CORRECTABLE_COLUMNS = [
+  "firstName", "lastName", "sampleId", "specimenId", "day", "month", "year", "day2", "month2", "year2",
+  "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "verbatimElevation",
+  "country", "stateProvince", "county", "locality", "samplingProtocol", "fieldNumber",
+];
+/** Written from the date, so a corrected date changes them too. */
+const DATE_DERIVED_COLUMNS = ["verbatimEventDate", "startDayofYear", "endDayofYear"];
+const DATE_FIELDS = ["day", "month", "year", "day2", "month2", "year2"];
+/** The volunteer's identification, which the old Beeline kept beside the expert's. */
+const VOLUNTEER_COLUMNS = ["familyVolDet", "genusVolDet", "speciesVolDet", "sexVolDet", "casteVolDet"];
+/** Sex and caste, the expert's and the volunteer's: each the column it is read from, and the column it is read with. */
+const SEX_CASTE = [
+  { column: "sex", macro: "legacy_sex_of", with: "caste" },
+  { column: "caste", macro: "legacy_caste_of", with: "sex" },
+  { column: "sexVolDet", macro: "legacy_sex_of", with: "casteVolDet" },
+  { column: "casteVolDet", macro: "legacy_caste_of", with: "sexVolDet" },
+] as const;
 const IDENTIFICATION_COLUMNS = ["family", "genus", "subgenus", "specificEpithet", "scientificName", "taxonRank", "identifiedBy"];
 const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
 
@@ -173,6 +190,7 @@ const collectors = (x: string) =>
  */
 export const DIFFERENCE_KIND_SQL = `CASE
   WHEN legacy = '' THEN 'filled'
+  WHEN exported = '' AND trim(legacy) = '' THEN 'whitespace'
   WHEN exported = '' THEN 'blanked'
   WHEN ${squash("exported")} = ${squash("legacy")} THEN 'whitespace'
   WHEN lower(${squash("exported")}) = lower(${squash("legacy")}) THEN 'case'
@@ -372,13 +390,23 @@ const PLACE_FINDING_FIELD: Record<string, string> = {
  *                        ingest/taxon-aliases.csv corrects to what Beeline wrote
  *   subgenus_form        (also from the values alone) a genus column holding only
  *                        '(Peponapis)', exported as the genus the tree files it under
- *   staff_correction     the legacy row as staff corrected it says what Beeline wrote
+ *   staff_correction     the legacy row as staff corrected it says what Beeline wrote,
+ *                        and the columns written from a date they corrected
  *   collector_order_contradicted  a record whose recordedBy and name columns
  *                        list its pair in opposite orders
  *   initial_from_surname an initial the legacy record took from the family name
  *   label_name           the initials a label name gives, or the derived one beside it
  *   newer_determination  the specimen's newest expert determination came from
- *                        Ecdysis or Beeline, so the legacy system never received it
+ *                        Ecdysis or Beeline, so the legacy system never received it;
+ *                        for sex and caste, the newest that states one
+ *   newer_volunteer_determination  the same for the volunteer's identification:
+ *                        from a worksheet or made in Beeline
+ *   second_print         carried from the specimen's other old record, a second
+ *                        print the one-time repair tied to it
+ *   sex_caste_vocabulary sex and caste as promotion reads the legacy pair
+ *   repair_placed        a record promotion held back, placed by the one-time repair
+ *                        in its sample, whose values it takes
+ *   reprinted            the label's print date is a later printing's
  *   one_day_range        an end the legacy record wrote on its start day, blank here
  *   standin_replaced     the legacy point was a stand-in for an obscured observation's
  *                        true point, which Beeline holds instead (beeline-b34)
@@ -465,6 +493,14 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
           SELECT 1 FROM legacy_occurrence o JOIN legacy_occurrence_corrected c ON c._id = o._id
           WHERE o."fieldNumber" = d.field_number
             AND (${CORRECTABLE_COLUMNS.map((c) => `(d."column" = ${sqlString(c)} AND c."${c}" = d.exported AND c."${c}" IS DISTINCT FROM o."${c}")`).join("\n              OR ")}))`);
+    // And the columns written from a date a correction changed.
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'staff_correction'
+      WHERE d."column" IN (${list(DATE_DERIVED_COLUMNS)}) AND d.kind IN ('changed', 'filled', 'blanked')
+        AND EXISTS (
+          SELECT 1 FROM legacy_occurrence o JOIN legacy_occurrence_corrected c ON c._id = o._id
+          WHERE o."fieldNumber" = d.field_number
+            AND (${DATE_FIELDS.map((c) => `c."${c}" IS DISTINCT FROM o."${c}"`).join(" OR ")}))`);
   }
   // A legacy record that contradicts itself about its pair's order: its name
   // columns list them in the order Beeline wrote and its recordedBy in the
@@ -515,6 +551,88 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
         JOIN (SELECT specimen_id, arg_max(channel, (recorded_at, entity_id)) AS channel
               FROM determination WHERE is_expert GROUP BY specimen_id) e ON e.specimen_id = sp.entity_id
         WHERE sp.field_number = d.field_number AND e.channel <> 'legacy_import')`);
+  // A record promotion held back and the one-time repair placed in the one
+  // sample it led to (beeline-iuva, GitHub #303): its point, dates and sample
+  // number are its sample's, since the record's own were what held it back
+  // or disagreed. Read off the blocking finding promotion still gives it.
+  if ((await one(conn, `SELECT count(*) FROM duckdb_views() WHERE view_name = 'legacy_promotion_finding'`)) > 0) {
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'repair_placed'
+      WHERE d.kind IN ('changed', 'filled', 'blanked')
+        AND EXISTS (
+          SELECT 1 FROM legacy_occurrence o
+          JOIN legacy_specimen_number n ON n._id = o._id
+          JOIN legacy_promotion_finding f ON f._id = o._id AND f.severity = 'blocking'
+          WHERE o."fieldNumber" = d.field_number)`);
+  }
+  // A label printed again (gh-218): the print date is the newest printing's,
+  // whether the first printing was new Beeline's or the old Beeline's.
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'reprinted'
+    WHERE d."column" = 'dateLabelPrint' AND d.kind = 'changed'
+      AND EXISTS (SELECT 1 FROM specimen sp
+                  JOIN printed_label_reprint pr ON pr.specimen_id = sp.entity_id
+                  JOIN print_run r ON r.entity_id = pr.print_run_id AND r.printed_at IS NOT NULL
+                  WHERE sp.field_number = d.field_number)`);
+  // Sex and caste from an expert determination the legacy system never
+  // received: the newest expert determination stating one came from Ecdysis
+  // or was made in Beeline, as the export reads them (src/legacy-export.ts,
+  // stated). An Ecdysis identification often states a sex the legacy record
+  // had otherwise: 7,270 records of the 2026-11-15 store went from male to
+  // female this way, which the sex-vocabulary ruling had been taking for its
+  // own (beeline-eznn).
+  for (const col of ["sex", "caste"]) {
+    await conn.run(`
+      UPDATE cmp_value_difference d SET kind = 'newer_determination'
+      WHERE d."column" = ${sqlString(col)} AND d.kind IN ('changed', 'filled', 'blanked')
+        AND EXISTS (
+          SELECT 1 FROM specimen sp
+          JOIN (SELECT specimen_id, arg_max(channel, (recorded_at, entity_id)) AS channel
+                FROM determination WHERE is_expert AND nullif(${col}, '') IS NOT NULL GROUP BY specimen_id) e
+            ON e.specimen_id = sp.entity_id
+          WHERE sp.field_number = d.field_number AND e.channel <> 'legacy_import')`);
+  }
+  // A volunteer's identification the legacy system never received: from a
+  // worksheet (beeline-pbk) or made in Beeline.
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'newer_volunteer_determination'
+    WHERE d."column" IN (${list(VOLUNTEER_COLUMNS)}) AND d.kind IN ('changed', 'filled', 'blanked')
+      AND EXISTS (
+        SELECT 1 FROM specimen sp
+        JOIN (SELECT specimen_id, arg_max(channel, (recorded_at, entity_id)) AS channel
+              FROM determination WHERE NOT is_expert GROUP BY specimen_id) v ON v.specimen_id = sp.entity_id
+        WHERE sp.field_number = d.field_number AND v.channel <> 'legacy_import')`);
+  // An identification carried from the specimen's other old record: a second
+  // print that the one-time repair tied to the specimen (beeline-iuva), where
+  // the identification had been entered.
+  if ((await one(conn, `SELECT count(*) FROM duckdb_tables() WHERE table_name = 'legacy_duplicate_record'`)) > 0) {
+    for (const col of [...IDENTIFICATION_COLUMNS, ...VOLUNTEER_COLUMNS, "sex", "caste"]) {
+      await conn.run(`
+        UPDATE cmp_value_difference d SET kind = 'second_print'
+        WHERE d."column" = ${sqlString(col)} AND d.kind IN ('changed', 'filled')
+          AND EXISTS (
+            SELECT 1 FROM specimen sp
+            JOIN legacy_duplicate_record r ON r.specimen_id = sp.entity_id
+            JOIN legacy_occurrence o ON o._id = r._id
+            WHERE sp.field_number = d.field_number AND trim(o."${col}") <> '' AND d.exported <> '')`);
+    }
+  }
+  // Sex and caste in the model's vocabulary, by promotion's own reading of
+  // the legacy pair (ingest/promote-determinations.sql): an abbreviation
+  // spelled out, a caste in the sex column deciding it (a worker is female),
+  // the old Beeline's Queen a gyne, a value outside the vocabulary dropped.
+  // Only where that reading is what Beeline wrote, so any other change of
+  // sex or caste is left for a ruling of its own.
+  if ((await one(conn, `SELECT count(*) FROM duckdb_functions() WHERE function_name = 'legacy_sex_of'`)) > 0) {
+    for (const { column, macro, with: other } of SEX_CASTE) {
+      await conn.run(`
+        UPDATE cmp_value_difference d SET kind = 'sex_caste_vocabulary'
+        WHERE d."column" = ${sqlString(column)} AND d.kind IN ('changed', 'blanked', 'case')
+          AND EXISTS (SELECT 1 FROM cmp_pairs p
+                      WHERE p."e_fieldNumber" = d.field_number
+                        AND coalesce(${macro}(p."l_${column}", p."l_${other}"), '') = d.exported)`);
+    }
+  }
   // A stand-in point the legacy record printed, which promotion replaced with
   // the observation's true point (sample_location_standin, beeline-b34): the
   // point, its uncertainty and source, and the elevation read at the
@@ -615,8 +733,9 @@ async function buildDifferences(conn: DuckDBConnection): Promise<void> {
 /**
  * cmp_attributed: each difference with the ruling that explains it, or NULL.
  * The most specific matching ruling wins — a field number over a whole
- * column, a kind over every kind — and since a ruling's (field number,
- * column, kind) is unique, at most one ruling is that specific.
+ * column, a column over every column, a kind over every kind — and since a
+ * ruling's (field number, column, kind) is unique, at most one ruling is that
+ * specific.
  */
 async function attribute(conn: DuckDBConnection, rulings: readonly Ruling[]): Promise<void> {
   await conn.run(`CREATE OR REPLACE TEMP TABLE cmp_ruling (ruling_id INTEGER, field_number TEXT, "column" TEXT, kind TEXT)`);
@@ -630,10 +749,10 @@ async function attribute(conn: DuckDBConnection, rulings: readonly Ruling[]): Pr
     SELECT * EXCLUDE (pick) FROM (
       SELECT d.*, r.ruling_id,
              row_number() OVER (PARTITION BY d.difference_id
-                                ORDER BY (r.field_number <> '') DESC, (r.kind <> '') DESC) AS pick
+                                ORDER BY (r.field_number <> '') DESC, (r."column" <> '') DESC, (r.kind <> '') DESC) AS pick
       FROM cmp_difference d
       LEFT JOIN cmp_ruling r
-        ON r."column" = d."column"
+        ON (r."column" = d."column" OR r."column" = '')
        AND (r.kind = '' OR r.kind = d.kind)
        AND (r.field_number = '' OR r.field_number = d.field_number))
     WHERE pick = 1`);

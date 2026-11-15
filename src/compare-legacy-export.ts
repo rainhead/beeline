@@ -506,6 +506,17 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
       const n = (x: string) => (f.startsWith("month") ? `try_cast(${monthNumber(x)} AS INTEGER)` : `try_cast(trim(${x}) AS INTEGER)`);
       return `${n(`c."${f}"`)} IS NOT DISTINCT FROM ${n(`p."e_${f}"`)}`;
     };
+    // Each written as the export writes it (src/legacy-export.ts): the range
+    // or the one day, and the days of the year only for a range.
+    const start = `try_cast(concat(c."year", '-', ${monthNumber('c."month"')}, '-', c."day") AS DATE)`;
+    const end = `coalesce(try_cast(concat(c."year2", '-', ${monthNumber('c."month2"')}, '-', c."day2") AS DATE), ${start})`;
+    const derived = `CASE d."column"
+        WHEN 'verbatimEventDate' THEN CASE WHEN ${end} > ${start}
+          THEN concat(strftime(${start}, '%Y-%-m-%-d'), '/', strftime(${end}, '%Y-%-m-%-d'))
+          ELSE strftime(${start}, '%-m/%-d/%Y') END
+        WHEN 'startDayofYear' THEN CASE WHEN ${end} > ${start} THEN CAST(dayofyear(${start}) AS VARCHAR) ELSE '' END
+        WHEN 'endDayofYear' THEN CASE WHEN ${end} > ${start} THEN CAST(dayofyear(${end}) AS VARCHAR) ELSE '' END
+      END`;
     await conn.run(`
       UPDATE cmp_value_difference d SET kind = 'staff_correction'
       WHERE d."column" IN (${list(DATE_DERIVED_COLUMNS)}) AND d.kind IN ('changed', 'filled', 'blanked')
@@ -514,7 +525,8 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
           JOIN cmp_pairs p ON p."e_fieldNumber" = o."fieldNumber"
           WHERE o."fieldNumber" = d.field_number
             AND (${DATE_FIELDS.map((c) => `c."${c}" IS DISTINCT FROM o."${c}"`).join(" OR ")})
-            AND ${DATE_FIELDS.map(dateAgrees).join(" AND ")})`);
+            AND ${DATE_FIELDS.map(dateAgrees).join(" AND ")}
+            AND ${derived} = d.exported)`);
   }
   // A legacy record that contradicts itself about its pair's order: its name
   // columns list them in the order Beeline wrote and its recordedBy in the
@@ -647,11 +659,22 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
             AND ${tied(`coalesce(${macro}(o."${column}", o."${other}"), '') = d.exported AND d.exported <> ''`)}`);
       }
     }
+    // Beside a genus that qualifies, the columns written from the name: the
+    // full name as the tied record wrote it or as its genus and epithet make
+    // it, and the family, rank, subgenus and determiner as it wrote them, or
+    // left blank there for the model's tree to fill (CodeRabbit on #352).
     await conn.run(`
       UPDATE cmp_value_difference d SET kind = 'second_print'
       WHERE d."column" IN ('family', 'taxonRank', 'scientificName', 'subgenus', 'identifiedBy') AND d.kind IN ('changed', 'filled')
         AND EXISTS (SELECT 1 FROM cmp_value_difference g
-                    WHERE g.field_number = d.field_number AND g."column" = 'genus' AND g.kind = 'second_print')`);
+                    WHERE g.field_number = d.field_number AND g."column" = 'genus' AND g.kind = 'second_print')
+        AND ${tied(`CASE d."column"
+              WHEN 'scientificName' THEN lower(trim(o."scientificName")) = lower(trim(d.exported))
+                OR lower(concat_ws(' ', ${withoutSubgenus('trim(o.genus)')}, nullif(trim(o."specificEpithet"), ''))) = lower(${withoutSubgenus("trim(d.exported)")})
+              WHEN 'family' THEN trim(o.family) = '' OR lower(trim(o.family)) = lower(trim(d.exported))
+              WHEN 'taxonRank' THEN trim(o."taxonRank") = '' OR lower(trim(o."taxonRank")) = lower(trim(d.exported))
+              WHEN 'subgenus' THEN trim(o.subgenus) = '' OR lower(trim(o.subgenus)) = lower(trim(d.exported))
+              ELSE lower(trim(o."identifiedBy")) = lower(trim(d.exported)) END`)}`);
   }
   // Sex and caste in the model's vocabulary, by promotion's own reading of
   // the legacy pair (ingest/promote-determinations.sql): an abbreviation
@@ -663,7 +686,7 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
     for (const { column, macro, with: other } of SEX_CASTE) {
       await conn.run(`
         UPDATE cmp_value_difference d SET kind = 'sex_caste_vocabulary'
-        WHERE d."column" = ${sqlString(column)} AND d.kind IN ('changed', 'blanked', 'case')
+        WHERE d."column" = ${sqlString(column)} AND d.kind IN ('changed', 'blanked', 'case', 'filled')
           AND EXISTS (SELECT 1 FROM cmp_pairs p
                       WHERE p."e_fieldNumber" = d.field_number
                         AND coalesce(${macro}(p."l_${column}", p."l_${other}"), '') = d.exported)`);

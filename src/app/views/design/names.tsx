@@ -252,14 +252,18 @@ export function DesignNames() {
           one rule everywhere. Beeline sets them in sentence case, with capitals only for proper nouns (&ldquo;Oregon
           grape&rdquo;), so &ldquo;silverleaf phacelia&rdquo;, not &ldquo;Silverleaf Phacelia&rdquo;. They are common
           nouns. iNaturalist&rsquo;s names, which it writes in title case or in sentence case without any rule we can
-          rely on, are converted when the name is chosen (beeline-rfkj.9): every word loses its capital unless it is a
-          proper noun, which is a word the old plant list capitalises inside a name (&ldquo;Oregon&rdquo;,
-          &ldquo;California&rdquo;), a possessive that is an eponym (&ldquo;Nuttall&rsquo;s&rdquo;,
-          &ldquo;Douglas&rsquo;&rdquo;), or a word in a short hand-kept file. The list&rsquo;s own names are not
-          converted. The words of a hyphenated name are judged one at a time (&ldquo;Douglas-fir&rdquo;,
-          &ldquo;love-in-a-mist&rdquo;). A place written as several words keeps its capitals as a phrase in the same file
-          (&ldquo;Rocky Mountain maple&rdquo;), and an eponym that iNaturalist wrote in lower case gets its capital
-          back from the file too (&ldquo;Bebb&rsquo;s willow&rdquo;).
+          rely on, and the old plant list&rsquo;s own names, some of which are in title case too, are converted when the
+          name is chosen (beeline-rfkj.9): every word loses its capital, <em>including the first word</em>, unless it
+          is a proper noun. That is a word or a phrase in a hand-kept file of 295 rows (&ldquo;Oregon&rdquo;,
+          &ldquo;Great Basin&rdquo;, &ldquo;Rocky Mountain&rdquo;), the abbreviation St or Mt, or a possessive:{" "}
+          <strong>every possessive keeps its capital</strong> (&ldquo;Nuttall&rsquo;s&rdquo;,
+          &ldquo;Douglas&rsquo;&rdquo;), because nearly all are eponyms, unless the file lowers it (&ldquo;shepherd&rsquo;s
+          purse&rdquo;). Nothing is learned from the data, so a diff of the file is what changes a name. The words of a
+          hyphenated name are judged one at a time (&ldquo;Douglas-fir&rdquo;, &ldquo;love-in-a-mist&rdquo;), so a
+          place with a hyphen inside it, such as Trans-Pecos, is not kept. A place written as several words is a phrase
+          in the same file (&ldquo;Rocky Mountain maple&rdquo;); a plural is a row of its own. An eponym that iNaturalist
+          wrote in lower case gets its capital back from the file (&ldquo;Bebb&rsquo;s willow&rdquo;). The names of
+          section, subsection, subgenus, series and subseries are scientific names and are left as written.
         </li>
       </ul>
 

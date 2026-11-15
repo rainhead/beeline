@@ -1,47 +1,67 @@
 Word,Treatment,Reason
+Africa,keep,a proper noun the old plant list writes with a capital (North Africa grass)
 African,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Afro,keep,"a people or a given name inside a plant's name (Afro-Australian daisies, Indian paintbrush, blue-eyed Mary)"
+Alaska,keep,a proper noun the old plant list writes with a capital (Alaska paper birch)
 Alaskan,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
 Alberta,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
 Alice,keep,"a person's name or title in a plant's name (Douglas-fir, creeping Jenny, Queen Anne's lace)"
 Alva,keep,"a person's name or title in a plant's name (Douglas-fir, creeping Jenny, Queen Anne's lace)"
 Alvord,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
+America,keep,a continent named in a plant's name (North America intermediate oaks)
 American,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
+Amur,keep,a proper noun the old plant list writes with a capital (Amur maple)
 Apache,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Arizona,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Armenian,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Asian,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
+Astoria,keep,a proper noun the old plant list writes with a capital (Astoria violet)
+Atlantic,keep,a proper noun the old plant list writes with a capital (Atlantic ivy)
 Atlas,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Australian,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
+Austrian,keep,a proper noun the old plant list writes with a capital (Austrian peaweed)
 Baja,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Balkan,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Barbara,keep,"a person's name or title in a plant's name (Douglas-fir, creeping Jenny, Queen Anne's lace)"
+Barnaby's,keep,a proper noun the old plant list writes with a capital (St. Barnaby's thistle)
 Bebb's,keep,"an eponym that iNaturalist wrote in lower case in some names (bebb's willow, wilkes' cryptantha); this restores the capital"
 Bermuda,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
+Bethlehem,keep,a proper noun the old plant list writes with a capital (star-of-Bethlehem)
+Big Bend,keep,"a region of Texas named in a plant's name (Big Bend silverleaf); a phrase, because one of its words is a common noun elsewhere"
 Blackfoot River,keep,"a river, valley, island or county named in a plant's name (Columbia River onion, Vancouver Island beggarticks); the last word is a common noun elsewhere"
 Bloomer's,keep,"an eponym that iNaturalist wrote in lower case in some names (bebb's willow, wilkes' cryptantha); this restores the capital"
 Blue Mountain,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
+Bob,keep,a proper noun the old plant list writes with a capital (stinky Bob)
+Bohemian,keep,a proper noun the old plant list writes with a capital (Bohemian knotweed)
 Boise,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Bolander's,keep,"an eponym that iNaturalist wrote in lower case in some names (bebb's willow, wilkes' cryptantha); this restores the capital"
 Booth's,keep,"an eponym that iNaturalist wrote in lower case in some names (bebb's willow, wilkes' cryptantha); this restores the capital"
+Brazilian,keep,a proper noun the old plant list writes with a capital (Brazilian waterweed)
 Bruneau,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Burkwood,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
+Caley,keep,a proper noun the old plant list writes with a capital (Caley pea)
+California,keep,"a state or country named in a plant's name (Oregon grape, California poppy, Canada thistle)"
 Californian,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Callery,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
+Canada,keep,"a country named in a plant's name (Canada thistle, Canada goldenrod)"
 Canadian,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Canby's,keep,"an eponym that iNaturalist wrote in lower case in some names (bebb's willow, wilkes' cryptantha); this restores the capital"
 Canterbury,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
+Cape,keep,a proper noun the old plant list writes with a capital (Cape ivy)
 Carolina,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Cascade,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Cascades,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Caucasian,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
 Caucasus,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
+Chalapa,keep,a proper noun the old plant list writes with a capital (Chalapa hoary cress)
 Chelan,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
+Chiloe,keep,a proper noun the old plant list writes with a capital (Chiloe avens)
 Chinese,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Chiricahua,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Chiricahua Mountain,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
 Christmas,keep,"a person's name or title in a plant's name (Douglas-fir, creeping Jenny, Queen Anne's lace)"
 Clearwater,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
+Coast Range,keep,"a mountain range of two words named in a plant's name (Coast Range lomatium); a phrase, because one of its words is a common noun elsewhere"
 Colorado,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Columbia,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Columbia Plateau,keep,"a river, valley, island or county named in a plant's name (Columbia River onion, Vancouver Island beggarticks); the last word is a common noun elsewhere"
@@ -50,19 +70,28 @@ Columbian,keep,"a place or people named in a plant's name (Utah serviceberry, Si
 Corbières,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Cuddy Mountain,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
 Cusick's,keep,"an eponym that iNaturalist wrote in lower case in some names (bebb's willow, wilkes' cryptantha); this restores the capital"
+Dalmatian,keep,a proper noun the old plant list writes with a capital (Dalmatian toadflax)
 Darley,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
 Darley Dale,keep,"a place of two words named in a plant's name (Santa Barbara ceanothus, Yolla Bolly bedstraw)"
+David,keep,a proper noun the old plant list writes with a capital (David viburnum)
 Davis Mountains,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
 Del,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Del Norte County,keep,"a river, valley, island or county named in a plant's name (Columbia River onion, Vancouver Island beggarticks); the last word is a common noun elsewhere"
+Deptford,keep,a proper noun the old plant list writes with a capital (Deptford pink)
 Deschutes,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Douglas,keep,"a person's name or title in a plant's name (Douglas-fir, creeping Jenny, Queen Anne's lace)"
+Dutch,keep,a proper noun the old plant list writes with a capital (Dutch clover)
+Easter,keep,a proper noun the old plant list writes with a capital (Easter lily)
 Engelmann,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
+English,keep,a proper noun the old plant list writes with a capital (English daisy)
 Eurasian,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 European,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Franciscan,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 French,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
+Garry,keep,a proper noun the old plant list writes with a capital (Garry oak)
 German,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
+Goose Lake,keep,"a lake in Oregon named in a plant's name (Goose Lake wild buckwheat); a phrase, because one of its words is a common noun elsewhere"
+Great Basin,keep,"a region of two words named in a plant's name (Great Basin wildrye); a phrase, because one of its words is a common noun elsewhere"
 Great Valley,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
 Greene's,keep,"an eponym that iNaturalist wrote in lower case in some names (bebb's willow, wilkes' cryptantha); this restores the capital"
 Harms,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
@@ -75,31 +104,42 @@ Howell's,keep,"an eponym that iNaturalist wrote in lower case in some names (beb
 Humboldt,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Humboldt Mountains,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
 Humboldt River,keep,"a river, valley, island or county named in a plant's name (Columbia River onion, Vancouver Island beggarticks); the last word is a common noun elsewhere"
-I,keep,"an initial or numeral that is part of the name (Q-tips, eupolypods I)"
+I,keep,"a Roman numeral that is part of the name (eupolypods I, II); written in capitals"
+Iberian,keep,a proper noun the old plant list writes with a capital (Iberian starthistle)
 Idaho,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
+II,keep,"a Roman numeral that is part of the name (eupolypods I, II); written in capitals"
+III,keep,"a Roman numeral that is part of the name (eupolypods I, II); written in capitals"
 Indian,keep,"a people or a given name inside a plant's name (Afro-Australian daisies, Indian paintbrush, blue-eyed Mary)"
 Italian,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
+Jane,keep,a proper noun the old plant list writes with a capital (salvation Jane)
 Japanese,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Jaynes,keep,"a person's name or title in a plant's name (Douglas-fir, creeping Jenny, Queen Anne's lace)"
 Jaynes Canyon,keep,"a river, valley, island or county named in a plant's name (Columbia River onion, Vancouver Island beggarticks); the last word is a common noun elsewhere"
 Jenny,keep,"a person's name or title in a plant's name (Douglas-fir, creeping Jenny, Queen Anne's lace)"
 Jersey,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
+Jerusalem,keep,a proper noun the old plant list writes with a capital (Jerusalem artichoke)
 Joe,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
+John Day,keep,"a river and valley in Oregon named in a plant's name (John Day paintbrush); a phrase, because Day is a common noun elsewhere"
+Johnson,keep,a proper noun the old plant list writes with a capital (Johnson grass)
 Kentucky,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 King's,keep,"an eponym that iNaturalist wrote in lower case in some names (bebb's willow, wilkes' cryptantha); this restores the capital"
 Kittitas,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Klamath,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Klickitat,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Labrador,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
+Lady Banks',keep,"a person's title and name, Lady Banks named in a plant's name (Lady Banks' rose); a phrase, because one of its words is a common noun elsewhere"
 Leiberg,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
 Lewis,keep,"a person's name or title in a plant's name (Douglas-fir, creeping Jenny, Queen Anne's lace)"
 Loebner,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
 London,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
+Lucie,keep,a proper noun the old plant list writes with a capital (St. Lucie cherry)
 MacDougal,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
 Macedonian,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
 Mackenzie's,keep,"an eponym that iNaturalist wrote in lower case in some names (bebb's willow, wilkes' cryptantha); this restores the capital"
+Mahala,keep,a proper noun the old plant list writes with a capital (Mahala mat)
 Mangas Spring,keep,"a river, valley, island or county named in a plant's name (Columbia River onion, Vancouver Island beggarticks); the last word is a common noun elsewhere"
 Mary,keep,"a people or a given name inside a plant's name (Afro-Australian daisies, Indian paintbrush, blue-eyed Mary)"
+Marys,keep,a proper noun the old plant list writes with a capital (blue-eyed Marys)
 Matilija,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Maximilian,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
 Mazama,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
@@ -111,20 +151,31 @@ Missouri,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, gr
 Modoc,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Mojave,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Mongolian,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
-Mount,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
+Montana,keep,"a state or country named in a plant's name (Oregon grape, California poppy, Canada thistle)"
+Monterey,keep,a proper noun the old plant list writes with a capital (Monterey centaury)
 Mount Hood,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
 Mount Mazama,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
 Mrs,keep,"a person's name or title in a plant's name (Douglas-fir, creeping Jenny, Queen Anne's lace)"
 Nanking,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Navajo,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Nevada,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
-New,keep,"a place named in a plant's name (New Mexico, New Zealand, New England)"
+New England,keep,"a region of two words named in a plant's name (New England aster); a phrase, because one of its words is a common noun elsewhere"
 New Mexico,keep,"a place of two words named in a plant's name (Santa Barbara ceanothus, Yolla Bolly bedstraw)"
+New World,keep,"a region named in a plant's name (New World monkeys); a phrase, because one of its words is a common noun elsewhere"
+New York,keep,"a state named in a plant's name (New York aster); a phrase, because one of its words is a common noun elsewhere"
+New Zealand,keep,"a country named in a plant's name (New Zealand hebe); a phrase, because one of its words is a common noun elsewhere"
 Newberry's,keep,"an eponym that iNaturalist wrote in lower case in some names (bebb's willow, wilkes' cryptantha); this restores the capital"
 Nootka,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Norte,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
+North Africa,keep,"a region of two words named in a plant's name (North Africa grass); a phrase, because one of its words is a common noun elsewhere"
+North America,keep,"a continent named in a plant's name (North America intermediate oaks); a phrase, because one of its words is a common noun elsewhere"
+North American,keep,"a continent as an adjective named in a plant's name (North American red raspberry); a phrase, because one of its words is a common noun elsewhere"
+Northwest,keep,a proper noun the old plant list writes with a capital (Northwest nettle)
 Norway,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
+Norwegian,keep,a proper noun the old plant list writes with a capital (Norwegian cinquefoil)
+Old World,keep,"a region named in a plant's name (Old World monkeys); a phrase, because one of its words is a common noun elsewhere"
 Olympic,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
+Oregon,keep,"a state or country named in a plant's name (Oregon grape, California poppy, Canada thistle)"
 Oregon Trail,keep,"a place of two words named in a plant's name (Santa Barbara ceanothus, Yolla Bolly bedstraw)"
 Organ Mountain,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
 Oriental,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
@@ -139,21 +190,23 @@ Persian,keep,"a nationality or region named as an adjective (Chinese aster, Japa
 Peruvian,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
 Philadelphia,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Point Reyes,keep,"a place of two words named in a plant's name (Santa Barbara ceanothus, Yolla Bolly bedstraw)"
+Portugal,keep,a proper noun the old plant list writes with a capital (Portugal laurel)
 Portuguese,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
 Puget Sound,keep,"a place of two words named in a plant's name (Santa Barbara ceanothus, Yolla Bolly bedstraw)"
 Pye,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
 Q,keep,"an initial or numeral that is part of the name (Q-tips, eupolypods I)"
-Queen,keep,"a person's name or title in a plant's name (Douglas-fir, creeping Jenny, Queen Anne's lace)"
+Robert,keep,a proper noun the old plant list writes with a capital (herb Robert)
 Roberts,keep,"a person's name or title in a plant's name (Douglas-fir, creeping Jenny, Queen Anne's lace)"
 Rocky Mountain,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
+Rocky Mountains,keep,"the plural of Rocky Mountain named in a plant's name (Rocky Mountains maple); a phrase, because one of its words is a common noun elsewhere"
 Rogue,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Rogue River,keep,"a river, valley, island or county named in a plant's name (Columbia River onion, Vancouver Island beggarticks); the last word is a common noun elsewhere"
 Russell,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
 Russian,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
+Saint,keep,"a title in a plant's name, written out (Saint John's wort); the abbreviations St. and Mt. before a period are a rule of the view"
 Santa Barbara,keep,"a place of two words named in a plant's name (Santa Barbara ceanothus, Yolla Bolly bedstraw)"
 Santa Rita,keep,"a place of two words named in a plant's name (Santa Barbara ceanothus, Yolla Bolly bedstraw)"
 Saskatoon,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
-Sawyer,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
 Scotch,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Scotland,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Scots,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
@@ -164,17 +217,24 @@ Sierra,keep,"a place or people named in a plant's name (Utah serviceberry, Sierr
 Sierra Nevada,keep,"a place of two words named in a plant's name (Santa Barbara ceanothus, Yolla Bolly bedstraw)"
 Sierran,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
 Siskiyou,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
+Siskiyou Mountains,keep,"a mountain range named in a plant's name (Siskiyou Mountains willowherb); a phrase, because one of its words is a common noun elsewhere"
 Sitka,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Snake River,keep,"a river, valley, island or county named in a plant's name (Columbia River onion, Vancouver Island beggarticks); the last word is a common noun elsewhere"
-Sound,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
+South American,keep,"a continent as an adjective named in a plant's name (South American water milfoil); a phrase, because one of its words is a common noun elsewhere"
 Spanish,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Spokane,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Steens,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Steens Mountain,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
+Sue,keep,a given name inside a plant's name (Perky Sue)
+Susan,keep,a proper noun the old plant list writes with a capital (black-eyed Susan)
+Susans,keep,the plural of Susan (black-eyed Susans)
+Syrian,keep,a proper noun the old plant list writes with a capital (Syrian bean-caper)
 Tahoka,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
+Taiwan,keep,a proper noun the old plant list writes with a capital (creeping Taiwan bramble)
 Tatarian,keep,"a nationality or region named as an adjective (Chinese aster, Japanese cherry, Scotch broom)"
 Texas,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Thompson's,keep,"an eponym that iNaturalist wrote in lower case in some names (bebb's willow, wilkes' cryptantha); this restores the capital"
+Turkestan,keep,a proper noun the old plant list writes with a capital (Turkestan thistle)
 Turkish,keep,"a nationality, region or people named as an adjective (American, Welsh poppy, Oriental bittersweet)"
 Tyrol,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Umtanum,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
@@ -192,13 +252,18 @@ Welsh,keep,"a nationality, region or people named as an adjective (American, Wel
 Wenatchee,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Wenatchee Mountain,keep,"a mountain or range named in a plant's name (Rocky Mountain maple, Steens Mountain paintbrush); the second word is a common noun elsewhere"
 Wheeler,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
+White Sands,keep,"a place in New Mexico named in a plant's name (White Sands fanmustard); a phrase, because one of its words is a common noun elsewhere"
 Wilkes',keep,"an eponym that iNaturalist wrote in lower case in some names (bebb's willow, wilkes' cryptantha); this restores the capital"
+Willamette,keep,a proper noun the old plant list writes with a capital (Willamette Valley daisy)
 Willamette Valley,keep,"a river, valley, island or county named in a plant's name (Columbia River onion, Vancouver Island beggarticks); the last word is a common noun elsewhere"
+William,keep,a proper noun the old plant list writes with a capital (Sweet William catchfly)
 Wyeth,keep,"a person's name in a plant's name, without a possessive (Callery pear, Joe Pye weed)"
+Wyoming,keep,"a state or country named in a plant's name (Oregon grape, California poppy, Canada thistle)"
 Yakima,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Yolla,keep,"a place or people named in a plant's name (Utah serviceberry, Sierra mock orange, Del Norte, Yolla Bolly)"
 Yolla Bolly,keep,"a place of two words named in a plant's name (Santa Barbara ceanothus, Yolla Bolly bedstraw)"
 York,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
+Yorkshire,keep,a proper noun the old plant list writes with a capital (Yorkshire fog)
 Zanzibar,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Zealand,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
 Zion,keep,"a place named in a plant's name (Mount Hood, Colorado, Yakima, grass of Parnassus)"
@@ -214,8 +279,11 @@ Enchanter's,lower,"a possessive of an animal or a role, not of a person (shepher
 Hawk's,lower,"a possessive of an animal or a role, not of a person (shepherd's purse, crane's-bill); it would otherwise keep its capital as a possessive"
 Hound's,lower,"a possessive of an animal or a role, not of a person (shepherd's purse, crane's-bill); it would otherwise keep its capital as a possessive"
 Ladies',lower,"a possessive of an animal or a role, not of a person (shepherd's purse, crane's-bill); it would otherwise keep its capital as a possessive"
+Lady's,lower,"a possessive of something that is not a person (lady's-mantle, for the Virgin Mary); it would otherwise keep its capital as a possessive"
 Leopard's,lower,"a possessive of an animal or a role, not of a person (shepherd's purse, crane's-bill); it would otherwise keep its capital as a possessive"
+Monk's,lower,a possessive of something that is not a person (monk's-hood); it would otherwise keep its capital as a possessive
 Owl's,lower,"a possessive of an animal or a role, not of a person (shepherd's purse, crane's-bill); it would otherwise keep its capital as a possessive"
+Parrot's,lower,a possessive of something that is not a person (parrot's feather); it would otherwise keep its capital as a possessive
 Pheasant's,lower,"a possessive of an animal or a role, not of a person (shepherd's purse, crane's-bill); it would otherwise keep its capital as a possessive"
 Poet's,lower,"a possessive of an animal or a role, not of a person (shepherd's purse, crane's-bill); it would otherwise keep its capital as a possessive"
 Prince's,lower,"a possessive of an animal or a role, not of a person (shepherd's purse, crane's-bill); it would otherwise keep its capital as a possessive"

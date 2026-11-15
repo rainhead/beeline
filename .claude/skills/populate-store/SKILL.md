@@ -17,7 +17,7 @@ pnpm inat:sync <projectId> [d1] [d2]        # observation window → append-only
 pnpm inat:promote                           # current observation state → samples
 pnpm inat:backfill-accounts                 # resolve legacy logins → iNat accounts
 pnpm inat:fetch-taxa [db]                   # cache the iNat taxa hosts name, with ancestors and replacements; ~120 requests cold, no token
-pnpm plant:load [db]                        # old Beeline's plant list from ingest/old-beeline-plant-list.csv, and ingest/plant-proper-nouns.csv (the words that keep a capital in iNaturalist's common names) (the app does it at every boot); no network
+pnpm plant:load [db]                        # old Beeline's plant list from ingest/old-beeline-plant-list.csv, and ingest/plant-proper-nouns.csv (the words that keep a capital when common names are set in sentence case) (the app does it at every boot); no network
 pnpm inat:fetch-plant-names [db]            # which iNat taxon each name of that list is; ~1,400 requests, ~29 minutes cold, no token; then inat:fetch-taxa for the taxa found. Each of the three steps ends by refreshing `plant_common_name_cache`, the copy of the common names a page reads (schema/068), so a hand-run store needs no separate step
 pnpm elevation:fetch && pnpm elevation:derive  # DEM tiles (SRTM 1-arc-second, Copernicus GLO-30 where SRTM does not reach) → missing elevations
 pnpm locality:fetch && pnpm locality:gazetteer  # public place names and outlines (about 2 GB) → data/gazetteer.duckdb, on a workstation

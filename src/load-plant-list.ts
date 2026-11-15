@@ -36,8 +36,8 @@ export const OLD_BEELINE_LIST = "old-beeline";
  */
 export const PLANT_LIST_LOADER_VERSION = 2;
 export const OLD_BEELINE_PLANT_LIST_FILE = "ingest/old-beeline-plant-list.csv";
-/** Where the file is, whatever directory the process was started in. */
 export const PLANT_PROPER_NOUNS_FILE = "ingest/plant-proper-nouns.csv";
+/** Where the files are, whatever directory the process was started in. */
 const PLANT_PROPER_NOUNS_PATH = fileURLToPath(new URL(`../${PLANT_PROPER_NOUNS_FILE}`, import.meta.url));
 const OLD_BEELINE_PLANT_LIST_PATH = fileURLToPath(new URL(`../${OLD_BEELINE_PLANT_LIST_FILE}`, import.meta.url));
 
@@ -111,14 +111,23 @@ export function parseProperNouns(bytes: Buffer): ProperNounRow[] {
   }
   const seen = new Set<string>();
   return records.map((r, i) => {
-    const [word, treatment, reason] = r.map((c) => c.trim());
+    // Only ordinary spaces and tabs are trimmed: a non-breaking space at an edge is a fault to refuse, not to hide.
+    const [word, treatment, reason] = r.map((c) => c.replace(/^[ \t]+|[ \t]+$/g, ""));
     if (r.length !== 3 || !word || !reason) throw new Error(`plant proper nouns: row ${i + 2} needs a word, a treatment and a reason`);
     if (treatment !== "keep" && treatment !== "lower") throw new Error(`plant proper nouns: row ${i + 2}: treatment must be keep or lower, not ${treatment}`);
-    if (word.includes("-")) throw new Error(`plant proper nouns: row ${i + 2}: ${word} has a hyphen; the parts of a hyphenated word are judged one at a time`);
-    if (/\s/.test(word) && (treatment !== "keep" || / {2}|\t/.test(word) || word !== word.trim()))
-      throw new Error(`plant proper nouns: row ${i + 2}: only a keep row may hold a phrase, and its words are separated by single spaces`);
-    if (seen.has(word.toLowerCase())) throw new Error(`plant proper nouns: ${word} appears twice, ignoring case (row ${i + 2})`);
-    seen.add(word.toLowerCase());
+    // Letters, with apostrophes inside or at the end ("Banks'"); a phrase has single ordinary spaces between its words, and a period may end a word
+    // inside it ("Mount St. Helens"). No hyphen (the parts of a hyphenated word are judged one at a time), no digit, no other kind of space (a
+    // non-breaking space would make a row that no name can match), so a row that could never match is refused.
+    const WORD = String.raw`\p{L}+(?:['’]\p{L}*)*`;
+    if (!new RegExp(`^${WORD}(?:\\.? ${WORD})*$`, "u").test(word))
+      throw new Error(`plant proper nouns: row ${i + 2}: ${JSON.stringify(word)} is not a word or a phrase of words (letters and apostrophes, single ordinary spaces, no hyphen)`);
+    if (word.includes(" ") && treatment !== "keep") throw new Error(`plant proper nouns: row ${i + 2}: only a keep row may hold a phrase`);
+    // A lower row only matters for a possessive: any other word is lower-cased already.
+    if (treatment === "lower" && !/(\p{L}['’]s|s['’])$/u.test(word))
+      throw new Error(`plant proper nouns: row ${i + 2}: a lower row is for a possessive (Shepherd's, Ladies'), and ${word} is not one`);
+    const folded = word.toLowerCase().replace(/’/g, "'");
+    if (seen.has(folded)) throw new Error(`plant proper nouns: ${word} appears twice, ignoring case and the kind of apostrophe (row ${i + 2})`);
+    seen.add(folded);
     return { word, treatment, reason };
   });
 }
@@ -172,6 +181,7 @@ export async function loadPlantList(
         [listKey, ...part.flatMap((p) => [p.scientific_name, p.rank, p.family, p.synonym, p.common_name])] as never[],
       );
     }
+    // All the rows, not one list's: the file of proper nouns belongs to no list and there is one of it, so a load replaces it whole.
     await conn.run("DELETE FROM plant_proper_noun");
     for (const n of properNouns) {
       await conn.run("INSERT INTO plant_proper_noun (word, treatment, reason) VALUES ($1, $2, $3)", [n.word, n.treatment, n.reason]);

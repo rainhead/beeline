@@ -580,7 +580,7 @@ describe("the common names follow the cache (schema/068)", () => {
     await host(1, 56861);
     expect(await copy()).toEqual([]);
     await fetchInatTaxa(conn, { ...opts(), skipRefresh: true });
-    expect(await copy()).toEqual([[56861n, "Pacific aster", "list"]]);
+    expect(await copy()).toEqual([[56861n, "pacific aster", "list"]]);
     expect(await q("SELECT count(*) FROM plant_common_name_stale")).toEqual([[0n]]);
   });
 
@@ -596,7 +596,7 @@ describe("the common names follow the cache (schema/068)", () => {
       return response;
     }) as typeof fetch;
     await expect(fetchInatTaxa(conn, { fetchImpl, requestDelayMs: 0, signal: controller.signal, skipRefresh: true })).rejects.toThrow(/deadline/);
-    expect(await copy()).toEqual([[56861n, "Pacific aster", "list"]]);
+    expect(await copy()).toEqual([[56861n, "pacific aster", "list"]]);
     expect(await q("SELECT count(*) FROM plant_common_name_stale")).toEqual([[0n]]);
   });
 });

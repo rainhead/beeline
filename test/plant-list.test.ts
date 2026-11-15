@@ -954,7 +954,7 @@ describe("common names", () => {
       [51884, "Urtica dioica", "species", "stinging nettle (iNaturalist)"],
       [1074432, "Urtica dioica gracilis", "subspecies", "coast nettle (iNaturalist)"],
     ]);
-    expect(await nameOf(1074432)).toEqual(["Northwest nettle", "list", "Urtica dioica gracilis", 0]);
+    expect(await nameOf(1074432)).toEqual(["northwest nettle", "list", "Urtica dioica gracilis", 0]);
     expect(await nameOf(51884)).toEqual(["stinging nettle", "list", "Urtica dioica", 0]);
   });
 

@@ -759,7 +759,7 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     expect(spec[shead.indexOf("hostFamily")]).toBe("Familia alpha");
   });
 
-  it("puts them in the Darwin Core archive as Beeline's own columns, with no term of their own", async () => {
+  it("puts id, current name and family in the Darwin Core archive as Beeline's own columns, and never the common name", async () => {
     const dir = await mkdtemp(join(tmpdir(), "beeline-dwca-"));
     const governance = { licenses: join(dir, "licenses.csv"), policies: join(dir, "policies.csv") };
     await writeFile(governance.licenses, "program,from_year,license,decided_by,decided_on,source,reason\nOBA,2017,CC-BY-NC-4.0,Test,2026-10-10,https://example.org/oba,Published under it\n");
@@ -774,9 +774,14 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     const [header, ...rows] = files["occurrence.txt"]!.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
     const cell = (name: string) => rows[0]![header!.indexOf(name)];
     expect(cell("associatedTaxa")).toContain("Alpha oldname");
-    expect([cell("hostInatTaxonId"), cell("hostCurrentName"), cell("hostFamily"), cell("hostCommonName")]).toEqual(["1", "Alpha lanata", "Familia alpha", "woolly alpha"]);
+    expect([cell("hostInatTaxonId"), cell("hostCurrentName"), cell("hostFamily")]).toEqual(["1", "Alpha lanata", "Familia alpha"]);
+    // The archive goes to Ecdysis and GBIF and carries scientific names only (Peter, 2026-11-14).
+    expect(header).not.toContain("hostCommonName");
+    expect(files["meta.xml"]).not.toContain("hostCommonName");
+    expect(rows[0]!.join("\t")).not.toContain("woolly alpha");
+    expect(rows.every((r) => r.length === header!.length)).toBe(true);
     // Darwin Core's family and vernacularName describe the bee, so these are declared as nothing.
-    for (const own of ["hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"]) {
+    for (const own of ["hostInatTaxonId", "hostCurrentName", "hostFamily"]) {
       expect(files["meta.xml"]).not.toContain(`terms/${own}`);
       expect(files["meta.xml"]).toContain(own);
     }

@@ -12,6 +12,21 @@ import {
   type SpecimenRow,
 } from "./listings.js";
 import type { CsvTiming } from "./request-timing.js";
+
+/**
+ * The specimens CSV's columns the archive leaves out. A host's common name is
+ * for people reading Beeline's own downloads; the archive is what goes to
+ * Ecdysis and GBIF, and it carries scientific names only (Peter, 2026-11-14:
+ * the listings CSV and the API carry the common name, the archive and labels
+ * do not).
+ */
+const NOT_IN_ARCHIVE = new Set<string>(["hostCommonName"]);
+const ARCHIVE_OWN_COLUMNS = SPECIMEN_OWN_COLUMNS.filter((c) => !NOT_IN_ARCHIVE.has(c));
+/** Where each column the archive keeps sits in a specimens CSV row. */
+const ARCHIVE_KEEP = [...SPECIMEN_DWC_COLUMNS, ...SPECIMEN_OWN_COLUMNS]
+  .map((c, i) => (NOT_IN_ARCHIVE.has(c) ? -1 : i))
+  .filter((i) => i >= 0);
+const archiveRow = (row: unknown[]): unknown[] => ARCHIVE_KEEP.map((i) => row[i]);
 import type { Database, DeterminationQualifier } from "../model.js";
 
 /**
@@ -240,7 +255,7 @@ export const metaXml = (license: string | null = null) => `<?xml version="1.0" e
     <files><location>occurrence.txt</location></files>
     <id index="0"/>
 ${fields(SPECIMEN_DWC_COLUMNS.map((t) => `${DWC}${t}`))}
-${license === null ? "" : `    <field default="${xmlAttr(license)}" term="http://purl.org/dc/terms/license"/>\n`}    <!-- Columns ${SPECIMEN_DWC_COLUMNS.length + 1} onwards are Beeline's own and have no Darwin Core term: ${SPECIMEN_OWN_COLUMNS.join(", ")}. -->
+${license === null ? "" : `    <field default="${xmlAttr(license)}" term="http://purl.org/dc/terms/license"/>\n`}    <!-- Columns ${SPECIMEN_DWC_COLUMNS.length + 1} onwards are Beeline's own and have no Darwin Core term: ${ARCHIVE_OWN_COLUMNS.join(", ")}. -->
   </core>
   <extension encoding="UTF-8" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1" rowType="${DWC}Identification">
     <files><location>identification.txt</location></files>
@@ -290,7 +305,7 @@ export function specimenArchiveStream(
       head: () => {
         file("meta.xml").push(encoder.encode(metaXml(opts.license ?? null)), true);
         core = file("occurrence.txt");
-        core.push(encoder.encode(tabLine(["id", ...SPECIMEN_DWC_COLUMNS, ...SPECIMEN_OWN_COLUMNS])));
+        core.push(encoder.encode(tabLine(["id", ...SPECIMEN_DWC_COLUMNS, ...ARCHIVE_OWN_COLUMNS])));
         identifications = file("identification.txt");
         identifications.push(
           encoder.encode(tabLine(["coreid", ...IDENTIFICATION_TERMS.map(([header]) => header), ...IDENTIFICATION_OWN_COLUMNS])),
@@ -298,7 +313,7 @@ export function specimenArchiveStream(
         return take();
       },
       page: (page) => {
-        core.push(encoder.encode(page.rows.map((r) => tabLine([r.specimen_id, ...specimenCsvRow(r, page)])).join("")));
+        core.push(encoder.encode(page.rows.map((r) => tabLine([r.specimen_id, ...archiveRow(specimenCsvRow(r, page))])).join("")));
         identifications.push(encoder.encode(page.identifications.map((r) => tabLine(identificationRow(r))).join("")));
         return take();
       },

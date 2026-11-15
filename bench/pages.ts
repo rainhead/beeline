@@ -119,8 +119,9 @@ interface CaseResult extends Case, Summary {
 const { positional, flags } = args(process.argv.slice(2));
 const source = positional[0] ?? "beeline.duckdb";
 const n = Number(flags.n ?? 15);
-// --only=<regex>: just the cases whose "who name" matches, for a quick comparison of a few pages. It is also the
-// only way to run the whole-corpus downloads and the sample-edit write, which a plain run leaves out.
+// --only=<regex>: just the cases whose "who name" matches, for a quick comparison of a few pages. It matches by
+// pattern, so `--only=all` pulls the whole-corpus downloads in too. A plain run leaves those downloads out and runs
+// the sample-edit write; with --only, the write runs only if the pattern matches it.
 const only = typeof flags.only === "string" ? new RegExp(flags.only) : undefined;
 
 const bench = await openBench(source);

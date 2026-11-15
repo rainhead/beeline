@@ -69,7 +69,7 @@ const COLUMN_MEANING: Record<(typeof SAMPLE_CSV_HEADER)[number] | (typeof SPECIM
   hostInatTaxonId: "The iNaturalist taxon id of the floral host, as the observation gave it; empty where the host has no id.",
   hostCurrentName: "What iNaturalist calls the floral host now, which differs from associatedTaxa where iNaturalist has since renamed or replaced it; empty where it has no single current name (split, retired) or Beeline has not yet read the taxon.",
   hostFamily: "The family of the floral host as iNaturalist now has it; empty where there is none.",
-  hostCommonName: "The common name of the host as iNaturalist now has it (the current taxon, which is the stored one unless iNaturalist has replaced it). It is the plant list's name for that taxon where the list has one, else iNaturalist's name for Oregon, else the name of the nearest coarser entry in the list. Empty where there is none, and for a split or retired host.",
+  hostCommonName: "The common name of the host as iNaturalist now has it (the current taxon, which is the stored one unless iNaturalist has replaced it). It is the plant list's name for that taxon where the list has one, else iNaturalist's name for Oregon, else the name of the nearest coarser entry in the list. Empty where there is none, and, as for hostCurrentName, for a split, retired, pending or absent host and one Beeline has not yet read.",
   atlas: "The code of the atlas the sample was collected in; empty outside every atlas.",
   locationSource: "Where the coordinates came from. Empty where the location is withheld.",
   geoprivacy: "The observer's iNaturalist geoprivacy setting for the observation: obscured or private. Empty when open.",

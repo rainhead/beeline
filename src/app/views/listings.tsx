@@ -659,6 +659,7 @@ export function SampleListing(props: ListingProps<SampleRow> & { mayEnterTrapSam
       ) : (
         <>
           <DataTable
+            hostColumn
             columns={[
               column({ ...col, label: copy.colSample, sort: "number", kind: "number" }),
               dateColumn({ ...col, label: copy.colDate }),
@@ -978,6 +979,7 @@ export function SpecimenListing(
       ) : (
         <>
           <DataTable
+            hostColumn
             columns={[
               ...(marking ? [tickColumn] : []),
               // The number is what the label carries, so whether it is on

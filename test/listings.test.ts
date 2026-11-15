@@ -623,7 +623,7 @@ describe("the host plant column", () => {
     // A bee off no flower: the dash, since the absence repeats down the column.
     const all = await get(app, "/specimens?scope=all");
     expect(all).toContain("WABA0001");
-    expect(all).not.toMatch(/<td><\/td>/);
+    expect(all).not.toMatch(/<td(?! class="actions")[^>]*><\/td>/);
   });
 });
 
@@ -773,6 +773,8 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     expect(await find("showy alpha")).toEqual(["B-3"]);
     expect(await find("SHOWY")).toEqual(["B-3"]);
     expect(await find("wy alp")).toEqual(["B-3"]);
+    // Neither the observed name ("Alpha showy") nor taxon 7's scientific name contains this, only the common name does.
+    expect(await find("OWY AL")).toEqual(["B-3"]);
   });
 
   describe("a host with no current name", () => {
@@ -780,8 +782,9 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     async function noNameApp() {
       const fx = await hostApp();
       const { conn } = fx;
-      await taxon(conn, { id: 20, name: "Pendingus", rank: "species", active: false, parent: 110, replacedBy: [9999] });
-      await taxon(conn, { id: 21, name: "Retiredus", rank: "species", active: false, parent: 110 });
+      // Each has an Oregon common name of its own, which must not leak into a host that has no current taxon.
+      await taxon(conn, { id: 20, name: "Pendingus", rank: "species", active: false, parent: 110, replacedBy: [9999], oregon: "leaky pending" });
+      await taxon(conn, { id: 21, name: "Retiredus", rank: "species", active: false, parent: 110, oregon: "leaky retired" });
       await refreshPlantCommonNames(conn);
       const make = async (n: string, id: number, name: string) => {
         const sample = await insertCleanSample(conn, { sample_number: `'${n}'`, host_inat_taxon_id: String(id), host_name_as_observed: `'${name}'`, host_rank: "'species'" });
@@ -800,6 +803,7 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
       for (const listing of ["samples", "specimens"]) {
         const body = await get(app, `/${listing}?scope=all&host=obs`);
         expect(dnumbers(body)).toEqual(["D-1", "D-2", "D-3"]);
+        expect(body).not.toContain("leaky");
         for (const name of ["Pending", "Retired", "Uncached"]) {
           expect(body).toMatch(new RegExp(`<i>${name}</i> <i>obs</i></span></td>`));
         }
@@ -814,6 +818,7 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
         for (const [n, id] of [["D-1", "20"], ["D-2", "21"], ["D-3", "888"]] as const) {
           const r = csv.find((l) => l[head.indexOf(key)] === n)!;
           expect(["hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"].map((h) => r[head.indexOf(h)])).toEqual([id, "", "", ""]);
+          expect(r.join(",")).not.toContain("leaky");
           expect(r[head.indexOf("associatedTaxa")]).toContain("obs");
         }
       }
@@ -829,6 +834,7 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
         // The taxon's own cached name is not a name it answers to once it has no current taxon.
         expect(await find("pendingus")).toEqual([]);
         expect(await find("retiredus")).toEqual([]);
+        expect(await find("leaky")).toEqual([]);
       }
     });
   });
@@ -924,7 +930,8 @@ describe("missing values", () => {
   // Absence was drawn three ways — words, a bare em dash, an empty cell — and
   // an empty cell cannot be told from a value that failed to load (Nora,
   // 2026-09-17). Every value cell now draws something, through one component.
-  const EMPTY_VALUE_CELL = /<td><\/td>|<td class="nowrap"><\/td>/;
+  // Any empty cell but the actions one, which holds a button or nothing and is not a value.
+  const EMPTY_VALUE_CELL = /<td(?! class="actions")[^>]*><\/td>/;
 
   it("never leaves a value cell empty, on either listing", async () => {
     const { app, conn } = await listingApp("staffer");
@@ -933,7 +940,7 @@ describe("missing values", () => {
                     WHERE sample_number = 'C-1'`);
     for (const path of ["/samples?scope=all", "/specimens?scope=all"]) {
       const body = await get(app, path);
-      expect(body, path).not.toMatch(EMPTY_VALUE_CELL);
+      expect(body.match(EMPTY_VALUE_CELL)?.[0], path).toBeUndefined();
     }
   });
 

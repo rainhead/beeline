@@ -502,14 +502,16 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
     // And the columns written from a date a correction changed, where the
     // date the export wrote is the corrected one: then they follow from it,
     // and any other value of theirs is something else (CodeRabbit on #352).
-    const dateAgrees = (f: string) => {
-      const n = (x: string) => (f.startsWith("month") ? `try_cast(${monthNumber(x)} AS INTEGER)` : `try_cast(trim(${x}) AS INTEGER)`);
-      return `${n(`c."${f}"`)} IS NOT DISTINCT FROM ${n(`p."e_${f}"`)}`;
-    };
     // Each written as the export writes it (src/legacy-export.ts): the range
     // or the one day, and the days of the year only for a range.
     const start = `try_cast(concat(c."year", '-', ${monthNumber('c."month"')}, '-', c."day") AS DATE)`;
     const end = `coalesce(try_cast(concat(c."year2", '-', ${monthNumber('c."month2"')}, '-', c."day2") AS DATE), ${start})`;
+    // The date the export wrote: its start, and its end where it wrote one,
+    // which it does only for a range, so a corrected one-day sample is blank there.
+    const exportedStart = `try_cast(concat(p."e_year", '-', p."e_month", '-', p."e_day") AS DATE)`;
+    const exportedEnd = `try_cast(concat(p."e_year2", '-', p."e_month2", '-', p."e_day2") AS DATE)`;
+    const datesAgree = `${exportedStart} = ${start}
+            AND (CASE WHEN ${end} > ${start} THEN ${exportedEnd} = ${end} ELSE ${exportedEnd} IS NULL END)`;
     const derived = `CASE d."column"
         WHEN 'verbatimEventDate' THEN CASE WHEN ${end} > ${start}
           THEN concat(strftime(${start}, '%Y-%-m-%-d'), '/', strftime(${end}, '%Y-%-m-%-d'))
@@ -525,7 +527,7 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
           JOIN cmp_pairs p ON p."e_fieldNumber" = o."fieldNumber"
           WHERE o."fieldNumber" = d.field_number
             AND (${DATE_FIELDS.map((c) => `c."${c}" IS DISTINCT FROM o."${c}"`).join(" OR ")})
-            AND ${DATE_FIELDS.map(dateAgrees).join(" AND ")}
+            AND ${datesAgree}
             AND ${derived} = d.exported)`);
   }
   // A legacy record that contradicts itself about its pair's order: its name
@@ -594,14 +596,21 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
           WHERE o."fieldNumber" = d.field_number)`);
   }
   // A label printed again (gh-218): the print date is the newest printing's,
-  // whether the first printing was new Beeline's or the old Beeline's.
+  // whether the first printing was new Beeline's or the old Beeline's, and
+  // only where it is that date as the export writes it (src/legacy-export.ts,
+  // printed; CodeRabbit on #352).
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'reprinted'
     WHERE d."column" = 'dateLabelPrint' AND d.kind = 'changed'
       AND EXISTS (SELECT 1 FROM specimen sp
                   JOIN printed_label_reprint pr ON pr.specimen_id = sp.entity_id
-                  JOIN print_run r ON r.entity_id = pr.print_run_id AND r.printed_at IS NOT NULL
-                  WHERE sp.field_number = d.field_number)`);
+                  JOIN print_run r ON r.entity_id = pr.print_run_id AND r.printed_at IS NOT NULL AND r.canceled_at IS NULL
+                  WHERE sp.field_number = d.field_number)
+      AND d.exported = (SELECT strftime(timezone('America/Los_Angeles', max(r.printed_at)), '%-d-%b-%y')
+                        FROM specimen sp
+                        JOIN printed_label pl ON pl.specimen_id = sp.entity_id
+                        JOIN print_run r ON r.entity_id = pl.print_run_id AND r.printed_at IS NOT NULL AND r.canceled_at IS NULL
+                        WHERE sp.field_number = d.field_number)`);
   // Sex and caste from an expert determination the legacy system never
   // received: the newest expert determination stating one came from Ecdysis
   // or was made in Beeline, as the export reads them (src/legacy-export.ts,

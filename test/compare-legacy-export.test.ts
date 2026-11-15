@@ -409,9 +409,20 @@ describe("identifications, sex and caste, and reprints (beeline-eznn)", () => {
     await conn.run(`UPDATE legacy_occurrence SET "genusVolDet" = '', "sexVolDet" = '' WHERE "fieldNumber" = '25000002'`);
     await conn.run(`UPDATE legacy_occurrence SET sex = upper(sex) WHERE "fieldNumber" = '25000001' AND sex <> ''`);
     await conn.run(`UPDATE legacy_occurrence SET "dateLabelPrint" = '11-Aug-25' WHERE "fieldNumber" = '25000009'`);
+    // A range staff corrected to the one day it was (as on 25000003's
+    // sample, collected on one day): the old record wrote an end the next
+    // day, and the correction takes it away, so the export writes no end and
+    // the date and days of the year as for one day.
+    await conn.run(`UPDATE legacy_occurrence
+      SET day2 = CAST(try_cast(day AS INTEGER) + 1 AS VARCHAR), month2 = month, year2 = year,
+          "verbatimEventDate" = 'a range', "startDayofYear" = '1', "endDayofYear" = '2'
+      WHERE "fieldNumber" = '25000003'`);
+    await conn.run(`INSERT INTO legacy_correction (_id, field, base_value, new_value, author, reason)
+      SELECT o._id, f.field, CASE f.field WHEN 'day2' THEN o.day2 WHEN 'month2' THEN o.month2 ELSE o.year2 END, '', 'test', 'one day'
+      FROM legacy_occurrence o, (VALUES ('day2'), ('month2'), ('year2')) f(field) WHERE o."fieldNumber" = '25000003'`);
   });
 
-  test("tells a newer identification and a reprint from a spelling of the old record's", async () => {
+  test("tells a newer identification, a reprint and a corrected date from a spelling of the old record's", async () => {
     await compareLegacyExport(conn, exportPath, []);
     const path = join(dir, "differences.csv");
     await writeDifferences(conn, [], path);
@@ -421,12 +432,17 @@ describe("identifications, sex and caste, and reprints (beeline-eznn)", () => {
           OR (field_number = '25000002' AND "column" IN ('genusVolDet', 'sexVolDet'))
           OR (field_number = '25000001' AND "column" = 'sex')
           OR (field_number = '25000009' AND "column" = 'dateLabelPrint')
+          OR (field_number = '25000003' AND "column" IN ('day2', 'verbatimEventDate', 'startDayofYear', 'endDayofYear'))
        ORDER BY ALL`,
     )).getRows() as [string, string, string][];
     expect(kinds).toEqual([
       ["25000001", "sex", "sex_caste_vocabulary"],
       ["25000002", "genusVolDet", "newer_volunteer_determination"],
       ["25000002", "sexVolDet", "newer_volunteer_determination"],
+      ["25000003", "day2", "staff_correction"],
+      ["25000003", "endDayofYear", "staff_correction"],
+      ["25000003", "startDayofYear", "staff_correction"],
+      ["25000003", "verbatimEventDate", "staff_correction"],
       ["25000005", "sex", "newer_determination"],
       ["25000009", "dateLabelPrint", "reprinted"],
     ]);

@@ -99,8 +99,9 @@ COMMENT ON COLUMN sample_host.resolved_by IS 'id: the sample''s own host id, an 
 -- and why. THE GUARANTEE: every sample with a host name and no id is either
 -- read through a current vascular plant and not listed here, or listed here
 -- (test/host-name-taxon.test.ts asserts it over every case). `read` says
--- whether a page shows anything for the host beyond the name: a row in
--- sample_host whose taxon has a current taxon. The first outcome that applies
+-- whether a page reads the host through a taxon: a row in sample_host whose
+-- taxon has a current taxon (a page can still print a line about a taxon
+-- with none, "split" or "no longer used"). The first outcome that applies
 -- is the one given:
 --   no name                   the name normalises to nothing (whitespace, a
 --                             bare hybrid sign or rank marker)
@@ -124,8 +125,9 @@ COMMENT ON COLUMN sample_host.resolved_by IS 'id: the sample''s own host id, an 
 --                             has read it
 --   taxon no longer current   the taxon has no current taxon: iNaturalist
 --                             retired it with nothing after it, split it, or
---                             no longer has it (absent). The page says so
---                             under the volunteer's name, and asking the name
+--                             no longer has it (absent). For the first two
+--                             the page says so under the volunteer's name,
+--                             for the third it says nothing; asking the name
 --                             again need not change the answer, since the
 --                             lookup names one replacement
 --   lineage not read          the cache holds no lineage for the current
@@ -152,22 +154,38 @@ COMMENT ON COLUMN sample_host.resolved_by IS 'id: the sample''s own host id, an 
 -- A sample that is not read for a reason none of these names is listed with
 -- no outcome, so the guarantee holds even for a case nobody foresaw.
 -- other_taxa names, for every row, the taxa the lookup's other exact hits
--- stand for today, which are what a person weighs for 'other taxa had this
--- name' and 'ambiguous'. With each sample's season and whether it has
+-- stand for today (each part of a split; a taxon the cache has not read by
+-- its id), which are what a person weighs for 'other taxa had this name' and
+-- 'ambiguous'. With each sample's season and whether it has
 -- settled (sample_season, settled_sample), so a count can be split as
 -- AGENTS.md asks. Reads the name views and the taxon cache whole, so it is
 -- for a person and for tests, not for a page.
 CREATE VIEW sample_host_unresolved AS
 WITH others AS (
-  -- Each exact hit of each lookup, followed to the taxon it stands for today; dead ends left out.
-  SELECT o.name_key, o.expected_rank,
-         coalesce(oc.current_taxon_id, o.current_taxon_id) AS taxon_id,
-         coalesce(oc.current_name, t.name) AS taxon_name
+  -- Each exact hit of each lookup, followed to the taxa it stands for today. Dead ends (retired with
+  -- nothing after, absent) are left out.
+  -- A taxon with one current taxon stands for that one.
+  SELECT o.name_key, o.expected_rank, oc.current_taxon_id AS taxon_id, oc.current_name AS taxon_name
+  FROM plant_name_hit_current o
+  JOIN inat_taxon_current oc ON oc.inat_taxon_id = o.current_taxon_id
+  WHERE oc.current_taxon_id IS NOT NULL
+  UNION
+  -- A split stands for each active taxon it was split into.
+  SELECT o.name_key, o.expected_rank, e.end_taxon_id,
+         coalesce(t.name, concat('taxon ', CAST(e.end_taxon_id AS TEXT)))
+  FROM plant_name_hit_current o
+  JOIN inat_taxon_current oc ON oc.inat_taxon_id = o.current_taxon_id AND oc.standing = 'split'
+  JOIN inat_taxon_replacement_end e ON e.retired_taxon_id = o.current_taxon_id AND e.end_kind = 'active'
+  LEFT JOIN inat_taxon t ON t.inat_taxon_id = e.end_taxon_id
+  UNION
+  -- One the cache has not read, or whose replacement it has not read, stands for itself by its id until
+  -- the nightly taxa step reads it.
+  SELECT o.name_key, o.expected_rank, o.current_taxon_id,
+         coalesce(t.name, concat('taxon ', CAST(o.current_taxon_id AS TEXT)))
   FROM plant_name_hit_current o
   LEFT JOIN inat_taxon_current oc ON oc.inat_taxon_id = o.current_taxon_id
   LEFT JOIN inat_taxon t ON t.inat_taxon_id = o.current_taxon_id
-  WHERE o.current_taxon_id IS NOT NULL
-    AND oc.standing IS DISTINCT FROM 'retired' AND oc.standing IS DISTINCT FROM 'absent'
+  WHERE o.current_taxon_id IS NOT NULL AND (oc.inat_taxon_id IS NULL OR oc.standing = 'pending')
 ), judged AS (
   SELECT s.entity_id AS sample_id, s.host_name_as_observed AS host_name, sh.name_key, sh.expected_rank,
          rd.sample_id IS NOT NULL AS read,

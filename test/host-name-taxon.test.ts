@@ -237,6 +237,26 @@ describe("a sample's host read by its name", () => {
     ]);
   });
 
+  test("names each part of a rival that was split, and a rival the cache has not read by its id", async () => {
+    const { conn, sample } = await store();
+    // Rival 8 was replaced by taxon 5, which iNaturalist has since split into 6 and 7.
+    for (const [id, name, active] of [[5, "Gamma split", false], [6, "Gamma one", true], [7, "Gamma two", true]] as const) {
+      await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active) VALUES (${id}, '${name}', 'genus', 20, ${active})`);
+      await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (${id}, ${id}, 0), (${id}, 211194, 1)`);
+    }
+    await conn.run("INSERT INTO inat_taxon_replacement VALUES (5, 6), (5, 7)");
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('beta', 'genus', 3, true)");
+    await conn.run(`INSERT INTO plant_name_lookup_hit VALUES ('beta', 'genus', 2, 'Beta', 'genus', true, 'Beta'),
+                    ('beta', 'genus', 8, 'Beta', 'genus', false, 'Beta'), ('beta', 'genus', 9, 'Beta', 'genus', false, 'Beta')`);
+    // Rival 9 was replaced by taxon 99, which the cache has not read yet.
+    await conn.run("INSERT INTO plant_name_lookup_hit_replacement VALUES ('beta', 'genus', 8, 5), ('beta', 'genus', 9, 99)");
+    await sample("1", "NULL", "'Beta'");
+    await refreshPlantCommonNames(conn);
+    expect(await rows(conn, "SELECT read, outcome, other_taxa FROM sample_host_unresolved")).toEqual([
+      [true, "other taxa had this name", "Gamma one; Gamma two; taxon 99"],
+    ]);
+  });
+
   test("a name whose taxon is a plant but not a vascular one is read, and listed for a person", async () => {
     // Synthetic: no host name on production resolves to a moss (2026-11-15), but the lookups search all plants.
     const { conn, sample } = await store();

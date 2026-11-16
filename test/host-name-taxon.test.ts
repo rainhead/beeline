@@ -117,6 +117,21 @@ describe("a sample's host read by its name", () => {
     expect(await rows(conn, "SELECT sample_id, outcome, candidate_taxon_id FROM sample_host_unresolved")).toEqual([[once, "other taxa had this name", 2n]]);
   });
 
+  test("a retired hit whose replacement was itself replaced by the winning taxon names no other plant, and is not listed", async () => {
+    // The lookup's answer said hit 8 was replaced by taxon 1; the taxon cache has since read 1 as retired and
+    // replaced by 2, the active taxon of the name. Followed to the end, both hits are taxon 2.
+    const { conn, sample } = await store();
+    await conn.run("UPDATE inat_taxon SET is_active = false WHERE inat_taxon_id = 1");
+    await conn.run("INSERT INTO inat_taxon_replacement VALUES (1, 2)");
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('beta', 'genus', 2, true)");
+    await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('beta', 'genus', 2, 'Beta', 'genus', true, 'Beta'), ('beta', 'genus', 8, 'Beta', 'genus', false, 'Beta')");
+    await conn.run("INSERT INTO plant_name_lookup_hit_replacement VALUES ('beta', 'genus', 8, 1)");
+    const same = await sample("1", "NULL", "'Beta'");
+    await refreshPlantCommonNames(conn);
+    expect(await rows(conn, `SELECT resolved_by, inat_taxon_id FROM sample_host WHERE sample_id = ${same}`)).toEqual([["name", 2n]]);
+    expect(await rows(conn, "SELECT count(*) FROM sample_host_unresolved")).toEqual([[0n]]);
+  });
+
   test("a name whose taxon is a plant but not a vascular one is read, and listed for a person", async () => {
     // Synthetic: no host name on production resolves to a moss (2026-11-15), but the lookups search all plants.
     const { conn, sample } = await store();

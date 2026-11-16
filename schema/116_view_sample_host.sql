@@ -108,7 +108,13 @@ COMMENT ON COLUMN sample_host.resolved_by IS 'id: the sample''s own host id, an 
 --                             or an older name, stands for a different taxon:
 --                             a name written years ago may have meant the
 --                             other (Mimulus, which iNaturalist has since
---                             split, on 6 samples of 2018 to 2020)
+--                             split, on 6 samples of 2018 to 2020). Both
+--                             sides are followed to what they are now
+--                             (inat_taxon_current), since the lookup's answer
+--                             names one replacement, which may itself have
+--                             been replaced since; a hit that is a dead end
+--                             (no replacement) names no other plant and does
+--                             not count.
 --   no name                   the name is only whitespace
 -- So every sample with a host name and no id is read (sample_host), or is
 -- here, or both. With each sample's season and whether it has settled, so a
@@ -125,8 +131,10 @@ WITH judged AS (
               WHEN c.inat_taxon_id IS NULL OR c.standing = 'pending' THEN 'taxon not read yet'
               WHEN c.is_vascular IS FALSE THEN 'not a vascular plant'
               WHEN EXISTS (SELECT 1 FROM plant_name_hit_current o
+                           LEFT JOIN inat_taxon_current oc ON oc.inat_taxon_id = o.current_taxon_id
                            WHERE o.name_key = r.name_key AND o.expected_rank = r.expected_rank
-                             AND o.current_taxon_id <> r.inat_taxon_id)
+                             AND coalesce(oc.current_taxon_id, o.current_taxon_id)
+                                 <> coalesce(c.current_taxon_id, r.inat_taxon_id))
                 THEN 'other taxa had this name'
          END AS outcome,
          r.inat_taxon_id AS candidate_taxon_id,

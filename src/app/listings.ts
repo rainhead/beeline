@@ -5,6 +5,7 @@ import type { CsvTiming } from "./request-timing.js";
 import { PROGRAM_MEMBERSHIP, type Database, type DeterminationQualifier, type SampleKind } from "../model.js";
 import { labelName } from "../person-name.js";
 import { orcidUrl } from "../orcid.js";
+import { plantRelationship } from "../trap-method.js";
 
 /**
  * Browsing the collection: the query layer behind /samples and /specimens.
@@ -1903,10 +1904,12 @@ const countryCode = (country: string | null) => (country === null ? null : (ALPH
 
 /**
  * dwc:associatedTaxa: the floral host, in the term's own quoted form
- * ("host":"Quercus alba"), with the relationship the legacy records used.
+ * ("host":"Quercus alba"), with the relationship the legacy records used; or,
+ * where the method names a trap, the plant near the trap ("near":"Ceanothus"),
+ * since a trap does not say which flower its bees visited (beeline-vjqy).
  */
-const associatedTaxa = (host: string | null) =>
-  host === null || host === "" ? null : `"visits flowers of":"${host.replaceAll('"', "'")}"`;
+const associatedTaxa = (host: string | null, method: string | null) =>
+  host === null || host === "" ? null : `"${plantRelationship(method)}":"${host.replaceAll('"', "'")}"`;
 
 /**
  * dwc:geodeticDatum: WGS84 for a point that came from iNaturalist, which
@@ -1987,7 +1990,7 @@ export const sampleCsvRow = (r: SampleRow, page: Page<SampleRow>): unknown[] => 
   r.coordinate_uncertainty_m,
   r.elevation_m,
   r.elevation_m,
-  associatedTaxa(r.host_name),
+  associatedTaxa(r.host_name, r.protocol),
   r.kind,
   r.specimen_count,
   r.host_rank,
@@ -2094,7 +2097,7 @@ export const specimenCsvRow = (r: SpecimenRow, page: Page<SpecimenRow>): unknown
   r.coordinate_uncertainty_m,
   r.elevation_m,
   r.elevation_m,
-  associatedTaxa(r.host_name),
+  associatedTaxa(r.host_name, r.protocol),
   r.scientific_name,
   r.authorship,
   r.taxon_rank,

@@ -8,8 +8,10 @@ import { en } from "../src/app/messages/en.js";
 import { createApp } from "../src/app/server.js";
 import { createKysely, openMemoryDuckDb } from "../src/db.js";
 import { DEFAULT_RULINGS } from "../src/compare-legacy-export.js";
+import { LegacyChangesPage } from "../src/app/views/legacy-changes.js";
 import {
   changesDir,
+  GENERATION,
   LINE_SQL,
   LINES,
   readChangesSummary,
@@ -187,6 +189,30 @@ describe("writing the changes", () => {
     expect(example!.specimenId).toEqual(expect.any(Number));
   });
 
+  test("gives a record new Beeline does not hold the held-back download rather than a file of blanks", async () => {
+    // Synthetic: a record only old Beeline holds, ruled as promotion would
+    // rule one it held back, written into a folder of its own.
+    await conn.run(`INSERT INTO legacy_occurrence SELECT * REPLACE ('only-old' AS _id, '29999999' AS "fieldNumber")
+                    FROM legacy_occurrence WHERE "fieldNumber" = '25000001'`);
+    try {
+      const rulings = [
+        ...(await readRulings(DEFAULT_RULINGS)),
+        { field_number: "", column: RECORD_COLUMN, kind: "not_exported", outcome: "reference-wrong", reason: "test", source: "test", decided_by: "test", decided_on: "2026-11-16" },
+      ];
+      const dir = changesDir(await mkdtemp(join(tmpdir(), "legacy-changes-held-")));
+      const held = (await writeChanges(conn, legacyExportPath(exportsDir), rulings, dir)).lines.find((l) => l.line === "held_back")!;
+      expect(held.examples.map((e) => e.fieldNumber)).toEqual(["29999999"]);
+      expect(held).toMatchObject({ file: null, bytes: null });
+      const generation = (await readdir(dir)).find((n) => GENERATION.test(n))!;
+      expect(await readdir(join(dir, generation))).not.toContain("held_back.csv");
+      const page = String(await LegacyChangesPage({ m: en as never, summary: (await readChangesSummary(join(dir, "..")))! }));
+      expect(page).toContain(`href="/exports/held-back.csv"`);
+      expect(page).not.toContain("held_back.csv");
+    } finally {
+      await conn.run(`DELETE FROM legacy_occurrence WHERE _id = 'only-old'`);
+    }
+  });
+
   test("lists each line's outcomes commonest first", () => {
     for (const l of summary.lines) {
       const sizes = l.outcomes.map((o) => o.active + o.settled);
@@ -205,13 +231,13 @@ describe("writing the changes", () => {
   test("writes each line's every value to its own file, in a folder of the night's own", async () => {
     const dir = join(changesDir(exportsDir), summary.generation);
     const sex = summary.lines.find((l) => l.line === "newer_expert_sex")!;
-    const bytes = await readFile(join(dir, sex.file));
+    const bytes = await readFile(join(dir, sex.file!));
     expect(bytes.subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
     const [header, ...rows] = bytes.subarray(3).toString("utf8").trim().split("\n");
     expect(header).toBe("field_number,season,column,old_beeline,new_beeline,what_new_beeline_did,outcome");
     expect(rows).toHaveLength(sex.values);
     expect(rows[0]).toBe("25000005,settled,sex,male,female,Sex or caste from a newer expert identification,Not a fault in either");
-    expect(sex.bytes).toBe((await stat(join(dir, sex.file))).size);
+    expect(sex.bytes).toBe((await stat(join(dir, sex.file!))).size);
     expect(await readChangesSummary(exportsDir)).toEqual(summary);
     // The older night's folder, which no summary named, is gone; the folder it did not write is not.
     await expect(stat(join(changesDir(exportsDir), OLDER_NIGHT))).rejects.toThrow();

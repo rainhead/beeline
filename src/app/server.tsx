@@ -2107,7 +2107,7 @@ export function createApp({
     if (!c.get("admin")) return c.text("Admins only.", 403);
     const generation = c.req.param("generation");
     const name = c.req.param("file");
-    const line = LINES.find((l) => lineFile(l.id) === name);
+    const line = LINES.find((l) => l.download === undefined && lineFile(l.id) === name);
     if (!GENERATION.test(generation) || line === undefined) return errorResponse(c, "notFound");
     let handle;
     try {

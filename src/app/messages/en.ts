@@ -1953,8 +1953,8 @@ export const en = {
     seeSamples: "See its samples",
     seeSpecimens: "See its specimens",
     ecdysis: "Expert determinations",
-    ecdysisDataset: (datasetId: number) =>
-      `Read back every night at 3am Pacific from Ecdysis, the museum database, dataset ${datasetId}.`,
+    ecdysisDataset: (source: string) =>
+      `Read back every night at 3am Pacific from Ecdysis, the museum database, ${source}.`,
   },
 
   /**

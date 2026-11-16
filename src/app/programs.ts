@@ -1,7 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../model.js";
 import { PROGRAM_MEMBERSHIP } from "../model.js";
-import { ECDYSIS_COLLECTIONS, type EcdysisCollection } from "../fetch-ecdysis.js";
+import { describeScope, ECDYSIS_COLLECTIONS } from "../fetch-ecdysis.js";
 import type { ProgramContact, ProgramContacts } from "../program-contacts.js";
 import { OUTSIDE } from "./listings.js";
 import { personHandle } from "./roster.js";
@@ -76,7 +76,8 @@ export interface ProgramDetail extends ProgramSummary {
   /** The address it gives people for questions, as staff last set it; null where none is set. */
   email: ProgramContact | null;
   /** The Ecdysis collections its expert determinations are read back from. */
-  ecdysis: EcdysisCollection[];
+  /** Each Ecdysis collection its determinations come back from, as "dataset 44" or "collection 196". */
+  ecdysis: string[];
 }
 
 interface ProgramRow {
@@ -240,7 +241,7 @@ export async function loadProgram(
     ...summary,
     printing,
     email: contacts.get(p.code)?.email ?? null,
-    ecdysis: ECDYSIS_COLLECTIONS.filter((c) => c.program === p.code),
+    ecdysis: ECDYSIS_COLLECTIONS.filter((c) => c.program === p.code).map(describeScope),
   };
 }
 

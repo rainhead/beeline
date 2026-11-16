@@ -18,6 +18,7 @@ import { createMemoryDb, insertCleanSample, rows } from "./helpers.js";
 
 const FIXTURES = new URL("./fixtures/ecdysis/archive/", import.meta.url).pathname;
 const WA: EcdysisCollection = { datasetId: 44, catalogPrefix: "WSDA_", program: "WaBA" };
+const BC: EcdysisCollection = { collectionId: 196, catalogPrefix: "BCBA_", program: "BC" };
 const CREDENTIALS = { username: "fetcher", password: "s3cret-never-logged" };
 
 let conn: DuckDBConnection;
@@ -63,7 +64,7 @@ function ecdysis(): Ecdysis {
     fetch: async (input, init) => {
       const url = new URL(String(input));
       const body = init?.body === undefined ? "" : String(init.body);
-      e.requests.push(`${init?.method ?? "GET"} ${url.pathname} ${body}`);
+      e.requests.push(`${init?.method ?? "GET"} ${url.pathname}${url.search} ${body}`);
       if (url.pathname === "/api/v2/occurrence") {
         if (e.apiFails) return new Response("oops", { status: 500 });
         const count = url.searchParams.has("dateLastModifiedMin") ? e.counts.modifiedSince : e.counts.total;
@@ -180,5 +181,43 @@ describe("the Ecdysis login in the environment", () => {
     expect(configFromEnv({ ...base, ECDYSIS_USERNAME: "u", ECDYSIS_PASSWORD: "p" }).ecdysis).toEqual({ username: "u", password: "p" });
     expect(() => configFromEnv({ ...base, ECDYSIS_USERNAME: "u" })).toThrow(/set together/);
     expect(() => configFromEnv({ ...base, ECDYSIS_PASSWORD: "p" })).toThrow(/set together/);
+  });
+
+  test("British Columbia is asked for by collection, not dataset, and its BCBA_ catalog numbers join to field numbers", async () => {
+    // Washington's fixture with the prefix BC's catalog numbers carry
+    // (BCBA_2404406 in Ecdysis's v2 API, 2026-11-16, over field number 2404406).
+    const bcOccurrences = (await readFile(`${FIXTURES}occurrences.csv`, "utf8")).replaceAll("WSDA_", "BCBA_");
+    expect(bcOccurrences).toContain("BCBA_2303966");
+    zip = zipSync({
+      "occurrences.csv": new TextEncoder().encode(bcOccurrences),
+      "identifications.csv": new Uint8Array(await readFile(`${FIXTURES}identifications.csv`)),
+    });
+    const e = ecdysis();
+    const r = await fetchEcdysis(conn, BC, { dir, credentials: CREDENTIALS, fetch: e.fetch, now: new Date("2026-10-09T10:00:00Z") });
+    expect(r).toMatchObject({ scope: "collection 196", source: "downloaded" });
+    expect(r.load).toMatchObject({ matched: 4, loaded: 6 });
+    expect(describeFetch(r)).toMatch(/^collection 196 downloaded/);
+    const probes = e.requests.filter((q) => q.startsWith("GET /api/v2/occurrence"));
+    expect(probes).toHaveLength(2);
+    for (const q of probes) {
+      expect(q).toContain("collid=196");
+      expect(q).not.toContain("datasetID");
+    }
+    const download = decodeURIComponent(e.requests.find((q) => q.startsWith("POST /collections/download/"))!);
+    expect(download).toContain("identifications=1");
+    expect(download).toContain("db=196");
+    expect(download).not.toContain("datasetid");
+    // Kept apart from Washington's, which is 44.zip.
+    expect((await import("node:fs")).readdirSync(dir).sort()).toEqual(["collection-196.probe.json", "collection-196.zip"]);
+    expect(JSON.parse(await readFile(join(dir, "collection-196.probe.json"), "utf8"))).toEqual({ collectionId: 196, total: 6, since: "2026-10-08", modifiedSince: 2 });
+  });
+
+  test("Washington's requests are unchanged by collections existing", async () => {
+    const e = ecdysis();
+    await fetchWith(e);
+    for (const q of e.requests.filter((q) => q.startsWith("GET /api/v2/occurrence"))) {
+      expect(q).toContain("datasetID=44");
+      expect(q).not.toContain("collid");
+    }
   });
 });

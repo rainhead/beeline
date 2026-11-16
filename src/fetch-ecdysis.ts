@@ -13,8 +13,9 @@ import { loadEcdysis, REPORTED_NAMES, type LoadEcdysisResult } from "./load-ecdy
  * Washington's dataset 44 — and only for a signed-in session: an anonymous
  * request is answered 401 since Ecdysis changed it. So before paying for one,
  * Ecdysis's public v2 API is asked two cheap questions about the same
- * population (by datasetID, not collection: dataset 44 is a subset of WSUC's
- * collection 164): how many records there are, and how many changed since the
+ * population (Washington's by datasetID, not collection: dataset 44 is a
+ * subset of WSUC's collection 164; British Columbia's by collection, since
+ * its collection 196 has no public dataset): how many records there are, and how many changed since the
  * last download, counted from a day before it. Either number moving means
  * something changed; any doubt — no baseline, the API unreachable — means
  * download, because a skipped download is silent staleness and a needless one
@@ -31,21 +32,41 @@ import { loadEcdysis, REPORTED_NAMES, type LoadEcdysisResult } from "./load-ecdy
  * The credentials are never written to a log, an error or the run's detail.
  */
 
-export interface EcdysisCollection {
-  /** Symbiota's dataset id: what the archive and the probe are scoped by. */
-  datasetId: number;
+/**
+ * What an archive and its probe are scoped by: a dataset, which is a subset of
+ * a collection that Ecdysis publishes under its own id (Washington's is 44),
+ * or a whole collection, for one with no public dataset (British Columbia's is
+ * 196). The download form says `datasetid=44` or `db=196`; the v2 API says
+ * `datasetID=44` or `collid=196`.
+ */
+export type EcdysisScope = { datasetId: number; collectionId?: undefined } | { collectionId: number; datasetId?: undefined };
+
+export type EcdysisCollection = EcdysisScope & {
   /** What precedes Beeline's field number in the catalog number. */
   catalogPrefix: string;
   /** The program whose determinations the collection holds, by code: what its page says it reads from. */
   program: string;
-}
+};
 
 /**
- * The collections Beeline reads determinations back from. Washington's only,
- * until which collections the other atlases keep is answered (beeline-9ut.2,
- * where this becomes reference data beside atlas_printing).
+ * The collections Beeline reads determinations back from: Washington's
+ * dataset and British Columbia's collection (beeline-9ut.2, beeline-dd8). Code
+ * and not a table (beeline-9ut.2): nobody edits these, adding one is a code
+ * change anyway (how to ask Ecdysis for it is above), and the store being
+ * reseeded or migrated has no bearing on which museum collection an atlas
+ * keeps. beeline-5pza reads the prefixes from here.
  */
-export const ECDYSIS_COLLECTIONS: readonly EcdysisCollection[] = [{ datasetId: 44, catalogPrefix: "WSDA_", program: "WaBA" }];
+export const ECDYSIS_COLLECTIONS: readonly EcdysisCollection[] = [
+  { datasetId: 44, catalogPrefix: "WSDA_", program: "WaBA" },
+  { collectionId: 196, catalogPrefix: "BCBA_", program: "BC" },
+];
+
+/** What the collection is called in a log line and on a program's page: "dataset 44", "collection 196". */
+export const describeScope = (s: EcdysisScope): string =>
+  s.collectionId !== undefined ? `collection ${s.collectionId}` : `dataset ${s.datasetId}`;
+
+/** The name its archive and baseline are kept under. A dataset's stays its bare id, as before collections were an option. */
+const scopeKey = (s: EcdysisScope): string => (s.collectionId !== undefined ? `collection-${s.collectionId}` : String(s.datasetId));
 
 export interface EcdysisCredentials {
   username: string;
@@ -60,7 +81,9 @@ const FAR_FUTURE = "2999-01-01";
 const USER_AGENT = "beeline (https://github.com/rainhead/beeline)";
 
 export interface ProbeBaseline {
-  datasetId: number;
+  /** Which scope this was counted for; exactly one of the two, as in EcdysisScope. */
+  datasetId?: number;
+  collectionId?: number;
   /** Total records in the dataset when the archive on disk was requested. */
   total: number;
   /** A day before that request: the lower bound of the modified-since count. */
@@ -70,7 +93,7 @@ export interface ProbeBaseline {
 }
 
 export interface FetchEcdysisOptions {
-  /** Where the archive and its probe baseline are kept: `<dir>/<datasetId>.zip`, `.probe.json`. */
+  /** Where the archive and its probe baseline are kept: `<dir>/<dataset id or collection-<id>>.zip`, `.probe.json`. */
   dir: string;
   credentials: EcdysisCredentials;
   signal?: AbortSignal;
@@ -82,7 +105,8 @@ export interface FetchEcdysisOptions {
 }
 
 export interface FetchEcdysisResult {
-  datasetId: number;
+  /** What was fetched, as `describeScope` words it. */
+  scope: string;
   /** Whether the archive was downloaded tonight or the cached one reloaded, and why. */
   source: "downloaded" | "cached";
   reason: string;
@@ -102,17 +126,21 @@ async function apiCount(f: typeof fetch, params: Record<string, string | number>
   return count;
 }
 
-/** The two counts, now: the dataset's total, and how many changed since `since`. */
+/** The v2 API's filter for a scope. */
+const apiFilter = (s: EcdysisScope): Record<string, number> =>
+  s.collectionId !== undefined ? { collid: s.collectionId } : { datasetID: s.datasetId };
+
+/** The two counts, now: the scope's total, and how many changed since `since`. */
 export async function probeEcdysis(
   f: typeof fetch,
-  datasetId: number,
+  scope: EcdysisScope,
   since: string,
   signal?: AbortSignal,
 ): Promise<{ total: number; modifiedSince: number }> {
-  const total = await apiCount(f, { datasetID: datasetId }, signal);
+  const total = await apiCount(f, apiFilter(scope), signal);
   const modifiedSince = await apiCount(
     f,
-    { datasetID: datasetId, dateLastModifiedMin: since, dateLastModifiedMax: FAR_FUTURE },
+    { ...apiFilter(scope), dateLastModifiedMin: since, dateLastModifiedMax: FAR_FUTURE },
     signal,
   );
   return { total, modifiedSince };
@@ -133,7 +161,7 @@ function cookieHeader(res: Response): string {
 export async function downloadArchive(
   f: typeof fetch,
   credentials: EcdysisCredentials,
-  datasetId: number,
+  scope: EcdysisScope,
   signal?: AbortSignal,
 ): Promise<Uint8Array> {
   // The login form has no CSRF token; its username field is `login` and the
@@ -149,7 +177,8 @@ export async function downloadArchive(
   const cookie = cookieHeader(login);
   if (cookie === "") throw new Error(`Ecdysis sign-in set no session cookie (answered ${login.status})`);
 
-  // The same request Ecdysis's own download form makes for one dataset, with
+  // The same request Ecdysis's own download form makes for one dataset (or,
+  // with `db`, one collection), with
   // the identification history (beeatlas's parameters, verified there).
   const body = new URLSearchParams({
     schema: "symbiota",
@@ -167,7 +196,7 @@ export async function downloadArchive(
       taxontype: "4",
       "association-type": "none",
       comingFrom: "newsearch",
-      datasetid: String(datasetId),
+      ...(scope.collectionId !== undefined ? { db: String(scope.collectionId) } : { datasetid: String(scope.datasetId) }),
     }).toString(),
     submitaction: "",
   });
@@ -183,7 +212,7 @@ export async function downloadArchive(
   const isZip = bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
   if (!res.ok || !isZip) {
     throw new Error(
-      `Ecdysis download for dataset ${datasetId} answered ${res.status} ${res.headers.get("content-type") ?? ""}, not a zip` +
+      `Ecdysis download for ${describeScope(scope)} answered ${res.status} ${res.headers.get("content-type") ?? ""}, not a zip` +
         (res.status === 401 ? " — the sign-in was refused (check ECDYSIS_USERNAME / ECDYSIS_PASSWORD)" : ""),
     );
   }
@@ -209,9 +238,9 @@ async function loadArchive(
 ): Promise<LoadEcdysisResult> {
   const files = unzipSync(zip, { filter: (f) => /^(occurrences|identifications)\.(tab|csv|txt)$/i.test(f.name) });
   if (Object.keys(files).length < 2) {
-    throw new Error(`Ecdysis archive for dataset ${collection.datasetId} lacks occurrences or identifications (has: ${Object.keys(files).join(", ") || "nothing"})`);
+    throw new Error(`Ecdysis archive for ${describeScope(collection)} lacks occurrences or identifications (has: ${Object.keys(files).join(", ") || "nothing"})`);
   }
-  const unpacked = await mkdtemp(join(dir, `${collection.datasetId}-unpacked-`));
+  const unpacked = await mkdtemp(join(dir, `${scopeKey(collection)}-unpacked-`));
   try {
     for (const [name, data] of Object.entries(files)) await writeFile(join(unpacked, name), data);
     return await loadEcdysis(conn, { path: unpacked, catalogPrefix: collection.catalogPrefix, now });
@@ -228,10 +257,10 @@ export async function fetchEcdysis(
   const f = opts.fetch ?? fetch;
   const now = opts.now ?? new Date();
   const step = opts.step ?? (<T>(_: string, fn: () => Promise<T>) => fn());
-  const { datasetId } = collection;
+  const scope: EcdysisScope = collection.collectionId !== undefined ? { collectionId: collection.collectionId } : { datasetId: collection.datasetId };
   await mkdir(opts.dir, { recursive: true });
-  const zipPath = join(opts.dir, `${datasetId}.zip`);
-  const baselinePath = join(opts.dir, `${datasetId}.probe.json`);
+  const zipPath = join(opts.dir, `${scopeKey(collection)}.zip`);
+  const baselinePath = join(opts.dir, `${scopeKey(collection)}.probe.json`);
 
   // Read the source before anything else, and decide.
   const baseline = await readBaseline(baselinePath);
@@ -240,12 +269,12 @@ export async function fetchEcdysis(
   let fresh: { total: number; modifiedSince: number } | null = null;
   let unchanged = false;
   try {
-    fresh = await step("probe Ecdysis", () => probeEcdysis(f, datasetId, since, opts.signal));
-    if (baseline === null || baseline.datasetId !== datasetId || !existsSync(zipPath)) {
+    fresh = await step("probe Ecdysis", () => probeEcdysis(f, scope, since, opts.signal));
+    if (baseline === null || baseline.datasetId !== scope.datasetId || baseline.collectionId !== scope.collectionId || !existsSync(zipPath)) {
       reason = "no archive downloaded before";
     } else {
       const sinceThen = await step("probe since the last download", () =>
-        probeEcdysis(f, datasetId, baseline.since, opts.signal),
+        probeEcdysis(f, scope, baseline.since, opts.signal),
       );
       unchanged = sinceThen.total === baseline.total && sinceThen.modifiedSince === baseline.modifiedSince;
       reason = unchanged
@@ -261,7 +290,7 @@ export async function fetchEcdysis(
     try {
       const zip = new Uint8Array(await readFile(zipPath));
       const load = await step("load the cached archive", () => loadArchive(conn, zip, opts.dir, collection, now));
-      return { datasetId, source: "cached", reason, load };
+      return { scope: describeScope(scope), source: "cached", reason, load };
     } catch (err) {
       // A kept archive that will not load would fail every night until
       // somebody deleted it; a fresh one costs two minutes. An abort is the
@@ -271,26 +300,26 @@ export async function fetchEcdysis(
     }
   }
 
-  const zip = await step("download the archive", () => downloadArchive(f, opts.credentials, datasetId, opts.signal));
+  const zip = await step("download the archive", () => downloadArchive(f, opts.credentials, scope, opts.signal));
   const load = await step("load the archive", () => loadArchive(conn, zip, opts.dir, collection, now));
   // Kept only once it has loaded, and the baseline with it: a failed load
   // leaves the previous pair, so the next night downloads again.
   await writeFile(`${zipPath}.tmp`, zip);
   await rename(`${zipPath}.tmp`, zipPath);
   if (fresh !== null) {
-    const next: ProbeBaseline = { datasetId, total: fresh.total, since, modifiedSince: fresh.modifiedSince };
+    const next: ProbeBaseline = { ...scope, total: fresh.total, since, modifiedSince: fresh.modifiedSince };
     await writeFile(baselinePath, `${JSON.stringify(next, null, 2)}\n`);
   } else {
     await rm(baselinePath, { force: true }); // no probe, no baseline: tomorrow downloads again
   }
-  return { datasetId, source: "downloaded", reason, load };
+  return { scope: describeScope(scope), source: "downloaded", reason, load };
 }
 
 /** One line for the job's detail: what was fetched, what loaded, and what is left for a person. */
 export function describeFetch(r: FetchEcdysisResult): string {
   const l = r.load;
   const parts = [
-    `dataset ${r.datasetId} ${r.source === "downloaded" ? "downloaded" : "cached archive reloaded"} (${r.reason})`,
+    `${r.scope} ${r.source === "downloaded" ? "downloaded" : "cached archive reloaded"} (${r.reason})`,
     `${l.loaded} determination(s) recorded`,
     `${l.matched}/${l.occurrences} occurrences matched`,
   ];

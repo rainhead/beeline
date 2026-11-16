@@ -2159,6 +2159,8 @@ export const en = {
     bySeason: (active: number, settled: number) => `${n(active)} active, ${n(settled)} settled`,
     examples: "For example",
     download: (bytes: string) => `Download every value on this line (CSV, ${bytes} MB)`,
+    /** A line's own download that is not a value against a value: what it holds, then its size. */
+    downloadAs: (what: string, bytes: string) => `${what} (CSV, ${bytes} MB)`,
     blank: "blank",
     /** Between old Beeline's value and new Beeline's: "male, now female". */
     now: "now",
@@ -2168,6 +2170,8 @@ export const en = {
     record: {
       onlyOld: "In old Beeline only",
       onlyNew: "In new Beeline only",
+      /** A second record of a pin, tied to the specimen with this field number. */
+      tiedTo: (fieldNumber: string) => `In old Beeline only, tied to specimen ${fieldNumber}`,
     },
     noSpecimen: "no specimen in new Beeline",
   },

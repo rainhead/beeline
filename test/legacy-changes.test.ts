@@ -213,6 +213,15 @@ describe("writing the changes", () => {
     }
   });
 
+  test("offers no download for specimens old Beeline never had", async () => {
+    // Synthetic: the fixture numbers nothing in new Beeline, so the line is added to its summary.
+    const numbered = { line: "numbered_here", active: 2, settled: 0, values: 2, outcomes: [{ outcome: "expected", active: 2, settled: 0 }], examples: [], file: null, bytes: null };
+    const page = String(await LegacyChangesPage({ m: en as never, summary: { ...summary, lines: [...summary.lines, numbered] } }));
+    const article = page.slice(page.indexOf(`<article id="numbered_here"`), page.indexOf("</article>", page.indexOf(`<article id="numbered_here"`)));
+    expect(article).toContain("Numbered by new Beeline");
+    expect(article).not.toContain("Download");
+  });
+
   test("lists each line's outcomes commonest first", () => {
     for (const l of summary.lines) {
       const sizes = l.outcomes.map((o) => o.active + o.settled);

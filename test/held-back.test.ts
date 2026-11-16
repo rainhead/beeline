@@ -7,8 +7,11 @@ import { en } from "../src/app/messages/en.js";
 import { createApp } from "../src/app/server.js";
 import type { InatClient } from "../src/app/auth.js";
 import { heldBackRecords, type HeldBack } from "../src/app/held-back.js";
-import { compareLegacyExport, dropComparisonTables } from "../src/compare-legacy-export.js";
-import { writeLegacyExport } from "../src/legacy-export.js";
+import { compareLegacyExport, DEFAULT_RULINGS, dropComparisonTables } from "../src/compare-legacy-export.js";
+import { legacyExportPath, writeLegacyExport } from "../src/legacy-export.js";
+import { changesDir, writeChanges } from "../src/legacy-changes.js";
+import { readRulings } from "../src/legacy-export-rulings.js";
+import { LegacyChangesPage } from "../src/app/views/legacy-changes.js";
 import { createKysely } from "../src/db.js";
 import { loadLegacyStaging } from "../src/load-legacy.js";
 import { promoteLegacy } from "../src/promote-legacy.js";
@@ -189,6 +192,35 @@ describe("the comparison of the old records with the export (beeline-eznn)", () 
     } finally {
       await dropComparisonTables(conn);
     }
+  });
+});
+
+describe("the second records of a pin, on What new Beeline changed", () => {
+  // A list of corrections may name one of these field numbers, so the line's
+  // download says which specimen each is tied to.
+  test("gives the specimen each record is tied to, in its download and its examples", async () => {
+    const exportsDir = await mkdtemp(join(tmpdir(), "held-back-changes-"));
+    await writeLegacyExport(conn, legacyExportPath(exportsDir));
+    const summary = await writeChanges(conn, legacyExportPath(exportsDir), await readRulings(DEFAULT_RULINGS), changesDir(exportsDir));
+    const line = summary.lines.find((l) => l.line === "second_record")!;
+    const tied = new Map(
+      ((await (await conn.run(`
+        SELECT o."fieldNumber", sp.field_number FROM legacy_duplicate_record r
+        JOIN legacy_occurrence o ON o._id = r._id JOIN specimen sp ON sp.entity_id = r.specimen_id`)).getRows()) as [string, string][]),
+    );
+    expect(tied.size).toBeGreaterThan(0);
+    const csv = (await readFile(join(changesDir(exportsDir), summary.generation, line.file!), "utf8")).replace(/^﻿/, "");
+    const [header, ...rows] = csv.trim().split("\n");
+    expect(header).toBe("old_field_number,season,tied_to_field_number,specimen_identified_from_a_second_record");
+    expect(rows.map((r) => r.split(",").slice(0, 3)).map(([old, , to]) => [old, to])).toEqual(
+      [...tied.entries()].sort(([a], [b]) => (a < b ? -1 : 1)),
+    );
+    for (const e of line.examples) {
+      expect(e.values).toEqual([{ column: "(record)", kind: "tied_second_record", old: "present", new: tied.get(e.fieldNumber) }]);
+    }
+    const page = String(await LegacyChangesPage({ m: en as never, summary }));
+    expect(page).toContain(en.legacyChanges.record.tiedTo(tied.get(line.examples[0]!.fieldNumber)!));
+    expect(page).toContain("Download the specimen each record is tied to (CSV,");
   });
 });
 

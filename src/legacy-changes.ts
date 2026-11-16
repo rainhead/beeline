@@ -112,11 +112,24 @@ export interface ChangeLine {
   match: readonly { kinds: readonly string[]; columns?: readonly string[]; old?: "blank" | "given" }[];
   /**
    * A download kept elsewhere that says more than this line's own would, in
-   * place of it. A record new Beeline does not hold has no value of new
-   * Beeline's to compare, so its row would say only that old Beeline had it.
+   * place of it, or null for none at all. A record new Beeline does not hold
+   * has no value of new Beeline's to compare, so its row would say only that
+   * old Beeline had it; and a specimen old Beeline never had is nothing a list
+   * of corrections to old Beeline can name.
    */
-  download?: { href: string; label: string };
+  download?: { href: string; label: string } | null;
+  /**
+   * The line's own CSV, where its rows say more as something other than one
+   * value against another: the SELECT list over the line's rows (`chg_line c`),
+   * and what its button says.
+   */
+  csv?: { select: string; label: string };
 }
+
+/** The specimen a second record of its pin is tied to, by the record's field number (`fn`). */
+const TIED_TO = (fn: string) => `(SELECT min(sp.field_number) FROM legacy_duplicate_record r
+  JOIN legacy_occurrence o ON o._id = r._id JOIN specimen sp ON sp.entity_id = r.specimen_id
+  WHERE o."fieldNumber" = ${fn})`;
 
 /**
  * Each line, in the page's order. The counts on the page are records, and
@@ -246,8 +259,17 @@ export const LINES: readonly ChangeLine[] = [
     id: "second_record",
     category: "specimens",
     title: "A second record of the same pin, tied to its specimen",
-    did: "Old Beeline's second record of a pin whose label was printed twice. New Beeline ties it to the specimen it records rather than making it a specimen of its own, so its field number names no specimen; the note on the specimen gives it.",
+    did: "Old Beeline's second record of a pin whose label was printed twice. New Beeline ties it to the specimen it records rather than making it a specimen of its own, so its field number names no specimen; the note on the specimen gives it. A correction that names one of these field numbers belongs to the specimen it is tied to, which the download gives for each.",
     match: [{ kinds: ["tied_second_record"] }],
+    // Where each record went, which is what a list naming its field number needs.
+    csv: {
+      select: `c.field_number AS old_field_number,
+               CASE WHEN c.active_season THEN 'active' ELSE 'settled' END AS season,
+               ${TIED_TO("c.field_number")} AS tied_to_field_number,
+               CASE WHEN EXISTS (SELECT 1 FROM chg_line s WHERE s.field_number = ${TIED_TO("c.field_number")} AND s.kind = 'second_print')
+                    THEN 'yes' ELSE 'no' END AS specimen_identified_from_a_second_record`,
+      label: "Download the specimen each record is tied to",
+    },
   },
   {
     id: "note",
@@ -278,8 +300,9 @@ export const LINES: readonly ChangeLine[] = [
     id: "numbered_here",
     category: "specimens",
     title: "Numbered by new Beeline",
-    did: "Specimens new Beeline has numbered and printed since cutover, which old Beeline did not have. The nightly copy puts them there for volunteers to identify.",
+    did: "Specimens new Beeline has numbered and printed since cutover, which old Beeline did not have. The nightly copy puts them there for volunteers to identify. No correction to old Beeline's records can name one, so they are counted and not listed.",
     match: [{ kinds: ["minted_by_beeline"] }],
+    download: null,
   },
   {
     id: "reprinted",
@@ -575,7 +598,9 @@ export async function writeChanges(
              coalesce((SELECT min(sp.entity_id) FROM specimen sp WHERE sp.field_number = v.fn),
                       (SELECT min(r.specimen_id) FROM legacy_duplicate_record r JOIN legacy_occurrence o ON o._id = r._id
                        WHERE o."fieldNumber" = v.fn)),
-             v."column", v.kind, v.legacy, v.exported
+             v."column", v.kind, v.legacy,
+             -- A second record's new value is the specimen it is tied to.
+             CASE WHEN v.kind = 'tied_second_record' THEN coalesce(${TIED_TO("v.fn")}, '') ELSE v.exported END
       FROM vals v WHERE v.v <= ${VALUES_PER_EXAMPLE}
       ORDER BY v.line, v.r, v."column"`)).getRows()) as [string, string, number | bigint | null, string, string, string, string][];
 
@@ -598,7 +623,7 @@ export async function writeChanges(
         const hidden = HIDDEN_VALUE_COLUMNS.has(column);
         ex.values.push({ column, kind, old: hidden ? null : legacy, new: hidden ? null : exported });
       }
-      if (l.download === undefined) await writeLineCsv(conn, l.id, path);
+      if (l.download === undefined) await writeLineCsv(conn, l.id, path, l.csv);
       lines.push({
         line: l.id,
         ...n,
@@ -651,21 +676,23 @@ export async function writeChanges(
  * the comparison (file names, issue numbers). With a byte order mark, so a
  * spreadsheet reads the names in it as UTF-8; replaced only once complete.
  */
-async function writeLineCsv(conn: DuckDBConnection, line: string, path: string): Promise<void> {
+async function writeLineCsv(conn: DuckDBConnection, line: string, path: string, csv?: ChangeLine["csv"]): Promise<void> {
   const body = `${path}.body.tmp`;
   const whole = `${path}.tmp`;
-  try {
-    await conn.run(`
-      COPY (
-        SELECT c.field_number, CASE WHEN c.active_season THEN 'active' ELSE 'settled' END AS season,
+  const query =
+    csv === undefined
+      ? `SELECT c.field_number, CASE WHEN c.active_season THEN 'active' ELSE 'settled' END AS season,
                c."column", c.legacy AS old_beeline, c.exported AS new_beeline,
                m.title AS what_new_beeline_did, coalesce(o.words, c.outcome) AS outcome
         FROM chg_line c
         JOIN chg_meta m ON m.line = c.line
         LEFT JOIN chg_outcome o ON o.outcome = c.outcome
         WHERE c.line = ${sqlString(line)}
-        ORDER BY c.field_number, c."column"
-      ) TO ${sqlString(body)} (HEADER, DELIMITER ',', QUOTE '"', ESCAPE '"')`);
+        ORDER BY c.field_number, c."column"`
+      : `SELECT ${csv.select} FROM chg_line c WHERE c.line = ${sqlString(line)} ORDER BY c.field_number`;
+  try {
+    await conn.run(`
+      COPY (${query}) TO ${sqlString(body)} (HEADER, DELIMITER ',', QUOTE '"', ESCAPE '"')`);
     const out = createWriteStream(whole);
     out.write(BOM);
     await pipeline(createReadStream(body), out);

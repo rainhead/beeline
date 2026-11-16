@@ -70,7 +70,7 @@ export function LegacyChangesPage({ m, summary }: { m: Messages; summary: Change
           <h2>{s.cat.title}</h2>
           <p>{s.cat.intro}</p>
           {s.lines.map(({ def, sum }) => (
-            <Line m={m} id={def.id} title={def.title} did={def.did} sum={sum} since={since} generation={summary.generation} download={def.download} />
+            <Line m={m} id={def.id} title={def.title} did={def.did} sum={sum} since={since} generation={summary.generation} download={def.download} csvLabel={def.csv?.label} />
           ))}
         </section>
       ))}
@@ -88,6 +88,7 @@ function Line({
   since,
   generation,
   download,
+  csvLabel,
 }: {
   m: Messages;
   id: string;
@@ -96,8 +97,10 @@ function Line({
   sum: LineSummary;
   since: string;
   generation: string;
-  /** A download kept elsewhere, in place of the line's own (ChangeLine.download). */
-  download: { href: string; label: string } | undefined;
+  /** A download kept elsewhere in place of the line's own, or null for none (ChangeLine.download). */
+  download: { href: string; label: string } | null | undefined;
+  /** What the line's own download's button says, where it is not a value against a value (ChangeLine.csv). */
+  csvLabel: string | undefined;
 }) {
   const c = m.legacyChanges;
   return (
@@ -134,15 +137,21 @@ function Line({
           </ul>
         </>
       )}
-      <p>
-        {download !== undefined ? (
-          <LinkButton href={download.href}>{download.label}</LinkButton>
-        ) : (
-          sum.file !== null && (
-            <LinkButton href={`/exports/changes/${generation}/${sum.file}`}>{c.download(((sum.bytes ?? 0) / 1e6).toFixed(1))}</LinkButton>
-          )
-        )}
-      </p>
+      {download !== null && (
+        <p>
+          {download !== undefined ? (
+            <LinkButton href={download.href}>{download.label}</LinkButton>
+          ) : (
+            sum.file !== null && (
+              <LinkButton href={`/exports/changes/${generation}/${sum.file}`}>
+                {csvLabel === undefined
+                  ? c.download(((sum.bytes ?? 0) / 1e6).toFixed(1))
+                  : c.downloadAs(csvLabel, ((sum.bytes ?? 0) / 1e6).toFixed(1))}
+              </LinkButton>
+            )
+          )}
+        </p>
+      )}
     </article>
   );
 }
@@ -164,7 +173,11 @@ function Example({ m, example: e }: { m: Messages; example: ChangeExample }) {
         {e.values.map((v) =>
           v.column === RECORD_COLUMN ? (
             <li>
-              {v.new === "" ? c.record.onlyOld : c.record.onlyNew}
+              {v.kind === "tied_second_record" && v.new !== null && v.new !== ""
+                ? c.record.tiedTo(v.new)
+                : v.new === ""
+                  ? c.record.onlyOld
+                  : c.record.onlyNew}
               {v.kind in m.heldBack.reason && `: ${m.heldBack.reason[v.kind as keyof typeof m.heldBack.reason]}`}
             </li>
           ) : v.old === null ? (

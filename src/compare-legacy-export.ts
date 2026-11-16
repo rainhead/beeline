@@ -413,6 +413,11 @@ const PLACE_FINDING_FIELD: Record<string, string> = {
  *   repair_placed        a record promotion held back, placed by the one-time repair
  *                        in its sample, whose values it takes
  *   reprinted            the label's print date is a later printing's
+ *   unidentified_sex_dropped  the old record's sex or caste where no expert identified
+ *                        it, an entry default from 2023, no longer carried
+ *   subgenus_dropped     a subgenus lost when a newer expert identification replaced
+ *                        the old record's
+ *   coarser_determination the newest expert identification names less than the old
  *   one_day_range        an end the legacy record wrote on its start day, blank here
  *   standin_replaced     the legacy point was a stand-in for an obscured observation's
  *                        true point, which Beeline holds instead (beeline-b34)
@@ -571,9 +576,12 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
                           AND d.legacy = split_part(trim(p.label_name), ' ', 1))))`);
   // An identification the legacy system never received: the specimen's
   // newest expert determination came from Ecdysis or was made in Beeline.
+  // Only where the values alone said nothing more particular: a genus written
+  // with its subgenus, an authorship or a capital is that, newer or not
+  // (the audit of 2026-11-15, beeline-eznn).
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'newer_determination'
-    WHERE d."column" IN (${list(IDENTIFICATION_COLUMNS)})
+    WHERE d."column" IN (${list(IDENTIFICATION_COLUMNS)}) AND d.kind IN ('changed', 'filled', 'blanked')
       AND EXISTS (
         SELECT 1 FROM specimen sp
         JOIN (SELECT specimen_id, arg_max(channel, (recorded_at, entity_id)) AS channel
@@ -629,11 +637,26 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
             ON e.specimen_id = sp.entity_id
           WHERE sp.field_number = d.field_number AND e.channel <> 'legacy_import')`);
   }
+  // What a newer expert identification lost: the subgenus the old record
+  // gave, and the species where the newest names only a genus. The newest
+  // stands, so these are for the taxonomists to see, not to hide among the
+  // newer identifications (the audit of 2026-11-15, beeline-eznn).
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'subgenus_dropped'
+    WHERE d."column" = 'subgenus' AND d.kind = 'newer_determination' AND d.exported = ''`);
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'coarser_determination'
+    WHERE d.kind = 'newer_determination' AND d."column" IN ('specificEpithet', 'scientificName', 'taxonRank')
+      AND EXISTS (SELECT 1 FROM cmp_pairs p
+                  WHERE p."e_fieldNumber" = d.field_number
+                    AND trim(p."l_specificEpithet") <> '' AND trim(p."e_specificEpithet") = '')`);
   // A volunteer's identification the legacy system never received: from a
-  // worksheet (beeline-pbk) or made in Beeline.
+  // worksheet (beeline-pbk) or made in Beeline. Never a value taken away: the
+  // export writes the newest volunteer identification's sex even where it
+  // states none, so a blank here is something else (the audit, beeline-eznn).
   await conn.run(`
     UPDATE cmp_value_difference d SET kind = 'newer_volunteer_determination'
-    WHERE d."column" IN (${list(VOLUNTEER_COLUMNS)}) AND d.kind IN ('changed', 'filled', 'blanked')
+    WHERE d."column" IN (${list(VOLUNTEER_COLUMNS)}) AND d.kind IN ('changed', 'filled') AND d.exported <> ''
       AND EXISTS (
         SELECT 1 FROM specimen sp
         JOIN (SELECT specimen_id, arg_max(channel, (recorded_at, entity_id)) AS channel
@@ -685,6 +708,15 @@ async function kindFromStore(conn: DuckDBConnection): Promise<void> {
               WHEN 'subgenus' THEN trim(o.subgenus) = '' OR lower(trim(o.subgenus)) = lower(trim(d.exported))
               ELSE lower(trim(o."identifiedBy")) = lower(trim(d.exported)) END`)}`);
   }
+  // Sex and caste the old record gave where no expert identified it: from
+  // 2023 an entry default (male), which the export no longer carries
+  // (src/legacy-export.ts, expertNamed; Peter, 2026-11-15, beeline-eznn).
+  await conn.run(`
+    UPDATE cmp_value_difference d SET kind = 'unidentified_sex_dropped'
+    WHERE d."column" IN ('sex', 'caste') AND d.kind = 'blanked'
+      AND EXISTS (SELECT 1 FROM cmp_pairs p
+                  WHERE p."e_fieldNumber" = d.field_number
+                    AND concat(trim(p."l_family"), trim(p."l_genus"), trim(p."l_specificEpithet"), trim(p."l_scientificName")) = '')`);
   // Sex and caste in the model's vocabulary, by promotion's own reading of
   // the legacy pair (ingest/promote-determinations.sql): an abbreviation
   // spelled out, a caste in the sex column deciding it (a worker is female),

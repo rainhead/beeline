@@ -448,6 +448,32 @@ describe("identifications, sex and caste, and reprints (beeline-eznn)", () => {
     ]);
   });
 
+  test("names what a newer identification lost, and the old default sex it no longer carries", async () => {
+    // Planted on the old records after the export: 25000005's old
+    // identification gave a subgenus the expert's newer one does not; and
+    // 25000003, which nobody identified, had the old Beeline's default male,
+    // which the export no longer carries.
+    await conn.run(`UPDATE legacy_occurrence SET subgenus = 'Pyrobombus' WHERE "fieldNumber" = '25000005'`);
+    await conn.run(`UPDATE legacy_occurrence SET sex = 'male' WHERE "fieldNumber" = '25000003'`);
+    try {
+      await compareLegacyExport(conn, exportPath, []);
+      const out = join(dir, "differences-loss.csv");
+      await writeDifferences(conn, [], out);
+      const kinds = (await conn.runAndReadAll(
+        `SELECT field_number, "column", kind FROM read_csv('${out}', header = true, all_varchar = true)
+         WHERE (field_number = '25000005' AND "column" = 'subgenus') OR (field_number = '25000003' AND "column" = 'sex')
+         ORDER BY ALL`,
+      )).getRows() as [string, string, string][];
+      expect(kinds).toEqual([
+        ["25000003", "sex", "unidentified_sex_dropped"],
+        ["25000005", "subgenus", "subgenus_dropped"],
+      ]);
+    } finally {
+      await conn.run(`UPDATE legacy_occurrence SET subgenus = '' WHERE "fieldNumber" = '25000005'`);
+      await conn.run(`UPDATE legacy_occurrence SET sex = '' WHERE "fieldNumber" = '25000003'`);
+    }
+  });
+
   test("the checked-in rulings explain each of them", async () => {
     const rulings = await readRulings(new URL("../ingest/legacy-export-rulings.csv", import.meta.url).pathname);
     const r = await compareLegacyExport(conn, exportPath, rulings);

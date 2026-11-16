@@ -66,6 +66,9 @@ export const VALUE_KINDS = [
   "sex_caste_vocabulary", // sex and caste as promotion reads the legacy pair: Male → male, a worker is female, Queen → gyne
   "repair_placed", // a record promotion held back, placed by the one-time repair in its sample, whose values it takes
   "reprinted", // the label's print date is a later printing's: the specimen was reprinted
+  "unidentified_sex_dropped", // the old record's sex or caste on a record no expert identified, an entry default from 2023: not carried
+  "subgenus_dropped", // a subgenus the old record gave, lost when a newer expert identification replaced it
+  "coarser_determination", // the newest expert identification names less than the old record's (a species before, a genus now)
   "one_day_range", // an end the legacy record wrote on its start day: 2018-7-26/2018-7-26
   "standin_replaced", // a stand-in point for an obscured observation, replaced by its true point (beeline-b34)
   "login_renamed", // the same iNaturalist user id under another login

@@ -44,6 +44,7 @@
     "taxon:apply": "tsx src/taxon-curation.ts",
     "taxon:fetch-sheet": "tsx src/fetch-taxon-sheet.ts",
     "taxon:decide": "tsx src/taxon-decide.ts",
+    "taxon:refile": "tsx src/refile-determinations.ts",
     "ecdysis:load": "tsx src/load-ecdysis.ts",
     "fly:usage": "tsx src/fly-usage.ts",
     "worksheets:fetch": "tsx src/fetch-worksheets.ts",

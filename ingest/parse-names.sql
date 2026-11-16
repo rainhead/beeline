@@ -57,8 +57,11 @@ CREATE OR REPLACE MACRO name_epithet(s) AS
 -- meant. A genus alias matches a genus column as written; a species alias
 -- matches the genus and epithet as written, once case and brackets are
 -- settled, and replaces both. `basis` says what a mapping rests on, as in
--- collector-aliases.csv. Spelling only: a gender ending or a name Ecdysis lacks
--- is a taxonomic choice, which belongs to beeline-45v.1 and not to this file.
+-- collector-aliases.csv. Mostly spelling. A gender ending or a name Ecdysis
+-- lacks is a taxonomic choice, and appears here only as Peter's decision,
+-- named in `basis` (Lasioglossum hudsoniella, 2026-11-09; Protohalonia
+-- venusta, filed as Ecdysis files it, 2026-11-15, beeline-fpoo): a choice to
+-- keep a name against Ecdysis belongs to ingest/taxon-curation.csv instead.
 -- One row per (rank, alias), because two lines claiming one spelling are a
 -- mistake in the file, not a choice to make here.
 CREATE TABLE legacy_taxon_alias AS

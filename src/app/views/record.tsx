@@ -7,7 +7,6 @@ import type { SampleChange } from "../../sample-change.js";
 import {
   sampleHref,
   specimenHref,
-  type ArchiveNote,
   type DeterminationEvent,
   type RecordFinding,
   type RecordHold,
@@ -1156,14 +1155,7 @@ export function Determinations({ m, events }: { m: Messages; events: readonly De
             </td>
             <td>
               {m.format.day(e.recorded_at)}
-              {/* A determination read from a published archive says so: its
-                  channel is the worksheets', which a deployed store cannot
-                  add to (schema/042). */}
-              <Meta block>
-                {e.archive_publisher !== null && e.archive_version !== null
-                  ? d.fromArchive(e.archive_publisher, e.archive_version)
-                  : (d.channels[e.channel] ?? e.channel)}
-              </Meta>
+              <Meta block>{d.channels[e.channel] ?? e.channel}</Meta>
             </td>
             <td>{e.of_record && <Chip tone="success">{d.ofRecord}</Chip>}</td>
           </tr>
@@ -1173,43 +1165,6 @@ export function Determinations({ m, events }: { m: Messages; events: readonly De
         {d.recordRule}
         {!recordIsNewest && <> {d.recordNotNewest}</>}
       </Meta>
-    </>
-  );
-}
-
-/**
- * What museums publish about the specimen, under its determinations
- * (beeline-muke). A published name is not a determination here unless a load
- * recorded it as one: where Beeline already holds an expert's name, nothing
- * says which is newer, so the statement is shown and nothing is changed
- * (Peter, 2026-11-15: every difference is visible).
- */
-export function PublishedNotes({ m, notes }: { m: Messages; notes: readonly ArchiveNote[] }) {
-  const p = m.record.determinations.published;
-  if (notes.length === 0) return null;
-  return (
-    <>
-      <h3>{p.heading}</h3>
-      {notes.map((n) => (
-        // A div, since the note beneath is a paragraph of its own.
-        <div>
-          {n.agrees ? p.same(n.publisher) : p.differs(n.publisher)}
-          {!n.agrees && (
-            <>
-              {" "}
-              {n.rank !== null && n.name !== null ? (
-                <TaxonName rank={n.rank} scientificName={n.name} />
-              ) : (
-                (n.scientific_name ?? p.noName)
-              )}
-            </>
-          )}
-          {/* Only where the name stops at the genus: under a species the subgenus says nothing more. */}
-          {!n.agrees && n.subgenus !== null && n.rank !== "species" && p.subgenus(n.subgenus)}
-          {p.detail(n.sex, n.identified_by, n.date_identified)}
-          <Meta block>{n.agrees ? p.sameNote(n.version) : p.differsNote(n.version)}</Meta>
-        </div>
-      ))}
     </>
   );
 }
@@ -1354,7 +1309,6 @@ export function SpecimenPage({
   m,
   specimen,
   events,
-  published,
   findings,
   labels,
   reprint,
@@ -1363,8 +1317,6 @@ export function SpecimenPage({
   m: Messages;
   specimen: SpecimenDetail;
   events: readonly DeterminationEvent[];
-  /** What museums publish about the specimen that its record does not already say. */
-  published: readonly ArchiveNote[];
   /** The sample's findings: its own become chips, this specimen's a card. */
   findings: readonly RecordFinding[];
   labels: readonly SpecimenLabelRow[];
@@ -1411,7 +1363,6 @@ export function SpecimenPage({
       {/* The history first: it is why this page exists. */}
       <Card>
         <Determinations m={m} events={events} />
-        <PublishedNotes m={m} notes={published} />
         {/* Only the person whose specimen it is can name it on that screen,
             so staff browsing someone else's are not pointed there. */}
         {sample.mine && !events.some((e) => !e.is_expert) && (

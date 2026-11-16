@@ -50,8 +50,6 @@
     "worksheets:load": "tsx src/load-worksheets.ts",
     "disposition:load": "tsx src/load-dispositions.ts",
     "determinations:load": "tsx src/load-determination-sheet.ts",
-    "archive:fetch": "tsx src/fetch-archive.ts",
-    "archive:load": "tsx src/load-archive.ts",
     "person:apply": "tsx src/apply-person-overlay.ts",
     "person:orcids": "tsx src/load-orcids.ts",
     "sample:apply": "tsx src/apply-sample-overlay.ts",

@@ -201,20 +201,7 @@ export async function identificationBatches(
     .where("d.is_expert", "=", true)
     .$if(!countUndated, (q) =>
       q.where((eb) =>
-        eb.or([
-          // A determination read from a published archive states a year and
-          // nothing closer, so it can no more be dated than the old
-          // Beeline's (schema/042), and it does not bring its specimen in.
-          eb.and([
-            eb("d.channel", "<>", "legacy_import"),
-            eb.not(
-              eb.exists(
-                eb.selectFrom("archive_determination as ad").whereRef("ad.determination_id", "=", "d.entity_id").select("ad.determination_id"),
-              ),
-            ),
-          ]),
-          eb.and([eb("d.determined_on", "is not", null), eb("d.determined_on_precision", "is", null)]),
-        ]),
+        eb.or([eb("d.channel", "<>", "legacy_import"), eb.and([eb("d.determined_on", "is not", null), eb("d.determined_on_precision", "is", null)])]),
       ),
     )
     .select("d.specimen_id")

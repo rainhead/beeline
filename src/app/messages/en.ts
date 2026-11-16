@@ -1488,24 +1488,6 @@ export const en = {
         legacy_import: "imported from old Beeline",
         worksheet_import: "imported from a determination worksheet",
       } as Record<string, string>,
-      /** In place of the channel, for a determination read from a museum's published dataset. */
-      fromArchive: (publisher: string, version: string) => `from the dataset ${publisher} publishes, version ${version}`,
-      /** What museums publish about the specimen, where Beeline's current determination is not that statement. */
-      published: {
-        heading: "Published elsewhere",
-        /** Followed by the name. */
-        differs: (publisher: string) => `${publisher} publishes this specimen as`,
-        same: (publisher: string) => `${publisher} publishes this specimen under the same name`,
-        noName: "a name that could not be read",
-        /** After a name that stops at the genus, where the record also states a subgenus. */
-        subgenus: (name: string) => `, subgenus ${name}`,
-        /** After the name: the sex, who identified it and the year, whichever were published. */
-        detail: (sex: string | null, by: string | null, year: string | null) =>
-          `${sex === null ? "" : ` (${sex})`}${by === null && year === null ? "" : `, identified${by === null ? "" : ` by ${by}`}${year === null ? "" : ` in ${year}`}`}.`,
-        differsNote: (version: string) =>
-          `From version ${version} of the dataset. Beeline has not made this a determination, because nothing shows whether it is newer than the current one.`,
-        sameNote: (version: string) => `From version ${version} of the dataset.`,
-      },
     },
   },
 

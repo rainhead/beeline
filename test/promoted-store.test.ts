@@ -56,9 +56,7 @@ describe("a copy of a promoted store", () => {
     expect(Object.keys(got.rows)).toEqual(Object.keys(want.rows));
     for (const name of Object.keys(want.rows)) expect(got.rows[name], name).toBe(want.rows[name]);
     expect(got).toEqual(want);
-    // A promotion, a copy and two readings of every table: 14 to 18 s alone
-    // on Hostess, and past the default 30 s in a full run on a busy machine.
-  }, 60_000);
+  });
 
   test("is a store of the test's own, which another copy does not see", async () => {
     const { conn: one } = await promotedStore("occurrences");

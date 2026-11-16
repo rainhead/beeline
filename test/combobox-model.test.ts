@@ -57,4 +57,10 @@ describe("keyAction", () => {
   it("never picks on Tab", () => {
     expect(keyAction(open, "Tab")).toMatchObject({ open: false, pick: false, prevent: false });
   });
+
+  it("keeps the list open when Tab moves forward into a control under it, and closes it on Shift+Tab", () => {
+    const withFooter = { ...open, footer: true };
+    expect(keyAction(withFooter, "Tab")).toMatchObject({ open: true, pick: false, prevent: false });
+    expect(keyAction(withFooter, "Tab", false, true)).toMatchObject({ open: false, pick: false, prevent: false });
+  });
 });

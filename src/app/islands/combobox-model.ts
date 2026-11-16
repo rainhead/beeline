@@ -52,6 +52,8 @@ export interface KeyState {
   count: number;
   /** Whether text that is no option may stand: false on a picker, which must yield one of its options. */
   free: boolean;
+  /** Whether the open list has a control under it, such as the taxon picker's bycatch box, that Tab moves into. */
+  footer?: boolean;
 }
 
 /**
@@ -72,7 +74,7 @@ export interface KeyResult {
   prevent: boolean;
 }
 
-export function keyAction(state: KeyState, key: string, alt = false): KeyResult {
+export function keyAction(state: KeyState, key: string, alt = false, shift = false): KeyResult {
   const same = { open: state.open, active: state.active, pick: false, revert: false, cancel: false, prevent: false };
   switch (key) {
     case "ArrowDown":
@@ -98,7 +100,10 @@ export function keyAction(state: KeyState, key: string, alt = false): KeyResult 
       if (state.open) return { ...same, open: false, active: -1, cancel: true, prevent: true };
       return { ...same, revert: true, cancel: true, prevent: true };
     case "Tab":
-      // Moving on never picks: a highlighted option is not a choice.
+      // Moving on never picks: a highlighted option is not a choice. Tab
+      // forward into a control under the open list keeps the list open,
+      // since that control belongs to it; otherwise it closes.
+      if (state.open && state.footer === true && !shift) return same;
       return { ...same, open: false };
     default:
       return same;

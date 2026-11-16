@@ -254,7 +254,7 @@ describe("the specimen page", () => {
     expect(notes).toContain("OSAC publishes this specimen as");
     expect(notes).toContain("<i>Lasioglossum</i>");
     expect(notes).toContain(`(female), identified by Lincoln R. Best in ${CURRENT_SEASON}.`);
-    expect(notes).toContain("nothing shows which is newer");
+    expect(notes).toContain("nothing shows whether it is newer than the current one");
     // Nothing to say where the record is the archive's own statement.
     expect(PublishedNotes({ m: en, notes: await archiveNotes(db, await specimenId("26000001")) })).toBeNull();
   });
@@ -389,13 +389,17 @@ describe("what cannot be read is held", () => {
       row("26000003", { recordedBy: "Someone Else" }),
       row("26000004", { day: String(Number(DAY) + 1) }),
       row("26000005", { recordedBy: "Someone Else | Ada Collector" }),
+      // The same family name under another given name confirms nothing.
+      row("26000006", { recordedBy: "Bea Collector" }),
+      row("26000007", { recordedBy: "A. Collector" }),
     ]);
     const result = await load(dir);
-    expect(result.held).toMatchObject({ no_specimen: 1, repeated_number: 2, collector_disagrees: 1, date_disagrees: 1 });
-    expect(result.backfilled).toEqual({ active: 2, settled: 0 });
-    expect((await recorded()).map((r) => r[0])).toEqual(["26000001", "26000005"]);
+    expect(result.held).toMatchObject({ no_specimen: 1, repeated_number: 2, collector_disagrees: 2, date_disagrees: 1 });
+    expect(result.backfilled).toEqual({ active: 3, settled: 0 });
+    expect((await recorded()).map((r) => r[0])).toEqual(["26000001", "26000005", "26000007"]);
     expect(await heldRows(dir)).toEqual([
       ["26000003", "collector_disagrees"],
+      ["26000006", "collector_disagrees"],
       ["26000004", "date_disagrees"],
       ["99999999", "no_specimen"],
       ["26000002", "repeated_number"],
@@ -425,6 +429,15 @@ describe("what cannot be read is held", () => {
     const result = await load(await archive("1.9", "2026-11-04", [row("26000001", { identifiedBy: "Somebody New" })]));
     expect(result).toMatchObject({ held: { determiner_unknown: 1 }, agrees: { active: 1 }, disagrees: { active: 0 } });
     expect(await archiveNotes(db, await specimenId("26000001"))).toMatchObject([{ name: "Lasioglossum sisymbrii", agrees: true }]);
+  });
+
+  test("a qualifier written into the published name holds the record", async () => {
+    const dir = await archive("1.9", "2026-11-04", [
+      row("26000001", { scientificName: "Lasioglossum cf. sisymbrii" }),
+      row("26000002", { scientificName: "Lasioglossum sisymbrii?" }),
+    ]);
+    expect((await load(dir)).held).toMatchObject({ name_unreadable: 2 });
+    expect(await recorded()).toEqual([]);
   });
 
   test("a qualifier, which the loader does not read, refuses the archive", async () => {

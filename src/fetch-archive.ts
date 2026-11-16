@@ -25,7 +25,7 @@ export const DEFAULT_ARCHIVES_DIR = "data/archives";
 
 /** OSAC's archive is 2 MB zipped and 70 MB unpacked (65,000 records). */
 const MAX_ZIP_BYTES = 200 * 1024 * 1024;
-const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_UNPACKED_BYTES = 2 * 1024 * 1024 * 1024;
 
 export interface FetchedArchive {
   datasetKey: string;
@@ -62,10 +62,15 @@ export async function fetchArchive(opts: {
   if (!response.ok) throw new Error(`${url} answered ${response.status}`);
   const zipped = new Uint8Array(await response.arrayBuffer());
   if (zipped.length > MAX_ZIP_BYTES) throw new Error(`${url}: ${zipped.length} bytes, more than an archive is expected to be`);
-  // An archive is unpacked in memory, so nothing larger than expected is.
+  // An archive is unpacked in memory, so no more than expected is: only the
+  // files at its top level, where a Darwin Core archive keeps them, and
+  // only up to a total.
+  let unpacked = 0;
   const files = unzipSync(zipped, {
     filter: (f) => {
-      if (f.originalSize > MAX_FILE_BYTES) throw new Error(`${url}: ${f.name} unpacks to ${f.originalSize} bytes`);
+      if (f.name.includes("/")) return false;
+      unpacked += f.originalSize;
+      if (unpacked > MAX_UNPACKED_BYTES) throw new Error(`${url}: unpacks to more than ${MAX_UNPACKED_BYTES} bytes`);
       return true;
     },
   });

@@ -1498,7 +1498,7 @@ export const en = {
         detail: (sex: string | null, by: string | null, year: string | null) =>
           `${sex === null ? "" : ` (${sex})`}${by === null && year === null ? "" : `, identified${by === null ? "" : ` by ${by}`}${year === null ? "" : ` in ${year}`}`}.`,
         differsNote: (version: string) =>
-          `From version ${version} of the dataset. Beeline has not made this a determination, because neither it nor the current determination says when it was made, so nothing shows which is newer.`,
+          `From version ${version} of the dataset. Beeline has not made this a determination, because nothing shows whether it is newer than the current one.`,
         sameNote: (version: string) => `From version ${version} of the dataset.`,
       },
     },

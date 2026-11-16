@@ -520,7 +520,9 @@ describe("one record", () => {
     const w = await world();
     const id = (await w.json(w.keys.alice, `/samples/${w.ids.a1}`)).specimens.rows[0].id;
     const body = await w.json(w.keys.alice, `/specimens/${id}`);
-    expect(Object.keys(body)).toEqual(["specimen", "sample", "determinations", "findings", "labels", "reprint"]);
+    expect(Object.keys(body)).toEqual(["specimen", "sample", "determinations", "published", "findings", "labels", "reprint"]);
+    // No museum's published dataset has been loaded, so nothing is published about it.
+    expect(body.published).toEqual([]);
     expect(body.specimen).toMatchObject({ id, field_number: "OBA00001", specimen_number: 1 });
     expect(body.sample.sample_number).toBe("A-1");
     expect(body.determinations).toHaveLength(1);
@@ -767,7 +769,7 @@ describe("what the API publishes of a record, field by field", () => {
     expect(Object.keys(specimen.sample).sort()).toEqual(Object.keys(sample.sample).sort());
     for (const own of ["specimen_number", "field_number", "disposition", "remarks"]) expect(specimen.sample).not.toHaveProperty(own);
     expect(Object.keys(specimen.determinations[0]).sort()).toEqual(
-      ["authorship", "caste", "channel", "determined_on", "determined_on_precision", "determiner", "entity_id", "is_expert", "notes", "of_record", "qualifier", "rank", "recorded_at", "scientific_name", "sex", "verbatim_identification"].sort(),
+      ["archive_publisher", "archive_version", "authorship", "caste", "channel", "determined_on", "determined_on_precision", "determiner", "entity_id", "is_expert", "notes", "of_record", "qualifier", "rank", "recorded_at", "scientific_name", "sex", "verbatim_identification"].sort(),
     );
     const withHistory = await w.json(w.keys.bob, `/samples/${w.ids.b2}`);
     expect(Object.keys(withHistory.history[0]).sort()).toEqual(["author", "at", "field", "new_value", "old_value", "reason", "source"].sort());

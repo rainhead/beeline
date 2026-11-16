@@ -251,6 +251,12 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
              ${col("identifiedBy")} AS identified_by, ${col("dateIdentified")} AS date_identified, ${col("sex")} AS sex
       FROM ${source}`);
     const records = await one(conn, "SELECT count(*) FROM ar_row");
+    // The file is read once, into ar_row, and everything after reads that.
+    // If it changed between the hash and the read (a fetch rewriting it),
+    // the statements would be stored under a hash that is not theirs.
+    if (createHash("sha256").update(await readFile(occurrencePath)).digest("hex") !== sha256) {
+      throw new Error(`${occurrencePath} changed while it was being read; load it again`);
+    }
     if ((await one(conn, "SELECT count(*) FROM ar_row WHERE occurrence_id IS NULL")) > 0) {
       throw new Error(`${occurrencePath}: a record with no occurrenceID`);
     }
@@ -337,8 +343,12 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
         FROM r LEFT JOIN ar_taxon_alias ga ON ga.rank = 'genus' AND ga.alias = r.genus
       )
       SELECT g.*,
+             -- Not readable where the name as published says more than its
+             -- genus and epithet do: a qualifier or a doubt written into it
+             -- (cf., aff., nr., a question mark), which the parted columns drop.
              regexp_full_match(coalesce(genus, ''), '[A-Z][a-z]+')
-               AND (species_epithet IS NULL OR regexp_full_match(species_epithet, '[a-z]+(-[a-z]+)?')) AS name_readable,
+               AND (species_epithet IS NULL OR regexp_full_match(species_epithet, '[a-z]+(-[a-z]+)?'))
+               AND NOT regexp_matches(coalesce(scientific_name, ''), '(^|\\s)(cf|aff|nr)\\.?(\\s|$)|\\?') AS name_readable,
              CASE WHEN species_epithet IS NULL THEN 'genus' ELSE 'species' END AS rank,
              CASE WHEN species_epithet IS NULL THEN genus_name
                   ELSE coalesce(sa.name, concat(genus_name, ' ', species_epithet)) END AS name,
@@ -363,7 +373,16 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
                           unnest(string_split(p.recorded_by, '|')) AS part(collector)
                      WHERE sc.sample_id = sa.entity_id
                        AND (${FOLD("pe.display_name")} = ${FOLD("part.collector")}
-                            OR ${FOLD("pe.family_name")} = ${FOLD("regexp_extract(trim(part.collector), '([^ ]+)$', 1)")})) AS collector_matches,
+                            -- The family name, where the given names do not
+                            -- contradict each other: the same first letter
+                            -- (Bob for Robert is not confirmed, and is held
+                            -- for a person), or a record or a person that
+                            -- gives only the family name. John Smith does not
+                            -- confirm a number on Jane Smith's specimen.
+                            OR (${FOLD("pe.family_name")} = ${FOLD("regexp_extract(trim(part.collector), '([^ ]+)$', 1)")}
+                                AND (nullif(trim(pe.given_name), '') IS NULL
+                                     OR NOT contains(trim(part.collector), ' ')
+                                     OR lower(left(trim(pe.given_name), 1)) = lower(left(trim(part.collector), 1)))))) AS collector_matches,
              (SELECT string_agg(pe.display_name, ' | ' ORDER BY sc.position)
               FROM sample_collector sc JOIN person pe ON pe.entity_id = sc.person_id WHERE sc.sample_id = sa.entity_id) AS collectors
       FROM ar_parsed p JOIN specimen sp ON sp.entity_id = p.specimen_id JOIN sample sa ON sa.entity_id = sp.sample_id
@@ -583,9 +602,11 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
       createdPeople: toCreate,
       heldPath,
     };
-    await conn.run(opts.dryRun ? "ROLLBACK" : "COMMIT");
+    // Written before the commit, so a report that cannot be written fails
+    // the load rather than following a load that succeeded.
     const heldCsv = [HELD_COLUMNS.join(","), ...heldRows.map((r) => r.map(csvCell).join(","))].join("\n");
     await writeFile(heldPath, `${heldCsv}\n`);
+    await conn.run(opts.dryRun ? "ROLLBACK" : "COMMIT");
     return result;
   } catch (err) {
     await conn.run("ROLLBACK").catch(() => {});

@@ -7,7 +7,7 @@ import { en } from "../src/app/messages/en.js";
 import { archiveNotes, determinationHistory } from "../src/app/record.js";
 import { Determinations, PublishedNotes } from "../src/app/views/record.js";
 import { createKysely } from "../src/db.js";
-import { HELD_COLUMNS, loadArchive, readEml } from "../src/load-archive.js";
+import { HELD_COLUMNS, loadArchive, readEml, versionAfter } from "../src/load-archive.js";
 import { CURRENT_SEASON, createMemoryDb, currentSeasonDate, insertCleanSample, rows } from "./helpers.js";
 
 /**
@@ -24,7 +24,7 @@ import { CURRENT_SEASON, createMemoryDb, currentSeasonDate, insertCleanSample, r
 const DATASET = "1fa69ff3-3e40-465f-927f-12b1484d3731";
 const COLUMNS = [
   "id", "occurrenceID", "catalogNumber", "recordedBy", "sex", "fieldNumber", "year", "month", "day",
-  "identifiedBy", "dateIdentified", "scientificName", "family", "genus", "subgenus", "specificEpithet", "taxonRank",
+  "identifiedBy", "dateIdentified", "identificationQualifier", "scientificName", "family", "genus", "subgenus", "specificEpithet", "taxonRank",
 ] as const;
 type Row = Partial<Record<(typeof COLUMNS)[number], string>>;
 
@@ -334,9 +334,46 @@ describe("loading again, and the next version", () => {
     expect((await load(await archive("1.10", "2026-12-01", [row("26000001"), row("26000002")]), LATER)).statements).toEqual({ added: 0, changed: 1, withdrawn: 0 });
   });
 
-  test("a version published before the newest loaded is refused; 1.10 follows 1.9", async () => {
+  test("the publisher's revision that cannot be recorded is still shown", async () => {
+    await load(await archive("1.8", "2026-11-04", [row("26000001")]));
+    expect(await archiveNotes(db, await specimenId("26000001"))).toEqual([]);
+    const result = await load(
+      await archive("1.9", "2026-11-04", [row("26000001", { specificEpithet: "nonesuch", scientificName: "Lasioglossum nonesuch" })]),
+      LATER,
+    );
+    expect(result).toMatchObject({ revised: [], held: { name_unknown: 1 }, disagrees: { active: 1 } });
+    // The record is still version 1.8's name, and the page says what is published now.
+    expect(await recordOf("26000001")).toEqual(["Lasioglossum sisymbrii", true, "worksheet_import"]);
+    expect(await archiveNotes(db, await specimenId("26000001"))).toMatchObject([
+      { version: "1.9", scientific_name: "Lasioglossum nonesuch", name: null, agrees: false },
+    ]);
+  });
+
+  test("a record the publisher re-issues under another occurrenceID still revises the publisher's own name", async () => {
+    await load(await archive("1.8", "2026-11-04", [row("26000001")]));
+    const result = await load(
+      await archive("1.9", "2026-11-04", [
+        row("26000001", {
+          occurrenceID: "https://osac.oregonstate.edu/SP/OSAC_0001224490", catalogNumber: "OSAC_0001224490",
+          specificEpithet: "incompletum", scientificName: "Lasioglossum incompletum (Crawford, 1907)",
+        }),
+      ]),
+      LATER,
+    );
+    expect(result).toMatchObject({ statements: { added: 1, changed: 0, withdrawn: 1 }, revised: [{ fieldNumber: "26000001" }] });
+    expect(await recordOf("26000001")).toEqual(["Lasioglossum incompletum", true, "worksheet_import"]);
+    expect(await archiveNotes(db, await specimenId("26000001"))).toEqual([]);
+  });
+
+  test("a version published before the newest loaded is refused, by date and by number; 1.10 follows 1.9", async () => {
     await load(await archive("1.9", "2026-11-04", [row("26000001")]));
     await expect(load(await archive("1.6", "2026-07-28", [row("26000001")]))).rejects.toThrow(/order they were published/);
+    // OSAC published 1.8 and 1.9 on one day: the date alone would let 1.8 in as the newer.
+    await expect(load(await archive("1.8", "2026-11-04", [row("26000001")]))).rejects.toThrow(/order they were published/);
+    expect(versionAfter("1.10", "1.9")).toBe(true);
+    expect(versionAfter("1.9", "1.10")).toBe(false);
+    expect(versionAfter("1.9", "1.9")).toBe(false);
+    expect(versionAfter("2.0", "1.10")).toBe(true);
     expect((await load(await archive("1.10", "2026-12-01", [row("26000001")]), LATER)).newVersion).toBe(true);
     expect(await rows(conn, "SELECT version, sequence FROM archive_version ORDER BY sequence")).toEqual([["1.9", 1], ["1.10", 2]]);
   });
@@ -370,6 +407,30 @@ describe("what cannot be read is held", () => {
     expect(await rows(conn, "SELECT occurrence_id, catalog_number FROM archive_statement WHERE catalog_number IS NOT NULL")).toEqual([
       ["http://osac.oregonstate.edu/SP/OSAC_0001224490", "OSAC_0001224490"],
     ]);
+  });
+
+  test("a record with no collector, no day or no determiner is held: nothing confirms its number, nobody vouches for its name", async () => {
+    const dir = await archive("1.9", "2026-11-04", [
+      row("26000001", { recordedBy: undefined }),
+      row("26000002", { day: undefined }),
+      row("26000003", { identifiedBy: undefined }),
+    ]);
+    const result = await load(dir);
+    expect(result.held).toMatchObject({ number_unconfirmed: 2, determiner_unknown: 1 });
+    expect(await recorded()).toEqual([]);
+  });
+
+  test("a record held for its determiner still says whether its name is the one Beeline has", async () => {
+    await determined("26000001", "Lasioglossum sisymbrii");
+    const result = await load(await archive("1.9", "2026-11-04", [row("26000001", { identifiedBy: "Somebody New" })]));
+    expect(result).toMatchObject({ held: { determiner_unknown: 1 }, agrees: { active: 1 }, disagrees: { active: 0 } });
+    expect(await archiveNotes(db, await specimenId("26000001"))).toMatchObject([{ name: "Lasioglossum sisymbrii", agrees: true }]);
+  });
+
+  test("a qualifier, which the loader does not read, refuses the archive", async () => {
+    const dir = await archive("1.9", "2026-11-04", [row("26000001", { identificationQualifier: "cf." })]);
+    await expect(load(dir)).rejects.toThrow(/identificationQualifier has values/);
+    expect(await rows(conn, "SELECT count(*) FROM archive_version")).toEqual([[0n]]);
   });
 
   test("a name the tree and Ecdysis lack, a family the tree files the name elsewhere under, a year before the sample", async () => {

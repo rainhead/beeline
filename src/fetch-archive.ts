@@ -23,6 +23,10 @@ import { readEml } from "./load-archive.js";
 
 export const DEFAULT_ARCHIVES_DIR = "data/archives";
 
+/** OSAC's archive is 2 MB zipped and 70 MB unpacked (65,000 records). */
+const MAX_ZIP_BYTES = 200 * 1024 * 1024;
+const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
+
 export interface FetchedArchive {
   datasetKey: string;
   version: string;
@@ -45,6 +49,7 @@ export async function fetchArchive(opts: {
   const dataset = (await registry.json()) as { endpoints?: Array<{ type?: string; url?: string }> };
   const endpoint = dataset.endpoints?.find((e) => e.type === "DWC_ARCHIVE")?.url;
   if (endpoint === undefined) throw new Error(`dataset ${opts.datasetKey} has no Darwin Core archive in GBIF's registry`);
+  if (!endpoint.startsWith("https://")) throw new Error(`${endpoint}: the archive's address is not https`);
   let url = endpoint;
   if (opts.version !== undefined) {
     if (!/^[0-9]+(\.[0-9]+)*$/.test(opts.version)) throw new Error(`${opts.version}: not a version number`);
@@ -55,7 +60,15 @@ export async function fetchArchive(opts: {
   }
   const response = await get(url);
   if (!response.ok) throw new Error(`${url} answered ${response.status}`);
-  const files = unzipSync(new Uint8Array(await response.arrayBuffer()));
+  const zipped = new Uint8Array(await response.arrayBuffer());
+  if (zipped.length > MAX_ZIP_BYTES) throw new Error(`${url}: ${zipped.length} bytes, more than an archive is expected to be`);
+  // An archive is unpacked in memory, so nothing larger than expected is.
+  const files = unzipSync(zipped, {
+    filter: (f) => {
+      if (f.originalSize > MAX_FILE_BYTES) throw new Error(`${url}: ${f.name} unpacks to ${f.originalSize} bytes`);
+      return true;
+    },
+  });
   const eml = files["eml.xml"];
   const meta = files["meta.xml"];
   if (eml === undefined || meta === undefined) throw new Error(`${url}: not a Darwin Core archive (no eml.xml or meta.xml)`);

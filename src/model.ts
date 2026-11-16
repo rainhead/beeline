@@ -1065,7 +1065,7 @@ export interface ArchiveDatasetTable {
   dataset_key: string;
   publisher: string;
   title: string;
-  specimen_term: "fieldNumber";
+  specimen_term: string;
 }
 
 /** A published version of a dataset that has been loaded. */

@@ -70,6 +70,7 @@ export const HELD_REASONS = [
   "no_specimen",
   "ambiguous_number",
   "specimen_changed",
+  "number_unconfirmed",
   "collector_disagrees",
   "date_disagrees",
   "identified_unreadable",
@@ -93,9 +94,31 @@ const NUMBER_REASONS: readonly HeldReason[] = [
   "no_specimen",
   "ambiguous_number",
   "specimen_changed",
+  "number_unconfirmed",
   "collector_disagrees",
   "date_disagrees",
 ];
+
+/** The Darwin Core terms a dataset may name its specimens by (archive_dataset.specimen_term). */
+export const SPECIMEN_TERMS: readonly string[] = ["fieldNumber"];
+
+/**
+ * Terms that change what an identification says, which the loader does not
+ * read: a qualifier (cf.) or a third epithet would be recorded as a plain
+ * species. OSAC's archive has neither column. One that gains a value in them
+ * is refused until the loader reads them.
+ */
+const UNREAD_TERMS = ["identificationQualifier", "infraspecificEpithet"] as const;
+
+/** Whether one dotted version number comes after another: 1.10 after 1.9. */
+export function versionAfter(a: string, b: string): boolean {
+  const [x, y] = [a, b].map((v) => v.split(".").map(Number));
+  for (let i = 0; i < Math.max(x!.length, y!.length); i++) {
+    const d = (x![i] ?? 0) - (y![i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return false;
+}
 
 export const HELD_COLUMNS = ["occurrence_id", "field_number", "reason", "scientific_name", "identified_by", "date_identified", "detail"] as const;
 
@@ -198,6 +221,9 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
   }
   const publisher = String(dataset[0]);
   const specimenTerm = String(dataset[1]);
+  if (!SPECIMEN_TERMS.includes(specimenTerm)) {
+    throw new Error(`dataset ${datasetKey} names its specimens by ${specimenTerm}, which the loader cannot read`);
+  }
 
   // A Darwin Core archive's core file as an IPT writes it: tab-separated, no
   // quoting, one header line of term names.
@@ -207,6 +233,11 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
     if (!present.has(required)) throw new Error(`${occurrencePath}: no ${required} column`);
   }
   const col = (name: string) => (present.has(name) ? `nullif(trim("${name}"), '')` : "CAST(NULL AS VARCHAR)");
+  for (const term of UNREAD_TERMS) {
+    if (present.has(term) && (await one(conn, `SELECT count(*) FROM ${source} WHERE ${col(term)} IS NOT NULL`)) > 0) {
+      throw new Error(`${occurrencePath}: ${term} has values, which the loader does not read yet: recording these records would drop it`);
+    }
+  }
 
   await conn.run("BEGIN TRANSACTION");
   try {
@@ -235,17 +266,15 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
     }
     const statements = { added: 0, changed: 0, withdrawn: 0 };
     if (newVersion) {
-      const newest = (
-        await all(
-          conn,
-          `SELECT version, CAST(published_on AS VARCHAR) FROM archive_version WHERE dataset_key = $1 ORDER BY sequence DESC LIMIT 1`,
-          [datasetKey],
-        )
-      )[0];
-      if (newest !== undefined && String(newest[1]) > publishedOn) {
-        throw new Error(
-          `version ${version} was published on ${publishedOn}, before version ${String(newest[0])} (${String(newest[1])}), which is already loaded: versions load in the order they were published`,
-        );
+      // Versions load in the order they were published: by date, and by
+      // number too, since a publisher can issue two on one day (OSAC's 1.8
+      // and 1.9) and an older one loaded second would be read as the newer.
+      for (const [v, on] of await all(conn, `SELECT version, CAST(published_on AS VARCHAR) FROM archive_version WHERE dataset_key = $1`, [datasetKey])) {
+        if (String(on) > publishedOn || !versionAfter(version, String(v))) {
+          throw new Error(
+            `version ${version} (published ${publishedOn}) does not come after version ${String(v)} (${String(on)}), which is already loaded: versions load in the order they were published`,
+          );
+        }
       }
       // What each record said last, before this version is added.
       await conn.run(
@@ -340,15 +369,24 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
       FROM ar_parsed p JOIN specimen sp ON sp.entity_id = p.specimen_id JOIN sample sa ON sa.entity_id = sp.sample_id
       WHERE p.specimens = 1`);
 
-    // The determination an earlier load recorded from each record, if any:
-    // the newest, and the specimen it is on.
+    // The specimens whose determination of record is one an earlier load
+    // recorded from this dataset: the only expert names a load may revise.
+    // By the specimen and not by the record, so that a record the publisher
+    // re-issues under another occurrenceID (as cataloguing a specimen might)
+    // still revises the publisher's own earlier name.
     await conn.run(
       `CREATE OR REPLACE TEMP TABLE ar_recorded AS
-       SELECT ad.occurrence_id, d.entity_id AS determination_id, d.specimen_id, d.animal_id, d.sex, d.determiner_name, d.determined_on
+       SELECT d.specimen_id, d.entity_id AS determination_id, d.animal_id, d.sex, d.determiner_name, d.determined_on
+       FROM archive_determination ad JOIN determination_of_record d ON d.entity_id = ad.determination_id
+       WHERE ad.dataset_key = $1`,
+      [datasetKey] as never,
+    );
+    // And every specimen an earlier load recorded each record on.
+    await conn.run(
+      `CREATE OR REPLACE TEMP TABLE ar_recorded_on AS
+       SELECT DISTINCT ad.occurrence_id, d.specimen_id
        FROM archive_determination ad JOIN determination d ON d.entity_id = ad.determination_id
-       WHERE ad.dataset_key = $1
-         AND ad.determination_id = (SELECT max(x.determination_id) FROM archive_determination x
-                                    WHERE x.dataset_key = ad.dataset_key AND x.occurrence_id = ad.occurrence_id)`,
+       WHERE ad.dataset_key = $1`,
       [datasetKey] as never,
     );
 
@@ -364,14 +402,18 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
                WHEN p.times_in_dataset > 1 THEN 'repeated_number'
                WHEN p.specimens = 0 THEN 'no_specimen'
                WHEN p.specimens > 1 THEN 'ambiguous_number'
-               WHEN EXISTS (SELECT 1 FROM ar_recorded x WHERE x.occurrence_id = p.occurrence_id AND x.specimen_id <> p.specimen_id) THEN 'specimen_changed'
-               WHEN p.recorded_by IS NOT NULL AND NOT s.collector_matches THEN 'collector_disagrees'
-               WHEN p.event_date IS NOT NULL AND NOT (p.event_date BETWEEN s.date_start AND s.date_end) THEN 'date_disagrees'
+               WHEN EXISTS (SELECT 1 FROM ar_recorded_on x WHERE x.occurrence_id = p.occurrence_id AND x.specimen_id <> p.specimen_id) THEN 'specimen_changed'
+               -- A number nothing confirms is not taken on its own word.
+               WHEN p.recorded_by IS NULL OR p.event_date IS NULL THEN 'number_unconfirmed'
+               WHEN NOT s.collector_matches THEN 'collector_disagrees'
+               WHEN NOT (p.event_date BETWEEN s.date_start AND s.date_end) THEN 'date_disagrees'
                WHEN p.date_identified IS NOT NULL AND p.determined_on IS NULL THEN 'identified_unreadable'
                WHEN p.determined_on > DATE ${sqlString(today)} OR p.determined_by_end < s.date_start THEN 'identified_disagrees'
                WHEN NOT p.name_readable THEN 'name_unreadable'
                WHEN p.sex IS NOT NULL AND p.sex_read IS NULL THEN 'sex_unreadable'
-               WHEN p.identified_by IS NOT NULL AND p.identified_by NOT IN (SELECT alias FROM ar_determiner_alias) THEN 'determiner_unknown'
+               -- A blank determiner is held too: a sheet's author vouches for
+               -- its rows, and a published record that names nobody has no one to.
+               WHEN p.identified_by IS NULL OR p.identified_by NOT IN (SELECT alias FROM ar_determiner_alias) THEN 'determiner_unknown'
              END AS outcome,
              CAST(NULL AS INTEGER) AS animal_id, CAST(NULL AS VARCHAR) AS detail
       FROM ar_parsed p LEFT JOIN ar_sample s USING (occurrence_id)`);
@@ -383,8 +425,7 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
     await conn.run(`
       UPDATE ar_outcome o SET may_record = o.outcome IS NULL AND (
         NOT EXISTS (SELECT 1 FROM determination d WHERE d.specimen_id = o.specimen_id AND d.is_expert)
-        OR EXISTS (SELECT 1 FROM ar_recorded x JOIN determination_of_record rec ON rec.entity_id = x.determination_id
-                   WHERE x.occurrence_id = o.occurrence_id AND x.specimen_id = o.specimen_id))`);
+        OR EXISTS (SELECT 1 FROM ar_recorded x WHERE x.specimen_id = o.specimen_id))`);
 
     const unplaced = (
       await all(
@@ -395,9 +436,12 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
     ).map((r) => String(r[0]));
     const adopted = await adoptEcdysisNames(conn, unplaced);
 
+    // Every readable name is placed, a held record's too, so that a record
+    // held for its determiner or its year still says whether its name is
+    // the one Beeline has.
     await conn.run(`
       UPDATE ar_outcome o SET animal_id = (SELECT min(a.entity_id) FROM animal a WHERE a.rank = o.rank AND a.scientific_name = o.name)
-      WHERE o.outcome IS NULL`);
+      WHERE o.name_readable`);
     await conn.run(`UPDATE ar_outcome SET outcome = 'name_unknown', detail = name WHERE outcome IS NULL AND animal_id IS NULL`);
     await conn.run(`
       CREATE OR REPLACE TEMP TABLE ar_family AS
@@ -421,8 +465,9 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
         WHEN 'identified_disagrees' THEN CASE WHEN determined_on > DATE ${sqlString(today)} THEN 'after today'
                ELSE concat('before the sample was collected on ', CAST(date_start AS VARCHAR)) END
         WHEN 'specimen_changed' THEN 'an earlier load recorded this record on another specimen'
+        WHEN 'number_unconfirmed' THEN 'the record gives no collector or no day collected'
         WHEN 'sex_unreadable' THEN sex
-        WHEN 'determiner_unknown' THEN identified_by
+        WHEN 'determiner_unknown' THEN coalesce(identified_by, 'the record names nobody')
         ELSE detail END
       WHERE outcome IS NOT NULL`);
 
@@ -438,7 +483,7 @@ export async function loadArchive(conn: DuckDBConnection, opts: ArchiveLoadOptio
                     IS DISTINCT FROM (o.animal_id, o.sex_read, o.identified_by, o.determined_on) THEN 'revised'
              END AS recording,
              x.animal_id AS was_animal_id
-      FROM ar_outcome o LEFT JOIN ar_recorded x ON x.occurrence_id = o.occurrence_id`);
+      FROM ar_outcome o LEFT JOIN ar_recorded x ON x.specimen_id = o.specimen_id`);
 
     // The determiners the determinations name, created where the alias file
     // names a person the store does not hold, as the sheet loader does.

@@ -63,5 +63,10 @@ describe("fetching a published archive", () => {
     const other: typeof fetch = async (input) =>
       String(input) === ENDPOINT ? new Response(zipOf("1.9", "00000000-0000-0000-0000-000000000000")) : answers(input);
     await expect(fetchArchive({ datasetKey: DATASET, dir, fetch: other })).rejects.toThrow(/is dataset 00000000/);
+    const plain: typeof fetch = async (input) =>
+      String(input).startsWith("https://api.gbif.org/")
+        ? Response.json({ endpoints: [{ type: "DWC_ARCHIVE", url: ENDPOINT.replace("https:", "http:") }] })
+        : answers(input);
+    await expect(fetchArchive({ datasetKey: DATASET, dir, fetch: plain })).rejects.toThrow(/not https/);
   });
 });

@@ -34,13 +34,13 @@ CREATE TABLE archive_dataset (
   dataset_key   TEXT PRIMARY KEY,
   publisher     TEXT NOT NULL,
   title         TEXT NOT NULL,
-  specimen_term TEXT NOT NULL CHECK (specimen_term IN ('fieldNumber'))
+  specimen_term TEXT NOT NULL
 );
 COMMENT ON TABLE archive_dataset IS 'A dataset a museum publishes to GBIF whose records are Beeline''s specimens. A load refuses a dataset that is not here: which column of an archive names the specimen is a decision somebody makes once per dataset.';
 COMMENT ON COLUMN archive_dataset.dataset_key IS 'GBIF''s key for the dataset, the UUID in its GBIF address. GBIF''s registry says where the publisher''s own archive is, which is what a load reads: GBIF''s copy respells names to its own taxonomy.';
 COMMENT ON COLUMN archive_dataset.publisher IS 'The publisher as a page names it: "OSAC".';
 COMMENT ON COLUMN archive_dataset.title IS 'The dataset''s title as published.';
-COMMENT ON COLUMN archive_dataset.specimen_term IS 'The Darwin Core term whose value is the specimen''s field number in Beeline.';
+COMMENT ON COLUMN archive_dataset.specimen_term IS 'The Darwin Core term whose value is the specimen''s field number in Beeline. No CHECK lists the terms, since a deployed store''s CHECK can never be widened (ADR 0006); the loader holds the list of terms it can read (src/load-archive.ts, SPECIMEN_TERMS).';
 
 INSERT INTO archive_dataset (dataset_key, publisher, title, specimen_term)
 VALUES ('1fa69ff3-3e40-465f-927f-12b1484d3731', 'OSAC', 'Oregon Bee Atlas', 'fieldNumber');
@@ -81,7 +81,11 @@ CREATE TABLE archive_statement (
   identified_by    TEXT,
   date_identified  TEXT,
   sex              TEXT,
-  PRIMARY KEY (dataset_key, occurrence_id, version)
+  PRIMARY KEY (dataset_key, occurrence_id, version),
+  FOREIGN KEY (dataset_key, version) REFERENCES archive_version(dataset_key, version),
+  CHECK (NOT withdrawn OR (field_number IS NULL AND catalog_number IS NULL AND scientific_name IS NULL
+                           AND genus IS NULL AND specific_epithet IS NULL AND identified_by IS NULL
+                           AND date_identified IS NULL AND sex IS NULL))
 );
 COMMENT ON TABLE archive_statement IS 'What a dataset said about one of its records, as published, from the version in which it first said it: a row for a record''s first appearance and one for each later version in which any of these columns changed. A version that repeats the last statement adds nothing. Never updated.';
 COMMENT ON COLUMN archive_statement.occurrence_id IS 'dwc:occurrenceID exactly as published, the scheme included: OSAC writes http: on some and https: on others, and GBIF reads a changed string as another record.';
@@ -128,7 +132,8 @@ CREATE TABLE archive_determination (
   dataset_key      TEXT NOT NULL REFERENCES archive_dataset(dataset_key),
   occurrence_id    TEXT NOT NULL,
   version          TEXT NOT NULL,
-  loaded_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+  loaded_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY (dataset_key, occurrence_id, version) REFERENCES archive_statement(dataset_key, occurrence_id, version)
 );
 COMMENT ON TABLE archive_determination IS 'Provenance for determinations a load recorded from an archive: the dataset, the record and the version whose statement each one is. Their channel is worksheet_import with is_expert true, because DuckDB cannot add a channel value to a deployed store''s CHECK (ADR 0006); a row here, and none in worksheet_determination, is what says a determination came from a published archive.';
 COMMENT ON COLUMN archive_determination.version IS 'The version of the statement recorded (archive_statement.version).';
@@ -149,9 +154,12 @@ COMMENT ON VIEW archive_statement_current IS 'The newest statement of each recor
 
 -- What a museum publishes about a specimen, for the specimen's page: one row
 -- for each record of a dataset that names the specimen and is still
--- published. is_record says the specimen's determination of record IS this
--- record's own determination, recorded by a load, so the page need not say
--- it twice; agrees says the name the archive gives is the name of the
+-- published. is_record says the specimen's determination of record is one a
+-- load recorded from this dataset AND still says what the record says now,
+-- so the page need not say it twice. A record the publisher has since
+-- changed to something a load could not record (a name the tree lacks, a
+-- determiner nobody has placed) is therefore not the record, and is shown.
+-- agrees says the name the archive gives is the name of the
 -- specimen's expert determination of record, with no qualifier on it. Where
 -- neither holds, the museum publishes something Beeline does not say, and
 -- the page shows it (Peter, 2026-11-15: every difference is visible).
@@ -159,18 +167,19 @@ CREATE VIEW archive_note AS
 SELECT r.specimen_id, d.dataset_key, d.publisher, c.occurrence_id, c.version, c.catalog_number,
        c.scientific_name, c.identified_by, c.date_identified, c.sex,
        r.animal_id, r.held,
-       coalesce(ad.determination_id = rec.entity_id, false) AS is_record,
+       coalesce(ad.determination_id IS NOT NULL AND r.held IS NULL
+                AND rec.animal_id = r.animal_id AND rec.qualifier IS NULL
+                AND rec.sex IS NOT DISTINCT FROM r.sex
+                AND rec.determined_on IS NOT DISTINCT FROM r.determined_on
+                AND rec.determiner_name IS NOT DISTINCT FROM c.identified_by, false) AS is_record,
        coalesce(rec.is_expert AND rec.animal_id = r.animal_id AND rec.qualifier IS NULL, false) AS agrees
 FROM archive_reading r
 JOIN archive_dataset d ON d.dataset_key = r.dataset_key
 JOIN archive_statement_current c ON c.dataset_key = r.dataset_key AND c.occurrence_id = r.occurrence_id
 LEFT JOIN determination_of_record rec ON rec.specimen_id = r.specimen_id
-LEFT JOIN (
-  SELECT dataset_key, occurrence_id, max(determination_id) AS determination_id
-  FROM archive_determination GROUP BY dataset_key, occurrence_id
-) ad ON ad.dataset_key = r.dataset_key AND ad.occurrence_id = r.occurrence_id
+LEFT JOIN archive_determination ad ON ad.determination_id = rec.entity_id AND ad.dataset_key = r.dataset_key
 WHERE r.specimen_id IS NOT NULL AND NOT c.withdrawn;
-COMMENT ON VIEW archive_note IS 'What a published archive says about a specimen now: its name as published, who identified it and in what year, and whether Beeline''s determination of record is that statement (is_record) or gives the same name (agrees).';
+COMMENT ON VIEW archive_note IS 'What a published archive says about a specimen now: its name as published, who identified it and in what year, and whether Beeline''s determination of record is one a load recorded from the dataset that still says the same (is_record), or gives the same name (agrees).';
 COMMENT ON COLUMN archive_note.held IS 'Why the load could not read the statement as a determination (a name the tree lacks, a determiner nobody has placed), or NULL.';
 
 -- Where a museum publishes a name other than the one Beeline's expert

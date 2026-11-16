@@ -28,13 +28,13 @@ CREATE TABLE archive_dataset (
   dataset_key   TEXT PRIMARY KEY,
   publisher     TEXT NOT NULL,
   title         TEXT NOT NULL,
-  specimen_term TEXT NOT NULL CHECK (specimen_term IN ('fieldNumber'))
+  specimen_term TEXT NOT NULL
 );
 COMMENT ON TABLE archive_dataset IS 'A dataset a museum publishes to GBIF whose records are Beeline''s specimens. A load refuses a dataset that is not here: which column of an archive names the specimen is a decision somebody makes once per dataset.';
 COMMENT ON COLUMN archive_dataset.dataset_key IS 'GBIF''s key for the dataset, the UUID in its GBIF address. GBIF''s registry says where the publisher''s own archive is, which is what a load reads: GBIF''s copy respells names to its own taxonomy.';
 COMMENT ON COLUMN archive_dataset.publisher IS 'The publisher as a page names it: "OSAC".';
 COMMENT ON COLUMN archive_dataset.title IS 'The dataset''s title as published.';
-COMMENT ON COLUMN archive_dataset.specimen_term IS 'The Darwin Core term whose value is the specimen''s field number in Beeline.';
+COMMENT ON COLUMN archive_dataset.specimen_term IS 'The Darwin Core term whose value is the specimen''s field number in Beeline. No CHECK lists the terms, since a deployed store''s CHECK can never be widened (ADR 0006); the loader holds the list of terms it can read (src/load-archive.ts, SPECIMEN_TERMS).';
 
 INSERT INTO archive_dataset (dataset_key, publisher, title, specimen_term)
 VALUES ('1fa69ff3-3e40-465f-927f-12b1484d3731', 'OSAC', 'Oregon Bee Atlas', 'fieldNumber');
@@ -75,7 +75,11 @@ CREATE TABLE archive_statement (
   identified_by    TEXT,
   date_identified  TEXT,
   sex              TEXT,
-  PRIMARY KEY (dataset_key, occurrence_id, version)
+  PRIMARY KEY (dataset_key, occurrence_id, version),
+  FOREIGN KEY (dataset_key, version) REFERENCES archive_version(dataset_key, version),
+  CHECK (NOT withdrawn OR (field_number IS NULL AND catalog_number IS NULL AND scientific_name IS NULL
+                           AND genus IS NULL AND specific_epithet IS NULL AND identified_by IS NULL
+                           AND date_identified IS NULL AND sex IS NULL))
 );
 COMMENT ON TABLE archive_statement IS 'What a dataset said about one of its records, as published, from the version in which it first said it: a row for a record''s first appearance and one for each later version in which any of these columns changed. A version that repeats the last statement adds nothing. Never updated.';
 COMMENT ON COLUMN archive_statement.occurrence_id IS 'dwc:occurrenceID exactly as published, the scheme included: OSAC writes http: on some and https: on others, and GBIF reads a changed string as another record.';
@@ -122,7 +126,8 @@ CREATE TABLE archive_determination (
   dataset_key      TEXT NOT NULL REFERENCES archive_dataset(dataset_key),
   occurrence_id    TEXT NOT NULL,
   version          TEXT NOT NULL,
-  loaded_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+  loaded_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY (dataset_key, occurrence_id, version) REFERENCES archive_statement(dataset_key, occurrence_id, version)
 );
 COMMENT ON TABLE archive_determination IS 'Provenance for determinations a load recorded from an archive: the dataset, the record and the version whose statement each one is. Their channel is worksheet_import with is_expert true, because DuckDB cannot add a channel value to a deployed store''s CHECK (ADR 0006); a row here, and none in worksheet_determination, is what says a determination came from a published archive.';
 COMMENT ON COLUMN archive_determination.version IS 'The version of the statement recorded (archive_statement.version).';

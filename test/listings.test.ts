@@ -770,6 +770,68 @@ describe("floral hosts by what iNaturalist calls them (beeline-rfkj.4)", () => {
     expect(spec[shead.indexOf("hostFamily")]).toBe("Familia alpha");
   });
 
+  /**
+   * What the plant names job stores when iNaturalist answers a name (src/fetch-plant-names.ts), so a host
+   * with a name and no id resolves without asking: one lookup and its hits, by the hit's own name and the
+   * term the search matched. Synthetic names, as the rest of this block's.
+   */
+  async function lookedUp(
+    conn: Awaited<ReturnType<typeof createMemoryDb>>["conn"],
+    nameKey: string,
+    hits: Array<{ id: number; name: string; matched: string }>,
+  ) {
+    await conn.run(`INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('${nameKey}', 'species', ${hits.length}, true)`);
+    for (const h of hits) {
+      await conn.run(`INSERT INTO plant_name_lookup_hit VALUES ('${nameKey}', 'species', ${h.id}, '${h.name}', 'species', true, '${h.matched}')`);
+    }
+    await refreshPlantCommonNames(conn);
+  }
+
+  it("reads a host with a name and no id through the taxon its name comes to, everywhere but hostInatTaxonId (beeline-rfkj.5)", async () => {
+    const { app, conn } = await hostApp();
+    // C-1's host is a name and no id; the lookup found the taxon of that name. The spacing and the case
+    // differ from iNaturalist's spelling, as old Beeline's do (the record page's test covers a hybrid sign).
+    await conn.run(`UPDATE sample SET host_name_as_observed = 'alpha  LANATA' WHERE sample_number = 'C-1'`);
+    await lookedUp(conn, "alpha lanata", [{ id: 1, name: "Alpha lanata", matched: "Alpha lanata" }]);
+    const body = await get(app, "/samples?scope=all");
+    expect(body).toContain(`<span class="taxon" title="woolly alpha"><i>alpha</i> <i>LANATA</i><span class="visually-hidden">, woolly alpha</span></span>`);
+    const find = async (term: string, listing = "samples") => numbers(await get(app, `/${listing}?scope=all&host=${encodeURIComponent(term)}`));
+    expect(await find("woolly")).toEqual(["A-1", "C-1"]);
+    expect(await find("Familia")).toEqual([]);
+    await conn.run(`INSERT INTO specimen (sample_id, specimen_number, field_number)
+                    SELECT entity_id, 1, 'OBA00009' FROM sample WHERE sample_number = 'C-1'`);
+    expect(await find("woolly", "specimens")).toEqual(["A-1", "C-1"]);
+    const specimens = await get(app, "/specimens?scope=all");
+    expect(specimens).toContain(`<span class="taxon" title="woolly alpha"><i>alpha</i> <i>LANATA</i>`);
+    const csv = parseCsv(await (await app.request("/samples.csv?scope=all")).text());
+    const head = csv[0]!;
+    const row = csv.find((l) => l[0] === "C-1")!;
+    // No id: it is the sample's identification on iNaturalist, and a name lookup is not one.
+    expect(["hostInatTaxonId", "hostCurrentName", "hostFamily", "hostCommonName"].map((h) => row[head.indexOf(h)])).toEqual([
+      "",
+      "Alpha lanata",
+      "Familia alpha",
+      "woolly alpha",
+    ]);
+    expect(row[head.indexOf("associatedTaxa")]).toContain("alpha  LANATA");
+    // The API's rows are the same mapper, and its record agrees with the listing.
+    const [[id]] = (await rows(conn, "SELECT entity_id FROM sample WHERE sample_number = 'C-1'")) as [[number]];
+    expect(await rows(conn, `SELECT resolved_by, current_name FROM sample_host WHERE sample_id = ${id}`)).toEqual([["name", "Alpha lanata"]]);
+  });
+
+  it("does not read a host whose name matched only through matched_term: it waits for a person", async () => {
+    // The name is a common name a volunteer typed; iNaturalist matched it, capitalised, as a term of taxon 1.
+    const { app, conn } = await hostApp();
+    await lookedUp(conn, "plain name", [{ id: 1, name: "Alpha lanata", matched: "Plain name" }]);
+    expect(await rows(conn, "SELECT by_own_name FROM plant_name_resolution WHERE name_key = 'plain name'")).toEqual([[false]]);
+    expect(await rows(conn, "SELECT count(*) FROM host_name_taxon_cache")).toEqual([[0n]]);
+    const body = await get(app, "/samples?scope=all");
+    expect(body).toMatch(/<span class="taxon"><i>Plain<\/i> <i>name<\/i><\/span><\/td>/);
+    expect(await rows(conn, "SELECT host_name, outcome, candidate_taxon_id FROM sample_host_unresolved")).toEqual([
+      ["Plain name", "matched by another name", 1n],
+    ]);
+  });
+
   it("finds a host by a common name written with capitals, whatever case is typed", async () => {
     const { app, conn } = await hostApp();
     await taxon(conn, { id: 7, name: "Alpha capitalis", rank: "species", active: true, parent: 110, oregon: "Showy Alpha" });

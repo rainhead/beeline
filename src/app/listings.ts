@@ -465,6 +465,8 @@ export interface SampleRow {
   host_name: string | null;
   host_rank: string | null;
   host_inat_taxon_id: bigint | null;
+  /** For a host with no id, the taxon its name comes to (host_name_taxon_cache); never published. */
+  host_name_taxon_id: bigint | null;
   /** What iNaturalist calls the host now, its family and its common name (HostNames); null where it has none. */
   host_current_name: string | null;
   host_family: string | null;
@@ -545,6 +547,7 @@ export interface SpecimenRow {
   host_name: string | null;
   host_rank: string | null;
   host_inat_taxon_id: bigint | null;
+  host_name_taxon_id: bigint | null;
   host_current_name: string | null;
   host_family: string | null;
   host_common_name: string | null;
@@ -654,16 +657,31 @@ const like = (term: string) => `%${term.toLowerCase()}%`;
  * taxon ids they belong to, so that a host that was replaced is found by the
  * name it has now and by its current taxon's common name. A split, retired or
  * pending host has neither, and so is found only by the name as observed,
- * which is why that one stays in the filter and is not replaced by them.
+ * which is why that one stays in the filter and is not replaced by them. A
+ * host with a name and no id answers through the taxon its name comes to
+ * (the host name join, below), as it does on the page.
  */
 const hostMatches = (term: string) =>
   sql<boolean>`(lower(s.host_name_as_observed) LIKE ${like(term)}
-    OR s.host_inat_taxon_id IN (SELECT h.inat_taxon_id FROM inat_taxon_current_named h
+    OR coalesce(s.host_inat_taxon_id, hnt.inat_taxon_id) IN (SELECT h.inat_taxon_id FROM inat_taxon_current_named h
                                 WHERE lower(h.current_name) LIKE ${like(term)} OR lower(h.common_name) LIKE ${like(term)}))`;
+
+// THE HOST NAME JOIN (beeline-rfkj.5). For a sample with a host name and no
+// host id, the taxon its name comes to: both listings' queries (listSamples,
+// listSpecimens) join host_name_taxon_cache as `hnt` on the name exactly as
+// the sample holds it, only for a sample with no id, whose id would otherwise
+// be its host. A join on the copy's key, so it adds no row; written as a
+// correlated subquery instead it cost the host filter 70 to 85 milliseconds
+// (pnpm bench:pages, 2026-11-15). The taxon is carried beside the id
+// (host_name_taxon_id), never in place of it: hostInatTaxonId in the
+// downloads is the id the sample holds, its identification on iNaturalist,
+// so a host found by name has none there, and only its current name, family
+// and common name are filled.
 
 /** What a listing says about a row's host beyond the name as observed. */
 interface HostNames {
   host_inat_taxon_id: bigint | null;
+  host_name_taxon_id: bigint | null;
   host_current_name: string | null;
   host_family: string | null;
   host_common_name: string | null;
@@ -714,16 +732,24 @@ export const hostNamesOnce = (db: Kysely<Database>): (() => Promise<HostNameMap>
  * which resolves the whole cache whatever it is asked for (about 19
  * milliseconds); a page rarely has one. `all` is for the API, which also gives
  * the current name and family, and reads the view for the hosts on the page.
+ * A host with no id is named through the taxon its name comes to
+ * (host_name_taxon_id) in each case, as the record page names it.
  * A {@link HostNameMap} is for a download: no read at all, the names having
  * been read once for the whole file.
  */
+/** The taxon a row's host is read through: its id, or, with none, the taxon its name comes to. */
+const hostTaxon = (r: HostNames): bigint | null => {
+  const id = r.host_inat_taxon_id ?? r.host_name_taxon_id;
+  return id === null ? null : BigInt(id);
+};
+
 async function nameHosts(db: Kysely<Database>, rows: HostNames[], detail: "common" | "all" | HostNameMap): Promise<void> {
   let byId: HostNameMap;
   if (detail instanceof Map) {
     byId = detail;
   } else {
     byId = new Map();
-    const ids = [...new Set(rows.flatMap((r) => (r.host_inat_taxon_id === null ? [] : [BigInt(r.host_inat_taxon_id)])))];
+    const ids = [...new Set(rows.flatMap((r) => (hostTaxon(r) === null ? [] : [hostTaxon(r)!])))];
     if (ids.length > 0) {
       let viaView = ids;
       if (detail === "common") {
@@ -753,7 +779,8 @@ async function nameHosts(db: Kysely<Database>, rows: HostNames[], detail: "commo
     }
   }
   for (const r of rows) {
-    const h = r.host_inat_taxon_id === null ? undefined : byId.get(BigInt(r.host_inat_taxon_id));
+    const id = hostTaxon(r);
+    const h = id === null ? undefined : byId.get(id);
     r.host_current_name = h?.name ?? null;
     r.host_family = h?.family ?? null;
     r.host_common_name = h?.common ?? null;
@@ -1131,6 +1158,9 @@ async function filteredSamples(
   const place = placeColumns(reader);
   let base = db
     .selectFrom("sample as s")
+    .leftJoin("host_name_taxon_cache as hnt", (join) =>
+      join.onRef("hnt.host_name", "=", "s.host_name_as_observed").on("s.host_inat_taxon_id", "is", null),
+    )
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
     .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
@@ -1305,6 +1335,7 @@ export async function listSamples(
         "s.host_name_as_observed as host_name",
         "s.host_rank",
         "s.host_inat_taxon_id",
+        "hnt.inat_taxon_id as host_name_taxon_id",
         located(hidden, sql<number | null>`loc.latitude`).as("latitude"),
         located(hidden, sql<number | null>`loc.longitude`).as("longitude"),
         located(hidden, sql<number | null>`loc.coordinate_uncertainty_m`).as("coordinate_uncertainty_m"),
@@ -1398,6 +1429,9 @@ async function filteredSpecimens(
   let base = db
     .selectFrom("specimen as sp")
     .innerJoin("sample as s", "s.entity_id", "sp.sample_id")
+    .leftJoin("host_name_taxon_cache as hnt", (join) =>
+      join.onRef("hnt.host_name", "=", "s.host_name_as_observed").on("s.host_inat_taxon_id", "is", null),
+    )
     .leftJoin("sample_atlas as sa", "sa.sample_id", "s.entity_id")
     .leftJoin("program as a", "a.entity_id", "sa.atlas_id")
     .leftJoin("program_abbreviation as pab", "pab.program_id", "a.entity_id")
@@ -1537,6 +1571,7 @@ export async function listSpecimens(
         "s.host_name_as_observed as host_name",
         "s.host_rank",
         "s.host_inat_taxon_id",
+        "hnt.inat_taxon_id as host_name_taxon_id",
         "an.rank as taxon_rank",
         "an.scientific_name",
         "an.authorship",

@@ -4,6 +4,7 @@ import { createMemoryDb, insertCleanSample, currentSeasonDate, rows } from "./he
 import { canonicalJson } from "../src/sync-inat.js";
 import { promoteObservations } from "../src/promote-observations.js";
 import { refreshObservationFields } from "../src/refresh-observation-fields.js";
+import { refreshPlantCommonNames } from "../src/plant-common-names.js";
 
 /**
  * Minting samples from observations (beeline-oyq).
@@ -674,6 +675,25 @@ describe("descriptive fields are a fill-only refresh", () => {
     const [[minted]] = (await rows(conn, "SELECT entity_id FROM sample")) as [[number]];
     expect(await one(`SELECT host_inat_taxon_id, host_name_as_observed FROM sample WHERE entity_id = ${minted}`)).toEqual([57669n, "Andrena"]);
     expect(await hostFinding(minted)).toBe(1);
+  });
+
+  test("a host read by its name that its observation then gives an id is read by the id, once (beeline-rfkj.5)", async () => {
+    for (const id of [47604, 54321]) {
+      await conn.run(`INSERT INTO inat_taxon (inat_taxon_id, name, rank, rank_level, is_active) VALUES (${id}, '${id === 47604 ? "Rubus" : "Rubus ursinus"}', '${id === 47604 ? "genus" : "species"}', ${id === 47604 ? 20 : 10}, true)`);
+      await conn.run(`INSERT INTO inat_taxon_ancestor VALUES (${id}, ${id}, 0)`);
+    }
+    await conn.run("INSERT INTO plant_name_lookup (name_key, expected_rank, total_results, read_in_full) VALUES ('rubus', 'genus', 1, true)");
+    await conn.run("INSERT INTO plant_name_lookup_hit VALUES ('rubus', 'genus', 47604, 'Rubus', 'genus', true, 'Rubus')");
+    const named = await insertCleanSample(conn, {
+      inat_observation_id: "7", sample_number: "'7'", host_name_as_observed: "'Rubus'", host_inat_taxon_id: "NULL", host_rank: "'genus'",
+    });
+    await refreshPlantCommonNames(conn);
+    const read = () => rows(conn, `SELECT inat_taxon_id, resolved_by FROM sample_host WHERE sample_id = ${named}`);
+    expect(await read()).toEqual([[47604n, "name"]]);
+    await stage(obs(7, { taxon: { id: 54321, name: "Rubus ursinus", rank: "species", ancestor_ids: [48460, 47126, 211194, 47604, 54321] } }));
+    await promoteObservations(conn);
+    // No refresh since: the copy still holds the name, which nothing reads for a sample with an id.
+    expect(await read()).toEqual([[54321n, "id"]]);
   });
 
   test("an atlas a human assigned is not moved by the lookup", async () => {
